@@ -410,7 +410,9 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
       }
     }
     Arch::Riscv64 => {
-      if caps.has(riscv::ZKNE) {
+      if caps.has(riscv::ZVKNED) {
+        AeadBackend::Riscv64VectorCrypto
+      } else if caps.has(riscv::ZKNE) {
         AeadBackend::Riscv64ScalarCrypto
       } else if caps.has(riscv::V) {
         // Hamburg vperm via vrgather.vv — practically constant-time.
@@ -523,6 +525,10 @@ mod tests {
       AeadBackend::Aarch64Aes
     );
     assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZVKNED),
+      AeadBackend::Riscv64VectorCrypto
+    );
+    assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZKNE),
       AeadBackend::Riscv64ScalarCrypto
     );
@@ -583,7 +589,11 @@ mod tests {
       AeadBackend::Riscv64Ttable
     );
 
-    // AEGIS: Zkne → vperm (V) → T-table
+    // AEGIS: Zvkned → Zkne → vperm (V) → T-table
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZVKNED),
+      AeadBackend::Riscv64VectorCrypto
+    );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZKNE),
       AeadBackend::Riscv64ScalarCrypto

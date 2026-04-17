@@ -22,6 +22,9 @@ fuzz_target!(|data: &[u8]| {
         .unwrap();
     assert_eq!(ours_256, ours_256_state, "pbkdf2-sha256 state reuse mismatch");
     assert!(Pbkdf2Sha256::verify_password(password, salt, iterations, &ours_256).is_ok());
+    let mut wrong_256 = ours_256.clone();
+    wrong_256[0] ^= 1;
+    assert!(Pbkdf2Sha256::verify_password(password, salt, iterations, &wrong_256).is_err());
 
     let mut oracle_256 = vec![0u8; out_len];
     pbkdf2::pbkdf2_hmac::<sha2_010::Sha256>(password, salt, iterations, &mut oracle_256);
@@ -35,6 +38,9 @@ fuzz_target!(|data: &[u8]| {
         .unwrap();
     assert_eq!(ours_512, ours_512_state, "pbkdf2-sha512 state reuse mismatch");
     assert!(Pbkdf2Sha512::verify_password(password, salt, iterations, &ours_512).is_ok());
+    let mut wrong_512 = ours_512.clone();
+    wrong_512[0] ^= 1;
+    assert!(Pbkdf2Sha512::verify_password(password, salt, iterations, &wrong_512).is_err());
 
     let mut oracle_512 = vec![0u8; out_len];
     pbkdf2::pbkdf2_hmac::<sha2_010::Sha512>(password, salt, iterations, &mut oracle_512);

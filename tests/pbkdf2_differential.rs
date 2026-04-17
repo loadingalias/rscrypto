@@ -41,10 +41,12 @@ proptest! {
     prop_assert_eq!(oneshot, expected.as_slice());
     prop_assert_eq!(reused, expected.as_slice());
     prop_assert!(state.verify(&salt, iterations, &expected).is_ok());
+    prop_assert!(Pbkdf2Sha256::verify_password(&password, &salt, iterations, &expected).is_ok());
 
     let mut wrong = expected.clone();
     wrong[0] ^= 1;
     prop_assert!(state.verify(&salt, iterations, &wrong).is_err());
+    prop_assert!(Pbkdf2Sha256::verify_password(&password, &salt, iterations, &wrong).is_err());
   }
 
   #[test]
@@ -67,10 +69,12 @@ proptest! {
     prop_assert_eq!(oneshot, expected.as_slice());
     prop_assert_eq!(reused, expected.as_slice());
     prop_assert!(state.verify(&salt, iterations, &expected).is_ok());
+    prop_assert!(Pbkdf2Sha512::verify_password(&password, &salt, iterations, &expected).is_ok());
 
     let mut wrong = expected.clone();
     wrong[0] ^= 1;
     prop_assert!(state.verify(&salt, iterations, &wrong).is_err());
+    prop_assert!(Pbkdf2Sha512::verify_password(&password, &salt, iterations, &wrong).is_err());
   }
 }
 

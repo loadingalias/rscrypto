@@ -1,8 +1,12 @@
 //! Blake2b kernel dispatch with `OnceCache` caching.
 
-use super::kernels::{Blake2bKernelId, CompressFn, compress_fn, required_caps};
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+use super::kernels::required_caps;
+use super::kernels::{Blake2bKernelId, CompressFn, compress_fn};
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
 use crate::backend::cache::OnceCache;
 
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
 #[derive(Clone, Copy)]
 struct Resolved {
   compress: CompressFn,
@@ -10,9 +14,11 @@ struct Resolved {
   name: &'static str,
 }
 
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
 static ACTIVE: OnceCache<Resolved> = OnceCache::new();
 
 /// Resolve the best available Blake2b kernel at runtime.
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
 fn resolve() -> Resolved {
   let caps = crate::platform::caps();
 
@@ -22,7 +28,7 @@ fn resolve() -> Resolved {
     Blake2bKernelId::X86Avx512vl,
     #[cfg(target_arch = "x86_64")]
     Blake2bKernelId::X86Avx2,
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
     Blake2bKernelId::Aarch64Neon,
     #[cfg(target_arch = "s390x")]
     Blake2bKernelId::S390xVector,
@@ -58,6 +64,11 @@ pub(crate) fn compress_dispatch() -> CompressFn {
   if super::kernels::COMPILE_TIME_HW {
     return super::kernels::compile_time_best();
   }
+  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  {
+    return compress_fn(Blake2bKernelId::Portable);
+  }
+  #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
   ACTIVE.get_or_init(resolve).compress
 }
 
@@ -69,6 +80,11 @@ pub fn kernel_name_for_len(_len: usize) -> &'static str {
   if super::kernels::COMPILE_TIME_HW {
     return compile_time_name();
   }
+  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  {
+    return Blake2bKernelId::Portable.as_str();
+  }
+  #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
   ACTIVE.get_or_init(resolve).name
 }
 
@@ -82,7 +98,11 @@ const fn compile_time_name() -> &'static str {
     "x86/avx512vl"
   } else if cfg!(all(target_arch = "x86_64", target_feature = "avx2")) {
     "x86/avx2"
-  } else if cfg!(all(target_arch = "aarch64", target_feature = "neon")) {
+  } else if cfg!(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    not(target_os = "macos")
+  )) {
     "aarch64/neon"
   } else {
     "portable"

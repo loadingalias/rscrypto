@@ -23,6 +23,7 @@ pub(crate) type CompressFn = fn(&mut [u32; 8], &[u8; 64], u64, bool);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub enum Blake2sKernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
@@ -136,6 +137,7 @@ pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
 /// Capabilities required to run the given kernel.
 #[inline]
 #[must_use]
+#[allow(dead_code)] // Used by runtime dispatch on targets that don't bypass to a fixed kernel.
 pub const fn required_caps(id: Blake2sKernelId) -> Caps {
   match id {
     Blake2sKernelId::Portable => Caps::NONE,
@@ -185,7 +187,11 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
     target_feature = "avx512f",
     target_feature = "avx512vl"
   ),
-  all(target_arch = "aarch64", target_feature = "neon"),
+  all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    not(target_os = "macos")
+  ),
 ));
 
 #[inline(always)]
@@ -198,7 +204,7 @@ pub(crate) fn compile_time_best() -> CompressFn {
   {
     return compress_x86_avx2;
   }
-  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon", not(target_os = "macos")))]
   {
     return compress_aarch64_neon;
   }
@@ -221,6 +227,7 @@ pub(crate) const IV: [u32; 8] = [
 ];
 
 /// Message-word permutation schedule (10 rows, reused cyclically for 10 rounds).
+#[allow(dead_code)] // Used by target-specific SIMD backends that are not compiled on every host.
 pub(crate) const SIGMA: [[u8; 16]; 10] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
@@ -234,20 +241,131 @@ pub(crate) const SIGMA: [[u8; 16]; 10] = [
   [10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0],
 ];
 
-/// Blake2s quarter-round G mixing function.
-///
-/// Rotation constants: 16, 12, 8, 7 (same as ChaCha20).
+#[derive(Clone, Copy)]
+struct U32x4(u32, u32, u32, u32);
+
+impl U32x4 {
+  #[inline(always)]
+  const fn new(a: u32, b: u32, c: u32, d: u32) -> Self {
+    Self(a, b, c, d)
+  }
+
+  #[inline(always)]
+  fn gather(src: &[u32; 16], i0: usize, i1: usize, i2: usize, i3: usize) -> Self {
+    Self(src[i0], src[i1], src[i2], src[i3])
+  }
+
+  #[inline(always)]
+  fn wrapping_add(self, rhs: Self) -> Self {
+    Self(
+      self.0.wrapping_add(rhs.0),
+      self.1.wrapping_add(rhs.1),
+      self.2.wrapping_add(rhs.2),
+      self.3.wrapping_add(rhs.3),
+    )
+  }
+
+  #[inline(always)]
+  fn rotate_right_const(self, n: u32) -> Self {
+    Self(
+      self.0.rotate_right(n),
+      self.1.rotate_right(n),
+      self.2.rotate_right(n),
+      self.3.rotate_right(n),
+    )
+  }
+
+  #[inline(always)]
+  const fn shuffle_left_1(self) -> Self {
+    Self(self.1, self.2, self.3, self.0)
+  }
+
+  #[inline(always)]
+  const fn shuffle_left_2(self) -> Self {
+    Self(self.2, self.3, self.0, self.1)
+  }
+
+  #[inline(always)]
+  const fn shuffle_left_3(self) -> Self {
+    Self(self.3, self.0, self.1, self.2)
+  }
+
+  #[inline(always)]
+  const fn shuffle_right_1(self) -> Self {
+    self.shuffle_left_3()
+  }
+
+  #[inline(always)]
+  const fn shuffle_right_2(self) -> Self {
+    self.shuffle_left_2()
+  }
+
+  #[inline(always)]
+  const fn shuffle_right_3(self) -> Self {
+    self.shuffle_left_1()
+  }
+}
+
+impl core::ops::BitXor for U32x4 {
+  type Output = Self;
+
+  #[inline(always)]
+  fn bitxor(self, rhs: Self) -> Self::Output {
+    Self(self.0 ^ rhs.0, self.1 ^ rhs.1, self.2 ^ rhs.2, self.3 ^ rhs.3)
+  }
+}
+
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
-fn g(v: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, x: u32, y: u32) {
-  v[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
-  v[d] = (v[d] ^ v[a]).rotate_right(16);
-  v[c] = v[c].wrapping_add(v[d]);
-  v[b] = (v[b] ^ v[c]).rotate_right(12);
-  v[a] = v[a].wrapping_add(v[b]).wrapping_add(y);
-  v[d] = (v[d] ^ v[a]).rotate_right(8);
-  v[c] = v[c].wrapping_add(v[d]);
-  v[b] = (v[b] ^ v[c]).rotate_right(7);
+fn quarter_round(v: &mut [U32x4; 4], rd: u32, rb: u32, m: U32x4) {
+  v[0] = v[0].wrapping_add(v[1]).wrapping_add(m);
+  v[3] = (v[3] ^ v[0]).rotate_right_const(rd);
+  v[2] = v[2].wrapping_add(v[3]);
+  v[1] = (v[1] ^ v[2]).rotate_right_const(rb);
+}
+
+#[inline(always)]
+fn shuffle(v: &mut [U32x4; 4]) {
+  v[1] = v[1].shuffle_left_1();
+  v[2] = v[2].shuffle_left_2();
+  v[3] = v[3].shuffle_left_3();
+}
+
+#[inline(always)]
+fn unshuffle(v: &mut [U32x4; 4]) {
+  v[1] = v[1].shuffle_right_1();
+  v[2] = v[2].shuffle_right_2();
+  v[3] = v[3].shuffle_right_3();
+}
+
+#[inline(always)]
+fn round(v: &mut [U32x4; 4], m: &[u32; 16], s: &[u8; 16]) {
+  quarter_round(
+    v,
+    16,
+    12,
+    U32x4::gather(m, s[0] as usize, s[2] as usize, s[4] as usize, s[6] as usize),
+  );
+  quarter_round(
+    v,
+    8,
+    7,
+    U32x4::gather(m, s[1] as usize, s[3] as usize, s[5] as usize, s[7] as usize),
+  );
+
+  shuffle(v);
+  quarter_round(
+    v,
+    16,
+    12,
+    U32x4::gather(m, s[8] as usize, s[10] as usize, s[12] as usize, s[14] as usize),
+  );
+  quarter_round(
+    v,
+    8,
+    7,
+    U32x4::gather(m, s[9] as usize, s[11] as usize, s[13] as usize, s[15] as usize),
+  );
+  unshuffle(v);
 }
 
 /// Load 16 little-endian u32 message words from a 64-byte block.
@@ -287,27 +405,36 @@ pub(crate) fn init_v(h: &[u32; 8], t: u64, last: bool) -> [u32; 16] {
 #[allow(clippy::indexing_slicing)]
 pub(crate) fn compress(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   let m = load_msg(block);
-  let mut v = init_v(h, t, last);
+  let t0 = t as u32;
+  let t1 = (t >> 32) as u32;
+  let f0 = if last { u32::MAX } else { 0 };
 
-  // 10 rounds of column + diagonal mixing
-  for round in 0..10u8 {
-    let s = &SIGMA[round as usize];
+  let mut v = [
+    U32x4::new(h[0], h[1], h[2], h[3]),
+    U32x4::new(h[4], h[5], h[6], h[7]),
+    U32x4::new(IV[0], IV[1], IV[2], IV[3]),
+    U32x4::new(IV[4] ^ t0, IV[5] ^ t1, IV[6] ^ f0, IV[7]),
+  ];
 
-    // Column step
-    g(&mut v, 0, 4, 8, 12, m[s[0] as usize], m[s[1] as usize]);
-    g(&mut v, 1, 5, 9, 13, m[s[2] as usize], m[s[3] as usize]);
-    g(&mut v, 2, 6, 10, 14, m[s[4] as usize], m[s[5] as usize]);
-    g(&mut v, 3, 7, 11, 15, m[s[6] as usize], m[s[7] as usize]);
+  round(&mut v, &m, &SIGMA[0]);
+  round(&mut v, &m, &SIGMA[1]);
+  round(&mut v, &m, &SIGMA[2]);
+  round(&mut v, &m, &SIGMA[3]);
+  round(&mut v, &m, &SIGMA[4]);
+  round(&mut v, &m, &SIGMA[5]);
+  round(&mut v, &m, &SIGMA[6]);
+  round(&mut v, &m, &SIGMA[7]);
+  round(&mut v, &m, &SIGMA[8]);
+  round(&mut v, &m, &SIGMA[9]);
 
-    // Diagonal step
-    g(&mut v, 0, 5, 10, 15, m[s[8] as usize], m[s[9] as usize]);
-    g(&mut v, 1, 6, 11, 12, m[s[10] as usize], m[s[11] as usize]);
-    g(&mut v, 2, 7, 8, 13, m[s[12] as usize], m[s[13] as usize]);
-    g(&mut v, 3, 4, 9, 14, m[s[14] as usize], m[s[15] as usize]);
-  }
-
-  // Finalize: h[i] ^= v[i] ^ v[i+8]
-  for i in 0..8 {
-    h[i] ^= v[i] ^ v[i.strict_add(8)];
-  }
+  let a = v[0] ^ v[2];
+  let b = v[1] ^ v[3];
+  h[0] ^= a.0;
+  h[1] ^= a.1;
+  h[2] ^= a.2;
+  h[3] ^= a.3;
+  h[4] ^= b.0;
+  h[5] ^= b.1;
+  h[6] ^= b.2;
+  h[7] ^= b.3;
 }

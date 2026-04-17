@@ -350,39 +350,53 @@ mod tests {
 
   use super::{diagonalize, undiagonalize, vpdi_a1_b0, vpdi_b1_a0};
 
+  #[target_feature(enable = "vector")]
+  unsafe fn assert_vpdi_lane_selectors() {
+    let a = i64x2::from_array([10, 11]);
+    let b = i64x2::from_array([20, 21]);
+    assert_eq!(vpdi_a1_b0(a, b).to_array(), [11, 20]);
+    assert_eq!(vpdi_b1_a0(a, b).to_array(), [21, 10]);
+  }
+
   #[test]
   fn vpdi_lane_selectors_match_expected_pairs() {
-    // SAFETY: the CI s390x runner only executes this module when the vector facility exists.
-    unsafe {
-      let a = i64x2::from_array([10, 11]);
-      let b = i64x2::from_array([20, 21]);
-      assert_eq!(vpdi_a1_b0(a, b).to_array(), [11, 20]);
-      assert_eq!(vpdi_b1_a0(a, b).to_array(), [21, 10]);
-    }
+    assert!(
+      std::arch::is_s390x_feature_detected!("vector"),
+      "s390x vector facility is required for Blake2b vpdi lane tests"
+    );
+    // SAFETY: the runtime check above guarantees the vector facility is available.
+    unsafe { assert_vpdi_lane_selectors() };
+  }
+
+  #[target_feature(enable = "vector")]
+  unsafe fn assert_diagonalize_round_trip() {
+    let mut b0 = i64x2::from_array([4, 5]);
+    let mut b1 = i64x2::from_array([6, 7]);
+    let mut c0 = i64x2::from_array([8, 9]);
+    let mut c1 = i64x2::from_array([10, 11]);
+    let mut d0 = i64x2::from_array([12, 13]);
+    let mut d1 = i64x2::from_array([14, 15]);
+    let original = (b0, b1, c0, c1, d0, d1);
+
+    diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    assert_eq!(b0.to_array(), [5, 6]);
+    assert_eq!(b1.to_array(), [7, 4]);
+    assert_eq!(c0.to_array(), [10, 11]);
+    assert_eq!(c1.to_array(), [8, 9]);
+    assert_eq!(d0.to_array(), [15, 12]);
+    assert_eq!(d1.to_array(), [13, 14]);
+
+    undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    assert_eq!((b0, b1, c0, c1, d0, d1), original);
   }
 
   #[test]
   fn diagonalize_round_trip_restores_rows() {
-    // SAFETY: the CI s390x runner only executes this module when the vector facility exists.
-    unsafe {
-      let mut b0 = i64x2::from_array([4, 5]);
-      let mut b1 = i64x2::from_array([6, 7]);
-      let mut c0 = i64x2::from_array([8, 9]);
-      let mut c1 = i64x2::from_array([10, 11]);
-      let mut d0 = i64x2::from_array([12, 13]);
-      let mut d1 = i64x2::from_array([14, 15]);
-      let original = (b0, b1, c0, c1, d0, d1);
-
-      diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
-      assert_eq!(b0.to_array(), [5, 6]);
-      assert_eq!(b1.to_array(), [7, 4]);
-      assert_eq!(c0.to_array(), [10, 11]);
-      assert_eq!(c1.to_array(), [8, 9]);
-      assert_eq!(d0.to_array(), [15, 12]);
-      assert_eq!(d1.to_array(), [13, 14]);
-
-      undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
-      assert_eq!((b0, b1, c0, c1, d0, d1), original);
-    }
+    assert!(
+      std::arch::is_s390x_feature_detected!("vector"),
+      "s390x vector facility is required for Blake2b diagonalize tests"
+    );
+    // SAFETY: the runtime check above guarantees the vector facility is available.
+    unsafe { assert_diagonalize_round_trip() };
   }
 }

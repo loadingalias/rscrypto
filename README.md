@@ -101,7 +101,7 @@ Secret key types mask `Debug` output; use `display_secret()` for hex.
 | `Crc32` / `Crc32C` | `u32` | Ethernet/gzip, iSCSI/ext4 |
 | `Crc64` / `Crc64Nvme` | `u64` | XZ Utils, NVMe |
 
-### Cryptographic Hashes (features: `crypto-hashes` or `sha2` / `sha3` / `blake3` / `ascon-hash`)
+### Cryptographic Hashes (features: `crypto-hashes` or `sha2` / `sha3` / `blake2b` / `blake2s` / `blake3` / `ascon-hash`)
 
 | Type | Output | Standard |
 |------|--------|----------|
@@ -109,6 +109,8 @@ Secret key types mask `Debug` output; use `display_secret()` for hex.
 | `Sha3_224` / `Sha3_256` / `Sha3_384` / `Sha3_512` | 28-64B | FIPS 202 |
 | `Shake128` / `Shake256` | XOF | FIPS 202 |
 | `Cshake256` | XOF | SP 800-185 |
+| `Blake2b256` / `Blake2b512` | 32B / 64B | RFC 7693 |
+| `Blake2s128` / `Blake2s256` | 16B / 32B | RFC 7693 |
 | `Blake3` | 32B / XOF | BLAKE3 spec |
 | `AsconHash256` / `AsconXof` / `AsconCxof128` | 32B / XOF | Ascon v1.2 |
 
@@ -194,7 +196,7 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `std` | **Yes** | Runtime CPU detection, I/O adapters. Implies `alloc` |
 | `alloc` | **Yes** | Buffered wrappers, `to_vec` methods |
 | `checksums` | No | `crc16` + `crc24` + `crc32` + `crc64` |
-| `crypto-hashes` | No | `sha2` + `sha3` + `blake3` + `ascon-hash` |
+| `crypto-hashes` | No | `sha2` + `sha3` + `blake2b` + `blake2s` + `blake3` + `ascon-hash` |
 | `fast-hashes` | No | `xxh3` + `rapidhash` |
 | `hashes` | No | `crypto-hashes` + `fast-hashes` |
 | `macs` | No | `hmac` + `kmac` |
@@ -207,7 +209,7 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `serde` | No | `Serialize`/`Deserialize` on keys, nonces, tags, signatures |
 | `diag` | No | Dispatch introspection. Implies `std` |
 
-Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
+Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
 
 ## Platform Support
 
@@ -283,11 +285,10 @@ src/
 **Platforms**: loongarch64, arm32, wasm32 compilation targets.
 
 **Algorithms**:
-- Blake2s / Blake2b
 - AES-128, AES-128-GCM-SIV
 - AEGIS-128L / AEGIS-X2 / AEGIS-X4
 - HMAC and HKDF for all SHA-2/SHA-3 variants
-- PBKDF2, Argon2, scrypt
+- Argon2id, scrypt
 - RSA, ECDSA (P-256, P-384)
 - ML-KEM and post-quantum primitives
 

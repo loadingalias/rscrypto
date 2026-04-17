@@ -826,6 +826,7 @@ fn pbkdf2_sha512_f(
 #[cfg(test)]
 mod tests {
   use alloc::vec;
+  use core::sync::atomic::{AtomicUsize, Ordering};
 
   use super::*;
 
@@ -1033,6 +1034,48 @@ mod tests {
     assert!(Pbkdf2Sha256::verify_password(b"pw", b"salt", 1, &[]).is_err());
   }
 
+  #[test]
+  fn sha256_verify_password_covers_output_lengths_and_mismatch_positions() {
+    let password = [0xA5; 97];
+    let salt = [0x5A; 200];
+
+    for out_len in 1..=96 {
+      let mut expected = vec![0u8; out_len];
+      Pbkdf2Sha256::derive_key(&password, &salt, 2, &mut expected).unwrap();
+      assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &expected).is_ok());
+
+      let mut wrong_first = expected.clone();
+      wrong_first[0] ^= 1;
+      assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &wrong_first).is_err());
+
+      let mut wrong_last = expected.clone();
+      let last = wrong_last.len().strict_sub(1);
+      wrong_last[last] ^= 1;
+      assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &wrong_last).is_err());
+    }
+  }
+
+  #[test]
+  fn sha512_verify_password_covers_output_lengths_and_mismatch_positions() {
+    let password = [0x3C; 193];
+    let salt = [0xC3; 260];
+
+    for out_len in 1..=192 {
+      let mut expected = vec![0u8; out_len];
+      Pbkdf2Sha512::derive_key(&password, &salt, 2, &mut expected).unwrap();
+      assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &expected).is_ok());
+
+      let mut wrong_first = expected.clone();
+      wrong_first[0] ^= 1;
+      assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &wrong_first).is_err());
+
+      let mut wrong_last = expected.clone();
+      let last = wrong_last.len().strict_sub(1);
+      wrong_last[last] ^= 1;
+      assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &wrong_last).is_err());
+    }
+  }
+
   // ── Streaming state reuse ─────────────────────────────────────────────
 
   #[test]
@@ -1121,6 +1164,43 @@ mod tests {
     Sha256KernelId::S390xKimd,
   ];
 
+  static SHA256_VERIFY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+  static SHA512_VERIFY_BLOCKS: AtomicUsize = AtomicUsize::new(0);
+
+  fn counting_sha256_compress(state: &mut [u32; 8], blocks: &[u8]) {
+    SHA256_VERIFY_BLOCKS.fetch_add(blocks.len() / SHA256_BLOCK_SIZE, Ordering::Relaxed);
+    sha256_compress_blocks_fn(Sha256KernelId::Portable)(state, blocks);
+  }
+
+  fn counting_sha512_compress(state: &mut [u64; 8], blocks: &[u8]) {
+    SHA512_VERIFY_BLOCKS.fetch_add(blocks.len() / SHA512_BLOCK_SIZE, Ordering::Relaxed);
+    sha512_compress_blocks_fn(Sha512KernelId::Portable)(state, blocks);
+  }
+
+  fn counted_sha256_verify(
+    state: &Pbkdf2Sha256,
+    salt: &[u8],
+    iterations: u32,
+    expected: &[u8],
+  ) -> (Result<(), VerificationError>, usize) {
+    SHA256_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
+    let result = state.verify(salt, iterations, expected);
+    let blocks = SHA256_VERIFY_BLOCKS.swap(0, Ordering::Relaxed);
+    (result, blocks)
+  }
+
+  fn counted_sha512_verify(
+    state: &Pbkdf2Sha512,
+    salt: &[u8],
+    iterations: u32,
+    expected: &[u8],
+  ) -> (Result<(), VerificationError>, usize) {
+    SHA512_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
+    let result = state.verify(salt, iterations, expected);
+    let blocks = SHA512_VERIFY_BLOCKS.swap(0, Ordering::Relaxed);
+    (result, blocks)
+  }
+
   fn assert_pbkdf2_sha256_kernel(id: Sha256KernelId) {
     let compress = sha256_compress_blocks_fn(id);
     let cases: &[(&[u8], &[u8], u32, usize)] = &[
@@ -1208,6 +1288,90 @@ mod tests {
       if caps.has(sha512_required_caps(id)) {
         assert_pbkdf2_sha512_kernel(id);
       }
+    }
+  }
+
+  #[test]
+  fn sha256_verify_keeps_same_compress_work_for_match_and_mismatch_positions() {
+    let password = [0x11; 89];
+    let salt = [0x22; 200];
+    let state = Pbkdf2Sha256::new_with_compress_for_test(&password, counting_sha256_compress);
+
+    for out_len in 1..=96 {
+      let mut expected = vec![0u8; out_len];
+      state.derive(&salt, 3, &mut expected).unwrap();
+
+      let (ok, ok_blocks) = counted_sha256_verify(&state, &salt, 3, &expected);
+      assert!(ok.is_ok(), "sha256 verify must accept correct output_len={out_len}");
+
+      let mut wrong_first = expected.clone();
+      wrong_first[0] ^= 1;
+      let (wrong_first_result, wrong_first_blocks) = counted_sha256_verify(&state, &salt, 3, &wrong_first);
+      assert!(
+        wrong_first_result.is_err(),
+        "sha256 verify must reject first-byte mismatch output_len={out_len}"
+      );
+
+      let mut wrong_last = expected.clone();
+      let last = wrong_last.len().strict_sub(1);
+      wrong_last[last] ^= 1;
+      let (wrong_last_result, wrong_last_blocks) = counted_sha256_verify(&state, &salt, 3, &wrong_last);
+      assert!(
+        wrong_last_result.is_err(),
+        "sha256 verify must reject last-byte mismatch output_len={out_len}"
+      );
+
+      assert!(ok_blocks > 0, "sha256 verify must do real work output_len={out_len}");
+      assert_eq!(
+        ok_blocks, wrong_first_blocks,
+        "sha256 verify must not short-circuit on first-byte mismatch output_len={out_len}"
+      );
+      assert_eq!(
+        ok_blocks, wrong_last_blocks,
+        "sha256 verify must not short-circuit on last-byte mismatch output_len={out_len}"
+      );
+    }
+  }
+
+  #[test]
+  fn sha512_verify_keeps_same_compress_work_for_match_and_mismatch_positions() {
+    let password = [0x44; 161];
+    let salt = [0x55; 260];
+    let state = Pbkdf2Sha512::new_with_compress_for_test(&password, counting_sha512_compress);
+
+    for out_len in 1..=192 {
+      let mut expected = vec![0u8; out_len];
+      state.derive(&salt, 3, &mut expected).unwrap();
+
+      let (ok, ok_blocks) = counted_sha512_verify(&state, &salt, 3, &expected);
+      assert!(ok.is_ok(), "sha512 verify must accept correct output_len={out_len}");
+
+      let mut wrong_first = expected.clone();
+      wrong_first[0] ^= 1;
+      let (wrong_first_result, wrong_first_blocks) = counted_sha512_verify(&state, &salt, 3, &wrong_first);
+      assert!(
+        wrong_first_result.is_err(),
+        "sha512 verify must reject first-byte mismatch output_len={out_len}"
+      );
+
+      let mut wrong_last = expected.clone();
+      let last = wrong_last.len().strict_sub(1);
+      wrong_last[last] ^= 1;
+      let (wrong_last_result, wrong_last_blocks) = counted_sha512_verify(&state, &salt, 3, &wrong_last);
+      assert!(
+        wrong_last_result.is_err(),
+        "sha512 verify must reject last-byte mismatch output_len={out_len}"
+      );
+
+      assert!(ok_blocks > 0, "sha512 verify must do real work output_len={out_len}");
+      assert_eq!(
+        ok_blocks, wrong_first_blocks,
+        "sha512 verify must not short-circuit on first-byte mismatch output_len={out_len}"
+      );
+      assert_eq!(
+        ok_blocks, wrong_last_blocks,
+        "sha512 verify must not short-circuit on last-byte mismatch output_len={out_len}"
+      );
     }
   }
 }

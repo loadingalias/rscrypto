@@ -8,7 +8,7 @@
 
 use core::arch::aarch64::*;
 
-use super::kernels::{SIGMA, init_v, load_msg};
+use super::kernels::init_v;
 
 // ─── Rotation helpers ──────────────────────────────────────────────────────
 
@@ -161,6 +161,67 @@ unsafe fn undiagonalize(
   }
 }
 
+#[inline(always)]
+unsafe fn load_u64x2(block: &[u8; 128], offset: usize) -> uint64x2_t {
+  // SAFETY: `offset` is one of the fixed 16-byte chunk starts inside the
+  // 128-byte Blake2b block, and `vld1q_u8` has no alignment requirement.
+  unsafe { vreinterpretq_u64_u8(vld1q_u8(block.as_ptr().add(offset))) }
+}
+
+#[inline(always)]
+unsafe fn lo2(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
+  // SAFETY: the lane extract/combine operations stay within the provided
+  // NEON registers and do not access memory.
+  unsafe { vcombine_u64(vget_low_u64(a), vget_low_u64(b)) }
+}
+
+#[inline(always)]
+unsafe fn hi2(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
+  // SAFETY: the lane extract/combine operations stay within the provided
+  // NEON registers and do not access memory.
+  unsafe { vcombine_u64(vget_high_u64(a), vget_high_u64(b)) }
+}
+
+#[inline(always)]
+unsafe fn lo_hi(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
+  // SAFETY: the lane extract/combine operations stay within the provided
+  // NEON registers and do not access memory.
+  unsafe { vcombine_u64(vget_low_u64(a), vget_high_u64(b)) }
+}
+
+#[inline(always)]
+unsafe fn ext1(a: uint64x2_t, b: uint64x2_t) -> uint64x2_t {
+  // SAFETY: the extract intrinsic operates only on the provided registers and
+  // the immediate lane count is in range.
+  unsafe { vextq_u64(a, b, 1) }
+}
+
+macro_rules! blake2b_round {
+  (
+    $a0:ident, $a1:ident, $b0:ident, $b1:ident, $c0:ident, $c1:ident, $d0:ident, $d1:ident;
+    $mx0:expr, $mx1:expr; $my0:expr, $my1:expr;
+    $nx0:expr, $nx1:expr; $ny0:expr, $ny1:expr
+  ) => {{
+    let mx0 = $mx0;
+    let mx1 = $mx1;
+    let my0 = $my0;
+    let my1 = $my1;
+    g2(
+      &mut $a0, &mut $a1, &mut $b0, &mut $b1, &mut $c0, &mut $c1, &mut $d0, &mut $d1, mx0, mx1, my0, my1,
+    );
+    diagonalize(&mut $b0, &mut $b1, &mut $c0, &mut $c1, &mut $d0, &mut $d1);
+
+    let mx0 = $nx0;
+    let mx1 = $nx1;
+    let my0 = $ny0;
+    let my1 = $ny1;
+    g2(
+      &mut $a0, &mut $a1, &mut $b0, &mut $b1, &mut $c0, &mut $c1, &mut $d0, &mut $d1, mx0, mx1, my0, my1,
+    );
+    undiagonalize(&mut $b0, &mut $b1, &mut $c0, &mut $c1, &mut $d0, &mut $d1);
+  }};
+}
+
 // ─── Compress entry point ──────────────────────────────────────────────
 
 /// Blake2b NEON-accelerated compress.
@@ -173,8 +234,15 @@ pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128,
   // SAFETY: NEON is required by the target_feature on this function; all
   // pointer-based loads/stores stay within the provided Blake2b state/block.
   unsafe {
-    let m = load_msg(block);
     let v = init_v(h, t, last);
+    let m0 = load_u64x2(block, 0);
+    let m1 = load_u64x2(block, 16);
+    let m2 = load_u64x2(block, 32);
+    let m3 = load_u64x2(block, 48);
+    let m4 = load_u64x2(block, 64);
+    let m5 = load_u64x2(block, 80);
+    let m6 = load_u64x2(block, 96);
+    let m7 = load_u64x2(block, 112);
 
     // Pack into 2-wide SIMD rows
     let mut a0 = vld1q_u64(v.as_ptr());
@@ -186,31 +254,77 @@ pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128,
     let mut d0 = vld1q_u64(v.as_ptr().add(12));
     let mut d1 = vld1q_u64(v.as_ptr().add(14));
 
-    for round in 0..12u8 {
-      let s = &SIGMA[(round % 10) as usize];
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m0, m1), lo2(m2, m3); hi2(m0, m1), hi2(m2, m3);
+      lo2(m4, m5), lo2(m6, m7); hi2(m4, m5), hi2(m6, m7)
+    );
 
-      // Column step
-      let mx0 = load_msg_pair(&m, s[0], s[2]);
-      let mx1 = load_msg_pair(&m, s[4], s[6]);
-      let my0 = load_msg_pair(&m, s[1], s[3]);
-      let my1 = load_msg_pair(&m, s[5], s[7]);
-      g2(
-        &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-      );
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m7, m2), hi2(m4, m6); lo2(m5, m4), ext1(m7, m3);
+      ext1(m0, m0), hi2(m5, m2); lo2(m6, m1), hi2(m3, m1)
+    );
 
-      diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      ext1(m5, m6), hi2(m2, m7); lo2(m4, m0), lo_hi(m1, m6);
+      lo_hi(m5, m1), hi2(m3, m4); lo2(m7, m3), ext1(m0, m2)
+    );
 
-      // Diagonal step
-      let mx0 = load_msg_pair(&m, s[8], s[10]);
-      let mx1 = load_msg_pair(&m, s[12], s[14]);
-      let my0 = load_msg_pair(&m, s[9], s[11]);
-      let my1 = load_msg_pair(&m, s[13], s[15]);
-      g2(
-        &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-      );
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      hi2(m3, m1), hi2(m6, m5); hi2(m4, m0), lo2(m6, m7);
+      lo_hi(m1, m2), lo_hi(m2, m7); lo2(m3, m5), lo2(m0, m4)
+    );
 
-      undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
-    }
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      hi2(m4, m2), lo2(m1, m5); lo_hi(m0, m3), lo_hi(m2, m7);
+      lo_hi(m7, m5), lo_hi(m3, m1); ext1(m0, m6), lo_hi(m4, m6)
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m1, m3), lo2(m0, m4); lo2(m6, m5), hi2(m5, m1);
+      lo_hi(m2, m3), hi2(m7, m0); hi2(m6, m2), lo_hi(m7, m4)
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo_hi(m6, m0), lo2(m7, m2); hi2(m2, m7), ext1(m6, m5);
+      lo2(m0, m3), ext1(m4, m4); hi2(m3, m1), lo_hi(m1, m5)
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      hi2(m6, m3), lo_hi(m6, m1); ext1(m5, m7), hi2(m0, m4);
+      hi2(m2, m7), lo2(m4, m1); lo2(m0, m2), lo2(m3, m5)
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m3, m7), ext1(m5, m0); hi2(m7, m4), ext1(m1, m4);
+      m6, ext1(m0, m5); lo_hi(m1, m3), m2
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m5, m4), hi2(m3, m0); lo2(m1, m2), lo_hi(m3, m2);
+      hi2(m7, m4), hi2(m1, m6); ext1(m5, m7), lo2(m6, m0)
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m0, m1), lo2(m2, m3); hi2(m0, m1), hi2(m2, m3);
+      lo2(m4, m5), lo2(m6, m7); hi2(m4, m5), hi2(m6, m7)
+    );
+
+    blake2b_round!(
+      a0, a1, b0, b1, c0, c1, d0, d1;
+      lo2(m7, m2), hi2(m4, m6); lo2(m5, m4), ext1(m7, m3);
+      ext1(m0, m0), hi2(m5, m2); lo2(m6, m1), hi2(m3, m1)
+    );
 
     // Finalize: h[i] ^= v[i] ^ v[i+8]
     let h0 = vld1q_u64(h.as_ptr());
@@ -223,12 +337,4 @@ pub(super) unsafe fn compress_neon(h: &mut [u64; 8], block: &[u8; 128], t: u128,
     vst1q_u64(h.as_mut_ptr().add(4), veorq_u64(h2, veorq_u64(b0, d0)));
     vst1q_u64(h.as_mut_ptr().add(6), veorq_u64(h3, veorq_u64(b1, d1)));
   }
-}
-
-#[inline(always)]
-unsafe fn load_msg_pair(m: &[u64; 16], i0: u8, i1: u8) -> uint64x2_t {
-  let pair = [m[i0 as usize], m[i1 as usize]];
-  // SAFETY: `pair` is a stack-allocated 2-lane buffer, so loading one NEON
-  // vector from its base pointer is in-bounds and properly initialized.
-  unsafe { vld1q_u64(pair.as_ptr()) }
 }
