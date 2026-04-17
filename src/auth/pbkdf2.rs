@@ -861,51 +861,14 @@ mod tests {
     );
   }
 
-  // ── Oracle: inline PBKDF2 using the RustCrypto hmac + sha2 dev-deps ──
-
-  use hmac::{Hmac, Mac as _, digest::KeyInit};
-
-  type OracleHmacSha256 = Hmac<sha2::Sha256>;
-  type OracleHmacSha512 = Hmac<sha2::Sha512>;
+  // ── Oracle: RustCrypto PBKDF2 primitive ────────────────────────────────
 
   fn oracle_sha256(password: &[u8], salt: &[u8], iterations: u32, out: &mut [u8]) {
-    for (i, chunk) in out.chunks_mut(32).enumerate() {
-      let block_index = (i as u32).strict_add(1);
-      let mut mac = OracleHmacSha256::new_from_slice(password).unwrap();
-      mac.update(salt);
-      mac.update(&block_index.to_be_bytes());
-      let mut u: [u8; 32] = mac.finalize().into_bytes().into();
-      let mut result = u;
-      for _ in 1..iterations {
-        let mut mac = OracleHmacSha256::new_from_slice(password).unwrap();
-        mac.update(&u);
-        u = mac.finalize().into_bytes().into();
-        for (r, &x) in result.iter_mut().zip(u.iter()) {
-          *r ^= x;
-        }
-      }
-      chunk.copy_from_slice(&result[..chunk.len()]);
-    }
+    pbkdf2::pbkdf2_hmac::<sha2_010::Sha256>(password, salt, iterations, out);
   }
 
   fn oracle_sha512(password: &[u8], salt: &[u8], iterations: u32, out: &mut [u8]) {
-    for (i, chunk) in out.chunks_mut(64).enumerate() {
-      let block_index = (i as u32).strict_add(1);
-      let mut mac = OracleHmacSha512::new_from_slice(password).unwrap();
-      mac.update(salt);
-      mac.update(&block_index.to_be_bytes());
-      let mut u: [u8; 64] = mac.finalize().into_bytes().into();
-      let mut result = u;
-      for _ in 1..iterations {
-        let mut mac = OracleHmacSha512::new_from_slice(password).unwrap();
-        mac.update(&u);
-        u = mac.finalize().into_bytes().into();
-        for (r, &x) in result.iter_mut().zip(u.iter()) {
-          *r ^= x;
-        }
-      }
-      chunk.copy_from_slice(&result[..chunk.len()]);
-    }
+    pbkdf2::pbkdf2_hmac::<sha2_010::Sha512>(password, salt, iterations, out);
   }
 
   #[test]

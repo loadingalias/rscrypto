@@ -10,7 +10,7 @@ use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
 use rscrypto::{
   Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512,
-  Mac as _, X25519SecretKey,
+  Mac as _, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
 };
 use x25519_dalek::{PublicKey as DalekX25519PublicKey, StaticSecret as DalekX25519Secret};
 
@@ -191,6 +191,106 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
   g.finish();
 }
 
+fn pbkdf2_sha256_derive(c: &mut Criterion) {
+  let password = [0x55u8; 32];
+  let salt = [0x33u8; 16];
+  let state = Pbkdf2Sha256::new(&password);
+
+  for &iterations in &[1u32, 100, 1000] {
+    let mut g = c.benchmark_group(format!("pbkdf2-sha256/iters={iterations}"));
+
+    for &out_len in &[32usize, 64] {
+      g.throughput(criterion::Throughput::Bytes(out_len as u64));
+
+      g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          Pbkdf2Sha256::derive_key(black_box(&password), black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          pbkdf2::pbkdf2_hmac::<sha2_010::Sha256>(
+            black_box(&password),
+            black_box(&salt),
+            iterations,
+            black_box(&mut out),
+          );
+          black_box(out[0])
+        })
+      });
+    }
+
+    g.finish();
+
+    let mut g_state = c.benchmark_group(format!("pbkdf2-sha256-state/iters={iterations}"));
+    for &out_len in &[32usize, 64] {
+      g_state.throughput(criterion::Throughput::Bytes(out_len as u64));
+      g_state.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          state.derive(black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          black_box(out[0])
+        })
+      });
+    }
+    g_state.finish();
+  }
+}
+
+fn pbkdf2_sha512_derive(c: &mut Criterion) {
+  let password = [0x66u8; 48];
+  let salt = [0x44u8; 16];
+  let state = Pbkdf2Sha512::new(&password);
+
+  for &iterations in &[1u32, 100, 1000] {
+    let mut g = c.benchmark_group(format!("pbkdf2-sha512/iters={iterations}"));
+
+    for &out_len in &[64usize, 128] {
+      g.throughput(criterion::Throughput::Bytes(out_len as u64));
+
+      g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          Pbkdf2Sha512::derive_key(black_box(&password), black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          pbkdf2::pbkdf2_hmac::<sha2_010::Sha512>(
+            black_box(&password),
+            black_box(&salt),
+            iterations,
+            black_box(&mut out),
+          );
+          black_box(out[0])
+        })
+      });
+    }
+
+    g.finish();
+
+    let mut g_state = c.benchmark_group(format!("pbkdf2-sha512-state/iters={iterations}"));
+    for &out_len in &[64usize, 128] {
+      g_state.throughput(criterion::Throughput::Bytes(out_len as u64));
+      g_state.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          state.derive(black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          black_box(out[0])
+        })
+      });
+    }
+    g_state.finish();
+  }
+}
+
 fn ed25519_public_key(c: &mut Criterion) {
   let secret_bytes = [7u8; 32];
   let mut g = c.benchmark_group("ed25519/public-key-from-secret");
@@ -344,6 +444,8 @@ criterion_group!(
   hmac_sha256_streaming,
   hkdf_sha256_expand,
   hkdf_sha384_expand,
+  pbkdf2_sha256_derive,
+  pbkdf2_sha512_derive,
   ed25519_public_key,
   ed25519_keypair_from_secret,
   ed25519_sign,

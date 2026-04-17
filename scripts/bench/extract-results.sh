@@ -201,7 +201,7 @@ def category_for(group):
     if g.startswith('blake3'): return 'Blake3'
     if g.startswith('xxh3'): return 'XXH3'
     if g.startswith('rapidhash'): return 'RapidHash'
-    if any(g.startswith(p) for p in ('hmac-','hkdf-','ed25519','x25519','kmac')): return 'Auth'
+    if any(g.startswith(p) for p in ('hmac-','hkdf-','pbkdf2-','ed25519','x25519','kmac')): return 'Auth'
     if any(g.startswith(p) for p in ('chacha20-poly1305','xchacha20-poly1305','aes-256-gcm','aegis-256','ascon-aead')): return 'AEAD'
     return 'Other'
 
