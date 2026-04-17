@@ -66,7 +66,7 @@ pub(crate) fn compress_dispatch() -> CompressFn {
   }
   #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
   {
-    return compress_fn(Blake2bKernelId::Portable);
+    compress_fn(Blake2bKernelId::Portable)
   }
   #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
   ACTIVE.get_or_init(resolve).compress
@@ -82,7 +82,7 @@ pub fn kernel_name_for_len(_len: usize) -> &'static str {
   }
   #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
   {
-    return Blake2bKernelId::Portable.as_str();
+    Blake2bKernelId::Portable.as_str()
   }
   #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
   ACTIVE.get_or_init(resolve).name
