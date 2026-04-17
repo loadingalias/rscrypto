@@ -242,8 +242,6 @@ pub(super) unsafe fn compress_vsx(h: &mut [u32; 8], block: &[u8; 64], t: u64, la
 
 #[cfg(test)]
 mod tests {
-  use core::simd::i64x2;
-
   use super::{DiagMasks, diagonalize, to_u32x4, undiagonalize};
 
   #[test]

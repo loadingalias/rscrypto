@@ -34,7 +34,7 @@ pub(crate) mod kernels;
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
 mod dispatch;
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
 mod power;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
