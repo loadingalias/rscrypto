@@ -539,18 +539,18 @@ impl Drop for Core {
 /// use rscrypto::Blake2sParams;
 ///
 /// let tag = Blake2sParams::new()
-///     .key(b"my-secret")
-///     .salt(b"salt-123")
-///     .personal(b"appv1tag")
-///     .hash_256(b"message");
+///   .key(b"my-secret")
+///   .salt(b"salt-123")
+///   .personal(b"appv1tag")
+///   .hash_256(b"message");
 /// assert_eq!(tag.len(), 32);
 ///
 /// // Same input + different personalization → different output.
 /// let other = Blake2sParams::new()
-///     .key(b"my-secret")
-///     .salt(b"salt-123")
-///     .personal(b"appv2tag")
-///     .hash_256(b"message");
+///   .key(b"my-secret")
+///   .salt(b"salt-123")
+///   .personal(b"appv2tag")
+///   .hash_256(b"message");
 /// assert_ne!(tag, other);
 /// ```
 #[derive(Clone)]
@@ -1142,8 +1142,16 @@ mod tests {
 
   #[test]
   fn params_stable_under_repeat() {
-    let a = Blake2sParams::new().key(b"k").salt(b"s").personal(b"p").hash_256(b"data");
-    let b = Blake2sParams::new().key(b"k").salt(b"s").personal(b"p").hash_256(b"data");
+    let a = Blake2sParams::new()
+      .key(b"k")
+      .salt(b"s")
+      .personal(b"p")
+      .hash_256(b"data");
+    let b = Blake2sParams::new()
+      .key(b"k")
+      .salt(b"s")
+      .personal(b"p")
+      .hash_256(b"data");
     assert_eq!(a, b);
   }
 

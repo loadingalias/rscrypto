@@ -564,18 +564,18 @@ impl Drop for Core {
 /// use rscrypto::Blake2bParams;
 ///
 /// let tag = Blake2bParams::new()
-///     .key(b"my-secret-key")
-///     .salt(b"random-salt-1234")
-///     .personal(b"app-v1-tagging00")
-///     .hash_256(b"message");
+///   .key(b"my-secret-key")
+///   .salt(b"random-salt-1234")
+///   .personal(b"app-v1-tagging00")
+///   .hash_256(b"message");
 /// assert_eq!(tag.len(), 32);
 ///
 /// // Same input + different personalization → different output.
 /// let other = Blake2bParams::new()
-///     .key(b"my-secret-key")
-///     .salt(b"random-salt-1234")
-///     .personal(b"app-v2-tagging00")
-///     .hash_256(b"message");
+///   .key(b"my-secret-key")
+///   .salt(b"random-salt-1234")
+///   .personal(b"app-v2-tagging00")
+///   .hash_256(b"message");
 /// assert_ne!(tag, other);
 /// ```
 #[derive(Clone)]
