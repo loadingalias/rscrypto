@@ -280,30 +280,38 @@ fn params(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256/plain", len), &data, |b, d| {
       b.iter(|| black_box(Blake2b256::digest(black_box(d))))
     });
-    g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256/salt+personal", len), &data, |b, d| {
-      b.iter(|| {
-        black_box(
-          Blake2bParams::new()
-            .salt(black_box(&salt_b))
-            .personal(black_box(&personal_b))
-            .hash_256(black_box(d)),
-        )
-      })
-    });
+    g.bench_with_input(
+      BenchmarkId::new("rscrypto/blake2b256/salt+personal", len),
+      &data,
+      |b, d| {
+        b.iter(|| {
+          black_box(
+            Blake2bParams::new()
+              .salt(black_box(&salt_b))
+              .personal(black_box(&personal_b))
+              .hash_256(black_box(d)),
+          )
+        })
+      },
+    );
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256/plain", len), &data, |b, d| {
       b.iter(|| black_box(Blake2s256::digest(black_box(d))))
     });
-    g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256/salt+personal", len), &data, |b, d| {
-      b.iter(|| {
-        black_box(
-          Blake2sParams::new()
-            .salt(black_box(&salt_s))
-            .personal(black_box(&personal_s))
-            .hash_256(black_box(d)),
-        )
-      })
-    });
+    g.bench_with_input(
+      BenchmarkId::new("rscrypto/blake2s256/salt+personal", len),
+      &data,
+      |b, d| {
+        b.iter(|| {
+          black_box(
+            Blake2sParams::new()
+              .salt(black_box(&salt_s))
+              .personal(black_box(&personal_s))
+              .hash_256(black_box(d)),
+          )
+        })
+      },
+    );
   }
 
   g.finish();
@@ -419,7 +427,15 @@ fn forced_kernel_compare(c: &mut Criterion) {
 criterion_group!(benches, oneshot, host_overhead, keyed, streaming, params);
 #[cfg(feature = "diag")]
 #[cfg(not(target_arch = "aarch64"))]
-criterion_group!(benches, oneshot, host_overhead, keyed, streaming, params, compress_kernel);
+criterion_group!(
+  benches,
+  oneshot,
+  host_overhead,
+  keyed,
+  streaming,
+  params,
+  compress_kernel
+);
 #[cfg(feature = "diag")]
 #[cfg(target_arch = "aarch64")]
 criterion_group!(
