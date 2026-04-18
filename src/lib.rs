@@ -507,9 +507,9 @@ pub use checksum::{Crc64, Crc64Nvme};
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
 #[cfg(feature = "blake2b")]
-pub use hashes::crypto::{Blake2b256, Blake2b512};
+pub use hashes::crypto::{Blake2b256, Blake2b512, Blake2bParams};
 #[cfg(feature = "blake2s")]
-pub use hashes::crypto::{Blake2s128, Blake2s256};
+pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sParams};
 #[cfg(feature = "blake3")]
 pub use hashes::crypto::{Blake3, Blake3XofReader};
 #[cfg(feature = "sha3")]

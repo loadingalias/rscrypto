@@ -28,12 +28,20 @@ unsafe fn ror12(x: uint32x4_t) -> uint32x4_t {
   unsafe { vsriq_n_u32(vshlq_n_u32(x, 20), x, 12) }
 }
 
-/// Rotate right by 8: byte shuffle.
+/// Rotate right by 8: byte shuffle via `vqtbl1q_u8`.
+///
+/// Preferred over the shift-or-or formulation on M-series and other wide
+/// out-of-order aarch64 cores (BLAKE3 PR #319 measured +26% on M1 icestorm
+/// and +10% on Cortex-A72 aarch64 for this rotation).
 #[inline(always)]
 unsafe fn ror8(x: uint32x4_t) -> uint32x4_t {
-  // SAFETY: the shift/or sequence operates only on the provided register
-  // value and requires no memory access or aliasing assumptions.
-  unsafe { vorrq_u32(vshrq_n_u32(x, 8), vshlq_n_u32(x, 24)) }
+  static ROT8: [u8; 16] = [1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12];
+  // SAFETY: the shuffle table is a fixed 16-byte constant and the NEON table
+  // lookup reads only from the provided register/table values.
+  unsafe {
+    let tbl = vld1q_u8(ROT8.as_ptr());
+    vreinterpretq_u32_u8(vqtbl1q_u8(vreinterpretq_u8_u32(x), tbl))
+  }
 }
 
 /// Rotate right by 7: shift+or.
