@@ -9,6 +9,7 @@ Usage:
 Selectors:
   aead
   auth
+  blake2
   blake3
   crc32c
   checksum

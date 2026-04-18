@@ -130,6 +130,7 @@ DEFAULT_HASH_ALGOS=(
   "sha3-512"
   "shake128"
   "shake256"
+  "blake2"
   "blake3"
   "xxh3"
   "rapidhash"
@@ -186,6 +187,7 @@ hash_filter_token() {
     ascon-hash256) echo "ascon-hash256" ;;
     ascon-xof128) echo "ascon-xof128" ;;
     xxh3) echo "xxh3" ;;
+    blake2) echo "^blake2/(rscrypto|rustcrypto|keyed|streaming)/" ;;
     blake3) echo "blake3" ;;
     *) echo "$algo" ;;
   esac
@@ -223,7 +225,7 @@ default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
     checksum) echo "crc" ;;
-    hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake3" ;;
+    hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake2,blake3" ;;
     auth) echo "auth" ;;
     aead) echo "aead" ;;
     *) echo "" ;;
@@ -262,6 +264,7 @@ bench_features_for_target() {
     ascon) echo "parallel,ascon-hash" ;;
     xxh3) echo "parallel,xxh3" ;;
     rapidhash) echo "parallel,rapidhash" ;;
+    blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
     auth) echo "parallel,hmac,hkdf,pbkdf2,ed25519,x25519" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256" ;;
@@ -300,6 +303,7 @@ bench_target_for_hash_algo() {
     ascon-hash256|ascon-xof128) echo "ascon" ;;
     xxh3) echo "xxh3" ;;
     rapidhash) echo "rapidhash" ;;
+    blake2) echo "blake2" ;;
     blake3) echo "blake3" ;;
     *) return 1 ;;
   esac
