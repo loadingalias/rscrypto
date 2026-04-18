@@ -43,6 +43,7 @@ msrv = true
 msrv_source = "workspace"  # deps | workspace | max
 
 detect_unused = true
+compiler_diag_cache = true
 remove_unused = true
 
 prune_dead_features = true
@@ -70,6 +71,7 @@ changelog_path = "CHANGELOG.md"
 changelog_relative_to = "workspace"
 skip_changelog_for = []
 require_changelog_entries = false
+require_release_notes = true
 
 
 [change-detection]

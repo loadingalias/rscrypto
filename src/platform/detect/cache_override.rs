@@ -50,7 +50,7 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
 
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   {
-    return atomic_cache::try_set_override(value);
+    atomic_cache::try_set_override(value)
   }
 
   #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]

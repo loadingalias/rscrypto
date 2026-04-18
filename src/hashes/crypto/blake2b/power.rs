@@ -1,326 +1,180 @@
-//! Blake2b POWER VSX-accelerated compression for ppc64.
+//! Blake2b POWER VSX-accelerated compression for powerpc64.
 //!
-//! Each row of the 4x4 u64 working matrix is split across two `i64x2`
-//! registers (lo = lanes 0-1, hi = lanes 2-3). Diagonalization uses
-//! `vperm` for lane rearrangement.
-//!
-//! All four Blake2b rotations (32, 24, 16, 63) use `vrld` (vector rotate
-//! left doubleword), which takes the shift amount from a vector register.
-//! Pre-built shift vectors eliminate repeated setup.
-//!
-//! # Endianness
-//!
-//! POWER in this codebase targets big-endian (`powerpc64`). The `m: [u64; 16]`
-//! array from `load_msg` contains native-endian u64 values (already decoded
-//! from little-endian wire format). We load pairs directly — no byte-swap.
-//!
-//! # Safety
-//!
-//! Requires POWER8+ with VSX. Caller must verify `power::VSX`.
+//! This backend keeps the working state in canonical `u64` words and uses
+//! `core::simd::u64x2` row pairs plus lane swizzles for diagonalization. That
+//! avoids any dependence on POWER byte-permute register layout, so the kernel
+//! is correct on both big- and little-endian POWER while still mapping cleanly
+//! to VSX-sized 128-bit vectors.
 
-#![allow(unsafe_code)]
-#![allow(clippy::cast_possible_truncation, clippy::indexing_slicing)]
+#![allow(clippy::indexing_slicing)]
 
-use core::simd::i64x2;
+use core::simd::u64x2;
 
 use super::kernels::{SIGMA, init_v, load_msg};
 
-// ─── VSX primitive operations (inline asm, POWER8+) ───────────────────────
+type RowPair = [u64x2; 2];
 
-/// Vector add u64 lanes: `vaddudm`.
 #[inline(always)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn vaddudm(a: i64x2, b: i64x2) -> i64x2 {
-  let out: i64x2;
-  // SAFETY: POWER8+ VSX available via target_feature.
-  unsafe {
-    core::arch::asm!(
-      "vaddudm {out}, {a}, {b}",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      options(nomem, nostack, pure)
-    );
-  }
-  out
+fn rotr64<const N: u32>(v: u64x2) -> u64x2 {
+  const { assert!(N > 0 && N < 64) }
+  let s0 = u64x2::splat(N as u64);
+  let s1 = u64x2::splat((64 - N) as u64);
+  (v >> s0) | (v << s1)
 }
 
-/// Vector XOR: `vxor`.
 #[inline(always)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn vxor(a: i64x2, b: i64x2) -> i64x2 {
-  let out: i64x2;
-  // SAFETY: POWER8+ VSX available via target_feature.
-  unsafe {
-    core::arch::asm!(
-      "vxor {out}, {a}, {b}",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      options(nomem, nostack, pure)
-    );
-  }
-  out
+fn load_msg_pair(m: &[u64; 16], i0: u8, i1: u8) -> u64x2 {
+  u64x2::from_array([m[i0 as usize], m[i1 as usize]])
 }
 
-/// Vector rotate left doubleword: `vrld`.
-///
-/// Each u64 lane of `x` is rotated left by the corresponding u64 lane of `shift`.
 #[inline(always)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn vrld(x: i64x2, shift: i64x2) -> i64x2 {
-  let out: i64x2;
-  // SAFETY: POWER8+ VSX available via target_feature.
-  unsafe {
-    core::arch::asm!(
-      "vrld {out}, {x}, {shift}",
-      out = lateout(vreg) out,
-      x = in(vreg) x,
-      shift = in(vreg) shift,
-      options(nomem, nostack, pure)
-    );
-  }
-  out
+fn pair_a1_b0(a: u64x2, b: u64x2) -> u64x2 {
+  core::simd::simd_swizzle!(a, b, [1, 2])
 }
 
-/// Vector permute: `vperm`.
-///
-/// Selects bytes from the concatenation of `a:b` according to `mask`.
 #[inline(always)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn vperm(a: i64x2, b: i64x2, mask: i64x2) -> i64x2 {
-  let out: i64x2;
-  // SAFETY: POWER8+ VSX available via target_feature.
-  unsafe {
-    core::arch::asm!(
-      "vperm {out}, {a}, {b}, {mask}",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      mask = in(vreg) mask,
-      options(nomem, nostack, pure)
-    );
-  }
-  out
+fn pair_b1_a0(a: u64x2, b: u64x2) -> u64x2 {
+  core::simd::simd_swizzle!(a, b, [3, 0])
 }
 
-// ─── Rotation shift vectors ──────────────────────────────────────────────
-
-/// Pre-built rotation amounts for `vrld`.
-/// Each is an i64x2 with both lanes set to the ROL amount.
-///
-/// Blake2b ROR 32 = ROL 32, ROR 24 = ROL 40, ROR 16 = ROL 48, ROR 63 = ROL 1.
-const ROL_32: i64x2 = i64x2::from_array([32, 32]);
-const ROL_40: i64x2 = i64x2::from_array([40, 40]);
-const ROL_48: i64x2 = i64x2::from_array([48, 48]);
-const ROL_1: i64x2 = i64x2::from_array([1, 1]);
-
-// ─── Diagonalization permute masks ───────────────────────────────────────
-
-/// `vperm` mask: extract [a[1], b[0]] from concatenation a:b.
-///
-/// On big-endian POWER, `vperm` indexes bytes 0..31 across the concatenation
-/// of the first and second source registers:
-///   bytes 0-15 = first source, bytes 16-31 = second source.
-///
-/// Element layout in each 128-bit register (BE):
-///   element 0 = bytes 0-7, element 1 = bytes 8-15.
-///
-/// To get [a[1], b[0]]: take bytes 8-15 from a, then bytes 16-23 from b.
-const VPERM_ROT_LEFT_1_LO: [u8; 16] = [
-  8, 9, 10, 11, 12, 13, 14, 15, // a[1]
-  16, 17, 18, 19, 20, 21, 22, 23, // b[0]
-];
-
-/// `vperm` mask: extract [b[1], a[0]] from concatenation a:b.
-///
-/// To get [b[1], a[0]]: take bytes 24-31 from b, then bytes 0-7 from a.
-const VPERM_ROT_LEFT_1_HI: [u8; 16] = [
-  24, 25, 26, 27, 28, 29, 30, 31, // b[1]
-  0, 1, 2, 3, 4, 5, 6, 7, // a[0]
-];
-
-/// `vperm` mask: extract [b[1], a[0]] — used for rotate-right-1 lo.
-/// Same as ROT_LEFT_1_HI.
-const VPERM_ROT_RIGHT_1_LO: [u8; 16] = VPERM_ROT_LEFT_1_HI;
-
-/// `vperm` mask: extract [a[1], b[0]] — used for rotate-right-1 hi.
-/// Same as ROT_LEFT_1_LO.
-const VPERM_ROT_RIGHT_1_HI: [u8; 16] = VPERM_ROT_LEFT_1_LO;
-
-// ─── Load helpers ─────────────────────────────────────────────────────────
-
-/// Load a pair of u64 values from the message array into a vector register.
 #[inline(always)]
-unsafe fn load_msg_pair(m: &[u64; 16], i0: u8, i1: u8) -> i64x2 {
-  i64x2::from_array([m[i0 as usize] as i64, m[i1 as usize] as i64])
+fn g2(a: &mut RowPair, b: &mut RowPair, c: &mut RowPair, d: &mut RowPair, mx: RowPair, my: RowPair) {
+  a[0] += b[0];
+  a[0] += mx[0];
+  a[1] += b[1];
+  a[1] += mx[1];
+  d[0] ^= a[0];
+  d[1] ^= a[1];
+  d[0] = rotr64::<32>(d[0]);
+  d[1] = rotr64::<32>(d[1]);
+  c[0] += d[0];
+  c[1] += d[1];
+  b[0] ^= c[0];
+  b[1] ^= c[1];
+  b[0] = rotr64::<24>(b[0]);
+  b[1] = rotr64::<24>(b[1]);
+  a[0] += b[0];
+  a[0] += my[0];
+  a[1] += b[1];
+  a[1] += my[1];
+  d[0] ^= a[0];
+  d[1] ^= a[1];
+  d[0] = rotr64::<16>(d[0]);
+  d[1] = rotr64::<16>(d[1]);
+  c[0] += d[0];
+  c[1] += d[1];
+  b[0] ^= c[0];
+  b[1] ^= c[1];
+  b[0] = rotr64::<63>(b[0]);
+  b[1] = rotr64::<63>(b[1]);
 }
 
-/// Load 2 consecutive u64 values from a pointer.
 #[inline(always)]
-unsafe fn vload_u64_pair(p: *const u64) -> i64x2 {
-  // SAFETY: caller ensures p is valid for 2 x u64.
-  unsafe { core::ptr::read_unaligned(p as *const i64x2) }
+fn diagonalize(b: &mut RowPair, c: &mut RowPair, d: &mut RowPair) {
+  let tb0 = b[0];
+  let tb1 = b[1];
+  b[0] = pair_a1_b0(tb0, tb1);
+  b[1] = pair_b1_a0(tb0, tb1);
+  c.swap(0, 1);
+  let td0 = d[0];
+  let td1 = d[1];
+  d[0] = pair_b1_a0(td0, td1);
+  d[1] = pair_a1_b0(td0, td1);
 }
 
-/// Load a permute mask constant into a vector register.
 #[inline(always)]
-unsafe fn load_perm_mask(mask: &[u8; 16]) -> i64x2 {
-  // SAFETY: mask is a 16-byte array.
-  unsafe { core::ptr::read_unaligned(mask.as_ptr() as *const i64x2) }
+fn undiagonalize(b: &mut RowPair, c: &mut RowPair, d: &mut RowPair) {
+  let tb0 = b[0];
+  let tb1 = b[1];
+  b[0] = pair_b1_a0(tb0, tb1);
+  b[1] = pair_a1_b0(tb0, tb1);
+  c.swap(0, 1);
+  let td0 = d[0];
+  let td1 = d[1];
+  d[0] = pair_a1_b0(td0, td1);
+  d[1] = pair_b1_a0(td0, td1);
 }
-
-// ─── G function on SIMD register pairs ────────────────────────────────────
-
-/// Blake2b G mixing on SIMD rows (2-wide).
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn g2(
-  a0: &mut i64x2,
-  a1: &mut i64x2,
-  b0: &mut i64x2,
-  b1: &mut i64x2,
-  c0: &mut i64x2,
-  c1: &mut i64x2,
-  d0: &mut i64x2,
-  d1: &mut i64x2,
-  mx0: i64x2,
-  mx1: i64x2,
-  my0: i64x2,
-  my1: i64x2,
-) {
-  // SAFETY: caller guarantees POWER8 VSX is available and all inputs are
-  // local vector registers with no aliasing beyond the provided refs.
-  unsafe {
-    *a0 = vaddudm(vaddudm(*a0, *b0), mx0);
-    *a1 = vaddudm(vaddudm(*a1, *b1), mx1);
-    *d0 = vrld(vxor(*d0, *a0), ROL_32);
-    *d1 = vrld(vxor(*d1, *a1), ROL_32);
-    *c0 = vaddudm(*c0, *d0);
-    *c1 = vaddudm(*c1, *d1);
-    *b0 = vrld(vxor(*b0, *c0), ROL_40);
-    *b1 = vrld(vxor(*b1, *c1), ROL_40);
-    *a0 = vaddudm(vaddudm(*a0, *b0), my0);
-    *a1 = vaddudm(vaddudm(*a1, *b1), my1);
-    *d0 = vrld(vxor(*d0, *a0), ROL_48);
-    *d1 = vrld(vxor(*d1, *a1), ROL_48);
-    *c0 = vaddudm(*c0, *d0);
-    *c1 = vaddudm(*c1, *d1);
-    *b0 = vrld(vxor(*b0, *c0), ROL_1);
-    *b1 = vrld(vxor(*b1, *c1), ROL_1);
-  }
-}
-
-// ─── Diagonalize / Un-diagonalize ─────────────────────────────────────────
-
-/// Diagonalize: rotate row B left by 1, row C by 2 (swap), row D right by 1.
-#[inline(always)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn diagonalize(b0: &mut i64x2, b1: &mut i64x2, c0: &mut i64x2, c1: &mut i64x2, d0: &mut i64x2, d1: &mut i64x2) {
-  // SAFETY: caller guarantees POWER8 VSX is available and all inputs are
-  // local vector registers with no aliasing beyond the provided refs.
-  unsafe {
-    let perm_l1_lo = load_perm_mask(&VPERM_ROT_LEFT_1_LO);
-    let perm_l1_hi = load_perm_mask(&VPERM_ROT_LEFT_1_HI);
-    let perm_r1_lo = load_perm_mask(&VPERM_ROT_RIGHT_1_LO);
-    let perm_r1_hi = load_perm_mask(&VPERM_ROT_RIGHT_1_HI);
-    let tb0 = *b0;
-    let tb1 = *b1;
-    *b0 = vperm(tb0, tb1, perm_l1_lo);
-    *b1 = vperm(tb0, tb1, perm_l1_hi);
-    core::mem::swap(c0, c1);
-    let td0 = *d0;
-    let td1 = *d1;
-    *d0 = vperm(td0, td1, perm_r1_lo);
-    *d1 = vperm(td0, td1, perm_r1_hi);
-  }
-}
-
-/// Un-diagonalize: reverse the rotations.
-#[inline(always)]
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn undiagonalize(
-  b0: &mut i64x2,
-  b1: &mut i64x2,
-  c0: &mut i64x2,
-  c1: &mut i64x2,
-  d0: &mut i64x2,
-  d1: &mut i64x2,
-) {
-  // SAFETY: caller guarantees POWER8 VSX is available and all inputs are
-  // local vector registers with no aliasing beyond the provided refs.
-  unsafe {
-    let perm_r1_lo = load_perm_mask(&VPERM_ROT_RIGHT_1_LO);
-    let perm_r1_hi = load_perm_mask(&VPERM_ROT_RIGHT_1_HI);
-    let perm_l1_lo = load_perm_mask(&VPERM_ROT_LEFT_1_LO);
-    let perm_l1_hi = load_perm_mask(&VPERM_ROT_LEFT_1_HI);
-    let tb0 = *b0;
-    let tb1 = *b1;
-    *b0 = vperm(tb0, tb1, perm_r1_lo);
-    *b1 = vperm(tb0, tb1, perm_r1_hi);
-    core::mem::swap(c0, c1);
-    let td0 = *d0;
-    let td1 = *d1;
-    *d0 = vperm(td0, td1, perm_l1_lo);
-    *d1 = vperm(td0, td1, perm_l1_hi);
-  }
-}
-
-// ─── Compress entry point ─────────────────────────────────────────────────
 
 /// Blake2b POWER VSX-accelerated compress.
 ///
 /// # Safety
 ///
 /// Caller must ensure POWER8+ with VSX is available.
-#[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
+#[target_feature(enable = "vsx")]
 pub(super) unsafe fn compress_vsx(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
-  // SAFETY: caller guarantees POWER8 VSX is available and both `h` and `block`
-  // are valid buffers for the full Blake2b compression step.
-  unsafe {
-    let m = load_msg(block);
-    let v = init_v(h, t, last);
-    let mut a0 = vload_u64_pair(v.as_ptr());
-    let mut a1 = vload_u64_pair(v.as_ptr().add(2));
-    let mut b0 = vload_u64_pair(v.as_ptr().add(4));
-    let mut b1 = vload_u64_pair(v.as_ptr().add(6));
-    let mut c0 = vload_u64_pair(v.as_ptr().add(8));
-    let mut c1 = vload_u64_pair(v.as_ptr().add(10));
-    let mut d0 = vload_u64_pair(v.as_ptr().add(12));
-    let mut d1 = vload_u64_pair(v.as_ptr().add(14));
+  let m = load_msg(block);
+  let v = init_v(h, t, last);
 
-    for round in 0..12u8 {
-      let s = &SIGMA[(round % 10) as usize];
-      let mx0 = load_msg_pair(&m, s[0], s[2]);
-      let mx1 = load_msg_pair(&m, s[4], s[6]);
-      let my0 = load_msg_pair(&m, s[1], s[3]);
-      let my1 = load_msg_pair(&m, s[5], s[7]);
-      g2(
-        &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-      );
-      diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
-      let mx0 = load_msg_pair(&m, s[8], s[10]);
-      let mx1 = load_msg_pair(&m, s[12], s[14]);
-      let my0 = load_msg_pair(&m, s[9], s[11]);
-      let my1 = load_msg_pair(&m, s[13], s[15]);
-      g2(
-        &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-      );
-      undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+  let mut a = [u64x2::from_array([v[0], v[1]]), u64x2::from_array([v[2], v[3]])];
+  let mut b = [u64x2::from_array([v[4], v[5]]), u64x2::from_array([v[6], v[7]])];
+  let mut c = [u64x2::from_array([v[8], v[9]]), u64x2::from_array([v[10], v[11]])];
+  let mut d = [u64x2::from_array([v[12], v[13]]), u64x2::from_array([v[14], v[15]])];
+
+  for round in 0..12u8 {
+    let s = &SIGMA[(round % 10) as usize];
+    let mx = [load_msg_pair(&m, s[0], s[2]), load_msg_pair(&m, s[4], s[6])];
+    let my = [load_msg_pair(&m, s[1], s[3]), load_msg_pair(&m, s[5], s[7])];
+    g2(&mut a, &mut b, &mut c, &mut d, mx, my);
+    diagonalize(&mut b, &mut c, &mut d);
+
+    let mx = [load_msg_pair(&m, s[8], s[10]), load_msg_pair(&m, s[12], s[14])];
+    let my = [load_msg_pair(&m, s[9], s[11]), load_msg_pair(&m, s[13], s[15])];
+    g2(&mut a, &mut b, &mut c, &mut d, mx, my);
+    undiagonalize(&mut b, &mut c, &mut d);
+  }
+
+  let h0 = u64x2::from_array([h[0], h[1]]);
+  let h1 = u64x2::from_array([h[2], h[3]]);
+  let h2 = u64x2::from_array([h[4], h[5]]);
+  let h3 = u64x2::from_array([h[6], h[7]]);
+  let r0 = h0 ^ a[0] ^ c[0];
+  let r1 = h1 ^ a[1] ^ c[1];
+  let r2 = h2 ^ b[0] ^ d[0];
+  let r3 = h3 ^ b[1] ^ d[1];
+  h[..2].copy_from_slice(&r0.to_array());
+  h[2..4].copy_from_slice(&r1.to_array());
+  h[4..6].copy_from_slice(&r2.to_array());
+  h[6..].copy_from_slice(&r3.to_array());
+}
+
+#[cfg(test)]
+mod tests {
+  use core::simd::u64x2;
+
+  use super::{RowPair, diagonalize, pair_a1_b0, pair_b1_a0, undiagonalize};
+
+  #[test]
+  fn lane_selectors_match_expected_pairs() {
+    if !crate::platform::caps().has(crate::platform::caps::power::VSX) {
+      return;
     }
 
-    let h0 = vload_u64_pair(h.as_ptr());
-    let h1 = vload_u64_pair(h.as_ptr().add(2));
-    let h2 = vload_u64_pair(h.as_ptr().add(4));
-    let h3 = vload_u64_pair(h.as_ptr().add(6));
-    let r0 = vxor(h0, vxor(a0, c0));
-    let r1 = vxor(h1, vxor(a1, c1));
-    let r2 = vxor(h2, vxor(b0, d0));
-    let r3 = vxor(h3, vxor(b1, d1));
-    core::ptr::write_unaligned(h.as_mut_ptr() as *mut i64x2, r0);
-    core::ptr::write_unaligned(h.as_mut_ptr().add(2) as *mut i64x2, r1);
-    core::ptr::write_unaligned(h.as_mut_ptr().add(4) as *mut i64x2, r2);
-    core::ptr::write_unaligned(h.as_mut_ptr().add(6) as *mut i64x2, r3);
+    let a = u64x2::from_array([10, 11]);
+    let b = u64x2::from_array([20, 21]);
+    assert_eq!(pair_a1_b0(a, b).to_array(), [11, 20]);
+    assert_eq!(pair_b1_a0(a, b).to_array(), [21, 10]);
+  }
+
+  #[test]
+  fn diagonalize_round_trip_restores_rows() {
+    if !crate::platform::caps().has(crate::platform::caps::power::VSX) {
+      return;
+    }
+
+    let mut b: RowPair = [u64x2::from_array([4, 5]), u64x2::from_array([6, 7])];
+    let mut c: RowPair = [u64x2::from_array([8, 9]), u64x2::from_array([10, 11])];
+    let mut d: RowPair = [u64x2::from_array([12, 13]), u64x2::from_array([14, 15])];
+    let original = (b, c, d);
+
+    diagonalize(&mut b, &mut c, &mut d);
+    assert_eq!(b[0].to_array(), [5, 6]);
+    assert_eq!(b[1].to_array(), [7, 4]);
+    assert_eq!(c[0].to_array(), [10, 11]);
+    assert_eq!(c[1].to_array(), [8, 9]);
+    assert_eq!(d[0].to_array(), [15, 12]);
+    assert_eq!(d[1].to_array(), [13, 14]);
+
+    undiagonalize(&mut b, &mut c, &mut d);
+    assert_eq!((b, c, d), original);
   }
 }

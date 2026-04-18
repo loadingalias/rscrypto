@@ -123,23 +123,22 @@ impl<T: Copy> OnceCache<T> {
       }
 
       // Slow path: try to initialize
-      if state == Self::UNINIT {
-        if self
+      if state == Self::UNINIT
+        && self
           .state
           .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
           .is_ok()
-        {
-          // We won the race - initialize the value
-          let value = f();
-          // SAFETY: We hold exclusive access during INITING state.
-          // No other thread can observe or write to the value until we publish READY.
-          #[allow(unsafe_code)]
-          unsafe {
-            (*self.value.get()).write(value);
-          }
-          self.state.store(Self::READY, Ordering::Release);
-          return value;
+      {
+        // We won the race - initialize the value
+        let value = f();
+        // SAFETY: We hold exclusive access during INITING state.
+        // No other thread can observe or write to the value until we publish READY.
+        #[allow(unsafe_code)]
+        unsafe {
+          (*self.value.get()).write(value);
         }
+        self.state.store(Self::READY, Ordering::Release);
+        return value;
       }
 
       // Another thread is initializing - spin wait
