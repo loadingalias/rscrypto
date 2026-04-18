@@ -279,10 +279,14 @@ mod tests {
     let input = super::from_u32x4(ROT_SEEDS);
 
     // SAFETY: target_feature on the enclosing function guarantees z/Vector.
-    let r16 = unsafe { rotr32_via_verll::<16>(input) };
-    let r12 = unsafe { rotr32_via_verll::<12>(input) };
-    let r8 = unsafe { rotr32_via_verll::<8>(input) };
-    let r7 = unsafe { rotr32_via_verll::<7>(input) };
+    let (r16, r12, r8, r7) = unsafe {
+      (
+        rotr32_via_verll::<16>(input),
+        rotr32_via_verll::<12>(input),
+        rotr32_via_verll::<8>(input),
+        rotr32_via_verll::<7>(input),
+      )
+    };
 
     let expect = |ror: u32| -> [u32; 4] {
       [
