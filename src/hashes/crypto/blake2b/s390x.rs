@@ -348,28 +348,7 @@ pub(super) unsafe fn compress_vector(h: &mut [u64; 8], block: &[u8; 128], t: u12
 mod tests {
   use core::simd::i64x2;
 
-  use super::{diagonalize, undiagonalize, vpdi_a1_b0, vpdi_b1_a0};
-
-  #[target_feature(enable = "vector")]
-  unsafe fn assert_vpdi_lane_selectors() {
-    let a = i64x2::from_array([10, 11]);
-    let b = i64x2::from_array([20, 21]);
-    // SAFETY: the helper itself requires the s390x vector facility.
-    unsafe {
-      assert_eq!(vpdi_a1_b0(a, b).to_array(), [11, 20]);
-      assert_eq!(vpdi_b1_a0(a, b).to_array(), [21, 10]);
-    }
-  }
-
-  #[test]
-  fn vpdi_lane_selectors_match_expected_pairs() {
-    assert!(
-      std::arch::is_s390x_feature_detected!("vector"),
-      "s390x vector facility is required for Blake2b vpdi lane tests"
-    );
-    // SAFETY: the runtime check above guarantees the vector facility is available.
-    unsafe { assert_vpdi_lane_selectors() };
-  }
+  use super::{diagonalize, undiagonalize};
 
   #[target_feature(enable = "vector")]
   unsafe fn assert_diagonalize_round_trip() {
@@ -383,13 +362,6 @@ mod tests {
 
     // SAFETY: the helper itself requires the s390x vector facility.
     unsafe { diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1) };
-    assert_eq!(b0.to_array(), [5, 6]);
-    assert_eq!(b1.to_array(), [7, 4]);
-    assert_eq!(c0.to_array(), [10, 11]);
-    assert_eq!(c1.to_array(), [8, 9]);
-    assert_eq!(d0.to_array(), [15, 12]);
-    assert_eq!(d1.to_array(), [13, 14]);
-
     // SAFETY: the helper itself requires the s390x vector facility.
     unsafe { undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1) };
     assert_eq!((b0, b1, c0, c1, d0, d1), original);

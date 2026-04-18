@@ -30,7 +30,7 @@ fn resolve() -> Resolved {
     Blake2sKernelId::Aarch64Neon,
     #[cfg(target_arch = "s390x")]
     Blake2sKernelId::S390xVector,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "big"))]
+    #[cfg(target_arch = "powerpc64")]
     Blake2sKernelId::PowerVsx,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V,
