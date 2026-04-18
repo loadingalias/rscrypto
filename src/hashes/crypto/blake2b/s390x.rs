@@ -1,8 +1,9 @@
 //! Blake2b z/Vector-accelerated compression for s390x.
 //!
 //! Each row of the 4x4 u64 working matrix is split across two `i64x2`
-//! registers (lo = lanes 0-1, hi = lanes 2-3). Diagonalization uses `vpdi`
-//! (permute doubleword immediate) and lane swaps.
+//! registers (lo = lanes 0-1, hi = lanes 2-3). Diagonalization uses explicit
+//! lane swizzles so the row permutation is expressed in logical lane order
+//! rather than raw `vpdi` immediates.
 //!
 //! All four Blake2b rotations (32, 24, 16, 63) map to single `verllg`
 //! (element rotate-left doubleword) instructions via the ROL equivalents:
@@ -133,44 +134,14 @@ unsafe fn verllg_1(x: i64x2) -> i64x2 {
   out
 }
 
-/// `vpdi` helper for `[a[1], b[0]]`.
-///
-/// `vpdi` selects each output doubleword from the concatenation `[a[0], a[1], b[0], b[1]]`.
-/// The high two bits of the immediate select output lane 0, and the low two bits select output
-/// lane 1. `xxh3` already relies on this encoding with `vpdi ..., 4` as an in-register lane swap.
 #[inline(always)]
-#[target_feature(enable = "vector")]
-unsafe fn vpdi_a1_b0(a: i64x2, b: i64x2) -> i64x2 {
-  let out: i64x2;
-  // SAFETY: z13+ vector facility via target_feature.
-  unsafe {
-    core::arch::asm!(
-      "vpdi {out}, {a}, {b}, 6",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      options(nomem, nostack, pure)
-    );
-  }
-  out
+fn pair_a1_b0(a: i64x2, b: i64x2) -> i64x2 {
+  core::simd::simd_swizzle!(a, b, [1, 2])
 }
 
-/// `vpdi` helper for `[b[1], a[0]]`.
 #[inline(always)]
-#[target_feature(enable = "vector")]
-unsafe fn vpdi_b1_a0(a: i64x2, b: i64x2) -> i64x2 {
-  let out: i64x2;
-  // SAFETY: z13+ vector facility via target_feature.
-  unsafe {
-    core::arch::asm!(
-      "vpdi {out}, {a}, {b}, 12",
-      out = lateout(vreg) out,
-      a = in(vreg) a,
-      b = in(vreg) b,
-      options(nomem, nostack, pure)
-    );
-  }
-  out
+fn pair_b1_a0(a: i64x2, b: i64x2) -> i64x2 {
+  core::simd::simd_swizzle!(a, b, [3, 0])
 }
 
 // ─── Load helpers ─────────────────────────────────────────────────────────
@@ -238,26 +209,22 @@ unsafe fn g2(
 
 /// Diagonalize: rotate row B left by 1, row C by 2 (swap lo/hi), row D right by 1.
 ///
-/// Using `vpdi` to rearrange doubleword elements between register pairs:
+/// Using logical lane swizzles to rearrange doubleword elements between register pairs:
 ///   B rotate-left-1:  (b0=[0,1], b1=[2,3]) -> ([1,2], [3,0])
 ///   C swap:           (c0, c1) -> (c1, c0)
 ///   D rotate-right-1: (d0=[0,1], d1=[2,3]) -> ([3,0], [1,2])
 #[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn diagonalize(b0: &mut i64x2, b1: &mut i64x2, c0: &mut i64x2, c1: &mut i64x2, d0: &mut i64x2, d1: &mut i64x2) {
-  // SAFETY: caller guarantees the s390x vector facility is available and all
-  // inputs are local vector registers with no aliasing beyond the provided refs.
-  unsafe {
-    let tb0 = *b0;
-    let tb1 = *b1;
-    *b0 = vpdi_a1_b0(tb0, tb1);
-    *b1 = vpdi_b1_a0(tb0, tb1);
-    core::mem::swap(c0, c1);
-    let td0 = *d0;
-    let td1 = *d1;
-    *d0 = vpdi_b1_a0(td0, td1);
-    *d1 = vpdi_a1_b0(td0, td1);
-  }
+  let tb0 = *b0;
+  let tb1 = *b1;
+  *b0 = pair_a1_b0(tb0, tb1);
+  *b1 = pair_b1_a0(tb0, tb1);
+  core::mem::swap(c0, c1);
+  let td0 = *d0;
+  let td1 = *d1;
+  *d0 = pair_b1_a0(td0, td1);
+  *d1 = pair_a1_b0(td0, td1);
 }
 
 /// Un-diagonalize: reverse the rotations.
@@ -271,19 +238,15 @@ unsafe fn undiagonalize(
   d0: &mut i64x2,
   d1: &mut i64x2,
 ) {
-  // SAFETY: caller guarantees the s390x vector facility is available and all
-  // inputs are local vector registers with no aliasing beyond the provided refs.
-  unsafe {
-    let tb0 = *b0;
-    let tb1 = *b1;
-    *b0 = vpdi_b1_a0(tb0, tb1);
-    *b1 = vpdi_a1_b0(tb0, tb1);
-    core::mem::swap(c0, c1);
-    let td0 = *d0;
-    let td1 = *d1;
-    *d0 = vpdi_a1_b0(td0, td1);
-    *d1 = vpdi_b1_a0(td0, td1);
-  }
+  let tb0 = *b0;
+  let tb1 = *b1;
+  *b0 = pair_b1_a0(tb0, tb1);
+  *b1 = pair_a1_b0(tb0, tb1);
+  core::mem::swap(c0, c1);
+  let td0 = *d0;
+  let td1 = *d1;
+  *d0 = pair_a1_b0(td0, td1);
+  *d1 = pair_b1_a0(td0, td1);
 }
 
 // ─── Compress entry point ─────────────────────────────────────────────────
@@ -351,7 +314,7 @@ mod tests {
   use super::{diagonalize, undiagonalize};
 
   #[target_feature(enable = "vector")]
-  unsafe fn assert_diagonalize_round_trip() {
+  unsafe fn assert_diagonalize_matches_blake2b_lane_rotation() {
     let mut b0 = i64x2::from_array([4, 5]);
     let mut b1 = i64x2::from_array([6, 7]);
     let mut c0 = i64x2::from_array([8, 9]);
@@ -362,18 +325,24 @@ mod tests {
 
     // SAFETY: the helper itself requires the s390x vector facility.
     unsafe { diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1) };
+    assert_eq!(b0, i64x2::from_array([5, 6]));
+    assert_eq!(b1, i64x2::from_array([7, 4]));
+    assert_eq!(c0, i64x2::from_array([10, 11]));
+    assert_eq!(c1, i64x2::from_array([8, 9]));
+    assert_eq!(d0, i64x2::from_array([15, 12]));
+    assert_eq!(d1, i64x2::from_array([13, 14]));
     // SAFETY: the helper itself requires the s390x vector facility.
     unsafe { undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1) };
     assert_eq!((b0, b1, c0, c1, d0, d1), original);
   }
 
   #[test]
-  fn diagonalize_round_trip_restores_rows() {
+  fn diagonalize_matches_blake2b_lane_rotation() {
     assert!(
       std::arch::is_s390x_feature_detected!("vector"),
       "s390x vector facility is required for Blake2b diagonalize tests"
     );
     // SAFETY: the runtime check above guarantees the vector facility is available.
-    unsafe { assert_diagonalize_round_trip() };
+    unsafe { assert_diagonalize_matches_blake2b_lane_rotation() };
   }
 }
