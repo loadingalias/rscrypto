@@ -96,7 +96,7 @@ fn assert_blake2b_case(case: OfficialCase) {
   let actual = if key.is_empty() {
     Blake2b512::digest(&input).to_vec()
   } else {
-    Blake2b512::keyed_hash(&key, &input).to_vec()
+    Blake2b512::keyed_digest(&key, &input).to_vec()
   };
   assert_eq!(
     actual,
@@ -109,7 +109,7 @@ fn assert_blake2b_case(case: OfficialCase) {
   let mut hasher = if key.is_empty() {
     Blake2b512::new()
   } else {
-    Blake2b512::keyed(&key)
+    Blake2b512::new_keyed(&key)
   };
   for chunk in input.chunks(17) {
     hasher.update(chunk);
@@ -131,7 +131,7 @@ fn assert_blake2s_case(case: OfficialCase) {
   let actual = if key.is_empty() {
     Blake2s256::digest(&input).to_vec()
   } else {
-    Blake2s256::keyed_hash(&key, &input).to_vec()
+    Blake2s256::keyed_digest(&key, &input).to_vec()
   };
   assert_eq!(
     actual,
@@ -144,7 +144,7 @@ fn assert_blake2s_case(case: OfficialCase) {
   let mut hasher = if key.is_empty() {
     Blake2s256::new()
   } else {
-    Blake2s256::keyed(&key)
+    Blake2s256::new_keyed(&key)
   };
   for chunk in input.chunks(11) {
     hasher.update(chunk);

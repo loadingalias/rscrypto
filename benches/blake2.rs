@@ -13,7 +13,7 @@ use digest::typenum::{U16, U32, U64};
 use hmac::{Mac as _, digest::KeyInit};
 #[cfg(feature = "diag")]
 use rscrypto::hashes::crypto::{blake2b, blake2s};
-use rscrypto::{Blake2b256, Blake2b512, Blake2s128, Blake2s256, Digest};
+use rscrypto::{Blake2b256, Blake2b512, Blake2bParams, Blake2s128, Blake2s256, Blake2sParams, Digest};
 
 type RustCryptoBlake2bMac256 = Blake2bMac<U32>;
 type RustCryptoBlake2bMac512 = Blake2bMac<U64>;
@@ -96,7 +96,7 @@ fn host_overhead(c: &mut Criterion) {
     common::set_throughput(&mut keyed, *len);
 
     keyed.bench_with_input(BenchmarkId::new("rscrypto/blake2b256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b256::keyed_hash(black_box(&key_b[..32]), black_box(d))))
+      b.iter(|| black_box(Blake2b256::keyed_digest(black_box(&key_b[..32]), black_box(d))))
     });
     keyed.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| {
@@ -107,7 +107,7 @@ fn host_overhead(c: &mut Criterion) {
     });
 
     keyed.bench_with_input(BenchmarkId::new("rscrypto/blake2s256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s256::keyed_hash(black_box(&key_s), black_box(d))))
+      b.iter(|| black_box(Blake2s256::keyed_digest(black_box(&key_s), black_box(d))))
     });
     keyed.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
       b.iter(|| {
@@ -127,7 +127,7 @@ fn host_overhead(c: &mut Criterion) {
       b.iter(|| {
         let mut h = Blake2b256::new();
         h.update(black_box(d));
-        black_box(h.finish())
+        black_box(h.finalize())
       })
     });
     stream.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
@@ -142,7 +142,7 @@ fn host_overhead(c: &mut Criterion) {
       b.iter(|| {
         let mut h = Blake2s256::new();
         h.update(black_box(d));
-        black_box(h.finish())
+        black_box(h.finalize())
       })
     });
     stream.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
@@ -166,7 +166,7 @@ fn keyed(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b256::keyed_hash(black_box(&key_b[..32]), black_box(d))))
+      b.iter(|| black_box(Blake2b256::keyed_digest(black_box(&key_b[..32]), black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| {
@@ -177,7 +177,7 @@ fn keyed(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b512", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b512::keyed_hash(black_box(&key_b), black_box(d))))
+      b.iter(|| black_box(Blake2b512::keyed_digest(black_box(&key_b), black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b512", len), data, |b, d| {
       b.iter(|| {
@@ -188,7 +188,7 @@ fn keyed(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2s128", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s128::keyed_hash(black_box(&key_s[..16]), black_box(d))))
+      b.iter(|| black_box(Blake2s128::keyed_digest(black_box(&key_s[..16]), black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2s128", len), data, |b, d| {
       b.iter(|| {
@@ -199,7 +199,7 @@ fn keyed(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s256::keyed_hash(black_box(&key_s), black_box(d))))
+      b.iter(|| black_box(Blake2s256::keyed_digest(black_box(&key_s), black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
       b.iter(|| {
@@ -225,7 +225,7 @@ fn streaming(c: &mut Criterion) {
         for chunk in data.chunks(chunk_size) {
           h.update(black_box(chunk));
         }
-        black_box(h.finish())
+        black_box(h.finalize())
       })
     });
     g.bench_function(format!("rustcrypto/blake2b256/{chunk_size}B"), |b| {
@@ -244,7 +244,7 @@ fn streaming(c: &mut Criterion) {
         for chunk in data.chunks(chunk_size) {
           h.update(black_box(chunk));
         }
-        black_box(h.finish())
+        black_box(h.finalize())
       })
     });
     g.bench_function(format!("rustcrypto/blake2s256/{chunk_size}B"), |b| {
@@ -254,6 +254,54 @@ fn streaming(c: &mut Criterion) {
           h.update(black_box(chunk));
         }
         black_box(h.finalize())
+      })
+    });
+  }
+
+  g.finish();
+}
+
+/// Parameter-block path (salt + personalization): verifies that the init-only
+/// cost of XORing salt/personal into IV[4..8] does not perturb the hot path
+/// relative to the unsalted `digest()` one-shot.
+fn params(c: &mut Criterion) {
+  let sizes = [64usize, 4096, 65_536];
+  let mut g = c.benchmark_group("blake2/params");
+
+  let salt_b = [0x11u8; 16];
+  let personal_b = [0x22u8; 16];
+  let salt_s = [0x33u8; 8];
+  let personal_s = [0x44u8; 8];
+
+  for len in sizes {
+    let data = common::random_bytes(len);
+    g.throughput(criterion::Throughput::Bytes(len as u64));
+
+    g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256/plain", len), &data, |b, d| {
+      b.iter(|| black_box(Blake2b256::digest(black_box(d))))
+    });
+    g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256/salt+personal", len), &data, |b, d| {
+      b.iter(|| {
+        black_box(
+          Blake2bParams::new()
+            .salt(black_box(&salt_b))
+            .personal(black_box(&personal_b))
+            .hash_256(black_box(d)),
+        )
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256/plain", len), &data, |b, d| {
+      b.iter(|| black_box(Blake2s256::digest(black_box(d))))
+    });
+    g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256/salt+personal", len), &data, |b, d| {
+      b.iter(|| {
+        black_box(
+          Blake2sParams::new()
+            .salt(black_box(&salt_s))
+            .personal(black_box(&personal_s))
+            .hash_256(black_box(d)),
+        )
       })
     });
   }
@@ -368,10 +416,10 @@ fn forced_kernel_compare(c: &mut Criterion) {
 }
 
 #[cfg(not(feature = "diag"))]
-criterion_group!(benches, oneshot, host_overhead, keyed, streaming);
+criterion_group!(benches, oneshot, host_overhead, keyed, streaming, params);
 #[cfg(feature = "diag")]
 #[cfg(not(target_arch = "aarch64"))]
-criterion_group!(benches, oneshot, host_overhead, keyed, streaming, compress_kernel);
+criterion_group!(benches, oneshot, host_overhead, keyed, streaming, params, compress_kernel);
 #[cfg(feature = "diag")]
 #[cfg(target_arch = "aarch64")]
 criterion_group!(
@@ -380,6 +428,7 @@ criterion_group!(
   host_overhead,
   keyed,
   streaming,
+  params,
   compress_kernel,
   forced_kernel_compare
 );

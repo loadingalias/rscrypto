@@ -15,7 +15,7 @@
 //! let mut hasher = Blake2b512::new();
 //! hasher.update(b"hello ");
 //! hasher.update(b"world");
-//! let hash = hasher.finish();
+//! let hash = hasher.finalize();
 //! assert_eq!(hash, Blake2b512::digest(b"hello world"));
 //! ```
 //!
@@ -25,7 +25,7 @@
 //! use rscrypto::{Blake2b256, Digest};
 //!
 //! let key = b"secret-key-up-to-64-bytes";
-//! let tag = Blake2b256::keyed_hash(key, b"message");
+//! let tag = Blake2b256::keyed_digest(key, b"message");
 //! assert_ne!(tag, Blake2b256::digest(b"message"));
 //! ```
 
@@ -92,7 +92,8 @@ pub fn diag_compress_block_aarch64_neon(state: &mut [u64; 8], block: &[u8; BLOCK
 
 /// Internal Blake2b state shared by `Blake2b256` and `Blake2b512`.
 ///
-/// Handles any output length (1-64 bytes) and optional keyed hashing.
+/// Handles any output length (1-64 bytes), optional keyed hashing, and the
+/// RFC 7693 §2.5 sequential-mode parameter block (`salt` + `personal`).
 #[derive(Clone)]
 struct Core {
   h: [u64; 8],
@@ -102,6 +103,8 @@ struct Core {
   nn: u8,
   kk: u8,
   key: MaybeUninit<[u8; MAX_KEY_LEN]>,
+  salt: [u8; SALT_LEN],
+  personal: [u8; PERSONAL_LEN],
   compress: kernels::CompressFn,
 }
 
@@ -116,6 +119,8 @@ impl Core {
       nn,
       kk: 0,
       key: MaybeUninit::uninit(),
+      salt: [0u8; SALT_LEN],
+      personal: [0u8; PERSONAL_LEN],
       compress: dispatch::compress_dispatch(),
     }
   }
@@ -125,8 +130,19 @@ impl Core {
   /// # Panics
   ///
   /// Panics if `nn` is 0 or > 64, or if `key` is longer than 64 bytes.
-  #[allow(clippy::indexing_slicing)]
+  #[inline]
   fn new(nn: u8, key: &[u8]) -> Self {
+    Self::new_with_params(nn, key, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN])
+  }
+
+  /// Create a new Blake2b state with output length `nn`, optional `key`, and
+  /// spec-defined `salt` + `personal` parameter-block values (RFC 7693 §2.5).
+  ///
+  /// # Panics
+  ///
+  /// Panics if `nn` is 0 or > 64, or if `key` is longer than 64 bytes.
+  #[allow(clippy::indexing_slicing)]
+  fn new_with_params(nn: u8, key: &[u8], salt: &[u8; SALT_LEN], personal: &[u8; PERSONAL_LEN]) -> Self {
     assert!(
       nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
       "Blake2b output length must be 1-64"
@@ -134,11 +150,7 @@ impl Core {
     assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
 
     let kk = key.len() as u8;
-
-    // Parameter block (sequential mode): fanout=1, depth=1
-    let p0 = nn as u64 | ((kk as u64) << 8) | (1u64 << 16) | (1u64 << 24);
-    let mut h = IV;
-    h[0] ^= p0;
+    let h = init_state_with_params(nn, kk, salt, personal);
 
     let stored_key = if kk > 0 {
       let mut bytes = [0u8; MAX_KEY_LEN];
@@ -164,6 +176,8 @@ impl Core {
       nn,
       kk,
       key: stored_key,
+      salt: *salt,
+      personal: *personal,
       compress: dispatch::compress_dispatch(),
     }
   }
@@ -260,19 +274,6 @@ impl Core {
     }
   }
 
-  #[allow(clippy::indexing_slicing)]
-  fn finish_into(&mut self, out: &mut [u8]) {
-    debug_assert!(out.len() == self.nn as usize);
-
-    let t = self.t.strict_add(self.buf_len as u128);
-    if self.buf_len as usize != BLOCK_SIZE {
-      self.buf[self.buf_len as usize..].fill(0);
-    }
-    (self.compress)(&mut self.h, &self.buf, t, true);
-    write_output(&self.h, self.nn, out);
-    self.wipe();
-  }
-
   #[cfg(test)]
   fn new_with_compress_for_test(nn: u8, key: &[u8], compress: kernels::CompressFn) -> Self {
     let mut core = Self::new(nn, key);
@@ -280,12 +281,11 @@ impl Core {
     core
   }
 
-  /// Reset to the initial state (including re-buffering the key if keyed).
+  /// Reset to the initial state (including re-buffering the key if keyed and
+  /// re-applying any salt/personalization parameter-block bytes).
   #[allow(clippy::indexing_slicing)]
   fn reset(&mut self) {
-    let p0 = self.nn as u64 | ((self.kk as u64) << 8) | (1u64 << 16) | (1u64 << 24);
-    self.h = IV;
-    self.h[0] ^= p0;
+    self.h = init_state_with_params(self.nn, self.kk, &self.salt, &self.personal);
 
     if self.kk > 0 {
       let key_len = self.kk as usize;
@@ -304,11 +304,34 @@ impl Core {
   }
 }
 
+/// Spec-defined salt size for Blake2b (RFC 7693 §2.5).
+const SALT_LEN: usize = 16;
+/// Spec-defined personalization size for Blake2b (RFC 7693 §2.5).
+const PERSONAL_LEN: usize = 16;
+
 #[inline]
 fn init_state(nn: u8, kk: u8) -> [u64; 8] {
+  init_state_with_params(nn, kk, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN])
+}
+
+/// Initialize Blake2b chaining state from a sequential-mode parameter block.
+///
+/// Per RFC 7693 §2.5 the parameter block is XORed into the IV before the first
+/// compression. In sequential mode (fanout=1, depth=1, leaf_length=0,
+/// node_offset=0, node_depth=0, inner_length=0) only `h[0]` carries the
+/// digest length / key length / fanout / depth bits, and `h[4..8]` carry the
+/// salt and personalization words.
+#[inline]
+#[allow(clippy::indexing_slicing)]
+fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8; PERSONAL_LEN]) -> [u64; 8] {
   let p0 = nn as u64 | ((kk as u64) << 8) | (1u64 << 16) | (1u64 << 24);
   let mut h = IV;
   h[0] ^= p0;
+  // SAFETY: salt and personal are exactly 16 bytes; slice splits are in bounds.
+  h[4] ^= u64::from_le_bytes(salt[0..8].try_into().unwrap());
+  h[5] ^= u64::from_le_bytes(salt[8..16].try_into().unwrap());
+  h[6] ^= u64::from_le_bytes(personal[0..8].try_into().unwrap());
+  h[7] ^= u64::from_le_bytes(personal[8..16].try_into().unwrap());
   h
 }
 
@@ -355,9 +378,16 @@ fn write_output(h: &[u64; 8], nn: u8, out: &mut [u8]) {
 }
 
 #[allow(clippy::indexing_slicing)]
-fn oneshot_small_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
+fn oneshot_small_into_with_params(
+  nn: u8,
+  key: &[u8],
+  salt: &[u8; SALT_LEN],
+  personal: &[u8; PERSONAL_LEN],
+  data: &[u8],
+  out: &mut [u8],
+) {
   let kk = key.len() as u8;
-  let mut h = init_state(nn, kk);
+  let mut h = init_state_with_params(nn, kk, salt, personal);
 
   if kk == 0 {
     let mut block = [0u8; BLOCK_SIZE];
@@ -395,7 +425,14 @@ fn oneshot_small_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
 }
 
 #[allow(clippy::indexing_slicing)]
-fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
+fn oneshot_hash_into_with_params(
+  nn: u8,
+  key: &[u8],
+  salt: &[u8; SALT_LEN],
+  personal: &[u8; PERSONAL_LEN],
+  data: &[u8],
+  out: &mut [u8],
+) {
   debug_assert!(out.len() == nn as usize);
   assert!(
     nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
@@ -404,12 +441,12 @@ fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
   assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
 
   if data.len() <= BLOCK_SIZE {
-    oneshot_small_into(nn, key, data, out);
+    oneshot_small_into_with_params(nn, key, salt, personal, data, out);
     return;
   }
 
   let kk = key.len() as u8;
-  let mut h = init_state(nn, kk);
+  let mut h = init_state_with_params(nn, kk, salt, personal);
   let mut buf = [0u8; BLOCK_SIZE];
   let mut buf_len = if kk > 0 {
     buf[..key.len()].copy_from_slice(key);
@@ -460,6 +497,11 @@ fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
   }
 }
 
+#[inline]
+fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
+  oneshot_hash_into_with_params(nn, key, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN], data, out);
+}
+
 #[inline(always)]
 fn oneshot_hash_array<const N: usize>(nn: u8, key: &[u8], data: &[u8]) -> [u8; N] {
   let mut out = MaybeUninit::<[u8; N]>::uninit();
@@ -467,6 +509,23 @@ fn oneshot_hash_array<const N: usize>(nn: u8, key: &[u8], data: &[u8]) -> [u8; N
   // before returning, and the temporary out buffer is valid for mutable access.
   unsafe {
     oneshot_hash_into(nn, key, data, &mut *out.as_mut_ptr());
+    out.assume_init()
+  }
+}
+
+#[inline(always)]
+fn oneshot_hash_array_with_params<const N: usize>(
+  nn: u8,
+  key: &[u8],
+  salt: &[u8; SALT_LEN],
+  personal: &[u8; PERSONAL_LEN],
+  data: &[u8],
+) -> [u8; N] {
+  let mut out = MaybeUninit::<[u8; N]>::uninit();
+  // SAFETY: `oneshot_hash_into_with_params` fully initializes exactly `N`
+  // output bytes before returning.
+  unsafe {
+    oneshot_hash_into_with_params(nn, key, salt, personal, data, &mut *out.as_mut_ptr());
     out.assume_init()
   }
 }
@@ -488,6 +547,162 @@ impl Drop for Core {
   }
 }
 
+// ─── Blake2bParams ──────────────────────────────────────────────────────────
+
+/// Builder for Blake2b hashers with optional key, salt, and personalization.
+///
+/// Implements the sequential-mode parameter block from RFC 7693 §2.5. Salt
+/// (up to 16 bytes) and personalization (up to 16 bytes) are XORed into the
+/// initial chaining value words `h[4..8]`, giving the same hasher with a
+/// different domain.
+///
+/// Empty key produces an unkeyed hasher; non-empty key produces a Blake2b-MAC.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::Blake2bParams;
+///
+/// let tag = Blake2bParams::new()
+///     .key(b"my-secret-key")
+///     .salt(b"random-salt-1234")
+///     .personal(b"app-v1-tagging00")
+///     .hash_256(b"message");
+/// assert_eq!(tag.len(), 32);
+///
+/// // Same input + different personalization → different output.
+/// let other = Blake2bParams::new()
+///     .key(b"my-secret-key")
+///     .salt(b"random-salt-1234")
+///     .personal(b"app-v2-tagging00")
+///     .hash_256(b"message");
+/// assert_ne!(tag, other);
+/// ```
+#[derive(Clone)]
+pub struct Blake2bParams {
+  key_buf: [u8; MAX_KEY_LEN],
+  key_len: u8,
+  salt: [u8; SALT_LEN],
+  personal: [u8; PERSONAL_LEN],
+}
+
+impl Blake2bParams {
+  /// Maximum key length (bytes).
+  pub const MAX_KEY_LEN: usize = MAX_KEY_LEN;
+  /// Maximum salt length (bytes).
+  pub const SALT_LEN: usize = SALT_LEN;
+  /// Maximum personalization length (bytes).
+  pub const PERSONAL_LEN: usize = PERSONAL_LEN;
+
+  /// Create a new params builder with no key, salt, or personalization.
+  #[must_use]
+  pub const fn new() -> Self {
+    Self {
+      key_buf: [0u8; MAX_KEY_LEN],
+      key_len: 0,
+      salt: [0u8; SALT_LEN],
+      personal: [0u8; PERSONAL_LEN],
+    }
+  }
+
+  /// Set the MAC key (0–64 bytes; empty disables keying).
+  ///
+  /// # Panics
+  ///
+  /// Panics if `key.len() > 64`.
+  #[must_use]
+  #[allow(clippy::indexing_slicing)]
+  pub fn key(mut self, key: &[u8]) -> Self {
+    assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
+    self.key_buf = [0u8; MAX_KEY_LEN];
+    self.key_buf[..key.len()].copy_from_slice(key);
+    self.key_len = key.len() as u8;
+    self
+  }
+
+  /// Set the salt (up to 16 bytes; shorter inputs are zero-padded per spec).
+  ///
+  /// # Panics
+  ///
+  /// Panics if `salt.len() > 16`.
+  #[must_use]
+  #[allow(clippy::indexing_slicing)]
+  pub fn salt(mut self, salt: &[u8]) -> Self {
+    assert!(salt.len() <= SALT_LEN, "Blake2b salt must be at most 16 bytes");
+    self.salt = [0u8; SALT_LEN];
+    self.salt[..salt.len()].copy_from_slice(salt);
+    self
+  }
+
+  /// Set the personalization tag (up to 16 bytes; shorter inputs are zero-padded).
+  ///
+  /// # Panics
+  ///
+  /// Panics if `personal.len() > 16`.
+  #[must_use]
+  #[allow(clippy::indexing_slicing)]
+  pub fn personal(mut self, personal: &[u8]) -> Self {
+    assert!(
+      personal.len() <= PERSONAL_LEN,
+      "Blake2b personalization must be at most 16 bytes"
+    );
+    self.personal = [0u8; PERSONAL_LEN];
+    self.personal[..personal.len()].copy_from_slice(personal);
+    self
+  }
+
+  fn key_slice(&self) -> &[u8] {
+    // SAFETY: key_len is set from a slice ≤ MAX_KEY_LEN in `key()`.
+    &self.key_buf[..self.key_len as usize]
+  }
+
+  /// Build a streaming Blake2b-256 hasher initialized with these parameters.
+  #[must_use]
+  pub fn build_256(&self) -> Blake2b256 {
+    Blake2b256(Core::new_with_params(32, self.key_slice(), &self.salt, &self.personal))
+  }
+
+  /// Build a streaming Blake2b-512 hasher initialized with these parameters.
+  #[must_use]
+  pub fn build_512(&self) -> Blake2b512 {
+    Blake2b512(Core::new_with_params(64, self.key_slice(), &self.salt, &self.personal))
+  }
+
+  /// Compute a Blake2b-256 hash of `data` in one shot using these parameters.
+  #[must_use]
+  pub fn hash_256(&self, data: &[u8]) -> [u8; 32] {
+    oneshot_hash_array_with_params::<32>(32, self.key_slice(), &self.salt, &self.personal, data)
+  }
+
+  /// Compute a Blake2b-512 hash of `data` in one shot using these parameters.
+  #[must_use]
+  pub fn hash_512(&self, data: &[u8]) -> [u8; 64] {
+    oneshot_hash_array_with_params::<64>(64, self.key_slice(), &self.salt, &self.personal, data)
+  }
+}
+
+impl Default for Blake2bParams {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
+impl fmt::Debug for Blake2bParams {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("Blake2bParams")
+      .field("key_len", &self.key_len)
+      .field("salt", &self.salt)
+      .field("personal", &self.personal)
+      .finish()
+  }
+}
+
+impl Drop for Blake2bParams {
+  fn drop(&mut self) {
+    ct::zeroize(&mut self.key_buf);
+  }
+}
+
 // ─── Blake2b256 ─────────────────────────────────────────────────────────────
 
 /// Blake2b-256 cryptographic hash (32-byte output).
@@ -503,7 +718,7 @@ impl Drop for Core {
 /// let mut h = Blake2b256::new();
 /// h.update(b"hello ");
 /// h.update(b"world");
-/// assert_eq!(h.finish(), hash);
+/// assert_eq!(h.finalize(), hash);
 /// ```
 #[derive(Clone)]
 pub struct Blake2b256(Core);
@@ -524,13 +739,13 @@ impl Blake2b256 {
     oneshot_hash_array::<32>(32, &[], data)
   }
 
-  /// Create a keyed Blake2b-256 instance (Blake2b-MAC).
+  /// Create a keyed Blake2b-256 streaming hasher (Blake2b-MAC).
   ///
   /// # Panics
   ///
   /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn keyed(key: &[u8]) -> Self {
+  pub fn new_keyed(key: &[u8]) -> Self {
     assert!(!key.is_empty(), "use Blake2b256::new() for unkeyed hashing");
     Self(Core::new(32, key))
   }
@@ -541,23 +756,9 @@ impl Blake2b256 {
   ///
   /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn keyed_hash(key: &[u8], data: &[u8]) -> [u8; 32] {
+  pub fn keyed_digest(key: &[u8], data: &[u8]) -> [u8; 32] {
     assert!(!key.is_empty(), "use Blake2b256::digest() for unkeyed hashing");
     oneshot_hash_array::<32>(32, key, data)
-  }
-
-  /// Finalize this hasher, consuming it and wiping its internal state.
-  #[must_use]
-  #[inline]
-  pub fn finish(mut self) -> [u8; 32] {
-    let mut out = MaybeUninit::<[u8; 32]>::uninit();
-    // SAFETY: `finish_into` fully initializes the fixed-size output buffer.
-    unsafe {
-      self.0.finish_into(&mut *out.as_mut_ptr());
-      let digest = out.assume_init();
-      core::mem::forget(self);
-      digest
-    }
   }
 }
 
@@ -625,7 +826,7 @@ impl Drop for Blake2b256 {
 /// let mut h = Blake2b512::new();
 /// h.update(b"hello ");
 /// h.update(b"world");
-/// assert_eq!(h.finish(), hash);
+/// assert_eq!(h.finalize(), hash);
 /// ```
 #[derive(Clone)]
 pub struct Blake2b512(Core);
@@ -646,13 +847,13 @@ impl Blake2b512 {
     oneshot_hash_array::<64>(64, &[], data)
   }
 
-  /// Create a keyed Blake2b-512 instance (Blake2b-MAC).
+  /// Create a keyed Blake2b-512 streaming hasher (Blake2b-MAC).
   ///
   /// # Panics
   ///
   /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn keyed(key: &[u8]) -> Self {
+  pub fn new_keyed(key: &[u8]) -> Self {
     assert!(!key.is_empty(), "use Blake2b512::new() for unkeyed hashing");
     Self(Core::new(64, key))
   }
@@ -663,23 +864,9 @@ impl Blake2b512 {
   ///
   /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn keyed_hash(key: &[u8], data: &[u8]) -> [u8; 64] {
+  pub fn keyed_digest(key: &[u8], data: &[u8]) -> [u8; 64] {
     assert!(!key.is_empty(), "use Blake2b512::digest() for unkeyed hashing");
     oneshot_hash_array::<64>(64, key, data)
-  }
-
-  /// Finalize this hasher, consuming it and wiping its internal state.
-  #[must_use]
-  #[inline]
-  pub fn finish(mut self) -> [u8; 64] {
-    let mut out = MaybeUninit::<[u8; 64]>::uninit();
-    // SAFETY: `finish_into` fully initializes the fixed-size output buffer.
-    unsafe {
-      self.0.finish_into(&mut *out.as_mut_ptr());
-      let digest = out.assume_init();
-      core::mem::forget(self);
-      digest
-    }
   }
 }
 
@@ -875,7 +1062,7 @@ mod tests {
     hmac::Mac::update(&mut oracle, data);
     let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-    let actual = Blake2b256::keyed_hash(key, data);
+    let actual = Blake2b256::keyed_digest(key, data);
     assert_eq!(actual, expected);
   }
 
@@ -886,7 +1073,7 @@ mod tests {
     hmac::Mac::update(&mut oracle, b"");
     let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-    let actual = Blake2b256::keyed_hash(key, b"");
+    let actual = Blake2b256::keyed_digest(key, b"");
     assert_eq!(actual, expected);
   }
 
@@ -899,17 +1086,17 @@ mod tests {
     hmac::Mac::update(&mut oracle, data);
     let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-    let actual = Blake2b256::keyed_hash(key, data);
+    let actual = Blake2b256::keyed_digest(key, data);
     assert_eq!(actual, expected);
   }
 
   #[test]
   fn blake2b256_keyed_streaming_reset() {
     let key = b"my-key";
-    let tag1 = Blake2b256::keyed_hash(key, b"msg1");
-    let tag2 = Blake2b256::keyed_hash(key, b"msg2");
+    let tag1 = Blake2b256::keyed_digest(key, b"msg1");
+    let tag2 = Blake2b256::keyed_digest(key, b"msg2");
 
-    let mut h = Blake2b256::keyed(key);
+    let mut h = Blake2b256::new_keyed(key);
     h.update(b"msg1");
     assert_eq!(h.finalize(), tag1);
 
@@ -921,7 +1108,7 @@ mod tests {
   #[test]
   fn keyed_differs_from_unkeyed() {
     let hash = Blake2b256::digest(b"hello");
-    let tag = Blake2b256::keyed_hash(b"key", b"hello");
+    let tag = Blake2b256::keyed_digest(b"key", b"hello");
     assert_ne!(hash, tag);
   }
 
@@ -981,13 +1168,13 @@ mod tests {
   #[test]
   #[should_panic]
   fn keyed_empty_key_panics() {
-    let _ = Blake2b256::keyed(b"");
+    let _ = Blake2b256::new_keyed(b"");
   }
 
   #[test]
   #[should_panic]
   fn keyed_overlength_key_panics() {
-    let _ = Blake2b256::keyed(&[0u8; 65]);
+    let _ = Blake2b256::new_keyed(&[0u8; 65]);
   }
 
   // ── Finalize is non-destructive ───────────────────────────────────────
@@ -1001,17 +1188,136 @@ mod tests {
     assert_eq!(hash1, hash2);
   }
 
+  // ── Params (salt + personalization) ───────────────────────────────────
+
   #[test]
-  fn finish_matches_finalize() {
-    let mut h = Blake2b256::new();
-    h.update(b"test");
-    let finalize = h.finalize();
+  fn params_default_matches_plain_digest() {
+    // Empty salt + empty personal + empty key should equal Blake2b256::digest.
+    let plain = Blake2b256::digest(b"hello");
+    let via_params = Blake2bParams::new().hash_256(b"hello");
+    assert_eq!(plain, via_params);
+  }
 
-    let mut h2 = Blake2b256::new();
-    h2.update(b"test");
-    let finish = h2.finish();
+  #[test]
+  fn params_default_matches_plain_digest_512() {
+    let plain = Blake2b512::digest(b"hello");
+    let via_params = Blake2bParams::new().hash_512(b"hello");
+    assert_eq!(plain, via_params);
+  }
 
-    assert_eq!(finish, finalize);
+  #[test]
+  fn params_key_matches_keyed_digest() {
+    // Empty salt + empty personal + key should equal keyed_digest.
+    let key = b"secret-key";
+    let plain = Blake2b256::keyed_digest(key, b"hello");
+    let via_params = Blake2bParams::new().key(key).hash_256(b"hello");
+    assert_eq!(plain, via_params);
+  }
+
+  #[test]
+  fn params_salt_changes_output() {
+    let a = Blake2bParams::new().salt(b"salt-a").hash_256(b"msg");
+    let b = Blake2bParams::new().salt(b"salt-b").hash_256(b"msg");
+    let plain = Blake2b256::digest(b"msg");
+    assert_ne!(a, b);
+    assert_ne!(a, plain);
+    assert_ne!(b, plain);
+  }
+
+  #[test]
+  fn params_personal_changes_output() {
+    let a = Blake2bParams::new().personal(b"ctx-a").hash_256(b"msg");
+    let b = Blake2bParams::new().personal(b"ctx-b").hash_256(b"msg");
+    let plain = Blake2b256::digest(b"msg");
+    assert_ne!(a, b);
+    assert_ne!(a, plain);
+    assert_ne!(b, plain);
+  }
+
+  #[test]
+  fn params_salt_and_personal_are_independent() {
+    // Swapping which field carries the same bytes must change the output,
+    // proving salt and personal XOR into different IV words.
+    let both_a = Blake2bParams::new()
+      .salt(b"AAAAAAAAAAAAAAAA")
+      .personal(b"BBBBBBBBBBBBBBBB")
+      .hash_256(b"msg");
+    let swapped = Blake2bParams::new()
+      .salt(b"BBBBBBBBBBBBBBBB")
+      .personal(b"AAAAAAAAAAAAAAAA")
+      .hash_256(b"msg");
+    assert_ne!(both_a, swapped);
+  }
+
+  #[test]
+  fn params_stable_under_repeat() {
+    let a = Blake2bParams::new()
+      .key(b"k")
+      .salt(b"s")
+      .personal(b"p")
+      .hash_256(b"data");
+    let b = Blake2bParams::new()
+      .key(b"k")
+      .salt(b"s")
+      .personal(b"p")
+      .hash_256(b"data");
+    assert_eq!(a, b);
+  }
+
+  #[test]
+  fn params_streaming_matches_oneshot() {
+    let params = Blake2bParams::new().key(b"k").salt(b"s").personal(b"p");
+    let oneshot = params.hash_256(b"hello world");
+
+    let mut h = params.build_256();
+    h.update(b"hello ");
+    h.update(b"world");
+    let stream = h.finalize();
+
+    assert_eq!(oneshot, stream);
+  }
+
+  #[test]
+  fn params_short_salt_is_zero_padded() {
+    // Short salt zero-padded should match explicit zero-padded 16-byte salt.
+    let short = Blake2bParams::new().salt(b"abc").hash_256(b"msg");
+    let mut padded = [0u8; 16];
+    padded[..3].copy_from_slice(b"abc");
+    let full = Blake2bParams::new().salt(&padded).hash_256(b"msg");
+    assert_eq!(short, full);
+  }
+
+  #[test]
+  fn params_reset_preserves_salt_and_personal() {
+    let params = Blake2bParams::new().salt(b"salt").personal(b"personal");
+    let mut h = params.build_256();
+    h.update(b"first");
+    let _ = h.finalize();
+
+    h.reset();
+    h.update(b"hello world");
+    let after_reset = h.finalize();
+
+    let expected = params.hash_256(b"hello world");
+    assert_eq!(after_reset, expected);
+  }
+
+  #[test]
+  #[should_panic]
+  fn params_overlong_salt_panics() {
+    let _ = Blake2bParams::new().salt(&[0u8; 17]);
+  }
+
+  #[test]
+  #[should_panic]
+  fn params_overlong_personal_panics() {
+    let _ = Blake2bParams::new().personal(&[0u8; 17]);
+  }
+
+  #[test]
+  #[should_panic]
+  fn params_overlong_key_panics() {
+    let _ = Blake2bParams::new().key(&[0u8; 65]);
   }
 
   // ── Forced-kernel oracle tests ────────────────────────────────────────
