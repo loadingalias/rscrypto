@@ -1260,6 +1260,11 @@ mod power_vsx {
   }
 
   /// Precomputed `vrlw` shift vectors for the four ChaCha20 rotations.
+  ///
+  /// ChaCha20's constants (16, 12, 8, 7) are rotate-RIGHT values. `vrlw` is a
+  /// rotate-LEFT by the shift in each lane, so each stored splat carries the
+  /// ROL amount `32 - ROR`. Field names encode the ChaCha20 (ROR) semantic;
+  /// the ROR→ROL conversion is centralized in `splat_ror` below.
   struct RotShifts {
     rot16: i64x2,
     rot12: i64x2,
@@ -1267,13 +1272,23 @@ mod power_vsx {
     rot7: i64x2,
   }
 
+  /// Build a `vrlw` shift splat from a ChaCha20 rotate-RIGHT constant.
+  ///
+  /// Returns `splat(32 - ROR)`; `rol(32 - ROR)` is equivalent to `ror(ROR)`
+  /// for u32, and `vrlw` rotates LEFT by its shift operand.
+  #[inline(always)]
+  fn splat_ror(ror: u32) -> i64x2 {
+    debug_assert!(ror > 0 && ror < 32, "ROR must be in 1..32 for u32 rotate-right");
+    splat(32 - ror)
+  }
+
   impl RotShifts {
     fn new() -> Self {
       Self {
-        rot16: splat(16),
-        rot12: splat(12),
-        rot8: splat(8),
-        rot7: splat(7),
+        rot16: splat_ror(16),
+        rot12: splat_ror(12),
+        rot8: splat_ror(8),
+        rot7: splat_ror(7),
       }
     }
   }
@@ -1499,6 +1514,49 @@ mod power_vsx {
       *b = vrlw(vxor(*b, *c), rot.rot7);
     }
   }
+
+  #[cfg(test)]
+  mod tests {
+    use super::{RotShifts, from_u32x4, to_u32x4, vrlw};
+    use crate::platform::caps::power;
+
+    const ROT_SEEDS: [u32; 4] = [0x0123_4567, 0x89AB_CDEF, 0xDEAD_BEEF, 0x0000_00FF];
+
+    #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
+    unsafe fn assert_vrlw_matches_portable() {
+      let input = from_u32x4(ROT_SEEDS);
+      let shifts = RotShifts::new();
+
+      // SAFETY: target_feature on this function guarantees POWER8+ VSX.
+      let r16 = unsafe { vrlw(input, shifts.rot16) };
+      let r12 = unsafe { vrlw(input, shifts.rot12) };
+      let r8 = unsafe { vrlw(input, shifts.rot8) };
+      let r7 = unsafe { vrlw(input, shifts.rot7) };
+
+      let expect = |ror: u32| -> [u32; 4] {
+        [
+          ROT_SEEDS[0].rotate_right(ror),
+          ROT_SEEDS[1].rotate_right(ror),
+          ROT_SEEDS[2].rotate_right(ror),
+          ROT_SEEDS[3].rotate_right(ror),
+        ]
+      };
+
+      assert_eq!(to_u32x4(r16), expect(16), "ror16 mismatch");
+      assert_eq!(to_u32x4(r12), expect(12), "ror12 mismatch");
+      assert_eq!(to_u32x4(r8), expect(8), "ror8 mismatch");
+      assert_eq!(to_u32x4(r7), expect(7), "ror7 mismatch");
+    }
+
+    #[test]
+    fn vrlw_with_rotshifts_matches_u32_rotate_right() {
+      if !crate::platform::caps().has(power::POWER8_READY) {
+        return; // Feature not available on this ppc64le host; nothing to assert.
+      }
+      // SAFETY: the runtime capability check above guarantees POWER8+ VSX.
+      unsafe { assert_vrlw_matches_portable() };
+    }
+  }
 }
 
 #[cfg(target_arch = "s390x")]
@@ -1702,18 +1760,26 @@ mod s390x_vector {
     out
   }
 
-  /// Vector element rotate left logical fullword: `verll` with M4=2.
+  /// Element rotate-RIGHT u32 via z/Arch `verll` (M4=2, fullword elements).
+  ///
+  /// ChaCha20's rotation constants (16, 12, 8, 7) are rotate-RIGHT values.
+  /// `verll` is a rotate-LEFT, so the helper passes `32 - ROR` at compile
+  /// time — single `verll` instruction, zero runtime cost.
   #[inline]
   #[target_feature(enable = "vector")]
-  unsafe fn verllf<const BITS: u32>(a: i64x2) -> i64x2 {
+  unsafe fn rotr32_via_verll<const ROR: u32>(a: i64x2) -> i64x2 {
+    const {
+      assert!(ROR > 0 && ROR < 32, "ROR must be in 1..32 for u32 rotate-right");
+    }
     let out: i64x2;
-    // SAFETY: z/Vector facility available via target_feature.
+    // SAFETY: z/Vector facility available via target_feature; immediate is
+    // compile-time bounded to 1..32 by the const assertion above.
     unsafe {
       core::arch::asm!(
         "verll {out}, {a}, {bits}, 2",
         out = lateout(vreg) out,
         a = in(vreg) a,
-        bits = const BITS,
+        bits = const 32 - ROR,
         options(nomem, nostack, pure)
       );
     }
@@ -1726,16 +1792,57 @@ mod s390x_vector {
     // SAFETY: z/Vector facility available via enclosing target_feature.
     unsafe {
       *a = vaf(*a, *b);
-      *d = verllf::<16>(vx(*d, *a));
+      *d = rotr32_via_verll::<16>(vx(*d, *a));
 
       *c = vaf(*c, *d);
-      *b = verllf::<12>(vx(*b, *c));
+      *b = rotr32_via_verll::<12>(vx(*b, *c));
 
       *a = vaf(*a, *b);
-      *d = verllf::<8>(vx(*d, *a));
+      *d = rotr32_via_verll::<8>(vx(*d, *a));
 
       *c = vaf(*c, *d);
-      *b = verllf::<7>(vx(*b, *c));
+      *b = rotr32_via_verll::<7>(vx(*b, *c));
+    }
+  }
+
+  #[cfg(test)]
+  mod tests {
+    use super::{from_u32x4, rotr32_via_verll, to_u32x4};
+
+    const ROT_SEEDS: [u32; 4] = [0x0123_4567, 0x89AB_CDEF, 0xDEAD_BEEF, 0x0000_00FF];
+
+    #[target_feature(enable = "vector")]
+    unsafe fn assert_rotr_matches_portable() {
+      let input = from_u32x4(ROT_SEEDS);
+      // SAFETY: target_feature guarantees z/Vector on this function.
+      let r16 = unsafe { rotr32_via_verll::<16>(input) };
+      let r12 = unsafe { rotr32_via_verll::<12>(input) };
+      let r8 = unsafe { rotr32_via_verll::<8>(input) };
+      let r7 = unsafe { rotr32_via_verll::<7>(input) };
+
+      let expect = |ror: u32| -> [u32; 4] {
+        [
+          ROT_SEEDS[0].rotate_right(ror),
+          ROT_SEEDS[1].rotate_right(ror),
+          ROT_SEEDS[2].rotate_right(ror),
+          ROT_SEEDS[3].rotate_right(ror),
+        ]
+      };
+
+      assert_eq!(to_u32x4(r16), expect(16), "ror16 mismatch");
+      assert_eq!(to_u32x4(r12), expect(12), "ror12 mismatch");
+      assert_eq!(to_u32x4(r8), expect(8), "ror8 mismatch");
+      assert_eq!(to_u32x4(r7), expect(7), "ror7 mismatch");
+    }
+
+    #[test]
+    fn rotr32_via_verll_matches_u32_rotate_right() {
+      assert!(
+        std::arch::is_s390x_feature_detected!("vector"),
+        "s390x vector facility is required for ChaCha20 rotation tests"
+      );
+      // SAFETY: the runtime check above guarantees z/Vector.
+      unsafe { assert_rotr_matches_portable() };
     }
   }
 }

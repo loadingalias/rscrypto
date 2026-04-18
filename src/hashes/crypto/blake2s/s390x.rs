@@ -4,6 +4,13 @@
 //! 128-bit vector register. z/Vector gives us word-wise add/XOR/rotate, while
 //! row diagonalization uses `vperm` because Blake2s needs 32-bit lane shuffles,
 //! not the 64-bit pair shuffles Blake2b uses.
+//!
+//! All four Blake2s rotations (16, 12, 8, 7) are rotate-RIGHT values per
+//! RFC 7693 §3.1. z/Arch `verll` is a rotate-LEFT instruction, so the helper
+//! `rotr32_via_verll::<ROR>` passes `32 - ROR` as the immediate and the call
+//! sites read the spec constants directly. `ror 16` is self-symmetric
+//! (rol 16 == ror 16 on u32), which is the only reason this file produced
+//! one correct rotation out of four before the ROR-aware helper landed.
 
 #![allow(unsafe_code)]
 #![allow(clippy::cast_possible_truncation, clippy::indexing_slicing)]
@@ -69,17 +76,26 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
   out
 }
 
+/// Element rotate-RIGHT u32 via z/Arch `verll` (M4=2, fullword elements).
+///
+/// `verll` is a rotate-LEFT instruction; on u32, `rol(32 - ROR) == ror(ROR)`.
+/// The conversion happens in the `const` `bits` operand so emitted asm is a
+/// single `verll` with the correct immediate — zero runtime cost.
 #[inline(always)]
 #[target_feature(enable = "vector")]
-unsafe fn verllf<const BITS: u32>(x: i64x2) -> i64x2 {
+unsafe fn rotr32_via_verll<const ROR: u32>(x: i64x2) -> i64x2 {
+  const {
+    assert!(ROR > 0 && ROR < 32, "ROR must be in 1..32 for u32 rotate-right");
+  }
   let out: i64x2;
-  // SAFETY: z/Vector facility available via target_feature.
+  // SAFETY: z/Vector facility available via target_feature; immediate is
+  // compile-time bounded to 1..32 by the const assertion above.
   unsafe {
     core::arch::asm!(
       "verll {out}, {x}, {bits}, 2",
       out = lateout(vreg) out,
       x = in(vreg) x,
-      bits = const BITS,
+      bits = const 32 - ROR,
       options(nomem, nostack, pure)
     );
   }
@@ -141,13 +157,13 @@ unsafe fn g4(a: &mut i64x2, b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, mx: i64
   // SAFETY: caller guarantees z/Vector and passes disjoint row registers.
   unsafe {
     *a = vaf(vaf(*a, *b), mx);
-    *d = verllf::<16>(vx(*d, *a));
+    *d = rotr32_via_verll::<16>(vx(*d, *a));
     *c = vaf(*c, *d);
-    *b = verllf::<12>(vx(*b, *c));
+    *b = rotr32_via_verll::<12>(vx(*b, *c));
     *a = vaf(vaf(*a, *b), my);
-    *d = verllf::<8>(vx(*d, *a));
+    *d = rotr32_via_verll::<8>(vx(*d, *a));
     *c = vaf(*c, *d);
-    *b = verllf::<7>(vx(*b, *c));
+    *b = rotr32_via_verll::<7>(vx(*b, *c));
   }
 }
 
@@ -218,7 +234,7 @@ pub(super) unsafe fn compress_vector(h: &mut [u32; 8], block: &[u8; 64], t: u64,
 
 #[cfg(test)]
 mod tests {
-  use super::{DiagMasks, diagonalize, to_u32x4, undiagonalize};
+  use super::{DiagMasks, diagonalize, rotr32_via_verll, to_u32x4, undiagonalize};
 
   #[target_feature(enable = "vector")]
   unsafe fn assert_diagonalize_matches_blake2s_lane_rotation() {
@@ -252,5 +268,44 @@ mod tests {
     );
     // SAFETY: the runtime check above guarantees the vector facility is available.
     unsafe { assert_diagonalize_matches_blake2s_lane_rotation() };
+  }
+
+  /// Seeds chosen to exercise every bit position and asymmetric patterns so a
+  /// wrong-direction or wrong-amount rotation surfaces in the comparison.
+  const ROT_SEEDS: [u32; 4] = [0x0123_4567, 0x89AB_CDEF, 0xDEAD_BEEF, 0x0000_00FF];
+
+  #[target_feature(enable = "vector")]
+  unsafe fn assert_rotr_matches_portable() {
+    let input = super::from_u32x4(ROT_SEEDS);
+
+    // SAFETY: target_feature on the enclosing function guarantees z/Vector.
+    let r16 = unsafe { rotr32_via_verll::<16>(input) };
+    let r12 = unsafe { rotr32_via_verll::<12>(input) };
+    let r8 = unsafe { rotr32_via_verll::<8>(input) };
+    let r7 = unsafe { rotr32_via_verll::<7>(input) };
+
+    let expect = |ror: u32| -> [u32; 4] {
+      [
+        ROT_SEEDS[0].rotate_right(ror),
+        ROT_SEEDS[1].rotate_right(ror),
+        ROT_SEEDS[2].rotate_right(ror),
+        ROT_SEEDS[3].rotate_right(ror),
+      ]
+    };
+
+    assert_eq!(to_u32x4(r16), expect(16), "ror16 mismatch");
+    assert_eq!(to_u32x4(r12), expect(12), "ror12 mismatch");
+    assert_eq!(to_u32x4(r8), expect(8), "ror8 mismatch");
+    assert_eq!(to_u32x4(r7), expect(7), "ror7 mismatch");
+  }
+
+  #[test]
+  fn rotr32_via_verll_matches_u32_rotate_right() {
+    assert!(
+      std::arch::is_s390x_feature_detected!("vector"),
+      "s390x vector facility is required for Blake2s rotation tests"
+    );
+    // SAFETY: the runtime check above guarantees the vector facility is available.
+    unsafe { assert_rotr_matches_portable() };
   }
 }
