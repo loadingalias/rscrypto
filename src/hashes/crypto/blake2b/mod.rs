@@ -327,11 +327,15 @@ fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8;
   let p0 = nn as u64 | ((kk as u64) << 8) | (1u64 << 16) | (1u64 << 24);
   let mut h = IV;
   h[0] ^= p0;
-  // SAFETY: salt and personal are exactly 16 bytes; slice splits are in bounds.
-  h[4] ^= u64::from_le_bytes(salt[0..8].try_into().unwrap());
-  h[5] ^= u64::from_le_bytes(salt[8..16].try_into().unwrap());
-  h[6] ^= u64::from_le_bytes(personal[0..8].try_into().unwrap());
-  h[7] ^= u64::from_le_bytes(personal[8..16].try_into().unwrap());
+  // Infallible: SALT_LEN = PERSONAL_LEN = 16 = 2 × 8, fallbacks are unreachable.
+  let (s_lo, s_rest) = salt.split_first_chunk::<8>().unwrap_or((&[0; 8], &[]));
+  let s_hi: &[u8; 8] = s_rest.first_chunk().unwrap_or(&[0; 8]);
+  let (p_lo, p_rest) = personal.split_first_chunk::<8>().unwrap_or((&[0; 8], &[]));
+  let p_hi: &[u8; 8] = p_rest.first_chunk().unwrap_or(&[0; 8]);
+  h[4] ^= u64::from_le_bytes(*s_lo);
+  h[5] ^= u64::from_le_bytes(*s_hi);
+  h[6] ^= u64::from_le_bytes(*p_lo);
+  h[7] ^= u64::from_le_bytes(*p_hi);
   h
 }
 
@@ -652,8 +656,8 @@ impl Blake2bParams {
   }
 
   fn key_slice(&self) -> &[u8] {
-    // SAFETY: key_len is set from a slice ≤ MAX_KEY_LEN in `key()`.
-    &self.key_buf[..self.key_len as usize]
+    // key_len is set from a slice ≤ MAX_KEY_LEN in `key()`; fallback is unreachable.
+    self.key_buf.get(..self.key_len as usize).unwrap_or(&[])
   }
 
   /// Build a streaming Blake2b-256 hasher initialized with these parameters.
