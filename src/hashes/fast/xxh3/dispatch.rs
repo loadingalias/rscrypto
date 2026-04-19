@@ -191,6 +191,10 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
 #[inline(always)]
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
+  if data.is_empty() {
+    // Bypass the 0..16B branch ladder on the hottest small-input case.
+    return super::xxh3_128_0to16(data, seed, &super::DEFAULT_SECRET);
+  }
   if data.len() <= 16 {
     return super::xxh3_128_0to16(data, seed, &super::DEFAULT_SECRET);
   }
