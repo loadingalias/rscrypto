@@ -169,6 +169,28 @@ const NVME_COMBINE_4WAY: [(u64, u64); 3] = [
   fold16_coeff_for_bytes(CRC64_NVME_POLY, 128),
 ];
 
+// 8-way: update step shifts by 8×128B = 1024B, combine shifts by 7/6/5/4/3/2/1 blocks.
+const XZ_FOLD_1024B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 1024);
+const NVME_FOLD_1024B: (u64, u64) = fold16_coeff_for_bytes(CRC64_NVME_POLY, 1024);
+const XZ_COMBINE_8WAY: [(u64, u64); 7] = [
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 896),
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 768),
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 640),
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 512),
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 384),
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 256),
+  fold16_coeff_for_bytes(CRC64_XZ_POLY, 128),
+];
+const NVME_COMBINE_8WAY: [(u64, u64); 7] = [
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 896),
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 768),
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 640),
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 512),
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 384),
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 256),
+  fold16_coeff_for_bytes(CRC64_NVME_POLY, 128),
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Load helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,6 +243,18 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: (u64, u64)
     x[5] = chunk[5] ^ x[5].fold_16(coeff);
     x[6] = chunk[6] ^ x[6].fold_16(coeff);
     x[7] = chunk[7] ^ x[7].fold_16(coeff);
+  }
+}
+
+#[inline]
+#[target_feature(enable = "zbc")]
+unsafe fn xor_fold_stream(combined: &mut [Simd; 8], stream: &[Simd; 8], coeff: (u64, u64)) {
+  unsafe {
+    let mut lane = 0usize;
+    while lane < 8 {
+      combined[lane] ^= stream[lane].fold_16(coeff);
+      lane = lane.strict_add(1);
+    }
   }
 }
 
@@ -375,6 +409,81 @@ unsafe fn update_simd_4way(
     for block in &blocks[aligned..] {
       let b = load_block(block);
       fold_block_128(&mut combined, &b, coeff_128);
+    }
+
+    fold_tail(combined, consts)
+  }
+}
+
+#[target_feature(enable = "zbc")]
+unsafe fn update_simd_8way(
+  state: u64,
+  blocks: &[Block],
+  fold_1024b: (u64, u64),
+  combine: &[(u64, u64); 7],
+  consts: &Crc64ClmulConstants,
+) -> u64 {
+  unsafe {
+    debug_assert!(!blocks.is_empty());
+
+    if blocks.len() < 8 {
+      let Some((first, rest)) = blocks.split_first() else {
+        return state;
+      };
+      return update_simd(state, first, rest, consts);
+    }
+
+    let aligned = blocks.len().strict_div(8).strict_mul(8);
+    let coeff_1024 = fold_1024b;
+    let coeff_128 = consts.fold_128b;
+
+    let mut streams = [
+      load_block(&blocks[0]),
+      load_block(&blocks[1]),
+      load_block(&blocks[2]),
+      load_block(&blocks[3]),
+      load_block(&blocks[4]),
+      load_block(&blocks[5]),
+      load_block(&blocks[6]),
+      load_block(&blocks[7]),
+    ];
+
+    // Inject CRC into stream 0.
+    streams[0][0] ^= Simd::new(0, state);
+
+    let mut i = 8usize;
+    while i < aligned {
+      let chunks = [
+        load_block(&blocks[i]),
+        load_block(&blocks[i.strict_add(1)]),
+        load_block(&blocks[i.strict_add(2)]),
+        load_block(&blocks[i.strict_add(3)]),
+        load_block(&blocks[i.strict_add(4)]),
+        load_block(&blocks[i.strict_add(5)]),
+        load_block(&blocks[i.strict_add(6)]),
+        load_block(&blocks[i.strict_add(7)]),
+      ];
+
+      let mut stream = 0usize;
+      while stream < 8 {
+        fold_block_128(&mut streams[stream], &chunks[stream], coeff_1024);
+        stream = stream.strict_add(1);
+      }
+
+      i = i.strict_add(8);
+    }
+
+    // Merge: A^7·s0 ⊕ A^6·s1 ⊕ A^5·s2 ⊕ A^4·s3 ⊕ A^3·s4 ⊕ A^2·s5 ⊕ A·s6 ⊕ s7.
+    let mut combined = streams[7];
+    let mut stream = 0usize;
+    while stream < 7 {
+      xor_fold_stream(&mut combined, &streams[stream], combine[stream]);
+      stream = stream.strict_add(1);
+    }
+
+    for block in &blocks[aligned..] {
+      let chunk = load_block(block);
+      fold_block_128(&mut combined, &chunk, coeff_128);
     }
 
     fold_tail(combined, consts)
@@ -853,6 +962,37 @@ unsafe fn crc64_zbc_4way(
   }
 }
 
+#[target_feature(enable = "zbc")]
+unsafe fn crc64_zbc_8way(
+  mut state: u64,
+  bytes: &[u8],
+  fold_1024b: (u64, u64),
+  combine: &[(u64, u64); 7],
+  consts: &Crc64ClmulConstants,
+  tables: &[[u64; 256]; 16],
+) -> u64 {
+  unsafe {
+    let (left, middle, right) = bytes.align_to::<u64>();
+
+    state = super::portable::crc64_slice16(state, left, tables);
+
+    let block_u64s = middle.len() & !15usize;
+    let (blocks_u64, tail_u64) = middle.split_at(block_u64s);
+
+    if !blocks_u64.is_empty() {
+      let blocks: &[Block] = core::slice::from_raw_parts(blocks_u64.as_ptr().cast(), blocks_u64.len().strict_div(16));
+      state = update_simd_8way(state, blocks, fold_1024b, combine, consts);
+    }
+
+    if !tail_u64.is_empty() {
+      let tail_bytes = core::slice::from_raw_parts(tail_u64.as_ptr().cast(), tail_u64.len().strict_mul(8));
+      state = super::portable::crc64_slice16(state, tail_bytes, tables);
+    }
+
+    super::portable::crc64_slice16(state, right, tables)
+  }
+}
+
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn crc64_zvbc_4way(
   mut state: u64,
@@ -980,6 +1120,26 @@ pub(crate) unsafe fn crc64_xz_zbc_4way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-XZ using scalar Zbc carryless multiply folding (8-way ILP variant).
+///
+/// # Safety
+///
+/// Requires the RISC-V Zbc extension. Caller must verify via
+/// `crate::platform::caps().has(riscv::ZBC)`.
+#[target_feature(enable = "zbc")]
+pub(crate) unsafe fn crc64_xz_zbc_8way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_zbc_8way(
+      crc,
+      data,
+      XZ_FOLD_1024B,
+      &XZ_COMBINE_8WAY,
+      &crate::checksum::common::clmul::CRC64_XZ_CLMUL,
+      &super::kernel_tables::XZ_TABLES_16,
+    )
+  }
+}
+
 /// CRC-64-XZ using RVV Zvbc (vector carryless multiply) folding (4-way ILP variant).
 ///
 /// # Safety
@@ -1094,6 +1254,26 @@ pub(crate) unsafe fn crc64_nvme_zbc_4way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
+/// CRC-64-NVME using scalar Zbc carryless multiply folding (8-way ILP variant).
+///
+/// # Safety
+///
+/// Requires the RISC-V Zbc extension. Caller must verify via
+/// `crate::platform::caps().has(riscv::ZBC)`.
+#[target_feature(enable = "zbc")]
+pub(crate) unsafe fn crc64_nvme_zbc_8way(crc: u64, data: &[u8]) -> u64 {
+  unsafe {
+    crc64_zbc_8way(
+      crc,
+      data,
+      NVME_FOLD_1024B,
+      &NVME_COMBINE_8WAY,
+      &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
+      &super::kernel_tables::NVME_TABLES_16,
+    )
+  }
+}
+
 /// CRC-64-NVME using RVV Zvbc (vector carryless multiply) folding (4-way ILP variant).
 ///
 /// # Safety
@@ -1144,6 +1324,11 @@ pub fn crc64_xz_zbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
 }
 
 #[inline]
+pub fn crc64_xz_zbc_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  unsafe { crc64_xz_zbc_8way(crc, data) }
+}
+
+#[inline]
 pub fn crc64_xz_zvbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_xz_zvbc_4way(crc, data) }
 }
@@ -1171,6 +1356,11 @@ pub fn crc64_nvme_zvbc_2way_safe(crc: u64, data: &[u8]) -> u64 {
 #[inline]
 pub fn crc64_nvme_zbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_nvme_zbc_4way(crc, data) }
+}
+
+#[inline]
+pub fn crc64_nvme_zbc_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  unsafe { crc64_nvme_zbc_8way(crc, data) }
 }
 
 #[inline]

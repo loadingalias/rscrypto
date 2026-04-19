@@ -1185,6 +1185,122 @@ mod rv_vperm_aes {
     bytes
   }
 
+  macro_rules! vperm_inner_round_m1 {
+    ($state:literal, $rk:literal) => {
+      concat!(
+        "vand.vi v19, ",
+        $state,
+        ", 15\n",
+        "vsrl.vi v20, ",
+        $state,
+        ", 4\n",
+        "vrgather.vv v21, v8, v19\n",
+        "vrgather.vv v22, v9, v20\n",
+        "vxor.vv v19, v21, v22\n",
+        "vand.vi v20, v19, 15\n",
+        "vsrl.vi v21, v19, 4\n",
+        "vrgather.vv v22, v11, v20\n",
+        "vxor.vv v23, v21, v20\n",
+        "vrgather.vv v24, v10, v21\n",
+        "vxor.vv v25, v24, v22\n",
+        "vrgather.vv v24, v10, v23\n",
+        "vxor.vv v26, v24, v22\n",
+        "vand.vi v27, v25, 15\n",
+        "vrgather.vv v28, v10, v27\n",
+        "vsra.vi v29, v25, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v28, v28, v29\n",
+        "vxor.vv v19, v28, v23\n",
+        "vand.vi v27, v26, 15\n",
+        "vrgather.vv v28, v10, v27\n",
+        "vsra.vi v29, v26, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v28, v28, v29\n",
+        "vxor.vv v20, v28, v21\n",
+        "vand.vi v27, v19, 15\n",
+        "vrgather.vv v28, v12, v27\n",
+        "vsra.vi v29, v19, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v22, v28, v29\n",
+        "vand.vi v27, v20, 15\n",
+        "vrgather.vv v30, v13, v27\n",
+        "vsra.vi v29, v20, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v23, v30, v29\n",
+        "vxor.vv v19, v22, v23\n",
+        "vxor.vv v19, v19, v17\n",
+        "vrgather.vv v20, v19, v14\n",
+        "vrgather.vv v21, v20, v15\n",
+        "vxor.vv v22, v20, v21\n",
+        "vsll.vi v23, v22, 1\n",
+        "vsra.vi v24, v22, 7\n",
+        "vand.vv v24, v24, v18\n",
+        "vxor.vv v23, v23, v24\n",
+        "vrgather.vv v24, v22, v16\n",
+        "vxor.vv v25, v22, v24\n",
+        "vxor.vv v26, v20, v25\n",
+        "vxor.vv v26, v26, v23\n",
+        "vxor.vv ",
+        $state,
+        ", v26, ",
+        $rk
+      )
+    };
+  }
+
+  macro_rules! vperm_final_round_m1 {
+    ($state:literal, $rk:literal) => {
+      concat!(
+        "vand.vi v19, ",
+        $state,
+        ", 15\n",
+        "vsrl.vi v20, ",
+        $state,
+        ", 4\n",
+        "vrgather.vv v21, v8, v19\n",
+        "vrgather.vv v22, v9, v20\n",
+        "vxor.vv v19, v21, v22\n",
+        "vand.vi v20, v19, 15\n",
+        "vsrl.vi v21, v19, 4\n",
+        "vrgather.vv v22, v11, v20\n",
+        "vxor.vv v23, v21, v20\n",
+        "vrgather.vv v24, v10, v21\n",
+        "vxor.vv v25, v24, v22\n",
+        "vrgather.vv v24, v10, v23\n",
+        "vxor.vv v26, v24, v22\n",
+        "vand.vi v27, v25, 15\n",
+        "vrgather.vv v28, v10, v27\n",
+        "vsra.vi v29, v25, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v28, v28, v29\n",
+        "vxor.vv v19, v28, v23\n",
+        "vand.vi v27, v26, 15\n",
+        "vrgather.vv v28, v10, v27\n",
+        "vsra.vi v29, v26, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v28, v28, v29\n",
+        "vxor.vv v20, v28, v21\n",
+        "vand.vi v27, v19, 15\n",
+        "vrgather.vv v28, v12, v27\n",
+        "vsra.vi v29, v19, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v22, v28, v29\n",
+        "vand.vi v27, v20, 15\n",
+        "vrgather.vv v30, v13, v27\n",
+        "vsra.vi v29, v20, 7\n",
+        "vxor.vi v29, v29, -1\n",
+        "vand.vv v23, v30, v29\n",
+        "vxor.vv v19, v22, v23\n",
+        "vxor.vv v19, v19, v17\n",
+        "vrgather.vv v20, v19, v14\n",
+        "vxor.vv ",
+        $state,
+        ", v20, ",
+        $rk
+      )
+    };
+  }
+
   /// Single inner AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
   /// Same asm as aegis256::rv_vperm::aes_round.
   #[target_feature(enable = "v")]
@@ -1371,6 +1487,115 @@ mod rv_vperm_aes {
     out
   }
 
+  /// Four independent inner rounds with one shared table load.
+  ///
+  /// This targets the AES-GCM-SIV fixed-cost path, where six ECB blocks are
+  /// derived up front. Sharing the vperm tables across 4 blocks removes most
+  /// of the per-call table-load overhead even before we attempt a wider LMUL
+  /// kernel.
+  #[target_feature(enable = "v")]
+  #[inline]
+  unsafe fn aes_inner_round_4(blocks: &mut [[u8; 16]; 4], round_key: &[u8; 16], tables: &VpermTables) {
+    // SAFETY: caller guarantees the RISC-V V extension is available and all
+    // block/key/table references are valid for 16-byte vector loads/stores.
+    unsafe {
+      asm!(
+        "vsetivli zero, 16, e8, m1, ta, ma",
+        "vle8.v v8, ({tbl})",
+        "addi {tmp}, {tbl}, 16",
+        "vle8.v v9, ({tmp})",
+        "addi {tmp}, {tbl}, 32",
+        "vle8.v v10, ({tmp})",
+        "addi {tmp}, {tbl}, 48",
+        "vle8.v v11, ({tmp})",
+        "addi {tmp}, {tbl}, 64",
+        "vle8.v v12, ({tmp})",
+        "addi {tmp}, {tbl}, 80",
+        "vle8.v v13, ({tmp})",
+        "addi {tmp}, {tbl}, 96",
+        "vle8.v v14, ({tmp})",
+        "addi {tmp}, {tbl}, 112",
+        "vle8.v v15, ({tmp})",
+        "addi {tmp}, {tbl}, 128",
+        "vle8.v v16, ({tmp})",
+        "addi {tmp}, {tbl}, 144",
+        "vle8.v v17, ({tmp})",
+        "addi {tmp}, {tbl}, 160",
+        "vle8.v v18, ({tmp})",
+        "vle8.v v0, ({b0})",
+        "vle8.v v1, ({b1})",
+        "vle8.v v2, ({b2})",
+        "vle8.v v3, ({b3})",
+        "vle8.v v4, ({rk})",
+        vperm_inner_round_m1!("v0", "v4"),
+        vperm_inner_round_m1!("v1", "v4"),
+        vperm_inner_round_m1!("v2", "v4"),
+        vperm_inner_round_m1!("v3", "v4"),
+        "vse8.v v0, ({b0})",
+        "vse8.v v1, ({b1})",
+        "vse8.v v2, ({b2})",
+        "vse8.v v3, ({b3})",
+        b0 = in(reg) blocks[0].as_mut_ptr(),
+        b1 = in(reg) blocks[1].as_mut_ptr(),
+        b2 = in(reg) blocks[2].as_mut_ptr(),
+        b3 = in(reg) blocks[3].as_mut_ptr(),
+        rk = in(reg) round_key.as_ptr(),
+        tbl = in(reg) tables as *const VpermTables as *const u8,
+        tmp = out(reg) _,
+        options(nostack),
+      );
+    }
+  }
+
+  /// Four independent final rounds with one shared table load.
+  #[target_feature(enable = "v")]
+  #[inline]
+  unsafe fn aes_final_round_4(blocks: &mut [[u8; 16]; 4], round_key: &[u8; 16], tables: &VpermTables) {
+    // SAFETY: caller guarantees the RISC-V V extension is available and all
+    // block/key/table references are valid for 16-byte vector loads/stores.
+    unsafe {
+      asm!(
+        "vsetivli zero, 16, e8, m1, ta, ma",
+        "vle8.v v8, ({tbl})",
+        "addi {tmp}, {tbl}, 16",
+        "vle8.v v9, ({tmp})",
+        "addi {tmp}, {tbl}, 32",
+        "vle8.v v10, ({tmp})",
+        "addi {tmp}, {tbl}, 48",
+        "vle8.v v11, ({tmp})",
+        "addi {tmp}, {tbl}, 64",
+        "vle8.v v12, ({tmp})",
+        "addi {tmp}, {tbl}, 80",
+        "vle8.v v13, ({tmp})",
+        "addi {tmp}, {tbl}, 96",
+        "vle8.v v14, ({tmp})",
+        "addi {tmp}, {tbl}, 144",
+        "vle8.v v17, ({tmp})",
+        "vle8.v v0, ({b0})",
+        "vle8.v v1, ({b1})",
+        "vle8.v v2, ({b2})",
+        "vle8.v v3, ({b3})",
+        "vle8.v v4, ({rk})",
+        vperm_final_round_m1!("v0", "v4"),
+        vperm_final_round_m1!("v1", "v4"),
+        vperm_final_round_m1!("v2", "v4"),
+        vperm_final_round_m1!("v3", "v4"),
+        "vse8.v v0, ({b0})",
+        "vse8.v v1, ({b1})",
+        "vse8.v v2, ({b2})",
+        "vse8.v v3, ({b3})",
+        b0 = in(reg) blocks[0].as_mut_ptr(),
+        b1 = in(reg) blocks[1].as_mut_ptr(),
+        b2 = in(reg) blocks[2].as_mut_ptr(),
+        b3 = in(reg) blocks[3].as_mut_ptr(),
+        rk = in(reg) round_key.as_ptr(),
+        tbl = in(reg) tables as *const VpermTables as *const u8,
+        tmp = out(reg) _,
+        options(nostack),
+      );
+    }
+  }
+
   /// AES-256 full-block encryption (14 rounds) using Hamburg vperm.
   ///
   /// # Safety
@@ -1399,6 +1624,38 @@ mod rv_vperm_aes {
       // Round 14 (final): SubBytes + ShiftRows + AddRoundKey (no MixColumns).
       let rk14 = round_key_bytes(rk, super::ROUNDS);
       *block = aes_final_round(block, &rk14, &tables);
+    }
+  }
+
+  /// Encrypt 4 independent AES-256 blocks using the vperm backend.
+  ///
+  /// The 4-block batch is aimed at GCM-SIV key derivation, which produces 6
+  /// unrelated ECB inputs up front. Processing 4 of them together amortizes
+  /// table loads across the hot fixed-cost path while keeping the existing
+  /// single-block kernel for small tails.
+  #[target_feature(enable = "v")]
+  pub(super) unsafe fn encrypt_4blocks(rk: &[u32; super::EXPANDED_KEY_WORDS], blocks: &mut [[u8; 16]; 4]) {
+    // SAFETY: caller guarantees the RISC-V V extension is available for the
+    // duration of the batch and all block buffers are valid 16-byte arrays.
+    unsafe {
+      let tables = VpermTables::load();
+
+      let rk0 = round_key_bytes(rk, 0);
+      for block in blocks.iter_mut() {
+        for i in 0..16 {
+          block[i] ^= rk0[i];
+        }
+      }
+
+      let mut round = 1usize;
+      while round < super::ROUNDS {
+        let rk_r = round_key_bytes(rk, round);
+        aes_inner_round_4(blocks, &rk_r, &tables);
+        round = round.strict_add(1);
+      }
+
+      let rk14 = round_key_bytes(rk, super::ROUNDS);
+      aes_final_round_4(blocks, &rk14, &tables);
     }
   }
 }
@@ -1928,6 +2185,27 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
         unsafe { core::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<u8>(), count.strict_mul(BLOCK_SIZE)) };
       // SAFETY: MSA verified by the S390xKm variant constructor. `flat` is valid for `count*16` bytes.
       unsafe { s390x_encrypt_blocks_inline(km_key, flat, count) };
+    }
+    return;
+  }
+  #[cfg(target_arch = "riscv64")]
+  if let KeyInner::RvVperm(rk) = &ek.inner {
+    let mut offset = 0usize;
+    while offset.strict_add(4) <= blocks.len() {
+      let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+      debug_assert_eq!(batch_slice.len(), 4);
+      // SAFETY: `batch_slice` is exactly 4 contiguous `[u8; 16]` elements, so
+      // reborrowing it as `&mut [[u8; 16]; 4]` preserves layout and bounds.
+      let batch: &mut [[u8; BLOCK_SIZE]; 4] = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+      // SAFETY: RvVperm variant is only constructed after runtime detection confirms V extension.
+      unsafe { rv_vperm_aes::encrypt_4blocks(rk, batch) };
+      offset = offset.strict_add(4);
+    }
+    while offset < blocks.len() {
+      // SAFETY: Same runtime V-extension guarantee as above; tail stays on the
+      // existing single-block kernel to avoid special-casing 1-3 blocks.
+      unsafe { rv_vperm_aes::encrypt_block(rk, &mut blocks[offset]) };
+      offset = offset.strict_add(1);
     }
     return;
   }
@@ -2493,5 +2771,27 @@ mod tests {
     let mut expected_block1 = iv_plus_1;
     aes256_encrypt_block(&ek, &mut expected_block1);
     assert_eq!(&buf[16..32], &expected_block1, "CTR block 1 keystream mismatch");
+  }
+
+  #[cfg(feature = "aes-gcm-siv")]
+  #[test]
+  fn aes256_encrypt_blocks_ecb_matches_scalar_dispatch() {
+    let key = [0xA5u8; 32];
+    let ek = aes256_expand_key(&key);
+    let mut blocks = [[0u8; BLOCK_SIZE]; 6];
+
+    for (i, block) in blocks.iter_mut().enumerate() {
+      for (j, byte) in block.iter_mut().enumerate() {
+        *byte = (i as u8).wrapping_mul(17) ^ (j as u8).wrapping_mul(29) ^ 0x5C;
+      }
+    }
+
+    let mut expected = blocks;
+    for block in &mut expected {
+      aes256_encrypt_block(&ek, block);
+    }
+
+    aes256_encrypt_blocks_ecb(&ek, &mut blocks);
+    assert_eq!(blocks, expected);
   }
 }
