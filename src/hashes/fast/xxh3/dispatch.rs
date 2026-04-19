@@ -123,6 +123,10 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[inline(always)]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
+  if data.is_empty() {
+    // Bypass the 0..16B branch ladder on the hottest small-input case.
+    return super::xxh3_64_0to16(data, seed, &super::DEFAULT_SECRET);
+  }
   if data.len() <= 16 {
     return super::xxh3_64_0to16(data, seed, &super::DEFAULT_SECRET);
   }

@@ -237,13 +237,13 @@ pub mod riscv64 {
   use super::super::riscv64 as arch;
   use crate::checksum::dispatchers::Crc64Fn;
 
-  /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
+  /// Zbc kernel names: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const ZBC_NAMES: &[&str] = &[
     "riscv64/zbc",
     "riscv64/zbc-2way",
     "riscv64/zbc-4way",
-    "riscv64/zbc-4way",
-    "riscv64/zbc-4way",
+    "riscv64/zbc-8way",
+    "riscv64/zbc-8way",
   ];
 
   /// Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
@@ -257,16 +257,16 @@ pub mod riscv64 {
 
   // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
-  // Note: riscv64 only supports up to 4-way, slots 3-4 are duplicates
+  // Note: riscv64 Zbc exposes up to 8-way; slot 4 is duplicated for index consistency.
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// XZ Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
+  /// XZ Zbc kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const XZ_ZBC: [Crc64Fn; 5] = [
     arch::crc64_xz_zbc_safe,
     arch::crc64_xz_zbc_2way_safe,
     arch::crc64_xz_zbc_4way_safe,
-    arch::crc64_xz_zbc_4way_safe, // dup for index consistency
-    arch::crc64_xz_zbc_4way_safe, // dup for index consistency
+    arch::crc64_xz_zbc_8way_safe,
+    arch::crc64_xz_zbc_8way_safe, // dup for index consistency
   ];
 
   /// XZ Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
@@ -282,13 +282,13 @@ pub mod riscv64 {
   // CRC64-NVME Kernel Function Arrays
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// NVME Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
+  /// NVME Zbc kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const NVME_ZBC: [Crc64Fn; 5] = [
     arch::crc64_nvme_zbc_safe,
     arch::crc64_nvme_zbc_2way_safe,
     arch::crc64_nvme_zbc_4way_safe,
-    arch::crc64_nvme_zbc_4way_safe, // dup for index consistency
-    arch::crc64_nvme_zbc_4way_safe, // dup for index consistency
+    arch::crc64_nvme_zbc_8way_safe,
+    arch::crc64_nvme_zbc_8way_safe, // dup for index consistency
   ];
 
   /// NVME Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]

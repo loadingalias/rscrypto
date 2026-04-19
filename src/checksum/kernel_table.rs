@@ -3118,10 +3118,10 @@ mod riscv64_tables {
     ),
     l: crc64_only_set(
       PORTABLE_SET,
-      crc64_k::XZ_ZBC[2],
-      "riscv64/zbc-4way",
-      crc64_k::NVME_ZBC[2],
-      "riscv64/zbc-4way",
+      crc64_k::XZ_ZBC[3],
+      "riscv64/zbc-8way",
+      crc64_k::NVME_ZBC[3],
+      "riscv64/zbc-8way",
     ),
   };
 
