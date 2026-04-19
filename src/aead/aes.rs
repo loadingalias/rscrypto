@@ -2172,7 +2172,6 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
 /// On s390x this issues a single KM instruction for all `blocks`,
 /// avoiding per-block parameter-block setup overhead. On other platforms
 /// falls back to per-block dispatch.
-#[cfg(feature = "aes-gcm-siv")]
 #[inline]
 pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(target_arch = "s390x")]
@@ -2364,6 +2363,43 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
   let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
   let mut offset = 0usize;
 
+  #[cfg(target_arch = "riscv64")]
+  if matches!(&ek.inner, KeyInner::RvVperm(_)) {
+    let iv_suffix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[4..16]);
+      buf
+    };
+
+    while offset.strict_add(64) <= data.len() {
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        keystream[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
+        keystream[i as usize][4..16].copy_from_slice(&iv_suffix);
+        i = i.strict_add(1);
+      }
+
+      aes256_encrypt_blocks_ecb(ek, &mut keystream);
+
+      let mut lane = 0usize;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let ks = u128::from_ne_bytes(keystream[lane]);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+        lane = lane.strict_add(1);
+      }
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    counter_block[4..16].copy_from_slice(&iv_suffix);
+  }
+
   while offset < data.len() {
     // Encode current counter into the block.
     counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
@@ -2415,6 +2451,43 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
     counter_block[15],
   ]);
   let mut offset = 0usize;
+
+  #[cfg(target_arch = "riscv64")]
+  if matches!(&ek.inner, KeyInner::RvVperm(_)) {
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+
+    while offset.strict_add(64) <= data.len() {
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        keystream[i as usize][..12].copy_from_slice(&iv_prefix);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      aes256_encrypt_blocks_ecb(ek, &mut keystream);
+
+      let mut lane = 0usize;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let ks = u128::from_ne_bytes(keystream[lane]);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+        lane = lane.strict_add(1);
+      }
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    counter_block[..12].copy_from_slice(&iv_prefix);
+  }
 
   while offset < data.len() {
     // Encode current counter into bytes 12..15 (big-endian).
@@ -2773,7 +2846,33 @@ mod tests {
     assert_eq!(&buf[16..32], &expected_block1, "CTR block 1 keystream mismatch");
   }
 
-  #[cfg(feature = "aes-gcm-siv")]
+  #[cfg(feature = "aes-gcm")]
+  #[test]
+  fn aes256_ctr32_be_known_answer() {
+    let key = [0x24u8; 32];
+    let ek = aes256_expand_key(&key);
+    let mut iv = [0u8; 16];
+    iv[..12].copy_from_slice(b"GCM nonce IV");
+    iv[12..16].copy_from_slice(&7u32.to_be_bytes());
+
+    let mut buf = [0u8; 80];
+    aes256_ctr32_encrypt_be(&ek, &iv, &mut buf);
+
+    for block_idx in 0..5usize {
+      let mut expected = iv;
+      let ctr = 7u32.wrapping_add(block_idx as u32);
+      expected[12..16].copy_from_slice(&ctr.to_be_bytes());
+      aes256_encrypt_block(&ek, &mut expected);
+      let start = block_idx.strict_mul(BLOCK_SIZE);
+      let end = start.strict_add(BLOCK_SIZE);
+      assert_eq!(
+        &buf[start..end],
+        &expected,
+        "CTR-BE block {block_idx} keystream mismatch"
+      );
+    }
+  }
+
   #[test]
   fn aes256_encrypt_blocks_ecb_matches_scalar_dispatch() {
     let key = [0xA5u8; 32];

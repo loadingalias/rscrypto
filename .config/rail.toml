@@ -86,7 +86,7 @@ require_release_notes = true
     "rustfmt.toml",
     ".cargo/config.toml",
   ]
-conservative_unclassified_owner_fallback = true  # Enable build+test fallback for unclassified crate-owned files
+unknown_file_policy = "owned_build_test"  # Enable build+test fallback for unclassified crate-owned files
 confidence_profile = "balanced"  # Planner confidence profile: strict, balanced, fast
 bot_pr_confidence_profile = "strict"  # Optional planner profile override for bot-authored PRs
 

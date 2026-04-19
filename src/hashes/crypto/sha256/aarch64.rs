@@ -251,35 +251,30 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
 
       // Rounds 16-63: compact loop (3 iterations × 16 rounds each).
       //
-      // Schedule-first ordering: all 4 message schedule updates are
-      // batched before the 4 hash round groups.  This gives wide OOO
-      // cores (Neoverse V1/V2) better pipeline overlap — the schedule
-      // chain (depends only on message words) can execute ahead of the
-      // hash chain (strict ABCD→EFGH serial dependency).
+      // Keep the message schedule interleaved with the hash rounds. That
+      // matches the faster sha2 crate kernel on Graviton3/4 and avoids
+      // lengthening the schedule dependency chain ahead of the hash work.
       let mut t: usize = 16;
       while t < 64 {
-        // --- Batch all 4 schedule updates ---
         s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
-        s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
-        s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
-        s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
-
-        // --- Then all 4 hash round groups ---
         tmp = vaddq_u32(s0, vld1q_u32(kp.add(t)));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
+        s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
         tmp = vaddq_u32(s1, vld1q_u32(kp.add(t.strict_add(4))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
+        s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
         tmp = vaddq_u32(s2, vld1q_u32(kp.add(t.strict_add(8))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
         efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
 
+        s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
         tmp = vaddq_u32(s3, vld1q_u32(kp.add(t.strict_add(12))));
         abcd_prev = abcd;
         abcd = vsha256hq_u32(abcd_prev, efgh, tmp);

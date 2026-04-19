@@ -3062,29 +3062,15 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
 
   let mut cv = key_words;
 
-  // Compress block 0 with CHUNK_START, then bulk-compress remaining blocks.
-  // SAFETY: `input.len() > BLOCK_LEN` in this branch (tiny path handles ≤64B).
-  let block0_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().cast::<[u8; BLOCK_LEN]>()) };
-  cv = first_8_words((kernel.compress)(
-    &cv,
-    &block0_words,
-    0,
-    BLOCK_LEN as u32,
-    flags | CHUNK_START,
-  ));
-
-  // Bulk-compress blocks 1..full_blocks via chunk_compress_blocks. This lets
-  // platform-specific implementations apply batch optimizations (e.g., s390x
-  // adaptive portable fallback for ≤15-block batches, x86 assembly bulk paths).
-  if full_blocks > 1 {
-    let mut blocks_compressed = 1u8;
-    (kernel.chunk_compress_blocks)(
-      &mut cv,
-      0,
-      flags,
-      &mut blocks_compressed,
-      &input[BLOCK_LEN..full_blocks * BLOCK_LEN],
-    );
+  // Compress full non-final blocks using the kernel's compress function
+  // pointer directly. Single-chunk XOF is latency-sensitive, and the bulk
+  // wrapper setup costs more than it saves in the 256B–1KiB range.
+  for i in 0..full_blocks {
+    let offset = i * BLOCK_LEN;
+    let block_flags = flags | if i == 0 { CHUNK_START } else { 0 };
+    // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
+    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    cv = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, block_flags));
   }
 
   // Build the last block's words.
@@ -3204,15 +3190,6 @@ impl Xof for Blake3XofReader {
     }
 
     if out.len() <= OUTPUT_BLOCK_LEN && self.position_within_block == 0 {
-      if out.len() == OUTPUT_BLOCK_LEN {
-        // Full output block at a block boundary: emit directly into the
-        // caller's buffer, avoiding the temp-buffer + copy in fill_one_block.
-        // SAFETY: `out.len() == OUTPUT_BLOCK_LEN` is checked.
-        let block = unsafe { &mut *(out.as_mut_ptr().cast::<[u8; OUTPUT_BLOCK_LEN]>()) };
-        self.root.emit_one_block(block);
-        self.root.counter = self.root.counter.wrapping_add(1);
-        return;
-      }
       self.fill_one_block(&mut out);
       return;
     }
