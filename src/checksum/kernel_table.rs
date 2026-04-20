@@ -2569,7 +2569,7 @@ mod s390x_tables {
 
   pub static S390X_Z15_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::s390x::Z13_READY,
-    boundaries: [64, 64, 4096],
+    boundaries: [63, 63, 4096],
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
@@ -2790,7 +2790,7 @@ mod power_tables {
 
   pub static POWER10_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::power::VPMSUM_READY,
-    boundaries: [64, 64, 4096],
+    boundaries: [63, 63, 4096],
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
     m: KernelSet {
@@ -2877,7 +2877,7 @@ mod riscv64_tables {
 
   pub static RISCV64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
-    boundaries: [128, 1024, 4096],
+    boundaries: [63, 1024, 4096],
     xs: PORTABLE_SET,
     // CRC64 is handled by a separate table. Keep the generic Zbc ladder focused
     // on CRC16/24/32, and make the multi-stream cutovers less eager than the
@@ -2976,7 +2976,7 @@ mod riscv64_tables {
 
   pub static RISCV64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
-    boundaries: [128, 1024, 4096],
+    boundaries: [63, 1024, 4096],
     xs: PORTABLE_SET,
     s: KernelSet {
       #[cfg(feature = "crc16")]
@@ -3135,7 +3135,7 @@ mod riscv64_tables {
   #[cfg(feature = "crc64")]
   pub static RISCV64_CRC64_ZVBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
-    boundaries: [128, 1024, 4096],
+    boundaries: [63, 1024, 4096],
     xs: PORTABLE_SET,
     s: crc64_only_set(PORTABLE_SET, crc64_k::XZ_ZVBC[0], "riscv64/zvbc", crc64_k::NVME_ZVBC[0], "riscv64/zvbc"),
     m: crc64_only_set(
@@ -3181,6 +3181,43 @@ mod tests {
     assert!(core::ptr::eq(table.select_fns(4096), &table.fns[M]));
     assert!(core::ptr::eq(table.select_fns(4097), &table.fns[L]));
     assert!(core::ptr::eq(table.select_fns(1_000_000), &table.fns[L]));
+  }
+
+  #[test]
+  #[cfg(target_arch = "s390x")]
+  fn test_s390x_z15_uses_vgfm_at_64b() {
+    let names = S390X_Z15_TABLE.select_names(64);
+    #[cfg(feature = "crc32")]
+    assert_eq!(names.crc32_ieee_name, "s390x/vgfm");
+    #[cfg(feature = "crc64")]
+    assert_eq!(names.crc64_nvme_name, "s390x/vgfm");
+  }
+
+  #[test]
+  #[cfg(target_arch = "powerpc64")]
+  fn test_power10_uses_vpmsum_at_64b() {
+    let names = POWER10_TABLE.select_names(64);
+    #[cfg(feature = "crc32")]
+    assert_eq!(names.crc32_ieee_name, "power/vpmsum");
+    #[cfg(feature = "crc64")]
+    assert_eq!(names.crc64_nvme_name, "power/vpmsum");
+  }
+
+  #[test]
+  #[cfg(target_arch = "riscv64")]
+  fn test_riscv64_short_thresholds_use_accel_at_64b() {
+    let crc_names = RISCV64_ZVBC_TABLE.select_names(64);
+    #[cfg(feature = "crc32")]
+    assert_eq!(crc_names.crc32_ieee_name, "riscv64/zvbc");
+    #[cfg(feature = "crc32")]
+    assert_eq!(crc_names.crc32c_name, "riscv64/zvbc");
+
+    #[cfg(feature = "crc64")]
+    {
+      let crc64_names = RISCV64_CRC64_ZVBC_TABLE.select_names(64);
+      assert_eq!(crc64_names.crc64_xz_name, "riscv64/zvbc");
+      assert_eq!(crc64_names.crc64_nvme_name, "riscv64/zvbc");
+    }
   }
 
   #[test]

@@ -80,6 +80,19 @@ running_re = re.compile(r'^Running: cargo bench .+--bench (\S+)')
 noise_re = re.compile(r'^\s*(Updating|Downloading|Downloaded|Compiling|Compiled|Finished|Locking|Running (unittests|benches))\b|^warning\[')
 SEP = '\u2501' * 74
 
+def write_normalized_results(path, runner, body):
+    with open(path, 'w') as out:
+        out.write(f'date={date}\n')
+        out.write(f'time={time_str}\n')
+        out.write('mode=ci\n')
+        out.write(f'platform={runner}\n')
+        out.write(f'commit={commit}\n\n')
+        body = body.strip()
+        if body:
+            out.write(body)
+            if not body.endswith('\n'):
+                out.write('\n')
+
 for entry in sorted(os.listdir(work)):
     if not entry.startswith('benchmark-'):
         continue
@@ -91,9 +104,18 @@ for entry in sorted(os.listdir(work)):
     # Prefer pre-built results.txt
     pre = os.path.join(work, entry, 'results.txt')
     if os.path.isfile(pre):
-        import shutil
-        shutil.copy2(pre, results_path)
-        print(f'  {runner}: copied results.txt')
+        with open(pre) as f:
+            pre_lines = f.readlines()
+
+        body_start = 0
+        for i, line in enumerate(pre_lines):
+            if not line.strip():
+                body_start = i + 1
+                break
+
+        body = ''.join(pre_lines[body_start:])
+        write_normalized_results(results_path, runner, body)
+        print(f'  {runner}: normalized results.txt')
         continue
 
     # Fall back to parsing output.txt
@@ -119,16 +141,19 @@ for entry in sorted(os.listdir(work)):
                         break
             sections.append((i, bench_name, filt))
 
-    with open(results_path, 'w') as out:
-        out.write(f'date={date}\ntime={time_str}\nmode=ci\nplatform=linux-{runner}\ncommit={commit}\n\n')
-        for idx, (start_line, bench, filt) in enumerate(sections):
-            end_line = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines)
-            content_lines = [ansi_re.sub('', l) for l in lines[start_line + 1 : end_line] if not noise_re.match(ansi_re.sub('', l))]
-            content = ''.join(content_lines).strip()
-            out.write(f'{SEP}\nbench={bench}\n')
-            if filt:
-                out.write(f'filter={filt}\n')
-            out.write(f'{SEP}\n{content}\n\n')
+    section_chunks = []
+    for idx, (start_line, bench, filt) in enumerate(sections):
+        end_line = sections[idx + 1][0] if idx + 1 < len(sections) else len(lines)
+        content_lines = [ansi_re.sub('', l) for l in lines[start_line + 1 : end_line] if not noise_re.match(ansi_re.sub('', l))]
+        content = ''.join(content_lines).strip()
+        chunk = [SEP, f'bench={bench}']
+        if filt:
+            chunk.append(f'filter={filt}')
+        chunk.append(SEP)
+        chunk.append(content)
+        section_chunks.append('\n'.join(chunk).strip())
+
+    write_normalized_results(results_path, runner, '\n\n'.join(section_chunks))
 
     print(f'  {runner}: parsed {len(sections)} sections')
 
@@ -349,9 +374,9 @@ w('')
 
 # Scoreboard
 total = sum(total_wtl)
-pct = total_wtl[0] * 100 // total if total else 0
+overall_pct = total_wtl[0] * 100 // total if total else 0
 w('## Overall Scoreboard\n')
-w(f'**{total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {pct}% win rate** ({total} comparisons)\n')
+w(f'**{total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {overall_pct}% win rate** ({total} comparisons)\n')
 
 # By Category
 w('### By Category\n')
@@ -389,8 +414,8 @@ for cat in CATEGORY_ORDER:
     for group in groups_by_cat[cat]:
         if group not in wtl_group: continue
         d = wtl_group[group]; t = sum(d)
-        pct = f'{d[0]*100.0/t:.1f}' if t else '0.0'
-        w(f'### {group} ({d[0]}W/{d[1]}T/{d[2]}L = {pct}%)\n')
+        group_pct = f'{d[0]*100.0/t:.1f}' if t else '0.0'
+        w(f'### {group} ({d[0]}W/{d[1]}T/{d[2]}L = {group_pct}%)\n')
 
         hdrs = ' | '.join(f'{PLATFORM_SHORT.get(p,p)}' for p in platforms)
         w(f'| Size | {hdrs} |')
@@ -409,7 +434,7 @@ with open(output_path, 'w') as f:
     f.write('\n'.join(o) + '\n')
 
 # Summary to stdout
-print(f'\n  Overall: {total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {pct}% win rate ({total} comparisons)')
+print(f'\n  Overall: {total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {overall_pct}% win rate ({total} comparisons)')
 for cat in CATEGORY_ORDER:
     if cat not in wtl_cat: continue
     d = wtl_cat[cat]; t = sum(d)
