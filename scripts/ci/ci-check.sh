@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 
 maybe_disable_sccache
+apply_ci_resource_profile
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Infrastructure correctness checks
@@ -64,7 +65,11 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "📚 Building documentation..."
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+if [[ "${RSCRYPTO_CI_RESOURCE_PROFILE:-}" == "constrained" ]]; then
+  skip "rustdoc on constrained CI runners" "native check/clippy/test coverage retained"
+else
+  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

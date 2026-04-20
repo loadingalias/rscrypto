@@ -125,6 +125,35 @@ maybe_disable_sccache() {
   fi
 }
 
+apply_ci_resource_profile() {
+  case "${RSCRYPTO_CI_RESOURCE_PROFILE:-}" in
+    "" | default)
+      return 0
+      ;;
+    constrained)
+      local arch
+      arch="$(uname -m 2>/dev/null || echo unknown)"
+
+      if [[ -z "${CARGO_BUILD_JOBS:-}" ]]; then
+        export CARGO_BUILD_JOBS=2
+      fi
+
+      if [[ -z "${RSCRYPTO_TEST_THREADS:-}" ]]; then
+        export RSCRYPTO_TEST_THREADS="${RUST_TEST_THREADS:-1}"
+      fi
+
+      if [[ -z "${RUST_TEST_THREADS:-}" ]]; then
+        export RUST_TEST_THREADS="$RSCRYPTO_TEST_THREADS"
+      fi
+
+      echo "CI resource profile: constrained (${arch}); CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}; test threads=${RSCRYPTO_TEST_THREADS}"
+      ;;
+    *)
+      echo "WARNING: unknown RSCRYPTO_CI_RESOURCE_PROFILE=${RSCRYPTO_CI_RESOURCE_PROFILE}; ignoring."
+      ;;
+  esac
+}
+
 ensure_target() {
   local target=$1
   if ! rustup target list --installed 2>/dev/null | grep -q "^${target}$"; then
