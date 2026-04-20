@@ -3158,6 +3158,12 @@ impl Blake3XofReader {
     *out = &mut core::mem::take(out)[take..];
   }
 
+  #[inline]
+  fn fill_full_block_direct(&mut self, out: &mut [u8; OUTPUT_BLOCK_LEN]) {
+    self.root.emit_blocks_into(out);
+    self.root.counter = self.root.counter.wrapping_add(1);
+  }
+
   fn squeeze_general(&mut self, out: &mut &mut [u8]) {
     if self.position_within_block != 0 {
       self.fill_one_block(out);
@@ -3186,6 +3192,16 @@ impl Xof for Blake3XofReader {
 
     if out.len() <= OUT_LEN && self.root.counter == 0 && self.position_within_block == 0 {
       self.fill_root_hash_prefix(&mut out);
+      return;
+    }
+
+    if out.len() == OUTPUT_BLOCK_LEN && self.position_within_block == 0 {
+      // Exact one-block reads can write directly into the caller buffer.
+      let out: &mut [u8; OUTPUT_BLOCK_LEN] = match out.try_into() {
+        Ok(out) => out,
+        Err(_) => unreachable!("length checked above"),
+      };
+      self.fill_full_block_direct(out);
       return;
     }
 
@@ -3813,42 +3829,56 @@ mod tests {
   }
 
   #[test]
-  fn short_xof_read32_matches_official_for_all_modes() {
-    for len in [1usize, 64, 1024] {
+  fn short_xof_reads_match_official_for_all_modes() {
+    for len in [0usize, 1, 64, 1024] {
       let input = input_pattern(len);
 
-      let mut plain = Blake3::new();
-      plain.update(&input);
-      let mut plain_xof = plain.finalize_xof();
-      let mut plain_out = [0u8; 32];
-      plain_xof.squeeze(&mut plain_out);
-      let mut plain_expected = [0u8; 32];
-      let mut plain_ref = blake3::Hasher::new();
-      plain_ref.update(&input);
-      plain_ref.finalize_xof().fill(&mut plain_expected);
-      assert_eq!(plain_out, plain_expected, "plain short xof mismatch len={len}");
+      for out_len in [32usize, 64] {
+        let mut plain = Blake3::new();
+        plain.update(&input);
+        let mut plain_xof = plain.finalize_xof();
+        let mut plain_out = [0u8; 64];
+        plain_xof.squeeze(&mut plain_out[..out_len]);
+        let mut plain_expected = [0u8; 64];
+        let mut plain_ref = blake3::Hasher::new();
+        plain_ref.update(&input);
+        plain_ref.finalize_xof().fill(&mut plain_expected[..out_len]);
+        assert_eq!(
+          &plain_out[..out_len],
+          &plain_expected[..out_len],
+          "plain short xof mismatch len={len} out_len={out_len}"
+        );
 
-      let mut keyed = Blake3::new_keyed(KEY);
-      keyed.update(&input);
-      let mut keyed_xof = keyed.finalize_xof();
-      let mut keyed_out = [0u8; 32];
-      keyed_xof.squeeze(&mut keyed_out);
-      let mut keyed_expected = [0u8; 32];
-      let mut keyed_ref = blake3::Hasher::new_keyed(KEY);
-      keyed_ref.update(&input);
-      keyed_ref.finalize_xof().fill(&mut keyed_expected);
-      assert_eq!(keyed_out, keyed_expected, "keyed short xof mismatch len={len}");
+        let mut keyed = Blake3::new_keyed(KEY);
+        keyed.update(&input);
+        let mut keyed_xof = keyed.finalize_xof();
+        let mut keyed_out = [0u8; 64];
+        keyed_xof.squeeze(&mut keyed_out[..out_len]);
+        let mut keyed_expected = [0u8; 64];
+        let mut keyed_ref = blake3::Hasher::new_keyed(KEY);
+        keyed_ref.update(&input);
+        keyed_ref.finalize_xof().fill(&mut keyed_expected[..out_len]);
+        assert_eq!(
+          &keyed_out[..out_len],
+          &keyed_expected[..out_len],
+          "keyed short xof mismatch len={len} out_len={out_len}"
+        );
 
-      let mut derive = Blake3::new_derive_key(CONTEXT);
-      derive.update(&input);
-      let mut derive_xof = derive.finalize_xof();
-      let mut derive_out = [0u8; 32];
-      derive_xof.squeeze(&mut derive_out);
-      let mut derive_expected = [0u8; 32];
-      let mut derive_ref = blake3::Hasher::new_derive_key(CONTEXT);
-      derive_ref.update(&input);
-      derive_ref.finalize_xof().fill(&mut derive_expected);
-      assert_eq!(derive_out, derive_expected, "derive short xof mismatch len={len}");
+        let mut derive = Blake3::new_derive_key(CONTEXT);
+        derive.update(&input);
+        let mut derive_xof = derive.finalize_xof();
+        let mut derive_out = [0u8; 64];
+        derive_xof.squeeze(&mut derive_out[..out_len]);
+        let mut derive_expected = [0u8; 64];
+        let mut derive_ref = blake3::Hasher::new_derive_key(CONTEXT);
+        derive_ref.update(&input);
+        derive_ref.finalize_xof().fill(&mut derive_expected[..out_len]);
+        assert_eq!(
+          &derive_out[..out_len],
+          &derive_expected[..out_len],
+          "derive short xof mismatch len={len} out_len={out_len}"
+        );
+      }
     }
   }
 
