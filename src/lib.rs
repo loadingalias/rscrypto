@@ -353,38 +353,22 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 // Exotic-architecture backends require nightly-only features (inline asm +
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
-// aarch64, wasm) compile on stable Rust 1.94.1.
-#![cfg_attr(
-  target_arch = "powerpc64",
-  feature(asm_experimental_arch, portable_simd, powerpc_target_feature)
-)]
-// s390x VGFM backend uses vector asm + portable SIMD.
-// NIGHTLY: s390x_target_feature enables MSA8 target_feature for AEGIS-256 VCIPH.
+// aarch64, wasm) compile on stable Rust 1.95.0.
+#![cfg_attr(target_arch = "powerpc64", feature(portable_simd, powerpc_target_feature))]
+// s390x VGFM backend uses vector asm + portable SIMD, and
+// target_feature_inline_always is still required for inline vector helpers.
 #![cfg_attr(
   target_arch = "s390x",
-  feature(asm_experimental_arch, asm_experimental_reg, portable_simd, s390x_target_feature)
+  feature(asm_experimental_reg, portable_simd, target_feature_inline_always)
 )]
 // riscv64 ZVBC backend uses vector target features + inline asm.
 // NIGHTLY: riscv_ext_intrinsics provides sha256{sum,sig}{0,1} Zknh intrinsics.
 #![cfg_attr(
   target_arch = "riscv64",
-  feature(
-    asm_experimental_arch,
-    asm_experimental_reg,
-    riscv_target_feature,
-    portable_simd,
-    riscv_ext_intrinsics
-  )
+  feature(asm_experimental_reg, riscv_target_feature, portable_simd, riscv_ext_intrinsics)
 )]
 // NIGHTLY: RISC-V scalar crypto intrinsics (Zknh) for SHA-256.
 #![cfg_attr(target_arch = "riscv32", feature(riscv_target_feature, riscv_ext_intrinsics))]
-// NIGHTLY: combine #[target_feature] + #[inline(always)] on aarch64 to guarantee
-// inlining of AES-CE/PMULL helpers into fused encrypt/decrypt scopes, eliminating
-// per-call register spills that dominate at small message sizes.
-#![cfg_attr(
-  any(target_arch = "aarch64", target_arch = "powerpc64", target_arch = "s390x"),
-  feature(target_feature_inline_always)
-)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 

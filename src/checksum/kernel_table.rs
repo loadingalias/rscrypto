@@ -61,25 +61,16 @@ pub(crate) fn active_crc64_table() -> &'static KernelTable {
 const FAST_PATH_MAX: usize = 7;
 
 /// Internal one-shot CRC-64/XZ helper used by trait impls.
-// Fast path and dispatch are split so the inliner keeps the ≤7B path tight
-// instead of carrying the `active_crc64_table()` + indirect-call slow path
-// in the same function body. Mirrors `xxh3::dispatch::hash64_with_seed`.
 #[cfg(feature = "crc64")]
 #[inline(always)]
 pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return 0;
     }
     return crate::checksum::crc64::portable::crc64_xz_bytewise(!0, data) ^ !0;
   }
-  crc64_xz_dispatch(data)
-}
-
-#[cfg(feature = "crc64")]
-#[cold]
-#[inline(never)]
-fn crc64_xz_dispatch(data: &[u8]) -> u64 {
   let table = active_crc64_table();
   let kernel = table.select_fns(data.len()).crc64_xz;
   kernel(!0, data) ^ !0
@@ -90,18 +81,12 @@ fn crc64_xz_dispatch(data: &[u8]) -> u64 {
 #[inline(always)]
 pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return 0;
     }
     return crate::checksum::crc64::portable::crc64_nvme_bytewise(!0, data) ^ !0;
   }
-  crc64_nvme_dispatch(data)
-}
-
-#[cfg(feature = "crc64")]
-#[cold]
-#[inline(never)]
-fn crc64_nvme_dispatch(data: &[u8]) -> u64 {
   let table = active_crc64_table();
   let kernel = table.select_fns(data.len()).crc64_nvme;
   kernel(!0, data) ^ !0
@@ -112,6 +97,7 @@ fn crc64_nvme_dispatch(data: &[u8]) -> u64 {
 #[inline(always)]
 pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -150,13 +136,6 @@ pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
     }
   }
 
-  crc32_ieee_dispatch(data)
-}
-
-#[cfg(feature = "crc32")]
-#[cold]
-#[inline(never)]
-fn crc32_ieee_dispatch(data: &[u8]) -> u32 {
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc32_ieee;
   kernel(!0, data) ^ !0
@@ -167,6 +146,7 @@ fn crc32_ieee_dispatch(data: &[u8]) -> u32 {
 #[inline(always)]
 pub(crate) fn crc32c(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -197,13 +177,6 @@ pub(crate) fn crc32c(data: &[u8]) -> u32 {
     }
   }
 
-  crc32c_dispatch(data)
-}
-
-#[cfg(feature = "crc32")]
-#[cold]
-#[inline(never)]
-fn crc32c_dispatch(data: &[u8]) -> u32 {
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc32c;
   kernel(!0, data) ^ !0
@@ -215,18 +188,12 @@ fn crc32c_dispatch(data: &[u8]) -> u32 {
 pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return 0;
     }
     return crate::checksum::crc16::portable::crc16_ccitt_bytewise(0xFFFF, data) ^ 0xFFFF;
   }
-  crc16_ccitt_dispatch(data)
-}
-
-#[cfg(feature = "crc16")]
-#[cold]
-#[inline(never)]
-fn crc16_ccitt_dispatch(data: &[u8]) -> u16 {
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc16_ccitt;
   kernel(0xFFFF, data) ^ 0xFFFF
@@ -238,18 +205,12 @@ fn crc16_ccitt_dispatch(data: &[u8]) -> u16 {
 pub(crate) fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return 0;
     }
     return crate::checksum::crc16::portable::crc16_ibm_bytewise(0, data);
   }
-  crc16_ibm_dispatch(data)
-}
-
-#[cfg(feature = "crc16")]
-#[cold]
-#[inline(never)]
-fn crc16_ibm_dispatch(data: &[u8]) -> u16 {
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc16_ibm;
   kernel(0, data)
@@ -263,20 +224,12 @@ pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;
   if data.len() <= FAST_PATH_MAX {
+    core::hint::cold_path();
     if data.is_empty() {
       return INIT;
     }
     return crate::checksum::crc24::portable::crc24_openpgp_bytewise(INIT, data) & MASK;
   }
-  crc24_openpgp_dispatch(data)
-}
-
-#[cfg(feature = "crc24")]
-#[cold]
-#[inline(never)]
-fn crc24_openpgp_dispatch(data: &[u8]) -> u32 {
-  const INIT: u32 = 0x00B7_04CE;
-  const MASK: u32 = 0x00FF_FFFF;
   let table = active_table();
   let kernel = table.select_fns(data.len()).crc24_openpgp;
   kernel(INIT, data) & MASK

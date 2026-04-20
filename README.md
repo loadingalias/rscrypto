@@ -298,7 +298,7 @@ src/
 
 ## MSRV
 
-1.94.1 (edition 2024). Tested on stable and nightly.
+1.95.0 (edition 2024). Tested on stable and nightly.
 
 ## License
 
