@@ -184,6 +184,7 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
+        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
         just ci-check
         if [[ "${{ github.event_name }}" == "pull_request" ]]; then
           export RAIL_SINCE="${{ needs.rail-plan.outputs.base_ref }}"

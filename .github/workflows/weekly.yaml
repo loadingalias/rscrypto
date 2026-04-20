@@ -135,6 +135,7 @@ jobs:
         lscpu
         cat /proc/cpuinfo | head -50
       run_script: |
+        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
         just ci-check
         just test --all
 
