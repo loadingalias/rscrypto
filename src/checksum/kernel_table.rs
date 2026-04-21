@@ -3071,65 +3071,23 @@ mod riscv64_tables {
   };
 
   #[cfg(feature = "crc64")]
-  const fn crc64_only_set(
-    _base: KernelSet,
-    #[cfg(feature = "crc64")] crc64_xz: Crc64Fn,
-    #[cfg(feature = "crc64")] crc64_xz_name: &'static str,
-    #[cfg(feature = "crc64")] crc64_nvme: Crc64Fn,
-    #[cfg(feature = "crc64")] crc64_nvme_name: &'static str,
-  ) -> KernelSet {
-    KernelSet {
-      #[cfg(feature = "crc16")]
-      crc16_ccitt: _base.crc16_ccitt,
-      #[cfg(feature = "crc16")]
-      crc16_ccitt_name: _base.crc16_ccitt_name,
-      #[cfg(feature = "crc16")]
-      crc16_ibm: _base.crc16_ibm,
-      #[cfg(feature = "crc16")]
-      crc16_ibm_name: _base.crc16_ibm_name,
-      #[cfg(feature = "crc24")]
-      crc24_openpgp: _base.crc24_openpgp,
-      #[cfg(feature = "crc24")]
-      crc24_openpgp_name: _base.crc24_openpgp_name,
-      #[cfg(feature = "crc32")]
-      crc32_ieee: _base.crc32_ieee,
-      #[cfg(feature = "crc32")]
-      crc32_ieee_name: _base.crc32_ieee_name,
-      #[cfg(feature = "crc32")]
-      crc32c: _base.crc32c,
-      #[cfg(feature = "crc32")]
-      crc32c_name: _base.crc32c_name,
-      crc64_xz,
-      crc64_xz_name,
-      crc64_nvme,
-      crc64_nvme_name,
-    }
-  }
-
-  // Zbc-only CRC64 is not a blanket "always portable" or "always CLMUL"
-  // decision. Slice16 wins on some in-order parts at modest sizes, while the
-  // multi-stream Zbc folds can still become the best available choice once the
-  // buffers are large enough to amortize the dependency chains.
+  // Keep CRC64 auto on portable slice-by-16 for now.
+  //
+  // The repo already learned this lesson once on in-order RISC-V cores: the
+  // dedicated Zbc folds can look attractive on paper but still lose badly to
+  // slice16 once the dependency chains and merge overhead hit real hardware.
+  //
+  // The current RISE benchmark data still shows broad CRC64 losses across
+  // 32B..1MiB, so until we add the planned RISE hwprobe snapshot / per-runner
+  // tuning proof, the release-grade auto policy should stay conservative.
   #[cfg(feature = "crc64")]
   pub static RISCV64_CRC64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,
     boundaries: [128, 4096, 16384],
     xs: PORTABLE_SET,
     s: PORTABLE_SET,
-    m: crc64_only_set(
-      PORTABLE_SET,
-      crc64_k::XZ_ZBC[1],
-      "riscv64/zbc-2way",
-      crc64_k::NVME_ZBC[1],
-      "riscv64/zbc-2way",
-    ),
-    l: crc64_only_set(
-      PORTABLE_SET,
-      crc64_k::XZ_ZBC[3],
-      "riscv64/zbc-8way",
-      crc64_k::NVME_ZBC[3],
-      "riscv64/zbc-8way",
-    ),
+    m: PORTABLE_SET,
+    l: PORTABLE_SET,
   };
 
   #[cfg(feature = "crc64")]
@@ -3137,21 +3095,9 @@ mod riscv64_tables {
     requires: crate::platform::caps::riscv::V.union(crate::platform::caps::riscv::ZVBC),
     boundaries: [63, 1024, 4096],
     xs: PORTABLE_SET,
-    s: crc64_only_set(PORTABLE_SET, crc64_k::XZ_ZVBC[0], "riscv64/zvbc", crc64_k::NVME_ZVBC[0], "riscv64/zvbc"),
-    m: crc64_only_set(
-      PORTABLE_SET,
-      crc64_k::XZ_ZVBC[1],
-      "riscv64/zvbc-2way",
-      crc64_k::NVME_ZVBC[1],
-      "riscv64/zvbc-2way",
-    ),
-    l: crc64_only_set(
-      PORTABLE_SET,
-      crc64_k::XZ_ZVBC[2],
-      "riscv64/zvbc-4way",
-      crc64_k::NVME_ZVBC[2],
-      "riscv64/zvbc-4way",
-    ),
+    s: PORTABLE_SET,
+    m: PORTABLE_SET,
+    l: PORTABLE_SET,
   };
 }
 
@@ -3205,7 +3151,7 @@ mod tests {
 
   #[test]
   #[cfg(target_arch = "riscv64")]
-  fn test_riscv64_short_thresholds_use_accel_at_64b() {
+  fn test_riscv64_short_thresholds_keep_crc64_portable_at_64b() {
     let crc_names = RISCV64_ZVBC_TABLE.select_names(64);
     #[cfg(feature = "crc32")]
     assert_eq!(crc_names.crc32_ieee_name, "riscv64/zvbc");
@@ -3215,8 +3161,8 @@ mod tests {
     #[cfg(feature = "crc64")]
     {
       let crc64_names = RISCV64_CRC64_ZVBC_TABLE.select_names(64);
-      assert_eq!(crc64_names.crc64_xz_name, "riscv64/zvbc");
-      assert_eq!(crc64_names.crc64_nvme_name, "riscv64/zvbc");
+      assert_eq!(crc64_names.crc64_xz_name, "portable/slice16");
+      assert_eq!(crc64_names.crc64_nvme_name, "portable/slice16");
     }
   }
 
