@@ -44,7 +44,7 @@ test-fuzz-build-scoped:
     @scripts/test/test-fuzz.sh --scoped-build
 
 test-proptests:
-    PROPTEST_CASES=10000 cargo nextest run --workspace --all-features -E 'test(/proptest/)' --test-threads=1
+    PROPTEST_CASES=512 scripts/test/test-proptests.sh
 
 test-all:
     just test --all

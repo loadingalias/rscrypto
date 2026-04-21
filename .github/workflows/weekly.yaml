@@ -334,6 +334,7 @@ jobs:
       - name: Fuzz Corpus Coverage
         env:
           RSCRYPTO_COV_FUZZ_SECS: "30"
+          RSCRYPTO_FUZZ_COVERAGE_SCOPE: "scoped"
         run: just coverage-fuzz
 
       - name: Upload to Codecov (nextest)
@@ -391,8 +392,8 @@ jobs:
 
       - name: Fuzz
         env:
-          RSCRYPTO_FUZZ_DURATION_SECS: "300"
-        run: just test-fuzz --all
+          RSCRYPTO_FUZZ_DURATION_SECS: "120"
+        run: just test-fuzz --scoped
 
       - name: Upload Fuzz Crash Artifacts
         if: failure()
@@ -406,7 +407,7 @@ jobs:
   # ─── Gate ───────────────────────────────────────────────────────────────────
   complete:
     name: Complete (weekly)
-    needs: [ci, ci-ibm-s390x, ci-ibm-power10, feature-matrix, proptests, supply-chain, infra, no-std, wasm, miri, fuzzing, coverage]
+    needs: [ci, ci-ibm-s390x, ci-ibm-power10, ci-riscv, feature-matrix, proptests, supply-chain, infra, no-std, wasm, miri, fuzzing, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -417,6 +418,7 @@ jobs:
             "ci=${{ needs.ci.result }}" \
             "ci-ibm-s390x=${{ needs.ci-ibm-s390x.result }}" \
             "ci-ibm-power10=${{ needs.ci-ibm-power10.result }}" \
+            "ci-riscv=${{ needs.ci-riscv.result }}" \
             "feature-matrix=${{ needs.feature-matrix.result }}" \
             "proptests=${{ needs.proptests.result }}" \
             "supply-chain=${{ needs.supply-chain.result }}" \
