@@ -213,12 +213,7 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
       g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          pbkdf2::pbkdf2_hmac::<sha2_010::Sha256>(
-            black_box(&password),
-            black_box(&salt),
-            iterations,
-            black_box(&mut out),
-          );
+          pbkdf2::pbkdf2_hmac::<sha2::Sha256>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
           black_box(out[0])
         })
       });
@@ -263,12 +258,7 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
       g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          pbkdf2::pbkdf2_hmac::<sha2_010::Sha512>(
-            black_box(&password),
-            black_box(&salt),
-            iterations,
-            black_box(&mut out),
-          );
+          pbkdf2::pbkdf2_hmac::<sha2::Sha512>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
           black_box(out[0])
         })
       });
