@@ -357,6 +357,23 @@ impl ExtendedPoint {
     Some((self.x.mul(&inv_z).normalize(), self.y.mul(&inv_z).normalize()))
   }
 
+  /// Map the Edwards point onto the Montgomery `u`-coordinate.
+  ///
+  /// `u = (Z + Y) / (Z - Y)` is the standard birational map from
+  /// Edwards25519 to Curve25519. The identity maps to the Montgomery
+  /// 2-torsion point `u = 0`.
+  #[must_use]
+  #[allow(dead_code)]
+  pub(crate) fn to_montgomery_u(self) -> FieldElement {
+    let numerator = self.z.add(&self.y);
+    let denominator = self.z.sub(&self.y);
+    if denominator.is_zero() {
+      FieldElement::ZERO
+    } else {
+      numerator.mul(&denominator.invert()).normalize()
+    }
+  }
+
   /// Compare two extended points without converting to affine coordinates.
   #[must_use]
   pub(crate) fn equals_projective(&self, rhs: &Self) -> bool {
@@ -534,8 +551,7 @@ impl fmt::Debug for ExtendedPoint {
 
 #[cfg(test)]
 mod tests {
-  use super::ExtendedPoint;
-  use crate::auth::ed25519::{Ed25519SecretKey, field::FieldElement, hash::ExpandedSecret};
+  use super::{ExtendedPoint, FieldElement};
 
   /// Generates the wNAF(8) basepoint table for IFMA verify.
   /// Run with `--nocapture` to print the table source.
@@ -719,8 +735,11 @@ mod tests {
     assert!(!basepoint().is_small_order());
   }
 
+  #[cfg(feature = "ed25519")]
   #[test]
   fn rfc8032_public_key_derivation_matches_vector_1() {
+    use crate::auth::ed25519::{Ed25519SecretKey, hash::ExpandedSecret};
+
     let secret = Ed25519SecretKey::from_bytes(decode_hex_32(
       "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
     ));

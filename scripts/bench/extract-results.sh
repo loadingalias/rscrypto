@@ -232,11 +232,16 @@ def category_for(group):
 
 # ── Parse results.txt files ──────────────────────────────────────────────────
 
-bench_id_re = re.compile(r'^([A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+)')
+# Criterion benchmark ids are path-like tokens at the start of the line, but
+# group segments may contain `=` (for example `pbkdf2-sha256/iters=100/...`).
+# Capture slash-delimited non-whitespace segments instead of the narrower
+# historical character class so size-indexed groups are not silently dropped.
+bench_id_re = re.compile(r'^(\S+(?:/\S+)+)')
 time_re = re.compile(r'time:\s+\[([^\]]+)\]')
 ansi_re = re.compile(r'\x1b\[[0-9;]*m')
 
-# data[group][size][platform][impl] = mid_ns
+# data[group][case][platform][impl] = mid_ns
+# where case is either an integer size bucket or the string "fixed".
 data = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
 meta = {}
 platforms_found = []
@@ -279,12 +284,23 @@ for root, dirs, files in os.walk(results_base):
                     mid_ns = to_ns(mid, unit)
                     if mid_ns is not None:
                         parts = current_id.split('/')
+                        case_key = None
+                        impl_name = None
+                        group = None
+
                         if len(parts) >= 3 and parts[-1].isdigit():
-                            size, impl_name = int(parts[-1]), parts[-2]
+                            case_key = int(parts[-1])
+                            impl_name = parts[-2]
                             group = '/'.join(parts[:-2])
+                        elif len(parts) >= 2:
+                            case_key = 'fixed'
+                            impl_name = parts[-1]
+                            group = '/'.join(parts[:-1])
+
+                        if group is not None:
                             if filter_pattern and filter_pattern not in group:
                                 current_id = None; continue
-                            data[group][size][platform_id][impl_name] = mid_ns
+                            data[group][case_key][platform_id][impl_name] = mid_ns
                 except (ValueError, IndexError):
                     pass
             current_id = None
@@ -352,8 +368,7 @@ if run_id:
 else:
     w(f'Source: {meta.get("mode","local")} run on {date_str} across {len(platforms)} platforms.')
 w(f'Commit: `{commit_short}`\n')
-w('This file covers the size-indexed competitive groups from the full `comp` sweep.')
-w('Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`, `ed25519/keypair-from-secret`, and `x25519`, are intentionally excluded from this canonical report.\n')
+w('This file covers the canonical competitive groups from the full `comp` sweep, including fixed-cost and size-indexed comparisons.\n')
 
 # Platforms
 w('## Platforms\n')
@@ -369,7 +384,7 @@ w('')
 w('## How to Read\n')
 w('- **Speedup** = competitor_time / rscrypto_time. Values above `1.00x` mean `rscrypto` is faster.')
 w('- **WIN**: speedup >= `1.03x`. **TIE**: `0.97x`--`1.03x`. **LOSS**: < `0.97x`.')
-w('- Group W/T/L totals count every competitor in the canonical size-indexed bench for that algorithm.')
+w('- Group W/T/L totals count every competitor in the canonical comparative bench for that algorithm.')
 w('')
 
 # Scoreboard
@@ -422,12 +437,18 @@ for cat in CATEGORY_ORDER:
         aligns = ' | '.join('----:' for _ in platforms)
         w(f'|------| {aligns} |')
 
-        for size in sorted(speedups[group].keys()):
+        def sort_case(case):
+            if case == 'fixed':
+                return (-1, 0)
+            return (0, case)
+
+        for size in sorted(speedups[group].keys(), key=sort_case):
             cells = []
             for p in platforms:
                 r = speedups[group][size].get(p)
                 cells.append(fmt_ratio(r) if r is not None else '-')
-            w(f'| {fmt_size(size)} | {" | ".join(cells)} |')
+            label = 'fixed' if size == 'fixed' else fmt_size(size)
+            w(f'| {label} | {" | ".join(cells)} |')
         w('')
 
 with open(output_path, 'w') as f:

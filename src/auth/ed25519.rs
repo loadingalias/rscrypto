@@ -30,19 +30,11 @@ use crate::{
   traits::{Digest, VerificationError, ct},
 };
 
-mod constants;
-pub(crate) mod field;
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod field_avx2;
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod field_ifma;
 pub(crate) mod hash;
-pub(crate) mod point;
-#[cfg(target_arch = "x86_64")]
-pub(crate) mod point_avx2;
-pub(crate) mod scalar;
-
 use self::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH};
+pub(crate) use crate::auth::curve25519_edwards::{constants, field, point, scalar};
+#[cfg(target_arch = "x86_64")]
+pub(crate) use crate::auth::curve25519_edwards::{field_avx2, field_ifma, point_avx2};
 
 // Keep the planned internal layout explicit at compile time.
 const _: usize = core::mem::size_of::<field::FieldElement>();
@@ -510,26 +502,7 @@ fn split_signature(signature: &Ed25519Signature) -> ([u8; 32], [u8; 32]) {
 // Dispatch: IFMA → AVX2 → portable
 // ---------------------------------------------------------------------------
 
-/// Dispatch `[s]B` (fixed-base scalar mul) to the fastest available path.
-#[must_use]
-pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
-  #[cfg(target_arch = "x86_64")]
-  {
-    let caps = crate::platform::caps();
-    if caps.has(crate::platform::caps::x86::AVX512IFMA)
-      && caps.has(crate::platform::caps::x86::AVX512VL)
-      && caps.has(crate::platform::caps::x86::AVX2)
-    {
-      // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
-      return unsafe { point_avx2::scalar_mul_basepoint_ifma(scalar_bytes) };
-    }
-    if caps.has(crate::platform::caps::x86::AVX2) {
-      // SAFETY: AVX2 confirmed by runtime detection.
-      return unsafe { point_avx2::scalar_mul_basepoint_avx2(scalar_bytes) };
-    }
-  }
-  point::ExtendedPoint::scalar_mul_basepoint(scalar_bytes)
-}
+pub(crate) use crate::auth::curve25519_edwards::basepoint_mul_dispatch;
 
 /// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
 /// available path.

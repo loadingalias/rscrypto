@@ -3,8 +3,7 @@
 Source: CI run [#24694081590](https://github.com/loadingalias/rscrypto/actions/runs/24694081590) on 2026-04-20 across 9 platforms.
 Commit: `70856ea1c10c`
 
-This file covers the size-indexed competitive groups from the full `comp` sweep.
-Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`, `ed25519/keypair-from-secret`, and `x25519`, are intentionally excluded from this canonical report.
+This file covers the canonical competitive groups from the full `comp` sweep, including fixed-cost and size-indexed comparisons.
 
 ## Platforms
 
@@ -24,11 +23,11 @@ Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`
 
 - **Speedup** = competitor_time / rscrypto_time. Values above `1.00x` mean `rscrypto` is faster.
 - **WIN**: speedup >= `1.03x`. **TIE**: `0.97x`--`1.03x`. **LOSS**: < `0.97x`.
-- Group W/T/L totals count every competitor in the canonical size-indexed bench for that algorithm.
+- Group W/T/L totals count every competitor in the canonical comparative bench for that algorithm.
 
 ## Overall Scoreboard
 
-**2726W / 681T / 220L = 75% win rate** (3627 comparisons)
+**2851W / 688T / 232L = 75% win rate** (3771 comparisons)
 
 ### By Category
 
@@ -42,22 +41,22 @@ Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`
 | Blake3 | 191 | 84 | 49 | 324 | 58% |
 | XXH3 | 81 | 52 | 29 | 162 | 50% |
 | RapidHash | 7 | 68 | 6 | 81 | 8% |
-| Auth | 294 | 66 | 27 | 387 | 75% |
+| Auth | 419 | 73 | 39 | 531 | 78% |
 | AEAD | 671 | 109 | 30 | 810 | 82% |
 
 ### By Platform
 
 | Platform | W | T | L | Total | Win % |
 |----------|--:|--:|--:|------:|------:|
-| Zen4 | 344 | 54 | 5 | 403 | 85% |
-| Zen5 | 316 | 70 | 17 | 403 | 78% |
-| SPR | 316 | 67 | 20 | 403 | 78% |
-| ICL | 316 | 70 | 17 | 403 | 78% |
-| Grav3 | 274 | 90 | 39 | 403 | 67% |
-| Grav4 | 274 | 88 | 41 | 403 | 67% |
-| s390x | 350 | 29 | 24 | 403 | 86% |
-| POWER10 | 270 | 120 | 13 | 403 | 66% |
-| RISE | 266 | 93 | 44 | 403 | 66% |
+| Zen4 | 357 | 56 | 6 | 419 | 85% |
+| Zen5 | 330 | 71 | 18 | 419 | 78% |
+| SPR | 329 | 68 | 22 | 419 | 78% |
+| ICL | 328 | 71 | 20 | 419 | 78% |
+| Grav3 | 289 | 90 | 40 | 419 | 68% |
+| Grav4 | 289 | 88 | 42 | 419 | 68% |
+| s390x | 365 | 29 | 25 | 419 | 87% |
+| POWER10 | 285 | 120 | 14 | 419 | 68% |
+| RISE | 279 | 95 | 45 | 419 | 66% |
 
 
 ---
@@ -473,6 +472,18 @@ Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`
 ---
 ## Auth
 
+### ed25519/keypair-from-secret (9W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| fixed | 2.02x | 1.65x | 1.21x | 1.72x | 1.35x | 1.31x | 1.10x | 1.45x | 1.60x |
+
+### ed25519/public-key-from-secret (9W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| fixed | 2.03x | 1.66x | 1.22x | 1.73x | 1.36x | 1.32x | 1.39x | 1.45x | 1.61x |
+
 ### ed25519/sign (36W/0T/0L = 100.0%)
 
 | Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
@@ -550,6 +561,60 @@ Fixed-cost benches without a size axis, such as `ed25519/public-key-from-secret`
 | 4KiB | 1.12x | 0.99x | 1.04x | 1.14x | 1.01x | 1.01x | 10.02x | 1.02x | 1.04x |
 | 64KiB | 1.12x | **0.97x** | 1.05x | 1.14x | 1.00x | 1.00x | 12.97x | 1.02x | 1.04x |
 | 1MiB | 1.12x | **0.97x** | 1.04x | 1.15x | 1.00x | 1.00x | 13.81x | 1.01x | 1.00x |
+
+### pbkdf2-sha256/iters=1 (10W/6T/2L = 55.6%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| 32B | 0.98x | 0.99x | 1.03x | **0.91x** | 3.51x | 3.53x | 1.75x | 1.15x | 0.97x |
+| 64B | 1.03x | 1.04x | 1.09x | **0.97x** | 3.35x | 3.34x | 2.29x | 1.18x | 1.01x |
+
+### pbkdf2-sha256/iters=100 (18W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| 32B | 1.13x | 1.08x | 1.12x | 1.12x | 3.44x | 3.42x | 2.33x | 1.31x | 1.11x |
+| 64B | 1.13x | 1.08x | 1.13x | 1.12x | 3.45x | 3.42x | 2.41x | 1.31x | 1.11x |
+
+### pbkdf2-sha256/iters=1000 (18W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| 32B | 1.13x | 1.08x | 1.12x | 1.12x | 3.45x | 3.43x | 2.64x | 1.33x | 1.09x |
+| 64B | 1.13x | 1.08x | 1.12x | 1.12x | 3.44x | 3.42x | 2.29x | 1.31x | 1.11x |
+
+### pbkdf2-sha512/iters=1 (18W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| 64B | 1.05x | 1.05x | 1.12x | 1.14x | 1.83x | 1.76x | 2.45x | 1.15x | 1.10x |
+| 128B | 1.05x | 1.07x | 1.12x | 1.16x | 1.83x | 1.74x | 3.13x | 1.18x | 1.09x |
+
+### pbkdf2-sha512/iters=100 (18W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| 64B | 1.10x | 1.10x | 1.16x | 1.20x | 1.87x | 1.79x | 3.12x | 1.29x | 1.19x |
+| 128B | 1.10x | 1.10x | 1.21x | 1.20x | 1.87x | 1.79x | 3.23x | 1.28x | 1.18x |
+
+### pbkdf2-sha512/iters=1000 (18W/0T/0L = 100.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| 64B | 1.10x | 1.11x | 1.14x | 1.20x | 1.87x | 1.79x | 3.20x | 1.27x | 1.19x |
+| 128B | 1.09x | 1.10x | 1.13x | 1.20x | 1.87x | 1.79x | 3.30x | 1.28x | 1.17x |
+
+### x25519/diffie-hellman (7W/1T/1L = 77.8%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| fixed | 1.08x | 1.10x | **0.95x** | 1.03x | 1.23x | 1.18x | 1.14x | 1.06x | 1.30x |
+
+### x25519/public-key-from-secret (0W/0T/9L = 0.0%)
+
+| Size | Zen4 | Zen5 | SPR | ICL | Grav3 | Grav4 | s390x | POWER10 | RISE |
+|------| ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: | ----: |
+| fixed | **0.33x** | **0.35x** | **0.32x** | **0.34x** | **0.38x** | **0.37x** | **0.39x** | **0.36x** | **0.49x** |
 
 
 ---

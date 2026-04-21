@@ -1014,8 +1014,7 @@ impl FieldElement2625x4 {
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 mod tests {
-  use super::*;
-  use crate::auth::ed25519::field::FieldElement;
+  use super::{FieldElement, *};
 
   fn test_field_elements() -> [FieldElement; 4] {
     let a = FieldElement::from_limbs([
@@ -1285,7 +1284,7 @@ mod tests {
 
     // SAFETY: AVX2 + IFMA availability checked by the runtime guard above.
     unsafe {
-      use crate::auth::ed25519::field_ifma::FieldElement51x4;
+      use super::super::field_ifma::FieldElement51x4;
 
       let avx2_lhs = FieldElement2625x4::new(&a, &b, &c, &d);
       let avx2_rhs = FieldElement2625x4::new(&e, &f, &g, &h);
@@ -1313,7 +1312,7 @@ mod tests {
 
     // SAFETY: AVX2 + IFMA availability checked by the runtime guard above.
     unsafe {
-      use crate::auth::ed25519::field_ifma::FieldElement51x4;
+      use super::super::field_ifma::FieldElement51x4;
 
       let avx2_packed = FieldElement2625x4::new(&a, &b, &c, &d);
       let avx2_result = avx2_packed.square();
