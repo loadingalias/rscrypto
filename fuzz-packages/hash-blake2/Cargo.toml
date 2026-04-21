@@ -1,0 +1,29 @@
+[package]
+name = "rscrypto-fuzz-hash-blake2"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "blake2b", "blake2s"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+blake2 = "0.11.0-rc.6"
+digest = "0.11"
+hmac = "0.13"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "hash_blake2b"
+path = "fuzz_targets/hash_blake2b.rs"
+doc = false
+
+[[bin]]
+name = "hash_blake2s"
+path = "fuzz_targets/hash_blake2s.rs"
+doc = false
