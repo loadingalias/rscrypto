@@ -97,7 +97,7 @@ jobs:
         case "${{ matrix.target.name }}" in
           *windows-msvc)
             echo "Windows commit lane: compile-only smoke"
-            cargo check --workspace --all-targets --all-features
+            cargo check --workspace --lib --all-features
             cargo test --workspace --all-features --no-run
             ;;
           *)
