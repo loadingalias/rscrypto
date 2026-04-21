@@ -79,6 +79,12 @@ jobs:
         uname -a
         lscpu
         if [[ "${{ matrix.setup_kind }}" == "default" ]]; then
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential pkg-config
+          fi
+          echo "CC=gcc" >> "$GITHUB_ENV"
+          echo "CXX=g++" >> "$GITHUB_ENV"
           cat /proc/cpuinfo | head -50
         fi
       run_script: |
