@@ -361,14 +361,9 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
   target_arch = "s390x",
   feature(asm_experimental_reg, portable_simd, target_feature_inline_always)
 )]
-// riscv64 ZVBC backend uses vector target features + inline asm.
-// NIGHTLY: riscv_ext_intrinsics provides sha256{sum,sig}{0,1} Zknh intrinsics.
-#![cfg_attr(
-  target_arch = "riscv64",
-  feature(asm_experimental_reg, riscv_target_feature, portable_simd, riscv_ext_intrinsics)
-)]
-// NIGHTLY: RISC-V scalar crypto intrinsics (Zknh) for SHA-256.
-#![cfg_attr(target_arch = "riscv32", feature(riscv_target_feature, riscv_ext_intrinsics))]
+// riscv64 backends still need nightly target-feature flags + inline asm.
+#![cfg_attr(target_arch = "riscv64", feature(asm_experimental_reg, riscv_target_feature))]
+#![cfg_attr(target_arch = "riscv32", feature(riscv_target_feature))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
