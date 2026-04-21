@@ -34,7 +34,7 @@ pub(crate) mod hash;
 use self::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH};
 pub(crate) use crate::auth::curve25519_edwards::{constants, field, point, scalar};
 #[cfg(target_arch = "x86_64")]
-pub(crate) use crate::auth::curve25519_edwards::{field_avx2, field_ifma, point_avx2};
+pub(crate) use crate::auth::curve25519_edwards::point_avx2;
 
 // Keep the planned internal layout explicit at compile time.
 const _: usize = core::mem::size_of::<field::FieldElement>();
