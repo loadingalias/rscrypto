@@ -717,6 +717,21 @@ fn words16_from_le_bytes_64(bytes: &[u8; 64]) -> [u32; 16] {
 }
 
 #[inline(always)]
+fn words16_to_le_bytes_64(words: &[u32; 16]) -> [u8; 64] {
+  let mut out = [0u8; 64];
+  if cfg!(target_endian = "little") {
+    // SAFETY: `words` is exactly 64 bytes, and `out` is exactly 64 bytes.
+    unsafe { ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), out.as_mut_ptr(), 64) };
+  } else {
+    for (idx, word) in words.iter().copied().enumerate() {
+      let offset = idx * 4;
+      out[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+    }
+  }
+  out
+}
+
+#[inline(always)]
 fn pow2_floor(n: usize) -> usize {
   debug_assert!(n != 0);
   1usize << (usize::BITS - 1 - n.leading_zeros())
@@ -1220,7 +1235,7 @@ impl OutputState {
     RootEmitState {
       kernel_id: self.kernel_id,
       input_chaining_value: self.input_chaining_value,
-      block_words: self.block_words,
+      block_bytes: words16_to_le_bytes_64(&self.block_words),
       counter: self.counter,
       block_len: self.block_len as u8,
       flags: self.flags as u8,
@@ -1231,7 +1246,7 @@ impl OutputState {
 #[derive(Clone, Copy)]
 struct RootEmitState {
   input_chaining_value: [u32; 8],
-  block_words: [u32; 16],
+  block_bytes: [u8; BLOCK_LEN],
   counter: u64,
   block_len: u8,
   flags: u8,
@@ -1247,13 +1262,13 @@ impl RootEmitState {
     key_words: [u32; 8],
     flags: u32,
   ) -> Self {
-    let mut block_words = [0u32; 16];
-    block_words[..8].copy_from_slice(&left_child_cv);
-    block_words[8..].copy_from_slice(&right_child_cv);
+    let mut block_bytes = [0u8; BLOCK_LEN];
+    block_bytes[..OUT_LEN].copy_from_slice(&words8_to_le_bytes(&left_child_cv));
+    block_bytes[OUT_LEN..].copy_from_slice(&words8_to_le_bytes(&right_child_cv));
     Self {
       kernel_id,
       input_chaining_value: key_words,
-      block_words,
+      block_bytes,
       counter: 0,
       block_len: BLOCK_LEN as u8,
       flags: (PARENT | flags) as u8,
@@ -1262,10 +1277,10 @@ impl RootEmitState {
 
   #[inline]
   fn emit_one_block(&self, out: &mut [u8; OUTPUT_BLOCK_LEN]) {
-    kernels::root_output_block_words(
+    kernels::root_output_block_bytes(
       self.kernel_id,
       &self.input_chaining_value,
-      &self.block_words,
+      &self.block_bytes,
       self.counter,
       u32::from(self.block_len),
       u32::from(self.flags) | ROOT,
@@ -1282,34 +1297,17 @@ impl RootEmitState {
     debug_assert!(offset <= OUT_LEN);
     debug_assert!(offset + out.len() <= OUT_LEN);
 
-    let words = first_8_words(kernels::compress_block_inline(
-      self.kernel_id,
-      &self.input_chaining_value,
-      &self.block_words,
-      0,
-      u32::from(self.block_len),
-      u32::from(self.flags) | ROOT,
-    ));
-
-    if cfg!(target_endian = "little") {
-      // SAFETY: `words` is exactly 32 bytes, and the caller bounds-checks the
-      // prefix range against `OUT_LEN`.
-      unsafe {
-        ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>().add(offset), out.as_mut_ptr(), out.len());
-      }
-      return;
-    }
-
-    let bytes = words8_to_le_bytes(&words);
-    out.copy_from_slice(&bytes[offset..offset + out.len()]);
+    let mut block = [0u8; OUTPUT_BLOCK_LEN];
+    self.emit_one_block(&mut block);
+    out.copy_from_slice(&block[offset..offset + out.len()]);
   }
 
   #[inline]
   fn emit_blocks_into(&self, out: &mut [u8]) {
-    kernels::root_output_blocks_bytes_into_inline(
+    kernels::root_output_blocks_from_block_bytes_into_inline(
       self.kernel_id,
       &self.input_chaining_value,
-      &self.block_words,
+      &self.block_bytes,
       self.counter,
       u32::from(self.block_len),
       u32::from(self.flags) | ROOT,
@@ -1570,7 +1568,7 @@ impl ChunkState {
     RootEmitState {
       kernel_id: self.kernel_id,
       input_chaining_value: self.chaining_value,
-      block_words: words16_from_le_bytes_64(&self.block),
+      block_bytes: self.block,
       counter: self.chunk_counter,
       block_len: self.block_len,
       flags: (self.flags | self.start_flag() | CHUNK_END) as u8,
@@ -3025,31 +3023,35 @@ impl Digest for Blake3 {
 fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> Blake3XofReader {
   debug_assert!(input.len() <= CHUNK_LEN);
 
-  // Tiny input (≤ 64B): zero-pad into block_words, no compression needed.
+  // Tiny input (≤ 64B): zero-pad into the final block bytes, no compression needed.
   if input.len() <= BLOCK_LEN {
-    let block_words = if cfg!(target_endian = "little") {
-      let mut out = [0u32; 16];
+    let block_bytes = {
+      let mut out = [0u8; BLOCK_LEN];
       if !input.is_empty() {
-        // SAFETY: `out` is 64 bytes, and `input.len() <= 64`.
-        unsafe {
-          ptr::copy_nonoverlapping(input.as_ptr(), out.as_mut_ptr().cast::<u8>(), input.len());
-        }
+        out[..input.len()].copy_from_slice(input);
       }
       out
-    } else {
-      let mut block = [0u8; BLOCK_LEN];
-      block[..input.len()].copy_from_slice(input);
-      words16_from_le_bytes_64(&block)
     };
 
     return Blake3XofReader::new(RootEmitState {
       kernel_id: kernel.id,
       input_chaining_value: key_words,
-      block_words,
+      block_bytes,
       counter: 0,
       block_len: input.len() as u8,
       flags: (flags | CHUNK_START | CHUNK_END) as u8,
     });
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  if input.len().is_multiple_of(BLOCK_LEN) {
+    // Mirror the x86 exact-block one-shot digest fast path so 256B..1KiB XOF
+    // does not fall back to per-block compression on the same lanes.
+    // SAFETY: the helper revalidates the x86 kernel allowlist, exact-block
+    // preconditions, and OS support before touching any target-specific path.
+    if let Some(reader) = unsafe { xof_oneshot_single_chunk_x86_exact_blocks(kernel, key_words, flags, input) } {
+      return reader;
+    }
   }
 
   // Single-chunk input (65–1024B): compress full blocks, store last block.
@@ -3073,27 +3075,16 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
     cv = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, block_flags));
   }
 
-  // Build the last block's words.
+  // Stage the final block bytes for the root-output reader.
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
-  let block_words = if cfg!(target_endian = "little") {
-    let mut out = [0u32; 16];
-    let offset = full_blocks * BLOCK_LEN;
-    // SAFETY: `last_len <= BLOCK_LEN` and source range is in-bounds.
-    unsafe {
-      ptr::copy_nonoverlapping(input.as_ptr().add(offset), out.as_mut_ptr().cast::<u8>(), last_len);
-    }
-    out
-  } else {
-    let mut block = [0u8; BLOCK_LEN];
-    let offset = full_blocks * BLOCK_LEN;
-    block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
-    words16_from_le_bytes_64(&block)
-  };
+  let mut block_bytes = [0u8; BLOCK_LEN];
+  let offset = full_blocks * BLOCK_LEN;
+  block_bytes[..last_len].copy_from_slice(&input[offset..offset + last_len]);
 
   Blake3XofReader::new(RootEmitState {
     kernel_id: kernel.id,
     input_chaining_value: cv,
-    block_words,
+    block_bytes,
     counter: 0,
     block_len: last_len as u8,
     flags: (flags | start | CHUNK_END) as u8,
@@ -3365,6 +3356,111 @@ fn use_avx512_four_block_avx2_fast_path() -> bool {
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
+#[must_use]
+fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: usize) -> bool {
+  if input_len == 0 || !input_len.is_multiple_of(BLOCK_LEN) {
+    return false;
+  }
+
+  let wide_pipeline_min_len = BLOCK_LEN.strict_mul(4);
+  match kernel.id {
+    kernels::Blake3KernelId::X86Avx2 => {
+      use_avx2_hash_many_one_chunk_fast_path()
+        && (!dispatch::hash_many_wide_pipeline() || input_len >= wide_pipeline_min_len)
+    }
+    kernels::Blake3KernelId::X86Avx512 => !dispatch::hash_many_wide_pipeline() || input_len >= wide_pipeline_min_len,
+    _ => false,
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+) -> Option<Blake3XofReader> {
+  debug_assert!(input.len() > BLOCK_LEN);
+  debug_assert!(input.len() <= CHUNK_LEN);
+  debug_assert!(input.len().is_multiple_of(BLOCK_LEN));
+
+  if !use_x86_hash_many_exact_block_one_chunk_fast_path(kernel, input.len()) {
+    return None;
+  }
+
+  let prefix_blocks = input.len() / BLOCK_LEN - 1;
+  debug_assert!(prefix_blocks != 0);
+  debug_assert!(flags <= u8::MAX as u32);
+  debug_assert!((flags | CHUNK_START) <= u8::MAX as u32);
+
+  let input_ptrs = [input.as_ptr()];
+  let mut cv_bytes = [0u8; OUT_LEN];
+  match kernel.id {
+    kernels::Blake3KernelId::X86Avx2 => {
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+      // SAFETY: this branch only runs for the AVX2 kernel on supported OSes,
+      // with one in-bounds exact-block input lane and a valid 32-byte output buffer.
+      unsafe {
+        x86_64::asm::hash_many_avx2(
+          input_ptrs.as_ptr(),
+          1,
+          prefix_blocks,
+          key_words.as_ptr(),
+          0,
+          false,
+          flags as u8,
+          (flags | CHUNK_START) as u8,
+          flags as u8,
+          cv_bytes.as_mut_ptr(),
+        );
+      }
+      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+      return None;
+    }
+    kernels::Blake3KernelId::X86Avx512 => {
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+      // SAFETY: this branch only runs for the AVX-512 kernel on supported OSes,
+      // with one in-bounds exact-block input lane and a valid 32-byte output buffer.
+      unsafe {
+        x86_64::asm::hash_many_avx512(
+          input_ptrs.as_ptr(),
+          1,
+          prefix_blocks,
+          key_words.as_ptr(),
+          0,
+          false,
+          flags as u8,
+          (flags | CHUNK_START) as u8,
+          flags as u8,
+          cv_bytes.as_mut_ptr(),
+        );
+      }
+      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+      return None;
+    }
+    _ => return None,
+  }
+
+  let mut block_bytes = [0u8; BLOCK_LEN];
+  let last_offset = prefix_blocks * BLOCK_LEN;
+  // SAFETY: `last_offset + BLOCK_LEN <= input.len()` by construction.
+  unsafe {
+    ptr::copy_nonoverlapping(input.as_ptr().add(last_offset), block_bytes.as_mut_ptr(), BLOCK_LEN);
+  }
+
+  Some(Blake3XofReader::new(RootEmitState {
+    kernel_id: kernel.id,
+    input_chaining_value: words8_from_le_bytes_32(&cv_bytes),
+    block_bytes,
+    counter: 0,
+    block_len: BLOCK_LEN as u8,
+    flags: (flags | CHUNK_END) as u8,
+  }))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
 unsafe fn digest_one_chunk_root_hash_words_x86(
   kernel: Kernel,
   key_words: [u32; 8],
@@ -3373,17 +3469,11 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
 ) -> [u32; 8] {
   debug_assert!(input.len() <= CHUNK_LEN);
 
-  // AVX2 exact-block one-chunk fast path. Keep this on a narrow allowlist
-  // only where CI has shown the path helps short inputs.
-  // On wide-pipeline CPUs (Zen 5, ICL) require ≥ 8 blocks (512 B): at 4 blocks
-  // the hash_many SIMD setup cost dominates. On narrow-pipeline AMD (Zen 4) the
-  // hash_many path is beneficial even at 4 blocks.
+  // AVX2 exact-block one-chunk fast path. The remaining gap is concentrated at
+  // the exact 4-block point (256 B), so wide-pipeline x86 also gets the path there.
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx2
-    && use_avx2_hash_many_one_chunk_fast_path()
-    && !input.is_empty()
-    && input.len().is_multiple_of(BLOCK_LEN)
-    && (!dispatch::hash_many_wide_pipeline() || input.len() >= BLOCK_LEN.strict_mul(8))
+    && use_x86_hash_many_exact_block_one_chunk_fast_path(kernel, input.len())
   {
     let blocks = input.len() / BLOCK_LEN;
     debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
@@ -3413,12 +3503,9 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     return words8_from_le_bytes_32(&out);
   }
 
-  // Same platform-aware threshold as the AVX2 path above.
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx512
-    && !input.is_empty()
-    && input.len().is_multiple_of(BLOCK_LEN)
-    && (!dispatch::hash_many_wide_pipeline() || input.len() >= BLOCK_LEN.strict_mul(8))
+    && use_x86_hash_many_exact_block_one_chunk_fast_path(kernel, input.len())
   {
     let blocks = input.len() / BLOCK_LEN;
     debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
@@ -3830,7 +3917,7 @@ mod tests {
 
   #[test]
   fn short_xof_reads_match_official_for_all_modes() {
-    for len in [0usize, 1, 64, 1024] {
+    for len in [0usize, 1, 64, 256, 1024] {
       let input = input_pattern(len);
 
       for out_len in [32usize, 64] {
@@ -3884,7 +3971,7 @@ mod tests {
 
   #[test]
   fn xof_two_32byte_reads_match_single_64byte_read() {
-    for len in [0usize, 1, 64, 1024] {
+    for len in [0usize, 1, 64, 256, 1024] {
       let input = input_pattern(len);
 
       let mut stepped_hasher = Blake3::new();
@@ -3909,7 +3996,7 @@ mod tests {
     const OUT_LEN: usize = 107;
     const SPLIT: usize = 44;
 
-    for len in [0usize, 2, 64, 1024] {
+    for len in [0usize, 2, 64, 256, 1024] {
       let input = input_pattern(len);
 
       let mut plain_single = Blake3::new();

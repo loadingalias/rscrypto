@@ -460,16 +460,16 @@ pub(crate) fn compress_block_inline(
 }
 
 #[inline]
-pub(crate) fn root_output_block_words(
+pub(crate) fn root_output_block_bytes(
   id: Blake3KernelId,
   chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
+  block_bytes: &[u8; BLOCK_LEN],
   counter: u64,
   block_len: u32,
   flags: u32,
   out: &mut [u8; 2 * OUT_LEN],
 ) {
-  root_output_block_words_inline(id, chaining_value, block_words, counter, block_len, flags, out);
+  root_output_block_bytes_inline(id, chaining_value, block_bytes, counter, block_len, flags, out);
 }
 
 #[inline(always)]
@@ -584,6 +584,42 @@ fn root_output_block_words_inline(
 
   let words = compress_block_inline(id, chaining_value, block_words, counter, block_len, flags);
   write_root_output_words(out, &words);
+}
+
+#[inline(always)]
+fn root_output_block_bytes_inline(
+  id: Blake3KernelId,
+  chaining_value: &[u32; 8],
+  block_bytes: &[u8; BLOCK_LEN],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: &mut [u8; 2 * OUT_LEN],
+) {
+  #[cfg(target_arch = "x86_64")]
+  {
+    match id {
+      Blake3KernelId::X86Avx512 | Blake3KernelId::X86Avx2 | Blake3KernelId::X86Sse41 => {
+        // SAFETY: all supported x86 root-output lanes here imply SSE4.1+SSSE3,
+        // and `out` is exactly one 64-byte output block.
+        unsafe {
+          super::x86_64::sse41::root_output_blocks1_bytes(
+            chaining_value,
+            block_bytes,
+            counter,
+            block_len,
+            flags,
+            out.as_mut_ptr(),
+          );
+        }
+        return;
+      }
+      _ => {}
+    }
+  }
+
+  let block_words = super::words16_from_le_bytes_64(block_bytes);
+  root_output_block_words_inline(id, chaining_value, &block_words, counter, block_len, flags, out);
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -844,6 +880,46 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
     output_block_counter = output_block_counter.wrapping_add(1);
     out = &mut out[2 * OUT_LEN..];
   }
+}
+
+#[inline(always)]
+pub(crate) fn root_output_blocks_from_block_bytes_into_inline(
+  id: Blake3KernelId,
+  chaining_value: &[u32; 8],
+  block_bytes: &[u8; BLOCK_LEN],
+  output_block_counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: &mut [u8],
+) {
+  debug_assert!(out.len().is_multiple_of(2 * OUT_LEN));
+
+  if out.len() == 2 * OUT_LEN {
+    // SAFETY: `out.len() == 64`, so the first 64 bytes can be reinterpreted as
+    // exactly one output block.
+    let block_out: &mut [u8; 2 * OUT_LEN] = unsafe { &mut *out.as_mut_ptr().cast::<[u8; 2 * OUT_LEN]>() };
+    root_output_block_bytes_inline(
+      id,
+      chaining_value,
+      block_bytes,
+      output_block_counter,
+      block_len,
+      flags,
+      block_out,
+    );
+    return;
+  }
+
+  let block_words = super::words16_from_le_bytes_64(block_bytes);
+  root_output_blocks_bytes_into_inline(
+    id,
+    chaining_value,
+    &block_words,
+    output_block_counter,
+    block_len,
+    flags,
+    out,
+  );
 }
 
 #[cfg(target_arch = "x86_64")]
