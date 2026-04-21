@@ -11,11 +11,11 @@ struct Pbkdf2Sha256Case {
 }
 
 fn oracle_sha256(password: &[u8], salt: &[u8], iterations: u32, out: &mut [u8]) {
-  pbkdf2::pbkdf2_hmac::<sha2_010::Sha256>(password, salt, iterations, out);
+  pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password, salt, iterations, out);
 }
 
 fn oracle_sha512(password: &[u8], salt: &[u8], iterations: u32, out: &mut [u8]) {
-  pbkdf2::pbkdf2_hmac::<sha2_010::Sha512>(password, salt, iterations, out);
+  pbkdf2::pbkdf2_hmac::<sha2::Sha512>(password, salt, iterations, out);
 }
 
 proptest! {
