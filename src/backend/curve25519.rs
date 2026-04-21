@@ -32,7 +32,8 @@ const MODULUS_N: u64 = MASK51;
 /// chains.
 const SUB_BIAS_0: u64 = ((1u64 << RADIX_BITS) - 19).wrapping_mul(16);
 const SUB_BIAS_N: u64 = MASK51.wrapping_mul(16);
-#[cfg(feature = "ed25519")]
+#[allow(dead_code)]
+#[cfg(any(feature = "ed25519", feature = "x25519"))]
 const SQRT_M1: FieldElement = FieldElement::from_limbs([
   1_718_705_420_411_056,
   234_908_883_556_509,
@@ -69,7 +70,8 @@ impl FieldElement {
   /// Borrow the raw radix-51 limbs.
   #[inline]
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) const fn limbs(&self) -> &[u64; FIELD_LIMBS] {
     &self.0
   }
@@ -177,7 +179,8 @@ impl FieldElement {
   /// Negate the field element modulo `2^255 - 19`.
   #[inline]
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn neg(&self) -> Self {
     Self::ZERO.sub(self)
   }
@@ -213,7 +216,8 @@ impl FieldElement {
 
   /// Decode a canonical 32-byte field element.
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn from_bytes(bytes: &[u8; 32]) -> Option<Self> {
     let mut acc = 0u128;
     let mut acc_bits = 0u32;
@@ -278,7 +282,8 @@ impl FieldElement {
 
   /// Return `true` when the canonical field element is zero.
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn is_zero(&self) -> bool {
     self.normalize().0.iter().all(|&limb| limb == 0)
   }
@@ -297,14 +302,16 @@ impl FieldElement {
 
   /// Return the low-bit sign of the canonical encoding.
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn is_negative(&self) -> bool {
     ((*self).to_bytes()[0] & 1) == 1
   }
 
   /// Square root in `GF(2^255 - 19)` when one exists.
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn sqrt(&self) -> Option<Self> {
     self.sqrt_ratio_i(&Self::ONE).and_then(|candidate| {
       if candidate.square().normalize() == self.normalize() {
@@ -354,14 +361,16 @@ impl FieldElement {
   }
 
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   fn pow_p58(&self) -> Self {
     let (t19, _) = self.pow22501();
     self.mul(&t19.pow2k(2))
   }
 
   #[must_use]
-  #[cfg(feature = "ed25519")]
+  #[allow(dead_code)]
+  #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn sqrt_ratio_i(&self, denominator: &Self) -> Option<Self> {
     let numerator = self.normalize();
     let denominator = denominator.normalize();

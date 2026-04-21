@@ -25,6 +25,7 @@ use core::{
 };
 
 use crate::{
+  auth::curve25519_edwards,
   backend::curve25519::{FieldElement, clamp_secret_scalar},
   traits::ct,
 };
@@ -380,7 +381,8 @@ fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> Fie
 #[inline]
 #[must_use]
 fn public_key_from_scalar(scalar_bytes: &[u8; POINT_LENGTH]) -> X25519PublicKey {
-  X25519PublicKey::from_u(montgomery_ladder(scalar_bytes, &X25519PublicKey::basepoint().u))
+  let point = curve25519_edwards::basepoint_mul_dispatch(scalar_bytes);
+  X25519PublicKey::from_u(point.to_montgomery_u())
 }
 
 #[must_use]

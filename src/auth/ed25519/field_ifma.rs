@@ -1261,8 +1261,7 @@ impl FieldElement51x4 {
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 mod tests {
-  use super::*;
-  use crate::auth::ed25519::field::FieldElement;
+  use super::{FieldElement, *};
 
   fn test_field_elements() -> [FieldElement; 4] {
     let a = FieldElement::from_limbs([

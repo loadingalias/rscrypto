@@ -1002,8 +1002,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 mod tests {
-  use super::*;
-  use crate::auth::ed25519::point::ExtendedPoint;
+  use super::{ExtendedPoint, *};
 
   fn basepoint() -> ExtendedPoint {
     ExtendedPoint::basepoint()
@@ -1220,6 +1219,7 @@ mod tests {
     }
   }
 
+  #[cfg(feature = "ed25519")]
   #[test]
   fn scalar_mul_basepoint_rfc8032_vector1() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1244,6 +1244,7 @@ mod tests {
     }
   }
 
+  #[cfg(feature = "ed25519")]
   #[test]
   fn straus_matches_scalar() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1257,7 +1258,7 @@ mod tests {
     let mut h = [0u8; 32];
     h[0] = 13;
 
-    let scalar_result = crate::auth::ed25519::point::straus_wnaf_basepoint_vartime(&s, &h, &a);
+    let scalar_result = super::super::point::straus_wnaf_basepoint_vartime(&s, &h, &a);
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
@@ -1269,6 +1270,7 @@ mod tests {
     }
   }
 
+  #[cfg(feature = "ed25519")]
   #[test]
   fn straus_matches_scalar_large_scalars() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1295,19 +1297,19 @@ mod tests {
 
     let r_point = ExtendedPoint::from_bytes(&r_bytes).unwrap();
     let a_point = ExtendedPoint::from_bytes(public.as_bytes()).unwrap();
-    let s_scalar = crate::auth::ed25519::scalar::from_canonical_bytes(&s_bytes).unwrap();
+    let s_scalar = super::super::scalar::from_canonical_bytes(&s_bytes).unwrap();
 
     let mut hasher = Sha512::new();
     hasher.update(&r_bytes);
     hasher.update(public.as_bytes());
     hasher.update(b"test message for straus");
-    let challenge = crate::auth::ed25519::scalar::reduce_bytes_mod_order(&hasher.finalize());
-    let neg_challenge = crate::auth::ed25519::scalar::negate_mod(&challenge);
-    let neg_challenge_bytes = crate::auth::ed25519::scalar::to_bytes(&neg_challenge);
-    let s_canonical = crate::auth::ed25519::scalar::to_bytes(&s_scalar);
+    let challenge = super::super::scalar::reduce_bytes_mod_order(&hasher.finalize());
+    let neg_challenge = super::super::scalar::negate_mod(&challenge);
+    let neg_challenge_bytes = super::super::scalar::to_bytes(&neg_challenge);
+    let s_canonical = super::super::scalar::to_bytes(&s_scalar);
 
     let scalar_result =
-      crate::auth::ed25519::point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point);
+      super::super::point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point);
 
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
