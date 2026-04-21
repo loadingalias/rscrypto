@@ -536,9 +536,9 @@ pub(crate) unsafe fn root_output_blocks4(
 /// Caller must ensure SSE4.1+SSSE3 is available and that `out` is valid for
 /// `64` writable bytes.
 #[target_feature(enable = "sse4.1,ssse3")]
-pub(crate) unsafe fn root_output_blocks1(
+unsafe fn root_output_blocks1_from_ptr(
   chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
+  block_ptr: *const u8,
   counter: u64,
   block_len: u32,
   flags: u32,
@@ -565,10 +565,10 @@ pub(crate) unsafe fn root_output_blocks1(
     );
 
     // Load message words row-wise
-    let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
-    let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
-    let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
-    let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
+    let m0 = _mm_loadu_si128(block_ptr.cast());
+    let m1 = _mm_loadu_si128(block_ptr.add(16).cast());
+    let m2 = _mm_loadu_si128(block_ptr.add(32).cast());
+    let m3 = _mm_loadu_si128(block_ptr.add(48).cast());
 
     // G function macro for row-wise operation
     macro_rules! g {
@@ -718,6 +718,51 @@ pub(crate) unsafe fn root_output_blocks1(
     _mm_storeu_si128(out.add(32).cast(), out2);
     _mm_storeu_si128(out.add(48).cast(), out3);
   }
+}
+
+/// Generate 1 root output block (64 bytes) using row-wise SIMD from a word block.
+///
+/// # Safety
+/// Caller must ensure SSE4.1+SSSE3 is available and that `out` is valid for
+/// `64` writable bytes.
+#[target_feature(enable = "sse4.1,ssse3")]
+pub(crate) unsafe fn root_output_blocks1(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // SAFETY: caller guarantees CPU features and output validity.
+  unsafe {
+    root_output_blocks1_from_ptr(
+      chaining_value,
+      block_words.as_ptr().cast::<u8>(),
+      counter,
+      block_len,
+      flags,
+      out,
+    )
+  }
+}
+
+/// Generate 1 root output block (64 bytes) using row-wise SIMD from raw block bytes.
+///
+/// # Safety
+/// Caller must ensure SSE4.1+SSSE3 is available and that `out` is valid for
+/// `64` writable bytes.
+#[target_feature(enable = "sse4.1,ssse3")]
+pub(crate) unsafe fn root_output_blocks1_bytes(
+  chaining_value: &[u32; 8],
+  block_bytes: &[u8; 64],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+) {
+  // SAFETY: caller guarantees CPU features and output validity.
+  unsafe { root_output_blocks1_from_ptr(chaining_value, block_bytes.as_ptr(), counter, block_len, flags, out) }
 }
 
 /// Generate 2 root output blocks (128 bytes) with consecutive counters.

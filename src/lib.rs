@@ -274,7 +274,7 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 ```
 "#
 )]
-//! `rscrypto` keeps the shipping library inside this repository:
+//! The shipping `rscrypto` library stays inside this repository.
 //!
 //! - no C FFI
 //! - no vendored C/C++ dependency chain
