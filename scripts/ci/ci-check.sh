@@ -14,6 +14,12 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "🔍 CI Quality Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Native CI quality lanes intentionally validate the shipped library surface
+# only. Bench, test, and example targets can pull in benchmark/oracle dev
+# tooling and foreign-language build steps that are outside the release crate.
+# Dedicated later steps still compile and run tests natively.
+CHECK_TARGETS=(--lib)
+
 # Prefer cargo-installed tools over any preinstalled runner tools.
 export PATH="$HOME/.cargo/bin:$PATH"
 
@@ -47,7 +53,7 @@ cargo fmt --all -- --check
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "🔧 Running cargo check..."
-cargo check --workspace --all-targets --all-features
+cargo check --workspace "${CHECK_TARGETS[@]}" --all-features
 
 echo ""
 echo "🧪 Running executable feature matrix..."
@@ -58,7 +64,7 @@ echo "🧪 Running executable feature matrix..."
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "📎 Running clippy..."
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace "${CHECK_TARGETS[@]}" --all-features -- -D warnings
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Documentation
