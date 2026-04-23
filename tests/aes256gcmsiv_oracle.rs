@@ -29,7 +29,7 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 12], aad: &[u8
 
   // Encrypt with rscrypto.
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours);
+  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
 
   // Encrypt with oracle.
   let mut oracle_buf = plaintext.to_vec();
@@ -99,6 +99,28 @@ fn aes256gcmsiv_oracle_large_input() {
   assert_matches_oracle(&key, &nonce, b"large", &plaintext);
 }
 
+#[test]
+fn aes256gcmsiv_is_deterministic_under_nonce_reuse() {
+  let key = Aes256GcmSivKey::from_bytes([0x5Au8; 32]);
+  let nonce = Nonce96::from_bytes([0xC3u8; 12]);
+  let cipher = Aes256GcmSiv::new(&key);
+  let aad = b"deterministic-aad";
+  let plaintext = b"same nonce, same plaintext, same tag";
+
+  let mut first = plaintext.to_vec();
+  let first_tag = cipher.encrypt_in_place(&nonce, aad, &mut first).unwrap();
+
+  let mut second = plaintext.to_vec();
+  let second_tag = cipher.encrypt_in_place(&nonce, aad, &mut second).unwrap();
+
+  assert_eq!(first, second, "ciphertext changed across identical AES-GCM-SIV inputs");
+  assert_eq!(
+    first_tag.as_bytes(),
+    second_tag.as_bytes(),
+    "tag changed across identical AES-GCM-SIV inputs"
+  );
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Forgery Rejection
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -110,7 +132,7 @@ fn aes256gcmsiv_rejects_modified_tag() {
   let cipher = Aes256GcmSiv::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).to_bytes();
+  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
   tag[0] ^= 1;
 
   assert!(
@@ -127,7 +149,7 @@ fn aes256gcmsiv_rejects_modified_ciphertext() {
   let cipher = Aes256GcmSiv::new(&key);
 
   let mut buffer = *b"tamper-detect";
-  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer);
+  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer).unwrap();
   buffer[0] ^= 1;
 
   assert!(cipher.decrypt_in_place(&nonce, b"", &mut buffer, &tag).is_err());
@@ -140,7 +162,7 @@ fn aes256gcmsiv_rejects_wrong_aad() {
   let cipher = Aes256GcmSiv::new(&key);
 
   let mut buffer = *b"aad-mismatch";
-  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer);
+  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer).unwrap();
 
   assert!(cipher.decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag).is_err());
 }

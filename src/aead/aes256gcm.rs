@@ -4,8 +4,10 @@
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce96, OpenError, aes, ghash, polyval};
-use crate::traits::{Aead, VerificationError, ct};
+#[cfg(target_arch = "x86_64")]
+use super::targets::{AeadBackend, AeadPrimitive, select_backend};
+use super::{AeadBufferError, LengthOverflow, Nonce96, OpenError, SealError, aes, ghash, polyval};
+use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = 32;
 const TAG_SIZE: usize = 16;
@@ -15,143 +17,9 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 /// In practice the portable CTR uses a 32-bit counter, limiting to (2^32 - 2) blocks.
 const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~64 GiB
 
-/// AES-256-GCM secret key (32 bytes).
-#[derive(Clone)]
-pub struct Aes256GcmKey([u8; Self::LENGTH]);
+define_aead_key_type!(Aes256GcmKey, KEY_SIZE, "AES-256-GCM secret key (32 bytes).");
 
-impl PartialEq for Aes256GcmKey {
-  fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for Aes256GcmKey {}
-
-impl Aes256GcmKey {
-  /// Key length in bytes.
-  pub const LENGTH: usize = KEY_SIZE;
-
-  /// Construct a typed key from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the key bytes.
-  #[inline]
-  #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the key bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl AsRef<[u8]> for Aes256GcmKey {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(Aes256GcmKey);
-
-impl fmt::Debug for Aes256GcmKey {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("Aes256GcmKey(****)")
-  }
-}
-
-impl Aes256GcmKey {
-  /// Construct a key by filling bytes from the provided closure.
-  ///
-  /// ```rust
-  /// # use rscrypto::Aes256GcmKey;
-  /// let key = Aes256GcmKey::generate(|buf| buf.fill(0xA5));
-  /// assert_eq!(key.as_bytes(), &[0xA5; Aes256GcmKey::LENGTH]);
-  /// ```
-  #[inline]
-  #[must_use]
-  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self(bytes)
-  }
-
-  impl_getrandom!();
-}
-
-impl_hex_fmt_secret!(Aes256GcmKey);
-impl_serde_bytes!(Aes256GcmKey);
-
-impl Drop for Aes256GcmKey {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.0);
-  }
-}
-
-/// AES-256-GCM authentication tag (16 bytes).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Aes256GcmTag([u8; Self::LENGTH]);
-
-impl Aes256GcmTag {
-  /// Tag length in bytes.
-  pub const LENGTH: usize = TAG_SIZE;
-
-  /// Construct a typed tag from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn to_bytes(self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl Default for Aes256GcmTag {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
-impl AsRef<[u8]> for Aes256GcmTag {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(Aes256GcmTag);
-
-impl fmt::Debug for Aes256GcmTag {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Aes256GcmTag(")?;
-    crate::hex::fmt_hex_lower(&self.0, f)?;
-    write!(f, ")")
-  }
-}
-
-impl_hex_fmt!(Aes256GcmTag);
-impl_serde_bytes!(Aes256GcmTag);
+define_aead_tag_type!(Aes256GcmTag, TAG_SIZE, "AES-256-GCM authentication tag (16 bytes).");
 
 /// AES-256-GCM AEAD (NIST SP 800-38D).
 ///
@@ -165,10 +33,15 @@ impl_serde_bytes!(Aes256GcmTag);
 /// forgery of future messages. There is no recovery — the key must be
 /// discarded.
 ///
-/// The 96-bit nonce space allows at most 2^32 encryptions per key when
-/// nonces are chosen randomly (birthday bound). For high-volume use,
-/// prefer a deterministic counter or one of:
+/// SP 800-38D §8.3 places limits on IV usage under one key:
+/// - random nonces: at most 2^32 encryptions per key (for collision-limiting risk),
+/// - deterministic nonces/counter mode: at most 2^48 messages per key.
 ///
+/// For high-volume use, prefer a deterministic construction with explicit
+/// key rotation near 2^48 calls, or one of:
+///
+/// - [`crate::aead::NonceCounter`] — 32-bit fixed prefix + monotonic counter for deterministic
+///   nonce issuance without allocations.
 /// - [`Aes256GcmSiv`](crate::Aes256GcmSiv) — nonce-misuse resistant (degrades to deterministic
 ///   encryption on reuse, but never leaks the auth key).
 /// - [`XChaCha20Poly1305`](crate::XChaCha20Poly1305) — 192-bit nonce makes random generation safe
@@ -184,19 +57,43 @@ impl_serde_bytes!(Aes256GcmTag);
 /// let cipher = Aes256Gcm::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf);
+/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf)?;
 /// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
-/// # Ok::<(), rscrypto::VerificationError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Tampering is reported as an opaque verification failure.
+///
+/// ```
+/// use rscrypto::{
+///   Aead, Aes256Gcm, Aes256GcmKey,
+///   aead::{Nonce96, OpenError},
+/// };
+///
+/// let key = Aes256GcmKey::from_bytes([0x42; 32]);
+/// let nonce = Nonce96::from_bytes([0x24; 12]);
+/// let cipher = Aes256Gcm::new(&key);
+///
+/// let mut sealed = [0u8; 5 + Aes256Gcm::TAG_SIZE];
+/// cipher.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// sealed[0] ^= 1;
+///
+/// let mut opened = [0u8; 5];
+/// assert_eq!(
+///   cipher.decrypt(&nonce, b"", &sealed, &mut opened),
+///   Err(OpenError::verification())
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Security
 ///
 /// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), all AES
 /// operations use constant-time hardware instructions. On RISC-V without
-/// hardware AES extensions (Zkne / Zvkned), encryption falls back to
-/// T-table lookups indexed by secret data, which are vulnerable to
-/// cache-timing side channels in shared-tenancy environments.
+/// hardware AES extensions (Zkne / Zvkned), encryption falls back to the
+/// constant-time portable implementation. That path is slower, but it
+/// avoids secret-indexed lookup tables.
 #[derive(Clone)]
 pub struct Aes256Gcm {
   /// Pre-expanded AES-256 round keys.
@@ -206,6 +103,8 @@ pub struct Aes256Gcm {
   /// Precomputed H powers [H^4, H^3, H^2, H] in the POLYVAL domain
   /// for 4-block wide GHASH processing.
   h_powers_rev: [u128; 4],
+  #[cfg(target_arch = "x86_64")]
+  backend: AeadBackend,
 }
 
 impl fmt::Debug for Aes256Gcm {
@@ -239,8 +138,7 @@ impl Aes256Gcm {
 
   /// Encrypt `buffer` in place and return the detached authentication tag.
   #[inline]
-  #[must_use]
-  pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> Aes256GcmTag {
+  pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> Result<Aes256GcmTag, SealError> {
     <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
   }
 
@@ -252,13 +150,13 @@ impl Aes256Gcm {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Aes256GcmTag,
-  ) -> Result<(), VerificationError> {
+  ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
   }
 
   /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
   #[inline]
-  pub fn encrypt(&self, nonce: &Nonce96, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
+  pub fn encrypt(&self, nonce: &Nonce96, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
     <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
@@ -297,7 +195,13 @@ fn make_j0(nonce: &Nonce96) -> [u8; 16] {
 /// GHASH processes: padded AAD || padded ciphertext || length block,
 /// where the length block is [len(A) in bits as u64 BE || len(C) in bits as u64 BE].
 #[inline]
-fn compute_tag(ek: &aes::Aes256EncKey, h: &[u8; 16], j0: &[u8; 16], aad: &[u8], ciphertext: &[u8]) -> [u8; TAG_SIZE] {
+fn compute_tag(
+  ek: &aes::Aes256EncKey,
+  h: &[u8; 16],
+  j0: &[u8; 16],
+  aad: &[u8],
+  ciphertext: &[u8],
+) -> Result<[u8; TAG_SIZE], LengthOverflow> {
   // GHASH(H, A, C)
   let mut gh = ghash::Ghash::new(h);
 
@@ -308,11 +212,7 @@ fn compute_tag(ek: &aes::Aes256EncKey, h: &[u8; 16], j0: &[u8; 16], aad: &[u8], 
   gh.update_padded(ciphertext);
 
   // Length block: [len(A) in bits as u64 BE || len(C) in bits as u64 BE].
-  let aad_bits = (aad.len() as u64).strict_mul(8);
-  let ct_bits = (ciphertext.len() as u64).strict_mul(8);
-  let mut length_block = [0u8; 16];
-  length_block[0..8].copy_from_slice(&aad_bits.to_be_bytes());
-  length_block[8..16].copy_from_slice(&ct_bits.to_be_bytes());
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
   gh.update_block(&length_block);
 
   let mut s = gh.finalize();
@@ -328,7 +228,7 @@ fn compute_tag(ek: &aes::Aes256EncKey, h: &[u8; 16], j0: &[u8; 16], aad: &[u8], 
   }
 
   ct::zeroize(&mut encrypted_j0);
-  s
+  Ok(s)
 }
 
 /// Compute the GCM authentication tag using 4-block wide GHASH.
@@ -344,7 +244,7 @@ fn compute_tag_wide(
   j0: &[u8; 16],
   aad: &[u8],
   ciphertext: &[u8],
-) -> [u8; TAG_SIZE] {
+) -> Result<[u8; TAG_SIZE], LengthOverflow> {
   let h_polyval = ghash::h_to_polyval(h);
 
   // Process AAD (zero-padded, block by block — usually small).
@@ -389,11 +289,7 @@ fn compute_tag_wide(
   }
 
   // Length block.
-  let aad_bits = (aad.len() as u64).strict_mul(8);
-  let ct_bits = (ciphertext.len() as u64).strict_mul(8);
-  let mut length_block = [0u8; 16];
-  length_block[0..8].copy_from_slice(&aad_bits.to_be_bytes());
-  length_block[8..16].copy_from_slice(&ct_bits.to_be_bytes());
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
   acc ^= u128::from_be_bytes(length_block);
   acc = polyval::clmul128_reduce(acc, h_polyval);
 
@@ -409,7 +305,7 @@ fn compute_tag_wide(
     i = i.strict_add(1);
   }
   ct::zeroize(&mut encrypted_j0);
-  s
+  Ok(s)
 }
 
 /// Increment the 32-bit big-endian counter in bytes 12..15.
@@ -422,6 +318,16 @@ fn inc32(block: &mut [u8; 16]) {
 // ---------------------------------------------------------------------------
 // Aead trait implementation
 // ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn resolve_backend() -> AeadBackend {
+  select_backend(
+    AeadPrimitive::Aes256Gcm,
+    crate::platform::arch(),
+    crate::platform::caps(),
+  )
+}
 
 impl Aead for Aes256Gcm {
   const KEY_SIZE: usize = KEY_SIZE;
@@ -446,7 +352,13 @@ impl Aead for Aes256Gcm {
     // Reverse: [H, H^2, H^3, H^4] -> [H^4, H^3, H^2, H]
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
 
-    Self { ek, h, h_powers_rev }
+    Self {
+      ek,
+      h,
+      h_powers_rev,
+      #[cfg(target_arch = "x86_64")]
+      backend: resolve_backend(),
+    }
   }
 
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
@@ -458,11 +370,8 @@ impl Aead for Aes256Gcm {
     Ok(Aes256GcmTag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
-    assert!(
-      (buffer.len() as u64) <= MAX_PLAINTEXT_LEN,
-      "AES-256-GCM plaintext exceeds maximum length"
-    );
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+    super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     let j0 = make_j0(nonce);
     let mut ctr_block = j0;
@@ -470,21 +379,18 @@ impl Aead for Aes256Gcm {
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
     #[cfg(target_arch = "x86_64")]
-    {
-      use crate::platform::caps;
-      let c = crate::platform::caps();
-      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
-        // SAFETY: VAES + VPCLMULQDQ availability verified via CPUID.
-        unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
-        let tag_bytes = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer);
-        return Aes256GcmTag::from_bytes(tag_bytes);
-      }
+    if self.backend == AeadBackend::X86VaesVpclmul {
+      // SAFETY: VAES + VPCLMULQDQ availability verified during backend resolution.
+      unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
+      let tag_bytes = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer)
+        .map_err(|_| SealError::too_large())?;
+      return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
 
     // Scalar path: single-block AES-NI/CE/portable + single-block GHASH.
     aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
-    let tag_bytes = compute_tag(&self.ek, &self.h, &j0, aad, buffer);
-    Aes256GcmTag::from_bytes(tag_bytes)
+    let tag_bytes = compute_tag(&self.ek, &self.h, &j0, aad, buffer).map_err(|_| SealError::too_large())?;
+    Ok(Aes256GcmTag::from_bytes(tag_bytes))
   }
 
   fn decrypt_in_place(
@@ -493,39 +399,33 @@ impl Aead for Aes256Gcm {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Self::Tag,
-  ) -> Result<(), VerificationError> {
-    assert!(
-      (buffer.len() as u64) <= MAX_PLAINTEXT_LEN,
-      "AES-256-GCM ciphertext exceeds maximum length"
-    );
+  ) -> Result<(), OpenError> {
+    super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     let j0 = make_j0(nonce);
 
     // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
-    {
-      use crate::platform::caps;
-      let c = crate::platform::caps();
-      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
-        // Verify tag BEFORE decryption (authenticate-then-decrypt).
-        let expected = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer);
-        if !ct::constant_time_eq(&expected, tag.as_bytes()) {
-          ct::zeroize(buffer);
-          return Err(VerificationError::new());
-        }
-        let mut ctr_block = j0;
-        inc32(&mut ctr_block);
-        // SAFETY: VAES availability verified via CPUID.
-        unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
-        return Ok(());
+    if self.backend == AeadBackend::X86VaesVpclmul {
+      // Verify tag BEFORE decryption (authenticate-then-decrypt).
+      let expected = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer)
+        .map_err(|_| OpenError::too_large())?;
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
       }
+      let mut ctr_block = j0;
+      inc32(&mut ctr_block);
+      // SAFETY: VAES availability verified during backend resolution.
+      unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
+      return Ok(());
     }
 
     // Scalar path: authenticate then decrypt.
-    let expected = compute_tag(&self.ek, &self.h, &j0, aad, buffer);
+    let expected = compute_tag(&self.ek, &self.h, &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
-      return Err(VerificationError::new());
+      return Err(OpenError::verification());
     }
     let mut ctr_block = j0;
     inc32(&mut ctr_block);
@@ -571,7 +471,7 @@ mod tests {
 
     // Encrypt.
     let mut buf = vec![];
-    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
     assert_eq!(tag.0, expected_tag, "Tag mismatch on encrypt");
 
     // Decrypt.
@@ -596,7 +496,7 @@ mod tests {
 
     // Encrypt.
     let mut buf = vec![0u8; 16];
-    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
     assert_eq!(buf, expected_ct, "Ciphertext mismatch");
     assert_eq!(tag.0, expected_tag, "Tag mismatch");
 
@@ -630,7 +530,7 @@ mod tests {
 
     // Encrypt.
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
     assert_eq!(buf, expected_ct, "Ciphertext mismatch");
     assert_eq!(tag.0, expected_tag, "Tag mismatch");
 
@@ -665,7 +565,7 @@ mod tests {
 
     // Encrypt.
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf).unwrap();
     assert_eq!(buf, expected_ct, "Ciphertext mismatch");
     assert_eq!(tag.0, expected_tag, "Tag mismatch");
 
@@ -682,7 +582,7 @@ mod tests {
     let cipher = Aes256Gcm::new(&key);
 
     let mut buf = vec![0u8; 16];
-    let mut tag = cipher.encrypt_in_place(&nonce, &[], &mut buf);
+    let mut tag = cipher.encrypt_in_place(&nonce, &[], &mut buf).unwrap();
     tag.0[0] ^= 1;
 
     let result = cipher.decrypt_in_place(&nonce, &[], &mut buf, &tag);
@@ -701,7 +601,7 @@ mod tests {
     let cipher = Aes256Gcm::new(&key);
 
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf).unwrap();
 
     // Wrong AAD.
     let result = cipher.decrypt_in_place(&nonce, b"wrong aad", &mut buf, &tag);
@@ -716,7 +616,7 @@ mod tests {
     let cipher = Aes256Gcm::new(&key);
 
     let mut buf = vec![0u8; 32];
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     buf[0] ^= 1;
     let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag);
@@ -733,7 +633,7 @@ mod tests {
     let cipher = Aes256Gcm::new(&key);
 
     let mut buf = plaintext.to_vec();
-    let tag = cipher.encrypt_in_place(&nonce, aad, &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, aad, &mut buf).unwrap();
     assert_ne!(&buf[..], &plaintext[..]);
 
     cipher.decrypt_in_place(&nonce, aad, &mut buf, &tag).unwrap();
@@ -810,7 +710,7 @@ mod tests {
     let cipher = Aes256Gcm::new(&key);
 
     let mut buf = *b"hello gcm";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     let wrong_nonce = Nonce96::from_bytes([0x08u8; 12]);
     let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
@@ -826,7 +726,7 @@ mod tests {
 
     let plaintext = *b"zero me on failure";
     let mut buf = plaintext;
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     // Corrupt the tag.
     let mut bad_tag = tag.to_bytes();

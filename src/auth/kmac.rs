@@ -41,31 +41,15 @@ impl Kmac256 {
 
   #[inline]
   fn absorb_key(state: &mut Cshake256, key: &[u8]) {
-    let (key_prefix, key_prefix_len) = left_encode(Self::key_bits(key));
-    let payload_len = key_prefix_len.strict_add(key.len());
+    let (key_prefix, key_prefix_len) = left_encode(crate::bytes_to_bits_saturating(key.len()));
+    let payload_len = key_prefix_len.saturating_add(key.len());
     state.absorb_bytepad_segments(&[&key_prefix[..key_prefix_len], key], payload_len);
-  }
-
-  #[inline]
-  fn key_bits(key: &[u8]) -> u64 {
-    match u64::try_from(key.len()) {
-      Ok(value) => value.strict_mul(8),
-      Err(_) => panic!("key length exceeds u64"),
-    }
-  }
-
-  #[inline]
-  fn output_bits(len: usize) -> u64 {
-    match u64::try_from(len) {
-      Ok(value) => value.strict_mul(8),
-      Err(_) => panic!("output length exceeds u64"),
-    }
   }
 
   #[inline]
   fn finalize_reader(&self, output_len: usize) -> impl Xof {
     let mut state = self.state.clone();
-    let (suffix, suffix_len) = right_encode(Self::output_bits(output_len));
+    let (suffix, suffix_len) = right_encode(crate::bytes_to_bits_saturating(output_len));
     state.update(&suffix[..suffix_len]);
     state.finalize_xof()
   }
@@ -105,23 +89,28 @@ impl Kmac256 {
   }
 
   /// Verify `expected` against the MAC of `data` in constant time.
-  pub fn verify(key: &[u8], customization: &[u8], data: &[u8], expected: &[u8]) -> Result<(), VerificationError> {
+  ///
+  /// This is the one-shot helper. For pre-release snapshots that inverted the
+  /// naming, use `verify_tag` for `(key, customization, data, expected)` and
+  /// [`Self::verify`] for an already-accumulated state.
+  pub fn verify_tag(key: &[u8], customization: &[u8], data: &[u8], expected: &[u8]) -> Result<(), VerificationError> {
     let mut state = Self::new(key, customization);
     state.update(data);
-    state.verify_tag(expected)
+    state.verify(expected)
   }
 
   /// Verify `expected` against the current KMAC256 output in constant time.
-  pub fn verify_tag(&self, expected: &[u8]) -> Result<(), VerificationError> {
+  ///
+  /// This checks the MAC for the bytes already absorbed into `self`; it does
+  /// not recompute from `(key, customization, data)` like [`Self::verify_tag`].
+  pub fn verify(&self, expected: &[u8]) -> Result<(), VerificationError> {
     let mut reader = self.finalize_reader(expected.len());
     let mut diff = 0u8;
     let mut block = [0u8; 64];
 
     for chunk in expected.chunks(block.len()) {
       reader.squeeze(&mut block[..chunk.len()]);
-      for (&lhs, &rhs) in block[..chunk.len()].iter().zip(chunk.iter()) {
-        diff |= lhs ^ rhs;
-      }
+      diff |= u8::from(!ct::constant_time_eq(&block[..chunk.len()], chunk));
     }
 
     ct::zeroize(&mut block);

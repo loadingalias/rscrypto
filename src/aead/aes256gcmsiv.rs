@@ -6,10 +6,11 @@ use core::fmt;
 
 #[cfg(target_arch = "x86_64")]
 use super::polyval::{accumulate_4blocks, precompute_powers};
-#[cfg(target_arch = "riscv64")]
-use super::targets::{AeadBackend, AeadPrimitive, select_backend};
-use super::{AeadBufferError, Nonce96, OpenError, aes, polyval};
-use crate::traits::{Aead, VerificationError, ct};
+use super::{
+  AeadBufferError, Nonce96, OpenError, SealError, aes, polyval,
+  targets::{AeadBackend, AeadPrimitive, select_backend},
+};
+use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = 32;
 const TAG_SIZE: usize = 16;
@@ -19,143 +20,13 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 /// Beyond this the 32-bit CTR counter wraps, causing keystream reuse.
 const MAX_PLAINTEXT_LEN: u64 = (1u64 << 36).strict_sub(32);
 
-/// AES-256-GCM-SIV secret key (32 bytes).
-#[derive(Clone)]
-pub struct Aes256GcmSivKey([u8; Self::LENGTH]);
+define_aead_key_type!(Aes256GcmSivKey, KEY_SIZE, "AES-256-GCM-SIV secret key (32 bytes).");
 
-impl PartialEq for Aes256GcmSivKey {
-  fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for Aes256GcmSivKey {}
-
-impl Aes256GcmSivKey {
-  /// Key length in bytes.
-  pub const LENGTH: usize = KEY_SIZE;
-
-  /// Construct a typed key from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the key bytes.
-  #[inline]
-  #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the key bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl AsRef<[u8]> for Aes256GcmSivKey {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(Aes256GcmSivKey);
-
-impl fmt::Debug for Aes256GcmSivKey {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("Aes256GcmSivKey(****)")
-  }
-}
-
-impl Aes256GcmSivKey {
-  /// Construct a key by filling bytes from the provided closure.
-  ///
-  /// ```rust
-  /// # use rscrypto::Aes256GcmSivKey;
-  /// let key = Aes256GcmSivKey::generate(|buf| buf.fill(0xA5));
-  /// assert_eq!(key.as_bytes(), &[0xA5; Aes256GcmSivKey::LENGTH]);
-  /// ```
-  #[inline]
-  #[must_use]
-  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self(bytes)
-  }
-
-  impl_getrandom!();
-}
-
-impl_hex_fmt_secret!(Aes256GcmSivKey);
-impl_serde_bytes!(Aes256GcmSivKey);
-
-impl Drop for Aes256GcmSivKey {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.0);
-  }
-}
-
-/// AES-256-GCM-SIV authentication tag (16 bytes).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Aes256GcmSivTag([u8; Self::LENGTH]);
-
-impl Aes256GcmSivTag {
-  /// Tag length in bytes.
-  pub const LENGTH: usize = TAG_SIZE;
-
-  /// Construct a typed tag from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn to_bytes(self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl Default for Aes256GcmSivTag {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
-impl AsRef<[u8]> for Aes256GcmSivTag {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(Aes256GcmSivTag);
-
-impl fmt::Debug for Aes256GcmSivTag {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "Aes256GcmSivTag(")?;
-    crate::hex::fmt_hex_lower(&self.0, f)?;
-    write!(f, ")")
-  }
-}
-
-impl_hex_fmt!(Aes256GcmSivTag);
-impl_serde_bytes!(Aes256GcmSivTag);
+define_aead_tag_type!(
+  Aes256GcmSivTag,
+  TAG_SIZE,
+  "AES-256-GCM-SIV authentication tag (16 bytes)."
+);
 
 /// AES-256-GCM-SIV AEAD (RFC 8452).
 ///
@@ -173,24 +44,47 @@ impl_serde_bytes!(Aes256GcmSivTag);
 /// let cipher = Aes256GcmSiv::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf);
+/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf)?;
 /// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
-/// # Ok::<(), rscrypto::VerificationError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Tampering is reported as an opaque verification failure.
+///
+/// ```
+/// use rscrypto::{
+///   Aead, Aes256GcmSiv, Aes256GcmSivKey,
+///   aead::{Nonce96, OpenError},
+/// };
+///
+/// let key = Aes256GcmSivKey::from_bytes([0x42; 32]);
+/// let nonce = Nonce96::from_bytes([0x24; 12]);
+/// let cipher = Aes256GcmSiv::new(&key);
+///
+/// let mut sealed = [0u8; 5 + Aes256GcmSiv::TAG_SIZE];
+/// cipher.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// sealed[0] ^= 1;
+///
+/// let mut opened = [0u8; 5];
+/// assert_eq!(
+///   cipher.decrypt(&nonce, b"", &sealed, &mut opened),
+///   Err(OpenError::verification())
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Security
 ///
 /// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), all AES
 /// operations use constant-time hardware instructions. On RISC-V without
-/// hardware AES extensions (Zkne / Zvkned), encryption falls back to
-/// T-table lookups indexed by secret data, which are vulnerable to
-/// cache-timing side channels in shared-tenancy environments.
+/// hardware AES extensions (Zkne / Zvkned), encryption falls back to the
+/// constant-time portable implementation. That path is slower, but it
+/// avoids secret-indexed lookup tables.
 #[derive(Clone)]
 pub struct Aes256GcmSiv {
   master_ek: aes::Aes256EncKey,
-  #[cfg(target_arch = "riscv64")]
-  riscv_backend: AeadBackend,
+  backend: AeadBackend,
 }
 
 impl fmt::Debug for Aes256GcmSiv {
@@ -224,8 +118,7 @@ impl Aes256GcmSiv {
 
   /// Encrypt `buffer` in place and return the detached authentication tag.
   #[inline]
-  #[must_use]
-  pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> Aes256GcmSivTag {
+  pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> Result<Aes256GcmSivTag, SealError> {
     <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
   }
 
@@ -237,13 +130,13 @@ impl Aes256GcmSiv {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Aes256GcmSivTag,
-  ) -> Result<(), VerificationError> {
+  ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
   }
 
   /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
   #[inline]
-  pub fn encrypt(&self, nonce: &Nonce96, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
+  pub fn encrypt(&self, nonce: &Nonce96, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
     <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
@@ -324,11 +217,7 @@ fn compute_tag(
   pv.update_padded(plaintext);
 
   // Length block: [aad_bits as u64 LE || plaintext_bits as u64 LE].
-  let aad_bits = (aad.len() as u64).strict_mul(8);
-  let pt_bits = (plaintext.len() as u64).strict_mul(8);
-  let mut length_block = [0u8; 16];
-  length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-  length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
   pv.update_block(&length_block);
 
   let mut s = pv.finalize();
@@ -423,11 +312,7 @@ fn compute_tag_riscv_with_reduce(
     acc = reduce(acc, h);
   }
 
-  let aad_bits = (aad.len() as u64).strict_mul(8);
-  let pt_bits = (plaintext.len() as u64).strict_mul(8);
-  let mut length_block = [0u8; 16];
-  length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-  length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
   acc ^= u128::from_le_bytes(length_block);
   acc = reduce(acc, h);
 
@@ -450,8 +335,8 @@ fn expand_key_riscv_for_backend(key: &[u8; 32], backend: AeadBackend) -> aes::Ae
     AeadBackend::Riscv64VectorCrypto => aes::aes256_expand_key_riscv_vector(key),
     AeadBackend::Riscv64ScalarCrypto => aes::aes256_expand_key_riscv_scalar(key),
     AeadBackend::Riscv64Vperm => aes::aes256_expand_key_riscv_vperm(key),
-    AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(key),
-    _ => unreachable!("non-RISC-V backend passed to expand_key_riscv_for_backend"),
+    AeadBackend::Portable | AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(key),
+    _ => aes::aes256_expand_key_riscv_ttable(key),
   }
 }
 
@@ -461,9 +346,8 @@ fn expand_message_key_riscv(enc_key: &[u8; 32], backend: AeadBackend) -> aes::Ae
   expand_key_riscv_for_backend(enc_key, backend)
 }
 
-#[cfg(target_arch = "riscv64")]
 #[inline]
-fn select_riscv_gcm_siv_backend() -> AeadBackend {
+fn resolve_backend() -> AeadBackend {
   select_backend(
     AeadPrimitive::Aes256GcmSiv,
     crate::platform::arch(),
@@ -477,7 +361,7 @@ fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
   match backend {
     AeadBackend::Riscv64VectorCrypto => RiscvPolyvalBackend::Vector,
     AeadBackend::Riscv64ScalarCrypto => RiscvPolyvalBackend::Scalar,
-    AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
+    AeadBackend::Portable | AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
       let caps = crate::platform::caps();
       if caps.has(crate::platform::caps::riscv::ZBC) || caps.has(crate::platform::caps::riscv::ZBKC) {
         RiscvPolyvalBackend::Scalar
@@ -485,7 +369,7 @@ fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
         RiscvPolyvalBackend::Portable
       }
     }
-    _ => unreachable!("non-RISC-V backend passed to riscv_polyval_backend"),
+    _ => RiscvPolyvalBackend::Portable,
   }
 }
 
@@ -541,7 +425,7 @@ fn decrypt_riscv(
   aad: &[u8],
   buffer: &mut [u8],
   tag: &Aes256GcmSivTag,
-) -> Result<(), VerificationError> {
+) -> Result<(), crate::traits::VerificationError> {
   let (mut auth_key, mut enc_key) = derive_keys(master_ek, nonce);
   let ek = expand_message_key_riscv(&enc_key, backend);
   let mut counter_block = tag.0;
@@ -554,7 +438,7 @@ fn decrypt_riscv(
 
   if !ct::constant_time_eq(&expected, tag.as_bytes()) {
     ct::zeroize(buffer);
-    return Err(VerificationError::new());
+    return Err(crate::traits::VerificationError::new());
   }
   Ok(())
 }
@@ -641,11 +525,7 @@ fn compute_tag_wide(
   }
 
   // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
-  let aad_bits = (aad.len() as u64).strict_mul(8);
-  let pt_bits = (plaintext.len() as u64).strict_mul(8);
-  let mut length_block = [0u8; 16];
-  length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-  length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
   acc ^= u128::from_le_bytes(length_block);
   acc = polyval::clmul128_reduce(acc, h);
 
@@ -764,11 +644,7 @@ unsafe fn encrypt_fused_aarch64(
     }
 
     // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
-    let aad_bits = (aad.len() as u64).strict_mul(8);
-    let pt_bits = (buffer.len() as u64).strict_mul(8);
-    let mut length_block = [0u8; 16];
-    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
 
@@ -823,7 +699,7 @@ unsafe fn decrypt_fused_aarch64(
   aad: &[u8],
   buffer: &mut [u8],
   tag: &Aes256GcmSivTag,
-) -> Result<(), VerificationError> {
+) -> Result<(), crate::traits::VerificationError> {
   // SAFETY: caller has verified AES-CE availability.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
@@ -933,11 +809,7 @@ unsafe fn decrypt_fused_aarch64(
     }
 
     // Length block.
-    let aad_bits = (aad.len() as u64).strict_mul(8);
-    let pt_bits = (buffer.len() as u64).strict_mul(8);
-    let mut length_block = [0u8; 16];
-    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::aarch64_clmul128_reduce_inline(acc, h);
 
@@ -953,7 +825,7 @@ unsafe fn decrypt_fused_aarch64(
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
-      return Err(VerificationError::new());
+      return Err(crate::traits::VerificationError::new());
     }
     Ok(())
   }
@@ -1053,11 +925,7 @@ unsafe fn encrypt_fused_ppc(
     }
 
     // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
-    let aad_bits = (aad.len() as u64).strict_mul(8);
-    let pt_bits = (buffer.len() as u64).strict_mul(8);
-    let mut length_block = [0u8; 16];
-    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::ppc_clmul128_reduce_inline(acc, h);
 
@@ -1112,7 +980,7 @@ unsafe fn decrypt_fused_ppc(
   aad: &[u8],
   buffer: &mut [u8],
   tag: &Aes256GcmSivTag,
-) -> Result<(), VerificationError> {
+) -> Result<(), crate::traits::VerificationError> {
   // SAFETY: caller has verified POWER8 crypto availability.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
@@ -1222,11 +1090,7 @@ unsafe fn decrypt_fused_ppc(
     }
 
     // Length block.
-    let aad_bits = (aad.len() as u64).strict_mul(8);
-    let pt_bits = (buffer.len() as u64).strict_mul(8);
-    let mut length_block = [0u8; 16];
-    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::ppc_clmul128_reduce_inline(acc, h);
 
@@ -1242,7 +1106,7 @@ unsafe fn decrypt_fused_ppc(
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
-      return Err(VerificationError::new());
+      return Err(crate::traits::VerificationError::new());
     }
     Ok(())
   }
@@ -1338,11 +1202,7 @@ unsafe fn encrypt_fused_s390x(
     }
 
     // Length block: [aad_bits as u64 LE || pt_bits as u64 LE].
-    let aad_bits = (aad.len() as u64).strict_mul(8);
-    let pt_bits = (buffer.len() as u64).strict_mul(8);
-    let mut length_block = [0u8; 16];
-    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::s390x_clmul128_reduce_inline(acc, h);
 
@@ -1398,7 +1258,7 @@ unsafe fn decrypt_fused_s390x(
   aad: &[u8],
   buffer: &mut [u8],
   tag: &Aes256GcmSivTag,
-) -> Result<(), VerificationError> {
+) -> Result<(), crate::traits::VerificationError> {
   // SAFETY: caller has verified z/Vector + MSA availability.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
@@ -1504,11 +1364,7 @@ unsafe fn decrypt_fused_s390x(
     }
 
     // Length block.
-    let aad_bits = (aad.len() as u64).strict_mul(8);
-    let pt_bits = (buffer.len() as u64).strict_mul(8);
-    let mut length_block = [0u8; 16];
-    length_block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
-    length_block[8..16].copy_from_slice(&pt_bits.to_le_bytes());
+    let length_block = super::AeadByteLengths::from_usize(aad.len(), buffer.len()).to_le_bits_block();
     acc ^= u128::from_le_bytes(length_block);
     acc = polyval::s390x_clmul128_reduce_inline(acc, h);
 
@@ -1525,7 +1381,7 @@ unsafe fn decrypt_fused_s390x(
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
-      return Err(VerificationError::new());
+      return Err(crate::traits::VerificationError::new());
     }
     Ok(())
   }
@@ -1545,16 +1401,14 @@ impl Aead for Aes256GcmSiv {
   type Tag = Aes256GcmSivTag;
 
   fn new(key: &Self::Key) -> Self {
-    #[cfg(target_arch = "riscv64")]
-    let riscv_backend = select_riscv_gcm_siv_backend();
+    let backend = resolve_backend();
 
     Self {
       #[cfg(target_arch = "riscv64")]
-      master_ek: expand_key_riscv_for_backend(key.as_bytes(), riscv_backend),
+      master_ek: expand_key_riscv_for_backend(key.as_bytes(), backend),
       #[cfg(not(target_arch = "riscv64"))]
       master_ek: aes::aes256_expand_key(key.as_bytes()),
-      #[cfg(target_arch = "riscv64")]
-      riscv_backend,
+      backend,
     }
   }
 
@@ -1567,74 +1421,64 @@ impl Aead for Aes256GcmSiv {
     Ok(Aes256GcmSivTag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
-    assert!(
-      (buffer.len() as u64) <= MAX_PLAINTEXT_LEN,
-      "AES-256-GCM-SIV plaintext exceeds 2^36 - 32 bytes"
-    );
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+    super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
-    {
-      use crate::platform::caps;
-      let c = crate::platform::caps();
-      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        let ek = aes::aes256_expand_key(&enc_key);
-        let tag_bytes = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
-        let mut counter_block = tag_bytes;
-        counter_block[15] |= 0x80;
-        // SAFETY: VAES availability verified via CPUID.
-        unsafe { aes::aes256_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
-        ct::zeroize(&mut auth_key);
-        ct::zeroize(&mut enc_key);
-        return Aes256GcmSivTag::from_bytes(tag_bytes);
-      }
+    if self.backend == AeadBackend::X86VaesVpclmul {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      let ek = aes::aes256_expand_key(&enc_key);
+      let tag_bytes = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
+      let mut counter_block = tag_bytes;
+      counter_block[15] |= 0x80;
+      // SAFETY: VAES availability verified during backend resolution.
+      unsafe { aes::aes256_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
+      ct::zeroize(&mut auth_key);
+      ct::zeroize(&mut enc_key);
+      return Ok(Aes256GcmSivTag::from_bytes(tag_bytes));
     }
 
     // Fused path: entire encrypt in a single #[target_feature] scope.
     #[cfg(target_arch = "aarch64")]
-    {
-      if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        // SAFETY: AES-CE availability verified via HWCAP.
-        let tag_bytes = unsafe { encrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
-        return Aes256GcmSivTag::from_bytes(tag_bytes);
-      }
+    if matches!(
+      self.backend,
+      AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+    ) {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: AES-CE availability verified during backend resolution.
+      let tag_bytes = unsafe { encrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
+      return Ok(Aes256GcmSivTag::from_bytes(tag_bytes));
     }
 
     // Fused path: POWER8 crypto.
     #[cfg(target_arch = "powerpc64")]
-    {
-      if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        // SAFETY: POWER8 crypto availability verified via HWCAP.
-        let tag_bytes = unsafe { encrypt_fused_ppc(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
-        return Aes256GcmSivTag::from_bytes(tag_bytes);
-      }
+    if self.backend == AeadBackend::Power8Crypto {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: POWER8 crypto availability verified during backend resolution.
+      let tag_bytes = unsafe { encrypt_fused_ppc(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
+      return Ok(Aes256GcmSivTag::from_bytes(tag_bytes));
     }
 
     // Fused path: s390x z/Vector + MSA.
     #[cfg(target_arch = "s390x")]
-    {
-      let c = crate::platform::caps();
-      if c.has(crate::platform::caps::s390x::VECTOR) && c.has(crate::platform::caps::s390x::MSA) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
-        let tag_bytes = unsafe { encrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
-        return Aes256GcmSivTag::from_bytes(tag_bytes);
-      }
+    if self.backend == AeadBackend::S390xMsa {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: z/Vector + MSA availability verified during backend resolution.
+      let tag_bytes = unsafe { encrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
+      return Ok(Aes256GcmSivTag::from_bytes(tag_bytes));
     }
 
     #[cfg(target_arch = "riscv64")]
     {
-      match self.riscv_backend {
-        AeadBackend::Riscv64VectorCrypto
+      match self.backend {
+        AeadBackend::Portable
+        | AeadBackend::Riscv64VectorCrypto
         | AeadBackend::Riscv64ScalarCrypto
         | AeadBackend::Riscv64Vperm
         | AeadBackend::Riscv64Ttable => {
-          let tag_bytes = encrypt_riscv(&self.master_ek, self.riscv_backend, nonce, aad, buffer);
-          return Aes256GcmSivTag::from_bytes(tag_bytes);
+          let tag_bytes = encrypt_riscv(&self.master_ek, self.backend, nonce, aad, buffer);
+          return Ok(Aes256GcmSivTag::from_bytes(tag_bytes));
         }
         _ => {}
       }
@@ -1651,7 +1495,7 @@ impl Aead for Aes256GcmSiv {
     ct::zeroize(&mut auth_key);
     ct::zeroize(&mut enc_key);
 
-    Aes256GcmSivTag::from_bytes(tag_bytes)
+    Ok(Aes256GcmSivTag::from_bytes(tag_bytes))
   }
 
   fn decrypt_in_place(
@@ -1660,77 +1504,70 @@ impl Aead for Aes256GcmSiv {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Self::Tag,
-  ) -> Result<(), VerificationError> {
-    assert!(
-      (buffer.len() as u64) <= MAX_PLAINTEXT_LEN,
-      "AES-256-GCM-SIV ciphertext exceeds 2^36 - 32 bytes"
-    );
+  ) -> Result<(), OpenError> {
+    super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
     #[cfg(target_arch = "x86_64")]
-    {
-      use crate::platform::caps;
-      let c = crate::platform::caps();
-      if c.has(caps::x86::VAES_READY) && c.has(caps::x86::VPCLMUL_READY) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        let ek = aes::aes256_expand_key(&enc_key);
-        // Decrypt first (SIV pattern).
-        let mut counter_block = tag.0;
-        counter_block[15] |= 0x80;
-        // SAFETY: VAES availability verified via CPUID.
-        unsafe { aes::aes256_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
+    if self.backend == AeadBackend::X86VaesVpclmul {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      let ek = aes::aes256_expand_key(&enc_key);
+      // Decrypt first (SIV pattern).
+      let mut counter_block = tag.0;
+      counter_block[15] |= 0x80;
+      // SAFETY: VAES availability verified during backend resolution.
+      unsafe { aes::aes256_ctr32_encrypt_wide(&ek, &counter_block, buffer) };
 
-        // Verify tag over decrypted plaintext.
-        let expected = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
-        ct::zeroize(&mut auth_key);
-        ct::zeroize(&mut enc_key);
-        if !ct::constant_time_eq(&expected, tag.as_bytes()) {
-          ct::zeroize(buffer);
-          return Err(VerificationError::new());
-        }
-        return Ok(());
+      // Verify tag over decrypted plaintext.
+      let expected = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
+      ct::zeroize(&mut auth_key);
+      ct::zeroize(&mut enc_key);
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
       }
+      return Ok(());
     }
 
     // Fused path: entire decrypt in a single #[target_feature] scope.
     #[cfg(target_arch = "aarch64")]
-    {
-      if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        // SAFETY: AES-CE availability verified via HWCAP.
-        return unsafe { decrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
-      }
+    if matches!(
+      self.backend,
+      AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+    ) {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: AES-CE availability verified during backend resolution.
+      return unsafe { decrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) }
+        .map_err(OpenError::from);
     }
 
     // Fused path: POWER8 crypto.
     #[cfg(target_arch = "powerpc64")]
-    {
-      if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        // SAFETY: POWER8 crypto availability verified via HWCAP.
-        return unsafe { decrypt_fused_ppc(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
-      }
+    if self.backend == AeadBackend::Power8Crypto {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: POWER8 crypto availability verified during backend resolution.
+      return unsafe { decrypt_fused_ppc(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) }
+        .map_err(OpenError::from);
     }
 
     // Fused path: s390x z/Vector + MSA.
     #[cfg(target_arch = "s390x")]
-    {
-      let c = crate::platform::caps();
-      if c.has(crate::platform::caps::s390x::VECTOR) && c.has(crate::platform::caps::s390x::MSA) {
-        let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
-        // SAFETY: z/Vector + MSA availability verified via STFLE/HWCAP.
-        return unsafe { decrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) };
-      }
+    if self.backend == AeadBackend::S390xMsa {
+      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: z/Vector + MSA availability verified during backend resolution.
+      return unsafe { decrypt_fused_s390x(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) }
+        .map_err(OpenError::from);
     }
 
     #[cfg(target_arch = "riscv64")]
     {
-      match self.riscv_backend {
-        AeadBackend::Riscv64VectorCrypto
+      match self.backend {
+        AeadBackend::Portable
+        | AeadBackend::Riscv64VectorCrypto
         | AeadBackend::Riscv64ScalarCrypto
         | AeadBackend::Riscv64Vperm
         | AeadBackend::Riscv64Ttable => {
-          return decrypt_riscv(&self.master_ek, self.riscv_backend, nonce, aad, buffer, tag);
+          return decrypt_riscv(&self.master_ek, self.backend, nonce, aad, buffer, tag).map_err(OpenError::from);
         }
         _ => {}
       }
@@ -1749,7 +1586,7 @@ impl Aead for Aes256GcmSiv {
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
-      return Err(VerificationError::new());
+      return Err(OpenError::verification());
     }
 
     Ok(())
@@ -1940,7 +1777,7 @@ mod tests {
     let cipher = Aes256GcmSiv::new(&key);
 
     let mut buf = plaintext.clone();
-    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut buf).unwrap();
 
     // buf is now ciphertext, tag is separate.
     assert_ne!(buf, plaintext);

@@ -16,6 +16,7 @@ include = [
   "/LICENSE-APACHE",
   "/LICENSE-MIT",
   "/README.md",
+  "/docs/tasks/fips.md",
   "/examples/**",
   "/src/**",
   "!/src/**/*.md",
@@ -111,7 +112,6 @@ aead = ["aes-gcm", "aes-gcm-siv", "chacha20poly1305", "xchacha20poly1305", "aegi
 full = ["checksums", "hashes", "auth", "aead"]
 parallel = ["std", "blake3", "dep:rayon"]
 diag = ["std"]
-testing = []
 
 [dependencies]
 getrandom = { version = "0.4.2", optional = true }

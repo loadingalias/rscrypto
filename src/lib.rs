@@ -1,4 +1,4 @@
-//! Zero-dependency-by-default Rust checksums and hashes.
+//! Pure Rust cryptography. Hardware-accelerated. Zero dependencies.
 //!
 //! # Quick Start
 #![cfg_attr(
@@ -81,7 +81,7 @@ let mut kmac = Kmac256::new(b"shared-secret", b"svc=v1");
 kmac.update(b"auth");
 let mut tag32 = [0u8; 32];
 kmac.finalize_into(&mut tag32);
-assert!(Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
+assert!(Kmac256::verify_tag(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
 
 let alice = X25519SecretKey::from_bytes([7u8; 32]);
 let bob = X25519SecretKey::from_bytes([9u8; 32]);
@@ -113,7 +113,7 @@ chacha.encrypt(&nonce96, b"hdr", b"data", &mut sealed)?;
 let xchacha = XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x33; 32]));
 let nonce192 = Nonce192::from_bytes([0x44; Nonce192::LENGTH]);
 let mut detached = *b"data";
-let tag = xchacha.encrypt_in_place(&nonce192, b"hdr", &mut detached);
+let tag = xchacha.encrypt_in_place(&nonce192, b"hdr", &mut detached)?;
 xchacha.decrypt_in_place(&nonce192, b"hdr", &mut detached, &tag)?;
 assert_eq!(&detached, b"data");
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -247,14 +247,15 @@ assert!(secret_hex.starts_with("42"));
   doc = r#"
 ## Serialization
 
-All key, nonce, tag, and signature types round-trip through
-`from_bytes` / `to_bytes` / `as_bytes`:
+Public values round-trip through `from_bytes` / `to_bytes` / `as_bytes`.
+Secret values use `from_bytes` / `as_bytes` and require explicit
+`expose_secret()` opt-in for owned extraction:
 
 ```rust
 use rscrypto::ChaCha20Poly1305Key;
 
 let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-let raw: [u8; 32] = key.to_bytes();
+let raw: [u8; 32] = key.expose_secret().expose();
 let restored = ChaCha20Poly1305Key::from_bytes(raw);
 assert_eq!(key, restored);
 ```
@@ -285,14 +286,9 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //!
 //! # Performance Posture
 //!
-//! Benchmark results live in `benchmark_results/` organized by date, platform,
-//! and architecture. Run `just bench` locally or extract CI results with the
-//! `extract-bench` skill. On the April 14, 2026 CI sweep across 9 platforms:
-//! `2707W / 729T / 191L` = `75%` win rate (`3627` comparisons).
-//!
-//! The honest current claim is "competitive and often faster," not "already over
-//! the public-release performance bar." Ed25519 is also split rather than one-way:
-//! signing is ahead in the canonical sweep, while verification still trails.
+//! Benchmark snapshots are stored in `benchmark_results/` by date, platform, and
+//! architecture. Use `just bench` locally for fresh numbers and compare against the
+//! checked-in baselines when deciding release readiness.
 //!
 //! # Feature Flags
 //!
@@ -301,16 +297,16 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //! | `std` | Yes | Enables runtime CPU detection for optimal dispatch |
 //! | `alloc` | Yes | Enables buffered types (implied by `std`) |
 //! | `crc16`, `crc24`, `crc32`, `crc64` | No | Individual checksum families |
-//! | `sha2`, `sha3`, `blake3`, `ascon-hash` | No | Cryptographic hash leaves |
+//! | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash` | No | Cryptographic hash leaves |
 //! | `xxh3`, `rapidhash` | No | Fast non-cryptographic hash leaves |
-//! | `hmac`, `hkdf`, `kmac`, `ed25519`, `x25519` | No | Individual auth/KDF leaves |
+//! | `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519` | No | Individual auth/KDF, signatures, and key-exchange leaves |
 //! | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` | No | AEAD leaves |
 //! | `checksums` | No | All checksum leaves |
-//! | `crypto-hashes` | No | `sha2`, `sha3`, `blake3`, and `ascon-hash` |
+//! | `crypto-hashes` | No | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, and `ascon-hash` |
 //! | `fast-hashes` | No | `xxh3` and `rapidhash` |
 //! | `hashes` | No | `crypto-hashes` + `fast-hashes` |
 //! | `macs` | No | `hmac` and `kmac` |
-//! | `kdfs` | No | `hkdf` |
+//! | `kdfs` | No | `hkdf` and `pbkdf2` |
 //! | `signatures` | No | `ed25519` |
 //! | `key-exchange` | No | `x25519` |
 //! | `auth` | No | `macs`, `kdfs`, `signatures`, and `key-exchange` |
@@ -319,6 +315,31 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //! | `parallel` | No | Rayon-based parallel Blake3 hashing |
 //! | `getrandom` | No | `random()` constructors for keys and nonces |
 //! | `serde` | No | `Serialize`/`Deserialize` for keys, nonces, tags, and signatures |
+//! | `diag` | No | Dispatch introspection surfaces when diagnostics are enabled |
+//!
+//! # Compliance Posture
+//!
+//! `rscrypto` is a **primitives crate**, not a FIPS-validated module.
+//! This crate intentionally ships both FIPS-aligned and non-FIPS components in the same boundary.
+//! If your program requires FIPS module validation, run `rscrypto` inside your validated module
+//! boundary. ## FIPS-aligned surface (current)
+//!
+//! | Category | Items |
+//! |----------|-------|
+//! | Symmetric AEAD | `Aes256Gcm` |
+//! | Hash / XOF | `Sha*`, `Shake*` |
+//! | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
+//! | Signature / KEX | `Ed25519*`, `X25519*` |
+//!
+//! ## Outside module boundary (this release)
+//!
+//! | Category | Items |
+//! |----------|-------|
+//! | AEAD | `Aes256GcmSiv`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, `Aegis256` |
+//! | Hash / XOF | `Ascon*`, `Blake*` |
+//! | Non-crypto | `Crc*`, `Xxh3`, `RapidHash` |
+//!
+//! The full FIPS boundary matrix and roadmap are documented in `docs/tasks/fips.md`.
 //!
 //! # Examples
 //!
@@ -385,6 +406,9 @@ extern crate alloc;
 #[cfg(any(feature = "std", test))]
 extern crate std;
 
+#[macro_use]
+mod macros;
+
 // Internal modules (not published as separate crates)
 #[cfg(any(
   feature = "aes-gcm",
@@ -440,6 +464,8 @@ macro_rules! impl_xof_read {
   };
 }
 
+mod secret;
+
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
@@ -452,8 +478,19 @@ macro_rules! impl_xof_read {
 ))]
 pub mod hashes;
 
+#[cfg_attr(not(any(feature = "kmac", feature = "ascon-hash")), allow(dead_code))]
+#[inline]
+pub(crate) fn bytes_to_bits_saturating(len: usize) -> u64 {
+  match u64::try_from(len) {
+    Ok(value) => value.saturating_mul(8),
+    Err(_) => u64::MAX,
+  }
+}
+
 // ─── Checksum re-exports ────────────────────────────────────────────────────
 
+#[cfg(feature = "aead")]
+pub use aead::{AeadBufferError, OpenError};
 #[cfg(feature = "aegis256")]
 pub use aead::{Aegis256, Aegis256Key, Aegis256Tag};
 #[cfg(feature = "aes-gcm")]
@@ -466,10 +503,12 @@ pub use aead::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(feature = "xchacha20poly1305")]
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
+#[cfg(feature = "hkdf")]
+pub use auth::HkdfOutputLengthError;
 #[cfg(feature = "kmac")]
 pub use auth::Kmac256;
 #[cfg(feature = "ed25519")]
-pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};
+pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
 pub use auth::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
@@ -487,6 +526,8 @@ pub use checksum::{Crc32, Crc32C};
 #[cfg(feature = "crc64")]
 pub use checksum::{Crc64, Crc64Nvme};
 // ─── Hash re-exports ────────────────────────────────────────────────────────
+#[cfg(feature = "ascon-hash")]
+pub use hashes::crypto::ascon::AsconCxofCustomizationError;
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
 #[cfg(feature = "blake2b")]
@@ -522,6 +563,7 @@ pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
   feature = "x25519"
 ))]
 pub use hex::{DisplaySecret, InvalidHexError};
+pub use secret::SecretBytes;
 // ─── Trait re-exports ───────────────────────────────────────────────────────
 #[cfg(any(
   feature = "aes-gcm",
@@ -558,10 +600,6 @@ use rscrypto::DispatchInfo;
 
 ```compile_fail
 use rscrypto::kernel_for;
-```
-
-```compile_fail
-use rscrypto::HashKernelIntrospect;
 ```
 
 ```compile_fail
@@ -622,11 +660,11 @@ use rscrypto::checksum::buffered::BufferedCrc32C;
 use rscrypto::checksum::introspect::{DispatchInfo, kernel_for};
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
 use rscrypto::hashes::fast::{RapidHash64, RapidHashFast128, RapidHashFast64, Xxh3_64};
-use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
+use rscrypto::hashes::introspect::{KernelIntrospect, kernel_for as hash_kernel_for};
 use rscrypto::hashes::DigestReader;
 use rscrypto::{AsconXof, AsconXofReader, RapidHash, Xxh3};
 
-fn assert_hash_introspect<T: HashKernelIntrospect>() {}
+fn assert_hash_introspect<T: KernelIntrospect>() {}
 
 let _ = rscrypto::platform::describe();
 let _: Crc32Config = rscrypto::Crc32::config();
@@ -741,6 +779,9 @@ pub struct __ApiPatternAudit;
 //
 // Every public type must be Send + Sync + Debug.  Most must also be Clone.
 // These static assertions fail the build if any contract is broken.
+
+#[cfg(all(test, miri))]
+mod miri_shadow_tests;
 
 #[cfg(test)]
 mod send_sync_assertions {

@@ -21,10 +21,6 @@ pub enum AeadPrimitive {
   ChaCha20Poly1305,
   Aes256GcmSiv,
   Aes256Gcm,
-  /// Planned — no encrypt/decrypt implementation yet.
-  Aes128GcmSiv,
-  /// Planned — no encrypt/decrypt implementation yet.
-  Aes128Gcm,
   AsconAead128,
   Aegis256,
 }
@@ -40,13 +36,11 @@ impl AeadPrimitive {
   ];
 
   /// All public AEAD primitives, including interop companions.
-  pub const ALL: [Self; 8] = [
+  pub const ALL: [Self; 6] = [
     Self::XChaCha20Poly1305,
     Self::ChaCha20Poly1305,
     Self::Aes256GcmSiv,
     Self::Aes256Gcm,
-    Self::Aes128GcmSiv,
-    Self::Aes128Gcm,
     Self::AsconAead128,
     Self::Aegis256,
   ];
@@ -59,8 +53,6 @@ impl AeadPrimitive {
       Self::ChaCha20Poly1305 => "chacha20-poly1305",
       Self::Aes256GcmSiv => "aes-256-gcm-siv",
       Self::Aes256Gcm => "aes-256-gcm",
-      Self::Aes128GcmSiv => "aes-128-gcm-siv",
-      Self::Aes128Gcm => "aes-128-gcm",
       Self::AsconAead128 => "ascon-aead128",
       Self::Aegis256 => "aegis-256",
     }
@@ -77,10 +69,7 @@ impl AeadPrimitive {
   #[inline]
   #[must_use]
   pub const fn is_gcm_family(self) -> bool {
-    matches!(
-      self,
-      Self::Aes256GcmSiv | Self::Aes256Gcm | Self::Aes128GcmSiv | Self::Aes128Gcm
-    )
+    matches!(self, Self::Aes256GcmSiv | Self::Aes256Gcm)
   }
 }
 
@@ -114,8 +103,8 @@ pub enum AeadBackend {
   /// Hamburg vperm AES via `vrgather.vv` — practically constant-time.
   /// Used on RISC-V with V extension but without Zkne/Zvkned.
   Riscv64Vperm,
-  /// T-table AES (software) + optional Zbc scalar CLMUL for POLYVAL.
-  /// Last-resort fallback on RISC-V without V AND without crypto extensions.
+  /// Legacy bare-scalar RISC-V AES fallback label.
+  /// Retained for compatibility; runtime dispatch now prefers `Portable`.
   Riscv64Ttable,
 }
 
@@ -226,9 +215,6 @@ pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> A
       BenchLane::IbmS390x => AeadBackend::S390xMsa,
       BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
     },
-    AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
-      panic!("AES-128-GCM[-SIV] AEAD not yet implemented")
-    }
     AeadPrimitive::AsconAead128 => AeadBackend::Portable,
     AeadPrimitive::Aegis256 => match lane {
       BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Aesni,
@@ -249,9 +235,6 @@ pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadB
   match primitive {
     AeadPrimitive::XChaCha20Poly1305 | AeadPrimitive::ChaCha20Poly1305 => select_chacha_backend(arch, caps),
     AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm => select_gcm_backend(arch, caps),
-    AeadPrimitive::Aes128GcmSiv | AeadPrimitive::Aes128Gcm => {
-      todo!("AES-128-GCM[-SIV] AEAD: key schedule, encrypt, decrypt")
-    }
     AeadPrimitive::AsconAead128 => select_ascon_backend(arch),
     AeadPrimitive::Aegis256 => select_aegis_backend(arch, caps),
   }
@@ -356,8 +339,8 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
         // Hamburg vperm AES + optional scalar CLMUL POLYVAL (Zbc/Zbkc).
         AeadBackend::Riscv64Vperm
       } else {
-        // T-table last resort (bare scalar RISC-V).
-        AeadBackend::Riscv64Ttable
+        // Constant-time scalar fallback for bare RISC-V.
+        AeadBackend::Portable
       }
     }
     Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
@@ -418,8 +401,8 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
         // Hamburg vperm via vrgather.vv — practically constant-time.
         AeadBackend::Riscv64Vperm
       } else {
-        // T-table last resort (bare scalar RISC-V, no V, no Zkne).
-        AeadBackend::Riscv64Ttable
+        // Constant-time scalar fallback for bare RISC-V.
+        AeadBackend::Portable
       }
     }
     Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
@@ -583,13 +566,13 @@ mod tests {
       AeadBackend::Riscv64Vperm
     );
 
-    // Tier 4: T-table last resort (bare scalar, no V, no crypto)
+    // Tier 4: constant-time portable fallback (bare scalar, no V, no crypto)
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, Caps::NONE),
-      AeadBackend::Riscv64Ttable
+      AeadBackend::Portable
     );
 
-    // AEGIS: Zvkned → Zkne → vperm (V) → T-table
+    // AEGIS: Zvkned → Zkne → vperm (V) → portable
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZVKNED),
       AeadBackend::Riscv64VectorCrypto
@@ -604,7 +587,7 @@ mod tests {
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, Caps::NONE),
-      AeadBackend::Riscv64Ttable
+      AeadBackend::Portable
     );
 
     // ChaCha: V → Riscv64Vector
@@ -637,7 +620,7 @@ mod tests {
   #[test]
   fn helper_sets_remain_stable() {
     assert_eq!(AeadPrimitive::CORE.len(), 5);
-    assert_eq!(AeadPrimitive::ALL.len(), 8);
+    assert_eq!(AeadPrimitive::ALL.len(), 6);
     assert_eq!(BenchLane::ALL.len(), 8);
     assert!(AeadPrimitive::XChaCha20Poly1305.is_chacha_family());
     assert!(AeadPrimitive::Aes256Gcm.is_gcm_family());

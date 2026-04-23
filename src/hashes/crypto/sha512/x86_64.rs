@@ -21,24 +21,13 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
+use crate::hashes::util::Aligned64;
+
 /// K constants packed as 20 groups of 4 × u64, matching the 4 message vectors.
 /// Each group is added to the corresponding msg vector before extracting
 /// __m128i pairs for `sha512rnds2`.
 #[cfg(target_arch = "x86_64")]
-#[repr(C, align(64))]
-struct AlignedK256([[u64; 4]; 20]);
-
-#[cfg(target_arch = "x86_64")]
-impl core::ops::Deref for AlignedK256 {
-  type Target = [[u64; 4]; 20];
-  #[inline(always)]
-  fn deref(&self) -> &[[u64; 4]; 20] {
-    &self.0
-  }
-}
-
-#[cfg(target_arch = "x86_64")]
-static K4: AlignedK256 = AlignedK256([
+static K4: Aligned64<[[u64; 4]; 20]> = Aligned64([
   [
     0x428a2f98d728ae22,
     0x7137449123ef65cd,

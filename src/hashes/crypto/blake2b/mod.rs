@@ -56,6 +56,7 @@ const MAX_KEY_LEN: usize = 64;
 const MAX_OUTPUT_LEN: usize = 64;
 
 #[cfg(any(test, feature = "diag"))]
+#[allow(dead_code)]
 #[inline]
 #[must_use]
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
@@ -508,13 +509,9 @@ fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
 
 #[inline(always)]
 fn oneshot_hash_array<const N: usize>(nn: u8, key: &[u8], data: &[u8]) -> [u8; N] {
-  let mut out = MaybeUninit::<[u8; N]>::uninit();
-  // SAFETY: `oneshot_hash_into` fully initializes exactly `N` output bytes
-  // before returning, and the temporary out buffer is valid for mutable access.
-  unsafe {
-    oneshot_hash_into(nn, key, data, &mut *out.as_mut_ptr());
-    out.assume_init()
-  }
+  let mut out = [0u8; N];
+  oneshot_hash_into(nn, key, data, &mut out);
+  out
 }
 
 #[inline(always)]
@@ -525,24 +522,16 @@ fn oneshot_hash_array_with_params<const N: usize>(
   personal: &[u8; PERSONAL_LEN],
   data: &[u8],
 ) -> [u8; N] {
-  let mut out = MaybeUninit::<[u8; N]>::uninit();
-  // SAFETY: `oneshot_hash_into_with_params` fully initializes exactly `N`
-  // output bytes before returning.
-  unsafe {
-    oneshot_hash_into_with_params(nn, key, salt, personal, data, &mut *out.as_mut_ptr());
-    out.assume_init()
-  }
+  let mut out = [0u8; N];
+  oneshot_hash_into_with_params(nn, key, salt, personal, data, &mut out);
+  out
 }
 
 #[inline(always)]
 fn finalize_array<const N: usize>(core: &Core) -> [u8; N] {
-  let mut out = MaybeUninit::<[u8; N]>::uninit();
-  // SAFETY: `finalize_into` writes the full fixed-size digest into the output
-  // buffer before returning.
-  unsafe {
-    core.finalize_into(&mut *out.as_mut_ptr());
-    out.assume_init()
-  }
+  let mut out = [0u8; N];
+  core.finalize_into(&mut out);
+  out
 }
 
 impl Drop for Core {

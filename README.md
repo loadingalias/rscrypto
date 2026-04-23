@@ -52,7 +52,7 @@ assert_eq!(alice.diffie_hellman(&bob.public_key())?, bob.diffie_hellman(&alice.p
 let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
 let nonce = Nonce96::from_bytes([0x22; 12]);
 let mut buf = *b"data";
-let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf)?;
 cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag)?;
 assert_eq!(&buf, b"data");
 
@@ -183,11 +183,39 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | Constant-time verification | `ct::constant_time_eq` with `black_box` barrier on all MAC/AEAD/signature paths |
 | Zeroize on drop | All secret key types use volatile writes + compiler fence |
 | Opaque errors | `VerificationError` is zero-size, leaks no failure details |
-| No secret-dependent branching | Portable fallbacks avoid secret-indexed lookups (see T-table note below) |
+| No secret-dependent memory lookups | AES and AEGIS fallbacks use hardware or constant-time portable code |
 | Overflow safety | `strict_*` arithmetic + `overflow-checks = true` in release |
 | Buffer zeroize on auth failure | All AEAD decrypt paths wipe the output buffer before returning errors |
 
-**T-table note**: AES-based AEADs on s390x and RISC-V (without crypto extensions) use T-table lookups indexed by secret data. This is documented on the affected types. All other platforms use constant-time hardware AES.
+See [SECURITY_NOTES.md](SECURITY_NOTES.md) for nonce lifecycle, verification handling, and RISC-V backend guidance.
+
+## Compliance Posture
+
+`rscrypto` is a **primitives crate**, not a FIPS-validated module.
+It exposes approved, non-approved, and non-crypto components in one crate for flexibility.
+If you need a FIPS-validated module boundary, keep `rscrypto` inside your module or a higher-level `fips`
+wrapper; do not claim module validation from this crate alone.
+
+### Approved / boundary examples
+
+Inside a typical boundary, these are the NIST-aligned items:
+
+| Category | Examples |
+|---------|----------|
+| Symmetric AEAD | `Aes256Gcm` (SP 800-38D) |
+| Hash / XOF | `Sha*`, `Shake*` (`FIPS 180-4`, `FIPS 202`) |
+| MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
+| Signature / KEX | `Ed25519*`, `X25519*` |
+
+Non-approved in this release:
+
+| Category | Examples |
+|----------|----------|
+| Cipher variants / AEAD | `Aes256GcmSiv`, `Aegis256`, `ChaCha20Poly1305`, `XChaCha20Poly1305` |
+| Hashes | `Blake*`, `Ascon*` (`SHA`/FIPS boundary not yet established) |
+| Non-crypto | `Crc*`, `Xxh3`, `RapidHash` |
+
+For the full boundary matrix and FIPS-roadmap, see `docs/tasks/fips.md`.
 
 ## Feature Flags
 

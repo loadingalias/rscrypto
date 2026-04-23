@@ -57,6 +57,7 @@ pub(crate) struct Kernel {
   pub(crate) x86_compress_cv_bytes: X86CompressCvBytesFn,
   /// Kernel name for debugging/tuning.
   #[cfg(any(test, feature = "diag"))]
+  #[cfg_attr(test, allow(dead_code))]
   pub(crate) name: &'static str,
 }
 

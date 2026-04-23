@@ -3,8 +3,6 @@
 
 #[cfg(target_arch = "x86_64")]
 fn detect_x86_64() -> Detected {
-  use crate::platform::caps::x86;
-
   // Start with compile-time detected features (includes SSE2 baseline)
   let caps_static = caps_static();
 
@@ -29,6 +27,8 @@ fn detect_x86_64() -> Detected {
   // disable AVX-512 entirely unless the user explicitly overrides.
   #[cfg(feature = "std")]
   {
+    use crate::platform::caps::x86;
+
     if is_intel_hybrid(is_amd, family, model) && !hybrid_avx512_override() {
       // Clear all AVX-512 related capabilities to prevent kernel selection
       // from choosing AVX-512/VPCLMUL paths that could SIGILL on E-cores.
@@ -62,13 +62,13 @@ fn detect_x86_64() -> Detected {
 
 #[cfg(target_arch = "x86")]
 fn detect_x86() -> Detected {
-  use crate::platform::caps::x86;
-
   // Start with compile-time detected features
   let mut caps = caps_static();
 
   #[cfg(feature = "std")]
   {
+    use crate::platform::caps::x86;
+
     // SSE2 is not guaranteed on 32-bit x86, detect at runtime
     if std::arch::is_x86_feature_detected!("sse2") {
       caps |= x86::SSE2;

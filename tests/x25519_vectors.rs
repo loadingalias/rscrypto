@@ -14,12 +14,12 @@ fn iterative_x25519(iterations: usize) -> [u8; 32] {
   let mut u = X25519PublicKey::basepoint();
 
   for _ in 0..iterations {
-    let next = k.diffie_hellman(&u).unwrap().to_bytes();
-    u = X25519PublicKey::from_bytes(k.to_bytes());
+    let next = k.diffie_hellman(&u).unwrap().expose_secret().expose();
+    u = X25519PublicKey::from_bytes(*k.as_bytes());
     k = X25519SecretKey::from_bytes(next);
   }
 
-  k.to_bytes()
+  k.expose_secret().expose()
 }
 
 #[test]
@@ -32,7 +32,7 @@ fn rfc_7748_scalar_multiplication_vectors_match() {
   ));
   let expected = decode_hex_32("c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b4075577a28552");
 
-  assert_eq!(scalar.diffie_hellman(&public).unwrap().to_bytes(), expected);
+  assert_eq!(*scalar.diffie_hellman(&public).unwrap().as_bytes(), expected);
 
   let scalar = X25519SecretKey::from_bytes(decode_hex_32(
     "4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d",
@@ -42,7 +42,7 @@ fn rfc_7748_scalar_multiplication_vectors_match() {
   ));
   let expected = decode_hex_32("95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957");
 
-  assert_eq!(scalar.diffie_hellman(&public).unwrap().to_bytes(), expected);
+  assert_eq!(*scalar.diffie_hellman(&public).unwrap().as_bytes(), expected);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn rfc_7748_diffie_hellman_vector_matches() {
 
   assert_eq!(alice.public_key(), alice_public);
   assert_eq!(bob.public_key(), bob_public);
-  assert_eq!(alice_shared.to_bytes(), expected);
+  assert_eq!(*alice_shared.as_bytes(), expected);
   assert_eq!(alice_shared, bob_shared);
 }
 
@@ -144,7 +144,7 @@ fn public_keys_and_shared_secrets_match_x25519_dalek() {
     if dalek_shared.iter().all(|&byte| byte == 0) {
       assert_eq!(ours_shared, Err(X25519Error::new()));
     } else {
-      assert_eq!(ours_shared.unwrap().to_bytes(), dalek_shared);
+      assert_eq!(*ours_shared.unwrap().as_bytes(), dalek_shared);
     }
   }
 }
@@ -161,7 +161,7 @@ fn public_key_matches_basepoint_diffie_hellman() {
     let public = secret.public_key();
     let via_ladder = secret.diffie_hellman(&X25519PublicKey::basepoint()).unwrap();
 
-    assert_eq!(public.to_bytes(), via_ladder.to_bytes());
+    assert_eq!(public.to_bytes(), *via_ladder.as_bytes());
   }
 }
 

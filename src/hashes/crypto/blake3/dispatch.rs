@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 #[cfg(feature = "parallel")]
 use super::dispatch_tables::ParallelTable;
 #[cfg(any(

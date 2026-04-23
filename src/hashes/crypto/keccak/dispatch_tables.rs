@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 //! Tuned dispatch tables for Keccak-f[1600].
 //!
 //! This table controls which permutation kernel is used by SHA-3/SHAKE and

@@ -43,7 +43,8 @@ impl ConstantTimeEq for [u8] {
 ///
 /// Returns `true` if `a` and `b` have equal length and identical contents.
 /// The comparison examines every byte regardless of mismatches, preventing
-/// timing side-channels.
+/// timing side-channels for equal-length inputs. Length mismatches return
+/// `false` immediately.
 ///
 /// # Examples
 ///
@@ -64,11 +65,60 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
   if a.len() != b.len() {
     return false;
   }
-  let mut acc = 0u8;
-  for (&x, &y) in a.iter().zip(b.iter()) {
-    acc |= x ^ y;
+
+  let len = a.len();
+  let mut acc0 = 0u64;
+  let mut acc1 = 0u64;
+  let mut acc2 = 0u64;
+  let mut acc3 = 0u64;
+  let mut i = 0usize;
+  let end32 = len & !31;
+  let a_ptr = a.as_ptr();
+  let b_ptr = b.as_ptr();
+
+  while i < end32 {
+    // SAFETY: `end32` rounds `len` down to a multiple of 32, so each unaligned
+    // 8-byte load stays within the slice bounds.
+    unsafe {
+      acc0 |=
+        core::ptr::read_unaligned(a_ptr.add(i).cast::<u64>()) ^ core::ptr::read_unaligned(b_ptr.add(i).cast::<u64>());
+      acc1 |= core::ptr::read_unaligned(a_ptr.add(i.strict_add(8)).cast::<u64>())
+        ^ core::ptr::read_unaligned(b_ptr.add(i.strict_add(8)).cast::<u64>());
+      acc2 |= core::ptr::read_unaligned(a_ptr.add(i.strict_add(16)).cast::<u64>())
+        ^ core::ptr::read_unaligned(b_ptr.add(i.strict_add(16)).cast::<u64>());
+      acc3 |= core::ptr::read_unaligned(a_ptr.add(i.strict_add(24)).cast::<u64>())
+        ^ core::ptr::read_unaligned(b_ptr.add(i.strict_add(24)).cast::<u64>());
+    }
+    i = i.strict_add(32);
   }
-  core::hint::black_box(acc) == 0
+
+  let mut acc = acc0 | acc1 | acc2 | acc3;
+  let end8 = len & !7;
+  while i < end8 {
+    // SAFETY: `end8` rounds `len` down to a multiple of 8, so each unaligned
+    // 8-byte load stays within the slice bounds.
+    unsafe {
+      acc |=
+        core::ptr::read_unaligned(a_ptr.add(i).cast::<u64>()) ^ core::ptr::read_unaligned(b_ptr.add(i).cast::<u64>());
+    }
+    i = i.strict_add(8);
+  }
+
+  while i < len {
+    // SAFETY: `i < len`, so these raw-pointer reads are in-bounds.
+    unsafe {
+      acc |= (*a_ptr.add(i) ^ *b_ptr.add(i)) as u64;
+    }
+    i = i.strict_add(1);
+  }
+
+  let mut observed = acc;
+  // SAFETY: `observed` is a valid stack slot. The volatile round-trip prevents
+  // the optimizer from collapsing the loop into an early-exit byte compare.
+  unsafe {
+    core::ptr::write_volatile(&mut observed, acc);
+    core::ptr::read_volatile(&observed) == 0
+  }
 }
 
 /// Volatile-zero a byte slice without emitting a compiler fence.
@@ -174,6 +224,21 @@ mod tests {
   #[test]
   fn all_ones_equal() {
     assert!(constant_time_eq(&[0xFF; 64], &[0xFF; 64]));
+  }
+
+  #[test]
+  fn equal_misaligned_long_slices() {
+    let a = [0x5Au8; 73];
+    let b = [0x5Au8; 73];
+    assert!(constant_time_eq(&a[1..], &b[1..]));
+  }
+
+  #[test]
+  fn differ_misaligned_long_slices() {
+    let a = [0x5Au8; 73];
+    let mut b = [0x5Au8; 73];
+    b[64] ^= 0x80;
+    assert!(!constant_time_eq(&a[1..], &b[1..]));
   }
 
   // ── ConstantTimeEq trait ────────────────────────────────────────────────

@@ -11,7 +11,21 @@ use crate::traits::Xof;
 const SHAKE_PAD: u8 = 0x1F;
 const CSHAKE_PAD: u8 = 0x04;
 
-/// cSHAKE256 hasher with explicit function-name and customization strings.
+/// cSHAKE256 state with explicit function-name and customization strings.
+///
+/// Standardized in NIST SP 800-185.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Cshake256, Xof};
+///
+/// let mut reader = Cshake256::xof(b"", b"Email Signature", b"abc");
+/// let mut out = [0u8; 32];
+/// reader.squeeze(&mut out);
+///
+/// assert_ne!(out, [0u8; 32]);
+/// ```
 #[derive(Clone)]
 pub struct Cshake256 {
   core: KeccakCore<RATE_256>,

@@ -6,7 +6,7 @@ use self::kernels::CompressBlocksFn;
 use crate::{
   hashes::{
     crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u64},
-    util::rotr32,
+    util::{Aligned64, rotr32},
   },
   traits::Digest,
 };
@@ -33,18 +33,7 @@ pub(crate) const H0: [u32; 8] = [
   0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
-#[repr(C, align(64))]
-struct AlignedK([u32; 64]);
-
-impl core::ops::Deref for AlignedK {
-  type Target = [u32; 64];
-  #[inline(always)]
-  fn deref(&self) -> &[u32; 64] {
-    &self.0
-  }
-}
-
-static K: AlignedK = AlignedK([
+static K: Aligned64<[u32; 64]> = Aligned64([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
   0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
   0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,
@@ -324,6 +313,20 @@ pub(crate) fn compress_block_with(
 /// the bit-length field wraps and the digest is silently incorrect.
 const MAX_MESSAGE_LEN: u64 = u64::MAX / 8;
 
+/// SHA-256 digest state.
+///
+/// Standardized in FIPS 180-4.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha256};
+///
+/// let mut hasher = Sha256::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha256::digest(b"abc"));
+/// ```
 #[derive(Clone)]
 pub struct Sha256 {
   state: [u32; 8],
@@ -623,12 +626,15 @@ mod tests {
       "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
     );
 
-    // 1,000,000 repetitions of 'a'.
-    let mut million_a = alloc::vec![b'a'; 1_000_000];
-    assert_eq!(
-      hex32(&Sha256::digest(&million_a)),
-      "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
-    );
-    million_a.clear();
+    #[cfg(not(miri))]
+    {
+      // 1,000,000 repetitions of 'a'.
+      let mut million_a = alloc::vec![b'a'; 1_000_000];
+      assert_eq!(
+        hex32(&Sha256::digest(&million_a)),
+        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+      );
+      million_a.clear();
+    }
   }
 }

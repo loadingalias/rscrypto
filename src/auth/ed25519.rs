@@ -19,6 +19,13 @@
 //! The public API keeps secret keys, public keys, signatures, and keypairs as
 //! distinct types instead of passing raw byte slices through signing and
 //! verification calls.
+//!
+//! # Post-Quantum Migration
+//!
+//! Ed25519 is a classical signature scheme. For new deployments with a
+//! long-lived trust horizon, plan a hybrid migration path rather than
+//! treating Ed25519 as the end state. The repository roadmap tracks
+//! `ML-DSA` as the post-quantum signature direction.
 
 use core::{
   fmt,
@@ -26,6 +33,7 @@ use core::{
 };
 
 use crate::{
+  SecretBytes,
   hashes::crypto::Sha512,
   traits::{Digest, VerificationError, ct},
 };
@@ -123,11 +131,11 @@ impl Ed25519SecretKey {
     Self(bytes)
   }
 
-  /// Return the secret key bytes.
+  /// Explicitly extract the secret key bytes into a zeroizing wrapper.
   #[inline]
   #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
+  pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
+    SecretBytes::new(self.0)
   }
 
   /// Borrow the secret key bytes.
@@ -339,6 +347,18 @@ impl_serde_bytes!(Ed25519Signature);
 impl_ct_eq!(Ed25519Signature);
 
 /// Ed25519 keypair with typed secret and public halves.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::{Ed25519Keypair, Ed25519SecretKey};
+///
+/// let secret = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
+/// let keypair = Ed25519Keypair::from_secret_key(secret);
+/// let signature = keypair.sign(b"auth");
+///
+/// assert!(keypair.public_key().verify(b"auth", &signature).is_ok());
+/// ```
 #[derive(Clone)]
 pub struct Ed25519Keypair {
   secret: Ed25519SecretKey,
@@ -561,7 +581,7 @@ mod tests {
   #[test]
   fn secret_key_roundtrips_bytes() {
     let key = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
-    assert_eq!(key.to_bytes(), [7u8; Ed25519SecretKey::LENGTH]);
+    assert_eq!(*key.as_bytes(), [7u8; Ed25519SecretKey::LENGTH]);
     assert_eq!(key.as_bytes(), &[7u8; Ed25519SecretKey::LENGTH]);
   }
 

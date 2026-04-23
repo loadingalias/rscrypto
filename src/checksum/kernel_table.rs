@@ -266,6 +266,8 @@ pub(crate) struct KernelFnSet {
   pub crc64_nvme: Crc64Fn,
 }
 
+const _: () = assert!(core::mem::size_of::<KernelFnSet>() <= 64);
+
 /// Cold-path kernel name strings for one size class.
 ///
 /// Contains human-readable kernel names for introspection / diagnostics.
@@ -467,6 +469,7 @@ impl KernelTable {
   /// A table is hardware-accelerated if it requires any CPU capabilities
   /// beyond the baseline (i.e., `requires != Caps::NONE`).
   #[cfg(any(test, feature = "diag"))]
+  #[cfg_attr(test, allow(dead_code))]
   #[inline]
   pub const fn is_hardware_accelerated(&self) -> bool {
     !self.requires.is_empty()
@@ -494,6 +497,7 @@ macro_rules! kernel_table {
 
 /// Returns `true` if the active kernel table uses hardware-accelerated CRC kernels.
 #[cfg(any(test, feature = "diag"))]
+#[cfg_attr(test, allow(dead_code))]
 #[inline]
 pub fn is_hardware_accelerated() -> bool {
   active_table().is_hardware_accelerated()
@@ -546,7 +550,7 @@ fn capability_match(caps: Caps) -> Option<&'static KernelTable> {
   {
     use crate::platform::caps::aarch64::{CRC_READY, PMULL_EOR3_READY, PMULL_READY};
 
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(miri)))]
     if let Some(family) = crate::platform::detect::detect_aarch64_tune_family() {
       match family {
         #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]

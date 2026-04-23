@@ -13,6 +13,8 @@
 //!
 //! Used via [`define_crc_property_tests!`] macro in algorithm modules.
 
+#![cfg_attr(miri, allow(dead_code))]
+
 use crate::traits::{Checksum, ChecksumCombine};
 
 /// Generic test harness for CRC algorithms.
@@ -311,6 +313,7 @@ macro_rules! define_crc_property_tests {
 ///
 /// Used by all CRC cross-check test modules to exercise edge cases around
 /// lane widths, cache line boundaries, and page boundaries.
+#[cfg(not(miri))]
 pub const TEST_LENGTHS: &[usize] = &[
   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Tiny
   16, 17, 31, 32, 33, 63, 64, 65, // SSE/NEON boundaries
@@ -319,9 +322,16 @@ pub const TEST_LENGTHS: &[usize] = &[
   2047, 2048, 2049, 4095, 4096, 4097, // Page boundaries
   8192, 16384, 32768, 65536, // Large buffers
 ];
+#[cfg(miri)]
+pub const TEST_LENGTHS: &[usize] = &[
+  0, 1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025,
+];
 
 /// Prime-sized chunk patterns for streaming cross-check tests.
+#[cfg(not(miri))]
 pub const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 17, 31, 37, 61, 127, 251];
+#[cfg(miri)]
+pub const STREAMING_CHUNK_SIZES: &[usize] = &[1, 3, 7, 13, 31, 61];
 
 /// Generate deterministic test data of a given length.
 ///

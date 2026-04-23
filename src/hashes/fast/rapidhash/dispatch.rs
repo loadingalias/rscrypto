@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 #[cfg(any(test, feature = "diag"))]
 use super::{
   dispatch_tables::DispatchTable,

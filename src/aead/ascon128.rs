@@ -7,10 +7,10 @@
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce128, OpenError};
+use super::{AeadBufferError, Nonce128, OpenError, SealError};
 use crate::{
   backend::ascon::{permute_8_portable, permute_12_portable},
-  traits::{Aead, VerificationError, ct},
+  traits::{Aead, ct},
 };
 
 const KEY_SIZE: usize = 16;
@@ -50,43 +50,9 @@ fn load_bytes(data: &[u8]) -> u64 {
 // Key
 // ---------------------------------------------------------------------------
 
-/// Ascon-AEAD128 128-bit secret key.
-#[derive(Clone)]
-pub struct AsconAead128Key([u8; Self::LENGTH]);
-
-impl PartialEq for AsconAead128Key {
-  fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for AsconAead128Key {}
+define_aead_key_type!(AsconAead128Key, KEY_SIZE, "Ascon-AEAD128 128-bit secret key.");
 
 impl AsconAead128Key {
-  /// Key length in bytes.
-  pub const LENGTH: usize = KEY_SIZE;
-
-  /// Construct a key from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the raw key bytes.
-  #[inline]
-  #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the raw key bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-
   /// Key halves as little-endian u64 words.
   #[inline]
   fn words(&self) -> (u64, u64) {
@@ -98,109 +64,11 @@ impl AsconAead128Key {
   }
 }
 
-impl AsRef<[u8]> for AsconAead128Key {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(AsconAead128Key);
-
-impl fmt::Debug for AsconAead128Key {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("AsconAead128Key(****)")
-  }
-}
-
-impl AsconAead128Key {
-  /// Construct a key by filling bytes from the provided closure.
-  ///
-  /// ```rust
-  /// # use rscrypto::AsconAead128Key;
-  /// let key = AsconAead128Key::generate(|buf| buf.fill(0xA5));
-  /// assert_eq!(key.as_bytes(), &[0xA5; AsconAead128Key::LENGTH]);
-  /// ```
-  #[inline]
-  #[must_use]
-  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self(bytes)
-  }
-
-  impl_getrandom!();
-}
-
-impl_hex_fmt_secret!(AsconAead128Key);
-impl_serde_bytes!(AsconAead128Key);
-
-impl Drop for AsconAead128Key {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.0);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Tag
 // ---------------------------------------------------------------------------
 
-/// Ascon-AEAD128 128-bit authentication tag.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AsconAead128Tag([u8; Self::LENGTH]);
-
-impl AsconAead128Tag {
-  /// Tag length in bytes.
-  pub const LENGTH: usize = TAG_SIZE;
-
-  /// Construct a tag from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the raw tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn to_bytes(self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the raw tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl Default for AsconAead128Tag {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
-impl AsRef<[u8]> for AsconAead128Tag {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(AsconAead128Tag);
-
-impl fmt::Debug for AsconAead128Tag {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "AsconAead128Tag(")?;
-    crate::hex::fmt_hex_lower(&self.0, f)?;
-    write!(f, ")")
-  }
-}
-
-impl_hex_fmt!(AsconAead128Tag);
-impl_serde_bytes!(AsconAead128Tag);
+define_aead_tag_type!(AsconAead128Tag, TAG_SIZE, "Ascon-AEAD128 128-bit authentication tag.");
 
 // ---------------------------------------------------------------------------
 // AEAD
@@ -215,17 +83,41 @@ impl_serde_bytes!(AsconAead128Tag);
 /// # Examples
 ///
 /// ```
-/// use rscrypto::{Aead, AsconAead128, AsconAead128Key, AsconAead128Tag, aead::Nonce128};
+/// use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::Nonce128};
 ///
 /// let key = AsconAead128Key::from_bytes([0u8; 16]);
 /// let nonce = Nonce128::from_bytes([0u8; 16]);
 /// let aead = AsconAead128::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
+/// let tag = aead.encrypt_in_place(&nonce, b"", &mut buf)?;
 /// aead.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
-/// # Ok::<(), rscrypto::VerificationError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Tampering is reported as an opaque verification failure.
+///
+/// ```
+/// use rscrypto::{
+///   Aead, AsconAead128, AsconAead128Key,
+///   aead::{Nonce128, OpenError},
+/// };
+///
+/// let key = AsconAead128Key::from_bytes([0u8; 16]);
+/// let nonce = Nonce128::from_bytes([0u8; 16]);
+/// let aead = AsconAead128::new(&key);
+///
+/// let mut sealed = [0u8; 5 + AsconAead128::TAG_SIZE];
+/// aead.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// sealed[0] ^= 1;
+///
+/// let mut opened = [0u8; 5];
+/// assert_eq!(
+///   aead.decrypt(&nonce, b"", &sealed, &mut opened),
+///   Err(OpenError::verification())
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct AsconAead128 {
@@ -263,8 +155,12 @@ impl AsconAead128 {
 
   /// Encrypt `buffer` in place and return the detached authentication tag.
   #[inline]
-  #[must_use]
-  pub fn encrypt_in_place(&self, nonce: &Nonce128, aad: &[u8], buffer: &mut [u8]) -> AsconAead128Tag {
+  pub fn encrypt_in_place(
+    &self,
+    nonce: &Nonce128,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Result<AsconAead128Tag, SealError> {
     <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
   }
 
@@ -276,13 +172,13 @@ impl AsconAead128 {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &AsconAead128Tag,
-  ) -> Result<(), VerificationError> {
+  ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
   }
 
   /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
   #[inline]
-  pub fn encrypt(&self, nonce: &Nonce128, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
+  pub fn encrypt(&self, nonce: &Nonce128, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
     <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
@@ -393,7 +289,7 @@ impl Aead for AsconAead128 {
     Ok(AsconAead128Tag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
@@ -421,7 +317,7 @@ impl Aead for AsconAead128 {
       tail.copy_from_slice(&s[sidx].to_le_bytes()[..tail.len()]);
     }
 
-    AsconAead128Tag::from_bytes(self.finalize(&mut s))
+    Ok(AsconAead128Tag::from_bytes(self.finalize(&mut s)))
   }
 
   fn decrypt_in_place(
@@ -430,7 +326,7 @@ impl Aead for AsconAead128 {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Self::Tag,
-  ) -> Result<(), VerificationError> {
+  ) -> Result<(), OpenError> {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
@@ -466,7 +362,7 @@ impl Aead for AsconAead128 {
     let expected = self.finalize(&mut s);
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
-      return Err(VerificationError::new());
+      return Err(OpenError::verification());
     }
 
     Ok(())
@@ -488,7 +384,7 @@ mod tests {
     let oracle_nonce = GenericArray::from_slice(&nonce);
 
     let mut ours = plaintext.to_vec();
-    let tag = aead.encrypt_in_place(&nonce_typed, aad, &mut ours);
+    let tag = aead.encrypt_in_place(&nonce_typed, aad, &mut ours).unwrap();
     let mut ours_combined = ours.clone();
     ours_combined.extend_from_slice(tag.as_bytes());
     let expected = oracle.encrypt(oracle_nonce, Payload { msg: plaintext, aad }).unwrap();
@@ -519,7 +415,7 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = [];
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
     aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
   }
 
@@ -531,7 +427,7 @@ mod tests {
     let plaintext = b"the quick brown fox jumps over the lazy dog";
 
     let mut buf = *plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"header", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"header", &mut buf).unwrap();
     assert_ne!(&buf[..], &plaintext[..]);
 
     aead.decrypt_in_place(&nonce, b"header", &mut buf, &tag).unwrap();
@@ -545,10 +441,30 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = [];
-    let tag = aead.encrypt_in_place(&nonce, b"associated data only", &mut buf);
+    let tag = aead
+      .encrypt_in_place(&nonce, b"associated data only", &mut buf)
+      .unwrap();
     aead
       .decrypt_in_place(&nonce, b"associated data only", &mut buf, &tag)
       .unwrap();
+  }
+
+  #[test]
+  fn buffer_zeroed_on_auth_failure() {
+    let key = AsconAead128Key::from_bytes([0x42; 16]);
+    let nonce = Nonce128::from_bytes([0x13; 16]);
+    let aead = AsconAead128::new(&key);
+
+    let mut buf = *b"zero me on failure";
+    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+
+    let mut bad_tag = tag.to_bytes();
+    bad_tag[0] ^= 0xFF;
+    let bad_tag = AsconAead128Tag::from_bytes(bad_tag);
+
+    let result = aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
+    assert!(result.is_err());
+    assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
   #[test]
@@ -558,7 +474,7 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"secret";
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
 
     buf[0] ^= 1;
     let result = aead.decrypt_in_place(&nonce, b"", &mut buf, &tag);
@@ -574,7 +490,7 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"data";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     let mut bad_tag_bytes = tag.to_bytes();
     bad_tag_bytes[15] ^= 1;
@@ -592,7 +508,7 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"msg";
-    let tag = aead.encrypt_in_place(&nonce, b"correct", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"correct", &mut buf).unwrap();
 
     let result = aead.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
     assert!(result.is_err());
@@ -605,7 +521,7 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"nonce test";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     let wrong_nonce = Nonce128::from_bytes([11; 16]);
     let result = aead.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
@@ -643,7 +559,9 @@ mod tests {
     // 100 bytes = 12 full blocks + 4-byte tail.
     let plaintext = [0x77u8; 100];
     let mut buf = plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"multi-block aad that is longer than one rate block", &mut buf);
+    let tag = aead
+      .encrypt_in_place(&nonce, b"multi-block aad that is longer than one rate block", &mut buf)
+      .unwrap();
     aead
       .decrypt_in_place(
         &nonce,
@@ -664,14 +582,14 @@ mod tests {
     // Exactly 8 bytes = 1 full block, 0-byte tail.
     let plaintext = [0x55u8; 8];
     let mut buf = plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
+    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
     aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
     assert_eq!(buf, plaintext);
 
     // Exactly 16 bytes = 2 full blocks, 0-byte tail.
     let plaintext16 = [0x66u8; 16];
     let mut buf16 = plaintext16;
-    let tag16 = aead.encrypt_in_place(&nonce, b"", &mut buf16);
+    let tag16 = aead.encrypt_in_place(&nonce, b"", &mut buf16).unwrap();
     aead.decrypt_in_place(&nonce, b"", &mut buf16, &tag16).unwrap();
     assert_eq!(buf16, plaintext16);
   }

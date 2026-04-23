@@ -8,8 +8,9 @@ use rscrypto::Kmac256;
 use rscrypto::VerificationError;
 #[cfg(feature = "aead")]
 use rscrypto::{
-  Aead, Aegis256, Aegis256Key, ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
-  aead::{AeadBufferError, Nonce96, Nonce192, Nonce256, OpenError},
+  Aead, Aegis256, Aegis256Key, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv, Aes256GcmSivKey, AsconAead128, AsconAead128Key,
+  ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  aead::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError},
 };
 #[cfg(feature = "hashes")]
 use rscrypto::{
@@ -17,7 +18,7 @@ use rscrypto::{
   Sha512, Sha512_256, Shake128, Shake256, Xof,
 };
 #[cfg(feature = "ed25519")]
-use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, verify_ed25519};
+use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey};
 #[cfg(feature = "hkdf")]
 use rscrypto::{HkdfSha256, HkdfSha384, auth::HkdfOutputLengthError};
 #[cfg(feature = "hmac")]
@@ -63,95 +64,6 @@ where
 }
 
 #[cfg(feature = "aead")]
-#[derive(Clone, PartialEq, Eq)]
-struct ApiKey([u8; 32]);
-
-#[cfg(feature = "aead")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ApiTag([u8; 16]);
-
-#[cfg(feature = "aead")]
-impl AsRef<[u8]> for ApiTag {
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-#[cfg(feature = "aead")]
-#[derive(Clone)]
-struct ApiAead {
-  key: ApiKey,
-}
-
-#[cfg(feature = "aead")]
-impl ApiAead {
-  fn mask(&self, nonce: &Nonce96, aad: &[u8]) -> u8 {
-    self.key.0[0] ^ nonce.as_bytes()[0] ^ (aad.len() as u8)
-  }
-
-  fn compute_tag(&self, nonce: &Nonce96, aad: &[u8], ciphertext: &[u8]) -> ApiTag {
-    let mut tag = [0u8; 16];
-    tag[0] = self.mask(nonce, aad);
-    tag[1] = ciphertext.len() as u8;
-    for (index, &byte) in ciphertext.iter().enumerate() {
-      tag[index % 14 + 2] ^= byte;
-    }
-    ApiTag(tag)
-  }
-}
-
-#[cfg(feature = "aead")]
-impl Aead for ApiAead {
-  const KEY_SIZE: usize = 32;
-  const NONCE_SIZE: usize = Nonce96::LENGTH;
-  const TAG_SIZE: usize = 16;
-
-  type Key = ApiKey;
-  type Nonce = Nonce96;
-  type Tag = ApiTag;
-
-  fn new(key: &Self::Key) -> Self {
-    Self { key: key.clone() }
-  }
-
-  fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
-    if bytes.len() != Self::TAG_SIZE {
-      return Err(AeadBufferError::new());
-    }
-
-    let mut tag = [0u8; Self::TAG_SIZE];
-    tag.copy_from_slice(bytes);
-    Ok(ApiTag(tag))
-  }
-
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
-    let mask = self.mask(nonce, aad);
-    for byte in buffer.iter_mut() {
-      *byte ^= mask;
-    }
-    self.compute_tag(nonce, aad, buffer)
-  }
-
-  fn decrypt_in_place(
-    &self,
-    nonce: &Self::Nonce,
-    aad: &[u8],
-    buffer: &mut [u8],
-    tag: &Self::Tag,
-  ) -> Result<(), VerificationError> {
-    if self.compute_tag(nonce, aad, buffer) != *tag {
-      return Err(VerificationError::new());
-    }
-
-    let mask = self.mask(nonce, aad);
-    for byte in buffer.iter_mut() {
-      *byte ^= mask;
-    }
-    Ok(())
-  }
-}
-
-#[cfg(feature = "aead")]
 fn assert_aead_api<A>(key: A::Key, nonce: A::Nonce)
 where
   A: Aead,
@@ -167,7 +79,7 @@ where
   assert_eq!(&opened, plaintext);
 
   let mut detached = *b"abc";
-  let tag = aead.encrypt_in_place_detached(&nonce, b"aad", &mut detached);
+  let tag = aead.encrypt_in_place_detached(&nonce, b"aad", &mut detached).unwrap();
   aead.decrypt_in_place(&nonce, b"aad", &mut detached, &tag).unwrap();
   assert_eq!(&detached, plaintext);
 }
@@ -244,7 +156,7 @@ fn kmac_follows_new_update_finalize_into_reset_and_verify() {
   kmac.update(b"abc");
   kmac.finalize_into(&mut actual);
   assert_eq!(actual, expected);
-  assert!(kmac.verify_tag(&expected).is_ok());
+  assert!(kmac.verify(&expected).is_ok());
 }
 
 #[test]
@@ -290,11 +202,10 @@ fn ed25519_types_follow_byte_roundtrip_and_verify_conventions() {
   let public = Ed25519PublicKey::from_bytes(keypair.public_key().to_bytes());
   let signature = keypair.sign(b"api-consistency-ed25519");
 
-  assert_eq!(secret.to_bytes(), *secret.as_bytes());
+  assert_eq!(*secret.expose_secret().as_bytes(), *secret.as_bytes());
   assert_eq!(public.to_bytes(), *public.as_bytes());
   assert_eq!(signature.to_bytes(), *signature.as_bytes());
   assert!(public.verify(b"api-consistency-ed25519", &signature).is_ok());
-  assert!(verify_ed25519(b"api-consistency-ed25519", &public, &signature).is_ok());
 }
 
 #[test]
@@ -304,9 +215,9 @@ fn x25519_types_follow_byte_roundtrip_conventions() {
   let public = X25519PublicKey::from_bytes(secret.public_key().to_bytes());
   let shared = secret.diffie_hellman(&public).unwrap();
 
-  assert_eq!(secret.to_bytes(), *secret.as_bytes());
+  assert_eq!(*secret.expose_secret().as_bytes(), *secret.as_bytes());
   assert_eq!(public.to_bytes(), *public.as_bytes());
-  assert_eq!(shared.to_bytes(), *shared.as_bytes());
+  assert_eq!(*shared.expose_secret().as_bytes(), *shared.as_bytes());
 }
 
 #[test]
@@ -337,26 +248,46 @@ fn x25519_error_follows_new_default_and_display_conventions() {
 fn aead_errors_follow_new_default_and_display_conventions() {
   assert_eq!(AeadBufferError::new(), AeadBufferError);
   assert_eq!(AeadBufferError::new().to_string(), "buffer length mismatch");
+  assert_eq!(SealError::default(), SealError::buffer());
+  assert_eq!(
+    SealError::too_large().to_string(),
+    "input exceeds the algorithm maximum length"
+  );
   assert_eq!(OpenError::default(), OpenError::buffer());
   assert_eq!(OpenError::buffer().to_string(), "buffer length mismatch");
+  assert_eq!(
+    OpenError::too_large().to_string(),
+    "input exceeds the algorithm maximum length"
+  );
   assert_eq!(OpenError::verification().to_string(), "verification failed");
 }
 
 #[test]
 #[cfg(feature = "aead")]
 fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
-  assert_aead_api::<ApiAead>(ApiKey([7u8; 32]), Nonce96::from_bytes([9u8; Nonce96::LENGTH]));
-  assert_aead_api::<ChaCha20Poly1305>(
-    ChaCha20Poly1305Key::from_bytes([2u8; ChaCha20Poly1305::KEY_SIZE]),
+  assert_aead_api::<Aes256Gcm>(
+    Aes256GcmKey::from_bytes([1u8; Aes256Gcm::KEY_SIZE]),
+    Nonce96::from_bytes([2u8; Nonce96::LENGTH]),
+  );
+  assert_aead_api::<Aes256GcmSiv>(
+    Aes256GcmSivKey::from_bytes([3u8; Aes256GcmSiv::KEY_SIZE]),
     Nonce96::from_bytes([4u8; Nonce96::LENGTH]),
   );
+  assert_aead_api::<ChaCha20Poly1305>(
+    ChaCha20Poly1305Key::from_bytes([5u8; ChaCha20Poly1305::KEY_SIZE]),
+    Nonce96::from_bytes([6u8; Nonce96::LENGTH]),
+  );
   assert_aead_api::<XChaCha20Poly1305>(
-    XChaCha20Poly1305Key::from_bytes([3u8; XChaCha20Poly1305::KEY_SIZE]),
-    Nonce192::from_bytes([5u8; Nonce192::LENGTH]),
+    XChaCha20Poly1305Key::from_bytes([7u8; XChaCha20Poly1305::KEY_SIZE]),
+    Nonce192::from_bytes([8u8; Nonce192::LENGTH]),
+  );
+  assert_aead_api::<AsconAead128>(
+    AsconAead128Key::from_bytes([9u8; AsconAead128::KEY_SIZE]),
+    Nonce128::from_bytes([10u8; Nonce128::LENGTH]),
   );
   assert_aead_api::<Aegis256>(
-    Aegis256Key::from_bytes([6u8; Aegis256::KEY_SIZE]),
-    Nonce256::from_bytes([7u8; Nonce256::LENGTH]),
+    Aegis256Key::from_bytes([11u8; Aegis256::KEY_SIZE]),
+    Nonce256::from_bytes([12u8; Nonce256::LENGTH]),
   );
 }
 

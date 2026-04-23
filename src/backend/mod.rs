@@ -13,12 +13,16 @@ pub mod ascon;
   feature = "crc64",
   feature = "sha2",
   all(feature = "sha3", any(test, feature = "diag")),
-  feature = "blake2b",
-  feature = "blake2s",
+  all(
+    any(feature = "blake2b", feature = "blake2s"),
+    not(all(target_arch = "aarch64", target_os = "macos"))
+  ),
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
   feature = "rapidhash",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305"
 ))]

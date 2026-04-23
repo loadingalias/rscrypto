@@ -27,7 +27,7 @@ fuzz_target!(|data: &[u8]| {
     assert!(Pbkdf2Sha256::verify_password(password, salt, iterations, &wrong_256).is_err());
 
     let mut oracle_256 = vec![0u8; out_len];
-    pbkdf2::pbkdf2_hmac::<sha2_010::Sha256>(password, salt, iterations, &mut oracle_256);
+    pbkdf2::pbkdf2_hmac::<sha2::Sha256>(password, salt, iterations, &mut oracle_256);
     assert_eq!(ours_256, oracle_256, "pbkdf2-sha256 oracle mismatch");
 
     let mut ours_512 = vec![0u8; out_len];
@@ -43,6 +43,6 @@ fuzz_target!(|data: &[u8]| {
     assert!(Pbkdf2Sha512::verify_password(password, salt, iterations, &wrong_512).is_err());
 
     let mut oracle_512 = vec![0u8; out_len];
-    pbkdf2::pbkdf2_hmac::<sha2_010::Sha512>(password, salt, iterations, &mut oracle_512);
+    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(password, salt, iterations, &mut oracle_512);
     assert_eq!(ours_512, oracle_512, "pbkdf2-sha512 oracle mismatch");
 });

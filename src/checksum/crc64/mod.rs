@@ -472,21 +472,24 @@ fn crc64_nvme_dispatch_sve2_pmull_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
   crc64_apply_kernel_vectored(crc, bufs, crc64_nvme_force_sve2_pmull_kernel(64))
 }
 
-#[cfg(feature = "std")]
-static CRC64_XZ_DISPATCH: crate::backend::cache::OnceCache<Crc64DispatchFn> = crate::backend::cache::OnceCache::new();
-#[cfg(feature = "std")]
-static CRC64_XZ_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc64DispatchVectoredFn> =
-  crate::backend::cache::OnceCache::new();
-#[cfg(feature = "std")]
-static CRC64_NVME_DISPATCH: crate::backend::cache::OnceCache<Crc64DispatchFn> = crate::backend::cache::OnceCache::new();
-#[cfg(feature = "std")]
-static CRC64_NVME_DISPATCH_VECTORED: crate::backend::cache::OnceCache<Crc64DispatchVectoredFn> =
-  crate::backend::cache::OnceCache::new();
-
-#[cfg(feature = "std")]
-#[inline]
-fn resolve_crc64_xz_dispatch() -> Crc64DispatchFn {
-  match config::get().effective_force {
+define_crc_dispatch! {
+  word_ty: u64,
+  dispatch_fn_ty: Crc64DispatchFn,
+  dispatch_vectored_fn_ty: Crc64DispatchVectoredFn,
+  auto_force: Crc64Force::Auto,
+  force_expr: config::get().effective_force,
+  active_table: crate::checksum::kernel_table::active_crc64_table(),
+  auto_dispatch: crc64_xz_dispatch_auto,
+  auto_vectored_dispatch: crc64_xz_dispatch_auto_vectored,
+  dispatch_cache: CRC64_XZ_DISPATCH,
+  dispatch_vectored_cache: CRC64_XZ_DISPATCH_VECTORED,
+  resolve_dispatch: resolve_crc64_xz_dispatch,
+  resolve_dispatch_vectored: resolve_crc64_xz_dispatch_vectored,
+  dispatch: crc64_xz_dispatch,
+  dispatch_vectored: crc64_xz_dispatch_vectored,
+  resolved_dispatch: crc64_xz_resolved_dispatch,
+  runtime_paths: crc64_xz_runtime_paths,
+  resolve_match: {
     Crc64Force::Reference => crc64_xz_dispatch_reference,
     Crc64Force::Portable => crc64_xz_dispatch_portable,
     #[cfg(target_arch = "aarch64")]
@@ -496,13 +499,8 @@ fn resolve_crc64_xz_dispatch() -> Crc64DispatchFn {
     #[cfg(target_arch = "aarch64")]
     Crc64Force::Sve2Pmull => crc64_xz_dispatch_sve2_pmull,
     _ => crc64_xz_dispatch_auto,
-  }
-}
-
-#[cfg(feature = "std")]
-#[inline]
-fn resolve_crc64_xz_dispatch_vectored() -> Crc64DispatchVectoredFn {
-  match config::get().effective_force {
+  },
+  resolve_vectored_match: {
     Crc64Force::Reference => crc64_xz_dispatch_reference_vectored,
     Crc64Force::Portable => crc64_xz_dispatch_portable_vectored,
     #[cfg(target_arch = "aarch64")]
@@ -515,10 +513,24 @@ fn resolve_crc64_xz_dispatch_vectored() -> Crc64DispatchVectoredFn {
   }
 }
 
-#[cfg(feature = "std")]
-#[inline]
-fn resolve_crc64_nvme_dispatch() -> Crc64DispatchFn {
-  match config::get().effective_force {
+define_crc_dispatch! {
+  word_ty: u64,
+  dispatch_fn_ty: Crc64DispatchFn,
+  dispatch_vectored_fn_ty: Crc64DispatchVectoredFn,
+  auto_force: Crc64Force::Auto,
+  force_expr: config::get().effective_force,
+  active_table: crate::checksum::kernel_table::active_crc64_table(),
+  auto_dispatch: crc64_nvme_dispatch_auto,
+  auto_vectored_dispatch: crc64_nvme_dispatch_auto_vectored,
+  dispatch_cache: CRC64_NVME_DISPATCH,
+  dispatch_vectored_cache: CRC64_NVME_DISPATCH_VECTORED,
+  resolve_dispatch: resolve_crc64_nvme_dispatch,
+  resolve_dispatch_vectored: resolve_crc64_nvme_dispatch_vectored,
+  dispatch: crc64_nvme_dispatch,
+  dispatch_vectored: crc64_nvme_dispatch_vectored,
+  resolved_dispatch: crc64_nvme_resolved_dispatch,
+  runtime_paths: crc64_nvme_runtime_paths,
+  resolve_match: {
     Crc64Force::Reference => crc64_nvme_dispatch_reference,
     Crc64Force::Portable => crc64_nvme_dispatch_portable,
     #[cfg(target_arch = "aarch64")]
@@ -528,13 +540,8 @@ fn resolve_crc64_nvme_dispatch() -> Crc64DispatchFn {
     #[cfg(target_arch = "aarch64")]
     Crc64Force::Sve2Pmull => crc64_nvme_dispatch_sve2_pmull,
     _ => crc64_nvme_dispatch_auto,
-  }
-}
-
-#[cfg(feature = "std")]
-#[inline]
-fn resolve_crc64_nvme_dispatch_vectored() -> Crc64DispatchVectoredFn {
-  match config::get().effective_force {
+  },
+  resolve_vectored_match: {
     Crc64Force::Reference => crc64_nvme_dispatch_reference_vectored,
     Crc64Force::Portable => crc64_nvme_dispatch_portable_vectored,
     #[cfg(target_arch = "aarch64")]
@@ -544,124 +551,6 @@ fn resolve_crc64_nvme_dispatch_vectored() -> Crc64DispatchVectoredFn {
     #[cfg(target_arch = "aarch64")]
     Crc64Force::Sve2Pmull => crc64_nvme_dispatch_sve2_pmull_vectored,
     _ => crc64_nvme_dispatch_auto_vectored,
-  }
-}
-
-/// CRC-64-XZ dispatch - hot path uses one-time resolved dispatch function.
-#[inline]
-fn crc64_xz_dispatch(crc: u64, data: &[u8]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC64_XZ_DISPATCH.get_or_init(resolve_crc64_xz_dispatch);
-    dispatch(crc, data)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc64_xz_dispatch_auto(crc, data)
-  }
-}
-
-#[inline]
-fn crc64_xz_resolved_dispatch() -> Crc64DispatchFn {
-  #[cfg(feature = "std")]
-  {
-    CRC64_XZ_DISPATCH.get_or_init(resolve_crc64_xz_dispatch)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc64_xz_dispatch_auto
-  }
-}
-
-#[inline]
-fn crc64_nvme_resolved_dispatch() -> Crc64DispatchFn {
-  #[cfg(feature = "std")]
-  {
-    CRC64_NVME_DISPATCH.get_or_init(resolve_crc64_nvme_dispatch)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc64_nvme_dispatch_auto
-  }
-}
-
-#[inline]
-fn crc64_xz_runtime_paths() -> (
-  Crc64DispatchFn,
-  Option<&'static crate::checksum::kernel_table::KernelTable>,
-) {
-  let cfg = config::get();
-  if cfg.effective_force == Crc64Force::Auto {
-    (
-      crc64_xz_dispatch_auto,
-      Some(crate::checksum::kernel_table::active_crc64_table()),
-    )
-  } else {
-    (crc64_xz_resolved_dispatch(), None)
-  }
-}
-
-#[inline]
-fn crc64_nvme_runtime_paths() -> (
-  Crc64DispatchFn,
-  Option<&'static crate::checksum::kernel_table::KernelTable>,
-) {
-  let cfg = config::get();
-  if cfg.effective_force == Crc64Force::Auto {
-    (
-      crc64_nvme_dispatch_auto,
-      Some(crate::checksum::kernel_table::active_crc64_table()),
-    )
-  } else {
-    (crc64_nvme_resolved_dispatch(), None)
-  }
-}
-
-/// CRC-64/XZ vectored dispatch (processes multiple buffers in order).
-#[inline]
-fn crc64_xz_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC64_XZ_DISPATCH_VECTORED.get_or_init(resolve_crc64_xz_dispatch_vectored);
-    dispatch(crc, bufs)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc64_xz_dispatch_auto_vectored(crc, bufs)
-  }
-}
-
-/// CRC-64-NVME dispatch - hot path uses one-time resolved dispatch function.
-#[inline]
-fn crc64_nvme_dispatch(crc: u64, data: &[u8]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC64_NVME_DISPATCH.get_or_init(resolve_crc64_nvme_dispatch);
-    dispatch(crc, data)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc64_nvme_dispatch_auto(crc, data)
-  }
-}
-
-/// CRC-64/NVME vectored dispatch (processes multiple buffers in order).
-#[inline]
-fn crc64_nvme_dispatch_vectored(crc: u64, bufs: &[&[u8]]) -> u64 {
-  #[cfg(feature = "std")]
-  {
-    let dispatch = CRC64_NVME_DISPATCH_VECTORED.get_or_init(resolve_crc64_nvme_dispatch_vectored);
-    dispatch(crc, bufs)
-  }
-
-  #[cfg(not(feature = "std"))]
-  {
-    crc64_nvme_dispatch_auto_vectored(crc, bufs)
   }
 }
 
@@ -824,6 +713,22 @@ impl crate::traits::ChecksumCombine for Crc64 {
 
 #[cfg(feature = "alloc")]
 impl Crc64 {
+  /// Buffer many small updates before dispatching to the active CRC-64/XZ kernel.
+  ///
+  /// This reduces per-call overhead when data arrives as short fragments.
+  /// For large contiguous buffers, use [`Crc64`] directly.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::{Checksum, Crc64};
+  ///
+  /// let mut hasher = Crc64::buffered();
+  /// hasher.update(b"123");
+  /// hasher.update(b"456789");
+  ///
+  /// assert_eq!(hasher.finalize(), Crc64::checksum(b"123456789"));
+  /// ```
   #[must_use]
   pub fn buffered() -> BufferedCrc64 {
     BufferedCrc64::new()

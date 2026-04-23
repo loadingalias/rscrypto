@@ -14,6 +14,8 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
+use crate::hashes::util::Aligned64;
+
 /// Flat K[0..64] round constants for SHA-256, used as a `vld1q_u32` source.
 ///
 /// Stored as a flat array (not grouped by 4) to allow simple pointer
@@ -21,11 +23,7 @@ use core::arch::aarch64::*;
 /// This matches the `sha2` crate's layout and avoids the closure indirection
 /// of the previous `K4: [[u32; 4]; 16]` layout.
 #[cfg(target_arch = "aarch64")]
-#[repr(C, align(64))]
-struct AlignedK32([u32; 64]);
-
-#[cfg(target_arch = "aarch64")]
-static K32: AlignedK32 = AlignedK32([
+static K32: Aligned64<[u32; 64]> = Aligned64([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98,
   0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
   0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8,

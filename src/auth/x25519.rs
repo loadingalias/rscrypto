@@ -18,6 +18,13 @@
 //! assert_eq!(alice_public.as_bytes().len(), X25519PublicKey::LENGTH);
 //! # Ok::<(), rscrypto::auth::X25519Error>(())
 //! ```
+//!
+//! # Post-Quantum Migration
+//!
+//! X25519 is a classical key-exchange primitive. For systems with a
+//! long-lived confidentiality requirement, plan a hybrid migration path
+//! instead of treating X25519 as the end state. The repository roadmap
+//! tracks `ML-KEM` as the post-quantum key-establishment direction.
 
 use core::{
   fmt,
@@ -25,6 +32,7 @@ use core::{
 };
 
 use crate::{
+  SecretBytes,
   auth::curve25519_edwards,
   backend::curve25519::{FieldElement, clamp_secret_scalar},
   traits::ct,
@@ -40,37 +48,15 @@ const BASEPOINT_BYTES: [u8; POINT_LENGTH] = {
 };
 const A24: FieldElement = FieldElement::from_small(121665);
 
-/// X25519 key agreement failed because the derived secret was all-zero.
-///
-/// This occurs when the peer input is a low-order point. RFC 7748 allows
-/// implementations to detect this by OR-ing the shared secret bytes together
-/// and aborting if the result is zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct X25519Error;
-
-impl X25519Error {
-  /// Construct a new X25519 agreement error.
-  #[inline]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self
-  }
+define_unit_error! {
+  /// X25519 key agreement failed because the derived secret was all-zero.
+  ///
+  /// This occurs when the peer input is a low-order point. RFC 7748 allows
+  /// implementations to detect this by OR-ing the shared secret bytes together
+  /// and aborting if the result is zero.
+  pub struct X25519Error;
+  "x25519 shared secret is all-zero"
 }
-
-impl Default for X25519Error {
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl fmt::Display for X25519Error {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("x25519 shared secret is all-zero")
-  }
-}
-
-impl core::error::Error for X25519Error {}
 
 /// X25519 secret scalar bytes.
 #[derive(Clone)]
@@ -95,11 +81,11 @@ impl X25519SecretKey {
     Self(bytes)
   }
 
-  /// Return the secret key bytes.
+  /// Explicitly extract the secret key bytes into a zeroizing wrapper.
   #[inline]
   #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
+  pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
+    SecretBytes::new(self.0)
   }
 
   /// Borrow the secret key bytes.
@@ -283,11 +269,11 @@ impl X25519SharedSecret {
     Self(bytes)
   }
 
-  /// Return the shared secret bytes.
+  /// Explicitly extract the shared secret bytes into a zeroizing wrapper.
   #[inline]
   #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
+  pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
+    SecretBytes::new(self.0)
   }
 
   /// Borrow the shared secret bytes.

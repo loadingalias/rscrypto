@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "pbkdf2"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
 pbkdf2 = "0.13"
-sha2_010 = { package = "sha2", version = "0.10.9" }
+sha2 = "0.11"
 
 [workspace]
 members = ["."]

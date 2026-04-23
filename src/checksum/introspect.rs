@@ -20,62 +20,10 @@
 //! assert!(!Crc64::kernel_name_for_len(4096).is_empty());
 //! ```
 
-use core::fmt;
-
-pub use crate::checksum::kernel_table::is_hardware_accelerated;
-
-/// Information about the current dispatch configuration.
-///
-/// This is a zero-allocation wrapper that provides a user-friendly view
-/// of the detected CPU capabilities and selected microarchitecture tuning.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::checksum::introspect::DispatchInfo;
-///
-/// let info = DispatchInfo::current();
-/// assert!(!format!("{info}").is_empty());
-/// ```
-#[derive(Clone, Copy)]
-pub struct DispatchInfo {
-  platform: crate::platform::Description,
-}
-
-impl DispatchInfo {
-  /// Returns dispatch info for the current platform.
-  ///
-  /// This call is cached after the first invocation, so subsequent calls
-  /// are essentially free (single atomic load).
-  #[inline]
-  #[must_use]
-  pub fn current() -> Self {
-    Self {
-      platform: crate::platform::describe(),
-    }
-  }
-
-  /// Returns the platform description (CPU, features, microarch).
-  #[inline]
-  #[must_use]
-  pub fn platform(&self) -> crate::platform::Description {
-    self.platform
-  }
-}
-
-impl fmt::Display for DispatchInfo {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.platform)
-  }
-}
-
-impl fmt::Debug for DispatchInfo {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("DispatchInfo")
-      .field("platform", &format_args!("{}", self.platform))
-      .finish()
-  }
-}
+pub use crate::{
+  checksum::kernel_table::is_hardware_accelerated,
+  platform::{DispatchInfo, KernelIntrospect},
+};
 
 /// Returns the kernel name selected for a specific algorithm and buffer size.
 ///
@@ -96,20 +44,6 @@ impl fmt::Debug for DispatchInfo {
 #[must_use]
 pub fn kernel_for<T: KernelIntrospect>(len: usize) -> &'static str {
   T::kernel_name_for_len(len)
-}
-
-/// Trait for types that support kernel introspection.
-///
-/// This trait is implemented for all CRC types, allowing generic
-/// introspection of kernel selection.
-pub trait KernelIntrospect {
-  /// Returns the kernel name that would be selected for a buffer of `len` bytes.
-  ///
-  /// The returned string is architecture and size-class specific, e.g.:
-  /// - `"aarch64/pmull-eor3-3way"` for large buffers on Apple Silicon
-  /// - `"x86_64/vpclmul-4x512"` for large buffers on Zen4
-  /// - `"portable/slice16"` on platforms without hardware acceleration
-  fn kernel_name_for_len(len: usize) -> &'static str;
 }
 
 #[cfg(test)]

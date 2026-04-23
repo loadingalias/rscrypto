@@ -12,22 +12,13 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
+use crate::hashes::util::Aligned64;
+
 /// K constants packed as 40 pairs of `[K[2i], K[2i+1]]` for `vld1q_u64` loads.
 ///
 /// Cache-line aligned (64 bytes) so the 640-byte table starts at an L1 boundary.
-#[repr(C, align(64))]
-struct AlignedKPairs([[u64; 2]; 40]);
-
-impl core::ops::Deref for AlignedKPairs {
-  type Target = [[u64; 2]; 40];
-  #[inline(always)]
-  fn deref(&self) -> &[[u64; 2]; 40] {
-    &self.0
-  }
-}
-
 #[cfg(target_arch = "aarch64")]
-static K_PAIRS: AlignedKPairs = AlignedKPairs([
+static K_PAIRS: Aligned64<[[u64; 2]; 40]> = Aligned64([
   [0x428a_2f98_d728_ae22, 0x7137_4491_23ef_65cd],
   [0xb5c0_fbcf_ec4d_3b2f, 0xe9b5_dba5_8189_dbbc],
   [0x3956_c25b_f348_b538, 0x59f1_11f1_b605_d019],

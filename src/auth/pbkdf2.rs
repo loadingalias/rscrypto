@@ -20,9 +20,22 @@
 //! assert!(Pbkdf2Sha256::verify_password(b"wrong", salt, 600_000, &key).is_err());
 //! # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
 //! ```
+//!
+//! # Security
+//!
+//! For NIST SP 800-132 / OWASP 2023 compliance baselines, pair type-specific
+//! minimums are:
+//!
+//! - `Pbkdf2Sha256`: at least `600_000` iterations
+//! - `Pbkdf2Sha512`: at least `210_000` iterations
+//! - salt length: at least `16` bytes (128 bits) for both types
+//!
+//! These are policy minima for production password-hashing deployments.
+//! This module is algorithmic PBKDF2; enforcement depends on caller-side policy.
 
 use core::fmt;
 
+use super::hmac::hmac_prefix_state;
 use crate::{
   hashes::crypto::{
     Sha256, Sha512,
@@ -56,7 +69,9 @@ const SHA512_BLOCK_SIZE: usize = 128;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Pbkdf2Error {
-  /// The iteration count must be at least 1.
+  /// The iteration count must be at least 1. NIST/OWASP policy minima are documented on
+  /// `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` and
+  /// `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS`.
   InvalidIterations,
   /// The requested output length exceeds `(2^32 − 1) × hLen`.
   OutputTooLong,
@@ -73,230 +88,259 @@ impl fmt::Display for Pbkdf2Error {
 
 impl core::error::Error for Pbkdf2Error {}
 
-// ─── PBKDF2-HMAC-SHA256 ────────────────────────────────────────────────────
-
-/// PBKDF2-HMAC-SHA256 key derivation (RFC 2898).
-///
-/// Pre-computes the HMAC-SHA256 prefix states from the password so that
-/// subsequent `derive` and `verify` calls run the iteration loop directly
-/// against the SHA-256 compress function with no per-iteration overhead.
-///
-/// # Examples
-///
-/// ```rust
-/// use rscrypto::Pbkdf2Sha256;
-///
-/// // Derive a 32-byte key
-/// let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 600_000)?;
-///
-/// // Re-use pre-computed state for multiple operations
-/// let state = Pbkdf2Sha256::new(b"password");
-/// let dk2 = state.derive_array::<32>(b"salt", 600_000)?;
-/// assert_eq!(dk, dk2);
-///
-/// // Verify
-/// assert!(state.verify(b"salt", 600_000, &dk).is_ok());
-/// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
-/// ```
-#[derive(Clone)]
-pub struct Pbkdf2Sha256 {
-  inner_init: [u32; 8],
-  outer_init: [u32; 8],
-  compress: Sha256CompressBlocksFn,
-}
-
-impl fmt::Debug for Pbkdf2Sha256 {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Pbkdf2Sha256").finish_non_exhaustive()
-  }
-}
-
-impl Pbkdf2Sha256 {
-  /// SHA-256 output size in bytes.
-  pub const OUTPUT_SIZE: usize = SHA256_OUTPUT_SIZE;
-
-  /// Pre-compute HMAC-SHA256 prefix states from `password`.
-  #[must_use]
-  #[allow(clippy::indexing_slicing)] // password.len() <= SHA256_BLOCK_SIZE in the else branch.
-  pub fn new(password: &[u8]) -> Self {
-    let compress = sha256_dispatch::compress_dispatch().select(0);
-
-    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    if password.len() > SHA256_BLOCK_SIZE {
-      let digest = Sha256::digest(password);
-      key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&digest);
-    } else {
-      key_block[..password.len()].copy_from_slice(password);
+macro_rules! define_pbkdf2_sha2 {
+  (
+    $(#[$struct_meta:meta])*
+    $name:ident {
+      output_size_const: $output_size_const:ident,
+      block_size_const: $block_size_const:ident,
+      compress_ty: $compress_ty:ty,
+      digest_ty: $digest_ty:ty,
+      h0: $h0:path,
+      dispatch: $dispatch:ident,
+      f_fn: $f_fn:path,
+      test_oneshot: $test_oneshot:path,
+      word_ty: $word_ty:ty,
+      recommended_iterations: $recommended_iterations:expr,
+    }
+  ) => {
+    $(#[$struct_meta])*
+    #[derive(Clone)]
+    pub struct $name {
+      inner_init: [$word_ty; 8],
+      outer_init: [$word_ty; 8],
+      compress: $compress_ty,
     }
 
-    let mut ipad = [0u8; SHA256_BLOCK_SIZE];
-    let mut opad = [0u8; SHA256_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
-
-    let mut inner_init = SHA256_H0;
-    compress(&mut inner_init, &ipad);
-
-    let mut outer_init = SHA256_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
-
-    Self {
-      inner_init,
-      outer_init,
-      compress,
-    }
-  }
-
-  /// Derive a key into `okm`.
-  ///
-  /// Returns [`Pbkdf2Error::InvalidIterations`] if `iterations` is zero, or
-  /// [`Pbkdf2Error::OutputTooLong`] if `okm` exceeds `(2^32 − 1) × 32` bytes.
-  #[allow(clippy::indexing_slicing)]
-  pub fn derive(&self, salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-    if iterations == 0 {
-      return Err(Pbkdf2Error::InvalidIterations);
-    }
-    if okm.is_empty() {
-      return Ok(());
-    }
-    let num_blocks = okm.len().div_ceil(SHA256_OUTPUT_SIZE);
-    if num_blocks as u64 > u32::MAX as u64 {
-      return Err(Pbkdf2Error::OutputTooLong);
-    }
-
-    let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
-    for (i, chunk) in okm.chunks_mut(SHA256_OUTPUT_SIZE).enumerate() {
-      let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha256_f(
-        self.compress,
-        &self.inner_init,
-        &self.outer_init,
-        salt,
-        iterations,
-        block_index,
-        &mut block_out,
-      );
-      chunk.copy_from_slice(&block_out[..chunk.len()]);
-    }
-
-    ct::zeroize(&mut block_out);
-    Ok(())
-  }
-
-  /// Derive a key into a fixed-size array.
-  pub fn derive_array<const N: usize>(&self, salt: &[u8], iterations: u32) -> Result<[u8; N], Pbkdf2Error> {
-    let mut out = [0u8; N];
-    self.derive(salt, iterations, &mut out)?;
-    Ok(out)
-  }
-
-  /// Verify `expected` against the derived key in constant time.
-  ///
-  /// Returns [`VerificationError`] on mismatch or if parameters are invalid.
-  #[allow(clippy::indexing_slicing)]
-  pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
-    if iterations == 0 || expected.is_empty() {
-      return Err(VerificationError::new());
-    }
-    let num_blocks = expected.len().div_ceil(SHA256_OUTPUT_SIZE);
-    if num_blocks as u64 > u32::MAX as u64 {
-      return Err(VerificationError::new());
-    }
-
-    let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
-    let mut acc = 0u8;
-
-    for (i, chunk) in expected.chunks(SHA256_OUTPUT_SIZE).enumerate() {
-      let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha256_f(
-        self.compress,
-        &self.inner_init,
-        &self.outer_init,
-        salt,
-        iterations,
-        block_index,
-        &mut block_out,
-      );
-      for (&a, &b) in block_out[..chunk.len()].iter().zip(chunk.iter()) {
-        acc |= a ^ b;
+    impl fmt::Debug for $name {
+      fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(stringify!($name)).finish_non_exhaustive()
       }
     }
 
-    ct::zeroize(&mut block_out);
+    impl $name {
+      /// Digest output size in bytes.
+      pub const OUTPUT_SIZE: usize = $output_size_const;
+      /// Minimum iteration count recommended for compliance-sensitive deployments.
+      pub const MIN_RECOMMENDED_ITERATIONS: u32 = $recommended_iterations;
+      /// Minimum salt length (bytes) recommended for compliance-sensitive deployments.
+      pub const MIN_SALT_LEN: usize = 16;
 
-    if core::hint::black_box(acc) == 0 {
-      Ok(())
-    } else {
-      Err(VerificationError::new())
+      /// Pre-compute HMAC prefix states from `password`.
+      #[must_use]
+      #[allow(clippy::indexing_slicing)] // password.len() <= block size in the else branch.
+      pub fn new(password: &[u8]) -> Self {
+        let compress = $dispatch::compress_dispatch().select(0);
+
+        let mut key_block = [0u8; $block_size_const];
+        if password.len() > $block_size_const {
+          let digest = <$digest_ty>::digest(password);
+          key_block[..$output_size_const].copy_from_slice(&digest);
+        } else {
+          key_block[..password.len()].copy_from_slice(password);
+        }
+
+        let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+          let mut inner_init = $h0;
+          compress(&mut inner_init, ipad);
+
+          let mut outer_init = $h0;
+          compress(&mut outer_init, opad);
+
+          (inner_init, outer_init)
+        });
+
+        Self {
+          inner_init,
+          outer_init,
+          compress,
+        }
+      }
+
+      /// Derive a key into `okm`.
+      #[allow(clippy::indexing_slicing)]
+      pub fn derive(&self, salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        if iterations == 0 {
+          return Err(Pbkdf2Error::InvalidIterations);
+        }
+        if okm.is_empty() {
+          return Ok(());
+        }
+        let num_blocks = okm.len().div_ceil($output_size_const);
+        if num_blocks as u64 > u32::MAX as u64 {
+          return Err(Pbkdf2Error::OutputTooLong);
+        }
+
+        let mut block_out = [0u8; $output_size_const];
+        for (i, chunk) in okm.chunks_mut($output_size_const).enumerate() {
+          let block_index = (i as u32).strict_add(1);
+          $f_fn(
+            self.compress,
+            &self.inner_init,
+            &self.outer_init,
+            salt,
+            iterations,
+            block_index,
+            &mut block_out,
+          );
+          chunk.copy_from_slice(&block_out[..chunk.len()]);
+        }
+
+        ct::zeroize(&mut block_out);
+        Ok(())
+      }
+
+      /// Derive a key into a fixed-size array.
+      pub fn derive_array<const N: usize>(&self, salt: &[u8], iterations: u32) -> Result<[u8; N], Pbkdf2Error> {
+        let mut out = [0u8; N];
+        self.derive(salt, iterations, &mut out)?;
+        Ok(out)
+      }
+
+      /// Verify `expected` against the derived key in constant time.
+      #[allow(clippy::indexing_slicing)]
+      pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
+        if iterations == 0 || expected.is_empty() {
+          return Err(VerificationError::new());
+        }
+        let num_blocks = expected.len().div_ceil($output_size_const);
+        if num_blocks as u64 > u32::MAX as u64 {
+          return Err(VerificationError::new());
+        }
+
+        let mut block_out = [0u8; $output_size_const];
+        let mut acc = 0u8;
+
+        for (i, chunk) in expected.chunks($output_size_const).enumerate() {
+          let block_index = (i as u32).strict_add(1);
+          $f_fn(
+            self.compress,
+            &self.inner_init,
+            &self.outer_init,
+            salt,
+            iterations,
+            block_index,
+            &mut block_out,
+          );
+          for (&a, &b) in block_out[..chunk.len()].iter().zip(chunk.iter()) {
+            acc |= a ^ b;
+          }
+        }
+
+        ct::zeroize(&mut block_out);
+
+        if core::hint::black_box(acc) == 0 {
+          Ok(())
+        } else {
+          Err(VerificationError::new())
+        }
+      }
+
+      /// Derive a key in one shot.
+      #[inline]
+      pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        Self::new(password).derive(salt, iterations, okm)
+      }
+
+      /// Derive a key into a fixed-size array in one shot.
+      #[inline]
+      pub fn derive_key_array<const N: usize>(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+      ) -> Result<[u8; N], Pbkdf2Error> {
+        Self::new(password).derive_array(salt, iterations)
+      }
+
+      /// Verify a password in one shot.
+      #[inline]
+      pub fn verify_password(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        expected: &[u8],
+      ) -> Result<(), VerificationError> {
+        Self::new(password).verify(salt, iterations, expected)
+      }
+
+      /// Test-only: build with a specific digest compress function.
+      #[cfg(test)]
+      #[allow(clippy::indexing_slicing)]
+      pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
+        let mut key_block = [0u8; $block_size_const];
+        if password.len() > $block_size_const {
+          key_block[..$output_size_const].copy_from_slice(&$test_oneshot(password, compress));
+        } else {
+          key_block[..password.len()].copy_from_slice(password);
+        }
+
+        let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+          let mut inner_init = $h0;
+          compress(&mut inner_init, ipad);
+
+          let mut outer_init = $h0;
+          compress(&mut outer_init, opad);
+
+          (inner_init, outer_init)
+        });
+
+        Self {
+          inner_init,
+          outer_init,
+          compress,
+        }
+      }
     }
-  }
 
-  /// Derive a key in one shot.
-  #[inline]
-  pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-    Self::new(password).derive(salt, iterations, okm)
-  }
-
-  /// Derive a key into a fixed-size array in one shot.
-  #[inline]
-  pub fn derive_key_array<const N: usize>(
-    password: &[u8],
-    salt: &[u8],
-    iterations: u32,
-  ) -> Result<[u8; N], Pbkdf2Error> {
-    Self::new(password).derive_array(salt, iterations)
-  }
-
-  /// Verify a password in one shot.
-  #[inline]
-  pub fn verify_password(
-    password: &[u8],
-    salt: &[u8],
-    iterations: u32,
-    expected: &[u8],
-  ) -> Result<(), VerificationError> {
-    Self::new(password).verify(salt, iterations, expected)
-  }
-
-  /// Test-only: build with a specific SHA-256 compress function.
-  #[cfg(test)]
-  #[allow(clippy::indexing_slicing)]
-  pub(crate) fn new_with_compress_for_test(password: &[u8], compress: Sha256CompressBlocksFn) -> Self {
-    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
-    if password.len() > SHA256_BLOCK_SIZE {
-      key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&sha256_oneshot_with_compress(password, compress));
-    } else {
-      key_block[..password.len()].copy_from_slice(password);
+    impl Drop for $name {
+      fn drop(&mut self) {
+        for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
+          // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+          unsafe { core::ptr::write_volatile(word, 0) };
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
     }
+  };
+}
 
-    let mut ipad = [0u8; SHA256_BLOCK_SIZE];
-    let mut opad = [0u8; SHA256_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
+// ─── PBKDF2-HMAC-SHA256 ────────────────────────────────────────────────────
 
-    let mut inner_init = SHA256_H0;
-    compress(&mut inner_init, &ipad);
-
-    let mut outer_init = SHA256_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
-
-    Self {
-      inner_init,
-      outer_init,
-      compress,
-    }
+define_pbkdf2_sha2! {
+  /// PBKDF2-HMAC-SHA256 key derivation (RFC 2898).
+  ///
+  /// Pre-computes the HMAC-SHA256 prefix states from the password so that
+  /// subsequent `derive` and `verify` calls run the iteration loop directly
+  /// against the SHA-256 compress function with no per-iteration overhead.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::Pbkdf2Sha256;
+  ///
+  /// // Derive a 32-byte key
+  /// let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 600_000)?;
+  ///
+  /// // Re-use pre-computed state for multiple operations
+  /// let state = Pbkdf2Sha256::new(b"password");
+  /// let dk2 = state.derive_array::<32>(b"salt", 600_000)?;
+  /// assert_eq!(dk, dk2);
+  ///
+  /// // Verify
+  /// assert!(state.verify(b"salt", 600_000, &dk).is_ok());
+  /// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
+  /// ```
+  Pbkdf2Sha256 {
+    output_size_const: SHA256_OUTPUT_SIZE,
+    block_size_const: SHA256_BLOCK_SIZE,
+    compress_ty: Sha256CompressBlocksFn,
+    digest_ty: Sha256,
+    h0: SHA256_H0,
+    dispatch: sha256_dispatch,
+    f_fn: pbkdf2_sha256_f,
+    test_oneshot: sha256_oneshot_with_compress,
+    word_ty: u32,
+    recommended_iterations: 600_000,
   }
 }
 
@@ -325,16 +369,6 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
     chunk.copy_from_slice(&word.to_be_bytes());
   }
   out
-}
-
-impl Drop for Pbkdf2Sha256 {
-  fn drop(&mut self) {
-    for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  }
 }
 
 /// Compute one PBKDF2-SHA256 block: `F(Password, Salt, c, i)`.
@@ -462,215 +496,33 @@ fn pbkdf2_sha256_f(
 
 // ─── PBKDF2-HMAC-SHA512 ────────────────────────────────────────────────────
 
-/// PBKDF2-HMAC-SHA512 key derivation (RFC 2898).
-///
-/// Pre-computes the HMAC-SHA512 prefix states from the password so that
-/// subsequent `derive` and `verify` calls run the iteration loop directly
-/// against the SHA-512 compress function with no per-iteration overhead.
-///
-/// # Examples
-///
-/// ```rust
-/// use rscrypto::Pbkdf2Sha512;
-///
-/// let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 210_000)?;
-/// assert!(Pbkdf2Sha512::verify_password(b"password", b"salt", 210_000, &dk).is_ok());
-/// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
-/// ```
-#[derive(Clone)]
-pub struct Pbkdf2Sha512 {
-  inner_init: [u64; 8],
-  outer_init: [u64; 8],
-  compress: Sha512CompressBlocksFn,
-}
-
-impl fmt::Debug for Pbkdf2Sha512 {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Pbkdf2Sha512").finish_non_exhaustive()
-  }
-}
-
-impl Pbkdf2Sha512 {
-  /// SHA-512 output size in bytes.
-  pub const OUTPUT_SIZE: usize = SHA512_OUTPUT_SIZE;
-
-  /// Pre-compute HMAC-SHA512 prefix states from `password`.
-  #[must_use]
-  #[allow(clippy::indexing_slicing)] // password.len() <= SHA512_BLOCK_SIZE in the else branch.
-  pub fn new(password: &[u8]) -> Self {
-    let compress = sha512_dispatch::compress_dispatch().select(0);
-
-    let mut key_block = [0u8; SHA512_BLOCK_SIZE];
-    if password.len() > SHA512_BLOCK_SIZE {
-      let digest = Sha512::digest(password);
-      key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&digest);
-    } else {
-      key_block[..password.len()].copy_from_slice(password);
-    }
-
-    let mut ipad = [0u8; SHA512_BLOCK_SIZE];
-    let mut opad = [0u8; SHA512_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
-
-    let mut inner_init = SHA512_H0;
-    compress(&mut inner_init, &ipad);
-
-    let mut outer_init = SHA512_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
-
-    Self {
-      inner_init,
-      outer_init,
-      compress,
-    }
-  }
-
-  /// Derive a key into `okm`.
-  #[allow(clippy::indexing_slicing)]
-  pub fn derive(&self, salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-    if iterations == 0 {
-      return Err(Pbkdf2Error::InvalidIterations);
-    }
-    if okm.is_empty() {
-      return Ok(());
-    }
-    let num_blocks = okm.len().div_ceil(SHA512_OUTPUT_SIZE);
-    if num_blocks as u64 > u32::MAX as u64 {
-      return Err(Pbkdf2Error::OutputTooLong);
-    }
-
-    let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
-    for (i, chunk) in okm.chunks_mut(SHA512_OUTPUT_SIZE).enumerate() {
-      let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha512_f(
-        self.compress,
-        &self.inner_init,
-        &self.outer_init,
-        salt,
-        iterations,
-        block_index,
-        &mut block_out,
-      );
-      chunk.copy_from_slice(&block_out[..chunk.len()]);
-    }
-
-    ct::zeroize(&mut block_out);
-    Ok(())
-  }
-
-  /// Derive a key into a fixed-size array.
-  pub fn derive_array<const N: usize>(&self, salt: &[u8], iterations: u32) -> Result<[u8; N], Pbkdf2Error> {
-    let mut out = [0u8; N];
-    self.derive(salt, iterations, &mut out)?;
-    Ok(out)
-  }
-
-  /// Verify `expected` against the derived key in constant time.
-  #[allow(clippy::indexing_slicing)]
-  pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
-    if iterations == 0 || expected.is_empty() {
-      return Err(VerificationError::new());
-    }
-    let num_blocks = expected.len().div_ceil(SHA512_OUTPUT_SIZE);
-    if num_blocks as u64 > u32::MAX as u64 {
-      return Err(VerificationError::new());
-    }
-
-    let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
-    let mut acc = 0u8;
-
-    for (i, chunk) in expected.chunks(SHA512_OUTPUT_SIZE).enumerate() {
-      let block_index = (i as u32).strict_add(1);
-      pbkdf2_sha512_f(
-        self.compress,
-        &self.inner_init,
-        &self.outer_init,
-        salt,
-        iterations,
-        block_index,
-        &mut block_out,
-      );
-      for (&a, &b) in block_out[..chunk.len()].iter().zip(chunk.iter()) {
-        acc |= a ^ b;
-      }
-    }
-
-    ct::zeroize(&mut block_out);
-
-    if core::hint::black_box(acc) == 0 {
-      Ok(())
-    } else {
-      Err(VerificationError::new())
-    }
-  }
-
-  /// Derive a key in one shot.
-  #[inline]
-  pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-    Self::new(password).derive(salt, iterations, okm)
-  }
-
-  /// Derive a key into a fixed-size array in one shot.
-  #[inline]
-  pub fn derive_key_array<const N: usize>(
-    password: &[u8],
-    salt: &[u8],
-    iterations: u32,
-  ) -> Result<[u8; N], Pbkdf2Error> {
-    Self::new(password).derive_array(salt, iterations)
-  }
-
-  /// Verify a password in one shot.
-  #[inline]
-  pub fn verify_password(
-    password: &[u8],
-    salt: &[u8],
-    iterations: u32,
-    expected: &[u8],
-  ) -> Result<(), VerificationError> {
-    Self::new(password).verify(salt, iterations, expected)
-  }
-
-  /// Test-only: build with a specific SHA-512 compress function.
-  #[cfg(test)]
-  #[allow(clippy::indexing_slicing)]
-  pub(crate) fn new_with_compress_for_test(password: &[u8], compress: Sha512CompressBlocksFn) -> Self {
-    let mut key_block = [0u8; SHA512_BLOCK_SIZE];
-    if password.len() > SHA512_BLOCK_SIZE {
-      key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&sha512_oneshot_with_compress(password, compress));
-    } else {
-      key_block[..password.len()].copy_from_slice(password);
-    }
-
-    let mut ipad = [0u8; SHA512_BLOCK_SIZE];
-    let mut opad = [0u8; SHA512_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
-
-    let mut inner_init = SHA512_H0;
-    compress(&mut inner_init, &ipad);
-
-    let mut outer_init = SHA512_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
-
-    Self {
-      inner_init,
-      outer_init,
-      compress,
-    }
+define_pbkdf2_sha2! {
+  /// PBKDF2-HMAC-SHA512 key derivation (RFC 2898).
+  ///
+  /// Pre-computes the HMAC-SHA512 prefix states from the password so that
+  /// subsequent `derive` and `verify` calls run the iteration loop directly
+  /// against the SHA-512 compress function with no per-iteration overhead.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::Pbkdf2Sha512;
+  ///
+  /// let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 210_000)?;
+  /// assert!(Pbkdf2Sha512::verify_password(b"password", b"salt", 210_000, &dk).is_ok());
+  /// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
+  /// ```
+  Pbkdf2Sha512 {
+    output_size_const: SHA512_OUTPUT_SIZE,
+    block_size_const: SHA512_BLOCK_SIZE,
+    compress_ty: Sha512CompressBlocksFn,
+    digest_ty: Sha512,
+    h0: SHA512_H0,
+    dispatch: sha512_dispatch,
+    f_fn: pbkdf2_sha512_f,
+    test_oneshot: sha512_oneshot_with_compress,
+    word_ty: u64,
+    recommended_iterations: 210_000,
   }
 }
 
@@ -699,16 +551,6 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
     chunk.copy_from_slice(&word.to_be_bytes());
   }
   out
-}
-
-impl Drop for Pbkdf2Sha512 {
-  fn drop(&mut self) {
-    for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  }
 }
 
 /// Compute one PBKDF2-SHA512 block: `F(Password, Salt, c, i)`.
@@ -847,6 +689,7 @@ mod tests {
     );
   }
 
+  #[cfg(not(miri))]
   #[test]
   fn rfc7914_sha256_vector_2() {
     let mut dk = [0u8; 64];
@@ -874,6 +717,7 @@ mod tests {
 
   #[test]
   fn sha256_matches_oracle() {
+    #[cfg(not(miri))]
     let cases: &[(&[u8], &[u8], u32, usize)] = &[
       (b"password", b"salt", 1, 32),
       (b"password", b"salt", 2, 32),
@@ -893,6 +737,18 @@ mod tests {
       // Long salt spanning SHA-256 blocks
       (b"password", &[0xBB; 200], 1, 32),
       // Key longer than block size (hashed first)
+      (&[0xCC; 128], b"salt", 1, 32),
+    ];
+    #[cfg(miri)]
+    let cases: &[(&[u8], &[u8], u32, usize)] = &[
+      (b"password", b"salt", 1, 32),
+      (b"password", b"salt", 2, 32),
+      (b"password", b"salt", 16, 64),
+      (b"", b"", 1, 32),
+      (b"p", b"s", 1, 1),
+      (b"password", b"salt", 1, 96),
+      (&[0xAA; 100], b"salt", 1, 32),
+      (b"password", &[0xBB; 200], 1, 32),
       (&[0xCC; 128], b"salt", 1, 32),
     ];
 
@@ -917,6 +773,7 @@ mod tests {
 
   #[test]
   fn sha512_matches_oracle() {
+    #[cfg(not(miri))]
     let cases: &[(&[u8], &[u8], u32, usize)] = &[
       (b"password", b"salt", 1, 64),
       (b"password", b"salt", 2, 64),
@@ -934,6 +791,17 @@ mod tests {
       // Long salt
       (b"password", &[0xBB; 200], 1, 64),
       // Key longer than block size
+      (&[0xCC; 200], b"salt", 1, 64),
+    ];
+    #[cfg(miri)]
+    let cases: &[(&[u8], &[u8], u32, usize)] = &[
+      (b"password", b"salt", 1, 64),
+      (b"password", b"salt", 2, 64),
+      (b"password", b"salt", 16, 128),
+      (b"", b"", 1, 64),
+      (b"p", b"s", 1, 1),
+      (b"password", b"salt", 1, 192),
+      (b"password", &[0xBB; 200], 1, 64),
       (&[0xCC; 200], b"salt", 1, 64),
     ];
 
@@ -1038,8 +906,12 @@ mod tests {
   fn sha256_verify_password_covers_output_lengths_and_mismatch_positions() {
     let password = [0xA5; 97];
     let salt = [0x5A; 200];
+    #[cfg(not(miri))]
+    let output_lengths = 1..=96;
+    #[cfg(miri)]
+    let output_lengths = [1usize, 2, 31, 32, 33, 63, 64, 65, 95, 96].into_iter();
 
-    for out_len in 1..=96 {
+    for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
       Pbkdf2Sha256::derive_key(&password, &salt, 2, &mut expected).unwrap();
       assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &expected).is_ok());
@@ -1059,8 +931,12 @@ mod tests {
   fn sha512_verify_password_covers_output_lengths_and_mismatch_positions() {
     let password = [0x3C; 193];
     let salt = [0xC3; 260];
+    #[cfg(not(miri))]
+    let output_lengths = 1..=192;
+    #[cfg(miri)]
+    let output_lengths = [1usize, 2, 63, 64, 65, 127, 128, 129, 191, 192].into_iter();
 
-    for out_len in 1..=192 {
+    for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
       Pbkdf2Sha512::derive_key(&password, &salt, 2, &mut expected).unwrap();
       assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &expected).is_ok());
@@ -1296,8 +1172,12 @@ mod tests {
     let password = [0x11; 89];
     let salt = [0x22; 200];
     let state = Pbkdf2Sha256::new_with_compress_for_test(&password, counting_sha256_compress);
+    #[cfg(not(miri))]
+    let output_lengths = 1..=96;
+    #[cfg(miri)]
+    let output_lengths = [1usize, 2, 31, 32, 33, 63, 64, 65, 95, 96].into_iter();
 
-    for out_len in 1..=96 {
+    for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
       state.derive(&salt, 3, &mut expected).unwrap();
 
@@ -1338,8 +1218,12 @@ mod tests {
     let password = [0x44; 161];
     let salt = [0x55; 260];
     let state = Pbkdf2Sha512::new_with_compress_for_test(&password, counting_sha512_compress);
+    #[cfg(not(miri))]
+    let output_lengths = 1..=192;
+    #[cfg(miri)]
+    let output_lengths = [1usize, 2, 63, 64, 65, 127, 128, 129, 191, 192].into_iter();
 
-    for out_len in 1..=192 {
+    for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
       state.derive(&salt, 3, &mut expected).unwrap();
 

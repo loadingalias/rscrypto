@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 //! Tuned dispatch tables for rapidhash (**NOT CRYPTO**).
 //!
 //! This module is the checked-in runtime table used by capability-driven dispatch.

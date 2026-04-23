@@ -26,7 +26,7 @@ proptest! {
     Kmac256::mac_into(&key, &customization, &data, &mut actual);
 
     prop_assert_eq!(actual, expected.clone());
-    prop_assert_eq!(Kmac256::verify(&key, &customization, &data, &expected), Ok(()));
+    prop_assert_eq!(Kmac256::verify_tag(&key, &customization, &data, &expected), Ok(()));
   }
 
   #[test]

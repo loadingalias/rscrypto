@@ -3,66 +3,40 @@
 //! Minimal, timing-safe error types designed to prevent information leakage.
 //! Individual crates may define additional errors as needed.
 
-use core::fmt;
-
-/// Verification failed.
-///
-/// Returned when cryptographic verification fails (MAC tags, AEAD tags,
-/// signatures). Intentionally opaque to prevent timing side-channels.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::traits::{VerificationError, ct::constant_time_eq};
-///
-/// fn verify(computed: &[u8; 32], expected: &[u8; 32]) -> Result<(), VerificationError> {
-///   if constant_time_eq(computed, expected) {
-///     Ok(())
-///   } else {
-///     Err(VerificationError::new())
-///   }
-/// }
-///
-/// let a = [0u8; 32];
-/// let b = [1u8; 32];
-/// assert!(verify(&a, &b).is_err());
-/// ```
-///
-/// # Security
-///
-/// This error provides no details about the failure to prevent timing
-/// side-channels. The underlying verification should use constant-time
-/// comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub struct VerificationError;
-
-impl VerificationError {
-  /// Create a new verification error.
+define_unit_error! {
+  /// Verification failed.
   ///
-  /// This is the only way to construct this error from outside the crate,
-  /// ensuring forward compatibility if fields are added in the future.
-  #[inline]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self
-  }
+  /// Returned when cryptographic verification fails (MAC tags, AEAD tags,
+  /// signatures). Intentionally opaque to prevent timing side-channels.
+  ///
+  /// # Examples
+  ///
+  /// ```
+  /// use rscrypto::traits::{VerificationError, ct::constant_time_eq};
+  ///
+  /// fn verify(computed: &[u8; 32], expected: &[u8; 32]) -> Result<(), VerificationError> {
+  ///   if constant_time_eq(computed, expected) {
+  ///     Ok(())
+  ///   } else {
+  ///     Err(VerificationError::new())
+  ///   }
+  /// }
+  ///
+  /// let a = [0u8; 32];
+  /// let b = [1u8; 32];
+  /// assert!(verify(&a, &b).is_err());
+  /// ```
+  ///
+  /// # Security
+  ///
+  /// This error provides no details about the failure to prevent timing
+  /// side-channels. Treat it as a generic authentication failure and avoid
+  /// mapping it to finer-grained protocol responses that would recreate an
+  /// oracle. The underlying verification should use constant-time comparison.
+  #[non_exhaustive]
+  pub struct VerificationError;
+  "verification failed"
 }
-
-impl Default for VerificationError {
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl fmt::Display for VerificationError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("verification failed")
-  }
-}
-
-impl core::error::Error for VerificationError {}
 
 #[cfg(test)]
 mod tests {

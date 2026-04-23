@@ -73,7 +73,7 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
 
     // Pre-encrypt with rscrypto to get valid ciphertext + tag.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext);
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     // Pre-encrypt with RustCrypto to get its tag format.
     let mut ct_rc = data.clone();
@@ -167,7 +167,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext);
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
@@ -260,7 +260,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext);
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
@@ -353,7 +353,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext);
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
@@ -409,6 +409,7 @@ fn aegis256_encrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let mut buf = data.clone();
+    let cipher_ac = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
@@ -420,10 +421,7 @@ fn aegis256_encrypt(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("aegis-crate", len), data, |b, d| {
       b.iter(|| {
         buf.copy_from_slice(d);
-        black_box(
-          aegis::aegis256::Aegis256::<16>::new(black_box(&KEY_32), black_box(&NONCE_32))
-            .encrypt_in_place(black_box(&mut buf), black_box(AAD)),
-        )
+        black_box(cipher_ac.encrypt_in_place(black_box(&mut buf), black_box(AAD)))
       })
     });
   }
@@ -442,11 +440,12 @@ fn aegis256_decrypt(c: &mut Criterion) {
 
     // Pre-encrypt with rscrypto to get valid ciphertext + tag.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext);
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     // Pre-encrypt with aegis crate to get its tag format.
     let mut ct_ac = data.clone();
-    let tag_ac = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32).encrypt_in_place(&mut ct_ac, AAD);
+    let cipher_ac = aegis::aegis256::Aegis256::<16>::new(&KEY_32, &NONCE_32);
+    let tag_ac = cipher_ac.encrypt_in_place(&mut ct_ac, AAD);
 
     let mut buf = ciphertext.clone();
 
@@ -470,7 +469,7 @@ fn aegis256_decrypt(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("aegis-crate", len), &ct_ac, |b, ct| {
       b.iter(|| {
         buf_ac.copy_from_slice(ct);
-        aegis::aegis256::Aegis256::<16>::new(black_box(&KEY_32), black_box(&NONCE_32))
+        cipher_ac
           .decrypt_in_place(black_box(&mut buf_ac), black_box(&tag_ac), black_box(AAD))
           .unwrap();
         black_box(&buf_ac);

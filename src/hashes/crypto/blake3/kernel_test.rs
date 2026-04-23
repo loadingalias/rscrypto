@@ -99,7 +99,14 @@ mod tests {
   #[test]
   fn all_kernels_match_official_crate_and_streaming_splits() {
     let caps = crate::platform::caps();
+    #[cfg(not(miri))]
     let lens = [0usize, 1, 2, 3, 63, 64, 65, 1023, 1024, 1025, 2047, 2048, 2049, 10_000];
+    #[cfg(miri)]
+    let lens = [0usize, 1, 63, 64, 65, 1023, 1024, 1025, 2048];
+    #[cfg(not(miri))]
+    let chunks = [1usize, 7, 31, 32, 63, 64, 65, 256, 1024, 4096];
+    #[cfg(miri)]
+    let chunks = [1usize, 31, 32, 63, 64, 65, 256];
 
     for &id in ALL {
       if !caps.has(required_caps(id)) {
@@ -116,7 +123,7 @@ mod tests {
         assert_eq!(ours, expected, "blake3 hash mismatch for kernel={}", id.as_str());
 
         // Streaming chunking patterns.
-        for &chunk in &[1usize, 7, 31, 32, 63, 64, 65, 256, 1024, 4096] {
+        for &chunk in &chunks {
           let mut h = hasher_for_kernel(id);
           for part in msg.chunks(chunk) {
             h.update_with(part, kernel.id, kernel.id);
@@ -278,9 +285,12 @@ mod tests {
   fn oneshot_digest_matches_official_crate() {
     // This exercises the `dispatch::digest` fast path (including the multi-chunk
     // oneshot implementation) rather than the streaming `update` API.
+    #[cfg(not(miri))]
     let lens = [
       0usize, 1, 2, 3, 63, 64, 65, 1023, 1024, 1025, 2047, 2048, 2049, 4096, 8192, 65_536, 1_048_576,
     ];
+    #[cfg(miri)]
+    let lens = [0usize, 1, 63, 64, 65, 1023, 1024, 1025, 4096, 8192];
 
     for &len in &lens {
       let msg = pattern(len);
@@ -292,7 +302,10 @@ mod tests {
 
   #[test]
   fn oneshot_keyed_and_derive_match_official_crate() {
+    #[cfg(not(miri))]
     let lens = [0usize, 1, 3, 64, 65, 1024, 4096, 10_000];
+    #[cfg(miri)]
+    let lens = [0usize, 1, 64, 65, 1024, 4096];
 
     for &len in &lens {
       let msg = pattern(len);
@@ -404,7 +417,7 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "std")]
+  #[cfg(all(feature = "std", not(miri)))]
   #[test]
   fn large_inputs_match_official_crate() {
     // This is sized to reliably cross the std-only parallelization thresholds.

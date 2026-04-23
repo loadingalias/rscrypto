@@ -190,3 +190,47 @@ impl core::fmt::Debug for Description {
 pub fn describe() -> Description {
   Description { det: get() }
 }
+
+/// Zero-allocation dispatch metadata shared by checksum, hash, and AEAD
+/// introspection surfaces.
+#[derive(Clone, Copy)]
+pub struct DispatchInfo {
+  platform: Description,
+}
+
+impl DispatchInfo {
+  /// Returns dispatch info for the current platform.
+  #[inline]
+  #[must_use]
+  pub fn current() -> Self {
+    Self { platform: describe() }
+  }
+
+  /// Returns the platform description driving dispatch decisions.
+  #[inline]
+  #[must_use]
+  pub fn platform(&self) -> Description {
+    self.platform
+  }
+}
+
+impl core::fmt::Display for DispatchInfo {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    core::fmt::Display::fmt(&self.platform, f)
+  }
+}
+
+impl core::fmt::Debug for DispatchInfo {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("DispatchInfo")
+      .field("platform", &format_args!("{}", self.platform))
+      .finish()
+  }
+}
+
+/// Trait for algorithms that can report the kernel chosen for a buffer length.
+pub trait KernelIntrospect {
+  /// Returns the kernel name that would be selected for a buffer of `len`
+  /// bytes.
+  fn kernel_name_for_len(len: usize) -> &'static str;
+}

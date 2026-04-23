@@ -1,7 +1,7 @@
 #![cfg(feature = "ed25519")]
 
 use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, VerifyingKey};
-use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};
+use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 
 fn patterned_message(len: usize, mul: u8, add: u8) -> Vec<u8> {
   (0..len)
@@ -33,7 +33,6 @@ fn ed25519_matches_dalek_for_deterministic_cases() {
     assert_eq!(public.to_bytes(), verifying_key.to_bytes());
     assert_eq!(ours.to_bytes(), oracle.to_bytes());
     assert!(public.verify(&message, &ours).is_ok());
-    assert!(verify_ed25519(&message, &public, &ours).is_ok());
 
     let oracle_public = Ed25519PublicKey::from_bytes(verifying_key.to_bytes());
     let oracle_signature = Ed25519Signature::from_bytes(oracle.to_bytes());
