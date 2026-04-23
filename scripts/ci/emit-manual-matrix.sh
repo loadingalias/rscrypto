@@ -65,13 +65,13 @@ append_row_for_platform() {
       ROWS+=("{\"platform\":\"graviton4\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${RUNSON_TIMEOUT_MINUTES},\"setup_kind\":\"runson\",\"runner\":\"runs-on=${GH_RUN_ID_VAL}/runner=graviton4\",\"cache_key\":\"\",\"tools_mode\":\"standard\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"runson_mode\":\"runson-bench\"}")
       ;;
     ibm-s390x)
-      ROWS+=("{\"platform\":\"ibm-s390x\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-s390x\",\"cache_key\":\"manual-ibm-${MODE}-s390x\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}")
+      ROWS+=("{\"platform\":\"ibm-s390x\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-s390x\",\"cache_key\":\"manual-ibm-${MODE}-s390x\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\",\"runson_mode\":\"runson-bench\"}")
       ;;
     ibm-power10)
-      ROWS+=("{\"platform\":\"ibm-power10\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"cache_key\":\"manual-ibm-${MODE}-power10\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}")
+      ROWS+=("{\"platform\":\"ibm-power10\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"cache_key\":\"manual-ibm-${MODE}-power10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\",\"runson_mode\":\"runson-bench\"}")
       ;;
     rise-riscv)
-      ROWS+=("{\"platform\":\"rise-riscv\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${RISCV_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-riscv\",\"cache_key\":\"manual-rise-${MODE}-riscv64\",\"tools_mode\":\"none\",\"toolchain_components\":\"\",\"runson_mode\":\"runson-bench\"}")
+      ROWS+=("{\"platform\":\"rise-riscv\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${RISCV_TIMEOUT_MINUTES},\"setup_kind\":\"default\",\"runner\":\"ubuntu-24.04-riscv\",\"cache_key\":\"manual-rise-${MODE}-riscv64\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\",\"runson_mode\":\"runson-bench\"}")
       ;;
     *)
       echo "error: unsupported bench platform '$platform'" >&2
