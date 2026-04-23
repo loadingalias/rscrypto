@@ -97,7 +97,13 @@ fn rk(i: usize) -> u32 {
     // SAFETY: i is always in 0..64, and K has exactly 64 elements.
     unsafe { core::ptr::read(K.0.as_ptr().add(i)) }
   }
-  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+  #[cfg(target_arch = "powerpc64")]
+  {
+    // The volatile-load variant regressed POWER correctness in target-native CI.
+    // Keep POWER on direct indexing until the memory-load strategy is revalidated.
+    K.0[i]
+  }
+  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "powerpc64")))]
   {
     // SAFETY: i is always in 0..64, and K has exactly 64 elements.
     unsafe { core::ptr::read_volatile(K.0.as_ptr().add(i)) }
