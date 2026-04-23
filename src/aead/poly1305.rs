@@ -940,8 +940,9 @@ mod tests {
       for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
         let aad: Vec<u8> = (0..aad_len).map(|i| i.strict_mul(11).strict_add(7) as u8).collect();
         let ct: Vec<u8> = (0..ct_len).map(|i| i.strict_mul(17).strict_add(3) as u8).collect();
+        let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
         let portable = authenticate_aead_portable(&aad, &ct, &key);
-        let parallel = super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key);
+        let parallel = super::avx2_par4::authenticate_aead_par4(&aad, &ct, &key, lengths);
         assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
       }
     }
@@ -972,7 +973,8 @@ mod tests {
       0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
     ];
 
-    let result = super::avx2_par4::authenticate_aead_par4(&aad, &ciphertext, &poly_key);
+    let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
+    let result = super::avx2_par4::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths);
     assert_eq!(result, expected);
   }
 }

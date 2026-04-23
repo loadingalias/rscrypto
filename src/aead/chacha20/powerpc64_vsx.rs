@@ -12,10 +12,9 @@ pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &
 
 /// Precomputed `vrlw` shift vectors for the four ChaCha20 rotations.
 ///
-/// ChaCha20's constants (16, 12, 8, 7) are rotate-RIGHT values. `vrlw` is a
-/// rotate-LEFT by the shift in each lane, so each stored splat carries the
-/// ROL amount `32 - ROR`. Field names encode the ChaCha20 (ROR) semantic;
-/// the ROR→ROL conversion is centralized in `splat_ror` below.
+/// ChaCha20 quarter rounds rotate LEFT by 16, 12, 8, and 7 bits. `vrlw`
+/// matches that semantic directly, so each stored splat carries the exact
+/// per-lane rotate-left amount.
 struct RotShifts {
   rot16: i64x2,
   rot12: i64x2,
@@ -23,23 +22,22 @@ struct RotShifts {
   rot7: i64x2,
 }
 
-/// Build a `vrlw` shift splat from a ChaCha20 rotate-RIGHT constant.
+/// Build a `vrlw` shift splat from a ChaCha20 rotate-left constant.
 ///
-/// Returns `splat(32 - ROR)`; `rol(32 - ROR)` is equivalent to `ror(ROR)`
-/// for u32, and `vrlw` rotates LEFT by its shift operand.
+/// Returns `splat(bits)`; `vrlw` rotates LEFT by the shift in each lane.
 #[inline(always)]
-fn splat_ror(ror: u32) -> i64x2 {
-  debug_assert!(ror > 0 && ror < 32, "ROR must be in 1..32 for u32 rotate-right");
-  splat(32 - ror)
+fn splat_rol(bits: u32) -> i64x2 {
+  debug_assert!(bits > 0 && bits < 32, "rotate-left amount must be in 1..32 for u32");
+  splat(bits)
 }
 
 impl RotShifts {
   fn new() -> Self {
     Self {
-      rot16: splat_ror(16),
-      rot12: splat_ror(12),
-      rot8: splat_ror(8),
-      rot7: splat_ror(7),
+      rot16: splat_rol(16),
+      rot12: splat_rol(12),
+      rot8: splat_rol(8),
+      rot7: splat_rol(7),
     }
   }
 }
@@ -281,19 +279,19 @@ mod tests {
       )
     };
 
-    let expect = |ror: u32| -> [u32; 4] {
+    let expect = |bits: u32| -> [u32; 4] {
       [
-        ROT_SEEDS[0].rotate_right(ror),
-        ROT_SEEDS[1].rotate_right(ror),
-        ROT_SEEDS[2].rotate_right(ror),
-        ROT_SEEDS[3].rotate_right(ror),
+        ROT_SEEDS[0].rotate_left(bits),
+        ROT_SEEDS[1].rotate_left(bits),
+        ROT_SEEDS[2].rotate_left(bits),
+        ROT_SEEDS[3].rotate_left(bits),
       ]
     };
 
-    assert_eq!(to_u32x4(r16), expect(16), "ror16 mismatch");
-    assert_eq!(to_u32x4(r12), expect(12), "ror12 mismatch");
-    assert_eq!(to_u32x4(r8), expect(8), "ror8 mismatch");
-    assert_eq!(to_u32x4(r7), expect(7), "ror7 mismatch");
+    assert_eq!(to_u32x4(r16), expect(16), "rotl16 mismatch");
+    assert_eq!(to_u32x4(r12), expect(12), "rotl12 mismatch");
+    assert_eq!(to_u32x4(r8), expect(8), "rotl8 mismatch");
+    assert_eq!(to_u32x4(r7), expect(7), "rotl7 mismatch");
   }
 
   #[test]

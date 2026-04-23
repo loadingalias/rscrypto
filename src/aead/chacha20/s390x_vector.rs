@@ -190,16 +190,15 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
   out
 }
 
-/// Element rotate-RIGHT u32 via z/Arch `verll` (M4=2, fullword elements).
+/// Element rotate-LEFT u32 via z/Arch `verll` (M4=2, fullword elements).
 ///
-/// ChaCha20's rotation constants (16, 12, 8, 7) are rotate-RIGHT values.
-/// `verll` is a rotate-LEFT, so the helper passes `32 - ROR` at compile
-/// time — single `verll` instruction, zero runtime cost.
+/// ChaCha20 quarter rounds rotate LEFT by 16, 12, 8, and 7 bits, and `verll`
+/// already rotates LEFT. The immediate maps directly to the ChaCha constant.
 #[inline]
 #[target_feature(enable = "vector")]
-unsafe fn rotr32_via_verll<const ROR: u32>(a: i64x2) -> i64x2 {
+unsafe fn rotl32_via_verll<const BITS: u32>(a: i64x2) -> i64x2 {
   const {
-    assert!(ROR > 0 && ROR < 32, "ROR must be in 1..32 for u32 rotate-right");
+    assert!(BITS > 0 && BITS < 32, "rotate-left amount must be in 1..32 for u32");
   }
   let out: i64x2;
   // SAFETY: z/Vector facility available via target_feature; immediate is
@@ -209,7 +208,7 @@ unsafe fn rotr32_via_verll<const ROR: u32>(a: i64x2) -> i64x2 {
       "verll {out}, {a}, {bits}, 2",
       out = lateout(vreg) out,
       a = in(vreg) a,
-      bits = const 32 - ROR,
+      bits = const BITS,
       options(nomem, nostack, pure)
     );
   }
@@ -222,22 +221,22 @@ unsafe fn quarter_round(a: &mut i64x2, b: &mut i64x2, c: &mut i64x2, d: &mut i64
   // SAFETY: z/Vector facility available via enclosing target_feature.
   unsafe {
     *a = vaf(*a, *b);
-    *d = rotr32_via_verll::<16>(vx(*d, *a));
+    *d = rotl32_via_verll::<16>(vx(*d, *a));
 
     *c = vaf(*c, *d);
-    *b = rotr32_via_verll::<12>(vx(*b, *c));
+    *b = rotl32_via_verll::<12>(vx(*b, *c));
 
     *a = vaf(*a, *b);
-    *d = rotr32_via_verll::<8>(vx(*d, *a));
+    *d = rotl32_via_verll::<8>(vx(*d, *a));
 
     *c = vaf(*c, *d);
-    *b = rotr32_via_verll::<7>(vx(*b, *c));
+    *b = rotl32_via_verll::<7>(vx(*b, *c));
   }
 }
 
 #[cfg(test)]
 mod tests {
-  use super::{from_u32x4, rotr32_via_verll, to_u32x4};
+  use super::{from_u32x4, rotl32_via_verll, to_u32x4};
 
   const ROT_SEEDS: [u32; 4] = [0x0123_4567, 0x89AB_CDEF, 0xDEAD_BEEF, 0x0000_00FF];
 
@@ -247,30 +246,30 @@ mod tests {
     // SAFETY: target_feature guarantees z/Vector on this function.
     let (r16, r12, r8, r7) = unsafe {
       (
-        rotr32_via_verll::<16>(input),
-        rotr32_via_verll::<12>(input),
-        rotr32_via_verll::<8>(input),
-        rotr32_via_verll::<7>(input),
+        rotl32_via_verll::<16>(input),
+        rotl32_via_verll::<12>(input),
+        rotl32_via_verll::<8>(input),
+        rotl32_via_verll::<7>(input),
       )
     };
 
-    let expect = |ror: u32| -> [u32; 4] {
+    let expect = |bits: u32| -> [u32; 4] {
       [
-        ROT_SEEDS[0].rotate_right(ror),
-        ROT_SEEDS[1].rotate_right(ror),
-        ROT_SEEDS[2].rotate_right(ror),
-        ROT_SEEDS[3].rotate_right(ror),
+        ROT_SEEDS[0].rotate_left(bits),
+        ROT_SEEDS[1].rotate_left(bits),
+        ROT_SEEDS[2].rotate_left(bits),
+        ROT_SEEDS[3].rotate_left(bits),
       ]
     };
 
-    assert_eq!(to_u32x4(r16), expect(16), "ror16 mismatch");
-    assert_eq!(to_u32x4(r12), expect(12), "ror12 mismatch");
-    assert_eq!(to_u32x4(r8), expect(8), "ror8 mismatch");
-    assert_eq!(to_u32x4(r7), expect(7), "ror7 mismatch");
+    assert_eq!(to_u32x4(r16), expect(16), "rotl16 mismatch");
+    assert_eq!(to_u32x4(r12), expect(12), "rotl12 mismatch");
+    assert_eq!(to_u32x4(r8), expect(8), "rotl8 mismatch");
+    assert_eq!(to_u32x4(r7), expect(7), "rotl7 mismatch");
   }
 
   #[test]
-  fn rotr32_via_verll_matches_u32_rotate_right() {
+  fn rotl32_via_verll_matches_u32_rotate_left() {
     assert!(
       std::arch::is_s390x_feature_detected!("vector"),
       "s390x vector facility is required for ChaCha20 rotation tests"
