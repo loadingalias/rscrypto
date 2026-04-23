@@ -429,15 +429,29 @@ mod x86_avx2;
 mod x86_avx512;
 #[cfg(test)]
 mod tests {
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little"),
+    target_arch = "s390x"
+  ))]
   use alloc::vec;
 
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little"),
+    target_arch = "s390x"
+  ))]
   use super::xor_keystream_portable;
   use super::{KEY_SIZE, NONCE_SIZE, block, hchacha20, xor_keystream};
   use crate::aead::targets::AeadPrimitive;
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  use crate::platform::caps::power;
+  #[cfg(target_arch = "s390x")]
+  use crate::platform::caps::s390x;
   #[cfg(target_arch = "x86_64")]
   use crate::platform::caps::x86;
 
@@ -580,6 +594,58 @@ mod tests {
       xor_keystream_portable(&key, 11, &nonce, &mut portable);
       super::aarch64_neon::xor_keystream(&key, 11, &nonce, &mut accelerated);
       assert_eq!(accelerated, portable);
+    }
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  fn power_vsx_backend_matches_portable() {
+    if !crate::platform::caps().has(power::POWER8_VECTOR) {
+      return;
+    }
+
+    let key = [0x39; KEY_SIZE];
+    let nonce = [0x52; NONCE_SIZE];
+    for len in [0usize, 1, 63, 64, 65, 127, 128, 129, 255, 256, 257, 768] {
+      let mut portable = vec![0u8; len];
+      let mut accelerated = vec![0u8; len];
+      let mut index = 0usize;
+      while index < len {
+        let value = index.strict_mul(23).strict_add(11) as u8;
+        portable[index] = value;
+        accelerated[index] = value;
+        index = index.strict_add(1);
+      }
+
+      xor_keystream_portable(&key, 5, &nonce, &mut portable);
+      super::power_vsx::xor_keystream(&key, 5, &nonce, &mut accelerated);
+      assert_eq!(accelerated, portable, "POWER VSX mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  #[cfg(target_arch = "s390x")]
+  fn s390x_backend_matches_portable() {
+    if !crate::platform::caps().has(s390x::MSA) {
+      return;
+    }
+
+    let key = [0x2b; KEY_SIZE];
+    let nonce = [0x64; NONCE_SIZE];
+    for len in [0usize, 1, 63, 64, 65, 127, 128, 129, 255, 256, 257, 768] {
+      let mut portable = vec![0u8; len];
+      let mut accelerated = vec![0u8; len];
+      let mut index = 0usize;
+      while index < len {
+        let value = index.strict_mul(31).strict_add(7) as u8;
+        portable[index] = value;
+        accelerated[index] = value;
+        index = index.strict_add(1);
+      }
+
+      xor_keystream_portable(&key, 9, &nonce, &mut portable);
+      super::s390x_vector::xor_keystream(&key, 9, &nonce, &mut accelerated);
+      assert_eq!(accelerated, portable, "s390x vector mismatch at len={len}");
     }
   }
 }
