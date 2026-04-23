@@ -327,6 +327,7 @@ def primary_competitor(group_data):
 
 speedups = defaultdict(lambda: defaultdict(dict))
 wtl_group = defaultdict(lambda: [0, 0, 0])   # [W, T, L]
+wtl_group_plat = defaultdict(lambda: defaultdict(lambda: [0, 0, 0]))
 wtl_cat   = defaultdict(lambda: [0, 0, 0])
 wtl_plat  = defaultdict(lambda: [0, 0, 0])
 total_wtl = [0, 0, 0]
@@ -349,9 +350,12 @@ for group, sizes in data.items():
                 ratio = theirs / ours
                 idx = 0 if ratio >= TIE_HI else (2 if ratio < TIE_LO else 1)
                 wtl_group[group][idx] += 1
+                wtl_group_plat[group][plat][idx] += 1
                 wtl_cat[cat][idx] += 1
                 wtl_plat[plat][idx] += 1
                 total_wtl[idx] += 1
+
+missing_ci_platforms = [p for p in PLATFORM_ORDER if p not in platforms_found]
 
 # ── Generate OVERVIEW.md ─────────────────────────────────────────────────────
 
@@ -379,6 +383,14 @@ for p in platforms:
     full, arch = PLATFORM_FULL.get(p, (p, '?'))
     w(f'| {short} | {full} | {arch} |')
 w('')
+
+if missing_ci_platforms:
+    w('## Missing CI Platforms\n')
+    w('No extracted benchmark results were available for the following expected CI lanes:')
+    for p in missing_ci_platforms:
+        full, arch = PLATFORM_FULL.get(p, (p, '?'))
+        w(f'- {PLATFORM_SHORT.get(p, p)}: {full} ({arch})')
+    w('')
 
 # How to Read
 w('## How to Read\n')
@@ -451,11 +463,24 @@ for cat in CATEGORY_ORDER:
             w(f'| {label} | {" | ".join(cells)} |')
         w('')
 
+        w('#### Platform Totals\n')
+        w('| Platform | W | T | L | Total | Win % |')
+        w('|----------|--:|--:|--:|------:|------:|')
+        for p in platforms:
+            pd = wtl_group_plat[group].get(p)
+            if not pd:
+                continue
+            pt = sum(pd)
+            w(f'| {PLATFORM_SHORT.get(p,p)} | {pd[0]} | {pd[1]} | {pd[2]} | {pt} | {pd[0]*100//pt if pt else 0}% |')
+        w('')
+
 with open(output_path, 'w') as f:
     f.write('\n'.join(o) + '\n')
 
 # Summary to stdout
 print(f'\n  Overall: {total_wtl[0]}W / {total_wtl[1]}T / {total_wtl[2]}L = {overall_pct}% win rate ({total} comparisons)')
+if missing_ci_platforms:
+    print('  Missing CI lanes:', ', '.join(PLATFORM_SHORT.get(p, p) for p in missing_ci_platforms))
 for cat in CATEGORY_ORDER:
     if cat not in wtl_cat: continue
     d = wtl_cat[cat]; t = sum(d)

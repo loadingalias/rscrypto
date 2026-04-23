@@ -1,10 +1,8 @@
 //! Tuned dispatch tables for SHA-256.
 //!
-//! SHA-NI, ARM SHA2 CE, and KIMD have negligible setup cost — use HW accel for
-//! all size classes when available.
-//!
-//! POWER dispatch stays on the portable path until the `vshasigmaw` backend is
-//! revalidated on target-native hardware.
+//! SHA-NI, ARM SHA2 CE, KIMD, and POWER `vshasigmaw` have negligible setup cost
+//! relative to the block work, so use HW accel for all size classes when
+//! available.
 
 pub use super::kernels::Sha256KernelId as KernelId;
 use crate::platform::Caps;
@@ -44,6 +42,15 @@ pub static AARCH64_SHA2_TABLE: DispatchTable = DispatchTable {
   s: KernelId::Aarch64Sha2,
   m: KernelId::Aarch64Sha2,
   l: KernelId::Aarch64Sha2,
+};
+
+#[cfg(target_arch = "powerpc64")]
+pub static PPC64_CRYPTO_TABLE: DispatchTable = DispatchTable {
+  boundaries: DEFAULT_BOUNDARIES,
+  xs: KernelId::Ppc64Crypto,
+  s: KernelId::Ppc64Crypto,
+  m: KernelId::Ppc64Crypto,
+  l: KernelId::Ppc64Crypto,
 };
 
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
@@ -88,6 +95,13 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
     use crate::platform::caps::aarch64;
     if caps.has(aarch64::SHA2) {
       return &AARCH64_SHA2_TABLE;
+    }
+  }
+  #[cfg(target_arch = "powerpc64")]
+  {
+    use crate::platform::caps::power;
+    if caps.has(power::POWER8_CRYPTO) {
+      return &PPC64_CRYPTO_TABLE;
     }
   }
   #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]

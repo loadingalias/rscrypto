@@ -110,3 +110,73 @@ pub(crate) fn permute_dispatch() -> SizeClassDispatch<PermuteFn> {
     l: d.l,
   }
 }
+
+#[cfg(any(test, feature = "std"))]
+#[inline]
+#[must_use]
+pub(crate) fn scalar_kernel_id() -> AsconPermute12KernelId {
+  let caps = crate::platform::caps();
+  let table: &'static DispatchTable = super::dispatch_tables::select_runtime_table(caps);
+  resolve(table.xs, caps)
+}
+
+#[cfg(any(test, feature = "std"))]
+#[inline]
+#[must_use]
+pub(crate) fn batch_kernel_id_for_count(count: usize) -> AsconPermute12KernelId {
+  let caps = crate::platform::caps();
+
+  #[cfg(target_arch = "x86_64")]
+  {
+    use crate::platform::caps::x86;
+    if count >= 8 && caps.has(x86::AVX512F.union(x86::AVX512VL)) {
+      return AsconPermute12KernelId::X86Avx512;
+    }
+    if count >= 4 && caps.has(x86::AVX2) {
+      return AsconPermute12KernelId::X86Avx2;
+    }
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::platform::caps::aarch64;
+    if count >= 2 && caps.has(aarch64::NEON) {
+      return AsconPermute12KernelId::Aarch64Neon;
+    }
+  }
+
+  scalar_kernel_id()
+}
+
+#[cfg(any(test, feature = "std"))]
+#[inline]
+#[must_use]
+pub(crate) fn batch_fallback_kernel_id(requested: AsconPermute12KernelId, count: usize) -> AsconPermute12KernelId {
+  match requested {
+    AsconPermute12KernelId::Portable => AsconPermute12KernelId::Portable,
+    #[cfg(target_arch = "aarch64")]
+    AsconPermute12KernelId::Aarch64Neon => {
+      if count >= 2 {
+        AsconPermute12KernelId::Aarch64Neon
+      } else {
+        scalar_kernel_id()
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    AsconPermute12KernelId::X86Avx2 => {
+      if count >= 4 {
+        AsconPermute12KernelId::X86Avx2
+      } else {
+        scalar_kernel_id()
+      }
+    }
+    #[cfg(target_arch = "x86_64")]
+    AsconPermute12KernelId::X86Avx512 => {
+      if count >= 8 {
+        AsconPermute12KernelId::X86Avx512
+      } else {
+        batch_kernel_id_for_count(count)
+      }
+    }
+  }
+}

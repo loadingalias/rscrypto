@@ -1,8 +1,9 @@
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 use super::kernels::{ALL, permute_fn, required_caps};
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct KernelResult {
   pub name: &'static str,
   pub state: [u64; 5],
@@ -60,7 +61,7 @@ pub fn verify_ascon_p12_kernels(data: &[u8]) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::hashes::crypto::ascon::kernels::simd_degree;
+  use crate::{hashes::crypto::ascon::kernels::simd_degree, traits::Digest as _};
 
   #[test]
   fn run_all_agree() {
@@ -86,7 +87,6 @@ mod tests {
 
   #[test]
   fn digest_many_matches_scalar() {
-    let caps = crate::platform::caps();
     let inputs_storage = [
       vec![0xA3; 4096],
       vec![0x5C; 4096],
@@ -97,7 +97,7 @@ mod tests {
     let inputs: Vec<&[u8]> = inputs_storage.iter().map(Vec::as_slice).collect();
 
     for &id in ALL {
-      if simd_degree(id) == 1 || !caps.has(required_caps(id)) {
+      if simd_degree(id) == 1 {
         continue;
       }
 
@@ -105,7 +105,7 @@ mod tests {
       crate::hashes::crypto::AsconHash256::digest_many_with_kernel(id, &inputs, &mut batch);
 
       for (input, actual) in inputs.iter().zip(batch.iter()) {
-        let expected = crate::hashes::crypto::AsconHash256::digest_with_kernel(id, input);
+        let expected = crate::hashes::crypto::AsconHash256::digest(input);
         assert_eq!(*actual, expected, "digest_many mismatch for {}", id.as_str());
       }
     }
@@ -113,7 +113,6 @@ mod tests {
 
   #[test]
   fn xof_many_matches_scalar() {
-    let caps = crate::platform::caps();
     let out_len = 64usize;
     let inputs_storage = [
       vec![0x42; 4096],
@@ -125,7 +124,7 @@ mod tests {
     let inputs: Vec<&[u8]> = inputs_storage.iter().map(Vec::as_slice).collect();
 
     for &id in ALL {
-      if simd_degree(id) == 1 || !caps.has(required_caps(id)) {
+      if simd_degree(id) == 1 {
         continue;
       }
 
@@ -134,7 +133,7 @@ mod tests {
 
       for (index, input) in inputs.iter().enumerate() {
         let mut expected = vec![0u8; out_len];
-        crate::hashes::crypto::AsconXof::hash_into_with_kernel(id, input, &mut expected);
+        crate::hashes::crypto::AsconXof::hash_into(input, &mut expected);
         let base = index * out_len;
         assert_eq!(
           &batch[base..base + out_len],
@@ -143,6 +142,50 @@ mod tests {
           id.as_str()
         );
       }
+    }
+  }
+
+  #[test]
+  fn digest_many_handles_mixed_length_runs() {
+    use crate::traits::Digest as _;
+
+    let inputs_storage = [
+      vec![0x10; 4096],
+      vec![0x20; 4096],
+      vec![0x30; 128],
+      vec![0x40; 128],
+      vec![0x50; 7],
+    ];
+    let inputs: Vec<&[u8]> = inputs_storage.iter().map(Vec::as_slice).collect();
+    let mut actual = [[0u8; 32]; 5];
+
+    crate::hashes::crypto::AsconHash256::digest_many(&inputs, &mut actual);
+
+    for (input, output) in inputs.iter().zip(actual.iter()) {
+      assert_eq!(*output, crate::hashes::crypto::AsconHash256::digest(input));
+    }
+  }
+
+  #[test]
+  fn xof_many_handles_mixed_length_runs() {
+    let inputs_storage = [
+      vec![0xAA; 4096],
+      vec![0xBB; 4096],
+      vec![0xCC; 64],
+      vec![0xDD; 64],
+      vec![0xEE; 3],
+    ];
+    let inputs: Vec<&[u8]> = inputs_storage.iter().map(Vec::as_slice).collect();
+    let out_len = 48usize;
+    let mut actual = vec![0u8; inputs.len() * out_len];
+
+    crate::hashes::crypto::AsconXof::hash_many_into(&inputs, out_len, &mut actual);
+
+    for (index, input) in inputs.iter().enumerate() {
+      let mut expected = vec![0u8; out_len];
+      crate::hashes::crypto::AsconXof::hash_into(input, &mut expected);
+      let base = index * out_len;
+      assert_eq!(&actual[base..base + out_len], expected.as_slice());
     }
   }
 }

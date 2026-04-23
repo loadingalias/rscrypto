@@ -17,6 +17,8 @@ mod aarch64;
 pub(crate) mod dispatch;
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
+#[cfg(test)]
+mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(target_arch = "x86_64")]
 mod x86_64_avx2;
@@ -66,20 +68,6 @@ impl Permuter for DispatchPermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 5], len_hint: usize) {
     (self.dispatch.select(len_hint))(state);
-  }
-}
-
-#[cfg(any(test, feature = "std"))]
-#[derive(Clone, Copy)]
-struct FixedPermuter {
-  permute: fn(&mut [u64; 5]),
-}
-
-#[cfg(any(test, feature = "std"))]
-impl Permuter for FixedPermuter {
-  #[inline(always)]
-  fn permute(self, state: &mut [u64; 5], _len_hint: usize) {
-    (self.permute)(state);
   }
 }
 
@@ -151,6 +139,7 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
     self.permuter.permute(&mut self.state, 0);
   }
 
+  #[inline(always)]
   fn update(&mut self, mut data: &[u8]) {
     if data.is_empty() {
       return;
@@ -181,6 +170,7 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
     }
   }
 
+  #[inline(always)]
   fn finalize_state(&self) -> [u64; 5] {
     let mut st = self.state;
     let last = &self.buf[..self.buf_len];
@@ -195,16 +185,49 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
   }
 }
 
-#[cfg(any(test, feature = "std"))]
-#[inline]
-fn fixed_sponge<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64, const IV4: u64>(
-  permuter: P,
-) -> Sponge<P, IV0, IV1, IV2, IV3, IV4> {
-  Sponge {
-    state: [IV0, IV1, IV2, IV3, IV4],
-    buf: [0u8; RATE],
-    buf_len: 0,
-    permuter,
+#[inline(always)]
+fn finalize_state_one_shot(mut state: [u64; 5], data: &[u8], mut permute: impl FnMut(&mut [u64; 5])) -> [u64; 5] {
+  let (blocks, tail) = data.as_chunks::<RATE>();
+  for block in blocks {
+    state[0] ^= u64::from_le_bytes(*block);
+    permute(&mut state);
+  }
+
+  let mut final_block = [0u8; RATE];
+  final_block[..tail.len()].copy_from_slice(tail);
+  state[0] ^= u64::from_le_bytes(final_block);
+  state[0] ^= pad(tail.len());
+  permute(&mut state);
+  state
+}
+
+#[inline(always)]
+fn squeeze_hash256(mut state: [u64; 5], mut permute: impl FnMut(&mut [u64; 5])) -> [u8; 32] {
+  let mut out = [0u8; 32];
+  let mut off = 0usize;
+  while off < 24 {
+    out[off..off + 8].copy_from_slice(&state[0].to_le_bytes());
+    permute(&mut state);
+    off += 8;
+  }
+  out[24..32].copy_from_slice(&state[0].to_le_bytes());
+  out
+}
+
+#[inline(always)]
+fn squeeze_xof_into(mut state: [u64; 5], out: &mut [u8], mut permute: impl FnMut(&mut [u64; 5])) {
+  let mut buf = state[0].to_le_bytes();
+  let (blocks, tail) = out.as_chunks_mut::<RATE>();
+  let block_count = blocks.len();
+  for (index, block) in blocks.iter_mut().enumerate() {
+    block.copy_from_slice(&buf);
+    if index + 1 < block_count || !tail.is_empty() {
+      permute(&mut state);
+      buf = state[0].to_le_bytes();
+    }
+  }
+  if !tail.is_empty() {
+    tail.copy_from_slice(&buf[..tail.len()]);
   }
 }
 
@@ -345,34 +368,8 @@ pub struct AsconHash256 {
 impl AsconHash256 {
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  fn batch_kernel_id_for_inputs(_inputs: &[&[u8]]) -> kernels::AsconPermute12KernelId {
-    // Select the widest available multi-state SIMD kernel for batch hashing.
-    // This is intentionally independent of the single-state dispatch table:
-    // single-state uses Portable (scalar is faster for 5 × u64 on aarch64),
-    // but batch operations benefit from parallel-lane SIMD kernels.
-    let caps = crate::platform::caps();
-
-    #[cfg(target_arch = "x86_64")]
-    {
-      use crate::platform::caps::x86;
-      if caps.has(x86::AVX512F.union(x86::AVX512VL)) {
-        return kernels::AsconPermute12KernelId::X86Avx512;
-      }
-      if caps.has(x86::AVX2) {
-        return kernels::AsconPermute12KernelId::X86Avx2;
-      }
-    }
-
-    #[cfg(target_arch = "aarch64")]
-    {
-      use crate::platform::caps::aarch64;
-      if caps.has(aarch64::NEON) {
-        return kernels::AsconPermute12KernelId::Aarch64Neon;
-      }
-    }
-
-    let _ = caps;
-    kernels::AsconPermute12KernelId::Portable
+  fn batch_kernel_id_for_count(count: usize) -> kernels::AsconPermute12KernelId {
+    dispatch::batch_kernel_id_for_count(count)
   }
 
   #[inline]
@@ -380,26 +377,8 @@ impl AsconHash256 {
   #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8]) -> [u8; 32] {
     let permute = kernels::permute_fn(kid);
-    let mut sponge: Sponge<
-      FixedPermuter,
-      { HASH256_IV[0] },
-      { HASH256_IV[1] },
-      { HASH256_IV[2] },
-      { HASH256_IV[3] },
-      { HASH256_IV[4] },
-    > = fixed_sponge(FixedPermuter { permute });
-    sponge.update(data);
-
-    let mut st = sponge.finalize_state();
-    let mut out = [0u8; 32];
-    let mut off = 0usize;
-    while off < 24 {
-      out[off..off + 8].copy_from_slice(&st[0].to_le_bytes());
-      permute(&mut st);
-      off += 8;
-    }
-    out[24..32].copy_from_slice(&st[0].to_le_bytes());
-    out
+    let state = finalize_state_one_shot(HASH256_IV, data, permute);
+    squeeze_hash256(state, permute)
   }
 
   /// Multi-message one-shot hashing using an explicitly selected kernel.
@@ -408,16 +387,21 @@ impl AsconHash256 {
   #[inline]
   #[cfg(any(test, feature = "std"))]
   pub(crate) fn digest_many_with_kernel(
-    kid: kernels::AsconPermute12KernelId,
+    mut kid: kernels::AsconPermute12KernelId,
     inputs: &[&[u8]],
     outputs: &mut [[u8; 32]],
   ) {
     assert_eq!(inputs.len(), outputs.len(), "input/output batch length mismatch");
+    if inputs.is_empty() {
+      return;
+    }
 
+    kid = dispatch::batch_fallback_kernel_id(kid, inputs.len());
     let degree = kernels::simd_degree(kid);
-    if degree == 1 || inputs.len() < degree || !inputs_have_equal_len(inputs) {
+    if degree == 1 || !inputs_have_equal_len(inputs) {
+      let scalar_kid = dispatch::scalar_kernel_id();
       for (input, output) in inputs.iter().zip(outputs.iter_mut()) {
-        *output = Self::digest_with_kernel(kid, input);
+        *output = Self::digest_with_kernel(scalar_kid, input);
       }
       return;
     }
@@ -442,12 +426,14 @@ impl AsconHash256 {
             aarch64::permute_12_aarch64_neon_x2,
           );
         }
-        for (input, output) in input_groups
-          .remainder()
-          .iter()
-          .zip(output_groups.into_remainder().iter_mut())
-        {
-          *output = Self::digest_with_kernel(kid, input);
+        let rem_inputs = input_groups.remainder();
+        let rem_outputs = output_groups.into_remainder();
+        if !rem_inputs.is_empty() {
+          Self::digest_many_with_kernel(
+            dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
+            rem_inputs,
+            rem_outputs,
+          );
         }
       }
       #[cfg(target_arch = "x86_64")]
@@ -462,12 +448,14 @@ impl AsconHash256 {
             x86_64_avx2::permute_12_x86_avx2_x4,
           );
         }
-        for (input, output) in input_groups
-          .remainder()
-          .iter()
-          .zip(output_groups.into_remainder().iter_mut())
-        {
-          *output = Self::digest_with_kernel(kid, input);
+        let rem_inputs = input_groups.remainder();
+        let rem_outputs = output_groups.into_remainder();
+        if !rem_inputs.is_empty() {
+          Self::digest_many_with_kernel(
+            dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
+            rem_inputs,
+            rem_outputs,
+          );
         }
       }
       #[cfg(target_arch = "x86_64")]
@@ -482,12 +470,14 @@ impl AsconHash256 {
             x86_64_avx512::permute_12_x86_avx512_x8,
           );
         }
-        for (input, output) in input_groups
-          .remainder()
-          .iter()
-          .zip(output_groups.into_remainder().iter_mut())
-        {
-          *output = Self::digest_with_kernel(kid, input);
+        let rem_inputs = input_groups.remainder();
+        let rem_outputs = output_groups.into_remainder();
+        if !rem_inputs.is_empty() {
+          Self::digest_many_with_kernel(
+            dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
+            rem_inputs,
+            rem_outputs,
+          );
         }
       }
     }
@@ -502,7 +492,20 @@ impl AsconHash256 {
   #[inline]
   #[cfg(any(test, feature = "std"))]
   pub fn digest_many(inputs: &[&[u8]], outputs: &mut [[u8; 32]]) {
-    Self::digest_many_with_kernel(Self::batch_kernel_id_for_inputs(inputs), inputs, outputs);
+    assert_eq!(inputs.len(), outputs.len(), "input/output batch length mismatch");
+
+    let mut start = 0usize;
+    while start < inputs.len() {
+      let len = inputs[start].len();
+      let mut end = start + 1;
+      while end < inputs.len() && inputs[end].len() == len {
+        end += 1;
+      }
+
+      let kid = Self::batch_kernel_id_for_count(end - start);
+      Self::digest_many_with_kernel(kid, &inputs[start..end], &mut outputs[start..end]);
+      start = end;
+    }
   }
 }
 
@@ -526,18 +529,9 @@ impl Digest for AsconHash256 {
     self.sponge.update(data);
   }
 
+  #[inline(always)]
   fn finalize(&self) -> Self::Output {
-    let mut st = self.sponge.finalize_state();
-
-    let mut out = [0u8; 32];
-    let mut off = 0usize;
-    while off < 24 {
-      out[off..off + 8].copy_from_slice(&st[0].to_le_bytes());
-      permute_12_portable(&mut st);
-      off += 8;
-    }
-    out[24..32].copy_from_slice(&st[0].to_le_bytes());
-    out
+    squeeze_hash256(self.sponge.finalize_state(), permute_12_portable)
   }
 
   #[inline]
@@ -569,9 +563,8 @@ impl AsconXof {
   #[inline]
   #[must_use]
   pub fn xof(data: &[u8]) -> AsconXofReader {
-    let mut h = Self::new();
-    h.update(data);
-    h.finalize_xof()
+    let state = finalize_state_one_shot(XOF128_IV, data, permute_12_portable);
+    AsconXofReader::from_state(state)
   }
 
   #[inline]
@@ -587,12 +580,7 @@ impl AsconXof {
   #[inline]
   #[must_use]
   pub fn finalize_xof(&self) -> AsconXofReader {
-    let state = self.sponge.finalize_state();
-    AsconXofReader {
-      state,
-      buf: [0u8; RATE],
-      pos: RATE,
-    }
+    AsconXofReader::from_state(self.sponge.finalize_state())
   }
 
   #[inline]
@@ -601,38 +589,16 @@ impl AsconXof {
   /// The canonical one-shot API is [`Self::xof`]. Use [`Self::new`],
   /// [`Self::update`], and [`Self::finalize_xof`] for streaming.
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
-    Self::xof(data).squeeze(out);
+    let state = finalize_state_one_shot(XOF128_IV, data, permute_12_portable);
+    squeeze_xof_into(state, out, permute_12_portable);
   }
 
   #[inline]
   #[cfg(any(test, feature = "std"))]
-  pub(crate) fn hash_into_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8], mut out: &mut [u8]) {
+  pub(crate) fn hash_into_with_kernel(kid: kernels::AsconPermute12KernelId, data: &[u8], out: &mut [u8]) {
     let permute = kernels::permute_fn(kid);
-    let mut sponge: Sponge<
-      FixedPermuter,
-      { XOF128_IV[0] },
-      { XOF128_IV[1] },
-      { XOF128_IV[2] },
-      { XOF128_IV[3] },
-      { XOF128_IV[4] },
-    > = fixed_sponge(FixedPermuter { permute });
-    sponge.update(data);
-    let mut state = sponge.finalize_state();
-
-    let mut buf = [0u8; RATE];
-    let mut pos = RATE;
-    while !out.is_empty() {
-      if pos == RATE {
-        buf = state[0].to_le_bytes();
-        permute(&mut state);
-        pos = 0;
-      }
-
-      let take = core::cmp::min(RATE - pos, out.len());
-      out[..take].copy_from_slice(&buf[pos..pos + take]);
-      out = &mut out[take..];
-      pos += take;
-    }
+    let state = finalize_state_one_shot(XOF128_IV, data, permute);
+    squeeze_xof_into(state, out, permute);
   }
 
   /// Multi-message XOF using an explicitly selected kernel.
@@ -642,7 +608,7 @@ impl AsconXof {
   #[inline]
   #[cfg(any(test, feature = "std"))]
   pub(crate) fn hash_many_into_with_kernel(
-    kid: kernels::AsconPermute12KernelId,
+    mut kid: kernels::AsconPermute12KernelId,
     inputs: &[&[u8]],
     out_len: usize,
     outputs: &mut [u8],
@@ -652,12 +618,17 @@ impl AsconXof {
       inputs.len() * out_len,
       "input/output batch length mismatch"
     );
+    if inputs.is_empty() {
+      return;
+    }
 
+    kid = dispatch::batch_fallback_kernel_id(kid, inputs.len());
     let degree = kernels::simd_degree(kid);
-    if degree == 1 || inputs.len() < degree || !inputs_have_equal_len(inputs) {
+    if degree == 1 || !inputs_have_equal_len(inputs) {
+      let scalar_kid = dispatch::scalar_kernel_id();
       for (index, input) in inputs.iter().enumerate() {
         let base = index * out_len;
-        Self::hash_into_with_kernel(kid, input, &mut outputs[base..base + out_len]);
+        Self::hash_into_with_kernel(scalar_kid, input, &mut outputs[base..base + out_len]);
       }
       return;
     }
@@ -689,12 +660,15 @@ impl AsconXof {
             aarch64::permute_12_aarch64_neon_x2,
           );
         }
-        for (input, output) in input_groups
-          .remainder()
-          .iter()
-          .zip(output_groups.into_remainder().chunks_exact_mut(out_len))
-        {
-          Self::hash_into_with_kernel(kid, input, output);
+        let rem_inputs = input_groups.remainder();
+        let rem_outputs = output_groups.into_remainder();
+        if !rem_inputs.is_empty() {
+          Self::hash_many_into_with_kernel(
+            dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
+            rem_inputs,
+            out_len,
+            rem_outputs,
+          );
         }
       }
       #[cfg(target_arch = "x86_64")]
@@ -710,12 +684,15 @@ impl AsconXof {
             x86_64_avx2::permute_12_x86_avx2_x4,
           );
         }
-        for (input, output) in input_groups
-          .remainder()
-          .iter()
-          .zip(output_groups.into_remainder().chunks_exact_mut(out_len))
-        {
-          Self::hash_into_with_kernel(kid, input, output);
+        let rem_inputs = input_groups.remainder();
+        let rem_outputs = output_groups.into_remainder();
+        if !rem_inputs.is_empty() {
+          Self::hash_many_into_with_kernel(
+            dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
+            rem_inputs,
+            out_len,
+            rem_outputs,
+          );
         }
       }
       #[cfg(target_arch = "x86_64")]
@@ -731,12 +708,15 @@ impl AsconXof {
             x86_64_avx512::permute_12_x86_avx512_x8,
           );
         }
-        for (input, output) in input_groups
-          .remainder()
-          .iter()
-          .zip(output_groups.into_remainder().chunks_exact_mut(out_len))
-        {
-          Self::hash_into_with_kernel(kid, input, output);
+        let rem_inputs = input_groups.remainder();
+        let rem_outputs = output_groups.into_remainder();
+        if !rem_inputs.is_empty() {
+          Self::hash_many_into_with_kernel(
+            dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
+            rem_inputs,
+            out_len,
+            rem_outputs,
+          );
         }
       }
     }
@@ -750,8 +730,26 @@ impl AsconXof {
   #[inline]
   #[cfg(any(test, feature = "std"))]
   pub fn hash_many_into(inputs: &[&[u8]], out_len: usize, outputs: &mut [u8]) {
-    let kid = AsconHash256::batch_kernel_id_for_inputs(inputs);
-    Self::hash_many_into_with_kernel(kid, inputs, out_len, outputs);
+    assert_eq!(
+      outputs.len(),
+      inputs.len() * out_len,
+      "input/output batch length mismatch"
+    );
+
+    let mut start = 0usize;
+    while start < inputs.len() {
+      let len = inputs[start].len();
+      let mut end = start + 1;
+      while end < inputs.len() && inputs[end].len() == len {
+        end += 1;
+      }
+
+      let kid = AsconHash256::batch_kernel_id_for_count(end - start);
+      let start_byte = start * out_len;
+      let end_byte = end * out_len;
+      Self::hash_many_into_with_kernel(kid, &inputs[start..end], out_len, &mut outputs[start_byte..end_byte]);
+      start = end;
+    }
   }
 }
 
@@ -771,16 +769,26 @@ impl fmt::Debug for AsconXofReader {
 
 impl AsconXofReader {
   #[inline(always)]
-  fn refill(&mut self) {
-    self.buf = self.state[0].to_le_bytes();
+  fn from_state(state: [u64; 5]) -> Self {
+    Self {
+      buf: state[0].to_le_bytes(),
+      state,
+      pos: 0,
+    }
+  }
+
+  #[inline(always)]
+  fn advance(&mut self) {
     permute_12_portable(&mut self.state);
+    self.buf = self.state[0].to_le_bytes();
     self.pos = 0;
   }
 }
 
 impl Xof for AsconXofReader {
+  #[inline(always)]
   fn squeeze(&mut self, mut out: &mut [u8]) {
-    if self.pos != RATE && !out.is_empty() {
+    if self.pos < RATE && !out.is_empty() {
       let take = core::cmp::min(RATE - self.pos, out.len());
       out[..take].copy_from_slice(&self.buf[self.pos..self.pos.strict_add(take)]);
       self.pos = self.pos.strict_add(take);
@@ -789,16 +797,19 @@ impl Xof for AsconXofReader {
 
     let (blocks, tail) = out.as_chunks_mut::<RATE>();
     for block in blocks {
-      *block = self.state[0].to_le_bytes();
-      permute_12_portable(&mut self.state);
+      if self.pos == RATE {
+        self.advance();
+      }
+      block.copy_from_slice(&self.buf);
+      self.pos = RATE;
     }
 
     if !tail.is_empty() {
-      self.refill();
+      if self.pos == RATE {
+        self.advance();
+      }
       tail.copy_from_slice(&self.buf[..tail.len()]);
       self.pos = tail.len();
-    } else {
-      self.pos = RATE;
     }
   }
 }
@@ -931,12 +942,7 @@ impl AsconCxof128 {
   #[inline]
   #[must_use]
   pub fn finalize_xof(&self) -> AsconCxof128Reader {
-    let state = self.sponge.finalize_state();
-    AsconXofReader {
-      state,
-      buf: [0u8; RATE],
-      pos: RATE,
-    }
+    AsconXofReader::from_state(self.sponge.finalize_state())
   }
 
   /// Fill `out` in one shot.

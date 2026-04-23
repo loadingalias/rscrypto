@@ -7,6 +7,7 @@ use super::{
 use crate::{hashes::crypto::dispatch_util::SizeClassDispatch, traits::Digest as _};
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct KernelResult {
   pub name: &'static str,
   pub digest: [u8; 32],
@@ -73,11 +74,15 @@ mod tests {
 
   fn all_chunk_sizes() -> &'static [usize] {
     #[cfg(not(miri))]
-    &[
-      1, 2, 3, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128, 255, 256, 1024, 4096,
-    ]
+    {
+      &[
+        1, 2, 3, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128, 255, 256, 1024, 4096,
+      ]
+    }
     #[cfg(miri)]
-    &[1, 7, 31, 32, 63, 64, 65, 127, 128]
+    {
+      &[1, 7, 31, 32, 63, 64, 65, 127, 128]
+    }
   }
 
   #[test]
