@@ -4,6 +4,7 @@
 //!
 //! - AEAD-specific error types
 //! - explicit nonce wrappers
+//! - deterministic AES-GCM nonce sequencing when `aes-gcm` is enabled
 //! - dispatch introspection
 //! - the shared [`Aead`] trait re-export
 //! - concrete AEAD implementations on the same typed surface
@@ -11,10 +12,7 @@
 //! # Quick Start
 //!
 //! ```rust
-//! use rscrypto::{
-//!   Aead, ChaCha20Poly1305, ChaCha20Poly1305Key,
-//!   aead::{Nonce96, OpenError},
-//! };
+//! use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
 //!
 //! let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
 //! let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
@@ -25,7 +23,7 @@
 //! let mut opened = [0u8; 4];
 //! cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened)?;
 //! assert_eq!(&opened, b"data");
-//! # Ok::<(), OpenError>(())
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Feature Selection
@@ -79,6 +77,8 @@ mod chacha20poly1305;
 mod ghash;
 #[cfg(feature = "diag")]
 pub mod introspect;
+#[cfg(feature = "aes-gcm")]
+mod nonce_counter;
 #[cfg(any(feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 mod poly1305;
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
@@ -96,6 +96,8 @@ pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+#[cfg(feature = "aes-gcm")]
+pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
 pub use targets::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
@@ -194,21 +196,56 @@ macro_rules! define_nonce_type {
       #[inline]
       #[must_use]
       pub fn random() -> Self {
-        let mut bytes = [0u8; $len];
-        match getrandom::fill(&mut bytes) {
-          Ok(()) => {}
+        match Self::try_random() {
+          Ok(value) => value,
           Err(e) => panic!("getrandom failed: {e}"),
         }
-        Self(bytes)
+      }
+
+      /// Try to generate a random nonce from the platform entropy source.
+      ///
+      /// # Errors
+      ///
+      /// Returns a getrandom error if the platform entropy source is unavailable.
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      #[inline]
+      pub fn try_random() -> Result<Self, getrandom::Error> {
+        let mut bytes = [0u8; $len];
+        getrandom::fill(&mut bytes).map(|()| Self(bytes))
       }
     }
   };
 }
 
-define_nonce_type!(Nonce96, 12, "Explicit 96-bit nonce wrapper.");
-define_nonce_type!(Nonce128, 16, "Explicit 128-bit nonce wrapper.");
-define_nonce_type!(Nonce192, 24, "Explicit 192-bit nonce wrapper.");
-define_nonce_type!(Nonce256, 32, "Explicit 256-bit nonce wrapper.");
+define_nonce_type!(
+  Nonce96,
+  12,
+  "Explicit 96-bit nonce wrapper.
+
+Pairs with `Aes256Gcm`, `Aes256GcmSiv`, and `ChaCha20Poly1305`."
+);
+define_nonce_type!(
+  Nonce128,
+  16,
+  "Explicit 128-bit nonce wrapper.
+
+Pairs with `AsconAead128`."
+);
+define_nonce_type!(
+  Nonce192,
+  24,
+  "Explicit 192-bit nonce wrapper.
+
+Pairs with `XChaCha20Poly1305`."
+);
+define_nonce_type!(
+  Nonce256,
+  32,
+  "Explicit 256-bit nonce wrapper.
+
+Pairs with `Aegis256`."
+);
 
 impl_hex_fmt!(Nonce96);
 impl_hex_fmt!(Nonce128);
@@ -219,42 +256,82 @@ impl_serde_bytes!(Nonce128);
 impl_serde_bytes!(Nonce192);
 impl_serde_bytes!(Nonce256);
 
-/// Combined-buffer length mismatch during AEAD sealing or opening.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AeadBufferError;
+define_unit_error! {
+  /// Combined-buffer length mismatch during AEAD sealing or opening.
+  pub struct AeadBufferError;
+  "buffer length mismatch"
+}
 
-impl AeadBufferError {
-  /// Construct a new AEAD buffer error.
+/// Combined AEAD seal failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SealError {
+  /// Combined input or output buffers have the wrong length.
+  Buffer(AeadBufferError),
+  /// Input exceeds the algorithm's supported length bound.
+  TooLarge,
+}
+
+impl SealError {
+  /// Construct a seal error for buffer-length mismatches.
   #[inline]
   #[must_use]
-  pub const fn new() -> Self {
-    Self
+  pub const fn buffer() -> Self {
+    Self::Buffer(AeadBufferError::new())
+  }
+
+  /// Construct a seal error for oversized inputs.
+  #[inline]
+  #[must_use]
+  pub const fn too_large() -> Self {
+    Self::TooLarge
   }
 }
 
-impl Default for AeadBufferError {
+impl Default for SealError {
   #[inline]
   fn default() -> Self {
-    Self::new()
+    Self::buffer()
   }
 }
 
-impl fmt::Display for AeadBufferError {
+impl fmt::Display for SealError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("buffer length mismatch")
+    match self {
+      Self::Buffer(err) => err.fmt(f),
+      Self::TooLarge => f.write_str("input exceeds the algorithm maximum length"),
+    }
   }
 }
 
-impl core::error::Error for AeadBufferError {}
+impl core::error::Error for SealError {
+  fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+    match self {
+      Self::Buffer(err) => Some(err),
+      Self::TooLarge => None,
+    }
+  }
+}
+
+impl From<AeadBufferError> for SealError {
+  #[inline]
+  fn from(value: AeadBufferError) -> Self {
+    Self::Buffer(value)
+  }
+}
 
 /// Combined AEAD open failure.
 ///
 /// Length mismatches and authentication failures are kept distinct so callers
-/// can fix their buffer management without guessing.
+/// can fix their buffer management without guessing. Treat
+/// [`OpenError::Verification`] as an opaque authentication failure at trust
+/// boundaries; only the buffer-shape variants are intended for caller-visible
+/// diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpenError {
   /// Combined input or output buffers have the wrong length.
   Buffer(AeadBufferError),
+  /// Input exceeds the algorithm's supported length bound.
+  TooLarge,
   /// Authentication failed.
   Verification(VerificationError),
 }
@@ -265,6 +342,13 @@ impl OpenError {
   #[must_use]
   pub const fn buffer() -> Self {
     Self::Buffer(AeadBufferError::new())
+  }
+
+  /// Construct an open error for oversized inputs.
+  #[inline]
+  #[must_use]
+  pub const fn too_large() -> Self {
+    Self::TooLarge
   }
 
   /// Construct an open error for authentication failures.
@@ -286,6 +370,7 @@ impl fmt::Display for OpenError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Self::Buffer(err) => err.fmt(f),
+      Self::TooLarge => f.write_str("input exceeds the algorithm maximum length"),
       Self::Verification(err) => err.fmt(f),
     }
   }
@@ -295,6 +380,7 @@ impl core::error::Error for OpenError {
   fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
     match self {
       Self::Buffer(err) => Some(err),
+      Self::TooLarge => None,
       Self::Verification(err) => Some(err),
     }
   }
@@ -314,9 +400,167 @@ impl From<VerificationError> for OpenError {
   }
 }
 
+#[cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305"
+  )),
+  allow(dead_code)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LengthOverflow;
+
+const _: () = assert!(usize::BITS <= u64::BITS);
+
+#[cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305"
+  )),
+  allow(dead_code)
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AeadByteLengths {
+  aad: u64,
+  text: u64,
+}
+
+impl AeadByteLengths {
+  #[inline]
+  pub(crate) const fn from_usize(aad_len: usize, text_len: usize) -> Self {
+    Self {
+      aad: aad_len as u64,
+      text: text_len as u64,
+    }
+  }
+
+  #[cfg_attr(
+    not(any(feature = "chacha20poly1305", feature = "xchacha20poly1305")),
+    allow(dead_code)
+  )]
+  #[inline]
+  pub(crate) fn try_new(aad_len: usize, text_len: usize) -> Result<Self, LengthOverflow> {
+    Ok(Self::from_usize(aad_len, text_len))
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  #[inline]
+  pub(crate) fn total_at_least(&self, threshold: usize) -> bool {
+    let threshold = threshold as u64;
+    if self.aad >= threshold || self.text >= threshold {
+      return true;
+    }
+
+    match self.aad.checked_add(self.text) {
+      Some(total) => total >= threshold,
+      None => true,
+    }
+  }
+
+  #[cfg_attr(
+    not(any(feature = "chacha20poly1305", feature = "xchacha20poly1305")),
+    allow(dead_code)
+  )]
+  #[inline]
+  pub(crate) fn to_le_bytes_block(self) -> [u8; 16] {
+    let mut block = [0u8; 16];
+    block[0..8].copy_from_slice(&self.aad.to_le_bytes());
+    block[8..16].copy_from_slice(&self.text.to_le_bytes());
+    block
+  }
+
+  #[cfg_attr(not(feature = "aes-gcm-siv"), allow(dead_code))]
+  #[inline]
+  pub(crate) fn to_le_bits_block(self) -> [u8; 16] {
+    let aad_bits = self.aad.strict_mul(8);
+    let text_bits = self.text.strict_mul(8);
+    let mut block = [0u8; 16];
+    block[0..8].copy_from_slice(&aad_bits.to_le_bytes());
+    block[8..16].copy_from_slice(&text_bits.to_le_bytes());
+    block
+  }
+
+  #[cfg_attr(not(feature = "aes-gcm"), allow(dead_code))]
+  #[inline]
+  pub(crate) fn to_be_bits_block(self) -> [u8; 16] {
+    let aad_bits = self.aad.strict_mul(8);
+    let text_bits = self.text.strict_mul(8);
+    let mut block = [0u8; 16];
+    block[0..8].copy_from_slice(&aad_bits.to_be_bytes());
+    block[8..16].copy_from_slice(&text_bits.to_be_bytes());
+    block
+  }
+}
+
+#[cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305"
+  )),
+  allow(dead_code)
+)]
+#[inline]
+pub(crate) fn try_length_as_u64(len: usize) -> Result<u64, LengthOverflow> {
+  u64::try_from(len).map_err(|_| LengthOverflow)
+}
+
+#[cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305"
+  )),
+  allow(dead_code)
+)]
+#[inline]
+pub(crate) fn try_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, LengthOverflow> {
+  let len = try_length_as_u64(len)?;
+  if len > max {
+    return Err(LengthOverflow);
+  }
+  Ok(len)
+}
+
+#[cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305"
+  )),
+  allow(dead_code)
+)]
+#[inline]
+pub(crate) fn seal_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, SealError> {
+  try_bounded_length_as_u64(len, max).map_err(|_| SealError::too_large())
+}
+
+#[cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305"
+  )),
+  allow(dead_code)
+)]
+#[inline]
+pub(crate) fn open_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, OpenError> {
+  try_bounded_length_as_u64(len, max).map_err(|_| OpenError::too_large())
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError};
+  use alloc::string::ToString;
+
+  use super::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError};
   use crate::traits::VerificationError;
 
   #[test]
@@ -337,5 +581,18 @@ mod tests {
   fn open_error_conversions_preserve_variant() {
     assert_eq!(OpenError::from(AeadBufferError::new()), OpenError::buffer());
     assert_eq!(OpenError::from(VerificationError::new()), OpenError::verification());
+  }
+
+  #[test]
+  fn aead_length_error_conventions_remain_stable() {
+    assert_eq!(SealError::default(), SealError::buffer());
+    assert_eq!(
+      SealError::too_large().to_string(),
+      "input exceeds the algorithm maximum length"
+    );
+    assert_eq!(
+      OpenError::too_large().to_string(),
+      "input exceeds the algorithm maximum length"
+    );
   }
 }

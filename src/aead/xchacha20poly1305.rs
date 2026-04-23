@@ -4,151 +4,21 @@
 
 use core::fmt;
 
-use super::{AeadBufferError, Nonce192, OpenError, chacha20, poly1305, targets::AeadPrimitive};
-use crate::traits::{Aead, VerificationError, ct};
+use super::{AeadBufferError, Nonce192, OpenError, SealError, chacha20, poly1305, targets::AeadPrimitive};
+use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce192::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
 
-/// XChaCha20-Poly1305 secret key bytes.
-#[derive(Clone)]
-pub struct XChaCha20Poly1305Key([u8; Self::LENGTH]);
+define_aead_key_type!(XChaCha20Poly1305Key, KEY_SIZE, "XChaCha20-Poly1305 secret key bytes.");
 
-impl PartialEq for XChaCha20Poly1305Key {
-  fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for XChaCha20Poly1305Key {}
-
-impl XChaCha20Poly1305Key {
-  /// Key length in bytes.
-  pub const LENGTH: usize = KEY_SIZE;
-
-  /// Construct a typed key from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the key bytes.
-  #[inline]
-  #[must_use]
-  pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the key bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl AsRef<[u8]> for XChaCha20Poly1305Key {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(XChaCha20Poly1305Key);
-
-impl fmt::Debug for XChaCha20Poly1305Key {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("XChaCha20Poly1305Key(****)")
-  }
-}
-
-impl XChaCha20Poly1305Key {
-  /// Construct a key by filling bytes from the provided closure.
-  ///
-  /// ```rust
-  /// # use rscrypto::XChaCha20Poly1305Key;
-  /// let key = XChaCha20Poly1305Key::generate(|buf| buf.fill(0xA5));
-  /// assert_eq!(key.as_bytes(), &[0xA5; XChaCha20Poly1305Key::LENGTH]);
-  /// ```
-  #[inline]
-  #[must_use]
-  pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self(bytes)
-  }
-
-  impl_getrandom!();
-}
-
-impl_hex_fmt_secret!(XChaCha20Poly1305Key);
-impl_serde_bytes!(XChaCha20Poly1305Key);
-
-impl Drop for XChaCha20Poly1305Key {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.0);
-  }
-}
-
-/// XChaCha20-Poly1305 authentication tag bytes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct XChaCha20Poly1305Tag([u8; Self::LENGTH]);
-
-impl XChaCha20Poly1305Tag {
-  /// Tag length in bytes.
-  pub const LENGTH: usize = TAG_SIZE;
-
-  /// Construct a typed tag from raw bytes.
-  #[inline]
-  #[must_use]
-  pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
-    Self(bytes)
-  }
-
-  /// Return the tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn to_bytes(self) -> [u8; Self::LENGTH] {
-    self.0
-  }
-
-  /// Borrow the tag bytes.
-  #[inline]
-  #[must_use]
-  pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
-    &self.0
-  }
-}
-
-impl Default for XChaCha20Poly1305Tag {
-  #[inline]
-  fn default() -> Self {
-    Self([0u8; Self::LENGTH])
-  }
-}
-
-impl AsRef<[u8]> for XChaCha20Poly1305Tag {
-  #[inline]
-  fn as_ref(&self) -> &[u8] {
-    &self.0
-  }
-}
-
-impl_ct_eq!(XChaCha20Poly1305Tag);
-
-impl fmt::Debug for XChaCha20Poly1305Tag {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "XChaCha20Poly1305Tag(")?;
-    crate::hex::fmt_hex_lower(&self.0, f)?;
-    write!(f, ")")
-  }
-}
-
-impl_hex_fmt!(XChaCha20Poly1305Tag);
-impl_serde_bytes!(XChaCha20Poly1305Tag);
+define_aead_tag_type!(
+  XChaCha20Poly1305Tag,
+  TAG_SIZE,
+  "XChaCha20-Poly1305 authentication tag bytes."
+);
 
 /// Portable XChaCha20-Poly1305 AEAD.
 ///
@@ -162,10 +32,34 @@ impl_serde_bytes!(XChaCha20Poly1305Tag);
 /// let cipher = XChaCha20Poly1305::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf);
+/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf)?;
 /// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
-/// # Ok::<(), rscrypto::VerificationError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// Tampering is reported as an opaque verification failure.
+///
+/// ```
+/// use rscrypto::{
+///   Aead, XChaCha20Poly1305, XChaCha20Poly1305Key,
+///   aead::{Nonce192, OpenError},
+/// };
+///
+/// let key = XChaCha20Poly1305Key::from_bytes([0x42; 32]);
+/// let nonce = Nonce192::from_bytes([0x24; 24]);
+/// let cipher = XChaCha20Poly1305::new(&key);
+///
+/// let mut sealed = [0u8; 5 + XChaCha20Poly1305::TAG_SIZE];
+/// cipher.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// sealed[0] ^= 1;
+///
+/// let mut opened = [0u8; 5];
+/// assert_eq!(
+///   cipher.decrypt(&nonce, b"", &sealed, &mut opened),
+///   Err(OpenError::verification())
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct XChaCha20Poly1305 {
@@ -203,8 +97,12 @@ impl XChaCha20Poly1305 {
 
   /// Encrypt `buffer` in place and return the detached authentication tag.
   #[inline]
-  #[must_use]
-  pub fn encrypt_in_place(&self, nonce: &Nonce192, aad: &[u8], buffer: &mut [u8]) -> XChaCha20Poly1305Tag {
+  pub fn encrypt_in_place(
+    &self,
+    nonce: &Nonce192,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Result<XChaCha20Poly1305Tag, SealError> {
     <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
   }
 
@@ -216,13 +114,13 @@ impl XChaCha20Poly1305 {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &XChaCha20Poly1305Tag,
-  ) -> Result<(), VerificationError> {
+  ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
   }
 
   /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
   #[inline]
-  pub fn encrypt(&self, nonce: &Nonce192, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
+  pub fn encrypt(&self, nonce: &Nonce192, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
     <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
@@ -246,14 +144,6 @@ impl XChaCha20Poly1305 {
     let mut ietf_nonce = [0u8; chacha20::NONCE_SIZE];
     ietf_nonce[4..].copy_from_slice(&nonce.as_bytes()[chacha20::HCHACHA_NONCE_SIZE..]);
     (subkey, ietf_nonce)
-  }
-
-  fn ensure_message_len(len: usize) {
-    let len = match u64::try_from(len) {
-      Ok(value) => value,
-      Err(_) => panic!("message length exceeds u64"),
-    };
-    assert!(len <= MAX_PLAINTEXT_LEN, "XChaCha20-Poly1305 message too large");
   }
 }
 
@@ -280,23 +170,22 @@ impl Aead for XChaCha20Poly1305 {
     Ok(XChaCha20Poly1305Tag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
-    Self::ensure_message_len(buffer.len());
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+    super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
-    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer);
+    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer)
+      .map_err(|_| SealError::too_large())?;
 
     let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
-    let tag = XChaCha20Poly1305Tag::from_bytes(poly1305::authenticate_aead(
-      AeadPrimitive::XChaCha20Poly1305,
-      aad,
-      buffer,
-      &poly_key,
-    ));
+    let tag = XChaCha20Poly1305Tag::from_bytes(
+      poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, buffer, &poly_key)
+        .map_err(|_| SealError::too_large())?,
+    );
 
     ct::zeroize(&mut poly_key);
     ct::zeroize(&mut subkey);
-    tag
+    Ok(tag)
   }
 
   fn decrypt_in_place(
@@ -305,22 +194,24 @@ impl Aead for XChaCha20Poly1305 {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Self::Tag,
-  ) -> Result<(), VerificationError> {
-    Self::ensure_message_len(buffer.len());
+  ) -> Result<(), OpenError> {
+    super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     // Derive subkey once and reuse for both tag verification and decryption.
     let (mut subkey, ietf_nonce) = self.derive_subkey_and_nonce(nonce);
     let mut poly_key = chacha20::poly1305_key_gen(&subkey, &ietf_nonce);
-    let expected = poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, buffer, &poly_key);
+    let expected = poly1305::authenticate_aead(AeadPrimitive::XChaCha20Poly1305, aad, buffer, &poly_key)
+      .map_err(|_| OpenError::too_large())?;
     ct::zeroize(&mut poly_key);
 
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       ct::zeroize(&mut subkey);
-      return Err(VerificationError::new());
+      return Err(OpenError::verification());
     }
 
-    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer);
+    chacha20::xor_keystream(AeadPrimitive::XChaCha20Poly1305, &subkey, 1, &ietf_nonce, buffer)
+      .map_err(|_| OpenError::too_large())?;
     ct::zeroize(&mut subkey);
     Ok(())
   }
@@ -337,7 +228,7 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"hello xchacha";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
     cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag).unwrap();
     assert_eq!(&buf, b"hello xchacha");
   }
@@ -349,7 +240,7 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"nonce test";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     let wrong_nonce = Nonce192::from_bytes([0x08u8; 24]);
     let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
@@ -363,7 +254,7 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"zero me on failure";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
 
     let mut bad_tag = tag.to_bytes();
     bad_tag[0] ^= 0xFF;
@@ -381,7 +272,7 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"aad test";
-    let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buf);
+    let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buf).unwrap();
 
     let result = cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
     assert!(result.is_err());

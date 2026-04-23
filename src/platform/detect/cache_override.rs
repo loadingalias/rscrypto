@@ -2,14 +2,11 @@
 // Override System
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(feature = "std")]
-use std::sync::{OnceLock, RwLock};
+#[cfg(all(feature = "std", not(miri)))]
+use std::sync::OnceLock;
 
 #[cfg(all(feature = "std", not(miri)))]
 static STD_CACHE: OnceLock<Detected> = OnceLock::new();
-
-#[cfg(feature = "std")]
-static OVERRIDE: RwLock<Option<Detected>> = RwLock::new(None);
 
 /// Set detection override.
 ///
@@ -37,20 +34,19 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
   #[cfg(feature = "std")]
   {
     #[cfg(not(miri))]
-    if STD_CACHE.get().is_some() {
-      return Err(OverrideError::AlreadyInitialized);
+    {
+      atomic_cache::try_set_override(value, STD_CACHE.get().is_some())
     }
 
-    if let Ok(mut guard) = OVERRIDE.write() {
-      *guard = value;
-      return Ok(());
+    #[cfg(miri)]
+    {
+      atomic_cache::try_set_override(value, false)
     }
-    Err(OverrideError::Unsupported)
   }
 
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   {
-    atomic_cache::try_set_override(value)
+    atomic_cache::try_set_override(value, false)
   }
 
   #[cfg(all(not(feature = "std"), not(target_has_atomic = "64")))]
@@ -73,7 +69,7 @@ pub fn clear_override() {
 pub fn has_override() -> bool {
   #[cfg(feature = "std")]
   {
-    OVERRIDE.read().map(|g| g.is_some()).unwrap_or(false)
+    atomic_cache::has_override()
   }
 
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
@@ -92,9 +88,7 @@ pub fn has_override() -> bool {
 fn detect_with_override() -> Detected {
   #[cfg(feature = "std")]
   {
-    if let Ok(guard) = OVERRIDE.read()
-      && let Some(ov) = *guard
-    {
+    if let Some(ov) = atomic_cache::get_override() {
       return ov;
     }
   }
@@ -113,17 +107,22 @@ fn detect_with_override() -> Detected {
 // Atomic Cache (no_std with 64-bit atomics)
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
+#[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
 mod atomic_cache {
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
+  use core::sync::atomic::AtomicU8;
   use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
   };
 
   use super::*;
 
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   const STATE_UNINIT: u8 = 0;
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   const STATE_INITING: u8 = 1;
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   const STATE_READY: u8 = 2;
 
   struct Slot<T>(UnsafeCell<T>);
@@ -137,12 +136,15 @@ mod atomic_cache {
     }
   }
 
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   static STATE: AtomicU8 = AtomicU8::new(STATE_UNINIT);
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   static CACHED: Slot<Detected> = Slot::new(Detected::portable());
 
   static OVERRIDE_SET: AtomicBool = AtomicBool::new(false);
   static OVERRIDE_VALUE: Slot<Option<Detected>> = Slot::new(None);
 
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   pub fn get_or_init(f: fn() -> Detected) -> Detected {
     if STATE.load(Ordering::Acquire) == STATE_READY {
       return load_cached();
@@ -165,11 +167,13 @@ mod atomic_cache {
     }
   }
 
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   fn load_cached() -> Detected {
     // SAFETY: Readers only access after STATE_READY with Acquire ordering.
     unsafe { *CACHED.0.get() }
   }
 
+  #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   fn store_cached(det: &Detected) {
     // SAFETY: Single writer while STATE_INITING; readers are blocked until STATE_READY.
     unsafe {
@@ -177,8 +181,14 @@ mod atomic_cache {
     }
   }
 
-  pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
-    if STATE.load(Ordering::Acquire) == STATE_READY {
+  pub fn try_set_override(value: Option<Detected>, already_initialized: bool) -> Result<(), OverrideError> {
+    #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
+    if already_initialized || STATE.load(Ordering::Acquire) == STATE_READY {
+      return Err(OverrideError::AlreadyInitialized);
+    }
+
+    #[cfg(feature = "std")]
+    if already_initialized {
       return Err(OverrideError::AlreadyInitialized);
     }
 
@@ -194,6 +204,7 @@ mod atomic_cache {
     OVERRIDE_SET.load(Ordering::Acquire)
   }
 
+  #[cfg(not(miri))]
   pub fn get_override() -> Option<Detected> {
     if !OVERRIDE_SET.load(Ordering::Acquire) {
       return None;

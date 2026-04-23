@@ -244,9 +244,21 @@ jobs:
           cargo check --target ${{ matrix.target }} --no-default-features --features hashes --lib
         fi
 
+  supply-chain:
+    name: Supply Chain (commit)
+    needs: lane-contract
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 15
+      setup_kind: default
+      cache_key: commit-supply-chain
+      tools_mode: standard
+      run_script: cargo deny check advisories
+
   complete:
     name: Complete (commit)
-    needs: [ci, ci-ibm-s390x, ci-ibm-power10, ci-riscv, no-std, wasm]
+    needs: [ci, ci-ibm-s390x, ci-ibm-power10, ci-riscv, no-std, wasm, supply-chain]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -268,5 +280,8 @@ jobs:
             exit 1
           fi
           if [ "${{ needs.wasm.result }}" != "success" ] && [ "${{ needs.wasm.result }}" != "skipped" ]; then
+            exit 1
+          fi
+          if [ "${{ needs.supply-chain.result }}" != "success" ] && [ "${{ needs.supply-chain.result }}" != "skipped" ]; then
             exit 1
           fi

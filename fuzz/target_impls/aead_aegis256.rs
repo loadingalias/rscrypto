@@ -22,7 +22,9 @@ fuzz_target!(|data: &[u8]| {
 
         // rscrypto encrypt → oracle decrypt
         let mut ct = plaintext.to_vec();
-        let tag = cipher.encrypt_in_place(&nonce, aad, &mut ct);
+        let tag = cipher
+            .encrypt_in_place(&nonce, aad, &mut ct)
+            .expect("differential: rscrypto encrypt must succeed");
         let tag_arr: [u8; 16] = tag.as_ref().try_into().unwrap();
         let oracle = OracleAegis::<16>::new(&key_bytes, &nonce_bytes);
         let pt = oracle.decrypt(&ct, &tag_arr, aad).unwrap();

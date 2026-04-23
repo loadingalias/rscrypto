@@ -71,7 +71,7 @@ fn streaming(c: &mut Criterion) {
   let mut g = c.benchmark_group("blake3/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
 
-  for chunk_size in [64, 4096, 65536] {
+  for chunk_size in [64, 4096, 16384, 65536] {
     g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
       b.iter(|| {
         use rscrypto::Digest;

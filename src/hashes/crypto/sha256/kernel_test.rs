@@ -72,18 +72,24 @@ mod tests {
   }
 
   fn all_chunk_sizes() -> &'static [usize] {
+    #[cfg(not(miri))]
     &[
       1, 2, 3, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128, 255, 256, 1024, 4096,
     ]
+    #[cfg(miri)]
+    &[1, 7, 31, 32, 63, 64, 65, 127, 128]
   }
 
   #[test]
   fn all_kernels_match_sha2_oracle_and_streaming_splits() {
     let caps = crate::platform::caps();
 
+    #[cfg(not(miri))]
     let lens = [
       0usize, 1, 2, 3, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129, 1000,
     ];
+    #[cfg(miri)]
+    let lens = [0usize, 1, 55, 56, 57, 63, 64, 65, 127, 128, 129];
 
     for &id in ALL {
       if !caps.has(required_caps(id)) {
@@ -117,7 +123,11 @@ mod tests {
         }
 
         // Exhaustive two-split for small buffers (padding edges).
-        if len <= 256 {
+        #[cfg(not(miri))]
+        let split_limit = 256;
+        #[cfg(miri)]
+        let split_limit = 128;
+        if len <= split_limit {
           for split in 0..=len {
             let (a, b) = msg.split_at(split);
             let mut h = hasher_for_kernel(id);

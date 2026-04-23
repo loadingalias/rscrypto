@@ -33,7 +33,7 @@ fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8
 
   // Encrypt with rscrypto.
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours);
+  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
 
   // Encrypt with oracle.
   let mut oracle_buf = plaintext.to_vec();
@@ -115,7 +115,7 @@ fn ascon_aead128_rejects_modified_tag() {
   let cipher = AsconAead128::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).to_bytes();
+  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
   tag[0] ^= 1;
 
   assert!(
@@ -132,7 +132,7 @@ fn ascon_aead128_rejects_modified_ciphertext() {
   let cipher = AsconAead128::new(&key);
 
   let mut buffer = *b"tamper-detect";
-  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer);
+  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer).unwrap();
   buffer[0] ^= 1;
 
   assert!(cipher.decrypt_in_place(&nonce, b"", &mut buffer, &tag).is_err());
@@ -145,7 +145,7 @@ fn ascon_aead128_rejects_wrong_aad() {
   let cipher = AsconAead128::new(&key);
 
   let mut buffer = *b"aad-mismatch";
-  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer);
+  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer).unwrap();
 
   assert!(cipher.decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag).is_err());
 }

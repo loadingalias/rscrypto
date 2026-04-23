@@ -1,0 +1,21 @@
+# Fixed-size hex payloads for typed parse targets.
+"0"
+"00"
+"0000"
+"ff"
+"FF"
+"deadbeef"
+"DEADBEEF"
+"000102030405060708090a0b0c0d0e0f"
+"404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+
+# Invalid-length and invalid-character edges.
+""
+"f"
+"fff"
+"0x"
+"zz"
+"-1"
+":"
+"\n"

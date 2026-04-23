@@ -152,6 +152,11 @@ unsafe fn scramble_acc(acc: &mut [uint64x2_t; 4], secret: *const u8) {
 /// Uses `wrapping_add` because the prefetch address may be past the end of the
 /// buffer — `prfm` silently ignores invalid addresses.
 #[inline(always)]
+#[cfg(miri)]
+unsafe fn prefetch_stripe(_input_ptr: *const u8) {}
+
+#[inline(always)]
+#[cfg(not(miri))]
 unsafe fn prefetch_stripe(input_ptr: *const u8) {
   // SAFETY: PRFM is a CPU hint; invalid addresses are silently ignored.
   unsafe {

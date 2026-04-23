@@ -132,15 +132,16 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Whether the best SHA-256 kernel is known at compile time.
-pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
-  all(target_arch = "x86_64", target_feature = "sha"),
-  all(target_arch = "aarch64", target_feature = "sha2"),
-  all(
-    any(target_arch = "riscv64", target_arch = "riscv32"),
-    target_feature = "zknh"
-  ),
-  all(target_arch = "wasm32", target_feature = "simd128"),
-));
+pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
+  && cfg!(any(
+    all(target_arch = "x86_64", target_feature = "sha"),
+    all(target_arch = "aarch64", target_feature = "sha2"),
+    all(
+      any(target_arch = "riscv64", target_arch = "riscv32"),
+      target_feature = "zknh"
+    ),
+    all(target_arch = "wasm32", target_feature = "simd128"),
+  ));
 
 /// Returns the compile-time-best compress function.
 ///
@@ -149,19 +150,27 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
 /// LLVM sees a constant function pointer and can devirtualize through it.
 #[inline(always)]
 pub(crate) fn compile_time_best() -> CompressBlocksFn {
-  #[cfg(all(target_arch = "x86_64", target_feature = "sha"))]
+  #[cfg(miri)]
+  {
+    return Sha256::compress_blocks_portable;
+  }
+  #[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sha"))]
   {
     return compress_blocks_x86_sha;
   }
-  #[cfg(all(target_arch = "aarch64", target_feature = "sha2"))]
+  #[cfg(all(not(miri), target_arch = "aarch64", target_feature = "sha2"))]
   {
     return compress_blocks_aarch64_sha2;
   }
-  #[cfg(all(any(target_arch = "riscv64", target_arch = "riscv32"), target_feature = "zknh"))]
+  #[cfg(all(
+    not(miri),
+    any(target_arch = "riscv64", target_arch = "riscv32"),
+    target_feature = "zknh"
+  ))]
   {
     return compress_blocks_riscv_zknh;
   }
-  #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+  #[cfg(all(not(miri), target_arch = "wasm32", target_feature = "simd128"))]
   {
     return compress_blocks_wasm_simd128;
   }
@@ -171,7 +180,9 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
 
 /// Kernel name for the compile-time-best path (introspection).
 #[cfg(any(test, feature = "diag"))]
-pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(all(target_arch = "x86_64", target_feature = "sha")) {
+pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
+  "portable"
+} else if cfg!(all(target_arch = "x86_64", target_feature = "sha")) {
   "x86-sha"
 } else if cfg!(all(target_arch = "aarch64", target_feature = "sha2")) {
   "aarch64-sha2"

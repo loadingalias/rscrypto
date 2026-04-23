@@ -2092,12 +2092,7 @@ fn root_output_oneshot(
         let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
         single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
       } else {
-        // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total,
-        // so the root output is always derived from parent nodes.
-        match last_full_chunk_cv {
-          Some(cv) => cv,
-          None => unreachable!("missing last full chunk cv"),
-        }
+        last_full_chunk_cv.unwrap_or_else(|| recompute_last_full_chunk_cv(kernel, key_words, flags, full_chunks, input))
       }
     }
 
@@ -2151,12 +2146,16 @@ fn root_output_oneshot(
         let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
         single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
       } else {
-        // `input.len() > CHUNK_LEN` implies there are at least 2 chunks total, so
-        // the root output is always derived from parent nodes rather than a chunk.
-        match last_full_chunk_cv {
-          Some(cv) => words8_from_le_bytes_32(&cv),
-          None => unreachable!("missing last full chunk cv"),
-        }
+        let last_full_chunk_cv = last_full_chunk_cv.unwrap_or_else(|| {
+          words8_to_le_bytes(&recompute_last_full_chunk_cv(
+            kernel,
+            key_words,
+            flags,
+            full_chunks,
+            input,
+          ))
+        });
+        words8_from_le_bytes_32(&last_full_chunk_cv)
       }
     }
   };
@@ -2175,6 +2174,22 @@ fn root_output_oneshot(
   }
 
   output
+}
+
+#[inline]
+fn recompute_last_full_chunk_cv(
+  kernel: Kernel,
+  key_words: [u32; 8],
+  flags: u32,
+  full_chunks: usize,
+  input: &[u8],
+) -> [u32; 8] {
+  debug_assert!(full_chunks != 0);
+  debug_assert_eq!(input.len() % CHUNK_LEN, 0);
+
+  let last_chunk_index = full_chunks.saturating_sub(1);
+  let offset = input.len().saturating_sub(CHUNK_LEN);
+  single_chunk_output(kernel, key_words, last_chunk_index as u64, flags, &input[offset..]).chaining_value()
 }
 
 #[cfg(feature = "parallel")]
@@ -2293,6 +2308,20 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
   digest_oneshot(kernel, key_words, flags, input)
 }
 
+/// BLAKE3 digest state.
+///
+/// Defined by the BLAKE3 specification.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Blake3, Digest};
+///
+/// let mut hasher = Blake3::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Blake3::digest(b"abc"));
+/// ```
 #[derive(Clone)]
 pub struct Blake3 {
   dispatch: dispatch::HasherDispatch,
@@ -2788,13 +2817,12 @@ impl Blake3 {
   fn root_output(&self) -> OutputState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut output = if let Some(right_cv) = self.pending_chunk_cv {
-      debug_assert!(
-        parent_nodes_remaining > 0,
-        "pending full chunk implies multi-chunk input"
-      );
-      parent_nodes_remaining -= 1;
+      let Some(left_index) = parent_nodes_remaining.checked_sub(1) else {
+        return self.chunk_state.output();
+      };
+      parent_nodes_remaining = left_index;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      let left = unsafe { *self.cv_stack[left_index].assume_init_ref() };
       parent_output(
         self.chunk_state.kernel_id,
         left,
@@ -2834,11 +2862,28 @@ impl Blake3 {
   fn root_emit_state_slow(&self) -> RootEmitState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
     let mut current_cv = if let Some(right_cv) = self.pending_chunk_cv {
-      debug_assert!(
-        parent_nodes_remaining > 0,
-        "pending full chunk implies multi-chunk input"
-      );
-      right_cv
+      let Some(left_index) = parent_nodes_remaining.checked_sub(1) else {
+        return self.chunk_state.root_emit_state();
+      };
+      parent_nodes_remaining = left_index;
+      // SAFETY: `cv_stack_len` tracks the number of initialized entries.
+      let left = unsafe { *self.cv_stack[left_index].assume_init_ref() };
+      if parent_nodes_remaining == 0 {
+        return RootEmitState::from_parent(
+          self.chunk_state.kernel_id,
+          left,
+          right_cv,
+          self.key_words,
+          self.chunk_state.flags,
+        );
+      }
+      kernels::parent_cv_inline(
+        self.chunk_state.kernel_id,
+        left,
+        right_cv,
+        self.key_words,
+        self.chunk_state.flags,
+      )
     } else {
       self.chunk_state.output_chaining_value()
     };
@@ -2865,7 +2910,7 @@ impl Blake3 {
       );
     }
 
-    unreachable!("root emit state must return from chunk or parent root path");
+    self.chunk_state.root_emit_state()
   }
 
   /// Finalize into an extendable output state (XOF).
@@ -3091,6 +3136,22 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
   })
 }
 
+/// BLAKE3 extendable-output reader.
+///
+/// Defined by the BLAKE3 specification.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Blake3, Blake3XofReader, Xof};
+///
+/// let mut reader: Blake3XofReader = Blake3::xof(b"abc");
+/// let mut out = [0u8; 64];
+/// reader.squeeze(&mut out);
+///
+/// let digest = Blake3::digest(b"abc");
+/// assert_eq!(&out[..32], digest.as_slice());
+/// ```
 #[derive(Clone)]
 pub struct Blake3XofReader {
   root: RootEmitState,
@@ -3188,11 +3249,15 @@ impl Xof for Blake3XofReader {
 
     if out.len() == OUTPUT_BLOCK_LEN && self.position_within_block == 0 {
       // Exact one-block reads can write directly into the caller buffer.
-      let out: &mut [u8; OUTPUT_BLOCK_LEN] = match out.try_into() {
-        Ok(out) => out,
-        Err(_) => unreachable!("length checked above"),
-      };
-      self.fill_full_block_direct(out);
+      {
+        let (blocks, remainder) = out.as_chunks_mut::<OUTPUT_BLOCK_LEN>();
+        debug_assert!(remainder.is_empty());
+        if let Some(block) = blocks.first_mut() {
+          self.fill_full_block_direct(block);
+          return;
+        }
+      }
+      self.fill_one_block(&mut out);
       return;
     }
 
@@ -3517,7 +3582,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     let input_ptrs = [input.as_ptr()];
     let mut out = [0u8; OUT_LEN];
     if blocks == 4 && use_avx512_four_block_avx2_fast_path() {
-      // For the exact 4-block one-chunk case (4096B input), AVX2's internal
+      // For the exact 4-block one-chunk case (256B input), AVX2's internal
       // tail cascade is a better fit than the AVX-512 4-lane sub-degree path.
       // Keep this heuristic narrow so 64..1024B stay on the proven AVX-512
       // exact-block path.
@@ -3613,7 +3678,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
             cv = x86_64::compress_cv_avx512_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
           }
         }
-        _ => unreachable!(),
+        _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
       }
     }
 
@@ -3662,7 +3727,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
             cv = x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
           }
         }
-        _ => unreachable!(),
+        _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
       }
     }
     return cv;
@@ -3710,7 +3775,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
           cv = x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
         }
       }
-      _ => unreachable!(),
+      _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
     }
   }
   cv

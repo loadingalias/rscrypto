@@ -279,12 +279,23 @@ macro_rules! impl_getrandom {
     #[inline]
     #[must_use]
     pub fn random() -> Self {
-      let mut bytes = [0u8; Self::LENGTH];
-      match getrandom::fill(&mut bytes) {
-        Ok(()) => {}
+      match Self::try_random() {
+        Ok(value) => value,
         Err(e) => panic!("getrandom failed: {e}"),
       }
-      Self(bytes)
+    }
+
+    /// Try to generate a random instance from the platform entropy source.
+    ///
+    /// # Errors
+    ///
+    /// Returns a getrandom error if the platform entropy source is unavailable.
+    #[cfg(feature = "getrandom")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+    #[inline]
+    pub fn try_random() -> Result<Self, getrandom::Error> {
+      let mut bytes = [0u8; Self::LENGTH];
+      getrandom::fill(&mut bytes).map(|()| Self(bytes))
     }
   };
 }

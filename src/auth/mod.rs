@@ -28,7 +28,7 @@
 //! kmac.update(b"auth");
 //! let mut kmac_tag = [0u8; 32];
 //! kmac.finalize_into(&mut kmac_tag);
-//! assert!(rscrypto::Kmac256::verify(b"shared-secret", b"svc=v1", b"auth", &kmac_tag).is_ok());
+//! assert!(rscrypto::Kmac256::verify_tag(b"shared-secret", b"svc=v1", b"auth", &kmac_tag).is_ok());
 //!
 //! let alice = rscrypto::X25519SecretKey::from_bytes([7u8; 32]);
 //! let bob = rscrypto::X25519SecretKey::from_bytes([9u8; 32]);
@@ -67,8 +67,11 @@
 //! - KMAC is variable-output, so the streaming path uses `finalize_into`.
 //! - HKDF uses `new(salt, ikm)` for extract state, then `expand` / `expand_array`; one-shot helpers
 //!   are `derive` / `derive_array`.
-//! - Signature and key-exchange types use typed `from_bytes` / `to_bytes` / `as_bytes` wrappers
-//!   plus verb-based operations such as `sign`, `verify`, and `diffie_hellman`.
+//! - Public values use typed `from_bytes` / `to_bytes` / `as_bytes` wrappers.
+//! - Secret values use typed `from_bytes` / `as_bytes` wrappers and require explicit
+//!   `expose_secret()` opt-in for owned extraction.
+//! - Verb-based operations such as `sign`, `verify`, and `diffie_hellman` stay on the typed
+//!   wrappers.
 //!
 //! # Error Conventions
 //!
@@ -100,7 +103,7 @@ pub mod pbkdf2;
 pub mod x25519;
 
 #[cfg(feature = "ed25519")]
-pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify as verify_ed25519};
+pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]

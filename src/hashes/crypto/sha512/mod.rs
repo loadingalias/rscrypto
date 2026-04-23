@@ -6,7 +6,7 @@ use self::kernels::CompressBlocksFn;
 use crate::{
   hashes::{
     crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u128},
-    util::rotr64,
+    util::{Aligned64, rotr64},
   },
   traits::Digest,
 };
@@ -52,18 +52,7 @@ pub(crate) const H0: [u64; 8] = [
 /// Without alignment the 640-byte table can straddle up to 10+1 L1 cache lines,
 /// causing extra misses on first access. Aligning to 64 bytes guarantees it
 /// starts at a line boundary, filling exactly 10 lines.
-#[repr(C, align(64))]
-struct AlignedK([u64; 80]);
-
-impl core::ops::Deref for AlignedK {
-  type Target = [u64; 80];
-  #[inline(always)]
-  fn deref(&self) -> &[u64; 80] {
-    &self.0
-  }
-}
-
-static K: AlignedK = AlignedK([
+static K: Aligned64<[u64; 80]> = Aligned64([
   0x428a_2f98_d728_ae22,
   0x7137_4491_23ef_65cd,
   0xb5c0_fbcf_ec4d_3b2f,
@@ -176,6 +165,20 @@ fn small_sigma1(x: u64) -> u64 {
   rotr64(x, 19) ^ rotr64(x, 61) ^ (x >> 6)
 }
 
+/// SHA-512 digest state.
+///
+/// Standardized in FIPS 180-4.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha512};
+///
+/// let mut hasher = Sha512::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha512::digest(b"abc"));
+/// ```
 #[derive(Clone)]
 pub struct Sha512 {
   state: [u64; 8],

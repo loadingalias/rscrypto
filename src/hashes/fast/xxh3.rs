@@ -885,9 +885,9 @@ impl core::hash::BuildHasher for Xxh3BuildHasher {
 
 #[cfg(test)]
 mod tests {
-
   use alloc::vec::Vec;
 
+  #[cfg(not(miri))]
   use proptest::prelude::*;
 
   use super::{Xxh3_64, Xxh3_128};
@@ -904,6 +904,7 @@ mod tests {
     );
   }
 
+  #[cfg(not(miri))]
   proptest! {
     #[test]
     fn xxh3_64_matches_oracle(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
@@ -932,6 +933,11 @@ mod tests {
 
   #[test]
   fn xxh3_long_paths_match_oracle() {
+    #[cfg(miri)]
+    let sizes = [
+      0usize, 1, 2, 3, 4, 8, 16, 17, 31, 32, 33, 127, 128, 129, 240, 241, 1024, 4096,
+    ];
+    #[cfg(not(miri))]
     let sizes = [0usize, 1, 2, 3, 4, 8, 16, 17, 128, 129, 240, 241, 1024, 4096, 65536];
     let seeds = [0u64, 1u64, 0x0123_4567_89ab_cdef];
 

@@ -16,47 +16,8 @@
 //! assert!(!backend_for(AeadPrimitive::XChaCha20Poly1305).is_empty());
 //! ```
 
-use core::fmt;
-
 use crate::aead::{AeadPrimitive, select_backend};
-
-/// Zero-allocation view of the current AEAD dispatch environment.
-#[derive(Clone, Copy)]
-pub struct DispatchInfo {
-  platform: crate::platform::Description,
-}
-
-impl DispatchInfo {
-  /// Returns dispatch info for the current platform.
-  #[inline]
-  #[must_use]
-  pub fn current() -> Self {
-    Self {
-      platform: crate::platform::describe(),
-    }
-  }
-
-  /// Returns the platform description used to drive AEAD backend selection.
-  #[inline]
-  #[must_use]
-  pub fn platform(&self) -> crate::platform::Description {
-    self.platform
-  }
-}
-
-impl fmt::Display for DispatchInfo {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", self.platform)
-  }
-}
-
-impl fmt::Debug for DispatchInfo {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("DispatchInfo")
-      .field("platform", &format_args!("{}", self.platform))
-      .finish()
-  }
-}
+pub use crate::platform::DispatchInfo;
 
 /// Returns the backend label selected for `primitive` on the current machine.
 #[inline]

@@ -1,14 +1,7 @@
 //! I/O adapter support for hashing algorithms.
 //!
-//! This module provides sealed traits that enable generic I/O adapter implementations
-//! for [`Checksum`](crate::Checksum) and [`Digest`](crate::traits::Digest) types.
-//!
-//! # Design
-//!
-//! The sealed trait pattern ensures:
-//! - New algorithms automatically get I/O support
-//! - External types cannot implement these traits (preventing coherence issues)
-//! - Future API extensions don't break existing code
+//! This module provides generic I/O adapter implementations for
+//! [`Checksum`](crate::Checksum) and [`Digest`](crate::traits::Digest) types.
 //!
 //! # Example
 //!
@@ -36,60 +29,6 @@
 //! );
 //! # Ok::<(), std::io::Error>(())
 //! ```
-
-/// Sealed trait marker - not implementable outside rscrypto.
-///
-/// This module prevents external implementations of [`Hashable`](crate::traits::io::Hashable),
-/// allowing us to extend the trait with new methods without breaking changes.
-mod private {
-  /// Sealed trait marker.
-  pub trait Sealed {}
-}
-
-// Internal re-export for use by sibling modules (checksum, digest).
-pub(crate) use private::Sealed as SealedMarker;
-
-/// Trait for types that can be used with I/O adapters.
-///
-/// This is implemented automatically for all [`Checksum`](crate::Checksum) and
-/// [`Digest`](crate::traits::Digest) types. It cannot be implemented manually.
-///
-/// # Stability
-///
-/// This trait is sealed - new methods may be added in minor versions.
-pub trait Hashable: private::Sealed {
-  /// The output type (e.g., `u32` for CRC32, `[u8; 32]` for SHA-256).
-  type Output: Copy + core::fmt::Debug;
-
-  /// Create a new hasher in its initial state.
-  fn new_hasher() -> Self;
-
-  /// Update the hasher with data.
-  fn update(&mut self, data: &[u8]);
-
-  /// Finalize and return the hash/checksum.
-  fn finalize(&self) -> Self::Output;
-}
-
-/// Marker trait for checksum algorithms.
-///
-/// This is automatically implemented for all types implementing [`Checksum`](crate::Checksum).
-/// It provides the `checksum()` method alias for `finalize()`.
-pub trait ChecksumMarker: private::Sealed {
-  type Output: Copy + core::fmt::Debug;
-
-  fn checksum(&self) -> Self::Output;
-}
-
-/// Marker trait for digest algorithms.
-///
-/// This is automatically implemented for all types implementing [`Digest`](crate::traits::Digest).
-/// It provides the `digest()` method alias for `finalize()`.
-pub trait DigestMarker: private::Sealed {
-  type Output: Copy + core::fmt::Debug;
-
-  fn digest(&self) -> Self::Output;
-}
 
 #[cfg(feature = "std")]
 #[inline]
@@ -173,6 +112,19 @@ where
   Ok(n)
 }
 
+#[cfg(feature = "std")]
+fn debug_adapter<R: core::fmt::Debug, H: core::fmt::Debug>(
+  f: &mut core::fmt::Formatter<'_>,
+  name: &str,
+  inner: &R,
+  hasher: &H,
+) -> core::fmt::Result {
+  f.debug_struct(name)
+    .field("inner", inner)
+    .field("hasher", hasher)
+    .finish()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Checksum I/O Adapters
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,16 +175,12 @@ pub struct ChecksumReader<R, C: crate::Checksum> {
 #[cfg(feature = "std")]
 impl<R: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug for ChecksumReader<R, C> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("ChecksumReader")
-      .field("inner", &self.inner)
-      .field("hasher", &self.hasher)
-      .finish()
+    debug_adapter(f, "ChecksumReader", &self.inner, &self.hasher)
   }
 }
 
 #[cfg(feature = "std")]
 impl<R, C: crate::Checksum> ChecksumReader<R, C> {
-  /// Create a new reader wrapper with the default initial state.
   #[inline]
   #[must_use]
   pub fn new(inner: R) -> Self {
@@ -242,9 +190,6 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
     }
   }
 
-  /// Create a new reader wrapper with a custom initial state.
-  ///
-  /// Useful for resuming a checksum computation from a known state.
   #[inline]
   #[must_use]
   pub fn with_initial(inner: R, initial: C::Output) -> Self {
@@ -254,43 +199,32 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
     }
   }
 
-  /// Get the current checksum value.
-  ///
-  /// This does not consume the reader or finalize the hasher -
-  /// further reads will continue updating the checksum.
   #[inline]
   #[must_use]
   pub fn checksum(&self) -> C::Output {
     self.hasher.finalize()
   }
 
-  /// Get a mutable reference to the underlying hasher.
-  ///
-  /// This allows advanced use cases like manual state manipulation.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut C {
     &mut self.hasher
   }
 
-  /// Unwrap this `ChecksumReader`, returning the inner reader and the final checksum.
   #[inline]
   pub fn into_parts(self) -> (R, C::Output) {
     (self.inner, self.hasher.finalize())
   }
 
-  /// Unwrap this `ChecksumReader`, returning the inner reader and discarding the checksum.
   #[inline]
   pub fn into_inner(self) -> R {
     self.inner
   }
 
-  /// Get a reference to the inner reader.
   #[inline]
   pub fn inner(&self) -> &R {
     &self.inner
   }
 
-  /// Get a mutable reference to the inner reader.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut R {
     &mut self.inner
@@ -365,16 +299,12 @@ pub struct ChecksumWriter<W, C: crate::Checksum> {
 #[cfg(feature = "std")]
 impl<W: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debug for ChecksumWriter<W, C> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("ChecksumWriter")
-      .field("inner", &self.inner)
-      .field("hasher", &self.hasher)
-      .finish()
+    debug_adapter(f, "ChecksumWriter", &self.inner, &self.hasher)
   }
 }
 
 #[cfg(feature = "std")]
 impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
-  /// Create a new writer wrapper with the default initial state.
   #[inline]
   #[must_use]
   pub fn new(inner: W) -> Self {
@@ -384,7 +314,6 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
     }
   }
 
-  /// Create a new writer wrapper with a custom initial state.
   #[inline]
   #[must_use]
   pub fn with_initial(inner: W, initial: C::Output) -> Self {
@@ -394,38 +323,32 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
     }
   }
 
-  /// Get the current checksum value.
   #[inline]
   #[must_use]
   pub fn checksum(&self) -> C::Output {
     self.hasher.finalize()
   }
 
-  /// Get a mutable reference to the underlying hasher.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut C {
     &mut self.hasher
   }
 
-  /// Unwrap this `ChecksumWriter`, returning the inner writer and the final checksum.
   #[inline]
   pub fn into_parts(self) -> (W, C::Output) {
     (self.inner, self.hasher.finalize())
   }
 
-  /// Unwrap this `ChecksumWriter`, returning the inner writer and discarding the checksum.
   #[inline]
   pub fn into_inner(self) -> W {
     self.inner
   }
 
-  /// Get a reference to the inner writer.
   #[inline]
   pub fn inner(&self) -> &W {
     &self.inner
   }
 
-  /// Get a mutable reference to the inner writer.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut W {
     &mut self.inner
@@ -499,16 +422,12 @@ pub struct DigestReader<R, D: crate::traits::Digest> {
 #[cfg(feature = "std")]
 impl<R: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt::Debug for DigestReader<R, D> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("DigestReader")
-      .field("inner", &self.inner)
-      .field("hasher", &self.hasher)
-      .finish()
+    debug_adapter(f, "DigestReader", &self.inner, &self.hasher)
   }
 }
 
 #[cfg(feature = "std")]
 impl<R, D: crate::traits::Digest> DigestReader<R, D> {
-  /// Create a new reader wrapper with the default initial state.
   #[inline]
   #[must_use]
   pub fn new(inner: R) -> Self {
@@ -518,43 +437,32 @@ impl<R, D: crate::traits::Digest> DigestReader<R, D> {
     }
   }
 
-  /// Get the current digest value.
-  ///
-  /// This does not consume the reader or finalize the hasher -
-  /// further reads will continue updating the digest.
   #[inline]
   #[must_use]
   pub fn digest(&self) -> D::Output {
     self.hasher.finalize()
   }
 
-  /// Get a mutable reference to the underlying hasher.
-  ///
-  /// This allows advanced use cases like manual state manipulation.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut D {
     &mut self.hasher
   }
 
-  /// Unwrap this `DigestReader`, returning the inner reader and the final digest.
   #[inline]
   pub fn into_parts(self) -> (R, D::Output) {
     (self.inner, self.hasher.finalize())
   }
 
-  /// Unwrap this `DigestReader`, returning the inner reader and discarding the digest.
   #[inline]
   pub fn into_inner(self) -> R {
     self.inner
   }
 
-  /// Get a reference to the inner reader.
   #[inline]
   pub fn inner(&self) -> &R {
     &self.inner
   }
 
-  /// Get a mutable reference to the inner reader.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut R {
     &mut self.inner
@@ -628,16 +536,12 @@ pub struct DigestWriter<W, D: crate::traits::Digest> {
 #[cfg(feature = "std")]
 impl<W: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt::Debug for DigestWriter<W, D> {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("DigestWriter")
-      .field("inner", &self.inner)
-      .field("hasher", &self.hasher)
-      .finish()
+    debug_adapter(f, "DigestWriter", &self.inner, &self.hasher)
   }
 }
 
 #[cfg(feature = "std")]
 impl<W, D: crate::traits::Digest> DigestWriter<W, D> {
-  /// Create a new writer wrapper with the default initial state.
   #[inline]
   #[must_use]
   pub fn new(inner: W) -> Self {
@@ -647,38 +551,32 @@ impl<W, D: crate::traits::Digest> DigestWriter<W, D> {
     }
   }
 
-  /// Get the current digest value.
   #[inline]
   #[must_use]
   pub fn digest(&self) -> D::Output {
     self.hasher.finalize()
   }
 
-  /// Get a mutable reference to the underlying hasher.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut D {
     &mut self.hasher
   }
 
-  /// Unwrap this `DigestWriter`, returning the inner writer and the final digest.
   #[inline]
   pub fn into_parts(self) -> (W, D::Output) {
     (self.inner, self.hasher.finalize())
   }
 
-  /// Unwrap this `DigestWriter`, returning the inner writer and discarding the digest.
   #[inline]
   pub fn into_inner(self) -> W {
     self.inner
   }
 
-  /// Get a reference to the inner writer.
   #[inline]
   pub fn inner(&self) -> &W {
     &self.inner
   }
 
-  /// Get a mutable reference to the inner writer.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut W {
     &mut self.inner

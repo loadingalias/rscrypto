@@ -107,33 +107,11 @@ const XOF128_IV: [u64; 5] = [
 
 const CXOF128_IV: [u64; 5] = [0x0000_0800_00cc_0004, 0, 0, 0, 0];
 
-/// Ascon-CXOF128 customization strings are limited to 256 bytes by SP 800-232.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AsconCxofCustomizationError;
-
-impl AsconCxofCustomizationError {
-  /// Construct a new customization-length error.
-  #[inline]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self
-  }
+define_unit_error! {
+  /// Ascon-CXOF128 customization strings are limited to 256 bytes by SP 800-232.
+  pub struct AsconCxofCustomizationError;
+  "Ascon-CXOF128 customization exceeds 256 bytes"
 }
-
-impl Default for AsconCxofCustomizationError {
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl fmt::Display for AsconCxofCustomizationError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("Ascon-CXOF128 customization exceeds 256 bytes")
-  }
-}
-
-impl core::error::Error for AsconCxofCustomizationError {}
 
 #[inline(always)]
 const fn pad(n: usize) -> u64 {
@@ -833,7 +811,28 @@ pub type AsconXof128 = AsconXof;
 /// Spec-precise alias for [`AsconXofReader`].
 pub type AsconXof128Reader = AsconXofReader;
 
-/// Ascon-CXOF128 hasher with explicit customization.
+/// Ascon-CXOF128 state with explicit customization.
+///
+/// Standardized in NIST SP 800-232.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{AsconCxof128, Xof};
+///
+/// let mut reader = AsconCxof128::xof(b"domain", b"abc")?;
+/// let mut out = [0u8; 32];
+/// reader.squeeze(&mut out);
+///
+/// assert_ne!(out, [0u8; 32]);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// # Errors
+///
+/// [`AsconCxof128::new`], [`AsconCxof128::xof`], and [`AsconCxof128::hash_into`]
+/// return [`AsconCxofCustomizationError`] when `customization` exceeds
+/// [`AsconCxof128::MAX_CUSTOMIZATION_LEN`].
 #[derive(Clone)]
 pub struct AsconCxof128 {
   sponge: Sponge<
@@ -865,6 +864,11 @@ impl AsconCxof128 {
   pub const MAX_CUSTOMIZATION_LEN: usize = 256;
 
   /// Construct a customized Ascon-CXOF128 state.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`AsconCxofCustomizationError`] when `customization` exceeds
+  /// [`MAX_CUSTOMIZATION_LEN`](Self::MAX_CUSTOMIZATION_LEN).
   pub fn new(customization: &[u8]) -> Result<Self, AsconCxofCustomizationError> {
     if customization.len() > Self::MAX_CUSTOMIZATION_LEN {
       return Err(AsconCxofCustomizationError::new());
@@ -880,10 +884,7 @@ impl AsconCxof128 {
     > = Sponge::default();
     permute_12_portable(&mut sponge.state);
 
-    let customization_bits = match u64::try_from(customization.len()) {
-      Ok(value) => value.strict_mul(8),
-      Err(_) => panic!("customization length exceeds u64"),
-    };
+    let customization_bits = crate::bytes_to_bits_saturating(customization.len());
     sponge.absorb_block(&customization_bits.to_le_bytes());
 
     let (blocks, rest) = customization.as_chunks::<RATE>();
@@ -903,6 +904,11 @@ impl AsconCxof128 {
   }
 
   /// Compute a one-shot Ascon-CXOF128 reader.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`AsconCxofCustomizationError`] when `customization` exceeds
+  /// [`MAX_CUSTOMIZATION_LEN`](Self::MAX_CUSTOMIZATION_LEN).
   pub fn xof(customization: &[u8], data: &[u8]) -> Result<AsconCxof128Reader, AsconCxofCustomizationError> {
     let mut hasher = Self::new(customization)?;
     hasher.update(data);
@@ -934,6 +940,11 @@ impl AsconCxof128 {
   }
 
   /// Fill `out` in one shot.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`AsconCxofCustomizationError`] when `customization` exceeds
+  /// [`MAX_CUSTOMIZATION_LEN`](Self::MAX_CUSTOMIZATION_LEN).
   pub fn hash_into(customization: &[u8], data: &[u8], out: &mut [u8]) -> Result<(), AsconCxofCustomizationError> {
     let mut reader = Self::xof(customization, data)?;
     reader.squeeze(out);

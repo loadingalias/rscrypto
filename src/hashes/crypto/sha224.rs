@@ -37,6 +37,20 @@ const H0: [u32; 8] = [
 /// count, so the maximum byte length is `(2^64 − 1) / 8 = 2^61 − 1`.
 const MAX_MESSAGE_LEN: u64 = u64::MAX / 8;
 
+/// SHA-224 digest state.
+///
+/// Standardized in FIPS 180-4.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha224};
+///
+/// let mut hasher = Sha224::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha224::digest(b"abc"));
+/// ```
 #[derive(Clone)]
 pub struct Sha224 {
   state: [u32; 8],
@@ -262,12 +276,15 @@ mod tests {
       "75388b16512776cc5dba5da1fd890150b0c6455cb4f58b1952522525"
     );
 
-    // 1,000,000 repetitions of 'a'.
-    let mut million_a = alloc::vec![b'a'; 1_000_000];
-    assert_eq!(
-      hex28(&Sha224::digest(&million_a)),
-      "20794655980c91d8bbb4c1ea97618a4bf03f42581948b2ee4ee7ad67"
-    );
-    million_a.clear();
+    #[cfg(not(miri))]
+    {
+      // 1,000,000 repetitions of 'a'.
+      let mut million_a = alloc::vec![b'a'; 1_000_000];
+      assert_eq!(
+        hex28(&Sha224::digest(&million_a)),
+        "20794655980c91d8bbb4c1ea97618a4bf03f42581948b2ee4ee7ad67"
+      );
+      million_a.clear();
+    }
   }
 }

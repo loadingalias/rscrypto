@@ -801,6 +801,9 @@ impl core::hash::BuildHasher for RapidBuildHasher {
 
 #[cfg(test)]
 mod tests {
+  use alloc::vec::Vec;
+
+  #[cfg(not(miri))]
   use proptest::prelude::*;
 
   use super::{RapidHash64, RapidHash128, RapidHashFast64, RapidHashFast128};
@@ -830,6 +833,7 @@ mod tests {
     assert_eq!(ours, theirs);
   }
 
+  #[cfg(not(miri))]
   proptest! {
     #[test]
     fn rapidhash_v3_64_matches_oracle(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
@@ -875,6 +879,74 @@ mod tests {
 
       prop_assert_eq!(lo, <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data));
       prop_assert_eq!(hi, <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed ^ 0x9E37_79B9_7F4A_7C15, &data));
+    }
+  }
+
+  fn deterministic_bytes(len: usize) -> Vec<u8> {
+    let mut out = alloc::vec![0u8; len];
+    let mut x = 0x243f_6a88_85a3_08d3u64;
+    for (i, byte) in out.iter_mut().enumerate() {
+      x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+      *byte = (x >> 56) as u8 ^ ((i as u8).rotate_left((i & 7) as u32));
+    }
+    out
+  }
+
+  #[test]
+  fn rapidhash_boundary_paths_match_oracles() {
+    let sizes = [
+      0usize, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 241, 1024, 4096,
+    ];
+    let seeds = [0u64, 1u64, 0x0123_4567_89ab_cdef];
+
+    for &seed in &seeds {
+      for &len in &sizes {
+        let data = deterministic_bytes(len);
+
+        let ours_v3_64 = <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
+        let secrets = rapidhash::v3::RapidSecrets::seed_cpp(seed);
+        let theirs_v3_64 = rapidhash::v3::rapidhash_v3_seeded(&data, &secrets);
+        assert_eq!(
+          ours_v3_64, theirs_v3_64,
+          "RapidHash64 mismatch (seed={seed}, len={len})"
+        );
+
+        let ours_v3_128 = <RapidHash128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
+        assert_eq!(
+          ours_v3_128 as u64, ours_v3_64,
+          "RapidHash128 low lane mismatch (seed={seed}, len={len})"
+        );
+        assert_eq!(
+          (ours_v3_128 >> 64) as u64,
+          <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed ^ 0x9E37_79B9_7F4A_7C15, &data),
+          "RapidHash128 high lane mismatch (seed={seed}, len={len})"
+        );
+
+        #[cfg(target_endian = "little")]
+        {
+          use core::hash::Hasher;
+
+          let ours_fast_64 = <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
+          let mut h = rapidhash::fast::RapidHasher::new(seed);
+          h.write(&data);
+          let theirs_fast_64 = h.finish();
+          assert_eq!(
+            ours_fast_64, theirs_fast_64,
+            "RapidHashFast64 mismatch (seed={seed}, len={len})"
+          );
+
+          let ours_fast_128 = <RapidHashFast128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
+          assert_eq!(
+            ours_fast_128 as u64, ours_fast_64,
+            "RapidHashFast128 low lane mismatch (seed={seed}, len={len})"
+          );
+          assert_eq!(
+            (ours_fast_128 >> 64) as u64,
+            <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed ^ 0x9E37_79B9_7F4A_7C15, &data),
+            "RapidHashFast128 high lane mismatch (seed={seed}, len={len})"
+          );
+        }
+      }
     }
   }
 }

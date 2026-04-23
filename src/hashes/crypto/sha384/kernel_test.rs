@@ -106,9 +106,16 @@ mod tests {
   #[test]
   fn all_kernels_match_sha2_oracle_for_oneshot_and_streaming_splits() {
     let caps = crate::platform::caps();
+    #[cfg(not(miri))]
     let lens = [
       0usize, 1, 2, 3, 111, 112, 113, 127, 128, 129, 239, 240, 241, 255, 256, 257, 1000,
     ];
+    #[cfg(miri)]
+    let lens = [0usize, 1, 111, 112, 113, 127, 128, 129, 255, 256, 257];
+    #[cfg(not(miri))]
+    let chunks = [1usize, 7, 31, 32, 63, 64, 65, 127, 128, 129, 1024, 4096];
+    #[cfg(miri)]
+    let chunks = [1usize, 31, 32, 63, 64, 65, 127, 128, 129];
 
     for &id in ALL {
       if !caps.has(required_caps(id)) {
@@ -132,7 +139,7 @@ mod tests {
         );
         assert_eq!(ours, exp, "sha384 oracle mismatch for kernel={}", id.as_str());
 
-        for &chunk in &[1usize, 7, 31, 32, 63, 64, 65, 127, 128, 129, 1024, 4096] {
+        for &chunk in &chunks {
           let mut h = hasher_for_kernel(id);
           for part in msg.chunks(chunk) {
             h.update(part);

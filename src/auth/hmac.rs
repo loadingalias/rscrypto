@@ -17,6 +17,27 @@ const SHA512_FAMILY_BLOCK_SIZE: usize = 128;
 const SHA384_TAG_SIZE: usize = 48;
 const SHA512_TAG_SIZE: usize = 64;
 
+#[inline]
+pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
+  key_block: &mut [u8; BLOCK_SIZE],
+  build: impl FnOnce(&[u8; BLOCK_SIZE], &[u8; BLOCK_SIZE]) -> T,
+) -> T {
+  let mut ipad = [0x36u8; BLOCK_SIZE];
+  let mut opad = [0x5Cu8; BLOCK_SIZE];
+  for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
+    *ipad_byte ^= key_byte;
+    *opad_byte ^= key_byte;
+  }
+
+  let result = build(&ipad, &opad);
+
+  ct::zeroize(key_block);
+  ct::zeroize(&mut ipad);
+  ct::zeroize(&mut opad);
+
+  result
+}
+
 /// HMAC-SHA256 authentication state.
 ///
 /// # Examples
@@ -86,25 +107,18 @@ impl Mac for HmacSha256 {
       }
     }
 
-    let mut ipad = [0x36u8; SHA256_BLOCK_SIZE];
-    let mut opad = [0x5Cu8; SHA256_BLOCK_SIZE];
-    for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-      *ipad_byte ^= key_byte;
-      *opad_byte ^= key_byte;
-    }
+    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = Sha256::new();
+      inner_init.update(ipad);
 
-    let mut inner_init = Sha256::new();
-    inner_init.update(&ipad);
+      let mut outer_init = Sha256::new();
+      outer_init.update(opad);
 
-    let mut outer_init = Sha256::new();
-    outer_init.update(&opad);
+      let inner_init_prefix = inner_init.aligned_prefix();
+      let outer_init_prefix = outer_init.aligned_prefix();
 
-    let inner_init_prefix = inner_init.aligned_prefix();
-    let outer_init_prefix = outer_init.aligned_prefix();
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner_init, inner_init_prefix, outer_init_prefix)
+    });
 
     Self {
       inner: inner_init,
@@ -242,6 +256,23 @@ impl Drop for HmacSha256 {
 }
 
 /// HMAC-SHA384 authentication state.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::{HmacSha384, Mac};
+///
+/// let key = b"shared-secret";
+/// let data = b"auth message";
+///
+/// let tag = HmacSha384::mac(key, data);
+///
+/// let mut mac = HmacSha384::new(key);
+/// mac.update(b"auth ");
+/// mac.update(b"message");
+/// assert_eq!(mac.finalize(), tag);
+/// assert!(HmacSha384::verify_tag(key, data, &tag).is_ok());
+/// ```
 #[derive(Clone)]
 pub struct HmacSha384 {
   inner: Sha384,
@@ -288,24 +319,17 @@ impl HmacSha384 {
       key_block[..key.len()].copy_from_slice(key);
     }
 
-    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
-    let mut opad = [0x5Cu8; SHA512_FAMILY_BLOCK_SIZE];
-    for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-      *ipad_byte ^= key_byte;
-      *opad_byte ^= key_byte;
-    }
+    let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner = Sha384::new_with_compress_for_test(compress);
+      inner.update(ipad);
+      let inner_init = inner.aligned_prefix();
 
-    let mut inner = Sha384::new_with_compress_for_test(compress);
-    inner.update(&ipad);
-    let inner_init = inner.aligned_prefix();
+      let mut outer = Sha384::new_with_compress_for_test(compress);
+      outer.update(opad);
+      let outer_init = outer.aligned_prefix();
 
-    let mut outer = Sha384::new_with_compress_for_test(compress);
-    outer.update(&opad);
-    let outer_init = outer.aligned_prefix();
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner, inner_init, outer_init)
+    });
 
     Self {
       inner,
@@ -343,25 +367,18 @@ impl Mac for HmacSha384 {
       }
     }
 
-    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
-    let mut opad = [0x5Cu8; SHA512_FAMILY_BLOCK_SIZE];
-    for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-      *ipad_byte ^= key_byte;
-      *opad_byte ^= key_byte;
-    }
+    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = Sha384::new();
+      inner_init.update(ipad);
 
-    let mut inner_init = Sha384::new();
-    inner_init.update(&ipad);
+      let mut outer_init = Sha384::new();
+      outer_init.update(opad);
 
-    let mut outer_init = Sha384::new();
-    outer_init.update(&opad);
+      let inner_init_prefix = inner_init.aligned_prefix();
+      let outer_init_prefix = outer_init.aligned_prefix();
 
-    let inner_init_prefix = inner_init.aligned_prefix();
-    let outer_init_prefix = outer_init.aligned_prefix();
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner_init, inner_init_prefix, outer_init_prefix)
+    });
 
     Self {
       inner: inner_init,
@@ -494,6 +511,23 @@ impl Drop for HmacSha384 {
 }
 
 /// HMAC-SHA512 authentication state.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::{HmacSha512, Mac};
+///
+/// let key = b"shared-secret";
+/// let data = b"auth message";
+///
+/// let tag = HmacSha512::mac(key, data);
+///
+/// let mut mac = HmacSha512::new(key);
+/// mac.update(b"auth ");
+/// mac.update(b"message");
+/// assert_eq!(mac.finalize(), tag);
+/// assert!(HmacSha512::verify_tag(key, data, &tag).is_ok());
+/// ```
 #[derive(Clone)]
 pub struct HmacSha512 {
   inner: Sha512,
@@ -540,24 +574,17 @@ impl HmacSha512 {
       key_block[..key.len()].copy_from_slice(key);
     }
 
-    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
-    let mut opad = [0x5Cu8; SHA512_FAMILY_BLOCK_SIZE];
-    for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-      *ipad_byte ^= key_byte;
-      *opad_byte ^= key_byte;
-    }
+    let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner = Sha512::new_with_compress_for_test(compress);
+      inner.update(ipad);
+      let inner_init = inner.aligned_prefix();
 
-    let mut inner = Sha512::new_with_compress_for_test(compress);
-    inner.update(&ipad);
-    let inner_init = inner.aligned_prefix();
+      let mut outer = Sha512::new_with_compress_for_test(compress);
+      outer.update(opad);
+      let outer_init = outer.aligned_prefix();
 
-    let mut outer = Sha512::new_with_compress_for_test(compress);
-    outer.update(&opad);
-    let outer_init = outer.aligned_prefix();
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner, inner_init, outer_init)
+    });
 
     Self {
       inner,
@@ -595,25 +622,18 @@ impl Mac for HmacSha512 {
       }
     }
 
-    let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
-    let mut opad = [0x5Cu8; SHA512_FAMILY_BLOCK_SIZE];
-    for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-      *ipad_byte ^= key_byte;
-      *opad_byte ^= key_byte;
-    }
+    let (inner_init, inner_init_prefix, outer_init_prefix) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = Sha512::new();
+      inner_init.update(ipad);
 
-    let mut inner_init = Sha512::new();
-    inner_init.update(&ipad);
+      let mut outer_init = Sha512::new();
+      outer_init.update(opad);
 
-    let mut outer_init = Sha512::new();
-    outer_init.update(&opad);
+      let inner_init_prefix = inner_init.aligned_prefix();
+      let outer_init_prefix = outer_init.aligned_prefix();
 
-    let inner_init_prefix = inner_init.aligned_prefix();
-    let outer_init_prefix = outer_init.aligned_prefix();
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner_init, inner_init_prefix, outer_init_prefix)
+    });
 
     Self {
       inner: inner_init,

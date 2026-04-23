@@ -90,22 +90,14 @@ impl Ghash {
 
   /// Feed arbitrary-length data, padding the last block with zeros.
   pub(crate) fn update_padded(&mut self, data: &[u8]) {
-    let mut offset = 0usize;
-    while offset.strict_add(BLOCK_SIZE) <= data.len() {
-      let (_, tail) = data.split_at(offset);
-      let (head, _) = tail.split_at(BLOCK_SIZE);
-      let block: &[u8; BLOCK_SIZE] = match head.try_into() {
-        Ok(b) => b,
-        Err(_) => unreachable!(),
-      };
+    let (blocks, remainder) = data.as_chunks::<BLOCK_SIZE>();
+    for block in blocks {
       self.update_block(block);
-      offset = offset.strict_add(BLOCK_SIZE);
     }
 
-    let remaining = data.len().strict_sub(offset);
-    if remaining > 0 {
+    if !remainder.is_empty() {
       let mut block = [0u8; BLOCK_SIZE];
-      block[..remaining].copy_from_slice(&data[offset..]);
+      block[..remainder.len()].copy_from_slice(remainder);
       self.update_block(&block);
     }
   }

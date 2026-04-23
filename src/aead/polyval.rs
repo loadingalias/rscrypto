@@ -13,6 +13,8 @@
 //! - **Montgomery reduction** (2-pass fold from the bottom) for modular reduction — the key
 //!   structural insight that makes POLYVAL's high-tap polynomial efficient to reduce
 
+use crate::backend::cache::OnceCache;
+
 /// POLYVAL block size in bytes (128 bits).
 #[cfg(feature = "aes-gcm-siv")]
 pub(crate) const BLOCK_SIZE: usize = 16;
@@ -938,52 +940,116 @@ pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u1
 // Combined multiply + reduce with hardware dispatch
 // ---------------------------------------------------------------------------
 
+type Clmul128ReduceFn = fn(u128, u128) -> u128;
+
+static CLMUL128_REDUCE_DISPATCH: OnceCache<Clmul128ReduceFn> = OnceCache::new();
+
+#[inline]
+fn current_caps() -> crate::platform::Caps {
+  #[cfg(feature = "std")]
+  {
+    crate::platform::caps()
+  }
+
+  #[cfg(not(feature = "std"))]
+  {
+    crate::platform::caps_static()
+  }
+}
+
+#[inline]
+fn clmul128_reduce_portable(a: u128, b: u128) -> u128 {
+  mont_reduce(clmul128(a, b))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn clmul128_reduce_x86_pclmul(a: u128, b: u128) -> u128 {
+  // SAFETY: resolver only selects this backend after verifying PCLMULQDQ support.
+  unsafe { pclmul::clmul128_reduce(a, b) }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn clmul128_reduce_aarch64_pmull(a: u128, b: u128) -> u128 {
+  // SAFETY: resolver only selects this backend after verifying PMULL support.
+  unsafe { pmull::clmul128_reduce(a, b) }
+}
+
+#[cfg(target_arch = "s390x")]
+#[inline]
+fn clmul128_reduce_s390x_vgfm(a: u128, b: u128) -> u128 {
+  // SAFETY: resolver only selects this backend after verifying z/Vector support.
+  unsafe { s390x_vgfm::clmul128_reduce(a, b) }
+}
+
+#[cfg(target_arch = "powerpc64")]
+#[inline]
+fn clmul128_reduce_power_vpmsum(a: u128, b: u128) -> u128 {
+  // SAFETY: resolver only selects this backend after verifying POWER8 crypto support.
+  unsafe { ppc_vpmsum::clmul128_reduce(a, b) }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn clmul128_reduce_riscv_vector(a: u128, b: u128) -> u128 {
+  // SAFETY: resolver only selects this backend after verifying Zvbc support.
+  unsafe { rv_clmul::clmul128_reduce(a, b) }
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn clmul128_reduce_riscv_scalar(a: u128, b: u128) -> u128 {
+  // SAFETY: resolver only selects this backend after verifying Zbc/Zbkc support.
+  unsafe { rv_scalar_clmul::clmul128_reduce(a, b) }
+}
+
+#[inline]
+fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
+  let caps = current_caps();
+
+  #[cfg(target_arch = "x86_64")]
+  if caps.has(crate::platform::caps::x86::PCLMULQDQ) {
+    return clmul128_reduce_x86_pclmul;
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  if caps.has(crate::platform::caps::aarch64::PMULL) {
+    return clmul128_reduce_aarch64_pmull;
+  }
+
+  #[cfg(target_arch = "s390x")]
+  if caps.has(crate::platform::caps::s390x::VECTOR) {
+    return clmul128_reduce_s390x_vgfm;
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  if caps.has(crate::platform::caps::power::POWER8_CRYPTO) {
+    return clmul128_reduce_power_vpmsum;
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    use crate::platform::caps::riscv;
+
+    if caps.has(riscv::ZVBC) {
+      return clmul128_reduce_riscv_vector;
+    }
+    if caps.has(riscv::ZBC) || caps.has(riscv::ZBKC) {
+      return clmul128_reduce_riscv_scalar;
+    }
+  }
+
+  clmul128_reduce_portable
+}
+
 /// Combined 128×128 carryless multiply + Montgomery reduce.
 ///
 /// Dispatches to PCLMULQDQ (x86_64) or PMULL (aarch64) when available,
 /// otherwise uses the portable Pornin bmul64 + Karatsuba path.
 pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
-  #[cfg(target_arch = "x86_64")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::x86::PCLMULQDQ) {
-      // SAFETY: PCLMULQDQ availability verified via CPUID.
-      return unsafe { pclmul::clmul128_reduce(a, b) };
-    }
-  }
-  #[cfg(target_arch = "aarch64")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL) {
-      // SAFETY: PMULL availability verified via HWCAP.
-      return unsafe { pmull::clmul128_reduce(a, b) };
-    }
-  }
-  #[cfg(target_arch = "s390x")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
-      // SAFETY: z/Vector availability verified via STFLE/HWCAP.
-      return unsafe { s390x_vgfm::clmul128_reduce(a, b) };
-    }
-  }
-  #[cfg(target_arch = "powerpc64")]
-  {
-    if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
-      // SAFETY: POWER8 crypto availability verified via HWCAP.
-      return unsafe { ppc_vpmsum::clmul128_reduce(a, b) };
-    }
-  }
-  #[cfg(target_arch = "riscv64")]
-  {
-    use crate::platform::caps::riscv;
-    if crate::platform::caps().has(riscv::ZVBC) {
-      // SAFETY: Zvbc availability verified via feature detection.
-      return unsafe { rv_clmul::clmul128_reduce(a, b) };
-    }
-    if crate::platform::caps().has(riscv::ZBC) || crate::platform::caps().has(riscv::ZBKC) {
-      // SAFETY: Zbc/Zbkc availability verified. clmul/clmulh encoding is identical.
-      return unsafe { rv_scalar_clmul::clmul128_reduce(a, b) };
-    }
-  }
-  mont_reduce(clmul128(a, b))
+  let clmul = CLMUL128_REDUCE_DISPATCH.get_or_init(resolve_clmul128_reduce);
+  clmul(a, b)
 }
 
 /// Precompute hash key powers [H, H^2, H^3, H^4] for 4-block wide processing.
@@ -1080,23 +1146,14 @@ impl Polyval {
 
   /// Feed arbitrary-length data, padding the last block with zeros.
   pub(crate) fn update_padded(&mut self, data: &[u8]) {
-    let mut offset = 0usize;
-    while offset.strict_add(BLOCK_SIZE) <= data.len() {
-      // Split avoids fallible conversion — the loop condition guarantees 16+ bytes remain.
-      let (_, tail) = data.split_at(offset);
-      let (head, _) = tail.split_at(BLOCK_SIZE);
-      let block: &[u8; BLOCK_SIZE] = match head.try_into() {
-        Ok(b) => b,
-        Err(_) => unreachable!(),
-      };
+    let (blocks, remainder) = data.as_chunks::<BLOCK_SIZE>();
+    for block in blocks {
       self.update_block(block);
-      offset = offset.strict_add(BLOCK_SIZE);
     }
 
-    let remaining = data.len().strict_sub(offset);
-    if remaining > 0 {
+    if !remainder.is_empty() {
       let mut block = [0u8; BLOCK_SIZE];
-      block[..remaining].copy_from_slice(&data[offset..]);
+      block[..remainder.len()].copy_from_slice(remainder);
       self.update_block(&block);
     }
   }

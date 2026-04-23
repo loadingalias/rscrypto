@@ -8,7 +8,7 @@
 use rscrypto::{
   Blake3, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, RapidHash, Sha256, Shake256, Xxh3,
   checksum::introspect::{DispatchInfo, KernelIntrospect, kernel_for},
-  hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for},
+  hashes::introspect::kernel_for as hash_kernel_for,
 };
 
 fn main() {
@@ -135,7 +135,7 @@ fn hash_size_based_dispatch() {
 fn generic_hash_introspection() {
   println!("--- Generic Hash Introspection ---\n");
 
-  fn report<T: HashKernelIntrospect>(name: &str, sizes: &[usize]) {
+  fn report<T: KernelIntrospect>(name: &str, sizes: &[usize]) {
     println!("{name}:");
     for &size in sizes {
       println!("  {:>8} B: {}", size, hash_kernel_for::<T>(size));

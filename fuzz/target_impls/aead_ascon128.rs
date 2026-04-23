@@ -23,7 +23,9 @@ fuzz_target!(|data: &[u8]| {
         let on = GenericArray::from_slice(&nonce_bytes);
 
         let mut ct = plaintext.to_vec();
-        let tag = cipher.encrypt_in_place(&nonce, aad, &mut ct);
+        let tag = cipher
+            .encrypt_in_place(&nonce, aad, &mut ct)
+            .expect("differential: rscrypto encrypt must succeed");
         let mut combined = ct.clone();
         combined.extend_from_slice(tag.as_ref());
         let pt = oracle.decrypt(on, Payload { msg: &combined, aad }).unwrap();

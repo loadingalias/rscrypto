@@ -28,1637 +28,32 @@ const EXPANDED_KEY_WORDS: usize = 4 * (ROUNDS + 1); // 60
 // x86_64 AES-NI backend
 // ---------------------------------------------------------------------------
 
-#[cfg(target_arch = "x86_64")]
-mod ni {
-  use core::arch::x86_64::*;
-
-  /// AES-256 round keys stored as 15 × 128-bit values for AES-NI.
-  #[derive(Clone, Copy)]
-  #[repr(C, align(16))]
-  pub(super) struct NiRoundKeys {
-    rk: [__m128i; 15],
-  }
-
-  impl NiRoundKeys {
-    /// Zeroize all round keys via volatile writes.
-    pub(super) fn zeroize(&mut self) {
-      // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 15].
-      // Reinterpreting as a byte slice for volatile zeroization is sound.
-      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
-      crate::traits::ct::zeroize(bytes);
-    }
-  }
-
-  /// AES-256 key expansion using AES-NI instructions.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
-  #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn expand_key(key: &[u8; 32]) -> NiRoundKeys {
-    // SAFETY: target_feature gate guarantees AES-NI + SSE2.
-    unsafe {
-      let mut rk = [_mm_setzero_si128(); 15];
-
-      rk[0] = _mm_loadu_si128(key.as_ptr().cast());
-      rk[1] = _mm_loadu_si128(key[16..].as_ptr().cast());
-
-      macro_rules! expand_even {
-        ($idx:expr, $prev_even:expr, $prev_odd:expr, $rcon:expr) => {{
-          let assist = _mm_aeskeygenassist_si128($prev_odd, $rcon);
-          let assist = _mm_shuffle_epi32(assist, 0xFF);
-          let mut t = $prev_even;
-          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-          rk[$idx] = _mm_xor_si128(t, assist);
-        }};
-      }
-
-      macro_rules! expand_odd {
-        ($idx:expr, $prev_even:expr, $prev_odd:expr) => {{
-          let assist = _mm_aeskeygenassist_si128($prev_even, 0x00);
-          let assist = _mm_shuffle_epi32(assist, 0xAA);
-          let mut t = $prev_odd;
-          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-          t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
-          rk[$idx] = _mm_xor_si128(t, assist);
-        }};
-      }
-
-      expand_even!(2, rk[0], rk[1], 0x01);
-      expand_odd!(3, rk[2], rk[1]);
-      expand_even!(4, rk[2], rk[3], 0x02);
-      expand_odd!(5, rk[4], rk[3]);
-      expand_even!(6, rk[4], rk[5], 0x04);
-      expand_odd!(7, rk[6], rk[5]);
-      expand_even!(8, rk[6], rk[7], 0x08);
-      expand_odd!(9, rk[8], rk[7]);
-      expand_even!(10, rk[8], rk[9], 0x10);
-      expand_odd!(11, rk[10], rk[9]);
-      expand_even!(12, rk[10], rk[11], 0x20);
-      expand_odd!(13, rk[12], rk[11]);
-      expand_even!(14, rk[12], rk[13], 0x40);
-
-      NiRoundKeys { rk }
-    }
-  }
-
-  /// Encrypt 4 blocks in parallel using VAES-512 (14-round AES-256).
-  ///
-  /// Takes 4 pre-loaded 128-bit blocks in a `__m512i`, broadcasts each
-  /// round key, and applies 14 VAES rounds. Returns the encrypted blocks.
-  ///
-  /// # Safety
-  /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-  #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-  pub(super) unsafe fn encrypt_4blocks(keys: &NiRoundKeys, blocks: __m512i) -> __m512i {
-    let k = &keys.rk;
-    let mut state = _mm512_xor_si512(blocks, _mm512_broadcast_i32x4(k[0]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[1]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[2]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[3]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[4]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[5]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[6]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[7]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[8]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[9]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[10]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[11]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[12]));
-    state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[13]));
-    _mm512_aesenclast_epi128(state, _mm512_broadcast_i32x4(k[14]))
-  }
-
-  /// Encrypt a single 16-byte block using AES-256 with AES-NI.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
-  #[target_feature(enable = "aes,sse2")]
-  pub(super) unsafe fn encrypt_block(keys: &NiRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: target_feature gate guarantees AES-NI + SSE2.
-    unsafe {
-      let k = &keys.rk;
-      let mut state = _mm_loadu_si128(block.as_ptr().cast());
-
-      state = _mm_xor_si128(state, k[0]);
-      state = _mm_aesenc_si128(state, k[1]);
-      state = _mm_aesenc_si128(state, k[2]);
-      state = _mm_aesenc_si128(state, k[3]);
-      state = _mm_aesenc_si128(state, k[4]);
-      state = _mm_aesenc_si128(state, k[5]);
-      state = _mm_aesenc_si128(state, k[6]);
-      state = _mm_aesenc_si128(state, k[7]);
-      state = _mm_aesenc_si128(state, k[8]);
-      state = _mm_aesenc_si128(state, k[9]);
-      state = _mm_aesenc_si128(state, k[10]);
-      state = _mm_aesenc_si128(state, k[11]);
-      state = _mm_aesenc_si128(state, k[12]);
-      state = _mm_aesenc_si128(state, k[13]);
-      state = _mm_aesenclast_si128(state, k[14]);
-
-      _mm_storeu_si128(block.as_mut_ptr().cast(), state);
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// aarch64 AES-CE backend
-// ---------------------------------------------------------------------------
-
 #[cfg(target_arch = "aarch64")]
-mod ce {
-  use core::arch::aarch64::*;
-
-  /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
-  #[derive(Clone, Copy)]
-  #[repr(C, align(16))]
-  pub(in crate::aead) struct CeRoundKeys {
-    rk: [uint8x16_t; 15],
-  }
-
-  impl CeRoundKeys {
-    /// Zeroize all round keys via volatile writes.
-    pub(super) fn zeroize(&mut self) {
-      // SAFETY: `self.rk` is a valid, aligned, fully-initialized [uint8x16_t; 15].
-      // Reinterpreting as a byte slice for volatile zeroization is sound.
-      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
-      crate::traits::ct::zeroize(bytes);
-    }
-  }
-
-  /// Core key-conversion logic — `#[target_feature]` + `#[inline(always)]` for
-  /// guaranteed inlining without register spills.
-  #[target_feature(enable = "neon")]
-  #[inline]
-  pub(super) unsafe fn from_portable_core(rk: &[u32; 60]) -> CeRoundKeys {
-    // SAFETY: caller guarantees NEON via target_feature chain.
-    unsafe {
-      let mut keys = [vdupq_n_u8(0); 15];
-      let mut i = 0usize;
-      while i < 15 {
-        let base = i.strict_mul(4);
-        let mut bytes = [0u8; 16];
-        bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
-        bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-        bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-        bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-        keys[i] = vld1q_u8(bytes.as_ptr());
-        i = i.strict_add(1);
-      }
-      CeRoundKeys { rk: keys }
-    }
-  }
-
-  /// Hardware-accelerated AES-256 key expansion using AESE for SubWord.
-  ///
-  /// The AESE instruction applies SubBytes to all 16 bytes. By broadcasting
-  /// a 32-bit word to all 4 columns of the AES state, ShiftRows becomes a
-  /// no-op (all columns identical), so `AESE(broadcast(w), 0)` = `SubWord(w)`.
-  /// This replaces ~1560 GF(2^8) field operations per SubWord call with a
-  /// single AESE instruction (~1 cycle on Neoverse V1/V2).
-  #[target_feature(enable = "aes,neon")]
-  #[inline]
-  pub(super) unsafe fn expand_key_hw(key: &[u8; 32]) -> CeRoundKeys {
-    // SAFETY: caller guarantees AES-CE + NEON availability.
-    unsafe {
-      // Hardware SubWord: AESE on broadcast input → SubBytes (ShiftRows is
-      // no-op because all 4 columns are identical).
-      #[target_feature(enable = "aes,neon")]
-      #[inline]
-      unsafe fn sub_word_hw(w: u32) -> u32 {
-        let state = vreinterpretq_u8_u32(vdupq_n_u32(w));
-        let zero = vdupq_n_u8(0);
-        let result = vaeseq_u8(state, zero);
-        vgetq_lane_u32(vreinterpretq_u32_u8(result), 0)
-      }
-
-      let mut rk = [0u32; super::EXPANDED_KEY_WORDS];
-
-      // Load initial key as big-endian u32 words.
-      let mut i = 0usize;
-      while i < 8 {
-        let base = i.strict_mul(4);
-        rk[i] = u32::from_be_bytes([
-          key[base],
-          key[base.strict_add(1)],
-          key[base.strict_add(2)],
-          key[base.strict_add(3)],
-        ]);
-        i = i.strict_add(1);
-      }
-
-      // Expand key schedule using hardware SubWord.
-      i = 8;
-      while i < super::EXPANDED_KEY_WORDS {
-        let mut temp = rk[i.strict_sub(1)];
-        if i.strict_rem(8) == 0 {
-          temp = sub_word_hw(super::rot_word(temp)) ^ super::RCON[i.strict_div(8).strict_sub(1)];
-        } else if i.strict_rem(8) == 4 {
-          temp = sub_word_hw(temp);
-        }
-        rk[i] = rk[i.strict_sub(8)] ^ temp;
-        i = i.strict_add(1);
-      }
-
-      // Convert to NEON round key format.
-      from_portable_core(&rk)
-    }
-  }
-
-  /// Non-inline entry point for hardware key expansion (called from the
-  /// runtime-dispatch `aes256_expand_key`).
-  #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn expand_key(key: &[u8; 32]) -> CeRoundKeys {
-    // SAFETY: target_feature gate guarantees AES-CE + NEON.
-    unsafe { expand_key_hw(key) }
-  }
-
-  /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
-  /// guaranteed inlining without register spills.
-  #[target_feature(enable = "aes,neon")]
-  #[inline]
-  pub(super) unsafe fn encrypt_block_core(keys: &CeRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: caller guarantees AES-CE + NEON via target_feature chain.
-    unsafe {
-      let k = &keys.rk;
-      let mut state = vld1q_u8(block.as_ptr());
-
-      // Rounds 1–13: AESE absorbs the previous round's AddRoundKey,
-      // then SubBytes + ShiftRows. AESMC applies MixColumns.
-      state = vaesmcq_u8(vaeseq_u8(state, k[0]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[1]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[2]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[3]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[4]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[5]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[6]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[7]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[8]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[9]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[10]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[11]));
-      state = vaesmcq_u8(vaeseq_u8(state, k[12]));
-
-      // Round 14 (final): SubBytes + ShiftRows, then AddRoundKey (no MixColumns).
-      state = vaeseq_u8(state, k[13]);
-      state = veorq_u8(state, k[14]);
-
-      vst1q_u8(block.as_mut_ptr(), state);
-    }
-  }
-
-  /// Encrypt a single 16-byte block using AES-256 with AES-CE.
-  ///
-  /// ARM's `AESE` instruction performs XOR(state, key) → SubBytes → ShiftRows.
-  /// Combined with `AESMC` (MixColumns), each middle round is a single
-  /// `AESMC(AESE(state, K[i]))` pair. The final round omits MixColumns.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
-  #[target_feature(enable = "aes,neon")]
-  pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: target_feature gate guarantees AES-CE + NEON.
-    unsafe { encrypt_block_core(keys, block) }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// s390x KM (Cipher Message) backend
-// ---------------------------------------------------------------------------
-
+#[path = "aes/aarch64_ce.rs"]
+mod ce;
 #[cfg(target_arch = "s390x")]
 #[allow(unsafe_code)]
-mod km {
-  use super::EXPANDED_KEY_WORDS;
-
-  /// AES-256 key for the KM (Cipher Message) instruction.
-  ///
-  /// Caches the raw 32-byte key (extracted once at key-expansion time)
-  /// alongside the full expanded schedule. This avoids 8 BE serializations
-  /// per `encrypt_block` call — critical for GCM-SIV which does 7 AES
-  /// calls for even a 0-byte message.
-  #[derive(Clone)]
-  #[repr(C, align(8))]
-  pub(in crate::aead) struct KmKey {
-    /// Raw 32-byte AES-256 key, ready for the KM parameter block.
-    raw: [u8; 32],
-    /// Full expanded schedule (kept for potential future use / uniform sizing).
-    rk: [u32; EXPANDED_KEY_WORDS],
-  }
-
-  impl KmKey {
-    /// Wrap an already-expanded portable round key schedule for KM.
-    pub(super) fn from_portable(rk: [u32; EXPANDED_KEY_WORDS]) -> Self {
-      // Extract the raw 32-byte key from the first 8 big-endian u32 words.
-      let mut raw = [0u8; 32];
-      let mut i = 0usize;
-      while i < 8 {
-        let off = i.strict_mul(4);
-        let bytes = rk[i].to_be_bytes();
-        raw[off] = bytes[0];
-        raw[off.strict_add(1)] = bytes[1];
-        raw[off.strict_add(2)] = bytes[2];
-        raw[off.strict_add(3)] = bytes[3];
-        i = i.strict_add(1);
-      }
-      Self { raw, rk }
-    }
-
-    /// Zeroize both the raw key and the full key schedule.
-    pub(super) fn zeroize(&mut self) {
-      crate::traits::ct::zeroize(&mut self.raw);
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      let bytes =
-        unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4)) };
-      crate::traits::ct::zeroize(bytes);
-    }
-  }
-
-  /// Encrypt a single 16-byte block using a raw AES-256 key and the KM instruction.
-  ///
-  /// This avoids rebuilding a portable key schedule when the caller already has
-  /// the derived 32-byte key material and only needs KM's raw parameter block.
-  ///
-  /// # Safety
-  /// Caller must ensure the MSA (CPACF) facility is available.
-  pub(super) unsafe fn encrypt_block_raw(raw_key: &[u8; 32], block: &mut [u8; 16]) {
-    // KM requires non-overlapping source and destination. Copy the
-    // plaintext to a stack buffer, encrypt from there into `block`.
-    let mut src: [u8; 16] = *block;
-
-    let parm = raw_key.as_ptr();
-    let src_ptr = src.as_ptr();
-    let dest_ptr = block.as_mut_ptr();
-
-    // KM function code 20 = AES-256 encrypt.
-    //
-    // Instruction: .insn rre, 0xB92E0000, R1, R2
-    //   R0  = function code (20)
-    //   R1  = parameter block pointer (32-byte key)
-    //   R2  = destination address (updated)
-    //   R4  = source address (updated)
-    //   R5  = source length in bytes (decremented)
-    //
-    // CC=0: complete. CC=2: partial (kernel preemption) - retry.
-    //
-    // SAFETY: MSA verified by caller. Parameter block is the raw
-    // 32-byte AES-256 key. Source and destination are valid,
-    // non-overlapping 16-byte buffers.
-    unsafe {
-      core::arch::asm!(
-        "0:",
-        ".insn rre, 0xB92E0000, 2, 4",
-        "jo 0b",
-        inout("r0") 20u64 => _,
-        in("r1") parm,
-        inout("r2") dest_ptr => _,
-        inout("r3") 16u64 => _,
-        inout("r4") src_ptr => _,
-        inout("r5") 16u64 => _,
-        options(nostack),
-      );
-    }
-
-    crate::traits::ct::zeroize(&mut src);
-  }
-
-  /// Encrypt a single 16-byte block using the KM instruction (AES-256 ECB).
-  ///
-  /// # Safety
-  /// Caller must ensure the MSA (CPACF) facility is available.
-  pub(super) unsafe fn encrypt_block(key: &KmKey, block: &mut [u8; 16]) {
-    // SAFETY: caller guarantees MSA; KmKey stores a raw 32-byte AES-256 key.
-    unsafe { encrypt_block_raw(&key.raw, block) }
-  }
-
-  /// Encrypt multiple independent 16-byte blocks using a single KM call.
-  ///
-  /// KM in ECB mode (function code 20) processes `count` contiguous blocks
-  /// in one instruction invocation. This is critical for GCM-SIV key
-  /// derivation which requires 6 independent AES-ECB encryptions.
-  ///
-  /// # Safety
-  /// Caller must ensure the MSA (CPACF) facility is available.
-  /// `blocks` must contain exactly `count * 16` bytes.
-  pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize) {
-    debug_assert_eq!(blocks.len(), count.strict_mul(16));
-
-    // KM requires non-overlapping source and destination.
-    // Allocate a stack buffer for the source copy.
-    let len = count.strict_mul(16);
-    let mut src = [0u8; 16 * 8]; // max 8 blocks (128 bytes), enough for GCM-SIV's 6
-    src[..len].copy_from_slice(&blocks[..len]);
-
-    let parm = key.raw.as_ptr();
-    let src_ptr = src.as_ptr();
-    let dest_ptr = blocks.as_mut_ptr();
-
-    // SAFETY: Same as encrypt_block. len = count*16 bytes, all within bounds.
-    unsafe {
-      core::arch::asm!(
-        "0:",
-        ".insn rre, 0xB92E0000, 2, 4",
-        "jo 0b",
-        inout("r0") 20u64 => _,
-        in("r1") parm,
-        inout("r2") dest_ptr => _,
-        inout("r3") len as u64 => _,
-        inout("r4") src_ptr => _,
-        inout("r5") len as u64 => _,
-        options(nostack),
-      );
-    }
-
-    crate::traits::ct::zeroize(&mut src[..len]);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// powerpc64 vcipher backend (POWER8 Crypto)
-// ---------------------------------------------------------------------------
-
+#[path = "aes/s390x_km.rs"]
+mod km;
+#[cfg(target_arch = "x86_64")]
+#[path = "aes/x86_64_ni.rs"]
+mod ni;
 #[cfg(target_arch = "powerpc64")]
 #[allow(unsafe_code)]
-mod ppc {
-  use core::{arch::asm, simd::i64x2};
-
-  /// AES-256 round keys stored as 15 × 128-bit vectors for POWER8 vcipher.
-  ///
-  /// POWER8 vcipher expects round keys in big-endian byte order, which
-  /// matches our portable key schedule (stored as big-endian u32 words).
-  #[derive(Clone)]
-  #[repr(C, align(16))]
-  pub(in crate::aead) struct PpcRoundKeys {
-    rk: [i64x2; 15],
-  }
-
-  impl PpcRoundKeys {
-    /// Zeroize all round keys via volatile writes.
-    pub(super) fn zeroize(&mut self) {
-      // SAFETY: [i64x2; 15] is layout-compatible with [u8; 240].
-      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
-      crate::traits::ct::zeroize(bytes);
-    }
-  }
-
-  /// Load 16 bytes from `ptr` into `i64x2` in ISA byte order (big-endian AES state).
-  ///
-  /// On ppc64le, `i64x2` element `[0]` maps to ISA doubleword 1 (bytes 8-15)
-  /// and element `[1]` maps to ISA doubleword 0 (bytes 0-7). So to place
-  /// memory bytes `[0..8)` into ISA bytes `[0..8)` (high doubleword), we put
-  /// them into element `[1]`. Memory bytes `[8..16)` go into element `[0]`.
-  ///
-  /// Pure-Rust approach avoids VSX `lxvd2x` asm which needs VSR register
-  /// numbers incompatible with the `vreg` register class.
-  #[inline]
-  fn load_block_be(ptr: *const u8) -> i64x2 {
-    // SAFETY: Caller guarantees ptr is valid for 16 bytes.
-    let bytes: [u8; 16] = unsafe { core::ptr::read_unaligned(ptr.cast()) };
-    let dw0 = i64::from_be_bytes([
-      bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ]);
-    let dw1 = i64::from_be_bytes([
-      bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
-    ]);
-    #[cfg(target_endian = "little")]
-    {
-      // LE element[0] = ISA DW1, element[1] = ISA DW0.
-      i64x2::from_array([dw1, dw0])
-    }
-    #[cfg(target_endian = "big")]
-    {
-      i64x2::from_array([dw0, dw1])
-    }
-  }
-
-  /// Store an `i64x2` (in ISA byte order = big-endian AES state) to memory.
-  ///
-  /// Inverse of `load_block_be`.
-  #[inline]
-  fn store_block_be(ptr: *mut u8, block: i64x2) {
-    let elems = block.to_array();
-    #[cfg(target_endian = "little")]
-    let (hi, lo) = (elems[1].to_be_bytes(), elems[0].to_be_bytes());
-    #[cfg(target_endian = "big")]
-    let (hi, lo) = (elems[0].to_be_bytes(), elems[1].to_be_bytes());
-    let mut bytes = [0u8; 16];
-    bytes[0..8].copy_from_slice(&hi);
-    bytes[8..16].copy_from_slice(&lo);
-    // SAFETY: Caller guarantees ptr is valid for 16 bytes.
-    unsafe { core::ptr::write_unaligned(ptr.cast(), bytes) };
-  }
-
-  /// Convert portable round keys (60 × big-endian u32) to POWER8 vector format.
-  ///
-  /// Each group of 4 u32 words forms one 128-bit round key in canonical AES
-  /// byte order. On `powerpc64le`, POWER vector registers need the same
-  /// big-endian byte normalization that the compiler applies for
-  /// `vec_xl_be`/`vec_xst_be`.
-  pub(super) fn from_portable(rk: &[u32; 60]) -> PpcRoundKeys {
-    let mut keys = [i64x2::from_array([0, 0]); 15];
-    let mut i = 0usize;
-    while i < 15 {
-      let base = i.strict_mul(4);
-      let mut bytes = [0u8; 16];
-      bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
-      bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-      bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-      bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-      keys[i] = load_block_be(bytes.as_ptr());
-      i = i.strict_add(1);
-    }
-    PpcRoundKeys { rk: keys }
-  }
-
-  /// Hardware SubWord using POWER8 `vsbox`.
-  ///
-  /// Broadcasts the input word to all 4 columns, applies the byte-wise AES
-  /// S-box in parallel, then returns the first substituted word.
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline]
-  unsafe fn sub_word_hw(w: u32) -> u32 {
-    let word = w.to_be_bytes();
-    let bytes = [
-      word[0], word[1], word[2], word[3], word[0], word[1], word[2], word[3], word[0], word[1], word[2], word[3],
-      word[0], word[1], word[2], word[3],
-    ];
-    let state = load_block_be(bytes.as_ptr());
-    // SAFETY: caller guarantees POWER8 crypto availability.
-    unsafe {
-      let out: i64x2;
-      asm!(
-        "vsbox {out}, {state}",
-        out = lateout(vreg) out,
-        state = in(vreg) state,
-        options(nomem, nostack, pure),
-      );
-      let mut out_bytes = [0u8; 16];
-      store_block_be(out_bytes.as_mut_ptr(), out);
-      u32::from_be_bytes([out_bytes[0], out_bytes[1], out_bytes[2], out_bytes[3]])
-    }
-  }
-
-  /// Hardware-accelerated AES-256 key expansion using POWER8 `vsbox`.
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline]
-  pub(super) unsafe fn expand_key_hw(key: &[u8; 32]) -> PpcRoundKeys {
-    // SAFETY: caller guarantees POWER8 crypto availability.
-    unsafe {
-      let mut rk = [0u32; super::EXPANDED_KEY_WORDS];
-
-      // Load the initial key as big-endian u32 words.
-      let mut i = 0usize;
-      while i < 8 {
-        let base = i.strict_mul(4);
-        rk[i] = u32::from_be_bytes([
-          key[base],
-          key[base.strict_add(1)],
-          key[base.strict_add(2)],
-          key[base.strict_add(3)],
-        ]);
-        i = i.strict_add(1);
-      }
-
-      // Expand key schedule using hardware SubWord.
-      i = 8;
-      while i < super::EXPANDED_KEY_WORDS {
-        let mut temp = rk[i.strict_sub(1)];
-        if i.strict_rem(8) == 0 {
-          temp = sub_word_hw(super::rot_word(temp)) ^ super::RCON[i.strict_div(8).strict_sub(1)];
-        } else if i.strict_rem(8) == 4 {
-          temp = sub_word_hw(temp);
-        }
-        rk[i] = rk[i.strict_sub(8)] ^ temp;
-        i = i.strict_add(1);
-      }
-
-      let keys = from_portable(&rk);
-      // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
-      crate::traits::ct::zeroize(core::slice::from_raw_parts_mut(
-        rk.as_mut_ptr().cast::<u8>(),
-        super::EXPANDED_KEY_WORDS.strict_mul(4),
-      ));
-      keys
-    }
-  }
-
-  /// Non-inline entry point for hardware key expansion.
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn expand_key(key: &[u8; 32]) -> PpcRoundKeys {
-    // SAFETY: target_feature gate guarantees POWER8 crypto.
-    unsafe { expand_key_hw(key) }
-  }
-
-  /// Core block-encrypt logic — `#[target_feature]` + `#[inline(always)]` for
-  /// guaranteed inlining without register spills.
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  #[inline]
-  pub(super) unsafe fn encrypt_block_core(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: caller guarantees POWER8 crypto via target_feature chain.
-    unsafe {
-      let k = &keys.rk;
-
-      let mut state = load_block_be(block.as_ptr());
-
-      // Rounds 1–13: vcipher (SubBytes + ShiftRows + MixColumns + AddRoundKey).
-      macro_rules! vcipher_round {
-        ($rk:expr) => {
-          asm!(
-            "vcipher {s}, {s}, {rk}",
-            s = inlateout(vreg) state,
-            rk = in(vreg) $rk,
-            options(nomem, nostack),
-          );
-        };
-      }
-
-      // Initial XOR is folded into the first vcipher: state = vcipher(plaintext, K0)
-      // means SubBytes(ShiftRows(MixColumns(plaintext XOR K0))). But vcipher actually
-      // computes ShiftRows(SubBytes(MixColumns(state))) XOR rk — so we need the initial
-      // AddRoundKey (K0) separately.
-      //
-      // Actually, vcipher does: ShiftRows → SubBytes → MixColumns → XOR(rk).
-      // The initial step of AES is AddRoundKey(K0), then 13 middle rounds, then final.
-      // We pre-XOR state with K0, then run 13 vcipher rounds with K1..K13, then
-      // vcipherlast with K14.
-      asm!(
-        "vxor {s}, {s}, {rk}",
-        s = inlateout(vreg) state,
-        rk = in(vreg) k[0],
-        options(nomem, nostack),
-      );
-
-      vcipher_round!(k[1]);
-      vcipher_round!(k[2]);
-      vcipher_round!(k[3]);
-      vcipher_round!(k[4]);
-      vcipher_round!(k[5]);
-      vcipher_round!(k[6]);
-      vcipher_round!(k[7]);
-      vcipher_round!(k[8]);
-      vcipher_round!(k[9]);
-      vcipher_round!(k[10]);
-      vcipher_round!(k[11]);
-      vcipher_round!(k[12]);
-      vcipher_round!(k[13]);
-
-      // Round 14 (final): SubBytes + ShiftRows + AddRoundKey (no MixColumns).
-      asm!(
-        "vcipherlast {s}, {s}, {rk}",
-        s = inlateout(vreg) state,
-        rk = in(vreg) k[14],
-        options(nomem, nostack),
-      );
-
-      store_block_be(block.as_mut_ptr(), state);
-    }
-  }
-
-  /// Encrypt a single 16-byte block using AES-256 with POWER8 vcipher.
-  ///
-  /// vcipher performs one AES middle round (SubBytes + ShiftRows + MixColumns
-  /// + AddRoundKey). vcipherlast performs the final round (no MixColumns).
-  ///
-  /// # Safety
-  /// Caller must ensure POWER8 crypto instructions are available.
-  #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-  pub(super) unsafe fn encrypt_block(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: target_feature gate guarantees POWER8 crypto.
-    unsafe { encrypt_block_core(keys, block) }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// riscv64 Zkne backend (RISC-V scalar AES)
-// ---------------------------------------------------------------------------
-
+#[path = "aes/powerpc64_ppc.rs"]
+mod ppc;
 #[cfg(target_arch = "riscv64")]
 #[allow(unsafe_code)]
-mod rv_scalar_aes {
-  use core::arch::riscv64::{aes64es, aes64esm};
-
-  /// AES-256 round keys stored as 15 pairs of 64-bit halves for scalar AES.
-  ///
-  /// Each round key is kept in canonical AES byte order and split into the
-  /// upper/lower 64-bit halves consumed by the RV64 scalar AES instructions.
-  #[derive(Clone)]
-  #[repr(C, align(16))]
-  pub(super) struct RvScalarRoundKeys {
-    rk: [(u64, u64); 15],
-  }
-
-  impl RvScalarRoundKeys {
-    /// Zeroize all round keys via volatile writes.
-    pub(super) fn zeroize(&mut self) {
-      // SAFETY: [(u64, u64); 15] is layout-compatible with [u8; 240].
-      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
-      crate::traits::ct::zeroize(bytes);
-    }
-  }
-
-  /// Convert portable round keys (60 × big-endian u32) to scalar-Zkne format.
-  pub(super) fn from_portable(rk: &[u32; 60]) -> RvScalarRoundKeys {
-    let mut keys = [(0u64, 0u64); 15];
-    let mut i = 0usize;
-    while i < 15 {
-      let base = i.strict_mul(4);
-      let mut bytes = [0u8; 16];
-      bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
-      bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-      bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-      bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-      let mut lo_bytes = [0u8; 8];
-      lo_bytes.copy_from_slice(&bytes[0..8]);
-      let mut hi_bytes = [0u8; 8];
-      hi_bytes.copy_from_slice(&bytes[8..16]);
-      keys[i] = (u64::from_be_bytes(lo_bytes), u64::from_be_bytes(hi_bytes));
-      i = i.strict_add(1);
-    }
-    RvScalarRoundKeys { rk: keys }
-  }
-
-  /// Encrypt a single 16-byte block using AES-256 with scalar RV64 AES.
-  ///
-  /// The scalar AES instructions transform one 64-bit half of the AES state at
-  /// a time. The second instruction for each round reverses the source register
-  /// order, exactly as described in the RISC-V scalar crypto specification.
-  ///
-  /// # Safety
-  /// Caller must ensure the CPU supports Zkne.
-  #[target_feature(enable = "zkne")]
-  pub(super) unsafe fn encrypt_block(keys: &RvScalarRoundKeys, block: &mut [u8; 16]) {
-    let mut lo_bytes = [0u8; 8];
-    lo_bytes.copy_from_slice(&block[0..8]);
-    let mut lo = u64::from_be_bytes(lo_bytes);
-
-    let mut hi_bytes = [0u8; 8];
-    hi_bytes.copy_from_slice(&block[8..16]);
-    let mut hi = u64::from_be_bytes(hi_bytes);
-
-    let (rk0_lo, rk0_hi) = keys.rk[0];
-    lo ^= rk0_lo;
-    hi ^= rk0_hi;
-
-    let mut round = 1usize;
-    while round < 14 {
-      let next_lo = aes64esm(lo, hi);
-      let next_hi = aes64esm(hi, lo);
-      let (rk_lo, rk_hi) = keys.rk[round];
-      lo = next_lo ^ rk_lo;
-      hi = next_hi ^ rk_hi;
-      round = round.strict_add(1);
-    }
-
-    let next_lo = aes64es(lo, hi);
-    let next_hi = aes64es(hi, lo);
-    let (rk_lo, rk_hi) = keys.rk[14];
-    lo = next_lo ^ rk_lo;
-    hi = next_hi ^ rk_hi;
-
-    block[0..8].copy_from_slice(&lo.to_be_bytes());
-    block[8..16].copy_from_slice(&hi.to_be_bytes());
-  }
-}
-
-// ---------------------------------------------------------------------------
-// riscv64 Zvkned backend (RISC-V vector AES)
-// ---------------------------------------------------------------------------
-
+#[path = "aes/riscv64_aes.rs"]
+mod rv_aes;
 #[cfg(target_arch = "riscv64")]
 #[allow(unsafe_code)]
-mod rv_aes {
-  use core::arch::asm;
-
-  /// AES-256 round keys stored as 15 × 16-byte arrays for Zvkned.
-  ///
-  /// Round keys are loaded from memory into vector registers per call
-  /// since RISC-V `vreg` is clobber-only (cannot be used as input/output).
-  #[derive(Clone)]
-  #[repr(C, align(16))]
-  pub(super) struct RvRoundKeys {
-    rk: [[u8; 16]; 15],
-  }
-
-  impl RvRoundKeys {
-    /// Zeroize all round keys via volatile writes.
-    pub(super) fn zeroize(&mut self) {
-      // SAFETY: [[u8; 16]; 15] is layout-compatible with [u8; 240].
-      let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
-      crate::traits::ct::zeroize(bytes);
-    }
-  }
-
-  /// Convert portable round keys (60 × big-endian u32) to Zvkned byte format.
-  pub(super) fn from_portable(rk: &[u32; 60]) -> RvRoundKeys {
-    let mut keys = [[0u8; 16]; 15];
-    let mut i = 0usize;
-    while i < 15 {
-      let base = i.strict_mul(4);
-      // Zvkned uses element-group byte order matching the AES state:
-      // 4 × u32 in little-endian element order within each 128-bit group.
-      keys[i][0..4].copy_from_slice(&rk[base].to_be_bytes());
-      keys[i][4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
-      keys[i][8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
-      keys[i][12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
-      i = i.strict_add(1);
-    }
-    RvRoundKeys { rk: keys }
-  }
-
-  /// Encrypt a single 16-byte block using AES-256 with Zvkned.
-  ///
-  /// Performs all 14 rounds in a single asm block, keeping state in v1
-  /// and loading round keys into v2 from memory. This avoids the vreg
-  /// input/output limitation since everything goes through memory.
-  ///
-  /// # Safety
-  /// Caller must ensure Zvkned vector crypto extension is available.
-  #[target_feature(enable = "v", enable = "zvkned")]
-  pub(super) unsafe fn encrypt_block(keys: &RvRoundKeys, block: &mut [u8; 16]) {
-    // SAFETY: target_feature gate guarantees Zvkned availability.
-    unsafe {
-      let block_ptr = block.as_mut_ptr();
-      let rk = &keys.rk;
-
-      asm!(
-        // Set vl=4 elements of e32 (= 128 bits) in a single vector register.
-        "vsetivli zero, 4, e32, m1, ta, ma",
-        // Load plaintext into v1.
-        "vle32.v v1, ({block})",
-        // Initial AddRoundKey (XOR with K0).
-        "vle32.v v2, ({rk0})",
-        "vaesz.vs v1, v2",
-        // Rounds 1–13: SubBytes + ShiftRows + MixColumns + AddRoundKey.
-        "vle32.v v2, ({rk1})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk2})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk3})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk4})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk5})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk6})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk7})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk8})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk9})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk10})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk11})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk12})",
-        "vaesem.vs v1, v2",
-        "vle32.v v2, ({rk13})",
-        "vaesem.vs v1, v2",
-        // Round 14 (final): SubBytes + ShiftRows + AddRoundKey (no MixColumns).
-        "vle32.v v2, ({rk14})",
-        "vaesef.vs v1, v2",
-        // Store ciphertext.
-        "vse32.v v1, ({block})",
-        block = in(reg) block_ptr,
-        rk0 = in(reg) rk[0].as_ptr(),
-        rk1 = in(reg) rk[1].as_ptr(),
-        rk2 = in(reg) rk[2].as_ptr(),
-        rk3 = in(reg) rk[3].as_ptr(),
-        rk4 = in(reg) rk[4].as_ptr(),
-        rk5 = in(reg) rk[5].as_ptr(),
-        rk6 = in(reg) rk[6].as_ptr(),
-        rk7 = in(reg) rk[7].as_ptr(),
-        rk8 = in(reg) rk[8].as_ptr(),
-        rk9 = in(reg) rk[9].as_ptr(),
-        rk10 = in(reg) rk[10].as_ptr(),
-        rk11 = in(reg) rk[11].as_ptr(),
-        rk12 = in(reg) rk[12].as_ptr(),
-        rk13 = in(reg) rk[13].as_ptr(),
-        rk14 = in(reg) rk[14].as_ptr(),
-        out("v1") _,
-        out("v2") _,
-        options(nostack),
-      );
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// riscv64 T-table backend (AES without crypto extensions)
-// ---------------------------------------------------------------------------
-//
-// On RISC-V without Zvkned or Zkne, the algebraic GF(2^8) S-box is ~200x
-// slower than the reference crate's fixsliced AES. T-tables fuse SubBytes +
-// MixColumns into 4 × 1 KiB lookup tables, reducing AES-256 from ~87K
-// operations/block to ~256 lookups/block.
-//
-// # Security
-//
-// T-tables are NOT constant-time (Bernstein 2005, Osvik et al. 2006).
-// Secret-indexed loads leak key material via cache-timing side channels.
-//
-// This module is a last-resort fallback for RISC-V without V extension AND
-// without Zkne/Zvkned hardware AES. When V is available, the `rv_vperm_aes`
-// module provides a practically constant-time path via `vrgather.vv`.
-// Dispatch hierarchy: Zvkned > Zkne > V+vperm > T-table (here).
-
-#[cfg(target_arch = "riscv64")]
-mod ttable {
-  /// AES S-box (FIPS 197 Table 2).
-  #[rustfmt::skip]
-  const SBOX: [u8; 256] = [
-    0x63,0x7C,0x77,0x7B,0xF2,0x6B,0x6F,0xC5,0x30,0x01,0x67,0x2B,0xFE,0xD7,0xAB,0x76,
-    0xCA,0x82,0xC9,0x7D,0xFA,0x59,0x47,0xF0,0xAD,0xD4,0xA2,0xAF,0x9C,0xA4,0x72,0xC0,
-    0xB7,0xFD,0x93,0x26,0x36,0x3F,0xF7,0xCC,0x34,0xA5,0xE5,0xF1,0x71,0xD8,0x31,0x15,
-    0x04,0xC7,0x23,0xC3,0x18,0x96,0x05,0x9A,0x07,0x12,0x80,0xE2,0xEB,0x27,0xB2,0x75,
-    0x09,0x83,0x2C,0x1A,0x1B,0x6E,0x5A,0xA0,0x52,0x3B,0xD6,0xB3,0x29,0xE3,0x2F,0x84,
-    0x53,0xD1,0x00,0xED,0x20,0xFC,0xB1,0x5B,0x6A,0xCB,0xBE,0x39,0x4A,0x4C,0x58,0xCF,
-    0xD0,0xEF,0xAA,0xFB,0x43,0x4D,0x33,0x85,0x45,0xF9,0x02,0x7F,0x50,0x3C,0x9F,0xA8,
-    0x51,0xA3,0x40,0x8F,0x92,0x9D,0x38,0xF5,0xBC,0xB6,0xDA,0x21,0x10,0xFF,0xF3,0xD2,
-    0xCD,0x0C,0x13,0xEC,0x5F,0x97,0x44,0x17,0xC4,0xA7,0x7E,0x3D,0x64,0x5D,0x19,0x73,
-    0x60,0x81,0x4F,0xDC,0x22,0x2A,0x90,0x88,0x46,0xEE,0xB8,0x14,0xDE,0x5E,0x0B,0xDB,
-    0xE0,0x32,0x3A,0x0A,0x49,0x06,0x24,0x5C,0xC2,0xD3,0xAC,0x62,0x91,0x95,0xE4,0x79,
-    0xE7,0xC8,0x37,0x6D,0x8D,0xD5,0x4E,0xA9,0x6C,0x56,0xF4,0xEA,0x65,0x7A,0xAE,0x08,
-    0xBA,0x78,0x25,0x2E,0x1C,0xA6,0xB4,0xC6,0xE8,0xDD,0x74,0x1F,0x4B,0xBD,0x8B,0x8A,
-    0x70,0x3E,0xB5,0x66,0x48,0x03,0xF6,0x0E,0x61,0x35,0x57,0xB9,0x86,0xC1,0x1D,0x9E,
-    0xE1,0xF8,0x98,0x11,0x69,0xD9,0x8E,0x94,0x9B,0x1E,0x87,0xE9,0xCE,0x55,0x28,0xDF,
-    0x8C,0xA1,0x89,0x0D,0xBF,0xE6,0x42,0x68,0x41,0x99,0x2D,0x0F,0xB0,0x54,0xBB,0x16,
-  ];
-
-  const fn xt(b: u8) -> u8 {
-    let r = (b as u16) << 1;
-    (r ^ (if r & 0x100 != 0 { 0x1B } else { 0 })) as u8
-  }
-
-  const fn generate_t0() -> [u32; 256] {
-    let mut t = [0u32; 256];
-    let mut i = 0;
-    while i < 256 {
-      let s = SBOX[i];
-      let s2 = xt(s);
-      let s3 = s2 ^ s;
-      t[i] = (s2 as u32) << 24 | (s as u32) << 16 | (s as u32) << 8 | s3 as u32;
-      i += 1;
-    }
-    t
-  }
-
-  const fn generate_t1() -> [u32; 256] {
-    let t0 = generate_t0();
-    let mut t = [0u32; 256];
-    let mut i = 0;
-    while i < 256 {
-      t[i] = t0[i].rotate_right(8);
-      i += 1;
-    }
-    t
-  }
-
-  const fn generate_t2() -> [u32; 256] {
-    let t0 = generate_t0();
-    let mut t = [0u32; 256];
-    let mut i = 0;
-    while i < 256 {
-      t[i] = t0[i].rotate_right(16);
-      i += 1;
-    }
-    t
-  }
-
-  const fn generate_t3() -> [u32; 256] {
-    let t0 = generate_t0();
-    let mut t = [0u32; 256];
-    let mut i = 0;
-    while i < 256 {
-      t[i] = t0[i].rotate_right(24);
-      i += 1;
-    }
-    t
-  }
-
-  static T0: [u32; 256] = generate_t0();
-  static T1: [u32; 256] = generate_t1();
-  static T2: [u32; 256] = generate_t2();
-  static T3: [u32; 256] = generate_t3();
-
-  /// AES-256 T-table block encryption (14 rounds).
-  ///
-  /// Rounds 1-13: T-table lookup (SubBytes + MixColumns fused) with ShiftRows
-  /// indexing. Round 14: S-box only (no MixColumns).
-  pub(super) fn encrypt_block(rk: &[u32; super::EXPANDED_KEY_WORDS], block: &mut [u8; 16]) {
-    let mut s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);
-    let mut s1 = u32::from_be_bytes([block[4], block[5], block[6], block[7]]);
-    let mut s2 = u32::from_be_bytes([block[8], block[9], block[10], block[11]]);
-    let mut s3 = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
-
-    // Initial AddRoundKey.
-    s0 ^= rk[0];
-    s1 ^= rk[1];
-    s2 ^= rk[2];
-    s3 ^= rk[3];
-
-    // Rounds 1-13: T-table (SubBytes + ShiftRows + MixColumns + AddRoundKey).
-    let mut round = 1usize;
-    while round < super::ROUNDS {
-      let rk_off = round.strict_mul(4);
-      let t0 = T0[(s0 >> 24) as usize]
-        ^ T1[((s1 >> 16) & 0xFF) as usize]
-        ^ T2[((s2 >> 8) & 0xFF) as usize]
-        ^ T3[(s3 & 0xFF) as usize]
-        ^ rk[rk_off];
-      let t1 = T0[(s1 >> 24) as usize]
-        ^ T1[((s2 >> 16) & 0xFF) as usize]
-        ^ T2[((s3 >> 8) & 0xFF) as usize]
-        ^ T3[(s0 & 0xFF) as usize]
-        ^ rk[rk_off.strict_add(1)];
-      let t2 = T0[(s2 >> 24) as usize]
-        ^ T1[((s3 >> 16) & 0xFF) as usize]
-        ^ T2[((s0 >> 8) & 0xFF) as usize]
-        ^ T3[(s1 & 0xFF) as usize]
-        ^ rk[rk_off.strict_add(2)];
-      let t3 = T0[(s3 >> 24) as usize]
-        ^ T1[((s0 >> 16) & 0xFF) as usize]
-        ^ T2[((s1 >> 8) & 0xFF) as usize]
-        ^ T3[(s2 & 0xFF) as usize]
-        ^ rk[rk_off.strict_add(3)];
-      s0 = t0;
-      s1 = t1;
-      s2 = t2;
-      s3 = t3;
-      round = round.strict_add(1);
-    }
-
-    // Round 14 (final): S-box + ShiftRows + AddRoundKey (no MixColumns).
-    let rk_off = super::ROUNDS.strict_mul(4);
-    let t0 = (SBOX[(s0 >> 24) as usize] as u32) << 24
-      | (SBOX[((s1 >> 16) & 0xFF) as usize] as u32) << 16
-      | (SBOX[((s2 >> 8) & 0xFF) as usize] as u32) << 8
-      | SBOX[(s3 & 0xFF) as usize] as u32;
-    let t1 = (SBOX[(s1 >> 24) as usize] as u32) << 24
-      | (SBOX[((s2 >> 16) & 0xFF) as usize] as u32) << 16
-      | (SBOX[((s3 >> 8) & 0xFF) as usize] as u32) << 8
-      | SBOX[(s0 & 0xFF) as usize] as u32;
-    let t2 = (SBOX[(s2 >> 24) as usize] as u32) << 24
-      | (SBOX[((s3 >> 16) & 0xFF) as usize] as u32) << 16
-      | (SBOX[((s0 >> 8) & 0xFF) as usize] as u32) << 8
-      | SBOX[(s1 & 0xFF) as usize] as u32;
-    let t3 = (SBOX[(s3 >> 24) as usize] as u32) << 24
-      | (SBOX[((s0 >> 16) & 0xFF) as usize] as u32) << 16
-      | (SBOX[((s1 >> 8) & 0xFF) as usize] as u32) << 8
-      | SBOX[(s2 & 0xFF) as usize] as u32;
-
-    block[0..4].copy_from_slice(&(t0 ^ rk[rk_off]).to_be_bytes());
-    block[4..8].copy_from_slice(&(t1 ^ rk[rk_off.strict_add(1)]).to_be_bytes());
-    block[8..12].copy_from_slice(&(t2 ^ rk[rk_off.strict_add(2)]).to_be_bytes());
-    block[12..16].copy_from_slice(&(t3 ^ rk[rk_off.strict_add(3)]).to_be_bytes());
-  }
-}
-
-// ---------------------------------------------------------------------------
-// RISC-V V Hamburg vperm full-block AES-256 (constant-time)
-// ---------------------------------------------------------------------------
-//
-// 14-round AES-256 encryption using Hamburg vperm technique with `vrgather.vv`.
-// Rounds 1-13: SubBytes + ShiftRows + MixColumns + AddRoundKey.
-// Round 14:    SubBytes + ShiftRows + AddRoundKey (no MixColumns).
-//
-// Uses the same portable key schedule as the T-table path — round keys are
-// stored as `[u32; 60]` and converted to bytes per round.
-
+#[path = "aes/riscv64_scalar_aes.rs"]
+mod rv_scalar_aes;
 #[cfg(target_arch = "riscv64")]
 #[allow(unsafe_code)]
-mod rv_vperm_aes {
-  use core::arch::asm;
-
-  use crate::aead::aes_round::{
-    AES_AFFINE, MC_ROT1, MC_ROT2, VPERM_INV_HI, VPERM_INV_LO, VPERM_IPT_HI, VPERM_IPT_LO, VPERM_SBOT, VPERM_SBOU,
-    VPERM_SR, XTIME_REDUCE,
-  };
-
-  /// Precomputed Hamburg vperm table block — contiguous for offset-based loads.
-  #[repr(C, align(16))]
-  struct VpermTables {
-    ipt_lo: [u8; 16],  // offset 0
-    ipt_hi: [u8; 16],  // offset 16
-    inv_lo: [u8; 16],  // offset 32
-    inv_hi: [u8; 16],  // offset 48
-    sbou: [u8; 16],    // offset 64
-    sbot: [u8; 16],    // offset 80
-    sr_perm: [u8; 16], // offset 96
-    mc_rot1: [u8; 16], // offset 112
-    mc_rot2: [u8; 16], // offset 128
-    affine: [u8; 16],  // offset 144
-    xtime: [u8; 16],   // offset 160
-  }
-
-  impl VpermTables {
-    #[inline(always)]
-    fn load() -> Self {
-      Self {
-        ipt_lo: VPERM_IPT_LO,
-        ipt_hi: VPERM_IPT_HI,
-        inv_lo: VPERM_INV_LO,
-        inv_hi: VPERM_INV_HI,
-        sbou: VPERM_SBOU,
-        sbot: VPERM_SBOT,
-        sr_perm: VPERM_SR,
-        mc_rot1: MC_ROT1,
-        mc_rot2: MC_ROT2,
-        affine: [AES_AFFINE; 16],
-        xtime: [XTIME_REDUCE; 16],
-      }
-    }
-  }
-
-  /// Extract round key bytes from the portable key schedule.
-  #[inline]
-  fn round_key_bytes(rk: &[u32; super::EXPANDED_KEY_WORDS], round: usize) -> [u8; 16] {
-    let off = round.strict_mul(4);
-    let mut bytes = [0u8; 16];
-    bytes[0..4].copy_from_slice(&rk[off].to_be_bytes());
-    bytes[4..8].copy_from_slice(&rk[off.strict_add(1)].to_be_bytes());
-    bytes[8..12].copy_from_slice(&rk[off.strict_add(2)].to_be_bytes());
-    bytes[12..16].copy_from_slice(&rk[off.strict_add(3)].to_be_bytes());
-    bytes
-  }
-
-  macro_rules! vperm_inner_round_m1 {
-    ($state:literal, $rk:literal) => {
-      concat!(
-        "vand.vi v19, ",
-        $state,
-        ", 15\n",
-        "vsrl.vi v20, ",
-        $state,
-        ", 4\n",
-        "vrgather.vv v21, v8, v19\n",
-        "vrgather.vv v22, v9, v20\n",
-        "vxor.vv v19, v21, v22\n",
-        "vand.vi v20, v19, 15\n",
-        "vsrl.vi v21, v19, 4\n",
-        "vrgather.vv v22, v11, v20\n",
-        "vxor.vv v23, v21, v20\n",
-        "vrgather.vv v24, v10, v21\n",
-        "vxor.vv v25, v24, v22\n",
-        "vrgather.vv v24, v10, v23\n",
-        "vxor.vv v26, v24, v22\n",
-        "vand.vi v27, v25, 15\n",
-        "vrgather.vv v28, v10, v27\n",
-        "vsra.vi v29, v25, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v28, v28, v29\n",
-        "vxor.vv v19, v28, v23\n",
-        "vand.vi v27, v26, 15\n",
-        "vrgather.vv v28, v10, v27\n",
-        "vsra.vi v29, v26, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v28, v28, v29\n",
-        "vxor.vv v20, v28, v21\n",
-        "vand.vi v27, v19, 15\n",
-        "vrgather.vv v28, v12, v27\n",
-        "vsra.vi v29, v19, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v22, v28, v29\n",
-        "vand.vi v27, v20, 15\n",
-        "vrgather.vv v30, v13, v27\n",
-        "vsra.vi v29, v20, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v23, v30, v29\n",
-        "vxor.vv v19, v22, v23\n",
-        "vxor.vv v19, v19, v17\n",
-        "vrgather.vv v20, v19, v14\n",
-        "vrgather.vv v21, v20, v15\n",
-        "vxor.vv v22, v20, v21\n",
-        "vsll.vi v23, v22, 1\n",
-        "vsra.vi v24, v22, 7\n",
-        "vand.vv v24, v24, v18\n",
-        "vxor.vv v23, v23, v24\n",
-        "vrgather.vv v24, v22, v16\n",
-        "vxor.vv v25, v22, v24\n",
-        "vxor.vv v26, v20, v25\n",
-        "vxor.vv v26, v26, v23\n",
-        "vxor.vv ",
-        $state,
-        ", v26, ",
-        $rk
-      )
-    };
-  }
-
-  macro_rules! vperm_final_round_m1 {
-    ($state:literal, $rk:literal) => {
-      concat!(
-        "vand.vi v19, ",
-        $state,
-        ", 15\n",
-        "vsrl.vi v20, ",
-        $state,
-        ", 4\n",
-        "vrgather.vv v21, v8, v19\n",
-        "vrgather.vv v22, v9, v20\n",
-        "vxor.vv v19, v21, v22\n",
-        "vand.vi v20, v19, 15\n",
-        "vsrl.vi v21, v19, 4\n",
-        "vrgather.vv v22, v11, v20\n",
-        "vxor.vv v23, v21, v20\n",
-        "vrgather.vv v24, v10, v21\n",
-        "vxor.vv v25, v24, v22\n",
-        "vrgather.vv v24, v10, v23\n",
-        "vxor.vv v26, v24, v22\n",
-        "vand.vi v27, v25, 15\n",
-        "vrgather.vv v28, v10, v27\n",
-        "vsra.vi v29, v25, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v28, v28, v29\n",
-        "vxor.vv v19, v28, v23\n",
-        "vand.vi v27, v26, 15\n",
-        "vrgather.vv v28, v10, v27\n",
-        "vsra.vi v29, v26, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v28, v28, v29\n",
-        "vxor.vv v20, v28, v21\n",
-        "vand.vi v27, v19, 15\n",
-        "vrgather.vv v28, v12, v27\n",
-        "vsra.vi v29, v19, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v22, v28, v29\n",
-        "vand.vi v27, v20, 15\n",
-        "vrgather.vv v30, v13, v27\n",
-        "vsra.vi v29, v20, 7\n",
-        "vxor.vi v29, v29, -1\n",
-        "vand.vv v23, v30, v29\n",
-        "vxor.vv v19, v22, v23\n",
-        "vxor.vv v19, v19, v17\n",
-        "vrgather.vv v20, v19, v14\n",
-        "vxor.vv ",
-        $state,
-        ", v20, ",
-        $rk
-      )
-    };
-  }
-
-  /// Single inner AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
-  /// Same asm as aegis256::rv_vperm::aes_round.
-  #[target_feature(enable = "v")]
-  #[inline]
-  unsafe fn aes_inner_round(block: &[u8; 16], round_key: &[u8; 16], tables: &VpermTables) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    // SAFETY: caller guarantees the RISC-V V extension is available and the
-    // asm block only reads the provided state/table/key buffers and writes `out`.
-    unsafe {
-      asm!(
-        "vsetivli zero, 16, e8, m1, ta, ma",
-        // Load tables.
-        "vle8.v v2, ({tbl})",
-        "addi {tmp}, {tbl}, 16",
-        "vle8.v v3, ({tmp})",
-        "addi {tmp}, {tbl}, 32",
-        "vle8.v v4, ({tmp})",
-        "addi {tmp}, {tbl}, 48",
-        "vle8.v v5, ({tmp})",
-        "addi {tmp}, {tbl}, 64",
-        "vle8.v v6, ({tmp})",
-        "addi {tmp}, {tbl}, 80",
-        "vle8.v v7, ({tmp})",
-        "addi {tmp}, {tbl}, 96",
-        "vle8.v v8, ({tmp})",
-        "addi {tmp}, {tbl}, 112",
-        "vle8.v v9, ({tmp})",
-        "addi {tmp}, {tbl}, 128",
-        "vle8.v v10, ({tmp})",
-        "addi {tmp}, {tbl}, 144",
-        "vle8.v v11, ({tmp})",
-        "addi {tmp}, {tbl}, 160",
-        "vle8.v v12, ({tmp})",
-        "vle8.v v0, ({state})",
-        "vle8.v v1, ({rk})",
-        // Phase 1: Nibble extraction.
-        "vand.vi v14, v0, 15",
-        "vsrl.vi v15, v0, 4",
-        // Phase 2: Input transform.
-        "vrgather.vv v16, v2, v14",
-        "vrgather.vv v17, v3, v15",
-        "vxor.vv v14, v16, v17",
-        // Phase 3: Re-extract nibbles.
-        "vand.vi v15, v14, 15",
-        "vsrl.vi v16, v14, 4",
-        // Phase 4: GF(2^4) inverse.
-        "vrgather.vv v17, v5, v15",
-        "vxor.vv v18, v16, v15",
-        "vrgather.vv v19, v4, v16",
-        "vxor.vv v20, v19, v17",
-        "vrgather.vv v21, v4, v18",
-        "vxor.vv v22, v21, v17",
-        "vand.vi v23, v20, 15",
-        "vrgather.vv v24, v4, v23",
-        "vsra.vi v25, v20, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v24, v24, v26",
-        "vxor.vv v14, v24, v18",
-        "vand.vi v23, v22, 15",
-        "vrgather.vv v24, v4, v23",
-        "vsra.vi v25, v22, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v24, v24, v26",
-        "vxor.vv v15, v24, v16",
-        // Phase 5: Output transform.
-        "vand.vi v23, v14, 15",
-        "vrgather.vv v24, v6, v23",
-        "vsra.vi v25, v14, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v16, v24, v26",
-        "vand.vi v23, v15, 15",
-        "vrgather.vv v24, v7, v23",
-        "vsra.vi v25, v15, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v17, v24, v26",
-        "vxor.vv v14, v16, v17",
-        "vxor.vv v14, v14, v11",
-        // ShiftRows.
-        "vrgather.vv v15, v14, v8",
-        // MixColumns.
-        "vrgather.vv v16, v15, v9",
-        "vxor.vv v17, v15, v16",
-        "vsll.vi v18, v17, 1",
-        "vsra.vi v19, v17, 7",
-        "vand.vv v19, v19, v12",
-        "vxor.vv v18, v18, v19",
-        "vrgather.vv v19, v17, v10",
-        "vxor.vv v20, v17, v19",
-        "vxor.vv v14, v15, v20",
-        "vxor.vv v14, v14, v18",
-        // AddRoundKey.
-        "vxor.vv v0, v14, v1",
-        "vse8.v v0, ({out})",
-        state = in(reg) block.as_ptr(),
-        rk = in(reg) round_key.as_ptr(),
-        tbl = in(reg) tables as *const VpermTables as *const u8,
-        out = in(reg) out.as_mut_ptr(),
-        tmp = out(reg) _,
-        options(nostack),
-      );
-    }
-    out
-  }
-
-  /// Final AES round (SubBytes + ShiftRows + AddRoundKey, no MixColumns).
-  #[target_feature(enable = "v")]
-  #[inline]
-  unsafe fn aes_final_round(block: &[u8; 16], round_key: &[u8; 16], tables: &VpermTables) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    // SAFETY: caller guarantees the RISC-V V extension is available and the
-    // asm block only reads the provided state/table/key buffers and writes `out`.
-    unsafe {
-      asm!(
-        "vsetivli zero, 16, e8, m1, ta, ma",
-        // Load tables (only need SubBytes + ShiftRows, no MixColumns).
-        "vle8.v v2, ({tbl})",
-        "addi {tmp}, {tbl}, 16",
-        "vle8.v v3, ({tmp})",
-        "addi {tmp}, {tbl}, 32",
-        "vle8.v v4, ({tmp})",
-        "addi {tmp}, {tbl}, 48",
-        "vle8.v v5, ({tmp})",
-        "addi {tmp}, {tbl}, 64",
-        "vle8.v v6, ({tmp})",
-        "addi {tmp}, {tbl}, 80",
-        "vle8.v v7, ({tmp})",
-        "addi {tmp}, {tbl}, 96",
-        "vle8.v v8, ({tmp})",
-        "addi {tmp}, {tbl}, 144",
-        "vle8.v v11, ({tmp})",
-        "vle8.v v0, ({state})",
-        "vle8.v v1, ({rk})",
-        // SubBytes (same as inner round).
-        "vand.vi v14, v0, 15",
-        "vsrl.vi v15, v0, 4",
-        "vrgather.vv v16, v2, v14",
-        "vrgather.vv v17, v3, v15",
-        "vxor.vv v14, v16, v17",
-        "vand.vi v15, v14, 15",
-        "vsrl.vi v16, v14, 4",
-        "vrgather.vv v17, v5, v15",
-        "vxor.vv v18, v16, v15",
-        "vrgather.vv v19, v4, v16",
-        "vxor.vv v20, v19, v17",
-        "vrgather.vv v21, v4, v18",
-        "vxor.vv v22, v21, v17",
-        "vand.vi v23, v20, 15",
-        "vrgather.vv v24, v4, v23",
-        "vsra.vi v25, v20, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v24, v24, v26",
-        "vxor.vv v14, v24, v18",
-        "vand.vi v23, v22, 15",
-        "vrgather.vv v24, v4, v23",
-        "vsra.vi v25, v22, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v24, v24, v26",
-        "vxor.vv v15, v24, v16",
-        "vand.vi v23, v14, 15",
-        "vrgather.vv v24, v6, v23",
-        "vsra.vi v25, v14, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v16, v24, v26",
-        "vand.vi v23, v15, 15",
-        "vrgather.vv v24, v7, v23",
-        "vsra.vi v25, v15, 7",
-        "vxor.vi v26, v25, -1",
-        "vand.vv v17, v24, v26",
-        "vxor.vv v14, v16, v17",
-        "vxor.vv v14, v14, v11",
-        // ShiftRows (no MixColumns).
-        "vrgather.vv v15, v14, v8",
-        // AddRoundKey.
-        "vxor.vv v0, v15, v1",
-        "vse8.v v0, ({out})",
-        state = in(reg) block.as_ptr(),
-        rk = in(reg) round_key.as_ptr(),
-        tbl = in(reg) tables as *const VpermTables as *const u8,
-        out = in(reg) out.as_mut_ptr(),
-        tmp = out(reg) _,
-        options(nostack),
-      );
-    }
-    out
-  }
-
-  /// Four independent inner rounds with one shared table load.
-  ///
-  /// This targets the AES-GCM-SIV fixed-cost path, where six ECB blocks are
-  /// derived up front. Sharing the vperm tables across 4 blocks removes most
-  /// of the per-call table-load overhead even before we attempt a wider LMUL
-  /// kernel.
-  #[target_feature(enable = "v")]
-  #[inline]
-  unsafe fn aes_inner_round_4(blocks: &mut [[u8; 16]; 4], round_key: &[u8; 16], tables: &VpermTables) {
-    // SAFETY: caller guarantees the RISC-V V extension is available and all
-    // block/key/table references are valid for 16-byte vector loads/stores.
-    unsafe {
-      asm!(
-        "vsetivli zero, 16, e8, m1, ta, ma",
-        "vle8.v v8, ({tbl})",
-        "addi {tmp}, {tbl}, 16",
-        "vle8.v v9, ({tmp})",
-        "addi {tmp}, {tbl}, 32",
-        "vle8.v v10, ({tmp})",
-        "addi {tmp}, {tbl}, 48",
-        "vle8.v v11, ({tmp})",
-        "addi {tmp}, {tbl}, 64",
-        "vle8.v v12, ({tmp})",
-        "addi {tmp}, {tbl}, 80",
-        "vle8.v v13, ({tmp})",
-        "addi {tmp}, {tbl}, 96",
-        "vle8.v v14, ({tmp})",
-        "addi {tmp}, {tbl}, 112",
-        "vle8.v v15, ({tmp})",
-        "addi {tmp}, {tbl}, 128",
-        "vle8.v v16, ({tmp})",
-        "addi {tmp}, {tbl}, 144",
-        "vle8.v v17, ({tmp})",
-        "addi {tmp}, {tbl}, 160",
-        "vle8.v v18, ({tmp})",
-        "vle8.v v0, ({b0})",
-        "vle8.v v1, ({b1})",
-        "vle8.v v2, ({b2})",
-        "vle8.v v3, ({b3})",
-        "vle8.v v4, ({rk})",
-        vperm_inner_round_m1!("v0", "v4"),
-        vperm_inner_round_m1!("v1", "v4"),
-        vperm_inner_round_m1!("v2", "v4"),
-        vperm_inner_round_m1!("v3", "v4"),
-        "vse8.v v0, ({b0})",
-        "vse8.v v1, ({b1})",
-        "vse8.v v2, ({b2})",
-        "vse8.v v3, ({b3})",
-        b0 = in(reg) blocks[0].as_mut_ptr(),
-        b1 = in(reg) blocks[1].as_mut_ptr(),
-        b2 = in(reg) blocks[2].as_mut_ptr(),
-        b3 = in(reg) blocks[3].as_mut_ptr(),
-        rk = in(reg) round_key.as_ptr(),
-        tbl = in(reg) tables as *const VpermTables as *const u8,
-        tmp = out(reg) _,
-        options(nostack),
-      );
-    }
-  }
-
-  /// Four independent final rounds with one shared table load.
-  #[target_feature(enable = "v")]
-  #[inline]
-  unsafe fn aes_final_round_4(blocks: &mut [[u8; 16]; 4], round_key: &[u8; 16], tables: &VpermTables) {
-    // SAFETY: caller guarantees the RISC-V V extension is available and all
-    // block/key/table references are valid for 16-byte vector loads/stores.
-    unsafe {
-      asm!(
-        "vsetivli zero, 16, e8, m1, ta, ma",
-        "vle8.v v8, ({tbl})",
-        "addi {tmp}, {tbl}, 16",
-        "vle8.v v9, ({tmp})",
-        "addi {tmp}, {tbl}, 32",
-        "vle8.v v10, ({tmp})",
-        "addi {tmp}, {tbl}, 48",
-        "vle8.v v11, ({tmp})",
-        "addi {tmp}, {tbl}, 64",
-        "vle8.v v12, ({tmp})",
-        "addi {tmp}, {tbl}, 80",
-        "vle8.v v13, ({tmp})",
-        "addi {tmp}, {tbl}, 96",
-        "vle8.v v14, ({tmp})",
-        "addi {tmp}, {tbl}, 144",
-        "vle8.v v17, ({tmp})",
-        "vle8.v v0, ({b0})",
-        "vle8.v v1, ({b1})",
-        "vle8.v v2, ({b2})",
-        "vle8.v v3, ({b3})",
-        "vle8.v v4, ({rk})",
-        vperm_final_round_m1!("v0", "v4"),
-        vperm_final_round_m1!("v1", "v4"),
-        vperm_final_round_m1!("v2", "v4"),
-        vperm_final_round_m1!("v3", "v4"),
-        "vse8.v v0, ({b0})",
-        "vse8.v v1, ({b1})",
-        "vse8.v v2, ({b2})",
-        "vse8.v v3, ({b3})",
-        b0 = in(reg) blocks[0].as_mut_ptr(),
-        b1 = in(reg) blocks[1].as_mut_ptr(),
-        b2 = in(reg) blocks[2].as_mut_ptr(),
-        b3 = in(reg) blocks[3].as_mut_ptr(),
-        rk = in(reg) round_key.as_ptr(),
-        tbl = in(reg) tables as *const VpermTables as *const u8,
-        tmp = out(reg) _,
-        options(nostack),
-      );
-    }
-  }
-
-  /// AES-256 full-block encryption (14 rounds) using Hamburg vperm.
-  ///
-  /// # Safety
-  /// Requires the RISC-V V extension.
-  #[target_feature(enable = "v")]
-  pub(super) unsafe fn encrypt_block(rk: &[u32; super::EXPANDED_KEY_WORDS], block: &mut [u8; 16]) {
-    // SAFETY: caller guarantees the RISC-V V extension is available for the
-    // full AES-256 block operation and all references are valid Rust buffers.
-    unsafe {
-      let tables = VpermTables::load();
-
-      // Initial AddRoundKey (round 0).
-      let rk0 = round_key_bytes(rk, 0);
-      for i in 0..16 {
-        block[i] ^= rk0[i];
-      }
-
-      // Rounds 1-13: full AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
-      let mut round = 1usize;
-      while round < super::ROUNDS {
-        let rk_r = round_key_bytes(rk, round);
-        *block = aes_inner_round(block, &rk_r, &tables);
-        round = round.strict_add(1);
-      }
-
-      // Round 14 (final): SubBytes + ShiftRows + AddRoundKey (no MixColumns).
-      let rk14 = round_key_bytes(rk, super::ROUNDS);
-      *block = aes_final_round(block, &rk14, &tables);
-    }
-  }
-
-  /// Encrypt 4 independent AES-256 blocks using the vperm backend.
-  ///
-  /// The 4-block batch is aimed at GCM-SIV key derivation, which produces 6
-  /// unrelated ECB inputs up front. Processing 4 of them together amortizes
-  /// table loads across the hot fixed-cost path while keeping the existing
-  /// single-block kernel for small tails.
-  #[target_feature(enable = "v")]
-  pub(super) unsafe fn encrypt_4blocks(rk: &[u32; super::EXPANDED_KEY_WORDS], blocks: &mut [[u8; 16]; 4]) {
-    // SAFETY: caller guarantees the RISC-V V extension is available for the
-    // duration of the batch and all block buffers are valid 16-byte arrays.
-    unsafe {
-      let tables = VpermTables::load();
-
-      let rk0 = round_key_bytes(rk, 0);
-      for block in blocks.iter_mut() {
-        for i in 0..16 {
-          block[i] ^= rk0[i];
-        }
-      }
-
-      let mut round = 1usize;
-      while round < super::ROUNDS {
-        let rk_r = round_key_bytes(rk, round);
-        aes_inner_round_4(blocks, &rk_r, &tables);
-        round = round.strict_add(1);
-      }
-
-      let rk14 = round_key_bytes(rk, super::ROUNDS);
-      aes_final_round_4(blocks, &rk14, &tables);
-    }
-  }
-}
+#[path = "aes/riscv64_vperm_aes.rs"]
+mod rv_vperm_aes;
 
 // ---------------------------------------------------------------------------
 // Aes256EncKey: enum-dispatched key storage
@@ -1678,59 +73,59 @@ pub(crate) struct Aes256EncKey {
 
 #[derive(Clone)]
 enum KeyInner {
-  Portable([u32; EXPANDED_KEY_WORDS]),
+  PortableRoundKeys([u32; EXPANDED_KEY_WORDS]),
   #[cfg(target_arch = "x86_64")]
-  AesNi(ni::NiRoundKeys),
+  X86AesNi(ni::NiRoundKeys),
   #[cfg(target_arch = "aarch64")]
-  Aarch64Ce(ce::CeRoundKeys),
+  Aarch64Aes(ce::CeRoundKeys),
   #[cfg(target_arch = "s390x")]
-  S390xKm(km::KmKey),
+  S390xMsa(km::KmKey),
   #[cfg(target_arch = "powerpc64")]
-  Power(ppc::PpcRoundKeys),
+  Power8Crypto(ppc::PpcRoundKeys),
   #[cfg(target_arch = "riscv64")]
-  RvScalar(rv_scalar_aes::RvScalarRoundKeys),
+  Riscv64ScalarCrypto(rv_scalar_aes::RvScalarRoundKeys),
   #[cfg(target_arch = "riscv64")]
-  RvAes(rv_aes::RvRoundKeys),
-  /// Hamburg vperm via vrgather.vv — uses portable key schedule, constant-time.
+  Riscv64VectorCrypto(rv_aes::RvRoundKeys),
+  /// Hamburg vperm via vrgather.vv -- uses portable key schedule, constant-time.
   #[cfg(target_arch = "riscv64")]
-  RvVperm([u32; EXPANDED_KEY_WORDS]),
+  Riscv64Vperm([u32; EXPANDED_KEY_WORDS]),
 }
 
 impl Drop for Aes256EncKey {
   fn drop(&mut self) {
     match &mut self.inner {
-      KeyInner::Portable(rk) => {
+      KeyInner::PortableRoundKeys(rk) => {
         // SAFETY: [u32; 60] is layout-compatible with [u8; 240].
         crate::traits::ct::zeroize(unsafe {
           core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
         });
       }
       #[cfg(target_arch = "x86_64")]
-      KeyInner::AesNi(ni_rk) => {
+      KeyInner::X86AesNi(ni_rk) => {
         ni_rk.zeroize();
       }
       #[cfg(target_arch = "aarch64")]
-      KeyInner::Aarch64Ce(ce_rk) => {
+      KeyInner::Aarch64Aes(ce_rk) => {
         ce_rk.zeroize();
       }
       #[cfg(target_arch = "s390x")]
-      KeyInner::S390xKm(km_key) => {
+      KeyInner::S390xMsa(km_key) => {
         km_key.zeroize();
       }
       #[cfg(target_arch = "powerpc64")]
-      KeyInner::Power(ppc_rk) => {
+      KeyInner::Power8Crypto(ppc_rk) => {
         ppc_rk.zeroize();
       }
       #[cfg(target_arch = "riscv64")]
-      KeyInner::RvScalar(rv_rk) => {
+      KeyInner::Riscv64ScalarCrypto(rv_rk) => {
         rv_rk.zeroize();
       }
       #[cfg(target_arch = "riscv64")]
-      KeyInner::RvAes(rv_rk) => {
+      KeyInner::Riscv64VectorCrypto(rv_rk) => {
         rv_rk.zeroize();
       }
       #[cfg(target_arch = "riscv64")]
-      KeyInner::RvVperm(rk) => {
+      KeyInner::Riscv64Vperm(rk) => {
         // SAFETY: the expanded key is a contiguous `[u32; 60]`, so viewing it as
         // a mutable byte slice for zeroization is valid for its exact size.
         crate::traits::ct::zeroize(unsafe {
@@ -1918,7 +313,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
     if crate::platform::caps().has(crate::platform::caps::x86::AESNI) {
       return Aes256EncKey {
         // SAFETY: AES-NI availability verified via CPUID above.
-        inner: KeyInner::AesNi(unsafe { ni::expand_key(key) }),
+        inner: KeyInner::X86AesNi(unsafe { ni::expand_key(key) }),
       };
     }
   }
@@ -1928,7 +323,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       return Aes256EncKey {
         // SAFETY: AES-CE availability verified via HWCAP above.
         // Uses AESE for SubWord — ~750x faster than the algebraic GF(2^8) S-box.
-        inner: KeyInner::Aarch64Ce(unsafe { ce::expand_key(key) }),
+        inner: KeyInner::Aarch64Aes(unsafe { ce::expand_key(key) }),
       };
     }
   }
@@ -1936,7 +331,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   {
     if crate::platform::caps().has(crate::platform::caps::s390x::MSA) {
       return Aes256EncKey {
-        inner: KeyInner::S390xKm(km::KmKey::from_portable(aes256_expand_key_portable(key))),
+        inner: KeyInner::S390xMsa(km::KmKey::from_portable(aes256_expand_key_portable(key))),
       };
     }
   }
@@ -1945,7 +340,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
     if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
       return Aes256EncKey {
         // SAFETY: POWER8 crypto availability verified via HWCAP above.
-        inner: KeyInner::Power(unsafe { ppc::expand_key(key) }),
+        inner: KeyInner::Power8Crypto(unsafe { ppc::expand_key(key) }),
       };
     }
   }
@@ -1956,7 +351,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       let rv_keys = rv_aes::from_portable(&portable_rk);
       zeroize_expanded_key_words(&mut portable_rk);
       return Aes256EncKey {
-        inner: KeyInner::RvAes(rv_keys),
+        inner: KeyInner::Riscv64VectorCrypto(rv_keys),
       };
     }
     if crate::platform::caps().has(crate::platform::caps::riscv::ZKNE) {
@@ -1964,17 +359,17 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       let rv_keys = rv_scalar_aes::from_portable(&portable_rk);
       zeroize_expanded_key_words(&mut portable_rk);
       return Aes256EncKey {
-        inner: KeyInner::RvScalar(rv_keys),
+        inner: KeyInner::Riscv64ScalarCrypto(rv_keys),
       };
     }
     if crate::platform::caps().has(crate::platform::caps::riscv::V) {
       return Aes256EncKey {
-        inner: KeyInner::RvVperm(aes256_expand_key_portable(key)),
+        inner: KeyInner::Riscv64Vperm(aes256_expand_key_portable(key)),
       };
     }
   }
   Aes256EncKey {
-    inner: KeyInner::Portable(aes256_expand_key_portable(key)),
+    inner: KeyInner::PortableRoundKeys(aes256_expand_key_portable(key)),
   }
 }
 
@@ -1985,7 +380,7 @@ pub(crate) fn aes256_expand_key_riscv_vector(key: &[u8; KEY_SIZE]) -> Aes256EncK
   let rv_keys = rv_aes::from_portable(&portable_rk);
   zeroize_expanded_key_words(&mut portable_rk);
   Aes256EncKey {
-    inner: KeyInner::RvAes(rv_keys),
+    inner: KeyInner::Riscv64VectorCrypto(rv_keys),
   }
 }
 
@@ -1996,7 +391,7 @@ pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncK
   let rv_keys = rv_scalar_aes::from_portable(&portable_rk);
   zeroize_expanded_key_words(&mut portable_rk);
   Aes256EncKey {
-    inner: KeyInner::RvScalar(rv_keys),
+    inner: KeyInner::Riscv64ScalarCrypto(rv_keys),
   }
 }
 
@@ -2004,15 +399,17 @@ pub(crate) fn aes256_expand_key_riscv_scalar(key: &[u8; KEY_SIZE]) -> Aes256EncK
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   Aes256EncKey {
-    inner: KeyInner::RvVperm(aes256_expand_key_portable(key)),
+    inner: KeyInner::Riscv64Vperm(aes256_expand_key_portable(key)),
   }
 }
 
 #[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
+  // Legacy helper retained for callers that still mention the old backend
+  // label. The implementation now uses the constant-time portable path.
   Aes256EncKey {
-    inner: KeyInner::Portable(aes256_expand_key_portable(key)),
+    inner: KeyInner::PortableRoundKeys(aes256_expand_key_portable(key)),
   }
 }
 
@@ -2117,50 +514,39 @@ pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [
 #[inline]
 pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZE]) {
   match &ek.inner {
-    KeyInner::Portable(rk) => {
-      // On riscv64 without crypto extensions, T-tables are ~200x faster than
-      // the algebraic GF(2^8) S-box. Same trade-off as s390x AEGIS (zvec).
-      #[cfg(target_arch = "riscv64")]
-      {
-        ttable::encrypt_block(rk, block)
-      }
-      #[cfg(not(target_arch = "riscv64"))]
-      {
-        aes256_encrypt_block_portable(rk, block)
-      }
-    }
+    KeyInner::PortableRoundKeys(rk) => aes256_encrypt_block_portable(rk, block),
     #[cfg(target_arch = "x86_64")]
-    KeyInner::AesNi(ni_rk) => {
+    KeyInner::X86AesNi(ni_rk) => {
       // SAFETY: AesNi variant is only constructed after runtime detection confirms AES-NI.
       unsafe { ni::encrypt_block(ni_rk, block) }
     }
     #[cfg(target_arch = "aarch64")]
-    KeyInner::Aarch64Ce(ce_rk) => {
+    KeyInner::Aarch64Aes(ce_rk) => {
       // SAFETY: Aarch64Ce variant is only constructed after runtime detection confirms AES-CE.
       unsafe { ce::encrypt_block(ce_rk, block) }
     }
     #[cfg(target_arch = "s390x")]
-    KeyInner::S390xKm(km_key) => {
+    KeyInner::S390xMsa(km_key) => {
       // SAFETY: S390xKm variant is only constructed after runtime detection confirms MSA/CPACF.
       unsafe { km::encrypt_block(km_key, block) }
     }
     #[cfg(target_arch = "powerpc64")]
-    KeyInner::Power(ppc_rk) => {
+    KeyInner::Power8Crypto(ppc_rk) => {
       // SAFETY: Power variant is only constructed after runtime detection confirms POWER8 crypto.
       unsafe { ppc::encrypt_block(ppc_rk, block) }
     }
     #[cfg(target_arch = "riscv64")]
-    KeyInner::RvScalar(rv_rk) => {
+    KeyInner::Riscv64ScalarCrypto(rv_rk) => {
       // SAFETY: RvScalar variant is only constructed after runtime detection confirms Zkne.
       unsafe { rv_scalar_aes::encrypt_block(rv_rk, block) }
     }
     #[cfg(target_arch = "riscv64")]
-    KeyInner::RvAes(rv_rk) => {
+    KeyInner::Riscv64VectorCrypto(rv_rk) => {
       // SAFETY: RvAes variant is only constructed after runtime detection confirms Zvkned.
       unsafe { rv_aes::encrypt_block(rv_rk, block) }
     }
     #[cfg(target_arch = "riscv64")]
-    KeyInner::RvVperm(rk) => {
+    KeyInner::Riscv64Vperm(rk) => {
       // SAFETY: RvVperm variant is only constructed after runtime detection confirms V extension.
       unsafe { rv_vperm_aes::encrypt_block(rk, block) }
     }
@@ -2172,10 +558,11 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
 /// On s390x this issues a single KM instruction for all `blocks`,
 /// avoiding per-block parameter-block setup overhead. On other platforms
 /// falls back to per-block dispatch.
+#[cfg_attr(not(any(target_arch = "riscv64", feature = "aes-gcm-siv", test)), allow(dead_code))]
 #[inline]
 pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(target_arch = "s390x")]
-  if let KeyInner::S390xKm(km_key) = &ek.inner {
+  if let KeyInner::S390xMsa(km_key) = &ek.inner {
     let count = blocks.len();
     if count > 0 {
       // SAFETY: `[[u8; 16]]` is layout-compatible with a contiguous `[u8]` of `count*16`.
@@ -2188,7 +575,7 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
     return;
   }
   #[cfg(target_arch = "riscv64")]
-  if let KeyInner::RvVperm(rk) = &ek.inner {
+  if let KeyInner::Riscv64Vperm(rk) = &ek.inner {
     let mut offset = 0usize;
     while offset.strict_add(4) <= blocks.len() {
       let batch_slice = &mut blocks[offset..offset.strict_add(4)];
@@ -2214,7 +601,6 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
 }
 
 /// Portable AES-256 block encryption.
-#[cfg(not(target_arch = "riscv64"))]
 #[inline]
 fn aes256_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS], block: &mut [u8; BLOCK_SIZE]) {
   // Load state as four big-endian u32 columns.
@@ -2257,14 +643,12 @@ fn aes256_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS], block: &mut [u8
 }
 
 /// Extract byte `row` from a big-endian column word.
-#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn col_byte(col: u32, row: usize) -> u8 {
   (col >> (24u32.strict_sub((row as u32).strict_mul(8)))) as u8
 }
 
 /// xtime: multiply by x in GF(2^8), i.e. x << 1 with conditional reduction.
-#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn xtime(x: u8) -> u8 {
   let hi = (x >> 7) & 1;
@@ -2275,7 +659,6 @@ const fn xtime(x: u8) -> u8 {
 ///
 /// Input/output: four column words in big-endian byte order.
 /// AddRoundKey is done by the caller.
-#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
   // After SubBytes + ShiftRows, column j contains:
@@ -2309,7 +692,6 @@ const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
 }
 
 /// Final AES round: SubBytes → ShiftRows (no MixColumns).
-#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn aes_final_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
   let t0 = (sbox(col_byte(s0, 0)) as u32) << 24
@@ -2333,7 +715,6 @@ const fn aes_final_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, 
 }
 
 /// MixColumns on a single column [b0, b1, b2, b3].
-#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 const fn mix_column(col: [u8; 4]) -> u32 {
   let [b0, b1, b2, b3] = col;
@@ -2364,7 +745,7 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
   let mut offset = 0usize;
 
   #[cfg(target_arch = "riscv64")]
-  if matches!(&ek.inner, KeyInner::RvVperm(_)) {
+  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_)) {
     let iv_suffix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[4..16]);
@@ -2453,7 +834,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
   let mut offset = 0usize;
 
   #[cfg(target_arch = "riscv64")]
-  if matches!(&ek.inner, KeyInner::RvVperm(_)) {
+  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_)) {
     let iv_prefix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[..12]);
@@ -2543,7 +924,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
   // ensures VAES + AVX-512 instructions are available.
   unsafe {
     let ni_rk = match &ek.inner {
-      KeyInner::AesNi(rk) => rk,
+      KeyInner::X86AesNi(rk) => rk,
       _ => {
         // Fallback to scalar if not AES-NI (shouldn't happen when VAES is available).
         aes256_ctr32_encrypt_be(ek, initial_counter, data);
@@ -2630,7 +1011,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counte
   // ensures VAES + AVX-512 instructions are available.
   unsafe {
     let ni_rk = match &ek.inner {
-      KeyInner::AesNi(rk) => rk,
+      KeyInner::X86AesNi(rk) => rk,
       _ => {
         aes256_ctr32_encrypt(ek, initial_counter, data);
         return;

@@ -6,12 +6,20 @@
 //! # Examples
 //!
 //! ```
-//! use rscrypto::{Blake3, Sha256, hashes::introspect::kernel_for};
+//! use rscrypto::{
+//!   Blake3, Sha256,
+//!   hashes::introspect::{DispatchInfo, kernel_for},
+//! };
+//!
+//! let info = DispatchInfo::current();
+//! assert!(!format!("{info}").is_empty());
 //!
 //! // Per-algorithm kernel selection for a specific input size
 //! assert!(!kernel_for::<Sha256>(1024).is_empty());
 //! assert!(!kernel_for::<Blake3>(4096).is_empty());
 //! ```
+
+pub use crate::platform::{DispatchInfo, KernelIntrospect};
 
 /// Returns the kernel name selected for a specific algorithm and buffer size.
 ///
@@ -29,22 +37,13 @@
 /// ```
 #[inline]
 #[must_use]
-pub fn kernel_for<T: HashKernelIntrospect>(len: usize) -> &'static str {
+pub fn kernel_for<T: KernelIntrospect>(len: usize) -> &'static str {
   T::kernel_name_for_len(len)
-}
-
-/// Trait for hash types that support kernel introspection.
-///
-/// This trait is implemented for all public hash algorithm types that support
-/// dispatch introspection.
-pub trait HashKernelIntrospect {
-  /// Returns the kernel name that would be selected for a buffer of `len` bytes.
-  fn kernel_name_for_len(len: usize) -> &'static str;
 }
 
 macro_rules! impl_hash_kernel_introspect {
   ($ty:path, $kernel_for_len:path) => {
-    impl HashKernelIntrospect for $ty {
+    impl KernelIntrospect for $ty {
       #[inline]
       fn kernel_name_for_len(len: usize) -> &'static str {
         $kernel_for_len(len)

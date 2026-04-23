@@ -203,27 +203,3 @@ pub trait Digest: Clone + Default {
     crate::traits::io::DigestWriter::new(inner)
   }
 }
-
-// Sealed trait implementations for I/O support
-#[cfg(feature = "std")]
-impl<T: Digest> crate::traits::io::SealedMarker for T {}
-
-#[cfg(feature = "std")]
-impl<T: Digest> crate::traits::io::Hashable for T {
-  type Output = T::Output;
-
-  #[inline(always)]
-  fn new_hasher() -> Self {
-    T::new()
-  }
-
-  #[inline(always)]
-  fn update(&mut self, data: &[u8]) {
-    T::update(self, data);
-  }
-
-  #[inline(always)]
-  fn finalize(&self) -> Self::Output {
-    T::finalize(self)
-  }
-}

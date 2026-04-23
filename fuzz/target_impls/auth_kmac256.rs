@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(expected, reset_out, "kmac changed after reset");
 
     // Property: verify accepts correct tag
-    Kmac256::verify(key, custom, message, &expected).expect("verify must accept correct tag");
+    Kmac256::verify_tag(key, custom, message, &expected).expect("verify must accept correct tag");
 
     // Differential: rscrypto ↔ tiny-keccak
     {

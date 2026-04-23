@@ -140,4 +140,5 @@ macro_rules! blob_iter {
 }
 
 blob_iter!(Blob2Iterator, 2);
+blob_iter!(Blob3Iterator, 3);
 blob_iter!(Blob6Iterator, 6);

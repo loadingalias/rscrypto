@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use super::hmac::{HmacSha256, HmacSha384};
+use super::hmac::{HmacSha256, HmacSha384, hmac_prefix_state};
 use crate::{
   hashes::crypto::{
     sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::CompressBlocksFn as Sha256CompressBlocksFn},
@@ -19,33 +19,11 @@ const SHA384_OUTPUT_SIZE: usize = 48;
 const SHA384_MAX_OUTPUT_SIZE: usize = 255 * SHA384_OUTPUT_SIZE;
 const SHA384_BLOCK_SIZE: usize = 128;
 
-/// HKDF requested more output than RFC 5869 allows for a single expansion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HkdfOutputLengthError;
-
-impl HkdfOutputLengthError {
-  /// Construct a new output-length error.
-  #[inline]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self
-  }
+define_unit_error! {
+  /// HKDF requested more output than RFC 5869 allows for a single expansion.
+  pub struct HkdfOutputLengthError;
+  "requested HKDF output exceeds the algorithm maximum"
 }
-
-impl Default for HkdfOutputLengthError {
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl fmt::Display for HkdfOutputLengthError {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.write_str("requested HKDF output exceeds the algorithm maximum")
-  }
-}
-
-impl core::error::Error for HkdfOutputLengthError {}
 
 /// HKDF-SHA256 pseudorandom key state.
 ///
@@ -106,22 +84,15 @@ impl HkdfSha256 {
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
     key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&prk);
 
-    let mut ipad = [0u8; SHA256_BLOCK_SIZE];
-    let mut opad = [0u8; SHA256_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
+    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = SHA256_H0;
+      compress(&mut inner_init, ipad);
 
-    let mut inner_init = SHA256_H0;
-    compress(&mut inner_init, &ipad);
+      let mut outer_init = SHA256_H0;
+      compress(&mut outer_init, opad);
 
-    let mut outer_init = SHA256_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner_init, outer_init)
+    });
 
     Self {
       prk,
@@ -258,6 +229,24 @@ impl Drop for HkdfSha256 {
 }
 
 /// HKDF-SHA384 pseudorandom key state.
+///
+/// `new()` and `extract()` perform HKDF-Extract and store the pseudorandom key
+/// for later `expand()` calls.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::HkdfSha384;
+///
+/// let hkdf = HkdfSha384::new(b"salt", b"input key material");
+///
+/// let mut okm = [0u8; 48];
+/// hkdf.expand(b"context", &mut okm)?;
+///
+/// let oneshot = HkdfSha384::derive_array::<48>(b"salt", b"input key material", b"context")?;
+/// assert_eq!(okm, oneshot);
+/// # Ok::<(), rscrypto::auth::HkdfOutputLengthError>(())
+/// ```
 #[derive(Clone)]
 pub struct HkdfSha384 {
   prk: [u8; SHA384_OUTPUT_SIZE],
@@ -298,22 +287,15 @@ impl HkdfSha384 {
     let mut key_block = [0u8; SHA384_BLOCK_SIZE];
     key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(&prk);
 
-    let mut ipad = [0u8; SHA384_BLOCK_SIZE];
-    let mut opad = [0u8; SHA384_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
+    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = SHA384_H0;
+      compress(&mut inner_init, ipad);
 
-    let mut inner_init = SHA384_H0;
-    compress(&mut inner_init, &ipad);
+      let mut outer_init = SHA384_H0;
+      compress(&mut outer_init, opad);
 
-    let mut outer_init = SHA384_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner_init, outer_init)
+    });
 
     Self {
       prk,
@@ -434,22 +416,15 @@ impl HkdfSha384 {
     let mut key_block = [0u8; SHA384_BLOCK_SIZE];
     key_block[..SHA384_OUTPUT_SIZE].copy_from_slice(&prk);
 
-    let mut ipad = [0u8; SHA384_BLOCK_SIZE];
-    let mut opad = [0u8; SHA384_BLOCK_SIZE];
-    for ((ip, op), &kb) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter()) {
-      *ip = kb ^ 0x36;
-      *op = kb ^ 0x5c;
-    }
+    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = SHA384_H0;
+      compress(&mut inner_init, ipad);
 
-    let mut inner_init = SHA384_H0;
-    compress(&mut inner_init, &ipad);
+      let mut outer_init = SHA384_H0;
+      compress(&mut outer_init, opad);
 
-    let mut outer_init = SHA384_H0;
-    compress(&mut outer_init, &opad);
-
-    ct::zeroize(&mut key_block);
-    ct::zeroize(&mut ipad);
-    ct::zeroize(&mut opad);
+      (inner_init, outer_init)
+    });
 
     Self {
       prk,

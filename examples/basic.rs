@@ -117,7 +117,9 @@ fn aead_api() {
   let aead = ChaCha20Poly1305::new(&key);
 
   let mut buf = *b"hello";
-  let tag = aead.encrypt_in_place(&nonce, b"", &mut buf);
+  let tag = aead
+    .encrypt_in_place(&nonce, b"", &mut buf)
+    .expect("encrypt must succeed");
   assert_ne!(&buf, b"hello");
   aead
     .decrypt_in_place(&nonce, b"", &mut buf, &tag)
@@ -160,10 +162,10 @@ fn serialization_api() {
   println!("--- Serialization ---\n");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-  let raw: [u8; 32] = key.to_bytes();
+  let raw: [u8; 32] = *key.as_bytes();
   let restored = ChaCha20Poly1305Key::from_bytes(raw);
-  assert_eq!(key, restored);
-  println!("Key round-trip via to_bytes/from_bytes: OK");
+  assert_eq!(key.as_bytes(), restored.as_bytes());
+  println!("Key round-trip via as_bytes/from_bytes: OK");
 
   let nonce = Nonce96::from_bytes([0xab; 12]);
   assert_eq!(nonce, Nonce96::from_bytes(nonce.to_bytes()));

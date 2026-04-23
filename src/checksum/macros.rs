@@ -37,6 +37,115 @@ macro_rules! crc_vectored_dispatch {
   }};
 }
 
+/// Generate the cached dispatch shell for a CRC polynomial.
+///
+/// This covers the repeated "resolve once under std, otherwise use auto"
+/// pattern shared by CRC-16/32/64 variants while leaving the actual kernel
+/// wrappers and force-specific architecture helpers local to each module.
+#[cfg_attr(
+  not(any(feature = "crc16", feature = "crc32", feature = "crc64")),
+  allow(unused_macros)
+)]
+macro_rules! define_crc_dispatch {
+  (
+    word_ty: $word_ty:ty,
+    dispatch_fn_ty: $dispatch_fn_ty:ty,
+    dispatch_vectored_fn_ty: $dispatch_vectored_fn_ty:ty,
+    auto_force: $auto_force:path,
+    force_expr: $force_expr:expr,
+    active_table: $active_table:expr,
+    auto_dispatch: $auto_dispatch:path,
+    auto_vectored_dispatch: $auto_vectored_dispatch:path,
+    dispatch_cache: $dispatch_cache:ident,
+    dispatch_vectored_cache: $dispatch_vectored_cache:ident,
+    resolve_dispatch: $resolve_dispatch:ident,
+    resolve_dispatch_vectored: $resolve_dispatch_vectored:ident,
+    dispatch: $dispatch:ident,
+    dispatch_vectored: $dispatch_vectored:ident,
+    resolved_dispatch: $resolved_dispatch:ident,
+    runtime_paths: $runtime_paths:ident,
+    resolve_match: { $($resolve_match:tt)* },
+    resolve_vectored_match: { $($resolve_vectored_match:tt)* }
+  ) => {
+    #[cfg(feature = "std")]
+    static $dispatch_cache: $crate::backend::cache::OnceCache<$dispatch_fn_ty> =
+      $crate::backend::cache::OnceCache::new();
+    #[cfg(feature = "std")]
+    static $dispatch_vectored_cache: $crate::backend::cache::OnceCache<$dispatch_vectored_fn_ty> =
+      $crate::backend::cache::OnceCache::new();
+
+    #[cfg(feature = "std")]
+    #[inline]
+    fn $resolve_dispatch() -> $dispatch_fn_ty {
+      match $force_expr {
+        $($resolve_match)*
+      }
+    }
+
+    #[cfg(feature = "std")]
+    #[inline]
+    fn $resolve_dispatch_vectored() -> $dispatch_vectored_fn_ty {
+      match $force_expr {
+        $($resolve_vectored_match)*
+      }
+    }
+
+    #[inline]
+    fn $dispatch(crc: $word_ty, data: &[u8]) -> $word_ty {
+      #[cfg(feature = "std")]
+      {
+        let dispatch = $dispatch_cache.get_or_init($resolve_dispatch);
+        dispatch(crc, data)
+      }
+
+      #[cfg(not(feature = "std"))]
+      {
+        $auto_dispatch(crc, data)
+      }
+    }
+
+    #[inline]
+    fn $dispatch_vectored(crc: $word_ty, bufs: &[&[u8]]) -> $word_ty {
+      #[cfg(feature = "std")]
+      {
+        let dispatch = $dispatch_vectored_cache.get_or_init($resolve_dispatch_vectored);
+        dispatch(crc, bufs)
+      }
+
+      #[cfg(not(feature = "std"))]
+      {
+        $auto_vectored_dispatch(crc, bufs)
+      }
+    }
+
+    #[inline]
+    fn $resolved_dispatch() -> $dispatch_fn_ty {
+      #[cfg(feature = "std")]
+      {
+        $dispatch_cache.get_or_init($resolve_dispatch)
+      }
+
+      #[cfg(not(feature = "std"))]
+      {
+        $auto_dispatch
+      }
+    }
+
+    #[inline]
+    fn $runtime_paths() -> (
+      $dispatch_fn_ty,
+      Option<&'static $crate::checksum::kernel_table::KernelTable>,
+    ) {
+      let force = $force_expr;
+      if force == $auto_force {
+        ($auto_dispatch, Some($active_table))
+      } else {
+        ($resolved_dispatch(), None)
+      }
+    }
+  };
+}
+
 /// Generate a buffered CRC wrapper for a given inner CRC type.
 ///
 /// This macro creates:

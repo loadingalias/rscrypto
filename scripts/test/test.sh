@@ -37,6 +37,9 @@ if [ -n "${RSCRYPTO_TEST_THREADS:-}" ]; then
   echo "Using test thread override: $RSCRYPTO_TEST_THREADS"
 fi
 
+# macOS /bin/bash 3.2 treats "${empty_array[@]}" as unbound with `set -u`.
+# Guard expansions so an omitted thread override stays a true no-op.
+
 run_workspace_doctests() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Running doctests for entire workspace"
@@ -129,7 +132,7 @@ if [ "$CHANGED_FLAG" = true ]; then
     case "$(rail_scope_mode)" in
       workspace)
         if [ "$HAS_NEXTEST" = true ]; then
-          cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]}"
+          cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
           run_workspace_doctests
         else
           cargo test --workspace --all-features
@@ -147,7 +150,7 @@ if [ "$CHANGED_FLAG" = true ]; then
           for crate in $affected; do
             CRATE_FLAGS+=(-p "$crate")
           done
-          cargo nextest run "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]}"
+          cargo nextest run "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
           run_changed_doctests
         else
           for crate in $affected; do
@@ -170,7 +173,7 @@ elif [ ${#CRATES[@]} -gt 0 ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [ "$HAS_NEXTEST" = true ]; then
     # shellcheck disable=SC2086
-    cargo nextest run $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]}"
+    cargo nextest run $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
     run_crate_doctests "${CRATES[@]}"
   else
     # shellcheck disable=SC2086
@@ -181,7 +184,7 @@ else
   echo "Testing entire workspace"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   if [ "$HAS_NEXTEST" = true ]; then
-    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]}"
+    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
     run_workspace_doctests
   else
     cargo test --workspace --all-features

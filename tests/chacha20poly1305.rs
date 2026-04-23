@@ -2,12 +2,22 @@
 
 use chacha20poly1305::{
   ChaCha20Poly1305 as Oracle, KeyInit,
-  aead::{AeadInPlace, Key, generic_array::GenericArray},
+  aead::{Aead as _, AeadInPlace, Key, Payload, generic_array::GenericArray},
 };
 use rscrypto::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag, aead::Nonce96};
 
 mod common;
 use common::decode_hex_vec as decode_hex;
+
+fn pattern_bytes(len: usize, seed: u8) -> Vec<u8> {
+  let mut out = vec![0u8; len];
+  for (index, byte) in out.iter_mut().enumerate() {
+    *byte = seed
+      .wrapping_add((index as u8).wrapping_mul(17))
+      .wrapping_add((index as u8).rotate_left(1));
+  }
+  out
+}
 
 #[test]
 fn chacha20poly1305_matches_rfc_8439_vector() {
@@ -52,7 +62,7 @@ fn chacha20poly1305_matches_rustcrypto_oracle() {
   let oracle_nonce = GenericArray::clone_from_slice(&nonce_bytes);
 
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours);
+  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
 
   let mut oracle_buffer = plaintext.to_vec();
   let oracle_tag = oracle
@@ -74,7 +84,7 @@ fn chacha20poly1305_rejects_modified_tag() {
   let cipher = ChaCha20Poly1305::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).to_bytes();
+  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
   tag[0] ^= 1;
 
   assert!(
@@ -82,4 +92,97 @@ fn chacha20poly1305_rejects_modified_tag() {
       .decrypt_in_place(&nonce, b"aad", &mut buffer, &ChaCha20Poly1305Tag::from_bytes(tag))
       .is_err()
   );
+}
+
+#[test]
+fn chacha20poly1305_rejects_wrong_tag_length() {
+  assert!(ChaCha20Poly1305::tag_from_slice(&[0u8; 0]).is_err());
+  assert!(ChaCha20Poly1305::tag_from_slice(&[0u8; 15]).is_err());
+  assert!(ChaCha20Poly1305::tag_from_slice(&[0u8; 17]).is_err());
+  assert!(ChaCha20Poly1305::tag_from_slice(&[0u8; 16]).is_ok());
+}
+
+#[test]
+fn chacha20poly1305_boundary_and_large_inputs_match_oracle() {
+  const PLAINTEXT_LENS: &[usize] = &[
+    0, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 255, 256, 257, 1023, 1024, 4095, 4096, 16_383, 16_384,
+  ];
+  const AAD_LENS: &[usize] = &[0, 1, 15, 16, 17, 31, 32, 33, 255, 256];
+
+  let key_bytes = [0x42u8; ChaCha20Poly1305::KEY_SIZE];
+  let nonce_bytes = [0x24u8; Nonce96::LENGTH];
+  let key = ChaCha20Poly1305Key::from_bytes(key_bytes);
+  let nonce = Nonce96::from_bytes(nonce_bytes);
+  let cipher = ChaCha20Poly1305::new(&key);
+
+  let oracle = Oracle::new(Key::<Oracle>::from_slice(&key_bytes));
+  let oracle_nonce = GenericArray::clone_from_slice(&nonce_bytes);
+
+  for &plaintext_len in PLAINTEXT_LENS {
+    let plaintext = pattern_bytes(plaintext_len, 0x31);
+
+    for &aad_len in AAD_LENS {
+      let aad = pattern_bytes(aad_len, 0x9b);
+
+      let mut combined = vec![0u8; plaintext_len + ChaCha20Poly1305::TAG_SIZE];
+      cipher.encrypt(&nonce, &aad, &plaintext, &mut combined).unwrap();
+
+      let oracle_combined = oracle
+        .encrypt(
+          &oracle_nonce,
+          Payload {
+            msg: &plaintext,
+            aad: &aad,
+          },
+        )
+        .unwrap();
+      assert_eq!(
+        combined, oracle_combined,
+        "combined ciphertext mismatch pt_len={plaintext_len} aad_len={aad_len}"
+      );
+
+      let mut opened = vec![0u8; plaintext_len];
+      cipher.decrypt(&nonce, &aad, &oracle_combined, &mut opened).unwrap();
+      assert_eq!(
+        opened, plaintext,
+        "combined decrypt mismatch pt_len={plaintext_len} aad_len={aad_len}"
+      );
+
+      let oracle_opened = oracle
+        .decrypt(
+          &oracle_nonce,
+          Payload {
+            msg: &combined,
+            aad: &aad,
+          },
+        )
+        .unwrap();
+      assert_eq!(
+        oracle_opened, plaintext,
+        "oracle decrypt mismatch pt_len={plaintext_len} aad_len={aad_len}"
+      );
+
+      let mut detached = plaintext.clone();
+      let tag = cipher.encrypt_in_place(&nonce, &aad, &mut detached).unwrap();
+      assert_eq!(
+        detached,
+        oracle_combined[..plaintext_len],
+        "detached ciphertext mismatch pt_len={plaintext_len} aad_len={aad_len}"
+      );
+      assert_eq!(
+        tag.as_bytes(),
+        &oracle_combined[plaintext_len..],
+        "detached tag mismatch pt_len={plaintext_len} aad_len={aad_len}"
+      );
+
+      let typed_tag = ChaCha20Poly1305Tag::from_bytes(tag.to_bytes());
+      cipher
+        .decrypt_in_place(&nonce, &aad, &mut detached, &typed_tag)
+        .unwrap();
+      assert_eq!(
+        detached, plaintext,
+        "detached decrypt mismatch pt_len={plaintext_len} aad_len={aad_len}"
+      );
+    }
+  }
 }

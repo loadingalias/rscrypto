@@ -6,10 +6,7 @@
 
 use core::fmt::Debug;
 
-use crate::{
-  aead::{AeadBufferError, OpenError},
-  traits::VerificationError,
-};
+use crate::aead::{AeadBufferError, OpenError, SealError};
 
 /// Authenticated encryption with associated data.
 ///
@@ -29,12 +26,12 @@ use crate::{
 ///
 /// // In-place encrypt with detached tag.
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf);
+/// let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf)?;
 ///
 /// // In-place decrypt.
 /// cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
-/// # Ok::<(), rscrypto::VerificationError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait Aead: Clone {
   /// Key size in bytes.
@@ -66,26 +63,30 @@ pub trait Aead: Clone {
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError>;
 
   /// Encrypt `buffer` in place and return the detached authentication tag.
-  #[must_use]
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag;
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError>;
 
   /// Decrypt `buffer` in place and verify the detached authentication tag.
   ///
   /// # Errors
   ///
-  /// Returns [`VerificationError`] when authentication fails.
+  /// Returns [`OpenError`] when authentication fails or the input exceeds the
+  /// algorithm's supported length bound.
   fn decrypt_in_place(
     &self,
     nonce: &Self::Nonce,
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Self::Tag,
-  ) -> Result<(), VerificationError>;
+  ) -> Result<(), OpenError>;
 
   /// Alias for [`encrypt_in_place`](Self::encrypt_in_place).
   #[inline]
-  #[must_use]
-  fn encrypt_in_place_detached(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Self::Tag {
+  fn encrypt_in_place_detached(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Result<Self::Tag, SealError> {
     self.encrypt_in_place(nonce, aad, buffer)
   }
 
@@ -97,7 +98,7 @@ pub trait Aead: Clone {
     aad: &[u8],
     buffer: &mut [u8],
     tag: &Self::Tag,
-  ) -> Result<(), VerificationError> {
+  ) -> Result<(), OpenError> {
     self.decrypt_in_place(nonce, aad, buffer, tag)
   }
 
@@ -132,18 +133,25 @@ pub trait Aead: Clone {
   ///
   /// # Errors
   ///
-  /// Returns [`AeadBufferError`] if `out.len()` does not match
-  /// `plaintext.len() + TAG_SIZE` or that addition overflows.
+  /// Returns [`SealError`] if `out.len()` does not match `plaintext.len() +
+  /// TAG_SIZE`, that addition overflows, or the input exceeds the algorithm's
+  /// supported length bound.
   #[inline]
-  fn encrypt(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), AeadBufferError> {
-    let expected = Self::ciphertext_len(plaintext.len())?;
+  fn encrypt(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
+    let expected = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
     if out.len() != expected {
-      return Err(AeadBufferError::new());
+      return Err(SealError::buffer());
     }
 
     let (ciphertext, tag_out) = out.split_at_mut(plaintext.len());
     ciphertext.copy_from_slice(plaintext);
-    let tag = self.encrypt_in_place(nonce, aad, ciphertext);
+    let tag = match self.encrypt_in_place(nonce, aad, ciphertext) {
+      Ok(tag) => tag,
+      Err(err) => {
+        super::ct::zeroize(out);
+        return Err(err);
+      }
+    };
     tag_out.copy_from_slice(tag.as_ref());
     Ok(())
   }
@@ -172,7 +180,7 @@ pub trait Aead: Clone {
     let tag = Self::tag_from_slice(tag_bytes)?;
     if let Err(e) = self.decrypt_in_place(nonce, aad, out, &tag) {
       super::ct::zeroize(out);
-      return Err(e.into());
+      return Err(e);
     }
     Ok(())
   }

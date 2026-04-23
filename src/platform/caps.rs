@@ -68,18 +68,9 @@ impl Caps {
 
   /// Create a capability set from raw words.
   ///
-  /// This is primarily useful for testing and fuzzing.
-  /// Normal usage should prefer the predefined constants.
-  ///
-  /// # Availability
-  ///
-  /// This function is only available when the `testing` feature is enabled
-  /// or in test builds. Enable it in Cargo.toml:
-  /// ```toml
-  /// [dependencies]
-  /// rscrypto = { version = "...", features = ["testing"] }
-  /// ```
-  #[cfg(any(test, feature = "testing"))]
+  /// This is primarily useful for testing and fuzzing. Normal usage should prefer
+  /// the predefined constants.
+  #[cfg(test)]
   #[inline]
   #[must_use]
   pub const fn from_raw(words: [u64; 4]) -> Self {
@@ -89,12 +80,7 @@ impl Caps {
   /// Access the raw underlying words.
   ///
   /// Returns the four 64-bit words that make up the capability bitset.
-  ///
-  /// # Availability
-  ///
-  /// This function is only available when the `testing` feature is enabled
-  /// or in test builds.
-  #[cfg(any(test, feature = "testing"))]
+  #[cfg(test)]
   #[inline]
   #[must_use]
   pub const fn as_raw(&self) -> &[u64; 4] {
@@ -1455,7 +1441,7 @@ mod proptests {
 
   /// Strategy to generate random Caps values
   fn arb_caps() -> impl Strategy<Value = Caps> {
-    prop::array::uniform4(any::<u64>()).prop_map(Caps::from_raw)
+    prop::array::uniform4(any::<u64>()).prop_map(Caps::from_words)
   }
 
   proptest! {

@@ -5,13 +5,39 @@
 use super::keccak::{KeccakCore, KeccakXof};
 use crate::traits::{Digest, Xof};
 
-/// SHA3-256.
+/// SHA3-256 digest state.
+///
+/// Standardized in FIPS 202.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha3_256};
+///
+/// let mut hasher = Sha3_256::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha3_256::digest(b"abc"));
+/// ```
 #[derive(Clone, Default)]
 pub struct Sha3_256 {
   core: KeccakCore<136>,
 }
 
-/// SHA3-224.
+/// SHA3-224 digest state.
+///
+/// Standardized in FIPS 202.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha3_224};
+///
+/// let mut hasher = Sha3_224::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha3_224::digest(b"abc"));
+/// ```
 #[derive(Clone, Default)]
 pub struct Sha3_224 {
   core: KeccakCore<144>,
@@ -119,13 +145,39 @@ impl Sha3_256 {
   }
 }
 
-/// SHA3-512.
+/// SHA3-512 digest state.
+///
+/// Standardized in FIPS 202.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha3_512};
+///
+/// let mut hasher = Sha3_512::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha3_512::digest(b"abc"));
+/// ```
 #[derive(Clone, Default)]
 pub struct Sha3_512 {
   core: KeccakCore<72>,
 }
 
-/// SHA3-384.
+/// SHA3-384 digest state.
+///
+/// Standardized in FIPS 202.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha3_384};
+///
+/// let mut hasher = Sha3_384::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha3_384::digest(b"abc"));
+/// ```
 #[derive(Clone, Default)]
 pub struct Sha3_384 {
   core: KeccakCore<104>,
@@ -233,13 +285,41 @@ impl Sha3_512 {
   }
 }
 
-/// SHAKE256 (XOF).
+/// SHAKE256 extendable-output state.
+///
+/// Standardized in FIPS 202.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Shake256, Xof};
+///
+/// let mut reader = Shake256::xof(b"abc");
+/// let mut out = [0u8; 32];
+/// reader.squeeze(&mut out);
+///
+/// assert_ne!(out, [0u8; 32]);
+/// ```
 #[derive(Clone, Default)]
 pub struct Shake256 {
   core: KeccakCore<136>,
 }
 
-/// SHAKE128 (XOF).
+/// SHAKE128 extendable-output state.
+///
+/// Standardized in FIPS 202.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Shake128, Xof};
+///
+/// let mut reader = Shake128::xof(b"abc");
+/// let mut out = [0u8; 32];
+/// reader.squeeze(&mut out);
+///
+/// assert_ne!(out, [0u8; 32]);
+/// ```
 #[derive(Clone, Default)]
 pub struct Shake128 {
   core: KeccakCore<168>,

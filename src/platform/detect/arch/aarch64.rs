@@ -407,6 +407,7 @@ enum AppleSiliconGen {
   feature = "std",
   any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
+#[cfg_attr(miri, allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Aarch64TuneFamily {
   #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
@@ -517,6 +518,7 @@ fn detect_apple_silicon_gen() -> Option<AppleSiliconGen> {
   any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64")
 ))]
 #[must_use]
+#[cfg_attr(miri, allow(dead_code))]
 pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   #[cfg(all(
     feature = "std",

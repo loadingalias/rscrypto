@@ -34,6 +34,20 @@ pub(crate) const H0: [u64; 8] = [
   0x47b5_481d_befa_4fa4,
 ];
 
+/// SHA-384 digest state.
+///
+/// Standardized in FIPS 180-4.
+///
+/// # Examples
+///
+/// ```
+/// use rscrypto::{Digest, Sha384};
+///
+/// let mut hasher = Sha384::new();
+/// hasher.update(b"abc");
+///
+/// assert_eq!(hasher.finalize(), Sha384::digest(b"abc"));
+/// ```
 #[derive(Clone)]
 pub struct Sha384 {
   state: [u64; 8],

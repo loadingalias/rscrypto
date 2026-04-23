@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 use crate::platform::Caps;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

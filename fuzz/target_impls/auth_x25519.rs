@@ -26,7 +26,9 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(ours_shared, Err(X25519Error::new()), "x25519 low-order rejection mismatch");
     } else {
         assert_eq!(
-            ours_shared.expect("non-zero x25519 oracle output must succeed").to_bytes(),
+            *ours_shared
+                .expect("non-zero x25519 oracle output must succeed")
+                .as_bytes(),
             dalek_shared,
             "x25519 shared-secret mismatch"
         );

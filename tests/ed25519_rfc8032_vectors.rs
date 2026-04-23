@@ -1,8 +1,10 @@
 #![cfg(feature = "ed25519")]
 
-use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};
+use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 
+#[derive(Clone, Copy)]
 struct Vector<'a> {
+  name: &'a str,
   secret_key: [u8; 32],
   public_key: [u8; 32],
   message: &'a str,
@@ -14,8 +16,29 @@ use common::{decode_hex_array as decode_hex, decode_hex_vec};
 
 #[test]
 fn ed25519_rfc8032_vectors() {
+  // RFC 8032 §7.1 contains five Ed25519 vectors: TEST 1, TEST 2, TEST 3, TEST 1024, and TEST
+  // SHA(abc).
   let vectors = [
     Vector {
+      name: "rfc8032 test 1",
+      secret_key: decode_hex(concat!(
+        "9d61b19deffd5a60ba844af492ec2cc4",
+        "4449c5697b326919703bac031cae7f60"
+      )),
+      public_key: decode_hex(concat!(
+        "d75a980182b10ab7d54bfed3c964073a",
+        "0ee172f3daa62325af021a68f707511a"
+      )),
+      message: "",
+      signature: decode_hex(concat!(
+        "e5564300c360ac729086e2cc806e828a",
+        "84877f1eb8e5d974d873e06522490155",
+        "5fb8821590a33bacc61e39701cf9b46b",
+        "d25bf5f0595bbe24655141438e7a100b"
+      )),
+    },
+    Vector {
+      name: "rfc8032 test 2",
       secret_key: decode_hex(concat!(
         "4ccd089b28ff96da9db6c346ec114e0f",
         "5b8a319f35aba624da8cf6ed4fb8a6fb"
@@ -33,6 +56,7 @@ fn ed25519_rfc8032_vectors() {
       )),
     },
     Vector {
+      name: "rfc8032 test 3",
       secret_key: decode_hex(concat!(
         "c5aa8df43f9f837bedb7442f31dcb7b1",
         "66d38535076f094b85ce3a2e0b4458f7"
@@ -50,6 +74,7 @@ fn ed25519_rfc8032_vectors() {
       )),
     },
     Vector {
+      name: "rfc8032 test 1024",
       secret_key: decode_hex(concat!(
         "f5e5767cf153319517630f226876b86c",
         "8160cc583bc013744c6bf255f5cc0ee5"
@@ -100,6 +125,7 @@ fn ed25519_rfc8032_vectors() {
       )),
     },
     Vector {
+      name: "rfc8032 test sha(abc)",
       secret_key: decode_hex(concat!(
         "833fe62409237b9d62ec77587520911e",
         "9a759cec1d19755b7da901b96dca3d42"
@@ -130,9 +156,17 @@ fn ed25519_rfc8032_vectors() {
     let message = decode_hex_vec(vector.message);
     let signature = Ed25519Signature::from_bytes(vector.signature);
 
-    assert_eq!(keypair.public_key(), public);
-    assert_eq!(keypair.sign(&message), signature);
-    assert!(public.verify(&message, &signature).is_ok());
-    assert!(verify_ed25519(&message, &public, &signature).is_ok());
+    assert_eq!(keypair.public_key(), public, "public key mismatch for {}", vector.name);
+    assert_eq!(
+      keypair.sign(&message),
+      signature,
+      "signature mismatch for {}",
+      vector.name
+    );
+    assert!(
+      public.verify(&message, &signature).is_ok(),
+      "verification failed for {}",
+      vector.name
+    );
   }
 }

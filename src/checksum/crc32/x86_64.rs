@@ -1807,10 +1807,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
     // Double-unrolled main loop: process 4 blocks (512B) per iteration.
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
-    let mut quad_chunks = rest.chunks_exact(DOUBLE_GROUP);
-    for quad in &mut quad_chunks {
-      let [b0, b1, b2, b3] = quad else { unreachable!() };
-
+    let (quad_groups, quad_remainder) = rest.as_chunks::<DOUBLE_GROUP>();
+    for [b0, b1, b2, b3] in quad_groups {
       // Prefetch ahead
       let base_ptr = b0.as_ptr().cast::<u8>();
       prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
@@ -1835,9 +1833,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
     }
 
     // Handle remaining pairs
-    let mut pairs = quad_chunks.remainder().chunks_exact(2);
-    for pair in &mut pairs {
-      let [b0, b1] = pair else { unreachable!() };
+    let (pairs, pair_remainder) = quad_remainder.as_chunks::<2>();
+    for [b0, b1] in pairs {
       let (y0, y1) = load_128b_block(b0);
       s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_256b, y0);
       s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_256b, y1);
@@ -1850,7 +1847,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_2way(state: u32, blocks: &[[Simd128; 8]
     let mut combined0 = _mm512_xor_si512(s1_0, fold_only_crc32_reflected_vpclmul(s0_0, coeff_128b));
     let mut combined1 = _mm512_xor_si512(s1_1, fold_only_crc32_reflected_vpclmul(s0_1, coeff_128b));
 
-    if let Some(block) = pairs.remainder().first() {
+    if let Some(block) = pair_remainder.first() {
       let (y0, y1) = load_128b_block(block);
       combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
       combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
@@ -1893,12 +1890,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
     // Double-unrolled main loop: process 8 blocks (1KB) per iteration.
     const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
 
-    let mut octet_chunks = rest.chunks_exact(DOUBLE_GROUP);
-    for octet in &mut octet_chunks {
-      let [b0, b1, b2, b3, b4, b5, b6, b7] = octet else {
-        unreachable!()
-      };
-
+    let (octet_groups, octet_remainder) = rest.as_chunks::<DOUBLE_GROUP>();
+    for [b0, b1, b2, b3, b4, b5, b6, b7] in octet_groups {
       // Prefetch ahead
       let base_ptr = b0.as_ptr().cast::<u8>();
       prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
@@ -1939,9 +1932,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
     }
 
     // Handle remaining 4-block groups
-    let mut groups = octet_chunks.remainder().chunks_exact(4);
-    for group in &mut groups {
-      let [b0, b1, b2, b3] = group else { unreachable!() };
+    let (groups, group_remainder) = octet_remainder.as_chunks::<4>();
+    for [b0, b1, b2, b3] in groups {
       let (y0, y1) = load_128b_block(b0);
       s0_0 = fold_16_crc32_reflected_vpclmul(s0_0, coeff_512b, y0);
       s0_1 = fold_16_crc32_reflected_vpclmul(s0_1, coeff_512b, y1);
@@ -1969,7 +1961,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_4way(state: u32, blocks: &[[Simd128; 8]
     combined0 = _mm512_xor_si512(combined0, fold_only_crc32_reflected_vpclmul(s2_0, c128));
     combined1 = _mm512_xor_si512(combined1, fold_only_crc32_reflected_vpclmul(s2_1, c128));
 
-    for block in groups.remainder() {
+    for block in group_remainder {
       let (y0, y1) = load_128b_block(block);
       combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
       combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
@@ -2017,12 +2009,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
     s0_0 = _mm512_xor_si512(s0_0, injected);
 
     // 7-way already processes 896B/iter - just add prefetch
-    let mut groups = rest.chunks_exact(7);
-    for group in &mut groups {
-      let [b0, b1, b2, b3, b4, b5, b6] = group else {
-        unreachable!()
-      };
-
+    let (groups, group_remainder) = rest.as_chunks::<7>();
+    for [b0, b1, b2, b3, b4, b5, b6] in groups {
       // Prefetch ahead
       let base_ptr = b0.as_ptr().cast::<u8>();
       prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
@@ -2072,7 +2060,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_7way(state: u32, blocks: &[[Simd128; 8]
     combined0 = _mm512_xor_si512(combined0, fold_only_crc32_reflected_vpclmul(s5_0, c128));
     combined1 = _mm512_xor_si512(combined1, fold_only_crc32_reflected_vpclmul(s5_1, c128));
 
-    for block in groups.remainder() {
+    for block in group_remainder {
       let (y0, y1) = load_128b_block(block);
       combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
       combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);
@@ -2122,12 +2110,8 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
     s0_0 = _mm512_xor_si512(s0_0, injected);
 
     // 8-way already processes 1KB/iter - just add prefetch
-    let mut groups = rest.chunks_exact(8);
-    for group in &mut groups {
-      let [b0, b1, b2, b3, b4, b5, b6, b7] = group else {
-        unreachable!()
-      };
-
+    let (groups, group_remainder) = rest.as_chunks::<8>();
+    for [b0, b1, b2, b3, b4, b5, b6, b7] in groups {
       // Prefetch ahead
       let base_ptr = b0.as_ptr().cast::<u8>();
       prefetch_read_l1(base_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
@@ -2183,7 +2167,7 @@ unsafe fn update_simd_crc32_ieee_vpclmul_8way(state: u32, blocks: &[[Simd128; 8]
     combined0 = _mm512_xor_si512(combined0, fold_only_crc32_reflected_vpclmul(s6_0, c128));
     combined1 = _mm512_xor_si512(combined1, fold_only_crc32_reflected_vpclmul(s6_1, c128));
 
-    for block in groups.remainder() {
+    for block in group_remainder {
       let (y0, y1) = load_128b_block(block);
       combined0 = fold_16_crc32_reflected_vpclmul(combined0, coeff_128b, y0);
       combined1 = fold_16_crc32_reflected_vpclmul(combined1, coeff_128b, y1);

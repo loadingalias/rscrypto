@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 use super::{
   dispatch_tables::DispatchTable,
   kernels::{Keccakf1600KernelId, permute_fn, required_caps},

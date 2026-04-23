@@ -27,8 +27,8 @@ fn encode_u64_be(value: u64, out: &mut [u8; 9], right: bool) -> usize {
 #[inline]
 fn bits_from_len(len: usize) -> u64 {
   match u64::try_from(len) {
-    Ok(value) => value.strict_mul(8),
-    Err(_) => panic!("length exceeds u64"),
+    Ok(value) => value.saturating_mul(8),
+    Err(_) => u64::MAX,
   }
 }
 

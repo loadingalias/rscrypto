@@ -11,8 +11,8 @@ use rscrypto::aead::introspect::{DispatchInfo as AeadDispatchInfo, backend_for a
 #[cfg(feature = "aead")]
 use rscrypto::aead::{
   AeadBackend, AeadBufferError, AeadPrimitive, Aegis256, Aegis256Key, Aegis256Tag, BenchLane, ChaCha20Poly1305,
-  ChaCha20Poly1305Key, ChaCha20Poly1305Tag, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, XChaCha20Poly1305,
-  XChaCha20Poly1305Key, XChaCha20Poly1305Tag, lane_target_backend, select_backend,
+  ChaCha20Poly1305Key, ChaCha20Poly1305Tag, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError,
+  XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag, lane_target_backend, select_backend,
 };
 #[cfg(feature = "hkdf")]
 use rscrypto::auth::HkdfOutputLengthError;
@@ -29,7 +29,9 @@ use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
 #[cfg(feature = "hashes")]
 use rscrypto::hashes::fast::{RapidHash64, RapidHashFast64, RapidHashFast128, Xxh3_64};
 #[cfg(all(feature = "hashes", feature = "diag"))]
-use rscrypto::hashes::introspect::{HashKernelIntrospect, kernel_for as hash_kernel_for};
+use rscrypto::hashes::introspect::{
+  DispatchInfo as HashDispatchInfo, KernelIntrospect as HashKernelIntrospect, kernel_for as hash_kernel_for,
+};
 #[cfg(all(feature = "hashes", feature = "std"))]
 use rscrypto::hashes::{DigestReader, DigestWriter};
 #[cfg(feature = "aead")]
@@ -43,7 +45,7 @@ use rscrypto::{
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 #[cfg(feature = "ed25519")]
-use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, verify_ed25519};
+use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
 use rscrypto::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
@@ -73,7 +75,10 @@ fn root_surface_aead_exports_compile() {
   assert_eq!(nonce256.as_bytes().len(), Nonce256::LENGTH);
 
   let _ = AeadBufferError::new();
+  let _ = SealError::buffer();
+  let _ = SealError::too_large();
   let _ = OpenError::buffer();
+  let _ = OpenError::too_large();
   let _ = OpenError::verification();
   let _ = AeadPrimitive::XChaCha20Poly1305.name();
   let _ = AeadBackend::Portable.name();
@@ -116,8 +121,8 @@ fn root_surface_aead_exports_compile() {
       Ok(tag)
     }
 
-    fn encrypt_in_place(&self, _nonce: &Self::Nonce, _aad: &[u8], _buffer: &mut [u8]) -> Self::Tag {
-      [0u8; Self::TAG_SIZE]
+    fn encrypt_in_place(&self, _nonce: &Self::Nonce, _aad: &[u8], _buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+      Ok([0u8; Self::TAG_SIZE])
     }
 
     fn decrypt_in_place(
@@ -126,7 +131,7 @@ fn root_surface_aead_exports_compile() {
       _aad: &[u8],
       _buffer: &mut [u8],
       _tag: &Self::Tag,
-    ) -> Result<(), VerificationError> {
+    ) -> Result<(), OpenError> {
       Ok(())
     }
   }
@@ -204,7 +209,7 @@ fn root_surface_kmac_exports_compile() {
   let mut kmac = Kmac256::new(key, b"svc=v1");
   kmac.update(data);
   kmac.finalize_into(&mut out);
-  assert!(Kmac256::verify(key, b"svc=v1", data, &out).is_ok());
+  assert!(Kmac256::verify_tag(key, b"svc=v1", data, &out).is_ok());
 }
 
 #[test]
@@ -219,7 +224,6 @@ fn root_surface_signature_exports_compile() {
   assert_eq!(public.as_bytes().len(), 32);
   assert_eq!(signature.as_bytes().len(), 64);
   assert!(public.verify(b"root-surface-ed25519", &signature).is_ok());
-  assert!(verify_ed25519(b"root-surface-ed25519", &public, &signature).is_ok());
 }
 
 #[test]
@@ -351,6 +355,7 @@ fn advanced_checksum_modules_compile() {
 fn advanced_hash_modules_compile() {
   fn assert_hash_kernel_introspect<T: HashKernelIntrospect>() {}
 
+  let _ = HashDispatchInfo::current();
   let _ = hash_kernel_for::<Sha256>(64);
   let _ = hash_kernel_for::<Shake256>(64);
   let _ = hash_kernel_for::<Blake3>(64);

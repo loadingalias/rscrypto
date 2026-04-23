@@ -99,7 +99,9 @@ pub fn assert_aead_roundtrip<A: Aead>(
     let original = plaintext.to_vec();
     let mut buf = original.clone();
 
-    let tag = cipher.encrypt_in_place(nonce, aad, &mut buf);
+    let tag = cipher
+        .encrypt_in_place(nonce, aad, &mut buf)
+        .expect("roundtrip: encrypt must succeed");
     cipher
         .decrypt_in_place(nonce, aad, &mut buf, &tag)
         .expect("roundtrip: decrypt must succeed");
@@ -132,7 +134,9 @@ pub fn assert_aead_forgery<A: Aead>(
     control: u8,
 ) {
     let mut ct = plaintext.to_vec();
-    let tag = cipher.encrypt_in_place(nonce, aad, &mut ct);
+    let tag = cipher
+        .encrypt_in_place(nonce, aad, &mut ct)
+        .expect("forgery: encrypt must succeed");
 
     let target = control % 3;
     let seed = control / 3;
