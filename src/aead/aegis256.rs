@@ -9,9 +9,18 @@
 
 use core::fmt;
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little"),
+  target_arch = "riscv64",
+))]
 use super::targets::AeadBackend;
-#[cfg(all(not(target_arch = "x86_64"), not(target_arch = "s390x")))]
+#[cfg(any(
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little"),
+  target_arch = "riscv64",
+))]
 use super::targets::{AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce256, OpenError, SealError};
 use crate::traits::{Aead, ct};
@@ -229,7 +238,12 @@ mod rv_zvkned;
 #[allow(unsafe_code)]
 #[path = "aegis256/s390x_vperm.rs"]
 mod s390x_vperm;
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(any(
+  target_arch = "x86_64",
+  target_arch = "aarch64",
+  all(target_arch = "powerpc64", target_endian = "little"),
+  target_arch = "riscv64",
+))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
   let caps = crate::platform::caps();
@@ -323,7 +337,12 @@ define_aead_tag_type!(Aegis256Tag, TAG_SIZE, "AEGIS-256 128-bit authentication t
 #[derive(Clone)]
 pub struct Aegis256 {
   key: Aegis256Key,
-  #[cfg(not(target_arch = "s390x"))]
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    all(target_arch = "powerpc64", target_endian = "little"),
+    target_arch = "riscv64",
+  ))]
   backend: AeadBackend,
 }
 
@@ -480,7 +499,12 @@ impl Aead for Aegis256 {
   fn new(key: &Self::Key) -> Self {
     Self {
       key: key.clone(),
-      #[cfg(not(target_arch = "s390x"))]
+      #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "aarch64",
+        all(target_arch = "powerpc64", target_endian = "little"),
+        target_arch = "riscv64",
+      ))]
       backend: resolve_backend(),
     }
   }
