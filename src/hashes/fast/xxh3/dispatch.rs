@@ -126,6 +126,9 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 #[must_use]
 pub fn hash64(data: &[u8]) -> u64 {
   let len = data.len();
+  if len == 0 {
+    return super::XXH3_64_EMPTY_DEFAULT;
+  }
   if len <= 16 {
     return super::xxh3_64_0to16(data, 0, &super::DEFAULT_SECRET);
   }
@@ -148,6 +151,9 @@ pub fn hash64(data: &[u8]) -> u64 {
 #[must_use]
 pub fn hash128(data: &[u8]) -> u128 {
   let len = data.len();
+  if len == 0 {
+    return super::XXH3_128_EMPTY_DEFAULT;
+  }
   if len <= 16 {
     return super::xxh3_128_0to16(data, 0, &super::DEFAULT_SECRET);
   }
@@ -170,6 +176,9 @@ pub fn hash128(data: &[u8]) -> u128 {
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
   let len = data.len();
+  if len == 0 && seed == 0 {
+    return super::XXH3_64_EMPTY_DEFAULT;
+  }
   if len <= 16 {
     return super::xxh3_64_0to16(data, seed, &super::DEFAULT_SECRET);
   }
@@ -272,6 +281,9 @@ fn hash64_long_runtime(seed: u64, data: &[u8]) -> u64 {
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
   let len = data.len();
+  if len == 0 && seed == 0 {
+    return super::XXH3_128_EMPTY_DEFAULT;
+  }
   if len <= 16 {
     return super::xxh3_128_0to16(data, seed, &super::DEFAULT_SECRET);
   }

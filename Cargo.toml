@@ -92,7 +92,6 @@ kmac = ["sha3"]
 ed25519 = ["sha2"]
 x25519 = []
 
-# Password-hashing infrastructure (docs/tasks/password_hashing.md)
 phc-strings = ["alloc"]
 argon2 = ["blake2b", "alloc"]
 scrypt = ["pbkdf2", "alloc"]

@@ -101,7 +101,8 @@ pub enum AeadBackend {
   Riscv64VectorCrypto,
   Riscv64Vector,
   /// Hamburg vperm AES via `vrgather.vv` — practically constant-time.
-  /// Used on RISC-V with V extension but without Zkne/Zvkned.
+  /// Kept as an explicit backend, but not selected for V-only RISC-V until
+  /// it beats the scalar portable path on benchmark hardware.
   Riscv64Vperm,
   /// Legacy bare-scalar RISC-V AES fallback label.
   /// Retained for compatibility; runtime dispatch now prefers `Portable`.
@@ -335,11 +336,10 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
         AeadBackend::Riscv64VectorCrypto
       } else if caps.has(riscv::ZKNE) && (caps.has(riscv::ZBC) || caps.has(riscv::ZBKC)) {
         AeadBackend::Riscv64ScalarCrypto
-      } else if caps.has(riscv::V) {
-        // Hamburg vperm AES + optional scalar CLMUL POLYVAL (Zbc/Zbkc).
-        AeadBackend::Riscv64Vperm
       } else {
-        // Constant-time scalar fallback for bare RISC-V.
+        // Constant-time scalar fallback. V-only Hamburg vperm is currently
+        // much slower than the portable path on RISE benchmark hardware, so
+        // do not select it automatically.
         AeadBackend::Portable
       }
     }
@@ -397,11 +397,10 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
         AeadBackend::Riscv64VectorCrypto
       } else if caps.has(riscv::ZKNE) {
         AeadBackend::Riscv64ScalarCrypto
-      } else if caps.has(riscv::V) {
-        // Hamburg vperm via vrgather.vv — practically constant-time.
-        AeadBackend::Riscv64Vperm
       } else {
-        // Constant-time scalar fallback for bare RISC-V.
+        // Constant-time scalar fallback. V-only Hamburg vperm is currently
+        // much slower than the portable path on RISE benchmark hardware, so
+        // do not select it automatically.
         AeadBackend::Portable
       }
     }
@@ -556,14 +555,15 @@ mod tests {
       AeadBackend::Riscv64ScalarCrypto
     );
 
-    // Tier 3: vperm (V extension, no crypto)
+    // Tier 3: V-only falls back to portable until the vperm AES backend is
+    // measured faster than the scalar portable path on benchmark hardware.
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::V | riscv::ZBC),
-      AeadBackend::Riscv64Vperm
+      AeadBackend::Portable
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Riscv64, riscv::V),
-      AeadBackend::Riscv64Vperm
+      AeadBackend::Portable
     );
 
     // Tier 4: constant-time portable fallback (bare scalar, no V, no crypto)
@@ -572,7 +572,7 @@ mod tests {
       AeadBackend::Portable
     );
 
-    // AEGIS: Zvkned → Zkne → vperm (V) → portable
+    // AEGIS: Zvkned → Zkne → portable
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZVKNED),
       AeadBackend::Riscv64VectorCrypto
@@ -583,7 +583,7 @@ mod tests {
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::V),
-      AeadBackend::Riscv64Vperm
+      AeadBackend::Portable
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, Caps::NONE),
