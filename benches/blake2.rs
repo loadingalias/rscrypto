@@ -379,7 +379,7 @@ fn compress_kernel(c: &mut Criterion) {
   g.finish();
 }
 
-#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+#[cfg(all(feature = "diag", any(target_arch = "aarch64", target_arch = "riscv64")))]
 fn forced_kernel_compare(c: &mut Criterion) {
   let mut group = c.benchmark_group("blake2/forced-kernel");
 
@@ -396,13 +396,27 @@ fn forced_kernel_compare(c: &mut Criterion) {
     });
   });
 
-  group.bench_function("rscrypto/blake2b256/aarch64-neon/64b", |b| {
-    b.iter(|| {
-      let mut state = blake2b::diag_init_state_unkeyed(32);
-      blake2b::diag_compress_block_aarch64_neon(&mut state, black_box(&block_b), 64, true);
-      black_box(state)
+  #[cfg(target_arch = "aarch64")]
+  {
+    group.bench_function("rscrypto/blake2b256/aarch64-neon/64b", |b| {
+      b.iter(|| {
+        let mut state = blake2b::diag_init_state_unkeyed(32);
+        blake2b::diag_compress_block_aarch64_neon(&mut state, black_box(&block_b), 64, true);
+        black_box(state)
+      });
     });
-  });
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    group.bench_function("rscrypto/blake2b256/riscv64-v/64b", |b| {
+      b.iter(|| {
+        let mut state = blake2b::diag_init_state_unkeyed(32);
+        blake2b::diag_compress_block_riscv64_v(&mut state, black_box(&block_b), 64, true);
+        black_box(state)
+      });
+    });
+  }
 
   group.bench_function("rscrypto/blake2s256/portable/32b", |b| {
     b.iter(|| {
@@ -412,13 +426,27 @@ fn forced_kernel_compare(c: &mut Criterion) {
     });
   });
 
-  group.bench_function("rscrypto/blake2s256/aarch64-neon/32b", |b| {
-    b.iter(|| {
-      let mut state = blake2s::diag_init_state_unkeyed(32);
-      blake2s::diag_compress_block_aarch64_neon(&mut state, black_box(&block_s), 32, true);
-      black_box(state)
+  #[cfg(target_arch = "aarch64")]
+  {
+    group.bench_function("rscrypto/blake2s256/aarch64-neon/32b", |b| {
+      b.iter(|| {
+        let mut state = blake2s::diag_init_state_unkeyed(32);
+        blake2s::diag_compress_block_aarch64_neon(&mut state, black_box(&block_s), 32, true);
+        black_box(state)
+      });
     });
-  });
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    group.bench_function("rscrypto/blake2s256/riscv64-v/32b", |b| {
+      b.iter(|| {
+        let mut state = blake2s::diag_init_state_unkeyed(32);
+        blake2s::diag_compress_block_riscv64_v(&mut state, black_box(&block_s), 32, true);
+        black_box(state)
+      });
+    });
+  }
 
   group.finish();
 }
@@ -426,7 +454,7 @@ fn forced_kernel_compare(c: &mut Criterion) {
 #[cfg(not(feature = "diag"))]
 criterion_group!(benches, oneshot, host_overhead, keyed, streaming, params);
 #[cfg(feature = "diag")]
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
 criterion_group!(
   benches,
   oneshot,
@@ -437,7 +465,7 @@ criterion_group!(
   compress_kernel
 );
 #[cfg(feature = "diag")]
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 criterion_group!(
   benches,
   oneshot,

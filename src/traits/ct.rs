@@ -163,6 +163,7 @@ pub fn zeroize(buf: &mut [u8]) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+#[cfg(feature = "pbkdf2")]
 mod word_zero_sealed {
   /// Marker for primitive integer types whose zero representation is
   /// `0` and whose `write_volatile` of zero is a sound clear.
@@ -194,6 +195,7 @@ mod word_zero_sealed {
   }
 }
 
+#[cfg(feature = "pbkdf2")]
 pub(crate) use word_zero_sealed::WordZero;
 
 /// Volatile-zero a slice of `WordZero` integers without a compiler fence.
@@ -203,6 +205,7 @@ pub(crate) use word_zero_sealed::WordZero;
 /// loops over `core::ptr::write_volatile` patterns. Caller is responsible
 /// for emitting a single `compiler_fence(SeqCst)` after all related
 /// zeroizations.
+#[cfg(feature = "pbkdf2")]
 #[inline(always)]
 pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
   for word in words {

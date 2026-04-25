@@ -4,7 +4,9 @@ use super::{
   dispatch_tables::DispatchTable,
   kernels::{AsconPermute12KernelId, permute_fn, required_caps},
 };
-use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassDispatch, platform::Caps};
+#[cfg(any(test, feature = "std"))]
+use crate::hashes::crypto::dispatch_util::SizeClassDispatch;
+use crate::{backend::cache::OnceCache, platform::Caps};
 
 type PermuteFn = fn(&mut [u64; 5]);
 
@@ -99,7 +101,7 @@ pub fn permute_12_for_len(state: &mut [u64; 5], len: usize) {
 
 #[inline]
 #[must_use]
-#[allow(dead_code)]
+#[cfg(any(test, feature = "std"))]
 pub(crate) fn permute_dispatch() -> SizeClassDispatch<PermuteFn> {
   let d = active();
   SizeClassDispatch {
