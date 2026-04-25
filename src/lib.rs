@@ -300,19 +300,22 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //! | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash` | No | Cryptographic hash leaves |
 //! | `xxh3`, `rapidhash` | No | Fast non-cryptographic hash leaves |
 //! | `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519` | No | Individual auth/KDF, signatures, and key-exchange leaves |
+//! | `argon2`, `scrypt`, `phc-strings` | No | Password-hashing leaves; `argon2` implies `blake2b + alloc`, `scrypt` implies `pbkdf2 + alloc`, `phc-strings` implies `alloc` |
 //! | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` | No | AEAD leaves |
 //! | `checksums` | No | All checksum leaves |
 //! | `crypto-hashes` | No | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, and `ascon-hash` |
 //! | `fast-hashes` | No | `xxh3` and `rapidhash` |
 //! | `hashes` | No | `crypto-hashes` + `fast-hashes` |
 //! | `macs` | No | `hmac` and `kmac` |
-//! | `kdfs` | No | `hkdf` and `pbkdf2` |
+//! | `kdfs` | No | `hkdf` and `pbkdf2` (key-derivation, not password-hashing) |
+//! | `password-hashing` | No | `argon2`, `scrypt`, and `phc-strings` |
 //! | `signatures` | No | `ed25519` |
 //! | `key-exchange` | No | `x25519` |
-//! | `auth` | No | `macs`, `kdfs`, `signatures`, and `key-exchange` |
+//! | `auth` | No | `macs`, `kdfs`, `password-hashing`, `signatures`, and `key-exchange` |
 //! | `aead` | No | All AEAD leaves |
 //! | `full` | No | `checksums`, `hashes`, `auth`, `aead` |
-//! | `parallel` | No | Rayon-based parallel Blake3 hashing |
+//! | `parallel` | No | Rayon-based parallel Blake3 hashing and Argon2 lane parallelism (implies `std + blake3 + argon2`) |
+//! | `portable-only` | No | Force portable backends (FIPS / DO-178C / ISO 26262 deployment posture). Suppresses runtime SIMD invocation; binary still contains SIMD code unless `RUSTFLAGS` further restricts target features. |
 //! | `getrandom` | No | `random()` constructors for keys and nonces |
 //! | `serde` | No | `Serialize`/`Deserialize` for keys, nonces, tags, and signatures |
 //! | `diag` | No | Dispatch introspection surfaces when diagnostics are enabled |
@@ -329,6 +332,7 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //! | Symmetric AEAD | `Aes256Gcm` |
 //! | Hash / XOF | `Sha*`, `Shake*` |
 //! | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
+//! | Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
 //! | Signature / KEX | `Ed25519*`, `X25519*` |
 //!
 //! ## Outside module boundary (this release)
@@ -337,6 +341,7 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
 //! |----------|-------|
 //! | AEAD | `Aes256GcmSiv`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, `Aegis256` |
 //! | Hash / XOF | `Ascon*`, `Blake*` |
+//! | Password hashing (memory-hard) | `Argon2d`, `Argon2i`, `Argon2id`, `Scrypt` — not NIST-approved; prefer `Pbkdf2Sha256` under FIPS policy |
 //! | Non-crypto | `Crc*`, `Xxh3`, `RapidHash` |
 //!
 //! The full FIPS boundary matrix and roadmap are documented in `docs/tasks/fips.md`.
@@ -437,7 +442,10 @@ pub mod aead;
   feature = "hkdf",
   feature = "kmac",
   feature = "ed25519",
-  feature = "x25519"
+  feature = "x25519",
+  feature = "phc-strings",
+  feature = "argon2",
+  feature = "scrypt"
 ))]
 pub mod auth;
 #[doc(hidden)]
@@ -507,6 +515,10 @@ pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 pub use auth::HkdfOutputLengthError;
 #[cfg(feature = "kmac")]
 pub use auth::Kmac256;
+#[cfg(feature = "phc-strings")]
+pub use auth::PhcError;
+#[cfg(feature = "argon2")]
+pub use auth::{Argon2Error, Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
 #[cfg(feature = "ed25519")]
 pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
@@ -515,6 +527,8 @@ pub use auth::{HkdfSha256, HkdfSha384};
 pub use auth::{HmacSha256, HmacSha384, HmacSha512};
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
+#[cfg(feature = "scrypt")]
+pub use auth::{Scrypt, ScryptError, ScryptParams};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 #[cfg(feature = "crc24")]
@@ -531,7 +545,7 @@ pub use hashes::crypto::ascon::AsconCxofCustomizationError;
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
 #[cfg(feature = "blake2b")]
-pub use hashes::crypto::{Blake2b256, Blake2b512, Blake2bParams};
+pub use hashes::crypto::{Blake2b, Blake2b256, Blake2b512, Blake2bParams};
 #[cfg(feature = "blake2s")]
 pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sParams};
 #[cfg(feature = "blake3")]
@@ -729,7 +743,7 @@ macro_rules! assert_xof_api {
     let data = b"abc";
     let mut h = <$ty>::new();
     h.update(data);
-    let streaming = squeeze_32(h.finalize_xof());
+    let streaming = squeeze_32(h.clone().finalize_xof());
     h.reset();
     let oneshot = squeeze_32(<$ty>::xof(data));
     assert_eq!(streaming, oneshot);

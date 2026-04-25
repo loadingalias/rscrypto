@@ -291,6 +291,7 @@ impl Ed25519PublicKey {
   /// Returns [`VerificationError`] if the public key bytes are invalid or
   /// weak, the signature is non-canonical, or the signature does not match
   /// `message`.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
   pub fn verify(&self, message: &[u8], signature: &Ed25519Signature) -> Result<(), VerificationError> {
     verify(message, self, signature)
   }
@@ -420,6 +421,7 @@ impl fmt::Debug for Ed25519Keypair {
 ///
 /// Returns [`VerificationError`] if the public key bytes are invalid or weak,
 /// the signature is non-canonical, or the signature does not match `message`.
+#[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
 pub fn verify(
   message: &[u8],
   public_key: &Ed25519PublicKey,

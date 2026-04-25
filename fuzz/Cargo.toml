@@ -9,10 +9,14 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = ["aead"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = ["aead", "traits_io"] }
 
-# Crate under test
-rscrypto = { path = "..", features = ["std", "checksums", "hashes", "auth", "aead"] }
+# Crate under test. The full-surface fuzz package activates every feature
+# that any individual scoped package under `fuzz-packages/` activates — the
+# union must stay in sync. When adding a feature to a scoped package, mirror
+# it here; CI's full-build smoke test surfaces drift as a build error rather
+# than as silent coverage loss.
+rscrypto = { path = "..", features = ["std", "checksums", "hashes", "auth", "aead", "argon2", "scrypt", "phc-strings"] }
 
 # ── Oracle crates for differential testing ────────────────────────────────────
 # AEAD
@@ -23,10 +27,12 @@ aegis = "0.9"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
 # Auth
+argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }
 ed25519-dalek = "2.2"
 hmac = "0.13"
 hkdf = "0.13"
 pbkdf2 = "0.13"
+scrypt = { version = "0.11", default-features = false }
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 
 # Hashes
@@ -79,6 +85,11 @@ name = "aead_aegis256"
 path = "fuzz_targets/aead_aegis256.rs"
 doc = false
 
+[[bin]]
+name = "aead_nonce_counter"
+path = "fuzz_targets/aead_nonce_counter.rs"
+doc = false
+
 # ── Auth targets ──────────────────────────────────────────────────────────────
 [[bin]]
 name = "auth_ed25519"
@@ -118,6 +129,31 @@ doc = false
 [[bin]]
 name = "auth_pbkdf2"
 path = "fuzz_targets/auth_pbkdf2.rs"
+doc = false
+
+[[bin]]
+name = "auth_argon2id"
+path = "fuzz_targets/auth_argon2id.rs"
+doc = false
+
+[[bin]]
+name = "auth_argon2d"
+path = "fuzz_targets/auth_argon2d.rs"
+doc = false
+
+[[bin]]
+name = "auth_argon2i"
+path = "fuzz_targets/auth_argon2i.rs"
+doc = false
+
+[[bin]]
+name = "auth_scrypt"
+path = "fuzz_targets/auth_scrypt.rs"
+doc = false
+
+[[bin]]
+name = "auth_phc"
+path = "fuzz_targets/auth_phc.rs"
 doc = false
 
 [[bin]]

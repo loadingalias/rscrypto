@@ -1,7 +1,9 @@
-
 use libfuzzer_sys::fuzz_target;
-use rscrypto::{HmacSha512, Mac};
-use rscrypto_fuzz::{FuzzInput, assert_mac_streaming, split_at_ratio, some_or_return};
+use rscrypto::HmacSha512;
+use rscrypto_fuzz::{
+    FuzzInput, assert_mac_against_oracle, assert_mac_reset, assert_mac_streaming,
+    some_or_return, split_at_ratio,
+};
 
 fuzz_target!(|data: &[u8]| {
     let mut input = FuzzInput::new(data);
@@ -12,28 +14,15 @@ fuzz_target!(|data: &[u8]| {
     let (key, message) = split_at_ratio(rest, key_split);
 
     assert_mac_streaming::<HmacSha512>(key, message, split);
+    assert_mac_reset::<HmacSha512>(key, message);
 
     let tag = HmacSha512::mac(key, message);
-    HmacSha512::verify_tag(key, message, &tag).expect("hmac-sha512 verify must accept correct tag");
+    HmacSha512::verify_tag(key, message, &tag).expect("verify must accept correct tag");
 
-    {
-        let mut mac = HmacSha512::new(key);
-        mac.update(message);
-        let first = mac.finalize();
-        mac.reset();
-        mac.update(message);
-        let second = mac.finalize();
-        assert_eq!(first, second, "hmac-sha512 changed after reset");
-    }
-
-    {
+    assert_mac_against_oracle::<HmacSha512>(key, message, &tag, |key, msg| {
         use hmac::{Hmac, KeyInit, Mac as _};
-        type OracleHmac512 = Hmac<sha2::Sha512>;
-
-        let mut oracle = <OracleHmac512 as KeyInit>::new_from_slice(key).unwrap();
-        oracle.update(message);
-        let oracle_tag = oracle.finalize().into_bytes();
-
-        assert_eq!(&tag[..], oracle_tag.as_slice(), "hmac-sha512 oracle mismatch");
-    }
+        let mut oracle = <Hmac<sha2::Sha512> as KeyInit>::new_from_slice(key).unwrap();
+        oracle.update(msg);
+        oracle.finalize().into_bytes().to_vec()
+    });
 });

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+jobs:
+  rail-plan:
+    name: Build Plan
+    runs-on: ubuntu-latest
+    outputs:
+      base_ref: ${{ steps.rail.outputs.base-ref || steps.manual.outputs.base_ref }}
+      scope_json: ${{ steps.rail.outputs.scope-json || '' }}
+      build: ${{ steps.rail.outputs.build || 'true' }}
+      test: ${{ steps.rail.outputs.test || 'true' }}
+      infra: ${{ steps.rail.outputs.infra || 'true' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - name: Manual dispatch (skip change detection)
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: echo "base_ref=" >> "$GITHUB_OUTPUT"
+
+      - name: Build Plan (PR)
+        if: github.event_name == 'pull_request'
+        id: rail
+        uses: loadingalias/cargo-rail-action@95875a43ad5583b4d6a1dc65630afb0c2ecb6b30  # v4.1.3
+        with:
+          version: "0.13.0"
+
+  suite:
+    name: CI Suite
+    needs: rail-plan
+    if: ${{ github.event_name != 'pull_request' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true' }}
+    uses: ./.github/workflows/_ci-suite.yaml
+    with:
+      scope: ${{ github.event_name == 'pull_request' && 'rail' || 'all' }}
+      base_ref: ${{ needs.rail-plan.outputs.base_ref }}
+      scope_json: ${{ needs.rail-plan.outputs.scope_json }}
+      cache_key_prefix: commit
+      supply_chain_mode: light
+      cross_depth: shallow
+
+  complete:
+    name: Complete
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert suite passed
+        run: |
+          result="${{ needs.suite.result }}"
+          if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+            echo "CI suite result: $result"
+            exit 1
+          fi
+          echo "CI suite: $result"

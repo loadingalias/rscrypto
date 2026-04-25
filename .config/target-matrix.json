@@ -26,12 +26,10 @@
       "wasm32-wasip1"
     ]
   },
-  "ci": {
-    "commit": [
-      { "name": "x86_64-unknown-linux-gnu", "runner": "ubuntu-latest" },
-      { "name": "aarch64-unknown-linux-gnu", "runner": "ubuntu-24.04-arm" },
-      { "name": "x86_64-pc-windows-msvc", "runner": "windows-latest" },
-      { "name": "aarch64-pc-windows-msvc", "runner": "windows-11-arm" }
-    ]
-  }
+  "ci": [
+    { "name": "x86_64-unknown-linux-gnu",  "type": "runson", "pool": "linux-x64-ci" },
+    { "name": "aarch64-unknown-linux-gnu", "type": "runson", "pool": "linux-arm64-ci" },
+    { "name": "x86_64-pc-windows-msvc",    "type": "gha",    "runner": "windows-latest" },
+    { "name": "aarch64-pc-windows-msvc",   "type": "gha",    "runner": "windows-11-arm" }
+  ]
 }

@@ -94,6 +94,48 @@ pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
 #[cfg(feature = "ascon-aead")]
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::diag_chacha20_xor_keystream_aarch64_neon;
+// Re-export the per-backend ChaCha20 entry points for forced-kernel
+// equivalence tests in `tests/aead_kernel_equivalence.rs`. Mirrors the
+// `diag_compress_*` pattern used by Argon2.
+#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
+pub use chacha20::diag_chacha20_xor_keystream_portable;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "powerpc64",
+  target_endian = "little",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::diag_chacha20_xor_keystream_power_vsx;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "riscv64",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::diag_chacha20_xor_keystream_riscv64_vector;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "s390x",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::diag_chacha20_xor_keystream_s390x_vector;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "wasm32",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::diag_chacha20_xor_keystream_wasm_simd128;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "x86_64",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(feature = "aes-gcm")]
@@ -264,6 +306,7 @@ define_unit_error! {
 
 /// Combined AEAD seal failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SealError {
   /// Combined input or output buffers have the wrong length.
   Buffer(AeadBufferError),
@@ -327,6 +370,7 @@ impl From<AeadBufferError> for SealError {
 /// boundaries; only the buffer-shape variants are intended for caller-visible
 /// diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OpenError {
   /// Combined input or output buffers have the wrong length.
   Buffer(AeadBufferError),

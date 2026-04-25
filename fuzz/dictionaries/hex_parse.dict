@@ -10,12 +10,13 @@
 "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
 "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
 
-# Invalid-length and invalid-character edges.
-""
+# Invalid-length and invalid-character edges. libFuzzer dict syntax disallows
+# empty entries and only accepts \xNN, \\, \" escapes — anything else (e.g.
+# `\n`) errors at parse time.
 "f"
 "fff"
 "0x"
 "zz"
 "-1"
 ":"
-"\n"
+"\x0a"

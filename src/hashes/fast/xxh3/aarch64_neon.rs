@@ -21,9 +21,14 @@
 use core::arch::aarch64::*;
 
 use super::{
-  ACC_NB, DEFAULT_SECRET, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE, SECRET_LASTACC_START,
-  SECRET_MERGEACCS_START, STRIPE_LEN,
+  ACC_NB, DEFAULT_SECRET, DEFAULT_SECRET_SIZE, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE,
+  SECRET_LASTACC_START, SECRET_MERGEACCS_START, STRIPE_LEN,
 };
+
+const STRIPES_PER_BLOCK: usize = (DEFAULT_SECRET_SIZE - STRIPE_LEN) / SECRET_CONSUME_RATE;
+const BLOCK_LEN: usize = STRIPE_LEN * STRIPES_PER_BLOCK;
+const SCRAMBLE_SECRET_OFFSET: usize = DEFAULT_SECRET_SIZE - STRIPE_LEN;
+const LAST_ACC_SECRET_OFFSET: usize = DEFAULT_SECRET_SIZE - STRIPE_LEN - SECRET_LASTACC_START;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SIMD accumulate + scramble
@@ -173,41 +178,43 @@ unsafe fn prefetch_stripe(input_ptr: *const u8) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "neon")]
-unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+unsafe fn hash_long_internal_loop<const PREFETCH: bool>(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
   // SAFETY: NEON available via target_feature. Input/secret bounds checked by caller.
   unsafe {
     let mut acc = load_acc(&INITIAL_ACC);
 
-    let nb_stripes = (secret.len().strict_sub(STRIPE_LEN)) / SECRET_CONSUME_RATE;
-    let block_len = STRIPE_LEN.strict_mul(nb_stripes);
-    let nb_blocks = (input.len().strict_sub(1)) / block_len;
+    let nb_blocks = (input.len().strict_sub(1)) / BLOCK_LEN;
 
     let mut block = 0usize;
     while block < nb_blocks {
       let mut stripe = 0usize;
-      while stripe < nb_stripes {
-        let input_off = block.strict_mul(block_len).strict_add(stripe.strict_mul(STRIPE_LEN));
+      while stripe < STRIPES_PER_BLOCK {
+        let input_off = block.strict_mul(BLOCK_LEN).strict_add(stripe.strict_mul(STRIPE_LEN));
         let input_ptr = input.as_ptr().add(input_off);
         let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
-        // Prefetch next stripe's input — prfm ignores out-of-bounds addresses.
-        prefetch_stripe(input_ptr.wrapping_add(STRIPE_LEN));
+        if PREFETCH {
+          // Prefetch next stripe's input — prfm ignores out-of-bounds addresses.
+          prefetch_stripe(input_ptr.wrapping_add(STRIPE_LEN));
+        }
         accumulate_512(&mut acc, input_ptr, secret.as_ptr().add(secret_off));
         stripe = stripe.strict_add(1);
       }
-      scramble_acc(&mut acc, secret.as_ptr().add(secret.len().strict_sub(STRIPE_LEN)));
+      scramble_acc(&mut acc, secret.as_ptr().add(SCRAMBLE_SECRET_OFFSET));
       block = block.strict_add(1);
     }
 
     // Remaining stripes in final partial block
-    let nb_stripes_final = (input.len().strict_sub(1).strict_sub(block_len.strict_mul(nb_blocks))) / STRIPE_LEN;
+    let nb_stripes_final = (input.len().strict_sub(1).strict_sub(BLOCK_LEN.strict_mul(nb_blocks))) / STRIPE_LEN;
     let mut stripe = 0usize;
     while stripe < nb_stripes_final {
       let input_off = nb_blocks
-        .strict_mul(block_len)
+        .strict_mul(BLOCK_LEN)
         .strict_add(stripe.strict_mul(STRIPE_LEN));
       let input_ptr = input.as_ptr().add(input_off);
       let secret_off = stripe.strict_mul(SECRET_CONSUME_RATE);
-      prefetch_stripe(input_ptr.wrapping_add(STRIPE_LEN));
+      if PREFETCH {
+        prefetch_stripe(input_ptr.wrapping_add(STRIPE_LEN));
+      }
       accumulate_512(&mut acc, input_ptr, secret.as_ptr().add(secret_off));
       stripe = stripe.strict_add(1);
     }
@@ -216,12 +223,25 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
     accumulate_512(
       &mut acc,
       input.as_ptr().add(input.len().strict_sub(STRIPE_LEN)),
-      secret
-        .as_ptr()
-        .add(secret.len().strict_sub(STRIPE_LEN).strict_sub(SECRET_LASTACC_START)),
+      secret.as_ptr().add(LAST_ACC_SECRET_OFFSET),
     );
 
     store_acc(&acc)
+  }
+}
+
+#[inline]
+#[target_feature(enable = "neon")]
+unsafe fn hash_long_internal_loop_for_len(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+  // Small long inputs have too few stripes to amortize software prefetch.
+  // Keep PRFM for larger streaming inputs where it helps Apple/Neoverse throughput.
+  // SAFETY: caller upholds the NEON and input/secret bounds contracts.
+  unsafe {
+    if input.len() <= 512 {
+      hash_long_internal_loop::<false>(input, secret)
+    } else {
+      hash_long_internal_loop::<true>(input, secret)
+    }
   }
 }
 
@@ -232,20 +252,36 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 /// Long-path entry point (>240B) — no ≤240B branches.
 ///
 /// Called from compile-time dispatch when the caller already knows `input.len() > MID_SIZE_MAX`.
+pub fn xxh3_64_long_default(input: &[u8]) -> u64 {
+  // SAFETY: NEON always available on aarch64.
+  let acc = unsafe {
+    if input.len() <= 1024 {
+      hash_long_internal_loop::<false>(input, &DEFAULT_SECRET)
+    } else {
+      hash_long_internal_loop_for_len(input, &DEFAULT_SECRET)
+    }
+  };
+  super::merge_accs(
+    &acc,
+    &DEFAULT_SECRET,
+    SECRET_MERGEACCS_START,
+    (input.len() as u64).wrapping_mul(PRIME64_1),
+  )
+}
+
 pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
-    // SAFETY: NEON always available on aarch64.
-    let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-    super::merge_accs(
-      &acc,
-      &DEFAULT_SECRET,
-      SECRET_MERGEACCS_START,
-      (input.len() as u64).wrapping_mul(PRIME64_1),
-    )
+    xxh3_64_long_default(input)
   } else {
     let secret = super::custom_default_secret(seed);
     // SAFETY: NEON always available on aarch64.
-    let acc = unsafe { hash_long_internal_loop(input, &secret) };
+    let acc = unsafe {
+      if input.len() <= 1024 {
+        hash_long_internal_loop::<false>(input, &secret)
+      } else {
+        hash_long_internal_loop_for_len(input, &secret)
+      }
+    };
     super::merge_accs(
       &acc,
       &secret,
@@ -273,15 +309,19 @@ pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
+pub fn xxh3_128_long_default(input: &[u8]) -> u128 {
+  // SAFETY: NEON always available on aarch64.
+  let acc = unsafe { hash_long_internal_loop_for_len(input, &DEFAULT_SECRET) };
+  xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
+}
+
 pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
-    // SAFETY: NEON always available on aarch64.
-    let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-    xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
+    xxh3_128_long_default(input)
   } else {
     let secret = super::custom_default_secret(seed);
     // SAFETY: NEON always available on aarch64.
-    let acc = unsafe { hash_long_internal_loop(input, &secret) };
+    let acc = unsafe { hash_long_internal_loop_for_len(input, &secret) };
     xxh3_128_long_finalize(&acc, &secret, input.len())
   }
 }

@@ -176,16 +176,20 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Long-path entry point (>240B) — no ≤240B branches.
+pub fn xxh3_64_long_default(input: &[u8]) -> u64 {
+  // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.
+  let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
+  super::merge_accs(
+    &acc,
+    &DEFAULT_SECRET,
+    SECRET_MERGEACCS_START,
+    (input.len() as u64).wrapping_mul(PRIME64_1),
+  )
+}
+
 pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
-    // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.
-    let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-    super::merge_accs(
-      &acc,
-      &DEFAULT_SECRET,
-      SECRET_MERGEACCS_START,
-      (input.len() as u64).wrapping_mul(PRIME64_1),
-    )
+    xxh3_64_long_default(input)
   } else {
     let secret = super::custom_default_secret(seed);
     // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.
@@ -217,11 +221,15 @@ pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
+pub fn xxh3_128_long_default(input: &[u8]) -> u128 {
+  // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.
+  let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
+  xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
+}
+
 pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
-    // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.
-    let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
-    xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
+    xxh3_128_long_default(input)
   } else {
     let secret = super::custom_default_secret(seed);
     // SAFETY: Dispatcher verifies AVX2 before selecting this kernel.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install cargo tools for CI
-# Usage: install-tools.sh [standard|runson|bench|runson-bench|ibm|minimal|none]
+# Install cargo tools for CI.
+# Usage: install-tools.sh [standard|bench|ibm|fuzz|coverage|minimal|none]
 
 set -euo pipefail
 
@@ -188,7 +188,7 @@ echo "Installing tools for mode: $MODE"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 case "$MODE" in
-  standard | runson)
+  standard)
     # Standard CI tools (same for all CI runners)
     install_binstall
     install_if_missing "cargo-nextest" "cargo-nextest"
@@ -212,7 +212,7 @@ case "$MODE" in
     fi
     ;;
 
-  bench | runson-bench)
+  bench)
     # Benchmark tools (Criterion + tuning)
     install_binstall
     install_if_missing "cargo-criterion" "cargo-criterion"
@@ -250,7 +250,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|runson|bench|runson-bench|ibm|fuzz|coverage|minimal|none]"
+    echo "Usage: install-tools.sh [standard|bench|ibm|fuzz|coverage|minimal|none]"
     exit 1
     ;;
 esac

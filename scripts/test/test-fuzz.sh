@@ -140,6 +140,32 @@ clean_artifacts() {
   echo "Fuzz artifacts cleaned"
 }
 
+# Map a fuzz target name to its dictionary file, if any.
+#
+# libFuzzer accepts `-dict=<file>` to seed mutation with high-value tokens.
+# Targets opt in by name; absence of a mapping means no dictionary, which is
+# the correct behaviour for purely numeric or property-only targets.
+fuzz_dictionary_for_target() {
+  local target="$1"
+  local dict=""
+
+  case "$target" in
+    aead_aegis256|aead_aes256gcm|aead_aes256gcmsiv|aead_ascon128|aead_chacha20poly1305|aead_xchacha20poly1305)
+      dict="$REPO_ROOT/fuzz/dictionaries/aead_boundary.dict"
+      ;;
+    auth_phc)
+      dict="$REPO_ROOT/fuzz/dictionaries/phc.dict"
+      ;;
+    hex_parse)
+      dict="$REPO_ROOT/fuzz/dictionaries/hex_parse.dict"
+      ;;
+  esac
+
+  if [ -n "$dict" ] && [ -f "$dict" ]; then
+    printf '%s' "$dict"
+  fi
+}
+
 run_target_in_package() {
   local package_dir="$1"
   local target="$2"
@@ -154,6 +180,12 @@ run_target_in_package() {
 
   local fuzz_args="-max_total_time=$duration -timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
   fuzz_args="$fuzz_args -artifact_prefix=$package_dir/artifacts/$target/"
+
+  local dict
+  dict="$(fuzz_dictionary_for_target "$target")"
+  if [ -n "$dict" ]; then
+    fuzz_args="$fuzz_args -dict=$dict"
+  fi
 
   local fuzz_exit=0
   fuzz_in_package "$package_dir" run "$target" \

@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![docs.rs](https://img.shields.io/docsrs/rscrypto)](https://docs.rs/rscrypto)
-[![CI](https://github.com/loadingalias/rscrypto/actions/workflows/commit.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/commit.yaml)
+[![CI](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/loadingalias/rscrypto/graph/badge.svg)](https://codecov.io/gh/loadingalias/rscrypto)
 
 Single-crate cryptography toolbox. No C FFI, no vendored C/C++, `no_std` first.
@@ -134,6 +134,16 @@ XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Cshake256XofReader`, `Bl
 | `HkdfSha256` / `HkdfSha384` | 32-48B PRK | RFC 5869 |
 | `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
 
+### Password Hashing (features: `password-hashing` or `argon2` / `scrypt` / `phc-strings`)
+
+| Type | Output | Standard |
+|------|--------|----------|
+| `Argon2d` / `Argon2i` / `Argon2id` | variable | RFC 9106 |
+| `Argon2Params`, `Argon2Version` | -- | RFC 9106 |
+| `Scrypt`, `ScryptParams` | variable | RFC 7914 |
+
+PHC string-format encode/decode shared by both families: `auth::phc` (feature `phc-strings`).
+
 ### Signatures & Key Exchange (features: `signatures` / `key-exchange` or `ed25519` / `x25519`)
 
 | Type | Size | Standard |
@@ -161,8 +171,14 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 |-------|------|----------|
 | `VerificationError` | MAC/AEAD/signature check fails | Reject input (intentionally opaque) |
 | `AeadBufferError` | Output buffer wrong size | Fix buffer length |
+| `SealError` | AEAD combined encrypt failure | Buffer / nonce / counter |
 | `OpenError` | AEAD combined decrypt failure | Buffer or verification |
+| `NonceCounterSealError` | Deterministic-IV counter exhausted or buffer error | Rotate key / fix buffer |
 | `HkdfOutputLengthError` | HKDF expand exceeds max | Request less output |
+| `Pbkdf2Error` | PBKDF2 parameter validation | Adjust iterations / output length |
+| `Argon2Error` | Argon2 parameter or input validation | Adjust params per RFC 9106 |
+| `ScryptError` | scrypt parameter validation | Adjust N / r / p per RFC 7914 |
+| `PhcError` | PHC string parse / encode | Fix encoded form |
 | `X25519Error` | Low-order DH point | Reject peer key |
 | `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
 | `InvalidHexError` | Hex decode failure | Fix input |
@@ -228,16 +244,18 @@ For the full boundary matrix and FIPS-roadmap, see `docs/tasks/fips.md`.
 | `fast-hashes` | No | `xxh3` + `rapidhash` |
 | `hashes` | No | `crypto-hashes` + `fast-hashes` |
 | `macs` | No | `hmac` + `kmac` |
-| `kdfs` | No | `hkdf` + `pbkdf2` (implies `hmac`) |
-| `auth` | No | `macs` + `kdfs` + `signatures` + `key-exchange` |
+| `kdfs` | No | `hkdf` + `pbkdf2` (implies `hmac`); pure key-derivation only |
+| `password-hashing` | No | `argon2` + `scrypt` + `phc-strings` |
+| `auth` | No | `macs` + `kdfs` + `password-hashing` + `signatures` + `key-exchange` |
 | `aead` | No | All 6 AEAD leaves |
 | `full` | No | `checksums` + `hashes` + `auth` + `aead` |
-| `parallel` | No | Rayon-backed parallel Blake3. Implies `std` + `blake3` |
+| `parallel` | No | Rayon-backed parallel Blake3 and Argon2 lane parallelism. Implies `std` + `blake3` + `argon2` |
+| `portable-only` | No | Force portable backends (FIPS / DO-178C / ISO 26262 deployment posture); suppresses runtime SIMD invocation |
 | `getrandom` | No | `random()` constructors on key/nonce types |
 | `serde` | No | `Serialize`/`Deserialize` on keys, nonces, tags, signatures |
 | `diag` | No | Dispatch introspection. Implies `std` |
 
-Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
+Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519`, `argon2`, `scrypt`, `phc-strings`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
 
 ## Platform Support
 
@@ -251,6 +269,7 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 | x86_64 (Intel ICL) | AVX-512, VPCLMULQDQ, AES-NI |
 | x86_64 (AMD Zen4/Zen5) | AVX-512, VPCLMULQDQ, AES-NI |
 | aarch64 (Graviton3/4) | NEON, PMULL, AES-CE, SHA2-CE |
+| aarch64 (macOS, Apple Silicon) | NEON, PMULL, AES-CE, SHA2-CE, SHA3-CE |
 | s390x (IBM Z) | z/Vector, VGFM |
 | ppc64le (POWER10) | AltiVec, VSX |
 | riscv64 (RISE) | V, Zbc |
@@ -273,7 +292,7 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 |-------|------|---------|
 | Unit + integration | 912 tests, official vectors, differential oracles | `just test` |
 | Feature matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
-| Property tests | 256 cases per proptest across 22 files | `just test-proptests` |
+| Property tests | 256 cases per proptest, run alongside unit + integration | `just test` (nextest) |
 | Miri | Memory safety under Stacked Borrows | `just test-miri` |
 | Fuzz | 32 targets with differential oracles (15 oracle crates) | `just test-fuzz` |
 | Coverage | Nextest + fuzz corpus LCOV | `just coverage` |
@@ -285,14 +304,14 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 src/
 +-- lib.rs              # Public API, re-exports
 +-- aead/               # AES-GCM, AES-GCM-SIV, ChaCha20, XChaCha20, AEGIS, Ascon
-+-- auth/               # HMAC, HKDF, KMAC, Ed25519, X25519
++-- auth/               # HMAC, HKDF, PBKDF2, KMAC, Argon2, scrypt, PHC, Ed25519, X25519
 +-- checksum/           # CRC families, config, buffered, introspection
 +-- hashes/
-|   +-- crypto/         # SHA-2, SHA-3, SHAKE, cSHAKE, Blake3, Ascon
+|   +-- crypto/         # SHA-2, SHA-3, SHAKE, cSHAKE, Blake2, Blake3, Ascon, Keccak
 |   +-- fast/           # XXH3, RapidHash
 +-- hex.rs              # Hex encoding, DisplaySecret
 +-- platform/           # CPU detection, SIMD dispatch
-+-- backend/            # Internal dispatch infrastructure
++-- backend/            # Internal dispatch infrastructure (curve25519, etc.)
 +-- traits/             # Checksum, Digest, Mac, Xof, FastHash, Aead, ct, io
 ```
 
@@ -316,7 +335,6 @@ src/
 - AES-128, AES-128-GCM-SIV
 - AEGIS-128L / AEGIS-X2 / AEGIS-X4
 - HMAC and HKDF for all SHA-2/SHA-3 variants
-- Argon2id, scrypt
 - RSA, ECDSA (P-256, P-384)
 - ML-KEM and post-quantum primitives
 

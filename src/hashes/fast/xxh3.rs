@@ -257,14 +257,16 @@ fn xxh3_64_4to8(input: &[u8], mut seed: u64, secret: &[u8]) -> u64 {
 
 #[inline(always)]
 fn xxh3_64_1to3(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
-  let combo = ((input[0] as u32) << 16)
-    | ((input[input.len() >> 1] as u32) << 24)
-    | (input[input.len() - 1] as u32)
-    | ((input.len() as u32) << 8);
+  // SAFETY: callers ensure input.len() is 1..=3 and secret.len() >= SECRET_SIZE_MIN.
+  unsafe {
+    let c1 = *input.get_unchecked(0);
+    let c2 = *input.get_unchecked(input.len() >> 1);
+    let c3 = *input.get_unchecked(input.len().strict_sub(1));
+    let combo = ((c1 as u32) << 16) | ((c2 as u32) << 24) | (c3 as u32) | ((input.len() as u32) << 8);
 
-  // SAFETY: secret.len() >= SECRET_SIZE_MIN (136), so offsets 0 and 4 are in bounds.
-  let flip = unsafe { ((read_u32_le(secret, 0) ^ read_u32_le(secret, 4)) as u64).wrapping_add(seed) };
-  xxh64_avalanche((combo as u64) ^ flip)
+    let flip = ((read_u32_le(secret, 0) ^ read_u32_le(secret, 4)) as u64).wrapping_add(seed);
+    xxh64_avalanche((combo as u64) ^ flip)
+  }
 }
 
 #[inline(always)]
@@ -305,6 +307,40 @@ fn xxh3_64_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
 
     acc = acc.wrapping_add(mix16_b(chunk16(input, 0), chunk16(secret, 0), seed));
     acc = acc.wrapping_add(mix16_b(chunk16(input, input.len() - 16), chunk16(secret, 16), seed));
+
+    xxh3_avalanche(acc)
+  }
+}
+
+#[inline(always)]
+pub(crate) fn xxh3_64_32(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
+  debug_assert_eq!(input.len(), 32);
+  debug_assert!(secret.len() >= SECRET_SIZE_MIN);
+
+  // SAFETY: callers provide exactly 32 input bytes and a full XXH3 secret.
+  unsafe {
+    let acc = 32u64
+      .wrapping_mul(PRIME64_1)
+      .wrapping_add(mix16_b(chunk16(input, 0), chunk16(secret, 0), seed))
+      .wrapping_add(mix16_b(chunk16(input, 16), chunk16(secret, 16), seed));
+
+    xxh3_avalanche(acc)
+  }
+}
+
+#[inline(always)]
+pub(crate) fn xxh3_64_64(input: &[u8], seed: u64, secret: &[u8]) -> u64 {
+  debug_assert_eq!(input.len(), 64);
+  debug_assert!(secret.len() >= SECRET_SIZE_MIN);
+
+  // SAFETY: callers provide exactly 64 input bytes and a full XXH3 secret.
+  unsafe {
+    let mut acc = 64u64.wrapping_mul(PRIME64_1);
+
+    acc = acc.wrapping_add(mix16_b(chunk16(input, 16), chunk16(secret, 32), seed));
+    acc = acc.wrapping_add(mix16_b(chunk16(input, 32), chunk16(secret, 48), seed));
+    acc = acc.wrapping_add(mix16_b(chunk16(input, 0), chunk16(secret, 0), seed));
+    acc = acc.wrapping_add(mix16_b(chunk16(input, 48), chunk16(secret, 16), seed));
 
     xxh3_avalanche(acc)
   }
@@ -475,6 +511,11 @@ fn xxh3_64_long_impl(input: &[u8], secret: &[u8]) -> u64 {
   )
 }
 
+/// Long-path default-seed entry point (>240B) — no seed branch.
+pub(crate) fn xxh3_64_long_default(input: &[u8]) -> u64 {
+  xxh3_64_long_impl(input, &DEFAULT_SECRET)
+}
+
 #[inline(never)]
 fn custom_default_secret(seed: u64) -> [u8; DEFAULT_SECRET_SIZE] {
   if seed == 0 {
@@ -509,7 +550,7 @@ fn custom_default_secret(seed: u64) -> [u8; DEFAULT_SECRET_SIZE] {
 /// Called from compile-time dispatch when the caller already knows `input.len() > MID_SIZE_MAX`.
 pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
-    xxh3_64_long_impl(input, &DEFAULT_SECRET)
+    xxh3_64_long_default(input)
   } else {
     let secret = custom_default_secret(seed);
     xxh3_64_long_impl(input, &secret)
@@ -519,11 +560,16 @@ pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
 #[cfg(any(test, feature = "diag"))]
 #[inline(always)]
 fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
-  if input.len() <= 16 {
+  let len = input.len();
+  if len <= 16 {
     xxh3_64_0to16(input, seed, &DEFAULT_SECRET)
-  } else if input.len() <= 128 {
+  } else if len == 32 {
+    xxh3_64_32(input, seed, &DEFAULT_SECRET)
+  } else if len == 64 {
+    xxh3_64_64(input, seed, &DEFAULT_SECRET)
+  } else if len <= 128 {
     xxh3_64_7to128(input, seed, &DEFAULT_SECRET)
-  } else if input.len() <= MID_SIZE_MAX {
+  } else if len <= MID_SIZE_MAX {
     xxh3_64_129to240(input, seed, &DEFAULT_SECRET)
   } else {
     xxh3_64_long(input, seed)
@@ -532,14 +578,14 @@ fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
 
 #[inline(always)]
 fn xxh3_128_1to3(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
-  let c1 = input[0];
-  let c2 = input[input.len() >> 1];
-  let c3 = input[input.len() - 1];
-  let input_lo = (c1 as u32) << 16 | (c2 as u32) << 24 | c3 as u32 | (input.len() as u32) << 8;
-  let input_hi = input_lo.swap_bytes().rotate_left(13);
-
-  // SAFETY: secret.len() >= SECRET_SIZE_MIN (136), so offsets 0..16 are in bounds.
+  // SAFETY: callers ensure input.len() is 1..=3 and secret.len() >= SECRET_SIZE_MIN.
   unsafe {
+    let c1 = *input.get_unchecked(0);
+    let c2 = *input.get_unchecked(input.len() >> 1);
+    let c3 = *input.get_unchecked(input.len().strict_sub(1));
+    let input_lo = (c1 as u32) << 16 | (c2 as u32) << 24 | c3 as u32 | (input.len() as u32) << 8;
+    let input_hi = input_lo.swap_bytes().rotate_left(13);
+
     let flip_lo = (read_u32_le(secret, 0) as u64 ^ read_u32_le(secret, 4) as u64).wrapping_add(seed);
     let flip_hi = (read_u32_le(secret, 8) as u64 ^ read_u32_le(secret, 12) as u64).wrapping_sub(seed);
     let keyed_lo = input_lo as u64 ^ flip_lo;
@@ -677,6 +723,76 @@ fn xxh3_128_7to128(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
   }
 }
 
+#[inline(always)]
+pub(crate) fn xxh3_128_32(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
+  debug_assert_eq!(input.len(), 32);
+  debug_assert!(secret.len() >= SECRET_SIZE_MIN);
+
+  // SAFETY: callers provide exactly 32 input bytes and a full XXH3 secret.
+  unsafe {
+    let data_1 = chunk16(input, 0);
+    let data_2 = chunk16(input, 16);
+    let secret = chunk32(secret, 0);
+
+    let mut lo = 32u64
+      .wrapping_mul(PRIME64_1)
+      .wrapping_add(mix16_b(data_1, &secret[0], seed));
+    lo ^= u64::from_ne_bytes(data_2[0])
+      .to_le()
+      .wrapping_add(u64::from_ne_bytes(data_2[1]).to_le());
+
+    let mut hi = mix16_b(data_2, &secret[1], seed);
+    hi ^= u64::from_ne_bytes(data_1[0])
+      .to_le()
+      .wrapping_add(u64::from_ne_bytes(data_1[1]).to_le());
+
+    let result_lo = lo.wrapping_add(hi);
+    let result_hi = lo
+      .wrapping_mul(PRIME64_1)
+      .wrapping_add(hi.wrapping_mul(PRIME64_4))
+      .wrapping_add((32u64.wrapping_sub(seed)).wrapping_mul(PRIME64_2));
+
+    (xxh3_avalanche(result_lo) as u128) | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
+  }
+}
+
+#[inline(always)]
+pub(crate) fn xxh3_128_64(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
+  debug_assert_eq!(input.len(), 64);
+  debug_assert!(secret.len() >= SECRET_SIZE_MIN);
+
+  // SAFETY: callers provide exactly 64 input bytes and a full XXH3 secret.
+  unsafe {
+    let mut lo = 64u64.wrapping_mul(PRIME64_1);
+    let mut hi = 0u64;
+
+    mix32_b(
+      &mut lo,
+      &mut hi,
+      chunk16(input, 16),
+      chunk16(input, 32),
+      chunk32(secret, 32),
+      seed,
+    );
+    mix32_b(
+      &mut lo,
+      &mut hi,
+      chunk16(input, 0),
+      chunk16(input, 48),
+      chunk32(secret, 0),
+      seed,
+    );
+
+    let result_lo = lo.wrapping_add(hi);
+    let result_hi = lo
+      .wrapping_mul(PRIME64_1)
+      .wrapping_add(hi.wrapping_mul(PRIME64_4))
+      .wrapping_add((64u64.wrapping_sub(seed)).wrapping_mul(PRIME64_2));
+
+    (xxh3_avalanche(result_lo) as u128) | (((0u64.wrapping_sub(xxh3_avalanche(result_hi))) as u128) << 64)
+  }
+}
+
 #[inline(never)]
 fn xxh3_128_129to240(input: &[u8], seed: u64, secret: &[u8]) -> u128 {
   const START_OFFSET: usize = 3;
@@ -757,10 +873,15 @@ fn xxh3_128_long_impl(input: &[u8], secret: &[u8]) -> u128 {
   (lo as u128) | ((hi as u128) << 64)
 }
 
+/// Long-path default-seed entry point (>240B) — no seed branch.
+pub(crate) fn xxh3_128_long_default(input: &[u8]) -> u128 {
+  xxh3_128_long_impl(input, &DEFAULT_SECRET)
+}
+
 /// Long-path entry point (>240B) — no ≤240B branches.
 pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
-    xxh3_128_long_impl(input, &DEFAULT_SECRET)
+    xxh3_128_long_default(input)
   } else {
     let secret = custom_default_secret(seed);
     xxh3_128_long_impl(input, &secret)
@@ -773,6 +894,11 @@ impl FastHash for Xxh3_64 {
   type Seed = u64;
 
   #[inline(always)]
+  fn hash(data: &[u8]) -> Self::Output {
+    dispatch::hash64(data)
+  }
+
+  #[inline(always)]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
     dispatch::hash64_with_seed(seed, data)
   }
@@ -782,6 +908,11 @@ impl FastHash for Xxh3_128 {
   const OUTPUT_SIZE: usize = 16;
   type Output = u128;
   type Seed = u64;
+
+  #[inline(always)]
+  fn hash(data: &[u8]) -> Self::Output {
+    dispatch::hash128(data)
+  }
 
   #[inline(always)]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
@@ -935,11 +1066,27 @@ mod tests {
   fn xxh3_long_paths_match_oracle() {
     #[cfg(miri)]
     let sizes = [
-      0usize, 1, 2, 3, 4, 8, 16, 17, 31, 32, 33, 127, 128, 129, 240, 241, 1024, 4096,
+      0usize, 1, 2, 3, 4, 8, 16, 17, 31, 32, 33, 64, 127, 128, 129, 240, 241, 256, 1024, 4096,
     ];
     #[cfg(not(miri))]
-    let sizes = [0usize, 1, 2, 3, 4, 8, 16, 17, 128, 129, 240, 241, 1024, 4096, 65536];
+    let sizes = [
+      0usize, 1, 2, 3, 4, 8, 16, 17, 32, 64, 128, 129, 240, 241, 256, 1024, 4096, 65536,
+    ];
     let seeds = [0u64, 1u64, 0x0123_4567_89ab_cdef];
+
+    for &len in &sizes {
+      let data = deterministic_bytes(len);
+      assert_eq!(
+        <Xxh3_64 as crate::traits::FastHash>::hash(&data),
+        xxhash_rust::xxh3::xxh3_64(&data),
+        "xxh3_64 default mismatch (len={len})"
+      );
+      assert_eq!(
+        <Xxh3_128 as crate::traits::FastHash>::hash(&data),
+        xxhash_rust::xxh3::xxh3_128(&data),
+        "xxh3_128 default mismatch (len={len})"
+      );
+    }
 
     for &seed in &seeds {
       for &len in &sizes {

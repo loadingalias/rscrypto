@@ -20,8 +20,6 @@ pub(crate) mod dispatch_tables;
 #[cfg(test)]
 mod kernel_test;
 pub(crate) mod kernels;
-#[cfg(target_arch = "powerpc64")]
-pub(crate) mod ppc64;
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 pub(crate) mod riscv64;
 #[cfg(target_arch = "s390x")]
@@ -85,8 +83,18 @@ fn small_sigma1(x: u32) -> u32 {
 /// (POWER, aarch64 portable, s390x, RISC-V), materializing a 32-bit
 /// immediate requires 2+ instructions (`lis`+`ori` on POWER, `movz`+`movk`
 /// on ARM), so loading from the static K array via a single load instruction
-/// is faster. `read_volatile` forces the compiler to emit a memory load
-/// instead of inlining the constant.
+/// is faster.
+///
+/// We use `core::hint::black_box` on the table base pointer instead of
+/// `core::ptr::read_volatile`. Both force the compiler to emit a memory
+/// load — `black_box` by hiding the address from the optimizer, and
+/// `read_volatile` by promising the read has observable side-effects.
+/// The `volatile` semantics carry ordering implications the compiler may
+/// honour conservatively, and a confirmed LLVM ppc64le miscompilation
+/// (commit `a70c6596`) traced to that conservatism produced wrong SHA-256
+/// output until POWER specifically reverted to direct indexing. The
+/// `black_box`-based path generates the same single-load codegen on
+/// every target without `volatile`'s sharp edges.
 ///
 /// This matches the `sha2` crate's `rk()` strategy and closes the 15-20%
 /// gap on POWER10.
@@ -94,19 +102,19 @@ fn small_sigma1(x: u32) -> u32 {
 fn rk(i: usize) -> u32 {
   #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
   {
+    // x86 has short immediates for 32-bit constants; constant-folding the
+    // table is fine and produces tighter code than a load.
     // SAFETY: i is always in 0..64, and K has exactly 64 elements.
     unsafe { core::ptr::read(K.0.as_ptr().add(i)) }
   }
-  #[cfg(target_arch = "powerpc64")]
+  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
   {
-    // The volatile-load variant regressed POWER correctness in target-native CI.
-    // Keep POWER on direct indexing until the memory-load strategy is revalidated.
-    K.0[i]
-  }
-  #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "powerpc64")))]
-  {
-    // SAFETY: i is always in 0..64, and K has exactly 64 elements.
-    unsafe { core::ptr::read_volatile(K.0.as_ptr().add(i)) }
+    let base = core::hint::black_box(K.0.as_ptr());
+    // SAFETY: i is always in 0..64, K has exactly 64 elements, and
+    // `black_box(ptr)` returns the same provenance / value, only opaque
+    // to subsequent constant propagation. The pointer arithmetic stays
+    // within the `K` allocation.
+    unsafe { core::ptr::read(base.add(i)) }
   }
 }
 

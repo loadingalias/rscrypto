@@ -107,7 +107,7 @@ fn all_xofs_follow_new_update_finalize_xof_and_xof() {
       let data = b"abc";
       let mut h = <$ty>::new();
       h.update(data);
-      let streaming = squeeze_32(h.finalize_xof());
+      let streaming = squeeze_32(h.clone().finalize_xof());
       h.reset();
       let oneshot = squeeze_32(<$ty>::xof(data));
       assert_eq!(streaming, oneshot);

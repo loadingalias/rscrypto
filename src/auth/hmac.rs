@@ -85,6 +85,7 @@ impl HmacSha256 {
 
   /// Verify `expected` against the HMAC tag of `data` in constant time.
   #[inline]
+  #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA256_TAG_SIZE]) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
@@ -174,19 +175,31 @@ impl Mac for HmacSha256 {
     let mut state = SHA256_H0;
 
     const INLINE_DATA_MAX: usize = 256;
-    const INNER_BUF_LEN: usize = 384;
-    let mut inner_buf = [0u8; INNER_BUF_LEN];
-    let inner_used: usize;
 
     if data.len() <= INLINE_DATA_MAX {
-      inner_buf[..SHA256_BLOCK_SIZE].copy_from_slice(&ipad);
       let data_end = SHA256_BLOCK_SIZE.strict_add(data.len());
-      inner_buf[SHA256_BLOCK_SIZE..data_end].copy_from_slice(data);
-      inner_buf[data_end] = 0x80;
       let padded = data_end.strict_add(9).strict_add(63).strict_div(64).strict_mul(64);
-      inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..padded]);
-      inner_used = padded;
+
+      macro_rules! compress_inline_inner {
+        ($len:expr) => {{
+          let mut inner_buf = [0u8; $len];
+          inner_buf[..SHA256_BLOCK_SIZE].copy_from_slice(&ipad);
+          inner_buf[SHA256_BLOCK_SIZE..data_end].copy_from_slice(data);
+          inner_buf[data_end] = 0x80;
+          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+          compress(&mut state, &inner_buf);
+          ct::zeroize_no_fence(&mut inner_buf);
+        }};
+      }
+
+      match padded {
+        128 => compress_inline_inner!(128),
+        192 => compress_inline_inner!(192),
+        256 => compress_inline_inner!(256),
+        320 => compress_inline_inner!(320),
+        384 => compress_inline_inner!(384),
+        _ => unreachable!("HMAC-SHA256 inline inner padding is bounded to 128..=384 bytes"),
+      }
     } else {
       compress(&mut state, &ipad);
 
@@ -196,6 +209,7 @@ impl Mac for HmacSha256 {
       }
       let rest = &data[full_len..];
 
+      let mut inner_buf = [0u8; SHA256_BLOCK_SIZE];
       inner_buf[..rest.len()].copy_from_slice(rest);
       inner_buf[rest.len()] = 0x80;
       if rest.len() >= 56 {
@@ -204,7 +218,7 @@ impl Mac for HmacSha256 {
       }
       inner_buf[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
       compress(&mut state, &inner_buf[..SHA256_BLOCK_SIZE]);
-      inner_used = SHA256_BLOCK_SIZE;
+      ct::zeroize_no_fence(&mut inner_buf);
     }
 
     let mut outer = [0u8; 128];
@@ -227,7 +241,6 @@ impl Mac for HmacSha256 {
     }
 
     ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut inner_buf[..inner_used]);
     ct::zeroize_no_fence(&mut outer);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -302,6 +315,7 @@ impl HmacSha384 {
 
   /// Verify `expected` against the HMAC tag of `data` in constant time.
   #[inline]
+  #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA384_TAG_SIZE]) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
@@ -409,7 +423,6 @@ impl Mac for HmacSha384 {
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
     const INLINE_DATA_MAX: usize = 256;
-    const INNER_BUF_LEN: usize = 512;
 
     let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
@@ -428,18 +441,29 @@ impl Mac for HmacSha384 {
     let total_inner_bits = total_inner.strict_mul(8);
 
     let mut state = SHA384_H0;
-    let mut inner_buf = [0u8; INNER_BUF_LEN];
-    let inner_sensitive_len: usize;
 
     if data.len() <= INLINE_DATA_MAX {
-      inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
       let data_end = SHA512_FAMILY_BLOCK_SIZE.strict_add(data.len());
-      inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
-      inner_buf[data_end] = 0x80;
       let padded = data_end.strict_add(17).strict_add(127).strict_div(128).strict_mul(128);
-      inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..padded]);
-      inner_sensitive_len = SHA512_FAMILY_BLOCK_SIZE;
+
+      macro_rules! compress_inline_inner {
+        ($len:expr) => {{
+          let mut inner_buf = [0u8; $len];
+          inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
+          inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
+          inner_buf[data_end] = 0x80;
+          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+          compress(&mut state, &inner_buf);
+          ct::zeroize_no_fence(&mut inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+        }};
+      }
+
+      match padded {
+        256 => compress_inline_inner!(256),
+        384 => compress_inline_inner!(384),
+        512 => compress_inline_inner!(512),
+        _ => unreachable!("HMAC-SHA384 inline inner padding is bounded to 256..=512 bytes"),
+      }
     } else {
       compress(&mut state, &ipad);
 
@@ -449,6 +473,7 @@ impl Mac for HmacSha384 {
       }
       let rest = &data[full_len..];
 
+      let mut inner_buf = [0u8; SHA512_FAMILY_BLOCK_SIZE];
       inner_buf[..rest.len()].copy_from_slice(rest);
       inner_buf[rest.len()] = 0x80;
       if rest.len() >= 112 {
@@ -457,7 +482,7 @@ impl Mac for HmacSha384 {
       }
       inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
       compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
-      inner_sensitive_len = 0;
+      ct::zeroize_no_fence(&mut inner_buf);
     }
 
     let mut outer = [0u8; 256];
@@ -480,9 +505,6 @@ impl Mac for HmacSha384 {
     }
 
     ct::zeroize_no_fence(&mut ipad);
-    if inner_sensitive_len != 0 {
-      ct::zeroize_no_fence(&mut inner_buf[..inner_sensitive_len]);
-    }
     ct::zeroize_no_fence(&mut outer[..SHA512_FAMILY_BLOCK_SIZE]);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -557,6 +579,7 @@ impl HmacSha512 {
 
   /// Verify `expected` against the HMAC tag of `data` in constant time.
   #[inline]
+  #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA512_TAG_SIZE]) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
@@ -664,7 +687,6 @@ impl Mac for HmacSha512 {
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
     const INLINE_DATA_MAX: usize = 256;
-    const INNER_BUF_LEN: usize = 512;
 
     let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
@@ -683,18 +705,29 @@ impl Mac for HmacSha512 {
     let total_inner_bits = total_inner.strict_mul(8);
 
     let mut state = SHA512_H0;
-    let mut inner_buf = [0u8; INNER_BUF_LEN];
-    let inner_sensitive_len: usize;
 
     if data.len() <= INLINE_DATA_MAX {
-      inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
       let data_end = SHA512_FAMILY_BLOCK_SIZE.strict_add(data.len());
-      inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
-      inner_buf[data_end] = 0x80;
       let padded = data_end.strict_add(17).strict_add(127).strict_div(128).strict_mul(128);
-      inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
-      compress(&mut state, &inner_buf[..padded]);
-      inner_sensitive_len = SHA512_FAMILY_BLOCK_SIZE;
+
+      macro_rules! compress_inline_inner {
+        ($len:expr) => {{
+          let mut inner_buf = [0u8; $len];
+          inner_buf[..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&ipad);
+          inner_buf[SHA512_FAMILY_BLOCK_SIZE..data_end].copy_from_slice(data);
+          inner_buf[data_end] = 0x80;
+          inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
+          compress(&mut state, &inner_buf);
+          ct::zeroize_no_fence(&mut inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+        }};
+      }
+
+      match padded {
+        256 => compress_inline_inner!(256),
+        384 => compress_inline_inner!(384),
+        512 => compress_inline_inner!(512),
+        _ => unreachable!("HMAC-SHA512 inline inner padding is bounded to 256..=512 bytes"),
+      }
     } else {
       compress(&mut state, &ipad);
 
@@ -704,6 +737,7 @@ impl Mac for HmacSha512 {
       }
       let rest = &data[full_len..];
 
+      let mut inner_buf = [0u8; SHA512_FAMILY_BLOCK_SIZE];
       inner_buf[..rest.len()].copy_from_slice(rest);
       inner_buf[rest.len()] = 0x80;
       if rest.len() >= 112 {
@@ -712,7 +746,7 @@ impl Mac for HmacSha512 {
       }
       inner_buf[120..SHA512_FAMILY_BLOCK_SIZE].copy_from_slice(&total_inner_bits.to_be_bytes());
       compress(&mut state, &inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
-      inner_sensitive_len = 0;
+      ct::zeroize_no_fence(&mut inner_buf);
     }
 
     let mut outer = [0u8; 256];
@@ -735,9 +769,6 @@ impl Mac for HmacSha512 {
     }
 
     ct::zeroize_no_fence(&mut ipad);
-    if inner_sensitive_len != 0 {
-      ct::zeroize_no_fence(&mut inner_buf[..inner_sensitive_len]);
-    }
     ct::zeroize_no_fence(&mut outer[..SHA512_FAMILY_BLOCK_SIZE]);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.

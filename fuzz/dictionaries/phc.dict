@@ -1,0 +1,68 @@
+# PHC string-format tokens. Accelerates the parser-edge-case lane of
+# auth_phc by giving libFuzzer the exact byte sequences that anchor the
+# grammar's branching points.
+
+# Algorithm names (canonical case + a one-flip-off case to exercise the
+# AlgorithmMismatch branch).
+"argon2id"
+"argon2d"
+"argon2i"
+"scrypt"
+"argon2"
+"sha256"
+
+# Section separators.
+"$"
+","
+"="
+
+# Argon2 version segment (RFC 9106 §3.1: only V0x10=16, V0x13=19 are valid).
+"v=19"
+"v=16"
+"v=0"
+"v=999"
+
+# Argon2 parameter keys.
+"m="
+"t="
+"p="
+
+# Argon2 minimum-validity costs (m≥8·p, t≥1, p≥1, output_len≥4).
+"m=8"
+"m=65536"
+"t=1"
+"t=3"
+"p=1"
+"p=4"
+
+# Scrypt parameter keys.
+"ln="
+"r="
+
+# Scrypt minimum-validity costs.
+"ln=1"
+"ln=14"
+"r=1"
+"r=8"
+
+# Canonical PHC strings (full encoded fixtures).
+"$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$c29tZWhhc2g"
+"$argon2d$v=19$m=8,t=1,p=1$c29tZXNhbHQ$c29tZWhhc2g"
+"$argon2i$v=19$m=8,t=1,p=1$c29tZXNhbHQ$c29tZWhhc2g"
+"$scrypt$ln=14,r=8,p=1$c29tZXNhbHQ$c29tZWhhc2g"
+
+# Base64 (PHC variant — RFC 4648 standard alphabet, no padding) edges.
+"c29tZXNhbHQ"
+"AAAA"
+"////"
+"++++"
+
+# Malformed segment shapes.
+"$$"
+"$="
+",,"
+"==1"
+"=1"
+"01"
+"-1"
+"+1"

@@ -135,42 +135,42 @@ macro_rules! keccakf_sha3_neon_round {
 
 /// Single-state Keccak-f[1600] using full-width SHA3 CE NEON instructions.
 ///
-/// Each lane is duplicated into both elements of a `uint64x2_t` register via
-/// `vdupq_n_u64`. Since all SHA3 CE instructions (EOR3, RAX1, XAR, BCAX) are
-/// element-wise on `.2D`, both elements follow the identical computation and
-/// lane 0 produces the correct permutation result.
+/// Lane 0 carries the real state; lane 1 is zero padding. The array-backed
+/// representation keeps register pressure lower than a 25-local vector form on
+/// Apple Silicon.
 ///
 /// # Safety
 ///
 /// Caller must ensure `sha3` target feature is available.
-#[cfg(all(target_arch = "aarch64", test))]
+#[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_single_impl(state: &mut [u64; 25]) {
-  let mut a0 = vdupq_n_u64(state[0]);
-  let mut a1 = vdupq_n_u64(state[1]);
-  let mut a2 = vdupq_n_u64(state[2]);
-  let mut a3 = vdupq_n_u64(state[3]);
-  let mut a4 = vdupq_n_u64(state[4]);
-  let mut a5 = vdupq_n_u64(state[5]);
-  let mut a6 = vdupq_n_u64(state[6]);
-  let mut a7 = vdupq_n_u64(state[7]);
-  let mut a8 = vdupq_n_u64(state[8]);
-  let mut a9 = vdupq_n_u64(state[9]);
-  let mut a10 = vdupq_n_u64(state[10]);
-  let mut a11 = vdupq_n_u64(state[11]);
-  let mut a12 = vdupq_n_u64(state[12]);
-  let mut a13 = vdupq_n_u64(state[13]);
-  let mut a14 = vdupq_n_u64(state[14]);
-  let mut a15 = vdupq_n_u64(state[15]);
-  let mut a16 = vdupq_n_u64(state[16]);
-  let mut a17 = vdupq_n_u64(state[17]);
-  let mut a18 = vdupq_n_u64(state[18]);
-  let mut a19 = vdupq_n_u64(state[19]);
-  let mut a20 = vdupq_n_u64(state[20]);
-  let mut a21 = vdupq_n_u64(state[21]);
-  let mut a22 = vdupq_n_u64(state[22]);
-  let mut a23 = vdupq_n_u64(state[23]);
-  let mut a24 = vdupq_n_u64(state[24]);
+  let z = vcreate_u64(0);
+  let mut a0 = vcombine_u64(vcreate_u64(state[0]), z);
+  let mut a1 = vcombine_u64(vcreate_u64(state[1]), z);
+  let mut a2 = vcombine_u64(vcreate_u64(state[2]), z);
+  let mut a3 = vcombine_u64(vcreate_u64(state[3]), z);
+  let mut a4 = vcombine_u64(vcreate_u64(state[4]), z);
+  let mut a5 = vcombine_u64(vcreate_u64(state[5]), z);
+  let mut a6 = vcombine_u64(vcreate_u64(state[6]), z);
+  let mut a7 = vcombine_u64(vcreate_u64(state[7]), z);
+  let mut a8 = vcombine_u64(vcreate_u64(state[8]), z);
+  let mut a9 = vcombine_u64(vcreate_u64(state[9]), z);
+  let mut a10 = vcombine_u64(vcreate_u64(state[10]), z);
+  let mut a11 = vcombine_u64(vcreate_u64(state[11]), z);
+  let mut a12 = vcombine_u64(vcreate_u64(state[12]), z);
+  let mut a13 = vcombine_u64(vcreate_u64(state[13]), z);
+  let mut a14 = vcombine_u64(vcreate_u64(state[14]), z);
+  let mut a15 = vcombine_u64(vcreate_u64(state[15]), z);
+  let mut a16 = vcombine_u64(vcreate_u64(state[16]), z);
+  let mut a17 = vcombine_u64(vcreate_u64(state[17]), z);
+  let mut a18 = vcombine_u64(vcreate_u64(state[18]), z);
+  let mut a19 = vcombine_u64(vcreate_u64(state[19]), z);
+  let mut a20 = vcombine_u64(vcreate_u64(state[20]), z);
+  let mut a21 = vcombine_u64(vcreate_u64(state[21]), z);
+  let mut a22 = vcombine_u64(vcreate_u64(state[22]), z);
+  let mut a23 = vcombine_u64(vcreate_u64(state[23]), z);
+  let mut a24 = vcombine_u64(vcreate_u64(state[24]), z);
 
   for &rc in &super::RC {
     keccakf_sha3_neon_round!(
@@ -209,13 +209,107 @@ unsafe fn keccakf_sha3_single_impl(state: &mut [u64; 25]) {
 /// Permute a single Keccak-f[1600] state using SHA3 Crypto Extensions.
 ///
 /// Requires `aarch64::SHA3` capability (verified by dispatch before calling).
-/// Not used in production (1.8× slower than portable on Neoverse V1/V2),
-/// retained for kernel correctness testing only.
-#[cfg(all(target_arch = "aarch64", test))]
+/// Used for Apple single-state dispatch; non-Apple aarch64 keeps the scalar
+/// fused-absorb path for single-state workloads.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_single(state: &mut [u64; 25]) {
   // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
   unsafe { keccakf_sha3_single_impl(state) }
+}
+
+/// Absorb one complete rate block and permute using SHA3 Crypto Extensions.
+///
+/// This fuses `state[i] ^= block_lane[i]` into the initial lane load, avoiding
+/// a separate state read/write pass before the permutation.
+///
+/// Requires `aarch64::SHA3` capability (verified by dispatch before calling).
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "sha3")]
+unsafe fn keccakf_sha3_absorb_single_impl<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
+  debug_assert_eq!(RATE % 8, 0);
+  let lanes = RATE / 8;
+  let ptr = block.as_ptr();
+
+  macro_rules! lane {
+    ($i:expr) => {{
+      if $i < lanes {
+        // SAFETY: `$i < lanes == RATE / 8`, so this read is within `block`;
+        // `read_unaligned` supports the 1-byte alignment of `[u8; RATE]`.
+        state[$i] ^ u64::from_le(unsafe { core::ptr::read_unaligned(ptr.add($i * 8).cast::<u64>()) })
+      } else {
+        state[$i]
+      }
+    }};
+  }
+
+  let z = vcreate_u64(0);
+  let mut a0 = vcombine_u64(vcreate_u64(lane!(0)), z);
+  let mut a1 = vcombine_u64(vcreate_u64(lane!(1)), z);
+  let mut a2 = vcombine_u64(vcreate_u64(lane!(2)), z);
+  let mut a3 = vcombine_u64(vcreate_u64(lane!(3)), z);
+  let mut a4 = vcombine_u64(vcreate_u64(lane!(4)), z);
+  let mut a5 = vcombine_u64(vcreate_u64(lane!(5)), z);
+  let mut a6 = vcombine_u64(vcreate_u64(lane!(6)), z);
+  let mut a7 = vcombine_u64(vcreate_u64(lane!(7)), z);
+  let mut a8 = vcombine_u64(vcreate_u64(lane!(8)), z);
+  let mut a9 = vcombine_u64(vcreate_u64(lane!(9)), z);
+  let mut a10 = vcombine_u64(vcreate_u64(lane!(10)), z);
+  let mut a11 = vcombine_u64(vcreate_u64(lane!(11)), z);
+  let mut a12 = vcombine_u64(vcreate_u64(lane!(12)), z);
+  let mut a13 = vcombine_u64(vcreate_u64(lane!(13)), z);
+  let mut a14 = vcombine_u64(vcreate_u64(lane!(14)), z);
+  let mut a15 = vcombine_u64(vcreate_u64(lane!(15)), z);
+  let mut a16 = vcombine_u64(vcreate_u64(lane!(16)), z);
+  let mut a17 = vcombine_u64(vcreate_u64(lane!(17)), z);
+  let mut a18 = vcombine_u64(vcreate_u64(lane!(18)), z);
+  let mut a19 = vcombine_u64(vcreate_u64(lane!(19)), z);
+  let mut a20 = vcombine_u64(vcreate_u64(lane!(20)), z);
+  let mut a21 = vcombine_u64(vcreate_u64(lane!(21)), z);
+  let mut a22 = vcombine_u64(vcreate_u64(lane!(22)), z);
+  let mut a23 = vcombine_u64(vcreate_u64(lane!(23)), z);
+  let mut a24 = vcombine_u64(vcreate_u64(lane!(24)), z);
+
+  for &rc in &super::RC {
+    keccakf_sha3_neon_round!(
+      a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
+      a24, rc
+    );
+  }
+
+  state[0] = vgetq_lane_u64(a0, 0);
+  state[1] = vgetq_lane_u64(a1, 0);
+  state[2] = vgetq_lane_u64(a2, 0);
+  state[3] = vgetq_lane_u64(a3, 0);
+  state[4] = vgetq_lane_u64(a4, 0);
+  state[5] = vgetq_lane_u64(a5, 0);
+  state[6] = vgetq_lane_u64(a6, 0);
+  state[7] = vgetq_lane_u64(a7, 0);
+  state[8] = vgetq_lane_u64(a8, 0);
+  state[9] = vgetq_lane_u64(a9, 0);
+  state[10] = vgetq_lane_u64(a10, 0);
+  state[11] = vgetq_lane_u64(a11, 0);
+  state[12] = vgetq_lane_u64(a12, 0);
+  state[13] = vgetq_lane_u64(a13, 0);
+  state[14] = vgetq_lane_u64(a14, 0);
+  state[15] = vgetq_lane_u64(a15, 0);
+  state[16] = vgetq_lane_u64(a16, 0);
+  state[17] = vgetq_lane_u64(a17, 0);
+  state[18] = vgetq_lane_u64(a18, 0);
+  state[19] = vgetq_lane_u64(a19, 0);
+  state[20] = vgetq_lane_u64(a20, 0);
+  state[21] = vgetq_lane_u64(a21, 0);
+  state[22] = vgetq_lane_u64(a22, 0);
+  state[23] = vgetq_lane_u64(a23, 0);
+  state[24] = vgetq_lane_u64(a24, 0);
+}
+
+/// Absorb one complete rate block and permute using SHA3 Crypto Extensions.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) fn keccakf_aarch64_sha3_absorb_single<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
+  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
+  unsafe { keccakf_sha3_absorb_single_impl::<RATE>(state, block) }
 }
 
 // ---------------------------------------------------------------------------

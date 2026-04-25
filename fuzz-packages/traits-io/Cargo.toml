@@ -10,7 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "blake3", "crc32"] }
-rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["traits_io"] }
 
 [workspace]
 members = ["."]

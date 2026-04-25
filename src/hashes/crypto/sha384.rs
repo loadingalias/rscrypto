@@ -191,9 +191,12 @@ impl Sha384 {
     compress_blocks(&mut state, &block);
 
     let mut out = [0u8; 48];
-    for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
+    out[0..8].copy_from_slice(&state[0].to_be_bytes());
+    out[8..16].copy_from_slice(&state[1].to_be_bytes());
+    out[16..24].copy_from_slice(&state[2].to_be_bytes());
+    out[24..32].copy_from_slice(&state[3].to_be_bytes());
+    out[32..40].copy_from_slice(&state[4].to_be_bytes());
+    out[40..48].copy_from_slice(&state[5].to_be_bytes());
     out
   }
 

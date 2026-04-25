@@ -1,21 +1,29 @@
 name: Setup rscrypto Environment
 description: |
   Install Rust toolchain, cargo tools, and configure caching.
-  All actions (dtolnay/rust-toolchain, taiki-e/install-action) skip if already installed
+  Unified host setup for GHA + runs-on.com + IBM/RISC-V runners.
 
 inputs:
   cache-key:
-    description: Additional cache key suffix
+    description: Suffix for the rust-cache key (workflow + target).
     required: false
     default: ""
   tools-mode:
-    description: Tool installation mode (standard, runson, bench, runson-bench, ibm, fuzz, minimal, none)
+    description: Tool install mode (standard, bench, ibm, fuzz, coverage, minimal, none).
     required: false
     default: "standard"
   toolchain-components:
-    description: Comma-separated list of toolchain components to install
+    description: Comma-separated rust toolchain components.
     required: false
     default: "clippy, rustfmt, rust-src"
+  enable-magic-cache:
+    description: Enable runs-on.com MagicCache (S3-backed). Only effective on runs-on pools declaring s3-cache extras.
+    required: false
+    default: "false"
+  enable-rust-cache:
+    description: Enable Swatinem/rust-cache for cargo artifacts. Bench lanes set to false to force clean builds.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -23,38 +31,26 @@ runs:
     - name: Detect Host Architecture
       id: host
       shell: bash
-      run: |
-        echo "uname_m=$(uname -m)" >> "$GITHUB_OUTPUT"
+      run: echo "uname_m=$(uname -m)" >> "$GITHUB_OUTPUT"
 
-    # Install Rust toolchain (reads version from rust-toolchain.toml)
+    # runs-on.com S3-backed cache intercept. No-op on non-runs-on pools.
+    - name: Setup MagicCache
+      if: inputs.enable-magic-cache == 'true'
+      uses: runs-on/action@742bf56072eb4845a0f94b3394673e4903c90ff0  # v2
+
     - name: Setup Toolchain
       uses: ./.github/actions/setup-toolchain
       with:
         components: ${{ inputs.toolchain-components }}
 
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    # Cache installed cargo tools separately (very stable, saves 30-90 seconds)
-    # Tools rarely change, so this cache hits almost always
-    # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    # Cargo tools cache — mode in the key so mode swaps don't contaminate a shared slot.
     - name: Cache Cargo Tools
       if: inputs.tools-mode != 'none'
       uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
       with:
         path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v9
-        # v9: refresh tool cache after adding cargo-deny and cargo-audit to host lanes
+        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v10
 
-    # Debug: show cache state before install
-    - name: Debug Cache State
-      if: inputs.tools-mode != 'none'
-      shell: bash
-      run: |
-        echo "Cache key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v9"
-        echo "Tools in ~/.cargo/bin:"
-        ls -la ~/.cargo/bin/ 2>/dev/null || echo "  (cache miss - directory empty or missing)"
-
-    # Install all required cargo tools via cargo-binstall (parallel, pre-built binaries)
-    # Skip if already in cache (install-tools.sh checks if tools exist)
     - name: Install Cargo Tools
       if: inputs.tools-mode != 'none'
       shell: bash
@@ -63,26 +59,12 @@ runs:
       run: scripts/ci/install-tools.sh ${{ inputs.tools-mode }}
 
     - name: Setup Rust Cache
+      if: inputs.enable-rust-cache == 'true'
       uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5  # v2.8.2
       with:
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        # Cache Strategy:
-        # - Caches: ~/.cargo (deps, tools) and ./target (build artifacts)
-        # - Cache key includes: workflow, platform, rustc version, Cargo.lock hash
-        # - Host triple automatically included in cache key
-        # - Separate caches per workflow and target triple via 'key' input
-        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        # Shared prefix: stable across commits (invalidates on bump)
         shared-key: "rscrypto-v1"
-
-        # Workflow and platform-specific suffix
         key: ${{ inputs.cache-key }}
-
-        # Cache even on test failures (build artifacts still useful)
         cache-on-failure: true
-
-        # Save from main, and also from any workflow_dispatch runs.
-        # The 'IBM' workflow check didn't work in reusable workflows; workflow_dispatch
-        # is sufficient since IBM runners are only used via workflow_dispatch.
-        save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+        # Populate cache on main, manual dispatch, and PRs (so slow platforms
+        # like IBM/RISC-V warm their cache before merge).
+        save-if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' }}

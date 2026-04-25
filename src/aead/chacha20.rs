@@ -427,6 +427,131 @@ mod x86_avx2;
 #[cfg(target_arch = "x86_64")]
 #[path = "chacha20/x86_64_avx512.rs"]
 mod x86_avx512;
+
+// ─── Forced-kernel diag entrypoints ────────────────────────────────────────
+//
+// Mirrors the `diag_compress_*` pattern in `src/auth/argon2/mod.rs`. Tests in
+// `tests/aead_kernel_equivalence.rs` invoke each backend's `xor_keystream`
+// directly to assert byte-identity with the portable oracle, regardless of
+// which backend the runtime dispatcher would otherwise pick. This is what
+// catches CRIT-1-class silent kernel divergence (e.g. POWER VSX rotation
+// inversion) on every CI runner that has the corresponding target feature.
+
+/// Run the **portable** ChaCha20 XOR-keystream regardless of host caps.
+#[cfg(feature = "diag")]
+pub fn diag_chacha20_xor_keystream_portable(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  xor_keystream_portable(key, initial_counter, nonce, buffer);
+}
+
+/// Run the aarch64 NEON ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host has `aarch64::NEON`. Compile-time gated to
+/// `target_arch = "aarch64"`.
+#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+pub fn diag_chacha20_xor_keystream_aarch64_neon(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
+/// Run the x86_64 AVX2 ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host has `x86::AVX2`.
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub fn diag_chacha20_xor_keystream_x86_avx2(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  x86_avx2::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
+/// Run the x86_64 AVX-512 ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host has `x86::AVX512F + AVX512VL + AVX512BW`.
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub fn diag_chacha20_xor_keystream_x86_avx512(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  x86_avx512::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
+/// Run the POWER VSX ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host is `powerpc64le` with VSX. The portable
+/// kernel — which has been the correctness oracle since commit `2631aefa`
+/// fixed the rotation-amount bug here — must produce identical bytes.
+#[cfg(all(feature = "diag", target_arch = "powerpc64", target_endian = "little"))]
+pub fn diag_chacha20_xor_keystream_power_vsx(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  power_vsx::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
+/// Run the s390x z/Vector ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host has `s390x::VECTOR`. Same correctness-oracle
+/// invariant as POWER VSX above.
+#[cfg(all(feature = "diag", target_arch = "s390x"))]
+pub fn diag_chacha20_xor_keystream_s390x_vector(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  s390x_vector::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
+/// Run the riscv64 RVV ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host has `riscv::V`.
+#[cfg(all(feature = "diag", target_arch = "riscv64"))]
+pub fn diag_chacha20_xor_keystream_riscv64_vector(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  riscv64_vector::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
+/// Run the wasm32 simd128 ChaCha20 XOR-keystream.
+#[cfg(all(feature = "diag", target_arch = "wasm32"))]
+pub fn diag_chacha20_xor_keystream_wasm_simd128(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer);
+}
 #[cfg(test)]
 mod tests {
   #[cfg(any(

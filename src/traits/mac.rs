@@ -116,6 +116,7 @@ pub trait Mac: Clone {
 
   /// Verify `expected` against the current tag in constant time.
   #[inline]
+  #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
     if ct::constant_time_eq(self.finalize().as_ref(), expected.as_ref()) {
       Ok(())
@@ -126,6 +127,7 @@ pub trait Mac: Clone {
 
   /// Compute and verify a tag in one shot.
   #[inline]
+  #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   fn verify_tag(key: &[u8], data: &[u8], expected: &Self::Tag) -> Result<(), VerificationError> {
     if ct::constant_time_eq(Self::mac(key, data).as_ref(), expected.as_ref()) {
       Ok(())

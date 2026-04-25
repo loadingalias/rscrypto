@@ -47,9 +47,52 @@ use crate::{
 
 const SHA256_OUTPUT_SIZE: usize = 32;
 const SHA256_BLOCK_SIZE: usize = 64;
+/// Maximum salt length whose `salt || INT_32_BE(block_index) || 0x80 || len`
+/// payload fits in a single SHA-256 block: 64 - 4 (block index) - 1 (`0x80`)
+/// - 8 (length) = 51.
+const SHA256_INLINE_SALT_MAX: usize = SHA256_BLOCK_SIZE - 4 - 1 - 8;
 
 const SHA512_OUTPUT_SIZE: usize = 64;
 const SHA512_BLOCK_SIZE: usize = 128;
+/// Maximum salt length whose `salt || INT_32_BE(block_index) || 0x80 || len`
+/// payload fits in a single SHA-512 block: 128 - 4 - 1 - 16 = 107.
+const SHA512_INLINE_SALT_MAX: usize = SHA512_BLOCK_SIZE - 4 - 1 - 16;
+
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn write_u32x8_be(dst: &mut [u8], words: &[u32; 8]) {
+  dst[0..4].copy_from_slice(&words[0].to_be_bytes());
+  dst[4..8].copy_from_slice(&words[1].to_be_bytes());
+  dst[8..12].copy_from_slice(&words[2].to_be_bytes());
+  dst[12..16].copy_from_slice(&words[3].to_be_bytes());
+  dst[16..20].copy_from_slice(&words[4].to_be_bytes());
+  dst[20..24].copy_from_slice(&words[5].to_be_bytes());
+  dst[24..28].copy_from_slice(&words[6].to_be_bytes());
+  dst[28..32].copy_from_slice(&words[7].to_be_bytes());
+}
+
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
+  dst[0..8].copy_from_slice(&words[0].to_be_bytes());
+  dst[8..16].copy_from_slice(&words[1].to_be_bytes());
+  dst[16..24].copy_from_slice(&words[2].to_be_bytes());
+  dst[24..32].copy_from_slice(&words[3].to_be_bytes());
+  dst[32..40].copy_from_slice(&words[4].to_be_bytes());
+  dst[40..48].copy_from_slice(&words[5].to_be_bytes());
+  dst[48..56].copy_from_slice(&words[6].to_be_bytes());
+  dst[56..64].copy_from_slice(&words[7].to_be_bytes());
+}
+
+#[inline(always)]
+fn zeroize_u32x8_no_fence(words: &mut [u32; 8]) {
+  ct::zeroize_words_no_fence(words);
+}
+
+#[inline(always)]
+fn zeroize_u64x8_no_fence(words: &mut [u64; 8]) {
+  ct::zeroize_words_no_fence(words);
+}
 
 // ─── Error ──────────────────────────────────────────────────────────────────
 
@@ -99,6 +142,7 @@ macro_rules! define_pbkdf2_sha2 {
       h0: $h0:path,
       dispatch: $dispatch:ident,
       f_fn: $f_fn:path,
+      iter1_fn: $iter1_fn:path,
       test_oneshot: $test_oneshot:path,
       word_ty: $word_ty:ty,
       recommended_iterations: $recommended_iterations:expr,
@@ -158,8 +202,22 @@ macro_rules! define_pbkdf2_sha2 {
       }
 
       /// Derive a key into `okm`.
+      #[inline]
       #[allow(clippy::indexing_slicing)]
       pub fn derive(&self, salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        Self::derive_with_prefixes(self.compress, &self.inner_init, &self.outer_init, salt, iterations, okm)
+      }
+
+      #[inline]
+      #[allow(clippy::indexing_slicing)]
+      fn derive_with_prefixes(
+        compress: $compress_ty,
+        inner_init: &[$word_ty; 8],
+        outer_init: &[$word_ty; 8],
+        salt: &[u8],
+        iterations: u32,
+        okm: &mut [u8],
+      ) -> Result<(), Pbkdf2Error> {
         if iterations == 0 {
           return Err(Pbkdf2Error::InvalidIterations);
         }
@@ -171,22 +229,45 @@ macro_rules! define_pbkdf2_sha2 {
           return Err(Pbkdf2Error::OutputTooLong);
         }
 
-        let mut block_out = [0u8; $output_size_const];
-        for (i, chunk) in okm.chunks_mut($output_size_const).enumerate() {
-          let block_index = (i as u32).strict_add(1);
+        if iterations == 1 {
+          $iter1_fn(compress, inner_init, outer_init, salt, okm);
+          return Ok(());
+        }
+
+        let mut block_index = 1u32;
+        let mut chunks = okm.chunks_exact_mut($output_size_const);
+
+        for chunk in chunks.by_ref() {
+          // SAFETY: chunks_exact_mut yields slices whose length is exactly
+          // $output_size_const, so this cast is to the same initialized bytes.
+          let full_chunk = unsafe { &mut *(chunk.as_mut_ptr().cast::<[u8; $output_size_const]>()) };
           $f_fn(
-            self.compress,
-            &self.inner_init,
-            &self.outer_init,
+            compress,
+            inner_init,
+            outer_init,
+            salt,
+            iterations,
+            block_index,
+            full_chunk,
+          );
+          block_index = block_index.strict_add(1);
+        }
+
+        let tail = chunks.into_remainder();
+        if !tail.is_empty() {
+          let mut block_out = [0u8; $output_size_const];
+          $f_fn(
+            compress,
+            inner_init,
+            outer_init,
             salt,
             iterations,
             block_index,
             &mut block_out,
           );
-          chunk.copy_from_slice(&block_out[..chunk.len()]);
+          tail.copy_from_slice(&block_out[..tail.len()]);
+          ct::zeroize(&mut block_out);
         }
-
-        ct::zeroize(&mut block_out);
         Ok(())
       }
 
@@ -199,6 +280,7 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Verify `expected` against the derived key in constant time.
       #[allow(clippy::indexing_slicing)]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
         if iterations == 0 || expected.is_empty() {
           return Err(VerificationError::new());
@@ -208,13 +290,15 @@ macro_rules! define_pbkdf2_sha2 {
           return Err(VerificationError::new());
         }
 
+        let compress = self.compress;
+
         let mut block_out = [0u8; $output_size_const];
         let mut acc = 0u8;
 
         for (i, chunk) in expected.chunks($output_size_const).enumerate() {
           let block_index = (i as u32).strict_add(1);
           $f_fn(
-            self.compress,
+            compress,
             &self.inner_init,
             &self.outer_init,
             salt,
@@ -238,8 +322,43 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Derive a key in one shot.
       #[inline]
+      #[allow(clippy::indexing_slicing)]
       pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-        Self::new(password).derive(salt, iterations, okm)
+        let compress = $dispatch::compress_dispatch().select(0);
+
+        let mut key_block = [0u8; $block_size_const];
+        if password.len() > $block_size_const {
+          let digest = <$digest_ty>::digest(password);
+          key_block[..$output_size_const].copy_from_slice(&digest);
+        } else {
+          key_block[..password.len()].copy_from_slice(password);
+        }
+
+        let mut ipad = [0x36u8; $block_size_const];
+        let mut opad = [0x5Cu8; $block_size_const];
+        for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
+          *ipad_byte ^= key_byte;
+          *opad_byte ^= key_byte;
+        }
+
+        let mut inner_init = $h0;
+        compress(&mut inner_init, &ipad);
+
+        let mut outer_init = $h0;
+        compress(&mut outer_init, &opad);
+
+        let result = Self::derive_with_prefixes(compress, &inner_init, &outer_init, salt, iterations, okm);
+
+        ct::zeroize_no_fence(&mut key_block);
+        ct::zeroize_no_fence(&mut ipad);
+        ct::zeroize_no_fence(&mut opad);
+        for word in inner_init.iter_mut().chain(outer_init.iter_mut()) {
+          // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+          unsafe { core::ptr::write_volatile(word, 0) };
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+        result
       }
 
       /// Derive a key into a fixed-size array in one shot.
@@ -254,6 +373,7 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Verify a password in one shot.
       #[inline]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_password(
         password: &[u8],
         salt: &[u8],
@@ -338,6 +458,7 @@ define_pbkdf2_sha2! {
     h0: SHA256_H0,
     dispatch: sha256_dispatch,
     f_fn: pbkdf2_sha256_f,
+    iter1_fn: pbkdf2_sha256_iter1,
     test_oneshot: sha256_oneshot_with_compress,
     word_ty: u32,
     recommended_iterations: 600_000,
@@ -377,6 +498,7 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
 /// using pre-padded block templates — no hash struct creation, no dispatch
 /// overhead, no padding recomputation.
 #[allow(clippy::indexing_slicing)]
+#[inline(always)]
 fn pbkdf2_sha256_f(
   compress: Sha256CompressBlocksFn,
   inner_init: &[u32; 8],
@@ -387,7 +509,8 @@ fn pbkdf2_sha256_f(
   output: &mut [u8; SHA256_OUTPUT_SIZE],
 ) {
   let mut state: [u32; 8];
-  let mut u = [0u8; SHA256_OUTPUT_SIZE];
+  let mut u_words: [u32; 8];
+  let mut result_words: [u32; 8];
 
   // ── U1 = HMAC(Password, Salt || INT_32_BE(block_index)) ──────────────
   state = *inner_init;
@@ -395,60 +518,75 @@ fn pbkdf2_sha256_f(
   let total_inner = (SHA256_BLOCK_SIZE as u64).strict_add(msg_len as u64);
 
   let mut block = [0u8; SHA256_BLOCK_SIZE];
-  let mut pos = 0usize;
-
-  // Feed salt
-  let mut salt_off = 0usize;
-  while salt_off < salt.len() {
-    let space = SHA256_BLOCK_SIZE.strict_sub(pos);
-    let remaining = salt.len().strict_sub(salt_off);
-    let take = if space < remaining { space } else { remaining };
-    block[pos..pos.strict_add(take)].copy_from_slice(&salt[salt_off..salt_off.strict_add(take)]);
-    pos = pos.strict_add(take);
-    salt_off = salt_off.strict_add(take);
-    if pos == SHA256_BLOCK_SIZE {
-      compress(&mut state, &block);
-      block = [0u8; SHA256_BLOCK_SIZE];
-      pos = 0;
-    }
-  }
-
-  // Feed block_index (4 bytes big-endian)
-  for &b in &block_index.to_be_bytes() {
-    block[pos] = b;
-    pos = pos.strict_add(1);
-    if pos == SHA256_BLOCK_SIZE {
-      compress(&mut state, &block);
-      block = [0u8; SHA256_BLOCK_SIZE];
-      pos = 0;
-    }
-  }
-
-  // SHA-256 padding
-  block[pos] = 0x80;
-  if pos.strict_add(1) > 56 {
+  if salt.len() <= SHA256_INLINE_SALT_MAX {
+    block[..salt.len()].copy_from_slice(salt);
+    let pos = salt.len().strict_add(4);
+    block[salt.len()..pos].copy_from_slice(&block_index.to_be_bytes());
+    block[pos] = 0x80;
+    block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
     compress(&mut state, &block);
-    block = [0u8; SHA256_BLOCK_SIZE];
+  } else {
+    let mut pos = 0usize;
+
+    // Feed salt
+    let mut salt_off = 0usize;
+    while salt_off < salt.len() {
+      let space = SHA256_BLOCK_SIZE.strict_sub(pos);
+      let remaining = salt.len().strict_sub(salt_off);
+      let take = if space < remaining { space } else { remaining };
+      block[pos..pos.strict_add(take)].copy_from_slice(&salt[salt_off..salt_off.strict_add(take)]);
+      pos = pos.strict_add(take);
+      salt_off = salt_off.strict_add(take);
+      if pos == SHA256_BLOCK_SIZE {
+        compress(&mut state, &block);
+        block = [0u8; SHA256_BLOCK_SIZE];
+        pos = 0;
+      }
+    }
+
+    // Feed block_index (4 bytes big-endian)
+    for &b in &block_index.to_be_bytes() {
+      block[pos] = b;
+      pos = pos.strict_add(1);
+      if pos == SHA256_BLOCK_SIZE {
+        compress(&mut state, &block);
+        block = [0u8; SHA256_BLOCK_SIZE];
+        pos = 0;
+      }
+    }
+
+    // SHA-256 padding
+    block[pos] = 0x80;
+    if pos.strict_add(1) > 56 {
+      compress(&mut state, &block);
+      block = [0u8; SHA256_BLOCK_SIZE];
+    }
+    block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
+    compress(&mut state, &block);
   }
-  block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
-  compress(&mut state, &block);
 
   // Outer hash of U1: single block
   let mut outer_block = [0u8; SHA256_BLOCK_SIZE];
-  for (chunk, &word) in outer_block[..SHA256_OUTPUT_SIZE].chunks_exact_mut(4).zip(state.iter()) {
-    chunk.copy_from_slice(&word.to_be_bytes());
-  }
+  write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
   outer_block[SHA256_OUTPUT_SIZE] = 0x80;
   // total outer bytes = 64 (opad, pre-compressed) + 32 (inner hash) = 96 → 768 bits
   outer_block[56..SHA256_BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
 
   state = *outer_init;
   compress(&mut state, &outer_block);
+  u_words = state;
+  result_words = u_words;
 
-  for (dst, &word) in u.chunks_exact_mut(4).zip(state.iter()) {
-    dst.copy_from_slice(&word.to_be_bytes());
+  if iterations == 1 {
+    write_u32x8_be(output, &result_words);
+    ct::zeroize_no_fence(&mut outer_block);
+    ct::zeroize_no_fence(&mut block);
+    zeroize_u32x8_no_fence(&mut state);
+    zeroize_u32x8_no_fence(&mut u_words);
+    zeroize_u32x8_no_fence(&mut result_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    return;
   }
-  *output = u;
 
   // ── Iterations 2..=c (fixed-size HMAC, 2 compress calls each) ────────
   // Inner template: [32-byte U] [0x80] [zeros] [768-bit length]
@@ -458,39 +596,117 @@ fn pbkdf2_sha256_f(
 
   for _ in 1..iterations {
     // Inner: compress(inner_init, U_{j-1} || padding)
-    inner_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&u);
+    write_u32x8_be(&mut inner_block[..SHA256_OUTPUT_SIZE], &u_words);
     state = *inner_init;
     compress(&mut state, &inner_block);
 
     // Serialize inner hash directly into outer block
-    for (chunk, &word) in outer_block[..SHA256_OUTPUT_SIZE].chunks_exact_mut(4).zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
+    write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
 
     // Outer: compress(outer_init, inner_hash || padding)
     state = *outer_init;
     compress(&mut state, &outer_block);
 
-    // Serialize Uj
-    for (dst, &word) in u.chunks_exact_mut(4).zip(state.iter()) {
-      dst.copy_from_slice(&word.to_be_bytes());
-    }
+    u_words = state;
 
     // XOR into output
-    for (o, &x) in output.iter_mut().zip(u.iter()) {
-      *o ^= x;
+    for (dst, &word) in result_words.iter_mut().zip(u_words.iter()) {
+      *dst ^= word;
     }
   }
 
+  write_u32x8_be(output, &result_words);
+
   // Zeroize sensitive state
-  ct::zeroize_no_fence(&mut u);
   ct::zeroize_no_fence(&mut inner_block);
   ct::zeroize_no_fence(&mut outer_block);
   ct::zeroize_no_fence(&mut block);
-  for word in state.iter_mut() {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
+  zeroize_u32x8_no_fence(&mut state);
+  zeroize_u32x8_no_fence(&mut u_words);
+  zeroize_u32x8_no_fence(&mut result_words);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+#[allow(clippy::indexing_slicing)]
+#[inline(always)]
+fn pbkdf2_sha256_iter1(
+  compress: Sha256CompressBlocksFn,
+  inner_init: &[u32; 8],
+  outer_init: &[u32; 8],
+  salt: &[u8],
+  okm: &mut [u8],
+) {
+  if salt.len() > SHA256_INLINE_SALT_MAX {
+    let mut block_index = 1u32;
+    let mut chunks = okm.chunks_exact_mut(SHA256_OUTPUT_SIZE);
+    for chunk in chunks.by_ref() {
+      // SAFETY: chunks_exact_mut yields slices whose length is exactly SHA256_OUTPUT_SIZE.
+      let full_chunk = unsafe { &mut *(chunk.as_mut_ptr().cast::<[u8; SHA256_OUTPUT_SIZE]>()) };
+      pbkdf2_sha256_f(compress, inner_init, outer_init, salt, 1, block_index, full_chunk);
+      block_index = block_index.strict_add(1);
+    }
+    let tail = chunks.into_remainder();
+    if !tail.is_empty() {
+      let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
+      pbkdf2_sha256_f(compress, inner_init, outer_init, salt, 1, block_index, &mut block_out);
+      tail.copy_from_slice(&block_out[..tail.len()]);
+      ct::zeroize(&mut block_out);
+    }
+    return;
   }
+
+  let msg_len = salt.len().strict_add(4);
+  let total_inner = (SHA256_BLOCK_SIZE as u64).strict_add(msg_len as u64);
+  let index_pos = salt.len();
+  let pad_pos = index_pos.strict_add(4);
+
+  let mut block = [0u8; SHA256_BLOCK_SIZE];
+  block[..salt.len()].copy_from_slice(salt);
+  block[pad_pos] = 0x80;
+  block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
+
+  let mut outer_block = [0u8; SHA256_BLOCK_SIZE];
+  outer_block[SHA256_OUTPUT_SIZE] = 0x80;
+  outer_block[56..SHA256_BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
+
+  let mut state = [0u32; 8];
+  let mut block_index = 1u32;
+
+  let mut chunks = okm.chunks_exact_mut(SHA256_OUTPUT_SIZE);
+  for chunk in chunks.by_ref() {
+    block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
+
+    state = *inner_init;
+    compress(&mut state, &block);
+
+    write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
+    state = *outer_init;
+    compress(&mut state, &outer_block);
+
+    write_u32x8_be(chunk, &state);
+    block_index = block_index.strict_add(1);
+  }
+
+  let tail = chunks.into_remainder();
+  if !tail.is_empty() {
+    block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
+
+    state = *inner_init;
+    compress(&mut state, &block);
+
+    write_u32x8_be(&mut outer_block[..SHA256_OUTPUT_SIZE], &state);
+    state = *outer_init;
+    compress(&mut state, &outer_block);
+
+    let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
+    write_u32x8_be(&mut block_out, &state);
+    tail.copy_from_slice(&block_out[..tail.len()]);
+    ct::zeroize_no_fence(&mut block_out);
+  }
+
+  ct::zeroize_no_fence(&mut block);
+  ct::zeroize_no_fence(&mut outer_block);
+  zeroize_u32x8_no_fence(&mut state);
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
@@ -520,6 +736,7 @@ define_pbkdf2_sha2! {
     h0: SHA512_H0,
     dispatch: sha512_dispatch,
     f_fn: pbkdf2_sha512_f,
+    iter1_fn: pbkdf2_sha512_iter1,
     test_oneshot: sha512_oneshot_with_compress,
     word_ty: u64,
     recommended_iterations: 210_000,
@@ -555,6 +772,7 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
 
 /// Compute one PBKDF2-SHA512 block: `F(Password, Salt, c, i)`.
 #[allow(clippy::indexing_slicing)]
+#[inline(always)]
 fn pbkdf2_sha512_f(
   compress: Sha512CompressBlocksFn,
   inner_init: &[u64; 8],
@@ -565,7 +783,8 @@ fn pbkdf2_sha512_f(
   output: &mut [u8; SHA512_OUTPUT_SIZE],
 ) {
   let mut state: [u64; 8];
-  let mut u = [0u8; SHA512_OUTPUT_SIZE];
+  let mut u_words: [u64; 8];
+  let mut result_words: [u64; 8];
 
   // ── U1 = HMAC(Password, Salt || INT_32_BE(block_index)) ──────────────
   state = *inner_init;
@@ -573,60 +792,64 @@ fn pbkdf2_sha512_f(
   let total_inner = (SHA512_BLOCK_SIZE as u128).strict_add(msg_len as u128);
 
   let mut block = [0u8; SHA512_BLOCK_SIZE];
-  let mut pos = 0usize;
-
-  // Feed salt
-  let mut salt_off = 0usize;
-  while salt_off < salt.len() {
-    let space = SHA512_BLOCK_SIZE.strict_sub(pos);
-    let remaining = salt.len().strict_sub(salt_off);
-    let take = if space < remaining { space } else { remaining };
-    block[pos..pos.strict_add(take)].copy_from_slice(&salt[salt_off..salt_off.strict_add(take)]);
-    pos = pos.strict_add(take);
-    salt_off = salt_off.strict_add(take);
-    if pos == SHA512_BLOCK_SIZE {
-      compress(&mut state, &block);
-      block = [0u8; SHA512_BLOCK_SIZE];
-      pos = 0;
-    }
-  }
-
-  // Feed block_index (4 bytes big-endian)
-  for &b in &block_index.to_be_bytes() {
-    block[pos] = b;
-    pos = pos.strict_add(1);
-    if pos == SHA512_BLOCK_SIZE {
-      compress(&mut state, &block);
-      block = [0u8; SHA512_BLOCK_SIZE];
-      pos = 0;
-    }
-  }
-
-  // SHA-512 padding (16-byte length field)
-  block[pos] = 0x80;
-  if pos.strict_add(1) > 112 {
+  if salt.len() <= SHA512_INLINE_SALT_MAX {
+    block[..salt.len()].copy_from_slice(salt);
+    let pos = salt.len().strict_add(4);
+    block[salt.len()..pos].copy_from_slice(&block_index.to_be_bytes());
+    block[pos] = 0x80;
+    block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
     compress(&mut state, &block);
-    block = [0u8; SHA512_BLOCK_SIZE];
+  } else {
+    let mut pos = 0usize;
+
+    // Feed salt
+    let mut salt_off = 0usize;
+    while salt_off < salt.len() {
+      let space = SHA512_BLOCK_SIZE.strict_sub(pos);
+      let remaining = salt.len().strict_sub(salt_off);
+      let take = if space < remaining { space } else { remaining };
+      block[pos..pos.strict_add(take)].copy_from_slice(&salt[salt_off..salt_off.strict_add(take)]);
+      pos = pos.strict_add(take);
+      salt_off = salt_off.strict_add(take);
+      if pos == SHA512_BLOCK_SIZE {
+        compress(&mut state, &block);
+        block = [0u8; SHA512_BLOCK_SIZE];
+        pos = 0;
+      }
+    }
+
+    // Feed block_index (4 bytes big-endian)
+    for &b in &block_index.to_be_bytes() {
+      block[pos] = b;
+      pos = pos.strict_add(1);
+      if pos == SHA512_BLOCK_SIZE {
+        compress(&mut state, &block);
+        block = [0u8; SHA512_BLOCK_SIZE];
+        pos = 0;
+      }
+    }
+
+    // SHA-512 padding (16-byte length field)
+    block[pos] = 0x80;
+    if pos.strict_add(1) > 112 {
+      compress(&mut state, &block);
+      block = [0u8; SHA512_BLOCK_SIZE];
+    }
+    block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
+    compress(&mut state, &block);
   }
-  block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
-  compress(&mut state, &block);
 
   // Outer hash of U1: single block
   let mut outer_block = [0u8; SHA512_BLOCK_SIZE];
-  for (chunk, &word) in outer_block[..SHA512_OUTPUT_SIZE].chunks_exact_mut(8).zip(state.iter()) {
-    chunk.copy_from_slice(&word.to_be_bytes());
-  }
+  write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
   outer_block[SHA512_OUTPUT_SIZE] = 0x80;
   // total outer bytes = 128 (opad, pre-compressed) + 64 (inner hash) = 192 → 1536 bits
   outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
 
   state = *outer_init;
   compress(&mut state, &outer_block);
-
-  for (dst, &word) in u.chunks_exact_mut(8).zip(state.iter()) {
-    dst.copy_from_slice(&word.to_be_bytes());
-  }
-  *output = u;
+  u_words = state;
+  result_words = u_words;
 
   // ── Iterations 2..=c (fixed-size HMAC, 2 compress calls each) ────────
   let mut inner_block = [0u8; SHA512_BLOCK_SIZE];
@@ -634,34 +857,113 @@ fn pbkdf2_sha512_f(
   inner_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
 
   for _ in 1..iterations {
-    inner_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&u);
+    write_u64x8_be(&mut inner_block[..SHA512_OUTPUT_SIZE], &u_words);
     state = *inner_init;
     compress(&mut state, &inner_block);
 
-    for (chunk, &word) in outer_block[..SHA512_OUTPUT_SIZE].chunks_exact_mut(8).zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
+    write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
 
     state = *outer_init;
     compress(&mut state, &outer_block);
 
-    for (dst, &word) in u.chunks_exact_mut(8).zip(state.iter()) {
-      dst.copy_from_slice(&word.to_be_bytes());
-    }
+    u_words = state;
 
-    for (o, &x) in output.iter_mut().zip(u.iter()) {
-      *o ^= x;
+    for (dst, &word) in result_words.iter_mut().zip(u_words.iter()) {
+      *dst ^= word;
     }
   }
 
-  ct::zeroize_no_fence(&mut u);
+  write_u64x8_be(output, &result_words);
+
   ct::zeroize_no_fence(&mut inner_block);
   ct::zeroize_no_fence(&mut outer_block);
   ct::zeroize_no_fence(&mut block);
-  for word in state.iter_mut() {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
+  zeroize_u64x8_no_fence(&mut state);
+  zeroize_u64x8_no_fence(&mut u_words);
+  zeroize_u64x8_no_fence(&mut result_words);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+#[allow(clippy::indexing_slicing)]
+#[inline(always)]
+fn pbkdf2_sha512_iter1(
+  compress: Sha512CompressBlocksFn,
+  inner_init: &[u64; 8],
+  outer_init: &[u64; 8],
+  salt: &[u8],
+  okm: &mut [u8],
+) {
+  if salt.len() > SHA512_INLINE_SALT_MAX {
+    let mut block_index = 1u32;
+    let mut chunks = okm.chunks_exact_mut(SHA512_OUTPUT_SIZE);
+    for chunk in chunks.by_ref() {
+      // SAFETY: chunks_exact_mut yields slices whose length is exactly SHA512_OUTPUT_SIZE.
+      let full_chunk = unsafe { &mut *(chunk.as_mut_ptr().cast::<[u8; SHA512_OUTPUT_SIZE]>()) };
+      pbkdf2_sha512_f(compress, inner_init, outer_init, salt, 1, block_index, full_chunk);
+      block_index = block_index.strict_add(1);
+    }
+    let tail = chunks.into_remainder();
+    if !tail.is_empty() {
+      let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
+      pbkdf2_sha512_f(compress, inner_init, outer_init, salt, 1, block_index, &mut block_out);
+      tail.copy_from_slice(&block_out[..tail.len()]);
+      ct::zeroize(&mut block_out);
+    }
+    return;
   }
+
+  let msg_len = salt.len().strict_add(4);
+  let total_inner = (SHA512_BLOCK_SIZE as u128).strict_add(msg_len as u128);
+  let index_pos = salt.len();
+  let pad_pos = index_pos.strict_add(4);
+
+  let mut block = [0u8; SHA512_BLOCK_SIZE];
+  block[..salt.len()].copy_from_slice(salt);
+  block[pad_pos] = 0x80;
+  block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_inner.strict_mul(8).to_be_bytes());
+
+  let mut outer_block = [0u8; SHA512_BLOCK_SIZE];
+  outer_block[SHA512_OUTPUT_SIZE] = 0x80;
+  outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
+
+  let mut state = [0u64; 8];
+  let mut block_index = 1u32;
+
+  let mut chunks = okm.chunks_exact_mut(SHA512_OUTPUT_SIZE);
+  for chunk in chunks.by_ref() {
+    block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
+
+    state = *inner_init;
+    compress(&mut state, &block);
+
+    write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
+    state = *outer_init;
+    compress(&mut state, &outer_block);
+
+    write_u64x8_be(chunk, &state);
+    block_index = block_index.strict_add(1);
+  }
+
+  let tail = chunks.into_remainder();
+  if !tail.is_empty() {
+    block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
+
+    state = *inner_init;
+    compress(&mut state, &block);
+
+    write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], &state);
+    state = *outer_init;
+    compress(&mut state, &outer_block);
+
+    let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
+    write_u64x8_be(&mut block_out, &state);
+    tail.copy_from_slice(&block_out[..tail.len()]);
+    ct::zeroize_no_fence(&mut block_out);
+  }
+
+  ct::zeroize_no_fence(&mut block);
+  ct::zeroize_no_fence(&mut outer_block);
+  zeroize_u64x8_no_fence(&mut state);
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 

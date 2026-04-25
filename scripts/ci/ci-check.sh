@@ -31,17 +31,6 @@ maybe_disable_sccache
 apply_ci_resource_profile
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Infrastructure correctness checks
-# ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo "🧱 Infrastructure checks..."
-if [[ "${CI:-}" == "true" ]]; then
-  echo "skipped in CI (local-only)"
-else
-  "$SCRIPT_DIR/check-infra.sh"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Format Check
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""

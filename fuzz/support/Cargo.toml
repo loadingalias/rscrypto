@@ -6,6 +6,7 @@ edition = "2024"
 
 [features]
 aead = []
+traits_io = []
 
 [dependencies]
 rscrypto = { path = "../..", features = ["std"] }

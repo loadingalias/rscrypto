@@ -1,0 +1,225 @@
+name: _ci-suite
+
+# Reusable CI suite: ci matrix, IBM/RISC-V lanes, no-std, wasm, supply-chain.
+# Called by ci.yaml (per PR/push) and weekly.yaml (scheduled full run).
+
+on:
+  workflow_call:
+    inputs:
+      scope:
+        description: "'rail' (cargo-rail narrowed) or 'all' (full workspace)."
+        required: true
+        type: string
+      base_ref:
+        description: "Base ref passed to cargo-rail when scope=rail."
+        required: false
+        type: string
+        default: ""
+      scope_json:
+        description: "Scope JSON from cargo-rail when scope=rail."
+        required: false
+        type: string
+        default: ""
+      cache_key_prefix:
+        description: "Cache-key prefix, segregates commit/weekly caches."
+        required: true
+        type: string
+      supply_chain_mode:
+        description: "'light' (cargo deny check advisories) or 'full' (deny all + audit)."
+        required: true
+        type: string
+      cross_depth:
+        description: "'shallow' (PR smoke) or 'deep' (full feature sweep) for no-std/wasm."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  target-matrix:
+    name: Resolve Target Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      ci: ${{ steps.matrix.outputs.ci }}
+      no_std: ${{ steps.matrix.outputs.no_std }}
+      wasm: ${{ steps.matrix.outputs.wasm }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Load matrix
+        id: matrix
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          {
+            echo "ci=$(bash scripts/lib/target-matrix.sh --format json --key ci)"
+            echo "no_std=$(bash scripts/lib/target-matrix.sh --format json --key no_std)"
+            echo "wasm=$(bash scripts/lib/target-matrix.sh --format json --key wasm)"
+          } >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI (${{ matrix.target.name }})
+    needs: target-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.target-matrix.outputs.ci) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 35
+      cache_key: ${{ inputs.cache_key_prefix }}-${{ matrix.target.name }}
+      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'standard' }}
+      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
+      enable_magic_cache: ${{ matrix.target.type == 'runson' }}
+      enable_rust_cache: true
+      run_script: |
+        case "${{ matrix.target.name }}" in
+          *windows-msvc)
+            echo "Windows lane: compile-only smoke"
+            cargo check --workspace --lib --all-features
+            cargo test --workspace --all-features --no-run
+            ;;
+          *)
+            if [[ "${{ inputs.scope }}" == "rail" ]]; then
+              export RAIL_SINCE="${{ inputs.base_ref }}"
+              export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
+              just check
+              just build
+              just test
+            else
+              just check --all
+              just build
+              just test --all
+            fi
+            ;;
+        esac
+
+  ci-ibm-s390x:
+    name: CI (IBM Z s390x)
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-s390x
+      timeout_minutes: 90
+      cache_key: ${{ inputs.cache_key_prefix }}-ibm-s390x
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      enable_magic_cache: false
+      enable_rust_cache: true
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        if [[ "${{ inputs.scope }}" == "rail" ]]; then
+          export RAIL_SINCE="${{ inputs.base_ref }}"
+          export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
+          just test
+        else
+          just test --all
+        fi
+
+  ci-ibm-power10:
+    name: CI (IBM POWER10 ppc64le)
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-ppc64le-p10
+      timeout_minutes: 90
+      cache_key: ${{ inputs.cache_key_prefix }}-ibm-power10
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      enable_magic_cache: false
+      enable_rust_cache: true
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        just ci-check
+        if [[ "${{ inputs.scope }}" == "rail" ]]; then
+          export RAIL_SINCE="${{ inputs.base_ref }}"
+          export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
+          just test
+        else
+          just test --all
+        fi
+
+  ci-riscv:
+    name: CI (RISE RISC-V riscv64)
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-riscv
+      timeout_minutes: 120
+      cache_key: ${{ inputs.cache_key_prefix }}-riscv64
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      enable_magic_cache: false
+      enable_rust_cache: true
+      pre_script: |
+        uname -a
+        lscpu
+        cat /proc/cpuinfo | head -50
+      run_script: |
+        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
+        just ci-check
+        if [[ "${{ inputs.scope }}" == "rail" ]]; then
+          export RAIL_SINCE="${{ inputs.base_ref }}"
+          export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
+          just test
+        else
+          just test --all
+        fi
+
+  no-std:
+    name: no_std (${{ matrix.target }})
+    needs: target-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.target-matrix.outputs.no_std) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 25
+      cache_key: ${{ inputs.cache_key_prefix }}-no-std-${{ matrix.target }}
+      tools_mode: minimal
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: bash scripts/ci/nostd-wasm-suite.sh "${{ matrix.target }}" "${{ inputs.cross_depth }}"
+
+  wasm:
+    name: wasm (${{ matrix.target }})
+    needs: target-matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.target-matrix.outputs.wasm) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 25
+      cache_key: ${{ inputs.cache_key_prefix }}-wasm-${{ matrix.target }}
+      tools_mode: minimal
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: bash scripts/ci/nostd-wasm-suite.sh "${{ matrix.target }}" "${{ inputs.cross_depth }}"
+
+  supply-chain:
+    name: Supply Chain (${{ inputs.supply_chain_mode }})
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 15
+      cache_key: ${{ inputs.cache_key_prefix }}-supply-chain
+      tools_mode: standard
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: |
+        if [[ "${{ inputs.supply_chain_mode }}" == "full" ]]; then
+          cargo deny check all
+          cargo audit
+        else
+          cargo deny check advisories
+        fi

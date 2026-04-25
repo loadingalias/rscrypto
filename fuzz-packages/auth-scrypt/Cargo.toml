@@ -1,0 +1,22 @@
+[package]
+name = "rscrypto-fuzz-auth-scrypt"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "scrypt"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+scrypt = { version = "0.11", default-features = false }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_scrypt"
+path = "fuzz_targets/auth_scrypt.rs"
+doc = false

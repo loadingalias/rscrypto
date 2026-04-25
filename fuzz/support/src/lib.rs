@@ -87,6 +87,28 @@ pub fn split_at_ratio(data: &[u8], ratio: u8) -> (&[u8], &[u8]) {
     data.split_at(split_point(data.len(), ratio))
 }
 
+/// Build a fixed-size salt-shaped buffer from a fuzzer-provided slice.
+///
+/// Password-hash fuzz targets (Argon2, scrypt, PHC) need a salt that
+/// satisfies the algorithm's minimum length (RFC 9106 §3.1: `MIN_SALT_LEN
+/// = 8`). When the fuzzer's slice is empty, the leading half of the
+/// returned array is filled with `filler` so the salt is not all-zero;
+/// otherwise the slice is repeated cyclically into the buffer. This shape
+/// is uniform across every password-hash target.
+#[inline]
+#[must_use]
+pub fn pad_salt_to<const N: usize>(material: &[u8], filler: u8) -> [u8; N] {
+    let mut out = [0u8; N];
+    if material.is_empty() {
+        out[..N / 2].fill(filler);
+    } else {
+        for (i, slot) in out.iter_mut().enumerate() {
+            *slot = material[i % material.len()];
+        }
+    }
+    out
+}
+
 #[cfg(feature = "aead")]
 /// Assert that `encrypt_in_place → decrypt_in_place` recovers the original
 /// plaintext for arbitrary inputs.
@@ -121,6 +143,62 @@ pub fn assert_aead_roundtrip<A: Aead>(
         recovered, original,
         "roundtrip: combined encrypt/decrypt mismatch"
     );
+}
+
+#[cfg(feature = "aead")]
+/// Assert byte-identical round-trip against a RustCrypto-style AEAD oracle
+/// that returns ciphertext and tag as a single combined buffer.
+///
+/// Captures the four-step pattern shared by every AEAD whose oracle
+/// implements the `aead` crate's `Aead`/`AeadInPlace` traits:
+///
+/// 1. rscrypto encrypts; oracle decrypts the combined output.
+/// 2. Oracle encrypts; rscrypto decrypts after splitting the `A::TAG_SIZE`
+///    suffix from the body.
+///
+/// `oracle_encrypt` and `oracle_decrypt` adapt the per-oracle nonce and
+/// `Payload` plumbing — they receive `(plaintext, aad)` / `(combined, aad)`
+/// and return the corresponding `Vec<u8>`. Closures should panic with a
+/// descriptive message on oracle errors; libFuzzer surfaces them as a crash.
+///
+/// AEAD constructions whose oracle returns the tag separately (e.g. `aegis`)
+/// cannot use this helper and stay bespoke in their target.
+pub fn assert_aead_against_oracle<A, EncFn, DecFn>(
+    cipher: &A,
+    nonce: &A::Nonce,
+    aad: &[u8],
+    plaintext: &[u8],
+    oracle_encrypt: EncFn,
+    oracle_decrypt: DecFn,
+) where
+    A: Aead,
+    EncFn: FnOnce(&[u8], &[u8]) -> Vec<u8>,
+    DecFn: FnOnce(&[u8], &[u8]) -> Vec<u8>,
+{
+    // ── ours encrypt → oracle decrypt ─────────────────────────────────────
+    let mut ct = plaintext.to_vec();
+    let tag = cipher
+        .encrypt_in_place(nonce, aad, &mut ct)
+        .expect("differential: rscrypto encrypt must succeed");
+    let mut combined = ct.clone();
+    combined.extend_from_slice(tag.as_ref());
+    let pt = oracle_decrypt(&combined, aad);
+    assert_eq!(pt, plaintext, "differential: oracle failed to decrypt our ciphertext");
+
+    // ── oracle encrypt → ours decrypt ─────────────────────────────────────
+    let oct = oracle_encrypt(plaintext, aad);
+    let split = oct.len().strict_sub(A::TAG_SIZE);
+    let (body, otag) = oct.split_at(split);
+    let mut buf = body.to_vec();
+    cipher
+        .decrypt_in_place(
+            nonce,
+            aad,
+            &mut buf,
+            &A::tag_from_slice(otag).expect("oracle tag length mismatch"),
+        )
+        .expect("differential: rscrypto failed to decrypt oracle ciphertext");
+    assert_eq!(buf, plaintext, "differential: decrypt mismatch on oracle ciphertext");
 }
 
 #[cfg(feature = "aead")]
@@ -225,6 +303,58 @@ pub fn assert_mac_streaming<M: Mac>(key: &[u8], data: &[u8], split_byte: u8) {
     assert_eq!(expected, got, "mac: streaming mismatch");
 }
 
+/// Assert that `reset()` restores the keyed initial state for a MAC.
+///
+/// Mirrors [`assert_digest_reset`] for `Mac` implementors so that every
+/// keyed primitive is exercised on the same property surface.
+pub fn assert_mac_reset<M: Mac>(key: &[u8], data: &[u8]) {
+    let mut m = M::new(key);
+    m.update(data);
+    let first = m.finalize();
+    m.reset();
+    m.update(data);
+    let second = m.finalize();
+    assert_eq!(first, second, "mac: changed after reset");
+}
+
+/// Compare a freshly-computed MAC tag against an oracle-produced tag.
+///
+/// `oracle` receives `(key, data)` and returns the canonical reference
+/// tag bytes. The helper asserts byte equality with the rscrypto tag —
+/// both are compared as raw `[u8]` slices to absorb fixed-size vs. vec
+/// representations.
+pub fn assert_mac_against_oracle<M: Mac>(
+    key: &[u8],
+    data: &[u8],
+    tag: &M::Tag,
+    oracle: impl FnOnce(&[u8], &[u8]) -> Vec<u8>,
+) {
+    let oracle_tag = oracle(key, data);
+    assert_eq!(
+        tag.as_ref(),
+        oracle_tag.as_slice(),
+        "mac: oracle tag mismatch"
+    );
+}
+
+/// Compare an HKDF expand result against an oracle expand result.
+///
+/// `ours_ok` / `oracle_ok` are `Result::is_ok()` for the expand calls;
+/// `ours_okm` / `oracle_okm` are the (possibly-undefined-on-Err) output
+/// buffers. The helper asserts both sides agree on success and, on
+/// success, agree on bytes.
+pub fn assert_hkdf_against_oracle(
+    ours_ok: bool,
+    ours_okm: &[u8],
+    oracle_ok: bool,
+    oracle_okm: &[u8],
+) {
+    assert_eq!(ours_ok, oracle_ok, "hkdf: oracle result mismatch");
+    if ours_ok {
+        assert_eq!(ours_okm, oracle_okm, "hkdf: oracle bytes mismatch");
+    }
+}
+
 /// Assert that squeezing a larger output is a prefix-extension of a smaller one.
 #[macro_export]
 macro_rules! assert_xof_prefix {
@@ -266,4 +396,129 @@ pub fn assert_checksum_chunked<C: Checksum>(data: &[u8], split_byte: u8) {
     let got = c.finalize();
 
     assert_eq!(expected, got, "checksum: streaming mismatch");
+}
+
+// ── Partial-IO scaffolding (feature: `traits_io`) ───────────────────────────
+//
+// Reusable adversarial `Read` / `Write` adapters for fuzzing rscrypto's
+// streaming traits. They model real-world short reads/writes by capping the
+// per-call byte count and tracking flush events. Used by `traits_io.rs` and
+// available for any future streaming-IO target.
+
+#[cfg(feature = "traits_io")]
+pub use partial_io::{PartialReader, PartialWriter};
+
+#[cfg(feature = "traits_io")]
+mod partial_io {
+    use std::io::{self, IoSlice, IoSliceMut, Read, Write};
+
+    /// `Read` adapter that returns at most `max_per_call` bytes per call,
+    /// regardless of the destination buffer size. Models adversarial short
+    /// reads.
+    #[derive(Clone, Debug)]
+    pub struct PartialReader {
+        pub data: Vec<u8>,
+        pub pos: usize,
+        pub max_per_call: usize,
+    }
+
+    impl PartialReader {
+        #[inline]
+        #[must_use]
+        pub fn new(data: &[u8], max_per_call: usize) -> Self {
+            Self {
+                data: data.to_vec(),
+                pos: 0,
+                max_per_call,
+            }
+        }
+    }
+
+    impl Read for PartialReader {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let remaining = &self.data[self.pos..];
+            let n = remaining.len().min(buf.len()).min(self.max_per_call);
+            buf[..n].copy_from_slice(&remaining[..n]);
+            self.pos = self.pos.strict_add(n);
+            Ok(n)
+        }
+
+        fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+            let remaining = &self.data[self.pos..];
+            let capacity = bufs
+                .iter()
+                .fold(0usize, |sum, buf| sum.strict_add(buf.len()));
+            let n = remaining.len().min(capacity).min(self.max_per_call);
+
+            let mut copied = 0usize;
+            for buf in bufs {
+                if copied == n {
+                    break;
+                }
+                let take = buf.len().min(n.strict_sub(copied));
+                if take == 0 {
+                    continue;
+                }
+                buf[..take].copy_from_slice(&remaining[copied..copied.strict_add(take)]);
+                copied = copied.strict_add(take);
+            }
+
+            self.pos = self.pos.strict_add(n);
+            Ok(n)
+        }
+    }
+
+    /// `Write` adapter that accepts at most `max_per_call` bytes per call
+    /// and tracks the flush count. Models adversarial backpressure.
+    #[derive(Clone, Debug, Default)]
+    pub struct PartialWriter {
+        pub inner: Vec<u8>,
+        pub flushes: usize,
+        pub max_per_call: usize,
+    }
+
+    impl PartialWriter {
+        #[inline]
+        #[must_use]
+        pub fn new(max_per_call: usize) -> Self {
+            Self {
+                inner: Vec::new(),
+                flushes: 0,
+                max_per_call,
+            }
+        }
+    }
+
+    impl Write for PartialWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let n = buf.len().min(self.max_per_call);
+            self.inner.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes = self.flushes.strict_add(1);
+            Ok(())
+        }
+
+        fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+            let mut remaining = self.max_per_call;
+            let mut written = 0usize;
+
+            for buf in bufs {
+                let take = remaining.min(buf.len());
+                if remaining == 0 {
+                    break;
+                }
+                if take == 0 {
+                    continue;
+                }
+                self.inner.extend_from_slice(&buf[..take]);
+                written = written.strict_add(take);
+                remaining = remaining.strict_sub(take);
+            }
+
+            Ok(written)
+        }
+    }
 }

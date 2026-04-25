@@ -16,8 +16,9 @@ source "$SCRIPT_DIR/../lib/common.sh"
 # How it works:
 #   - Code uses #[cfg(miri)] guards to fall back to portable implementations
 #   - SIMD intrinsics that Miri can't interpret are automatically bypassed
-#   - Integration proptests stay in `just test-proptests`; equivalent boundary-
-#     heavy shadow tests live in lib tests so Miri can still validate invariants
+#   - Integration proptests run in the regular `just test` lane; equivalent
+#     boundary-heavy shadow tests live in lib tests so Miri can still validate
+#     invariants
 #   - No special RUSTFLAGS needed - works on ARM and x86 identically
 #
 # Usage:
@@ -56,7 +57,7 @@ echo "Testing: rscrypto"
 echo "Mode: --lib with production feature coverage and Miri shadow invariants"
 echo "Features: full,diag"
 echo "Scope: unit tests + in-crate deterministic invariant coverage"
-echo "Out of scope: integration proptests in tests/ (run via just test-proptests)"
+echo "Out of scope: integration proptests in tests/ (run via just test)"
 echo ""
 
 # Run Miri on library tests only (--lib excludes benchmarks/examples and
