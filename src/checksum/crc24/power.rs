@@ -98,6 +98,8 @@ impl Simd {
     }
 
     #[cfg(target_endian = "big")]
+    // SAFETY: The function-level target features make `vreg` operands valid, and the asm only
+    // byte-reverses the input vector into a new output register without touching memory or stack.
     unsafe {
       let out: i64x2;
       asm!(
