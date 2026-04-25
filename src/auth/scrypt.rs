@@ -809,6 +809,24 @@ impl Scrypt {
     Ok(encoded)
   }
 
+  /// Hash `password` with a fresh 16-byte salt from the operating system
+  /// CSPRNG and encode the result as a PHC string.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the platform entropy source fails.
+  ///
+  /// # Errors
+  ///
+  /// Propagates any [`ScryptError`] from parameter validation, input length
+  /// checks, or working-set allocation.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  pub fn hash_string(params: &ScryptParams, password: &[u8]) -> Result<alloc::string::String, ScryptError> {
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).unwrap_or_else(|e| panic!("getrandom failed: {e}"));
+    Self::hash_string_with_salt(params, password, &salt)
+  }
+
   /// Verify `password` against a PHC-encoded hash in constant time.
   ///
   /// Parses the encoded string, rebuilds the cost parameters, re-hashes
@@ -1065,6 +1083,15 @@ mod tests {
     let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
     let wrong_len = [0u8; 16];
     assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &wrong_len).is_err());
+  }
+
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  #[test]
+  fn hash_string_uses_random_salt_and_verifies() {
+    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
+    let encoded = Scrypt::hash_string(&params, b"password").unwrap();
+    assert!(Scrypt::verify_string(b"password", &encoded).is_ok());
+    assert!(Scrypt::verify_string(b"wrong-password", &encoded).is_err());
   }
 
   // ── Byte flips at every position ──────────────────────────────────────

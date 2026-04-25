@@ -95,6 +95,41 @@ assert_eq!(
 )]
 //!
 #![cfg_attr(
+  feature = "password-hashing",
+  doc = r#"
+## Password Hashing
+
+```rust
+use rscrypto::{Argon2Params, Argon2id, Scrypt, ScryptParams};
+
+let password = b"correct horse battery staple";
+let salt = b"random-salt-1234";
+
+let argon2 = Argon2Params::new()
+  .memory_cost_kib(32)
+  .time_cost(1)
+  .parallelism(1)
+  .output_len(32)
+  .build()?;
+let encoded = Argon2id::hash_string_with_salt(&argon2, password, salt)?;
+assert!(Argon2id::verify_string(password, &encoded).is_ok());
+assert!(Argon2id::verify_string(b"wrong", &encoded).is_err());
+
+let scrypt = ScryptParams::new()
+  .log_n(4)
+  .r(1)
+  .p(1)
+  .output_len(32)
+  .build()?;
+let encoded = Scrypt::hash_string_with_salt(&scrypt, password, salt)?;
+assert!(Scrypt::verify_string(password, &encoded).is_ok());
+assert!(Scrypt::verify_string(b"wrong", &encoded).is_err());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
+//!
+#![cfg_attr(
   all(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
   doc = r#"
 ## AEAD

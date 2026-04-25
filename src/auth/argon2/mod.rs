@@ -1820,6 +1820,27 @@ macro_rules! define_argon2_variant {
         Ok(encoded)
       }
 
+      /// Hash `password` with a fresh 16-byte salt from the operating
+      /// system CSPRNG and encode the result as a PHC string.
+      ///
+      /// # Panics
+      ///
+      /// Panics if the platform entropy source fails.
+      ///
+      /// # Errors
+      ///
+      /// Propagates any [`Argon2Error`] from parameter validation or input
+      /// length checks.
+      #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+      pub fn hash_string(
+        params: &Argon2Params,
+        password: &[u8],
+      ) -> Result<alloc::string::String, Argon2Error> {
+        let mut salt = [0u8; 16];
+        getrandom::fill(&mut salt).unwrap_or_else(|e| panic!("getrandom failed: {e}"));
+        Self::hash_string_with_salt(params, password, &salt)
+      }
+
       /// Verify `password` against a PHC-encoded hash in constant time.
       ///
       /// Parses the encoded string, rebuilds the cost parameters, re-hashes
@@ -2156,6 +2177,23 @@ mod tests {
     let h = Argon2id::hash_array::<32>(&params, PASSWORD, SALT).unwrap();
     let wrong_salt = [0xffu8; 16];
     assert!(Argon2id::verify(&params, PASSWORD, &wrong_salt, &h).is_err());
+  }
+
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  #[test]
+  #[cfg(not(miri))]
+  fn hash_string_uses_random_salt_and_verifies() {
+    let params = Argon2Params::new()
+      .memory_cost_kib(32)
+      .time_cost(1)
+      .parallelism(1)
+      .output_len(32)
+      .build()
+      .unwrap();
+
+    let encoded = Argon2id::hash_string(&params, b"password").unwrap();
+    assert!(Argon2id::verify_string(b"password", &encoded).is_ok());
+    assert!(Argon2id::verify_string(b"wrong-password", &encoded).is_err());
   }
 
   // ── Errors ─────────────────────────────────────────────────────────────

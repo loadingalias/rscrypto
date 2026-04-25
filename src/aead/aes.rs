@@ -6,11 +6,11 @@
 //! use by AES-based AEAD constructions (GCM-SIV, GCM). All operations are
 //! constant-time: no table lookups indexed by secret data.
 //!
-//! On x86_64 with AES-NI or aarch64 with AES-CE, the hardware path is
-//! selected at key-expansion time. The portable S-box uses algebraic
-//! inversion in GF(2^8) via the Fermat power chain (x^254) and
-//! constant-time field arithmetic, avoiding any lookup tables that could
-//! leak through cache timing.
+//! On x86_64 with AES-NI, aarch64 with AES-CE, or RISC-V with scalar/vector
+//! crypto AES, the hardware path is selected at key-expansion time. The
+//! portable S-box uses algebraic inversion in GF(2^8) via the Fermat power
+//! chain (x^254) and constant-time field arithmetic, avoiding any lookup
+//! tables that could leak through cache timing.
 
 /// AES block size in bytes.
 pub(crate) const BLOCK_SIZE: usize = 16;
@@ -360,11 +360,6 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       zeroize_expanded_key_words(&mut portable_rk);
       return Aes256EncKey {
         inner: KeyInner::Riscv64ScalarCrypto(rv_keys),
-      };
-    }
-    if crate::platform::caps().has(crate::platform::caps::riscv::V) {
-      return Aes256EncKey {
-        inner: KeyInner::Riscv64Vperm(aes256_expand_key_portable(key)),
       };
     }
   }
