@@ -27,7 +27,6 @@ env:
   CARGO_TERM_COLOR: always
   RSCRYPTO_BENCH_MODE: ci
   CARGO_INCREMENTAL: 0
-  RUSTFLAGS: "-C target-cpu=native"
 
 permissions:
   contents: read
@@ -57,8 +56,7 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.has_targets == 'true' }}
     concurrency:
-      # Allow multiple bench workflow runs to overlap as long as they target
-      # different lanes; serialize per lane to avoid self-contention.
+      # Multiple bench runs can overlap across lanes; serialize per lane.
       group: bench-${{ github.ref }}-${{ matrix.platform }}
       cancel-in-progress: false
     strategy:
@@ -69,13 +67,14 @@ jobs:
     with:
       runner: ${{ matrix.runner }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      setup_kind: ${{ matrix.setup_kind }}
-      cache_key: ${{ matrix.cache_key }}
+      cache_key: ""
       tools_mode: ${{ matrix.tools_mode }}
       toolchain_components: ${{ matrix.toolchain_components }}
-      runson_mode: ${{ matrix.runson_mode }}
+      # Clean builds required for bench integrity — no caching on any bench lane.
+      enable_magic_cache: false
+      enable_rust_cache: false
       pre_script: |
-        echo "Bench host: ${{ matrix.platform }}"
+        echo "Bench host: ${{ matrix.platform }} (${{ matrix.os }})"
         uname -a
         lscpu
         cat /proc/cpuinfo | head -50
@@ -87,7 +86,7 @@ jobs:
         BENCH_RESULTS_DIR=benchmark-results \
         BENCH_RUN_DATE="$RUN_DATE" \
         BENCH_RUN_TIME="$RUN_TIME" \
-        BENCH_RUN_OS=linux \
+        BENCH_RUN_OS="${{ matrix.os }}" \
         BENCH_RUN_ARCH="${{ matrix.platform }}" \
         BENCH_RUN_COMMIT="$RUN_COMMIT" \
         BENCH_RUN_MODE=ci \

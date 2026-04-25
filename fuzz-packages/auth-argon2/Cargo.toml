@@ -1,0 +1,32 @@
+[package]
+name = "rscrypto-fuzz-auth-argon2"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "argon2"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
+argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "auth_argon2id"
+path = "fuzz_targets/auth_argon2id.rs"
+doc = false
+
+[[bin]]
+name = "auth_argon2d"
+path = "fuzz_targets/auth_argon2d.rs"
+doc = false
+
+[[bin]]
+name = "auth_argon2i"
+path = "fuzz_targets/auth_argon2i.rs"
+doc = false

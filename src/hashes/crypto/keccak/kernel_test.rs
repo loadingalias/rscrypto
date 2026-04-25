@@ -106,6 +106,52 @@ mod tests {
     verify_keccakf1600_kernels(&[0u8; 200]).expect("kernels should agree");
   }
 
+  /// Every rscrypto keccakf1600 kernel permutes the state identically to the
+  /// `keccak` crate's soft backend, for a batch of patterned inputs.
+  #[cfg(not(miri))]
+  #[test]
+  fn all_kernels_match_keccak_crate_oracle() {
+    let cases: &[&[u8]] = &[
+      &[],
+      b"abc",
+      b"1600-bit block fills exactly",
+      &[0u8; 200],
+      &[0xffu8; 200],
+    ];
+
+    let k = keccak::Keccak::new();
+    for input in cases {
+      let expected = {
+        let mut state = state_from_bytes(input);
+        k.with_f1600(|f1600| f1600(&mut state));
+        state
+      };
+
+      for r in run_all_keccakf1600_kernels(input) {
+        assert_eq!(r.state, expected, "kernel={} mismatches keccak crate oracle", r.name);
+      }
+    }
+  }
+
+  #[cfg(not(miri))]
+  proptest::proptest! {
+    /// Every rscrypto keccakf1600 kernel matches the `keccak` crate across
+    /// arbitrary 1600-bit state inputs.
+    #[test]
+    fn kernels_match_keccak_crate_oracle(bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..=200)) {
+      let k = keccak::Keccak::new();
+      let expected = {
+        let mut state = state_from_bytes(&bytes);
+        k.with_f1600(|f1600| f1600(&mut state));
+        state
+      };
+
+      for r in run_all_keccakf1600_kernels(&bytes) {
+        proptest::prop_assert_eq!(r.state, expected, "kernel {} mismatches keccak oracle", r.name);
+      }
+    }
+  }
+
   /// Verify 2-state interleaved kernel matches two independent single-state runs.
   #[test]
   #[cfg(target_arch = "aarch64")]

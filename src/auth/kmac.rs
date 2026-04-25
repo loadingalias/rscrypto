@@ -42,7 +42,7 @@ impl Kmac256 {
   #[inline]
   fn absorb_key(state: &mut Cshake256, key: &[u8]) {
     let (key_prefix, key_prefix_len) = left_encode(crate::bytes_to_bits_saturating(key.len()));
-    let payload_len = key_prefix_len.saturating_add(key.len());
+    let payload_len = key_prefix_len.strict_add(key.len());
     state.absorb_bytepad_segments(&[&key_prefix[..key_prefix_len], key], payload_len);
   }
 
@@ -93,6 +93,7 @@ impl Kmac256 {
   /// This is the one-shot helper. For pre-release snapshots that inverted the
   /// naming, use `verify_tag` for `(key, customization, data, expected)` and
   /// [`Self::verify`] for an already-accumulated state.
+  #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], customization: &[u8], data: &[u8], expected: &[u8]) -> Result<(), VerificationError> {
     let mut state = Self::new(key, customization);
     state.update(data);
@@ -103,6 +104,7 @@ impl Kmac256 {
   ///
   /// This checks the MAC for the bytes already absorbed into `self`; it does
   /// not recompute from `(key, customization, data)` like [`Self::verify_tag`].
+  #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify(&self, expected: &[u8]) -> Result<(), VerificationError> {
     let mut reader = self.finalize_reader(expected.len());
     let mut diff = 0u8;

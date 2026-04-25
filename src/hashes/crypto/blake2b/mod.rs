@@ -1,8 +1,10 @@
 //! Blake2b cryptographic hash (RFC 7693).
 //!
-//! Blake2b-256 and Blake2b-512, with optional keyed hashing (Blake2b-MAC).
-//! Blake2b is a prerequisite for Argon2 and is independently useful in NOISE,
-//! WireGuard, Zcash, and other protocols.
+//! Blake2b-256 and Blake2b-512, plus [`Blake2b`] for runtime-configurable
+//! output lengths in 1..=64 bytes. Keyed hashing (Blake2b-MAC) is supported
+//! on all three surfaces. Blake2b is a prerequisite for Argon2 and is
+//! independently useful in NOISE, WireGuard, Zcash, BLAKE2X, SPHINCS+, and
+//! other protocols.
 //!
 //! # Examples
 //!
@@ -27,6 +29,21 @@
 //! let key = b"secret-key-up-to-64-bytes";
 //! let tag = Blake2b256::keyed_digest(key, b"message");
 //! assert_ne!(tag, Blake2b256::digest(b"message"));
+//! ```
+//!
+//! ## Variable Output Length
+//!
+//! ```rust
+//! use rscrypto::Blake2b;
+//!
+//! // One-shot into a 48-byte buffer.
+//! let mut out = [0u8; 48];
+//! Blake2b::digest_into(48, b"hello", &mut out);
+//! assert_ne!(out, [0u8; 48]);
+//!
+//! // Streaming with a const-generic output array.
+//! let tag = Blake2b::digest_array::<20>(b"message");
+//! assert_eq!(tag.len(), 20);
 //! ```
 
 pub(crate) mod kernels;
@@ -661,6 +678,31 @@ impl Blake2bParams {
     Blake2b512(Core::new_with_params(64, self.key_slice(), &self.salt, &self.personal))
   }
 
+  /// Build a streaming variable-output Blake2b hasher (`output_len` bytes, 1..=64).
+  ///
+  /// # Panics
+  ///
+  /// Panics if `output_len == 0` or `output_len > 64`.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::Blake2bParams;
+  ///
+  /// let mut hasher = Blake2bParams::new().salt(b"domain-salt").build(48);
+  /// hasher.update(b"hello ");
+  /// hasher.update(b"world");
+  /// let mut out = [0u8; 48];
+  /// hasher.finalize_into(&mut out);
+  /// ```
+  #[must_use]
+  pub fn build(&self, output_len: u8) -> Blake2b {
+    Blake2b {
+      core: Core::new_with_params(output_len, self.key_slice(), &self.salt, &self.personal),
+      output_len,
+    }
+  }
+
   /// Compute a Blake2b-256 hash of `data` in one shot using these parameters.
   #[must_use]
   pub fn hash_256(&self, data: &[u8]) -> [u8; 32] {
@@ -671,6 +713,30 @@ impl Blake2bParams {
   #[must_use]
   pub fn hash_512(&self, data: &[u8]) -> [u8; 64] {
     oneshot_hash_array_with_params::<64>(64, self.key_slice(), &self.salt, &self.personal, data)
+  }
+
+  /// Compute a variable-output Blake2b hash of `data` in one shot using these
+  /// parameters. The output length is taken from `out.len()`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `out.len() == 0` or `out.len() > 64`.
+  ///
+  /// # Examples
+  ///
+  /// ```rust
+  /// use rscrypto::Blake2bParams;
+  ///
+  /// let mut out = [0u8; 24];
+  /// Blake2bParams::new()
+  ///   .personal(b"app-v1")
+  ///   .hash_into(b"msg", &mut out);
+  /// assert_ne!(out, [0u8; 24]);
+  /// ```
+  pub fn hash_into(&self, data: &[u8], out: &mut [u8]) {
+    let nn = out.len();
+    assert!((1..=MAX_OUTPUT_LEN).contains(&nn), "Blake2b output length must be 1-64",);
+    oneshot_hash_into_with_params(nn as u8, self.key_slice(), &self.salt, &self.personal, data, out);
   }
 }
 
@@ -906,21 +972,196 @@ impl Drop for Blake2b512 {
   }
 }
 
-// ─── Variable-output helper for Argon2 ──────────────────────────────────────
+// ─── Blake2b (variable output length) ───────────────────────────────────────
 
-/// One-shot Blake2b with variable output length (1-64 bytes).
-#[cfg(test)]
-#[allow(clippy::indexing_slicing)]
-pub(crate) fn blake2b_hash(data: &[u8], nn: u8, out: &mut [u8]) {
-  debug_assert!(nn >= 1 && nn as usize <= MAX_OUTPUT_LEN);
-  debug_assert!(out.len() == nn as usize);
-  let mut core = Core::new(nn, &[]);
-  core.update(data);
-  core.finalize_into(out);
+/// Blake2b with runtime-configurable output length in 1..=64 bytes.
+///
+/// `Blake2b256` and `Blake2b512` are ergonomic fixed-length wrappers over
+/// this same compression function; use `Blake2b` when the output length is
+/// a runtime value or when it is not 32 or 64. Output lengths from 1 to 64
+/// bytes are spec-compliant (RFC 7693 §3.2).
+///
+/// # Examples
+///
+/// ```rust
+/// use rscrypto::Blake2b;
+///
+/// // One-shot with a 48-byte output.
+/// let mut out = [0u8; 48];
+/// Blake2b::digest_into(48, b"hello world", &mut out);
+/// assert_ne!(out, [0u8; 48]);
+///
+/// // Streaming with a 20-byte output.
+/// let mut hasher = Blake2b::new(20);
+/// hasher.update(b"hello ");
+/// hasher.update(b"world");
+/// let mut tag = [0u8; 20];
+/// hasher.finalize_into(&mut tag);
+///
+/// // Const-generic convenience.
+/// let tag2 = Blake2b::digest_array::<20>(b"hello world");
+/// assert_eq!(tag, tag2);
+/// ```
+///
+/// # Panics
+///
+/// Constructors panic if `output_len` is `0` or greater than `64`.
+/// `finalize_into` panics if the supplied slice length does not match the
+/// hasher's configured output length.
+#[derive(Clone)]
+pub struct Blake2b {
+  core: Core,
+  output_len: u8,
+}
+
+impl fmt::Debug for Blake2b {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("Blake2b")
+      .field("output_len", &self.output_len)
+      .finish_non_exhaustive()
+  }
+}
+
+impl Blake2b {
+  /// Maximum permitted output length (bytes).
+  pub const MAX_OUTPUT_SIZE: usize = MAX_OUTPUT_LEN;
+
+  /// Create an unkeyed Blake2b hasher with the given output length.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `output_len == 0` or `output_len > 64`.
+  #[must_use]
+  pub fn new(output_len: u8) -> Self {
+    Self {
+      core: Core::new(output_len, &[]),
+      output_len,
+    }
+  }
+
+  /// Create a keyed Blake2b hasher (Blake2b-MAC) with the given output length.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `output_len == 0`, `output_len > 64`, `key` is empty, or
+  /// `key.len() > 64`.
+  #[must_use]
+  pub fn new_keyed(output_len: u8, key: &[u8]) -> Self {
+    assert!(!key.is_empty(), "use Blake2b::new() for unkeyed hashing");
+    Self {
+      core: Core::new(output_len, key),
+      output_len,
+    }
+  }
+
+  /// Output length this hasher will produce, in bytes.
+  #[must_use]
+  #[inline]
+  pub const fn output_size(&self) -> usize {
+    self.output_len as usize
+  }
+
+  /// Feed data into the hash state.
+  #[inline]
+  pub fn update(&mut self, data: &[u8]) {
+    self.core.update(data);
+  }
+
+  /// Write the hash into `out`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `out.len() != self.output_size()`.
+  pub fn finalize_into(&self, out: &mut [u8]) {
+    assert_eq!(
+      out.len(),
+      self.output_len as usize,
+      "Blake2b::finalize_into output slice must be exactly the configured output length"
+    );
+    self.core.finalize_into(out);
+  }
+
+  /// Reset to the initial state, preserving the configured output length and
+  /// key if the hasher was created via `new_keyed`.
+  #[inline]
+  pub fn reset(&mut self) {
+    self.core.reset();
+  }
+
+  /// Compute an unkeyed Blake2b hash in one shot with `output_len` bytes
+  /// written to `out`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `output_len == 0`, `output_len > 64`, or
+  /// `out.len() != output_len as usize`.
+  pub fn digest_into(output_len: u8, data: &[u8], out: &mut [u8]) {
+    assert_eq!(
+      out.len(),
+      output_len as usize,
+      "Blake2b::digest_into output slice must be exactly output_len bytes"
+    );
+    oneshot_hash_into(output_len, &[], data, out);
+  }
+
+  /// Compute a keyed Blake2b hash in one shot with `output_len` bytes
+  /// written to `out`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `output_len == 0`, `output_len > 64`, `key` is empty,
+  /// `key.len() > 64`, or `out.len() != output_len as usize`.
+  pub fn keyed_digest_into(output_len: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
+    assert!(!key.is_empty(), "use Blake2b::digest_into() for unkeyed hashing");
+    assert_eq!(
+      out.len(),
+      output_len as usize,
+      "Blake2b::keyed_digest_into output slice must be exactly output_len bytes"
+    );
+    oneshot_hash_into(output_len, key, data, out);
+  }
+
+  /// Compute an unkeyed Blake2b hash in one shot, returning a fixed-size array.
+  ///
+  /// The output length `N` is enforced at monomorphization time.
+  ///
+  /// # Panics
+  ///
+  /// Fails compilation (via inline const assertion) if `N == 0` or `N > 64`.
+  #[must_use]
+  pub fn digest_array<const N: usize>(data: &[u8]) -> [u8; N] {
+    const {
+      assert!(N >= 1 && N <= MAX_OUTPUT_LEN, "Blake2b output length N must be 1..=64");
+    }
+    oneshot_hash_array::<N>(N as u8, &[], data)
+  }
+
+  /// Compute a keyed Blake2b hash in one shot, returning a fixed-size array.
+  ///
+  /// # Panics
+  ///
+  /// Fails compilation if `N == 0` or `N > 64`; panics at runtime if `key`
+  /// is empty or longer than 64 bytes.
+  #[must_use]
+  pub fn keyed_digest_array<const N: usize>(key: &[u8], data: &[u8]) -> [u8; N] {
+    const {
+      assert!(N >= 1 && N <= MAX_OUTPUT_LEN, "Blake2b output length N must be 1..=64");
+    }
+    assert!(!key.is_empty(), "use Blake2b::digest_array() for unkeyed hashing");
+    oneshot_hash_array::<N>(N as u8, key, data)
+  }
+}
+
+impl Drop for Blake2b {
+  fn drop(&mut self) {
+    // Core::drop handles zeroization.
+  }
 }
 
 #[cfg(test)]
 mod tests {
+  use alloc::vec;
+
   use blake2::{Blake2b as OracleBlake2b, Blake2bMac, Digest as _};
   use digest::{
     KeyInit,
@@ -1110,7 +1351,7 @@ mod tests {
   #[test]
   fn variable_output_1_byte() {
     let mut out = [0u8; 1];
-    blake2b_hash(b"test", 1, &mut out);
+    Blake2b::digest_into(1, b"test", &mut out);
     assert_ne!(out, [0u8; 1]);
   }
 
@@ -1118,15 +1359,235 @@ mod tests {
   fn variable_output_matches_fixed() {
     // 32-byte variable output should match Blake2b256
     let mut var_out = [0u8; 32];
-    blake2b_hash(b"hello", 32, &mut var_out);
+    Blake2b::digest_into(32, b"hello", &mut var_out);
     let fixed_out = Blake2b256::digest(b"hello");
     assert_eq!(var_out, fixed_out);
 
     // 64-byte variable output should match Blake2b512
     let mut var_out = [0u8; 64];
-    blake2b_hash(b"hello", 64, &mut var_out);
+    Blake2b::digest_into(64, b"hello", &mut var_out);
     let fixed_out = Blake2b512::digest(b"hello");
     assert_eq!(var_out, fixed_out);
+  }
+
+  /// Run a single variable-length oracle match using `blake2::Blake2b::<UN>`.
+  macro_rules! assert_blake2b_var_matches {
+    ($nn:literal, $UN:ty, $data:expr) => {{
+      let data: &[u8] = $data;
+      let mut oracle = blake2::Blake2b::<$UN>::new();
+      oracle.update(data);
+      let expected_arr: [u8; $nn] = oracle.finalize().into();
+
+      let mut actual = [0u8; $nn];
+      Blake2b::digest_into($nn, data, &mut actual);
+      assert_eq!(actual, expected_arr, "Blake2b nn={} oracle mismatch", $nn);
+    }};
+  }
+
+  #[test]
+  fn variable_output_oracle_spread() {
+    // Representative spread covering all single-block / wraparound boundaries.
+    use digest::consts::{U1, U8, U16, U20, U24, U32, U40, U48, U56, U63, U64};
+    let data = b"rscrypto variable-output test input";
+    assert_blake2b_var_matches!(1, U1, data);
+    assert_blake2b_var_matches!(8, U8, data);
+    assert_blake2b_var_matches!(16, U16, data);
+    assert_blake2b_var_matches!(20, U20, data);
+    assert_blake2b_var_matches!(24, U24, data);
+    assert_blake2b_var_matches!(32, U32, data);
+    assert_blake2b_var_matches!(40, U40, data);
+    assert_blake2b_var_matches!(48, U48, data);
+    assert_blake2b_var_matches!(56, U56, data);
+    assert_blake2b_var_matches!(63, U63, data);
+    assert_blake2b_var_matches!(64, U64, data);
+  }
+
+  #[test]
+  fn variable_output_oracle_spread_multiblock() {
+    // Longer input (> one block) to stress the multi-block path against the oracle.
+    use digest::consts::{U16, U32, U48, U64};
+    let data: [u8; 300] = core::array::from_fn(|i| (i & 0xff) as u8);
+    assert_blake2b_var_matches!(16, U16, &data);
+    assert_blake2b_var_matches!(32, U32, &data);
+    assert_blake2b_var_matches!(48, U48, &data);
+    assert_blake2b_var_matches!(64, U64, &data);
+  }
+
+  #[test]
+  fn variable_output_all_lengths_self_consistent() {
+    // 1..=64 oneshot == streaming(single update) == streaming(chunked)
+    let data: [u8; 200] = core::array::from_fn(|i| ((i * 31 + 17) & 0xff) as u8);
+    for nn in 1u8..=64 {
+      let mut oneshot = vec![0u8; nn as usize];
+      Blake2b::digest_into(nn, &data, &mut oneshot);
+
+      let mut h = Blake2b::new(nn);
+      h.update(&data);
+      let mut single_update = vec![0u8; nn as usize];
+      h.finalize_into(&mut single_update);
+      assert_eq!(oneshot, single_update, "single-update nn={nn}");
+
+      let mut h = Blake2b::new(nn);
+      for chunk in data.chunks(37) {
+        h.update(chunk);
+      }
+      let mut chunked = vec![0u8; nn as usize];
+      h.finalize_into(&mut chunked);
+      assert_eq!(oneshot, chunked, "chunked nn={nn}");
+    }
+  }
+
+  #[test]
+  fn variable_output_streaming_matches_oneshot() {
+    let data = [0x5Au8; 300];
+    for nn in [1u8, 16, 32, 48, 63, 64] {
+      let mut expected = vec![0u8; nn as usize];
+      Blake2b::digest_into(nn, &data, &mut expected);
+
+      let mut h = Blake2b::new(nn);
+      for chunk in data.chunks(37) {
+        h.update(chunk);
+      }
+      let mut actual = vec![0u8; nn as usize];
+      h.finalize_into(&mut actual);
+      assert_eq!(actual, expected, "streaming mismatch nn={nn}");
+    }
+  }
+
+  #[test]
+  fn variable_output_keyed_matches_fixed_32_and_64() {
+    // For nn=32 and nn=64 we can cross-check against Blake2b256/Blake2b512 keyed paths.
+    let key: &[u8] = b"variable-output-key";
+    let data: &[u8] = b"message";
+
+    let mut actual_32 = [0u8; 32];
+    Blake2b::keyed_digest_into(32, key, data, &mut actual_32);
+    assert_eq!(actual_32, Blake2b256::keyed_digest(key, data));
+
+    let mut actual_64 = [0u8; 64];
+    Blake2b::keyed_digest_into(64, key, data, &mut actual_64);
+    assert_eq!(actual_64, Blake2b512::keyed_digest(key, data));
+  }
+
+  #[test]
+  fn variable_output_keyed_differs_from_unkeyed() {
+    let key = b"secret-key";
+    let data = b"message";
+    for nn in [1u8, 16, 40, 48, 63] {
+      let mut keyed = vec![0u8; nn as usize];
+      Blake2b::keyed_digest_into(nn, key, data, &mut keyed);
+
+      let mut unkeyed = vec![0u8; nn as usize];
+      Blake2b::digest_into(nn, data, &mut unkeyed);
+
+      assert_ne!(keyed, unkeyed, "keyed vs unkeyed nn={nn}");
+    }
+  }
+
+  #[test]
+  fn variable_output_keyed_deterministic() {
+    let key = b"secret-key";
+    let data = b"message";
+    for nn in [1u8, 16, 40, 48, 63] {
+      let mut a = vec![0u8; nn as usize];
+      let mut b = vec![0u8; nn as usize];
+      Blake2b::keyed_digest_into(nn, key, data, &mut a);
+      Blake2b::keyed_digest_into(nn, key, data, &mut b);
+      assert_eq!(a, b, "determinism nn={nn}");
+    }
+  }
+
+  #[test]
+  fn variable_output_reset_preserves_length() {
+    let mut h = Blake2b::new(40);
+    h.update(b"first");
+    let mut first = [0u8; 40];
+    h.finalize_into(&mut first);
+
+    h.reset();
+    h.update(b"second");
+    let mut second = [0u8; 40];
+    h.finalize_into(&mut second);
+
+    let mut expected = [0u8; 40];
+    Blake2b::digest_into(40, b"second", &mut expected);
+    assert_eq!(second, expected);
+    assert_ne!(first, second);
+  }
+
+  #[test]
+  fn variable_output_digest_array_matches_into() {
+    let arr = Blake2b::digest_array::<20>(b"hello world");
+    let mut expected = [0u8; 20];
+    Blake2b::digest_into(20, b"hello world", &mut expected);
+    assert_eq!(arr, expected);
+  }
+
+  #[test]
+  fn params_build_variable_matches_oneshot() {
+    let params = Blake2bParams::new().salt(b"domain-salt").personal(b"app-v1");
+    let mut oneshot = [0u8; 24];
+    params.hash_into(b"hello world", &mut oneshot);
+
+    let mut h = params.build(24);
+    h.update(b"hello ");
+    h.update(b"world");
+    let mut streamed = [0u8; 24];
+    h.finalize_into(&mut streamed);
+    assert_eq!(oneshot, streamed);
+  }
+
+  #[test]
+  fn params_hash_into_matches_plain_when_defaults() {
+    // Empty key/salt/personal + variable length should match direct Blake2b.
+    for nn in [1u8, 17, 32, 48, 64] {
+      let mut via_params = vec![0u8; nn as usize];
+      Blake2bParams::new().hash_into(b"msg", &mut via_params);
+
+      let mut direct = vec![0u8; nn as usize];
+      Blake2b::digest_into(nn, b"msg", &mut direct);
+      assert_eq!(via_params, direct);
+    }
+  }
+
+  #[test]
+  #[should_panic(expected = "Blake2b output length must be 1-64")]
+  fn params_hash_into_rejects_wrapping_output_length() {
+    let mut out = vec![0u8; 256];
+    Blake2bParams::new().hash_into(b"msg", &mut out);
+  }
+
+  #[test]
+  #[should_panic]
+  fn variable_output_zero_panics() {
+    let _ = Blake2b::new(0);
+  }
+
+  #[test]
+  #[should_panic]
+  fn variable_output_over_64_panics() {
+    let _ = Blake2b::new(65);
+  }
+
+  #[test]
+  #[should_panic]
+  fn variable_output_mismatch_slice_panics() {
+    let mut out = [0u8; 20];
+    Blake2b::digest_into(32, b"x", &mut out);
+  }
+
+  #[test]
+  #[should_panic]
+  fn variable_output_finalize_wrong_len_panics() {
+    let h = Blake2b::new(32);
+    let mut out = [0u8; 16];
+    h.finalize_into(&mut out);
+  }
+
+  #[test]
+  #[should_panic]
+  fn variable_output_keyed_empty_key_panics() {
+    let _ = Blake2b::new_keyed(32, b"");
   }
 
   // ── Edge cases ────────────────────────────────────────────────────────

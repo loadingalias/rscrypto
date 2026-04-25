@@ -1,7 +1,6 @@
-
 use libfuzzer_sys::fuzz_target;
 use rscrypto::HkdfSha256;
-use rscrypto_fuzz::{FuzzInput, split_at_ratio, some_or_return};
+use rscrypto_fuzz::{FuzzInput, assert_hkdf_against_oracle, some_or_return, split_at_ratio};
 
 fuzz_target!(|data: &[u8]| {
     let mut input = FuzzInput::new(data);
@@ -10,7 +9,7 @@ fuzz_target!(|data: &[u8]| {
     let out_len_bytes: [u8; 2] = some_or_return!(input.bytes());
     let rest = input.rest();
 
-    // Split into (salt, remainder), then (ikm, info)
+    // Split into (salt, remainder), then (ikm, info).
     let (salt, remainder) = split_at_ratio(rest, salt_split);
     let (ikm, info) = split_at_ratio(remainder, ikm_split);
 
@@ -31,22 +30,22 @@ fuzz_target!(|data: &[u8]| {
         "expand vs derive result mismatch"
     );
 
-    // Property: extract then expand matches one-shot derive
+    // Property: extract then expand matches one-shot derive.
     let hk2 = HkdfSha256::extract(salt, ikm);
     assert_eq!(hk.prk(), hk2.prk(), "extract vs new PRK mismatch");
 
-    // Differential: rscrypto ↔ hkdf crate
+    if ours_expand.is_ok() {
+        assert_eq!(okm, okm2, "expand vs derive bytes mismatch");
+    }
+
+    // Differential: rscrypto ↔ hkdf crate.
     let oracle = hkdf::Hkdf::<sha2::Sha256>::new(Some(salt), ikm);
     let mut oracle_okm = vec![0u8; out_len];
     let oracle_expand = oracle.expand(info, &mut oracle_okm);
-    assert_eq!(
+    assert_hkdf_against_oracle(
         ours_expand.is_ok(),
+        &okm,
         oracle_expand.is_ok(),
-        "hkdf oracle result mismatch"
+        &oracle_okm,
     );
-
-    if ours_expand.is_ok() {
-        assert_eq!(okm, okm2, "expand vs derive mismatch");
-        assert_eq!(okm, oracle_okm, "hkdf oracle mismatch");
-    }
 });

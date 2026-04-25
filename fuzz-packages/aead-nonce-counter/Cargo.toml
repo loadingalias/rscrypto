@@ -1,0 +1,21 @@
+[package]
+name = "rscrypto-fuzz-aead-nonce-counter"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+rscrypto = { path = "../..", features = ["std", "aes-gcm"] }
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "aead_nonce_counter"
+path = "fuzz_targets/aead_nonce_counter.rs"
+doc = false

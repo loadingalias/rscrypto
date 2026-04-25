@@ -20,7 +20,7 @@ mod kernel_test;
 pub(crate) mod kernels;
 
 #[cfg(target_arch = "aarch64")]
-mod aarch64;
+pub(crate) mod aarch64;
 #[cfg(target_arch = "riscv64")]
 pub(crate) mod riscv64;
 #[cfg(target_arch = "s390x")]
@@ -337,9 +337,14 @@ impl Sha512 {
     compress_blocks(&mut state, &block);
 
     let mut out = [0u8; 64];
-    for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
-      chunk.copy_from_slice(&word.to_be_bytes());
-    }
+    out[0..8].copy_from_slice(&state[0].to_be_bytes());
+    out[8..16].copy_from_slice(&state[1].to_be_bytes());
+    out[16..24].copy_from_slice(&state[2].to_be_bytes());
+    out[24..32].copy_from_slice(&state[3].to_be_bytes());
+    out[32..40].copy_from_slice(&state[4].to_be_bytes());
+    out[40..48].copy_from_slice(&state[5].to_be_bytes());
+    out[48..56].copy_from_slice(&state[6].to_be_bytes());
+    out[56..64].copy_from_slice(&state[7].to_be_bytes());
     out
   }
 
@@ -405,8 +410,12 @@ impl Sha512 {
 /// On x86/x86_64, 64-bit constants can sometimes be encoded via `movabs`+`add`,
 /// but on all other architectures (POWER, aarch64, s390x), materializing a
 /// 64-bit immediate requires 4+ instructions. Loading from the static K array
-/// via a single `ld`/`ldr` is far cheaper. `read_volatile` forces the compiler
-/// to emit a memory load. See SHA-256's `rk()` for the full rationale.
+/// via a single `ld`/`ldr` is far cheaper.
+///
+/// We use `core::hint::black_box` on the table base pointer rather than
+/// `core::ptr::read_volatile` — see the matching `sha256::rk()` doc for
+/// the LLVM ppc64le miscompilation that motivated dropping `volatile`
+/// here too.
 #[inline(always)]
 fn rk(i: usize) -> u64 {
   #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -416,8 +425,11 @@ fn rk(i: usize) -> u64 {
   }
   #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
   {
-    // SAFETY: i is always in 0..80, and K has exactly 80 elements.
-    unsafe { core::ptr::read_volatile(K.0.as_ptr().add(i)) }
+    let base = core::hint::black_box(K.0.as_ptr());
+    // SAFETY: i is always in 0..80, K has exactly 80 elements, and
+    // `black_box(ptr)` returns the same provenance / value, only opaque
+    // to subsequent constant propagation.
+    unsafe { core::ptr::read(base.add(i)) }
   }
 }
 

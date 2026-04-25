@@ -19,329 +19,113 @@ permissions:
   contents: read
 
 jobs:
-  # ─── Gate ───────────────────────────────────────────────────────────────────
-  lane-contract:
-    name: Lane Contract (weekly)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Assert lane
-        run: |
-          test "${{ github.event_name }}" = "schedule" -o "${{ github.event_name }}" = "workflow_dispatch"
-          echo "lane=weekly"
-
-  # ─── Matrix ─────────────────────────────────────────────────────────────────
-  target-matrix:
-    name: Resolve Target Matrix
-    needs: lane-contract
-    runs-on: ubuntu-latest
-    outputs:
-      ci: ${{ steps.matrix.outputs.ci }}
-      no_std: ${{ steps.matrix.outputs.no_std }}
-      wasm: ${{ steps.matrix.outputs.wasm }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - name: Load matrix from manifest
-        id: matrix
-        run: |
-          {
-            echo "ci=$(bash scripts/lib/target-matrix.sh --format json --key weekly_ci)"
-            echo "no_std=$(bash scripts/lib/target-matrix.sh --format json --key weekly_no_std)"
-            echo "wasm=$(bash scripts/lib/target-matrix.sh --format json --key weekly_wasm)"
-          } >> "$GITHUB_OUTPUT"
-
-  # ─── Full CI (all platforms) ────────────────────────────────────────────────
-  ci:
-    name: CI (${{ matrix.target.name }})
-    needs: [lane-contract, target-matrix]
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.ci) }}
-    uses: ./.github/workflows/_rust-job.yaml
+  # ─── Full CI suite: all platforms, deep cross-compile sweep, full supply chain. ──
+  suite:
+    name: CI Suite (weekly)
+    uses: ./.github/workflows/_ci-suite.yaml
     with:
-      runner: ${{ matrix.target.runner }}
-      timeout_minutes: 45
-      setup_kind: default
-      cache_key: weekly-${{ matrix.target.name }}
-      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'minimal' || 'standard' }}
-      toolchain_components: "clippy, rustfmt, rust-src"
-      run_script: |
-        case "${{ matrix.target.name }}" in
-          *windows-msvc)
-            echo "Windows weekly lane: full end-to-end validation"
-            just ci-check
-            just build
-            just test --all
-            ;;
-          *)
-            just check --all
-            just build
-            just test --all
-            ;;
-        esac
+      scope: all
+      cache_key_prefix: weekly
+      supply_chain_mode: full
+      cross_depth: deep
 
-  ci-ibm-s390x:
-    name: CI (IBM Z s390x)
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-s390x
-      timeout_minutes: 90
-      setup_kind: default
-      cache_key: weekly-ci-s390x
-      tools_mode: ibm
-      toolchain_components: "clippy, rustfmt"
-      pre_script: |
-        uname -a
-        lscpu
-        cat /proc/cpuinfo | head -50
-      run_script: |
-        just ci-check
-        just test --all
-
-  ci-ibm-power10:
-    name: CI (IBM POWER10 ppc64le)
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-ppc64le-p10
-      timeout_minutes: 90
-      setup_kind: default
-      cache_key: weekly-ci-power10
-      tools_mode: ibm
-      toolchain_components: "clippy, rustfmt"
-      pre_script: |
-        uname -a
-        lscpu
-        cat /proc/cpuinfo | head -50
-      run_script: |
-        just ci-check
-        just test --all
-
-  ci-riscv:
-    name: CI (RISE RISC-V riscv64)
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-riscv
-      timeout_minutes: 120
-      setup_kind: default
-      cache_key: weekly-ci-riscv64
-      tools_mode: ibm
-      toolchain_components: "clippy, rustfmt"
-      pre_script: |
-        uname -a
-        lscpu
-        cat /proc/cpuinfo | head -50
-      run_script: |
-        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
-        just ci-check
-        just test --all
-
-  # ─── Feature matrix (weekly-only) ──────────────────────────────────────────
+  # ─── Executable feature-matrix sweep (26 combinations). ──
   feature-matrix:
     name: Feature Matrix (${{ matrix.target.name }})
-    needs: lane-contract
     strategy:
       fail-fast: false
       matrix:
         target:
           - name: x86_64
-            runner: ubuntu-latest
+            runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
           - name: aarch64
-            runner: ubuntu-24.04-arm
+            runner: runs-on=${{ github.run_id }}/runner=linux-arm64-ci
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 30
-      setup_kind: default
       cache_key: weekly-feature-matrix-${{ matrix.target.name }}
       tools_mode: minimal
+      enable_magic_cache: true
+      enable_rust_cache: true
       run_script: just test-feature-matrix
 
-  # ─── Property tests (weekly-only) ──────────────────────────────────────────
-  proptests:
-    name: Property Tests (${{ matrix.target.name }})
-    needs: lane-contract
+  # ─── Miri memory-safety (stacked borrows). ──
+  miri:
+    name: Miri (${{ matrix.target.name }})
     strategy:
       fail-fast: false
       matrix:
         target:
           - name: x86_64
-            runner: ubuntu-latest
+            runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
           - name: aarch64
-            runner: ubuntu-24.04-arm
+            runner: runs-on=${{ github.run_id }}/runner=linux-arm64-ci
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
-      timeout_minutes: 45
-      setup_kind: default
-      cache_key: weekly-proptests-${{ matrix.target.name }}
+      timeout_minutes: 60
+      cache_key: weekly-miri-${{ matrix.target.name }}
       tools_mode: minimal
-      run_script: just test-proptests
+      toolchain_components: "miri, rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: just test-miri
 
-  # ─── Supply chain audit (weekly-only) ──────────────────────────────────────
-  supply-chain:
-    name: Supply Chain Audit
-    needs: lane-contract
+  # ─── Miri memory-safety (tree borrows). ──
+  miri-tree-borrows:
+    name: Miri (Tree Borrows)
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: ubuntu-latest
-      timeout_minutes: 15
-      setup_kind: default
-      cache_key: weekly-supply-chain
-      tools_mode: standard
-      run_script: |
-        cargo deny check all
-        cargo audit
-
-  # ─── Infrastructure validation (weekly-only) ───────────────────────────────
-  infra:
-    name: Infrastructure
-    needs: lane-contract
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-latest
-      timeout_minutes: 10
-      setup_kind: default
-      cache_key: weekly-infra
-      tools_mode: standard
-      run_script: just ci-infra-check
-
-  # ─── Cross-platform: no_std ─────────────────────────────────────────────────
-  no-std:
-    name: no_std (${{ matrix.target }})
-    needs: [lane-contract, target-matrix]
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.no_std) }}
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-latest
-      timeout_minutes: 25
-      setup_kind: default
-      cache_key: weekly-no-std-${{ matrix.target }}
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 60
+      cache_key: weekly-miri-tree-borrows
       tools_mode: minimal
+      toolchain_components: "miri, rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
       run_script: |
-        rustup target add ${{ matrix.target }}
+        export MIRIFLAGS="-Zmiri-tree-borrows"
+        just test-miri
 
-        # Bare no_std (no features)
-        cargo check --target ${{ matrix.target }} --no-default-features --lib
-        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
-
-        # Individual features
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features checksums --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features hashes --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features aead --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features auth --lib
-
-        # Combined features
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,hashes --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib
-
-        # Full no_std release build
-        cargo build --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib --release
-
-  # ─── Cross-platform: wasm ───────────────────────────────────────────────────
-  wasm:
-    name: wasm (${{ matrix.target }})
-    needs: [lane-contract, target-matrix]
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.wasm) }}
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-latest
-      timeout_minutes: 25
-      setup_kind: default
-      cache_key: weekly-wasm-${{ matrix.target }}
-      tools_mode: minimal
-      run_script: |
-        rustup target add ${{ matrix.target }}
-
-        # Bare no_std (no features)
-        cargo check --target ${{ matrix.target }} --no-default-features --lib
-        cargo build --target ${{ matrix.target }} --no-default-features --lib --release
-
-        # Individual features
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features checksums --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features hashes --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features aead --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features auth --lib
-
-        # Combined features
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,hashes --lib
-        cargo check --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib
-
-        # Full wasm release build
-        cargo build --target ${{ matrix.target }} --no-default-features --features alloc,checksums,hashes,auth,aead --lib --release
-
-  # ─── Memory safety ─────────────────────────────────────────────────────────
-  miri:
-    name: Miri (${{ matrix.target.name }})
-    needs: lane-contract
-    runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 60
+  # ─── Fuzzing (libFuzzer scoped packages). ──
+  fuzzing:
+    name: Fuzzing (${{ matrix.target.name }})
     strategy:
       fail-fast: false
       matrix:
         target:
           - name: x86_64
-            runner: ubuntu-latest
+            runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
           - name: aarch64
-            runner: ubuntu-24.04-arm
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+            runner: runs-on=${{ github.run_id }}/runner=linux-arm64-ci
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 120
+      cache_key: weekly-fuzz-${{ matrix.target.name }}
+      tools_mode: fuzz
+      enable_magic_cache: true
+      enable_rust_cache: true
+      pre_script: |
+        echo "RSCRYPTO_FUZZ_DURATION_SECS=120" >> "$GITHUB_ENV"
+      run_script: just test-fuzz --scoped
+      artifact_name: fuzz-crashes-weekly-${{ matrix.target.name }}
+      artifact_path: |
+        fuzz/artifacts/
+        fuzz-packages/*/artifacts/
+      artifact_always: false
 
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: weekly-miri-${{ matrix.target.name }}
-          tools-mode: minimal
-          toolchain-components: "miri, rust-src"
-
-      - name: Miri
-        run: just test-miri --all
-
-  miri-tree-borrows:
-    name: Miri (Tree Borrows)
-    needs: lane-contract
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: weekly-miri-tree-borrows
-          tools-mode: minimal
-          toolchain-components: "miri, rust-src"
-
-      - name: Miri (Tree Borrows)
-        env:
-          MIRIFLAGS: -Zmiri-tree-borrows
-        run: just test-miri --all
-
-
-  # ─── Coverage ───────────────────────────────────────────────────────────────
+  # ─── Coverage (nextest + fuzz corpus → codecov). ──
   coverage:
     name: Coverage
-    needs: lane-contract
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
     timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -349,15 +133,17 @@ jobs:
           cache-key: weekly-coverage
           tools-mode: coverage
           toolchain-components: "rust-src"
+          enable-magic-cache: "true"
+          enable-rust-cache: "true"
 
       - name: Test Suite Coverage (nextest)
-        run: just coverage-nextest
+        run: just test-coverage
 
       - name: Fuzz Corpus Coverage
         env:
           RSCRYPTO_COV_FUZZ_SECS: "30"
           RSCRYPTO_FUZZ_COVERAGE_SCOPE: "scoped"
-        run: just coverage-fuzz
+        run: just test-fuzz-coverage
 
       - name: Upload to Codecov (nextest)
         uses: codecov/codecov-action@4650159d642e33fdc30954ca22638caf0df6cac8  # v5.4.3
@@ -388,48 +174,10 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-  # ─── Fuzzing ────────────────────────────────────────────────────────────────
-  fuzzing:
-    name: Fuzzing (${{ matrix.target.name }})
-    needs: lane-contract
-    runs-on: ${{ matrix.target.runner }}
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - name: x86_64
-            runner: ubuntu-latest
-          - name: aarch64
-            runner: ubuntu-24.04-arm
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
-      - name: Setup
-        uses: ./.github/actions/setup
-        with:
-          cache-key: weekly-fuzz-${{ matrix.target.name }}
-          tools-mode: fuzz
-
-      - name: Fuzz
-        env:
-          RSCRYPTO_FUZZ_DURATION_SECS: "120"
-        run: just test-fuzz --scoped
-
-      - name: Upload Fuzz Crash Artifacts
-        if: failure()
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
-        with:
-          name: fuzz-crashes-weekly-${{ matrix.target.name }}
-          path: fuzz/artifacts/
-          retention-days: 90
-          if-no-files-found: ignore
-
-  # ─── Gate ───────────────────────────────────────────────────────────────────
+  # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [ci, ci-ibm-s390x, ci-ibm-power10, ci-riscv, feature-matrix, proptests, supply-chain, infra, no-std, wasm, miri, fuzzing, coverage]
+    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -437,17 +185,10 @@ jobs:
         run: |
           failed=0
           for lane in \
-            "ci=${{ needs.ci.result }}" \
-            "ci-ibm-s390x=${{ needs.ci-ibm-s390x.result }}" \
-            "ci-ibm-power10=${{ needs.ci-ibm-power10.result }}" \
-            "ci-riscv=${{ needs.ci-riscv.result }}" \
+            "suite=${{ needs.suite.result }}" \
             "feature-matrix=${{ needs.feature-matrix.result }}" \
-            "proptests=${{ needs.proptests.result }}" \
-            "supply-chain=${{ needs.supply-chain.result }}" \
-            "infra=${{ needs.infra.result }}" \
-            "no-std=${{ needs.no-std.result }}" \
-            "wasm=${{ needs.wasm.result }}" \
             "miri=${{ needs.miri.result }}" \
+            "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \
             "fuzzing=${{ needs.fuzzing.result }}" \
             "coverage=${{ needs.coverage.result }}"
           do

@@ -21,6 +21,7 @@ use crate::platform::caps::{Arch, Caps};
 
 /// Errors when configuring runtime detection overrides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OverrideError {
   /// Detection has already been initialized; override updates are no longer allowed.
   AlreadyInitialized,
@@ -124,10 +125,22 @@ pub fn get() -> Detected {
 }
 
 /// Get just the capabilities.
+///
+/// When `feature = "portable-only"` is enabled, this returns [`Caps::NONE`]
+/// unconditionally — every dispatcher walking `caps()` falls through to its
+/// portable backend. See the `portable-only` feature description in
+/// `Cargo.toml` for deployment context (FIPS / DO-178C / ISO 26262).
 #[inline]
 #[must_use]
 pub fn caps() -> Caps {
-  get().caps
+  #[cfg(feature = "portable-only")]
+  {
+    Caps::NONE
+  }
+  #[cfg(not(feature = "portable-only"))]
+  {
+    get().caps
+  }
 }
 
 /// Get the detected architecture.

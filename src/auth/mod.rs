@@ -81,12 +81,17 @@
 //!
 //! # Modules
 //!
+//! - [`argon2`] - Argon2d/Argon2i/Argon2id password hashing (RFC 9106).
 //! - [`ed25519`] - Ed25519 key and signature types.
 //! - [`hmac`] - HMAC-based authentication.
 //! - [`hkdf`] - HKDF extract-then-expand key derivation.
 //! - [`kmac`] - KMAC256 variable-output MAC.
+//! - [`phc`] - PHC string-format codec shared by password hashers.
+//! - [`scrypt`] - scrypt password hashing (RFC 7914).
 //! - [`x25519`] - X25519 Diffie-Hellman key agreement.
 
+#[cfg(feature = "argon2")]
+pub mod argon2;
 #[cfg(any(feature = "ed25519", feature = "x25519"))]
 pub(crate) mod curve25519_edwards;
 #[cfg(feature = "ed25519")]
@@ -99,9 +104,15 @@ pub mod hmac;
 pub mod kmac;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
+#[cfg(feature = "phc-strings")]
+pub mod phc;
+#[cfg(feature = "scrypt")]
+pub mod scrypt;
 #[cfg(feature = "x25519")]
 pub mod x25519;
 
+#[cfg(feature = "argon2")]
+pub use argon2::{Argon2Error, Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
@@ -112,6 +123,10 @@ pub use hmac::{HmacSha256, HmacSha384, HmacSha512};
 pub use kmac::Kmac256;
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
+#[cfg(feature = "phc-strings")]
+pub use phc::PhcError;
+#[cfg(feature = "scrypt")]
+pub use scrypt::{Scrypt, ScryptError, ScryptParams};
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 

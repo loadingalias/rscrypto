@@ -120,25 +120,101 @@ pub fn kernel_name_for_len(len: usize) -> &'static str {
 /// the intermediate `xxh3_64_with_seed` call and its redundant ≤`MID_SIZE_MAX`
 /// guard branch.
 ///
-/// The long-path fallback is `#[cold]` to keep the caller's ≤240B paths tight
-/// in the µop cache.
+/// Compile-time long dispatch inlines to a direct kernel call. Runtime fallback
+/// stays out-of-line so ≤240B paths do not carry the cache/feature lookup.
+#[inline(always)]
+#[must_use]
+pub fn hash64(data: &[u8]) -> u64 {
+  let len = data.len();
+  if len <= 16 {
+    return super::xxh3_64_0to16(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len == 64 {
+    return super::xxh3_64_64(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len == 32 {
+    return super::xxh3_64_32(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len <= 128 {
+    return super::xxh3_64_7to128(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len <= super::MID_SIZE_MAX {
+    return super::xxh3_64_129to240(data, 0, &super::DEFAULT_SECRET);
+  }
+  hash64_long_default(data)
+}
+
+#[inline(always)]
+#[must_use]
+pub fn hash128(data: &[u8]) -> u128 {
+  let len = data.len();
+  if len <= 16 {
+    return super::xxh3_128_0to16(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len == 64 {
+    return super::xxh3_128_64(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len == 32 {
+    return super::xxh3_128_32(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len <= 128 {
+    return super::xxh3_128_7to128(data, 0, &super::DEFAULT_SECRET);
+  }
+  if len <= super::MID_SIZE_MAX {
+    return super::xxh3_128_129to240(data, 0, &super::DEFAULT_SECRET);
+  }
+  hash128_long_default(data)
+}
+
 #[inline(always)]
 #[must_use]
 pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
-  if data.is_empty() {
-    // Bypass the 0..16B branch ladder on the hottest small-input case.
+  let len = data.len();
+  if len <= 16 {
     return super::xxh3_64_0to16(data, seed, &super::DEFAULT_SECRET);
   }
-  if data.len() <= 16 {
-    return super::xxh3_64_0to16(data, seed, &super::DEFAULT_SECRET);
+  if len == 64 {
+    return super::xxh3_64_64(data, seed, &super::DEFAULT_SECRET);
   }
-  if data.len() <= 128 {
+  if len == 32 {
+    return super::xxh3_64_32(data, seed, &super::DEFAULT_SECRET);
+  }
+  if len <= 128 {
     return super::xxh3_64_7to128(data, seed, &super::DEFAULT_SECRET);
   }
-  if data.len() <= super::MID_SIZE_MAX {
+  if len <= super::MID_SIZE_MAX {
     return super::xxh3_64_129to240(data, seed, &super::DEFAULT_SECRET);
   }
   hash64_long(seed, data)
+}
+
+#[inline(always)]
+fn hash64_long_default(data: &[u8]) -> u64 {
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+  {
+    return super::x86_64_avx512::xxh3_64_long_default(data);
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+  {
+    return super::x86_64_avx2::xxh3_64_long_default(data);
+  }
+
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+  {
+    return super::aarch64_neon::xxh3_64_long_default(data);
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    return super::xxh3_64_long_default(data);
+  }
+
+  #[allow(unreachable_code)]
+  {
+    let d = active();
+    (d.long64)(data, 0)
+  }
 }
 
 /// Long-path dispatch (>240B).
@@ -151,8 +227,7 @@ pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
 /// Falls back to runtime dispatch when features are unknown at compile time,
 /// using the dedicated long-path entry point that skips redundant ≤240B length
 /// checks in the kernel.
-#[cold]
-#[inline(never)]
+#[inline(always)]
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   // Tier 1: compile-time dispatch — dedicated long entry points skip ≤240B
   // branches that are guaranteed dead at this call site.
@@ -183,35 +258,69 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   // Tier 2: runtime dispatch — dedicated long-path fn pointer, no redundant
   // length checks.
   #[allow(unreachable_code)]
-  {
-    let d = active();
-    (d.long64)(data, seed)
-  }
+  hash64_long_runtime(seed, data)
+}
+
+#[inline(never)]
+fn hash64_long_runtime(seed: u64, data: &[u8]) -> u64 {
+  let d = active();
+  (d.long64)(data, seed)
 }
 
 /// See [`hash64_with_seed`] for the dispatch rationale.
 #[inline(always)]
 #[must_use]
 pub fn hash128_with_seed(seed: u64, data: &[u8]) -> u128 {
-  if data.is_empty() {
-    // Bypass the 0..16B branch ladder on the hottest small-input case.
+  let len = data.len();
+  if len <= 16 {
     return super::xxh3_128_0to16(data, seed, &super::DEFAULT_SECRET);
   }
-  if data.len() <= 16 {
-    return super::xxh3_128_0to16(data, seed, &super::DEFAULT_SECRET);
+  if len == 64 {
+    return super::xxh3_128_64(data, seed, &super::DEFAULT_SECRET);
   }
-  if data.len() <= 128 {
+  if len == 32 {
+    return super::xxh3_128_32(data, seed, &super::DEFAULT_SECRET);
+  }
+  if len <= 128 {
     return super::xxh3_128_7to128(data, seed, &super::DEFAULT_SECRET);
   }
-  if data.len() <= super::MID_SIZE_MAX {
+  if len <= super::MID_SIZE_MAX {
     return super::xxh3_128_129to240(data, seed, &super::DEFAULT_SECRET);
   }
   hash128_long(seed, data)
 }
 
+#[inline(always)]
+fn hash128_long_default(data: &[u8]) -> u128 {
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+  {
+    return super::x86_64_avx512::xxh3_128_long_default(data);
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx2", not(target_feature = "avx512f")))]
+  {
+    return super::x86_64_avx2::xxh3_128_long_default(data);
+  }
+
+  #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+  {
+    return super::aarch64_neon::xxh3_128_long_default(data);
+  }
+
+  #[cfg(target_arch = "riscv64")]
+  {
+    return super::xxh3_128_long_default(data);
+  }
+
+  #[allow(unreachable_code)]
+  {
+    let d = active();
+    (d.long128)(data, 0)
+  }
+}
+
 /// See [`hash64_long`] for the compile-time dispatch rationale.
-#[cold]
-#[inline(never)]
+#[inline(always)]
 fn hash128_long(seed: u64, data: &[u8]) -> u128 {
   // Tier 1: compile-time dispatch (dedicated long entry points).
   #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -237,8 +346,11 @@ fn hash128_long(seed: u64, data: &[u8]) -> u128 {
 
   // Tier 2: runtime dispatch — dedicated long-path fn pointer.
   #[allow(unreachable_code)]
-  {
-    let d = active();
-    (d.long128)(data, seed)
-  }
+  hash128_long_runtime(seed, data)
+}
+
+#[inline(never)]
+fn hash128_long_runtime(seed: u64, data: &[u8]) -> u128 {
+  let d = active();
+  (d.long128)(data, seed)
 }

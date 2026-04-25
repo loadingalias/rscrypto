@@ -1,68 +1,69 @@
 # Scripts Map
 
-This file is the caller map for `scripts/`.
+Caller map for `scripts/`. Every `.sh` under `scripts/` must appear here with
+its caller.
 
-## Entry Points
+## Entry Points (called from `justfile` or CI)
 
-- `scripts/check/check.sh`
-  - Called by: `just check`
-- `scripts/check/check-all.sh`
-  - Called by: `just check-all`
-- `scripts/check/check-win.sh`
-  - Called by: `just check-win`, `scripts/check/check-all.sh`
-- `scripts/check/check-linux.sh`
-  - Called by: `just check-linux`, `scripts/check/check-all.sh`
-- `scripts/check/check-ibm.sh`
-  - Called by: `scripts/check/check-all.sh`
-- `scripts/test/test.sh`
-  - Called by: `just test`, `just test-changed`
-- `scripts/test/test-feature-matrix.sh`
-  - Called by: `just test-feature-matrix`, `just check`, `just ci-check`
-- `scripts/test/test-miri.sh`
-  - Called by: `just test-miri`
-- `scripts/test/test-fuzz.sh`
-  - Called by: `just test-fuzz`
-- `scripts/bench/bench.sh`
-  - Called by: `just bench`
-- `scripts/ci/ci-check.sh`
-  - Called by: `just ci-check`, CI workflows
-- `scripts/ci/check-infra.sh`
-  - Called by: `scripts/ci/ci-check.sh`
-- `scripts/ci/install-tools.sh`
-  - Called by: `.github/actions/setup/action.yaml`, `.github/actions/setup-runson/action.yaml`
-- `scripts/ci/pin-actions.sh`
-  - Called by: `just pin-actions`, `just verify-actions`
-- `scripts/ci/pre-push.sh`
-  - Called by: optional local Git hook (`.git/hooks/pre-push`)
+| Script | Callers |
+|--------|---------|
+| `check/check.sh`               | `just check` |
+| `check/check-all.sh`           | `just check-all` |
+| `ci/ci-check.sh`               | `just ci-check`, `_ci-suite.yaml` (IBM/RISC-V pre-run) |
+| `test/test.sh`                 | `just test`, `just test-all`, `_ci-suite.yaml` |
+| `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `scripts/ci/ci-check.sh`, `weekly.yaml` |
+| `test/test-miri.sh`            | `just test-miri`, `weekly.yaml` |
+| `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
+| `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `just test-all-coverage`, `weekly.yaml` |
+| `bench/bench.sh`               | `just bench`, `just bench-quick` |
+| `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
+| `ci/pre-push.sh`               | `just ci-pre-push`, optional `.git/hooks/pre-push` |
+| `update/update-all.sh`         | `just update`, `just update-check` |
 
-## Shared Libraries
+## Cross-platform Check Helpers
 
-- `scripts/lib/common.sh`
-  - Sourced by: `scripts/check/*.sh`, `scripts/test/*.sh`, `scripts/ci/ci-check.sh`
-- `scripts/lib/rail-plan.sh`
-  - Sourced by: `scripts/lib/common.sh`
-- `scripts/lib/targets.sh`
-  - Sourced by: `scripts/check/check-all.sh`, `scripts/check/check-win.sh`, `scripts/check/check-linux.sh`
-- `scripts/lib/target-matrix.sh`
-  - Called by: `scripts/lib/targets.sh`, `.github/workflows/commit.yaml`, `.github/workflows/weekly.yaml`, `just target-matrix-shell`, `just target-matrix-json`
-- `scripts/lib/toolchain.sh`
-  - Called by: `.github/actions/setup-toolchain/action.yaml`, `.github/actions/setup-runson/action.yaml`
+| Script | Callers |
+|--------|---------|
+| `check/check-win.sh`    | `scripts/check/check-all.sh` |
+| `check/check-linux.sh`  | `scripts/check/check-all.sh` |
+| `check/check-ibm.sh`    | `scripts/check/check-all.sh` |
+| `check/zig-cc.sh`       | `scripts/check/check-linux.sh`, `scripts/check/check-ibm.sh` |
 
-## Utilities
+## Bench Internals
 
-- `scripts/check/zig-cc.sh`
-  - Called by: `scripts/check/check-linux.sh`
-- `scripts/bench/criterion-summary.py`
-  - Called by: `just bench-summary`, `just bench-compare`, `just bench-blake3-compare`
-- `scripts/bench/blake3-codegen-audit.sh`
-  - Called by: `just blake3-codegen-audit`
-- `scripts/bench/blake3-gap-gate.sh`
-  - Called by: `scripts/ci/run-bench.sh`, `just bench-blake3-gate`
-- `scripts/bench/extract-results.sh`
-  - Called by: manual developer workflow, generates `benchmark_results/OVERVIEW.md`
-- `scripts/bench/comp-check.py`
-  - Called by: `just comp-check`
-- `scripts/gen_blake3_x86_asm_ports.py`
-  - Called by: `just gen-blake3-x86-asm-ports`
-- `scripts/gen_hashes_testdata.py`
-  - Called by: `just gen-hashes-testdata` (manual developer utility)
+| Script | Callers |
+|--------|---------|
+| `ci/run-bench.sh`            | `scripts/bench/bench.sh`, `bench.yaml` |
+| `bench/blake3-gap-gate.sh`   | `scripts/ci/run-bench.sh` |
+
+## CI-only (not surfaced via `just`)
+
+| Script | Callers |
+|--------|---------|
+| `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
+| `ci/emit-manual-matrix.sh`     | `bench.yaml` |
+| `ci/nostd-wasm-suite.sh`       | `_ci-suite.yaml` (no_std, wasm matrices) |
+
+## Shared Libraries (sourced, not invoked)
+
+| Script | Sourced by |
+|--------|------------|
+| `lib/common.sh`         | `scripts/check/*.sh`, `scripts/test/*.sh`, `scripts/ci/ci-check.sh` |
+| `lib/rail-plan.sh`      | `scripts/lib/common.sh` |
+| `lib/fuzz-packages.sh`  | `scripts/test/test-fuzz.sh`, `scripts/test/test-coverage.sh` |
+| `lib/targets.sh`        | `scripts/check/check-all.sh`, `scripts/check/check-linux.sh`, `scripts/check/check-ibm.sh` |
+| `lib/target-matrix.sh`  | `scripts/lib/targets.sh`, `_ci-suite.yaml` (target-matrix job) |
+| `lib/toolchain.sh`      | `.github/actions/setup-toolchain/action.yaml` |
+
+## Results layout
+
+Bench results — both local (`just bench*`) and CI (`/extract-bench` skill pulls
+GitHub Actions artifacts) — land under:
+
+```
+benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt
+```
+
+Local runs use `linux|macos|windows` + `x86-64|aarch64`. Same layout in CI;
+the extractor writes into the same tree so local and CI runs interleave
+by date without collision.

@@ -1,7 +1,9 @@
-
 use libfuzzer_sys::fuzz_target;
 use rscrypto::{ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
-use rscrypto_fuzz::{FuzzInput, assert_aead_forgery, assert_aead_roundtrip, some_or_return};
+use rscrypto_fuzz::{
+    FuzzInput, assert_aead_against_oracle, assert_aead_forgery, assert_aead_roundtrip,
+    some_or_return,
+};
 
 fuzz_target!(|data: &[u8]| {
     let mut input = FuzzInput::new(data);
@@ -16,32 +18,16 @@ fuzz_target!(|data: &[u8]| {
     assert_aead_roundtrip(&cipher, &nonce, aad, plaintext);
     assert_aead_forgery(&cipher, &nonce, aad, plaintext, control);
 
-    // Differential: rscrypto ↔ chacha20poly1305 crate
-    {
-        use chacha20poly1305::aead::{Aead as _, KeyInit, Payload};
-        let oracle = chacha20poly1305::ChaCha20Poly1305::new_from_slice(&key_bytes).unwrap();
-        let on = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
-
-        let mut ct = plaintext.to_vec();
-        let tag = cipher
-            .encrypt_in_place(&nonce, aad, &mut ct)
-            .expect("differential: rscrypto encrypt must succeed");
-        let mut combined = ct.clone();
-        combined.extend_from_slice(tag.as_ref());
-        let pt = oracle.decrypt(on, Payload { msg: &combined, aad }).unwrap();
-        assert_eq!(pt, plaintext, "oracle failed to decrypt our ciphertext");
-
-        let oct = oracle.encrypt(on, Payload { msg: plaintext, aad }).unwrap();
-        let (body, otag) = oct.split_at(oct.len().strict_sub(16));
-        let mut buf = body.to_vec();
-        cipher
-            .decrypt_in_place(
-                &nonce,
-                aad,
-                &mut buf,
-                &ChaCha20Poly1305::tag_from_slice(otag).unwrap(),
-            )
-            .expect("we failed to decrypt oracle ciphertext");
-        assert_eq!(buf, plaintext, "decrypt mismatch on oracle ciphertext");
-    }
+    // Differential: rscrypto ↔ chacha20poly1305 crate.
+    use chacha20poly1305::aead::{Aead as _, KeyInit, Payload};
+    let oracle = chacha20poly1305::ChaCha20Poly1305::new_from_slice(&key_bytes).unwrap();
+    let on = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
+    assert_aead_against_oracle(
+        &cipher,
+        &nonce,
+        aad,
+        plaintext,
+        |pt, aad| oracle.encrypt(on, Payload { msg: pt, aad }).unwrap(),
+        |ct, aad| oracle.decrypt(on, Payload { msg: ct, aad }).unwrap(),
+    );
 });

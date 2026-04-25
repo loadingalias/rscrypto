@@ -19,16 +19,10 @@ if ! command -v cargo-nextest >/dev/null 2>&1; then
   echo "cargo-nextest not found; falling back to cargo test"
 fi
 
-# Select nextest profile based on test mode
 case "$RSCRYPTO_TEST_MODE" in
-  commit)
-    PROFILE="commit"
-    ;;
-  local | *)
-    PROFILE="default"
-    ;;
+  commit) PROFILE="commit" ;;
+  *)      PROFILE="default" ;;
 esac
-
 echo "Using nextest profile: $PROFILE"
 
 NEXTEST_THREAD_ARGS=()
@@ -63,7 +57,7 @@ run_crate_doctests() {
   done
 }
 
-run_changed_doctests() {
+run_rail_scoped_doctests() {
   case "$(rail_scope_mode)" in
     workspace)
       run_workspace_doctests
@@ -77,7 +71,6 @@ run_changed_doctests() {
       fi
 
       local crates=()
-      local crate
       for crate in $affected; do
         crates+=("$crate")
       done
@@ -90,35 +83,54 @@ run_changed_doctests() {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Priority:
-#   1. --changed flag: cargo rail change detection
-#   2. User-specified crate(s): Test those directly
-#   3. Otherwise (--all or no args): full workspace
+# Dispatch:
+#   --all             → full workspace
+#   <crate> [<crate>] → test the named crate(s) directly
+#   (no args)         → rail-scoped (cargo-rail planner selects affected crates)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ALL_FLAG=false
-CHANGED_FLAG=false
 CRATES=()
 for arg in "$@"; do
   case "$arg" in
-    --all)
-      ALL_FLAG=true
-      ;;
-    --changed)
-      CHANGED_FLAG=true
-      ;;
-    *)
-      CRATES+=("$arg")
-      ;;
+    --all) ALL_FLAG=true ;;
+    *)     CRATES+=("$arg") ;;
   esac
 done
 
-if [ "$CHANGED_FLAG" = true ] && { [ "$ALL_FLAG" = true ] || [ ${#CRATES[@]} -gt 0 ]; }; then
-  echo "error: --changed cannot be combined with --all or crate arguments" >&2
+if [ "$ALL_FLAG" = true ] && [ ${#CRATES[@]} -gt 0 ]; then
+  echo "error: --all cannot be combined with crate arguments" >&2
   exit 2
 fi
 
-if [ "$CHANGED_FLAG" = true ]; then
+if [ ${#CRATES[@]} -gt 0 ]; then
+  CRATE_FLAGS=""
+  for crate in "${CRATES[@]}"; do
+    CRATE_FLAGS="$CRATE_FLAGS -p $crate"
+  done
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Testing specific crate(s): ${CRATES[*]}"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if [ "$HAS_NEXTEST" = true ]; then
+    # shellcheck disable=SC2086
+    cargo nextest run $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+    run_crate_doctests "${CRATES[@]}"
+  else
+    # shellcheck disable=SC2086
+    cargo test $CRATE_FLAGS --all-features
+  fi
+elif [ "$ALL_FLAG" = true ]; then
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Testing entire workspace"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  if [ "$HAS_NEXTEST" = true ]; then
+    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+    run_workspace_doctests
+  else
+    cargo test --workspace --all-features
+  fi
+else
+  # Rail-scoped (default): cargo-rail planner selects the affected crates.
   if [ -n "${RAIL_SINCE:-}" ]; then
     echo "Using base ref from CI: $RAIL_SINCE"
   fi
@@ -151,7 +163,7 @@ if [ "$CHANGED_FLAG" = true ]; then
             CRATE_FLAGS+=(-p "$crate")
           done
           cargo nextest run "${CRATE_FLAGS[@]}" -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-          run_changed_doctests
+          run_rail_scoped_doctests
         else
           for crate in $affected; do
             cargo test -p "$crate" --all-features
@@ -162,31 +174,5 @@ if [ "$CHANGED_FLAG" = true ]; then
         echo "no test targets"
         ;;
     esac
-  fi
-elif [ ${#CRATES[@]} -gt 0 ]; then
-  CRATE_FLAGS=""
-  for crate in "${CRATES[@]}"; do
-    CRATE_FLAGS="$CRATE_FLAGS -p $crate"
-  done
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Testing specific crate(s): ${CRATES[*]}"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if [ "$HAS_NEXTEST" = true ]; then
-    # shellcheck disable=SC2086
-    cargo nextest run $CRATE_FLAGS -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-    run_crate_doctests "${CRATES[@]}"
-  else
-    # shellcheck disable=SC2086
-    cargo test $CRATE_FLAGS --all-features
-  fi
-else
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Testing entire workspace"
-  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  if [ "$HAS_NEXTEST" = true ]; then
-    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-    run_workspace_doctests
-  else
-    cargo test --workspace --all-features
   fi
 fi

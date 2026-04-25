@@ -2,8 +2,6 @@ use super::Sha256;
 use crate::platform::Caps;
 #[cfg(target_arch = "aarch64")]
 use crate::platform::caps::aarch64;
-#[cfg(target_arch = "powerpc64")]
-use crate::platform::caps::power;
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 use crate::platform::caps::riscv;
 #[cfg(target_arch = "s390x")]
@@ -24,8 +22,6 @@ pub enum Sha256KernelId {
   X86Sha = 1,
   #[cfg(target_arch = "aarch64")]
   Aarch64Sha2 = 2,
-  #[cfg(target_arch = "powerpc64")]
-  Ppc64Crypto = 6,
   #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
   RiscvZknh = 3,
   #[cfg(target_arch = "wasm32")]
@@ -45,8 +41,6 @@ impl Sha256KernelId {
       Self::X86Sha => "x86-sha",
       #[cfg(target_arch = "aarch64")]
       Self::Aarch64Sha2 => "aarch64-sha2",
-      #[cfg(target_arch = "powerpc64")]
-      Self::Ppc64Crypto => "ppc64/crypto",
       #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
       Self::RiscvZknh => "riscv/zknh",
       #[cfg(target_arch = "wasm32")]
@@ -64,8 +58,6 @@ pub const ALL: &[Sha256KernelId] = &[
   Sha256KernelId::X86Sha,
   #[cfg(target_arch = "aarch64")]
   Sha256KernelId::Aarch64Sha2,
-  #[cfg(target_arch = "powerpc64")]
-  Sha256KernelId::Ppc64Crypto,
   #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
   Sha256KernelId::RiscvZknh,
   #[cfg(target_arch = "wasm32")]
@@ -88,12 +80,6 @@ fn compress_blocks_x86_sha(state: &mut [u32; 8], blocks: &[u8]) {
 fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: &[u8]) {
   // SAFETY: Only called when dispatch has verified `aarch64::SHA2` is available.
   unsafe { super::aarch64::compress_blocks_aarch64_sha2(state, blocks) }
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn compress_blocks_ppc64_crypto(state: &mut [u32; 8], blocks: &[u8]) {
-  // SAFETY: Only called when dispatch has verified `power::POWER8_CRYPTO` is available.
-  unsafe { super::ppc64::compress_blocks_ppc64_crypto(state, blocks) }
 }
 
 #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
@@ -122,8 +108,6 @@ pub(crate) fn compress_blocks_fn(id: Sha256KernelId) -> CompressBlocksFn {
     Sha256KernelId::X86Sha => compress_blocks_x86_sha,
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => compress_blocks_aarch64_sha2,
-    #[cfg(target_arch = "powerpc64")]
-    Sha256KernelId::Ppc64Crypto => compress_blocks_ppc64_crypto,
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
     Sha256KernelId::RiscvZknh => compress_blocks_riscv_zknh,
     #[cfg(target_arch = "wasm32")]
@@ -142,8 +126,6 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
     Sha256KernelId::X86Sha => x86::SHA,
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => aarch64::SHA2,
-    #[cfg(target_arch = "powerpc64")]
-    Sha256KernelId::Ppc64Crypto => power::POWER8_CRYPTO,
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
     Sha256KernelId::RiscvZknh => riscv::ZKNH,
     #[cfg(target_arch = "wasm32")]
@@ -169,7 +151,6 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
   && cfg!(any(
     all(target_arch = "x86_64", target_feature = "sha"),
     all(target_arch = "aarch64", target_feature = "sha2"),
-    all(target_arch = "powerpc64", target_feature = "power8-crypto"),
     all(
       any(target_arch = "riscv64", target_arch = "riscv32"),
       target_feature = "zknh"
@@ -196,10 +177,6 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
   {
     return compress_blocks_aarch64_sha2;
   }
-  #[cfg(all(not(miri), target_arch = "powerpc64", target_feature = "power8-crypto"))]
-  {
-    return compress_blocks_ppc64_crypto;
-  }
   #[cfg(all(
     not(miri),
     any(target_arch = "riscv64", target_arch = "riscv32"),
@@ -224,8 +201,6 @@ pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
   "x86-sha"
 } else if cfg!(all(target_arch = "aarch64", target_feature = "sha2")) {
   "aarch64-sha2"
-} else if cfg!(all(target_arch = "powerpc64", target_feature = "power8-crypto")) {
-  "ppc64/crypto"
 } else if cfg!(all(
   any(target_arch = "riscv64", target_arch = "riscv32"),
   target_feature = "zknh"

@@ -9,7 +9,12 @@
 //! let runtime = rscrypto::platform::caps();
 //! let compile_time = rscrypto::platform::caps_static();
 //!
-//! assert!(runtime.count() >= compile_time.count());
+//! // `caps_static()` reports compile-time facts. `caps()` reports runtime
+//! // facts. With the default feature set, `caps()` ⊇ `caps_static()`. The
+//! // optional `portable-only` feature collapses `caps()` to `Caps::NONE`
+//! // for FIPS / DO-178C deployment modes; that override does not change
+//! // `caps_static()`. Both functions return `Caps`, a 256-bit bitset.
+//! let _ = (runtime, compile_time);
 //! ```
 //!
 //! # Design

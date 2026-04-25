@@ -163,6 +163,56 @@ pub fn zeroize(buf: &mut [u8]) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+mod word_zero_sealed {
+  /// Marker for primitive integer types whose zero representation is
+  /// `0` and whose `write_volatile` of zero is a sound clear.
+  ///
+  /// Sealed: only the integer types listed here are accepted as scratch
+  /// types for [`zeroize_words_no_fence`] / [`zeroize_words`]. New
+  /// implementors must be reviewed for soundness (no padding, no Drop).
+  pub trait WordZero: Copy {
+    const ZERO: Self;
+  }
+
+  impl WordZero for u8 {
+    const ZERO: Self = 0;
+  }
+  impl WordZero for u16 {
+    const ZERO: Self = 0;
+  }
+  impl WordZero for u32 {
+    const ZERO: Self = 0;
+  }
+  impl WordZero for u64 {
+    const ZERO: Self = 0;
+  }
+  impl WordZero for u128 {
+    const ZERO: Self = 0;
+  }
+  impl WordZero for usize {
+    const ZERO: Self = 0;
+  }
+}
+
+pub(crate) use word_zero_sealed::WordZero;
+
+/// Volatile-zero a slice of `WordZero` integers without a compiler fence.
+///
+/// Use for word-shaped scratch buffers (compression states, Argon2 working
+/// blocks, HMAC accumulators) that hand-rolled `for word in words { ... }`
+/// loops over `core::ptr::write_volatile` patterns. Caller is responsible
+/// for emitting a single `compiler_fence(SeqCst)` after all related
+/// zeroizations.
+#[inline(always)]
+pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
+  for word in words {
+    // SAFETY: `word` is a valid, aligned, dereferenceable pointer to `T`.
+    // `T: WordZero` guarantees `T` is a primitive integer with no padding
+    // or Drop, so `write_volatile(word, T::ZERO)` is a sound clear.
+    unsafe { core::ptr::write_volatile(word, T::ZERO) };
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

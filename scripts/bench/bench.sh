@@ -51,10 +51,10 @@ apply_kv() {
   key="$(echo "$key" | tr '[:upper:]' '[:lower:]' | tr '-' '_')"
 
   case "$key" in
-    crate|crates)
+    crate | crates)
       CRATES="$(append_csv "$CRATES" "$value")"
       ;;
-    bench|benches)
+    bench | benches)
       BENCHES="$(append_csv "$BENCHES" "$value")"
       ;;
     only)
@@ -107,7 +107,7 @@ CLEAN="${BENCH_CLEAN:-true}"
 while [[ $# -gt 0 ]]; do
   token="$1"
   case "$token" in
-    -h|--help)
+    -h | --help)
       usage
       exit 0
       ;;
@@ -147,18 +147,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 detect_bench_os() {
   case "${RUNNER_OS:-$(uname -s)}" in
-    Linux)                         echo "linux" ;;
-    Darwin)                        echo "macos" ;;
-    Windows|MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
-    *)                             uname -s | tr '[:upper:]' '[:lower:]' ;;
+    Linux) echo "linux" ;;
+    Darwin) echo "macos" ;;
+    Windows | MINGW* | MSYS* | CYGWIN*) echo "windows" ;;
+    *) uname -s | tr '[:upper:]' '[:lower:]' ;;
   esac
 }
 
 detect_bench_arch() {
   case "$(uname -m)" in
-    arm64)         echo "aarch64" ;;
-    x86_64|amd64)  echo "x86-64" ;;
-    *)             uname -m ;;
+    arm64) echo "aarch64" ;;
+    x86_64 | amd64) echo "x86-64" ;;
+    *) uname -m ;;
   esac
 }
 
@@ -171,21 +171,21 @@ RUN_MODE="${RSCRYPTO_BENCH_MODE:-local}"
 RESULTS_DIR="$REPO_ROOT/benchmark_results/$RUN_DATE/$RUN_OS/$RUN_ARCH"
 
 BENCH_CRATES="$CRATES" \
-BENCH_BENCHES="$BENCHES" \
-BENCH_ONLY="$ONLY" \
-BENCH_FILTER="$FILTER" \
-BENCH_QUICK="$QUICK" \
-BENCH_WARMUP_MS="$WARMUP_MS" \
-BENCH_MEASURE_MS="$MEASURE_MS" \
-BENCH_SAMPLE_SIZE="$SAMPLE_SIZE" \
-BENCH_PROFILE_TIME_SECS="$PROFILE_TIME_SECS" \
-BENCH_OUTPUT_DIR="$OUTPUT_DIR" \
-BENCH_CLEAN="$CLEAN" \
-BENCH_RESULTS_DIR="$RESULTS_DIR" \
-BENCH_RUN_DATE="$RUN_DATE" \
-BENCH_RUN_TIME="$RUN_TIME" \
-BENCH_RUN_OS="$RUN_OS" \
-BENCH_RUN_ARCH="$RUN_ARCH" \
-BENCH_RUN_COMMIT="$RUN_COMMIT" \
-BENCH_RUN_MODE="$RUN_MODE" \
-scripts/ci/run-bench.sh
+  BENCH_BENCHES="$BENCHES" \
+  BENCH_ONLY="$ONLY" \
+  BENCH_FILTER="$FILTER" \
+  BENCH_QUICK="$QUICK" \
+  BENCH_WARMUP_MS="$WARMUP_MS" \
+  BENCH_MEASURE_MS="$MEASURE_MS" \
+  BENCH_SAMPLE_SIZE="$SAMPLE_SIZE" \
+  BENCH_PROFILE_TIME_SECS="$PROFILE_TIME_SECS" \
+  BENCH_OUTPUT_DIR="$OUTPUT_DIR" \
+  BENCH_CLEAN="$CLEAN" \
+  BENCH_RESULTS_DIR="$RESULTS_DIR" \
+  BENCH_RUN_DATE="$RUN_DATE" \
+  BENCH_RUN_TIME="$RUN_TIME" \
+  BENCH_RUN_OS="$RUN_OS" \
+  BENCH_RUN_ARCH="$RUN_ARCH" \
+  BENCH_RUN_COMMIT="$RUN_COMMIT" \
+  BENCH_RUN_MODE="$RUN_MODE" \
+  scripts/ci/run-bench.sh

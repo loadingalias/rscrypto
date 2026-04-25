@@ -470,13 +470,14 @@ else
     fi
   done
 fi
-if [[ "$ALLOW_FULL_HASHES_COMP_INPUT" != "true" \
+if [[ "$QUICK_INPUT" != "true" \
+  && "$ALLOW_FULL_HASHES_COMP_INPUT" != "true" \
   && "$targets_hashes" == "true" \
   && "$targets_comp" == "true" \
   && -z "$ONLY_INPUT" \
   && -z "$FILTER_INPUT" ]]; then
   echo "error: refusing unscoped hashes/comp run (expensive and often timeout-prone on CI lanes)." >&2
-  echo "hint: set BENCH_ONLY and/or BENCH_FILTER to scope the run, or explicitly allow full coverage." >&2
+  echo "hint: set BENCH_ONLY and/or BENCH_FILTER to scope the run, use --quick, or explicitly allow full coverage." >&2
   echo "hint: if you intentionally want full hashes/comp coverage, set BENCH_ALLOW_FULL_HASHES_COMP=true." >&2
   exit 2
 fi

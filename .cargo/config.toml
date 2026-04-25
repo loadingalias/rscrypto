@@ -1,9 +1,10 @@
 # Linux x86_64
 [target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native"]
 
 # Linux ARM64
 [target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-feature=+lse"]
+rustflags = ["-C", "target-feature=+lse", "-C", "target-cpu=native"]
 
 # Windows x86_64
 [target.x86_64-pc-windows-msvc]
@@ -14,10 +15,11 @@ rustflags = ["-C", "target-feature=+lse"]
 
 # macOS Apple Silicon
 [target.aarch64-apple-darwin]
-rustflags = ["-C", "target-feature=+lse"]
+rustflags = ["-C", "target-feature=+lse", "-C", "target-cpu=native"]
 
 # macOS Intel
 [target.x86_64-apple-darwin]
+rustflags = ["-C", "target-cpu=native"]
 
 # Tier B
 # Linux x86_64 MUSL

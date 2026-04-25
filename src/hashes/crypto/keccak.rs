@@ -513,28 +513,6 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
   state[24] = a24;
 }
 
-/// Fused absorb + permute: XOR a rate-sized block into state and run
-/// Keccak-f[1600]. On aarch64 this loads `state[i] ^ block[i]` directly
-/// into registers, eliminating the write-then-reload round-trip. On other
-/// architectures the array-based permutation accesses state via memory
-/// throughout, so fusion has no benefit — we fall back to separate steps.
-#[inline(always)]
-fn absorb_and_permute<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
-  #[cfg(target_arch = "aarch64")]
-  {
-    // Always use the fused portable path on aarch64. The single-state SHA3
-    // CE kernel is ~1.8× slower than portable on Neoverse V1/V2 (Graviton3/4)
-    // due to half-utilized 128-bit lanes. SHA3 CE is only beneficial for the
-    // 2-state interleaved path (permute_x2).
-    keccakf_absorb_portable::<RATE>(state, block);
-  }
-  #[cfg(not(target_arch = "aarch64"))]
-  {
-    xor_block_into::<RATE>(state, block);
-    keccakf_portable(state);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Permuter trait + platform-specific implementations
 // ---------------------------------------------------------------------------
@@ -558,6 +536,13 @@ fn absorb_and_permute<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RAT
 
 pub(crate) trait Permuter: Copy {
   fn permute(self, state: &mut [u64; 25], len_hint: usize);
+
+  /// Absorb one complete rate block and permute.
+  #[inline(always)]
+  fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
+    xor_block_into::<RATE>(state, block);
+    self.permute(state, RATE);
+  }
 
   /// Permute two independent states in parallel.
   /// Default: two sequential single-state permutations.
@@ -590,21 +575,28 @@ impl Permuter for InlinePermuter {
   }
 }
 
-/// aarch64 permuter: portable scalar for single-state, SHA3 CE for 2-state
+/// aarch64 permuter: Apple uses SHA3 CE for single-state; non-Apple aarch64
+/// keeps the portable scalar path for single-state and SHA3 CE for 2-state
 /// interleaved (`permute_x2`) when available.
 ///
 /// The single-state SHA3 CE kernel is ~1.8× slower than portable on Neoverse
 /// V1/V2 (Graviton3/4) — duplicating each u64 into both lanes of uint64x2_t
-/// wastes half the SIMD bandwidth and incurs GPR↔NEON crossing penalties.
-/// The 2-state kernel packs two independent states lane-wise for ~2× aggregate
-/// throughput, making SHA3 CE worthwhile only for parallel operations.
-#[cfg(target_arch = "aarch64")]
+/// wastes half the SIMD bandwidth and incurs GPR↔NEON crossing penalties. On
+/// Apple Silicon the SHA3 CE path is faster than the scalar named-register
+/// permutation. The 2-state kernel packs two independent states lane-wise for
+/// ~2× aggregate throughput, making SHA3 CE worthwhile on all aarch64 SHA3 CE
+/// targets for parallel operations.
+#[cfg(all(target_arch = "aarch64", target_feature = "sha3"))]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Aarch64Permuter;
+
+#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3")))]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
   has_sha3: bool,
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3")))]
 impl Default for Aarch64Permuter {
   #[inline]
   fn default() -> Self {
@@ -617,13 +609,60 @@ impl Default for Aarch64Permuter {
   }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", target_feature = "sha3"))]
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
-    // Always portable for single-state — SHA3 CE single-state is ~1.8× slower
-    // on Neoverse V1/V2 (see module-level comment).
-    keccakf_portable(state);
+    if cfg!(target_vendor = "apple") {
+      aarch64::keccakf_aarch64_sha3_single(state);
+    } else {
+      keccakf_portable(state);
+    }
+  }
+
+  #[inline(always)]
+  fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
+    if cfg!(target_vendor = "apple") {
+      if RATE <= 144 {
+        aarch64::keccakf_aarch64_sha3_absorb_single::<RATE>(state, block);
+      } else {
+        xor_block_into::<RATE>(state, block);
+        aarch64::keccakf_aarch64_sha3_single(state);
+      }
+    } else {
+      keccakf_absorb_portable::<RATE>(state, block);
+    }
+  }
+
+  #[inline(always)]
+  fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], _len_hint: usize) {
+    aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3")))]
+impl Permuter for Aarch64Permuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    if cfg!(target_vendor = "apple") && self.has_sha3 {
+      aarch64::keccakf_aarch64_sha3_single(state);
+    } else {
+      keccakf_portable(state);
+    }
+  }
+
+  #[inline(always)]
+  fn absorb_block<const RATE: usize>(self, state: &mut [u64; 25], block: &[u8; RATE]) {
+    if cfg!(target_vendor = "apple") && self.has_sha3 {
+      if RATE <= 144 {
+        aarch64::keccakf_aarch64_sha3_absorb_single::<RATE>(state, block);
+      } else {
+        xor_block_into::<RATE>(state, block);
+        aarch64::keccakf_aarch64_sha3_single(state);
+      }
+    } else {
+      keccakf_absorb_portable::<RATE>(state, block);
+    }
   }
 
   #[inline(always)]
@@ -694,28 +733,28 @@ pub(crate) type PlatformPermuter = S390xPermuter;
 #[cfg(not(any(target_arch = "aarch64", target_arch = "s390x")))]
 pub(crate) type PlatformPermuter = InlinePermuter;
 
-pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter>;
+pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter, true>;
+pub(crate) type PublicKeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter, false>;
 
-pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter>;
+pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter, true>;
+pub(crate) type PublicKeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter, false>;
 
 // ---------------------------------------------------------------------------
 // Sponge core
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter> {
+pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter, const ZEROIZE: bool> {
   state: [u64; 25],
-  buf: [u8; RATE],
   buf_len: usize,
   permuter: P,
 }
 
-impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PlatformPermuter> {
+impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, PlatformPermuter, ZEROIZE> {
   #[inline]
   fn default() -> Self {
     Self {
       state: [0u64; 25],
-      buf: [0u8; RATE],
       buf_len: 0,
       permuter: PlatformPermuter::default(),
     }
@@ -726,35 +765,30 @@ impl<const RATE: usize> Default for KeccakCoreImpl<RATE, PlatformPermuter> {
 // portable-reference type alias needs its own `Default`. On other targets
 // `PlatformPermuter = InlinePermuter` and the impl above already covers it.
 #[cfg(all(any(test, feature = "std"), any(target_arch = "aarch64", target_arch = "s390x")))]
-impl<const RATE: usize> Default for KeccakCoreImpl<RATE, InlinePermuter> {
+impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, InlinePermuter, ZEROIZE> {
   #[inline]
   fn default() -> Self {
     Self {
       state: [0u64; 25],
-      buf: [0u8; RATE],
       buf_len: 0,
       permuter: InlinePermuter,
     }
   }
 }
 
-impl<const RATE: usize, P: Permuter> Drop for KeccakCoreImpl<RATE, P> {
+impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> Drop for KeccakCoreImpl<RATE, P, ZEROIZE> {
   fn drop(&mut self) {
-    for word in self.state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
+    if ZEROIZE {
+      for word in self.state.iter_mut() {
+        // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+        unsafe { core::ptr::write_volatile(word, 0) };
+      }
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
-    crate::traits::ct::zeroize(&mut self.buf);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
 
-impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
-  #[inline(always)]
-  fn absorb_block(_permuter: P, state: &mut [u64; 25], block: &[u8; RATE]) {
-    absorb_and_permute::<RATE>(state, block);
-  }
-
+impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P, ZEROIZE> {
   pub(crate) fn update(&mut self, mut data: &[u8]) {
     if data.is_empty() {
       return;
@@ -763,14 +797,12 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
     let permuter = self.permuter;
     if self.buf_len != 0 {
       let take = core::cmp::min(RATE - self.buf_len, data.len());
-      self.buf[self.buf_len..self.buf_len.strict_add(take)].copy_from_slice(&data[..take]);
+      xor_bytes_into_state::<RATE>(&mut self.state, self.buf_len, &data[..take]);
       self.buf_len = self.buf_len.strict_add(take);
       data = &data[take..];
 
       if self.buf_len == RATE {
-        let state = &mut self.state;
-        let block = &self.buf;
-        Self::absorb_block(permuter, state, block);
+        permuter.permute(&mut self.state, RATE);
         self.buf_len = 0;
       }
     }
@@ -781,14 +813,14 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
       let block_bytes = &data[..blocks.len().strict_mul(RATE)];
       if !permuter.try_absorb_blocks(state, block_bytes, RATE) {
         for block in blocks {
-          Self::absorb_block(permuter, state, block);
+          permuter.absorb_block(state, block);
         }
       }
     }
     data = rest;
 
     if !data.is_empty() {
-      self.buf[..data.len()].copy_from_slice(data);
+      xor_bytes_into_state::<RATE>(&mut self.state, 0, data);
       self.buf_len = data.len();
     }
   }
@@ -797,20 +829,12 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
   fn finalize_state(&self, ds: u8) -> [u64; 25] {
     let permuter = self.permuter;
     let mut state = self.state;
-    let mut buf = self.buf;
     let buf_len = self.buf_len;
 
     debug_assert!(buf_len < RATE, "buf_len={} should be < RATE={}", buf_len, RATE);
 
-    // Ensure padding happens over a zero-padded block.
-    buf[buf_len..].fill(0);
-
-    // Domain separator, then pad10*1 with final 0x80.
-    // SAFETY: buf_len < RATE is guaranteed by the assertion above.
-    buf[buf_len] ^= ds;
-    buf[RATE - 1] ^= 0x80;
-
-    Self::absorb_block(permuter, &mut state, &buf);
+    pad_absorbed_state::<RATE>(&mut state, buf_len, ds);
+    permuter.permute(&mut state, 0);
     state
   }
 
@@ -828,14 +852,33 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
     }
   }
 
-  pub(crate) fn finalize_xof(&self, ds: u8) -> KeccakXofImpl<RATE, P> {
+  pub(crate) fn finalize_xof(&self, ds: u8) -> KeccakXofImpl<RATE, P, ZEROIZE> {
     let permuter = self.permuter;
     let state = self.finalize_state(ds);
-    let mut buf = [0u8; RATE];
-    KeccakXofImpl::<RATE, P>::fill_buf(&state, &mut buf);
     KeccakXofImpl {
       state,
-      buf,
+      pos: 0,
+      permuter,
+    }
+  }
+}
+
+impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, false> {
+  pub(crate) fn into_xof(self, ds: u8) -> KeccakXofImpl<RATE, P, false> {
+    let mut this = core::mem::ManuallyDrop::new(self);
+    let inner = &mut *this;
+    let permuter = inner.permuter;
+    let buf_len = inner.buf_len;
+
+    debug_assert!(buf_len < RATE, "buf_len={} should be < RATE={}", buf_len, RATE);
+
+    pad_absorbed_state::<RATE>(&mut inner.state, buf_len, ds);
+    permuter.permute(&mut inner.state, 0);
+    KeccakXofImpl {
+      // SAFETY: this public Keccak core is non-zeroizing, and `this` is
+      // `ManuallyDrop`, so moving the finalized state into the reader does not
+      // bypass any required cleanup.
+      state: unsafe { core::ptr::read(&inner.state) },
       pos: 0,
       permuter,
     }
@@ -848,10 +891,11 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P> {
 
 /// Hash a message in one shot, bypassing the `KeccakCoreImpl` sponge wrapper.
 ///
-/// This avoids allocating the rate-sized buffer, eliminates the `Drop`
-/// zeroization of that buffer, and removes all buffer-management conditionals.
-/// The state is stack-allocated, absorbed into directly, and zeroized at the
-/// end.
+/// This avoids allocating the rate-sized buffer and removes all
+/// buffer-management conditionals. The state is stack-allocated and absorbed
+/// into directly. Explicit state zeroization is omitted because Keccak-based
+/// public hashes (SHA-3, SHAKE) operate on non-secret input; if this path is
+/// ever reused for a secret-keyed XOF, add explicit zeroization at return.
 ///
 /// Uses `PlatformPermuter` for dispatch: on s390x this enables KIMD hardware
 /// batch-absorb (XOR + permute in a single instruction), replacing the
@@ -871,7 +915,7 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
     let block_bytes = &data[..blocks.len().strict_mul(RATE)];
     if !permuter.try_absorb_blocks(&mut state, block_bytes, RATE) {
       for block in blocks {
-        absorb_and_permute::<RATE>(&mut state, block);
+        permuter.absorb_block(&mut state, block);
       }
     }
   }
@@ -882,13 +926,6 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
   // Extract output.
   let mut out = [0u8; OUT];
   extract_output::<OUT>(&state, &mut out);
-
-  // Zeroize state.
-  for word in state.iter_mut() {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
-  }
-  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
   out
 }
@@ -913,6 +950,45 @@ fn xor_block_into<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) 
   }
 }
 
+/// XOR a partial rate segment into the Keccak state at byte `offset`.
+#[inline(always)]
+fn xor_bytes_into_state<const RATE: usize>(state: &mut [u64; 25], mut offset: usize, mut data: &[u8]) {
+  debug_assert_eq!(RATE % 8, 0);
+  debug_assert!(offset <= RATE);
+  debug_assert!(data.len() <= RATE - offset);
+
+  while !data.is_empty() && (offset & 7) != 0 {
+    state[offset / 8] ^= (data[0] as u64) << ((offset & 7).strict_mul(8));
+    offset = offset.strict_add(1);
+    data = &data[1..];
+  }
+
+  while data.len() >= 8 {
+    // SAFETY: `data.len() >= 8`, so this unaligned 8-byte read is in-bounds.
+    let word = unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) };
+    state[offset / 8] ^= u64::from_le(word);
+    offset = offset.strict_add(8);
+    data = &data[8..];
+  }
+
+  for &byte in data {
+    state[offset / 8] ^= (byte as u64) << ((offset & 7).strict_mul(8));
+    offset = offset.strict_add(1);
+  }
+}
+
+/// Apply Keccak domain separation and pad10*1 to a state with already-absorbed partial bytes.
+#[inline(always)]
+fn pad_absorbed_state<const RATE: usize>(state: &mut [u64; 25], pos: usize, ds: u8) {
+  debug_assert_eq!(RATE % 8, 0);
+  debug_assert!(pos < RATE);
+
+  state[pos / 8] ^= (ds as u64) << ((pos & 7).strict_mul(8));
+
+  let last = RATE - 1;
+  state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
+}
+
 /// XOR remainder + padding into a Keccak state **without** permuting.
 ///
 /// Used by `oneshot_pair` to pad both states independently before a single
@@ -922,29 +998,8 @@ fn pad_into_state<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8], ds
   debug_assert_eq!(RATE % 8, 0);
   debug_assert!(remainder.len() < RATE);
 
-  // XOR remainder into state lane-by-lane.
-  let full_lanes = remainder.len() / 8;
-  let ptr = remainder.as_ptr() as *const u64;
-  let mut i = 0usize;
-  while i < full_lanes {
-    // SAFETY: `i < full_lanes == remainder.len() / 8`, so `ptr.add(i)` reads within `remainder`.
-    let v = unsafe { core::ptr::read_unaligned(ptr.add(i)) };
-    state[i] ^= u64::from_le(v);
-    i += 1;
-  }
-
-  // Build the partial lane: trailing remainder bytes + domain separator byte.
-  let partial_start = full_lanes.strict_mul(8);
-  let partial_len = remainder.len().strict_sub(partial_start);
-  let mut partial = [0u8; 8];
-  partial[..partial_len].copy_from_slice(&remainder[partial_start..]);
-  partial[partial_len] = ds;
-  state[full_lanes] ^= u64::from_le_bytes(partial);
-
-  // pad10*1: XOR 0x80 into the last byte of the rate.
-  let last_lane = (RATE - 1) / 8;
-  let last_byte_pos = (RATE - 1) % 8;
-  state[last_lane] ^= 0x80_u64 << last_byte_pos.strict_mul(8);
+  xor_bytes_into_state::<RATE>(state, 0, remainder);
+  pad_absorbed_state::<RATE>(state, remainder.len(), ds);
 }
 
 /// Pad and absorb the final block for a Keccak sponge.
@@ -959,13 +1014,28 @@ fn finalize_pad_absorb<const RATE: usize>(state: &mut [u64; 25], remainder: &[u8
 /// Extract fixed-size output from a Keccak state.
 #[inline(always)]
 fn extract_output<const OUT: usize>(state: &[u64; 25], out: &mut [u8; OUT]) {
-  let (chunks, rem) = out.as_chunks_mut::<8>();
-  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
-    *chunk = word.to_le_bytes();
+  macro_rules! write_lane {
+    ($i:expr) => {
+      if OUT >= ($i + 1) * 8 {
+        out[$i * 8..($i + 1) * 8].copy_from_slice(&state[$i].to_le_bytes());
+      }
+    };
   }
-  if !rem.is_empty() {
-    let bytes = state[chunks.len()].to_le_bytes();
-    rem.copy_from_slice(&bytes[..rem.len()]);
+
+  write_lane!(0);
+  write_lane!(1);
+  write_lane!(2);
+  write_lane!(3);
+  write_lane!(4);
+  write_lane!(5);
+  write_lane!(6);
+  write_lane!(7);
+
+  let rem = OUT & 7;
+  if rem != 0 {
+    let offset = OUT & !7;
+    let bytes = state[offset / 8].to_le_bytes();
+    out[offset..].copy_from_slice(&bytes[..rem]);
   }
 }
 
@@ -998,10 +1068,10 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
 
   // Process remaining blocks of the longer input with single-state.
   for block in &blocks_a[min_blocks..] {
-    absorb_and_permute::<RATE>(&mut state_a, block);
+    permuter.absorb_block(&mut state_a, block);
   }
   for block in &blocks_b[min_blocks..] {
-    absorb_and_permute::<RATE>(&mut state_b, block);
+    permuter.absorb_block(&mut state_b, block);
   }
 
   // Finalize both states: pad into each, then permute both in parallel.
@@ -1014,59 +1084,89 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   extract_output::<OUT>(&state_a, &mut out_a);
   extract_output::<OUT>(&state_b, &mut out_b);
 
-  // Zeroize state.
-  for word in state_a.iter_mut().chain(state_b.iter_mut()) {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
-  }
-  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
   (out_a, out_b)
 }
 
 #[derive(Clone)]
-pub(crate) struct KeccakXofImpl<const RATE: usize, P: Permuter> {
+pub(crate) struct KeccakXofImpl<const RATE: usize, P: Permuter, const ZEROIZE: bool> {
   state: [u64; 25],
-  buf: [u8; RATE],
   pos: usize,
   permuter: P,
 }
 
-impl<const RATE: usize, P: Permuter> Drop for KeccakXofImpl<RATE, P> {
+impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> Drop for KeccakXofImpl<RATE, P, ZEROIZE> {
   fn drop(&mut self) {
-    for word in self.state.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
+    if ZEROIZE {
+      for word in self.state.iter_mut() {
+        // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+        unsafe { core::ptr::write_volatile(word, 0) };
+      }
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
-    crate::traits::ct::zeroize(&mut self.buf);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
 
-impl<const RATE: usize, P: Permuter> KeccakXofImpl<RATE, P> {
+impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P, ZEROIZE> {
   #[inline(always)]
-  fn fill_buf(state: &[u64; 25], out: &mut [u8; RATE]) {
-    debug_assert_eq!(RATE % 8, 0);
-    let lanes = RATE / 8;
-    let mut i = 0usize;
-    while i < lanes {
-      let bytes = state[i].to_le_bytes();
-      out[i * 8..i * 8 + 8].copy_from_slice(&bytes);
-      i += 1;
+  fn copy_state_first_32(state: &[u64; 25], out: &mut [u8]) {
+    debug_assert!(out.len() == 32);
+    out[0..8].copy_from_slice(&state[0].to_le_bytes());
+    out[8..16].copy_from_slice(&state[1].to_le_bytes());
+    out[16..24].copy_from_slice(&state[2].to_le_bytes());
+    out[24..32].copy_from_slice(&state[3].to_le_bytes());
+  }
+
+  #[inline(always)]
+  fn copy_state_prefix(state: &[u64; 25], out: &mut [u8]) {
+    debug_assert!(out.len() <= RATE);
+    let (chunks, rem) = out.as_chunks_mut::<8>();
+    for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
+      *chunk = word.to_le_bytes();
+    }
+    if !rem.is_empty() {
+      let bytes = state[chunks.len()].to_le_bytes();
+      rem.copy_from_slice(&bytes[..rem.len()]);
+    }
+  }
+
+  #[inline(always)]
+  fn copy_state_bytes(state: &[u64; 25], mut pos: usize, mut out: &mut [u8]) {
+    debug_assert!(pos <= RATE);
+    debug_assert!(out.len() <= RATE - pos);
+
+    while !out.is_empty() {
+      let lane = pos / 8;
+      let byte = pos % 8;
+      let bytes = state[lane].to_le_bytes();
+      let take = core::cmp::min(8 - byte, out.len());
+      out[..take].copy_from_slice(&bytes[byte..byte.strict_add(take)]);
+      pos = pos.strict_add(take);
+      out = &mut out[take..];
     }
   }
 
   pub(crate) fn squeeze_into(&mut self, mut out: &mut [u8]) {
+    if self.pos == 0 && out.len() == 32 && RATE >= 32 {
+      Self::copy_state_first_32(&self.state, out);
+      self.pos = 32;
+      return;
+    }
+
+    if self.pos == 0 && out.len() <= RATE {
+      Self::copy_state_prefix(&self.state, out);
+      self.pos = out.len();
+      return;
+    }
+
     while !out.is_empty() {
       if self.pos == RATE {
         let permuter = self.permuter;
         permuter.permute(&mut self.state, 0);
-        Self::fill_buf(&self.state, &mut self.buf);
         self.pos = 0;
       }
 
       let take = core::cmp::min(RATE - self.pos, out.len());
-      out[..take].copy_from_slice(&self.buf[self.pos..self.pos.strict_add(take)]);
+      Self::copy_state_bytes(&self.state, self.pos, &mut out[..take]);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];
     }

@@ -36,7 +36,7 @@ pub(crate) mod sp800185;
 #[cfg(feature = "ascon-hash")]
 pub use ascon::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
 #[cfg(feature = "blake2b")]
-pub use blake2b::{Blake2b256, Blake2b512, Blake2bParams};
+pub use blake2b::{Blake2b, Blake2b256, Blake2b512, Blake2bParams};
 #[cfg(feature = "blake2s")]
 pub use blake2s::{Blake2s128, Blake2s256, Blake2sParams};
 #[cfg(feature = "blake3")]

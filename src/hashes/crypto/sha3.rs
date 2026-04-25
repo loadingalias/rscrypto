@@ -2,7 +2,7 @@
 //!
 //! Portable, `no_std`, pure Rust Keccak-f\[1600\] sponge.
 
-use super::keccak::{KeccakCore, KeccakXof};
+use super::keccak::{PublicKeccakCore, PublicKeccakXof};
 use crate::traits::{Digest, Xof};
 
 /// SHA3-256 digest state.
@@ -21,7 +21,7 @@ use crate::traits::{Digest, Xof};
 /// ```
 #[derive(Clone, Default)]
 pub struct Sha3_256 {
-  core: KeccakCore<136>,
+  core: PublicKeccakCore<136>,
 }
 
 /// SHA3-224 digest state.
@@ -40,7 +40,7 @@ pub struct Sha3_256 {
 /// ```
 #[derive(Clone, Default)]
 pub struct Sha3_224 {
-  core: KeccakCore<144>,
+  core: PublicKeccakCore<144>,
 }
 
 impl core::fmt::Debug for Sha3_256 {
@@ -161,7 +161,7 @@ impl Sha3_256 {
 /// ```
 #[derive(Clone, Default)]
 pub struct Sha3_512 {
-  core: KeccakCore<72>,
+  core: PublicKeccakCore<72>,
 }
 
 /// SHA3-384 digest state.
@@ -180,7 +180,7 @@ pub struct Sha3_512 {
 /// ```
 #[derive(Clone, Default)]
 pub struct Sha3_384 {
-  core: KeccakCore<104>,
+  core: PublicKeccakCore<104>,
 }
 
 impl core::fmt::Debug for Sha3_512 {
@@ -302,7 +302,7 @@ impl Sha3_512 {
 /// ```
 #[derive(Clone, Default)]
 pub struct Shake256 {
-  core: KeccakCore<136>,
+  core: PublicKeccakCore<136>,
 }
 
 /// SHAKE128 extendable-output state.
@@ -322,7 +322,7 @@ pub struct Shake256 {
 /// ```
 #[derive(Clone, Default)]
 pub struct Shake128 {
-  core: KeccakCore<168>,
+  core: PublicKeccakCore<168>,
 }
 
 impl core::fmt::Debug for Shake256 {
@@ -359,9 +359,9 @@ impl Shake128 {
 
   #[inline]
   #[must_use]
-  pub fn finalize_xof(&self) -> Shake128XofReader {
+  pub fn finalize_xof(self) -> Shake128XofReader {
     Shake128XofReader {
-      inner: self.core.finalize_xof(0x1F),
+      inner: self.core.into_xof(0x1F),
     }
   }
 
@@ -382,7 +382,7 @@ impl Shake128 {
 
 #[derive(Clone)]
 pub struct Shake128XofReader {
-  inner: KeccakXof<168>,
+  inner: PublicKeccakXof<168>,
 }
 
 impl core::fmt::Debug for Shake128XofReader {
@@ -422,9 +422,9 @@ impl Shake256 {
 
   #[inline]
   #[must_use]
-  pub fn finalize_xof(&self) -> Shake256XofReader {
+  pub fn finalize_xof(self) -> Shake256XofReader {
     Shake256XofReader {
-      inner: self.core.finalize_xof(0x1F),
+      inner: self.core.into_xof(0x1F),
     }
   }
 
@@ -445,7 +445,7 @@ impl Shake256 {
 
 #[derive(Clone)]
 pub struct Shake256XofReader {
-  inner: KeccakXof<136>,
+  inner: PublicKeccakXof<136>,
 }
 
 impl core::fmt::Debug for Shake256XofReader {

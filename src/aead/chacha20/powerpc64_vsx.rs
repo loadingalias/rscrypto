@@ -295,7 +295,7 @@ mod tests {
   }
 
   #[test]
-  fn vrlw_with_rotshifts_matches_u32_rotate_right() {
+  fn vrlw_with_rotshifts_matches_u32_rotate_left() {
     if !crate::platform::caps().has(power::POWER8_READY) {
       return; // Feature not available on this ppc64le host; nothing to assert.
     }

@@ -10,10 +10,6 @@ on:
         required: false
         type: number
         default: 30
-      setup_kind:
-        required: false
-        type: string
-        default: default
       cache_key:
         required: false
         type: string
@@ -26,10 +22,14 @@ on:
         required: false
         type: string
         default: "clippy, rustfmt, rust-src"
-      runson_mode:
+      enable_magic_cache:
         required: false
-        type: string
-        default: runson-bench
+        type: boolean
+        default: false
+      enable_rust_cache:
+        required: false
+        type: boolean
+        default: true
       pre_script:
         required: false
         type: string
@@ -63,19 +63,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup Host
-        if: inputs.setup_kind == 'default'
+      - name: Setup
         uses: ./.github/actions/setup
         with:
           cache-key: ${{ inputs.cache_key }}
           tools-mode: ${{ inputs.tools_mode }}
           toolchain-components: ${{ inputs.toolchain_components }}
-
-      - name: Setup RunsOn
-        if: inputs.setup_kind == 'runson'
-        uses: ./.github/actions/setup-runson
-        with:
-          mode: ${{ inputs.runson_mode }}
+          enable-magic-cache: ${{ inputs.enable_magic_cache }}
+          enable-rust-cache: ${{ inputs.enable_rust_cache }}
 
       - name: Pre Run
         if: inputs.pre_script != ''

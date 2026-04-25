@@ -39,6 +39,7 @@ define_unit_error! {
 
 /// AES-GCM sealing failure from [`NonceCounter`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum NonceCounterSealError {
   /// No fresh nonce remains in the counter.
   Exhausted(NonceCounterExhausted),
@@ -170,7 +171,7 @@ impl NonceCounter<Aes256Gcm> {
   #[inline]
   #[must_use]
   pub const fn remaining(&self) -> u64 {
-    Self::MAX_MESSAGES - self.next
+    Self::MAX_MESSAGES.strict_sub(self.next)
   }
 
   /// Issue the next fresh AES-GCM nonce.
@@ -287,5 +288,15 @@ mod tests {
     assert!(counter.next_nonce().is_ok());
     assert_eq!(counter.remaining(), 0);
     assert!(counter.next_nonce().is_err());
+  }
+
+  #[test]
+  fn aes_gcm_nonce_counter_with_counter_rejects_max() {
+    // The documented contract: `with_counter` rejects any starting value
+    // greater than or equal to MAX_MESSAGES. Pin both the equality and the
+    // strictly-greater branch so a future relaxation cannot silently widen
+    // the deterministic-IV budget past the SP 800-38D limit.
+    assert!(NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", NonceCounter::<Aes256Gcm>::MAX_MESSAGES).is_err());
+    assert!(NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", u64::MAX).is_err());
   }
 }

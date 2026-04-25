@@ -29,13 +29,34 @@ declare -A DEFAULT_THRESHOLDS=(
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --root)         ROOT="$2";         shift 2 ;;
-    --group)        GROUP="$2";        shift 2 ;;
-    --ours)         OURS="$2";         shift 2 ;;
-    --ours-prefix)  OURS_PREFIX="$2";  shift 2 ;;
-    --rival)        RIVAL="$2";        shift 2 ;;
-    --max-gap-case) MAX_GAP_CASE="$2"; shift 2 ;;
-    --label)        LABEL="$2";        shift 2 ;;
+    --root)
+      ROOT="$2"
+      shift 2
+      ;;
+    --group)
+      GROUP="$2"
+      shift 2
+      ;;
+    --ours)
+      OURS="$2"
+      shift 2
+      ;;
+    --ours-prefix)
+      OURS_PREFIX="$2"
+      shift 2
+      ;;
+    --rival)
+      RIVAL="$2"
+      shift 2
+      ;;
+    --max-gap-case)
+      MAX_GAP_CASE="$2"
+      shift 2
+      ;;
+    --label)
+      LABEL="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown argument: $1" >&2
       exit 1
@@ -56,7 +77,7 @@ for k in "${!DEFAULT_THRESHOLDS[@]}"; do
 done
 
 if [[ -n "$MAX_GAP_CASE" ]]; then
-  IFS=',' read -ra TOKENS <<< "$MAX_GAP_CASE"
+  IFS=',' read -ra TOKENS <<<"$MAX_GAP_CASE"
   for token in "${TOKENS[@]}"; do
     token="${token// /}"
     [[ -n "$token" ]] || continue

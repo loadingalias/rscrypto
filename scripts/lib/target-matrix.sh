@@ -2,6 +2,12 @@
 # Read .config/target-matrix.json and emit shell/json views for CI/scripts.
 #
 # Single source of truth: .config/target-matrix.json
+#
+# JSON keys:
+#   ci      CI host matrix (linux via runs-on, windows via GHA). Injects runs-on
+#           routing with the current github run_id so runs-on.com pools route correctly.
+#   no_std  Bare-metal no_std targets.
+#   wasm    WASM targets.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,13 +57,25 @@ print_shell() {
 
 get_json() {
   local key="$1"
+  local run_id="${GITHUB_RUN_ID:-${GH_RUN_ID:-0}}"
+
   case "$key" in
-    commit_ci)     jq -c '.ci.commit'    "$MANIFEST" ;;
-    weekly_ci)     jq -c '.ci.weekly // .ci.commit' "$MANIFEST" ;;
-    commit_no_std | weekly_no_std) jq -c '.groups.no_std' "$MANIFEST" ;;
-    commit_wasm   | weekly_wasm)   jq -c '.groups.wasm'   "$MANIFEST" ;;
+    ci)
+      # Inject runs-on routing for type=runson rows; leave type=gha rows as-is.
+      jq -c --arg run_id "$run_id" '
+        .ci | map(
+          if .type == "runson" then
+            .runner = "runs-on=" + $run_id + "/runner=" + .pool
+          else
+            .
+          end
+        )
+      ' "$MANIFEST"
+      ;;
+    no_std) jq -c '.groups.no_std' "$MANIFEST" ;;
+    wasm)   jq -c '.groups.wasm'   "$MANIFEST" ;;
     *)
-      echo "ERROR: unknown json key: $key" >&2
+      echo "ERROR: unknown json key: $key (supported: ci, no_std, wasm)" >&2
       exit 1
       ;;
   esac

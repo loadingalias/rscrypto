@@ -24,9 +24,26 @@ mod tests {
 
   #[test]
   #[cfg(not(miri))] // get() uses syscalls for feature detection
+  // `feature = "portable-only"` intentionally short-circuits `caps()` to
+  // `Caps::NONE`, which would mismatch `get().caps` on a SIMD-capable host.
+  // The convenience-function contract under SIMD-on dispatch is what this
+  // test asserts; the portable-only override has its own coverage in
+  // `test_caps_returns_none_with_portable_only_feature` below.
+  #[cfg(not(feature = "portable-only"))]
   fn test_convenience_functions() {
     let det = get();
     assert_eq!(caps(), det.caps);
+    assert_eq!(arch(), det.arch);
+  }
+
+  #[test]
+  #[cfg(all(feature = "portable-only", not(miri)))]
+  fn test_caps_returns_none_with_portable_only_feature() {
+    // The `portable-only` feature must collapse `caps()` to the empty cap
+    // set so every dispatcher falls through to its portable backend.
+    assert_eq!(caps(), Caps::NONE, "portable-only must zero out caps()");
+    // `arch()` is unaffected — only the cap surface is suppressed.
+    let det = get();
     assert_eq!(arch(), det.arch);
   }
 
@@ -90,6 +107,11 @@ mod tests {
 
   #[test]
   #[cfg(not(miri))] // Miri can't detect runtime features, returns Caps::NONE
+  // The "static is a subset of runtime" invariant assumes runtime detection
+  // is enabled. With `portable-only`, runtime is intentionally `Caps::NONE`,
+  // and `caps_static()` may be non-empty — they're allowed to disagree
+  // because the override is the whole point of the feature.
+  #[cfg(not(feature = "portable-only"))]
   fn test_caps_static_subset_of_runtime() {
     // Compile-time detected features must be a subset of runtime detected features
     let static_caps = caps_static();

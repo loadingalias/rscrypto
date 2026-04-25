@@ -19,6 +19,31 @@ const SHA384_OUTPUT_SIZE: usize = 48;
 const SHA384_MAX_OUTPUT_SIZE: usize = 255 * SHA384_OUTPUT_SIZE;
 const SHA384_BLOCK_SIZE: usize = 128;
 
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn write_u32x8_be(dst: &mut [u8; SHA256_OUTPUT_SIZE], words: &[u32; 8]) {
+  dst[0..4].copy_from_slice(&words[0].to_be_bytes());
+  dst[4..8].copy_from_slice(&words[1].to_be_bytes());
+  dst[8..12].copy_from_slice(&words[2].to_be_bytes());
+  dst[12..16].copy_from_slice(&words[3].to_be_bytes());
+  dst[16..20].copy_from_slice(&words[4].to_be_bytes());
+  dst[20..24].copy_from_slice(&words[5].to_be_bytes());
+  dst[24..28].copy_from_slice(&words[6].to_be_bytes());
+  dst[28..32].copy_from_slice(&words[7].to_be_bytes());
+}
+
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn write_u64x6_be(dst: &mut [u8], words: &[u64; 8]) {
+  debug_assert!(dst.len() >= SHA384_OUTPUT_SIZE);
+  dst[0..8].copy_from_slice(&words[0].to_be_bytes());
+  dst[8..16].copy_from_slice(&words[1].to_be_bytes());
+  dst[16..24].copy_from_slice(&words[2].to_be_bytes());
+  dst[24..32].copy_from_slice(&words[3].to_be_bytes());
+  dst[32..40].copy_from_slice(&words[4].to_be_bytes());
+  dst[40..48].copy_from_slice(&words[5].to_be_bytes());
+}
+
 define_unit_error! {
   /// HKDF requested more output than RFC 5869 allows for a single expansion.
   pub struct HkdfOutputLengthError;
@@ -107,6 +132,7 @@ impl HkdfSha256 {
   /// Uses raw SHA-256 state arrays and a single cached compress function,
   /// bypassing all `Sha256` struct creation, `Drop` zeroization, and dispatch
   /// overhead in the inner loop.
+  #[inline]
   #[allow(clippy::indexing_slicing)]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA256_MAX_OUTPUT_SIZE {
@@ -125,11 +151,11 @@ impl HkdfSha256 {
     outer_block[SHA256_OUTPUT_SIZE] = 0x80;
     outer_block[56..SHA256_BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
 
-    let mut prev_tag = [0u8; SHA256_OUTPUT_SIZE];
     let mut inner_hash = [0u8; SHA256_OUTPUT_SIZE];
     let mut state = [0u32; 8];
     let mut counter: u8 = 1;
 
+    let mut prev_tag = [0u8; SHA256_OUTPUT_SIZE];
     let mut chunks = okm.chunks_mut(SHA256_OUTPUT_SIZE);
     let Some(first) = chunks.next() else {
       return Ok(());
@@ -169,9 +195,9 @@ impl HkdfSha256 {
       counter = counter.wrapping_add(1);
     }
 
-    ct::zeroize(&mut prev_tag);
-    ct::zeroize(&mut inner_hash);
-    ct::zeroize(&mut outer_block);
+    ct::zeroize_no_fence(&mut prev_tag);
+    ct::zeroize_no_fence(&mut inner_hash);
+    ct::zeroize_no_fence(&mut outer_block);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };
@@ -310,6 +336,7 @@ impl HkdfSha384 {
   /// Uses raw SHA-384 state arrays and a single cached compress function,
   /// bypassing all `Sha384` struct creation, `Drop` zeroization, and dispatch
   /// overhead in the inner loop.
+  #[inline]
   #[allow(clippy::indexing_slicing)]
   pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
     if okm.len() > SHA384_MAX_OUTPUT_SIZE {
@@ -328,10 +355,10 @@ impl HkdfSha384 {
     outer_block[SHA384_OUTPUT_SIZE] = 0x80;
     outer_block[112..SHA384_BLOCK_SIZE].copy_from_slice(&1408u128.to_be_bytes());
 
-    let mut prev_tag = [0u8; SHA384_OUTPUT_SIZE];
     let mut state = [0u64; 8];
     let mut counter: u8 = 1;
 
+    let mut prev_tag = [0u8; SHA384_OUTPUT_SIZE];
     let mut chunks = okm.chunks_mut(SHA384_OUTPUT_SIZE);
     let Some(first) = chunks.next() else {
       return Ok(());
@@ -357,8 +384,8 @@ impl HkdfSha384 {
       counter = counter.wrapping_add(1);
     }
 
-    ct::zeroize(&mut prev_tag);
-    ct::zeroize(&mut outer_block);
+    ct::zeroize_no_fence(&mut prev_tag);
+    ct::zeroize_no_fence(&mut outer_block);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };
@@ -502,9 +529,7 @@ fn expand_hmac_sha256_inner(
   block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
   compress(state, &block);
 
-  for (dst, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
-    dst.copy_from_slice(&word.to_be_bytes());
-  }
+  write_u32x8_be(out, state);
 }
 
 #[inline(always)]
@@ -521,9 +546,7 @@ fn expand_hmac_sha256_outer(
   outer_block[..SHA256_OUTPUT_SIZE].copy_from_slice(inner_hash);
   compress(state, outer_block);
 
-  for (dst, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
-    dst.copy_from_slice(&word.to_be_bytes());
-  }
+  write_u32x8_be(out, state);
 }
 
 #[inline(always)]
@@ -582,9 +605,7 @@ fn expand_hmac_sha384_inner(
   block[112..SHA384_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
   compress(state, &block);
 
-  for (dst, &word) in outer_block[..SHA384_OUTPUT_SIZE].chunks_exact_mut(8).zip(state.iter()) {
-    dst.copy_from_slice(&word.to_be_bytes());
-  }
+  write_u64x6_be(&mut outer_block[..SHA384_OUTPUT_SIZE], state);
 }
 
 #[inline(always)]
@@ -599,9 +620,7 @@ fn expand_hmac_sha384_outer(
   *state = *outer_init;
   compress(state, outer_block);
 
-  for (dst, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
-    dst.copy_from_slice(&word.to_be_bytes());
-  }
+  write_u64x6_be(out, state);
 }
 
 #[cfg(test)]
