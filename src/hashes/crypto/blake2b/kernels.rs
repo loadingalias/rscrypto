@@ -187,11 +187,6 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
     target_feature = "avx512vl"
   ),
   all(target_arch = "x86_64", target_feature = "avx2"),
-  all(
-    target_arch = "aarch64",
-    target_feature = "neon",
-    not(target_os = "macos")
-  ),
 ));
 
 /// Returns the compile-time-best compress function.
@@ -208,10 +203,6 @@ pub(crate) fn compile_time_best() -> CompressFn {
   ))]
   {
     return compress_x86_avx2;
-  }
-  #[cfg(all(target_arch = "aarch64", target_feature = "neon", not(target_os = "macos")))]
-  {
-    return compress_aarch64_neon;
   }
   #[allow(unreachable_code)]
   compress

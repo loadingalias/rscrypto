@@ -106,6 +106,15 @@ pub fn diag_compress_block_aarch64_neon(state: &mut [u64; 8], block: &[u8; BLOCK
   unsafe { aarch64::compress_neon(state, block, t, last) }
 }
 
+#[cfg(all(feature = "diag", target_arch = "riscv64"))]
+#[inline]
+pub fn diag_compress_block_riscv64_v(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
+  assert!(crate::platform::caps().has(crate::platform::caps::riscv::V));
+  // SAFETY: the runtime capability assertion above verifies V before calling
+  // the target-feature-specialized diagnostic kernel.
+  unsafe { riscv64::compress_rvv(state, block, t, last) }
+}
+
 // ─── Core state ─────────────────────────────────────────────────────────────
 
 /// Internal Blake2b state shared by `Blake2b256` and `Blake2b512`.
@@ -357,14 +366,6 @@ fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8;
   h
 }
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon", not(target_os = "macos")))]
-#[inline(always)]
-fn compress_direct(h: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  // SAFETY: NEON is enabled at compile time on this target.
-  unsafe { aarch64::compress_neon(h, block, t, last) };
-}
-
-#[cfg(not(all(target_arch = "aarch64", target_feature = "neon", not(target_os = "macos"))))]
 #[inline(always)]
 fn compress_direct(h: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
   let compress = dispatch::compress_dispatch();

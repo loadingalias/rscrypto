@@ -92,7 +92,7 @@ pub mod introspect;
 ))]
 pub mod io;
 
-#[cfg(any(feature = "sha2", test))]
+#[cfg(feature = "sha2")]
 mod util;
 
 // Re-export I/O adapters (requires std)
