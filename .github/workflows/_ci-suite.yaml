@@ -110,7 +110,7 @@ jobs:
       pre_script: |
         uname -a
         lscpu
-        cat /proc/cpuinfo | head -50
+        sed -n '1,50p' /proc/cpuinfo
       run_script: |
         just ci-check
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
@@ -135,7 +135,7 @@ jobs:
       pre_script: |
         uname -a
         lscpu
-        cat /proc/cpuinfo | head -50
+        sed -n '1,50p' /proc/cpuinfo
       run_script: |
         just ci-check
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
@@ -160,7 +160,7 @@ jobs:
       pre_script: |
         uname -a
         lscpu
-        cat /proc/cpuinfo | head -50
+        sed -n '1,50p' /proc/cpuinfo
       run_script: |
         export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
         just ci-check

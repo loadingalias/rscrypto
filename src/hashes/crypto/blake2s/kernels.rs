@@ -200,7 +200,11 @@ pub(crate) fn compile_time_best() -> CompressFn {
   {
     return compress_x86_avx512vl;
   }
-  #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512vl"))
+  ))]
   {
     return compress_x86_avx2;
   }

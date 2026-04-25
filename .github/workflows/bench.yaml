@@ -77,7 +77,7 @@ jobs:
         echo "Bench host: ${{ matrix.platform }} (${{ matrix.os }})"
         uname -a
         lscpu
-        cat /proc/cpuinfo | head -50
+        sed -n '1,50p' /proc/cpuinfo
       run_script: |
         RUN_DATE="$(date -u +"%Y-%m-%d")"
         RUN_TIME="$(date -u +"%H_%M_%S")"
