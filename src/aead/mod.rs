@@ -524,6 +524,21 @@ impl AeadByteLengths {
     block[8..16].copy_from_slice(&text_bits.to_be_bytes());
     block
   }
+
+  #[cfg_attr(
+    not(all(
+      target_arch = "x86_64",
+      any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+    )),
+    allow(dead_code)
+  )]
+  #[inline]
+  pub(crate) const fn total_at_least(self, minimum: u64) -> bool {
+    if self.aad >= minimum {
+      return true;
+    }
+    self.text >= minimum - self.aad
+  }
 }
 
 #[cfg_attr(
@@ -590,7 +605,7 @@ pub(crate) fn open_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, Op
 mod tests {
   use alloc::string::ToString;
 
-  use super::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError};
+  use super::{AeadBufferError, AeadByteLengths, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError};
   use crate::traits::VerificationError;
 
   #[test]
@@ -624,5 +639,12 @@ mod tests {
       OpenError::too_large().to_string(),
       "input exceeds the algorithm maximum length"
     );
+  }
+
+  #[test]
+  fn aead_byte_lengths_total_threshold_is_overflow_safe() {
+    assert!(!AeadByteLengths::from_usize(31, 32).total_at_least(64));
+    assert!(AeadByteLengths::from_usize(32, 32).total_at_least(64));
+    assert!(AeadByteLengths { aad: u64::MAX, text: 1 }.total_at_least(u64::MAX));
   }
 }
