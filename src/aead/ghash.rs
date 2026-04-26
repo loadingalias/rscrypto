@@ -11,9 +11,11 @@
 //! multiplication and Montgomery reduction used by POLYVAL apply unchanged
 //! because the reflected GHASH polynomial equals POLYVAL's polynomial.
 
+#[cfg(test)]
 use super::polyval::clmul128_reduce;
 
 /// GHASH block size in bytes (128 bits).
+#[cfg(test)]
 pub(crate) const BLOCK_SIZE: usize = 16;
 
 /// GHASH key size in bytes.
@@ -57,6 +59,7 @@ pub(crate) fn h_to_polyval(h_bytes: &[u8; KEY_SIZE]) -> u128 {
 /// - Apply `mulX_POLYVAL` to the hash key
 /// - Accumulate with XOR + field multiply + Montgomery reduce
 /// - Finalize as big-endian bytes
+#[cfg(test)]
 pub(crate) struct Ghash {
   /// Hash key H with `mulX_POLYVAL` applied.
   h: u128,
@@ -64,6 +67,7 @@ pub(crate) struct Ghash {
   acc: u128,
 }
 
+#[cfg(test)]
 impl Ghash {
   /// Create a new GHASH instance with the given 128-bit hash key.
   ///
@@ -121,6 +125,7 @@ impl Ghash {
   }
 }
 
+#[cfg(test)]
 impl Drop for Ghash {
   fn drop(&mut self) {
     // SAFETY: self.acc/self.h are valid, aligned, dereferenceable pointers to initialized memory.
