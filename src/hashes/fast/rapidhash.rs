@@ -220,7 +220,7 @@ fn rapidhash_core<const AVALANCHE: bool>(data: &[u8], mut seed: u64, secrets: &[
 fn rapidhash_core_default<const AVALANCHE: bool>(data: &[u8], seed: u64) -> u64 {
   #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
   {
-    return rapidhash_core::<AVALANCHE>(data, seed, &V3_DEFAULT_SECRETS);
+    rapidhash_core::<AVALANCHE>(data, seed, &V3_DEFAULT_SECRETS)
   }
 
   #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]

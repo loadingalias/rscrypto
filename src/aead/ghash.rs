@@ -113,16 +113,6 @@ impl Ghash {
     // ByteReverse that was applied at input time.
     self.acc.to_be_bytes()
   }
-
-  /// Finalize and return the raw accumulator as u128 (POLYVAL domain).
-  ///
-  /// Used by the wide GCM path to continue accumulation outside the
-  /// `Ghash` struct with precomputed H powers.
-  #[cfg(target_arch = "x86_64")]
-  #[inline]
-  pub(crate) fn finalize_u128(self) -> u128 {
-    self.acc
-  }
 }
 
 #[cfg(test)]
