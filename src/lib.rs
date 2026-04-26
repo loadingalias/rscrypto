@@ -141,7 +141,7 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
-    any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+    any(feature = "blake3", feature = "chacha20poly1305", feature = "xchacha20poly1305")
   ),
   feature(portable_simd)
 )]
