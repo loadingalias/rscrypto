@@ -46,6 +46,9 @@ mod ppc;
 #[allow(unsafe_code)]
 #[path = "aes/riscv64_aes.rs"]
 mod rv_aes;
+#[cfg(any(target_arch = "riscv64", test))]
+#[path = "aes/riscv64_fixslice_aes.rs"]
+mod rv_fixslice_aes;
 #[cfg(target_arch = "riscv64")]
 #[allow(unsafe_code)]
 #[path = "aes/riscv64_scalar_aes.rs"]
@@ -73,6 +76,7 @@ pub(crate) struct Aes256EncKey {
 
 #[derive(Clone)]
 enum KeyInner {
+  #[allow(dead_code)]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS]),
   #[cfg(target_arch = "x86_64")]
   X86AesNi(ni::NiRoundKeys),
@@ -89,6 +93,9 @@ enum KeyInner {
   /// Hamburg vperm via vrgather.vv -- uses portable key schedule, constant-time.
   #[cfg(target_arch = "riscv64")]
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS]),
+  /// Four-block table-free fixslice fallback for scalar RV64 without AES extensions.
+  #[cfg(target_arch = "riscv64")]
+  Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys),
 }
 
 impl Drop for Aes256EncKey {
@@ -131,6 +138,10 @@ impl Drop for Aes256EncKey {
         crate::traits::ct::zeroize(unsafe {
           core::slice::from_raw_parts_mut(rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS.strict_mul(4))
         });
+      }
+      #[cfg(target_arch = "riscv64")]
+      KeyInner::Riscv64Fixslice(rk) => {
+        rk.zeroize();
       }
     }
   }
@@ -362,7 +373,11 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
         inner: KeyInner::Riscv64ScalarCrypto(rv_keys),
       };
     }
+    Aes256EncKey {
+      inner: KeyInner::Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys::new(key)),
+    }
   }
+  #[cfg(not(target_arch = "riscv64"))]
   Aes256EncKey {
     inner: KeyInner::PortableRoundKeys(aes256_expand_key_portable(key)),
   }
@@ -402,9 +417,9 @@ pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKe
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
   // Legacy helper retained for callers that still mention the old backend
-  // label. The implementation now uses the constant-time portable path.
+  // label. The implementation now uses the constant-time RV64 fixslice path.
   Aes256EncKey {
-    inner: KeyInner::PortableRoundKeys(aes256_expand_key_portable(key)),
+    inner: KeyInner::Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys::new(key)),
   }
 }
 
@@ -545,7 +560,16 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
       // SAFETY: RvVperm variant is only constructed after runtime detection confirms V extension.
       unsafe { rv_vperm_aes::encrypt_block(rk, block) }
     }
+    #[cfg(target_arch = "riscv64")]
+    KeyInner::Riscv64Fixslice(rk) => rv_fixslice_aes::encrypt_block(rk, block),
   }
+}
+
+#[cfg(any(target_arch = "riscv64", test))]
+#[allow(dead_code)]
+#[inline]
+pub(super) fn aes_enc_round_4_fixslice(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
+  rv_fixslice_aes::cipher_round_4(blocks, round_keys);
 }
 
 /// Encrypt multiple independent 16-byte blocks with AES-256 ECB.
@@ -587,6 +611,34 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
       // existing single-block kernel to avoid special-casing 1-3 blocks.
       unsafe { rv_vperm_aes::encrypt_block(rk, &mut blocks[offset]) };
       offset = offset.strict_add(1);
+    }
+    return;
+  }
+  #[cfg(target_arch = "riscv64")]
+  if let KeyInner::Riscv64Fixslice(rk) = &ek.inner {
+    let mut offset = 0usize;
+    while offset.strict_add(4) <= blocks.len() {
+      let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+      debug_assert_eq!(batch_slice.len(), 4);
+      // SAFETY: `batch_slice` is exactly four contiguous `[u8; 16]` elements.
+      let batch: &mut [[u8; BLOCK_SIZE]; 4] = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+      rv_fixslice_aes::encrypt_4blocks(rk, batch);
+      offset = offset.strict_add(4);
+    }
+    if offset < blocks.len() {
+      let remaining = blocks.len().strict_sub(offset);
+      let mut tail = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0usize;
+      while i < remaining {
+        tail[i] = blocks[offset.strict_add(i)];
+        i = i.strict_add(1);
+      }
+      rv_fixslice_aes::encrypt_4blocks(rk, &mut tail);
+      i = 0;
+      while i < remaining {
+        blocks[offset.strict_add(i)] = tail[i];
+        i = i.strict_add(1);
+      }
     }
     return;
   }
@@ -740,7 +792,7 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
   let mut offset = 0usize;
 
   #[cfg(target_arch = "riscv64")]
-  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_)) {
+  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_) | KeyInner::Riscv64Fixslice(_)) {
     let iv_suffix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[4..16]);
@@ -829,7 +881,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
   let mut offset = 0usize;
 
   #[cfg(target_arch = "riscv64")]
-  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_)) {
+  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_) | KeyInner::Riscv64Fixslice(_)) {
     let iv_prefix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[..12]);
@@ -1269,6 +1321,47 @@ mod tests {
     }
 
     aes256_encrypt_blocks_ecb(&ek, &mut blocks);
+    assert_eq!(blocks, expected);
+  }
+
+  #[test]
+  fn riscv64_fixslice_matches_nist_aes256_vector() {
+    let key: [u8; 32] = [
+      0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12,
+      0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+    ];
+    let plaintext: [u8; 16] = [
+      0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+    ];
+    let expected: [u8; 16] = [
+      0x8e, 0xa2, 0xb7, 0xca, 0x51, 0x67, 0x45, 0xbf, 0xea, 0xfc, 0x49, 0x90, 0x4b, 0x49, 0x60, 0x89,
+    ];
+
+    let rk = rv_fixslice_aes::RvFixsliceRoundKeys::new(&key);
+    let mut block = plaintext;
+    rv_fixslice_aes::encrypt_block(&rk, &mut block);
+    assert_eq!(block, expected);
+  }
+
+  #[test]
+  fn riscv64_fixslice_4blocks_matches_portable() {
+    let key = [0x3cu8; KEY_SIZE];
+    let portable = aes256_expand_key_portable(&key);
+    let fixslice = rv_fixslice_aes::RvFixsliceRoundKeys::new(&key);
+    let mut blocks = [[0u8; BLOCK_SIZE]; 4];
+
+    for (i, block) in blocks.iter_mut().enumerate() {
+      for (j, byte) in block.iter_mut().enumerate() {
+        *byte = (i as u8).wrapping_mul(0x31) ^ (j as u8).wrapping_mul(0x57) ^ 0xa6;
+      }
+    }
+
+    let mut expected = blocks;
+    for block in &mut expected {
+      aes256_encrypt_block_portable(&portable, block);
+    }
+
+    rv_fixslice_aes::encrypt_4blocks(&fixslice, &mut blocks);
     assert_eq!(blocks, expected);
   }
 }

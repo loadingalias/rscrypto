@@ -56,7 +56,12 @@ pub use crate::traits::Aead;
 use crate::traits::VerificationError;
 #[cfg(feature = "aegis256")]
 mod aegis256;
-#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  all(feature = "aegis256", target_arch = "riscv64"),
+  all(feature = "aegis256", test),
+))]
 mod aes;
 #[cfg(feature = "aes-gcm")]
 mod aes256gcm;

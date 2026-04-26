@@ -93,17 +93,38 @@ fn zero_block() -> Block {
 #[cfg(not(target_arch = "s390x"))]
 type State = [Block; 6];
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
 #[inline(always)]
 fn aes_round(block: &Block, round_key: &Block) -> Block {
   super::aes_round::aes_enc_round_portable(block, round_key)
+}
+
+#[cfg(any(target_arch = "riscv64", test))]
+#[inline]
+fn update_riscv_fixslice(s: &mut State, m: &Block) {
+  let tmp = s[5];
+
+  let mut first = [s[4], s[3], s[2], s[1]];
+  let first_keys = [s[5], s[4], s[3], s[2]];
+  super::aes::aes_enc_round_4_fixslice(&mut first, &first_keys);
+
+  let mut second = [s[0], tmp, zero_block(), zero_block()];
+  let second_keys = [s[1], s[0], zero_block(), zero_block()];
+  super::aes::aes_enc_round_4_fixslice(&mut second, &second_keys);
+
+  s[5] = first[0];
+  s[4] = first[1];
+  s[3] = first[2];
+  s[2] = first[3];
+  s[1] = second[0];
+  s[0] = xor_block(&second[1], m);
 }
 
 /// AEGIS-256 Update function: absorb one 128-bit message block into the state.
 ///
 /// Each step applies a single AES round to rotate the state pipeline.
 /// The message block is XORed into S0 after the round.
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), not(target_arch = "riscv64")))]
 #[inline]
 fn update(s: &mut State, m: &Block) {
   let tmp = s[5];
@@ -113,6 +134,12 @@ fn update(s: &mut State, m: &Block) {
   s[2] = aes_round(&s[1], &s[2]);
   s[1] = aes_round(&s[0], &s[1]);
   s[0] = xor_block(&aes_round(&tmp, &s[0]), m);
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline]
+fn update(s: &mut State, m: &Block) {
+  update_riscv_fixslice(s, m);
 }
 
 /// Initialize AEGIS-256 state from key and nonce.
@@ -723,6 +750,32 @@ mod tests {
     assert_eq!(s[3], hex_block("2f1498ae19b80da13fba698f088a8590"));
     assert_eq!(s[4], hex_block("a54c2ee95e8c2a2c3dae2ec743ae6b86"));
     assert_eq!(s[5], hex_block("a3240fceb68e32d5d114df1b5363ab67"));
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  #[test]
+  fn riscv_fixslice_update_matches_portable_update() {
+    let mut portable: State = [
+      hex_block("1fa1207ed76c86f2c4bb40e8b395b43e"),
+      hex_block("b44c375e6c1e1978db64bcd12e9e332f"),
+      hex_block("0dab84bfa9f0226432ff630f233d4e5b"),
+      hex_block("d7ef65c9b93e8ee60c75161407b066e7"),
+      hex_block("a760bb3da073fbd92bdc24734b1f56fb"),
+      hex_block("a828a18d6a964497ac6e7e53c5f55c73"),
+    ];
+    let mut fixslice = portable;
+    let m = hex_block("b165617ed04ab738afb2612c6d18a1ec");
+
+    let tmp = portable[5];
+    portable[5] = portable_aes_round(&portable[4], &portable[5]);
+    portable[4] = portable_aes_round(&portable[3], &portable[4]);
+    portable[3] = portable_aes_round(&portable[2], &portable[3]);
+    portable[2] = portable_aes_round(&portable[1], &portable[2]);
+    portable[1] = portable_aes_round(&portable[0], &portable[1]);
+    portable[0] = xor_block(&portable_aes_round(&tmp, &portable[0]), &m);
+
+    update_riscv_fixslice(&mut fixslice, &m);
+    assert_eq!(fixslice, portable);
   }
 
   // -- Spec test vectors (Appendix A.3) --

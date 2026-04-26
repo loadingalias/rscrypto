@@ -18,7 +18,7 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~64 GiB
 
 #[cfg(target_arch = "x86_64")]
-const X86_VAES_GCM_MIN_LEN: usize = 256;
+const X86_VAES_GCM_MIN_LEN: usize = 32;
 
 define_aead_key_type!(Aes256GcmKey, KEY_SIZE, "AES-256-GCM secret key (32 bytes).");
 
@@ -200,25 +200,20 @@ fn make_j0(nonce: &Nonce96) -> [u8; 16] {
 #[inline]
 fn compute_tag(
   ek: &aes::Aes256EncKey,
-  h: &[u8; 16],
+  h_polyval: u128,
   j0: &[u8; 16],
   aad: &[u8],
   ciphertext: &[u8],
 ) -> Result<[u8; TAG_SIZE], LengthOverflow> {
-  // GHASH(H, A, C)
-  let mut gh = ghash::Ghash::new(h);
+  let mut acc = 0u128;
+  acc = ghash_update_padded(acc, h_polyval, aad);
+  acc = ghash_update_padded(acc, h_polyval, ciphertext);
 
-  // Process AAD (zero-padded to 128-bit blocks).
-  gh.update_padded(aad);
-
-  // Process ciphertext (zero-padded to 128-bit blocks).
-  gh.update_padded(ciphertext);
-
-  // Length block: [len(A) in bits as u64 BE || len(C) in bits as u64 BE].
   let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
-  gh.update_block(&length_block);
+  acc ^= u128::from_be_bytes(length_block);
+  acc = polyval::clmul128_reduce(acc, h_polyval);
 
-  let mut s = gh.finalize();
+  let mut s = acc.to_be_bytes();
 
   // tag = GHASH_result XOR AES(K, J0)
   let mut encrypted_j0 = *j0;
@@ -234,6 +229,24 @@ fn compute_tag(
   Ok(s)
 }
 
+#[inline]
+fn ghash_update_padded(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
+  let (blocks, remainder) = data.as_chunks::<16>();
+  for block in blocks {
+    acc ^= u128::from_be_bytes(*block);
+    acc = polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    acc ^= u128::from_be_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  acc
+}
+
 /// Compute the GCM authentication tag using 4-block wide GHASH.
 ///
 /// Same semantics as `compute_tag` but processes ciphertext in 4-block
@@ -242,20 +255,13 @@ fn compute_tag(
 #[inline]
 fn compute_tag_wide(
   ek: &aes::Aes256EncKey,
-  h: &[u8; 16],
+  h_polyval: u128,
   h_powers_rev: &[u128; 4],
   j0: &[u8; 16],
   aad: &[u8],
   ciphertext: &[u8],
 ) -> Result<[u8; TAG_SIZE], LengthOverflow> {
-  let h_polyval = ghash::h_to_polyval(h);
-
-  // Process AAD (zero-padded, block by block — usually small).
-  let mut acc = {
-    let mut gh = ghash::Ghash::new(h);
-    gh.update_padded(aad);
-    gh.finalize_u128()
-  };
+  let mut acc = ghash_update_padded(0, h_polyval, aad);
 
   // Process ciphertext in 4-block wide chunks.
   let mut offset = 0usize;
@@ -385,14 +391,15 @@ impl Aead for Aes256Gcm {
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
       // SAFETY: VAES + VPCLMULQDQ availability verified during backend resolution.
       unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
-      let tag_bytes = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer)
+      let tag_bytes = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
         .map_err(|_| SealError::too_large())?;
       return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
 
     // Scalar path: single-block AES-NI/CE/portable + single-block GHASH.
     aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
-    let tag_bytes = compute_tag(&self.ek, &self.h, &j0, aad, buffer).map_err(|_| SealError::too_large())?;
+    let tag_bytes =
+      compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| SealError::too_large())?;
     Ok(Aes256GcmTag::from_bytes(tag_bytes))
   }
 
@@ -411,7 +418,7 @@ impl Aead for Aes256Gcm {
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
       // Verify tag BEFORE decryption (authenticate-then-decrypt).
-      let expected = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer)
+      let expected = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
         .map_err(|_| OpenError::too_large())?;
       if !ct::constant_time_eq(&expected, tag.as_bytes()) {
         ct::zeroize(buffer);
@@ -425,7 +432,7 @@ impl Aead for Aes256Gcm {
     }
 
     // Scalar path: authenticate then decrypt.
-    let expected = compute_tag(&self.ek, &self.h, &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
+    let expected = compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
