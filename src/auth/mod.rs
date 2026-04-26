@@ -112,7 +112,7 @@ pub mod scrypt;
 pub mod x25519;
 
 #[cfg(feature = "argon2")]
-pub use argon2::{Argon2Error, Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
+pub use argon2::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
@@ -126,7 +126,7 @@ pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 #[cfg(feature = "phc-strings")]
 pub use phc::PhcError;
 #[cfg(feature = "scrypt")]
-pub use scrypt::{Scrypt, ScryptError, ScryptParams};
+pub use scrypt::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 

@@ -11,6 +11,7 @@ pub mod ascon;
   feature = "crc24",
   feature = "crc32",
   feature = "crc64",
+  feature = "argon2",
   feature = "sha2",
   all(feature = "sha3", any(test, feature = "diag")),
   all(

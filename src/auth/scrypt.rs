@@ -310,6 +310,52 @@ impl ScryptParams {
   }
 }
 
+/// Operational limits for verifying scrypt PHC strings from untrusted storage.
+///
+/// PHC strings encode their own CPU/memory parameters and output length. Use
+/// `Scrypt::verify_string_with_policy` when those encoded parameters can be
+/// controlled by another tenant, database row, network peer, or migration
+/// input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScryptVerifyPolicy {
+  /// Maximum encoded `log_n` value.
+  pub max_log_n: u8,
+  /// Maximum encoded block-size parameter `r`.
+  pub max_r: u32,
+  /// Maximum encoded parallelisation parameter `p`.
+  pub max_p: u32,
+  /// Maximum encoded output length in bytes.
+  pub max_output_len: usize,
+}
+
+impl ScryptVerifyPolicy {
+  /// Build a policy from explicit upper bounds.
+  #[must_use]
+  pub const fn new(max_log_n: u8, max_r: u32, max_p: u32, max_output_len: usize) -> Self {
+    Self {
+      max_log_n,
+      max_r,
+      max_p,
+      max_output_len,
+    }
+  }
+
+  /// Return `true` when `params` and `output_len` are within this policy.
+  #[must_use]
+  pub const fn allows(&self, params: &ScryptParams, output_len: usize) -> bool {
+    params.log_n <= self.max_log_n
+      && params.r <= self.max_r
+      && params.p <= self.max_p
+      && output_len <= self.max_output_len
+  }
+}
+
+impl Default for ScryptVerifyPolicy {
+  fn default() -> Self {
+    Self::new(DEFAULT_LOG_N, DEFAULT_R, DEFAULT_P, DEFAULT_OUTPUT_LEN as usize)
+  }
+}
+
 // ─── Kernel dispatch (Phase 2: Portable only) ──────────────────────────────
 
 /// Salsa20/8 kernel identifier.
@@ -841,7 +887,31 @@ impl Scrypt {
   #[cfg(feature = "phc-strings")]
   #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
   pub fn verify_string(password: &[u8], encoded: &str) -> Result<(), VerificationError> {
+    Self::verify_string_with_policy(
+      password,
+      encoded,
+      &ScryptVerifyPolicy::new(u8::MAX, u32::MAX, u32::MAX, usize::MAX),
+    )
+  }
+
+  /// Verify `password` against a PHC string after enforcing operational
+  /// bounds on its encoded cost parameters.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] on any mismatch, malformed string,
+  /// parameter error, or policy violation.
+  #[cfg(feature = "phc-strings")]
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_string_with_policy(
+    password: &[u8],
+    encoded: &str,
+    policy: &ScryptVerifyPolicy,
+  ) -> Result<(), VerificationError> {
     let parsed = phc_integration::decode_string(encoded).map_err(|_| VerificationError::new())?;
+    if !policy.allows(&parsed.params, parsed.hash.len()) {
+      return Err(VerificationError::new());
+    }
     let mut actual = alloc::vec![0u8; parsed.hash.len()];
     if Self::hash(&parsed.params, password, &parsed.salt, &mut actual).is_err() {
       ct::zeroize(&mut actual);
@@ -1275,6 +1345,22 @@ mod tests {
       assert!(encoded.starts_with("$scrypt$ln=4,r=1,p=1$"));
       assert!(Scrypt::verify_string(b"password", &encoded).is_ok());
       assert!(Scrypt::verify_string(b"wrongpassword", &encoded).is_err());
+    }
+
+    #[test]
+    fn verify_string_with_policy_enforces_scrypt_bounds() {
+      let params = small_params();
+      let salt = [0xA1u8; 16];
+      let encoded = Scrypt::hash_string_with_salt(&params, b"password", &salt).unwrap();
+
+      let allowed = ScryptVerifyPolicy::new(4, 1, 1, 32);
+      assert!(Scrypt::verify_string_with_policy(b"password", &encoded, &allowed).is_ok());
+
+      let low_log_n = ScryptVerifyPolicy::new(3, 1, 1, 32);
+      assert!(Scrypt::verify_string_with_policy(b"password", &encoded, &low_log_n).is_err());
+
+      let short_output = ScryptVerifyPolicy::new(4, 1, 1, 31);
+      assert!(Scrypt::verify_string_with_policy(b"password", &encoded, &short_output).is_err());
     }
 
     #[test]

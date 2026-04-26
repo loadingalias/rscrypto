@@ -20,10 +20,11 @@ unsafe fn store(v: uint8x16_t, out: &mut [u8; BLOCK_SIZE]) {
 
 // ── Register-based helpers ──────────────────────────────────────────────
 //
-// ARM AESE applies AddRoundKey *before* SubBytes (opposite of x86 AESENC),
-// so we pass zero as the AESE key and XOR the actual round key after
-// MixColumns. The zero XOR is NOT redundant — removing it would break
-// correctness because SubBytes is non-linear.
+// ARM AESE applies AddRoundKey before SubBytes, so both operand forms below
+// compute the same AESENC-compatible round. Apple cores benchmark faster with
+// the state as AESE's destructive data operand; non-Apple targets use the
+// libaegis operand form, preserving old state registers for the next pipeline
+// assignments on Neoverse-class cores.
 //
 // Neoverse V1/V2 has 2 crypto pipelines; register-based code gives the
 // OOO engine maximum scheduling freedom across both pipes.
@@ -46,12 +47,26 @@ unsafe fn update_regs(
   zero: uint8x16_t,
 ) {
   let tmp = *s5;
-  *s5 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s4, zero)), *s5);
-  *s4 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s3, zero)), *s4);
-  *s3 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s2, zero)), *s3);
-  *s2 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s1, zero)), *s2);
-  *s1 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s0, zero)), *s1);
-  *s0 = veorq_u8(veorq_u8(vaesmcq_u8(vaeseq_u8(tmp, zero)), *s0), m);
+
+  #[cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos"))]
+  {
+    *s5 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s4, zero)), *s5);
+    *s4 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s3, zero)), *s4);
+    *s3 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s2, zero)), *s3);
+    *s2 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s1, zero)), *s2);
+    *s1 = veorq_u8(vaesmcq_u8(vaeseq_u8(*s0, zero)), *s1);
+    *s0 = veorq_u8(veorq_u8(vaesmcq_u8(vaeseq_u8(tmp, zero)), *s0), m);
+  }
+
+  #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
+  {
+    *s5 = veorq_u8(vaesmcq_u8(vaeseq_u8(zero, *s4)), *s5);
+    *s4 = veorq_u8(vaesmcq_u8(vaeseq_u8(zero, *s3)), *s4);
+    *s3 = veorq_u8(vaesmcq_u8(vaeseq_u8(zero, *s2)), *s3);
+    *s2 = veorq_u8(vaesmcq_u8(vaeseq_u8(zero, *s1)), *s2);
+    *s1 = veorq_u8(vaesmcq_u8(vaeseq_u8(zero, *s0)), *s1);
+    *s0 = veorq_u8(veorq_u8(vaesmcq_u8(vaeseq_u8(zero, tmp)), *s0), m);
+  }
 }
 
 #[inline]

@@ -1,6 +1,6 @@
 //! Shared portable AES round helpers for AEGIS and Hamburg vperm constants.
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 const BLOCK_SIZE: usize = 16;
 
 // ---------------------------------------------------------------------------
@@ -106,10 +106,9 @@ pub(crate) const MC_ROT2: [u8; 16] = [
   0x0A, 0x0B, 0x08, 0x09, 0x0E, 0x0F, 0x0C, 0x0D,
 ];
 
-// Keep the scalar AES round implementation out of s390x/riscv64 test builds.
-// Those targets validate the shared vperm tables, but they do not call the
-// portable round helper and clippy rightfully rejects dead code there.
-#[cfg(not(target_arch = "s390x"))]
+// Keep the scalar AES round implementation out of builds that only need the
+// shared RISC-V/s390x vperm constants.
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn gf256_mul(a: u8, b: u8) -> u8 {
   let a = a as u16;
@@ -136,13 +135,13 @@ const fn gf256_mul(a: u8, b: u8) -> u8 {
   prod as u8
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn gf256_sq(x: u8) -> u8 {
   gf256_mul(x, x)
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn gf256_inv(x: u8) -> u8 {
   let x2 = gf256_sq(x);
@@ -160,7 +159,7 @@ const fn gf256_inv(x: u8) -> u8 {
   gf256_mul(x252, x2)
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn sbox(x: u8) -> u8 {
   let inv = gf256_inv(x);
@@ -168,20 +167,20 @@ const fn sbox(x: u8) -> u8 {
   r ^ 0x63
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn col_byte(col: u32, row: usize) -> u8 {
   (col >> (24u32.strict_sub((row as u32).strict_mul(8)))) as u8
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn xtime(x: u8) -> u8 {
   let hi = (x >> 7) & 1;
   (x << 1) ^ (hi.wrapping_mul(0x1b))
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn mix_column(col: [u8; 4]) -> u32 {
   let [b0, b1, b2, b3] = col;
@@ -194,7 +193,7 @@ const fn mix_column(col: [u8; 4]) -> u32 {
   (r0 as u32) << 24 | (r1 as u32) << 16 | (r2 as u32) << 8 | r3 as u32
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline(always)]
 const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
   let sr0 = [
@@ -225,7 +224,7 @@ const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
   (mix_column(sr0), mix_column(sr1), mix_column(sr2), mix_column(sr3))
 }
 
-#[cfg(not(target_arch = "s390x"))]
+#[cfg(all(not(target_arch = "s390x"), feature = "aegis256"))]
 #[inline]
 pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
   let s0 = u32::from_be_bytes([block[0], block[1], block[2], block[3]]);

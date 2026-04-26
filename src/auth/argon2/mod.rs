@@ -469,6 +469,57 @@ impl Argon2Params {
   }
 }
 
+/// Operational limits for verifying Argon2 PHC strings from untrusted storage.
+///
+/// PHC strings encode their own memory, iteration, parallelism, and output
+/// lengths. Use `Argon2id::verify_string_with_policy` (or the matching
+/// variant method) when those encoded parameters can be controlled by another
+/// tenant, database row, network peer, or migration input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Argon2VerifyPolicy {
+  /// Maximum encoded memory cost in KiB.
+  pub max_memory_cost_kib: u32,
+  /// Maximum encoded time cost.
+  pub max_time_cost: u32,
+  /// Maximum encoded parallelism.
+  pub max_parallelism: u32,
+  /// Maximum encoded output length in bytes.
+  pub max_output_len: usize,
+}
+
+impl Argon2VerifyPolicy {
+  /// Build a policy from explicit upper bounds.
+  #[must_use]
+  pub const fn new(max_memory_cost_kib: u32, max_time_cost: u32, max_parallelism: u32, max_output_len: usize) -> Self {
+    Self {
+      max_memory_cost_kib,
+      max_time_cost,
+      max_parallelism,
+      max_output_len,
+    }
+  }
+
+  /// Return `true` when `params` and `output_len` are within this policy.
+  #[must_use]
+  pub const fn allows(&self, params: &Argon2Params, output_len: usize) -> bool {
+    params.memory_cost_kib <= self.max_memory_cost_kib
+      && params.time_cost <= self.max_time_cost
+      && params.parallelism <= self.max_parallelism
+      && output_len <= self.max_output_len
+  }
+}
+
+impl Default for Argon2VerifyPolicy {
+  fn default() -> Self {
+    Self::new(
+      DEFAULT_MEMORY_KIB,
+      DEFAULT_TIME_COST,
+      DEFAULT_PARALLELISM,
+      DEFAULT_OUTPUT_LEN,
+    )
+  }
+}
+
 // ─── Kernel dispatch ────────────────────────────────────────────────────────
 //
 // [`KernelId`], [`ALL_KERNELS`], [`required_caps`], and the private
@@ -1863,6 +1914,23 @@ macro_rules! define_argon2_variant {
         Self::verify_string_with_context(password, encoded, &[], &[])
       }
 
+      /// Verify `password` against a PHC string after enforcing operational
+      /// bounds on its encoded cost parameters.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`VerificationError`] on any mismatch, malformed string,
+      /// variant mismatch, parameter error, or policy violation.
+      #[cfg(feature = "phc-strings")]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_string_with_policy(
+        password: &[u8],
+        encoded: &str,
+        policy: &Argon2VerifyPolicy,
+      ) -> Result<(), VerificationError> {
+        Self::verify_string_with_context_and_policy(password, encoded, &[], &[], policy)
+      }
+
       /// Verify `password` against a PHC-encoded hash using an external
       /// pepper and/or associated data.
       ///
@@ -1883,6 +1951,31 @@ macro_rules! define_argon2_variant {
         secret: &[u8],
         associated_data: &[u8],
       ) -> Result<(), VerificationError> {
+        Self::verify_string_with_context_and_policy(
+          password,
+          encoded,
+          secret,
+          associated_data,
+          &Argon2VerifyPolicy::new(u32::MAX, u32::MAX, u32::MAX, usize::MAX),
+        )
+      }
+
+      /// Verify `password` against a PHC string with external context and
+      /// explicit operational bounds.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`VerificationError`] on any mismatch, malformed string,
+      /// variant mismatch, parameter error, or policy violation.
+      #[cfg(feature = "phc-strings")]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_string_with_context_and_policy(
+        password: &[u8],
+        encoded: &str,
+        secret: &[u8],
+        associated_data: &[u8],
+        policy: &Argon2VerifyPolicy,
+      ) -> Result<(), VerificationError> {
         let parsed = phc_integration::decode_string(encoded, Self::ALGORITHM)
           .map_err(|_| VerificationError::new())?;
         let mut params = parsed.params;
@@ -1893,6 +1986,9 @@ macro_rules! define_argon2_variant {
           params = params.associated_data(associated_data);
         }
         params = params.build().map_err(|_| VerificationError::new())?;
+        if !policy.allows(&params, parsed.hash.len()) {
+          return Err(VerificationError::new());
+        }
         let mut actual = alloc::vec![0u8; parsed.hash.len()];
         if Self::hash(&params, password, &parsed.salt, &mut actual).is_err() {
           ct::zeroize(&mut actual);
@@ -2364,6 +2460,37 @@ mod tests {
       assert!(encoded.starts_with("$argon2id$v=19$m=32,t=2,p=1$"));
       assert!(Argon2id::verify_string(b"password", &encoded).is_ok());
       assert!(Argon2id::verify_string(b"wrongpassword", &encoded).is_err());
+    }
+
+    #[test]
+    fn verify_string_with_policy_enforces_argon2_bounds() {
+      let params = small_params();
+      let salt = [0xA1u8; 16];
+      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
+
+      let allowed = Argon2VerifyPolicy::new(32, 2, 1, 32);
+      assert!(Argon2id::verify_string_with_policy(b"password", &encoded, &allowed).is_ok());
+
+      let low_memory = Argon2VerifyPolicy::new(31, 2, 1, 32);
+      assert!(Argon2id::verify_string_with_policy(b"password", &encoded, &low_memory).is_err());
+
+      let short_output = Argon2VerifyPolicy::new(32, 2, 1, 31);
+      assert!(Argon2id::verify_string_with_policy(b"password", &encoded, &short_output).is_err());
+    }
+
+    #[test]
+    fn verify_string_with_context_and_policy_enforces_argon2_bounds() {
+      let params = small_params().secret(b"pepper").build().unwrap();
+      let salt = [0xA2u8; 16];
+      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
+
+      let allowed = Argon2VerifyPolicy::new(32, 2, 1, 32);
+      assert!(Argon2id::verify_string_with_context_and_policy(b"password", &encoded, b"pepper", &[], &allowed).is_ok());
+
+      let low_time = Argon2VerifyPolicy::new(32, 1, 1, 32);
+      assert!(
+        Argon2id::verify_string_with_context_and_policy(b"password", &encoded, b"pepper", &[], &low_time).is_err()
+      );
     }
 
     #[test]

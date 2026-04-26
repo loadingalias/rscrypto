@@ -491,20 +491,6 @@ impl AeadByteLengths {
     Ok(Self::from_usize(aad_len, text_len))
   }
 
-  #[cfg(target_arch = "x86_64")]
-  #[inline]
-  pub(crate) fn total_at_least(&self, threshold: usize) -> bool {
-    let threshold = threshold as u64;
-    if self.aad >= threshold || self.text >= threshold {
-      return true;
-    }
-
-    match self.aad.checked_add(self.text) {
-      Some(total) => total >= threshold,
-      None => true,
-    }
-  }
-
   #[cfg_attr(
     not(any(feature = "chacha20poly1305", feature = "xchacha20poly1305")),
     allow(dead_code)

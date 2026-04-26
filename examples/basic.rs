@@ -1,7 +1,7 @@
 //! Basic `rscrypto` usage across checksums, digests, MACs, KDFs, XOFs, fast hashes, AEAD,
 //! hex formatting, and I/O adapters.
 //!
-//! Run with: `cargo run --example basic`
+//! Run with: `cargo run --example basic --features full`
 
 use std::io::{Cursor, Read, Write};
 
@@ -11,7 +11,7 @@ use rscrypto::{
 };
 
 fn main() -> std::io::Result<()> {
-  println!("=== rscrypto Basic Examples ===\n");
+  println!("rscrypto basic example\n");
 
   checksum_api();
   digest_api();
@@ -26,9 +26,9 @@ fn main() -> std::io::Result<()> {
   Ok(())
 }
 
-/// Checksums follow `new` → `update` → `finalize` → `reset`.
+/// Checksums follow `new`, `update`, `finalize`, `reset`.
 fn checksum_api() {
-  println!("--- Checksums ---\n");
+  println!("Checksums\n");
 
   let data = b"hello world";
 
@@ -46,9 +46,9 @@ fn checksum_api() {
   println!("CRC-32C(\"hello world\") = 0x{oneshot:08X}\n");
 }
 
-/// Digests follow `new` → `update` → `finalize` → `reset`.
+/// Digests follow `new`, `update`, `finalize`, `reset`.
 fn digest_api() {
-  println!("--- Digests ---\n");
+  println!("Digests\n");
 
   let data = b"hello world";
 
@@ -76,7 +76,7 @@ fn digest_api() {
 
 /// MACs and KDFs keep the same one-shot vs stateful split.
 fn auth_api() {
-  println!("--- Auth ---\n");
+  println!("Auth\n");
 
   let key = b"shared-secret";
   let data = b"hello world";
@@ -110,7 +110,7 @@ fn auth_api() {
 
 /// AEAD: encrypt, authenticate, and decrypt with typed keys and nonces.
 fn aead_api() {
-  println!("--- AEAD ---\n");
+  println!("AEAD\n");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
   let nonce = Nonce96::from_bytes([0x22; 12]);
@@ -126,14 +126,14 @@ fn aead_api() {
     .expect("decrypt must succeed");
   assert_eq!(&buf, b"hello");
 
-  println!("ChaCha20-Poly1305 round-trip OK");
+  println!("ChaCha20-Poly1305 round-trip succeeded");
   println!("  tag = {tag}");
   println!("  nonce = {nonce}\n");
 }
 
 /// Hex Display, FromStr, and secret key masking.
 fn hex_api() {
-  println!("--- Hex Formatting ---\n");
+  println!("Hex formatting\n");
 
   let nonce = Nonce96::from_bytes([0xab; 12]);
   println!("Display:  {nonce}");
@@ -143,7 +143,7 @@ fn hex_api() {
 
   let parsed: Nonce96 = "abababababababababababab".parse().unwrap();
   assert_eq!(parsed, nonce);
-  println!("FromStr:  round-trip OK");
+  println!("FromStr:  round-trip succeeded");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
   println!("\nSecret Debug: {key:?}");
@@ -159,22 +159,22 @@ fn hex_api() {
 
 /// Serialization via from_bytes / to_bytes / as_bytes.
 fn serialization_api() {
-  println!("--- Serialization ---\n");
+  println!("Serialization\n");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
   let raw: [u8; 32] = *key.as_bytes();
   let restored = ChaCha20Poly1305Key::from_bytes(raw);
   assert_eq!(key.as_bytes(), restored.as_bytes());
-  println!("Key round-trip via as_bytes/from_bytes: OK");
+  println!("Key round-trip via as_bytes/from_bytes succeeded");
 
   let nonce = Nonce96::from_bytes([0xab; 12]);
   assert_eq!(nonce, Nonce96::from_bytes(nonce.to_bytes()));
-  println!("Nonce round-trip: OK\n");
+  println!("Nonce round-trip succeeded\n");
 }
 
-/// XOFs support both `new` → `update` → `finalize_xof` and `xof(data)`.
+/// XOFs support both `new`, `update`, `finalize_xof` and `xof(data)`.
 fn xof_api() {
-  println!("--- XOFs ---\n");
+  println!("XOFs\n");
 
   let data = b"hello world";
 
@@ -198,7 +198,7 @@ fn xof_api() {
 }
 
 fn fast_hash_api() {
-  println!("--- Fast Hashes ---\n");
+  println!("Fast hashes\n");
 
   let data = b"hello world";
 
@@ -215,7 +215,7 @@ fn fast_hash_api() {
 }
 
 fn io_api() -> std::io::Result<()> {
-  println!("--- I/O Adapters ---\n");
+  println!("I/O adapters\n");
 
   let data = b"stream me through adapters";
 

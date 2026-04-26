@@ -64,6 +64,6 @@ GitHub Actions artifacts) — land under:
 benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt
 ```
 
-Local runs use `linux|macos|windows` + `x86-64|aarch64`. Same layout in CI;
-the extractor writes into the same tree so local and CI runs interleave
-by date without collision.
+Local runs use the host calendar date and `linux|macos|windows` +
+`x86-64|aarch64`. Same layout in CI; the extractor writes into the same tree
+so local and CI runs interleave by date without collision.

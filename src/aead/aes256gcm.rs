@@ -17,6 +17,9 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 /// In practice the portable CTR uses a 32-bit counter, limiting to (2^32 - 2) blocks.
 const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~64 GiB
 
+#[cfg(target_arch = "x86_64")]
+const X86_VAES_GCM_MIN_LEN: usize = 256;
+
 define_aead_key_type!(Aes256GcmKey, KEY_SIZE, "AES-256-GCM secret key (32 bytes).");
 
 define_aead_tag_type!(Aes256GcmTag, TAG_SIZE, "AES-256-GCM authentication tag (16 bytes).");
@@ -379,7 +382,7 @@ impl Aead for Aes256Gcm {
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
     #[cfg(target_arch = "x86_64")]
-    if self.backend == AeadBackend::X86VaesVpclmul {
+    if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
       // SAFETY: VAES + VPCLMULQDQ availability verified during backend resolution.
       unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
       let tag_bytes = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer)
@@ -406,7 +409,7 @@ impl Aead for Aes256Gcm {
 
     // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
-    if self.backend == AeadBackend::X86VaesVpclmul {
+    if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
       // Verify tag BEFORE decryption (authenticate-then-decrypt).
       let expected = compute_tag_wide(&self.ek, &self.h, &self.h_powers_rev, &j0, aad, buffer)
         .map_err(|_| OpenError::too_large())?;

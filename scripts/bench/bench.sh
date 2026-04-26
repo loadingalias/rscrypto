@@ -101,7 +101,7 @@ WARMUP_MS="${BENCH_WARMUP_MS:-}"
 MEASURE_MS="${BENCH_MEASURE_MS:-}"
 SAMPLE_SIZE="${BENCH_SAMPLE_SIZE:-}"
 PROFILE_TIME_SECS="${BENCH_PROFILE_TIME_SECS:-}"
-OUTPUT_DIR="${BENCH_OUTPUT_DIR:-benchmark-results}"
+OUTPUT_DIR="${BENCH_OUTPUT_DIR:-}"
 CLEAN="${BENCH_CLEAN:-true}"
 
 while [[ $# -gt 0 ]]; do
@@ -162,12 +162,24 @@ detect_bench_arch() {
   esac
 }
 
-RUN_DATE="$(date -u +"%Y-%m-%d")"
-RUN_TIME="$(date -u +"%H_%M_%S")"
 RUN_OS="$(detect_bench_os)"
 RUN_ARCH="$(detect_bench_arch)"
 RUN_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 RUN_MODE="${RSCRYPTO_BENCH_MODE:-local}"
+
+if [[ "$RUN_MODE" == "local" ]]; then
+  RUN_DATE="$(date +"%Y-%m-%d")"
+  RUN_TIME="$(date +"%H_%M_%S")"
+else
+  RUN_DATE="$(date -u +"%Y-%m-%d")"
+  RUN_TIME="$(date -u +"%H_%M_%S")"
+fi
+
+if [[ -z "$OUTPUT_DIR" ]]; then
+  OUTPUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rscrypto-bench.XXXXXX")"
+  trap 'rm -rf "$OUTPUT_DIR"' EXIT
+fi
+
 RESULTS_DIR="$REPO_ROOT/benchmark_results/$RUN_DATE/$RUN_OS/$RUN_ARCH"
 
 BENCH_CRATES="$CRATES" \
