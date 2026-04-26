@@ -99,7 +99,7 @@ fn aes_round(block: &Block, round_key: &Block) -> Block {
   super::aes_round::aes_enc_round_portable(block, round_key)
 }
 
-#[cfg(any(target_arch = "riscv64", test))]
+#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
 #[inline]
 fn update_riscv_fixslice(s: &mut State, m: &Block) {
   let tmp = s[5];
