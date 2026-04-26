@@ -1,44 +1,36 @@
-//! Pure Rust cryptography. Hardware-accelerated. Zero dependencies.
+//! Pure Rust cryptography. Hardware-accelerated. `no_std` first.
 //!
-//! # Quick Start
-#![cfg_attr(
-  feature = "crc32",
-  doc = r#"
-## Checksum
-
-```rust
-use rscrypto::{Checksum, Crc32C};
-
-let data = b"hello world";
-
-let checksum = Crc32C::checksum(data);
-
-let mut h = Crc32C::new();
-h.update(b"hello ");
-h.update(b"world");
-assert_eq!(h.finalize(), checksum);
-```
-
-Install only what you need:
-
-```toml
-[dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
-```
-"#
-)]
+//! Enable only the primitive families you use. The default feature set is
+//! just `std`.
 //!
+//! ```toml
+//! [dependencies]
+//! rscrypto = { version = "0.1", default-features = false, features = ["sha2"] }
+//! ```
+//!
+//! # Guides
+//!
+//! - Repository README: <https://github.com/loadingalias/rscrypto#readme>
+//! - Runnable examples: <https://github.com/loadingalias/rscrypto/tree/main/examples>
+//! - Additional docs: <https://github.com/loadingalias/rscrypto/tree/main/docs>
+//! - Security guidance: <https://github.com/loadingalias/rscrypto/blob/main/docs/security.md>
+//!
+//! # API Shape
+//!
+//! - Checksums: `Type::checksum(data)` or `new` / `update` / `finalize`.
+//! - Digests: `Type::digest(data)` or `new` / `update` / `finalize`.
+//! - XOFs: `Type::xof(data)` or `new` / `update` / `finalize_xof`.
+//! - MACs: `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)`.
+//! - AEADs: typed keys and nonces, with combined and detached APIs.
 #![cfg_attr(
   feature = "sha2",
   doc = r#"
-## Digest
+# Quick Start
 
 ```rust
 use rscrypto::{Digest, Sha256};
 
-let data = b"hello world";
-
-let digest = Sha256::digest(data);
+let digest = Sha256::digest(b"hello world");
 
 let mut h = Sha256::new();
 h.update(b"hello ");
@@ -47,367 +39,65 @@ assert_eq!(h.finalize(), digest);
 ```
 "#
 )]
-//!
 #![cfg_attr(
-  feature = "auth",
+  feature = "chacha20poly1305",
   doc = r#"
-## Auth
+# AEAD
 
 ```rust
-use rscrypto::{
-  Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Kmac256, Mac, X25519SecretKey,
-};
+use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
 
-let key = b"shared-secret";
-let data = b"hello world";
+let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
+let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+let cipher = ChaCha20Poly1305::new(&key);
 
-let tag = HmacSha256::mac(key, data);
+let mut buffer = *b"data";
+let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer)?;
+cipher.decrypt_in_place(&nonce, b"aad", &mut buffer, &tag)?;
+assert_eq!(&buffer, b"data");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+"#
+)]
+#![cfg_attr(
+  all(feature = "password-hashing", feature = "getrandom"),
+  doc = r#"
+# Password Hashing
 
-let mut mac = HmacSha256::new(key);
-mac.update(b"hello ");
-mac.update(b"world");
-assert_eq!(mac.finalize(), tag);
-assert!(mac.verify(&tag).is_ok());
+```rust
+use rscrypto::{Argon2Params, Argon2VerifyPolicy, Argon2id};
 
-let mut okm = [0u8; 32];
-HkdfSha256::new(b"salt", b"input key material").expand(b"context", &mut okm)?;
-assert_ne!(okm, [0u8; 32]);
+let params = Argon2Params::new().build()?;
+let encoded = Argon2id::hash_string(&params, b"correct horse battery staple")?;
 
-let keypair = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([7u8; 32]));
-let sig = keypair.sign(b"auth");
-assert!(keypair.public_key().verify(b"auth", &sig).is_ok());
-
-let mut kmac = Kmac256::new(b"shared-secret", b"svc=v1");
-kmac.update(b"auth");
-let mut tag32 = [0u8; 32];
-kmac.finalize_into(&mut tag32);
-assert!(Kmac256::verify_tag(b"shared-secret", b"svc=v1", b"auth", &tag32).is_ok());
-
-let alice = X25519SecretKey::from_bytes([7u8; 32]);
-let bob = X25519SecretKey::from_bytes([9u8; 32]);
-assert_eq!(
-  alice.diffie_hellman(&bob.public_key())?,
-  bob.diffie_hellman(&alice.public_key())?
+assert!(
+  Argon2id::verify_string_with_policy(
+    b"correct horse battery staple",
+    &encoded,
+    &Argon2VerifyPolicy::default(),
+  )
+  .is_ok()
 );
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 "#
 )]
+//! # Feature Groups
 //!
-#![cfg_attr(
-  feature = "password-hashing",
-  doc = r#"
-## Password Hashing
-
-```rust
-use rscrypto::{Argon2Params, Argon2id, Scrypt, ScryptParams};
-
-let password = b"correct horse battery staple";
-let salt = b"random-salt-1234";
-
-let argon2 = Argon2Params::new()
-  .memory_cost_kib(32)
-  .time_cost(1)
-  .parallelism(1)
-  .output_len(32)
-  .build()?;
-let encoded = Argon2id::hash_string_with_salt(&argon2, password, salt)?;
-assert!(Argon2id::verify_string(password, &encoded).is_ok());
-assert!(Argon2id::verify_string(b"wrong", &encoded).is_err());
-
-let scrypt = ScryptParams::new()
-  .log_n(4)
-  .r(1)
-  .p(1)
-  .output_len(32)
-  .build()?;
-let encoded = Scrypt::hash_string_with_salt(&scrypt, password, salt)?;
-assert!(Scrypt::verify_string(password, &encoded).is_ok());
-assert!(Scrypt::verify_string(b"wrong", &encoded).is_err());
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-"#
-)]
+//! - `checksums`: CRC families.
+//! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash.
+//! - `auth`: MACs, KDFs, password hashing, Ed25519, X25519.
+//! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
+//! - `full`: all public primitive families.
 //!
-#![cfg_attr(
-  all(feature = "chacha20poly1305", feature = "xchacha20poly1305"),
-  doc = r#"
-## AEAD
-
-```rust
-use rscrypto::{
-  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
-  aead::{Nonce96, Nonce192},
-};
-
-let chacha = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
-let nonce96 = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
-let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
-chacha.encrypt(&nonce96, b"hdr", b"data", &mut sealed)?;
-
-let xchacha = XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x33; 32]));
-let nonce192 = Nonce192::from_bytes([0x44; Nonce192::LENGTH]);
-let mut detached = *b"data";
-let tag = xchacha.encrypt_in_place(&nonce192, b"hdr", &mut detached)?;
-xchacha.decrypt_in_place(&nonce192, b"hdr", &mut detached, &tag)?;
-assert_eq!(&detached, b"data");
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-"#
-)]
+//! Leaf features are available for size-conscious builds.
 //!
-#![cfg_attr(
-  all(feature = "sha3", feature = "ascon-hash"),
-  doc = r#"
-## XOF
-
-```rust
-use rscrypto::{AsconCxof128, Cshake256, Shake256, Xof};
-
-let data = b"hello world";
-
-let mut h = Shake256::new();
-h.update(data);
-let mut xof = h.finalize_xof();
-let mut out = [0u8; 64];
-xof.squeeze(&mut out);
-
-let mut oneshot = Shake256::xof(data);
-let mut same = [0u8; 64];
-oneshot.squeeze(&mut same);
-assert_eq!(out, same);
-assert_ne!(out, [0u8; 64]);
-
-let mut cshake = Cshake256::xof(b"", b"domain=v1", data);
-cshake.squeeze(&mut same);
-assert_ne!(out, same);
-
-let mut cxof = AsconCxof128::xof(b"domain=v1", data)?;
-cxof.squeeze(&mut same);
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-"#
-)]
+//! # Security Posture
 //!
-#![cfg_attr(
-  feature = "chacha20poly1305",
-  doc = r#"
-## Hex Encoding & Serialization
-
-Public types display as lowercase hex. Secret keys mask their `Debug` output
-and require explicit opt-in via `display_secret()`.
-
-```rust
-use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
-
-let nonce = Nonce96::from_bytes([0xab; 12]);
-assert_eq!(format!("{nonce}"), "abababababababababababab");
-assert_eq!(format!("{nonce:X}"), "ABABABABABABABABABABABAB");
-assert_eq!(format!("{nonce:?}"), "Nonce96(abababababababababababab)");
-
-let parsed: Nonce96 = "abababababababababababab".parse()?;
-assert_eq!(parsed, nonce);
-
-let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-assert_eq!(format!("{key:?}"), "ChaCha20Poly1305Key(****)");
-let secret_hex = format!("{}", key.display_secret());
-assert!(secret_hex.starts_with("42"));
-# Ok::<(), Box<dyn std::error::Error>>(())
-```
-"#
-)]
-//! ## Bundle Selection
-//!
-//! Prefer leaf features when you know exactly what you need:
-//!
-//! ```toml
-//! [dependencies]
-//! # MACs only
-//! rscrypto = { version = "0.1", default-features = false, features = ["macs"] }
-//!
-//! # Ed25519 only
-//! rscrypto = { version = "0.1", default-features = false, features = ["signatures"] }
-//!
-//! # X25519 only
-//! rscrypto = { version = "0.1", default-features = false, features = ["key-exchange"] }
-//!
-//! # Everything
-//! rscrypto = { version = "0.1", features = ["full"] }
-//! ```
-//!
-//! ## Feature Selection Guide
-//!
-//! Use leaves when size matters more than category semantics:
-//!
-//! - single checksum family: `crc16`, `crc24`, `crc32`, or `crc64`
-//! - single digest family: `sha2`, `sha3`, `blake3`, or `ascon-hash`
-//! - one fast hash family: `xxh3` or `rapidhash`
-//! - one auth primitive: `hmac`, `hkdf`, `kmac`, `ed25519`, or `x25519`
-//! - one AEAD: `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, or
-//!   `ascon-aead`
-//!
-//! Use bundles when you want the category to grow with the crate:
-//!
-//! - all checksums: `checksums`
-//! - all cryptographic hashes: `crypto-hashes`
-//! - all non-cryptographic hashes: `fast-hashes`
-//! - all hashes: `hashes`
-//! - all MACs: `macs`
-//! - all KDFs: `kdfs`
-//! - all signature primitives: `signatures`
-//! - all key-exchange primitives: `key-exchange`
-//! - all auth/key-derivation primitives: `auth`
-//! - all AEADs: `aead`
-//! - everything: `full`
-//!
-//! Keep `default = ["std"]` unless you specifically need a `no_std` build.
-//!
-//! ## API Conventions
-//!
-//! The crate keeps naming deliberate across families:
-//!
-//! - checksums use `Type::checksum(data)` plus `new` / `update` / `finalize` / `reset`
-//! - fixed-output digests use `Type::digest(data)` plus the same streaming verbs
-//! - XOFs use `Type::xof(data)` and `finalize_xof()`
-//! - MACs use `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)`; streaming MACs use
-//!   `new` / `update` / `finalize` / `reset`
-//! - HKDF uses `new(salt, ikm)`, then `expand` / `expand_array`, with one-shot `derive` /
-//!   `derive_array`
-//! - signature, key, nonce, and tag wrappers round-trip through `from_bytes` / `to_bytes` /
-//!   `as_bytes`
-//! - AEADs use typed keys and nonces, with `encrypt` / `decrypt` for combined buffers and
-//!   `encrypt_in_place` / `decrypt_in_place` for detached tags
-#![cfg_attr(
-  feature = "chacha20poly1305",
-  doc = r#"
-## Serialization
-
-Public values round-trip through `from_bytes` / `to_bytes` / `as_bytes`.
-Secret values use `from_bytes` / `as_bytes` and require explicit
-`expose_secret()` opt-in for owned extraction:
-
-```rust
-use rscrypto::ChaCha20Poly1305Key;
-
-let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-let raw: [u8; 32] = key.expose_secret().expose();
-let restored = ChaCha20Poly1305Key::from_bytes(raw);
-assert_eq!(key, restored);
-```
-
-## Key & Nonce Generation
-
-Use `generate()` with any entropy source. The crate itself carries
-zero RNG dependencies — you bring your own CSPRNG:
-
-```rust
-use rscrypto::{ChaCha20Poly1305Key, aead::Nonce96};
-
-let key = ChaCha20Poly1305Key::generate(|buf| buf.fill(0xA5));
-let nonce = Nonce96::generate(|buf| buf.fill(0x5A));
-assert_eq!(key.as_bytes(), &[0xA5; ChaCha20Poly1305Key::LENGTH]);
-assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
-```
-"#
-)]
-//! The shipping `rscrypto` library stays inside this repository.
-//!
-//! - no C FFI
-//! - no vendored C/C++ dependency chain
-//! - no mandatory runtime dependencies
-//!
-//! The only optional runtime dependency is `rayon`, behind the `parallel`
-//! feature.
-//!
-//! # Performance Posture
-//!
-//! Benchmark snapshots are stored in `benchmark_results/` by date, platform, and
-//! architecture. Use `just bench` locally for fresh numbers and compare against the
-//! checked-in baselines when deciding release readiness.
-//!
-//! # Feature Flags
-//!
-//! | Feature | Default | Description |
-//! |---------|---------|-------------|
-//! | `std` | Yes | Enables runtime CPU detection for optimal dispatch |
-//! | `alloc` | Yes | Enables buffered types (implied by `std`) |
-//! | `crc16`, `crc24`, `crc32`, `crc64` | No | Individual checksum families |
-//! | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash` | No | Cryptographic hash leaves |
-//! | `xxh3`, `rapidhash` | No | Fast non-cryptographic hash leaves |
-//! | `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519` | No | Individual auth/KDF, signatures, and key-exchange leaves |
-//! | `argon2`, `scrypt`, `phc-strings` | No | Password-hashing leaves; `argon2` implies `blake2b + alloc`, `scrypt` implies `pbkdf2 + alloc`, `phc-strings` implies `alloc` |
-//! | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` | No | AEAD leaves |
-//! | `checksums` | No | All checksum leaves |
-//! | `crypto-hashes` | No | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, and `ascon-hash` |
-//! | `fast-hashes` | No | `xxh3` and `rapidhash` |
-//! | `hashes` | No | `crypto-hashes` + `fast-hashes` |
-//! | `macs` | No | `hmac` and `kmac` |
-//! | `kdfs` | No | `hkdf` and `pbkdf2` (key-derivation, not password-hashing) |
-//! | `password-hashing` | No | `argon2`, `scrypt`, and `phc-strings` |
-//! | `signatures` | No | `ed25519` |
-//! | `key-exchange` | No | `x25519` |
-//! | `auth` | No | `macs`, `kdfs`, `password-hashing`, `signatures`, and `key-exchange` |
-//! | `aead` | No | All AEAD leaves |
-//! | `full` | No | `checksums`, `hashes`, `auth`, `aead` |
-//! | `parallel` | No | Rayon-based parallel Blake3 hashing and Argon2 lane parallelism (implies `std + blake3 + argon2`) |
-//! | `portable-only` | No | Force portable backends (FIPS / DO-178C / ISO 26262 deployment posture). Suppresses runtime SIMD invocation; binary still contains SIMD code unless `RUSTFLAGS` further restricts target features. |
-//! | `getrandom` | No | `random()` constructors for keys and nonces |
-//! | `serde` | No | `Serialize`/`Deserialize` for keys, nonces, tags, and signatures |
-//! | `diag` | No | Dispatch introspection surfaces when diagnostics are enabled |
-//!
-//! # Compliance Posture
-//!
-//! `rscrypto` is a **primitives crate**, not a FIPS-validated module.
-//! This crate intentionally ships both FIPS-aligned and non-FIPS components in the same boundary.
-//! If your program requires FIPS module validation, run `rscrypto` inside your validated module
-//! boundary. ## FIPS-aligned surface (current)
-//!
-//! | Category | Items |
-//! |----------|-------|
-//! | Symmetric AEAD | `Aes256Gcm` |
-//! | Hash / XOF | `Sha*`, `Shake*` |
-//! | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
-//! | Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
-//! | Signature / KEX | `Ed25519*`, `X25519*` |
-//!
-//! ## Outside module boundary (this release)
-//!
-//! | Category | Items |
-//! |----------|-------|
-//! | AEAD | `Aes256GcmSiv`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, `Aegis256` |
-//! | Hash / XOF | `Ascon*`, `Blake*` |
-//! | Password hashing (memory-hard) | `Argon2d`, `Argon2i`, `Argon2id`, `Scrypt` — not NIST-approved; prefer `Pbkdf2Sha256` under FIPS policy |
-//! | Non-crypto | `Crc*`, `Xxh3`, `RapidHash` |
-//!
-//! The full FIPS boundary matrix and roadmap are documented in `docs/tasks/fips.md`.
-//!
-//! # Examples
-//!
-//! - `cargo run --example basic --features full` is the canonical checksum, digest, MAC, KDF, XOF,
-//!   fast hash, and I/O adapter specimen.
-//! - `cargo run --example introspect --features checksums,hashes,diag` is the advanced dispatch
-//!   introspection example.
-//! - `cargo run --example parallel --features checksums` shows CRC combine-based chunked
-//!   processing.
-//!
-//! # Advanced Surfaces
-//!
-//! - `rscrypto::checksum::config` for checksum force/config controls
-//! - `rscrypto::checksum::introspect` for checksum dispatch reporting when `diag` is enabled
-//! - `rscrypto::aead::introspect` for AEAD backend reporting when `diag` is enabled
-//! - `rscrypto::hashes::introspect` for hash kernel reporting when `diag` is enabled
-//! - `rscrypto::hashes::fast` for explicit fast-hash family access, including `RapidHashFast64` and
-//!   `RapidHashFast128`
-//! - `rscrypto::platform` for platform detection and override control
-//!
-//! ## `no_std` Usage
-//!
-//! ```toml
-//! [dependencies]
-//! rscrypto = { version = "0.1", default-features = false, features = ["crc32"] }
-//! ```
-//!
-//! Without `std`, hardware acceleration uses compile-time feature detection only.
+//! `rscrypto` is a primitives crate, not a FIPS-validated module. It exposes
+//! FIPS-aligned and non-FIPS primitives in the same crate. See the repository
+//! security guidance for nonce lifecycle, PHC verification limits, and
+//! platform fallback notes.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
@@ -422,11 +112,38 @@ assert_eq!(nonce.as_bytes(), &[0x5A; Nonce96::LENGTH]);
   target_arch = "s390x",
   feature(asm_experimental_reg, portable_simd, target_feature_inline_always)
 )]
-// riscv64 full-feature builds still need nightly target-feature flags,
-// portable SIMD, scalar/vector crypto intrinsics, and extended inline asm register classes.
+// riscv64 backends use nightly target-feature flags; individual backend
+// families opt into asm register classes, crypto intrinsics, or portable SIMD.
+#![cfg_attr(target_arch = "riscv64", feature(riscv_target_feature))]
 #![cfg_attr(
-  target_arch = "riscv64",
-  feature(asm_experimental_reg, portable_simd, riscv_ext_intrinsics, riscv_target_feature)
+  all(
+    target_arch = "riscv64",
+    any(
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "xxh3",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "aegis256"
+    )
+  ),
+  feature(asm_experimental_reg)
+)]
+#![cfg_attr(
+  all(
+    target_arch = "riscv64",
+    any(feature = "sha2", feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  ),
+  feature(riscv_ext_intrinsics)
+)]
+#![cfg_attr(
+  all(
+    target_arch = "riscv64",
+    any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+  ),
+  feature(portable_simd)
 )]
 #![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics, riscv_target_feature))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
@@ -530,7 +247,7 @@ pub(crate) fn bytes_to_bits_saturating(len: usize) -> u64 {
   }
 }
 
-// ─── Checksum re-exports ────────────────────────────────────────────────────
+// Checksum re-exports.
 
 #[cfg(feature = "aead")]
 pub use aead::{AeadBufferError, OpenError};
@@ -553,7 +270,7 @@ pub use auth::Kmac256;
 #[cfg(feature = "phc-strings")]
 pub use auth::PhcError;
 #[cfg(feature = "argon2")]
-pub use auth::{Argon2Error, Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
+pub use auth::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
 #[cfg(feature = "ed25519")]
 pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
@@ -563,7 +280,7 @@ pub use auth::{HmacSha256, HmacSha384, HmacSha512};
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 #[cfg(feature = "scrypt")]
-pub use auth::{Scrypt, ScryptError, ScryptParams};
+pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 #[cfg(feature = "crc24")]
@@ -574,7 +291,7 @@ pub use checksum::{Crc16Ccitt, Crc16Ibm};
 pub use checksum::{Crc32, Crc32C};
 #[cfg(feature = "crc64")]
 pub use checksum::{Crc64, Crc64Nvme};
-// ─── Hash re-exports ────────────────────────────────────────────────────────
+// Hash re-exports.
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::ascon::AsconCxofCustomizationError;
 #[cfg(feature = "ascon-hash")]
@@ -600,7 +317,7 @@ pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast12
 pub use hashes::fast::{Xxh3, Xxh3_128};
 #[cfg(all(feature = "xxh3", feature = "alloc"))]
 pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
-// ─── Hex re-exports ──────────────────────────────────────────────────────
+// Hex re-exports.
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
@@ -613,7 +330,7 @@ pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
 ))]
 pub use hex::{DisplaySecret, InvalidHexError};
 pub use secret::SecretBytes;
-// ─── Trait re-exports ───────────────────────────────────────────────────────
+// Trait re-exports.
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
@@ -824,7 +541,7 @@ let _ = writer.crc();
 "#]
 pub struct __ApiPatternAudit;
 
-// ─── Compile-time trait assertions ─────────────────────────────────────────
+// Compile-time trait assertions.
 //
 // Every public type must be Send + Sync + Debug.  Most must also be Clone.
 // These static assertions fail the build if any contract is broken.
@@ -843,10 +560,10 @@ mod send_sync_assertions {
 
   #[test]
   fn public_types_are_send_and_sync() {
-    // ── Traits (object-safety is separate; this checks the types) ──
+    // Traits. Object safety is separate; this checks the types.
     assert_send_sync::<traits::error::VerificationError>();
 
-    // ── Platform ──
+    // Platform.
     assert_send_sync::<platform::Caps>();
     assert_send_sync::<platform::Arch>();
     assert_send_sync::<platform::Detected>();
@@ -969,7 +686,7 @@ mod send_sync_assertions {
     assert_send_sync::<hashes::DigestWriter<Vec<u8>, Sha256>>();
   }
 
-  // ── Clone + Debug assertions ──────────────────────────────────────────
+  // Clone + Debug assertions.
 
   #[test]
   fn platform_types_are_clone_and_debug() {

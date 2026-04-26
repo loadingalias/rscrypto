@@ -8,7 +8,7 @@
 [![codecov](https://codecov.io/gh/loadingalias/rscrypto/graph/badge.svg)](https://codecov.io/gh/loadingalias/rscrypto)
 
 Single-crate cryptography toolbox. No C FFI, no vendored C/C++, `no_std` first.
-Pick only the features you need — one leaf feature, one dependency line.
+Pick only the features you need: one leaf feature, one dependency line.
 
 ```toml
 [dependencies]
@@ -64,36 +64,33 @@ let _ = Xxh3::hash(b"data");
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["password-hashing"] }
+rscrypto = { version = "0.1", default-features = false, features = ["password-hashing", "getrandom"] }
 ```
 
 ```rust
-use rscrypto::{Argon2Params, Argon2id, Scrypt, ScryptParams};
+use rscrypto::{Argon2Params, Argon2VerifyPolicy, Argon2id, Scrypt, ScryptParams, ScryptVerifyPolicy};
 
 let password = b"correct horse battery staple";
-let salt = b"random-salt-1234";
 
-let argon2 = Argon2Params::new()
-  .memory_cost_kib(32)
-  .time_cost(1)
-  .parallelism(1)
-  .output_len(32)
-  .build()?;
-let encoded = Argon2id::hash_string_with_salt(&argon2, password, salt)?;
-assert!(Argon2id::verify_string(password, &encoded).is_ok());
-assert!(Argon2id::verify_string(b"wrong", &encoded).is_err());
+let argon2 = Argon2Params::new().build()?;
+let encoded = Argon2id::hash_string(&argon2, password)?;
+assert!(Argon2id::verify_string_with_policy(password, &encoded, &Argon2VerifyPolicy::default()).is_ok());
+assert!(Argon2id::verify_string_with_policy(b"wrong", &encoded, &Argon2VerifyPolicy::default()).is_err());
 
-let scrypt = ScryptParams::new()
-  .log_n(4)
-  .r(1)
-  .p(1)
-  .output_len(32)
-  .build()?;
-let encoded = Scrypt::hash_string_with_salt(&scrypt, password, salt)?;
-assert!(Scrypt::verify_string(password, &encoded).is_ok());
-assert!(Scrypt::verify_string(b"wrong", &encoded).is_err());
+let scrypt = ScryptParams::new().build()?;
+let encoded = Scrypt::hash_string(&scrypt, password)?;
+assert!(Scrypt::verify_string_with_policy(password, &encoded, &ScryptVerifyPolicy::default()).is_ok());
+assert!(Scrypt::verify_string_with_policy(b"wrong", &encoded, &ScryptVerifyPolicy::default()).is_err());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Examples And Docs
+
+| Path | Purpose |
+|------|---------|
+| [`examples/`](examples/) | Runnable examples with their feature sets |
+| [`docs/`](docs/) | Security guidance and supporting notes |
+| [`docs/security.md`](docs/security.md) | Nonce, verification, randomness, and fallback guidance |
 
 ## API Conventions
 
@@ -174,8 +171,8 @@ XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Cshake256XofReader`, `Bl
 | Type | Output | Standard |
 |------|--------|----------|
 | `Argon2d` / `Argon2i` / `Argon2id` | variable | RFC 9106 |
-| `Argon2Params`, `Argon2Version` | -- | RFC 9106 |
-| `Scrypt`, `ScryptParams` | variable | RFC 7914 |
+| `Argon2Params`, `Argon2VerifyPolicy`, `Argon2Version` | -- | RFC 9106 |
+| `Scrypt`, `ScryptParams`, `ScryptVerifyPolicy` | variable | RFC 7914 |
 
 PHC string-format encode/decode shared by both families: `auth::phc` (feature `phc-strings`).
 
@@ -238,7 +235,7 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | Overflow safety | `strict_*` arithmetic + `overflow-checks = true` in release |
 | Buffer zeroize on auth failure | All AEAD decrypt paths wipe the output buffer before returning errors |
 
-See [SECURITY_NOTES.md](SECURITY_NOTES.md) for nonce lifecycle, verification handling, and RISC-V backend guidance.
+See [docs/security.md](docs/security.md) for nonce lifecycle, verification handling, PHC verification limits, and RISC-V backend guidance.
 
 ## Compliance Posture
 
@@ -256,7 +253,7 @@ Inside a typical boundary, these are the NIST-aligned items:
 | Symmetric AEAD | `Aes256Gcm` (SP 800-38D) |
 | Hash / XOF | `Sha*`, `Shake*` (`FIPS 180-4`, `FIPS 202`) |
 | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
-| Signature / KEX | `Ed25519*`, `X25519*` |
+| Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
 
 Non-approved in this release:
 
@@ -264,9 +261,11 @@ Non-approved in this release:
 |----------|----------|
 | Cipher variants / AEAD | `Aes256GcmSiv`, `Aegis256`, `ChaCha20Poly1305`, `XChaCha20Poly1305` |
 | Hashes | `Blake*`, `Ascon*` (`SHA`/FIPS boundary not yet established) |
+| Public-key primitives | `Ed25519*`, `X25519*` |
+| Password hashing | `Argon2*`, `Scrypt` |
 | Non-crypto | `Crc*`, `Xxh3`, `RapidHash` |
 
-For the full boundary matrix and FIPS-roadmap, see `docs/tasks/fips.md`.
+This table classifies APIs only; it is not a validation claim.
 
 ## Feature Flags
 
@@ -286,7 +285,7 @@ For the full boundary matrix and FIPS-roadmap, see `docs/tasks/fips.md`.
 | `full` | No | `checksums` + `hashes` + `auth` + `aead` |
 | `parallel` | No | Rayon-backed parallel Blake3 and Argon2 lane parallelism. Implies `std` + `blake3` + `argon2` |
 | `portable-only` | No | Force portable backends (FIPS / DO-178C / ISO 26262 deployment posture); suppresses runtime SIMD invocation |
-| `getrandom` | No | `random()` constructors on key/nonce types |
+| `getrandom` | No | `random()` constructors on key/nonce types and random-salt PHC password hashing |
 | `serde` | No | `Serialize`/`Deserialize` on keys, nonces, tags, signatures |
 | `diag` | No | Dispatch introspection. Implies `std` |
 
@@ -325,7 +324,7 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 
 | Layer | What | Command |
 |-------|------|---------|
-| Unit + integration | 912 tests, official vectors, differential oracles | `just test` |
+| Unit + integration | Official vectors, differential oracles, API invariants | `just test` |
 | Feature matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
 | Property tests | 256 cases per proptest, run alongside unit + integration | `just test` (nextest) |
 | Miri | Memory safety under Stacked Borrows | `just test-miri` |
@@ -361,21 +360,6 @@ src/
 | `aead::introspect` | `diag` | AEAD backend reporting |
 | `platform` | -- | CPU detection, override control |
 | `traits::io` | `std` | `ChecksumReader/Writer`, `DigestReader/Writer` |
-
-## Coming Soon
-
-**Platforms**: loongarch64, arm32, wasm32 compilation targets.
-
-**Algorithms**:
-- AES-128, AES-128-GCM-SIV
-- AEGIS-128L / AEGIS-X2 / AEGIS-X4
-- HMAC and HKDF for all SHA-2/SHA-3 variants
-- RSA, ECDSA (P-256, P-384)
-- ML-KEM and post-quantum primitives
-
-**Security**:
-- Tighten `unsafe` discipline across all SIMD modules
-- Formal third-party audit (Cure53 or equivalent)
 
 ## MSRV
 

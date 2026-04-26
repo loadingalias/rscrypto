@@ -772,7 +772,7 @@ mod vpclmul {
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(feature = "aes-gcm-siv")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   pub(super) unsafe fn aggregate_4blocks(
     acc: u128,
@@ -1319,6 +1319,7 @@ mod tests {
   use super::*;
 
   /// RFC 8452 Appendix A: POLYVAL test vector.
+  #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn polyval_rfc8452_appendix_a() {
     let h = hex_to_16("25629347589242761d31f826ba4b757b");
@@ -1335,6 +1336,7 @@ mod tests {
   }
 
   /// POLYVAL with empty input should return zero.
+  #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn polyval_empty() {
     let h = [0x42u8; 16];
@@ -1343,6 +1345,7 @@ mod tests {
   }
 
   /// POLYVAL with zero key should always return zero.
+  #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn polyval_zero_key() {
     let h = [0u8; 16];
@@ -1353,6 +1356,7 @@ mod tests {
   }
 
   /// Verify that update_padded matches manual block-by-block.
+  #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn polyval_padded_matches_manual() {
     let h = hex_to_16("25629347589242761d31f826ba4b757b");

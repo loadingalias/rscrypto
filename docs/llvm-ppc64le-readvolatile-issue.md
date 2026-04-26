@@ -1,4 +1,4 @@
-# LLVM ppc64le miscompilation report — `core::ptr::read_volatile` on a `pub static` produces wrong SHA-256 output
+# LLVM ppc64le miscompilation report: `core::ptr::read_volatile` on a `pub static` produces wrong SHA-256 output
 
 **Status:** Workaround in place. Upstream issue not yet filed.
 
@@ -41,8 +41,8 @@ fn rk(i: usize) -> u32 {
 
 After running through the SHA-256 message schedule and round function, the
 final state on ppc64le diverged from the NIST published value at byte 0.
-The miscompilation was deterministic — every test run produced the same
-wrong bytes — so it was not a memory-ordering / threading interaction.
+The miscompilation was deterministic. Every test run produced the same
+wrong bytes, so it was not a memory-ordering / threading interaction.
 
 ## Bisection
 
@@ -93,7 +93,7 @@ The miscompilation suggests either:
    a way that materialises wrong K values when the compress-loop is
    aggressively unrolled, or
 2. Some pass between IR and ppc64le codegen treats `load volatile` from a
-   constant address differently than expected — e.g. erroneously eliding
+   constant address differently than expected, for example erroneously eliding
    to a constant despite `volatile`, or alias-analysis confusing the
    `K.0.as_ptr().add(i)` provenance.
 
@@ -115,8 +115,7 @@ maintainers triage which pass introduces the divergence.
 
 ## Related
 
-- rscrypto commit `a70c6596` — POWER ppc64le SHA-256 mitigation.
-- rscrypto commit (this branch) — `black_box`-based replacement on all
-  non-x86 targets.
+- rscrypto commit `a70c6596`: POWER ppc64le SHA-256 mitigation.
+- Current mitigation: `black_box`-based replacement on all non-x86 targets.
 - LLVM upstream: `volatile` load semantics across architectures, especially
   PPC backend's `legalizeOperationsLoad`.

@@ -16,7 +16,11 @@ include = [
   "/LICENSE-APACHE",
   "/LICENSE-MIT",
   "/README.md",
-  "/docs/tasks/fips.md",
+  "/SECURITY.md",
+  "/docs/README.md",
+  "/docs/security.md",
+  "/docs/llvm-ppc64le-readvolatile-issue.md",
+  "/benches/**",
   "/examples/**",
   "/src/**",
   "!/src/**/*.md",
@@ -118,7 +122,7 @@ full = ["checksums", "hashes", "auth", "aead"]
 parallel = ["std", "blake3", "argon2", "dep:rayon"]
 diag = ["std"]
 
-# Hard-disable runtime SIMD dispatch — `platform::caps()` returns the empty
+# Hard-disable runtime SIMD dispatch: `platform::caps()` returns the empty
 # capability set, so every algorithm's three-tier dispatcher falls through to
 # its portable backend. Intended for FIPS / DO-178C / ISO 26262 / IEC 62443
 # deployment modes where the on-running code path must be the audited
@@ -235,6 +239,10 @@ required-features = ["std", "checksums", "hashes", "diag"]
 [[example]]
 name = "parallel"
 required-features = ["std", "checksums"]
+
+[[example]]
+name = "password_hashing"
+required-features = ["std", "password-hashing", "getrandom"]
 
 [lints]
 workspace = true

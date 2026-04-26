@@ -27,17 +27,19 @@ You should receive an acknowledgment within **48 hours**. We will follow up with
 - Memory safety issues in `unsafe` blocks
 - Nonce/key misuse that the API fails to prevent
 - Supply chain or build system vulnerabilities
+- Resource exhaustion caused by untrusted inputs, encoded password-hash parameters, or parser behavior
+- CI or release automation vulnerabilities that can affect published artifacts
 
 ### Out of Scope
 
 - Benchmark regressions or performance issues
-- Denial of service via resource exhaustion (unless it triggers a crash/UB)
-- Issues in optional dev-dependencies or CI tooling
+- Pure availability reports against caller-chosen expensive parameters with no untrusted-input or crash/UB component
+- Issues in local-only developer tooling that cannot affect builds, releases, users, or generated artifacts
 - Vulnerabilities in downstream crates that use `rscrypto` incorrectly
 
 ## AI-Generated Reports
 
-We welcome vulnerability reports regardless of how they were discovered — including those found with the assistance of AI systems (LLMs, automated analysis tools, fuzzing agents, etc.).
+We welcome vulnerability reports regardless of how they were discovered, including those found with the assistance of AI systems (LLMs, automated analysis tools, fuzzing agents, etc.).
 
 **If your report was generated or assisted by AI, please disclose:**
 - The AI system(s) used (model name, version, provider)
@@ -56,9 +58,9 @@ We do not penalize or deprioritize AI-assisted reports. Full transparency benefi
 
 ## Response Process
 
-1. **Triage** (0–48 hours): We confirm receipt and assess severity.
-2. **Investigation** (1–7 days): We reproduce the issue and determine root cause.
-3. **Remediation** (1–14 days): We develop and test a fix.
+1. **Triage** (0-48 hours): We confirm receipt and assess severity.
+2. **Investigation** (1-7 days): We reproduce the issue and determine root cause.
+3. **Remediation** (1-14 days): We develop and test a fix.
 4. **Disclosure**: We coordinate a public advisory, credit the reporter (if desired), and publish a patched release.
 
 We follow a **90-day disclosure deadline**. If a fix is not available within 90 days of the initial report, we will publish the vulnerability details publicly, regardless of fix status.
@@ -67,7 +69,7 @@ We follow a **90-day disclosure deadline**. If a fix is not available within 90 
 
 | Version | Supported |
 | ------- | --------- |
-| `0.1.x` | ✅ Yes |
+| `0.1.x` | Yes |
 
 Only the latest `0.1.x` release receives security patches. We strongly recommend staying current.
 

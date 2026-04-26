@@ -1,4 +1,4 @@
-//! Advanced checksum and hash kernel introspection.
+//! Checksum and hash kernel introspection.
 //!
 //! This example shows how to inspect which kernels are selected for your
 //! platform, useful for verifying hardware acceleration is enabled.
@@ -12,7 +12,7 @@ use rscrypto::{
 };
 
 fn main() {
-  println!("=== Advanced Dispatch Introspection ===\n");
+  println!("Dispatch introspection\n");
 
   platform_info();
   checksum_kernel_probes();
@@ -25,7 +25,7 @@ fn main() {
 
 /// Display detected platform capabilities.
 fn platform_info() {
-  println!("--- Platform Detection ---\n");
+  println!("Platform detection\n");
 
   let info = DispatchInfo::current();
 
@@ -41,7 +41,7 @@ fn platform_info() {
 
 /// Show a representative 1KB kernel probe for each checksum algorithm.
 fn checksum_kernel_probes() {
-  println!("--- Checksum Kernels @ 1KB ---\n");
+  println!("Checksum kernels at 1 KiB\n");
 
   println!("CRC-16 (CCITT):    {}", kernel_for::<Crc16Ccitt>(1024));
   println!("CRC-24 (OpenPGP):  {}", kernel_for::<Crc24OpenPgp>(1024));
@@ -54,7 +54,7 @@ fn checksum_kernel_probes() {
 
 /// Checksum kernels may vary based on buffer size.
 fn checksum_size_based_dispatch() {
-  println!("--- Checksum Size-Based Kernel Selection ---\n");
+  println!("Checksum size-based kernel selection\n");
 
   // Different buffer sizes may use different kernels
   let sizes = [64, 256, 1024, 4096, 65536, 1_048_576];
@@ -76,7 +76,7 @@ fn checksum_size_based_dispatch() {
 
 /// Generic checksum introspection using the kernel_for function.
 fn generic_checksum_introspection() {
-  println!("--- Generic Checksum Introspection ---\n");
+  println!("Generic checksum introspection\n");
 
   // The kernel_for::<T>(len) function works with any KernelIntrospect type
   fn report<T: KernelIntrospect>(name: &str, sizes: &[usize]) {
@@ -100,7 +100,7 @@ fn generic_checksum_introspection() {
 
 /// Show a representative 1KB kernel probe for each hash family.
 fn hash_kernel_probes() {
-  println!("\n--- Hash Kernels @ 1KB ---\n");
+  println!("\nHash kernels at 1 KiB\n");
 
   println!("SHA-256:           {}", hash_kernel_for::<Sha256>(1024));
   println!("SHAKE-256:         {}", hash_kernel_for::<Shake256>(1024));
@@ -112,7 +112,7 @@ fn hash_kernel_probes() {
 
 /// Hash kernels may vary based on input size.
 fn hash_size_based_dispatch() {
-  println!("--- Hash Size-Based Kernel Selection ---\n");
+  println!("Hash size-based kernel selection\n");
 
   let sizes = [64, 256, 1024, 4096, 65536, 1_048_576];
 
@@ -133,7 +133,7 @@ fn hash_size_based_dispatch() {
 
 /// Generic hash introspection using the hash kernel_for function.
 fn generic_hash_introspection() {
-  println!("--- Generic Hash Introspection ---\n");
+  println!("Generic hash introspection\n");
 
   fn report<T: KernelIntrospect>(name: &str, sizes: &[usize]) {
     println!("{name}:");

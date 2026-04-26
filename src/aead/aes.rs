@@ -906,7 +906,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
 /// Returns the number of blocks encrypted (for counter tracking).
 ///
 /// The counter occupies bytes 12..15 (big-endian) per NIST SP 800-38D.
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
   ek: &Aes256EncKey,
@@ -997,7 +997,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
 /// AES-256 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
 ///
 /// GCM-SIV variant: counter occupies bytes 0..3 (little-endian).
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
 pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counter: &[u8; BLOCK_SIZE], data: &mut [u8]) {
   use core::arch::x86_64::*;
@@ -1175,6 +1175,7 @@ mod tests {
   }
 
   /// AES-256 CTR mode: round-trip (encrypt then decrypt = identity).
+  #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn aes256_ctr32_round_trip() {
     let key = [0x42u8; 32];
@@ -1195,6 +1196,7 @@ mod tests {
 
   /// AES-256 CTR: known-answer test using the GCM-SIV test vector.
   /// Validates actual keystream output, not just round-trip.
+  #[cfg(feature = "aes-gcm-siv")]
   #[test]
   fn aes256_ctr32_known_answer() {
     // From RFC 8452 Appendix C.2 test case 2 (AES-256):

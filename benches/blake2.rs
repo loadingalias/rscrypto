@@ -408,7 +408,7 @@ fn forced_kernel_compare(c: &mut Criterion) {
   }
 
   #[cfg(target_arch = "riscv64")]
-  {
+  if rscrypto::platform::caps().has(rscrypto::platform::caps::riscv::V) {
     group.bench_function("rscrypto/blake2b256/riscv64-v/64b", |b| {
       b.iter(|| {
         let mut state = blake2b::diag_init_state_unkeyed(32);
@@ -438,7 +438,7 @@ fn forced_kernel_compare(c: &mut Criterion) {
   }
 
   #[cfg(target_arch = "riscv64")]
-  {
+  if rscrypto::platform::caps().has(rscrypto::platform::caps::riscv::V) {
     group.bench_function("rscrypto/blake2s256/riscv64-v/32b", |b| {
       b.iter(|| {
         let mut state = blake2s::diag_init_state_unkeyed(32);

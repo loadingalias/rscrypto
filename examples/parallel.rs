@@ -4,14 +4,14 @@
 //! we can compute crc(A || B) without having both chunks in memory.
 //! This enables efficient parallel processing of large data.
 //!
-//! Run with: `cargo run --example parallel`
+//! Run with: `cargo run --example parallel --features checksums`
 
 use std::thread;
 
 use rscrypto::{Checksum, ChecksumCombine, Crc32, Crc64};
 
 fn main() {
-  println!("=== Parallel Checksum Examples ===\n");
+  println!("parallel checksum example\n");
 
   combine_basics();
   parallel_chunks();
@@ -20,7 +20,7 @@ fn main() {
 
 /// Basic combine() demonstration.
 fn combine_basics() {
-  println!("--- Combine Basics ---\n");
+  println!("Combine basics\n");
 
   let data = b"hello world";
   let (part_a, part_b) = data.split_at(6); // "hello " and "world"
@@ -40,7 +40,7 @@ fn combine_basics() {
   println!("Combined:           0x{combined:08X}");
   println!("Full data checksum: 0x{expected:08X}");
   assert_eq!(combined, expected);
-  println!("Match!\n");
+  println!("Combined checksum matches reference\n");
 
   // Works with any number of parts - combine sequentially
   let parts: &[&[u8]] = &[b"one", b"two", b"three"];
@@ -60,7 +60,7 @@ fn combine_basics() {
 
 /// Processing large data in parallel chunks.
 fn parallel_chunks() {
-  println!("--- Parallel Chunk Processing ---\n");
+  println!("Parallel chunk processing\n");
 
   // Simulate large data (in practice, this could be a memory-mapped file)
   let data: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
@@ -83,12 +83,12 @@ fn parallel_chunks() {
 
   println!("Parallel CRC-64:   0x{parallel:016X}");
   assert_eq!(sequential, parallel);
-  println!("Match! (processed {} chunks)\n", chunks.len());
+  println!("Parallel checksum matches reference ({} chunks)\n", chunks.len());
 }
 
 /// Multi-threaded checksum using std::thread.
 fn threaded_example() {
-  println!("--- Multi-Threaded Example ---\n");
+  println!("Threaded processing\n");
 
   // Generate test data
   let data: Vec<u8> = (0..4_000_000).map(|i| ((i * 17) % 256) as u8).collect();
@@ -130,5 +130,5 @@ fn threaded_example() {
 
   println!("Threaded:   0x{combined:016X}");
   assert_eq!(sequential, combined);
-  println!("Match! (used {} threads)\n", num_threads);
+  println!("Threaded checksum matches reference ({} threads)\n", num_threads);
 }
