@@ -64,7 +64,7 @@ mod x86_64;
 
 use core::{fmt, mem::MaybeUninit};
 
-use kernels::IV;
+use kernels::{Blake2bCounter, IV};
 
 use crate::traits::{Digest, ct};
 
@@ -99,6 +99,25 @@ pub fn diag_compress_block_portable(state: &mut [u64; 8], block: &[u8; BLOCK_SIZ
   kernels::compress(state, block, t, last);
 }
 
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+pub fn diag_compress_block_x86_avx2(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
+  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX2));
+  // SAFETY: the runtime capability assertion above verifies AVX2 before
+  // calling the target-feature-specialized diagnostic kernel.
+  unsafe { x86_64::compress_avx2(state, block, t, last) }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+pub fn diag_compress_block_x86_avx512vl(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
+  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX512F));
+  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX512VL));
+  // SAFETY: the runtime capability assertions above verify AVX-512F+VL before
+  // calling the target-feature-specialized diagnostic kernel.
+  unsafe { x86_64::compress_avx512vl(state, block, t, last) }
+}
+
 #[cfg(all(feature = "diag", target_arch = "aarch64"))]
 #[inline]
 pub fn diag_compress_block_aarch64_neon(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
@@ -126,7 +145,7 @@ struct Core {
   h: [u64; 8],
   buf: [u8; BLOCK_SIZE],
   buf_len: u8,
-  t: u128,
+  t: Blake2bCounter,
   nn: u8,
   kk: u8,
   key: MaybeUninit<[u8; MAX_KEY_LEN]>,
@@ -143,7 +162,7 @@ impl Core {
       h: init_state(nn, 0),
       buf: [0u8; BLOCK_SIZE],
       buf_len: 0,
-      t: 0,
+      t: Blake2bCounter::zero(),
       nn,
       kk: 0,
       key: MaybeUninit::uninit(),
@@ -201,7 +220,7 @@ impl Core {
       h,
       buf,
       buf_len,
-      t: 0,
+      t: Blake2bCounter::zero(),
       nn,
       kk,
       key: stored_key,
@@ -231,7 +250,7 @@ impl Core {
     // SAFETY: fields are valid, aligned, dereferenceable pointers.
     unsafe {
       core::ptr::write_volatile(&mut self.buf_len, 0);
-      core::ptr::write_volatile(&mut self.t, 0);
+      core::ptr::write_volatile(&mut self.t, Blake2bCounter::zero());
       core::ptr::write_volatile(&mut self.nn, 0);
       core::ptr::write_volatile(&mut self.kk, 0);
     }
@@ -253,8 +272,8 @@ impl Core {
     if self.buf_len > 0 && (self.buf_len as usize).strict_add(data_len) > BLOCK_SIZE {
       let fill = BLOCK_SIZE.strict_sub(self.buf_len as usize);
       self.buf[self.buf_len as usize..BLOCK_SIZE].copy_from_slice(&data[..fill]);
-      self.t = self.t.strict_add(BLOCK_SIZE as u128);
-      (self.compress)(&mut self.h, &self.buf, self.t, false);
+      self.t.add_len(BLOCK_SIZE as u64);
+      (self.compress)(&mut self.h, &self.buf, self.t.as_u128(), false);
       self.buf_len = 0;
       offset = fill;
     }
@@ -284,8 +303,8 @@ impl Core {
     debug_assert!(out.len() == self.nn as usize);
 
     let mut h = self.h;
-    let t = self.t.strict_add(self.buf_len as u128);
-    if self.buf_len as usize == BLOCK_SIZE || (self.kk == 0 && self.t == 0) {
+    let t = self.t.plus_len(self.buf_len as u64).as_u128();
+    if self.buf_len as usize == BLOCK_SIZE || (self.kk == 0 && self.t.is_zero()) {
       (self.compress)(&mut h, &self.buf, t, true);
     } else {
       let mut last_block = [0u8; BLOCK_SIZE];
@@ -337,7 +356,7 @@ impl Core {
       self.buf = [0u8; BLOCK_SIZE];
       self.buf_len = 0;
     }
-    self.t = 0;
+    self.t = Blake2bCounter::zero();
   }
 }
 
@@ -448,23 +467,22 @@ fn oneshot_small_into_with_params(
     return;
   }
 
-  let mut key_block = [0u8; BLOCK_SIZE];
-  key_block[..key.len()].copy_from_slice(key);
+  let mut block = [0u8; BLOCK_SIZE];
+  block[..key.len()].copy_from_slice(key);
 
   if data.is_empty() {
-    compress(&mut h, &key_block, BLOCK_SIZE as u128, true);
+    compress(&mut h, &block, BLOCK_SIZE as u128, true);
   } else {
-    compress(&mut h, &key_block, BLOCK_SIZE as u128, false);
+    compress(&mut h, &block, BLOCK_SIZE as u128, false);
 
-    let mut data_block = [0u8; BLOCK_SIZE];
-    data_block[..data.len()].copy_from_slice(data);
+    ct::zeroize(&mut block);
+    block[..data.len()].copy_from_slice(data);
     compress(
       &mut h,
-      &data_block,
+      &block,
       (BLOCK_SIZE as u128).strict_add(data.len() as u128),
       true,
     );
-    ct::zeroize(&mut data_block);
   }
 
   write_output(&h, nn, out);
@@ -472,7 +490,7 @@ fn oneshot_small_into_with_params(
     // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
     unsafe { core::ptr::write_volatile(word, 0) };
   }
-  ct::zeroize(&mut key_block);
+  ct::zeroize(&mut block);
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -508,7 +526,7 @@ fn oneshot_hash_into_inner(
   } else {
     0
   };
-  let mut t = 0u128;
+  let mut t = Blake2bCounter::zero();
   let mut offset = 0usize;
   let data_len = data.len();
 
@@ -517,8 +535,8 @@ fn oneshot_hash_into_inner(
     if fill > 0 {
       buf[buf_len as usize..BLOCK_SIZE].copy_from_slice(&data[..fill]);
     }
-    t = t.strict_add(BLOCK_SIZE as u128);
-    compress(&mut h, &buf, t, false);
+    t.add_len(BLOCK_SIZE as u64);
+    compress(&mut h, &buf, t.as_u128(), false);
     ct::zeroize(&mut buf);
     buf_len = 0;
     offset = fill;
@@ -539,8 +557,8 @@ fn oneshot_hash_into_inner(
     buf_len = remaining as u8;
   }
 
-  t = t.strict_add(buf_len as u128);
-  compress(&mut h, &buf, t, true);
+  t.add_len(buf_len as u64);
+  compress(&mut h, &buf, t.as_u128(), true);
   write_output(&h, nn, out);
 
   for word in &mut h {
@@ -1827,7 +1845,7 @@ mod tests {
     let _ = Blake2bParams::new().key(&[0u8; 65]);
   }
 
-  // ── Forced-kernel oracle tests ────────────────────────────────────────
+  // ── Per-kernel oracle tests ───────────────────────────────────────────
 
   use super::kernels::{
     ALL as BLAKE2B_KERNELS, Blake2bKernelId, compress_blocks_fn as blake2b_compress_blocks_fn,
@@ -1857,7 +1875,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2b-256 forced mismatch kernel={} len={}",
+        "blake2b-256 per-kernel mismatch kernel={} len={}",
         id.as_str(),
         data.len(),
       );
@@ -1871,7 +1889,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2b-512 forced mismatch kernel={} len={}",
+        "blake2b-512 per-kernel mismatch kernel={} len={}",
         id.as_str(),
         data.len(),
       );
@@ -1888,7 +1906,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2b-256 keyed forced mismatch kernel={} key_len={}",
+        "blake2b-256 keyed per-kernel mismatch kernel={} key_len={}",
         id.as_str(),
         key.len(),
       );
@@ -1905,7 +1923,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2b-512 streaming forced mismatch kernel={} chunk={}",
+        "blake2b-512 streaming per-kernel mismatch kernel={} chunk={}",
         id.as_str(),
         chunk_size,
       );

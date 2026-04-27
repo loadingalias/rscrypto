@@ -16,7 +16,7 @@ use crate::{
 
 /// Compression kernel identifier.
 ///
-/// Every shipped kernel has a variant here plus a forced-kernel test that
+/// Every shipped kernel has a variant here plus a per-kernel test that
 /// pins it against the portable oracle. Variants are `#[cfg]`-gated by
 /// target architecture: the enum width stays minimal on each target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub enum KernelId {
 }
 
 impl KernelId {
-  /// Kernel name for diagnostics and forced-kernel test plumbing.
+  /// Kernel name for diagnostics and per-kernel test plumbing.
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
