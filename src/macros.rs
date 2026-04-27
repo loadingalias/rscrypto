@@ -245,8 +245,10 @@ macro_rules! define_blake2_dispatch {
   (
     kernel_id: $kernel_id:ty,
     compress_fn_ty: $compress_fn_ty:ty,
+    compress_blocks_fn_ty: $compress_blocks_fn_ty:ty,
     portable_kernel: $portable_kernel:path,
     compress_fn: $compress_fn:path,
+    compress_blocks_fn: $compress_blocks_fn:path,
     required_caps: $required_caps:path,
     candidates: [$($candidates:tt)*],
   ) => {
@@ -254,6 +256,7 @@ macro_rules! define_blake2_dispatch {
     #[derive(Clone, Copy)]
     struct Resolved {
       compress: $compress_fn_ty,
+      compress_blocks: $compress_blocks_fn_ty,
       #[cfg(any(test, feature = "diag"))]
       #[allow(dead_code)]
       name: &'static str,
@@ -271,6 +274,7 @@ macro_rules! define_blake2_dispatch {
         if caps.has($required_caps(id)) {
           return Resolved {
             compress: $compress_fn(id),
+            compress_blocks: $compress_blocks_fn(id),
             #[cfg(any(test, feature = "diag"))]
             name: id.as_str(),
           };
@@ -279,6 +283,7 @@ macro_rules! define_blake2_dispatch {
 
       Resolved {
         compress: $compress_fn($portable_kernel),
+        compress_blocks: $compress_blocks_fn($portable_kernel),
         #[cfg(any(test, feature = "diag"))]
         name: $portable_kernel.as_str(),
       }
@@ -296,6 +301,20 @@ macro_rules! define_blake2_dispatch {
       }
       #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
       ACTIVE.get_or_init(resolve).compress
+    }
+
+    #[inline]
+    #[must_use]
+    pub(crate) fn compress_blocks_dispatch() -> $compress_blocks_fn_ty {
+      if super::kernels::COMPILE_TIME_HW {
+        return super::kernels::compile_time_best_blocks();
+      }
+      #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+      {
+        $compress_blocks_fn($portable_kernel)
+      }
+      #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+      ACTIVE.get_or_init(resolve).compress_blocks
     }
 
     #[cfg(any(test, feature = "diag"))]

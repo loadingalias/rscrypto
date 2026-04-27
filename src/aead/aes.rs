@@ -95,7 +95,7 @@ enum KeyInner {
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS]),
   /// Four-block table-free fixslice fallback for scalar RV64 without AES extensions.
   #[cfg(target_arch = "riscv64")]
-  Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys),
+  Riscv64Fixslice(Box<rv_fixslice_aes::RvFixsliceRoundKeys>),
 }
 
 impl Drop for Aes256EncKey {
@@ -374,7 +374,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       };
     }
     Aes256EncKey {
-      inner: KeyInner::Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys::new(key)),
+      inner: KeyInner::Riscv64Fixslice(Box::new(rv_fixslice_aes::RvFixsliceRoundKeys::new(key))),
     }
   }
   #[cfg(not(target_arch = "riscv64"))]
@@ -419,7 +419,7 @@ pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncK
   // Legacy helper retained for callers that still mention the old backend
   // label. The implementation now uses the constant-time RV64 fixslice path.
   Aes256EncKey {
-    inner: KeyInner::Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys::new(key)),
+    inner: KeyInner::Riscv64Fixslice(Box::new(rv_fixslice_aes::RvFixsliceRoundKeys::new(key))),
   }
 }
 

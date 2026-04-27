@@ -18,6 +18,7 @@ use crate::platform::caps::x86;
 ///
 /// Parameters: mutable state (8×u32), 64-byte message block, byte counter, finalization flag.
 pub(crate) type CompressFn = fn(&mut [u32; 8], &[u8; 64], u64, bool);
+pub(crate) type CompressBlocksFn = fn(&mut [u32; 8], &[u8], &mut u64);
 
 /// Blake2s kernel identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +119,58 @@ fn compress_x86_avx512vl(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool)
   unsafe { super::x86_64::compress_avx512vl(h, block, t, last) }
 }
 
+#[inline(always)]
+fn compress_blocks_with(h: &mut [u32; 8], blocks: &[u8], t: &mut u64, compress: CompressFn) {
+  debug_assert_eq!(blocks.len() % 64, 0);
+  let mut chunks = blocks.chunks_exact(64);
+  for chunk in &mut chunks {
+    *t = t.strict_add(64);
+    // SAFETY: `chunks_exact(64)` yields slices of exactly 64 bytes.
+    let block = unsafe { &*chunk.as_ptr().cast::<[u8; 64]>() };
+    compress(h, block, *t, false);
+  }
+  debug_assert!(chunks.remainder().is_empty());
+}
+
+fn compress_blocks_portable(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress);
+}
+
+#[cfg(target_arch = "aarch64")]
+fn compress_blocks_aarch64_neon(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_aarch64_neon);
+}
+
+#[cfg(target_arch = "powerpc64")]
+fn compress_blocks_power_vsx(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_power_vsx);
+}
+
+#[cfg(target_arch = "riscv64")]
+fn compress_blocks_riscv64_v(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_riscv64_v);
+}
+
+#[cfg(target_arch = "s390x")]
+fn compress_blocks_s390x_vector(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_s390x_vector);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn compress_blocks_wasm_simd128(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_wasm_simd128);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn compress_blocks_x86_avx2(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_x86_avx2);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn compress_blocks_x86_avx512vl(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
+  compress_blocks_with(h, blocks, t, compress_x86_avx512vl);
+}
+
 /// Return the compress function for the given kernel.
 #[must_use]
 pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
@@ -137,6 +190,27 @@ pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
     Blake2sKernelId::Riscv64V => compress_riscv64_v,
     #[cfg(target_arch = "wasm32")]
     Blake2sKernelId::WasmSimd128 => compress_wasm_simd128,
+  }
+}
+
+#[must_use]
+pub(crate) fn compress_blocks_fn(id: Blake2sKernelId) -> CompressBlocksFn {
+  match id {
+    Blake2sKernelId::Portable => compress_blocks_portable,
+    #[cfg(target_arch = "x86_64")]
+    Blake2sKernelId::X86Avx2 => compress_blocks_x86_avx2,
+    #[cfg(target_arch = "x86_64")]
+    Blake2sKernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
+    #[cfg(target_arch = "aarch64")]
+    Blake2sKernelId::Aarch64Neon => compress_blocks_aarch64_neon,
+    #[cfg(target_arch = "s390x")]
+    Blake2sKernelId::S390xVector => compress_blocks_s390x_vector,
+    #[cfg(target_arch = "powerpc64")]
+    Blake2sKernelId::PowerVsx => compress_blocks_power_vsx,
+    #[cfg(target_arch = "riscv64")]
+    Blake2sKernelId::Riscv64V => compress_blocks_riscv64_v,
+    #[cfg(target_arch = "wasm32")]
+    Blake2sKernelId::WasmSimd128 => compress_blocks_wasm_simd128,
   }
 }
 
@@ -211,6 +285,24 @@ pub(crate) fn compile_time_best() -> CompressFn {
   }
   #[allow(unreachable_code)]
   compress
+}
+
+#[inline(always)]
+pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx512vl"))]
+  {
+    return compress_blocks_x86_avx512vl;
+  }
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx2",
+    not(all(target_feature = "avx512f", target_feature = "avx512vl"))
+  ))]
+  {
+    return compress_blocks_x86_avx2;
+  }
+  #[allow(unreachable_code)]
+  compress_blocks_portable
 }
 
 // ─── Portable implementation ─────────────────────────────────────────────────

@@ -4,7 +4,7 @@ use core::arch::x86_64::{
   _mm256_unpackhi_epi32, _mm256_unpackhi_epi64, _mm256_unpacklo_epi32, _mm256_unpacklo_epi64, _mm256_xor_si256,
 };
 
-use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, xor_keystream_portable};
+use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, x86_ssse3_x4, xor_keystream_portable};
 
 const BLOCKS_PER_BATCH: usize = 8;
 
@@ -166,6 +166,15 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
   }
 
   let remainder = batches.into_remainder();
+  let mut x4_batches = remainder.chunks_exact_mut(BLOCK_SIZE * x86_ssse3_x4::BLOCKS_PER_BATCH);
+  for chunk in &mut x4_batches {
+    // SAFETY: AVX2-capable CPUs provide the SSSE3 instructions used by the
+    // 4-block tail kernel, and `chunk` is exactly 4 ChaCha20 blocks.
+    unsafe { x86_ssse3_x4::xor_blocks(key, counter, nonce, chunk) };
+    counter = counter.wrapping_add(x86_ssse3_x4::BLOCKS_PER_BATCH as u32);
+  }
+
+  let remainder = x4_batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }

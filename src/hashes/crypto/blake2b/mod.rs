@@ -133,6 +133,7 @@ struct Core {
   salt: [u8; SALT_LEN],
   personal: [u8; PERSONAL_LEN],
   compress: kernels::CompressFn,
+  compress_blocks: kernels::CompressBlocksFn,
 }
 
 impl Core {
@@ -149,6 +150,7 @@ impl Core {
       salt: [0u8; SALT_LEN],
       personal: [0u8; PERSONAL_LEN],
       compress: dispatch::compress_dispatch(),
+      compress_blocks: dispatch::compress_blocks_dispatch(),
     }
   }
 
@@ -206,6 +208,7 @@ impl Core {
       salt: *salt,
       personal: *personal,
       compress: dispatch::compress_dispatch(),
+      compress_blocks: dispatch::compress_blocks_dispatch(),
     }
   }
 
@@ -258,13 +261,12 @@ impl Core {
 
     // Process full blocks directly from data, keeping the last chunk
     // in the buffer so finalize can set the final flag.
-    while offset.strict_add(BLOCK_SIZE) < data_len {
-      self.t = self.t.strict_add(BLOCK_SIZE as u128);
-      // SAFETY: offset + BLOCK_SIZE < data_len, so 128 bytes are in bounds.
-      // [u8; 128] has alignment 1, matching u8.
-      let block = unsafe { &*data.as_ptr().add(offset).cast::<[u8; BLOCK_SIZE]>() };
-      (self.compress)(&mut self.h, block, self.t, false);
-      offset = offset.strict_add(BLOCK_SIZE);
+    let available = data_len.strict_sub(offset);
+    if available > BLOCK_SIZE {
+      let blocks_len = available.strict_sub(1) / BLOCK_SIZE * BLOCK_SIZE;
+      let end = offset.strict_add(blocks_len);
+      (self.compress_blocks)(&mut self.h, &data[offset..end], &mut self.t);
+      offset = end;
     }
 
     // Buffer remaining data
@@ -302,9 +304,15 @@ impl Core {
   }
 
   #[cfg(test)]
-  fn new_with_compress_for_test(nn: u8, key: &[u8], compress: kernels::CompressFn) -> Self {
+  fn new_with_compress_for_test(
+    nn: u8,
+    key: &[u8],
+    compress: kernels::CompressFn,
+    compress_blocks: kernels::CompressBlocksFn,
+  ) -> Self {
     let mut core = Self::new(nn, key);
     core.compress = compress;
+    core.compress_blocks = compress_blocks;
     core
   }
 
@@ -338,8 +346,22 @@ const PERSONAL_LEN: usize = 16;
 
 #[inline]
 fn init_state(nn: u8, kk: u8) -> [u64; 8] {
-  init_state_with_params(nn, kk, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN])
+  match (nn, kk) {
+    (32, 0) => BLAKE2B256_H0,
+    (64, 0) => BLAKE2B512_H0,
+    _ => init_state_with_params(nn, kk, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN]),
+  }
 }
+
+#[inline]
+const fn init_unkeyed_fixed_state(nn: u8) -> [u64; 8] {
+  let mut h = IV;
+  h[0] ^= nn as u64 | (1u64 << 16) | (1u64 << 24);
+  h
+}
+
+const BLAKE2B256_H0: [u64; 8] = init_unkeyed_fixed_state(32);
+const BLAKE2B512_H0: [u64; 8] = init_unkeyed_fixed_state(64);
 
 /// Initialize Blake2b chaining state from a sequential-mode parameter block.
 ///
@@ -366,6 +388,7 @@ fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8;
   h
 }
 
+#[cfg(feature = "diag")]
 #[inline(always)]
 fn compress_direct(h: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
   let compress = dispatch::compress_dispatch();
@@ -404,18 +427,21 @@ fn write_output(h: &[u64; 8], nn: u8, out: &mut [u8]) {
 fn oneshot_small_into_with_params(
   nn: u8,
   key: &[u8],
-  salt: &[u8; SALT_LEN],
-  personal: &[u8; PERSONAL_LEN],
+  params: Option<(&[u8; SALT_LEN], &[u8; PERSONAL_LEN])>,
   data: &[u8],
   out: &mut [u8],
+  compress: kernels::CompressFn,
 ) {
   let kk = key.len() as u8;
-  let mut h = init_state_with_params(nn, kk, salt, personal);
+  let mut h = match params {
+    Some((salt, personal)) => init_state_with_params(nn, kk, salt, personal),
+    None => init_state(nn, kk),
+  };
 
   if kk == 0 {
     let mut block = [0u8; BLOCK_SIZE];
     block[..data.len()].copy_from_slice(data);
-    compress_direct(&mut h, &block, data.len() as u128, true);
+    compress(&mut h, &block, data.len() as u128, true);
     write_output(&h, nn, out);
     return;
   }
@@ -424,13 +450,13 @@ fn oneshot_small_into_with_params(
   key_block[..key.len()].copy_from_slice(key);
 
   if data.is_empty() {
-    compress_direct(&mut h, &key_block, BLOCK_SIZE as u128, true);
+    compress(&mut h, &key_block, BLOCK_SIZE as u128, true);
   } else {
-    compress_direct(&mut h, &key_block, BLOCK_SIZE as u128, false);
+    compress(&mut h, &key_block, BLOCK_SIZE as u128, false);
 
     let mut data_block = [0u8; BLOCK_SIZE];
     data_block[..data.len()].copy_from_slice(data);
-    compress_direct(
+    compress(
       &mut h,
       &data_block,
       (BLOCK_SIZE as u128).strict_add(data.len() as u128),
@@ -448,11 +474,10 @@ fn oneshot_small_into_with_params(
 }
 
 #[allow(clippy::indexing_slicing)]
-fn oneshot_hash_into_with_params(
+fn oneshot_hash_into_inner(
   nn: u8,
   key: &[u8],
-  salt: &[u8; SALT_LEN],
-  personal: &[u8; PERSONAL_LEN],
+  params: Option<(&[u8; SALT_LEN], &[u8; PERSONAL_LEN])>,
   data: &[u8],
   out: &mut [u8],
 ) {
@@ -463,13 +488,17 @@ fn oneshot_hash_into_with_params(
   );
   assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
 
+  let compress = dispatch::compress_dispatch();
   if data.len() <= BLOCK_SIZE {
-    oneshot_small_into_with_params(nn, key, salt, personal, data, out);
+    oneshot_small_into_with_params(nn, key, params, data, out, compress);
     return;
   }
 
   let kk = key.len() as u8;
-  let mut h = init_state_with_params(nn, kk, salt, personal);
+  let mut h = match params {
+    Some((salt, personal)) => init_state_with_params(nn, kk, salt, personal),
+    None => init_state(nn, kk),
+  };
   let mut buf = [0u8; BLOCK_SIZE];
   let mut buf_len = if kk > 0 {
     buf[..key.len()].copy_from_slice(key);
@@ -487,18 +516,19 @@ fn oneshot_hash_into_with_params(
       buf[buf_len as usize..BLOCK_SIZE].copy_from_slice(&data[..fill]);
     }
     t = t.strict_add(BLOCK_SIZE as u128);
-    compress_direct(&mut h, &buf, t, false);
+    compress(&mut h, &buf, t, false);
     ct::zeroize(&mut buf);
     buf_len = 0;
     offset = fill;
   }
 
-  while offset.strict_add(BLOCK_SIZE) < data_len {
-    t = t.strict_add(BLOCK_SIZE as u128);
-    // SAFETY: offset + BLOCK_SIZE < data_len, so 128 bytes are in bounds.
-    let block = unsafe { &*data.as_ptr().add(offset).cast::<[u8; BLOCK_SIZE]>() };
-    compress_direct(&mut h, block, t, false);
-    offset = offset.strict_add(BLOCK_SIZE);
+  let available = data_len.strict_sub(offset);
+  if available > BLOCK_SIZE {
+    let blocks_len = available.strict_sub(1) / BLOCK_SIZE * BLOCK_SIZE;
+    let end = offset.strict_add(blocks_len);
+    let compress_blocks = dispatch::compress_blocks_dispatch();
+    compress_blocks(&mut h, &data[offset..end], &mut t);
+    offset = end;
   }
 
   let remaining = data_len.strict_sub(offset);
@@ -508,7 +538,7 @@ fn oneshot_hash_into_with_params(
   }
 
   t = t.strict_add(buf_len as u128);
-  compress_direct(&mut h, &buf, t, true);
+  compress(&mut h, &buf, t, true);
   write_output(&h, nn, out);
 
   if kk > 0 {
@@ -521,8 +551,20 @@ fn oneshot_hash_into_with_params(
 }
 
 #[inline]
+fn oneshot_hash_into_with_params(
+  nn: u8,
+  key: &[u8],
+  salt: &[u8; SALT_LEN],
+  personal: &[u8; PERSONAL_LEN],
+  data: &[u8],
+  out: &mut [u8],
+) {
+  oneshot_hash_into_inner(nn, key, Some((salt, personal)), data, out);
+}
+
+#[inline]
 fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
-  oneshot_hash_into_with_params(nn, key, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN], data, out);
+  oneshot_hash_into_inner(nn, key, None, data, out);
 }
 
 #[inline(always)]
@@ -824,14 +866,21 @@ impl Blake2b256 {
 
 impl Blake2b256 {
   #[cfg(test)]
-  pub(crate) fn new_with_compress_for_test(compress: kernels::CompressFn) -> Self {
-    Self(Core::new_with_compress_for_test(32, &[], compress))
+  pub(crate) fn new_with_compress_for_test(
+    compress: kernels::CompressFn,
+    compress_blocks: kernels::CompressBlocksFn,
+  ) -> Self {
+    Self(Core::new_with_compress_for_test(32, &[], compress, compress_blocks))
   }
 
   #[cfg(test)]
-  pub(crate) fn keyed_with_compress_for_test(key: &[u8], compress: kernels::CompressFn) -> Self {
+  pub(crate) fn keyed_with_compress_for_test(
+    key: &[u8],
+    compress: kernels::CompressFn,
+    compress_blocks: kernels::CompressBlocksFn,
+  ) -> Self {
     assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
-    Self(Core::new_with_compress_for_test(32, key, compress))
+    Self(Core::new_with_compress_for_test(32, key, compress, compress_blocks))
   }
 }
 
@@ -932,8 +981,11 @@ impl Blake2b512 {
 
 impl Blake2b512 {
   #[cfg(test)]
-  pub(crate) fn new_with_compress_for_test(compress: kernels::CompressFn) -> Self {
-    Self(Core::new_with_compress_for_test(64, &[], compress))
+  pub(crate) fn new_with_compress_for_test(
+    compress: kernels::CompressFn,
+    compress_blocks: kernels::CompressBlocksFn,
+  ) -> Self {
+    Self(Core::new_with_compress_for_test(64, &[], compress, compress_blocks))
   }
 }
 
@@ -1778,11 +1830,13 @@ mod tests {
   // ── Forced-kernel oracle tests ────────────────────────────────────────
 
   use super::kernels::{
-    ALL as BLAKE2B_KERNELS, Blake2bKernelId, compress_fn as blake2b_compress_fn, required_caps as blake2b_required_caps,
+    ALL as BLAKE2B_KERNELS, Blake2bKernelId, compress_blocks_fn as blake2b_compress_blocks_fn,
+    compress_fn as blake2b_compress_fn, required_caps as blake2b_required_caps,
   };
 
   fn assert_blake2b_kernel(id: Blake2bKernelId) {
     let compress = blake2b_compress_fn(id);
+    let compress_blocks = blake2b_compress_blocks_fn(id);
     let cases: &[&[u8]] = &[
       b"",
       b"a",
@@ -1798,7 +1852,7 @@ mod tests {
     // Unkeyed Blake2b-256
     for &data in cases {
       let expected = oracle_hash_256(data);
-      let mut h = Blake2b256::new_with_compress_for_test(compress);
+      let mut h = Blake2b256::new_with_compress_for_test(compress, compress_blocks);
       h.update(data);
       assert_eq!(
         h.finalize(),
@@ -1812,7 +1866,7 @@ mod tests {
     // Unkeyed Blake2b-512
     for &data in cases {
       let expected = oracle_hash_512(data);
-      let mut h = Blake2b512::new_with_compress_for_test(compress);
+      let mut h = Blake2b512::new_with_compress_for_test(compress, compress_blocks);
       h.update(data);
       assert_eq!(
         h.finalize(),
@@ -1829,7 +1883,7 @@ mod tests {
       hmac::Mac::update(&mut oracle, b"message");
       let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-      let mut h = Blake2b256::keyed_with_compress_for_test(key, compress);
+      let mut h = Blake2b256::keyed_with_compress_for_test(key, compress, compress_blocks);
       h.update(b"message");
       assert_eq!(
         h.finalize(),
@@ -1844,7 +1898,7 @@ mod tests {
     let data = &[0x42u8; 300];
     let expected = oracle_hash_512(data);
     for chunk_size in [1, 7, 63, 64, 127, 128, 129] {
-      let mut h = Blake2b512::new_with_compress_for_test(compress);
+      let mut h = Blake2b512::new_with_compress_for_test(compress, compress_blocks);
       for chunk in data.chunks(chunk_size) {
         h.update(chunk);
       }
