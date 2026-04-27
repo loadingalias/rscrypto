@@ -45,5 +45,58 @@ fn xxh3_128(c: &mut Criterion) {
   g.finish();
 }
 
+#[cfg(feature = "diag")]
+fn xxh3_128_diagnostic(c: &mut Criterion) {
+  let inputs: Vec<_> = [1024, 4096, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect();
+  let mut g = c.benchmark_group("xxh3-128/diagnostic");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("auto", len), data, |b, d| {
+      b.iter(|| black_box(rscrypto::hashes::fast::xxh3::diagnostics::hash128_auto(black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("portable", len), data, |b, d| {
+      b.iter(|| {
+        black_box(rscrypto::hashes::fast::xxh3::diagnostics::hash128_portable(black_box(
+          d,
+        )))
+      })
+    });
+
+    #[cfg(target_arch = "aarch64")]
+    {
+      g.bench_with_input(BenchmarkId::new("neon-prefetch", len), data, |b, d| {
+        b.iter(|| {
+          black_box(rscrypto::hashes::fast::xxh3::diagnostics::hash128_neon_prefetch(
+            black_box(d),
+          ))
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("neon-no-prefetch", len), data, |b, d| {
+        b.iter(|| {
+          black_box(rscrypto::hashes::fast::xxh3::diagnostics::hash128_neon_no_prefetch(
+            black_box(d),
+          ))
+        })
+      });
+    }
+
+    g.bench_with_input(BenchmarkId::new("xxhash-rust", len), data, |b, d| {
+      b.iter(|| black_box(xxhash_rust::xxh3::xxh3_128(black_box(d))))
+    });
+  }
+
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
 criterion_group!(benches, xxh3_64, xxh3_128);
+#[cfg(feature = "diag")]
+criterion_group!(benches, xxh3_64, xxh3_128, xxh3_128_diagnostic);
 criterion_main!(benches);

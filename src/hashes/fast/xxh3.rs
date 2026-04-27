@@ -923,6 +923,49 @@ impl FastHash for Xxh3_128 {
   }
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub mod diagnostics {
+  /// Hash with the portable scalar XXH3-128 path.
+  #[inline]
+  #[must_use]
+  pub fn hash128_portable(data: &[u8]) -> u128 {
+    if data.len() <= super::MID_SIZE_MAX {
+      return super::dispatch::hash128(data);
+    }
+    super::xxh3_128_long(data, 0)
+  }
+
+  /// Hash with the production XXH3-128 dispatch path.
+  #[inline]
+  #[must_use]
+  pub fn hash128_auto(data: &[u8]) -> u128 {
+    super::dispatch::hash128(data)
+  }
+
+  /// Hash with aarch64 NEON and prefetch forced for long inputs.
+  #[cfg(target_arch = "aarch64")]
+  #[inline]
+  #[must_use]
+  pub fn hash128_neon_prefetch(data: &[u8]) -> u128 {
+    if data.len() <= super::MID_SIZE_MAX {
+      return super::dispatch::hash128(data);
+    }
+    super::aarch64_neon::xxh3_128_long_default_prefetch(data)
+  }
+
+  /// Hash with aarch64 NEON and prefetch disabled for long inputs.
+  #[cfg(target_arch = "aarch64")]
+  #[inline]
+  #[must_use]
+  pub fn hash128_neon_no_prefetch(data: &[u8]) -> u128 {
+    if data.len() <= super::MID_SIZE_MAX {
+      return super::dispatch::hash128(data);
+    }
+    super::aarch64_neon::xxh3_128_long_default_no_prefetch(data)
+  }
+}
+
 // ─── BuildHasher support ──────────────────────────────────────────────────
 
 /// Streaming [`core::hash::Hasher`] backed by XXH3-64.

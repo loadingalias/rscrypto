@@ -259,14 +259,14 @@ bench_features_for_target() {
   local bench="${1:-}"
   case "$bench" in
     crc) echo "parallel,checksums" ;;
-    sha2) echo "parallel,sha2" ;;
+    sha2) echo "parallel,sha2,diag" ;;
     sha3) echo "parallel,sha3" ;;
     ascon) echo "parallel,ascon-hash" ;;
-    xxh3) echo "parallel,xxh3" ;;
+    xxh3) echo "parallel,xxh3,diag" ;;
     rapidhash) echo "parallel,rapidhash" ;;
     blake2) echo "parallel,blake2b,blake2s,diag" ;;
     blake3) echo "parallel,blake3" ;;
-    auth) echo "parallel,hmac,hkdf,pbkdf2,ed25519,x25519" ;;
+    auth) echo "parallel,hmac,hkdf,pbkdf2,ed25519,x25519,diag" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256" ;;
     *) echo "parallel" ;;
   esac

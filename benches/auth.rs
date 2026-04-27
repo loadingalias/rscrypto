@@ -20,7 +20,39 @@ type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
 type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
 type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
 
+#[cfg(feature = "diag")]
+fn print_auth_diag_once() {
+  use std::sync::Once;
+
+  static ONCE: Once = Once::new();
+  ONCE.call_once(|| {
+    use rscrypto::{Sha256, hashes::introspect::kernel_for};
+
+    eprintln!("rscrypto-diag auth runtime_caps={}", rscrypto::platform::caps());
+    eprintln!("rscrypto-diag auth static_caps={}", rscrypto::platform::caps_static());
+    eprintln!(
+      "rscrypto-diag auth target_features sha={} sha512={} avx2={} avx512f={}",
+      cfg!(target_feature = "sha"),
+      cfg!(target_feature = "sha512"),
+      cfg!(target_feature = "avx2"),
+      cfg!(target_feature = "avx512f")
+    );
+    eprintln!(
+      "rscrypto-diag auth sha256_kernel 64={} 4096={} 1048576={}",
+      kernel_for::<Sha256>(64),
+      kernel_for::<Sha256>(4096),
+      kernel_for::<Sha256>(1_048_576)
+    );
+  });
+}
+
+#[cfg(not(feature = "diag"))]
+#[inline]
+fn print_auth_diag_once() {}
+
 fn hmac_sha256(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let inputs = common::comp_sizes();
   let key = [0x42u8; 32];
   let mut g = c.benchmark_group("hmac-sha256");
@@ -47,6 +79,8 @@ fn hmac_sha256(c: &mut Criterion) {
 }
 
 fn hmac_sha384(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let inputs = common::comp_sizes();
   let key = [0x42u8; 48];
   let mut g = c.benchmark_group("hmac-sha384");
@@ -73,6 +107,8 @@ fn hmac_sha384(c: &mut Criterion) {
 }
 
 fn hmac_sha512(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let inputs = common::comp_sizes();
   let key = [0x42u8; 64];
   let mut g = c.benchmark_group("hmac-sha512");
@@ -99,6 +135,8 @@ fn hmac_sha512(c: &mut Criterion) {
 }
 
 fn hmac_sha256_streaming(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let data = common::random_bytes(1048576);
   let key = [0x24u8; 32];
   let mut g = c.benchmark_group("hmac-sha256/streaming");
@@ -132,6 +170,8 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
 }
 
 fn hkdf_sha256_expand(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let salt = [0x11u8; 32];
   let ikm = [0x22u8; 32];
   let info = [0x33u8; 48];
@@ -162,6 +202,8 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
 }
 
 fn hkdf_sha384_expand(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let salt = [0x11u8; 48];
   let ikm = [0x22u8; 48];
   let info = [0x33u8; 80];
@@ -192,6 +234,8 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
 }
 
 fn pbkdf2_sha256_derive(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let password = [0x55u8; 32];
   let salt = [0x33u8; 16];
   let state = Pbkdf2Sha256::new(&password);
@@ -237,6 +281,8 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
 }
 
 fn pbkdf2_sha512_derive(c: &mut Criterion) {
+  print_auth_diag_once();
+
   let password = [0x66u8; 48];
   let salt = [0x44u8; 16];
   let state = Pbkdf2Sha512::new(&password);
