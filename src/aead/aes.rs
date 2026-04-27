@@ -94,8 +94,11 @@ enum KeyInner {
   #[cfg(target_arch = "riscv64")]
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS]),
   /// Four-block table-free fixslice fallback for scalar RV64 without AES extensions.
-  #[cfg(target_arch = "riscv64")]
-  Riscv64Fixslice(Box<rv_fixslice_aes::RvFixsliceRoundKeys>),
+  #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
+  Riscv64Fixslice(alloc::boxed::Box<rv_fixslice_aes::RvFixsliceRoundKeys>),
+  /// No-alloc RV64 builds keep the larger fixslice key schedule inline.
+  #[cfg(all(target_arch = "riscv64", not(feature = "alloc")))]
+  Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys),
 }
 
 impl Drop for Aes256EncKey {
@@ -313,6 +316,18 @@ fn zeroize_expanded_key_words(rk: &mut [u32; EXPANDED_KEY_WORDS]) {
   });
 }
 
+#[cfg(all(target_arch = "riscv64", feature = "alloc"))]
+#[inline]
+fn riscv64_fixslice_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
+  KeyInner::Riscv64Fixslice(alloc::boxed::Box::new(rv_fixslice_aes::RvFixsliceRoundKeys::new(key)))
+}
+
+#[cfg(all(target_arch = "riscv64", not(feature = "alloc")))]
+#[inline]
+fn riscv64_fixslice_key_inner(key: &[u8; KEY_SIZE]) -> KeyInner {
+  KeyInner::Riscv64Fixslice(rv_fixslice_aes::RvFixsliceRoundKeys::new(key))
+}
+
 /// Expand a 256-bit AES key into round keys.
 ///
 /// On x86_64 with AES-NI or aarch64 with AES-CE, converts to hardware-native
@@ -374,7 +389,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
       };
     }
     Aes256EncKey {
-      inner: KeyInner::Riscv64Fixslice(Box::new(rv_fixslice_aes::RvFixsliceRoundKeys::new(key))),
+      inner: riscv64_fixslice_key_inner(key),
     }
   }
   #[cfg(not(target_arch = "riscv64"))]
@@ -419,7 +434,7 @@ pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncK
   // Legacy helper retained for callers that still mention the old backend
   // label. The implementation now uses the constant-time RV64 fixslice path.
   Aes256EncKey {
-    inner: KeyInner::Riscv64Fixslice(Box::new(rv_fixslice_aes::RvFixsliceRoundKeys::new(key))),
+    inner: riscv64_fixslice_key_inner(key),
   }
 }
 
