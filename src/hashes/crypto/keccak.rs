@@ -566,6 +566,7 @@ pub(crate) trait Permuter: Copy {
 /// Direct-call permuter using the portable scalar kernel. No function pointer
 /// indirection — LLVM can inline `keccakf_portable` into the absorb loop.
 #[derive(Clone, Copy, Default)]
+#[allow(dead_code)] // Reference/test permuter is target- and feature-combination dependent.
 pub(crate) struct InlinePermuter;
 
 impl Permuter for InlinePermuter {
@@ -791,6 +792,12 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> Drop for KeccakCoreImp
 impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P, ZEROIZE> {
   pub(crate) fn update(&mut self, mut data: &[u8]) {
     if data.is_empty() {
+      return;
+    }
+
+    if data.len() < RATE - self.buf_len {
+      xor_bytes_into_state::<RATE>(&mut self.state, self.buf_len, data);
+      self.buf_len = self.buf_len.strict_add(data.len());
       return;
     }
 

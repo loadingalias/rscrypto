@@ -6,9 +6,41 @@ use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
+#[cfg(feature = "diag")]
+fn print_sha2_diag_once() {
+  use std::sync::Once;
+
+  static ONCE: Once = Once::new();
+  ONCE.call_once(|| {
+    use rscrypto::{Sha256, hashes::introspect::kernel_for};
+
+    eprintln!("rscrypto-diag sha2 runtime_caps={}", rscrypto::platform::caps());
+    eprintln!("rscrypto-diag sha2 static_caps={}", rscrypto::platform::caps_static());
+    eprintln!(
+      "rscrypto-diag sha2 target_features sha={} sha512={} avx2={} avx512f={}",
+      cfg!(target_feature = "sha"),
+      cfg!(target_feature = "sha512"),
+      cfg!(target_feature = "avx2"),
+      cfg!(target_feature = "avx512f")
+    );
+    eprintln!(
+      "rscrypto-diag sha2 sha256_kernel 64={} 4096={} 1048576={}",
+      kernel_for::<Sha256>(64),
+      kernel_for::<Sha256>(4096),
+      kernel_for::<Sha256>(1_048_576)
+    );
+  });
+}
+
+#[cfg(not(feature = "diag"))]
+#[inline]
+fn print_sha2_diag_once() {}
+
 macro_rules! sha2_oneshot {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
+      print_sha2_diag_once();
+
       let inputs = common::comp_sizes();
       let mut g = c.benchmark_group($group);
 
@@ -41,6 +73,8 @@ sha2_oneshot!(sha512_256, "sha512-256", rscrypto::Sha512_256, sha2::Sha512_256);
 macro_rules! sha2_streaming {
   ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty) => {
     fn $fn_name(c: &mut Criterion) {
+      print_sha2_diag_once();
+
       let data = common::random_bytes(1048576);
       let mut g = c.benchmark_group($group);
       g.throughput(criterion::Throughput::Bytes(data.len() as u64));

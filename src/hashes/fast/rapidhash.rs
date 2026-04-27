@@ -17,10 +17,10 @@ use crate::traits::FastHash;
 
 #[doc(hidden)]
 pub(crate) mod dispatch;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 #[doc(hidden)]
 pub(crate) mod dispatch_tables;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 pub(crate) mod kernels;
 
 /// Standard V3 rapidhash (64-bit) with avalanche finisher.
@@ -793,6 +793,11 @@ fn rapidhash_fast_small_parts(data: &[u8], mut seed: u64) -> (u64, u64, u64) {
   let mut a = 0u64;
   let mut b = 0u64;
 
+  if data.len() == 1 {
+    let byte = data[0] as u64;
+    return ((byte << 45) | byte, byte, seed.wrapping_add(1));
+  }
+
   if likely(data.len() >= 8) {
     a = read_u64_np(data, 0);
     b = read_u64_np(data, data.len() - 8);
@@ -822,6 +827,11 @@ fn rapidhash_fast_core(data: &[u8], mut seed: u64) -> u64 {
   if likely(data.len() <= 16) {
     let mut a = 0u64;
     let mut b = 0u64;
+
+    if data.len() == 1 {
+      let byte = data[0] as u64;
+      return rapidhash_fast_finish((byte << 45) | byte, byte, seed.wrapping_add(1));
+    }
 
     if likely(data.len() >= 8) {
       a = read_u64_np(data, 0);

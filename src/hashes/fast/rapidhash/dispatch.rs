@@ -1,17 +1,17 @@
 #![cfg_attr(test, allow(dead_code))]
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 use super::{
   dispatch_tables::DispatchTable,
   kernels::{RapidHashKernelId, hash64_fn, required_caps},
 };
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 use crate::{backend::cache::OnceCache, platform::Caps};
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 type Hash64Fn = fn(&[u8], u64) -> u64;
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 #[derive(Clone, Copy)]
 struct ActiveDispatch {
   boundaries: [usize; 3],
@@ -25,10 +25,10 @@ struct ActiveDispatch {
   l_name: &'static str,
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 #[inline]
 #[must_use]
 fn resolve(id: RapidHashKernelId, caps: Caps) -> RapidHashKernelId {
@@ -39,7 +39,7 @@ fn resolve(id: RapidHashKernelId, caps: Caps) -> RapidHashKernelId {
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 #[inline]
 #[must_use]
 fn active() -> ActiveDispatch {
@@ -66,7 +66,7 @@ fn active() -> ActiveDispatch {
   })
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 #[inline]
 #[must_use]
 fn select(d: &ActiveDispatch, len: usize) -> (Hash64Fn, &'static str) {
@@ -82,7 +82,7 @@ fn select(d: &ActiveDispatch, len: usize) -> (Hash64Fn, &'static str) {
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
 #[inline]
 #[must_use]
 pub fn kernel_name_for_len(len: usize) -> &'static str {

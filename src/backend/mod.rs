@@ -21,7 +21,7 @@ pub mod ascon;
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
-  feature = "rapidhash",
+  all(feature = "rapidhash", any(test, feature = "diag")),
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
   feature = "chacha20poly1305",

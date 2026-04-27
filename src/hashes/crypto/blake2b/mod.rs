@@ -285,7 +285,7 @@ impl Core {
 
     let mut h = self.h;
     let t = self.t.strict_add(self.buf_len as u128);
-    if self.buf_len as usize == BLOCK_SIZE {
+    if self.buf_len as usize == BLOCK_SIZE || (self.kk == 0 && self.t == 0) {
       (self.compress)(&mut h, &self.buf, t, true);
     } else {
       let mut last_block = [0u8; BLOCK_SIZE];
@@ -296,9 +296,11 @@ impl Core {
 
     write_output(&h, self.nn, out);
 
-    // Zeroize local state
     for word in h.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      // SAFETY: Volatile zeroization of a stack word is sound because:
+      // 1. `word` comes from `h.iter_mut()`, so it is valid and uniquely borrowed.
+      // 2. `u64` has no invalid bit patterns; writing zero preserves validity.
+      // 3. The pointer does not escape this loop iteration.
       unsafe { core::ptr::write_volatile(word, 0) };
     }
   }
@@ -541,13 +543,11 @@ fn oneshot_hash_into_inner(
   compress(&mut h, &buf, t, true);
   write_output(&h, nn, out);
 
-  if kk > 0 {
-    for word in &mut h {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    ct::zeroize(&mut buf);
+  for word in &mut h {
+    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+    unsafe { core::ptr::write_volatile(word, 0) };
   }
+  ct::zeroize(&mut buf);
 }
 
 #[inline]
