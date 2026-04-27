@@ -427,6 +427,9 @@ mod x86_avx2;
 #[cfg(target_arch = "x86_64")]
 #[path = "chacha20/x86_64_avx512.rs"]
 mod x86_avx512;
+#[cfg(target_arch = "x86_64")]
+#[path = "chacha20/x86_64_ssse3_x4.rs"]
+mod x86_ssse3_x4;
 
 // ─── Forced-kernel diag entrypoints ────────────────────────────────────────
 //
@@ -650,7 +653,7 @@ mod tests {
     let key = [0x71; KEY_SIZE];
     let nonce = [0x19; NONCE_SIZE];
     for len in [
-      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 1536, 2048, 4096, 8192,
+      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 768, 769, 1023, 1024, 1280, 1281, 1536, 2048, 4096, 8192,
     ] {
       let mut portable = vec![0u8; len];
       let mut accelerated = vec![0u8; len];
@@ -678,7 +681,7 @@ mod tests {
     let key = [0x55; KEY_SIZE];
     let nonce = [0x33; NONCE_SIZE];
     for len in [
-      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 1024, 2048, 4096, 8192,
+      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 768, 769, 1023, 1024, 1280, 1281, 2048, 4096, 8192,
     ] {
       let mut portable = vec![0u8; len];
       let mut accelerated = vec![0u8; len];

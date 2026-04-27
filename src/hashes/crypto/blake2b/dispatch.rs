@@ -12,12 +12,14 @@
 //! Regaining dominance on those platforms requires multi-block kernels
 //! (Blake3-style 2-way or 4-way), not more single-block shuffle tuning.
 
-use super::kernels::{Blake2bKernelId, CompressFn, compress_fn};
+use super::kernels::{Blake2bKernelId, CompressBlocksFn, CompressFn, compress_blocks_fn, compress_fn};
 define_blake2_dispatch! {
   kernel_id: Blake2bKernelId,
   compress_fn_ty: CompressFn,
+  compress_blocks_fn_ty: CompressBlocksFn,
   portable_kernel: Blake2bKernelId::Portable,
   compress_fn: compress_fn,
+  compress_blocks_fn: compress_blocks_fn,
   required_caps: super::kernels::required_caps,
   candidates: [
     #[cfg(target_arch = "x86_64")]

@@ -39,6 +39,18 @@ struct ActiveDispatch {
 
 static ACTIVE: OnceCache<ActiveDispatch> = OnceCache::new();
 
+#[cfg(target_arch = "x86_64")]
+// Zen5 CI shows AVX-512 startup cost losing badly for XXH3-64 at 256B/1KiB,
+// while larger buffers amortize it. Keep this limited to 64-bit long paths.
+const ZEN5_XXH3_64_AVX2_LONG_MAX: usize = 1024;
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn use_zen5_xxh3_64_avx2_short_long(len: usize) -> bool {
+  len <= ZEN5_XXH3_64_AVX2_LONG_MAX
+    && crate::platform::caps().has(crate::platform::caps::x86::AMD_ZEN5 | crate::platform::caps::x86::AVX2)
+}
+
 #[inline]
 #[must_use]
 fn resolve(id: Xxh3KernelId, caps: Caps) -> Xxh3KernelId {
@@ -199,6 +211,13 @@ pub fn hash64_with_seed(seed: u64, data: &[u8]) -> u64 {
 
 #[inline(always)]
 fn hash64_long_default(data: &[u8]) -> u64 {
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx2"))]
+  {
+    if use_zen5_xxh3_64_avx2_short_long(data.len()) {
+      return super::x86_64_avx2::xxh3_64_long_default(data);
+    }
+  }
+
   #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
   {
     return super::x86_64_avx512::xxh3_64_long_default(data);
@@ -240,6 +259,13 @@ fn hash64_long_default(data: &[u8]) -> u64 {
 fn hash64_long(seed: u64, data: &[u8]) -> u64 {
   // Tier 1: compile-time dispatch — dedicated long entry points skip ≤240B
   // branches that are guaranteed dead at this call site.
+  #[cfg(all(target_arch = "x86_64", target_feature = "avx512f", target_feature = "avx2"))]
+  {
+    if use_zen5_xxh3_64_avx2_short_long(data.len()) {
+      return super::x86_64_avx2::xxh3_64_long(data, seed);
+    }
+  }
+
   #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
   {
     return super::x86_64_avx512::xxh3_64_long(data, seed);
@@ -272,6 +298,13 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
 
 #[inline(never)]
 fn hash64_long_runtime(seed: u64, data: &[u8]) -> u64 {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if use_zen5_xxh3_64_avx2_short_long(data.len()) {
+      return super::x86_64_avx2::xxh3_64_long(data, seed);
+    }
+  }
+
   let d = active();
   (d.long64)(data, seed)
 }

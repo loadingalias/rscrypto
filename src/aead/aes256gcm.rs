@@ -18,7 +18,7 @@ const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~64 GiB
 
 #[cfg(target_arch = "x86_64")]
-const X86_VAES_GCM_MIN_LEN: usize = 32;
+const X86_VAES_GCM_MIN_LEN: usize = 64;
 
 define_aead_key_type!(Aes256GcmKey, KEY_SIZE, "AES-256-GCM secret key (32 bytes).");
 
@@ -213,20 +213,7 @@ fn compute_tag(
   acc ^= u128::from_be_bytes(length_block);
   acc = polyval::clmul128_reduce(acc, h_polyval);
 
-  let mut s = acc.to_be_bytes();
-
-  // tag = GHASH_result XOR AES(K, J0)
-  let mut encrypted_j0 = *j0;
-  aes::aes256_encrypt_block(ek, &mut encrypted_j0);
-
-  let mut i = 0usize;
-  while i < 16 {
-    s[i] ^= encrypted_j0[i];
-    i = i.strict_add(1);
-  }
-
-  ct::zeroize(&mut encrypted_j0);
-  Ok(s)
+  Ok(encrypt_j0_tag(ek, j0, acc))
 }
 
 #[inline]
@@ -245,6 +232,88 @@ fn ghash_update_padded(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
   }
 
   acc
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn ghash_collect_padded_block(blocks: &mut [u128; 4], block_count: &mut usize, block: u128) -> bool {
+  if *block_count == 4 {
+    return false;
+  }
+  blocks[*block_count] = block;
+  *block_count = (*block_count).strict_add(1);
+  true
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn ghash_collect_padded(blocks: &mut [u128; 4], block_count: &mut usize, data: &[u8]) -> bool {
+  let (full_blocks, remainder) = data.as_chunks::<16>();
+  for block in full_blocks {
+    if !ghash_collect_padded_block(blocks, block_count, u128::from_be_bytes(*block)) {
+      return false;
+    }
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    return ghash_collect_padded_block(blocks, block_count, u128::from_be_bytes(block));
+  }
+
+  true
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn compute_tag_short_wide(
+  ek: &aes::Aes256EncKey,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  j0: &[u8; 16],
+  aad: &[u8],
+  ciphertext: &[u8],
+) -> Result<Option<[u8; TAG_SIZE]>, LengthOverflow> {
+  let mut sequence = [0u128; 4];
+  let mut block_count = 0usize;
+
+  if !ghash_collect_padded(&mut sequence, &mut block_count, aad) {
+    return Ok(None);
+  }
+  if !ghash_collect_padded(&mut sequence, &mut block_count, ciphertext) {
+    return Ok(None);
+  }
+
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
+  if !ghash_collect_padded_block(&mut sequence, &mut block_count, u128::from_be_bytes(length_block)) {
+    return Ok(None);
+  }
+
+  if block_count == 1 && sequence[0] == 0 {
+    return Ok(Some(encrypt_j0_tag(ek, j0, 0)));
+  }
+
+  let mut blocks = [0u128; 4];
+  let start = 4usize.strict_sub(block_count);
+  blocks[start..].copy_from_slice(&sequence[..block_count]);
+  let acc = polyval::accumulate_4blocks(0, h_polyval, h_powers_rev, &blocks);
+  Ok(Some(encrypt_j0_tag(ek, j0, acc)))
+}
+
+#[inline]
+fn encrypt_j0_tag(ek: &aes::Aes256EncKey, j0: &[u8; 16], acc: u128) -> [u8; TAG_SIZE] {
+  let mut s = acc.to_be_bytes();
+  let mut encrypted_j0 = *j0;
+  aes::aes256_encrypt_block(ek, &mut encrypted_j0);
+
+  let mut i = 0usize;
+  while i < 16 {
+    s[i] ^= encrypted_j0[i];
+    i = i.strict_add(1);
+  }
+
+  ct::zeroize(&mut encrypted_j0);
+  s
 }
 
 /// Compute the GCM authentication tag using 4-block wide GHASH.
@@ -302,19 +371,7 @@ fn compute_tag_wide(
   acc ^= u128::from_be_bytes(length_block);
   acc = polyval::clmul128_reduce(acc, h_polyval);
 
-  // Finalize: convert back to GHASH convention.
-  let mut s = acc.to_be_bytes();
-
-  // tag = GHASH_result XOR AES(K, J0)
-  let mut encrypted_j0 = *j0;
-  aes::aes256_encrypt_block(ek, &mut encrypted_j0);
-  let mut i = 0usize;
-  while i < 16 {
-    s[i] ^= encrypted_j0[i];
-    i = i.strict_add(1);
-  }
-  ct::zeroize(&mut encrypted_j0);
-  Ok(s)
+  Ok(encrypt_j0_tag(ek, j0, acc))
 }
 
 /// Increment the 32-bit big-endian counter in bytes 12..15.
@@ -398,6 +455,14 @@ impl Aead for Aes256Gcm {
 
     // Scalar path: single-block AES-NI/CE/portable + single-block GHASH.
     aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
+    #[cfg(target_arch = "x86_64")]
+    if self.backend == AeadBackend::X86VaesVpclmul
+      && let Some(tag_bytes) =
+        compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+          .map_err(|_| SealError::too_large())?
+    {
+      return Ok(Aes256GcmTag::from_bytes(tag_bytes));
+    }
     let tag_bytes =
       compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| SealError::too_large())?;
     Ok(Aes256GcmTag::from_bytes(tag_bytes))
@@ -432,6 +497,21 @@ impl Aead for Aes256Gcm {
     }
 
     // Scalar path: authenticate then decrypt.
+    #[cfg(target_arch = "x86_64")]
+    if self.backend == AeadBackend::X86VaesVpclmul
+      && let Some(expected) =
+        compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+          .map_err(|_| OpenError::too_large())?
+    {
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
+      }
+      let mut ctr_block = j0;
+      inc32(&mut ctr_block);
+      aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
+      return Ok(());
+    }
     let expected = compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);

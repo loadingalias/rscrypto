@@ -50,10 +50,44 @@ const DEFAULT_SECRETS: [u64; 7] = [
   0x90ed_1765_281c_388c,
 ];
 
-// V3 default paths use a referenced copy to match upstream's `RapidSecrets`
-// code shape on targets where materializing many 64-bit constants is costly.
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-static V3_DEFAULT_SECRETS: [u64; 7] = DEFAULT_SECRETS;
+struct PrecomputedSecrets {
+  seed: u64,
+  secrets: [u64; 7],
+}
+
+// Default paths use referenced precomputed state to match upstream's
+// `RapidSecrets` code shape on targets where materializing many 64-bit
+// constants is costly.
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+static V3_DEFAULT_SECRETS: PrecomputedSecrets = PrecomputedSecrets {
+  seed: PRECOMPUTED_SEED_0,
+  secrets: DEFAULT_SECRETS,
+};
+
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+static V3_DEFAULT_HI_SECRETS: PrecomputedSecrets = PrecomputedSecrets {
+  seed: PRECOMPUTED_SEED_HI,
+  secrets: DEFAULT_SECRETS,
+};
+
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+static FAST_DEFAULT_SECRETS: [u64; 7] = DEFAULT_SECRETS;
+
+#[inline(always)]
+fn default_fast_secret<const IDX: usize>() -> u64 {
+  debug_assert!(IDX < DEFAULT_SECRETS.len());
+
+  #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+  {
+    FAST_DEFAULT_SECRETS[IDX]
+  }
+
+  #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
+  {
+    DEFAULT_SECRETS[IDX]
+  }
+}
 
 #[inline(always)]
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
@@ -220,7 +254,7 @@ fn rapidhash_core<const AVALANCHE: bool>(data: &[u8], mut seed: u64, secrets: &[
 fn rapidhash_core_default<const AVALANCHE: bool>(data: &[u8], seed: u64) -> u64 {
   #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
   {
-    rapidhash_core::<AVALANCHE>(data, seed, &V3_DEFAULT_SECRETS)
+    rapidhash_core::<AVALANCHE>(data, seed, &V3_DEFAULT_SECRETS.secrets)
   }
 
   #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
@@ -751,7 +785,7 @@ const FAST_COLD_CUTOFF: usize = 400;
 
 #[inline(always)]
 fn rapidhash_fast_finish(a: u64, b: u64, seed: u64) -> u64 {
-  rapid_mix(a ^ DEFAULT_SECRETS[0], b ^ seed)
+  rapid_mix(a ^ default_fast_secret::<0>(), b ^ seed)
 }
 
 #[inline(always)]
@@ -854,13 +888,16 @@ unsafe fn rapidhash_fast_core_inline_mid(data: &[u8], mut seed: u64) -> u64 {
   let mut see2 = seed;
 
   while slice.len() >= 48 {
-    seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+    seed = rapid_mix(
+      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+      read_u64_np(slice, 8) ^ seed,
+    );
     see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ DEFAULT_SECRETS[1],
+      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
       read_u64_np(slice, 24) ^ see1,
     );
     see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ DEFAULT_SECRETS[2],
+      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
       read_u64_np(slice, 40) ^ see2,
     );
     let (_, rest) = slice.split_at(48);
@@ -887,10 +924,13 @@ unsafe fn rapidhash_fast_tail(mut seed: u64, slice: &[u8], data: &[u8]) -> u64 {
   unsafe { core::hint::assert_unchecked(data.len() > 16) };
 
   if likely(slice.len() > 16) {
-    seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+    seed = rapid_mix(
+      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+      read_u64_np(slice, 8) ^ seed,
+    );
     if likely(slice.len() > 32) {
       seed = rapid_mix(
-        read_u64_np(slice, 16) ^ DEFAULT_SECRETS[0],
+        read_u64_np(slice, 16) ^ default_fast_secret::<0>(),
         read_u64_np(slice, 24) ^ seed,
       );
     }
@@ -937,13 +977,16 @@ unsafe fn rapidhash_fast_core_medium(data: &[u8], mut seed: u64) -> u64 {
   let mut see2 = seed;
 
   while slice.len() >= 48 {
-    seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+    seed = rapid_mix(
+      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+      read_u64_np(slice, 8) ^ seed,
+    );
     see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ DEFAULT_SECRETS[1],
+      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
       read_u64_np(slice, 24) ^ see1,
     );
     see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ DEFAULT_SECRETS[2],
+      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
       read_u64_np(slice, 40) ^ see2,
     );
     let (_, rest) = slice.split_at(48);
@@ -977,58 +1020,61 @@ unsafe fn rapidhash_fast_core_large(data: &[u8], mut seed: u64) -> u64 {
 
   // 7-stream bulk: 224B per iteration (2 × 112B half-blocks).
   while slice.len() >= 224 {
-    seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+    seed = rapid_mix(
+      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+      read_u64_np(slice, 8) ^ seed,
+    );
     see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ DEFAULT_SECRETS[1],
+      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
       read_u64_np(slice, 24) ^ see1,
     );
     see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ DEFAULT_SECRETS[2],
+      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
       read_u64_np(slice, 40) ^ see2,
     );
     see3 = rapid_mix(
-      read_u64_np(slice, 48) ^ DEFAULT_SECRETS[3],
+      read_u64_np(slice, 48) ^ default_fast_secret::<3>(),
       read_u64_np(slice, 56) ^ see3,
     );
     see4 = rapid_mix(
-      read_u64_np(slice, 64) ^ DEFAULT_SECRETS[4],
+      read_u64_np(slice, 64) ^ default_fast_secret::<4>(),
       read_u64_np(slice, 72) ^ see4,
     );
     see5 = rapid_mix(
-      read_u64_np(slice, 80) ^ DEFAULT_SECRETS[5],
+      read_u64_np(slice, 80) ^ default_fast_secret::<5>(),
       read_u64_np(slice, 88) ^ see5,
     );
     see6 = rapid_mix(
-      read_u64_np(slice, 96) ^ DEFAULT_SECRETS[6],
+      read_u64_np(slice, 96) ^ default_fast_secret::<6>(),
       read_u64_np(slice, 104) ^ see6,
     );
 
     seed = rapid_mix(
-      read_u64_np(slice, 112) ^ DEFAULT_SECRETS[0],
+      read_u64_np(slice, 112) ^ default_fast_secret::<0>(),
       read_u64_np(slice, 120) ^ seed,
     );
     see1 = rapid_mix(
-      read_u64_np(slice, 128) ^ DEFAULT_SECRETS[1],
+      read_u64_np(slice, 128) ^ default_fast_secret::<1>(),
       read_u64_np(slice, 136) ^ see1,
     );
     see2 = rapid_mix(
-      read_u64_np(slice, 144) ^ DEFAULT_SECRETS[2],
+      read_u64_np(slice, 144) ^ default_fast_secret::<2>(),
       read_u64_np(slice, 152) ^ see2,
     );
     see3 = rapid_mix(
-      read_u64_np(slice, 160) ^ DEFAULT_SECRETS[3],
+      read_u64_np(slice, 160) ^ default_fast_secret::<3>(),
       read_u64_np(slice, 168) ^ see3,
     );
     see4 = rapid_mix(
-      read_u64_np(slice, 176) ^ DEFAULT_SECRETS[4],
+      read_u64_np(slice, 176) ^ default_fast_secret::<4>(),
       read_u64_np(slice, 184) ^ see4,
     );
     see5 = rapid_mix(
-      read_u64_np(slice, 192) ^ DEFAULT_SECRETS[5],
+      read_u64_np(slice, 192) ^ default_fast_secret::<5>(),
       read_u64_np(slice, 200) ^ see5,
     );
     see6 = rapid_mix(
-      read_u64_np(slice, 208) ^ DEFAULT_SECRETS[6],
+      read_u64_np(slice, 208) ^ default_fast_secret::<6>(),
       read_u64_np(slice, 216) ^ see6,
     );
 
@@ -1038,29 +1084,32 @@ unsafe fn rapidhash_fast_core_large(data: &[u8], mut seed: u64) -> u64 {
 
   // Single 112B half-block if enough remains.
   if likely(slice.len() >= 112) {
-    seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+    seed = rapid_mix(
+      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+      read_u64_np(slice, 8) ^ seed,
+    );
     see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ DEFAULT_SECRETS[1],
+      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
       read_u64_np(slice, 24) ^ see1,
     );
     see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ DEFAULT_SECRETS[2],
+      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
       read_u64_np(slice, 40) ^ see2,
     );
     see3 = rapid_mix(
-      read_u64_np(slice, 48) ^ DEFAULT_SECRETS[3],
+      read_u64_np(slice, 48) ^ default_fast_secret::<3>(),
       read_u64_np(slice, 56) ^ see3,
     );
     see4 = rapid_mix(
-      read_u64_np(slice, 64) ^ DEFAULT_SECRETS[4],
+      read_u64_np(slice, 64) ^ default_fast_secret::<4>(),
       read_u64_np(slice, 72) ^ see4,
     );
     see5 = rapid_mix(
-      read_u64_np(slice, 80) ^ DEFAULT_SECRETS[5],
+      read_u64_np(slice, 80) ^ default_fast_secret::<5>(),
       read_u64_np(slice, 88) ^ see5,
     );
     see6 = rapid_mix(
-      read_u64_np(slice, 96) ^ DEFAULT_SECRETS[6],
+      read_u64_np(slice, 96) ^ default_fast_secret::<6>(),
       read_u64_np(slice, 104) ^ see6,
     );
     let (_, rest) = slice.split_at(112);
@@ -1070,26 +1119,32 @@ unsafe fn rapidhash_fast_core_large(data: &[u8], mut seed: u64) -> u64 {
   // 3-stream residual: up to 2 × 48B blocks drain the remainder before the
   // tail, avoiding the serial dependency chain of the V3 nested-if tail.
   if slice.len() >= 48 {
-    seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+    seed = rapid_mix(
+      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+      read_u64_np(slice, 8) ^ seed,
+    );
     see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ DEFAULT_SECRETS[1],
+      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
       read_u64_np(slice, 24) ^ see1,
     );
     see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ DEFAULT_SECRETS[2],
+      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
       read_u64_np(slice, 40) ^ see2,
     );
     let (_, rest) = slice.split_at(48);
     slice = rest;
 
     if slice.len() >= 48 {
-      seed = rapid_mix(read_u64_np(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_np(slice, 8) ^ seed);
+      seed = rapid_mix(
+        read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
+        read_u64_np(slice, 8) ^ seed,
+      );
       see1 = rapid_mix(
-        read_u64_np(slice, 16) ^ DEFAULT_SECRETS[1],
+        read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
         read_u64_np(slice, 24) ^ see1,
       );
       see2 = rapid_mix(
-        read_u64_np(slice, 32) ^ DEFAULT_SECRETS[2],
+        read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
         read_u64_np(slice, 40) ^ see2,
       );
       let (_, rest) = slice.split_at(48);
@@ -1118,7 +1173,15 @@ impl FastHash for RapidHash64 {
   /// saving one 128-bit multiply per call.
   #[inline(always)]
   fn hash(data: &[u8]) -> Self::Output {
-    rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_0)
+    #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+    {
+      rapidhash_core::<true>(data, V3_DEFAULT_SECRETS.seed, &V3_DEFAULT_SECRETS.secrets)
+    }
+
+    #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
+    {
+      rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_0)
+    }
   }
 
   #[inline]
@@ -1136,9 +1199,19 @@ impl FastHash for RapidHash128 {
   /// per call.
   #[inline(always)]
   fn hash(data: &[u8]) -> Self::Output {
-    let lo = rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_0) as u128;
-    let hi = rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_HI) as u128;
-    lo | (hi << 64)
+    #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+    {
+      let lo = rapidhash_core::<true>(data, V3_DEFAULT_SECRETS.seed, &V3_DEFAULT_SECRETS.secrets) as u128;
+      let hi = rapidhash_core::<true>(data, V3_DEFAULT_HI_SECRETS.seed, &V3_DEFAULT_HI_SECRETS.secrets) as u128;
+      lo | (hi << 64)
+    }
+
+    #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
+    {
+      let lo = rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_0) as u128;
+      let hi = rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_HI) as u128;
+      lo | (hi << 64)
+    }
   }
 
   #[inline]
