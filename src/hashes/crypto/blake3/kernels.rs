@@ -1836,7 +1836,7 @@ unsafe fn chunk_compress_blocks_s390x_vector(
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
   // On IBM Z, the vector per-block wrapper has measurable fixed overhead on
-  // short one-chunk bodies (e.g. 256B/1024B kernel-ab cases). Route those
+  // short one-chunk bodies (e.g. 256B/1024B inputs). Route those
   // small batches through the portable scalar loop and keep the vector path
   // for larger batches where it clearly wins.
   const SHORT_BATCH_PORTABLE_MAX_BLOCKS: usize = (CHUNK_LEN / BLOCK_LEN) - 1; // 15

@@ -82,6 +82,25 @@ pub fn diag_compress_block_portable(state: &mut [u32; 8], block: &[u8; BLOCK_SIZ
   kernels::compress(state, block, t, last);
 }
 
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+pub fn diag_compress_block_x86_avx2(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE], t: u64, last: bool) {
+  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX2));
+  // SAFETY: the runtime capability assertion above verifies AVX2 before
+  // calling the target-feature-specialized diagnostic kernel.
+  unsafe { x86_64::compress_avx2(state, block, t, last) }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+pub fn diag_compress_block_x86_avx512vl(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE], t: u64, last: bool) {
+  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX512F));
+  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX512VL));
+  // SAFETY: the runtime capability assertions above verify AVX-512F+VL before
+  // calling the target-feature-specialized diagnostic kernel.
+  unsafe { x86_64::compress_avx512vl(state, block, t, last) }
+}
+
 #[cfg(all(feature = "diag", target_arch = "aarch64"))]
 #[inline]
 pub fn diag_compress_block_aarch64_neon(state: &mut [u32; 8], block: &[u8; BLOCK_SIZE], t: u64, last: bool) {
@@ -1264,7 +1283,7 @@ mod tests {
     let _ = Blake2sParams::new().key(&[0u8; 33]);
   }
 
-  // ── Forced-kernel oracle tests ────────────────────────────────────────
+  // ── Per-kernel oracle tests ───────────────────────────────────────────
 
   fn assert_blake2s_kernel(id: Blake2sKernelId) {
     let compress = blake2s_compress_fn(id);
@@ -1277,7 +1296,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2s-256 forced mismatch kernel={} len={}",
+        "blake2s-256 per-kernel mismatch kernel={} len={}",
         id.as_str(),
         data.len(),
       );
@@ -1290,7 +1309,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2s-128 forced mismatch kernel={} len={}",
+        "blake2s-128 per-kernel mismatch kernel={} len={}",
         id.as_str(),
         data.len(),
       );
@@ -1311,7 +1330,7 @@ mod tests {
       assert_eq!(
         &actual_128[..],
         &expected_128[..],
-        "blake2s-128 keyed forced mismatch kernel={} key_len={}",
+        "blake2s-128 keyed per-kernel mismatch kernel={} key_len={}",
         id.as_str(),
         key.len(),
       );
@@ -1326,7 +1345,7 @@ mod tests {
       assert_eq!(
         &actual_256[..],
         &expected_256[..],
-        "blake2s-256 keyed forced mismatch kernel={} key_len={}",
+        "blake2s-256 keyed per-kernel mismatch kernel={} key_len={}",
         id.as_str(),
         key.len(),
       );
@@ -1343,7 +1362,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected,
-        "blake2s-256 streaming forced mismatch kernel={} chunk={}",
+        "blake2s-256 streaming per-kernel mismatch kernel={} chunk={}",
         id.as_str(),
         chunk_size,
       );
@@ -1358,7 +1377,7 @@ mod tests {
       assert_eq!(
         h.finalize(),
         expected_128,
-        "blake2s-128 streaming forced mismatch kernel={} chunk={}",
+        "blake2s-128 streaming per-kernel mismatch kernel={} chunk={}",
         id.as_str(),
         chunk_size,
       );

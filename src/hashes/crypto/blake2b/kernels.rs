@@ -18,7 +18,45 @@ use crate::platform::caps::x86;
 ///
 /// Parameters: mutable state (8×u64), 128-byte message block, byte counter, finalization flag.
 pub(crate) type CompressFn = fn(&mut [u64; 8], &[u8; 128], u128, bool);
-pub(crate) type CompressBlocksFn = fn(&mut [u64; 8], &[u8], &mut u128);
+pub(crate) type CompressBlocksFn = fn(&mut [u64; 8], &[u8], &mut Blake2bCounter);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Blake2bCounter {
+  lo: u64,
+  hi: u64,
+}
+
+impl Blake2bCounter {
+  #[inline(always)]
+  pub(crate) const fn zero() -> Self {
+    Self { lo: 0, hi: 0 }
+  }
+
+  #[inline(always)]
+  pub(crate) const fn is_zero(self) -> bool {
+    self.lo == 0 && self.hi == 0
+  }
+
+  #[inline(always)]
+  pub(crate) fn add_len(&mut self, len: u64) {
+    let (lo, carry) = self.lo.overflowing_add(len);
+    self.lo = lo;
+    if carry {
+      self.hi = self.hi.strict_add(1);
+    }
+  }
+
+  #[inline(always)]
+  pub(crate) fn plus_len(mut self, len: u64) -> Self {
+    self.add_len(len);
+    self
+  }
+
+  #[inline(always)]
+  pub(crate) const fn as_u128(self) -> u128 {
+    ((self.hi as u128) << 64) | self.lo as u128
+  }
+}
 
 /// Blake2b kernel identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,15 +69,15 @@ pub enum Blake2bKernelId {
   X86Avx2 = 1,
   #[cfg(target_arch = "x86_64")]
   X86Avx512vl = 2,
-  // Retained for forced diagnostics; production dispatch keeps the portable kernel on AArch64.
+  // Correct but not selected in production; portable is faster on current AArch64 CI.
   #[allow(dead_code)]
   #[cfg(target_arch = "aarch64")]
   Aarch64Neon = 3,
-  // Retained for forced diagnostics; production dispatch keeps the portable kernel on s390x.
+  // Correct but not selected in production; portable is faster on current s390x CI.
   #[allow(dead_code)]
   #[cfg(target_arch = "s390x")]
   S390xVector = 4,
-  // Retained for forced diagnostics; production dispatch keeps the portable kernel on POWER.
+  // Correct but not selected in production; portable is faster on current POWER CI.
   #[allow(dead_code)]
   #[cfg(target_arch = "powerpc64")]
   PowerVsx = 5,
@@ -119,54 +157,54 @@ fn compress_wasm_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: boo
 }
 
 #[inline(always)]
-fn compress_blocks_with(h: &mut [u64; 8], blocks: &[u8], t: &mut u128, compress: CompressFn) {
+fn compress_blocks_with(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter, compress: CompressFn) {
   debug_assert_eq!(blocks.len() % 128, 0);
   let mut chunks = blocks.chunks_exact(128);
   for chunk in &mut chunks {
-    *t = t.strict_add(128);
+    t.add_len(128);
     // SAFETY: `chunks_exact(128)` yields slices of exactly 128 bytes.
     let block = unsafe { &*chunk.as_ptr().cast::<[u8; 128]>() };
-    compress(h, block, *t, false);
+    compress(h, block, t.as_u128(), false);
   }
   debug_assert!(chunks.remainder().is_empty());
 }
 
-fn compress_blocks_portable(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_portable(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress);
 }
 
 #[cfg(target_arch = "x86_64")]
-fn compress_blocks_x86_avx2(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_x86_avx2(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_x86_avx2);
 }
 
 #[cfg(target_arch = "x86_64")]
-fn compress_blocks_x86_avx512vl(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_x86_avx512vl(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_x86_avx512vl);
 }
 
 #[cfg(target_arch = "aarch64")]
-fn compress_blocks_aarch64_neon(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_aarch64_neon(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_aarch64_neon);
 }
 
 #[cfg(target_arch = "s390x")]
-fn compress_blocks_s390x_vector(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_s390x_vector(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_s390x_vector);
 }
 
 #[cfg(target_arch = "powerpc64")]
-fn compress_blocks_power_vsx(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_power_vsx(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_power_vsx);
 }
 
 #[cfg(target_arch = "riscv64")]
-fn compress_blocks_riscv64_v(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_riscv64_v(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_riscv64_v);
 }
 
 #[cfg(target_arch = "wasm32")]
-fn compress_blocks_wasm_simd128(h: &mut [u64; 8], blocks: &[u8], t: &mut u128) {
+fn compress_blocks_wasm_simd128(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
   compress_blocks_with(h, blocks, t, compress_wasm_simd128);
 }
 

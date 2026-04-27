@@ -528,12 +528,12 @@ impl Default for Argon2VerifyPolicy {
 // `aarch64.rs` for NEON, etc.). This module only *calls through* the
 // resolved [`CompressFn`] — no inline BlaMka code below this point.
 
-// ─── Diagnostic entry points for forced-kernel tests and benches ───────────
+// ─── Diagnostic entry points for per-kernel tests ──────────────────────────
 
 /// The kernel selected by the runtime dispatcher on the current host.
 ///
-/// Useful for reporting in benchmarks and for forced-kernel tests that
-/// want to cross-check the active kernel matches expectations.
+/// Useful for reporting and for tests that cross-check the active kernel
+/// against the runtime dispatcher.
 #[cfg(feature = "diag")]
 #[must_use]
 pub fn diag_active_kernel() -> KernelId {
@@ -612,7 +612,7 @@ pub fn diag_hash_aarch64_neon(
 ///
 /// # Panics
 ///
-/// Panics if the host does not support AVX2. The forced-kernel tests
+/// Panics if the host does not support AVX2. The per-kernel tests
 /// gate this call on `crate::platform::caps()` having the kernel's
 /// required caps before invoking it.
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
@@ -942,7 +942,7 @@ pub fn diag_compress_wasm_simd128(
   unsafe { wasm::compress_simd128(dst, x, y, xor_into) }
 }
 
-/// Block-word count (128) — exposed for diagnostic kernel benches.
+/// Block-word count (128) — exposed for diagnostic kernel tests.
 #[cfg(feature = "diag")]
 pub const DIAG_BLOCK_WORDS: usize = BLOCK_WORDS;
 
@@ -1106,7 +1106,7 @@ impl AddressBlock {
     let mut zero = MemoryBlock::zero();
     let mut intermediate = MemoryBlock::zero();
     // SAFETY: the CompressFn came from `active_compress()` (or
-    // `compress_fn_for` in forced-kernel tests), which only returns a
+    // `compress_fn_for` in per-kernel tests), which only returns a
     // kernel whose `required_caps` are a subset of the host's caps.
     unsafe {
       compress(&mut intermediate.0, &zero.0, &input.0, /* xor_into = */ false);

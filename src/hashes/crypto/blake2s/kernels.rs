@@ -31,15 +31,15 @@ pub enum Blake2sKernelId {
   X86Avx2 = 1,
   #[cfg(target_arch = "x86_64")]
   X86Avx512vl = 2,
-  // Retained for forced diagnostics; production dispatch keeps the portable kernel on AArch64.
+  // Correct but not selected in production; portable is faster on current AArch64 CI.
   #[allow(dead_code)]
   #[cfg(target_arch = "aarch64")]
   Aarch64Neon = 3,
-  // Retained for forced diagnostics; production dispatch keeps the portable kernel on s390x.
+  // Correct but not selected in production; portable is faster on current s390x CI.
   #[allow(dead_code)]
   #[cfg(target_arch = "s390x")]
   S390xVector = 4,
-  // Retained for forced diagnostics; production dispatch keeps the portable kernel on POWER.
+  // Correct but not selected in production; portable is faster on current POWER CI.
   #[allow(dead_code)]
   #[cfg(target_arch = "powerpc64")]
   PowerVsx = 5,

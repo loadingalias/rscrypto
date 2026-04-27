@@ -103,60 +103,6 @@ fn crc64_nvme(c: &mut Criterion) {
   g.finish();
 }
 
-fn crc32c_diagnostic(c: &mut Criterion) {
-  let inputs: Vec<_> = [1024, 4096]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect();
-  let mut g = c.benchmark_group("crc32c/diagnostic");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    let kernel = rscrypto::Crc32C::kernel_name_for_len(*len);
-    g.bench_with_input(BenchmarkId::new(format!("rscrypto/{kernel}"), len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Crc32C::checksum(black_box(d))))
-    });
-
-    g.bench_with_input(BenchmarkId::new("crc-fast", len), data, |b, d| {
-      b.iter(|| black_box(crc_fast::crc32_iscsi(black_box(d))))
-    });
-  }
-
-  g.finish();
-}
-
-fn crc64_nvme_diagnostic(c: &mut Criterion) {
-  let inputs: Vec<_> = [1024, 4096, 16384]
-    .into_iter()
-    .map(|len| (len, common::random_bytes(len)))
-    .collect();
-  let mut g = c.benchmark_group("crc64-nvme/diagnostic");
-
-  for (len, data) in &inputs {
-    common::set_throughput(&mut g, *len);
-
-    let kernel = rscrypto::Crc64Nvme::kernel_name_for_len(*len);
-    g.bench_with_input(BenchmarkId::new(format!("rscrypto/{kernel}"), len), data, |b, d| {
-      b.iter(|| black_box(rscrypto::Crc64Nvme::checksum(black_box(d))))
-    });
-
-    g.bench_with_input(BenchmarkId::new("crc-fast", len), data, |b, d| {
-      b.iter(|| black_box(crc_fast::crc64_nvme(black_box(d))))
-    });
-
-    g.bench_with_input(BenchmarkId::new("crc64fast-nvme", len), data, |b, d| {
-      b.iter(|| {
-        let mut h = crc64fast_nvme::Digest::new();
-        h.write(black_box(d));
-        black_box(h.sum64())
-      })
-    });
-  }
-
-  g.finish();
-}
-
 fn crc16(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let crc_algo = crc::Crc::<u16>::new(&crc::CRC_16_IBM_SDLC);
@@ -218,15 +164,6 @@ fn crc24(c: &mut Criterion) {
 }
 
 criterion_group!(
-  benches,
-  crc32_ieee,
-  crc32c,
-  crc64_xz,
-  crc64_nvme,
-  crc32c_diagnostic,
-  crc64_nvme_diagnostic,
-  crc16,
-  crc16_ibm,
-  crc24
+  benches, crc32_ieee, crc32c, crc64_xz, crc64_nvme, crc16, crc16_ibm, crc24
 );
 criterion_main!(benches);

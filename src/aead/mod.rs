@@ -105,8 +105,8 @@ pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use chacha20::diag_chacha20_xor_keystream_aarch64_neon;
-// Re-export the per-backend ChaCha20 entry points for forced-kernel
-// equivalence tests in `tests/aead_kernel_equivalence.rs`. Mirrors the
+// Re-export the per-backend ChaCha20 entry points for equivalence tests in
+// `tests/aead_kernel_equivalence.rs`. Mirrors the
 // `diag_compress_*` pattern used by Argon2.
 #[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
 pub use chacha20::diag_chacha20_xor_keystream_portable;

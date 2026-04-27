@@ -326,26 +326,6 @@ pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   }
 }
 
-#[cfg(feature = "diag")]
-pub(super) fn xxh3_128_long_default_prefetch(input: &[u8]) -> u128 {
-  // SAFETY: Forced NEON diagnostic path is sound because:
-  // 1. This module only compiles on `target_arch = "aarch64"`.
-  // 2. NEON is baseline on aarch64 targets supported by Rust.
-  // 3. Callers route only long inputs here, matching the internal loop contract.
-  let acc = unsafe { hash_long_internal_loop::<true>(input, &DEFAULT_SECRET) };
-  xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn xxh3_128_long_default_no_prefetch(input: &[u8]) -> u128 {
-  // SAFETY: Forced NEON diagnostic path is sound because:
-  // 1. This module only compiles on `target_arch = "aarch64"`.
-  // 2. NEON is baseline on aarch64 targets supported by Rust.
-  // 3. Callers route only long inputs here, matching the internal loop contract.
-  let acc = unsafe { hash_long_internal_loop::<false>(input, &DEFAULT_SECRET) };
-  xxh3_128_long_finalize(&acc, &DEFAULT_SECRET, input.len())
-}
-
 #[inline(always)]
 fn xxh3_128_long_finalize(acc: &[u64; ACC_NB], secret: &[u8], len: usize) -> u128 {
   let lo = super::merge_accs(

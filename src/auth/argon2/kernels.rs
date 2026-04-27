@@ -71,8 +71,8 @@ macro_rules! p_direct {
 /// Portable Argon2 BlaMka compression.
 ///
 /// Reference implementation per RFC 9106 §3.6. This is the correctness
-/// oracle for every per-arch SIMD kernel — the forced-kernel tests in
-/// `tests/argon2_vectors.rs` and the sibling kernel files must produce
+/// oracle for every per-arch SIMD kernel — the per-kernel tests in
+/// `tests/argon2_kernels.rs` and the sibling kernel files must produce
 /// identical byte output for any pair `(x, y)` of input blocks.
 ///
 /// # Safety
