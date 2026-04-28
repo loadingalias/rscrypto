@@ -39,7 +39,7 @@
 
 pub mod caps;
 pub mod detect;
-pub mod target_matrix;
+mod target_matrix;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API - Types

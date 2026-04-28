@@ -186,7 +186,7 @@ impl Ed25519SecretKey {
 }
 
 impl_hex_fmt_secret!(Ed25519SecretKey);
-impl_serde_bytes!(Ed25519SecretKey);
+impl_serde_secret_bytes!(Ed25519SecretKey);
 
 impl Drop for Ed25519SecretKey {
   fn drop(&mut self) {

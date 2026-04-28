@@ -144,7 +144,7 @@ impl fmt::Debug for X25519SecretKey {
 }
 
 impl_hex_fmt_secret!(X25519SecretKey);
-impl_serde_bytes!(X25519SecretKey);
+impl_serde_secret_bytes!(X25519SecretKey);
 
 impl Drop for X25519SecretKey {
   fn drop(&mut self) {
@@ -306,7 +306,7 @@ impl fmt::Debug for X25519SharedSecret {
 }
 
 impl_hex_fmt_secret!(X25519SharedSecret);
-impl_serde_bytes!(X25519SharedSecret);
+impl_serde_secret_bytes!(X25519SharedSecret);
 
 impl Drop for X25519SharedSecret {
   fn drop(&mut self) {

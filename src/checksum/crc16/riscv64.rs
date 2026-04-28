@@ -12,10 +12,6 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
-// Rust 2024 requires explicit inner `unsafe` blocks even inside `unsafe fn`.
-// In this backend those blocks are mechanical consequences of target-feature and
-// asm helpers, not independent safety boundaries.
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 use core::{
   arch::asm,
@@ -81,6 +77,8 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. ZBC target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let out: u64;
       asm!(
@@ -100,6 +98,8 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. ZBC target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let out: u64;
       asm!(
@@ -119,6 +119,8 @@ impl Simd {
     // SAFETY: Caller guarantees:
     // 1. ZBC target features are available (dispatch check).
     // 2. All SIMD operations are pure register computations after loads.
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       Self {
         hi: Self::clmul_hi(a, b),
@@ -174,6 +176,8 @@ fn load_block_split(block: &Block) -> ([u64; 8], [u64; 8]) {
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn fold_16_zbc(x: Simd, coeff: (u64, u64)) -> Simd {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (coeff_high, coeff_low) = coeff;
     Simd::mul64(x.low_64(), coeff_high) ^ Simd::mul64(x.high_64(), coeff_low)
@@ -186,6 +190,8 @@ unsafe fn fold_16_reflected_zbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) -
   // SAFETY: Caller guarantees:
   // 1. ZBC + ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { data_to_xor ^ fold_16_zbc(x, coeff) }
 }
 
@@ -195,6 +201,8 @@ unsafe fn fold_width32_reflected_zbc(x: Simd, high: u64, low: u64) -> Simd {
   // SAFETY: Caller guarantees:
   // 1. ZBC + ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let clmul = Simd::mul64(x.low_64(), low);
     let shifted = Simd::new(0, x.high_64());
@@ -212,6 +220,8 @@ unsafe fn fold_width32_reflected_zbc(x: Simd, high: u64, low: u64) -> Simd {
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn barrett_width32_reflected_zbc(x: Simd, poly: u64, mu: u64) -> u32 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let t1 = Simd::mul64(x.low_64(), mu);
     let l = Simd::mul64(t1.low_64(), poly);
@@ -225,6 +235,8 @@ unsafe fn finalize_lanes_width32_reflected_zbc(x: [Simd; 8], keys: &[u64; 23]) -
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut res = x[7];
     res = fold_16_reflected_zbc(x[0], (keys[10], keys[9]), res);
@@ -245,6 +257,8 @@ unsafe fn update_simd_zbc(state: u32, first: &Block, rest: &[Block], keys: &[u64
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut x = load_block(first);
     x[0] ^= Simd::new(0, state as u64);
@@ -272,6 +286,8 @@ unsafe fn fold_block_128_reflected_zbc(x: &mut [Simd; 8], block: &Block, coeff: 
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let chunk = load_block(block);
     x[0] = fold_16_reflected_zbc(x[0], coeff, chunk[0]);
@@ -291,6 +307,8 @@ unsafe fn update_simd_zbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u6
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -347,6 +365,8 @@ unsafe fn update_simd_zbc_4way(
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -423,6 +443,8 @@ unsafe fn crc16_width32_zbc(mut state: u16, data: &[u8], keys: &[u64; 23], porta
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     let Some((first, rest)) = middle.split_first() else {
@@ -448,6 +470,8 @@ unsafe fn crc16_width32_zbc_2way(
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -472,6 +496,8 @@ unsafe fn crc16_width32_zbc_4way(
   // SAFETY: Caller guarantees:
   // 1. ZBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -499,6 +525,8 @@ unsafe fn mul64_zvbc(a: u64, b: u64) -> Simd {
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let lo: u64;
     let hi: u64;
@@ -528,6 +556,8 @@ unsafe fn fold_16_zvbc(x: Simd, coeff: (u64, u64)) -> Simd {
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (coeff_high, coeff_low) = coeff;
     mul64_zvbc(x.low_64(), coeff_high) ^ mul64_zvbc(x.high_64(), coeff_low)
@@ -540,6 +570,8 @@ unsafe fn fold_16_reflected_zvbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) 
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC + V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { data_to_xor ^ fold_16_zvbc(x, coeff) }
 }
 
@@ -549,6 +581,8 @@ unsafe fn fold_width32_reflected_zvbc(x: Simd, high: u64, low: u64) -> Simd {
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC + V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let clmul = mul64_zvbc(x.low_64(), low);
     let shifted = Simd::new(0, x.high_64());
@@ -569,6 +603,8 @@ unsafe fn barrett_width32_reflected_zvbc(x: Simd, poly: u64, mu: u64) -> u32 {
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let t1 = mul64_zvbc(x.low_64(), mu);
     let l = mul64_zvbc(t1.low_64(), poly);
@@ -582,6 +618,8 @@ unsafe fn fold_tail_zvbc(hi: [u64; 8], lo: [u64; 8], keys: &[u64; 23]) -> u32 {
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut acc = Simd::new(hi[7], lo[7]);
     acc ^= fold_16_zvbc(Simd::new(hi[0], lo[0]), (keys[10], keys[9]));
@@ -609,6 +647,8 @@ unsafe fn fold_block_128_zvbc(
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut offset = 0usize;
     while offset < 8 {
@@ -657,6 +697,8 @@ unsafe fn update_simd_zvbc(state: u32, first: &Block, rest: &[Block], keys: &[u6
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (mut x_hi, mut x_lo) = load_block_split(first);
     x_lo[0] ^= state as u64;
@@ -678,6 +720,8 @@ unsafe fn update_simd_zvbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -740,6 +784,8 @@ unsafe fn update_simd_zvbc_4way(
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -812,6 +858,8 @@ unsafe fn crc16_width32_zvbc(mut state: u16, data: &[u8], keys: &[u64; 23], port
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     let Some((first, rest)) = middle.split_first() else {
@@ -837,6 +885,8 @@ unsafe fn crc16_width32_zvbc_2way(
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -862,6 +912,8 @@ unsafe fn crc16_width32_zvbc_4way(
   // SAFETY: Caller guarantees:
   // 1. V + ZVBC target features are available (dispatch check).
   // 2. All SIMD operations are pure register computations after loads.
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {

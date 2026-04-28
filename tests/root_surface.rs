@@ -7,12 +7,15 @@ use rscrypto::Kmac256;
 #[cfg(any(feature = "hmac", feature = "kmac"))]
 use rscrypto::Mac;
 #[cfg(all(feature = "aead", feature = "diag"))]
-use rscrypto::aead::introspect::{DispatchInfo as AeadDispatchInfo, backend_for as aead_backend_for};
+use rscrypto::aead::introspect::{
+  DispatchInfo as AeadDispatchInfo, aegis256_backend, aes256gcm_backend, aes256gcmsiv_backend, ascon_aead128_backend,
+  chacha20poly1305_backend, xchacha20poly1305_backend,
+};
 #[cfg(feature = "aead")]
 use rscrypto::aead::{
-  AeadBackend, AeadBufferError, AeadPrimitive, Aegis256, Aegis256Key, Aegis256Tag, BenchLane, ChaCha20Poly1305,
-  ChaCha20Poly1305Key, ChaCha20Poly1305Tag, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError,
-  XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag, lane_target_backend, select_backend,
+  AeadBufferError, Aegis256, Aegis256Key, Aegis256Tag, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag,
+  Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  XChaCha20Poly1305Tag,
 };
 #[cfg(feature = "hkdf")]
 use rscrypto::auth::HkdfOutputLengthError;
@@ -34,8 +37,6 @@ use rscrypto::hashes::introspect::{
 };
 #[cfg(all(feature = "hashes", feature = "std"))]
 use rscrypto::hashes::{DigestReader, DigestWriter};
-#[cfg(feature = "aead")]
-use rscrypto::platform::{Arch, Caps};
 #[cfg(feature = "hashes")]
 use rscrypto::{
   AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake256,
@@ -80,17 +81,16 @@ fn root_surface_aead_exports_compile() {
   let _ = OpenError::buffer();
   let _ = OpenError::too_large();
   let _ = OpenError::verification();
-  let _ = AeadPrimitive::XChaCha20Poly1305.name();
-  let _ = AeadBackend::Portable.name();
-  let _ = BenchLane::IntelSpr.platform_name();
-  let _ = BenchLane::Graviton4.arch();
-  let _ = lane_target_backend(AeadPrimitive::Aes256Gcm, BenchLane::IntelSpr);
-  let _ = select_backend(AeadPrimitive::AsconAead128, Arch::Wasm32, Caps::NONE);
 
   #[cfg(feature = "diag")]
   {
     let _ = AeadDispatchInfo::current();
-    let _ = aead_backend_for(AeadPrimitive::ChaCha20Poly1305);
+    let _ = aes256gcm_backend();
+    let _ = aes256gcmsiv_backend();
+    let _ = chacha20poly1305_backend();
+    let _ = xchacha20poly1305_backend();
+    let _ = aegis256_backend();
+    let _ = ascon_aead128_backend();
   }
 
   fn assert_aead_trait<T: Aead>() {}

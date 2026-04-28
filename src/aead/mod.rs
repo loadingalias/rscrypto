@@ -88,7 +88,7 @@ mod nonce_counter;
 mod poly1305;
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 mod polyval;
-pub mod targets;
+mod targets;
 #[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305;
 #[cfg(feature = "aegis256")]
@@ -145,7 +145,6 @@ pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keyst
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
-pub use targets::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 
@@ -178,13 +177,6 @@ macro_rules! define_nonce_type {
       #[must_use]
       pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
         &self.0
-      }
-    }
-
-    impl Default for $name {
-      #[inline]
-      fn default() -> Self {
-        Self([0u8; Self::LENGTH])
       }
     }
 
@@ -454,7 +446,8 @@ impl From<VerificationError> for OpenError {
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305"
+    feature = "xchacha20poly1305",
+    feature = "aegis256"
   )),
   allow(dead_code)
 )]
@@ -468,7 +461,8 @@ const _: () = assert!(usize::BITS <= u64::BITS);
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305"
+    feature = "xchacha20poly1305",
+    feature = "aegis256"
   )),
   allow(dead_code)
 )]
@@ -494,6 +488,19 @@ impl AeadByteLengths {
   #[inline]
   pub(crate) fn try_new(aad_len: usize, text_len: usize) -> Result<Self, LengthOverflow> {
     Ok(Self::from_usize(aad_len, text_len))
+  }
+
+  #[cfg_attr(
+    not(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")),
+    allow(dead_code)
+  )]
+  #[inline]
+  pub(crate) fn try_new_bit_lengths(aad_len: usize, text_len: usize) -> Result<Self, LengthOverflow> {
+    const MAX_BIT_ENCODED_BYTES: u64 = u64::MAX / 8;
+    Ok(Self {
+      aad: try_bounded_length_as_u64(aad_len, MAX_BIT_ENCODED_BYTES)?,
+      text: try_bounded_length_as_u64(text_len, MAX_BIT_ENCODED_BYTES)?,
+    })
   }
 
   #[cfg_attr(
@@ -551,7 +558,8 @@ impl AeadByteLengths {
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305"
+    feature = "xchacha20poly1305",
+    feature = "aegis256"
   )),
   allow(dead_code)
 )]
@@ -565,7 +573,8 @@ pub(crate) fn try_length_as_u64(len: usize) -> Result<u64, LengthOverflow> {
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305"
+    feature = "xchacha20poly1305",
+    feature = "aegis256"
   )),
   allow(dead_code)
 )]
@@ -583,7 +592,8 @@ pub(crate) fn try_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, Len
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305"
+    feature = "xchacha20poly1305",
+    feature = "aegis256"
   )),
   allow(dead_code)
 )]
@@ -593,17 +603,36 @@ pub(crate) fn seal_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, Se
 }
 
 #[cfg_attr(
+  not(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")),
+  allow(dead_code)
+)]
+#[inline]
+pub(crate) fn seal_bit_lengths(aad_len: usize, text_len: usize) -> Result<AeadByteLengths, SealError> {
+  AeadByteLengths::try_new_bit_lengths(aad_len, text_len).map_err(|_| SealError::too_large())
+}
+
+#[cfg_attr(
   not(any(
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305"
+    feature = "xchacha20poly1305",
+    feature = "aegis256"
   )),
   allow(dead_code)
 )]
 #[inline]
 pub(crate) fn open_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, OpenError> {
   try_bounded_length_as_u64(len, max).map_err(|_| OpenError::too_large())
+}
+
+#[cfg_attr(
+  not(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")),
+  allow(dead_code)
+)]
+#[inline]
+pub(crate) fn open_bit_lengths(aad_len: usize, text_len: usize) -> Result<AeadByteLengths, OpenError> {
+  AeadByteLengths::try_new_bit_lengths(aad_len, text_len).map_err(|_| OpenError::too_large())
 }
 
 #[cfg(test)]
@@ -651,5 +680,13 @@ mod tests {
     assert!(!AeadByteLengths::from_usize(31, 32).total_at_least(64));
     assert!(AeadByteLengths::from_usize(32, 32).total_at_least(64));
     assert!(AeadByteLengths { aad: u64::MAX, text: 1 }.total_at_least(u64::MAX));
+  }
+
+  #[test]
+  #[cfg(target_pointer_width = "64")]
+  fn bit_length_blocks_reject_unencodable_lengths() {
+    let too_large = (u64::MAX / 8).strict_add(1) as usize;
+    assert!(AeadByteLengths::try_new_bit_lengths(too_large, 0).is_err());
+    assert!(AeadByteLengths::try_new_bit_lengths(0, too_large).is_err());
   }
 }

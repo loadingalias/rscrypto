@@ -182,6 +182,14 @@ const PRECOMPUTED_SEED_0: u64 = rapidhash_seed_cpp(0);
 const PRECOMPUTED_SEED_HI: u64 = rapidhash_seed_cpp(V3_HI_SEED);
 
 #[inline(always)]
+const fn rapidhash_fast_default_empty(seed: u64) -> u64 {
+  rapid_mix(DEFAULT_SECRETS[0], seed)
+}
+
+const FAST_EMPTY_HASH_SEED_0: u64 = rapidhash_fast_default_empty(PRECOMPUTED_SEED_0);
+const FAST_EMPTY_HASH_SEED_HI: u64 = rapidhash_fast_default_empty(PRECOMPUTED_SEED_HI);
+
+#[inline(always)]
 #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
 fn rapidhash_finish(a: u64, b: u64, remainder: u64, secrets: &[u64; 7]) -> u64 {
   rapid_mix(a ^ 0xaaaa_aaaa_aaaa_aaaa, b ^ v3_secret::<1>(secrets) ^ remainder)
@@ -1239,6 +1247,10 @@ impl FastHash for RapidHashFast64 {
   /// saving one 128-bit multiply per call.
   #[inline(always)]
   fn hash(data: &[u8]) -> Self::Output {
+    if data.is_empty() {
+      return FAST_EMPTY_HASH_SEED_0;
+    }
+
     rapidhash_fast_default_core(data, PRECOMPUTED_SEED_0)
   }
 
@@ -1257,6 +1269,10 @@ impl FastHash for RapidHashFast128 {
   /// saving one 128-bit multiply per call.
   #[inline(always)]
   fn hash(data: &[u8]) -> Self::Output {
+    if data.is_empty() {
+      return (FAST_EMPTY_HASH_SEED_0 as u128) | ((FAST_EMPTY_HASH_SEED_HI as u128) << 64);
+    }
+
     rapidhash_fast_128_core(data, PRECOMPUTED_SEED_0, PRECOMPUTED_SEED_HI)
   }
 

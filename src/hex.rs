@@ -190,16 +190,16 @@ macro_rules! impl_hex_fmt_secret {
 /// newtype with `as_bytes() -> &[u8; N]`, `from_bytes([u8; N]) -> Self`,
 /// and `LENGTH`.
 #[cfg(feature = "serde")]
-macro_rules! impl_serde_bytes {
-  ($type:ty) => {
-    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+macro_rules! impl_serde_bytes_inner {
+  ($type:ty, $feature:literal) => {
+    #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
     impl serde::Serialize for $type {
       fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(self.as_bytes())
       }
     }
 
-    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
     impl<'de> serde::Deserialize<'de> for $type {
       fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct ByteVisitor;
@@ -233,9 +233,30 @@ macro_rules! impl_serde_bytes {
   };
 }
 
+#[cfg(feature = "serde")]
+macro_rules! impl_serde_bytes {
+  ($type:ty) => {
+    impl_serde_bytes_inner!($type, "serde");
+  };
+}
+
 // No-op when serde feature is disabled.
 #[cfg(not(feature = "serde"))]
 macro_rules! impl_serde_bytes {
+  ($type:ty) => {};
+}
+
+/// Implement `serde` for secret material behind the explicit `serde-secrets`
+/// feature. This keeps broad DTO serialization from silently exporting keys.
+#[cfg(feature = "serde-secrets")]
+macro_rules! impl_serde_secret_bytes {
+  ($type:ty) => {
+    impl_serde_bytes_inner!($type, "serde-secrets");
+  };
+}
+
+#[cfg(not(feature = "serde-secrets"))]
+macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {};
 }
 

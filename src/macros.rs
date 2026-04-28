@@ -447,7 +447,7 @@ macro_rules! define_aead_key_type {
     }
 
     impl_hex_fmt_secret!($name);
-    impl_serde_bytes!($name);
+    impl_serde_secret_bytes!($name);
 
     impl Drop for $name {
       fn drop(&mut self) {

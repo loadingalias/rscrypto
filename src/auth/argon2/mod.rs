@@ -235,6 +235,8 @@ pub enum Argon2Error {
   SecretTooLong,
   /// Optional associated-data length exceeds 2^32-1 bytes.
   AssociatedDataTooLong,
+  /// The platform entropy source failed while generating a PHC salt.
+  EntropyUnavailable,
 }
 
 impl fmt::Display for Argon2Error {
@@ -249,6 +251,7 @@ impl fmt::Display for Argon2Error {
       Self::PasswordTooLong => "Argon2 password exceeds 2^32-1 bytes",
       Self::SecretTooLong => "Argon2 secret exceeds 2^32-1 bytes",
       Self::AssociatedDataTooLong => "Argon2 associated data exceeds 2^32-1 bytes",
+      Self::EntropyUnavailable => "Argon2 entropy source unavailable",
     })
   }
 }
@@ -1874,21 +1877,18 @@ macro_rules! define_argon2_variant {
       /// Hash `password` with a fresh 16-byte salt from the operating
       /// system CSPRNG and encode the result as a PHC string.
       ///
-      /// # Panics
-      ///
-      /// Panics if the platform entropy source fails.
-      ///
       /// # Errors
       ///
       /// Propagates any [`Argon2Error`] from parameter validation or input
-      /// length checks.
+      /// length checks. Returns [`Argon2Error::EntropyUnavailable`] if the
+      /// platform entropy source fails.
       #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       pub fn hash_string(
         params: &Argon2Params,
         password: &[u8],
       ) -> Result<alloc::string::String, Argon2Error> {
         let mut salt = [0u8; 16];
-        getrandom::fill(&mut salt).unwrap_or_else(|e| panic!("getrandom failed: {e}"));
+        getrandom::fill(&mut salt).map_err(|_| Argon2Error::EntropyUnavailable)?;
         Self::hash_string_with_salt(params, password, &salt)
       }
 

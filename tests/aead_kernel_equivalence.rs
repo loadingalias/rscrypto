@@ -1,8 +1,10 @@
-//! Forced-kernel AEAD backend equivalence vs the portable oracle.
+//! Forced-kernel ChaCha20 backend equivalence vs the portable oracle.
 //!
 //! Mirrors the `tests/argon2_kernels.rs` harness: drive every compiled SIMD
 //! backend (NEON / AVX2 / AVX-512 / VSX / z/Vector / RVV / simd128) with the
-//! same inputs and assert byte-identical output against the portable kernel.
+//! same ChaCha20 inputs and assert byte-identical output against the portable
+//! kernel. Full AEAD algorithms are covered by oracle tests that run under both
+//! normal dispatch and `portable-only` feature-matrix lanes.
 //!
 //! This is the test that catches CRIT-1 class silent kernel divergence —
 //! the bug that shipped on POWER VSX and s390x z/Vector for ChaCha20 prior

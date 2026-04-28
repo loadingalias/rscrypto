@@ -3,10 +3,7 @@
 //! Maps each AEAD primitive to the best available backend for a given platform,
 //! based on detected CPU capabilities.
 //!
-//! Two rules:
-//!
-//! - every primitive has an explicit backend for every benchmark lane
-//! - backend selection is derived from detected CPU capabilities
+//! Backend selection is derived from detected CPU capabilities.
 
 use crate::platform::{
   Arch, Caps,
@@ -14,6 +11,7 @@ use crate::platform::{
 };
 
 /// AEAD primitives on the public surface.
+#[allow(dead_code)] // Reduced-feature test builds can compile only byte wrappers, not live dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AeadPrimitive {
@@ -25,55 +23,8 @@ pub enum AeadPrimitive {
   Aegis256,
 }
 
-impl AeadPrimitive {
-  /// Primary AEAD set.
-  pub const CORE: [Self; 5] = [
-    Self::XChaCha20Poly1305,
-    Self::Aes256GcmSiv,
-    Self::Aes256Gcm,
-    Self::AsconAead128,
-    Self::Aegis256,
-  ];
-
-  /// All public AEAD primitives, including interop companions.
-  pub const ALL: [Self; 6] = [
-    Self::XChaCha20Poly1305,
-    Self::ChaCha20Poly1305,
-    Self::Aes256GcmSiv,
-    Self::Aes256Gcm,
-    Self::AsconAead128,
-    Self::Aegis256,
-  ];
-
-  /// Stable display name.
-  #[must_use]
-  pub const fn name(self) -> &'static str {
-    match self {
-      Self::XChaCha20Poly1305 => "xchacha20-poly1305",
-      Self::ChaCha20Poly1305 => "chacha20-poly1305",
-      Self::Aes256GcmSiv => "aes-256-gcm-siv",
-      Self::Aes256Gcm => "aes-256-gcm",
-      Self::AsconAead128 => "ascon-aead128",
-      Self::Aegis256 => "aegis-256",
-    }
-  }
-
-  /// Returns true for ChaCha20/Poly1305-based profiles.
-  #[inline]
-  #[must_use]
-  pub const fn is_chacha_family(self) -> bool {
-    matches!(self, Self::XChaCha20Poly1305 | Self::ChaCha20Poly1305)
-  }
-
-  /// Returns true for AES-GCM and AES-GCM-SIV profiles.
-  #[inline]
-  #[must_use]
-  pub const fn is_gcm_family(self) -> bool {
-    matches!(self, Self::Aes256GcmSiv | Self::Aes256Gcm)
-  }
-}
-
-/// Backend classes that future implementations are allowed to target.
+/// Backend classes selected by live dispatch.
+#[allow(dead_code)] // Some architecture-specific variants are only constructed on their target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum AeadBackend {
@@ -84,7 +35,6 @@ pub enum AeadBackend {
   X86Avx512,
   X86Aesni,
   X86AesniPclmul,
-  X86Vaes,
   X86VaesVpclmul,
   Aarch64Neon,
   Aarch64Aes,
@@ -104,13 +54,11 @@ pub enum AeadBackend {
   /// Kept as an explicit backend, but not selected for V-only RISC-V until
   /// it beats the scalar portable path on benchmark hardware.
   Riscv64Vperm,
-  /// Legacy bare-scalar RISC-V AES fallback label.
-  /// Retained for compatibility; runtime dispatch now prefers `Portable`.
-  Riscv64Ttable,
 }
 
 impl AeadBackend {
   /// Stable backend label for diagnostics and future benchmark grouping.
+  #[allow(dead_code)] // Used by `diag`; reduced-feature builds can compile dispatch without introspection.
   #[must_use]
   pub const fn name(self) -> &'static str {
     match self {
@@ -121,7 +69,6 @@ impl AeadBackend {
       Self::X86Avx512 => "x86_64/avx512",
       Self::X86Aesni => "x86_64/aesni",
       Self::X86AesniPclmul => "x86_64/aesni+pclmul",
-      Self::X86Vaes => "x86_64/vaes",
       Self::X86VaesVpclmul => "x86_64/vaes+vpclmul",
       Self::Aarch64Neon => "aarch64/neon",
       Self::Aarch64Aes => "aarch64/aes",
@@ -136,93 +83,7 @@ impl AeadBackend {
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
       Self::Riscv64Vector => "riscv64/vector",
       Self::Riscv64Vperm => "riscv64/vperm",
-      Self::Riscv64Ttable => "riscv64/ttable",
     }
-  }
-}
-
-/// Benchmark runners from `.github/workflows/bench.yaml`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum BenchLane {
-  IntelIcl,
-  IntelSpr,
-  AmdZen4,
-  AmdZen5,
-  Graviton3,
-  Graviton4,
-  IbmS390x,
-  IbmPower10,
-}
-
-impl BenchLane {
-  /// All benchmark lanes currently wired into the workflow.
-  pub const ALL: [Self; 8] = [
-    Self::IntelIcl,
-    Self::IntelSpr,
-    Self::AmdZen4,
-    Self::AmdZen5,
-    Self::Graviton3,
-    Self::Graviton4,
-    Self::IbmS390x,
-    Self::IbmPower10,
-  ];
-
-  /// Stable lane identifier used by CI planning scripts.
-  #[must_use]
-  pub const fn platform_name(self) -> &'static str {
-    match self {
-      Self::IntelIcl => "intel-icl",
-      Self::IntelSpr => "intel-spr",
-      Self::AmdZen4 => "amd-zen4",
-      Self::AmdZen5 => "amd-zen5",
-      Self::Graviton3 => "graviton3",
-      Self::Graviton4 => "graviton4",
-      Self::IbmS390x => "ibm-s390x",
-      Self::IbmPower10 => "ibm-power10",
-    }
-  }
-
-  /// Architecture family for the lane.
-  #[must_use]
-  pub const fn arch(self) -> Arch {
-    match self {
-      Self::IntelIcl | Self::IntelSpr | Self::AmdZen4 | Self::AmdZen5 => Arch::X86_64,
-      Self::Graviton3 | Self::Graviton4 => Arch::Aarch64,
-      Self::IbmS390x => Arch::S390x,
-      Self::IbmPower10 => Arch::Power,
-    }
-  }
-}
-
-/// Benchmark-lane backend target for a primitive.
-///
-/// This is the lane-native ceiling the future implementation is expected to
-/// compete with on that runner.
-#[must_use]
-pub const fn lane_target_backend(primitive: AeadPrimitive, lane: BenchLane) -> AeadBackend {
-  match primitive {
-    AeadPrimitive::XChaCha20Poly1305 | AeadPrimitive::ChaCha20Poly1305 => match lane {
-      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Avx512,
-      BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64Neon,
-      BenchLane::IbmS390x => AeadBackend::S390xVector,
-      BenchLane::IbmPower10 => AeadBackend::PowerVector,
-    },
-    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm => match lane {
-      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => {
-        AeadBackend::X86VaesVpclmul
-      }
-      BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64AesPmull,
-      BenchLane::IbmS390x => AeadBackend::S390xMsa,
-      BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
-    },
-    AeadPrimitive::AsconAead128 => AeadBackend::Portable,
-    AeadPrimitive::Aegis256 => match lane {
-      BenchLane::IntelIcl | BenchLane::IntelSpr | BenchLane::AmdZen4 | BenchLane::AmdZen5 => AeadBackend::X86Aesni,
-      BenchLane::Graviton3 | BenchLane::Graviton4 => AeadBackend::Aarch64Aes,
-      BenchLane::IbmS390x => AeadBackend::S390xVperm,
-      BenchLane::IbmPower10 => AeadBackend::Power8Crypto,
-    },
   }
 }
 
@@ -411,44 +272,11 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
 
 #[cfg(test)]
 mod tests {
-  use super::{AeadBackend, AeadPrimitive, BenchLane, lane_target_backend, select_backend};
+  use super::{AeadBackend, AeadPrimitive, select_backend};
   use crate::platform::{
     Arch, Caps,
     caps::{aarch64, power, riscv, s390x, wasm, x86},
   };
-
-  #[test]
-  fn every_core_primitive_has_a_backend_goal_for_every_bench_lane() {
-    for primitive in AeadPrimitive::CORE {
-      for lane in BenchLane::ALL {
-        let backend = lane_target_backend(primitive, lane);
-        assert_ne!(backend.name(), "");
-      }
-    }
-  }
-
-  #[test]
-  fn workflow_lane_names_match_manual_matrix_script() {
-    let workflow = include_str!("../../.github/workflows/bench.yaml");
-    let matrix_script = include_str!("../../scripts/ci/emit-manual-matrix.sh");
-
-    assert!(
-      workflow.contains("platforms:"),
-      "missing platforms workflow_dispatch input in bench workflow"
-    );
-    assert!(
-      workflow.contains("BENCH_PLATFORMS: ${{ inputs.platforms }}"),
-      "bench workflow no longer passes platforms input to the matrix script"
-    );
-
-    for lane in BenchLane::ALL {
-      let platform = lane.platform_name();
-      assert!(
-        matrix_script.contains(platform),
-        "missing {platform} in bench matrix script"
-      );
-    }
-  }
 
   #[test]
   fn gcm_prefers_x86_vaes_then_aesni() {
@@ -615,15 +443,5 @@ mod tests {
       select_backend(AeadPrimitive::AsconAead128, Arch::Wasm32, Caps::NONE),
       AeadBackend::WasmPortable
     );
-  }
-
-  #[test]
-  fn helper_sets_remain_stable() {
-    assert_eq!(AeadPrimitive::CORE.len(), 5);
-    assert_eq!(AeadPrimitive::ALL.len(), 6);
-    assert_eq!(BenchLane::ALL.len(), 8);
-    assert!(AeadPrimitive::XChaCha20Poly1305.is_chacha_family());
-    assert!(AeadPrimitive::Aes256Gcm.is_gcm_family());
-    assert!(!AeadPrimitive::AsconAead128.is_gcm_family());
   }
 }
