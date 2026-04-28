@@ -472,6 +472,7 @@ fn oneshot_small_into_with_params(
 
   if data.is_empty() {
     compress(&mut h, &block, BLOCK_SIZE as u128, true);
+    ct::zeroize(&mut block);
   } else {
     compress(&mut h, &block, BLOCK_SIZE as u128, false);
 
@@ -490,7 +491,6 @@ fn oneshot_small_into_with_params(
     // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
     unsafe { core::ptr::write_volatile(word, 0) };
   }
-  ct::zeroize(&mut block);
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -561,11 +561,13 @@ fn oneshot_hash_into_inner(
   compress(&mut h, &buf, t.as_u128(), true);
   write_output(&h, nn, out);
 
-  for word in &mut h {
-    // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(word, 0) };
+  if kk > 0 {
+    for word in &mut h {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    ct::zeroize(&mut buf);
   }
-  ct::zeroize(&mut buf);
 }
 
 #[inline]
