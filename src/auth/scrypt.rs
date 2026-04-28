@@ -129,6 +129,8 @@ pub enum ScryptError {
   ResourceOverflow,
   /// The allocator refused to provide the working-set buffers.
   AllocationFailed,
+  /// The platform entropy source failed while generating a PHC salt.
+  EntropyUnavailable,
 }
 
 impl fmt::Display for ScryptError {
@@ -140,6 +142,7 @@ impl fmt::Display for ScryptError {
       Self::InvalidOutputLen => "scrypt output length must be at least 1",
       Self::ResourceOverflow => "scrypt parameters exceed the target's address space",
       Self::AllocationFailed => "scrypt working-set allocation failed",
+      Self::EntropyUnavailable => "scrypt entropy source unavailable",
     })
   }
 }
@@ -858,18 +861,14 @@ impl Scrypt {
   /// Hash `password` with a fresh 16-byte salt from the operating system
   /// CSPRNG and encode the result as a PHC string.
   ///
-  /// # Panics
-  ///
-  /// Panics if the platform entropy source fails.
-  ///
   /// # Errors
   ///
   /// Propagates any [`ScryptError`] from parameter validation, input length
-  /// checks, or working-set allocation.
+  /// checks, working-set allocation, or entropy-source failure.
   #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
   pub fn hash_string(params: &ScryptParams, password: &[u8]) -> Result<alloc::string::String, ScryptError> {
     let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).unwrap_or_else(|e| panic!("getrandom failed: {e}"));
+    getrandom::fill(&mut salt).map_err(|_| ScryptError::EntropyUnavailable)?;
     Self::hash_string_with_salt(params, password, &salt)
   }
 
@@ -1287,6 +1286,7 @@ mod tests {
       ScryptError::InvalidOutputLen,
       ScryptError::ResourceOverflow,
       ScryptError::AllocationFailed,
+      ScryptError::EntropyUnavailable,
     ];
     for e in all {
       let s = alloc::format!("{e}");

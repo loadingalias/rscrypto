@@ -546,6 +546,8 @@ impl Aead for Aegis256 {
   }
 
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+    super::seal_bit_lengths(aad.len(), buffer.len())?;
+
     let key = self.key.as_bytes();
     let nonce = nonce.as_bytes();
 
@@ -620,6 +622,8 @@ impl Aead for Aegis256 {
     buffer: &mut [u8],
     tag: &Self::Tag,
   ) -> Result<(), OpenError> {
+    super::open_bit_lengths(aad.len(), buffer.len())?;
+
     let key = self.key.as_bytes();
     let nonce = nonce.as_bytes();
 

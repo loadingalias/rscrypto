@@ -12,11 +12,6 @@
 #![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
 #![allow(clippy::indexing_slicing)]
-// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
-// Rust 2024 requires explicit inner `unsafe` blocks even inside `unsafe fn`.
-// In this backend those blocks are mechanical consequences of target-feature and
-// asm helpers, not independent safety boundaries.
-#![allow(clippy::undocumented_unsafe_blocks)]
 
 use core::{
   arch::asm,
@@ -75,6 +70,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn clmul_lo(a: u64, b: u64) -> u64 {
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let out: u64;
       asm!(
@@ -91,6 +88,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn clmul_hi(a: u64, b: u64) -> u64 {
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let out: u64;
       asm!(
@@ -107,6 +106,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn mul64(a: u64, b: u64) -> Self {
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       Self {
         hi: Self::clmul_hi(a, b),
@@ -119,6 +120,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn fold_16(self, coeff: (u64, u64)) -> Self {
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let (coeff_high, coeff_low) = coeff;
       Self::mul64(self.low_64(), coeff_low) ^ Self::mul64(self.high_64(), coeff_high)
@@ -129,6 +132,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn fold_8(self, coeff: u64) -> Self {
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let prod = Self::mul64(self.low_64(), coeff);
       prod ^ Self::new(0, self.high_64())
@@ -139,6 +144,8 @@ impl Simd {
   #[inline]
   #[target_feature(enable = "zbc")]
   unsafe fn barrett(self, poly: u64, mu: u64) -> u64 {
+    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+    // buffers and register-only operands are established before this block.
     unsafe {
       let t1 = Self::clmul_lo(self.low_64(), mu);
       let l = Self::mul64(t1, poly);
@@ -217,6 +224,8 @@ fn load_block(block: &Block) -> [Simd; 8] {
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut acc = x[7];
     acc ^= x[0].fold_16(consts.tail_fold_16b[0]);
@@ -234,6 +243,8 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: (u64, u64)) {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     x[0] = chunk[0] ^ x[0].fold_16(coeff);
     x[1] = chunk[1] ^ x[1].fold_16(coeff);
@@ -249,6 +260,8 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: (u64, u64)
 #[inline]
 #[target_feature(enable = "zbc")]
 unsafe fn xor_fold_stream(combined: &mut [Simd; 8], stream: &[Simd; 8], coeff: (u64, u64)) {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut lane = 0usize;
     while lane < 8 {
@@ -260,6 +273,8 @@ unsafe fn xor_fold_stream(combined: &mut [Simd; 8], stream: &[Simd; 8], coeff: (
 
 #[target_feature(enable = "zbc")]
 unsafe fn update_simd(state: u64, first: &Block, rest: &[Block], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut x = load_block(first);
 
@@ -278,6 +293,8 @@ unsafe fn update_simd(state: u64, first: &Block, rest: &[Block], consts: &Crc64C
 
 #[target_feature(enable = "zbc")]
 unsafe fn update_simd_2way(state: u64, blocks: &[Block], fold_256b: (u64, u64), consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -337,6 +354,8 @@ unsafe fn update_simd_4way(
   combine: &[(u64, u64); 3],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -423,6 +442,8 @@ unsafe fn update_simd_8way(
   combine: &[(u64, u64); 7],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -517,6 +538,8 @@ fn load_block_split(block: &Block) -> ([u64; 8], [u64; 8]) {
 #[inline]
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn mul64_zvbc(a: u64, b: u64) -> Simd {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let lo: u64;
     let hi: u64;
@@ -543,6 +566,8 @@ unsafe fn mul64_zvbc(a: u64, b: u64) -> Simd {
 #[inline]
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn fold_16_zvbc(x: Simd, coeff: (u64, u64)) -> Simd {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (coeff_high, coeff_low) = coeff;
     mul64_zvbc(x.low_64(), coeff_low) ^ mul64_zvbc(x.high_64(), coeff_high)
@@ -552,6 +577,8 @@ unsafe fn fold_16_zvbc(x: Simd, coeff: (u64, u64)) -> Simd {
 #[inline]
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn fold_8_zvbc(x: Simd, coeff: u64) -> Simd {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let prod = mul64_zvbc(x.low_64(), coeff);
     Simd::new(prod.high_64(), prod.low_64() ^ x.high_64())
@@ -561,6 +588,8 @@ unsafe fn fold_8_zvbc(x: Simd, coeff: u64) -> Simd {
 #[inline]
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn barrett_zvbc(x: Simd, poly: u64, mu: u64) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let t1 = mul64_zvbc(x.low_64(), mu).low_64();
     let l = mul64_zvbc(t1, poly);
@@ -571,6 +600,8 @@ unsafe fn barrett_zvbc(x: Simd, poly: u64, mu: u64) -> u64 {
 #[inline]
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn fold_tail_zvbc(hi: [u64; 8], lo: [u64; 8], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut acc = Simd::new(hi[7], lo[7]);
     acc ^= fold_16_zvbc(Simd::new(hi[0], lo[0]), consts.tail_fold_16b[0]);
@@ -594,6 +625,8 @@ unsafe fn fold_block_128_zvbc(
   coeff_low: u64,
   coeff_high: u64,
 ) {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let mut offset = 0usize;
     while offset < 8 {
@@ -638,6 +671,8 @@ unsafe fn fold_block_128_zvbc(
 
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn update_simd_zvbc(state: u64, first: &Block, rest: &[Block], consts: &Crc64ClmulConstants) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (mut x_hi, mut x_lo) = load_block_split(first);
 
@@ -663,6 +698,8 @@ unsafe fn update_simd_zvbc_2way(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -723,6 +760,8 @@ unsafe fn update_simd_zvbc_4way(
   combine: &[(u64, u64); 3],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     debug_assert!(!blocks.is_empty());
 
@@ -811,6 +850,8 @@ unsafe fn update_simd_zvbc_4way(
 
 #[target_feature(enable = "zbc")]
 unsafe fn crc64_zbc(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 16]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -839,6 +880,8 @@ unsafe fn crc64_zbc(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, 
 
 #[target_feature(enable = "v", enable = "zvbc")]
 unsafe fn crc64_zvbc(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 16]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -873,6 +916,8 @@ unsafe fn crc64_zbc_2way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -905,6 +950,8 @@ unsafe fn crc64_zvbc_2way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -938,6 +985,8 @@ unsafe fn crc64_zbc_4way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -971,6 +1020,8 @@ unsafe fn crc64_zbc_8way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -1002,6 +1053,8 @@ unsafe fn crc64_zvbc_4way(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 16],
 ) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     let (left, middle, right) = bytes.align_to::<u64>();
 
@@ -1034,6 +1087,8 @@ unsafe fn crc64_zvbc_4way(
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_xz_zbc(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc(
       crc,
@@ -1052,6 +1107,8 @@ pub(crate) unsafe fn crc64_xz_zbc(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZVBC)`.
 #[target_feature(enable = "v", enable = "zvbc")]
 pub(crate) unsafe fn crc64_xz_zvbc(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zvbc(
       crc,
@@ -1070,6 +1127,8 @@ pub(crate) unsafe fn crc64_xz_zvbc(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_xz_zbc_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc_2way(
       crc,
@@ -1089,6 +1148,8 @@ pub(crate) unsafe fn crc64_xz_zbc_2way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZVBC)`.
 #[target_feature(enable = "v", enable = "zvbc")]
 pub(crate) unsafe fn crc64_xz_zvbc_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zvbc_2way(
       crc,
@@ -1108,6 +1169,8 @@ pub(crate) unsafe fn crc64_xz_zvbc_2way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_xz_zbc_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc_4way(
       crc,
@@ -1128,6 +1191,8 @@ pub(crate) unsafe fn crc64_xz_zbc_4way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_xz_zbc_8way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc_8way(
       crc,
@@ -1148,6 +1213,8 @@ pub(crate) unsafe fn crc64_xz_zbc_8way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZVBC)`.
 #[target_feature(enable = "v", enable = "zvbc")]
 pub(crate) unsafe fn crc64_xz_zvbc_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zvbc_4way(
       crc,
@@ -1168,6 +1235,8 @@ pub(crate) unsafe fn crc64_xz_zvbc_4way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_nvme_zbc(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc(
       crc,
@@ -1186,6 +1255,8 @@ pub(crate) unsafe fn crc64_nvme_zbc(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZVBC)`.
 #[target_feature(enable = "v", enable = "zvbc")]
 pub(crate) unsafe fn crc64_nvme_zvbc(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zvbc(
       crc,
@@ -1204,6 +1275,8 @@ pub(crate) unsafe fn crc64_nvme_zvbc(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_nvme_zbc_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc_2way(
       crc,
@@ -1223,6 +1296,8 @@ pub(crate) unsafe fn crc64_nvme_zbc_2way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZVBC)`.
 #[target_feature(enable = "v", enable = "zvbc")]
 pub(crate) unsafe fn crc64_nvme_zvbc_2way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zvbc_2way(
       crc,
@@ -1242,6 +1317,8 @@ pub(crate) unsafe fn crc64_nvme_zvbc_2way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_nvme_zbc_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc_4way(
       crc,
@@ -1262,6 +1339,8 @@ pub(crate) unsafe fn crc64_nvme_zbc_4way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZBC)`.
 #[target_feature(enable = "zbc")]
 pub(crate) unsafe fn crc64_nvme_zbc_8way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zbc_8way(
       crc,
@@ -1282,6 +1361,8 @@ pub(crate) unsafe fn crc64_nvme_zbc_8way(crc: u64, data: &[u8]) -> u64 {
 /// `crate::platform::caps().has(riscv::ZVBC)`.
 #[target_feature(enable = "v", enable = "zvbc")]
 pub(crate) unsafe fn crc64_nvme_zvbc_4way(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe {
     crc64_zvbc_4way(
       crc,
@@ -1300,70 +1381,98 @@ pub(crate) unsafe fn crc64_nvme_zvbc_4way(crc: u64, data: &[u8]) -> u64 {
 
 #[inline]
 pub fn crc64_xz_zbc_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zbc(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_zvbc_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zvbc(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_zbc_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zbc_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_zvbc_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zvbc_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_zbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zbc_4way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_zbc_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zbc_8way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_xz_zvbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_xz_zvbc_4way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zbc_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zbc(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zvbc_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zvbc(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zbc_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zbc_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zvbc_2way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zvbc_2way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zbc_4way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zbc_8way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zbc_8way(crc, data) }
 }
 
 #[inline]
 pub fn crc64_nvme_zvbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
+  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
+  // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zvbc_4way(crc, data) }
 }

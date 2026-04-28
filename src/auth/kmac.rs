@@ -41,7 +41,7 @@ impl Kmac256 {
 
   #[inline]
   fn absorb_key(state: &mut Cshake256, key: &[u8]) {
-    let (key_prefix, key_prefix_len) = left_encode(crate::bytes_to_bits_saturating(key.len()));
+    let (key_prefix, key_prefix_len) = left_encode(crate::bytes_to_bits(key.len()));
     let payload_len = key_prefix_len.strict_add(key.len());
     state.absorb_bytepad_segments(&[&key_prefix[..key_prefix_len], key], payload_len);
   }
@@ -49,7 +49,7 @@ impl Kmac256 {
   #[inline]
   fn finalize_reader(&self, output_len: usize) -> impl Xof {
     let mut state = self.state.clone();
-    let (suffix, suffix_len) = right_encode(crate::bytes_to_bits_saturating(output_len));
+    let (suffix, suffix_len) = right_encode(crate::bytes_to_bits(output_len));
     state.update(&suffix[..suffix_len]);
     state.finalize_xof()
   }

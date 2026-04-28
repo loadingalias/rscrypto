@@ -416,6 +416,7 @@ fn compress_direct(h: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bo
   compress(h, block, t, last);
 }
 
+#[inline(always)]
 #[allow(clippy::indexing_slicing)]
 fn write_output(h: &[u64; 8], nn: u8, out: &mut [u8]) {
   let nn = nn as usize;
@@ -444,6 +445,7 @@ fn write_output(h: &[u64; 8], nn: u8, out: &mut [u8]) {
   }
 }
 
+#[inline(always)]
 #[allow(clippy::indexing_slicing)]
 fn oneshot_small_into_with_params(
   nn: u8,
@@ -493,6 +495,7 @@ fn oneshot_small_into_with_params(
   }
 }
 
+#[inline(always)]
 #[allow(clippy::indexing_slicing)]
 fn oneshot_hash_into_inner(
   nn: u8,
@@ -570,7 +573,7 @@ fn oneshot_hash_into_inner(
   }
 }
 
-#[inline]
+#[inline(always)]
 fn oneshot_hash_into_with_params(
   nn: u8,
   key: &[u8],
@@ -582,7 +585,7 @@ fn oneshot_hash_into_with_params(
   oneshot_hash_into_inner(nn, key, Some((salt, personal)), data, out);
 }
 
-#[inline]
+#[inline(always)]
 fn oneshot_hash_into(nn: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
   oneshot_hash_into_inner(nn, key, None, data, out);
 }

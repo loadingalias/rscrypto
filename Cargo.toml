@@ -1,6 +1,6 @@
 [package]
 name = "rscrypto"
-description = "Pure Rust cryptography. Hardware-accelerated. Zero dependencies."
+description = "Pure Rust cryptography. Hardware-accelerated. Zero default dependencies."
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95.0"
@@ -119,6 +119,9 @@ key-exchange = ["x25519"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
 full = ["checksums", "hashes", "auth", "aead"]
+getrandom = ["dep:getrandom"]
+serde = ["dep:serde"]
+serde-secrets = ["serde"]
 parallel = ["std", "blake3", "argon2", "dep:rayon"]
 diag = ["std"]
 

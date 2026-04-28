@@ -1,8 +1,8 @@
-//! Serde round-trip tests for all types with `impl_serde_bytes!`.
+//! Serde round-trip tests for byte-wrapper serde implementations.
 //!
 //! Each type is serialized to JSON and deserialized back, asserting byte-level
-//! equality. This catches encoding bugs that would silently corrupt keys, tags,
-//! nonces, and signatures over the wire.
+//! equality. This catches encoding bugs that would silently corrupt tags,
+//! nonces, public keys, signatures, and explicitly opted-in secrets.
 
 #![cfg(feature = "serde")]
 
@@ -39,48 +39,66 @@ mod aead_nonces {
 // ── AEAD keys and tags ──────────────────────────────────────────────────────
 #[cfg(feature = "chacha20poly1305")]
 mod chacha20poly1305_serde {
-  use rscrypto::aead::{ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::ChaCha20Poly1305Key;
+  use rscrypto::aead::ChaCha20Poly1305Tag;
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, ChaCha20Poly1305Key, 32);
   serde_roundtrip!(tag, ChaCha20Poly1305Tag, 16);
 }
 
 #[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305_serde {
-  use rscrypto::aead::{XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::XChaCha20Poly1305Key;
+  use rscrypto::aead::XChaCha20Poly1305Tag;
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, XChaCha20Poly1305Key, 32);
   serde_roundtrip!(tag, XChaCha20Poly1305Tag, 16);
 }
 
 #[cfg(feature = "aes-gcm")]
 mod aes256gcm_serde {
-  use rscrypto::aead::{Aes256GcmKey, Aes256GcmTag};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::Aes256GcmKey;
+  use rscrypto::aead::Aes256GcmTag;
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, Aes256GcmKey, 32);
   serde_roundtrip!(tag, Aes256GcmTag, 16);
 }
 
 #[cfg(feature = "aes-gcm-siv")]
 mod aes256gcmsiv_serde {
-  use rscrypto::aead::{Aes256GcmSivKey, Aes256GcmSivTag};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::Aes256GcmSivKey;
+  use rscrypto::aead::Aes256GcmSivTag;
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, Aes256GcmSivKey, 32);
   serde_roundtrip!(tag, Aes256GcmSivTag, 16);
 }
 
 #[cfg(feature = "ascon-aead")]
 mod ascon128_serde {
-  use rscrypto::aead::{AsconAead128Key, AsconAead128Tag};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::AsconAead128Key;
+  use rscrypto::aead::AsconAead128Tag;
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, AsconAead128Key, 16);
   serde_roundtrip!(tag, AsconAead128Tag, 16);
 }
 
 #[cfg(feature = "aegis256")]
 mod aegis256_serde {
-  use rscrypto::aead::{Aegis256Key, Aegis256Tag};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::Aegis256Key;
+  use rscrypto::aead::Aegis256Tag;
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, Aegis256Key, 32);
   serde_roundtrip!(tag, Aegis256Tag, 16);
 }
@@ -88,8 +106,11 @@ mod aegis256_serde {
 // ── Auth keys and signatures ────────────────────────────────────────────────
 #[cfg(feature = "ed25519")]
 mod ed25519_serde {
-  use rscrypto::{Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::Ed25519SecretKey;
+  use rscrypto::{Ed25519PublicKey, Ed25519Signature};
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(secret_key, Ed25519SecretKey, 32);
   serde_roundtrip!(public_key, Ed25519PublicKey, 32);
   serde_roundtrip!(signature, Ed25519Signature, 64);
@@ -97,10 +118,14 @@ mod ed25519_serde {
 
 #[cfg(feature = "x25519")]
 mod x25519_serde {
-  use rscrypto::{X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+  use rscrypto::X25519PublicKey;
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::{X25519SecretKey, X25519SharedSecret};
 
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(secret_key, X25519SecretKey, 32);
   serde_roundtrip!(public_key, X25519PublicKey, 32);
+  #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(shared_secret, X25519SharedSecret, 32);
 }
 

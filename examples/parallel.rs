@@ -73,7 +73,16 @@ fn parallel_chunks() {
 
   // Parallel: compute each chunk's CRC, then combine
   let chunks: Vec<_> = data.chunks(chunk_size).collect();
-  let chunk_crcs: Vec<_> = chunks.iter().map(|c| Crc64::checksum(c)).collect();
+  let chunk_crcs: Vec<_> = thread::scope(|scope| {
+    let handles: Vec<_> = chunks
+      .iter()
+      .map(|&chunk| scope.spawn(move || Crc64::checksum(chunk)))
+      .collect();
+    handles
+      .into_iter()
+      .map(|handle| handle.join().expect("thread panicked"))
+      .collect()
+  });
 
   // Combine all chunk CRCs
   let mut parallel = chunk_crcs[0];
@@ -103,23 +112,17 @@ fn threaded_example() {
   // Split data into chunks with their indices
   let chunks: Vec<(usize, &[u8])> = data.chunks(chunk_size).enumerate().collect();
 
-  // Spawn threads to compute each chunk's CRC
-  let handles: Vec<_> = chunks
-    .into_iter()
-    .map(|(idx, chunk)| {
-      let chunk = chunk.to_vec(); // Clone for thread ownership
-      thread::spawn(move || {
-        let crc = Crc64::checksum(&chunk);
-        (idx, crc, chunk.len())
-      })
-    })
-    .collect();
-
-  // Collect results in order
-  let mut results: Vec<(usize, u64, usize)> = handles
-    .into_iter()
-    .map(|h| h.join().expect("thread panicked"))
-    .collect();
+  // Spawn scoped threads to compute each chunk's CRC without copying chunk data.
+  let mut results: Vec<(usize, u64, usize)> = thread::scope(|scope| {
+    let handles: Vec<_> = chunks
+      .iter()
+      .map(|&(idx, chunk)| scope.spawn(move || (idx, Crc64::checksum(chunk), chunk.len())))
+      .collect();
+    handles
+      .into_iter()
+      .map(|handle| handle.join().expect("thread panicked"))
+      .collect()
+  });
   results.sort_by_key(|(idx, _, _)| *idx);
 
   // Combine in order

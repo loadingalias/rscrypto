@@ -238,13 +238,20 @@ mod secret;
 ))]
 pub mod hashes;
 
-#[cfg_attr(not(any(feature = "kmac", feature = "ascon-hash")), allow(dead_code))]
+#[cfg_attr(
+  not(any(feature = "kmac", feature = "ascon-hash", feature = "sha3")),
+  allow(dead_code)
+)]
 #[inline]
-pub(crate) fn bytes_to_bits_saturating(len: usize) -> u64 {
-  match u64::try_from(len) {
-    Ok(value) => value.saturating_mul(8),
-    Err(_) => u64::MAX,
-  }
+#[track_caller]
+pub(crate) fn bytes_to_bits(len: usize) -> u64 {
+  let Ok(bytes) = u64::try_from(len) else {
+    panic!("byte length exceeds u64");
+  };
+  let Some(bits) = bytes.checked_mul(8) else {
+    panic!("byte length bit count exceeds u64");
+  };
+  bits
 }
 
 // Checksum re-exports.
@@ -548,6 +555,21 @@ pub struct __ApiPatternAudit;
 
 #[cfg(all(test, miri))]
 mod miri_shadow_tests;
+
+#[cfg(test)]
+mod length_framing_tests {
+  #[test]
+  fn bytes_to_bits_accepts_max_encodable_len() {
+    assert_eq!(super::bytes_to_bits((u64::MAX / 8) as usize), u64::MAX - 7);
+  }
+
+  #[test]
+  #[cfg(target_pointer_width = "64")]
+  #[should_panic(expected = "byte length bit count exceeds u64")]
+  fn bytes_to_bits_rejects_bit_count_overflow() {
+    let _ = super::bytes_to_bits((u64::MAX / 8).strict_add(1) as usize);
+  }
+}
 
 #[cfg(test)]
 mod send_sync_assertions {

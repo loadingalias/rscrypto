@@ -209,7 +209,7 @@ fn compute_tag(
   acc = ghash_update_padded(acc, h_polyval, aad);
   acc = ghash_update_padded(acc, h_polyval, ciphertext);
 
-  let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
+  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
   acc ^= u128::from_be_bytes(length_block);
   acc = polyval::clmul128_reduce(acc, h_polyval);
 
@@ -284,7 +284,7 @@ fn compute_tag_short_wide(
     return Ok(None);
   }
 
-  let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
+  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
   if !ghash_collect_padded_block(&mut sequence, &mut block_count, u128::from_be_bytes(length_block)) {
     return Ok(None);
   }
@@ -367,7 +367,7 @@ fn compute_tag_wide(
   }
 
   // Length block.
-  let length_block = super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()).to_be_bits_block();
+  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
   acc ^= u128::from_be_bytes(length_block);
   acc = polyval::clmul128_reduce(acc, h_polyval);
 
@@ -438,6 +438,7 @@ impl Aead for Aes256Gcm {
 
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+    super::seal_bit_lengths(aad.len(), buffer.len())?;
 
     let j0 = make_j0(nonce);
     let mut ctr_block = j0;
@@ -476,6 +477,7 @@ impl Aead for Aes256Gcm {
     tag: &Self::Tag,
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+    super::open_bit_lengths(aad.len(), buffer.len())?;
 
     let j0 = make_j0(nonce);
 

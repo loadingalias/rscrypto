@@ -1,12 +1,16 @@
-//! Checksum and hash kernel introspection.
+//! Checksum, hash, and AEAD kernel introspection.
 //!
 //! This example shows how to inspect which kernels are selected for your
 //! platform, useful for verifying hardware acceleration is enabled.
 //!
-//! Run with: `cargo run --example introspect --features checksums,hashes,diag`
+//! Run with: `cargo run --example introspect --features checksums,hashes,aead,diag`
 
 use rscrypto::{
   Blake3, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, RapidHash, Sha256, Shake256, Xxh3,
+  aead::introspect::{
+    aegis256_backend, aes256gcm_backend, aes256gcmsiv_backend, ascon_aead128_backend, chacha20poly1305_backend,
+    xchacha20poly1305_backend,
+  },
   checksum::introspect::{DispatchInfo, KernelIntrospect, kernel_for},
   hashes::introspect::kernel_for as hash_kernel_for,
 };
@@ -21,6 +25,7 @@ fn main() {
   hash_kernel_probes();
   hash_size_based_dispatch();
   generic_hash_introspection();
+  aead_backend_probes();
 }
 
 /// Display detected platform capabilities.
@@ -149,4 +154,16 @@ fn generic_hash_introspection() {
   report::<Shake256>("SHAKE-256", &sizes);
   report::<Blake3>("BLAKE3", &sizes);
   report::<Xxh3>("XXH3", &sizes);
+}
+
+/// AEAD backend labels report the active authenticated-encryption path.
+fn aead_backend_probes() {
+  println!("\nAEAD backends\n");
+
+  println!("AES-256-GCM:          {}", aes256gcm_backend());
+  println!("AES-256-GCM-SIV:      {}", aes256gcmsiv_backend());
+  println!("ChaCha20-Poly1305:    {}", chacha20poly1305_backend());
+  println!("XChaCha20-Poly1305:   {}", xchacha20poly1305_backend());
+  println!("AEGIS-256:            {}", aegis256_backend());
+  println!("Ascon-AEAD128:        {}", ascon_aead128_backend());
 }

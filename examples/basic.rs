@@ -146,8 +146,9 @@ fn hex_api() {
   println!("FromStr:  round-trip succeeded");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-  println!("\nSecret Debug: {key:?}");
-  println!("display_secret(): {}", key.display_secret());
+  let key_debug = format!("{key:?}");
+  assert_eq!(key_debug, "ChaCha20Poly1305Key(****)");
+  println!("\nSecret Debug: {key_debug}");
 
   let ed_sk = Ed25519SecretKey::from_bytes([7u8; 32]);
   let kp = Ed25519Keypair::from_secret_key(ed_sk);

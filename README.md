@@ -107,7 +107,7 @@ assert!(Scrypt::verify_string_with_policy(b"wrong", &encoded, &ScryptVerifyPolic
 | Fast hashes | `Type::hash(data)` | -- | -- |
 
 Key, nonce, tag, and signature types round-trip through `from_bytes` / `to_bytes` / `as_bytes`.
-Secret key types mask `Debug` output; use `display_secret()` for hex.
+Secret key types mask `Debug` output; explicit secret display/export APIs are opt-in and should not be logged.
 
 ## Complete Type Inventory
 
@@ -286,7 +286,8 @@ This table classifies APIs only; it is not a validation claim.
 | `parallel` | No | Rayon-backed parallel Blake3 and Argon2 lane parallelism. Implies `std` + `blake3` + `argon2` |
 | `portable-only` | No | Force portable backends (FIPS / DO-178C / ISO 26262 deployment posture); suppresses runtime SIMD invocation |
 | `getrandom` | No | `random()` constructors on key/nonce types and random-salt PHC password hashing |
-| `serde` | No | `Serialize`/`Deserialize` on keys, nonces, tags, signatures |
+| `serde` | No | `Serialize`/`Deserialize` on non-secret byte wrappers: nonces, tags, public keys, signatures |
+| `serde-secrets` | No | Explicit raw-byte `Serialize`/`Deserialize` for secret keys and shared secrets. Implies `serde` |
 | `diag` | No | Dispatch introspection. Implies `std` |
 
 Leaf features: `crc16`, `crc24`, `crc32`, `crc64`, `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash`, `xxh3`, `rapidhash`, `hmac`, `hkdf`, `pbkdf2`, `kmac`, `ed25519`, `x25519`, `argon2`, `scrypt`, `phc-strings`, `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead`.
@@ -328,8 +329,8 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 | Feature matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
 | Property tests | 256 cases per proptest, run alongside unit + integration | `just test` (nextest) |
 | Miri | Memory safety under Stacked Borrows | `just test-miri` |
-| Fuzz | 32 targets with differential oracles (15 oracle crates) | `just test-fuzz` |
-| Coverage | Nextest + fuzz corpus LCOV | `just coverage` |
+| Fuzz | Full fuzz suite plus scoped package harnesses with differential oracles | `just test-fuzz` |
+| Coverage | Nextest + fuzz corpus LCOV | `just test-all-coverage` |
 | Supply chain | `cargo deny` + `cargo audit` | Weekly CI |
 
 ## Module Hierarchy

@@ -25,14 +25,6 @@ fn encode_u64_be(value: u64, out: &mut [u8; 9], right: bool) -> usize {
 }
 
 #[inline]
-fn bits_from_len(len: usize) -> u64 {
-  match u64::try_from(len) {
-    Ok(value) => value.saturating_mul(8),
-    Err(_) => u64::MAX,
-  }
-}
-
-#[inline]
 pub(crate) fn left_encode(value: u64) -> ([u8; 9], usize) {
   let mut out = [0u8; 9];
   let len = encode_u64_be(value, &mut out, false);
@@ -49,7 +41,7 @@ pub(crate) fn right_encode(value: u64) -> ([u8; 9], usize) {
 
 #[inline]
 pub(crate) fn encoded_string_len(data: &[u8]) -> usize {
-  left_encode(bits_from_len(data.len())).1.strict_add(data.len())
+  left_encode(crate::bytes_to_bits(data.len())).1.strict_add(data.len())
 }
 
 pub(crate) fn absorb_bytepad<const RATE: usize>(core: &mut KeccakCore<RATE>, segments: &[&[u8]], payload_len: usize) {

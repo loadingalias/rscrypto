@@ -23,6 +23,7 @@
 - `Aes256Gcm`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, and `Aegis256` require nonce uniqueness per key.
 - `Aes256GcmSiv` is misuse-resistant, but nonce reuse is still not the normal operating model.
 - Typed nonce wrappers prevent length mistakes, not lifecycle mistakes.
+- Nonce wrappers intentionally do not implement `Default`; all-zero nonces must be constructed explicitly.
 - For `Aes256Gcm`, prefer monotonic counters or protocol sequence numbers over ad hoc random nonces.
 
 ## Random Constructors
@@ -30,14 +31,21 @@
 - Prefer `try_random()` in services and long-running processes.
 - `random()` is a convenience wrapper that panics if the platform entropy source fails.
 
+## Secret Serialization
+
+- Secret key and shared-secret types mask `Debug`, but raw bytes remain extractable by explicit API.
+- The optional `serde` feature covers non-secret byte wrappers such as nonces, tags, public keys, and
+  signatures.
+- The optional `serde-secrets` feature serializes raw secret-key and shared-secret bytes. Enable it
+  only for controlled key-material storage or protocol formats, not for logs, telemetry, or broad
+  application DTOs.
+
 ## RISC-V AES And AEGIS
 
 - Bare-scalar `riscv64` targets without `Zkne`, `Zvkned`, or `V` use the constant-time portable AES and
   AES-round fallback.
 - Expect a large throughput drop on that path relative to hardware or vector backends.
 - Secret-indexed AES lookup tables are not used on the fallback path.
-- The legacy `Riscv64Ttable` diagnostic label maps to portable code and is not selected as a live
-  secret-indexed lookup-table backend.
 
 ## Post-Quantum Planning
 

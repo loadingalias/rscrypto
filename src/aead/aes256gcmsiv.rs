@@ -335,7 +335,7 @@ fn expand_key_riscv_for_backend(key: &[u8; 32], backend: AeadBackend) -> aes::Ae
     AeadBackend::Riscv64VectorCrypto => aes::aes256_expand_key_riscv_vector(key),
     AeadBackend::Riscv64ScalarCrypto => aes::aes256_expand_key_riscv_scalar(key),
     AeadBackend::Riscv64Vperm => aes::aes256_expand_key_riscv_vperm(key),
-    AeadBackend::Portable | AeadBackend::Riscv64Ttable => aes::aes256_expand_key_riscv_ttable(key),
+    AeadBackend::Portable => aes::aes256_expand_key_riscv_ttable(key),
     _ => aes::aes256_expand_key_riscv_ttable(key),
   }
 }
@@ -361,7 +361,7 @@ fn riscv_polyval_backend(backend: AeadBackend) -> RiscvPolyvalBackend {
   match backend {
     AeadBackend::Riscv64VectorCrypto => RiscvPolyvalBackend::Vector,
     AeadBackend::Riscv64ScalarCrypto => RiscvPolyvalBackend::Scalar,
-    AeadBackend::Portable | AeadBackend::Riscv64Vperm | AeadBackend::Riscv64Ttable => {
+    AeadBackend::Portable | AeadBackend::Riscv64Vperm => {
       let caps = crate::platform::caps();
       if caps.has(crate::platform::caps::riscv::ZBC) || caps.has(crate::platform::caps::riscv::ZBKC) {
         RiscvPolyvalBackend::Scalar
@@ -1423,6 +1423,7 @@ impl Aead for Aes256GcmSiv {
 
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+    super::seal_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
@@ -1475,8 +1476,7 @@ impl Aead for Aes256GcmSiv {
         AeadBackend::Portable
         | AeadBackend::Riscv64VectorCrypto
         | AeadBackend::Riscv64ScalarCrypto
-        | AeadBackend::Riscv64Vperm
-        | AeadBackend::Riscv64Ttable => {
+        | AeadBackend::Riscv64Vperm => {
           let tag_bytes = encrypt_riscv(&self.master_ek, self.backend, nonce, aad, buffer);
           return Ok(Aes256GcmSivTag::from_bytes(tag_bytes));
         }
@@ -1506,6 +1506,7 @@ impl Aead for Aes256GcmSiv {
     tag: &Self::Tag,
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+    super::open_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
     #[cfg(target_arch = "x86_64")]
@@ -1565,8 +1566,7 @@ impl Aead for Aes256GcmSiv {
         AeadBackend::Portable
         | AeadBackend::Riscv64VectorCrypto
         | AeadBackend::Riscv64ScalarCrypto
-        | AeadBackend::Riscv64Vperm
-        | AeadBackend::Riscv64Ttable => {
+        | AeadBackend::Riscv64Vperm => {
           return decrypt_riscv(&self.master_ek, self.backend, nonce, aad, buffer, tag).map_err(OpenError::from);
         }
         _ => {}

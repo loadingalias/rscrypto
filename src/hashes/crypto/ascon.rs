@@ -895,7 +895,7 @@ impl AsconCxof128 {
     > = Sponge::default();
     permute_12_portable(&mut sponge.state);
 
-    let customization_bits = crate::bytes_to_bits_saturating(customization.len());
+    let customization_bits = crate::bytes_to_bits(customization.len());
     sponge.absorb_block(&customization_bits.to_le_bytes());
 
     let (blocks, rest) = customization.as_chunks::<RATE>();
