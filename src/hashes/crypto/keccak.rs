@@ -766,7 +766,11 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
 // On aarch64/s390x, `PlatformPermuter` is NOT `InlinePermuter`, so the
 // portable-reference type alias needs its own `Default`. On other targets
 // `PlatformPermuter = InlinePermuter` and the impl above already covers it.
-#[cfg(all(any(test, feature = "std"), not(miri), any(target_arch = "aarch64", target_arch = "s390x")))]
+#[cfg(all(
+  any(test, feature = "std"),
+  not(miri),
+  any(target_arch = "aarch64", target_arch = "s390x")
+))]
 impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, InlinePermuter, ZEROIZE> {
   #[inline]
   fn default() -> Self {
