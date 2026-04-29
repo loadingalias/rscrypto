@@ -313,13 +313,10 @@ impl FieldElement {
   #[allow(dead_code)]
   #[cfg(any(feature = "ed25519", feature = "x25519"))]
   pub(crate) fn sqrt(&self) -> Option<Self> {
-    self.sqrt_ratio_i(&Self::ONE).and_then(|candidate| {
-      if candidate.square().normalize() == self.normalize() {
-        Some(candidate)
-      } else {
-        None
-      }
-    })
+    let normalized = self.normalize();
+    self
+      .sqrt_ratio_i(&Self::ONE)
+      .filter(|candidate| candidate.square().normalize() == normalized)
   }
 
   #[must_use]

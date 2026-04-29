@@ -1076,7 +1076,7 @@ mod tests {
   // ── Differential: rscrypto vs RustCrypto `scrypt` ─────────────────────
 
   fn oracle_scrypt(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, out_len: usize) -> alloc::vec::Vec<u8> {
-    let params = scrypt::Params::new(log_n, r, p, out_len).unwrap();
+    let params = scrypt::Params::new(log_n, r, p).unwrap();
     let mut out = vec![0u8; out_len];
     scrypt::scrypt(password, salt, &params, &mut out).unwrap();
     out

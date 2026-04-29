@@ -46,31 +46,6 @@ impl Permuter for InlinePermuter {
   }
 }
 
-#[cfg(any(test, feature = "std"))]
-#[allow(dead_code)]
-#[derive(Clone, Copy)]
-struct DispatchPermuter {
-  dispatch: crate::hashes::crypto::dispatch_util::SizeClassDispatch<fn(&mut [u64; 5])>,
-}
-
-#[cfg(any(test, feature = "std"))]
-impl Default for DispatchPermuter {
-  #[inline]
-  fn default() -> Self {
-    Self {
-      dispatch: dispatch::permute_dispatch(),
-    }
-  }
-}
-
-#[cfg(any(test, feature = "std"))]
-impl Permuter for DispatchPermuter {
-  #[inline(always)]
-  fn permute(self, state: &mut [u64; 5], len_hint: usize) {
-    (self.dispatch.select(len_hint))(state);
-  }
-}
-
 // Ascon permutation round constants (12 rounds).
 // Used by SIMD kernels; the shared portable permutation inlines the constants.
 #[allow(dead_code)]

@@ -18,9 +18,11 @@ AGENTS.md
 *.pem
 *.key
 
-# Personal - Notes, Docs, Examples, Testing, etc.
-private/tasks/*
+# Junk
+private/tasks/fips.md
+private/tasks/pqe_pqc.md
 benchmark_results/*
+docs/llvm-ppc64le-readvolatile-issue.md
 
 # Fuzzing
 corpus
@@ -34,3 +36,4 @@ fuzz-packages/**/Cargo.lock
 
 # Testing
 proptest-regressions
+*.proptest-regressions
