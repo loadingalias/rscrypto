@@ -1,36 +1,45 @@
 # rscrypto
 
-> Pure Rust cryptography. Hardware-accelerated. Zero default dependencies.
+> Zero-dependency Rust crypto, hardware-accelerated across x86_64, ARM64, RISC-V, IBM Z, IBM POWER, and Apple Silicon.
 
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![docs.rs](https://img.shields.io/docsrs/rscrypto)](https://docs.rs/rscrypto)
 [![CI](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml)
 [![codecov](https://codecov.io/gh/loadingalias/rscrypto/graph/badge.svg)](https://codecov.io/gh/loadingalias/rscrypto)
 
-Single-crate cryptography toolbox. No C FFI, no vendored C/C++, `no_std` first.
-Pick only the features you need: one leaf feature, one dependency line.
+Most Rust crypto stacks force a bad choice: wire together a pile of single-primitive crates, or accept a larger package w/ dependencies, external C-libs, and supply-chain tradeoffs.
+That risk is not one I'm willing to take with the state of supply-chain attacks.
+
+`rscrypto` is a single-crate crypto stack: checksums, cryptographic hashes, fast hashes, MACs, KDFs, password hashing, signatures, key exchange, and AEADs behind leaf-selectable features.
+It can be a tiny SHA-2 dependency or the full primitives package; either way, primitive implementations stay in-tree as Rust, SIMD intrinsics, and targeted ASM kernels.
+No C FFI, no vendored C/C++, no OpenSSL/libcrypto dependency, no external crypto crate stack.
+
+Hardware acceleration is not just a single platform. I've taken great care to accelerate widely.
+The benchmark matrix covers x86_64 Intel/AMD, ARM64 Graviton3/4, RISE RISC-V, IBM Z/s390x, IBM POWER10, and macOS Apple Silicon.
+Every benchmarked architecture has hardware, SIMD, or ASM acceleration in-tree; portable fallbacks remain the correctness floor for unsupported configurations and constrained builds.
+
+Proof points:
+
+| Claim | Evidence |
+|-------|----------|
+| Faster than the official BLAKE3 crate on large buffers | **2.37x** geomean faster than `blake3` for one-shot/keyed/derive-key `>=64 KiB` Linux CI inputs; up to **7.70x** |
+| Faster Ed25519 signing without `ed25519-dalek` / `curve25519-dalek` | **1.57x** geomean faster than `ed25519-dalek` signing across Linux CI |
+| Broad hardware-accelerated portability | x86_64, ARM64, RISC-V, IBM Z, IBM POWER, Apple Silicon, plus portable `no_std`/WASM fallbacks |
+| Zero default dependency surface | `full` enables the primitive stack without pulling OpenSSL, C FFI, RustCrypto, `dalek`, `blake3`, or `crc*` crates |
+
+Use it as a single primitive:
 
 ```toml
 [dependencies]
 rscrypto = { version = "0.1", default-features = false, features = ["sha2"] }
 ```
 
-## Performance
+Or bring the whole toolbox without pulling in a C library:
 
-Latest benchmark snapshot: **3716 faster comparisons** across **5796** matched Linux CI comparisons on nine architectures, with a **1.76x** geomean speedup.
-The local macOS Apple Silicon run adds **357 faster comparisons** across **681** matched comparisons, with a **1.54x** geomean speedup.
-
-| Primitive | Baseline | Result |
-|---|---|---|
-| SHA-3 / SHAKE | RustCrypto `sha3` | 2.18x / 2.60x geomean; up to 25.66x / 22.27x |
-| BLAKE3 | `blake3` | 2.37x geomean on `>=64 KiB`; up to 7.88x |
-| AEAD | RustCrypto AEADs, `aegis` | 1.83x geomean; AES-256-GCM decrypt 2.51x; AES-256-GCM-SIV encrypt 3.79x |
-| Ed25519 / X25519 | `ed25519-dalek`, `x25519-dalek` | Ed25519 signing 1.57x geomean; X25519 1.37x |
-| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | 4.42x geomean; CRC32C 2.25x; CRC64/NVMe 2.36x |
-
-On macOS Apple Silicon, AEAD is the strongest area at 2.60x geomean and checksums land at 4.18x; SHA-2 and SHA-3 are essentially parity at 1.02x and 1.01x.
-
-Numbers: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md), Linux run [`25069224636`](https://github.com/loadingalias/rscrypto/actions/runs/25069224636), macOS run [`benchmark_results/2026-04-28/macos/aarch64/results.txt`](benchmark_results/2026-04-28/macos/aarch64/results.txt).
+```toml
+[dependencies]
+rscrypto = { version = "0.1", default-features = false, features = ["full"] }
+```
 
 ## Quick Start
 
@@ -101,12 +110,45 @@ assert!(Scrypt::verify_string_with_policy(b"wrong", &encoded, &ScryptVerifyPolic
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+## Why rscrypto
+
+`rscrypto` was built as a necessity for Rail Industries, currently in stealth. I needed reproducible builds, small dependency graphs, platform coverage, and throughput under real workloads without dragging in c-libs and weakening my supply chain story.
+
+| What You Need | What `rscrypto` Does |
+|---------------|----------------------|
+| One primitive without dependency sprawl | Enable one leaf feature, such as `sha2`, `aes-gcm`, or `x25519` |
+| A full crypto toolbox | Enable `full` for hashes, checksums, auth, key exchange, signatures, and AEADs |
+| Optional ecosystem hooks | Add `getrandom`, `serde`, or `parallel` only when you need them |
+| No C toolchain in your build | No C FFI, no vendored C/C++, no OpenSSL/libcrypto dependency |
+| Hardware speed without platform lock-in | ISA-specific kernels across x86_64, ARM64, RISC-V, IBM Z, IBM POWER, and Apple Silicon |
+| Embedded, WASM, and kernel-adjacent targets | Portable fallbacks for every enabled primitive, `alloc` and `std` opt-in by feature |
+| Auditable failure behavior | Opaque verification errors, typed keys/nonces/tags, zeroized secrets |
+
+The design goal is simple: replace both single-primitive dependency piles and native crypto bindings with one auditable Rust crate that's more performant that either option above.
+
+## Performance
+
+The current benchmarks compare `rscrypto` against the crates I would normally reach for: RustCrypto hashes and AEADs, `blake3`, `ed25519-dalek`, `x25519-dalek`, `crc*`, `xxhash-rust`, `rapidhash`, `aegis`, and related baselines.
+
+Linux: **3717 faster comparisons** across **5796** matched comparisons on nine architectures, with a **1.75x** geomean speedup from raw Criterion medians.
+
+| Primitive | Baseline | Result |
+|---|---|---|
+| SHA-3 / SHAKE | RustCrypto `sha3` | 2.18x / 2.60x geomean; up to 25.83x / 22.41x |
+| BLAKE3 | `blake3` | 2.37x geomean on one-shot/keyed/derive-key `>=64 KiB`; up to 7.70x |
+| AEAD | RustCrypto AEADs, `aegis` | 1.84x geomean; AES-256-GCM decrypt 2.51x; AES-256-GCM-SIV encrypt 3.79x |
+| Ed25519 / X25519 | `ed25519-dalek`, `x25519-dalek` | Ed25519 signing 1.57x geomean; X25519 1.37x |
+| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | 4.41x geomean; CRC32C 2.24x; CRC64/NVMe 2.35x |
+
+On macOS Apple Silicon, AEAD is the strongest area at 2.60x geomean and checksums land at 4.18x; SHA-2 and SHA-3 are essentially parity at 1.02x and 1.01x.
+
+Numbers: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
+
 ## Examples And Docs
 
 | Path | Purpose |
 |------|---------|
 | [`examples/`](examples/) | Runnable examples with their feature sets |
-| [`docs/`](docs/) | Security guidance and supporting notes |
 | [`docs/security.md`](docs/security.md) | Nonce, verification, randomness, and fallback guidance |
 
 ## API Conventions
@@ -126,120 +168,11 @@ assert!(Scrypt::verify_string_with_policy(b"wrong", &encoded, &ScryptVerifyPolic
 Key, nonce, tag, and signature types round-trip through `from_bytes` / `to_bytes` / `as_bytes`.
 Secret key types mask `Debug` output; explicit secret display/export APIs are opt-in and should not be logged.
 
-## Complete Type Inventory
+## Types
 
-### Traits
+Top-level API families: traits, checksums, cryptographic hashes/XOFs, fast hashes, MACs, KDFs, password hashing, Ed25519/X25519, AEADs, typed keys/nonces/tags/signatures, error types, and constant-time utilities.
 
-| Trait | Purpose |
-|-------|---------|
-| `Checksum` | Stateful + one-shot checksums |
-| `ChecksumCombine` | O(log n) parallel CRC combine |
-| `Digest` | Fixed-output cryptographic hash |
-| `Xof` | Variable-output extendable function |
-| `Mac` | Keyed streaming MAC |
-| `FastHash` | One-shot seeded non-crypto hash |
-| `Aead` | Authenticated encryption |
-| `ConstantTimeEq` | Constant-time byte equality |
-
-### Checksums (features: `checksums` or `crc16` / `crc24` / `crc32` / `crc64`)
-
-| Type | Output | Standard |
-|------|--------|----------|
-| `Crc16Ccitt` / `Crc16Ibm` | `u16` | X.25/HDLC, ARC/IBM |
-| `Crc24OpenPgp` | `u32` | RFC 4880 |
-| `Crc32` / `Crc32C` | `u32` | Ethernet/gzip, iSCSI/ext4 |
-| `Crc64` / `Crc64Nvme` | `u64` | XZ Utils, NVMe |
-
-### Cryptographic Hashes (features: `crypto-hashes` or `sha2` / `sha3` / `blake2b` / `blake2s` / `blake3` / `ascon-hash`)
-
-| Type | Output | Standard |
-|------|--------|----------|
-| `Sha224` / `Sha256` / `Sha384` / `Sha512` / `Sha512_256` | 28-64B | FIPS 180-4 |
-| `Sha3_224` / `Sha3_256` / `Sha3_384` / `Sha3_512` | 28-64B | FIPS 202 |
-| `Shake128` / `Shake256` | XOF | FIPS 202 |
-| `Cshake256` | XOF | SP 800-185 |
-| `Blake2b256` / `Blake2b512` | 32B / 64B | RFC 7693 |
-| `Blake2s128` / `Blake2s256` | 16B / 32B | RFC 7693 |
-| `Blake3` | 32B / XOF | BLAKE3 spec |
-| `AsconHash256` / `AsconXof` / `AsconCxof128` | 32B / XOF | Ascon v1.2 |
-
-XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Cshake256XofReader`, `Blake3XofReader`, `AsconXofReader`, `AsconCxof128Reader`.
-
-### Fast Hashes (features: `fast-hashes` or `xxh3` / `rapidhash`)
-
-| Type | Output |
-|------|--------|
-| `Xxh3` / `Xxh3_128` | `u64` / `u128` |
-| `RapidHash` / `RapidHash128` | `u64` / `u128` |
-
-`BuildHasher` support (requires `alloc`): `Xxh3BuildHasher`, `RapidBuildHasher`.
-
-### MACs & KDFs (features: `macs` / `kdfs` or `hmac` / `hkdf` / `pbkdf2` / `kmac`)
-
-| Type | Tag/Output | Standard |
-|------|------------|----------|
-| `HmacSha256` / `HmacSha384` / `HmacSha512` | 32-64B | RFC 2104 |
-| `Kmac256` | variable | SP 800-185 |
-| `HkdfSha256` / `HkdfSha384` | 32-48B PRK | RFC 5869 |
-| `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
-
-### Password Hashing (features: `password-hashing` or `argon2` / `scrypt` / `phc-strings`)
-
-| Type | Output | Standard |
-|------|--------|----------|
-| `Argon2d` / `Argon2i` / `Argon2id` | variable | RFC 9106 |
-| `Argon2Params`, `Argon2VerifyPolicy`, `Argon2Version` | -- | RFC 9106 |
-| `Scrypt`, `ScryptParams`, `ScryptVerifyPolicy` | variable | RFC 7914 |
-
-PHC string-format encode/decode shared by both families: `auth::phc` (feature `phc-strings`).
-
-### Signatures & Key Exchange (features: `signatures` / `key-exchange` or `ed25519` / `x25519`)
-
-| Type | Size | Standard |
-|------|------|----------|
-| `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
-| `Ed25519Keypair` | -- | RFC 8032 |
-| `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
-
-### AEAD (feature: `aead` or individual leaves)
-
-| Cipher | Key | Nonce | Tag | Standard |
-|--------|-----|-------|-----|----------|
-| `Aes256Gcm` | `Aes256GcmKey` 32B | `Nonce96` 12B | `Aes256GcmTag` 16B | SP 800-38D |
-| `Aes256GcmSiv` | `Aes256GcmSivKey` 32B | `Nonce96` 12B | `Aes256GcmSivTag` 16B | RFC 8452 |
-| `ChaCha20Poly1305` | `ChaCha20Poly1305Key` 32B | `Nonce96` 12B | `ChaCha20Poly1305Tag` 16B | RFC 8439 |
-| `XChaCha20Poly1305` | `XChaCha20Poly1305Key` 32B | `Nonce192` 24B | `XChaCha20Poly1305Tag` 16B | draft-irtf |
-| `AsconAead128` | `AsconAead128Key` 16B | `Nonce128` 16B | `AsconAead128Tag` 16B | Ascon v1.2 |
-| `Aegis256` | `Aegis256Key` 32B | `Nonce256` 32B | `Aegis256Tag` 16B | draft-irtf |
-
-Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32B).
-
-### Error Types
-
-| Error | When | Recovery |
-|-------|------|----------|
-| `VerificationError` | MAC/AEAD/signature check fails | Reject input (intentionally opaque) |
-| `AeadBufferError` | Output buffer wrong size | Fix buffer length |
-| `SealError` | AEAD combined encrypt failure | Buffer / nonce / counter |
-| `OpenError` | AEAD combined decrypt failure | Buffer or verification |
-| `NonceCounterSealError` | Deterministic-IV counter exhausted or buffer error | Rotate key / fix buffer |
-| `HkdfOutputLengthError` | HKDF expand exceeds max | Request less output |
-| `Pbkdf2Error` | PBKDF2 parameter validation | Adjust iterations / output length |
-| `Argon2Error` | Argon2 parameter or input validation | Adjust params per RFC 9106 |
-| `ScryptError` | scrypt parameter validation | Adjust N / r / p per RFC 7914 |
-| `PhcError` | PHC string parse / encode | Fix encoded form |
-| `X25519Error` | Low-order DH point | Reject peer key |
-| `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
-| `InvalidHexError` | Hex decode failure | Fix input |
-| `platform::OverrideError` | Override after detection init | Set before first call |
-
-### Utility
-
-| Item | Purpose |
-|------|---------|
-| `ct::constant_time_eq` | Constant-time byte comparison |
-| `ct::zeroize` | Volatile-write buffer wipe |
-| `DisplaySecret` | Opt-in hex display for secret keys |
+Full type inventory: [`docs/types.md`](docs/types.md).
 
 ## Security Properties
 
@@ -256,33 +189,15 @@ See [docs/security.md](docs/security.md) for nonce lifecycle, verification handl
 
 ## Compliance Posture
 
-`rscrypto` is a **primitives crate**, not a FIPS-validated module.
-It exposes approved, non-approved, and non-crypto components in one crate for flexibility.
-If you need a FIPS-validated module boundary, keep `rscrypto` inside your module or a higher-level `fips`
-wrapper; do not claim module validation from this crate alone.
+`rscrypto` provides FIPS-oriented building blocks, not a FIPS 140-3 validated module.
 
-### Approved / boundary examples
+NIST-aligned primitives include AES-256-GCM, SHA-2, SHA-3/SHAKE, HMAC, KMAC, HKDF, and PBKDF2.
+Validation requires a defined module boundary, operational environment, self-tests, documentation, and lab review; this crate does not claim that certificate today.
 
-Inside a typical boundary, these are the NIST-aligned items:
+Roadmap: add a `nist-approved` feature bundle for FIPS-oriented deployments.
+It should select approved primitives only; it will not be a validation claim.
 
-| Category | Examples |
-|---------|----------|
-| Symmetric AEAD | `Aes256Gcm` (SP 800-38D) |
-| Hash / XOF | `Sha*`, `Shake*` (`FIPS 180-4`, `FIPS 202`) |
-| MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
-| Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
-
-Non-approved in this release:
-
-| Category | Examples |
-|----------|----------|
-| Cipher variants / AEAD | `Aes256GcmSiv`, `Aegis256`, `ChaCha20Poly1305`, `XChaCha20Poly1305` |
-| Hashes | `Blake*`, `Ascon*` (`SHA`/FIPS boundary not yet established) |
-| Public-key primitives | `Ed25519*`, `X25519*` |
-| Password hashing | `Argon2*`, `Scrypt` |
-| Non-crypto | `Crc*`, `Xxh3`, `RapidHash` |
-
-This table classifies APIs only; it is not a validation claim.
+Compliance details: [`docs/compliance.md`](docs/compliance.md).
 
 ## Feature Flags
 
@@ -328,15 +243,13 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 
 **no_std build targets**: `thumbv6m-none-eabi`, `riscv32imac-unknown-none-elf`, `aarch64-unknown-none`, `x86_64-unknown-none`, `wasm32-unknown-unknown`, `wasm32-wasip1`.
 
-## Invariants
+**NOTE**: RISE RISC-V runners are the only RISC-V runners that I could find that were reliable and worked. I'd like to expand the RISC-V work here, but I simply don't have access to the hardware currently. Also, IBM accepted this repository for thier IBM POWER/Z runners, which are 100% free and without them... I'd never have been able to code for IBM arches... so thank you, IBM.
 
-| Invariant | What Breaks If Violated |
-|-----------|-------------------------|
-| Portable fallback is the authority | Wrong output on any platform |
-| All backends produce identical bytes | Silent data corruption |
-| Verification errors are opaque | Timing and oracle attacks |
-| Secret material zeroized on drop | Key retention in memory |
-| Official vectors and differential tests stay green | Interoperability failures |
+## Correctness Model
+
+Portable implementations are the byte-for-byte authority.
+Hardware, SIMD, and ASM backends are accelerators and are differential-tested against the portable path and official vectors.
+Verification errors are opaque, secret keys zeroize on drop, and release builds keep overflow checks enabled.
 
 ## Testing
 
@@ -350,34 +263,9 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 | Coverage | Nextest + fuzz corpus LCOV | `just test-all-coverage` |
 | Supply chain | `cargo deny` + `cargo audit` | Weekly CI |
 
-## Module Hierarchy
+## Internals
 
-```text
-src/
-+-- lib.rs              # Public API, re-exports
-+-- aead/               # AES-GCM, AES-GCM-SIV, ChaCha20, XChaCha20, AEGIS, Ascon
-+-- auth/               # HMAC, HKDF, PBKDF2, KMAC, Argon2, scrypt, PHC, Ed25519, X25519
-+-- checksum/           # CRC families, config, buffered, introspection
-+-- hashes/
-|   +-- crypto/         # SHA-2, SHA-3, SHAKE, cSHAKE, Blake2, Blake3, Ascon, Keccak
-|   +-- fast/           # XXH3, RapidHash
-+-- hex.rs              # Hex encoding, DisplaySecret
-+-- platform/           # CPU detection, SIMD dispatch
-+-- backend/            # Internal dispatch infrastructure (curve25519, etc.)
-+-- traits/             # Checksum, Digest, Mac, Xof, FastHash, Aead, ct, io
-```
-
-## Advanced Modules
-
-| Module | Gate | Purpose |
-|--------|------|---------|
-| `checksum::config` | -- | Force-dispatch controls |
-| `checksum::buffered` | `alloc` | Buffered CRC wrappers |
-| `checksum::introspect` | `diag` | Kernel selection reporting |
-| `hashes::introspect` | `diag` | Hash kernel reporting |
-| `aead::introspect` | `diag` | AEAD backend reporting |
-| `platform` | -- | CPU detection, override control |
-| `traits::io` | `std` | `ChecksumReader/Writer`, `DigestReader/Writer` |
+Module hierarchy and advanced modules: [`docs/architecture.md`](docs/architecture.md).
 
 ## MSRV
 

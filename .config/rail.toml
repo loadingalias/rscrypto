@@ -13,7 +13,7 @@ targets = [
   "aarch64-unknown-linux-musl",
   "wasm32-unknown-unknown",
   "wasm32-wasip1",
-  "wasm64-unknown-unknown",
+  #"wasm64-unknown-unknown",
   "x86_64-unknown-linux-musl",
   # Other
   "aarch64-pc-windows-msvc",
@@ -65,7 +65,7 @@ tag_prefix = "v"
 tag_format = "{prefix}{version}"  # Single crate: just v0.1.0
 require_clean = true
 publish_delay = 5
-create_github_release = true
+create_github_release = false
 sign_tags = true
 changelog_path = "CHANGELOG.md"
 changelog_relative_to = "workspace"

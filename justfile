@@ -1,4 +1,3 @@
-# Build the workspace (debug).
 build:
     cargo build --workspace --all-targets --all-features
 
@@ -52,9 +51,9 @@ test-coverage:
 test-fuzz-coverage:
     @scripts/test/test-coverage.sh --fuzz
 
-# Nextest + fuzz + merged HTML report.
+# Nextest + fuzz + merged LCOV report.
 test-all-coverage:
-    @scripts/test/test-coverage.sh --html
+    @scripts/test/test-coverage.sh
 
 # ─── Benches ───────────────────────────────────────────────────────
 # Results land in benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt

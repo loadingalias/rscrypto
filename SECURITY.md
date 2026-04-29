@@ -16,7 +16,7 @@ Include as much detail as possible:
 - Expected vs. actual behavior
 - Any relevant platform/CPU details (x86_64, aarch64, etc.)
 
-You should receive an acknowledgment within **48 hours**. We will follow up with a more detailed response indicating next steps and an expected resolution timeline.
+You should receive an acknowledgment within **48 hours**. I will follow up with a more detailed response indicating next steps and an expected resolution timeline.
 
 ## Scope
 
@@ -39,7 +39,7 @@ You should receive an acknowledgment within **48 hours**. We will follow up with
 
 ## AI-Generated Reports
 
-We welcome vulnerability reports regardless of how they were discovered, including those found with the assistance of AI systems (LLMs, automated analysis tools, fuzzing agents, etc.).
+I welcome vulnerability reports regardless of how they were discovered, including those found using AI (LLMs, automated analysis tools, fuzzing agents, etc.). This is not an issue here.
 
 **If your report was generated or assisted by AI, please disclose:**
 - The AI system(s) used (model name, version, provider)
@@ -48,22 +48,22 @@ We welcome vulnerability reports regardless of how they were discovered, includi
 - Whether the AI produced the report autonomously or assisted your own analysis
 - Any intermediate outputs, reasoning traces, or tool calls the AI generated
 
-This information helps us:
+This information helps me:
 - Reproduce and validate the finding efficiently
 - Understand which attack surfaces or code paths the AI focused on
 - Improve our own automated analysis and fuzzing pipelines
 - Contribute to the broader security research community
 
-We do not penalize or deprioritize AI-assisted reports. Full transparency benefits everyone.
+I will almost never penalize or deprioritize AI-assisted reports. Full transparency benefits everyone and AI is an outstanding tool to that end.
 
 ## Response Process
 
-1. **Triage** (0-48 hours): We confirm receipt and assess severity.
-2. **Investigation** (1-7 days): We reproduce the issue and determine root cause.
-3. **Remediation** (1-14 days): We develop and test a fix.
-4. **Disclosure**: We coordinate a public advisory, credit the reporter (if desired), and publish a patched release.
+1. **Triage** (0-48 hours): I, or someone I trust, will confirm receipt and assess severity.
+2. **Investigation** (1-7 days): I will reproduce the issue and determine root cause.
+3. **Remediation** (1-14 days): I will develop and test a fix.
+4. **Disclosure**: I will coordinate a public advisory, credit the reporter (if desired), and publish a patched release.
 
-We follow a **90-day disclosure deadline**. If a fix is not available within 90 days of the initial report, we will publish the vulnerability details publicly, regardless of fix status.
+I follow a **30-day disclosure deadline**. If a fix is not available within 30 days of the initial report, I will publish the vulnerability details publicly, regardless of fix status.
 
 ## Supported Versions
 
@@ -75,14 +75,14 @@ Only the latest `0.1.x` release receives security patches. We strongly recommend
 
 ## Safe Harbor
 
-We support safe harbor for security researchers who:
+I support safe harbor for security researchers who:
 - Make a good-faith effort to avoid privacy violations, data destruction, and service interruption
 - Do not exploit a vulnerability beyond what is necessary to demonstrate it
 - Do not modify user data or access third-party systems
-- Report the vulnerability to us promptly and allow reasonable time for remediation
+- Report the vulnerability to me promptly and allow reasonable time for remediation
 
-We will not pursue legal action against researchers who follow these guidelines.
+We will not pursue legal action against researchers who follow these guidelines under any circumstances.
 
 ## Acknowledgments
 
-We appreciate the security research community and will publicly credit reporters in release notes and advisories unless anonymity is requested.
+I appreciate the security research community and will publicly credit reporters in release notes and advisories unless anonymity is requested.

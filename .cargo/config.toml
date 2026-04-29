@@ -39,7 +39,7 @@ rustflags = ["-C", "target-feature=+lse"]
 # WASM64 - Experimental (Memory64 / WASM 3.0)
 # Tier 3: requires -Z build-std, no pre-built std
 # See: https://doc.rust-lang.org/rustc/platform-support/wasm64-unknown-unknown.html
-[target.wasm64-unknown-unknown]
+# [target.wasm64-unknown-unknown]
 
 # Tier D - Enterprise
 # IBM s390x (Z mainframes)

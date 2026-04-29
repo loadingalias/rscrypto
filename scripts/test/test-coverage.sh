@@ -51,6 +51,29 @@ esac
 
 mkdir -p "$COV_DIR"
 
+clean_coverage_outputs() {
+  if [ "$RUN_NEXTEST" = true ]; then
+    rm -f "$COV_DIR/nextest.lcov"
+    rm -rf "$COV_DIR/html-nextest"
+  fi
+
+  if [ "$RUN_FUZZ" = true ]; then
+    local host_target
+    host_target="$(rustc -vV | sed -n 's|host: ||p')"
+
+    rm -f "$COV_DIR"/fuzz*.lcov
+    rm -rf "$FUZZ_ROOT/coverage"
+    rm -rf "$REPO_ROOT/target/$host_target/coverage"
+    rm -rf "$FUZZ_SHARED_TARGET_DIR/$host_target/coverage"
+  fi
+
+  if [ "$RUN_NEXTEST" = true ] && [ "$RUN_FUZZ" = true ]; then
+    rm -f "$COV_DIR/merged.lcov" "$COV_DIR/SUMMARY.md"
+  fi
+}
+
+clean_coverage_outputs
+
 # ── Nextest coverage ─────────────────────────────────────────────────────────
 
 run_nextest_coverage() {
@@ -66,6 +89,7 @@ run_nextest_coverage() {
 
   local lcov_path="$COV_DIR/nextest.lcov"
 
+  cargo llvm-cov clean --workspace
   cargo llvm-cov nextest \
     --all-features \
     --workspace \
@@ -76,6 +100,7 @@ run_nextest_coverage() {
   echo "Nextest coverage: $lcov_path"
 
   if [ "$GEN_HTML" = true ]; then
+    cargo llvm-cov clean --workspace
     cargo llvm-cov nextest \
       --all-features \
       --workspace \
@@ -96,6 +121,23 @@ run_fuzz_coverage() {
     echo "Error: cargo-fuzz not found"
     exit 1
   fi
+
+  find_latest_coverage_binary() {
+    local target=$1
+    shift
+
+    local root binary
+    for root in "$@"; do
+      [ -d "$root" ] || continue
+      binary="$(find "$root" -name "$target" -type f -perm -111 -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1 || true)"
+      if [ -n "$binary" ]; then
+        printf '%s\n' "$binary"
+        return 0
+      fi
+    done
+
+    return 1
+  }
 
   if [ ! -d "$FUZZ_ROOT" ]; then
     echo "No fuzz/ directory found — skipping"
@@ -129,6 +171,7 @@ run_fuzz_coverage() {
   fi
 
   local all_lcov_files=()
+  local skipped_count=0
   local package_dir package_label package_slug target
 
   echo ""
@@ -167,41 +210,59 @@ run_fuzz_coverage() {
       fuzz_in_package "$package_dir" coverage "$target" --target "$host_target" \
         2>&1 | { grep -v "^INFO:" || true; } || cov_exit=$?
       if [ "$cov_exit" -ne 0 ]; then
-        echo "    warning: coverage generation exited $cov_exit, skipping"
+        echo "    error: coverage generation exited $cov_exit, skipping"
+        skipped_count=$((skipped_count + 1))
         continue
       fi
 
       local cov_dir="$package_dir/coverage/$target"
       if [ ! -d "$cov_dir" ]; then
-        echo "    warning: no coverage output for ${package_label}/${target}"
+        echo "    error: no coverage output for ${package_label}/${target}"
+        skipped_count=$((skipped_count + 1))
         continue
       fi
 
       local profraw_files
       profraw_files=$(find "$cov_dir" -name "*.profraw" 2>/dev/null)
       if [ -z "$profraw_files" ]; then
-        echo "    warning: no profraw files for ${package_label}/${target}"
+        echo "    error: no profraw files for ${package_label}/${target}"
+        skipped_count=$((skipped_count + 1))
         continue
       fi
 
       "$llvm_profdata" merge -sparse $profraw_files -o "$cov_dir/merged.profdata"
 
       local binary
-      binary=$(find "$FUZZ_SHARED_TARGET_DIR/$host_target/coverage" -name "$target" -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)
+      binary="$(find_latest_coverage_binary \
+        "$target" \
+        "$REPO_ROOT/target/$host_target/coverage" \
+        "$FUZZ_SHARED_TARGET_DIR/$host_target/coverage" || true)"
       if [ -z "$binary" ]; then
-        echo "    warning: coverage binary not found for ${package_label}/${target}"
+        echo "    error: coverage binary not found for ${package_label}/${target}"
+        skipped_count=$((skipped_count + 1))
         continue
       fi
 
       local target_lcov="$REPO_ROOT/coverage/fuzz-${package_slug}--${target}.lcov"
-      "$llvm_cov" export "$binary" \
+      if ! "$llvm_cov" export "$binary" \
         -instr-profile="$cov_dir/merged.profdata" \
         -format=lcov \
-        > "$target_lcov" 2>/dev/null
+        > "$target_lcov"; then
+        echo "    error: llvm-cov export failed for ${package_label}/${target}"
+        rm -f "$target_lcov"
+        skipped_count=$((skipped_count + 1))
+        continue
+      fi
       all_lcov_files+=("$target_lcov")
       echo "    $target_lcov"
     done < <(fuzz_list_targets "$package_dir")
   done
+
+  if [ "$skipped_count" -ne 0 ]; then
+    echo ""
+    echo "Error: fuzz coverage skipped $skipped_count target(s)"
+    return 1
+  fi
 
   # Phase 3: Merge all fuzz LCOV files into one.
   if [ ${#all_lcov_files[@]} -gt 0 ]; then
@@ -224,7 +285,7 @@ generate_summary() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   local lcov_files=()
-  for f in "$COV_DIR"/nextest.lcov "$COV_DIR"/fuzz.lcov "$COV_DIR"/fuzz-*.lcov; do
+  for f in "$COV_DIR"/nextest.lcov "$COV_DIR"/fuzz.lcov; do
     [ -f "$f" ] && lcov_files+=("$f")
   done
 

@@ -148,8 +148,8 @@ fn rs_scrypt_params(log_n: u8, r: u32, p: u32, out_len: u32) -> ScryptParams {
 }
 
 /// Build RustCrypto scrypt oracle params.
-fn oracle_scrypt_params(log_n: u8, r: u32, p: u32, out_len: usize) -> scrypt::Params {
-  scrypt::Params::new(log_n, r, p, out_len).unwrap()
+fn oracle_scrypt_params(log_n: u8, r: u32, p: u32, _out_len: usize) -> scrypt::Params {
+  scrypt::Params::new(log_n, r, p).unwrap()
 }
 
 /// Small / CI-friendly scrypt matrix: (log_n, r, p).

@@ -1,7 +1,7 @@
 # Scripts Map
 
 Caller map for `scripts/`. Every `.sh` under `scripts/` must appear here with
-its caller.
+its caller. This is the 'dev' engine, so to speak.
 
 ## Entry Points (called from `justfile` or CI)
 

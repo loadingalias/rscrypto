@@ -1,6 +1,6 @@
 [package]
 name = "rscrypto"
-description = "Pure Rust cryptography. Hardware-accelerated. Zero default dependencies."
+description = "Rust crypto with zero default deps: BLAKE3, Ed25519/X25519, hashes, MACs, KDFs, AEADs, and checksums with SIMD/ASM acceleration."
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95.0"
@@ -9,17 +9,18 @@ authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
 documentation = "https://docs.rs/rscrypto"
 readme = "README.md"
-keywords = ["crypto", "cryptography", "blake3", "simd", "no-std"]
-categories = ["cryptography", "no-std", "algorithms", "hardware-support"]
+keywords = ["blake3", "ed25519", "x25519", "aead", "simd"]
+categories = ["cryptography", "no-std", "algorithms", "hardware-support", "embedded"]
 include = [
   "/Cargo.toml",
   "/LICENSE-APACHE",
   "/LICENSE-MIT",
   "/README.md",
   "/SECURITY.md",
-  "/docs/README.md",
+  "/docs/architecture.md",
+  "/docs/compliance.md",
   "/docs/security.md",
-  "/docs/llvm-ppc64le-readvolatile-issue.md",
+  "/docs/types.md",
   "/benches/**",
   "/examples/**",
   "/src/**",
@@ -39,12 +40,10 @@ resolver = "3"
 members = ["."]
 
 [workspace.lints.rust]
-# `unsafe` is allowed in rscrypto, but must be narrow and well-documented.
 unsafe_code = "allow"
 unsafe_op_in_unsafe_fn = "deny"
 dangling_pointers_from_locals = "deny"
 integer_to_ptr_transmutes = "deny"
-# Allow miri cfg and x86 target features not yet stabilized in rustc's check-cfg
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(miri)',
   'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
@@ -61,9 +60,6 @@ unwrap_used = "allow"
 expect_used = "allow"
 indexing_slicing = "allow"
 
-# Safety discipline:
-# - `unsafe {}` blocks must have a `// SAFETY:` comment explaining why they're sound.
-# - `unsafe fn` must document its safety contract.
 undocumented_unsafe_blocks = "deny"
 missing_safety_doc = "deny"
 
@@ -141,25 +137,22 @@ rayon = { version = "1.12.0", optional = true }
 serde = { version = "1", optional = true, default-features = false }
 
 [dev-dependencies]
-# Benchmark framework
 criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] }
 proptest = "^1.11.0"
 
-# CRC oracle crates
+# Oracles
 crc = "3.4.0"
 crc-fast = "1.10.0"
 crc32c = "0.6.8"
 crc32fast = "1.5.0"
 crc64fast = "1.1.0"
 crc64fast-nvme = "1.2.1"
-
-# Hash oracle crates
 ascon-hash = "0.4.0"
 argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }
-blake3 = { version = "1.8.4", default-features = false, features = ["std", "rayon"] }
+blake3 = { version = "1.8.5", default-features = false, features = ["std", "rayon"] }
 blake2 = "0.11.0-rc.6"
 pbkdf2 = "0.13.0"
-scrypt = { version = "0.11.0", default-features = false }
+scrypt = { version = "0.12.0", default-features = false }
 sha2 = "0.11.0"
 sha3 = "0.11.0"
 keccak = "0.2.0"
@@ -264,8 +257,8 @@ codegen-units = 256
 [profile.release]
 opt-level = 3
 debug = false
-strip = "debuginfo" # Keep symbols for backtraces, remove debug info
-overflow-checks = true # Critical for crypto: overflow = security vulnerability
+strip = "debuginfo"
+overflow-checks = true
 lto = "fat"
 panic = "abort"
 codegen-units = 1
