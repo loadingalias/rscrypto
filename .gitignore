@@ -8,8 +8,8 @@ Thumbs.db
 # Claude/Codex
 .claude
 .agents
-AGENTS.md
 .codex
+AGENTS.md
 
 # Zed
 .zed
@@ -19,11 +19,6 @@ AGENTS.md
 *.key
 
 # Personal - Notes, Docs, Examples, Testing, etc.
-ARCHITECTURE_MATRIX.md
-PLAN.md
-tune-results/
-benchmark-results
-__pycache__
 docs/tasks/*
 benchmark_results/*
 

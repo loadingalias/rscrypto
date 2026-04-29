@@ -92,6 +92,7 @@ impl AeadBackend {
 /// This function encodes current dispatch policy, not benchmark fantasy.
 /// Unmeasured or unimplemented SIMD classes deliberately resolve to `portable`
 /// instead of lying.
+#[allow(dead_code)] // Some leaf AEAD builds compile target policy without live dispatch on the host.
 #[must_use]
 pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
   match primitive {
@@ -103,6 +104,7 @@ pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadB
 }
 
 #[inline]
+#[allow(dead_code)] // Only used when a ChaCha20-Poly1305 feature is enabled.
 fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
   match arch {
     Arch::X86_64 => {
@@ -154,6 +156,7 @@ fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
 }
 
 #[inline]
+#[allow(dead_code)] // Only used when an AES-GCM-family feature needs live dispatch on this target.
 fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
   match arch {
     Arch::X86_64 => {
@@ -210,6 +213,7 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
 }
 
 #[inline]
+#[allow(dead_code)] // Only used by Ascon-AEAD dispatch diagnostics.
 const fn select_ascon_backend(arch: Arch) -> AeadBackend {
   match arch {
     Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
@@ -218,6 +222,7 @@ const fn select_ascon_backend(arch: Arch) -> AeadBackend {
 }
 
 #[inline]
+#[allow(dead_code)] // Only used when AEGIS-256 needs target-policy dispatch on this target.
 fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
   // VAES-256 is intentionally not used for AEGIS-256. The serial update chain
   // (6 dependent AES rounds per block) makes cross-lane shuffle overhead in

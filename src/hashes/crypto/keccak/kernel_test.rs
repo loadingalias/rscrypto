@@ -154,7 +154,7 @@ mod tests {
 
   /// Verify 2-state interleaved kernel matches two independent single-state runs.
   #[test]
-  #[cfg(target_arch = "aarch64")]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
   fn keccakf1600_x2_matches_single_state() {
     let caps = crate::platform::caps();
     if !caps.has(crate::platform::caps::aarch64::SHA3) {

@@ -5,7 +5,7 @@
 
 #![allow(clippy::indexing_slicing)] // Keccak state is fixed-size; indexing is audited
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) mod aarch64;
 #[cfg(any(test, feature = "diag"))]
 #[doc(hidden)]
@@ -17,7 +17,7 @@ pub(crate) mod dispatch_tables;
 pub(crate) mod kernel_test;
 #[cfg(any(test, feature = "diag"))]
 pub(crate) mod kernels;
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) mod s390x;
 
 const KECCAKF_ROUNDS: usize = 24;
@@ -429,6 +429,7 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 /// eliminates all `if lane < lanes` branches — the result is straight-line code.
 #[cfg(target_arch = "aarch64")]
 #[inline]
+#[allow(dead_code)] // Only used by non-Miri platform permuters with absorb-block overrides.
 fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
   debug_assert_eq!(RATE % 8, 0);
   let lanes = RATE / 8;
@@ -587,17 +588,17 @@ impl Permuter for InlinePermuter {
 /// permutation. The 2-state kernel packs two independent states lane-wise for
 /// ~2× aggregate throughput, making SHA3 CE worthwhile on all aarch64 SHA3 CE
 /// targets for parallel operations.
-#[cfg(all(target_arch = "aarch64", target_feature = "sha3"))]
+#[cfg(all(target_arch = "aarch64", target_feature = "sha3", not(miri)))]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Aarch64Permuter;
 
-#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3")))]
+#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3"), not(miri)))]
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
   has_sha3: bool,
 }
 
-#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3")))]
+#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3"), not(miri)))]
 impl Default for Aarch64Permuter {
   #[inline]
   fn default() -> Self {
@@ -610,7 +611,7 @@ impl Default for Aarch64Permuter {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", target_feature = "sha3"))]
+#[cfg(all(target_arch = "aarch64", target_feature = "sha3", not(miri)))]
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
@@ -641,7 +642,7 @@ impl Permuter for Aarch64Permuter {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3")))]
+#[cfg(all(target_arch = "aarch64", not(target_feature = "sha3"), not(miri)))]
 impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
@@ -725,13 +726,13 @@ impl Permuter for S390xPermuter {
 // Platform-specific permuter selection
 // ---------------------------------------------------------------------------
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) type PlatformPermuter = Aarch64Permuter;
 
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) type PlatformPermuter = S390xPermuter;
 
-#[cfg(not(any(target_arch = "aarch64", target_arch = "s390x")))]
+#[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "s390x"))))]
 pub(crate) type PlatformPermuter = InlinePermuter;
 
 pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter, true>;
@@ -765,7 +766,7 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
 // On aarch64/s390x, `PlatformPermuter` is NOT `InlinePermuter`, so the
 // portable-reference type alias needs its own `Default`. On other targets
 // `PlatformPermuter = InlinePermuter` and the impl above already covers it.
-#[cfg(all(any(test, feature = "std"), any(target_arch = "aarch64", target_arch = "s390x")))]
+#[cfg(all(any(test, feature = "std"), not(miri), any(target_arch = "aarch64", target_arch = "s390x")))]
 impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, InlinePermuter, ZEROIZE> {
   #[inline]
   fn default() -> Self {

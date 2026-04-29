@@ -15,6 +15,23 @@ Pick only the features you need: one leaf feature, one dependency line.
 rscrypto = { version = "0.1", default-features = false, features = ["sha2"] }
 ```
 
+## Performance
+
+Latest benchmark snapshot: **3716 faster comparisons** across **5796** matched Linux CI comparisons on nine architectures, with a **1.76x** geomean speedup.
+The local macOS Apple Silicon run adds **357 faster comparisons** across **681** matched comparisons, with a **1.54x** geomean speedup.
+
+| Primitive | Baseline | Result |
+|---|---|---|
+| SHA-3 / SHAKE | RustCrypto `sha3` | 2.18x / 2.60x geomean; up to 25.66x / 22.27x |
+| BLAKE3 | `blake3` | 2.37x geomean on `>=64 KiB`; up to 7.88x |
+| AEAD | RustCrypto AEADs, `aegis` | 1.83x geomean; AES-256-GCM decrypt 2.51x; AES-256-GCM-SIV encrypt 3.79x |
+| Ed25519 / X25519 | `ed25519-dalek`, `x25519-dalek` | Ed25519 signing 1.57x geomean; X25519 1.37x |
+| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | 4.42x geomean; CRC32C 2.25x; CRC64/NVMe 2.36x |
+
+On macOS Apple Silicon, AEAD is the strongest area at 2.60x geomean and checksums land at 4.18x; SHA-2 and SHA-3 are essentially parity at 1.02x and 1.01x.
+
+Numbers: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md), Linux run [`25069224636`](https://github.com/loadingalias/rscrypto/actions/runs/25069224636), macOS run [`benchmark_results/2026-04-28/macos/aarch64/results.txt`](benchmark_results/2026-04-28/macos/aarch64/results.txt).
+
 ## Quick Start
 
 ```rust
