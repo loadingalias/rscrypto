@@ -2187,16 +2187,22 @@ mod phc_integration {
 
 #[cfg(test)]
 mod tests {
+  #[cfg(not(miri))]
   use alloc::vec;
 
   use super::*;
 
   // RFC 9106 Appendix A test vectors (version 0x13, m=32, t=3, p=4, T=32).
+  #[cfg(not(miri))]
   const PASSWORD: &[u8] = &[0x01u8; 32];
+  #[cfg(not(miri))]
   const SALT: &[u8] = &[0x02u8; 16];
+  #[cfg(not(miri))]
   const SECRET: &[u8] = &[0x03u8; 8];
+  #[cfg(not(miri))]
   const AD: &[u8] = &[0x04u8; 12];
 
+  #[cfg(not(miri))]
   fn canon_params() -> Argon2Params {
     Argon2Params::new()
       .memory_cost_kib(32)
@@ -2348,6 +2354,7 @@ mod tests {
 
   // ── Differential: rscrypto vs rustcrypto `argon2` oracle ──────────────
 
+  #[cfg(not(miri))]
   fn oracle_hash(
     algo: argon2::Algorithm,
     password: &[u8],

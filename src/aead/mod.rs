@@ -446,8 +446,7 @@ impl From<VerificationError> for OpenError {
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256"
+    feature = "xchacha20poly1305"
   )),
   allow(dead_code)
 )]
@@ -461,8 +460,7 @@ const _: () = assert!(usize::BITS <= u64::BITS);
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256"
+    feature = "xchacha20poly1305"
   )),
   allow(dead_code)
 )]
@@ -558,8 +556,7 @@ impl AeadByteLengths {
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256"
+    feature = "xchacha20poly1305"
   )),
   allow(dead_code)
 )]
@@ -573,8 +570,7 @@ pub(crate) fn try_length_as_u64(len: usize) -> Result<u64, LengthOverflow> {
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256"
+    feature = "xchacha20poly1305"
   )),
   allow(dead_code)
 )]
@@ -592,8 +588,7 @@ pub(crate) fn try_bounded_length_as_u64(len: usize, max: u64) -> Result<u64, Len
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256"
+    feature = "xchacha20poly1305"
   )),
   allow(dead_code)
 )]
@@ -616,8 +611,7 @@ pub(crate) fn seal_bit_lengths(aad_len: usize, text_len: usize) -> Result<AeadBy
     feature = "aes-gcm",
     feature = "aes-gcm-siv",
     feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256"
+    feature = "xchacha20poly1305"
   )),
   allow(dead_code)
 )]
