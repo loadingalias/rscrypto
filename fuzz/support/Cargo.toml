@@ -5,7 +5,7 @@ publish = false
 edition = "2024"
 
 [features]
-aead = []
+aead = ["rscrypto/aead"]
 traits_io = []
 
 [dependencies]
