@@ -19,8 +19,7 @@ AGENTS.md
 *.key
 
 # Junk
-private/tasks/fips.md
-private/tasks/pqe_pqc.md
+private/tasks
 benchmark_results/*
 docs/llvm-ppc64le-readvolatile-issue.md
 

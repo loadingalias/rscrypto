@@ -64,7 +64,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
-      timeout_minutes: 60
+      timeout_minutes: 120
       cache_key: weekly-miri-${{ matrix.target.name }}
       tools_mode: minimal
       toolchain_components: "miri, rust-src"
@@ -78,7 +78,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 60
+      timeout_minutes: 120
       cache_key: weekly-miri-tree-borrows
       tools_mode: minimal
       toolchain_components: "miri, rust-src"
@@ -120,7 +120,7 @@ jobs:
   coverage:
     name: Coverage
     runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -136,45 +136,27 @@ jobs:
           enable-magic-cache: "true"
           enable-rust-cache: "true"
 
-      - name: Test Suite Coverage (nextest)
+      - name: Total Coverage (nextest + fuzz corpus replay)
+        env:
+          RSCRYPTO_FUZZ_COVERAGE_SCOPE: "all"
         run: just test-coverage
 
-      - name: Fuzz Corpus Coverage
-        env:
-          RSCRYPTO_COV_FUZZ_SECS: "30"
-          RSCRYPTO_FUZZ_COVERAGE_SCOPE: "scoped"
-        run: just test-fuzz-coverage
-
-      - name: Upload to Codecov (nextest)
+      - name: Upload to Codecov
         uses: codecov/codecov-action@4650159d642e33fdc30954ca22638caf0df6cac8  # v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/nextest.lcov
-          flags: tests
-          name: nextest
+          files: coverage/total.lcov
+          flags: total
+          name: total
           fail_ci_if_error: true
-
-      - name: Upload to Codecov (fuzz)
-        if: ${{ hashFiles('coverage/fuzz.lcov') != '' }}
-        uses: codecov/codecov-action@4650159d642e33fdc30954ca22638caf0df6cac8  # v5.4.3
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage/fuzz.lcov
-          flags: fuzz
-          name: fuzz
-          fail_ci_if_error: false
 
       - name: Upload Coverage Artifacts
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08  # v4.6.0
         with:
           name: coverage-reports
           path: |
-            coverage/nextest.lcov
-            coverage/fuzz.lcov
-            coverage/fuzz-*.lcov
-            coverage/fuzz-profile-manifest.txt
-            fuzz/coverage/*/coverage.profdata
-            fuzz-packages/*/coverage/*/coverage.profdata
+            coverage/total.lcov
+            coverage/SUMMARY.md
           retention-days: 90
           if-no-files-found: warn
 

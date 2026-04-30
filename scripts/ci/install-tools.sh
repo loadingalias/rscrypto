@@ -228,11 +228,10 @@ case "$MODE" in
     ;;
 
   coverage)
-    # Coverage reporting: nextest LCOV + fuzz corpus profile coverage.
+    # Coverage reporting: nextest + deterministic fuzz corpus replay.
     install_binstall
     install_if_missing "cargo-llvm-cov" "cargo-llvm-cov"
     install_if_missing "cargo-nextest" "cargo-nextest"
-    install_if_missing "cargo-fuzz" "cargo-fuzz"
     install_if_missing "just" "just"
     # llvm-tools-preview provides llvm-profdata/llvm-cov for coverage reporting.
     rustup component add llvm-tools-preview 2>/dev/null || true

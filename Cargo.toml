@@ -139,6 +139,7 @@ serde = { version = "1", optional = true, default-features = false }
 [dev-dependencies]
 criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] }
 proptest = "^1.11.0"
+rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "fuzz/support", features = ["aead", "traits_io"] }
 
 # Oracles
 crc = "3.4.0"

@@ -43,15 +43,19 @@ test-fuzz *args="":
 
 # ─── Coverage ──────────────────────────────────────────────────────
 
-# Nextest LCOV coverage.
+# Total source coverage: nextest + deterministic fuzz corpus replay.
 test-coverage:
+    @scripts/test/test-coverage.sh
+
+# Nextest-only LCOV coverage.
+test-nextest-coverage:
     @scripts/test/test-coverage.sh --nextest
 
-# Fuzz-corpus profile coverage.
+# Fuzz-corpus replay LCOV coverage.
 test-fuzz-coverage:
     @scripts/test/test-coverage.sh --fuzz
 
-# Nextest LCOV + fuzz profile coverage.
+# Alias for total source coverage.
 test-all-coverage:
     @scripts/test/test-coverage.sh
 

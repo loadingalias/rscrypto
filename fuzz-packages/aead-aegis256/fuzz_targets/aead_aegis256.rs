@@ -1,2 +1,8 @@
 #![no_main]
-include!("../../../fuzz/target_impls/aead_aegis256.rs");
+
+#[path = "../../../fuzz/target_impls/aead_aegis256.rs"]
+mod target_impl;
+
+libfuzzer_sys::fuzz_target!(|data: &[u8]| {
+    target_impl::run(data);
+});

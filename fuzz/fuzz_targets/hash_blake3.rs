@@ -1,2 +1,8 @@
 #![no_main]
-include!("../target_impls/hash_blake3.rs");
+
+#[path = "../target_impls/hash_blake3.rs"]
+mod target_impl;
+
+libfuzzer_sys::fuzz_target!(|data: &[u8]| {
+    target_impl::run(data);
+});

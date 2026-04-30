@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "scrypt"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
-scrypt = { version = "0.11", default-features = false }
+scrypt = { version = "0.12", default-features = false }
 
 [workspace]
 members = ["."]
