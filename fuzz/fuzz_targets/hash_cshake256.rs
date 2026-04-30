@@ -1,2 +1,8 @@
 #![no_main]
-include!("../target_impls/hash_cshake256.rs");
+
+#[path = "../target_impls/hash_cshake256.rs"]
+mod target_impl;
+
+libfuzzer_sys::fuzz_target!(|data: &[u8]| {
+    target_impl::run(data);
+});

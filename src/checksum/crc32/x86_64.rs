@@ -2277,6 +2277,17 @@ mod tests {
 
   use super::*;
 
+  fn vpclmul_available_for_tests() -> bool {
+    !cfg!(miri)
+      && std::arch::is_x86_feature_detected!("avx512f")
+      && std::arch::is_x86_feature_detected!("avx512vl")
+      && std::arch::is_x86_feature_detected!("avx512bw")
+      && std::arch::is_x86_feature_detected!("avx512dq")
+      && std::arch::is_x86_feature_detected!("vpclmulqdq")
+      && std::arch::is_x86_feature_detected!("pclmulqdq")
+      && std::arch::is_x86_feature_detected!("ssse3")
+  }
+
   #[test]
   fn test_crc32_ieee_fold16_constants_match_precomputed_table() {
     // Sanity-check our compile-time generator against the (trusted) generator output
@@ -2335,14 +2346,7 @@ mod tests {
 
   #[test]
   fn test_crc32_ieee_vpclmul_matches_portable_various_lengths() {
-    if !(std::arch::is_x86_feature_detected!("avx512f")
-      && std::arch::is_x86_feature_detected!("avx512vl")
-      && std::arch::is_x86_feature_detected!("avx512bw")
-      && std::arch::is_x86_feature_detected!("avx512dq")
-      && std::arch::is_x86_feature_detected!("vpclmulqdq")
-      && std::arch::is_x86_feature_detected!("pclmulqdq")
-      && std::arch::is_x86_feature_detected!("ssse3"))
-    {
+    if !vpclmul_available_for_tests() {
       return;
     }
 
@@ -2400,14 +2404,7 @@ mod tests {
 
   #[test]
   fn test_crc32_ieee_vpclmul_multistream_matches_portable() {
-    if !(std::arch::is_x86_feature_detected!("avx512f")
-      && std::arch::is_x86_feature_detected!("avx512vl")
-      && std::arch::is_x86_feature_detected!("avx512bw")
-      && std::arch::is_x86_feature_detected!("avx512dq")
-      && std::arch::is_x86_feature_detected!("vpclmulqdq")
-      && std::arch::is_x86_feature_detected!("pclmulqdq")
-      && std::arch::is_x86_feature_detected!("ssse3"))
-    {
+    if !vpclmul_available_for_tests() {
       return;
     }
 
