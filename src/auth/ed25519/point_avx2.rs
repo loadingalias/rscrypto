@@ -1004,6 +1004,10 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 mod tests {
   use super::{ExtendedPoint, *};
 
+  fn avx512ifma_available_for_tests() -> bool {
+    !cfg!(miri) && std::arch::is_x86_feature_detected!("avx512ifma")
+  }
+
   fn basepoint() -> ExtendedPoint {
     ExtendedPoint::basepoint()
   }
@@ -1361,7 +1365,7 @@ mod tests {
 
   #[test]
   fn ifma_pack_unpack_roundtrip() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1376,7 +1380,7 @@ mod tests {
 
   #[test]
   fn ifma_double_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1395,7 +1399,7 @@ mod tests {
 
   #[test]
   fn ifma_double_chain_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1414,7 +1418,7 @@ mod tests {
 
   #[test]
   fn ifma_add_cached_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1436,7 +1440,7 @@ mod tests {
 
   #[test]
   fn ifma_add_then_double_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1457,7 +1461,7 @@ mod tests {
 
   #[test]
   fn ifma_neg_cached_is_subtraction() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1475,7 +1479,7 @@ mod tests {
 
   #[test]
   fn ifma_scalar_mul_vartime_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let bp = basepoint();
@@ -1495,7 +1499,7 @@ mod tests {
 
   #[test]
   fn ifma_scalar_mul_basepoint_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let mut scalar = [0u8; 32];
