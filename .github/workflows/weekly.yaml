@@ -88,7 +88,7 @@ jobs:
         export MIRIFLAGS="-Zmiri-tree-borrows"
         just test-miri
 
-  # ─── Fuzzing (libFuzzer scoped packages). ──
+  # ─── Fuzzing (libFuzzer full + scoped packages). ──
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
     strategy:
@@ -108,10 +108,25 @@ jobs:
       enable_magic_cache: true
       enable_rust_cache: true
       pre_script: |
-        echo "RSCRYPTO_FUZZ_DURATION_SECS=120" >> "$GITHUB_ENV"
-      run_script: just test-fuzz --scoped
-      artifact_name: fuzz-crashes-weekly-${{ matrix.target.name }}
+        echo "RSCRYPTO_FUZZ_DURATION_SECS=60" >> "$GITHUB_ENV"
+      run_script: |
+        just test-fuzz --all
+        rm -rf fuzz-output
+        mkdir -p fuzz-output
+        mapfile -t corpus_dirs < <(
+          {
+            [ -d fuzz/corpus ] && printf '%s\n' fuzz/corpus
+            find fuzz-packages -mindepth 2 -maxdepth 2 -type d -name corpus
+          } | sort
+        )
+        if [ "${#corpus_dirs[@]}" -eq 0 ]; then
+          tar -czf fuzz-output/corpus.tar.gz --files-from /dev/null
+        else
+          tar -czf fuzz-output/corpus.tar.gz "${corpus_dirs[@]}"
+        fi
+      artifact_name: fuzz-output-weekly-${{ matrix.target.name }}
       artifact_path: |
+        fuzz-output/corpus.tar.gz
         fuzz/artifacts/
         fuzz-packages/*/artifacts/
       artifact_always: false
@@ -119,6 +134,7 @@ jobs:
   # ─── Coverage (nextest + fuzz corpus → codecov). ──
   coverage:
     name: Coverage
+    needs: fuzzing
     runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
     timeout-minutes: 120
     steps:
@@ -135,6 +151,26 @@ jobs:
           toolchain-components: "rust-src"
           enable-magic-cache: "true"
           enable-rust-cache: "true"
+
+      - name: Download fuzz corpus artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: fuzz-output-weekly-*
+          path: fuzz-output-artifacts
+
+      - name: Restore fuzz corpora
+        shell: bash
+        run: |
+          shopt -s nullglob
+          archives=(fuzz-output-artifacts/*/fuzz-output/corpus.tar.gz)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "No fuzz corpus archives found"
+            exit 0
+          fi
+          for archive in "${archives[@]}"; do
+            echo "Extracting $archive"
+            tar -xzf "$archive"
+          done
 
       - name: Total Coverage (nextest + fuzz corpus replay)
         env:

@@ -27,6 +27,8 @@ maybe_disable_sccache
 COV_DIR="$REPO_ROOT/coverage"
 FUZZ_COVERAGE_SCOPE=${RSCRYPTO_FUZZ_COVERAGE_SCOPE:-all}
 LLVM_COV_TARGET_DIR="${RSCRYPTO_COV_TARGET_DIR:-$REPO_ROOT/target/llvm-cov-target}"
+FUZZ_REPLAY_CORPUS_FILES=0
+FUZZ_REPLAY_STATUS="not run"
 
 RUN_NEXTEST=false
 RUN_FUZZ=false
@@ -114,10 +116,53 @@ run_fuzz_replay_capture() {
   esac
 
   echo "Fuzz coverage scope: $FUZZ_COVERAGE_SCOPE"
+
+  FUZZ_REPLAY_CORPUS_FILES=$(count_fuzz_corpus_files "$FUZZ_COVERAGE_SCOPE")
+  if [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
+    FUZZ_REPLAY_STATUS="skipped: no corpus files"
+    if [ "$RUN_NEXTEST" = true ]; then
+      echo "No fuzz corpus files found for scope '$FUZZ_COVERAGE_SCOPE'; unified coverage will use nextest only"
+    else
+      echo "No fuzz corpus files found for scope '$FUZZ_COVERAGE_SCOPE'; no fuzz coverage report will be generated"
+    fi
+    return 0
+  fi
+
+  export RSCRYPTO_FUZZ_REPLAY_MISSING=skip
   cargo test --all-features --test fuzz_corpus_replay "${test_filter[@]}" -- --ignored --nocapture
 
   echo ""
-  echo "Fuzz corpus replay captured"
+  FUZZ_REPLAY_STATUS="captured: ${FUZZ_REPLAY_CORPUS_FILES} corpus file(s)"
+  echo "Fuzz corpus replay captured (${FUZZ_REPLAY_CORPUS_FILES} corpus file(s))"
+}
+
+count_fuzz_corpus_files() {
+  local scope=$1
+  local roots=()
+  local count=0
+
+  case "$scope" in
+    all)
+      roots=("$REPO_ROOT/fuzz/corpus" "$REPO_ROOT/fuzz-packages")
+      ;;
+    full)
+      roots=("$REPO_ROOT/fuzz/corpus")
+      ;;
+    scoped)
+      roots=("$REPO_ROOT/fuzz-packages")
+      ;;
+  esac
+
+  local root
+  for root in "${roots[@]}"; do
+    if [ -d "$root" ]; then
+      while IFS= read -r -d '' _; do
+        count=$((count + 1))
+      done < <(find "$root" -path "*/corpus/*" -type f -print0 2>/dev/null)
+    fi
+  done
+
+  echo "$count"
 }
 
 coverage_output_path() {
@@ -183,7 +228,7 @@ generate_summary() {
   fi
   if [ "$RUN_FUZZ" = true ]; then
     sources_list="${sources_list}
-- \`fuzz corpus replay (${FUZZ_COVERAGE_SCOPE})\`"
+- \`fuzz corpus replay (${FUZZ_COVERAGE_SCOPE}; ${FUZZ_REPLAY_STATUS})\`"
   fi
 
   echo ""
@@ -219,6 +264,12 @@ fi
 
 if [ "$RUN_FUZZ" = true ]; then
   run_fuzz_replay_capture
+fi
+
+if [ "$RUN_NEXTEST" = false ] && [ "$RUN_FUZZ" = true ] && [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
+  echo ""
+  echo "No fuzz coverage report generated because no corpus files were available"
+  exit 0
 fi
 
 LCOV_PATH="$(coverage_output_path)"

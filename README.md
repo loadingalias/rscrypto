@@ -5,7 +5,9 @@
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![docs.rs](https://img.shields.io/docsrs/rscrypto)](https://docs.rs/rscrypto)
 [![CI](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml)
-[![codecov](https://codecov.io/gh/loadingalias/rscrypto/graph/badge.svg)](https://codecov.io/gh/loadingalias/rscrypto)
+[![codecov: nextest + all fuzz corpus replay](https://codecov.io/gh/loadingalias/rscrypto/branch/main/graph/badge.svg?token=ILNLPXBW0P)](https://codecov.io/gh/loadingalias/rscrypto)
+
+Coverage is uploaded as one `total` Codecov report from `cargo-nextest` plus all weekly libFuzzer corpus replay.
 
 Most Rust crypto stacks force a bad choice: wire together a pile of single-primitive crates, or accept a larger package w/ dependencies, external C-libs, and supply-chain tradeoffs.
 That risk is not one I'm willing to take with the state of supply-chain attacks.
