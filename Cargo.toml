@@ -241,6 +241,10 @@ required-features = ["std", "checksums"]
 name = "password_hashing"
 required-features = ["std", "password-hashing", "getrandom"]
 
+[[test]]
+name = "fuzz_corpus_replay"
+required-features = ["std", "full"]
+
 [lints]
 workspace = true
 
