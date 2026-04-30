@@ -3,10 +3,11 @@ name = "rscrypto-fuzz-support"
 version = "0.0.0"
 publish = false
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [features]
 aead = ["rscrypto/aead"]
 traits_io = []
 
 [dependencies]
-rscrypto = { path = "../..", features = ["std"] }
+rscrypto = { version = "0.1.0", path = "../..", features = ["std"] }
