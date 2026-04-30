@@ -155,6 +155,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Upload to Codecov (fuzz)
+        if: ${{ hashFiles('coverage/fuzz.lcov') != '' }}
         uses: codecov/codecov-action@4650159d642e33fdc30954ca22638caf0df6cac8  # v5.4.3
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -171,6 +172,9 @@ jobs:
             coverage/nextest.lcov
             coverage/fuzz.lcov
             coverage/fuzz-*.lcov
+            coverage/fuzz-profile-manifest.txt
+            fuzz/coverage/*/coverage.profdata
+            fuzz-packages/*/coverage/*/coverage.profdata
           retention-days: 90
           if-no-files-found: warn
 

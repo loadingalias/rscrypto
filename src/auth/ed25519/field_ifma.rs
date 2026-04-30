@@ -1263,6 +1263,10 @@ impl FieldElement51x4 {
 mod tests {
   use super::{FieldElement, *};
 
+  fn avx512ifma_available_for_tests() -> bool {
+    !cfg!(miri) && std::arch::is_x86_feature_detected!("avx512ifma")
+  }
+
   fn test_field_elements() -> [FieldElement; 4] {
     let a = FieldElement::from_limbs([
       1_234_567_890_123,
@@ -1336,7 +1340,7 @@ mod tests {
 
   #[test]
   fn mul_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1375,7 +1379,7 @@ mod tests {
 
   #[test]
   fn square_matches_mul_self() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1398,7 +1402,7 @@ mod tests {
 
   #[test]
   fn square_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1418,7 +1422,7 @@ mod tests {
 
   #[test]
   fn mul_small_matches_full_mul() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1501,7 +1505,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_matches_reduce_then_mul() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_53bit_field_elements();
@@ -1560,7 +1564,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_max_limbs() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     // Worst case: all limbs at maximum 53-bit value.
@@ -1592,7 +1596,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_with_diff_sum_output() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     // Simulate the actual use case: diff_sum() on reduced field elements.
@@ -1621,7 +1625,7 @@ mod tests {
 
   #[test]
   fn mul_small_unreduced_matches_reduce_then_mul_small() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_53bit_field_elements();
@@ -1651,7 +1655,7 @@ mod tests {
 
   #[test]
   fn mul_unreduced_51bit_inputs_matches_mul() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     // With 51-bit inputs (already reduced), mul_unreduced should produce
@@ -1690,7 +1694,7 @@ mod tests {
 
   #[test]
   fn square_and_negate_d_wide_matches_scalar() {
-    if !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();

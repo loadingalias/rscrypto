@@ -47,11 +47,11 @@ test-fuzz *args="":
 test-coverage:
     @scripts/test/test-coverage.sh --nextest
 
-# Fuzz-corpus LCOV coverage.
+# Fuzz-corpus profile coverage.
 test-fuzz-coverage:
     @scripts/test/test-coverage.sh --fuzz
 
-# Nextest + fuzz + merged LCOV report.
+# Nextest LCOV + fuzz profile coverage.
 test-all-coverage:
     @scripts/test/test-coverage.sh
 

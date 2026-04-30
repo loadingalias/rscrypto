@@ -1016,6 +1016,10 @@ impl FieldElement2625x4 {
 mod tests {
   use super::{FieldElement, *};
 
+  fn avx512ifma_available_for_tests() -> bool {
+    !cfg!(miri) && std::arch::is_x86_feature_detected!("avx512ifma")
+  }
+
   fn test_field_elements() -> [FieldElement; 4] {
     let a = FieldElement::from_limbs([
       1_234_567_890_123,
@@ -1276,7 +1280,7 @@ mod tests {
 
   #[test]
   fn ifma_mul_matches_avx2() {
-    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx2") || !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();
@@ -1305,7 +1309,7 @@ mod tests {
 
   #[test]
   fn ifma_square_matches_avx2() {
-    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("avx512ifma") {
+    if !std::arch::is_x86_feature_detected!("avx2") || !avx512ifma_available_for_tests() {
       return;
     }
     let [a, b, c, d] = test_field_elements();

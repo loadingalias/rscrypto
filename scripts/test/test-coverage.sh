@@ -4,9 +4,9 @@ set -euo pipefail
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Coverage Reporting for rscrypto
 #
-# Generates LCOV coverage reports from two sources:
+# Generates coverage reports from two sources:
 #   1. Test suite via cargo-llvm-cov + nextest  → coverage/nextest.lcov
-#   2. Fuzz corpus via cargo fuzz coverage      → coverage/fuzz.lcov
+#   2. Fuzz corpus via cargo fuzz coverage      → coverage/fuzz-profile-manifest.txt
 #
 # Usage:
 #   ./scripts/test/test-coverage.sh                # Both nextest + fuzz
@@ -61,8 +61,11 @@ clean_coverage_outputs() {
     local host_target
     host_target="$(rustc -vV | sed -n 's|host: ||p')"
 
-    rm -f "$COV_DIR"/fuzz*.lcov
+    rm -f "$COV_DIR"/fuzz*.lcov "$COV_DIR/fuzz-profile-manifest.txt"
     rm -rf "$FUZZ_ROOT/coverage"
+    if [ -d "$FUZZ_SCOPED_ROOT" ]; then
+      find "$FUZZ_SCOPED_ROOT" -mindepth 2 -maxdepth 2 -type d -name coverage -prune -exec rm -rf {} +
+    fi
     rm -rf "$REPO_ROOT/target/$host_target/coverage"
     rm -rf "$FUZZ_SHARED_TARGET_DIR/$host_target/coverage"
   fi
@@ -122,23 +125,6 @@ run_fuzz_coverage() {
     exit 1
   fi
 
-  find_latest_coverage_binary() {
-    local target=$1
-    shift
-
-    local root binary
-    for root in "$@"; do
-      [ -d "$root" ] || continue
-      binary="$(find "$root" -name "$target" -type f -perm -111 -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1 || true)"
-      if [ -n "$binary" ]; then
-        printf '%s\n' "$binary"
-        return 0
-      fi
-    done
-
-    return 1
-  }
-
   if [ ! -d "$FUZZ_ROOT" ]; then
     echo "No fuzz/ directory found — skipping"
     return 0
@@ -154,24 +140,27 @@ run_fuzz_coverage() {
   local host_target
   host_target="$(rustc -vV | sed -n 's|host: ||p')"
 
-  # Locate llvm-profdata and llvm-cov from the toolchain.
-  local llvm_profdata llvm_cov
+  # Locate llvm-profdata from the toolchain. cargo-fuzz coverage emits
+  # libFuzzer profile data, not Rust source coverage maps, so this lane
+  # validates and preserves profiles instead of exporting LCOV.
+  local llvm_profdata
   local toolchain_lib
   toolchain_lib="$(rustc --print sysroot)/lib/rustlib/$host_target/bin"
   if [ -x "$toolchain_lib/llvm-profdata" ]; then
     llvm_profdata="$toolchain_lib/llvm-profdata"
-    llvm_cov="$toolchain_lib/llvm-cov"
   elif command -v llvm-profdata &>/dev/null; then
     llvm_profdata="llvm-profdata"
-    llvm_cov="llvm-cov"
   else
     echo "Error: llvm-profdata not found"
     echo "Install with: rustup component add llvm-tools-preview"
     return 1
   fi
 
-  local all_lcov_files=()
-  local skipped_count=0
+  local profile_manifest="$COV_DIR/fuzz-profile-manifest.txt"
+  : > "$profile_manifest"
+
+  local generated_count=0
+  local failed_count=0
   local package_dir package_label package_slug target
 
   echo ""
@@ -199,7 +188,7 @@ run_fuzz_coverage() {
   done
 
   echo ""
-  echo "Phase 2: Generating coverage reports"
+  echo "Phase 2: Generating coverage profiles"
   for package_dir in "${SELECTED_FUZZ_PACKAGES[@]}"; do
     package_label="$(fuzz_package_label "$package_dir")"
     package_slug="${package_label//\//-}"
@@ -210,69 +199,83 @@ run_fuzz_coverage() {
       fuzz_in_package "$package_dir" coverage "$target" --target "$host_target" \
         2>&1 | { grep -v "^INFO:" || true; } || cov_exit=$?
       if [ "$cov_exit" -ne 0 ]; then
-        echo "    error: coverage generation exited $cov_exit, skipping"
-        skipped_count=$((skipped_count + 1))
+        echo "    error: coverage generation exited $cov_exit"
+        failed_count=$((failed_count + 1))
         continue
       fi
 
       local cov_dir="$package_dir/coverage/$target"
       if [ ! -d "$cov_dir" ]; then
         echo "    error: no coverage output for ${package_label}/${target}"
-        skipped_count=$((skipped_count + 1))
+        failed_count=$((failed_count + 1))
         continue
       fi
 
-      local profraw_files
-      profraw_files=$(find "$cov_dir" -name "*.profraw" 2>/dev/null)
-      if [ -z "$profraw_files" ]; then
-        echo "    error: no profraw files for ${package_label}/${target}"
-        skipped_count=$((skipped_count + 1))
+      local profile_path="$cov_dir/coverage.profdata"
+      if [ ! -f "$profile_path" ]; then
+        local profraw_files
+        local merged_profile="$cov_dir/merged.profdata"
+        profraw_files=$(find "$cov_dir" -name "*.profraw" -type f 2>/dev/null)
+        if [ -z "$profraw_files" ]; then
+          echo "    error: no profile data for ${package_label}/${target}"
+          failed_count=$((failed_count + 1))
+          continue
+        fi
+
+        if ! "$llvm_profdata" merge -sparse $profraw_files -o "$merged_profile"; then
+          echo "    error: llvm-profdata merge failed for ${package_label}/${target}"
+          failed_count=$((failed_count + 1))
+          continue
+        fi
+        profile_path="$merged_profile"
+      fi
+
+      if ! "$llvm_profdata" show "$profile_path" >/dev/null; then
+        echo "    error: invalid profile data for ${package_label}/${target}"
+        failed_count=$((failed_count + 1))
         continue
       fi
 
-      "$llvm_profdata" merge -sparse $profraw_files -o "$cov_dir/merged.profdata"
+      generated_count=$((generated_count + 1))
+      printf '%s\t%s\t%s\n' "$package_label" "$target" "${profile_path#$REPO_ROOT/}" >> "$profile_manifest"
+      echo "    profile: ${profile_path#$REPO_ROOT/}"
 
-      local binary
-      binary="$(find_latest_coverage_binary \
-        "$target" \
-        "$REPO_ROOT/target/$host_target/coverage" \
-        "$FUZZ_SHARED_TARGET_DIR/$host_target/coverage" || true)"
-      if [ -z "$binary" ]; then
-        echo "    error: coverage binary not found for ${package_label}/${target}"
-        skipped_count=$((skipped_count + 1))
-        continue
+      # Keep optional LCOV files generated by older cargo-fuzz/toolchain
+      # combinations, but do not synthesize a source coverage report from
+      # libFuzzer edge profiles.
+      local target_lcov="$cov_dir/lcov.info"
+      if [ -f "$target_lcov" ]; then
+        local output_lcov="$REPO_ROOT/coverage/fuzz-${package_slug}--${target}.lcov"
+        cp "$target_lcov" "$output_lcov"
+        echo "    lcov: ${output_lcov#$REPO_ROOT/}"
       fi
-
-      local target_lcov="$REPO_ROOT/coverage/fuzz-${package_slug}--${target}.lcov"
-      if ! "$llvm_cov" export "$binary" \
-        -instr-profile="$cov_dir/merged.profdata" \
-        -format=lcov \
-        > "$target_lcov"; then
-        echo "    error: llvm-cov export failed for ${package_label}/${target}"
-        rm -f "$target_lcov"
-        skipped_count=$((skipped_count + 1))
-        continue
-      fi
-      all_lcov_files+=("$target_lcov")
-      echo "    $target_lcov"
     done < <(fuzz_list_targets "$package_dir")
   done
 
-  if [ "$skipped_count" -ne 0 ]; then
+  if [ "$failed_count" -ne 0 ]; then
     echo ""
-    echo "Error: fuzz coverage skipped $skipped_count target(s)"
+    echo "Error: fuzz coverage failed for $failed_count target(s)"
     return 1
   fi
 
-  # Phase 3: Merge all fuzz LCOV files into one.
+  local all_lcov_files=()
+  while IFS= read -r -d '' lcov_file; do
+    all_lcov_files+=("$lcov_file")
+  done < <(find "$COV_DIR" -maxdepth 1 -name "fuzz-*.lcov" -type f -print0 2>/dev/null)
+
   if [ ${#all_lcov_files[@]} -gt 0 ]; then
     local merged="$COV_DIR/fuzz.lcov"
     cat "${all_lcov_files[@]}" > "$merged"
     echo ""
-    echo "Merged fuzz coverage: $merged (${#all_lcov_files[@]} targets)"
+    echo "Merged fuzz LCOV: $merged (${#all_lcov_files[@]} targets)"
+  fi
+
+  if [ "$generated_count" -gt 0 ]; then
+    echo ""
+    echo "Fuzz coverage profiles: $profile_manifest ($generated_count targets)"
   else
     echo ""
-    echo "No fuzz coverage data generated"
+    echo "No fuzz coverage profiles generated"
   fi
 }
 
@@ -357,5 +360,9 @@ fi
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Coverage reports in: $COV_DIR/"
-ls -la "$COV_DIR"/*.lcov 2>/dev/null || echo "(no LCOV files generated)"
+if find "$COV_DIR" -maxdepth 1 \( -name "*.lcov" -o -name "fuzz-profile-manifest.txt" \) -type f -print -quit | grep -q .; then
+  find "$COV_DIR" -maxdepth 1 \( -name "*.lcov" -o -name "fuzz-profile-manifest.txt" \) -type f -exec ls -la {} +
+else
+  echo "(no coverage files generated)"
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
