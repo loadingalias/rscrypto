@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+  fs,
+  path::{Path, PathBuf},
+};
 
 use rscrypto_fuzz::replay_corpus_dir;
 
@@ -7,8 +10,32 @@ fn repo_root() -> PathBuf {
 }
 
 fn replay(target: &str, corpus_dir: PathBuf, run: fn(&[u8])) {
+  if should_skip_missing_corpus() && !has_replay_files(&corpus_dir) {
+    eprintln!(
+      "corpus replay: skipping target `{target}` because {} is missing or empty",
+      corpus_dir.display()
+    );
+    return;
+  }
+
   let replayed = replay_corpus_dir(target, corpus_dir, run);
   assert_ne!(replayed, 0, "{target} corpus should not be empty");
+}
+
+fn should_skip_missing_corpus() -> bool {
+  std::env::var("RSCRYPTO_FUZZ_REPLAY_MISSING").is_ok_and(|value| value == "skip")
+}
+
+fn has_replay_files(corpus_dir: &Path) -> bool {
+  let Ok(entries) = fs::read_dir(corpus_dir) else {
+    return false;
+  };
+
+  entries.filter_map(Result::ok).any(|entry| {
+    entry
+      .file_type()
+      .is_ok_and(|file_type| file_type.is_file() || file_type.is_symlink())
+  })
 }
 
 #[path = "../fuzz/target_impls/aead_aegis256.rs"]
