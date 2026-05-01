@@ -56,9 +56,8 @@ clean_coverage_outputs() {
   rm -f "$COV_DIR"/fuzz-*.lcov "$COV_DIR"/fuzz-profile-manifest.txt "$COV_DIR"/SUMMARY.md
   rm -rf "$COV_DIR"/html-nextest "$COV_DIR"/html-fuzz "$COV_DIR"/html-total
   rm -rf "$LLVM_COV_TARGET_DIR"
+  clear_profile_data
 }
-
-clean_coverage_outputs
 
 # ── Coverage capture ─────────────────────────────────────────────────────────
 
@@ -158,15 +157,24 @@ run_fuzz_replay_capture() {
 run_full_fuzz_replay() {
   echo "Full fuzz workspace replay"
   cargo test --manifest-path "$REPO_ROOT/fuzz/Cargo.toml" --all-features --test corpus_replay -- --nocapture
+  assert_profile_data_after "full fuzz workspace replay"
 }
 
 run_scoped_fuzz_replay() {
   echo "Scoped fuzz package replay"
 
-  local manifest
+  local after before manifest
   while IFS= read -r manifest; do
     echo "  -> ${manifest#"$REPO_ROOT"/}"
+    before=$(profile_count)
     cargo test --manifest-path "$manifest" --all-features --test corpus_replay -- --nocapture
+    after=$(profile_count)
+    if [ "$after" -le "$before" ]; then
+      echo "Error: no new coverage profile data after ${manifest#"$REPO_ROOT"/}"
+      echo "LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE"
+      echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR"
+      return 1
+    fi
   done < <(find "$REPO_ROOT/fuzz-packages" -mindepth 2 -maxdepth 2 -name Cargo.toml | sort)
 }
 
@@ -220,10 +228,68 @@ coverage_html_dir() {
 }
 
 clear_profile_data() {
+  local profile
+
+  while IFS= read -r profile; do
+    rm -f "$profile"
+  done < <(
+    find_profile_files '*.profraw'
+    find_profile_files '*.profdata'
+    find_profile_files '*-profraw-list'
+  )
+}
+
+find_profile_roots() {
+  local root
+
+  for root in "$LLVM_COV_TARGET_DIR" "$REPO_ROOT" "$REPO_ROOT/fuzz" "$REPO_ROOT/fuzz-packages"; do
+    if [ -d "$root" ]; then
+      printf '%s\n' "$root"
+    fi
+  done
+}
+
+write_profile_manifest() {
+  local output=$1
+
+  find_profile_files '*.profraw' | sort -u > "$output"
+}
+
+find_profile_files() {
+  local name_pattern=$1
+
   if [ -d "$LLVM_COV_TARGET_DIR" ]; then
-    find "$LLVM_COV_TARGET_DIR" -maxdepth 1 \
-      \( -name "*.profraw" -o -name "*.profdata" -o -name "*-profraw-list" \) \
-      -type f -exec rm -f {} +
+    find "$LLVM_COV_TARGET_DIR" -maxdepth 4 -name "$name_pattern" -type f 2>/dev/null
+  fi
+  if [ -d "$REPO_ROOT" ]; then
+    find "$REPO_ROOT" -maxdepth 1 -name "$name_pattern" -type f 2>/dev/null
+  fi
+  if [ -d "$REPO_ROOT/fuzz" ]; then
+    find "$REPO_ROOT/fuzz" -maxdepth 1 -name "$name_pattern" -type f 2>/dev/null
+  fi
+  if [ -d "$REPO_ROOT/fuzz-packages" ]; then
+    find "$REPO_ROOT/fuzz-packages" -mindepth 2 -maxdepth 2 -name "$name_pattern" -type f 2>/dev/null
+  fi
+}
+
+profile_count() {
+  local manifest
+  manifest=$(mktemp)
+  write_profile_manifest "$manifest"
+  wc -l < "$manifest" | tr -d ' '
+  rm -f "$manifest"
+}
+
+assert_profile_data_after() {
+  local label=$1
+
+  if [ "$(profile_count)" -eq 0 ]; then
+    echo "Error: no coverage profile data after $label"
+    echo "LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE"
+    echo "CARGO_TARGET_DIR=$CARGO_TARGET_DIR"
+    echo "Profile search roots:"
+    find_profile_roots | sed 's/^/  - /'
+    return 1
   fi
 }
 
@@ -284,9 +350,12 @@ generate_fuzz_report() {
   profraw_list="$LLVM_COV_TARGET_DIR/rscrypto-profraw-list"
   raw_lcov="$COV_DIR/fuzz.raw.lcov"
 
-  find "$LLVM_COV_TARGET_DIR" -maxdepth 1 -name "*.profraw" -type f | sort > "$profraw_list"
+  write_profile_manifest "$profraw_list"
   if [ ! -s "$profraw_list" ]; then
-    echo "Error: no fuzz profile data found in $LLVM_COV_TARGET_DIR"
+    echo "Error: no fuzz profile data found"
+    echo "LLVM_PROFILE_FILE=$LLVM_PROFILE_FILE"
+    echo "Profile search roots:"
+    find_profile_roots | sed 's/^/  - /'
     return 1
   fi
 
@@ -475,6 +544,7 @@ SUMMARY_EOF
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+clean_coverage_outputs
 require_coverage_tools
 start_coverage_capture
 

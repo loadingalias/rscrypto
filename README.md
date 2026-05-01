@@ -1,24 +1,25 @@
 # rscrypto
 
-> Zero-dependency Rust crypto, hardware-accelerated across x86_64, ARM64, RISC-V, IBM Z, IBM POWER, and Apple Silicon.
+> Rust crypto with zero default deps, no C libraries, and hardware acceleration across x86_64, ARM64, RISC-V, IBM Z, IBM POWER, and Apple Silicon. It is also no-std compatible and WASM/WASI compatible.
 
 [![Crates.io](https://img.shields.io/crates/v/rscrypto.svg)](https://crates.io/crates/rscrypto)
 [![docs.rs](https://img.shields.io/docsrs/rscrypto)](https://docs.rs/rscrypto)
 [![CI](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml/badge.svg)](https://github.com/loadingalias/rscrypto/actions/workflows/ci.yaml)
 [![codecov: nextest + all fuzz corpus replay](https://codecov.io/gh/loadingalias/rscrypto/branch/main/graph/badge.svg?token=ILNLPXBW0P)](https://codecov.io/gh/loadingalias/rscrypto)
 
-Coverage is uploaded as one `total` Codecov report from `cargo-nextest` plus all weekly libFuzzer corpus replay.
+Coverage is uploaded as one `total` Codecov report from `cargo-nextest` + all of the weekly libFuzzer corpus replay data.
 
-Most Rust crypto stacks force a bad choice: wire together a pile of single-primitive crates, or accept a larger package w/ dependencies, external C-libs, and supply-chain tradeoffs.
-That risk is not one I'm willing to take with the state of supply-chain attacks.
+Crypto is often where otherwise portable Rust software stops being portable:
+native libs, target gaps, dependency piles, feature drift, and per-primitive
+performance surprises.
 
 `rscrypto` is a single-crate crypto stack: checksums, cryptographic hashes, fast hashes, MACs, KDFs, password hashing, signatures, key exchange, and AEADs behind leaf-selectable features.
 It can be a tiny SHA-2 dependency or the full primitives package; either way, primitive implementations stay in-tree as Rust, SIMD intrinsics, and targeted ASM kernels.
 No C FFI, no vendored C/C++, no OpenSSL/libcrypto dependency, no external crypto crate stack.
 
-Hardware acceleration is not just a single platform. I've taken great care to accelerate widely.
+`rscrypto` treats platform coverage as part of the API, not a bonus bench.
 The benchmark matrix covers x86_64 Intel/AMD, ARM64 Graviton3/4, RISE RISC-V, IBM Z/s390x, IBM POWER10, and macOS Apple Silicon.
-Every benchmarked architecture has hardware, SIMD, or ASM acceleration in-tree; portable fallbacks remain the correctness floor for unsupported configurations and constrained builds.
+Every benched architecture has hardware, SIMD, or ASM acceleration in-tree; portable fallbacks remain the correctness floor for unsupported configurations and constrained builds.
 
 Proof points:
 
@@ -27,7 +28,19 @@ Proof points:
 | Faster than the official BLAKE3 crate on large buffers | **2.37x** geomean faster than `blake3` for one-shot/keyed/derive-key `>=64 KiB` Linux CI inputs; up to **7.70x** |
 | Faster Ed25519 signing without `ed25519-dalek` / `curve25519-dalek` | **1.57x** geomean faster than `ed25519-dalek` signing across Linux CI |
 | Broad hardware-accelerated portability | x86_64, ARM64, RISC-V, IBM Z, IBM POWER, Apple Silicon, plus portable `no_std`/WASM fallbacks |
-| Zero default dependency surface | `full` enables the primitive stack without pulling OpenSSL, C FFI, RustCrypto, `dalek`, `blake3`, or `crc*` crates |
+| Small dependency surface | Zero default deps; `full` enables the primitive stack without pulling OpenSSL, C FFI, RustCrypto, `dalek`, `blake3`, or `crc*` crates |
+
+Choose the smallest feature that fits:
+
+| Need | Feature |
+|------|---------|
+| SHA-2 | `sha2` |
+| BLAKE3 | `blake3` |
+| CRC32 / CRC32C | `crc32` |
+| HMAC / HKDF / PBKDF2 / KMAC | `macs` / `kdfs` / `auth` |
+| Ed25519 / X25519 | `ed25519` / `x25519` |
+| AEADs | `aead` |
+| Full primitive stack | `full` |
 
 Use it as a single primitive:
 
@@ -42,6 +55,8 @@ Or bring the whole toolbox without pulling in a C library:
 [dependencies]
 rscrypto = { version = "0.1", default-features = false, features = ["full"] }
 ```
+
+Important boundaries: `rscrypto` is not a FIPS 140-3 validated module (yet). It provides Rust impls of commonly used primitives w/ portable fallbacks, typed APIs, and explicit hardware backends.
 
 ## Quick Start
 
@@ -114,7 +129,7 @@ assert!(Scrypt::verify_string_with_policy(b"wrong", &encoded, &ScryptVerifyPolic
 
 ## Why rscrypto
 
-`rscrypto` was built as a necessity for Rail Industries, currently in stealth. I needed reproducible builds, small dependency graphs, platform coverage, and throughput under real workloads without dragging in c-libs and weakening my supply chain story.
+`rscrypto` started from a production need within Rail Industries: reproducible builds, small dependency graphs, wide platform coverage, and throughput under real workloads without dragging C libraries into the supply-chain story.
 
 | What You Need | What `rscrypto` Does |
 |---------------|----------------------|
@@ -126,13 +141,13 @@ assert!(Scrypt::verify_string_with_policy(b"wrong", &encoded, &ScryptVerifyPolic
 | Embedded, WASM, and kernel-adjacent targets | Portable fallbacks for every enabled primitive, `alloc` and `std` opt-in by feature |
 | Auditable failure behavior | Opaque verification errors, typed keys/nonces/tags, zeroized secrets |
 
-The design goal is simple: replace both single-primitive dependency piles and native crypto bindings with one auditable Rust crate that's more performant that either option above.
+The design goal is simple: replace both single-primitive dependency piles and native crypto bindings with one auditable Rust crate that can be faster than either option above... and without the massive supply chain risk.
 
 ## Performance
 
-The current benchmarks compare `rscrypto` against the crates I would normally reach for: RustCrypto hashes and AEADs, `blake3`, `ed25519-dalek`, `x25519-dalek`, `crc*`, `xxhash-rust`, `rapidhash`, `aegis`, and related baselines.
+The current benchmarks compare `rscrypto` against the really common Rust baselines: RustCrypto hashes and AEADs, `blake3`, `ed25519-dalek`, `x25519-dalek`, `crc-fast`, `xxhash-rust`, `rapidhash`, `aegis`, and other related crates.
 
-Linux: **3717 faster comparisons** across **5796** matched comparisons on nine architectures, with a **1.75x** geomean speedup from raw Criterion medians.
+Linux: **3717 faster comparisons** across **5796** matched comparisons on nine arches, with a **1.75x** geomean speedup from raw Criterion medians.
 
 | Primitive | Baseline | Result |
 |---|---|---|
@@ -144,9 +159,9 @@ Linux: **3717 faster comparisons** across **5796** matched comparisons on nine a
 
 On macOS Apple Silicon, AEAD is the strongest area at 2.60x geomean and checksums land at 4.18x; SHA-2 and SHA-3 are essentially parity at 1.02x and 1.01x.
 
-Numbers: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
+Most Recent Bench Numbers: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
 
-## Examples And Docs
+## Examples & Docs
 
 | Path | Purpose |
 |------|---------|
@@ -193,11 +208,9 @@ See [docs/security.md](docs/security.md) for nonce lifecycle, verification handl
 
 `rscrypto` provides FIPS-oriented building blocks, not a FIPS 140-3 validated module.
 
-NIST-aligned primitives include AES-256-GCM, SHA-2, SHA-3/SHAKE, HMAC, KMAC, HKDF, and PBKDF2.
-Validation requires a defined module boundary, operational environment, self-tests, documentation, and lab review; this crate does not claim that certificate today.
+NIST-aligned primitives include `AES-256-GCM`, `SHA-2`, `SHA-3/SHAKE`, `HMAC`, `KMAC`, `HKDF`, and `PBKDF2`. Validation requires I define the FIPS module boundary, operational environment, self-tests, docs, and pay for a lab review.
 
-Roadmap: add a `nist-approved` feature bundle for FIPS-oriented deployments.
-It should select approved primitives only; it will not be a validation claim.
+Adding a `nist-approved` feature bundle for FIPS-oriented deployments is on my roadmap, but it also costs tens of thousands of dollars to have it done correctly.
 
 Compliance details: [`docs/compliance.md`](docs/compliance.md).
 
@@ -245,25 +258,24 @@ Three-tier SIMD dispatch: compile-time `#[cfg]` --> runtime detection (with `std
 
 **no_std build targets**: `thumbv6m-none-eabi`, `riscv32imac-unknown-none-elf`, `aarch64-unknown-none`, `x86_64-unknown-none`, `wasm32-unknown-unknown`, `wasm32-wasip1`.
 
-**NOTE**: RISE RISC-V runners are the only RISC-V runners that I could find that were reliable and worked. I'd like to expand the RISC-V work here, but I simply don't have access to the hardware currently. Also, IBM accepted this repository for thier IBM POWER/Z runners, which are 100% free and without them... I'd never have been able to code for IBM arches... so thank you, IBM.
+**NOTE**: RISE RISC-V runners are the only reliable RISC-V runners I could find. I'd like to expand the RISC-V work here, but I do not currently have access to more hardware. IBM also accepted this repository for their IBM POWER/Z runners; without that access, I would not have been able to build and test the IBM backends.
 
 ## Correctness Model
 
-Portable implementations are the byte-for-byte authority.
-Hardware, SIMD, and ASM backends are accelerators and are differential-tested against the portable path and official vectors.
-Verification errors are opaque, secret keys zeroize on drop, and release builds keep overflow checks enabled.
+Portable impls are the byte-for-byte authority.
+Hardware, SIMD, and ASM backends are accelerators and are differential-tested against the portable path and official vectors. Verification errors are opaque, secret keys zeroize on drop, and release builds keep overflow checks enabled.
 
 ## Testing
 
 | Layer | What | Command |
 |-------|------|---------|
-| Unit + integration | Official vectors, differential oracles, API invariants | `just test` |
-| Feature matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
-| Property tests | 256 cases per proptest, run alongside unit + integration | `just test` (nextest) |
+| Unit & Integration | Official vectors, differential oracles, API invariants | `just test` |
+| Feature Matrix | Leaf and bundle reduced-feature combinations | `just test-feature-matrix` |
+| Property Tests | 256 cases per proptest, run alongside unit + integration | `just test` (nextest) |
 | Miri | Memory safety under Stacked Borrows | `just test-miri` |
 | Fuzz | Full fuzz suite plus scoped package harnesses with differential oracles | `just test-fuzz` |
 | Coverage | Nextest + fuzz corpus LCOV | `just test-all-coverage` |
-| Supply chain | `cargo deny` + `cargo audit` | Weekly CI |
+| Supply Chain | `cargo deny` + `cargo audit` | Weekly CI |
 
 ## Internals
 
