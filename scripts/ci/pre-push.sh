@@ -8,10 +8,14 @@ set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [[ -z "$REPO_ROOT" ]]; then
+  echo "Error: unable to find repository root" >&2
+  exit 1
+fi
+
+# shellcheck source=scripts/lib/common.sh
+source "$REPO_ROOT/scripts/lib/common.sh"
 
 cd "$REPO_ROOT"
 
