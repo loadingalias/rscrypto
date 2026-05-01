@@ -110,7 +110,7 @@ runners:
     ram: [4, 8]
     family: ["c7g", "m7g", "c8g", "m8g"]
     image: ubuntu24-full-arm64
-    spot: price-capacity-optimized
+    spot: false
     volume: 50gb:gp3
     ssh: true
     extras: ["s3-cache"]

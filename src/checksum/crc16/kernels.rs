@@ -100,7 +100,7 @@ pub mod aarch64 {
   ];
 
   /// CCITT PMULL+EOR3 kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub const CCITT_PMULL_EOR3: [Crc16Fn; 5] = [
     arch::crc16_ccitt_pmull_eor3_safe,
     arch::crc16_ccitt_pmull_eor3_2way_safe,
@@ -126,7 +126,7 @@ pub mod aarch64 {
   ];
 
   /// IBM PMULL+EOR3 kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub const IBM_PMULL_EOR3: [Crc16Fn; 5] = [
     arch::crc16_ibm_pmull_eor3_safe,
     arch::crc16_ibm_pmull_eor3_2way_safe,

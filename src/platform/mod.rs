@@ -39,6 +39,7 @@
 
 pub mod caps;
 pub mod detect;
+#[cfg(not(miri))]
 mod target_matrix;
 
 // ─────────────────────────────────────────────────────────────────────────────
