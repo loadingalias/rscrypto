@@ -757,14 +757,14 @@ mod aarch64_tables {
   #[cfg(feature = "crc64")]
   use crate::checksum::crc64::kernels::aarch64 as crc64_k;
 
-  #[cfg(all(feature = "crc16", any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "crc16", not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN: usize = 262_144;
 
   /// Graviton3 CRC16/CCITT large-path PMULL+EOR3 hybrid.
   ///
   /// PMULL+EOR3 2-way improves lower "large" buffers, while PMULL+EOR3 1-way
   /// remains safer for very large buffers on G3.
-  #[cfg(all(feature = "crc16", any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "crc16", not(miri), any(target_os = "linux", target_os = "android")))]
   #[inline]
   fn g3_crc16_ccitt_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -778,7 +778,7 @@ mod aarch64_tables {
   ///
   /// Empirically, 2-way PMULL+EOR3 helps lower "large" buffers while 1-way
   /// PMULL+EOR3 remains safer for very large buffers on G3.
-  #[cfg(all(feature = "crc16", any(target_os = "linux", target_os = "android")))]
+  #[cfg(all(feature = "crc16", not(miri), any(target_os = "linux", target_os = "android")))]
   #[inline]
   fn g3_crc16_ibm_l_hybrid(crc: u16, data: &[u8]) -> u16 {
     if data.len() <= G3_CRC16_PMULL_EOR3_2WAY_MAX_LEN {
@@ -963,7 +963,7 @@ mod aarch64_tables {
   // without SHA3 feature flag - the EOR3 instruction is available through
   // a different path on this hardware.
   // ───────────────────────────────────────────────────────────────────────────
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub static GRAVITON2_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     boundaries: [64, 256, 4096],
@@ -1104,7 +1104,7 @@ mod aarch64_tables {
   // - Higher throughput (~25% faster across the board)
   // - Different optimal kernel choices for CRC16@s and CRC64/NVME
   // ───────────────────────────────────────────────────────────────────────────
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_XS: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
@@ -1136,7 +1136,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-small",
   };
 
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_S: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
@@ -1168,7 +1168,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull",
   };
 
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_M: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: crc16_k::CCITT_PMULL_EOR3[0], // PMULL+EOR3 cuts XOR chain in large lanes.
@@ -1200,7 +1200,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-2way",
   };
 
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_L: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
     crc16_ccitt: g3_crc16_ccitt_l_hybrid,
@@ -1232,7 +1232,7 @@ mod aarch64_tables {
     crc64_nvme_name: "aarch64/pmull-eor3",
   };
 
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub static GRAVITON3_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
@@ -1247,7 +1247,7 @@ mod aarch64_tables {
   //
   // Starts from Graviton3, but keeps 2-way PMULL+EOR3 for CRC16 large classes.
   // ───────────────────────────────────────────────────────────────────────────
-  #[cfg(any(target_os = "linux", target_os = "android"))]
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub static GRAVITON4_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
     [64, 256, 4096],
