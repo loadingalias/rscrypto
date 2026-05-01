@@ -99,16 +99,10 @@ run_fuzz_replay_capture() {
   echo "Fuzz Corpus Coverage Capture (deterministic replay)"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  if [ ! -f "$REPO_ROOT/tests/fuzz_corpus_replay.rs" ]; then
-    echo "Error: tests/fuzz_corpus_replay.rs not found"
-    return 1
-  fi
-
-  local test_filter=()
   case "$FUZZ_COVERAGE_SCOPE" in
     all) ;;
-    full) test_filter=("replay_full_") ;;
-    scoped) test_filter=("replay_scoped_") ;;
+    full) ;;
+    scoped) ;;
     *)
       echo "Error: unknown fuzz coverage scope: $FUZZ_COVERAGE_SCOPE"
       return 1
@@ -129,11 +123,37 @@ run_fuzz_replay_capture() {
   fi
 
   export RSCRYPTO_FUZZ_REPLAY_MISSING=skip
-  cargo test --all-features --test fuzz_corpus_replay "${test_filter[@]}" -- --ignored --nocapture
+  case "$FUZZ_COVERAGE_SCOPE" in
+    all)
+      run_full_fuzz_replay
+      run_scoped_fuzz_replay
+      ;;
+    full)
+      run_full_fuzz_replay
+      ;;
+    scoped)
+      run_scoped_fuzz_replay
+      ;;
+  esac
 
   echo ""
   FUZZ_REPLAY_STATUS="captured: ${FUZZ_REPLAY_CORPUS_FILES} corpus file(s)"
   echo "Fuzz corpus replay captured (${FUZZ_REPLAY_CORPUS_FILES} corpus file(s))"
+}
+
+run_full_fuzz_replay() {
+  echo "Full fuzz workspace replay"
+  cargo test --manifest-path "$REPO_ROOT/fuzz/Cargo.toml" --all-features --test corpus_replay -- --nocapture
+}
+
+run_scoped_fuzz_replay() {
+  echo "Scoped fuzz package replay"
+
+  local manifest
+  while IFS= read -r manifest; do
+    echo "  -> ${manifest#"$REPO_ROOT"/}"
+    cargo test --manifest-path "$manifest" --all-features --test corpus_replay -- --nocapture
+  done < <(find "$REPO_ROOT/fuzz-packages" -mindepth 2 -maxdepth 2 -name Cargo.toml | sort)
 }
 
 count_fuzz_corpus_files() {
@@ -185,23 +205,209 @@ coverage_html_dir() {
   fi
 }
 
-generate_report() {
+clear_profile_data() {
+  if [ -d "$LLVM_COV_TARGET_DIR" ]; then
+    find "$LLVM_COV_TARGET_DIR" -maxdepth 1 \
+      \( -name "*.profraw" -o -name "*.profdata" -o -name "*-profraw-list" \) \
+      -type f -exec rm -f {} +
+  fi
+}
+
+llvm_tool() {
+  local tool=$1
+  local host path sysroot
+
+  sysroot="$(rustc --print sysroot)"
+  host="$(rustc -vV | awk '/^host:/{print $2}')"
+  path="$sysroot/lib/rustlib/$host/bin/$tool"
+  if [ -x "$path" ]; then
+    echo "$path"
+    return 0
+  fi
+
+  if command -v "$tool" &>/dev/null; then
+    command -v "$tool"
+    return 0
+  fi
+
+  echo "Error: $tool not found; install rustup component llvm-tools-preview" >&2
+  return 1
+}
+
+generate_root_report() {
   local lcov_path=$1
   local html_dir
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Generating coverage report"
+  echo "Generating test-suite coverage report"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   cargo llvm-cov report --lcov --output-path "$lcov_path"
   echo "LCOV report: $lcov_path"
 
-  if [ "$GEN_HTML" = true ]; then
+  if [ "$GEN_HTML" = true ] && { [ "$RUN_NEXTEST" = false ] || [ "$RUN_FUZZ" = false ]; }; then
     html_dir="$(coverage_html_dir)"
     cargo llvm-cov report --html --output-dir "$html_dir"
     echo "HTML report: $html_dir/index.html"
   fi
+}
+
+generate_fuzz_report() {
+  local lcov_path=$1
+  local llvm_cov llvm_profdata profdata profraw_list raw_lcov
+  local replay_binaries=()
+  local candidate
+
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "Generating fuzz replay coverage report"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  llvm_cov="$(llvm_tool llvm-cov)"
+  llvm_profdata="$(llvm_tool llvm-profdata)"
+  profdata="$LLVM_COV_TARGET_DIR/rscrypto.profdata"
+  profraw_list="$LLVM_COV_TARGET_DIR/rscrypto-profraw-list"
+  raw_lcov="$COV_DIR/fuzz.raw.lcov"
+
+  find "$LLVM_COV_TARGET_DIR" -maxdepth 1 -name "*.profraw" -type f | sort > "$profraw_list"
+  if [ ! -s "$profraw_list" ]; then
+    echo "Error: no fuzz profile data found in $LLVM_COV_TARGET_DIR"
+    return 1
+  fi
+
+  "$llvm_profdata" merge -sparse -f "$profraw_list" -o "$profdata"
+
+  while IFS= read -r -d '' candidate; do
+    if [ -x "$candidate" ]; then
+      replay_binaries+=(--object "$candidate")
+    fi
+  done < <(find "$LLVM_COV_TARGET_DIR/debug/deps" -maxdepth 1 -type f -name "corpus_replay-*" -print0)
+
+  if [ "${#replay_binaries[@]}" -eq 0 ]; then
+    echo "Error: no fuzz corpus_replay test binaries found in $LLVM_COV_TARGET_DIR/debug/deps"
+    return 1
+  fi
+
+  "$llvm_cov" export \
+    --format=lcov \
+    --instr-profile "$profdata" \
+    --ignore-filename-regex "(/\\.cargo/registry/|/rustc/|/fuzz/|/fuzz-packages/|/tests/)" \
+    "${replay_binaries[@]}" > "$raw_lcov"
+
+  filter_lcov_sources "$raw_lcov" "$lcov_path"
+  rm -f "$raw_lcov"
+  echo "LCOV report: $lcov_path"
+}
+
+filter_lcov_sources() {
+  local input=$1
+  local output=$2
+
+  awk -v source_root="$REPO_ROOT/src/" '
+    BEGIN { keep = 0 }
+    /^SF:/ {
+      path = substr($0, 4)
+      keep = (index(path, source_root) == 1)
+    }
+    keep { print }
+    /^end_of_record/ { keep = 0 }
+  ' "$input" > "$output"
+
+  if [ ! -s "$output" ]; then
+    echo "Error: filtered LCOV report is empty: $output"
+    return 1
+  fi
+}
+
+merge_lcov_reports() {
+  local output=$1
+  shift
+
+  awk '
+    /^SF:/ {
+      file = substr($0, 4)
+      files[file] = 1
+      next
+    }
+    /^FN:/ {
+      if (file == "") next
+      rest = substr($0, 4)
+      comma = index(rest, ",")
+      line = substr(rest, 1, comma - 1)
+      name = substr(rest, comma + 1)
+      key = file SUBSEP name
+      fn_line[key] = line
+      funcs[key] = 1
+      next
+    }
+    /^FNDA:/ {
+      if (file == "") next
+      rest = substr($0, 6)
+      comma = index(rest, ",")
+      count = substr(rest, 1, comma - 1) + 0
+      name = substr(rest, comma + 1)
+      key = file SUBSEP name
+      fn_hits[key] += count
+      funcs[key] = 1
+      next
+    }
+    /^DA:/ {
+      if (file == "") next
+      rest = substr($0, 4)
+      split(rest, parts, ",")
+      key = file SUBSEP parts[1]
+      line_hits[key] += parts[2] + 0
+      lines[key] = 1
+      next
+    }
+    /^end_of_record/ {
+      file = ""
+      next
+    }
+    END {
+      for (file_name in files) {
+        print "SF:" file_name
+
+        fn_found = 0
+        fn_hit = 0
+        for (key in funcs) {
+          split(key, parts, SUBSEP)
+          if (parts[1] != file_name) continue
+          name = parts[2]
+          count = fn_hits[key] + 0
+          if (fn_line[key] != "") print "FN:" fn_line[key] "," name
+          print "FNDA:" count "," name
+          fn_found++
+          if (count > 0) fn_hit++
+        }
+        print "FNF:" fn_found
+        print "FNH:" fn_hit
+
+        line_found = 0
+        line_hit = 0
+        for (key in lines) {
+          split(key, parts, SUBSEP)
+          if (parts[1] != file_name) continue
+          line = parts[2]
+          count = line_hits[key] + 0
+          print "DA:" line "," count
+          line_found++
+          if (count > 0) line_hit++
+        }
+        print "LF:" line_found
+        print "LH:" line_hit
+        print "end_of_record"
+      }
+    }
+  ' "$@" > "$output"
+
+  if [ ! -s "$output" ]; then
+    echo "Error: merged LCOV report is empty: $output"
+    return 1
+  fi
+
+  echo "Merged LCOV report: $output"
 }
 
 generate_summary() {
@@ -258,22 +464,35 @@ SUMMARY_EOF
 require_coverage_tools
 start_coverage_capture
 
-if [ "$RUN_NEXTEST" = true ]; then
-  run_nextest_capture
-fi
-
-if [ "$RUN_FUZZ" = true ]; then
-  run_fuzz_replay_capture
-fi
-
-if [ "$RUN_NEXTEST" = false ] && [ "$RUN_FUZZ" = true ] && [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
-  echo ""
-  echo "No fuzz coverage report generated because no corpus files were available"
-  exit 0
-fi
-
 LCOV_PATH="$(coverage_output_path)"
-generate_report "$LCOV_PATH"
+
+if [ "$RUN_NEXTEST" = true ] && [ "$RUN_FUZZ" = true ]; then
+  run_nextest_capture
+  generate_root_report "$COV_DIR/nextest.lcov"
+  clear_profile_data
+
+  run_fuzz_replay_capture
+  if [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
+    cp "$COV_DIR/nextest.lcov" "$LCOV_PATH"
+  else
+    generate_fuzz_report "$COV_DIR/fuzz.lcov"
+    merge_lcov_reports "$LCOV_PATH" "$COV_DIR/nextest.lcov" "$COV_DIR/fuzz.lcov"
+  fi
+elif [ "$RUN_NEXTEST" = true ]; then
+  run_nextest_capture
+  generate_root_report "$LCOV_PATH"
+elif [ "$RUN_FUZZ" = true ]; then
+  run_fuzz_replay_capture
+
+  if [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
+    echo ""
+    echo "No fuzz coverage report generated because no corpus files were available"
+    exit 0
+  fi
+
+  generate_fuzz_report "$LCOV_PATH"
+fi
+
 generate_summary "$LCOV_PATH"
 
 echo ""
