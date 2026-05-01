@@ -70,7 +70,7 @@ jobs:
       runner: ${{ matrix.target.runner }}
       timeout_minutes: 35
       cache_key: ${{ inputs.cache_key_prefix }}-${{ matrix.target.name }}
-      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'standard' }}
+      tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'ci' }}
       toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
       enable_magic_cache: ${{ matrix.target.type == 'runson' }}
       enable_rust_cache: true
@@ -82,6 +82,7 @@ jobs:
             cargo test --workspace --all-features --no-run
             ;;
           *)
+            export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
             if [[ "${{ inputs.scope }}" == "rail" ]]; then
               export RAIL_SINCE="${{ inputs.base_ref }}"
               export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
@@ -103,7 +104,7 @@ jobs:
       runner: ubuntu-24.04-s390x
       timeout_minutes: 90
       cache_key: ${{ inputs.cache_key_prefix }}-ibm-s390x
-      tools_mode: ibm
+      tools_mode: none
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
@@ -112,13 +113,13 @@ jobs:
         lscpu
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
-        just ci-check
+        bash scripts/ci/ci-check.sh
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
           export RAIL_SINCE="${{ inputs.base_ref }}"
           export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-          just test
+          bash scripts/test/test.sh
         else
-          just test --all
+          bash scripts/test/test.sh --all
         fi
 
   ci-ibm-power10:
@@ -128,7 +129,7 @@ jobs:
       runner: ubuntu-24.04-ppc64le-p10
       timeout_minutes: 90
       cache_key: ${{ inputs.cache_key_prefix }}-ibm-power10
-      tools_mode: ibm
+      tools_mode: none
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
@@ -137,13 +138,13 @@ jobs:
         lscpu
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
-        just ci-check
+        bash scripts/ci/ci-check.sh
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
           export RAIL_SINCE="${{ inputs.base_ref }}"
           export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-          just test
+          bash scripts/test/test.sh
         else
-          just test --all
+          bash scripts/test/test.sh --all
         fi
 
   ci-riscv:
@@ -153,7 +154,7 @@ jobs:
       runner: ubuntu-24.04-riscv
       timeout_minutes: 120
       cache_key: ${{ inputs.cache_key_prefix }}-riscv64
-      tools_mode: ibm
+      tools_mode: none
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
@@ -163,13 +164,14 @@ jobs:
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
         export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
-        just ci-check
+        export RSCRYPTO_SKIP_DOCTESTS=1
+        bash scripts/ci/ci-check.sh
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
           export RAIL_SINCE="${{ inputs.base_ref }}"
           export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-          just test
+          bash scripts/test/test.sh
         else
-          just test --all
+          bash scripts/test/test.sh --all
         fi
 
   no-std:
@@ -213,7 +215,7 @@ jobs:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 15
       cache_key: ${{ inputs.cache_key_prefix }}-supply-chain
-      tools_mode: standard
+      tools_mode: supply-chain
       enable_magic_cache: true
       enable_rust_cache: true
       run_script: |

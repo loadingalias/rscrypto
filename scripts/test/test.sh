@@ -34,7 +34,25 @@ fi
 # macOS /bin/bash 3.2 treats "${empty_array[@]}" as unbound with `set -u`.
 # Guard expansions so an omitted thread override stays a true no-op.
 
+SKIP_DOCTESTS=false
+case "${RSCRYPTO_SKIP_DOCTESTS:-}" in
+  1 | true | TRUE | yes | YES)
+    SKIP_DOCTESTS=true
+    echo "Skipping doctests: RSCRYPTO_SKIP_DOCTESTS=${RSCRYPTO_SKIP_DOCTESTS}"
+    ;;
+esac
+
+CARGO_TEST_TARGET_ARGS=()
+if [ "$SKIP_DOCTESTS" = true ]; then
+  CARGO_TEST_TARGET_ARGS=(--lib --tests)
+fi
+
 run_workspace_doctests() {
+  if [ "$SKIP_DOCTESTS" = true ]; then
+    echo "doctests skipped"
+    return 0
+  fi
+
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Running doctests for entire workspace"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -42,6 +60,11 @@ run_workspace_doctests() {
 }
 
 run_crate_doctests() {
+  if [ "$SKIP_DOCTESTS" = true ]; then
+    echo "doctests skipped"
+    return 0
+  fi
+
   local crates=("$@")
   if [ ${#crates[@]} -eq 0 ]; then
     echo "no doc-test targets"
@@ -117,7 +140,7 @@ if [ ${#CRATES[@]} -gt 0 ]; then
     run_crate_doctests "${CRATES[@]}"
   else
     # shellcheck disable=SC2086
-    cargo test $CRATE_FLAGS --all-features
+    cargo test $CRATE_FLAGS --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
   fi
 elif [ "$ALL_FLAG" = true ]; then
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -127,7 +150,7 @@ elif [ "$ALL_FLAG" = true ]; then
     cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
     run_workspace_doctests
   else
-    cargo test --workspace --all-features
+    cargo test --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
   fi
 else
   # Rail-scoped (default): cargo-rail planner selects the affected crates.
@@ -147,7 +170,7 @@ else
           cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
           run_workspace_doctests
         else
-          cargo test --workspace --all-features
+          cargo test --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
         fi
         ;;
       crates)
@@ -166,7 +189,7 @@ else
           run_rail_scoped_doctests
         else
           for crate in $affected; do
-            cargo test -p "$crate" --all-features
+            cargo test -p "$crate" --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
           done
         fi
         ;;
