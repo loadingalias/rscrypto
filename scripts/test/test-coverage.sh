@@ -19,7 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-# shellcheck source=../lib/common.sh
+# shellcheck source=scripts/lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 maybe_disable_sccache
@@ -79,11 +79,25 @@ require_coverage_tools() {
 start_coverage_capture() {
   export CARGO_INCREMENTAL=0
   export CARGO_TARGET_DIR="$LLVM_COV_TARGET_DIR"
+  mkdir -p "$LLVM_COV_TARGET_DIR"
 
   cargo llvm-cov clean --workspace
 
   # shellcheck disable=SC2046
   eval "$(cargo llvm-cov show-env --sh)"
+
+  # Keep coverage profile output coupled to the target directory we report from.
+  # Some cargo-llvm-cov versions infer this from CARGO_TARGET_DIR, but weekly CI
+  # runs multiple isolated fuzz manifests, so make the handoff explicit.
+  export CARGO_TARGET_DIR="$LLVM_COV_TARGET_DIR"
+  set_profile_output nextest
+}
+
+set_profile_output() {
+  local phase=$1
+
+  mkdir -p "$LLVM_COV_TARGET_DIR"
+  export LLVM_PROFILE_FILE="$LLVM_COV_TARGET_DIR/rscrypto-${phase}-%p-%10m.profraw"
 }
 
 run_nextest_capture() {
@@ -471,6 +485,7 @@ if [ "$RUN_NEXTEST" = true ] && [ "$RUN_FUZZ" = true ]; then
   generate_root_report "$COV_DIR/nextest.lcov"
   clear_profile_data
 
+  set_profile_output fuzz
   run_fuzz_replay_capture
   if [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
     cp "$COV_DIR/nextest.lcov" "$LCOV_PATH"
@@ -482,6 +497,7 @@ elif [ "$RUN_NEXTEST" = true ]; then
   run_nextest_capture
   generate_root_report "$LCOV_PATH"
 elif [ "$RUN_FUZZ" = true ]; then
+  set_profile_output fuzz
   run_fuzz_replay_capture
 
   if [ "$FUZZ_REPLAY_CORPUS_FILES" -eq 0 ]; then
