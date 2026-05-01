@@ -14,7 +14,7 @@ set -euo pipefail
 #
 # Options:
 #   --verify-only    Check if workflows match lock file (CI mode)
-#   --update-lock    Fetch latest SHAs and update lock file
+#   --update-lock    Resolve the refs already in the lock file to SHAs
 #
 # Requirements:
 #   - yq (YAML processor): brew install yq OR apt-get install yq
@@ -73,6 +73,10 @@ check_dependencies() {
   fi
 }
 
+workflow_files() {
+  find "$WORKFLOWS_DIR" "$ACTIONS_DIR" \( -name "*.yaml" -o -name "*.yml" \) -type f 2>/dev/null | sort
+}
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GitHub API - Resolve ref to SHA
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -106,12 +110,12 @@ resolve_ref_to_sha() {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Update Lock File with Latest SHAs
+# Update Lock File with SHAs for Locked Refs
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 update_lock_file() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo "Updating actions-lock.yaml with latest SHAs"
+  echo "Updating actions-lock.yaml with SHAs for locked refs"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
@@ -165,9 +169,8 @@ rewrite_workflows() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
-  # Find all YAML files in workflows/ and actions/
   local files
-  files=$(find "$WORKFLOWS_DIR" "$ACTIONS_DIR" -name "*.yaml" -o -name "*.yml" 2>/dev/null)
+  files=$(workflow_files)
 
   for file in $files; do
     echo "Processing: $(basename "$file")"
@@ -235,9 +238,10 @@ verify_workflows() {
   echo ""
 
   local files
-  files=$(find "$WORKFLOWS_DIR" "$ACTIONS_DIR" -name "*.yaml" -o -name "*.yml" 2>/dev/null)
+  files=$(workflow_files)
 
   local unpinned=()
+  local unlocked=()
 
   for file in $files; do
     # Find lines with "uses:" that are NOT pinned to a SHA
@@ -249,12 +253,45 @@ verify_workflows() {
     if [ -n "$issues" ]; then
       unpinned+=("$file")
       echo "❌ UNPINNED: $(basename "$file")"
-      echo "$issues" | sed 's/^/     /'
+      while IFS= read -r issue; do
+        echo "     $issue"
+      done <<< "$issues"
       echo ""
     fi
+
+    local external_uses
+    external_uses=$(grep -n "uses:" "$file" \
+      | grep -v "uses: \\./\\.github/actions/" \
+      | grep -v "uses: \\./\\.github/workflows/" \
+      | sed -E 's/^[0-9]+:[[:space:]-]*uses:[[:space:]]*([^[:space:]#]+).*/\1/' \
+      | grep -v '^docker://' \
+      | grep -v '^$' \
+      || true)
+
+    local use_ref action
+    while IFS= read -r use_ref; do
+      [ -z "$use_ref" ] && continue
+      action="${use_ref%@*}"
+      if [ "$action" = "$use_ref" ]; then
+        continue
+      fi
+      if ! yq eval -e ".\"$action\"" "$LOCK_FILE" >/dev/null 2>&1; then
+        unlocked+=("$file:$action")
+      fi
+    done <<< "$external_uses"
   done
 
-  if [ ${#unpinned[@]} -gt 0 ]; then
+  if [ ${#unlocked[@]} -gt 0 ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "❌ LOCK COVERAGE FAILED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Found external actions missing from .github/actions-lock.yaml:"
+    printf '  - %s\n' "${unlocked[@]}"
+    echo ""
+  fi
+
+  if [ ${#unpinned[@]} -gt 0 ] || [ ${#unlocked[@]} -gt 0 ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "❌ VERIFICATION FAILED"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -262,7 +299,8 @@ verify_workflows() {
     echo "Found ${#unpinned[@]} file(s) with unpinned actions."
     echo ""
     echo "To fix, run:"
-    echo "  just pin-actions"
+    echo "  1. Add missing external actions to .github/actions-lock.yaml"
+    echo "  2. just pin-actions"
     echo ""
     exit 1
   else

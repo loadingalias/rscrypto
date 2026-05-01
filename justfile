@@ -73,7 +73,7 @@ bench-quick *args="":
 
 # ─── Maintenance ───────────────────────────────────────────────────
 
-# Update lockfile + manifests to latest compatible versions.
+# Update root/fuzz manifests and GitHub Actions refs/pins.
 update:
     @scripts/update/update-all.sh
 
@@ -81,7 +81,7 @@ update:
 update-check:
     @scripts/update/update-all.sh --check
 
-# Update .github/actions-lock.yaml to latest upstream SHAs.
+# Refresh .github/actions-lock.yaml SHAs for the currently locked refs.
 pin-actions:
     @scripts/ci/pin-actions.sh --update-lock
 

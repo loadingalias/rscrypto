@@ -15,6 +15,12 @@ if ! command -v cargo-upgrade >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v yq >/dev/null 2>&1; then
+  echo "Error: yq is required but not installed."
+  echo "Install with: brew install yq"
+  exit 1
+fi
+
 update_workspace() {
   local workspace_path="$1"
   local workspace_name="$2"
@@ -39,6 +45,22 @@ update_workspace() {
   popd >/dev/null
 }
 
+discover_fuzz_workspaces() {
+  local manifest
+
+  if [[ -f "$REPO_ROOT/fuzz/Cargo.toml" ]]; then
+    printf '%s\n' "$REPO_ROOT/fuzz"
+  fi
+
+  if [[ -d "$REPO_ROOT/fuzz-packages" ]]; then
+    while IFS= read -r manifest; do
+      if [[ "$(yq eval '.package.metadata.cargo-fuzz // false' "$manifest")" == "true" ]]; then
+        dirname "$manifest"
+      fi
+    done < <(find "$REPO_ROOT/fuzz-packages" -mindepth 2 -maxdepth 2 -name Cargo.toml -type f | sort)
+  fi
+}
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "rscrypto dependency update"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -49,20 +71,21 @@ fi
 update_workspace "$REPO_ROOT" "workspace"
 
 FUZZ_COUNT=0
-for fuzz_dir in "$REPO_ROOT"/crates/*/fuzz; do
-  if [[ -d "$fuzz_dir" && -f "$fuzz_dir/Cargo.toml" ]]; then
-    update_workspace "$fuzz_dir" "fuzz: $(basename "$(dirname "$fuzz_dir")")"
-    FUZZ_COUNT=$((FUZZ_COUNT + 1))
-  fi
-done
+while IFS= read -r fuzz_dir; do
+  [[ -z "$fuzz_dir" ]] && continue
+  update_workspace "$fuzz_dir" "fuzz: ${fuzz_dir#"$REPO_ROOT"/}"
+  FUZZ_COUNT=$((FUZZ_COUNT + 1))
+done < <(discover_fuzz_workspaces)
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "GitHub actions lock/pinning"
+echo "GitHub actions upgrade/pinning"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 if [[ "$CHECK_ONLY" == true ]]; then
+  "$REPO_ROOT/scripts/ci/upgrade-actions.sh" --check
   "$REPO_ROOT/scripts/ci/pin-actions.sh" --verify-only
 else
+  "$REPO_ROOT/scripts/ci/upgrade-actions.sh"
   "$REPO_ROOT/scripts/ci/pin-actions.sh" --update-lock
 fi
 
