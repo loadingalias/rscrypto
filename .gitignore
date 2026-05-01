@@ -20,6 +20,7 @@ AGENTS.md
 
 # Junk
 docs/tasks
+docs/distribution
 benchmark_results/*
 docs/llvm-ppc64le-readvolatile-issue.md
 
