@@ -97,7 +97,7 @@ runners:
     ram: [4, 8]
     family: ["c7i", "m7i", "c7a", "m7a", "c6i", "m6i"]
     image: ubuntu24-full-x64
-    spot: price-capacity-optimized
+    spot: false
     volume: 50gb:gp3
     ssh: true
     extras: ["s3-cache"]
