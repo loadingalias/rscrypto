@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI.
-# Usage: install-tools.sh [standard|bench|ibm|fuzz|coverage|minimal|none]
+# Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|minimal|none]
 
 set -euo pipefail
 
@@ -198,6 +198,20 @@ case "$MODE" in
     install_if_missing "just" "just"
     ;;
 
+  ci)
+    # Native CI tools: test runner + just wrapper only. Supply-chain tooling
+    # belongs to the dedicated supply-chain lane.
+    install_binstall
+    install_if_missing "cargo-nextest" "cargo-nextest"
+    install_if_missing "just" "just"
+    ;;
+
+  supply-chain)
+    install_binstall
+    install_if_missing "cargo-deny" "cargo-deny"
+    install_if_missing "cargo-audit" "cargo-audit"
+    ;;
+
   ibm)
     # IBM runners: keep installs minimal and fast.
     # Skip cargo-binstall entirely on these platforms since it requires source
@@ -249,7 +263,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|bench|ibm|fuzz|coverage|minimal|none]"
+    echo "Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|minimal|none]"
     exit 1
     ;;
 esac

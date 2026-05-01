@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Host-only checks: fmt, check, clippy, deny, audit, doc
+# Host-only checks: fmt, check, clippy, optional deny/audit, doc
 # Usage: check.sh [--all] [crate1 crate2 ...]
 
 # Prefer cargo-installed tools over any preinstalled runner tools.
@@ -89,8 +89,8 @@ if ! cargo clippy $CRATE_FLAGS --all-targets --all-features -- -D warnings >"$LO
 fi
 ok
 
-# Audit/Deny (workspace only)
-if [[ "$FULL_WORKSPACE" == true ]]; then
+# Audit/Deny (workspace only). CI owns this in the dedicated supply-chain lane.
+if [[ "$FULL_WORKSPACE" == true && "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1" ]]; then
   step "Auditing deps"
   if ! cargo deny check all >"$LOG_DIR/deny.log" 2>&1; then
     fail

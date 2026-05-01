@@ -9,7 +9,7 @@ inputs:
     required: false
     default: ""
   tools-mode:
-    description: Tool install mode (standard, bench, ibm, fuzz, coverage, minimal, none).
+    description: Tool install mode (standard, ci, supply-chain, bench, ibm, fuzz, coverage, minimal, none).
     required: false
     default: "standard"
   toolchain-components:
