@@ -17,6 +17,7 @@ include = [
   "/LICENSE-MIT",
   "/README.md",
   "/SECURITY.md",
+  "/.config/target-matrix.json",
   "/docs/architecture.md",
   "/docs/compliance.md",
   "/docs/security.md",
@@ -139,7 +140,6 @@ serde = { version = "1", optional = true, default-features = false }
 [dev-dependencies]
 criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] }
 proptest = "^1.11.0"
-rscrypto_fuzz = { package = "rscrypto-fuzz-support", version = "0.0.0", path = "fuzz/support", features = ["aead", "traits_io"] }
 
 # Oracles
 crc = "3.4.0"
@@ -240,10 +240,6 @@ required-features = ["std", "checksums"]
 [[example]]
 name = "password_hashing"
 required-features = ["std", "password-hashing", "getrandom"]
-
-[[test]]
-name = "fuzz_corpus_replay"
-required-features = ["std", "full"]
 
 [lints]
 workspace = true
