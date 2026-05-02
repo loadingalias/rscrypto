@@ -1,20 +1,17 @@
-# cargo-rail configuration for rscrypto
+# cargo-rail config for rscrypto
 # Documentation: https://github.com/loadingalias/cargo-rail
 
 # Targets
 targets = [
-  # Tier 1 (Guaranteed)
   "aarch64-apple-darwin",
   "aarch64-unknown-linux-gnu",
   "x86_64-apple-darwin",
   "x86_64-pc-windows-msvc",
   "x86_64-unknown-linux-gnu",
-  # Tier 2 (Common)
   "aarch64-unknown-linux-musl",
   "wasm32-unknown-unknown",
   "wasm32-wasip1",
   "x86_64-unknown-linux-musl",
-  # Other
   "aarch64-pc-windows-msvc",
   "aarch64-unknown-none",
   "loongarch64-unknown-linux-gnu",
@@ -39,7 +36,7 @@ exact_pin_handling = "warn"
 major_version_conflict = "bump"
 
 msrv = true
-msrv_source = "workspace"  # deps | workspace | max
+msrv_source = "workspace"
 
 detect_unused = true
 compiler_diag_cache = true
