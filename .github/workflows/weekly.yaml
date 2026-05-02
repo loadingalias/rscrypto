@@ -88,24 +88,9 @@ jobs:
         export MIRIFLAGS="-Zmiri-tree-borrows"
         just test-miri
 
-  # ─── Coverage plumbing smoke: fail before expensive fuzzing if llvm-cov profile capture is broken. ──
-  coverage-smoke:
-    name: Coverage Smoke
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 30
-      cache_key: weekly-coverage-smoke
-      tools_mode: coverage
-      toolchain_components: "rust-src"
-      enable_magic_cache: true
-      enable_rust_cache: true
-      run_script: RSCRYPTO_FUZZ_COVERAGE_SCOPE=full scripts/test/test-coverage.sh --fuzz
-
   # ─── Fuzzing (libFuzzer full + scoped packages). ──
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
-    needs: coverage-smoke
     strategy:
       fail-fast: false
       matrix:
@@ -188,8 +173,6 @@ jobs:
           done
 
       - name: Total Coverage (nextest + fuzz corpus replay)
-        env:
-          RSCRYPTO_FUZZ_COVERAGE_SCOPE: "all"
         run: just test-coverage
 
       - name: Upload to Codecov
@@ -214,7 +197,7 @@ jobs:
   # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [suite, feature-matrix, miri, miri-tree-borrows, coverage-smoke, fuzzing, coverage]
+    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -226,7 +209,6 @@ jobs:
             "feature-matrix=${{ needs.feature-matrix.result }}" \
             "miri=${{ needs.miri.result }}" \
             "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \
-            "coverage-smoke=${{ needs.coverage-smoke.result }}" \
             "fuzzing=${{ needs.fuzzing.result }}" \
             "coverage=${{ needs.coverage.result }}"
           do
