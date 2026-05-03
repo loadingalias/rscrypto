@@ -1,36 +1,27 @@
 [package]
 name = "rscrypto"
-description = "Rust crypto with zero default deps: BLAKE3, Ed25519/X25519, hashes, MACs, KDFs, AEADs, and checksums with SIMD/ASM acceleration."
+description = "Pure Rust cryptography, hardware-accelerated: BLAKE3, SHA-2/3, AES-GCM, ChaCha20-Poly1305, Ed25519, X25519, HMAC, HKDF, Argon2, CRC. no_std, WASM, ten CPU architectures."
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95.0"
+rust-version = "1.91.0"
 license = "MIT OR Apache-2.0"
 authors = ["loadingalias"]
 repository = "https://github.com/loadingalias/rscrypto"
 documentation = "https://docs.rs/rscrypto"
 readme = "README.md"
-keywords = ["blake3", "ed25519", "x25519", "aead", "simd"]
+keywords = ["cryptography", "no-std", "aead", "blake3", "simd"]
 categories = ["cryptography", "no-std", "algorithms", "hardware-support", "embedded"]
 include = [
-  "/Cargo.toml",
-  "/LICENSE-APACHE",
-  "/LICENSE-MIT",
-  "/README.md",
-  "/SECURITY.md",
-  "/.config/target-matrix.json",
-  "/docs/architecture.md",
-  "/docs/compliance.md",
-  "/docs/security.md",
-  "/docs/types.md",
-  "/benches/**",
-  "/examples/**",
-  "/src/**",
-  "!/src/**/*.md",
-  "!/src/**/*.txt",
-  "!/src/**/.gitignore",
-  "/tests/**",
-  "/testdata/**",
-]
+    "/Cargo.toml",
+    "/LICENSE-APACHE",
+    "/LICENSE-MIT",
+    "/README.md",
+    "/.config/target-matrix.json",
+    "/src/**",
+    "!/src/**/*.md",
+    "!/src/**/*.txt",
+    "!/src/**/.gitignore",
+  ]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -224,22 +215,6 @@ harness = false
 name = "kmac_cshake"
 harness = false
 required-features = ["sha3", "kmac"]
-
-[[example]]
-name = "basic"
-required-features = ["std", "full"]
-
-[[example]]
-name = "introspect"
-required-features = ["std", "checksums", "hashes", "aead", "diag"]
-
-[[example]]
-name = "parallel"
-required-features = ["std", "checksums"]
-
-[[example]]
-name = "password_hashing"
-required-features = ["std", "password-hashing", "getrandom"]
 
 [lints]
 workspace = true

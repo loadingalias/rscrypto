@@ -1,5 +1,3 @@
-#![cfg(feature = "parallel")]
-
 use core::mem::MaybeUninit;
 
 use super::{
