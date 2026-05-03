@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/loadingalias/rscrypto/compare/v0.1.0...v0.1.1) - 2026-05-02
+
+### 🏗️ Build
+
+- trim tests/testdata/benches from published crate include list docs: fix README quick start imports and add Xxh3 FastHash trait workspace: wire README into doctest harness via ReadmeDoctests hook ([f16a44f](https://github.com/loadingalias/rscrypto/commit/f16a44f5db5527f77ad294e717c64f1b12930bdb))
+
+
+
 ## [0.1.0](https://github.com/loadingalias/rscrypto/releases/tag/v0.1.0) - 2026-05-02
 
 ### 🐛 Bug Fixes
