@@ -1,7 +1,16 @@
-//! Pure Rust cryptography. Hardware-accelerated. `no_std` first.
+//! Pure Rust cryptography, hardware-accelerated on ten architectures. `no_std` first.
 //!
-//! Enable only the primitive families you use. The default feature set is
-//! just `std`.
+//! `rscrypto` is a single-crate cryptography stack: hashes, AEADs, MACs, KDFs,
+//! password hashing, signatures, key exchange, and checksums. Enable one leaf
+//! feature for a minimal build (`sha2`, `aes-gcm`, `ed25519`, anything) or
+//! `full` for the entire primitive set. Zero default dependencies; `getrandom`,
+//! `serde`, and `rayon` are opt-in.
+//!
+//! The portable Rust path is the byte-for-byte authority. SIMD and ASM kernels
+//! are accelerators, differential-tested against the portable path on every
+//! release. Three-tier dispatch (compile-time `target_feature` → runtime
+//! detection → portable fallback) picks the fastest safe backend at runtime;
+//! without `std`, only the compile-time tier runs.
 //!
 //! ```toml
 //! [dependencies]
@@ -94,17 +103,25 @@ assert!(
 //!
 //! # Security Posture
 //!
-//! `rscrypto` is a primitives crate, not a FIPS-validated module. It exposes
-//! FIPS-aligned and non-FIPS primitives in the same crate. See the repository
-//! security guidance for nonce lifecycle, PHC verification limits, and
-//! platform fallback notes.
+//! Constant-time MAC, AEAD, and signature verification with `black_box`
+//! barriers. Opaque verification errors that leak no failure detail. Zeroize
+//! on drop for every secret-bearing type. `strict_*` arithmetic on counters
+//! and lengths; release builds keep `overflow-checks = true`. Continuous
+//! libFuzzer with corpus replay in CI; Miri on the portable backends.
+//!
+//! `rscrypto` is a primitives crate, not a FIPS 140-3 validated module. It
+//! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,
+//! KMAC, HKDF, PBKDF2) alongside non-FIPS ones. The `portable-only` feature
+//! flag forces dispatch to the constant-time portable backend for FIPS /
+//! DO-178C / ISO 26262 / IEC 62443 deployments. See the security guidance
+//! for nonce lifecycle, PHC verification limits, and platform fallback notes.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 // Exotic-architecture backends require nightly-only features (inline asm +
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
-// aarch64, wasm) compile on stable Rust 1.95.0.
+// aarch64, wasm) compile on stable Rust 1.91.0.
 #![cfg_attr(target_arch = "powerpc64", feature(portable_simd, powerpc_target_feature))]
 // s390x VGFM backend uses vector asm + portable SIMD, and
 // target_feature_inline_always is still required for inline vector helpers.
@@ -359,6 +376,10 @@ pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationErr
   feature = "rapidhash"
 ))]
 pub use traits::{Digest, FastHash, Xof};
+
+#[cfg(all(doctest, feature = "full", feature = "getrandom"))]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
 
 #[cfg(all(doctest, feature = "full", feature = "diag"))]
 #[doc(hidden)]

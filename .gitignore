@@ -23,6 +23,7 @@ private/tasks
 docs/distribution
 benchmark_results/*
 docs/llvm-ppc64le-readvolatile-issue.md
+docs/migration
 
 # Fuzzing
 corpus

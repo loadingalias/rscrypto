@@ -60,12 +60,18 @@ pub(crate) fn active_crc64_table() -> &'static KernelTable {
 /// hardware-accelerated kernels outperform the bytewise loop.
 const FAST_PATH_MAX: usize = 7;
 
+// `core::hint::cold_path` is 1.95+; a `#[cold]` empty fn produces identical
+// LLVM branch-weight metadata and keeps MSRV at 1.93.
+#[cold]
+#[inline]
+fn cold_path() {}
+
 /// Internal one-shot CRC-64/XZ helper used by trait impls.
 #[cfg(feature = "crc64")]
 #[inline(always)]
 pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -81,7 +87,7 @@ pub(crate) fn crc64_xz(data: &[u8]) -> u64 {
 #[inline(always)]
 pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -97,7 +103,7 @@ pub(crate) fn crc64_nvme(data: &[u8]) -> u64 {
 #[inline(always)]
 pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -146,7 +152,7 @@ pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
 #[inline(always)]
 pub(crate) fn crc32c(data: &[u8]) -> u32 {
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -188,7 +194,7 @@ pub(crate) fn crc32c(data: &[u8]) -> u32 {
 pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
   // CCITT: INIT=0xFFFF, XOROUT=0xFFFF
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -205,7 +211,7 @@ pub(crate) fn crc16_ccitt(data: &[u8]) -> u16 {
 pub(crate) fn crc16_ibm(data: &[u8]) -> u16 {
   // IBM: INIT=0x0000, XOROUT=0x0000
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return 0;
     }
@@ -224,7 +230,7 @@ pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;
   if data.len() <= FAST_PATH_MAX {
-    core::hint::cold_path();
+    cold_path();
     if data.is_empty() {
       return INIT;
     }

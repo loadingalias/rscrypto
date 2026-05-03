@@ -1218,6 +1218,7 @@ struct MatrixView {
   total_len: usize,
 }
 
+#[cfg(feature = "parallel")]
 // SAFETY: `MatrixView` is `Send + Sync` only because the parallel filler
 // (`fill_slice_parallel`) honours the RFC 9106 §3.4 disjointness discipline:
 //   1. Within one slice, lane `i` writes exclusively to its own segment and reads only from (a)
@@ -1229,10 +1230,9 @@ struct MatrixView {
 //      of the call and never split the view.
 // All `block`/`block_mut` methods are `unsafe`; the type system does not
 // enforce the proof, the runtime does.
-#[cfg(feature = "parallel")]
 unsafe impl Send for MatrixView {}
-// SAFETY: see the Send impl above — same disjointness argument.
 #[cfg(feature = "parallel")]
+// SAFETY: see the Send impl above — same disjointness argument.
 unsafe impl Sync for MatrixView {}
 
 impl MatrixView {

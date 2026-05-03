@@ -122,8 +122,8 @@ thread_local! {
 #[derive(Clone, Copy)]
 struct SendPtr<T>(*mut T);
 
-// SAFETY: Callers must ensure no two tasks access overlapping ranges through the pointer.
 #[cfg(feature = "parallel")]
+// SAFETY: Callers must ensure no two tasks access overlapping ranges through the pointer.
 unsafe impl<T> Send for SendPtr<T> {}
 #[cfg(feature = "parallel")]
 // SAFETY: Callers must ensure no two tasks access overlapping ranges through the pointer.

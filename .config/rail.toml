@@ -36,7 +36,7 @@ exact_pin_handling = "warn"
 major_version_conflict = "bump"
 
 msrv = true
-msrv_source = "workspace"
+msrv_source = "max"
 
 detect_unused = true
 compiler_diag_cache = true

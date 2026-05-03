@@ -35,8 +35,6 @@
 //! - ROR 24 / 16: byte shuffle via `vqtbl1q_u8` with fixed index tables.
 //! - ROR 63 ≡ ROL 1: `vsriq_n_u64::<63>(vshlq_n_u64::<1>(x), x)`.
 
-#![cfg(target_arch = "aarch64")]
-
 use core::arch::aarch64::{
   uint8x16_t, uint64x2_t, vaddq_u64, veorq_u64, vextq_u64, vld1q_u8, vld1q_u64, vmovn_u64, vmull_u32, vqtbl1q_u8,
   vreinterpretq_u8_u64, vreinterpretq_u32_u64, vreinterpretq_u64_u8, vreinterpretq_u64_u32, vrev64q_u32, vshlq_n_u64,
