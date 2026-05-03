@@ -6,6 +6,10 @@ Runnable demonstrations of the public `rscrypto` API. Each example is small enou
 
 If you've never used `rscrypto`, run `basic` first — it tours every primitive family the crate exposes. After that, pick the example that matches what you're trying to do.
 
+If you are replacing an existing crate, start with the matching guide in
+[`docs/migration/`](../docs/migration/) and then use these examples to confirm
+the new API shape.
+
 ## All examples
 
 ### `basic` — API tour across every family
@@ -56,5 +60,6 @@ Prints the platform's detected CPU capabilities and reports which kernel the dis
 
 - Full API reference: [`docs.rs/rscrypto`](https://docs.rs/rscrypto)
 - Algorithm inventory and feature flags: [`README.md`](../README.md)
+- Migration guides from RustCrypto, `blake3`, CRC crates, AEADs, signatures, and password hashing: [`docs/migration/`](../docs/migration/)
 - Security guidance (nonce lifecycle, PHC verification limits, fallback notes): [`docs/security.md`](../docs/security.md)
 - Architecture (modules, dispatch model, internals): [`docs/architecture.md`](../docs/architecture.md)

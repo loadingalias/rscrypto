@@ -13,6 +13,7 @@
 - Use `Argon2id::verify_string_with_policy`, `Argon2d::verify_string_with_policy`, `Argon2i::verify_string_with_policy`, or `Scrypt::verify_string_with_policy` when encoded hashes can come from untrusted storage, tenant-controlled rows, network peers, or migration input.
 - `Argon2VerifyPolicy::default()` and `ScryptVerifyPolicy::default()` admit hashes produced by the default parameter constructors. Services with stronger configured parameters should set explicit policy ceilings that match their deployment budget.
 - The unbounded `verify_string` helpers remain for compatibility with trusted local hash stores.
+- Migration guides for Argon2 and scrypt live in [`docs/migration/RustCrypto/argon2.md`](migration/RustCrypto/argon2.md) and [`docs/migration/RustCrypto/scrypt.md`](migration/RustCrypto/scrypt.md).
 
 ## Nonces
 
