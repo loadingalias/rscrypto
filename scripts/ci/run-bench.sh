@@ -154,7 +154,9 @@ DEFAULT_AEAD_ALGOS=(
   "xchacha20-poly1305"
   "chacha20-poly1305"
   "aes-256-gcm-siv"
+  "aes-128-gcm-siv"
   "aes-256-gcm"
+  "aes-128-gcm"
   "aegis-256"
 )
 
@@ -215,7 +217,9 @@ aead_filter_token() {
     xchacha20-poly1305) echo "xchacha20-poly1305" ;;
     chacha20-poly1305) echo "^chacha20-poly1305/" ;;
     aes-256-gcm-siv) echo "aes-256-gcm-siv" ;;
+    aes-128-gcm-siv) echo "aes-128-gcm-siv" ;;
     aes-256-gcm) echo "^aes-256-gcm/" ;;
+    aes-128-gcm) echo "^aes-128-gcm/" ;;
     aegis-256) echo "aegis-256" ;;
     *) echo "$algo" ;;
   esac

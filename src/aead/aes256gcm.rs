@@ -4,9 +4,10 @@
 
 use core::fmt;
 
-#[cfg(target_arch = "x86_64")]
-use super::targets::{AeadBackend, AeadPrimitive, select_backend};
-use super::{AeadBufferError, LengthOverflow, Nonce96, OpenError, SealError, aes, ghash, polyval};
+use super::{
+  AeadBufferError, LengthOverflow, Nonce96, OpenError, SealError, aes, ghash, polyval,
+  targets::{AeadBackend, AeadPrimitive, select_backend},
+};
 use crate::traits::{Aead, ct};
 
 const KEY_SIZE: usize = 32;
@@ -106,7 +107,6 @@ pub struct Aes256Gcm {
   /// Precomputed H powers [H^4, H^3, H^2, H] in the POLYVAL domain
   /// for 4-block wide GHASH processing.
   h_powers_rev: [u128; 4],
-  #[cfg(target_arch = "x86_64")]
   backend: AeadBackend,
 }
 
@@ -234,6 +234,36 @@ fn ghash_update_padded(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
   acc
 }
 
+#[inline]
+fn ghash_update_padded_wide(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
+  let (full_blocks, remainder) = data.as_chunks::<16>();
+  let mut chunks = full_blocks.chunks_exact(4);
+
+  for chunk in &mut chunks {
+    let blocks = [
+      u128::from_be_bytes(chunk[0]),
+      u128::from_be_bytes(chunk[1]),
+      u128::from_be_bytes(chunk[2]),
+      u128::from_be_bytes(chunk[3]),
+    ];
+    acc = polyval::accumulate_4blocks(acc, h_polyval, h_powers_rev, &blocks);
+  }
+
+  for block in chunks.remainder() {
+    acc ^= u128::from_be_bytes(*block);
+    acc = polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    acc ^= u128::from_be_bytes(block);
+    acc = polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  acc
+}
+
 #[cfg(target_arch = "x86_64")]
 #[inline]
 fn ghash_collect_padded_block(blocks: &mut [u128; 4], block_count: &mut usize, block: u128) -> bool {
@@ -318,9 +348,8 @@ fn encrypt_j0_tag(ek: &aes::Aes256EncKey, j0: &[u8; 16], acc: u128) -> [u8; TAG_
 
 /// Compute the GCM authentication tag using 4-block wide GHASH.
 ///
-/// Same semantics as `compute_tag` but processes ciphertext in 4-block
-/// (64-byte) chunks via `accumulate_4blocks`.
-#[cfg(target_arch = "x86_64")]
+/// Same semantics as `compute_tag` but processes AAD and ciphertext in
+/// 4-block (64-byte) chunks via `accumulate_4blocks`.
 #[inline]
 fn compute_tag_wide(
   ek: &aes::Aes256EncKey,
@@ -330,41 +359,9 @@ fn compute_tag_wide(
   aad: &[u8],
   ciphertext: &[u8],
 ) -> Result<[u8; TAG_SIZE], LengthOverflow> {
-  let mut acc = ghash_update_padded(0, h_polyval, aad);
-
-  // Process ciphertext in 4-block wide chunks.
-  let mut offset = 0usize;
-  while offset.strict_add(64) <= ciphertext.len() {
-    let mut blocks = [0u128; 4];
-    let mut i = 0usize;
-    while i < 4 {
-      let base = offset.strict_add(i.strict_mul(16));
-      let mut block = [0u8; 16];
-      block.copy_from_slice(&ciphertext[base..base.strict_add(16)]);
-      blocks[i] = u128::from_be_bytes(block);
-      i = i.strict_add(1);
-    }
-    acc = polyval::accumulate_4blocks(acc, h_polyval, h_powers_rev, &blocks);
-    offset = offset.strict_add(64);
-  }
-
-  // Remaining single blocks.
-  while offset.strict_add(16) <= ciphertext.len() {
-    let mut block = [0u8; 16];
-    block.copy_from_slice(&ciphertext[offset..offset.strict_add(16)]);
-    acc ^= u128::from_be_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h_polyval);
-    offset = offset.strict_add(16);
-  }
-
-  // Partial tail block.
-  let remaining = ciphertext.len().strict_sub(offset);
-  if remaining > 0 {
-    let mut block = [0u8; 16];
-    block[..remaining].copy_from_slice(&ciphertext[offset..]);
-    acc ^= u128::from_be_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h_polyval);
-  }
+  let mut acc = 0u128;
+  acc = ghash_update_padded_wide(acc, h_polyval, h_powers_rev, aad);
+  acc = ghash_update_padded_wide(acc, h_polyval, h_powers_rev, ciphertext);
 
   // Length block.
   let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
@@ -387,11 +384,28 @@ fn inc32(block: &mut [u8; 16]) {
   block[12..16].copy_from_slice(&ctr.wrapping_add(1).to_be_bytes());
 }
 
+#[inline]
+fn should_use_wide_ghash(backend: AeadBackend, aad_len: usize, ciphertext_len: usize) -> bool {
+  const MIN_WIDE_INPUT: usize = 64;
+
+  if aad_len < MIN_WIDE_INPUT && ciphertext_len < MIN_WIDE_INPUT {
+    return false;
+  }
+
+  match backend {
+    AeadBackend::X86VaesVpclmul
+    | AeadBackend::Aarch64AesPmull
+    | AeadBackend::Aarch64Sve2AesPmull
+    | AeadBackend::Power8Crypto => true,
+    AeadBackend::S390xMsa => crate::platform::caps().has(crate::platform::caps::s390x::VECTOR),
+    _ => false,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Aead trait implementation
 // ---------------------------------------------------------------------------
 
-#[cfg(target_arch = "x86_64")]
 #[inline]
 fn resolve_backend() -> AeadBackend {
   select_backend(
@@ -428,7 +442,6 @@ impl Aead for Aes256Gcm {
       ek,
       h,
       h_powers_rev,
-      #[cfg(target_arch = "x86_64")]
       backend: resolve_backend(),
     }
   }
@@ -453,7 +466,9 @@ impl Aead for Aes256Gcm {
     // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      // SAFETY: VAES + VPCLMULQDQ availability verified during backend resolution.
+      // SAFETY: VAES + VPCLMULQDQ path because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES and VPCLMULQDQ.
+      // 2. The CTR helper operates in place on the provided `buffer` slice and handles tails internally.
       unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
       let tag_bytes = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
         .map_err(|_| SealError::too_large())?;
@@ -468,6 +483,11 @@ impl Aead for Aes256Gcm {
         compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
           .map_err(|_| SealError::too_large())?
     {
+      return Ok(Aes256GcmTag::from_bytes(tag_bytes));
+    }
+    if should_use_wide_ghash(self.backend, aad.len(), buffer.len()) {
+      let tag_bytes = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+        .map_err(|_| SealError::too_large())?;
       return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
     let tag_bytes =
@@ -499,7 +519,9 @@ impl Aead for Aes256Gcm {
       }
       let mut ctr_block = j0;
       inc32(&mut ctr_block);
-      // SAFETY: VAES availability verified during backend resolution.
+      // SAFETY: VAES CTR path because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES support.
+      // 2. The CTR helper operates in place on the provided `buffer` slice and handles tails internally.
       unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
       return Ok(());
     }
@@ -511,6 +533,18 @@ impl Aead for Aes256Gcm {
         compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
           .map_err(|_| OpenError::too_large())?
     {
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
+      }
+      let mut ctr_block = j0;
+      inc32(&mut ctr_block);
+      aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
+      return Ok(());
+    }
+    if should_use_wide_ghash(self.backend, aad.len(), buffer.len()) {
+      let expected = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
+        .map_err(|_| OpenError::too_large())?;
       if !ct::constant_time_eq(&expected, tag.as_bytes()) {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
@@ -536,7 +570,9 @@ impl Aead for Aes256Gcm {
 impl Drop for Aes256Gcm {
   fn drop(&mut self) {
     ct::zeroize(&mut self.h);
-    // SAFETY: [u128; 4] is layout-compatible with [u8; 64].
+    // SAFETY: H-power byte view because:
+    // 1. `[u128; 4]` is a contiguous initialized 64-byte array.
+    // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
     ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev.as_mut_ptr().cast::<u8>(), 64) });
     // ek's Drop is handled by Aes256EncKey's own Drop impl.
   }

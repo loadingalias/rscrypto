@@ -2,110 +2,156 @@
 
 Sources:
 
-- Linux: Bench CI run [#25069224636](https://github.com/loadingalias/rscrypto/actions/runs/25069224636), created 2026-04-28 17:57:49 UTC.
-- macOS: local Apple Silicon run at `benchmark_results/2026-04-28/macos/aarch64/results.txt`, started 2026-04-28 `23_13_22`.
+- Linux: Bench CI run [#25375704946](https://github.com/loadingalias/rscrypto/actions/runs/25375704946), created 2026-05-05 12:14:28 UTC.
+- Raw files: `benchmark_results/2026-05-05/linux/*/results.txt`.
 
-Commit: `0ea1b73b2a40fd164b702e8b927d5930a996f846`.
+Commit: `dc3cf94f11e0c73f50ad989039c16b617cf1d414`.
 
-Scope: nine Linux CI runners plus one local macOS Apple Silicon run.
-The macOS run includes KMAC, cSHAKE, and password-hashing comparisons that are not in the Linux CI scope, so Linux and macOS totals are reported separately.
+Scope: nine Linux CI runners. The 2026-05-04 local macOS file is a failed local compile log, so it is excluded.
 Speedup is `external_crate_time / rscrypto_time`; above `1.00x` means `rscrypto` is faster.
 Wins are `>1.05x`, ties are `0.95x..1.05x`, losses are `<0.95x`.
-Linux headline numbers below were recomputed from raw Criterion median times on 2026-04-29.
-The macOS scorecard is a public-facing subset of the local log; the raw file contains extra benchmark groups outside that scorecard.
+All-pair comparisons count every matched external implementation. Fastest-external comparisons keep only the fastest external implementation for each platform, operation, mode, and input size.
 
 ## Headline
 
-Linux CI remains the broad headline: `rscrypto` wins **3717 / 5796** matched external comparisons.
-The macOS scorecard remains separate at **357 / 681** faster listed comparisons.
+Linux all-pair headline: `rscrypto` wins **5679 / 9603** matched Linux CI external comparisons.
+Against only the fastest external implementation per case, it wins **2941 / 5499** comparisons.
 
 | Scope | Pairs | W/T/L | Win % | Geomean | Median |
 |---|---:|---:|---:|---:|---:|
-| Linux CI | 5796 | 3717/1792/287 | 64% | 1.75x | 1.14x |
-| macOS Apple Silicon | 681 | 357/281/43 | 52% | 1.54x | 1.06x |
+| Linux CI, all external pairs | 9603 | 5679/2232/1692 | 59% | 1.43x | 1.12x |
+| Linux CI, fastest external per case | 5499 | 2941/1489/1069 | 53% | 1.42x | 1.07x |
 
 What matters:
 
-- SHA-3 and SHAKE are the cleanest cryptographic wins: **2.18x** and **2.60x** geomean vs RustCrypto `sha3`.
-- AEAD is broadly ahead: **1.84x** geomean across RustCrypto AEADs and `aegis`, with AES-256-GCM and AES-256-GCM-SIV carrying the strongest user-facing story.
-- BLAKE3 is not universally ahead on tiny inputs, but large one-shot/keyed/derive-key inputs are strong: **2.37x** geomean for `>=64 KiB` vs the `blake3` crate.
-- Ed25519 signing wins everywhere measured: **1.57x** geomean vs `ed25519-dalek`.
-- Checksums are decisive: **4.41x** geomean across `crc`, `crc32fast`, `crc64fast`, `crc-fast`, and related baselines.
-- macOS Apple Silicon is strongest in AEAD (**2.60x**) and checksums (**4.18x**); SHA-2 and SHA-3 are mostly parity there (**1.02x** and **1.01x**).
+- The expanded competitor set changed the headline from a broad RustCrypto-style comparison to a harder field: 9603 all-pair comparisons and 5499 fastest-external comparisons.
+- SHA-3 and SHAKE remain clean wins: **2.18x** and **2.62x** geomean vs RustCrypto `sha3`, with no losses in this run.
+- Checksums remain the strongest public story: **4.32x** all-pair geomean.
+- AEAD is mixed after adding `aws-lc-rs` and `ring`: **1.28x** all-pair geomean, but AES-256-GCM loses to the fastest external backend on most cases while AES-256-GCM-SIV remains a decisive win.
+- BLAKE3 is still strong on large inputs: **2.23x** geomean for `>=64 KiB` inputs across all measured BLAKE3 modes.
+- Fast non-crypto hashes are not a headline win against the expanded field: RapidHash and XXH3 lose to the fastest external implementation on geomean.
+- Coverage gap: this CI run contains AES-256-GCM and AES-256-GCM-SIV results, but no AES-128-GCM or AES-128-GCM-SIV result IDs. The CI selector has been fixed after this run; another Bench run is needed for AES-128 numbers.
 
-## Linux Category Scorecard
+## Linux All-Pair Scorecard
 
-| Area | Baseline | Pairs | W/T/L | Win % | Geomean | Median | Strongest useful result |
-|---|---|---:|---:|---:|---:|---:|---|
-| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | 990 | 801/135/54 | 81% | 4.41x | 2.41x | CRC32C 2.24x geomean; CRC64/NVMe 2.35x geomean |
-| SHA-3 | RustCrypto `sha3` | 414 | 385/27/2 | 93% | 2.18x | 2.15x | up to 25.83x on IBM Z |
-| SHAKE/cSHAKE | RustCrypto `sha3` | 198 | 189/8/1 | 95% | 2.60x | 2.23x | up to 22.41x on IBM Z |
-| AEAD | RustCrypto AEADs, `aegis` | 990 | 736/184/70 | 74% | 1.84x | 1.43x | AES-256-GCM decrypt 2.51x geomean; AES-256-GCM-SIV encrypt 3.79x geomean |
-| BLAKE3 | `blake3` | 432 | 223/183/26 | 52% | 1.42x | 1.06x | one-shot/keyed/derive-key `>=64 KiB` inputs 2.37x geomean; up to 7.70x |
-| Auth / Sign / KDF | RustCrypto, `ed25519-dalek`, `x25519-dalek` | 603 | 327/236/40 | 54% | 1.26x | 1.06x | Ed25519 sign 1.57x geomean; X25519 1.37x geomean |
-| Ascon | `ascon-hash` | 198 | 124/73/1 | 63% | 1.31x | 1.18x | up to 2.52x |
-| XXH3 | `xxhash-rust` | 198 | 107/67/24 | 54% | 1.18x | 1.08x | up to 2.41x |
-| RapidHash | `rapidhash` | 396 | 130/205/61 | 33% | 1.09x | 1.00x | up to 4.98x; broad parity remains |
-| BLAKE2 | RustCrypto `blake2` | 846 | 424/421/1 | 50% | 1.08x | 1.05x | up to 1.70x |
-| SHA-2 | RustCrypto `sha2` | 531 | 271/253/7 | 51% | 1.45x | 1.05x | up to 121.01x on SPR large-buffer SHA-224 |
+| Area | Baseline | Pairs | W/T/L | Win % | Geomean | Median |
+|---|---|---:|---:|---:|---:|---:|
+| Checksums | `crc`, `crc32fast`, `crc32c`, `crc64fast`, `crc-fast`, `crc64fast-nvme` | 990 | 792/134/64 | 80% | 4.32x | 2.31x |
+| SHA-3 | RustCrypto `sha3` | 414 | 388/26/0 | 94% | 2.18x | 2.16x |
+| SHAKE | RustCrypto `sha3` | 198 | 191/7/0 | 96% | 2.62x | 2.17x |
+| AEAD | RustCrypto AEADs, `aws-lc-rs`, `ring`, `dryoc`, `aegis-crate` | 1782 | 1006/264/512 | 56% | 1.28x | 1.12x |
+| BLAKE3 | `blake3` | 432 | 237/165/30 | 55% | 1.43x | 1.09x |
+| Auth / KDF / Sign | RustCrypto, `aws-lc-rs`, `ring`, `dryoc`, `dalek` | 1809 | 1046/379/384 | 58% | 1.21x | 1.09x |
+| Ascon hash/XOF | `ascon-hash` | 198 | 128/68/2 | 65% | 1.31x | 1.22x |
+| BLAKE2 | RustCrypto `blake2` | 1071 | 653/414/4 | 61% | 1.24x | 1.09x |
+| SHA-2 | RustCrypto `sha2`, `aws-lc-rs`, `ring` | 1125 | 660/404/61 | 59% | 1.43x | 1.09x |
+| XXH3 | `xxhash-rust`, `gxhash`, `ahash`, `foldhash` | 528 | 253/85/190 | 48% | 0.99x | 1.01x |
+| RapidHash | `rapidhash`, `gxhash`, `ahash`, `foldhash` | 1056 | 325/286/445 | 31% | 0.85x | 0.99x |
 
-## macOS Apple Silicon Scorecard
+## Linux Fastest-External Scorecard
 
 | Area | Pairs | W/T/L | Win % | Geomean | Median |
 |---|---:|---:|---:|---:|---:|
-| Checksums | 110 | 85/21/4 | 77% | 4.18x | 1.85x |
-| AEAD | 110 | 105/5/0 | 95% | 2.60x | 1.27x |
-| BLAKE3 | 48 | 16/32/0 | 33% | 1.23x | 1.01x |
-| Auth / Sign / KDF | 78 | 30/45/3 | 38% | 1.07x | 1.01x |
-| Password hashing | 15 | 5/7/3 | 33% | 0.77x | 0.99x |
-| SHAKE/cSHAKE | 33 | 22/6/5 | 67% | 1.11x | 1.10x |
-| Ascon | 22 | 16/6/0 | 73% | 1.09x | 1.06x |
-| RapidHash | 44 | 16/23/5 | 36% | 1.18x | 1.00x |
-| XXH3 | 22 | 7/8/7 | 32% | 1.04x | 0.99x |
-| BLAKE2 | 94 | 33/61/0 | 35% | 1.04x | 1.02x |
-| SHA-3 | 46 | 11/26/9 | 24% | 1.01x | 1.02x |
-| SHA-2 | 59 | 11/41/7 | 19% | 1.02x | 1.00x |
+| Checksums | 693 | 517/118/58 | 75% | 5.02x | 2.31x |
+| SHA-3 | 414 | 388/26/0 | 94% | 2.18x | 2.16x |
+| SHAKE | 198 | 191/7/0 | 96% | 2.62x | 2.17x |
+| AEAD | 990 | 528/174/288 | 53% | 1.25x | 1.07x |
+| BLAKE3 | 432 | 237/165/30 | 55% | 1.43x | 1.09x |
+| Auth / KDF / Sign | 603 | 197/176/230 | 33% | 0.97x | 1.00x |
+| Ascon hash/XOF | 198 | 128/68/2 | 65% | 1.31x | 1.22x |
+| BLAKE2 | 846 | 434/408/4 | 51% | 1.08x | 1.05x |
+| SHA-2 | 531 | 226/267/38 | 43% | 1.33x | 1.04x |
+| XXH3 | 198 | 51/25/122 | 26% | 0.66x | 0.73x |
+| RapidHash | 396 | 44/55/297 | 11% | 0.51x | 0.52x |
+
+## AEAD Detail
+
+| Primitive | All pairs | W/T/L | Geomean | Median | Fastest-only pairs | W/T/L | Geomean | Median |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| AES-256-GCM | 594 | 276/29/289 | 1.12x | 0.97x | 198 | 37/9/152 | 0.56x | 0.57x |
+| AES-256-GCM encrypt | 297 | 122/16/159 | 1.08x | 0.91x | 99 | 14/2/83 | 0.54x | 0.52x |
+| AES-256-GCM decrypt | 297 | 154/13/130 | 1.16x | 1.10x | 99 | 23/7/69 | 0.59x | 0.71x |
+| AES-256-GCM-SIV | 198 | 187/3/8 | 3.54x | 1.81x | 198 | 187/3/8 | 3.54x | 1.81x |
+| AES-256-GCM-SIV encrypt | 99 | 93/2/4 | 3.85x | 1.81x | 99 | 93/2/4 | 3.85x | 1.81x |
+| AES-256-GCM-SIV decrypt | 99 | 94/1/4 | 3.26x | 1.81x | 99 | 94/1/4 | 3.26x | 1.81x |
+| ChaCha20-Poly1305 | 594 | 299/104/191 | 1.01x | 1.05x | 198 | 60/34/104 | 0.84x | 0.94x |
+| XChaCha20-Poly1305 | 198 | 139/58/1 | 1.27x | 1.17x | 198 | 139/58/1 | 1.27x | 1.17x |
+| AEGIS-256 | 198 | 105/70/23 | 1.43x | 1.06x | 198 | 105/70/23 | 1.43x | 1.06x |
+
+## External Competitor Pressure
+
+This table is all-pair only and answers which newly added competitors are actually applying pressure.
+
+| External | Pairs | W/T/L | Win % | Geomean | Median |
+|---|---:|---:|---:|---:|---:|
+| `rustcrypto` | 2133 | 1289/758/86 | 60% | 1.39x | 1.09x |
+| `aws-lc-rs` | 1260 | 622/195/443 | 49% | 1.05x | 1.05x |
+| `ring` | 1242 | 698/157/387 | 56% | 1.14x | 1.11x |
+| `sha3` | 612 | 579/33/0 | 95% | 2.31x | 2.16x |
+| `sha2` | 531 | 270/254/7 | 51% | 1.46x | 1.05x |
+| `blake3` | 432 | 237/165/30 | 55% | 1.43x | 1.09x |
+| `gxhash` | 396 | 34/8/354 | 9% | 0.40x | 0.41x |
+| `rapidhash` | 396 | 128/206/62 | 32% | 1.10x | 1.01x |
+| `dryoc` | 315 | 292/16/7 | 93% | 1.81x | 1.70x |
+| `ahash` | 297 | 196/13/88 | 66% | 1.33x | 1.36x |
+| `crc` | 297 | 291/2/4 | 98% | 19.35x | 29.93x |
+| `crc-fast` | 297 | 180/94/23 | 61% | 2.03x | 1.17x |
+| `foldhash` | 297 | 113/76/108 | 38% | 1.08x | 0.99x |
+| `aegis-crate` | 198 | 105/70/23 | 53% | 1.43x | 1.06x |
+| `ascon-hash` | 198 | 128/68/2 | 65% | 1.31x | 1.22x |
+| `xxhash-rust` | 198 | 107/68/23 | 54% | 1.19x | 1.09x |
+| `dalek` | 108 | 89/11/8 | 82% | 1.35x | 1.32x |
+| `crc32c` | 99 | 91/3/5 | 92% | 2.74x | 2.19x |
+| `crc32fast` | 99 | 81/9/9 | 82% | 2.43x | 2.00x |
+| `crc64fast` | 99 | 75/12/12 | 76% | 2.38x | 2.04x |
+| `crc64fast-nvme` | 99 | 74/14/11 | 75% | 2.37x | 1.96x |
 
 ## Platform Scorecard
 
+All-pair comparisons; POWER10, s390x, and RISC-V have fewer external pairs because some competitors do not support every target.
+
 | Platform | Pairs | W/T/L | Win % | Geomean | Median |
 |---|---:|---:|---:|---:|---:|
-| AMD Zen 4 | 644 | 500/128/16 | 78% | 1.62x | 1.20x |
-| AMD Zen 5 | 644 | 394/220/30 | 61% | 1.65x | 1.12x |
-| AWS Graviton3 | 644 | 341/259/44 | 53% | 1.65x | 1.07x |
-| AWS Graviton4 | 644 | 336/288/20 | 52% | 1.66x | 1.06x |
-| IBM POWER10 | 644 | 331/296/17 | 51% | 1.94x | 1.06x |
-| IBM Z / s390x | 644 | 529/78/37 | 82% | 3.03x | 2.36x |
-| Intel Ice Lake | 644 | 467/152/25 | 73% | 1.62x | 1.23x |
-| Intel Sapphire Rapids | 644 | 501/100/43 | 78% | 1.92x | 1.27x |
-| RISE RISC-V | 644 | 318/271/55 | 49% | 1.18x | 1.05x |
-| macOS Apple Silicon | 681 | 357/281/43 | 52% | 1.54x | 1.06x |
+| AMD Zen 4 | 1089 | 701/182/206 | 64% | 1.28x | 1.10x |
+| AMD Zen 5 | 1089 | 622/286/181 | 57% | 1.29x | 1.10x |
+| Intel Ice Lake | 1089 | 669/184/236 | 61% | 1.27x | 1.13x |
+| Intel Sapphire Rapids | 1089 | 656/182/251 | 60% | 1.26x | 1.11x |
+| AWS Graviton3 | 1089 | 501/326/262 | 46% | 1.25x | 1.02x |
+| AWS Graviton4 | 1089 | 488/363/238 | 45% | 1.25x | 1.03x |
+| IBM POWER10 | 1023 | 651/308/64 | 64% | 1.76x | 1.18x |
+| IBM Z / s390x | 1023 | 871/86/66 | 85% | 3.02x | 2.38x |
+| RISE RISC-V | 1023 | 520/315/188 | 51% | 1.17x | 1.05x |
 
 ## README Numbers
 
-These are the public-facing claims worth carrying into `README.md`:
+These are the public-facing claims worth carrying into `README.md` after the next AES-128-inclusive run confirms the missing AEAD coverage:
 
-- **3717 faster comparisons** across **5796** matched Linux CI comparisons.
-- **1.75x geomean** Linux CI speedup overall.
-- **357 faster comparisons** across **681** matched macOS Apple Silicon comparisons; **1.54x geomean** speedup.
-- **SHA-3 / SHAKE:** 2.18x / 2.60x geomean vs RustCrypto `sha3`; up to 25.83x / 22.41x.
-- **BLAKE3:** 2.37x geomean on one-shot/keyed/derive-key `>=64 KiB` inputs vs `blake3`; up to 7.70x.
-- **AEAD:** 1.84x geomean; AES-256-GCM encrypt/decrypt at 2.25x / 2.51x geomean; AES-256-GCM-SIV encrypt at 3.79x geomean.
-- **Ed25519 / X25519:** Ed25519 signing 1.57x geomean vs `ed25519-dalek`; X25519 1.37x geomean vs `x25519-dalek`.
-- **Checksums:** 4.41x geomean; CRC32C 2.24x geomean; CRC64/NVMe 2.35x geomean.
-- **macOS Apple Silicon:** AEAD 2.60x geomean; checksums 4.18x geomean; SHA-2/SHA-3 are parity, not headline wins.
+- **5679 faster comparisons** across **9603** matched Linux CI external comparisons.
+- **1.43x geomean** Linux CI speedup overall across all external pairs; **1.42x** against the fastest external implementation per case.
+- **SHA-3 / SHAKE:** 2.18x / 2.62x geomean vs RustCrypto `sha3`.
+- **BLAKE3:** 2.23x geomean for `>=64 KiB` inputs vs `blake3` across all measured BLAKE3 modes.
+- **AEAD:** 1.28x all-pair geomean; AES-256-GCM-SIV is 3.54x, while AES-256-GCM is 0.56x against the fastest external backend.
+- **Ed25519 / X25519:** Ed25519 signing 1.47x all-pair geomean; X25519 1.15x all-pair geomean.
+- **Checksums:** 4.32x all-pair geomean.
+- **Coverage warning:** do not publish AES-128 AEAD claims from this run; rerun Bench after the selector fix.
 
 ## Raw Results
 
 | Runner | Result |
 |---|---|
-| AMD Zen 4 | `benchmark_results/2026-04-28/linux/amd-zen4/results.txt` |
-| AMD Zen 5 | `benchmark_results/2026-04-28/linux/amd-zen5/results.txt` |
-| AWS Graviton3 | `benchmark_results/2026-04-28/linux/graviton3/results.txt` |
-| AWS Graviton4 | `benchmark_results/2026-04-28/linux/graviton4/results.txt` |
-| IBM POWER10 | `benchmark_results/2026-04-28/linux/ibm-power10/results.txt` |
-| IBM Z / s390x | `benchmark_results/2026-04-28/linux/ibm-s390x/results.txt` |
-| Intel Ice Lake | `benchmark_results/2026-04-28/linux/intel-icl/results.txt` |
-| Intel Sapphire Rapids | `benchmark_results/2026-04-28/linux/intel-spr/results.txt` |
-| RISE RISC-V | `benchmark_results/2026-04-28/linux/rise-riscv/results.txt` |
-| macOS Apple Silicon | `benchmark_results/2026-04-28/macos/aarch64/results.txt` |
+| AMD Zen 4 | `benchmark_results/2026-05-05/linux/amd-zen4/results.txt` |
+| AMD Zen 5 | `benchmark_results/2026-05-05/linux/amd-zen5/results.txt` |
+| Intel Ice Lake | `benchmark_results/2026-05-05/linux/intel-icl/results.txt` |
+| Intel Sapphire Rapids | `benchmark_results/2026-05-05/linux/intel-spr/results.txt` |
+| AWS Graviton3 | `benchmark_results/2026-05-05/linux/graviton3/results.txt` |
+| AWS Graviton4 | `benchmark_results/2026-05-05/linux/graviton4/results.txt` |
+| IBM POWER10 | `benchmark_results/2026-05-05/linux/ibm-power10/results.txt` |
+| IBM Z / s390x | `benchmark_results/2026-05-05/linux/ibm-s390x/results.txt` |
+| RISE RISC-V | `benchmark_results/2026-05-05/linux/rise-riscv/results.txt` |
+
+## Methodology Notes
+
+- Parsed 15354 Criterion median timings from the nine structured result files.
+- A comparison is matched when a Criterion ID has a `rscrypto` path component and an external ID with the same platform, bench binary, path length, operation/mode components, and input size, differing only in that implementation component.
+- Fastest-external rows collapse multiple external implementations for the same case down to the fastest observed external median.
+- The raw result files were normalized after extraction to use the workflow creation time in their header and to strip ANSI color codes from Cargo output.

@@ -123,12 +123,8 @@ assert!(
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
 // aarch64, wasm) compile on stable Rust 1.91.0.
 #![cfg_attr(target_arch = "powerpc64", feature(portable_simd, powerpc_target_feature))]
-// s390x VGFM backend uses vector asm + portable SIMD, and
-// target_feature_inline_always is still required for inline vector helpers.
-#![cfg_attr(
-  target_arch = "s390x",
-  feature(asm_experimental_reg, portable_simd, target_feature_inline_always)
-)]
+// s390x VGFM backend uses vector asm + portable SIMD.
+#![cfg_attr(target_arch = "s390x", feature(asm_experimental_reg, portable_simd))]
 // riscv64 backends use nightly target-feature flags; individual backend
 // families opt into asm register classes, crypto intrinsics, or portable SIMD.
 #![cfg_attr(target_arch = "riscv64", feature(riscv_target_feature))]

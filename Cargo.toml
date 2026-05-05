@@ -179,33 +179,56 @@ gxhash = "3.5.0"
 [lib]
 bench = false
 
+[[example]]
+name = "basic"
+required-features = ["full"]
+
+[[example]]
+name = "introspect"
+required-features = ["checksums", "hashes", "aead", "diag"]
+
+[[example]]
+name = "parallel"
+required-features = ["checksums"]
+
+[[example]]
+name = "password_hashing"
+required-features = ["password-hashing", "getrandom"]
+
 [[bench]]
 name = "aead"
 harness = false
+required-features = ["aead"]
 
 [[bench]]
 name = "blake2"
 harness = false
+required-features = ["blake2b", "blake2s"]
 
 [[bench]]
 name = "blake3"
 harness = false
+required-features = ["blake3"]
 
 [[bench]]
 name = "sha2"
 harness = false
+required-features = ["sha2"]
 
 [[bench]]
 name = "sha3"
 harness = false
+required-features = ["sha3"]
 
 [[bench]]
 name = "ascon"
 harness = false
+required-features = ["ascon-hash"]
 
 [[bench]]
 name = "auth"
 harness = false
+required-features = ["hkdf", "pbkdf2", "ed25519", "x25519"]
 
 [[bench]]
 name = "password_hashing"
@@ -215,14 +238,17 @@ required-features = ["argon2", "scrypt", "phc-strings"]
 [[bench]]
 name = "xxh3"
 harness = false
+required-features = ["xxh3"]
 
 [[bench]]
 name = "rapidhash"
 harness = false
+required-features = ["rapidhash"]
 
 [[bench]]
 name = "crc"
 harness = false
+required-features = ["checksums"]
 
 [[bench]]
 name = "kmac_cshake"

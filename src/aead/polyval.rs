@@ -208,7 +208,7 @@ mod pmull {
   /// Computes `(acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H` using
   /// 16 independent `vmull_p64` instructions that the OOO core on Neoverse
   /// V1/V2 (2 crypto pipes) can schedule freely, then a single reduction.
-  #[cfg(feature = "aes-gcm-siv")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "neon", enable = "aes")]
   #[inline]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -425,7 +425,7 @@ mod s390x_vgfm {
   ///
   /// 12 independent VGFM (4 × 3 Karatsuba), then one vector
   /// Montgomery reduction.
-  #[cfg(feature = "aes-gcm-siv")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "vector")]
   #[inline]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -555,7 +555,7 @@ mod ppc_vpmsum {
   ///
   /// 12 independent `vpmsumd` (4 × 3 Karatsuba), then one scalar
   /// Montgomery reduction.
-  #[cfg(feature = "aes-gcm-siv")]
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
   #[inline]
   pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
@@ -847,11 +847,13 @@ pub(super) unsafe fn aarch64_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure PMULL is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "aarch64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "neon", enable = "aes")]
 #[inline]
 pub(super) unsafe fn aarch64_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
-  // SAFETY: PMULL availability guaranteed by caller.
+  // SAFETY: PMULL aggregate call because:
+  // 1. Caller guarantees PMULL availability before invoking this unsafe helper.
+  // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays matching the backend contract.
   unsafe { pmull::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
@@ -871,11 +873,13 @@ pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
-  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  // SAFETY: POWER8 aggregate call because:
+  // 1. Caller guarantees POWER8 crypto availability before invoking this unsafe helper.
+  // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays matching the backend contract.
   unsafe { ppc_vpmsum::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
@@ -895,11 +899,13 @@ pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 ///
 /// # Safety
 /// Caller must ensure z/Vector is available.
-#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "vector")]
 #[inline]
 pub(super) unsafe fn s390x_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
-  // SAFETY: z/Vector availability guaranteed by caller.
+  // SAFETY: z/Vector aggregate call because:
+  // 1. Caller guarantees vector-facility availability before invoking this unsafe helper.
+  // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays matching the backend contract.
   unsafe { s390x_vgfm::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
@@ -1075,9 +1081,14 @@ pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
 ///
 /// Computes: (acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H
 ///
-/// Dispatches to VPCLMULQDQ (x86_64) when available, otherwise falls
-/// back to 4 sequential `clmul128_reduce` calls.
-#[cfg(any(target_arch = "x86_64", test))]
+/// Dispatches to a target carryless-multiply aggregate when available,
+/// otherwise falls back to 4 sequential `clmul128_reduce` calls.
+#[cfg(any(
+  feature = "aes-gcm",
+  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
+  target_arch = "x86_64",
+  test
+))]
 pub(super) fn accumulate_4blocks(
   acc: u128,
   h: u128,
@@ -1091,9 +1102,45 @@ pub(super) fn accumulate_4blocks(
       return unsafe { vpclmul::aggregate_4blocks(acc, h_powers_rev, blocks) };
     }
   }
-  // Non-x86 platforms use inline variants in their fused encrypt/decrypt
-  // paths, so only x86_64 dispatches through this function.
+
+  #[cfg(target_arch = "aarch64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL) {
+      // SAFETY: PMULL aggregate call because:
+      // 1. Runtime caps confirmed PMULL support before entering the target-feature helper.
+      // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays, matching the helper contract.
+      return unsafe { aarch64_aggregate_4blocks_inline(acc, h_powers_rev, blocks) };
+    }
+  }
+
+  #[cfg(target_arch = "powerpc64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::power::POWER8_CRYPTO) {
+      // SAFETY: POWER8 crypto aggregate call because:
+      // 1. Runtime caps confirmed POWER8_CRYPTO support before entering the target-feature helper.
+      // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays, matching the helper contract.
+      return unsafe { ppc_aggregate_4blocks_inline(acc, h_powers_rev, blocks) };
+    }
+  }
+
+  #[cfg(target_arch = "s390x")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      // SAFETY: z/Vector aggregate call because:
+      // 1. Runtime caps confirmed vector-facility support before entering the target-feature helper.
+      // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays, matching the helper contract.
+      return unsafe { s390x_aggregate_4blocks_inline(acc, h_powers_rev, blocks) };
+    }
+  }
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x"
+  )))]
   let _ = h_powers_rev;
+
   // Sequential fallback: equivalent to 4 individual block updates.
   let mut a = acc ^ blocks[0];
   a = clmul128_reduce(a, h);
