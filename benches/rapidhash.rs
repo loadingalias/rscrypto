@@ -19,7 +19,11 @@ use rscrypto::FastHash;
 const V3_HI_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 fn rapidhash_fast_64(c: &mut Criterion) {
+  use core::hash::BuildHasher as _;
+
   let inputs = common::comp_sizes();
+  let ahash_state = ahash::RandomState::with_seed(0);
+  let foldhash_state = foldhash::fast::FixedState::default();
   let mut g = c.benchmark_group("rapidhash-64");
 
   for (len, data) in &inputs {
@@ -32,6 +36,26 @@ fn rapidhash_fast_64(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rapidhash", len), data, |b, d| {
       b.iter(|| {
         let mut h = rapidhash::fast::RapidHasher::default();
+        h.write(black_box(d));
+        black_box(h.finish())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
+      b.iter(|| black_box(gxhash::gxhash64(black_box(d), 0)))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ahash", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = ahash_state.build_hasher();
+        h.write(black_box(d));
+        black_box(h.finish())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("foldhash", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = foldhash_state.build_hasher();
         h.write(black_box(d));
         black_box(h.finish())
       })
@@ -67,13 +91,22 @@ fn rapidhash_fast_128(c: &mut Criterion) {
         black_box(lo | (hi << 64))
       })
     });
+
+    // ahash and foldhash have no native 128-bit output API; gxhash does.
+    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
+      b.iter(|| black_box(gxhash::gxhash128(black_box(d), 0)))
+    });
   }
 
   g.finish();
 }
 
 fn rapidhash_v3_64(c: &mut Criterion) {
+  use core::hash::BuildHasher as _;
+
   let inputs = common::comp_sizes();
+  let ahash_state = ahash::RandomState::with_seed(0);
+  let foldhash_state = foldhash::fast::FixedState::default();
   let mut g = c.benchmark_group("rapidhash-v3-64");
 
   for (len, data) in &inputs {
@@ -86,6 +119,26 @@ fn rapidhash_v3_64(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rapidhash", len), data, |b, d| {
       let secrets = rapidhash::v3::RapidSecrets::seed_cpp(0);
       b.iter(|| black_box(rapidhash::v3::rapidhash_v3_seeded(black_box(d), &secrets)))
+    });
+
+    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
+      b.iter(|| black_box(gxhash::gxhash64(black_box(d), 0)))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ahash", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = ahash_state.build_hasher();
+        h.write(black_box(d));
+        black_box(h.finish())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("foldhash", len), data, |b, d| {
+      b.iter(|| {
+        let mut h = foldhash_state.build_hasher();
+        h.write(black_box(d));
+        black_box(h.finish())
+      })
     });
   }
 
@@ -111,6 +164,11 @@ fn rapidhash_v3_128(c: &mut Criterion) {
         let hi = rapidhash::v3::rapidhash_v3_seeded(black_box(d), &hi_secrets) as u128;
         black_box(lo | (hi << 64))
       })
+    });
+
+    // ahash and foldhash have no native 128-bit output API; gxhash does.
+    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
+      b.iter(|| black_box(gxhash::gxhash128(black_box(d), 0)))
     });
   }
 

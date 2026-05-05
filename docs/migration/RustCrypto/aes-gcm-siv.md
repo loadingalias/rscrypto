@@ -30,8 +30,13 @@ rscrypto = { version = "0.1", features = ["aes-gcm-siv"] }
 
 | `aes-gcm-siv` type | rscrypto type | Key bytes |
 |---|---|---|
+| `Aes128GcmSiv` | `Aes128GcmSiv` | 16 |
 | `Aes256GcmSiv` | `Aes256GcmSiv` | 32 |
-| `Aes128GcmSiv` | not currently mapped | 16 |
+
+Both variants share the same typed surface (`Aes128GcmSivKey`/`Aes256GcmSivKey`,
+`Nonce96`, `Aes128GcmSivTag`/`Aes256GcmSivTag`) and the same `Aead` trait.
+The migration recipe below uses `Aes256GcmSiv` throughout; substitute
+`Aes128GcmSiv` and the matching 16-byte key type for AES-128-GCM-SIV use.
 
 ## API patterns
 

@@ -26,6 +26,10 @@ const AAD: &[u8] = b"rscrypto-bench";
 // XChaCha20-Poly1305
 // ---------------------------------------------------------------------------
 
+// dryoc 0.7.2 does not expose `crypto_aead_xchacha20poly1305_ietf` as a single-shot AEAD;
+// only the secretstream framing is available, which is not apples-to-apples with rscrypto's
+// IETF one-shot XChaCha20-Poly1305. dryoc rows for XChaCha20 are therefore omitted here;
+// dryoc participates in BLAKE2b, Ed25519, X25519, and Argon2id benches instead.
 fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
@@ -122,16 +126,23 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
 // ---------------------------------------------------------------------------
 
 fn chacha20_poly1305_encrypt(c: &mut Criterion) {
+  use aws_lc_rs::aead as aws_aead;
+  use ring::aead as ring_aead;
+
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::ChaCha20Poly1305::new(&KEY_32.into());
   let nonce_rc = chacha20poly1305::Nonce::from_slice(&NONCE_12);
+  let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
+  let ring_key =
+    ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
   let mut g = c.benchmark_group("chacha20-poly1305/encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let mut buf = data.clone();
+    let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len() + 16);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
@@ -150,17 +161,53 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
         )
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| {
+        buf_combined.clear();
+        buf_combined.extend_from_slice(black_box(d));
+        aws_key
+          .seal_in_place_append_tag(
+            aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+            aws_aead::Aad::from(AAD),
+            black_box(&mut buf_combined),
+          )
+          .unwrap();
+        black_box(&buf_combined);
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| {
+        buf_combined.clear();
+        buf_combined.extend_from_slice(black_box(d));
+        ring_key
+          .seal_in_place_append_tag(
+            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+            ring_aead::Aad::from(AAD),
+            black_box(&mut buf_combined),
+          )
+          .unwrap();
+        black_box(&buf_combined);
+      })
+    });
   }
 
   g.finish();
 }
 
 fn chacha20_poly1305_decrypt(c: &mut Criterion) {
+  use aws_lc_rs::aead as aws_aead;
+  use ring::aead as ring_aead;
+
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::ChaCha20Poly1305::new(&KEY_32.into());
   let nonce_rc = chacha20poly1305::Nonce::from_slice(&NONCE_12);
+  let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
+  let ring_key =
+    ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
   let mut g = c.benchmark_group("chacha20-poly1305/decrypt");
 
   for (len, data) in &inputs {
@@ -171,6 +218,24 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+
+    let mut ct_aws: Vec<u8> = data.clone();
+    aws_key
+      .seal_in_place_append_tag(
+        aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+        aws_aead::Aad::from(AAD),
+        &mut ct_aws,
+      )
+      .unwrap();
+
+    let mut ct_ring: Vec<u8> = data.clone();
+    ring_key
+      .seal_in_place_append_tag(
+        ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+        ring_aead::Aad::from(AAD),
+        &mut ct_ring,
+      )
+      .unwrap();
 
     let mut buf = ciphertext.clone();
 
@@ -203,6 +268,38 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
           )
           .unwrap();
         black_box(&buf_rc);
+      })
+    });
+
+    let mut buf_aws = ct_aws.clone();
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      b.iter(|| {
+        buf_aws.copy_from_slice(ct);
+        aws_key
+          .open_in_place(
+            aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+            aws_aead::Aad::from(AAD),
+            black_box(&mut buf_aws),
+          )
+          .unwrap();
+        black_box(&buf_aws);
+      })
+    });
+
+    let mut buf_ring = ct_ring.clone();
+
+    g.bench_with_input(BenchmarkId::new("ring", len), &ct_ring, |b, ct| {
+      b.iter(|| {
+        buf_ring.copy_from_slice(ct);
+        ring_key
+          .open_in_place(
+            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+            ring_aead::Aad::from(AAD),
+            black_box(&mut buf_ring),
+          )
+          .unwrap();
+        black_box(&buf_ring);
       })
     });
   }
@@ -304,16 +401,16 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
-// AES-256-GCM
+// AES-128-GCM-SIV
 // ---------------------------------------------------------------------------
 
-fn aes256_gcm_encrypt(c: &mut Criterion) {
+fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
-  let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
-  let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
-  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
-  let mut g = c.benchmark_group("aes-256-gcm/encrypt");
+  let cipher_rs = rscrypto::Aes128GcmSiv::new(&rscrypto::Aes128GcmSivKey::from_bytes(KEY_16));
+  let cipher_rc = aes_gcm_siv::Aes128GcmSiv::new(&KEY_16.into());
+  let nonce_rc = aes_gcm_siv::Nonce::from_slice(&NONCE_12);
+  let mut g = c.benchmark_group("aes-128-gcm-siv/encrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -341,13 +438,13 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
   g.finish();
 }
 
-fn aes256_gcm_decrypt(c: &mut Criterion) {
+fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
-  let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
-  let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
-  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
-  let mut g = c.benchmark_group("aes-256-gcm/decrypt");
+  let cipher_rs = rscrypto::Aes128GcmSiv::new(&rscrypto::Aes128GcmSivKey::from_bytes(KEY_16));
+  let cipher_rc = aes_gcm_siv::Aes128GcmSiv::new(&KEY_16.into());
+  let nonce_rc = aes_gcm_siv::Nonce::from_slice(&NONCE_12);
+  let mut g = c.benchmark_group("aes-128-gcm-siv/decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
@@ -389,6 +486,376 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
           )
           .unwrap();
         black_box(&buf_rc);
+      })
+    });
+  }
+
+  g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// AES-256-GCM
+// ---------------------------------------------------------------------------
+
+fn aes256_gcm_encrypt(c: &mut Criterion) {
+  use aws_lc_rs::aead as aws_aead;
+  use ring::aead as ring_aead;
+
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
+  let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
+  let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
+  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).unwrap());
+  let mut g = c.benchmark_group("aes-256-gcm/encrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let mut buf = data.clone();
+    let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len() + 16);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(
+          cipher_rc
+            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
+            .unwrap(),
+        )
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| {
+        buf_combined.clear();
+        buf_combined.extend_from_slice(black_box(d));
+        aws_key
+          .seal_in_place_append_tag(
+            aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+            aws_aead::Aad::from(AAD),
+            black_box(&mut buf_combined),
+          )
+          .unwrap();
+        black_box(&buf_combined);
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| {
+        buf_combined.clear();
+        buf_combined.extend_from_slice(black_box(d));
+        ring_key
+          .seal_in_place_append_tag(
+            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+            ring_aead::Aad::from(AAD),
+            black_box(&mut buf_combined),
+          )
+          .unwrap();
+        black_box(&buf_combined);
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn aes256_gcm_decrypt(c: &mut Criterion) {
+  use aws_lc_rs::aead as aws_aead;
+  use ring::aead as ring_aead;
+
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
+  let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
+  let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
+  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).unwrap());
+  let mut g = c.benchmark_group("aes-256-gcm/decrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    let mut ciphertext = data.clone();
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+
+    let mut ct_rc = data.clone();
+    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+
+    let mut ct_aws: Vec<u8> = data.clone();
+    aws_key
+      .seal_in_place_append_tag(
+        aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+        aws_aead::Aad::from(AAD),
+        &mut ct_aws,
+      )
+      .unwrap();
+
+    let mut ct_ring: Vec<u8> = data.clone();
+    ring_key
+      .seal_in_place_append_tag(
+        ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+        ring_aead::Aad::from(AAD),
+        &mut ct_ring,
+      )
+      .unwrap();
+
+    let mut buf = ciphertext.clone();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
+      b.iter(|| {
+        buf.copy_from_slice(ct);
+        cipher_rs
+          .decrypt_in_place(
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut buf),
+            black_box(&tag_rs),
+          )
+          .unwrap();
+        black_box(&buf);
+      })
+    });
+
+    let mut buf_rc = ct_rc.clone();
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
+      b.iter(|| {
+        buf_rc.copy_from_slice(ct);
+        cipher_rc
+          .decrypt_in_place_detached(
+            black_box(nonce_rc),
+            black_box(AAD),
+            black_box(&mut buf_rc),
+            black_box(&tag_rc),
+          )
+          .unwrap();
+        black_box(&buf_rc);
+      })
+    });
+
+    let mut buf_aws = ct_aws.clone();
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      b.iter(|| {
+        buf_aws.copy_from_slice(ct);
+        aws_key
+          .open_in_place(
+            aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+            aws_aead::Aad::from(AAD),
+            black_box(&mut buf_aws),
+          )
+          .unwrap();
+        black_box(&buf_aws);
+      })
+    });
+
+    let mut buf_ring = ct_ring.clone();
+
+    g.bench_with_input(BenchmarkId::new("ring", len), &ct_ring, |b, ct| {
+      b.iter(|| {
+        buf_ring.copy_from_slice(ct);
+        ring_key
+          .open_in_place(
+            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+            ring_aead::Aad::from(AAD),
+            black_box(&mut buf_ring),
+          )
+          .unwrap();
+        black_box(&buf_ring);
+      })
+    });
+  }
+
+  g.finish();
+}
+
+// ---------------------------------------------------------------------------
+// AES-128-GCM
+// ---------------------------------------------------------------------------
+
+const KEY_16: [u8; 16] = [0x42u8; 16];
+
+fn aes128_gcm_encrypt(c: &mut Criterion) {
+  use aws_lc_rs::aead as aws_aead;
+  use ring::aead as ring_aead;
+
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
+  let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
+  let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
+  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).unwrap());
+  let mut g = c.benchmark_group("aes-128-gcm/encrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let mut buf = data.clone();
+    let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len() + 16);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(
+          cipher_rc
+            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
+            .unwrap(),
+        )
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| {
+        buf_combined.clear();
+        buf_combined.extend_from_slice(black_box(d));
+        aws_key
+          .seal_in_place_append_tag(
+            aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+            aws_aead::Aad::from(AAD),
+            black_box(&mut buf_combined),
+          )
+          .unwrap();
+        black_box(&buf_combined);
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| {
+        buf_combined.clear();
+        buf_combined.extend_from_slice(black_box(d));
+        ring_key
+          .seal_in_place_append_tag(
+            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+            ring_aead::Aad::from(AAD),
+            black_box(&mut buf_combined),
+          )
+          .unwrap();
+        black_box(&buf_combined);
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn aes128_gcm_decrypt(c: &mut Criterion) {
+  use aws_lc_rs::aead as aws_aead;
+  use ring::aead as ring_aead;
+
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
+  let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
+  let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
+  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).unwrap());
+  let mut g = c.benchmark_group("aes-128-gcm/decrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    let mut ciphertext = data.clone();
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+
+    let mut ct_rc = data.clone();
+    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+
+    let mut ct_aws: Vec<u8> = data.clone();
+    aws_key
+      .seal_in_place_append_tag(
+        aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+        aws_aead::Aad::from(AAD),
+        &mut ct_aws,
+      )
+      .unwrap();
+
+    let mut ct_ring: Vec<u8> = data.clone();
+    ring_key
+      .seal_in_place_append_tag(
+        ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+        ring_aead::Aad::from(AAD),
+        &mut ct_ring,
+      )
+      .unwrap();
+
+    let mut buf = ciphertext.clone();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
+      b.iter(|| {
+        buf.copy_from_slice(ct);
+        cipher_rs
+          .decrypt_in_place(
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut buf),
+            black_box(&tag_rs),
+          )
+          .unwrap();
+        black_box(&buf);
+      })
+    });
+
+    let mut buf_rc = ct_rc.clone();
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto", len), &ct_rc, |b, ct| {
+      b.iter(|| {
+        buf_rc.copy_from_slice(ct);
+        cipher_rc
+          .decrypt_in_place_detached(
+            black_box(nonce_rc),
+            black_box(AAD),
+            black_box(&mut buf_rc),
+            black_box(&tag_rc),
+          )
+          .unwrap();
+        black_box(&buf_rc);
+      })
+    });
+
+    let mut buf_aws = ct_aws.clone();
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), &ct_aws, |b, ct| {
+      b.iter(|| {
+        buf_aws.copy_from_slice(ct);
+        aws_key
+          .open_in_place(
+            aws_aead::Nonce::assume_unique_for_key(NONCE_12),
+            aws_aead::Aad::from(AAD),
+            black_box(&mut buf_aws),
+          )
+          .unwrap();
+        black_box(&buf_aws);
+      })
+    });
+
+    let mut buf_ring = ct_ring.clone();
+
+    g.bench_with_input(BenchmarkId::new("ring", len), &ct_ring, |b, ct| {
+      b.iter(|| {
+        buf_ring.copy_from_slice(ct);
+        ring_key
+          .open_in_place(
+            ring_aead::Nonce::assume_unique_for_key(NONCE_12),
+            ring_aead::Aad::from(AAD),
+            black_box(&mut buf_ring),
+          )
+          .unwrap();
+        black_box(&buf_ring);
       })
     });
   }
@@ -492,8 +959,12 @@ criterion_group!(
   chacha20_poly1305_decrypt,
   aes256_gcm_siv_encrypt,
   aes256_gcm_siv_decrypt,
+  aes128_gcm_siv_encrypt,
+  aes128_gcm_siv_decrypt,
   aes256_gcm_encrypt,
   aes256_gcm_decrypt,
+  aes128_gcm_encrypt,
+  aes128_gcm_decrypt,
   aegis256_encrypt,
   aegis256_decrypt,
 );

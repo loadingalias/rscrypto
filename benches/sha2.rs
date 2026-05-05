@@ -64,10 +64,69 @@ macro_rules! sha2_oneshot {
   };
 }
 
+/// Variant of `sha2_oneshot!` that also benches `aws-lc-rs` and `ring` — both
+/// expose SHA-256/384/512 but neither ships SHA-224 or SHA-512/256.
+macro_rules! sha2_oneshot_ietf {
+  ($fn_name:ident, $group:literal, $ours:ty, $theirs:ty, $aws_alg:expr, $ring_alg:expr) => {
+    fn $fn_name(c: &mut Criterion) {
+      print_sha2_diag_once();
+
+      let inputs = common::comp_sizes();
+      let mut g = c.benchmark_group($group);
+
+      for (len, data) in &inputs {
+        common::set_throughput(&mut g, *len);
+
+        g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+          b.iter(|| black_box(<$ours>::digest(black_box(d))))
+        });
+
+        g.bench_with_input(BenchmarkId::new("sha2", len), data, |b, d| {
+          b.iter(|| {
+            use sha2::Digest as _;
+            black_box(<$theirs>::digest(black_box(d)))
+          })
+        });
+
+        g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+          b.iter(|| black_box(aws_lc_rs::digest::digest($aws_alg, black_box(d))))
+        });
+
+        g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+          b.iter(|| black_box(ring::digest::digest($ring_alg, black_box(d))))
+        });
+      }
+
+      g.finish();
+    }
+  };
+}
+
 sha2_oneshot!(sha224, "sha224", rscrypto::Sha224, sha2::Sha224);
-sha2_oneshot!(sha256, "sha256", rscrypto::Sha256, sha2::Sha256);
-sha2_oneshot!(sha384, "sha384", rscrypto::Sha384, sha2::Sha384);
-sha2_oneshot!(sha512, "sha512", rscrypto::Sha512, sha2::Sha512);
+sha2_oneshot_ietf!(
+  sha256,
+  "sha256",
+  rscrypto::Sha256,
+  sha2::Sha256,
+  &aws_lc_rs::digest::SHA256,
+  &ring::digest::SHA256
+);
+sha2_oneshot_ietf!(
+  sha384,
+  "sha384",
+  rscrypto::Sha384,
+  sha2::Sha384,
+  &aws_lc_rs::digest::SHA384,
+  &ring::digest::SHA384
+);
+sha2_oneshot_ietf!(
+  sha512,
+  "sha512",
+  rscrypto::Sha512,
+  sha2::Sha512,
+  &aws_lc_rs::digest::SHA512,
+  &ring::digest::SHA512
+);
 sha2_oneshot!(sha512_256, "sha512-256", rscrypto::Sha512_256, sha2::Sha512_256);
 
 macro_rules! sha2_streaming {

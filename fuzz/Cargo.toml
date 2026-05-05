@@ -61,8 +61,18 @@ path = "fuzz_targets/aead_aes256gcm.rs"
 doc = false
 
 [[bin]]
+name = "aead_aes128gcm"
+path = "fuzz_targets/aead_aes128gcm.rs"
+doc = false
+
+[[bin]]
 name = "aead_aes256gcmsiv"
 path = "fuzz_targets/aead_aes256gcmsiv.rs"
+doc = false
+
+[[bin]]
+name = "aead_aes128gcmsiv"
+path = "fuzz_targets/aead_aes128gcmsiv.rs"
 doc = false
 
 [[bin]]

@@ -45,12 +45,28 @@ pub fn aes256gcm_backend() -> &'static str {
   backend_for(AeadPrimitive::Aes256Gcm)
 }
 
+/// Returns the backend selected for `Aes128Gcm` on the current machine.
+#[cfg(feature = "aes-gcm")]
+#[inline]
+#[must_use]
+pub fn aes128gcm_backend() -> &'static str {
+  backend_for(AeadPrimitive::Aes128Gcm)
+}
+
 /// Returns the backend selected for `Aes256GcmSiv` on the current machine.
 #[cfg(feature = "aes-gcm-siv")]
 #[inline]
 #[must_use]
 pub fn aes256gcmsiv_backend() -> &'static str {
   backend_for(AeadPrimitive::Aes256GcmSiv)
+}
+
+/// Returns the backend selected for `Aes128GcmSiv` on the current machine.
+#[cfg(feature = "aes-gcm-siv")]
+#[inline]
+#[must_use]
+pub fn aes128gcmsiv_backend() -> &'static str {
+  backend_for(AeadPrimitive::Aes128GcmSiv)
 }
 
 /// Returns the backend selected for `ChaCha20Poly1305` on the current machine.
@@ -112,8 +128,12 @@ mod tests {
     assert!(!super::chacha20poly1305_backend().is_empty());
     #[cfg(feature = "aes-gcm")]
     assert!(!super::aes256gcm_backend().is_empty());
+    #[cfg(feature = "aes-gcm")]
+    assert!(!super::aes128gcm_backend().is_empty());
     #[cfg(feature = "aes-gcm-siv")]
     assert!(!super::aes256gcmsiv_backend().is_empty());
+    #[cfg(feature = "aes-gcm-siv")]
+    assert!(!super::aes128gcmsiv_backend().is_empty());
     #[cfg(feature = "aegis256")]
     assert!(!super::aegis256_backend().is_empty());
     #[cfg(feature = "ascon-aead")]

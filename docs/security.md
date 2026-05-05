@@ -17,11 +17,11 @@
 
 ## Nonces
 
-- `Aes256Gcm`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, and `Aegis256` require nonce uniqueness per key.
-- `Aes256GcmSiv` is misuse-resistant, but nonce reuse is still not the normal operating model.
+- `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, and `Aegis256` require nonce uniqueness per key.
+- `Aes128GcmSiv` and `Aes256GcmSiv` are misuse-resistant, but nonce reuse is still not the normal operating model.
 - Typed nonce wrappers prevent length mistakes, not lifecycle mistakes.
 - Nonce wrappers intentionally do not implement `Default`; all-zero nonces must be constructed explicitly.
-- For `Aes256Gcm`, prefer monotonic counters or protocol sequence numbers over ad hoc random nonces.
+- For `Aes128Gcm` and `Aes256Gcm`, prefer monotonic counters or protocol sequence numbers over ad hoc random nonces.
 
 ## Random Constructors
 
@@ -44,4 +44,4 @@
 
 - Ed25519 and X25519 are classical primitives.
 - For systems with a long-lived trust horizon, plan a hybrid migration path instead of treating them as the final state.
-- The repository roadmap tracks ML-DSA, ML-KEM, and other post-quantum primitives in `README.md`.
+- The repository roadmap tracks ML-DSA, ML-KEM, and other post-quantum primitives via [GitHub issues](https://github.com/loadingalias/rscrypto/issues).

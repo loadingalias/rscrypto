@@ -10,7 +10,7 @@ Inside a typical boundary, these are the NIST-aligned items:
 
 | Category | Examples |
 |---------|----------|
-| Symmetric AEAD | `Aes256Gcm` (SP 800-38D) |
+| Symmetric AEAD | `Aes128Gcm`, `Aes256Gcm` (SP 800-38D) |
 | Hash / XOF | `Sha*`, `Shake*` (`FIPS 180-4`, `FIPS 202`) |
 | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
 | Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
@@ -19,7 +19,7 @@ Inside a typical boundary, these are the NIST-aligned items:
 
 | Category | Examples |
 |----------|----------|
-| Cipher variants / AEAD | `Aes256GcmSiv`, `Aegis256`, `ChaCha20Poly1305`, `XChaCha20Poly1305` |
+| Cipher variants / AEAD | `Aes128GcmSiv`, `Aes256GcmSiv`, `Aegis256`, `ChaCha20Poly1305`, `XChaCha20Poly1305` |
 | Hashes | `Blake*`, `Ascon*` (`SHA`/FIPS boundary not yet established) |
 | Public-key primitives | `Ed25519*`, `X25519*` |
 | Password hashing | `Argon2*`, `Scrypt` |

@@ -94,7 +94,9 @@ Feature: `aead` or individual leaves.
 
 | Cipher | Key | Nonce | Tag | Standard |
 |--------|-----|-------|-----|----------|
+| `Aes128Gcm` | `Aes128GcmKey` 16B | `Nonce96` 12B | `Aes128GcmTag` 16B | SP 800-38D |
 | `Aes256Gcm` | `Aes256GcmKey` 32B | `Nonce96` 12B | `Aes256GcmTag` 16B | SP 800-38D |
+| `Aes128GcmSiv` | `Aes128GcmSivKey` 16B | `Nonce96` 12B | `Aes128GcmSivTag` 16B | RFC 8452 |
 | `Aes256GcmSiv` | `Aes256GcmSivKey` 32B | `Nonce96` 12B | `Aes256GcmSivTag` 16B | RFC 8452 |
 | `ChaCha20Poly1305` | `ChaCha20Poly1305Key` 32B | `Nonce96` 12B | `ChaCha20Poly1305Tag` 16B | RFC 8439 |
 | `XChaCha20Poly1305` | `XChaCha20Poly1305Key` 32B | `Nonce192` 24B | `XChaCha20Poly1305Tag` 16B | draft-irtf |

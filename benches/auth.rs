@@ -20,6 +20,23 @@ type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
 type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
 type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
 
+/// `KeyType` newtype so `aws_lc_rs::hkdf::Prk::expand(...)` can produce a
+/// variable-length OKM matching the bench's `out_len`.
+struct AwsHkdfLen(usize);
+impl aws_lc_rs::hkdf::KeyType for AwsHkdfLen {
+  fn len(&self) -> usize {
+    self.0
+  }
+}
+
+/// `KeyType` newtype for ring's variable-length HKDF expand.
+struct RingHkdfLen(usize);
+impl ring::hkdf::KeyType for RingHkdfLen {
+  fn len(&self) -> usize {
+    self.0
+  }
+}
+
 #[cfg(feature = "diag")]
 fn print_auth_diag_once() {
   use std::sync::Once;
@@ -55,6 +72,8 @@ fn hmac_sha256(c: &mut Criterion) {
 
   let inputs = common::comp_sizes();
   let key = [0x42u8; 32];
+  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
+  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key);
   let mut g = c.benchmark_group("hmac-sha256");
 
   for (len, data) in &inputs {
@@ -73,6 +92,14 @@ fn hmac_sha256(c: &mut Criterion) {
         black_box(mac.finalize().into_bytes())
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
+    });
   }
 
   g.finish();
@@ -83,6 +110,8 @@ fn hmac_sha384(c: &mut Criterion) {
 
   let inputs = common::comp_sizes();
   let key = [0x42u8; 48];
+  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA384, &key);
+  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA384, &key);
   let mut g = c.benchmark_group("hmac-sha384");
 
   for (len, data) in &inputs {
@@ -101,6 +130,14 @@ fn hmac_sha384(c: &mut Criterion) {
         black_box(mac.finalize().into_bytes())
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
+    });
   }
 
   g.finish();
@@ -111,6 +148,8 @@ fn hmac_sha512(c: &mut Criterion) {
 
   let inputs = common::comp_sizes();
   let key = [0x42u8; 64];
+  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA512, &key);
+  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA512, &key);
   let mut g = c.benchmark_group("hmac-sha512");
 
   for (len, data) in &inputs {
@@ -128,6 +167,14 @@ fn hmac_sha512(c: &mut Criterion) {
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
+    });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
     });
   }
 
@@ -177,6 +224,8 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
   let info = [0x33u8; 48];
   let hkdf = HkdfSha256::new(&salt, &ikm);
   let rustcrypto = RustCryptoHkdfSha256::new(Some(&salt), &ikm);
+  let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA256, &salt).extract(&ikm);
+  let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &salt).extract(&ikm);
   let mut g = c.benchmark_group("hkdf-sha256/expand");
 
   for out_len in [32usize, 64, 256, 1024] {
@@ -196,6 +245,30 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
         black_box(out[0])
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        aws_prk
+          .expand(&[black_box(&info)], AwsHkdfLen(len))
+          .unwrap()
+          .fill(black_box(&mut out))
+          .unwrap();
+        black_box(out[0])
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        ring_prk
+          .expand(&[black_box(&info)], RingHkdfLen(len))
+          .unwrap()
+          .fill(black_box(&mut out))
+          .unwrap();
+        black_box(out[0])
+      })
+    });
   }
 
   g.finish();
@@ -209,6 +282,8 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
   let info = [0x33u8; 80];
   let hkdf = HkdfSha384::new(&salt, &ikm);
   let rustcrypto = RustCryptoHkdfSha384::new(Some(&salt), &ikm);
+  let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA384, &salt).extract(&ikm);
+  let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA384, &salt).extract(&ikm);
   let mut g = c.benchmark_group("hkdf-sha384/expand");
 
   for out_len in [48usize, 96, 256, 1024] {
@@ -228,6 +303,30 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
         black_box(out[0])
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        aws_prk
+          .expand(&[black_box(&info)], AwsHkdfLen(len))
+          .unwrap()
+          .fill(black_box(&mut out))
+          .unwrap();
+        black_box(out[0])
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
+      let mut out = vec![0u8; len];
+      b.iter(|| {
+        ring_prk
+          .expand(&[black_box(&info)], RingHkdfLen(len))
+          .unwrap()
+          .fill(black_box(&mut out))
+          .unwrap();
+        black_box(out[0])
+      })
+    });
   }
 
   g.finish();
@@ -241,6 +340,7 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
   let state = Pbkdf2Sha256::new(&password);
 
   for &iterations in &[1u32, 100, 1000] {
+    let nz_iters = core::num::NonZeroU32::new(iterations).unwrap();
     let mut g = c.benchmark_group(format!("pbkdf2-sha256/iters={iterations}"));
 
     for &out_len in &[32usize, 64] {
@@ -258,6 +358,34 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
         let mut out = vec![0u8; len];
         b.iter(|| {
           pbkdf2::pbkdf2_hmac::<sha2::Sha256>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          aws_lc_rs::pbkdf2::derive(
+            aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+            nz_iters,
+            black_box(&salt),
+            black_box(&password),
+            black_box(&mut out),
+          );
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          ring::pbkdf2::derive(
+            ring::pbkdf2::PBKDF2_HMAC_SHA256,
+            nz_iters,
+            black_box(&salt),
+            black_box(&password),
+            black_box(&mut out),
+          );
           black_box(out[0])
         })
       });
@@ -288,6 +416,7 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
   let state = Pbkdf2Sha512::new(&password);
 
   for &iterations in &[1u32, 100, 1000] {
+    let nz_iters = core::num::NonZeroU32::new(iterations).unwrap();
     let mut g = c.benchmark_group(format!("pbkdf2-sha512/iters={iterations}"));
 
     for &out_len in &[64usize, 128] {
@@ -305,6 +434,34 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
         let mut out = vec![0u8; len];
         b.iter(|| {
           pbkdf2::pbkdf2_hmac::<sha2::Sha512>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          aws_lc_rs::pbkdf2::derive(
+            aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA512,
+            nz_iters,
+            black_box(&salt),
+            black_box(&password),
+            black_box(&mut out),
+          );
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          ring::pbkdf2::derive(
+            ring::pbkdf2::PBKDF2_HMAC_SHA512,
+            nz_iters,
+            black_box(&salt),
+            black_box(&password),
+            black_box(&mut out),
+          );
           black_box(out[0])
         })
       });
@@ -367,10 +524,16 @@ fn ed25519_keypair_from_secret(c: &mut Criterion) {
 }
 
 fn ed25519_sign(c: &mut Criterion) {
+  use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair};
+
   let secret_bytes = [9u8; 32];
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
   let keypair = Ed25519Keypair::from_secret_key(secret);
   let signing_key = SigningKey::from_bytes(&secret_bytes);
+  let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  let (_dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
+  let mut dryoc_sig: [u8; 64] = [0u8; 64];
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
     .map(|len| (len, common::random_bytes(len)))
@@ -387,18 +550,44 @@ fn ed25519_sign(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("dalek", len), data, |b, d| {
       b.iter(|| black_box(black_box(&signing_key).sign(black_box(d))))
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| black_box(aws_kp.sign(black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| black_box(ring_kp.sign(black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("dryoc", len), data, |b, d| {
+      b.iter(|| {
+        crypto_sign_detached(&mut dryoc_sig, black_box(d), &dryoc_sk).unwrap();
+        black_box(&dryoc_sig);
+      })
+    });
   }
 
   g.finish();
 }
 
 fn ed25519_verify(c: &mut Criterion) {
+  use aws_lc_rs::signature::KeyPair as _;
+  use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair, crypto_sign_verify_detached};
+  use ring::signature::KeyPair as _;
+
   let secret_bytes = [13u8; 32];
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
   let keypair = Ed25519Keypair::from_secret_key(secret);
   let public: Ed25519PublicKey = keypair.public_key();
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   let verifying_key = signing_key.verifying_key();
+  let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  let aws_pubkey: Vec<u8> = aws_kp.public_key().as_ref().to_vec();
+  let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, aws_pubkey);
+  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  let ring_pubkey: Vec<u8> = ring_kp.public_key().as_ref().to_vec();
+  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, ring_pubkey);
+  let (dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
   let inputs = [0usize, 32, 1024, 16384]
     .into_iter()
     .map(|len| (len, common::random_bytes(len)))
@@ -409,6 +598,10 @@ fn ed25519_verify(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
     let ours = keypair.sign(data);
     let dalek = signing_key.sign(data);
+    let aws_sig = aws_kp.sign(data);
+    let ring_sig = ring_kp.sign(data);
+    let mut dryoc_sig: [u8; 64] = [0u8; 64];
+    crypto_sign_detached(&mut dryoc_sig, data, &dryoc_sk).unwrap();
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
@@ -425,12 +618,40 @@ fn ed25519_verify(c: &mut Criterion) {
         black_box(())
       })
     });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+      b.iter(|| {
+        aws_upk.verify(black_box(d), aws_sig.as_ref()).unwrap();
+        black_box(())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| {
+        ring_upk.verify(black_box(d), ring_sig.as_ref()).unwrap();
+        black_box(())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("dryoc", len), data, |b, d| {
+      b.iter(|| {
+        crypto_sign_verify_detached(&dryoc_sig, black_box(d), &dryoc_pk).unwrap();
+        black_box(())
+      })
+    });
   }
 
   g.finish();
 }
 
+// `ring` is omitted from x25519 benches: ring 0.17 only exposes
+// `EphemeralPrivateKey` (consumed by `agree_ephemeral`) and provides no
+// reusable static-key API. Including it would force a full keygen-and-discard
+// per iteration, which is not apples-to-apples against the static-key DH
+// path that rscrypto / dalek / aws-lc-rs / dryoc all share.
 fn x25519_public_key(c: &mut Criterion) {
+  use dryoc::classic::crypto_core::crypto_scalarmult_base;
+
   let secret_bytes = [0x2au8; 32];
   let mut g = c.benchmark_group("x25519/public-key-from-secret");
 
@@ -448,10 +669,29 @@ fn x25519_public_key(c: &mut Criterion) {
     })
   });
 
+  g.bench_function("aws-lc-rs", |b| {
+    b.iter(|| {
+      let priv_key =
+        aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, black_box(&secret_bytes))
+          .unwrap();
+      black_box(priv_key.compute_public_key().unwrap())
+    })
+  });
+
+  g.bench_function("dryoc", |b| {
+    let mut public = [0u8; 32];
+    b.iter(|| {
+      crypto_scalarmult_base(&mut public, black_box(&secret_bytes));
+      black_box(public)
+    })
+  });
+
   g.finish();
 }
 
 fn x25519_diffie_hellman(c: &mut Criterion) {
+  use dryoc::classic::crypto_core::{crypto_scalarmult, crypto_scalarmult_base};
+
   let alice_bytes = [0x18u8; 32];
   let bob_bytes = [0x34u8; 32];
 
@@ -459,6 +699,19 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   let bob_public = X25519SecretKey::from_bytes(bob_bytes).public_key();
   let dalek_alice = DalekX25519Secret::from(alice_bytes);
   let dalek_bob_public = DalekX25519PublicKey::from(&DalekX25519Secret::from(bob_bytes));
+  let aws_alice =
+    aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).unwrap();
+  let aws_bob_pub_bytes: [u8; 32] = {
+    let bob_priv =
+      aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &bob_bytes).unwrap();
+    let pk = bob_priv.compute_public_key().unwrap();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(pk.as_ref());
+    out
+  };
+  let aws_bob_unparsed = aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::X25519, aws_bob_pub_bytes);
+  let mut dryoc_bob_pub = [0u8; 32];
+  crypto_scalarmult_base(&mut dryoc_bob_pub, &bob_bytes);
   let mut g = c.benchmark_group("x25519/diffie-hellman");
 
   g.bench_function("rscrypto", |b| {
@@ -467,6 +720,24 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
 
   g.bench_function("dalek", |b| {
     b.iter(|| black_box(black_box(&dalek_alice).diffie_hellman(black_box(&dalek_bob_public))))
+  });
+
+  g.bench_function("aws-lc-rs", |b| {
+    b.iter(|| {
+      let first = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
+        Ok::<u8, ()>(bytes[0])
+      })
+      .unwrap();
+      black_box(first)
+    })
+  });
+
+  g.bench_function("dryoc", |b| {
+    let mut shared = [0u8; 32];
+    b.iter(|| {
+      crypto_scalarmult(&mut shared, black_box(&alice_bytes), black_box(&dryoc_bob_pub));
+      black_box(shared)
+    })
   });
 
   g.finish();

@@ -30,10 +30,13 @@ rscrypto = { version = "0.1", features = ["aes-gcm"] }
 
 | `aes-gcm` type | rscrypto type | Key bytes |
 |---|---|---|
+| `Aes128Gcm` | `Aes128Gcm` | 16 |
 | `Aes256Gcm` | `Aes256Gcm` | 32 |
-| `Aes128Gcm` | not currently mapped — open an issue if you need AES-128-GCM | 16 |
 
-rscrypto only ships the 256-bit variant. AES-128 is in the roadmap; today, keep `aes-gcm` for AES-128 use.
+Both variants share the same typed surface (`Aes128GcmKey`/`Aes256GcmKey`,
+`Nonce96`, `Aes128GcmTag`/`Aes256GcmTag`) and the same `Aead` trait.
+The migration recipe below uses `Aes256Gcm` throughout; substitute
+`Aes128Gcm` and the matching 16-byte key type for AES-128-GCM use.
 
 ## API patterns
 

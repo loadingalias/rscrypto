@@ -19,6 +19,8 @@ type RustCryptoBlake2sMac128 = Blake2sMac<U16>;
 type RustCryptoBlake2sMac256 = Blake2sMac<U32>;
 
 fn oneshot(c: &mut Criterion) {
+  use dryoc::classic::crypto_generichash::crypto_generichash;
+
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("blake2");
 
@@ -31,12 +33,26 @@ fn oneshot(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| black_box(RustCryptoBlake2b256::digest(black_box(d))))
     });
+    g.bench_with_input(BenchmarkId::new("dryoc/blake2b256", len), data, |b, d| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        crypto_generichash(black_box(&mut out), black_box(d), None).unwrap();
+        black_box(out)
+      })
+    });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b512", len), data, |b, d| {
       b.iter(|| black_box(Blake2b512::digest(black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b512", len), data, |b, d| {
       b.iter(|| black_box(RustCryptoBlake2b512::digest(black_box(d))))
+    });
+    g.bench_with_input(BenchmarkId::new("dryoc/blake2b512", len), data, |b, d| {
+      let mut out = [0u8; 64];
+      b.iter(|| {
+        crypto_generichash(black_box(&mut out), black_box(d), None).unwrap();
+        black_box(out)
+      })
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2s128", len), data, |b, d| {
@@ -155,6 +171,8 @@ fn host_overhead(c: &mut Criterion) {
 }
 
 fn keyed(c: &mut Criterion) {
+  use dryoc::classic::crypto_generichash::crypto_generichash;
+
   let inputs = common::comp_sizes();
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
@@ -173,6 +191,13 @@ fn keyed(c: &mut Criterion) {
         black_box(mac.finalize().into_bytes())
       })
     });
+    g.bench_with_input(BenchmarkId::new("dryoc/blake2b256", len), data, |b, d| {
+      let mut out = [0u8; 32];
+      b.iter(|| {
+        crypto_generichash(black_box(&mut out), black_box(d), Some(black_box(&key_b[..32]))).unwrap();
+        black_box(out)
+      })
+    });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b512", len), data, |b, d| {
       b.iter(|| black_box(Blake2b512::keyed_digest(black_box(&key_b), black_box(d))))
@@ -182,6 +207,13 @@ fn keyed(c: &mut Criterion) {
         let mut mac = RustCryptoBlake2bMac512::new_from_slice(black_box(&key_b)).unwrap();
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
+      })
+    });
+    g.bench_with_input(BenchmarkId::new("dryoc/blake2b512", len), data, |b, d| {
+      let mut out = [0u8; 64];
+      b.iter(|| {
+        crypto_generichash(black_box(&mut out), black_box(d), Some(black_box(&key_b[..]))).unwrap();
+        black_box(out)
       })
     });
 
@@ -212,6 +244,10 @@ fn keyed(c: &mut Criterion) {
 }
 
 fn streaming(c: &mut Criterion) {
+  use dryoc::classic::crypto_generichash::{
+    crypto_generichash_final, crypto_generichash_init, crypto_generichash_update,
+  };
+
   let data = common::random_bytes(1048576);
   let mut g = c.benchmark_group("blake2/streaming");
   g.throughput(criterion::Throughput::Bytes(data.len() as u64));
@@ -233,6 +269,17 @@ fn streaming(c: &mut Criterion) {
           h.update(black_box(chunk));
         }
         black_box(h.finalize())
+      })
+    });
+    g.bench_function(format!("dryoc/blake2b256/{chunk_size}B"), |b| {
+      b.iter(|| {
+        let mut state = crypto_generichash_init(None, 32).unwrap();
+        for chunk in data.chunks(chunk_size) {
+          crypto_generichash_update(&mut state, black_box(chunk));
+        }
+        let mut out = [0u8; 32];
+        crypto_generichash_final(state, &mut out).unwrap();
+        black_box(out)
       })
     });
 

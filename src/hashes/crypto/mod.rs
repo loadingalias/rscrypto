@@ -40,7 +40,7 @@ pub use blake2b::{Blake2b, Blake2b256, Blake2b512, Blake2bParams};
 #[cfg(feature = "blake2s")]
 pub use blake2s::{Blake2s128, Blake2s256, Blake2sParams};
 #[cfg(feature = "blake3")]
-pub use blake3::{Blake3, Blake3XofReader};
+pub use blake3::{Blake3, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
 pub use cshake::{Cshake256, Cshake256XofReader};
 #[cfg(feature = "sha3")]

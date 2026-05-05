@@ -375,6 +375,12 @@ fn compute_tag_wide(
 }
 
 /// Increment the 32-bit big-endian counter in bytes 12..15.
+///
+/// Wraparound is intentional: this is the `inc_32` function from
+/// NIST SP 800-38D § 6.2, which defines the counter as a 32-bit
+/// integer that increments modulo 2^32. The MAX_PLAINTEXT_LEN bound
+/// (~64 GiB) ensures the encrypt loop tops out at 2^32 - 2 blocks
+/// before any wrap could occur, so wrap is unreachable in practice.
 #[inline]
 fn inc32(block: &mut [u8; 16]) {
   let ctr = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);

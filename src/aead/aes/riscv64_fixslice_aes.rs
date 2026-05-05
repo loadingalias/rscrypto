@@ -10,7 +10,7 @@
 
 #![allow(clippy::unreadable_literal)]
 
-use super::{BLOCK_SIZE, KEY_SIZE};
+use super::{BLOCK_SIZE, KEY_SIZE, KEY_SIZE_128};
 
 type State = [u64; 8];
 
@@ -31,6 +31,31 @@ impl RvFixsliceRoundKeys {
   #[allow(dead_code)]
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `[u64; 120]` is contiguous and valid to view as bytes for its
+    // exact initialized size.
+    crate::traits::ct::zeroize(unsafe {
+      core::slice::from_raw_parts_mut(self.keys.as_mut_ptr().cast::<u8>(), self.keys.len().strict_mul(8))
+    });
+  }
+}
+
+/// Bitsliced AES-128 round keys (10 rounds → 11 round keys × 8 u64 per group).
+#[derive(Clone)]
+pub(super) struct RvFixslice128RoundKeys {
+  keys: [u64; 88],
+}
+
+impl RvFixslice128RoundKeys {
+  #[inline]
+  pub(super) fn new(key: &[u8; KEY_SIZE_128]) -> Self {
+    Self {
+      keys: aes128_key_schedule(key),
+    }
+  }
+
+  #[inline]
+  #[allow(dead_code)]
+  pub(super) fn zeroize(&mut self) {
+    // SAFETY: `[u64; 88]` is contiguous and valid to view as bytes for its
     // exact initialized size.
     crate::traits::ct::zeroize(unsafe {
       core::slice::from_raw_parts_mut(self.keys.as_mut_ptr().cast::<u8>(), self.keys.len().strict_mul(8))
@@ -103,6 +128,110 @@ pub(super) fn cipher_round_4(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[
     lane = lane.strict_add(1);
   }
   *blocks = out;
+}
+
+#[inline]
+pub(super) fn encrypt_block_128(rkeys: &RvFixslice128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
+  let mut blocks = [*block; 4];
+  encrypt_4blocks_128(rkeys, &mut blocks);
+  *block = blocks[0];
+}
+
+#[inline]
+pub(super) fn encrypt_4blocks_128(rkeys: &RvFixslice128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]; 4]) {
+  let mut state = State::default();
+  bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
+
+  add_round_key(&mut state, &rkeys.keys[..8]);
+
+  let mut rk_off = 8usize;
+  loop {
+    sub_bytes(&mut state);
+    mix_columns_1(&mut state);
+    add_round_key(&mut state, &rkeys.keys[rk_off..rk_off.strict_add(8)]);
+    rk_off = rk_off.strict_add(8);
+
+    if rk_off == 80 {
+      break;
+    }
+
+    sub_bytes(&mut state);
+    mix_columns_2(&mut state);
+    add_round_key(&mut state, &rkeys.keys[rk_off..rk_off.strict_add(8)]);
+    rk_off = rk_off.strict_add(8);
+
+    sub_bytes(&mut state);
+    mix_columns_3(&mut state);
+    add_round_key(&mut state, &rkeys.keys[rk_off..rk_off.strict_add(8)]);
+    rk_off = rk_off.strict_add(8);
+
+    sub_bytes(&mut state);
+    mix_columns_0(&mut state);
+    add_round_key(&mut state, &rkeys.keys[rk_off..rk_off.strict_add(8)]);
+    rk_off = rk_off.strict_add(8);
+  }
+
+  shift_rows_2(&mut state);
+  sub_bytes(&mut state);
+  add_round_key(&mut state, &rkeys.keys[80..]);
+
+  *blocks = inv_bitslice(&state);
+}
+
+fn aes128_key_schedule(key: &[u8; KEY_SIZE_128]) -> [u64; 88] {
+  let mut rkeys = [0u64; 88];
+
+  bitslice(&mut rkeys[..8], key, key, key, key);
+
+  let mut rk_off = 0usize;
+  let mut rcon = 0usize;
+  while rcon < 10 {
+    memshift32(&mut rkeys, rk_off);
+    rk_off = rk_off.strict_add(8);
+
+    sub_bytes(&mut rkeys[rk_off..rk_off.strict_add(8)]);
+    sub_bytes_nots(&mut rkeys[rk_off..rk_off.strict_add(8)]);
+
+    if rcon < 8 {
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], rcon);
+    } else if rcon == 8 {
+      // RCON byte for round 9 is 0x1b = bits 0, 1, 3, 4.
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 0);
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 1);
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 3);
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 4);
+    } else {
+      // RCON byte for round 10 is 0x36 = bits 1, 2, 4, 5.
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 1);
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 2);
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 4);
+      add_round_constant_bit(&mut rkeys[rk_off..rk_off.strict_add(8)], 5);
+    }
+
+    xor_columns(&mut rkeys, rk_off, 8, ror_distance(1, 3));
+    rcon = rcon.strict_add(1);
+  }
+
+  // Fold the cumulative ShiftRows rotation into the keys for rounds whose
+  // mix_columns variant in the encrypt loop is non-zero. Pattern mirrors
+  // [`aes256_key_schedule`] adapted to AES-128's 10-round count.
+  let mut i = 8usize;
+  while i < 72 {
+    inv_shift_rows_1(&mut rkeys[i..i.strict_add(8)]);
+    inv_shift_rows_2(&mut rkeys[i.strict_add(8)..i.strict_add(16)]);
+    inv_shift_rows_3(&mut rkeys[i.strict_add(16)..i.strict_add(24)]);
+    i = i.strict_add(32);
+  }
+  inv_shift_rows_1(&mut rkeys[72..80]);
+
+  // Account for the NOTs absorbed by sub_bytes during the schedule above.
+  i = 1;
+  while i < 11 {
+    sub_bytes_nots(&mut rkeys[i.strict_mul(8)..i.strict_mul(8).strict_add(8)]);
+    i = i.strict_add(1);
+  }
+
+  rkeys
 }
 
 fn aes256_key_schedule(key: &[u8; KEY_SIZE]) -> [u64; 120] {
