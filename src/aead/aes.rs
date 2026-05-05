@@ -101,6 +101,7 @@ enum KeyInner {
   Riscv64VectorCrypto(rv_aes::RvRoundKeys),
   /// Hamburg vperm via vrgather.vv -- uses portable key schedule, constant-time.
   #[cfg(target_arch = "riscv64")]
+  #[allow(dead_code)] // V-only AES is kept for GCM-SIV and explicit diagnostic paths; GCM does not select it yet.
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS]),
   /// Four-block table-free fixslice fallback for scalar RV64 without AES extensions.
   #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
@@ -190,6 +191,7 @@ enum Key128Inner {
   Riscv64VectorCrypto(rv_aes::Rv128RoundKeys),
   /// Hamburg vperm via vrgather.vv -- uses portable key schedule, constant-time.
   #[cfg(target_arch = "riscv64")]
+  #[allow(dead_code)] // V-only AES is kept for GCM-SIV and explicit diagnostic paths; GCM does not select it yet.
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS_128]),
   /// Four-block table-free fixslice fallback for scalar RV64 without AES extensions.
   #[cfg(all(target_arch = "riscv64", feature = "alloc"))]
@@ -773,7 +775,7 @@ pub(super) unsafe fn aarch64_encrypt_block_128_inline(keys: &ce::Ce128RoundKeys,
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
@@ -785,7 +787,7 @@ pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoun
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
@@ -828,7 +830,7 @@ pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, b
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], block: &mut [u8; BLOCK_SIZE]) {
   // SAFETY: MSA availability guaranteed by caller.
@@ -867,7 +869,7 @@ pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(target_arch = "s390x")]
+#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_128_inline(key: &km::Km128Key, blocks: &mut [u8], count: usize) {
   // SAFETY: MSA availability guaranteed by caller.
@@ -1471,6 +1473,30 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
 // AES-CTR for GCM (big-endian 32-bit counter in bytes 12..15)
 // ---------------------------------------------------------------------------
 
+#[cfg(all(feature = "aes-gcm", any(target_arch = "riscv64", target_arch = "s390x")))]
+#[inline]
+fn aes256_ctr32_be_uses_block_batch(ek: &Aes256EncKey) -> bool {
+  match &ek.inner {
+    #[cfg(target_arch = "s390x")]
+    KeyInner::S390xMsa(_) => true,
+    #[cfg(target_arch = "riscv64")]
+    KeyInner::Riscv64Vperm(_) | KeyInner::Riscv64Fixslice(_) => true,
+    _ => false,
+  }
+}
+
+#[cfg(all(feature = "aes-gcm", any(target_arch = "riscv64", target_arch = "s390x")))]
+#[inline]
+fn aes128_ctr32_be_uses_block_batch(ek: &Aes128EncKey) -> bool {
+  match &ek.inner {
+    #[cfg(target_arch = "s390x")]
+    Key128Inner::S390xMsa(_) => true,
+    #[cfg(target_arch = "riscv64")]
+    Key128Inner::Riscv64Vperm(_) | Key128Inner::Riscv64Fixslice(_) => true,
+    _ => false,
+  }
+}
+
 /// AES-256 CTR encryption/decryption for GCM.
 ///
 /// The counter occupies the last 4 bytes (12..15) of the 16-byte counter
@@ -1489,8 +1515,8 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
   ]);
   let mut offset = 0usize;
 
-  #[cfg(target_arch = "riscv64")]
-  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_) | KeyInner::Riscv64Fixslice(_)) {
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  if aes256_ctr32_be_uses_block_batch(ek) {
     let iv_prefix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[..12]);
@@ -1676,11 +1702,8 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
   ]);
   let mut offset = 0usize;
 
-  #[cfg(target_arch = "riscv64")]
-  if matches!(
-    &ek.inner,
-    Key128Inner::Riscv64Vperm(_) | Key128Inner::Riscv64Fixslice(_)
-  ) {
+  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  if aes128_ctr32_be_uses_block_batch(ek) {
     let iv_prefix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[..12]);
