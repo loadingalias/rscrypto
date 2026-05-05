@@ -10,6 +10,7 @@
 //! - `rapidhash-v3-128`: `RapidHash128` vs composed v3 for the competitor.
 
 mod common;
+mod hash_competitors;
 
 use core::{hash::Hasher, hint::black_box};
 
@@ -41,9 +42,7 @@ fn rapidhash_fast_64(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
-      b.iter(|| black_box(gxhash::gxhash64(black_box(d), 0)))
-    });
+    hash_competitors::bench_gxhash64(&mut g, *len, data);
 
     g.bench_with_input(BenchmarkId::new("ahash", len), data, |b, d| {
       b.iter(|| {
@@ -92,10 +91,9 @@ fn rapidhash_fast_128(c: &mut Criterion) {
       })
     });
 
-    // ahash and foldhash have no native 128-bit output API; gxhash does.
-    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
-      b.iter(|| black_box(gxhash::gxhash128(black_box(d), 0)))
-    });
+    // ahash and foldhash have no native 128-bit output API; gxhash does when target AES SIMD is
+    // enabled.
+    hash_competitors::bench_gxhash128(&mut g, *len, data);
   }
 
   g.finish();
@@ -121,9 +119,7 @@ fn rapidhash_v3_64(c: &mut Criterion) {
       b.iter(|| black_box(rapidhash::v3::rapidhash_v3_seeded(black_box(d), &secrets)))
     });
 
-    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
-      b.iter(|| black_box(gxhash::gxhash64(black_box(d), 0)))
-    });
+    hash_competitors::bench_gxhash64(&mut g, *len, data);
 
     g.bench_with_input(BenchmarkId::new("ahash", len), data, |b, d| {
       b.iter(|| {
@@ -166,10 +162,9 @@ fn rapidhash_v3_128(c: &mut Criterion) {
       })
     });
 
-    // ahash and foldhash have no native 128-bit output API; gxhash does.
-    g.bench_with_input(BenchmarkId::new("gxhash", len), data, |b, d| {
-      b.iter(|| black_box(gxhash::gxhash128(black_box(d), 0)))
-    });
+    // ahash and foldhash have no native 128-bit output API; gxhash does when target AES SIMD is
+    // enabled.
+    hash_competitors::bench_gxhash128(&mut g, *len, data);
   }
 
   g.finish();
