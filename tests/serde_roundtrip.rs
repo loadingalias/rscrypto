@@ -60,6 +60,17 @@ mod xchacha20poly1305_serde {
 }
 
 #[cfg(feature = "aes-gcm")]
+mod aes128gcm_serde {
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::Aes128GcmKey;
+  use rscrypto::aead::Aes128GcmTag;
+
+  #[cfg(feature = "serde-secrets")]
+  serde_roundtrip!(key, Aes128GcmKey, 16);
+  serde_roundtrip!(tag, Aes128GcmTag, 16);
+}
+
+#[cfg(feature = "aes-gcm")]
 mod aes256gcm_serde {
   #[cfg(feature = "serde-secrets")]
   use rscrypto::aead::Aes256GcmKey;
@@ -68,6 +79,17 @@ mod aes256gcm_serde {
   #[cfg(feature = "serde-secrets")]
   serde_roundtrip!(key, Aes256GcmKey, 32);
   serde_roundtrip!(tag, Aes256GcmTag, 16);
+}
+
+#[cfg(feature = "aes-gcm-siv")]
+mod aes128gcmsiv_serde {
+  #[cfg(feature = "serde-secrets")]
+  use rscrypto::aead::Aes128GcmSivKey;
+  use rscrypto::aead::Aes128GcmSivTag;
+
+  #[cfg(feature = "serde-secrets")]
+  serde_roundtrip!(key, Aes128GcmSivKey, 16);
+  serde_roundtrip!(tag, Aes128GcmSivTag, 16);
 }
 
 #[cfg(feature = "aes-gcm-siv")]

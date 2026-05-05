@@ -55,8 +55,8 @@ API shape change, or not a good fit.
 
 | From | To | Status |
 |---|---|---|
-| [`aes-gcm`](RustCrypto/aes-gcm.md) (RustCrypto) | `Aes256Gcm` | Verified against `aes-gcm 0.10.3` |
-| [`aes-gcm-siv`](RustCrypto/aes-gcm-siv.md) (RustCrypto) | `Aes256GcmSiv` | Verified against `aes-gcm-siv 0.11.1` |
+| [`aes-gcm`](RustCrypto/aes-gcm.md) (RustCrypto) | `Aes128Gcm`, `Aes256Gcm` | Verified against `aes-gcm 0.10.3` |
+| [`aes-gcm-siv`](RustCrypto/aes-gcm-siv.md) (RustCrypto) | `Aes128GcmSiv`, `Aes256GcmSiv` | Verified against `aes-gcm-siv 0.11.1` |
 | [`chacha20poly1305`](RustCrypto/chacha20poly1305.md) (RustCrypto) | `ChaCha20Poly1305`, `XChaCha20Poly1305` | Verified against `chacha20poly1305 0.10.1` |
 | [`ascon-aead`](RustCrypto/ascon-aead.md) (RustCrypto) | `AsconAead128` | Verified against `ascon-aead 0.5.2` |
 | [`aegis`](aegis.md) | `Aegis256` | Verified against `aegis 0.9.8` |

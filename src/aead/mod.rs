@@ -64,6 +64,10 @@ mod aegis256;
 ))]
 mod aes;
 #[cfg(feature = "aes-gcm")]
+mod aes128gcm;
+#[cfg(feature = "aes-gcm-siv")]
+mod aes128gcmsiv;
+#[cfg(feature = "aes-gcm")]
 mod aes256gcm;
 #[cfg(feature = "aes-gcm-siv")]
 mod aes256gcmsiv;
@@ -93,6 +97,10 @@ mod targets;
 mod xchacha20poly1305;
 #[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
+#[cfg(feature = "aes-gcm")]
+pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
+#[cfg(feature = "aes-gcm-siv")]
+pub use aes128gcmsiv::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag};
 #[cfg(feature = "aes-gcm")]
 pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 #[cfg(feature = "aes-gcm-siv")]

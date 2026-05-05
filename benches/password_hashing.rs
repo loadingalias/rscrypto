@@ -9,6 +9,7 @@
 use core::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use dryoc::classic::crypto_pwhash::{PasswordHashAlgorithm, crypto_pwhash};
 use rscrypto::{Argon2Error, Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id, Scrypt, ScryptParams};
 
 /// Function pointer shared by all three `Argon2{d,i,id}::hash` variants.
@@ -46,7 +47,13 @@ const SMALL_MATRIX: &[(u32, u32, u32)] = &[
   (64, 3, 2),
 ];
 
-fn bench_small_variant(c: &mut Criterion, group_name: &str, rs_hash: ArgonHashFn, oracle_algo: argon2::Algorithm) {
+fn bench_small_variant(
+  c: &mut Criterion,
+  group_name: &str,
+  rs_hash: ArgonHashFn,
+  oracle_algo: argon2::Algorithm,
+  dryoc_algo: Option<PasswordHashAlgorithm>,
+) {
   let mut g = c.benchmark_group(group_name);
   g.sample_size(30);
 
@@ -77,20 +84,55 @@ fn bench_small_variant(c: &mut Criterion, group_name: &str, rs_hash: ArgonHashFn
           .unwrap();
       });
     });
+
+    // dryoc wraps libsodium's `crypto_pwhash`, which fixes parallelism at p=1.
+    // Skip the row whenever the matrix asks for p>1; that case is rscrypto+rustcrypto only.
+    if p == 1
+      && let Some(ref alg) = dryoc_algo
+    {
+      let memlimit_bytes = (m as usize).saturating_mul(1024);
+      g.bench_with_input(BenchmarkId::new("dryoc", &param_id), alg, |b, algorithm| {
+        let mut out = [0u8; 32];
+        b.iter(|| {
+          crypto_pwhash(
+            black_box(&mut out),
+            black_box(PASSWORD),
+            black_box(&SALT[..16]),
+            t as u64,
+            memlimit_bytes,
+            algorithm.clone(),
+          )
+          .unwrap();
+        });
+      });
+    }
   }
   g.finish();
 }
 
 fn argon2d_small(c: &mut Criterion) {
-  bench_small_variant(c, "argon2d-small", Argon2d::hash, argon2::Algorithm::Argon2d);
+  // dryoc has no Argon2d (libsodium only ships Argon2i and Argon2id).
+  bench_small_variant(c, "argon2d-small", Argon2d::hash, argon2::Algorithm::Argon2d, None);
 }
 
 fn argon2i_small(c: &mut Criterion) {
-  bench_small_variant(c, "argon2i-small", Argon2i::hash, argon2::Algorithm::Argon2i);
+  bench_small_variant(
+    c,
+    "argon2i-small",
+    Argon2i::hash,
+    argon2::Algorithm::Argon2i,
+    Some(PasswordHashAlgorithm::Argon2i13),
+  );
 }
 
 fn argon2id_small(c: &mut Criterion) {
-  bench_small_variant(c, "argon2id-small", Argon2id::hash, argon2::Algorithm::Argon2id);
+  bench_small_variant(
+    c,
+    "argon2id-small",
+    Argon2id::hash,
+    argon2::Algorithm::Argon2id,
+    Some(PasswordHashAlgorithm::Argon2id13),
+  );
 }
 
 // ─── OWASP-scale parameter matrix ───────────────────────────────────────────
@@ -128,6 +170,23 @@ fn argon2id_owasp(c: &mut Criterion) {
       oracle
         .hash_password_into(black_box(PASSWORD), black_box(SALT), black_box(&mut out))
         .unwrap();
+    });
+  });
+
+  // dryoc / libsodium-classic Argon2id at OWASP parameters (memlimit in bytes).
+  let dryoc_memlimit = (19 * 1024usize).saturating_mul(1024);
+  g.bench_function(BenchmarkId::new("dryoc", "m=19MiB_t=2_p=1"), |b| {
+    let mut out = [0u8; 32];
+    b.iter(|| {
+      crypto_pwhash(
+        black_box(&mut out),
+        black_box(PASSWORD),
+        black_box(&SALT[..16]),
+        2u64,
+        dryoc_memlimit,
+        PasswordHashAlgorithm::Argon2id13,
+      )
+      .unwrap();
     });
   });
 

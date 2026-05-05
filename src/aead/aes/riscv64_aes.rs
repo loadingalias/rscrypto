@@ -113,3 +113,96 @@ pub(super) unsafe fn encrypt_block(keys: &RvRoundKeys, block: &mut [u8; 16]) {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// AES-128 (11 round keys, 10 rounds)
+// ---------------------------------------------------------------------------
+
+/// AES-128 round keys stored as 11 × 16-byte arrays for Zvkned.
+#[derive(Clone)]
+#[repr(C, align(16))]
+pub(super) struct Rv128RoundKeys {
+  rk: [[u8; 16]; 11],
+}
+
+impl Rv128RoundKeys {
+  /// Zeroize all round keys via volatile writes.
+  pub(super) fn zeroize(&mut self) {
+    // SAFETY: [[u8; 16]; 11] is layout-compatible with [u8; 176].
+    let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 11usize.strict_mul(16)) };
+    crate::traits::ct::zeroize(bytes);
+  }
+}
+
+/// Convert portable round keys (44 × big-endian u32) to Zvkned byte format.
+pub(super) fn from_portable_128(rk: &[u32; 44]) -> Rv128RoundKeys {
+  let mut keys = [[0u8; 16]; 11];
+  let mut i = 0usize;
+  while i < 11 {
+    let base = i.strict_mul(4);
+    keys[i][0..4].copy_from_slice(&rk[base].to_be_bytes());
+    keys[i][4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
+    keys[i][8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
+    keys[i][12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
+    i = i.strict_add(1);
+  }
+  Rv128RoundKeys { rk: keys }
+}
+
+/// Encrypt a single 16-byte block using AES-128 with Zvkned.
+///
+/// # Safety
+/// Caller must ensure Zvkned vector crypto extension is available.
+#[target_feature(enable = "v", enable = "zvkned")]
+pub(super) unsafe fn encrypt_block_128(keys: &Rv128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: target_feature gate guarantees Zvkned availability.
+  unsafe {
+    let block_ptr = block.as_mut_ptr();
+    let rk = &keys.rk;
+
+    asm!(
+      "vsetivli zero, 4, e32, m1, ta, ma",
+      "vle32.v v1, ({block})",
+      "vle32.v v2, ({rk0})",
+      "vaesz.vs v1, v2",
+      // Rounds 1–9.
+      "vle32.v v2, ({rk1})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk2})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk3})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk4})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk5})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk6})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk7})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk8})",
+      "vaesem.vs v1, v2",
+      "vle32.v v2, ({rk9})",
+      "vaesem.vs v1, v2",
+      // Round 10 (final).
+      "vle32.v v2, ({rk10})",
+      "vaesef.vs v1, v2",
+      "vse32.v v1, ({block})",
+      block = in(reg) block_ptr,
+      rk0 = in(reg) rk[0].as_ptr(),
+      rk1 = in(reg) rk[1].as_ptr(),
+      rk2 = in(reg) rk[2].as_ptr(),
+      rk3 = in(reg) rk[3].as_ptr(),
+      rk4 = in(reg) rk[4].as_ptr(),
+      rk5 = in(reg) rk[5].as_ptr(),
+      rk6 = in(reg) rk[6].as_ptr(),
+      rk7 = in(reg) rk[7].as_ptr(),
+      rk8 = in(reg) rk[8].as_ptr(),
+      rk9 = in(reg) rk[9].as_ptr(),
+      rk10 = in(reg) rk[10].as_ptr(),
+      out("v1") _,
+      out("v2") _,
+      options(nostack),
+    );
+  }
+}

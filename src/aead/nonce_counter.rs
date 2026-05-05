@@ -25,7 +25,7 @@
 
 use core::{fmt, marker::PhantomData};
 
-use super::{Aes256Gcm, Aes256GcmTag, Nonce96, SealError};
+use super::{Aes128Gcm, Aes128GcmTag, Aes256Gcm, Aes256GcmTag, Nonce96, SealError};
 
 const FIXED_PREFIX_LEN: usize = 4;
 const COUNTER_LEN: usize = 8;
@@ -232,11 +232,131 @@ impl NonceCounter<Aes256Gcm> {
   }
 }
 
+impl NonceCounter<Aes128Gcm> {
+  /// Fixed per-stream prefix length in bytes.
+  pub const FIXED_PREFIX_LEN: usize = FIXED_PREFIX_LEN;
+
+  /// Counter field length in bytes.
+  pub const COUNTER_LEN: usize = COUNTER_LEN;
+
+  /// Maximum deterministic AES-GCM invocations per key before rotation.
+  pub const MAX_MESSAGES: u64 = MAX_MESSAGES;
+
+  /// Start a fresh AES-128-GCM nonce stream with `fixed_prefix`.
+  #[inline]
+  #[must_use]
+  pub const fn new(fixed_prefix: [u8; FIXED_PREFIX_LEN]) -> Self {
+    Self {
+      fixed_prefix,
+      next: 0,
+      _cipher: PhantomData,
+    }
+  }
+
+  /// Resume an AES-128-GCM nonce stream from a persisted counter value.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`NonceCounterExhausted`] when `next_counter >= MAX_MESSAGES`.
+  #[inline]
+  pub fn with_counter(fixed_prefix: [u8; FIXED_PREFIX_LEN], next_counter: u64) -> Result<Self, NonceCounterExhausted> {
+    if next_counter >= Self::MAX_MESSAGES {
+      return Err(NonceCounterExhausted::new());
+    }
+
+    Ok(Self {
+      fixed_prefix,
+      next: next_counter,
+      _cipher: PhantomData,
+    })
+  }
+
+  /// Return the fixed 32-bit prefix.
+  #[inline]
+  #[must_use]
+  pub const fn fixed_prefix(&self) -> [u8; FIXED_PREFIX_LEN] {
+    self.fixed_prefix
+  }
+
+  /// Return the next 64-bit invocation counter that will be issued.
+  #[inline]
+  #[must_use]
+  pub const fn next_counter(&self) -> u64 {
+    self.next
+  }
+
+  /// Return how many nonces have already been issued.
+  #[inline]
+  #[must_use]
+  pub const fn issued(&self) -> u64 {
+    self.next
+  }
+
+  /// Return how many deterministic AES-GCM invocations remain.
+  #[inline]
+  #[must_use]
+  pub const fn remaining(&self) -> u64 {
+    Self::MAX_MESSAGES.strict_sub(self.next)
+  }
+
+  /// Issue the next fresh AES-128-GCM nonce.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`NonceCounterExhausted`] when the counter reaches
+  /// [`MAX_MESSAGES`](Self::MAX_MESSAGES).
+  #[inline]
+  pub fn next_nonce(&mut self) -> Result<Nonce96, NonceCounterExhausted> {
+    if self.next >= Self::MAX_MESSAGES {
+      return Err(NonceCounterExhausted::new());
+    }
+
+    let nonce = Self::build_nonce(self.fixed_prefix, self.next);
+    self.next = self.next.strict_add(1);
+    Ok(nonce)
+  }
+
+  /// Encrypt `buffer` in place with the next fresh nonce.
+  #[inline]
+  pub fn encrypt_in_place(
+    &mut self,
+    cipher: &Aes128Gcm,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Result<(Nonce96, Aes128GcmTag), NonceCounterSealError> {
+    let nonce = self.next_nonce()?;
+    let tag = cipher.encrypt_in_place(&nonce, aad, buffer)?;
+    Ok((nonce, tag))
+  }
+
+  /// Encrypt `plaintext` into `out` with the next fresh nonce.
+  #[inline]
+  pub fn encrypt(
+    &mut self,
+    cipher: &Aes128Gcm,
+    aad: &[u8],
+    plaintext: &[u8],
+    out: &mut [u8],
+  ) -> Result<Nonce96, NonceCounterSealError> {
+    let nonce = self.next_nonce()?;
+    cipher.encrypt(&nonce, aad, plaintext, out)?;
+    Ok(nonce)
+  }
+
+  #[inline]
+  fn build_nonce(fixed_prefix: [u8; FIXED_PREFIX_LEN], counter: u64) -> Nonce96 {
+    let mut bytes = [0u8; Nonce96::LENGTH];
+    bytes[..FIXED_PREFIX_LEN].copy_from_slice(&fixed_prefix);
+    bytes[FIXED_PREFIX_LEN..].copy_from_slice(&counter.to_be_bytes());
+    Nonce96::from_bytes(bytes)
+  }
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{Aes256Gcm, NonceCounter, NonceCounterSealError};
+  use super::{Aes128Gcm, Aes256Gcm, NonceCounter, NonceCounterSealError};
   use crate::{
-    Aes256GcmKey,
+    Aes128GcmKey, Aes256GcmKey,
     aead::{Nonce96, SealError},
   };
 
@@ -298,5 +418,64 @@ mod tests {
     // the deterministic-IV budget past the SP 800-38D limit.
     assert!(NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", NonceCounter::<Aes256Gcm>::MAX_MESSAGES).is_err());
     assert!(NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", u64::MAX).is_err());
+  }
+
+  #[test]
+  fn aes128_gcm_nonce_counter_encrypt_round_trip() {
+    let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes([0x42; 16]));
+    let mut counter = NonceCounter::<Aes128Gcm>::new(*b"sess");
+
+    let mut sealed = [0u8; 4 + Aes128Gcm::TAG_SIZE];
+    let nonce = counter.encrypt(&cipher, b"hdr", b"data", &mut sealed).unwrap();
+
+    let mut opened = [0u8; 4];
+    cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened).unwrap();
+    assert_eq!(&opened, b"data");
+    assert_eq!(counter.next_counter(), 1);
+  }
+
+  #[test]
+  fn aes128_gcm_nonce_counter_formats_prefix_and_counter() {
+    let mut counter = NonceCounter::<Aes128Gcm>::new(*b"conn");
+
+    assert_eq!(
+      counter.next_nonce().unwrap(),
+      Nonce96::from_bytes([b'c', b'o', b'n', b'n', 0, 0, 0, 0, 0, 0, 0, 0])
+    );
+    assert_eq!(
+      counter.next_nonce().unwrap(),
+      Nonce96::from_bytes([b'c', b'o', b'n', b'n', 0, 0, 0, 0, 0, 0, 0, 1])
+    );
+    assert_eq!(counter.issued(), 2);
+  }
+
+  #[test]
+  fn aes128_gcm_nonce_counter_consumes_nonce_on_seal_error() {
+    let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes([0x24; 16]));
+    let mut counter = NonceCounter::<Aes128Gcm>::new(*b"bufr");
+    let mut out = [0u8; 3];
+
+    let err = counter.encrypt(&cipher, b"", b"data", &mut out).unwrap_err();
+    assert_eq!(err, NonceCounterSealError::from(SealError::buffer()));
+    assert_eq!(counter.next_counter(), 1);
+  }
+
+  #[test]
+  fn aes128_gcm_nonce_counter_exhausts_cleanly() {
+    let mut counter =
+      NonceCounter::<Aes128Gcm>::with_counter(*b"last", NonceCounter::<Aes128Gcm>::MAX_MESSAGES.strict_sub(1)).unwrap();
+
+    assert!(counter.next_nonce().is_ok());
+    assert_eq!(counter.remaining(), 0);
+    assert!(counter.next_nonce().is_err());
+  }
+
+  #[test]
+  fn aes128_gcm_nonce_counter_with_counter_rejects_max() {
+    // Pin both the equality and strictly-greater branch so a future
+    // relaxation cannot silently widen the deterministic-IV budget past
+    // the SP 800-38D limit.
+    assert!(NonceCounter::<Aes128Gcm>::with_counter(*b"oflw", NonceCounter::<Aes128Gcm>::MAX_MESSAGES).is_err());
+    assert!(NonceCounter::<Aes128Gcm>::with_counter(*b"oflw", u64::MAX).is_err());
   }
 }

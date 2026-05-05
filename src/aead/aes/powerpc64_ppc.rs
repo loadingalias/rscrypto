@@ -257,3 +257,155 @@ pub(super) unsafe fn encrypt_block(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
   // SAFETY: target_feature gate guarantees POWER8 crypto.
   unsafe { encrypt_block_core(keys, block) }
 }
+
+// ---------------------------------------------------------------------------
+// AES-128 (11 round keys, 10 rounds)
+// ---------------------------------------------------------------------------
+
+/// AES-128 round keys stored as 11 × 128-bit vectors for POWER8 vcipher.
+#[derive(Clone)]
+#[repr(C, align(16))]
+pub(in crate::aead) struct Ppc128RoundKeys {
+  rk: [i64x2; 11],
+}
+
+impl Ppc128RoundKeys {
+  /// Zeroize all round keys via volatile writes.
+  pub(super) fn zeroize(&mut self) {
+    // SAFETY: [i64x2; 11] is layout-compatible with [u8; 176].
+    let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 11usize.strict_mul(16)) };
+    crate::traits::ct::zeroize(bytes);
+  }
+}
+
+/// Convert portable round keys (44 × big-endian u32) to POWER8 vector format.
+pub(super) fn from_portable_128(rk: &[u32; 44]) -> Ppc128RoundKeys {
+  let mut keys = [i64x2::from_array([0, 0]); 11];
+  let mut i = 0usize;
+  while i < 11 {
+    let base = i.strict_mul(4);
+    let mut bytes = [0u8; 16];
+    bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
+    bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
+    bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
+    bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
+    keys[i] = load_block_be(bytes.as_ptr());
+    i = i.strict_add(1);
+  }
+  Ppc128RoundKeys { rk: keys }
+}
+
+/// Hardware-accelerated AES-128 key expansion using POWER8 `vsbox`.
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline]
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+unsafe fn expand_key_128_hw(key: &[u8; 16]) -> Ppc128RoundKeys {
+  // SAFETY: caller guarantees POWER8 crypto availability.
+  unsafe {
+    let mut rk = [0u32; super::EXPANDED_KEY_WORDS_128];
+
+    let mut i = 0usize;
+    while i < 4 {
+      let base = i.strict_mul(4);
+      rk[i] = u32::from_be_bytes([
+        key[base],
+        key[base.strict_add(1)],
+        key[base.strict_add(2)],
+        key[base.strict_add(3)],
+      ]);
+      i = i.strict_add(1);
+    }
+
+    i = 4;
+    while i < super::EXPANDED_KEY_WORDS_128 {
+      let mut temp = rk[i.strict_sub(1)];
+      if i.strict_rem(4) == 0 {
+        temp = sub_word_hw(super::rot_word(temp)) ^ super::RCON[i.strict_div(4).strict_sub(1)];
+      }
+      rk[i] = rk[i.strict_sub(4)] ^ temp;
+      i = i.strict_add(1);
+    }
+
+    let keys = from_portable_128(&rk);
+    // SAFETY: [u32; 44] is layout-compatible with [u8; 176].
+    crate::traits::ct::zeroize(core::slice::from_raw_parts_mut(
+      rk.as_mut_ptr().cast::<u8>(),
+      super::EXPANDED_KEY_WORDS_128.strict_mul(4),
+    ));
+    keys
+  }
+}
+
+/// Non-inline entry point for AES-128 hardware key expansion.
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available.
+pub(super) unsafe fn expand_key_128(key: &[u8; 16]) -> Ppc128RoundKeys {
+  // SAFETY: target_feature gate guarantees POWER8 crypto.
+  unsafe { expand_key_128_hw(key) }
+}
+
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline]
+/// # Safety
+///
+/// Caller must ensure POWER8 vector crypto support is available and `block`
+/// points to a valid writable AES block.
+pub(super) unsafe fn encrypt_block_128_core(keys: &Ppc128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: caller guarantees POWER8 crypto via target_feature chain.
+  unsafe {
+    let k = &keys.rk;
+
+    let mut state = load_block_be(block.as_ptr());
+
+    macro_rules! vcipher_round {
+      ($rk:expr) => {
+        asm!(
+          "vcipher {s}, {s}, {rk}",
+          s = inlateout(vreg) state,
+          rk = in(vreg) $rk,
+          options(nomem, nostack),
+        );
+      };
+    }
+
+    asm!(
+      "vxor {s}, {s}, {rk}",
+      s = inlateout(vreg) state,
+      rk = in(vreg) k[0],
+      options(nomem, nostack),
+    );
+
+    vcipher_round!(k[1]);
+    vcipher_round!(k[2]);
+    vcipher_round!(k[3]);
+    vcipher_round!(k[4]);
+    vcipher_round!(k[5]);
+    vcipher_round!(k[6]);
+    vcipher_round!(k[7]);
+    vcipher_round!(k[8]);
+    vcipher_round!(k[9]);
+
+    asm!(
+      "vcipherlast {s}, {s}, {rk}",
+      s = inlateout(vreg) state,
+      rk = in(vreg) k[10],
+      options(nomem, nostack),
+    );
+
+    store_block_be(block.as_mut_ptr(), state);
+  }
+}
+
+/// Encrypt a single 16-byte block using AES-128 with POWER8 vcipher.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto instructions are available.
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn encrypt_block_128(keys: &Ppc128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: target_feature gate guarantees POWER8 crypto.
+  unsafe { encrypt_block_128_core(keys, block) }
+}

@@ -168,3 +168,156 @@ pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
   // SAFETY: target_feature gate guarantees AES-CE + NEON.
   unsafe { encrypt_block_core(keys, block) }
 }
+
+// ---------------------------------------------------------------------------
+// AES-128 (11 round keys, 10 rounds)
+// ---------------------------------------------------------------------------
+
+/// AES-128 round keys stored as 11 × 128-bit NEON vectors for AES-CE.
+///
+/// Visibility mirrors [`CeRoundKeys`]: `pub(in crate::aead)` so the fused
+/// AES-128-GCM-SIV path in `aes128gcmsiv.rs` can hold these round keys
+/// across the `#[target_feature(enable = "aes,neon")]` scope via
+/// `aes::aarch64_expand_key_128_inline` / `aes::aarch64_encrypt_block_128_inline`.
+#[derive(Clone, Copy)]
+#[repr(C, align(16))]
+pub(in crate::aead) struct Ce128RoundKeys {
+  rk: [uint8x16_t; 11],
+}
+
+impl Ce128RoundKeys {
+  /// Zeroize all round keys via volatile writes.
+  pub(super) fn zeroize(&mut self) {
+    // SAFETY: `self.rk` is a valid, aligned, fully-initialized [uint8x16_t; 11].
+    let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 11usize.strict_mul(16)) };
+    crate::traits::ct::zeroize(bytes);
+  }
+}
+
+#[target_feature(enable = "neon")]
+#[inline]
+/// # Safety
+///
+/// Caller must ensure NEON is available and `rk` points to a valid portable
+/// AES-128 key schedule.
+unsafe fn from_portable_core_128(rk: &[u32; super::EXPANDED_KEY_WORDS_128]) -> Ce128RoundKeys {
+  // SAFETY: caller guarantees NEON via target_feature chain.
+  unsafe {
+    let mut keys = [vdupq_n_u8(0); 11];
+    let mut i = 0usize;
+    while i < 11 {
+      let base = i.strict_mul(4);
+      let mut bytes = [0u8; 16];
+      bytes[0..4].copy_from_slice(&rk[base].to_be_bytes());
+      bytes[4..8].copy_from_slice(&rk[base.strict_add(1)].to_be_bytes());
+      bytes[8..12].copy_from_slice(&rk[base.strict_add(2)].to_be_bytes());
+      bytes[12..16].copy_from_slice(&rk[base.strict_add(3)].to_be_bytes());
+      keys[i] = vld1q_u8(bytes.as_ptr());
+      i = i.strict_add(1);
+    }
+    Ce128RoundKeys { rk: keys }
+  }
+}
+
+/// Hardware-accelerated AES-128 key expansion using AESE for SubWord.
+#[target_feature(enable = "aes,neon")]
+#[inline]
+/// # Safety
+///
+/// Caller must ensure the CPU supports `aes` and `neon`.
+unsafe fn expand_key_128_hw(key: &[u8; 16]) -> Ce128RoundKeys {
+  // SAFETY: caller guarantees AES-CE + NEON availability.
+  unsafe {
+    #[target_feature(enable = "aes,neon")]
+    #[inline]
+    /// # Safety
+    ///
+    /// Caller must ensure the CPU supports `aes` and `neon`.
+    unsafe fn sub_word_hw(w: u32) -> u32 {
+      let state = vreinterpretq_u8_u32(vdupq_n_u32(w));
+      let zero = vdupq_n_u8(0);
+      let result = vaeseq_u8(state, zero);
+      vgetq_lane_u32(vreinterpretq_u32_u8(result), 0)
+    }
+
+    let mut rk = [0u32; super::EXPANDED_KEY_WORDS_128];
+
+    // Load initial key as big-endian u32 words.
+    let mut i = 0usize;
+    while i < 4 {
+      let base = i.strict_mul(4);
+      rk[i] = u32::from_be_bytes([
+        key[base],
+        key[base.strict_add(1)],
+        key[base.strict_add(2)],
+        key[base.strict_add(3)],
+      ]);
+      i = i.strict_add(1);
+    }
+
+    // Expand key schedule using hardware SubWord.
+    i = 4;
+    while i < super::EXPANDED_KEY_WORDS_128 {
+      let mut temp = rk[i.strict_sub(1)];
+      if i.strict_rem(4) == 0 {
+        temp = sub_word_hw(super::rot_word(temp)) ^ super::RCON[i.strict_div(4).strict_sub(1)];
+      }
+      rk[i] = rk[i.strict_sub(4)] ^ temp;
+      i = i.strict_add(1);
+    }
+
+    from_portable_core_128(&rk)
+  }
+}
+
+/// Non-inline entry point for AES-128 hardware key expansion.
+#[target_feature(enable = "aes,neon")]
+/// # Safety
+///
+/// Caller must ensure the CPU supports `aes` and `neon`.
+pub(super) unsafe fn expand_key_128(key: &[u8; 16]) -> Ce128RoundKeys {
+  // SAFETY: target_feature gate guarantees AES-CE + NEON.
+  unsafe { expand_key_128_hw(key) }
+}
+
+#[target_feature(enable = "aes,neon")]
+#[inline]
+/// # Safety
+///
+/// Caller must ensure the CPU supports `aes` and `neon`, and `block` points
+/// to a valid writable AES block.
+pub(super) unsafe fn encrypt_block_128_core(keys: &Ce128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: caller guarantees AES-CE + NEON via target_feature chain.
+  unsafe {
+    let k = &keys.rk;
+    let mut state = vld1q_u8(block.as_ptr());
+
+    // Rounds 1–9: AESE absorbs the previous round's AddRoundKey,
+    // then SubBytes + ShiftRows. AESMC applies MixColumns.
+    state = vaesmcq_u8(vaeseq_u8(state, k[0]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[1]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[2]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[3]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[4]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[5]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[6]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[7]));
+    state = vaesmcq_u8(vaeseq_u8(state, k[8]));
+
+    // Round 10 (final): SubBytes + ShiftRows, then AddRoundKey (no MixColumns).
+    state = vaeseq_u8(state, k[9]);
+    state = veorq_u8(state, k[10]);
+
+    vst1q_u8(block.as_mut_ptr(), state);
+  }
+}
+
+/// Encrypt a single 16-byte block using AES-128 with AES-CE.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-CE (`target_feature = "aes"`).
+#[target_feature(enable = "aes,neon")]
+pub(super) unsafe fn encrypt_block_128(keys: &Ce128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: target_feature gate guarantees AES-CE + NEON.
+  unsafe { encrypt_block_128_core(keys, block) }
+}

@@ -8,8 +8,9 @@ use rscrypto::Kmac256;
 use rscrypto::VerificationError;
 #[cfg(feature = "aead")]
 use rscrypto::{
-  Aead, Aegis256, Aegis256Key, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv, Aes256GcmSivKey, AsconAead128, AsconAead128Key,
-  ChaCha20Poly1305, ChaCha20Poly1305Key, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Aead, Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
+  Aes256GcmSiv, Aes256GcmSivKey, AsconAead128, AsconAead128Key, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError, SealError},
 };
 #[cfg(feature = "hashes")]
@@ -265,9 +266,17 @@ fn aead_errors_follow_new_default_and_display_conventions() {
 #[test]
 #[cfg(feature = "aead")]
 fn all_aeads_follow_new_encrypt_decrypt_and_detached_aliases() {
+  assert_aead_api::<Aes128Gcm>(
+    Aes128GcmKey::from_bytes([0u8; Aes128Gcm::KEY_SIZE]),
+    Nonce96::from_bytes([1u8; Nonce96::LENGTH]),
+  );
   assert_aead_api::<Aes256Gcm>(
     Aes256GcmKey::from_bytes([1u8; Aes256Gcm::KEY_SIZE]),
     Nonce96::from_bytes([2u8; Nonce96::LENGTH]),
+  );
+  assert_aead_api::<Aes128GcmSiv>(
+    Aes128GcmSivKey::from_bytes([2u8; Aes128GcmSiv::KEY_SIZE]),
+    Nonce96::from_bytes([3u8; Nonce96::LENGTH]),
   );
   assert_aead_api::<Aes256GcmSiv>(
     Aes256GcmSivKey::from_bytes([3u8; Aes256GcmSiv::KEY_SIZE]),

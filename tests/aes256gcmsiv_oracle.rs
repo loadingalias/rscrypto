@@ -100,6 +100,20 @@ fn aes256gcmsiv_oracle_large_input() {
 }
 
 #[test]
+fn aes256gcmsiv_oracle_aad_size_sweep() {
+  let key = [0x99u8; 32];
+  let nonce = [0xAAu8; 12];
+  let plaintext = b"fixed-plaintext";
+
+  // Sweeps cover the wide-POLYVAL 4-block boundary (64-byte chunks) and the
+  // partial-tail seam at +/-1 around 16-byte block boundaries.
+  for aad_len in [0, 1, 15, 16, 17, 32, 33, 47, 48, 49, 64, 65, 80, 81, 128, 1024] {
+    let aad: Vec<u8> = (0..aad_len).map(|i| (i & 0xFF) as u8).collect();
+    assert_matches_oracle(&key, &nonce, &aad, plaintext);
+  }
+}
+
+#[test]
 fn aes256gcmsiv_is_deterministic_under_nonce_reuse() {
   let key = Aes256GcmSivKey::from_bytes([0x5Au8; 32]);
   let nonce = Nonce96::from_bytes([0xC3u8; 12]);

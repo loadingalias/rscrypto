@@ -184,16 +184,13 @@ extern crate std;
 mod macros;
 
 // Internal modules (not published as separate crates)
-#[cfg(any(
-  feature = "aes-gcm",
-  feature = "aes-gcm-siv",
-  feature = "chacha20poly1305",
-  feature = "xchacha20poly1305",
-  feature = "aegis256",
-  feature = "ascon-aead",
-  feature = "ed25519",
-  feature = "x25519"
-))]
+// `hex` is an internal utility module: ct-eq macro (`impl_ct_eq!`), hex
+// formatters (`fmt_hex_lower`, `fmt_hex_upper`), and the `DisplaySecret`
+// wrapper. It's pure `core::fmt` + `crate::traits` and `no_std`-safe.
+// Always-available so any tag/key/signature/hash-output type can use the
+// shared helpers without hand-maintaining a per-feature gate list.
+// Public re-exports of `DisplaySecret` / `InvalidHexError` stay gated to the
+// features that surface them in the public API.
 #[macro_use]
 mod hex;
 
@@ -278,6 +275,10 @@ pub use aead::{AeadBufferError, OpenError};
 #[cfg(feature = "aegis256")]
 pub use aead::{Aegis256, Aegis256Key, Aegis256Tag};
 #[cfg(feature = "aes-gcm")]
+pub use aead::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
+#[cfg(feature = "aes-gcm-siv")]
+pub use aead::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag};
+#[cfg(feature = "aes-gcm")]
 pub use aead::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 #[cfg(feature = "aes-gcm-siv")]
 pub use aead::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
@@ -325,7 +326,7 @@ pub use hashes::crypto::{Blake2b, Blake2b256, Blake2b512, Blake2bParams};
 #[cfg(feature = "blake2s")]
 pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sParams};
 #[cfg(feature = "blake3")]
-pub use hashes::crypto::{Blake3, Blake3XofReader};
+pub use hashes::crypto::{Blake3, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
 pub use hashes::crypto::{
   Cshake256, Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256,

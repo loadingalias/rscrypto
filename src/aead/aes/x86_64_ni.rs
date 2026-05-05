@@ -129,3 +129,111 @@ pub(super) unsafe fn encrypt_block(keys: &NiRoundKeys, block: &mut [u8; 16]) {
     _mm_storeu_si128(block.as_mut_ptr().cast(), state);
   }
 }
+
+// ---------------------------------------------------------------------------
+// AES-128 (11 round keys, 10 rounds)
+// ---------------------------------------------------------------------------
+
+/// AES-128 round keys stored as 11 × 128-bit values for AES-NI.
+#[derive(Clone, Copy)]
+#[repr(C, align(16))]
+pub(super) struct Ni128RoundKeys {
+  rk: [__m128i; 11],
+}
+
+impl Ni128RoundKeys {
+  /// Zeroize all round keys via volatile writes.
+  pub(super) fn zeroize(&mut self) {
+    // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 11].
+    let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 11usize.strict_mul(16)) };
+    crate::traits::ct::zeroize(bytes);
+  }
+}
+
+/// AES-128 key expansion using AES-NI instructions.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn expand_key_128(key: &[u8; 16]) -> Ni128RoundKeys {
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2.
+  unsafe {
+    let mut rk = [_mm_setzero_si128(); 11];
+
+    rk[0] = _mm_loadu_si128(key.as_ptr().cast());
+
+    // AES-128 key schedule expands each round key from the previous one
+    // using AESKEYGENASSIST with the rcon for that round.
+    macro_rules! expand_step {
+      ($idx:expr, $prev:expr, $rcon:expr) => {{
+        let assist = _mm_aeskeygenassist_si128($prev, $rcon);
+        let assist = _mm_shuffle_epi32(assist, 0xFF);
+        let mut t = $prev;
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        t = _mm_xor_si128(t, _mm_slli_si128(t, 4));
+        rk[$idx] = _mm_xor_si128(t, assist);
+      }};
+    }
+
+    expand_step!(1, rk[0], 0x01);
+    expand_step!(2, rk[1], 0x02);
+    expand_step!(3, rk[2], 0x04);
+    expand_step!(4, rk[3], 0x08);
+    expand_step!(5, rk[4], 0x10);
+    expand_step!(6, rk[5], 0x20);
+    expand_step!(7, rk[6], 0x40);
+    expand_step!(8, rk[7], 0x80);
+    expand_step!(9, rk[8], 0x1b);
+    expand_step!(10, rk[9], 0x36);
+
+    Ni128RoundKeys { rk }
+  }
+}
+
+/// Encrypt 4 blocks in parallel using VAES-512 (10-round AES-128).
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+pub(super) unsafe fn encrypt_4blocks_128(keys: &Ni128RoundKeys, blocks: __m512i) -> __m512i {
+  let k = &keys.rk;
+  let mut state = _mm512_xor_si512(blocks, _mm512_broadcast_i32x4(k[0]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[1]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[2]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[3]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[4]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[5]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[6]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[7]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[8]));
+  state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[9]));
+  _mm512_aesenclast_epi128(state, _mm512_broadcast_i32x4(k[10]))
+}
+
+/// Encrypt a single 16-byte block using AES-128 with AES-NI.
+///
+/// # Safety
+/// Caller must ensure the CPU supports AES-NI (`target_feature = "aes"`).
+#[target_feature(enable = "aes,sse2")]
+pub(super) unsafe fn encrypt_block_128(keys: &Ni128RoundKeys, block: &mut [u8; 16]) {
+  // SAFETY: target_feature gate guarantees AES-NI + SSE2.
+  unsafe {
+    let k = &keys.rk;
+    let mut state = _mm_loadu_si128(block.as_ptr().cast());
+
+    state = _mm_xor_si128(state, k[0]);
+    state = _mm_aesenc_si128(state, k[1]);
+    state = _mm_aesenc_si128(state, k[2]);
+    state = _mm_aesenc_si128(state, k[3]);
+    state = _mm_aesenc_si128(state, k[4]);
+    state = _mm_aesenc_si128(state, k[5]);
+    state = _mm_aesenc_si128(state, k[6]);
+    state = _mm_aesenc_si128(state, k[7]);
+    state = _mm_aesenc_si128(state, k[8]);
+    state = _mm_aesenc_si128(state, k[9]);
+    state = _mm_aesenclast_si128(state, k[10]);
+
+    _mm_storeu_si128(block.as_mut_ptr().cast(), state);
+  }
+}

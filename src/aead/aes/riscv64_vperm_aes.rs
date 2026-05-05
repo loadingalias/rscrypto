@@ -52,6 +52,18 @@ fn round_key_bytes(rk: &[u32; super::EXPANDED_KEY_WORDS], round: usize) -> [u8; 
   bytes
 }
 
+/// Extract round key bytes from the AES-128 portable key schedule.
+#[inline]
+fn round_key_bytes_128(rk: &[u32; super::EXPANDED_KEY_WORDS_128], round: usize) -> [u8; 16] {
+  let off = round.strict_mul(4);
+  let mut bytes = [0u8; 16];
+  bytes[0..4].copy_from_slice(&rk[off].to_be_bytes());
+  bytes[4..8].copy_from_slice(&rk[off.strict_add(1)].to_be_bytes());
+  bytes[8..12].copy_from_slice(&rk[off.strict_add(2)].to_be_bytes());
+  bytes[12..16].copy_from_slice(&rk[off.strict_add(3)].to_be_bytes());
+  bytes
+}
+
 macro_rules! vperm_inner_round_m1 {
   ($state:literal, $rk:literal) => {
     concat!(
@@ -538,5 +550,70 @@ pub(super) unsafe fn encrypt_4blocks(rk: &[u32; super::EXPANDED_KEY_WORDS], bloc
 
     let rk14 = round_key_bytes(rk, super::ROUNDS);
     aes_final_round_4(blocks, &rk14, &tables);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AES-128 (10 rounds)
+// ---------------------------------------------------------------------------
+
+/// AES-128 full-block encryption (10 rounds) using Hamburg vperm.
+///
+/// # Safety
+/// Requires the RISC-V V extension.
+#[target_feature(enable = "v")]
+pub(super) unsafe fn encrypt_block_128(rk: &[u32; super::EXPANDED_KEY_WORDS_128], block: &mut [u8; 16]) {
+  // SAFETY: caller guarantees the RISC-V V extension is available for the
+  // full AES-128 block operation and all references are valid Rust buffers.
+  unsafe {
+    let tables = VpermTables::load();
+
+    // Initial AddRoundKey (round 0).
+    let rk0 = round_key_bytes_128(rk, 0);
+    for i in 0..16 {
+      block[i] ^= rk0[i];
+    }
+
+    // Rounds 1-9: full AES round (SubBytes + ShiftRows + MixColumns + AddRoundKey).
+    let mut round = 1usize;
+    while round < super::ROUNDS_128 {
+      let rk_r = round_key_bytes_128(rk, round);
+      *block = aes_inner_round(block, &rk_r, &tables);
+      round = round.strict_add(1);
+    }
+
+    // Round 10 (final): SubBytes + ShiftRows + AddRoundKey (no MixColumns).
+    let rk10 = round_key_bytes_128(rk, super::ROUNDS_128);
+    *block = aes_final_round(block, &rk10, &tables);
+  }
+}
+
+/// Encrypt 4 independent AES-128 blocks using the vperm backend.
+///
+/// # Safety
+/// Caller must ensure the CPU supports the RISC-V `v` extension.
+#[target_feature(enable = "v")]
+pub(super) unsafe fn encrypt_4blocks_128(rk: &[u32; super::EXPANDED_KEY_WORDS_128], blocks: &mut [[u8; 16]; 4]) {
+  // SAFETY: caller guarantees the RISC-V V extension is available for the
+  // duration of the batch and all block buffers are valid 16-byte arrays.
+  unsafe {
+    let tables = VpermTables::load();
+
+    let rk0 = round_key_bytes_128(rk, 0);
+    for block in blocks.iter_mut() {
+      for i in 0..16 {
+        block[i] ^= rk0[i];
+      }
+    }
+
+    let mut round = 1usize;
+    while round < super::ROUNDS_128 {
+      let rk_r = round_key_bytes_128(rk, round);
+      aes_inner_round_4(blocks, &rk_r, &tables);
+      round = round.strict_add(1);
+    }
+
+    let rk10 = round_key_bytes_128(rk, super::ROUNDS_128);
+    aes_final_round_4(blocks, &rk10, &tables);
   }
 }

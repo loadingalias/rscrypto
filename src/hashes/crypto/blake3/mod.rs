@@ -16,7 +16,7 @@ use core::{cmp::min, mem::MaybeUninit, ptr};
 #[cfg(feature = "std")]
 use std::thread_local;
 
-use crate::traits::{Digest, Xof};
+use crate::traits::{Digest, VerificationError, Xof, ct};
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) mod aarch64;
@@ -45,6 +45,99 @@ const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
 // bytes, then the maximum number of chunks is `2^64 / 2^10 = 2^54`, i.e. a
 // 54-level binary reduction tree.
 const CV_STACK_LEN: usize = 54;
+
+/// BLAKE3 keyed-hash output (32 bytes).
+///
+/// Equality is constant-time, matching the security semantics expected for tag
+/// verification.
+// Manual `PartialEq` is constant-time but byte-equivalent to a derived
+// implementation, so the `Hash`/`Eq` contract `a == b → hash(a) == hash(b)`
+// is preserved. The lint flags the divergence between `derive(Hash)` and a
+// hand-written `eq`, which is the right shape here: variable-time `==` on a
+// MAC-shaped output would be a footgun.
+#[allow(clippy::derived_hash_with_manual_eq)]
+#[derive(Clone, Copy, Default, Hash)]
+pub struct Blake3KeyedHash([u8; OUT_LEN]);
+
+impl Blake3KeyedHash {
+  /// Keyed-hash output length in bytes.
+  pub const LENGTH: usize = OUT_LEN;
+
+  /// Construct from raw bytes.
+  #[inline]
+  #[must_use]
+  pub const fn from_bytes(bytes: [u8; OUT_LEN]) -> Self {
+    Self(bytes)
+  }
+
+  /// Return the keyed-hash bytes.
+  #[inline]
+  #[must_use]
+  pub const fn to_bytes(self) -> [u8; OUT_LEN] {
+    self.0
+  }
+
+  /// Borrow the keyed-hash bytes.
+  #[inline]
+  #[must_use]
+  pub const fn as_bytes(&self) -> &[u8; OUT_LEN] {
+    &self.0
+  }
+}
+
+impl From<[u8; OUT_LEN]> for Blake3KeyedHash {
+  #[inline]
+  fn from(value: [u8; OUT_LEN]) -> Self {
+    Self::from_bytes(value)
+  }
+}
+
+impl From<Blake3KeyedHash> for [u8; OUT_LEN] {
+  #[inline]
+  fn from(value: Blake3KeyedHash) -> Self {
+    value.to_bytes()
+  }
+}
+
+impl AsRef<[u8]> for Blake3KeyedHash {
+  #[inline]
+  fn as_ref(&self) -> &[u8] {
+    &self.0
+  }
+}
+
+impl PartialEq for Blake3KeyedHash {
+  #[inline]
+  fn eq(&self, other: &Self) -> bool {
+    ct::constant_time_eq(&self.0, &other.0)
+  }
+}
+
+impl PartialEq<[u8; OUT_LEN]> for Blake3KeyedHash {
+  #[inline]
+  fn eq(&self, other: &[u8; OUT_LEN]) -> bool {
+    ct::constant_time_eq(&self.0, other)
+  }
+}
+
+impl PartialEq<Blake3KeyedHash> for [u8; OUT_LEN] {
+  #[inline]
+  fn eq(&self, other: &Blake3KeyedHash) -> bool {
+    ct::constant_time_eq(self, &other.0)
+  }
+}
+
+impl Eq for Blake3KeyedHash {}
+
+impl_ct_eq!(Blake3KeyedHash);
+
+impl core::fmt::Debug for Blake3KeyedHash {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    write!(f, "Blake3KeyedHash(")?;
+    crate::hex::fmt_hex_lower(&self.0, f)?;
+    write!(f, ")")
+  }
+}
 
 #[cfg(any(feature = "parallel", not(target_endian = "little")))]
 type CvBytes = [u8; OUT_LEN];
@@ -2380,12 +2473,26 @@ impl Blake3 {
   /// and finalize overhead, which is critical for latency-sensitive keyed hashing.
   #[inline]
   #[must_use]
-  pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> [u8; OUT_LEN] {
+  pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3KeyedHash {
     #[cfg(feature = "std")]
     let key_words = control::keyed_words_cached(key);
     #[cfg(not(feature = "std"))]
     let key_words = words8_from_le_bytes_32(key);
-    digest_public_oneshot(key_words, KEYED_HASH, data)
+    Blake3KeyedHash::from_bytes(digest_public_oneshot(key_words, KEYED_HASH, data))
+  }
+
+  /// Compute and verify the keyed hash of `data` in constant time.
+  ///
+  /// This avoids accidental use of short-circuit `==` on `[u8; 32]` when
+  /// authenticating data with keyed BLAKE3.
+  #[inline]
+  #[must_use = "keyed-hash verification must be checked; a dropped Result silently accepts a forged tag"]
+  pub fn verify_keyed(key: &[u8; KEY_LEN], data: &[u8], expected: &Blake3KeyedHash) -> Result<(), VerificationError> {
+    if Self::keyed_digest(key, data) == *expected {
+      Ok(())
+    } else {
+      Err(VerificationError::new())
+    }
   }
 
   /// Compute the keyed XOF output state of `data` in one shot.
@@ -3854,8 +3961,8 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
 
 #[cfg(test)]
 mod tests {
-  use super::{Blake3, OUT_LEN};
-  use crate::traits::{Digest, Xof};
+  use super::{Blake3, Blake3KeyedHash, OUT_LEN};
+  use crate::traits::{Digest, VerificationError, Xof};
 
   #[test]
   fn xof_repeated_small_squeezes_match_single_read() {
@@ -3958,7 +4065,7 @@ mod tests {
           h.update(chunk);
         }
         assert_eq!(
-          h.finalize(),
+          Blake3KeyedHash::from_bytes(h.finalize()),
           expected_keyed,
           "keyed streaming mismatch len={len} split={split}"
         );
@@ -3978,6 +4085,22 @@ mod tests {
         );
       }
     }
+  }
+
+  #[test]
+  fn verify_keyed_accepts_matching_tag() {
+    let data = b"authenticated payload";
+    let expected = Blake3::keyed_digest(KEY, data);
+    assert_eq!(Blake3::verify_keyed(KEY, data, &expected), Ok(()));
+  }
+
+  #[test]
+  fn verify_keyed_rejects_mismatched_tag() {
+    let data = b"authenticated payload";
+    let mut bad = Blake3::keyed_digest(KEY, data).to_bytes();
+    bad[0] ^= 0x01;
+    let bad = Blake3KeyedHash::from_bytes(bad);
+    assert_eq!(Blake3::verify_keyed(KEY, data, &bad), Err(VerificationError::new()));
   }
 
   #[test]

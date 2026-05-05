@@ -1,4 +1,4 @@
-use super::EXPANDED_KEY_WORDS;
+use super::{EXPANDED_KEY_WORDS, EXPANDED_KEY_WORDS_128};
 
 /// AES-256 key for the KM (Cipher Message) instruction.
 ///
@@ -129,6 +129,127 @@ pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize
       ".insn rre, 0xB92E0000, 2, 4",
       "jo 0b",
       inout("r0") 20u64 => _,
+      in("r1") parm,
+      inout("r2") dest_ptr => _,
+      inout("r3") len as u64 => _,
+      inout("r4") src_ptr => _,
+      inout("r5") len as u64 => _,
+      options(nostack),
+    );
+  }
+
+  crate::traits::ct::zeroize(&mut src[..len]);
+}
+
+// ---------------------------------------------------------------------------
+// AES-128 (KM function code 18)
+// ---------------------------------------------------------------------------
+
+/// AES-128 key for the KM (Cipher Message) instruction.
+#[derive(Clone)]
+#[repr(C, align(8))]
+pub(in crate::aead) struct Km128Key {
+  /// Raw 16-byte AES-128 key, ready for the KM parameter block.
+  raw: [u8; 16],
+  /// Full expanded schedule (kept for parity with [`KmKey`]).
+  rk: [u32; EXPANDED_KEY_WORDS_128],
+}
+
+impl Km128Key {
+  /// Wrap an already-expanded portable round key schedule for KM.
+  pub(super) fn from_portable(rk: [u32; EXPANDED_KEY_WORDS_128]) -> Self {
+    let mut raw = [0u8; 16];
+    let mut i = 0usize;
+    while i < 4 {
+      let off = i.strict_mul(4);
+      let bytes = rk[i].to_be_bytes();
+      raw[off] = bytes[0];
+      raw[off.strict_add(1)] = bytes[1];
+      raw[off.strict_add(2)] = bytes[2];
+      raw[off.strict_add(3)] = bytes[3];
+      i = i.strict_add(1);
+    }
+    Self { raw, rk }
+  }
+
+  /// Zeroize both the raw key and the full key schedule.
+  pub(super) fn zeroize(&mut self) {
+    crate::traits::ct::zeroize(&mut self.raw);
+    // SAFETY: [u32; 44] is layout-compatible with [u8; 176].
+    let bytes = unsafe {
+      core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), EXPANDED_KEY_WORDS_128.strict_mul(4))
+    };
+    crate::traits::ct::zeroize(bytes);
+  }
+}
+
+/// Encrypt a single 16-byte block using a raw AES-128 key and the KM instruction.
+///
+/// # Safety
+/// Caller must ensure the MSA (CPACF) facility is available.
+pub(super) unsafe fn encrypt_block_raw_128(raw_key: &[u8; 16], block: &mut [u8; 16]) {
+  let mut src: [u8; 16] = *block;
+
+  let parm = raw_key.as_ptr();
+  let src_ptr = src.as_ptr();
+  let dest_ptr = block.as_mut_ptr();
+
+  // KM function code 18 = AES-128 encrypt. Same encoding as AES-256
+  // (.insn rre, 0xB92E0000); only the function code in r0 differs.
+  //
+  // SAFETY: MSA verified by caller. Parameter block is the raw
+  // 16-byte AES-128 key. Source and destination are valid,
+  // non-overlapping 16-byte buffers.
+  unsafe {
+    core::arch::asm!(
+      "0:",
+      ".insn rre, 0xB92E0000, 2, 4",
+      "jo 0b",
+      inout("r0") 18u64 => _,
+      in("r1") parm,
+      inout("r2") dest_ptr => _,
+      inout("r3") 16u64 => _,
+      inout("r4") src_ptr => _,
+      inout("r5") 16u64 => _,
+      options(nostack),
+    );
+  }
+
+  crate::traits::ct::zeroize(&mut src);
+}
+
+/// Encrypt a single 16-byte block using the KM instruction (AES-128 ECB).
+///
+/// # Safety
+/// Caller must ensure the MSA (CPACF) facility is available.
+pub(super) unsafe fn encrypt_block_128(key: &Km128Key, block: &mut [u8; 16]) {
+  // SAFETY: caller guarantees MSA; Km128Key stores a raw 16-byte AES-128 key.
+  unsafe { encrypt_block_raw_128(&key.raw, block) }
+}
+
+/// Encrypt multiple independent 16-byte blocks using a single KM call (AES-128 ECB).
+///
+/// # Safety
+/// Caller must ensure the MSA (CPACF) facility is available.
+/// `blocks` must contain exactly `count * 16` bytes.
+pub(super) unsafe fn encrypt_blocks_128(key: &Km128Key, blocks: &mut [u8], count: usize) {
+  debug_assert_eq!(blocks.len(), count.strict_mul(16));
+
+  let len = count.strict_mul(16);
+  let mut src = [0u8; 16 * 8];
+  src[..len].copy_from_slice(&blocks[..len]);
+
+  let parm = key.raw.as_ptr();
+  let src_ptr = src.as_ptr();
+  let dest_ptr = blocks.as_mut_ptr();
+
+  // SAFETY: MSA verified by caller; src/dest are non-overlapping len-byte spans.
+  unsafe {
+    core::arch::asm!(
+      "0:",
+      ".insn rre, 0xB92E0000, 2, 4",
+      "jo 0b",
+      inout("r0") 18u64 => _,
       in("r1") parm,
       inout("r2") dest_ptr => _,
       inout("r3") len as u64 => _,

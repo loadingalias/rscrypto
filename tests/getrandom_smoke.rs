@@ -38,9 +38,21 @@ mod xchacha20poly1305_rng {
 }
 
 #[cfg(feature = "aes-gcm")]
+mod aes128gcm_rng {
+  use rscrypto::aead::Aes128GcmKey;
+  random_smoke!(key, Aes128GcmKey);
+}
+
+#[cfg(feature = "aes-gcm")]
 mod aes256gcm_rng {
   use rscrypto::aead::Aes256GcmKey;
   random_smoke!(key, Aes256GcmKey);
+}
+
+#[cfg(feature = "aes-gcm-siv")]
+mod aes128gcmsiv_rng {
+  use rscrypto::aead::Aes128GcmSivKey;
+  random_smoke!(key, Aes128GcmSivKey);
 }
 
 #[cfg(feature = "aes-gcm-siv")]

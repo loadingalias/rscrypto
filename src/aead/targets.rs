@@ -19,6 +19,8 @@ pub enum AeadPrimitive {
   ChaCha20Poly1305,
   Aes256GcmSiv,
   Aes256Gcm,
+  Aes128Gcm,
+  Aes128GcmSiv,
   AsconAead128,
   Aegis256,
 }
@@ -97,7 +99,9 @@ impl AeadBackend {
 pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
   match primitive {
     AeadPrimitive::XChaCha20Poly1305 | AeadPrimitive::ChaCha20Poly1305 => select_chacha_backend(arch, caps),
-    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm => select_gcm_backend(arch, caps),
+    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm | AeadPrimitive::Aes128Gcm | AeadPrimitive::Aes128GcmSiv => {
+      select_gcm_backend(arch, caps)
+    }
     AeadPrimitive::AsconAead128 => select_ascon_backend(arch),
     AeadPrimitive::Aegis256 => select_aegis_backend(arch, caps),
   }
@@ -290,10 +294,26 @@ mod tests {
       select_backend(AeadPrimitive::Aes256Gcm, Arch::X86_64, vaes_caps),
       AeadBackend::X86VaesVpclmul
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::X86_64, vaes_caps),
+      AeadBackend::X86VaesVpclmul
+    );
 
     let aesni_caps = x86::AESNI | x86::PCLMULQDQ;
     assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::X86_64, aesni_caps),
+      AeadBackend::X86AesniPclmul
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::X86_64, aesni_caps),
+      AeadBackend::X86AesniPclmul
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::X86_64, vaes_caps),
+      AeadBackend::X86VaesVpclmul
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::X86_64, aesni_caps),
       AeadBackend::X86AesniPclmul
     );
   }
@@ -305,10 +325,26 @@ mod tests {
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Aarch64, sve2_caps),
       AeadBackend::Aarch64Sve2AesPmull
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Aarch64, sve2_caps),
+      AeadBackend::Aarch64Sve2AesPmull
+    );
 
     let aes_pmull_caps = aarch64::AES | aarch64::PMULL;
     assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Aarch64, aes_pmull_caps),
+      AeadBackend::Aarch64AesPmull
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Aarch64, aes_pmull_caps),
+      AeadBackend::Aarch64AesPmull
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Aarch64, sve2_caps),
+      AeadBackend::Aarch64Sve2AesPmull
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Aarch64, aes_pmull_caps),
       AeadBackend::Aarch64AesPmull
     );
   }
@@ -356,11 +392,27 @@ mod tests {
       AeadBackend::S390xMsa
     );
     assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::S390x, s390x::MSA),
+      AeadBackend::S390xMsa
+    );
+    assert_eq!(
       select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::MSA),
       AeadBackend::S390xVector
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Power, power::POWER8_CRYPTO),
+      AeadBackend::Power8Crypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Power, power::POWER8_CRYPTO),
+      AeadBackend::Power8Crypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::S390x, s390x::MSA),
+      AeadBackend::S390xMsa
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Power, power::POWER8_CRYPTO),
       AeadBackend::Power8Crypto
     );
     assert_eq!(
@@ -376,6 +428,10 @@ mod tests {
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::ZVKNED | riscv::ZVBC),
       AeadBackend::Riscv64VectorCrypto
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Riscv64, riscv::ZVKNED | riscv::ZVBC),
+      AeadBackend::Riscv64VectorCrypto
+    );
 
     // Tier 2: scalar AES + scalar CLMUL
     assert_eq!(
@@ -385,6 +441,10 @@ mod tests {
     // Zbkc also qualifies for scalar CLMUL
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::ZKNE | riscv::ZBKC),
+      AeadBackend::Riscv64ScalarCrypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Riscv64, riscv::ZKNE | riscv::ZBC),
       AeadBackend::Riscv64ScalarCrypto
     );
 
@@ -398,10 +458,30 @@ mod tests {
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Riscv64, riscv::V),
       AeadBackend::Portable
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Riscv64, riscv::V | riscv::ZBC),
+      AeadBackend::Portable
+    );
 
     // Tier 4: constant-time portable fallback (bare scalar, no V, no crypto)
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, Caps::NONE),
+      AeadBackend::Portable
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128Gcm, Arch::Riscv64, Caps::NONE),
+      AeadBackend::Portable
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Riscv64, riscv::ZVKNED | riscv::ZVBC),
+      AeadBackend::Riscv64VectorCrypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Riscv64, riscv::ZKNE | riscv::ZBC),
+      AeadBackend::Riscv64ScalarCrypto
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Riscv64, Caps::NONE),
       AeadBackend::Portable
     );
 

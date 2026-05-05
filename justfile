@@ -92,3 +92,11 @@ check-actions:
 # Local pre-push hook entry (symlink into .git/hooks/pre-push).
 ci-pre-push:
     @scripts/ci/pre-push.sh
+
+# ─── Assets ────────────────────────────────────────────────────────
+
+# Regenerate README perf chart SVGs from benchmark_results/OVERVIEW.md.
+chart:
+    @mkdir -p target
+    @rustc --edition 2024 -O scripts/render_perf_chart.rs -o target/render_perf_chart
+    @target/render_perf_chart
