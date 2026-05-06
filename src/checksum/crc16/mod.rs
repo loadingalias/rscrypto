@@ -920,6 +920,9 @@ mod cross_check {
   }
 }
 
+impl_std_io_write_for_checksum!(Crc16Ccitt);
+impl_std_io_write_for_checksum!(Crc16Ibm);
+
 #[cfg(test)]
 crate::define_crc_property_tests!(crc16_ccitt_props, Crc16Ccitt);
 #[cfg(test)]

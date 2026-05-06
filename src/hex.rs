@@ -1,4 +1,17 @@
 #![allow(clippy::indexing_slicing)]
+#![cfg_attr(
+  not(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305",
+    feature = "aegis256",
+    feature = "ascon-aead",
+    feature = "ed25519",
+    feature = "x25519"
+  )),
+  allow(dead_code, unused_macros)
+)]
 
 //! Internal hex encoding, decoding, and formatting utilities.
 //!

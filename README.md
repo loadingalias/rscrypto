@@ -55,7 +55,7 @@ Use `default-features = false` for constrained `no_std` builds. Enable `getrando
 ## Quick start
 
 ```rust
-use rscrypto::{Digest, Sha256};
+use rscrypto::{Sha256, prelude::*};
 
 let one_shot = Sha256::digest(b"hello world");
 
@@ -201,6 +201,7 @@ Vulnerabilities should be reported through [GitHub Private Vulnerability Reporti
 - Platform matrix: [`docs/platforms.md`](docs/platforms.md)
 - Security guidance: [`docs/security.md`](docs/security.md)
 - Migration guides: [`docs/migration/`](docs/migration/)
+- Benchmark methodology: [`docs/benchmarking.md`](docs/benchmarking.md)
 - Benchmarks: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
 - Release history: [`CHANGELOG.md`](CHANGELOG.md)
 

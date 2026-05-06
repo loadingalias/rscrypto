@@ -1751,6 +1751,9 @@ mod tests {
   }
 }
 
+impl_std_io_write_for_checksum!(Crc64);
+impl_std_io_write_for_checksum!(Crc64Nvme);
+
 #[cfg(test)]
 crate::define_crc_property_tests!(crc64_xz_props, Crc64);
 #[cfg(test)]

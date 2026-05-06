@@ -33,6 +33,81 @@ macro_rules! define_unit_error {
   };
 }
 
+#[cfg(any(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
+macro_rules! impl_std_io_write_for_checksum {
+  ($type:ty) => {
+    #[cfg(feature = "std")]
+    #[allow(clippy::std_instead_of_core)]
+    impl std::io::Write for $type {
+      #[inline]
+      fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        <Self as crate::traits::Checksum>::update(self, buf);
+        Ok(buf.len())
+      }
+
+      #[inline]
+      fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+      }
+
+      #[inline]
+      fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let mut written = 0usize;
+        for buf in bufs {
+          written = written
+            .checked_add(buf.len())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "vectored write length overflow"))?;
+        }
+        for buf in bufs {
+          <Self as crate::traits::Checksum>::update(self, buf.as_ref());
+        }
+        Ok(written)
+      }
+    }
+  };
+}
+
+#[cfg(any(
+  feature = "sha2",
+  feature = "sha3",
+  feature = "blake2b",
+  feature = "blake2s",
+  feature = "blake3",
+  feature = "ascon-hash"
+))]
+macro_rules! impl_std_io_write_for_digest {
+  ($type:ty) => {
+    #[cfg(feature = "std")]
+    #[allow(clippy::std_instead_of_core)]
+    impl std::io::Write for $type {
+      #[inline]
+      fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        <Self as crate::traits::Digest>::update(self, buf);
+        Ok(buf.len())
+      }
+
+      #[inline]
+      fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+      }
+
+      #[inline]
+      fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let mut written = 0usize;
+        for buf in bufs {
+          written = written
+            .checked_add(buf.len())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "vectored write length overflow"))?;
+        }
+        for buf in bufs {
+          <Self as crate::traits::Digest>::update(self, buf.as_ref());
+        }
+        Ok(written)
+      }
+    }
+  };
+}
+
 #[cfg(all(
   any(target_arch = "aarch64", target_arch = "riscv64", target_arch = "x86_64"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")

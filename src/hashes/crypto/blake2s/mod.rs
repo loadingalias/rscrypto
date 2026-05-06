@@ -958,6 +958,9 @@ impl Drop for Blake2s128 {
   }
 }
 
+impl_std_io_write_for_digest!(Blake2s256);
+impl_std_io_write_for_digest!(Blake2s128);
+
 #[cfg(test)]
 mod tests {
   use blake2::{Blake2s128 as OracleBlake2s128, Blake2s256 as OracleBlake2s256, Blake2sMac, Digest as _};

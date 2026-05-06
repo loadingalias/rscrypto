@@ -7,7 +7,9 @@
 //! # Quick Start
 //!
 //! ```rust
-//! use rscrypto::{Digest, FastHash, Sha256, Shake256, Xof, Xxh3};
+//! # #[cfg(feature = "sha2")]
+//! # {
+//! use rscrypto::{Digest, Sha256};
 //!
 //! let digest = Sha256::digest(b"hello");
 //!
@@ -15,14 +17,25 @@
 //! streaming.update(b"he");
 //! streaming.update(b"llo");
 //! assert_eq!(streaming.finalize(), digest);
+//! # }
+//!
+//! # #[cfg(feature = "sha3")]
+//! # {
+//! use rscrypto::{Shake256, Xof};
 //!
 //! let mut xof = Shake256::xof(b"hello");
 //! let mut out = [0u8; 32];
 //! xof.squeeze(&mut out);
 //! assert_ne!(out, [0u8; 32]);
+//! # }
+//!
+//! # #[cfg(feature = "xxh3")]
+//! # {
+//! use rscrypto::{FastHash, Xxh3};
 //!
 //! let fast = Xxh3::hash(b"hello");
 //! assert_ne!(fast, 0);
+//! # }
 //! ```
 //!
 //! # Feature Selection

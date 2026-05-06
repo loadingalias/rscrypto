@@ -13,16 +13,19 @@
 //! # Example
 //!
 //! ```rust
+//! # #[cfg(feature = "sha2")]
+//! # {
 //! use std::io::{Cursor, Read};
 //!
-//! use rscrypto::{Digest as _, hashes::crypto::Blake3};
+//! use rscrypto::{Digest as _, Sha256};
 //!
-//! let mut reader = Blake3::reader(Cursor::new(b"hello world".to_vec()));
+//! let mut reader = Sha256::reader(Cursor::new(b"hello world".to_vec()));
 //! let mut contents = Vec::new();
-//! reader.read_to_end(&mut contents)?;
+//! let bytes = reader.read_to_end(&mut contents).unwrap();
+//! assert_eq!(bytes, b"hello world".len());
 //! assert_eq!(contents, b"hello world");
-//! assert_eq!(reader.digest(), Blake3::digest(&contents));
-//! # Ok::<(), std::io::Error>(())
+//! assert_eq!(reader.digest(), Sha256::digest(&contents));
+//! # }
 //! ```
 
 pub use crate::traits::io::{DigestReader, DigestWriter};

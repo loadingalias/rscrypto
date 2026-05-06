@@ -515,6 +515,8 @@ impl Digest for AsconHash256 {
   }
 }
 
+impl_std_io_write_for_digest!(AsconHash256);
+
 /// Ascon-XOF128 hasher.
 #[derive(Clone, Default)]
 pub struct AsconXof {

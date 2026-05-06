@@ -285,6 +285,11 @@ impl Sha3_512 {
   }
 }
 
+impl_std_io_write_for_digest!(Sha3_224);
+impl_std_io_write_for_digest!(Sha3_256);
+impl_std_io_write_for_digest!(Sha3_384);
+impl_std_io_write_for_digest!(Sha3_512);
+
 /// SHAKE256 extendable-output state.
 ///
 /// Standardized in FIPS 202.

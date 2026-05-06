@@ -305,3 +305,5 @@ impl Digest for Sha384 {
     dispatch::digest(data)
   }
 }
+
+impl_std_io_write_for_digest!(Sha384);

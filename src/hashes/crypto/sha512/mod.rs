@@ -717,6 +717,8 @@ impl Digest for Sha512 {
   }
 }
 
+impl_std_io_write_for_digest!(Sha512);
+
 #[cfg(test)]
 mod tests {
 

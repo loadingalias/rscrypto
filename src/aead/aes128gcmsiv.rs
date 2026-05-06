@@ -540,7 +540,10 @@ unsafe fn encrypt_fused_aarch64(
   aad: &[u8],
   buffer: &mut [u8],
 ) -> [u8; TAG_SIZE] {
-  // SAFETY: caller has verified AES-CE availability.
+  // SAFETY: fused AArch64 AES-128-GCM-SIV encryption because:
+  // 1. This function has `#[target_feature(enable = "aes,neon")]`.
+  // 2. The caller verifies AES-CE availability before dispatching here.
+  // 3. `auth_key`, `enc_key_bytes`, nonce, AAD, and buffer are initialized caller-owned inputs.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
@@ -629,7 +632,24 @@ unsafe fn encrypt_fused_aarch64(
     let mut counter_block = tag;
     counter_block[15] |= 0x80;
     let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    let iv_suffix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&counter_block[4..16]);
+      buf
+    };
     offset = 0;
+    while offset.strict_add(128) <= buffer.len() {
+      let end = offset.strict_add(128);
+      aes::aarch64_ctr32_le_xor_8blocks_128_inline(&enc_ek, &iv_suffix, ctr, &mut buffer[offset..end]);
+      ctr = ctr.wrapping_add(8);
+      offset = end;
+    }
+    while offset.strict_add(64) <= buffer.len() {
+      let end = offset.strict_add(64);
+      aes::aarch64_ctr32_le_xor_4blocks_128_inline(&enc_ek, &iv_suffix, ctr, &mut buffer[offset..end]);
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
     while offset < buffer.len() {
       counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
       let mut keystream = counter_block;
@@ -667,7 +687,10 @@ unsafe fn decrypt_fused_aarch64(
   buffer: &mut [u8],
   tag: &Aes128GcmSivTag,
 ) -> Result<(), crate::traits::VerificationError> {
-  // SAFETY: caller has verified AES-CE availability.
+  // SAFETY: fused AArch64 AES-128-GCM-SIV decryption because:
+  // 1. This function has `#[target_feature(enable = "aes,neon")]`.
+  // 2. The caller verifies AES-CE availability before dispatching here.
+  // 3. `auth_key`, `enc_key_bytes`, nonce, AAD, buffer, and tag are initialized caller-owned inputs.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
@@ -678,7 +701,24 @@ unsafe fn decrypt_fused_aarch64(
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
     let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    let iv_suffix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&counter_block[4..16]);
+      buf
+    };
     let mut offset = 0usize;
+    while offset.strict_add(128) <= buffer.len() {
+      let end = offset.strict_add(128);
+      aes::aarch64_ctr32_le_xor_8blocks_128_inline(&enc_ek, &iv_suffix, ctr, &mut buffer[offset..end]);
+      ctr = ctr.wrapping_add(8);
+      offset = end;
+    }
+    while offset.strict_add(64) <= buffer.len() {
+      let end = offset.strict_add(64);
+      aes::aarch64_ctr32_le_xor_4blocks_128_inline(&enc_ek, &iv_suffix, ctr, &mut buffer[offset..end]);
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
     while offset < buffer.len() {
       counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
       let mut keystream = counter_block;
@@ -802,7 +842,10 @@ unsafe fn encrypt_fused_ppc(
   aad: &[u8],
   buffer: &mut [u8],
 ) -> [u8; TAG_SIZE] {
-  // SAFETY: caller has verified POWER8 crypto availability.
+  // SAFETY: fused POWER8 AES-128-GCM-SIV encryption because:
+  // 1. This function has POWER8 crypto target features enabled.
+  // 2. The caller verifies POWER8 crypto availability before dispatching here.
+  // 3. `auth_key`, `enc_key_bytes`, nonce, AAD, and buffer are initialized caller-owned inputs.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
@@ -929,7 +972,10 @@ unsafe fn decrypt_fused_ppc(
   buffer: &mut [u8],
   tag: &Aes128GcmSivTag,
 ) -> Result<(), crate::traits::VerificationError> {
-  // SAFETY: caller has verified POWER8 crypto availability.
+  // SAFETY: fused POWER8 AES-128-GCM-SIV decryption because:
+  // 1. This function has POWER8 crypto target features enabled.
+  // 2. The caller verifies POWER8 crypto availability before dispatching here.
+  // 3. `auth_key`, `enc_key_bytes`, nonce, AAD, buffer, and tag are initialized caller-owned inputs.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
@@ -1063,7 +1109,10 @@ unsafe fn encrypt_fused_s390x(
   aad: &[u8],
   buffer: &mut [u8],
 ) -> [u8; TAG_SIZE] {
-  // SAFETY: caller has verified z/Vector + MSA availability.
+  // SAFETY: fused s390x AES-128-GCM-SIV encryption because:
+  // 1. This path only runs after z/Vector + MSA availability is verified.
+  // 2. `auth_key` and `enc_key_bytes` are fixed-size initialized derived keys.
+  // 3. Nonce, AAD, and buffer are initialized caller-owned inputs.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
@@ -1188,7 +1237,10 @@ unsafe fn decrypt_fused_s390x(
   buffer: &mut [u8],
   tag: &Aes128GcmSivTag,
 ) -> Result<(), crate::traits::VerificationError> {
-  // SAFETY: caller has verified z/Vector + MSA availability.
+  // SAFETY: fused s390x AES-128-GCM-SIV decryption because:
+  // 1. This path only runs after z/Vector + MSA availability is verified.
+  // 2. `auth_key` and `enc_key_bytes` are fixed-size initialized derived keys.
+  // 3. Nonce, AAD, buffer, and tag are initialized caller-owned inputs.
   unsafe {
     let nonce_bytes = nonce.as_bytes();
 
@@ -1366,7 +1418,12 @@ impl Aead for Aes128GcmSiv {
       self.backend,
       AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
     ) {
-      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: Direct AArch64 AES-128 GCM-SIV KDF because:
+      // 1. Backend resolution selected an AArch64 AES+PMULL backend.
+      // 2. The selected backend constructs `self.master_ek` with AES-CE round keys.
+      // 3. `nonce.as_bytes()` is exactly the 96-bit GCM-SIV nonce.
+      let (mut auth_key, mut enc_key) =
+        unsafe { aes::aarch64_gcmsiv_derive_keys_128_inline(&self.master_ek, nonce.as_bytes()) };
       // SAFETY: AES-CE availability verified during backend resolution.
       let tag_bytes = unsafe { encrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer) };
       return Ok(Aes128GcmSivTag::from_bytes(tag_bytes));
@@ -1456,7 +1513,12 @@ impl Aead for Aes128GcmSiv {
       self.backend,
       AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
     ) {
-      let (mut auth_key, mut enc_key) = derive_keys(&self.master_ek, nonce);
+      // SAFETY: Direct AArch64 AES-128 GCM-SIV KDF because:
+      // 1. Backend resolution selected an AArch64 AES+PMULL backend.
+      // 2. The selected backend constructs `self.master_ek` with AES-CE round keys.
+      // 3. `nonce.as_bytes()` is exactly the 96-bit GCM-SIV nonce.
+      let (mut auth_key, mut enc_key) =
+        unsafe { aes::aarch64_gcmsiv_derive_keys_128_inline(&self.master_ek, nonce.as_bytes()) };
       // SAFETY: AES-CE availability verified during backend resolution.
       return unsafe { decrypt_fused_aarch64(&mut auth_key, &mut enc_key, nonce, aad, buffer, tag) }
         .map_err(OpenError::from);

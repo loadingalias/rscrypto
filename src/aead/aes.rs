@@ -724,7 +724,10 @@ pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128
 #[target_feature(enable = "aes,neon")]
 #[inline]
 pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRoundKeys {
-  // SAFETY: AES-CE availability guaranteed by caller.
+  // SAFETY: AES-CE key expansion because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees the current CPU supports AES-CE.
+  // 3. `key` is a fixed 32-byte AES-256 key.
   unsafe { ce::expand_key_hw(key) }
 }
 
@@ -736,8 +739,118 @@ pub(super) unsafe fn aarch64_expand_key_inline(key: &[u8; KEY_SIZE]) -> ce::CeRo
 #[target_feature(enable = "aes,neon")]
 #[inline]
 pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: AES-CE availability guaranteed by caller.
+  // SAFETY: AES-CE block encryption because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees the current CPU supports AES-CE.
+  // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { ce::encrypt_block_core(keys, block) }
+}
+
+/// Encrypt multiple AES-256 blocks inside one AES-CE target scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available.
+#[cfg(all(target_arch = "aarch64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+unsafe fn aarch64_encrypt_blocks_inline(keys: &ce::CeRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  if blocks.len() == 6 {
+    // SAFETY: exact six-block AES-256 batch because:
+    // 1. The caller guarantees AES-CE availability for this target-feature scope.
+    // 2. `blocks.len() == 6`, so the slice is exactly one contiguous six-block array.
+    // 3. `[[u8; 16]]` elements have no padding and remain valid under the fixed-size array view.
+    let batch = unsafe { &mut *blocks.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 6]>() };
+    // SAFETY: AES-CE batch encryption because:
+    // 1. This function's caller must guarantee AES-CE availability.
+    // 2. `batch` is a valid mutable reference to six initialized AES blocks.
+    unsafe { ce::encrypt_6blocks_core(keys, batch) };
+    return;
+  }
+
+  let mut offset = 0usize;
+  while offset.strict_add(4) <= blocks.len() {
+    let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+    // SAFETY: exact four-block AES-256 batch because:
+    // 1. `batch_slice` was sliced to length 4 immediately above.
+    // 2. `[[u8; 16]]` elements are contiguous and have no padding.
+    // 3. The mutable borrow is limited to this loop iteration.
+    let batch = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+    // SAFETY: AES-CE batch encryption because:
+    // 1. This function's caller must guarantee AES-CE availability.
+    // 2. `batch` is a valid mutable reference to four initialized AES blocks.
+    unsafe { ce::encrypt_4blocks_core(keys, batch) };
+    offset = offset.strict_add(4);
+  }
+
+  while offset < blocks.len() {
+    // SAFETY: AES-CE block encryption because:
+    // 1. This function's caller must guarantee AES-CE availability.
+    // 2. `blocks[offset]` is a valid mutable `[u8; 16]` inside the caller-owned slice.
+    unsafe { ce::encrypt_block_core(keys, &mut blocks[offset]) };
+    offset = offset.strict_add(1);
+  }
+}
+
+/// Derive AES-256-GCM-SIV per-message keys directly with AES-CE.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available and `master_ek` is the AArch64 AES
+/// backend variant.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(super) unsafe fn aarch64_gcmsiv_derive_keys_inline(
+  master_ek: &Aes256EncKey,
+  nonce: &[u8; 12],
+) -> ([u8; 16], [u8; 32]) {
+  let KeyInner::Aarch64Aes(ce_rk) = &master_ek.inner else {
+    unreachable!("AArch64 GCM-SIV KDF requires an AES-CE master key");
+  };
+  // SAFETY: direct AES-CE GCM-SIV KDF because:
+  // 1. This function's caller must guarantee AES-CE availability.
+  // 2. The matched key variant proves the master key schedule is AES-CE compatible.
+  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
+  unsafe { ce::gcmsiv_derive_keys_core(ce_rk, nonce) }
+}
+
+/// XOR four AES-256 GCM-SIV CTR blocks inside one AES-CE target scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available and `data` has at least 64 bytes.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(super) unsafe fn aarch64_ctr32_le_xor_4blocks_inline(
+  keys: &ce::CeRoundKeys,
+  iv_suffix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+) {
+  // SAFETY: four-block AES-CE CTR XOR because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees `data` has at least 64 writable bytes.
+  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
+  unsafe { ce::encrypt_ctr32_le_xor_4blocks_core(keys, iv_suffix, ctr, data) }
+}
+
+/// XOR eight AES-256 GCM-SIV CTR blocks inside one AES-CE target scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available and `data` has at least 128 bytes.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(super) unsafe fn aarch64_ctr32_le_xor_8blocks_inline(
+  keys: &ce::CeRoundKeys,
+  iv_suffix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+) {
+  // SAFETY: eight-block AES-CE CTR XOR because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees `data` has at least 128 writable bytes.
+  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
+  unsafe { ce::encrypt_ctr32_le_xor_8blocks_core(keys, iv_suffix, ctr, data) }
 }
 
 /// Expand AES-128 key directly to AES-CE round keys.
@@ -751,7 +864,10 @@ pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block:
 #[target_feature(enable = "aes,neon")]
 #[inline]
 pub(super) unsafe fn aarch64_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ce::Ce128RoundKeys {
-  // SAFETY: AES-CE availability guaranteed by caller.
+  // SAFETY: AES-CE AES-128 key expansion because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees the current CPU supports AES-CE.
+  // 3. `key` is a fixed 16-byte AES-128 key.
   unsafe { ce::expand_key_128(key) }
 }
 
@@ -763,8 +879,105 @@ pub(super) unsafe fn aarch64_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> 
 #[target_feature(enable = "aes,neon")]
 #[inline]
 pub(super) unsafe fn aarch64_encrypt_block_128_inline(keys: &ce::Ce128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: AES-CE availability guaranteed by caller.
+  // SAFETY: AES-CE AES-128 block encryption because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees the current CPU supports AES-CE.
+  // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { ce::encrypt_block_128_core(keys, block) }
+}
+
+/// Encrypt multiple AES-128 blocks inside one AES-CE target scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available.
+#[cfg(all(target_arch = "aarch64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+unsafe fn aarch64_encrypt_blocks_128_inline(keys: &ce::Ce128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  let mut offset = 0usize;
+  while offset.strict_add(4) <= blocks.len() {
+    let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+    // SAFETY: exact four-block AES-128 batch because:
+    // 1. `batch_slice` was sliced to length 4 immediately above.
+    // 2. `[[u8; 16]]` elements are contiguous and have no padding.
+    // 3. The mutable borrow is limited to this loop iteration.
+    let batch = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+    // SAFETY: AES-CE batch encryption because:
+    // 1. This function's caller must guarantee AES-CE availability.
+    // 2. `batch` is a valid mutable reference to four initialized AES blocks.
+    unsafe { ce::encrypt_4blocks_128_core(keys, batch) };
+    offset = offset.strict_add(4);
+  }
+
+  while offset < blocks.len() {
+    // SAFETY: AES-CE block encryption because:
+    // 1. This function's caller must guarantee AES-CE availability.
+    // 2. `blocks[offset]` is a valid mutable `[u8; 16]` inside the caller-owned slice.
+    unsafe { ce::encrypt_block_128_core(keys, &mut blocks[offset]) };
+    offset = offset.strict_add(1);
+  }
+}
+
+/// Derive AES-128-GCM-SIV per-message keys directly with AES-CE.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available and `master_ek` is the AArch64 AES
+/// backend variant.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(super) unsafe fn aarch64_gcmsiv_derive_keys_128_inline(
+  master_ek: &Aes128EncKey,
+  nonce: &[u8; 12],
+) -> ([u8; 16], [u8; 16]) {
+  let Key128Inner::Aarch64Aes(ce_rk) = &master_ek.inner else {
+    unreachable!("AArch64 GCM-SIV KDF requires an AES-CE master key");
+  };
+  // SAFETY: direct AES-CE GCM-SIV KDF because:
+  // 1. This function's caller must guarantee AES-CE availability.
+  // 2. The matched key variant proves the master key schedule is AES-CE compatible.
+  // 3. `nonce` is exactly the 96-bit GCM-SIV nonce.
+  unsafe { ce::gcmsiv_derive_keys_128_core(ce_rk, nonce) }
+}
+
+/// XOR four AES-128 GCM-SIV CTR blocks inside one AES-CE target scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available and `data` has at least 64 bytes.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(super) unsafe fn aarch64_ctr32_le_xor_4blocks_128_inline(
+  keys: &ce::Ce128RoundKeys,
+  iv_suffix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+) {
+  // SAFETY: four-block AES-CE AES-128 CTR XOR because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees `data` has at least 64 writable bytes.
+  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
+  unsafe { ce::encrypt_ctr32_le_xor_4blocks_128_core(keys, iv_suffix, ctr, data) }
+}
+
+/// XOR eight AES-128 GCM-SIV CTR blocks inside one AES-CE target scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE is available and `data` has at least 128 bytes.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "aes,neon")]
+#[inline]
+pub(super) unsafe fn aarch64_ctr32_le_xor_8blocks_128_inline(
+  keys: &ce::Ce128RoundKeys,
+  iv_suffix: &[u8; 12],
+  ctr: u32,
+  data: &mut [u8],
+) {
+  // SAFETY: eight-block AES-CE AES-128 CTR XOR because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees `data` has at least 128 writable bytes.
+  // 3. `iv_suffix` is exactly the 96-bit GCM-SIV nonce suffix.
+  unsafe { ce::encrypt_ctr32_le_xor_8blocks_128_core(keys, iv_suffix, ctr, data) }
 }
 
 // ---------------------------------------------------------------------------
@@ -775,11 +988,14 @@ pub(super) unsafe fn aarch64_encrypt_block_128_inline(keys: &ce::Ce128RoundKeys,
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoundKeys {
-  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  // SAFETY: POWER8 AES-256 key expansion because:
+  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
+  // 2. The caller guarantees the current CPU supports POWER8 crypto.
+  // 3. `key` is a fixed 32-byte AES-256 key.
   unsafe { ppc::expand_key_hw(key) }
 }
 
@@ -787,12 +1003,47 @@ pub(super) unsafe fn ppc_expand_key_inline(key: &[u8; KEY_SIZE]) -> ppc::PpcRoun
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  // SAFETY: POWER8 AES-256 block encryption because:
+  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
+  // 2. The caller guarantees the current CPU supports POWER8 crypto.
+  // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { ppc::encrypt_block_core(keys, block) }
+}
+
+/// Encrypt multiple AES-256 blocks inside one POWER crypto target scope.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline]
+unsafe fn ppc_encrypt_blocks_inline(keys: &ppc::PpcRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  let mut offset = 0usize;
+  while offset.strict_add(4) <= blocks.len() {
+    let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+    // SAFETY: exact four-block POWER AES batch because:
+    // 1. `batch_slice` was sliced to length 4 immediately above.
+    // 2. `[[u8; 16]]` elements are contiguous and have no padding.
+    // 3. This function's caller guarantees POWER8 crypto availability.
+    let batch = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+    // SAFETY: POWER8 four-block AES because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `batch` is a valid mutable reference to four initialized AES blocks.
+    unsafe { ppc::encrypt_4blocks_core(keys, batch) };
+    offset = offset.strict_add(4);
+  }
+
+  while offset < blocks.len() {
+    // SAFETY: POWER8 AES block encryption because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `blocks[offset]` is a valid mutable `[u8; 16]` inside the caller-owned slice.
+    unsafe { ppc::encrypt_block_core(keys, &mut blocks[offset]) };
+    offset = offset.strict_add(1);
+  }
 }
 
 /// Expand AES-128 key directly to POWER round keys.
@@ -802,11 +1053,14 @@ pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ppc::Ppc128RoundKeys {
-  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  // SAFETY: POWER8 AES-128 key expansion because:
+  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
+  // 2. The caller guarantees the current CPU supports POWER8 crypto.
+  // 3. `key` is a fixed 16-byte AES-128 key.
   unsafe { ppc::expand_key_128(key) }
 }
 
@@ -814,12 +1068,47 @@ pub(super) unsafe fn ppc_expand_key_128_inline(key: &[u8; KEY_SIZE_128]) -> ppc:
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  // SAFETY: POWER8 AES-128 block encryption because:
+  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
+  // 2. The caller guarantees the current CPU supports POWER8 crypto.
+  // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { ppc::encrypt_block_128_core(keys, block) }
+}
+
+/// Encrypt multiple AES-128 blocks inside one POWER crypto target scope.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+#[inline]
+unsafe fn ppc_encrypt_blocks_128_inline(keys: &ppc::Ppc128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  let mut offset = 0usize;
+  while offset.strict_add(4) <= blocks.len() {
+    let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+    // SAFETY: exact four-block POWER AES batch because:
+    // 1. `batch_slice` was sliced to length 4 immediately above.
+    // 2. `[[u8; 16]]` elements are contiguous and have no padding.
+    // 3. This function's caller guarantees POWER8 crypto availability.
+    let batch = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+    // SAFETY: POWER8 four-block AES because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `batch` is a valid mutable reference to four initialized AES blocks.
+    unsafe { ppc::encrypt_4blocks_128_core(keys, batch) };
+    offset = offset.strict_add(4);
+  }
+
+  while offset < blocks.len() {
+    // SAFETY: POWER8 AES block encryption because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `blocks[offset]` is a valid mutable `[u8; 16]` inside the caller-owned slice.
+    unsafe { ppc::encrypt_block_128_core(keys, &mut blocks[offset]) };
+    offset = offset.strict_add(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +1122,10 @@ pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, b
 #[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: MSA availability guaranteed by caller.
+  // SAFETY: s390x KM AES-256 block encryption because:
+  // 1. The caller guarantees MSA/CPACF availability.
+  // 2. `raw_key` is a fixed 32-byte AES-256 key.
+  // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { km::encrypt_block_raw(raw_key, block) }
 }
 
@@ -844,7 +1136,10 @@ pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], bl
 #[cfg(target_arch = "s390x")]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [u8], count: usize) {
-  // SAFETY: MSA availability guaranteed by caller.
+  // SAFETY: s390x KM AES-256 block batch because:
+  // 1. The caller guarantees MSA/CPACF availability.
+  // 2. `blocks` is valid for at least `count * 16` writable bytes.
+  // 3. `key` is an initialized AES-256 KM key descriptor.
   unsafe { km::encrypt_blocks(key, blocks, count) }
 }
 
@@ -858,7 +1153,10 @@ pub(super) unsafe fn s390x_encrypt_blocks_inline(key: &km::KmKey, blocks: &mut [
 #[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_128], block: &mut [u8; BLOCK_SIZE]) {
-  // SAFETY: MSA availability guaranteed by caller.
+  // SAFETY: s390x KM AES-128 block encryption because:
+  // 1. The caller guarantees MSA/CPACF availability.
+  // 2. `raw_key` is a fixed 16-byte AES-128 key.
+  // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { km::encrypt_block_raw_128(raw_key, block) }
 }
 
@@ -872,7 +1170,10 @@ pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_
 #[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_128_inline(key: &km::Km128Key, blocks: &mut [u8], count: usize) {
-  // SAFETY: MSA availability guaranteed by caller.
+  // SAFETY: s390x KM AES-128 block batch because:
+  // 1. The caller guarantees MSA/CPACF availability.
+  // 2. `blocks` is valid for at least `count * 16` writable bytes.
+  // 3. `key` is an initialized AES-128 KM key descriptor.
   unsafe { km::encrypt_blocks_128(key, blocks, count) }
 }
 
@@ -992,11 +1293,39 @@ pub(crate) fn aes128_encrypt_block(ek: &Aes128EncKey, block: &mut [u8; BLOCK_SIZ
 /// the per-block dispatcher. Used by `riscv64` from the AES-128 CTR paths
 /// and by AES-128-GCM-SIV key derivation.
 #[cfg_attr(
-  not(any(target_arch = "riscv64", target_arch = "s390x", feature = "aes-gcm-siv", test)),
+  not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    feature = "aes-gcm-siv",
+    test
+  )),
   allow(dead_code)
 )]
 #[inline]
 pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  #[cfg(target_arch = "aarch64")]
+  if let Key128Inner::Aarch64Aes(ce_rk) = &ek.inner {
+    if !blocks.is_empty() {
+      // SAFETY: AES-CE AES-128 batch encryption because:
+      // 1. The `Aarch64Aes` key variant is only constructed after runtime detection confirms AES-CE.
+      // 2. `blocks` is a mutable slice of initialized 16-byte AES blocks.
+      unsafe { aarch64_encrypt_blocks_128_inline(ce_rk, blocks) };
+    }
+    return;
+  }
+  #[cfg(target_arch = "powerpc64")]
+  if let Key128Inner::Power8Crypto(ppc_rk) = &ek.inner {
+    if !blocks.is_empty() {
+      // SAFETY: POWER8 AES-128 batch encryption because:
+      // 1. The `Power8Crypto` key variant is only constructed after runtime detection confirms POWER8
+      //    crypto.
+      // 2. `blocks` is a mutable slice of initialized 16-byte AES blocks.
+      unsafe { ppc_encrypt_blocks_128_inline(ppc_rk, blocks) };
+    }
+    return;
+  }
   #[cfg(target_arch = "s390x")]
   if let Key128Inner::S390xMsa(km_key) = &ek.inner {
     let count = blocks.len();
@@ -1007,6 +1336,50 @@ pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BL
         unsafe { core::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<u8>(), count.strict_mul(BLOCK_SIZE)) };
       // SAFETY: MSA verified by the S390xMsa variant constructor. `flat` is valid for `count*16` bytes.
       unsafe { s390x_encrypt_blocks_128_inline(km_key, flat, count) };
+    }
+    return;
+  }
+  #[cfg(target_arch = "riscv64")]
+  if let Key128Inner::Riscv64VectorCrypto(rk) = &ek.inner {
+    let mut offset = 0usize;
+    while offset.strict_add(4) <= blocks.len() {
+      let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+      debug_assert_eq!(batch_slice.len(), 4);
+      // SAFETY: exact four-block RISC-V Zvkned AES-128 batch because:
+      // 1. `batch_slice` is sliced to exactly four contiguous `[u8; 16]` elements.
+      // 2. `Riscv64VectorCrypto` is only constructed after runtime detection confirms Zvkned.
+      // 3. The mutable borrow is scoped to this loop iteration.
+      let batch: &mut [[u8; BLOCK_SIZE]; 4] = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+      // SAFETY: `Riscv64VectorCrypto` proves Zvkned availability for this key.
+      unsafe { rv_aes::encrypt_4blocks_128(rk, batch) };
+      offset = offset.strict_add(4);
+    }
+    while offset < blocks.len() {
+      // SAFETY: same Zvkned availability guarantee as the wide path above.
+      unsafe { rv_aes::encrypt_block_128(rk, &mut blocks[offset]) };
+      offset = offset.strict_add(1);
+    }
+    return;
+  }
+  #[cfg(target_arch = "riscv64")]
+  if let Key128Inner::Riscv64ScalarCrypto(rk) = &ek.inner {
+    let mut offset = 0usize;
+    while offset.strict_add(4) <= blocks.len() {
+      let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+      debug_assert_eq!(batch_slice.len(), 4);
+      // SAFETY: exact four-block RISC-V Zkne AES-128 batch because:
+      // 1. `batch_slice` is sliced to exactly four contiguous `[u8; 16]` elements.
+      // 2. `Riscv64ScalarCrypto` is only constructed after runtime detection confirms Zkne.
+      // 3. The mutable borrow is scoped to this loop iteration.
+      let batch: &mut [[u8; BLOCK_SIZE]; 4] = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+      // SAFETY: `Riscv64ScalarCrypto` proves Zkne availability for this key.
+      unsafe { rv_scalar_aes::encrypt_4blocks_128(rk, batch) };
+      offset = offset.strict_add(4);
+    }
+    while offset < blocks.len() {
+      // SAFETY: same Zkne availability guarantee as the wide path above.
+      unsafe { rv_scalar_aes::encrypt_block_128(rk, &mut blocks[offset]) };
+      offset = offset.strict_add(1);
     }
     return;
   }
@@ -1109,9 +1482,40 @@ fn aes128_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS_128], block: &mut
 /// On s390x this issues a single KM instruction for all `blocks`,
 /// avoiding per-block parameter-block setup overhead. On other platforms
 /// falls back to per-block dispatch.
-#[cfg_attr(not(any(target_arch = "riscv64", feature = "aes-gcm-siv", test)), allow(dead_code))]
+#[cfg_attr(
+  not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    feature = "aes-gcm-siv",
+    test
+  )),
+  allow(dead_code)
+)]
 #[inline]
 pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
+  #[cfg(target_arch = "aarch64")]
+  if let KeyInner::Aarch64Aes(ce_rk) = &ek.inner {
+    if !blocks.is_empty() {
+      // SAFETY: AES-CE AES-256 batch encryption because:
+      // 1. The `Aarch64Aes` key variant is only constructed after runtime detection confirms AES-CE.
+      // 2. `blocks` is a mutable slice of initialized 16-byte AES blocks.
+      unsafe { aarch64_encrypt_blocks_inline(ce_rk, blocks) };
+    }
+    return;
+  }
+  #[cfg(target_arch = "powerpc64")]
+  if let KeyInner::Power8Crypto(ppc_rk) = &ek.inner {
+    if !blocks.is_empty() {
+      // SAFETY: POWER8 AES-256 batch encryption because:
+      // 1. The `Power8Crypto` key variant is only constructed after runtime detection confirms POWER8
+      //    crypto.
+      // 2. `blocks` is a mutable slice of initialized 16-byte AES blocks.
+      unsafe { ppc_encrypt_blocks_inline(ppc_rk, blocks) };
+    }
+    return;
+  }
   #[cfg(target_arch = "s390x")]
   if let KeyInner::S390xMsa(km_key) = &ek.inner {
     let count = blocks.len();
@@ -1122,6 +1526,50 @@ pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BL
         unsafe { core::slice::from_raw_parts_mut(blocks.as_mut_ptr().cast::<u8>(), count.strict_mul(BLOCK_SIZE)) };
       // SAFETY: MSA verified by the S390xKm variant constructor. `flat` is valid for `count*16` bytes.
       unsafe { s390x_encrypt_blocks_inline(km_key, flat, count) };
+    }
+    return;
+  }
+  #[cfg(target_arch = "riscv64")]
+  if let KeyInner::Riscv64VectorCrypto(rk) = &ek.inner {
+    let mut offset = 0usize;
+    while offset.strict_add(4) <= blocks.len() {
+      let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+      debug_assert_eq!(batch_slice.len(), 4);
+      // SAFETY: exact four-block RISC-V Zvkned AES-256 batch because:
+      // 1. `batch_slice` is sliced to exactly four contiguous `[u8; 16]` elements.
+      // 2. `Riscv64VectorCrypto` is only constructed after runtime detection confirms Zvkned.
+      // 3. The mutable borrow is scoped to this loop iteration.
+      let batch: &mut [[u8; BLOCK_SIZE]; 4] = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+      // SAFETY: `Riscv64VectorCrypto` proves Zvkned availability for this key.
+      unsafe { rv_aes::encrypt_4blocks(rk, batch) };
+      offset = offset.strict_add(4);
+    }
+    while offset < blocks.len() {
+      // SAFETY: Same Zvkned availability guarantee as the wide path above.
+      unsafe { rv_aes::encrypt_block(rk, &mut blocks[offset]) };
+      offset = offset.strict_add(1);
+    }
+    return;
+  }
+  #[cfg(target_arch = "riscv64")]
+  if let KeyInner::Riscv64ScalarCrypto(rk) = &ek.inner {
+    let mut offset = 0usize;
+    while offset.strict_add(4) <= blocks.len() {
+      let batch_slice = &mut blocks[offset..offset.strict_add(4)];
+      debug_assert_eq!(batch_slice.len(), 4);
+      // SAFETY: exact four-block RISC-V Zkne AES-256 batch because:
+      // 1. `batch_slice` is sliced to exactly four contiguous `[u8; 16]` elements.
+      // 2. `Riscv64ScalarCrypto` is only constructed after runtime detection confirms Zkne.
+      // 3. The mutable borrow is scoped to this loop iteration.
+      let batch: &mut [[u8; BLOCK_SIZE]; 4] = unsafe { &mut *batch_slice.as_mut_ptr().cast::<[[u8; BLOCK_SIZE]; 4]>() };
+      // SAFETY: `Riscv64ScalarCrypto` proves Zkne availability for this key.
+      unsafe { rv_scalar_aes::encrypt_4blocks(rk, batch) };
+      offset = offset.strict_add(4);
+    }
+    while offset < blocks.len() {
+      // SAFETY: Same Zkne availability guarantee as the wide path above.
+      unsafe { rv_scalar_aes::encrypt_block(rk, &mut blocks[offset]) };
+      offset = offset.strict_add(1);
     }
     return;
   }
@@ -1324,7 +1772,13 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
   let mut offset = 0usize;
 
   #[cfg(target_arch = "riscv64")]
-  if matches!(&ek.inner, KeyInner::Riscv64Vperm(_) | KeyInner::Riscv64Fixslice(_)) {
+  if matches!(
+    &ek.inner,
+    KeyInner::Riscv64VectorCrypto(_)
+      | KeyInner::Riscv64ScalarCrypto(_)
+      | KeyInner::Riscv64Vperm(_)
+      | KeyInner::Riscv64Fixslice(_)
+  ) {
     let iv_suffix: [u8; 12] = {
       let mut buf = [0u8; 12];
       buf.copy_from_slice(&initial_counter[4..16]);
@@ -1405,7 +1859,10 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
   #[cfg(target_arch = "riscv64")]
   if matches!(
     &ek.inner,
-    Key128Inner::Riscv64Vperm(_) | Key128Inner::Riscv64Fixslice(_)
+    Key128Inner::Riscv64VectorCrypto(_)
+      | Key128Inner::Riscv64ScalarCrypto(_)
+      | Key128Inner::Riscv64Vperm(_)
+      | Key128Inner::Riscv64Fixslice(_)
   ) {
     let iv_suffix: [u8; 12] = {
       let mut buf = [0u8; 12];
@@ -1473,26 +1930,56 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
 // AES-CTR for GCM (big-endian 32-bit counter in bytes 12..15)
 // ---------------------------------------------------------------------------
 
-#[cfg(all(feature = "aes-gcm", any(target_arch = "riscv64", target_arch = "s390x")))]
+#[cfg(all(
+  feature = "aes-gcm",
+  any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x"
+  )
+))]
 #[inline]
 fn aes256_ctr32_be_uses_block_batch(ek: &Aes256EncKey) -> bool {
   match &ek.inner {
+    #[cfg(target_arch = "aarch64")]
+    KeyInner::Aarch64Aes(_) => true,
+    #[cfg(target_arch = "powerpc64")]
+    KeyInner::Power8Crypto(_) => true,
     #[cfg(target_arch = "s390x")]
     KeyInner::S390xMsa(_) => true,
     #[cfg(target_arch = "riscv64")]
-    KeyInner::Riscv64Vperm(_) | KeyInner::Riscv64Fixslice(_) => true,
+    KeyInner::Riscv64VectorCrypto(_)
+    | KeyInner::Riscv64ScalarCrypto(_)
+    | KeyInner::Riscv64Vperm(_)
+    | KeyInner::Riscv64Fixslice(_) => true,
     _ => false,
   }
 }
 
-#[cfg(all(feature = "aes-gcm", any(target_arch = "riscv64", target_arch = "s390x")))]
+#[cfg(all(
+  feature = "aes-gcm",
+  any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x"
+  )
+))]
 #[inline]
 fn aes128_ctr32_be_uses_block_batch(ek: &Aes128EncKey) -> bool {
   match &ek.inner {
+    #[cfg(target_arch = "aarch64")]
+    Key128Inner::Aarch64Aes(_) => true,
+    #[cfg(target_arch = "powerpc64")]
+    Key128Inner::Power8Crypto(_) => true,
     #[cfg(target_arch = "s390x")]
     Key128Inner::S390xMsa(_) => true,
     #[cfg(target_arch = "riscv64")]
-    Key128Inner::Riscv64Vperm(_) | Key128Inner::Riscv64Fixslice(_) => true,
+    Key128Inner::Riscv64VectorCrypto(_)
+    | Key128Inner::Riscv64ScalarCrypto(_)
+    | Key128Inner::Riscv64Vperm(_)
+    | Key128Inner::Riscv64Fixslice(_) => true,
     _ => false,
   }
 }
@@ -1515,7 +2002,43 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
   ]);
   let mut offset = 0usize;
 
-  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(target_arch = "aarch64")]
+  if let KeyInner::Aarch64Aes(ce_rk) = &ek.inner {
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+
+    while offset.strict_add(128) <= data.len() {
+      let end = offset.strict_add(128);
+      // SAFETY: direct aarch64 CTR batch because:
+      // 1. `Aarch64Aes` keys are only constructed after runtime detection confirms AES-CE.
+      // 2. The loop condition guarantees the helper receives at least 128 writable bytes.
+      // 3. The counter prefix is copied from the caller-provided GCM counter block.
+      let _ = unsafe { ce::encrypt_ctr32_be_xor_8blocks_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]) };
+      ctr = ctr.wrapping_add(8);
+      offset = end;
+    }
+
+    while offset.strict_add(64) <= data.len() {
+      let end = offset.strict_add(64);
+      // SAFETY: direct aarch64 CTR batch because:
+      // 1. `Aarch64Aes` keys are only constructed after runtime detection confirms AES-CE.
+      // 2. The loop condition guarantees the helper receives at least 64 writable bytes.
+      // 3. The counter prefix is copied from the caller-provided GCM counter block.
+      let _ = unsafe { ce::encrypt_ctr32_be_xor_4blocks_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]) };
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
+  }
+
+  #[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x"
+  ))]
   if aes256_ctr32_be_uses_block_batch(ek) {
     let iv_prefix: [u8; 12] = {
       let mut buf = [0u8; 12];
@@ -1586,31 +2109,598 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
 // Wide AES-CTR for GCM (big-endian 32-bit counter, VAES-512)
 // ---------------------------------------------------------------------------
 
-/// AES-256 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
+/// Build four big-endian GCM counter blocks directly in a VAES register.
 ///
-/// Processes 4 blocks (64 bytes) per iteration using VAES-512, then falls
-/// back to single-block AES-NI for the remaining 0-3 blocks.
-/// Returns the number of blocks encrypted (for counter tracking).
-///
-/// The counter occupies bytes 12..15 (big-endian) per NIST SP 800-38D.
+/// # Safety
+/// Caller must ensure AVX-512F is available.
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
+#[target_feature(enable = "avx512f")]
+#[inline]
+unsafe fn x86_gcm_ctr_blocks_be_4(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m512i {
+  use core::arch::x86_64::*;
+
+  let c0 = ctr.swap_bytes();
+  let c1 = ctr.wrapping_add(1).swap_bytes();
+  let c2 = ctr.wrapping_add(2).swap_bytes();
+  let c3 = ctr.wrapping_add(3).swap_bytes();
+  let iv0 = iv_words[0] as i32;
+  let iv1 = iv_words[1] as i32;
+  let iv2 = iv_words[2] as i32;
+  let b0 = _mm_set_epi32(c0 as i32, iv2, iv1, iv0);
+  let b1 = _mm_set_epi32(c1 as i32, iv2, iv1, iv0);
+  let b2 = _mm_set_epi32(c2 as i32, iv2, iv1, iv0);
+  let b3 = _mm_set_epi32(c3 as i32, iv2, iv1, iv0);
+
+  let z = _mm512_zextsi128_si512(b0);
+  let z = _mm512_inserti32x4(z, b1, 1);
+  let z = _mm512_inserti32x4(z, b2, 2);
+  _mm512_inserti32x4(z, b3, 3)
+}
+
+/// Build one big-endian GCM counter block directly in an XMM register.
+///
+/// # Safety
+/// Caller must ensure SSE2 is available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "sse2")]
+#[inline]
+unsafe fn x86_gcm_ctr_block_be(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m128i {
+  use core::arch::x86_64::*;
+
+  _mm_set_epi32(
+    ctr.swap_bytes() as i32,
+    iv_words[2] as i32,
+    iv_words[1] as i32,
+    iv_words[0] as i32,
+  )
+}
+
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "aes-gcm"))]
+#[inline]
+fn ghash_ciphertext_fallback(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
+  let (blocks, remainder) = data.as_chunks::<16>();
+  for block in blocks {
+    acc ^= u128::from_be_bytes(*block);
+    acc = super::polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    acc ^= u128::from_be_bytes(block);
+    acc = super::polyval::clmul128_reduce(acc, h_polyval);
+  }
+
+  acc
+}
+
+/// AES-256 CTR encryption fused with PCLMUL GHASH accumulation for GCM sealing.
+///
+/// Classic AES-NI/PCLMUL path for x86_64 hosts without VAES/VPCLMUL. This stays
+/// separate from the VAES path so older x86 cores still get a fused CTR/GHASH
+/// kernel instead of scalar CTR plus a second GHASH pass.
+///
+/// # Safety
+/// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_aesni_pclmul_ghash(
   ek: &Aes256EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
-) {
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
   use core::arch::x86_64::*;
 
-  // SAFETY: AesNi variant is guaranteed by caller; target_feature gate
-  // ensures VAES + AVX-512 instructions are available.
+  // SAFETY: fused x86 AES-NI/PCLMUL sealing because:
+  // 1. This function's caller guarantees AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+  // 2. `data` is a valid mutable byte slice; pointer arithmetic is bounded by checked loop
+  //    conditions.
+  // 3. GHASH folds ciphertext registers after encryption, matching GCM authentication semantics.
   unsafe {
     let ni_rk = match &ek.inner {
       KeyInner::X86AesNi(rk) => rk,
       _ => {
-        // Fallback to scalar if not AES-NI (shouldn't happen when VAES is available).
         aes256_ctr32_encrypt_be(ek, initial_counter, data);
-        return;
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr0 = x86_gcm_ctr_block_be(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(1));
+      let ctr2 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(2));
+      let ctr3 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(3));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_4blocks_aesni(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let ptr = data.as_mut_ptr().add(offset);
+      let p0 = _mm_loadu_si128(ptr.cast());
+      let p1 = _mm_loadu_si128(ptr.add(16).cast());
+      let p2 = _mm_loadu_si128(ptr.add(32).cast());
+      let p3 = _mm_loadu_si128(ptr.add(48).cast());
+      let c0 = _mm_xor_si128(p0, ks0);
+      let c1 = _mm_xor_si128(p1, ks1);
+      let c2 = _mm_xor_si128(p2, ks2);
+      let c3 = _mm_xor_si128(p3, ks3);
+      _mm_storeu_si128(ptr.cast(), c0);
+      _mm_storeu_si128(ptr.add(16).cast(), c1);
+      _mm_storeu_si128(ptr.add(32).cast(), c2);
+      _mm_storeu_si128(ptr.add(48).cast(), c3);
+      acc = super::polyval::x86_pclmul_aggregate_4blocks_be_xmm_inline(acc, h_powers_rev, c0, c1, c2, c3);
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        let ciphertext = xored.to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-256 CTR decryption fused with PCLMUL GHASH accumulation for GCM open.
+///
+/// # Safety
+/// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
+pub(crate) unsafe fn aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-NI/PCLMUL opening because:
+  // 1. This function's caller guarantees AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+  // 2. Ciphertext registers are folded into GHASH before plaintext is stored back.
+  // 3. All pointer arithmetic stays inside checked chunk bounds.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      KeyInner::X86AesNi(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr0 = x86_gcm_ctr_block_be(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(1));
+      let ctr2 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(2));
+      let ctr3 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(3));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_4blocks_aesni(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let ptr = data.as_mut_ptr().add(offset);
+      let c0 = _mm_loadu_si128(ptr.cast());
+      let c1 = _mm_loadu_si128(ptr.add(16).cast());
+      let c2 = _mm_loadu_si128(ptr.add(32).cast());
+      let c3 = _mm_loadu_si128(ptr.add(48).cast());
+      acc = super::polyval::x86_pclmul_aggregate_4blocks_be_xmm_inline(acc, h_powers_rev, c0, c1, c2, c3);
+      _mm_storeu_si128(ptr.cast(), _mm_xor_si128(c0, ks0));
+      _mm_storeu_si128(ptr.add(16).cast(), _mm_xor_si128(c1, ks1));
+      _mm_storeu_si128(ptr.add(32).cast(), _mm_xor_si128(c2, ks2));
+      _mm_storeu_si128(ptr.add(48).cast(), _mm_xor_si128(c3, ks3));
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-256 CTR encryption fused with GHASH accumulation for GCM sealing.
+///
+/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// ciphertext has been folded in. The incoming `acc` is normally the GHASH
+/// state after AAD processing.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-GCM sealing because:
+  // 1. This function's caller guarantees all required x86 target features.
+  // 2. `data` is a valid mutable byte slice; all pointer arithmetic stays inside checked chunk
+  //    bounds.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      KeyInner::X86AesNi(rk) => rk,
+      _ => {
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(256) <= data.len() {
+      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
+      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
+      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      let c0 = _mm512_xor_si512(p0, ks0);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), c0);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
+
+      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
+      let c1 = _mm512_xor_si512(p1, ks1);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(64)).cast(), c1);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
+
+      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
+      let c2 = _mm512_xor_si512(p2, ks2);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(128)).cast(), c2);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
+
+      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
+      let c3 = _mm512_xor_si512(p3, ks3);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(192)).cast(), c3);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+
+      ctr = ctr.wrapping_add(16);
+      offset = offset.strict_add(256);
+    }
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
+      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      let ciphertext = _mm512_xor_si512(plaintext, keystream);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; 16];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        let ciphertext = xored.to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-256 CTR decryption fused with GHASH accumulation for GCM open.
+///
+/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
+/// the accumulator. Authentication is finalized by the caller.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-GCM opening because:
+  // 1. This function's caller guarantees all required x86 target features.
+  // 2. `data` is a valid mutable ciphertext slice. Each vector is folded into GHASH before the
+  //    corresponding plaintext is stored back.
+  // 3. All pointer arithmetic stays inside checked chunk bounds.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      KeyInner::X86AesNi(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(256) <= data.len() {
+      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
+      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
+      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(c0, ks0));
+
+      let c1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
+        _mm512_xor_si512(c1, ks1),
+      );
+
+      let c2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
+        _mm512_xor_si512(c2, ks2),
+      );
+
+      let c3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
+        _mm512_xor_si512(c3, ks3),
+      );
+
+      ctr = ctr.wrapping_add(16);
+      offset = offset.strict_add(256);
+    }
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
+      let ciphertext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset).cast(),
+        _mm512_xor_si512(ciphertext, keystream),
+      );
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; 16];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-256 CTR encryption fused with PMULL GHASH accumulation for GCM sealing.
+///
+/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// ciphertext has been folded in. The incoming `acc` is normally the GHASH
+/// state after AAD processing.
+///
+/// # Safety
+/// Caller must ensure AES-CE and PMULL are available.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,neon")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_aarch64_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: fused aarch64 AES-GCM sealing because:
+  // 1. This function's caller guarantees AES-CE and PMULL availability.
+  // 2. `data` is a valid mutable byte slice; all chunk processing uses checked slice ranges and the
+  //    tail path handles partial blocks.
+  unsafe {
+    let ce_rk = match &ek.inner {
+      KeyInner::Aarch64Aes(rk) => rk,
+      _ => {
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
       }
     };
 
@@ -1627,38 +2717,28 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
     ]);
     let mut offset = 0usize;
 
-    // Wide path: 4 blocks (64 bytes) per iteration.
-    while offset.strict_add(64) <= data.len() {
-      // Build 4 counter blocks.
-      let mut ctr_blocks = [[0u8; 16]; 4];
-      let mut i = 0u32;
-      while i < 4 {
-        ctr_blocks[i as usize][..12].copy_from_slice(&iv_prefix);
-        ctr_blocks[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
-        i = i.strict_add(1);
-      }
-      let ctr_vec = _mm512_loadu_si512(ctr_blocks.as_ptr().cast());
-
-      // Encrypt 4 blocks in parallel.
-      let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
-
-      // XOR keystream with data.
-      let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      let ciphertext = _mm512_xor_si512(plaintext, keystream);
-      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
-
-      ctr = ctr.wrapping_add(4);
-      offset = offset.strict_add(64);
+    if offset.strict_add(128) <= data.len() {
+      let state = ce::encrypt_ctr32_be_xor_ghash_128b_chunks_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
+      acc = state.0;
+      ctr = state.1;
+      offset = state.2;
     }
 
-    // Tail: 0-3 remaining blocks via single-block AES-NI.
+    while offset.strict_add(64) <= data.len() {
+      let end = offset.strict_add(64);
+      let blocks = ce::encrypt_ctr32_be_xor_4blocks_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
+      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks);
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
+
     while offset < data.len() {
-      let mut counter_block = [0u8; 16];
+      let mut counter_block = [0u8; BLOCK_SIZE];
       counter_block[..12].copy_from_slice(&iv_prefix);
       counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
 
       let mut keystream = counter_block;
-      ni::encrypt_block(ni_rk, &mut keystream);
+      ce::encrypt_block_core(ce_rk, &mut keystream);
 
       let remaining = data.len().strict_sub(offset);
       if remaining >= BLOCK_SIZE {
@@ -1666,9 +2746,121 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+        let ciphertext = xored.to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-256 CTR decryption fused with PMULL GHASH accumulation for GCM open.
+///
+/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
+/// the accumulator. Authentication is still finalized and checked by the
+/// caller, which zeroizes the buffer on failure.
+///
+/// # Safety
+/// Caller must ensure AES-CE and PMULL are available.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,neon")]
+pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: fused aarch64 AES-GCM opening because:
+  // 1. This function's caller guarantees AES-CE and PMULL availability.
+  // 2. `data` is a valid mutable ciphertext slice. Ciphertext blocks are copied before in-place
+  //    decryption, so GHASH always authenticates the original bytes.
+  // 3. All chunk processing uses checked slice bounds and the tail path handles partial blocks.
+  unsafe {
+    let ce_rk = match &ek.inner {
+      KeyInner::Aarch64Aes(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let state = ce::decrypt_ctr32_be_xor_ghash_128b_chunks_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
+    acc = state.0;
+    ctr = state.1;
+    let mut offset = state.2;
+
+    while offset.strict_add(64) <= data.len() {
+      let end = offset.strict_add(64);
+      let chunk = &data[offset..end];
+      let (ciphertext_blocks, _) = chunk.as_chunks::<16>();
+      let blocks = [
+        u128::from_be_bytes(ciphertext_blocks[0]),
+        u128::from_be_bytes(ciphertext_blocks[1]),
+        u128::from_be_bytes(ciphertext_blocks[2]),
+        u128::from_be_bytes(ciphertext_blocks[3]),
+      ];
+      let _ = ce::encrypt_ctr32_be_xor_4blocks_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
+      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks);
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ce::encrypt_block_core(ce_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+
+        let ks = u128::from_ne_bytes(keystream);
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ ks;
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+
         let mut i = 0usize;
         while i < remaining {
           data[offset.strict_add(i)] ^= keystream[i];
@@ -1678,6 +2870,8 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide(
       }
       ctr = ctr.wrapping_add(1);
     }
+
+    acc
   }
 }
 
@@ -1702,7 +2896,43 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
   ]);
   let mut offset = 0usize;
 
-  #[cfg(any(target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(target_arch = "aarch64")]
+  if let Key128Inner::Aarch64Aes(ce_rk) = &ek.inner {
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+
+    while offset.strict_add(128) <= data.len() {
+      let end = offset.strict_add(128);
+      // SAFETY: direct aarch64 CTR batch because:
+      // 1. `Aarch64Aes` keys are only constructed after runtime detection confirms AES-CE.
+      // 2. The loop condition guarantees the helper receives at least 128 writable bytes.
+      // 3. The counter prefix is copied from the caller-provided GCM counter block.
+      let _ = unsafe { ce::encrypt_ctr32_be_xor_8blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]) };
+      ctr = ctr.wrapping_add(8);
+      offset = end;
+    }
+
+    while offset.strict_add(64) <= data.len() {
+      let end = offset.strict_add(64);
+      // SAFETY: direct aarch64 CTR batch because:
+      // 1. `Aarch64Aes` keys are only constructed after runtime detection confirms AES-CE.
+      // 2. The loop condition guarantees the helper receives at least 64 writable bytes.
+      // 3. The counter prefix is copied from the caller-provided GCM counter block.
+      let _ = unsafe { ce::encrypt_ctr32_be_xor_4blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]) };
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
+  }
+
+  #[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x"
+  ))]
   if aes128_ctr32_be_uses_block_batch(ek) {
     let iv_prefix: [u8; 12] = {
       let mut buf = [0u8; 12];
@@ -1766,36 +2996,35 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
   }
 }
 
-// ---------------------------------------------------------------------------
-// Wide AES-128 CTR for GCM (big-endian 32-bit counter, VAES-512)
-// ---------------------------------------------------------------------------
-
-/// AES-128 CTR encryption using VAES-512 for the bulk, AES-NI for the tail.
+/// AES-128 CTR encryption fused with PMULL GHASH accumulation for GCM sealing.
 ///
-/// Mirrors [`aes256_ctr32_encrypt_be_wide`] but runs the AES-128 round
-/// schedule (10 rounds). Processes 4 blocks (64 bytes) per iteration via
-/// VAES-512 then falls back to single-block AES-NI for the 0-3 remaining
-/// blocks.
+/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// ciphertext has been folded in. The incoming `acc` is normally the GHASH
+/// state after AAD processing.
 ///
 /// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
-#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
-pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide(
+/// Caller must ensure AES-CE and PMULL are available.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,neon")]
+pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
   ek: &Aes128EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
-) {
-  use core::arch::x86_64::*;
-
-  // SAFETY: X86AesNi variant guaranteed by caller; target_feature gate
-  // ensures VAES + AVX-512 instructions are available.
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: fused aarch64 AES-GCM sealing because:
+  // 1. This function's caller guarantees AES-CE and PMULL availability.
+  // 2. `data` is a valid mutable byte slice; all chunk processing uses checked slice ranges and the
+  //    tail path handles partial blocks.
   unsafe {
-    let ni_rk = match &ek.inner {
-      Key128Inner::X86AesNi(rk) => rk,
+    let ce_rk = match &ek.inner {
+      Key128Inner::Aarch64Aes(rk) => rk,
       _ => {
         aes128_ctr32_encrypt_be(ek, initial_counter, data);
-        return;
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
       }
     };
 
@@ -1812,21 +3041,484 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide(
     ]);
     let mut offset = 0usize;
 
-    while offset.strict_add(64) <= data.len() {
-      let mut ctr_blocks = [[0u8; 16]; 4];
-      let mut i = 0u32;
-      while i < 4 {
-        ctr_blocks[i as usize][..12].copy_from_slice(&iv_prefix);
-        ctr_blocks[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
-        i = i.strict_add(1);
+    // Short messages are faster if GHASH consumes ciphertext registers immediately. The lagged
+    // pipeline below wins once there is enough work to hide GHASH behind the next AES chunk.
+    if data.len() <= 256 {
+      while offset.strict_add(128) <= data.len() {
+        let end = offset.strict_add(128);
+        let blocks = ce::encrypt_ctr32_be_xor_8blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
+        acc = super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev_8, &blocks);
+        ctr = ctr.wrapping_add(8);
+        offset = end;
       }
-      let ctr_vec = _mm512_loadu_si512(ctr_blocks.as_ptr().cast());
+    } else {
+      let state = ce::encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
+      acc = state.0;
+      ctr = state.1;
+      offset = state.2;
+    }
 
+    while offset.strict_add(64) <= data.len() {
+      let end = offset.strict_add(64);
+      let blocks = ce::encrypt_ctr32_be_xor_4blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
+      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks);
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ce::encrypt_block_128_core(ce_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        let ciphertext = xored.to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR decryption fused with PMULL GHASH accumulation for GCM open.
+///
+/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
+/// the accumulator. Authentication is still finalized and checked by the
+/// caller, which zeroizes the buffer on failure.
+///
+/// # Safety
+/// Caller must ensure AES-CE and PMULL are available.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,neon")]
+pub(crate) unsafe fn aes128_ctr32_decrypt_be_aarch64_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  h_powers_rev_8: &[u128; 8],
+) -> u128 {
+  // SAFETY: fused aarch64 AES-GCM opening because:
+  // 1. This function's caller guarantees AES-CE and PMULL availability.
+  // 2. `data` is a valid mutable ciphertext slice. Ciphertext blocks are copied before in-place
+  //    decryption, so GHASH always authenticates the original bytes.
+  // 3. All chunk processing uses checked slice bounds and the tail path handles partial blocks.
+  unsafe {
+    let ce_rk = match &ek.inner {
+      Key128Inner::Aarch64Aes(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let state = ce::decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
+    acc = state.0;
+    ctr = state.1;
+    let mut offset = state.2;
+
+    while offset.strict_add(64) <= data.len() {
+      let end = offset.strict_add(64);
+      let chunk = &data[offset..end];
+      let (ciphertext_blocks, _) = chunk.as_chunks::<16>();
+      let blocks = [
+        u128::from_be_bytes(ciphertext_blocks[0]),
+        u128::from_be_bytes(ciphertext_blocks[1]),
+        u128::from_be_bytes(ciphertext_blocks[2]),
+        u128::from_be_bytes(ciphertext_blocks[3]),
+      ];
+      let _ = ce::encrypt_ctr32_be_xor_4blocks_128_core(ce_rk, &iv_prefix, ctr, &mut data[offset..end]);
+      acc = super::polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks);
+      ctr = ctr.wrapping_add(4);
+      offset = end;
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ce::encrypt_block_128_core(ce_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+
+        let ks = u128::from_ne_bytes(keystream);
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ ks;
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::aarch64_clmul128_reduce_inline(acc, h_polyval);
+
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR encryption fused with PCLMUL GHASH accumulation for GCM sealing.
+///
+/// # Safety
+/// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
+pub(crate) unsafe fn aes128_ctr32_encrypt_be_aesni_pclmul_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-NI/PCLMUL sealing because:
+  // 1. This function's caller guarantees AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+  // 2. `data` is a valid mutable byte slice; pointer arithmetic is bounded by checked loop
+  //    conditions.
+  // 3. GHASH folds ciphertext registers after encryption, matching GCM authentication semantics.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      Key128Inner::X86AesNi(rk) => rk,
+      _ => {
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr0 = x86_gcm_ctr_block_be(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(1));
+      let ctr2 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(2));
+      let ctr3 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(3));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_4blocks_128_aesni(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let ptr = data.as_mut_ptr().add(offset);
+      let p0 = _mm_loadu_si128(ptr.cast());
+      let p1 = _mm_loadu_si128(ptr.add(16).cast());
+      let p2 = _mm_loadu_si128(ptr.add(32).cast());
+      let p3 = _mm_loadu_si128(ptr.add(48).cast());
+      let c0 = _mm_xor_si128(p0, ks0);
+      let c1 = _mm_xor_si128(p1, ks1);
+      let c2 = _mm_xor_si128(p2, ks2);
+      let c3 = _mm_xor_si128(p3, ks3);
+      _mm_storeu_si128(ptr.cast(), c0);
+      _mm_storeu_si128(ptr.add(16).cast(), c1);
+      _mm_storeu_si128(ptr.add(32).cast(), c2);
+      _mm_storeu_si128(ptr.add(48).cast(), c3);
+      acc = super::polyval::x86_pclmul_aggregate_4blocks_be_xmm_inline(acc, h_powers_rev, c0, c1, c2, c3);
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut d = [0u8; BLOCK_SIZE];
+        d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let xored = u128::from_ne_bytes(d) ^ ks;
+        let ciphertext = xored.to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR decryption fused with PCLMUL GHASH accumulation for GCM open.
+///
+/// # Safety
+/// Caller must ensure AES-NI, PCLMULQDQ, SSE2, and SSSE3 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,pclmulqdq,sse2,ssse3")]
+pub(crate) unsafe fn aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-NI/PCLMUL opening because:
+  // 1. This function's caller guarantees AES-NI, PCLMULQDQ, SSE2, and SSSE3.
+  // 2. Ciphertext registers are folded into GHASH before plaintext is stored back.
+  // 3. All pointer arithmetic stays inside checked chunk bounds.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      Key128Inner::X86AesNi(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr0 = x86_gcm_ctr_block_be(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(1));
+      let ctr2 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(2));
+      let ctr3 = x86_gcm_ctr_block_be(iv_words, ctr.wrapping_add(3));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_4blocks_128_aesni(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let ptr = data.as_mut_ptr().add(offset);
+      let c0 = _mm_loadu_si128(ptr.cast());
+      let c1 = _mm_loadu_si128(ptr.add(16).cast());
+      let c2 = _mm_loadu_si128(ptr.add(32).cast());
+      let c3 = _mm_loadu_si128(ptr.add(48).cast());
+      acc = super::polyval::x86_pclmul_aggregate_4blocks_be_xmm_inline(acc, h_powers_rev, c0, c1, c2, c3);
+      _mm_storeu_si128(ptr.cast(), _mm_xor_si128(c0, ks0));
+      _mm_storeu_si128(ptr.add(16).cast(), _mm_xor_si128(c1, ks1));
+      _mm_storeu_si128(ptr.add(32).cast(), _mm_xor_si128(c2, ks2));
+      _mm_storeu_si128(ptr.add(48).cast(), _mm_xor_si128(c3, ks3));
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR encryption fused with GHASH accumulation for GCM sealing.
+///
+/// Encrypts `data` in place and returns the GHASH accumulator after the
+/// ciphertext has been folded in. The incoming `acc` is normally the GHASH
+/// state after AAD processing.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-GCM sealing because:
+  // 1. This function's caller guarantees all required x86 target features.
+  // 2. `data` is a valid mutable byte slice; all pointer arithmetic stays inside checked chunk
+  //    bounds.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      Key128Inner::X86AesNi(rk) => rk,
+      _ => {
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(256) <= data.len() {
+      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
+      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
+      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      let c0 = _mm512_xor_si512(p0, ks0);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), c0);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
+
+      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
+      let c1 = _mm512_xor_si512(p1, ks1);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(64)).cast(), c1);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
+
+      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
+      let c2 = _mm512_xor_si512(p2, ks2);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(128)).cast(), c2);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
+
+      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
+      let c3 = _mm512_xor_si512(p3, ks3);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(192)).cast(), c3);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+
+      ctr = ctr.wrapping_add(16);
+      offset = offset.strict_add(256);
+    }
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
       let keystream = ni::encrypt_4blocks_128(ni_rk, ctr_vec);
-
       let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
       let ciphertext = _mm512_xor_si512(plaintext, keystream);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), ciphertext);
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
 
       ctr = ctr.wrapping_add(4);
       offset = offset.strict_add(64);
@@ -1846,9 +3538,157 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide(
         let mut d = [0u8; BLOCK_SIZE];
         d.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
         let xored = u128::from_ne_bytes(d) ^ ks;
-        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+        let ciphertext = xored.to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
         offset = offset.strict_add(BLOCK_SIZE);
       } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR decryption fused with GHASH accumulation for GCM open.
+///
+/// Folds ciphertext into GHASH, decrypts the same chunk in place, and returns
+/// the accumulator. Authentication is finalized by the caller.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VAES + VPCLMULQDQ + PCLMULQDQ + AES + SSE2.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,avx512bw,avx512dq,vaes,vpclmulqdq,pclmulqdq")]
+pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  use core::arch::x86_64::*;
+
+  // SAFETY: fused x86 AES-GCM opening because:
+  // 1. This function's caller guarantees all required x86 target features.
+  // 2. `data` is a valid mutable ciphertext slice. Each vector is folded into GHASH before the
+  //    corresponding plaintext is stored back.
+  // 3. All pointer arithmetic stays inside checked chunk bounds.
+  unsafe {
+    let ni_rk = match &ek.inner {
+      Key128Inner::X86AesNi(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let iv_words = [
+      u32::from_le_bytes([iv_prefix[0], iv_prefix[1], iv_prefix[2], iv_prefix[3]]),
+      u32::from_le_bytes([iv_prefix[4], iv_prefix[5], iv_prefix[6], iv_prefix[7]]),
+      u32::from_le_bytes([iv_prefix[8], iv_prefix[9], iv_prefix[10], iv_prefix[11]]),
+    ];
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(256) <= data.len() {
+      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
+      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
+      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(c0, ks0));
+
+      let c1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
+        _mm512_xor_si512(c1, ks1),
+      );
+
+      let c2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
+        _mm512_xor_si512(c2, ks2),
+      );
+
+      let c3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
+        _mm512_xor_si512(c3, ks3),
+      );
+
+      ctr = ctr.wrapping_add(16);
+      offset = offset.strict_add(256);
+    }
+
+    while offset.strict_add(64) <= data.len() {
+      let ctr_vec = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
+      let keystream = ni::encrypt_4blocks_128(ni_rk, ctr_vec);
+      let ciphertext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, ciphertext);
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset).cast(),
+        _mm512_xor_si512(ciphertext, keystream),
+      );
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; 16];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ni::encrypt_block_128(ni_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
+        let plaintext = u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream);
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext.to_ne_bytes());
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::x86_clmul128_reduce_inline(acc, h_polyval);
+
         let mut i = 0usize;
         while i < remaining {
           data[offset.strict_add(i)] ^= keystream[i];
@@ -1858,6 +3698,8 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide(
       }
       ctr = ctr.wrapping_add(1);
     }
+
+    acc
   }
 }
 

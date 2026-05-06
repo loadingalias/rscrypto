@@ -5,7 +5,7 @@ use core::{arch::asm, simd::i64x2};
 /// POWER8 vcipher expects round keys in big-endian byte order, which
 /// matches our portable key schedule (stored as big-endian u32 words).
 #[derive(Clone)]
-#[repr(C, align(16))]
+#[repr(C, align(64))]
 pub(in crate::aead) struct PpcRoundKeys {
   rk: [i64x2; 15],
 }
@@ -245,6 +245,99 @@ pub(super) unsafe fn encrypt_block_core(keys: &PpcRoundKeys, block: &mut [u8; 16
   }
 }
 
+/// Encrypt four independent AES-256 blocks with POWER8 vcipher.
+///
+/// POWER10 has four AES pipes; keeping four independent states live lets the
+/// scheduler issue vcipher work across those pipes instead of serializing one
+/// block through all rounds before starting the next counter block.
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 crypto support is available and `blocks` points
+/// to four valid writable AES blocks.
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn encrypt_4blocks_core(keys: &PpcRoundKeys, blocks: &mut [[u8; 16]; 4]) {
+  // SAFETY: four-block POWER8 AES because:
+  // 1. The caller guarantees POWER8 crypto support before entering this target-feature scope.
+  // 2. `blocks` is a live mutable reference to four initialized 16-byte AES blocks.
+  // 3. Each block is loaded once, transformed in registers, and stored back to its original slot.
+  unsafe {
+    let k = &keys.rk;
+
+    let mut s0 = load_block_be(blocks[0].as_ptr());
+    let mut s1 = load_block_be(blocks[1].as_ptr());
+    let mut s2 = load_block_be(blocks[2].as_ptr());
+    let mut s3 = load_block_be(blocks[3].as_ptr());
+
+    macro_rules! vxor_all {
+      ($rk:expr) => {
+        asm!(
+          "vxor {s0}, {s0}, {rk}",
+          "vxor {s1}, {s1}, {rk}",
+          "vxor {s2}, {s2}, {rk}",
+          "vxor {s3}, {s3}, {rk}",
+          s0 = inlateout(vreg) s0,
+          s1 = inlateout(vreg) s1,
+          s2 = inlateout(vreg) s2,
+          s3 = inlateout(vreg) s3,
+          rk = in(vreg) $rk,
+          options(nomem, nostack),
+        );
+      };
+    }
+
+    macro_rules! vcipher_all {
+      ($rk:expr) => {
+        asm!(
+          "vcipher {s0}, {s0}, {rk}",
+          "vcipher {s1}, {s1}, {rk}",
+          "vcipher {s2}, {s2}, {rk}",
+          "vcipher {s3}, {s3}, {rk}",
+          s0 = inlateout(vreg) s0,
+          s1 = inlateout(vreg) s1,
+          s2 = inlateout(vreg) s2,
+          s3 = inlateout(vreg) s3,
+          rk = in(vreg) $rk,
+          options(nomem, nostack),
+        );
+      };
+    }
+
+    vxor_all!(k[0]);
+    vcipher_all!(k[1]);
+    vcipher_all!(k[2]);
+    vcipher_all!(k[3]);
+    vcipher_all!(k[4]);
+    vcipher_all!(k[5]);
+    vcipher_all!(k[6]);
+    vcipher_all!(k[7]);
+    vcipher_all!(k[8]);
+    vcipher_all!(k[9]);
+    vcipher_all!(k[10]);
+    vcipher_all!(k[11]);
+    vcipher_all!(k[12]);
+    vcipher_all!(k[13]);
+
+    asm!(
+      "vcipherlast {s0}, {s0}, {rk}",
+      "vcipherlast {s1}, {s1}, {rk}",
+      "vcipherlast {s2}, {s2}, {rk}",
+      "vcipherlast {s3}, {s3}, {rk}",
+      s0 = inlateout(vreg) s0,
+      s1 = inlateout(vreg) s1,
+      s2 = inlateout(vreg) s2,
+      s3 = inlateout(vreg) s3,
+      rk = in(vreg) k[14],
+      options(nomem, nostack),
+    );
+
+    store_block_be(blocks[0].as_mut_ptr(), s0);
+    store_block_be(blocks[1].as_mut_ptr(), s1);
+    store_block_be(blocks[2].as_mut_ptr(), s2);
+    store_block_be(blocks[3].as_mut_ptr(), s3);
+  }
+}
+
 /// Encrypt a single 16-byte block using AES-256 with POWER8 vcipher.
 ///
 /// vcipher performs one AES middle round (SubBytes + ShiftRows + MixColumns
@@ -264,7 +357,7 @@ pub(super) unsafe fn encrypt_block(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
 
 /// AES-128 round keys stored as 11 × 128-bit vectors for POWER8 vcipher.
 #[derive(Clone)]
-#[repr(C, align(16))]
+#[repr(C, align(64))]
 pub(in crate::aead) struct Ppc128RoundKeys {
   rk: [i64x2; 11],
 }
@@ -397,6 +490,91 @@ pub(super) unsafe fn encrypt_block_128_core(keys: &Ppc128RoundKeys, block: &mut 
     );
 
     store_block_be(block.as_mut_ptr(), state);
+  }
+}
+
+/// Encrypt four independent AES-128 blocks with POWER8 vcipher.
+///
+/// # Safety
+///
+/// Caller must ensure POWER8 crypto support is available and `blocks` points
+/// to four valid writable AES blocks.
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(super) unsafe fn encrypt_4blocks_128_core(keys: &Ppc128RoundKeys, blocks: &mut [[u8; 16]; 4]) {
+  // SAFETY: four-block POWER8 AES because:
+  // 1. The caller guarantees POWER8 crypto support before entering this target-feature scope.
+  // 2. `blocks` is a live mutable reference to four initialized 16-byte AES blocks.
+  // 3. Each block is loaded once, transformed in registers, and stored back to its original slot.
+  unsafe {
+    let k = &keys.rk;
+
+    let mut s0 = load_block_be(blocks[0].as_ptr());
+    let mut s1 = load_block_be(blocks[1].as_ptr());
+    let mut s2 = load_block_be(blocks[2].as_ptr());
+    let mut s3 = load_block_be(blocks[3].as_ptr());
+
+    macro_rules! vxor_all {
+      ($rk:expr) => {
+        asm!(
+          "vxor {s0}, {s0}, {rk}",
+          "vxor {s1}, {s1}, {rk}",
+          "vxor {s2}, {s2}, {rk}",
+          "vxor {s3}, {s3}, {rk}",
+          s0 = inlateout(vreg) s0,
+          s1 = inlateout(vreg) s1,
+          s2 = inlateout(vreg) s2,
+          s3 = inlateout(vreg) s3,
+          rk = in(vreg) $rk,
+          options(nomem, nostack),
+        );
+      };
+    }
+
+    macro_rules! vcipher_all {
+      ($rk:expr) => {
+        asm!(
+          "vcipher {s0}, {s0}, {rk}",
+          "vcipher {s1}, {s1}, {rk}",
+          "vcipher {s2}, {s2}, {rk}",
+          "vcipher {s3}, {s3}, {rk}",
+          s0 = inlateout(vreg) s0,
+          s1 = inlateout(vreg) s1,
+          s2 = inlateout(vreg) s2,
+          s3 = inlateout(vreg) s3,
+          rk = in(vreg) $rk,
+          options(nomem, nostack),
+        );
+      };
+    }
+
+    vxor_all!(k[0]);
+    vcipher_all!(k[1]);
+    vcipher_all!(k[2]);
+    vcipher_all!(k[3]);
+    vcipher_all!(k[4]);
+    vcipher_all!(k[5]);
+    vcipher_all!(k[6]);
+    vcipher_all!(k[7]);
+    vcipher_all!(k[8]);
+    vcipher_all!(k[9]);
+
+    asm!(
+      "vcipherlast {s0}, {s0}, {rk}",
+      "vcipherlast {s1}, {s1}, {rk}",
+      "vcipherlast {s2}, {s2}, {rk}",
+      "vcipherlast {s3}, {s3}, {rk}",
+      s0 = inlateout(vreg) s0,
+      s1 = inlateout(vreg) s1,
+      s2 = inlateout(vreg) s2,
+      s3 = inlateout(vreg) s3,
+      rk = in(vreg) k[10],
+      options(nomem, nostack),
+    );
+
+    store_block_be(blocks[0].as_mut_ptr(), s0);
+    store_block_be(blocks[1].as_mut_ptr(), s1);
+    store_block_be(blocks[2].as_mut_ptr(), s2);
+    store_block_be(blocks[3].as_mut_ptr(), s3);
   }
 }
 
