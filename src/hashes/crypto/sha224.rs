@@ -244,6 +244,8 @@ impl Digest for Sha224 {
   }
 }
 
+impl_std_io_write_for_digest!(Sha224);
+
 #[cfg(test)]
 mod tests {
   use super::Sha224;

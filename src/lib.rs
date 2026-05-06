@@ -184,13 +184,21 @@ extern crate std;
 mod macros;
 
 // Internal modules (not published as separate crates)
-// `hex` is an internal utility module: ct-eq macro (`impl_ct_eq!`), hex
-// formatters (`fmt_hex_lower`, `fmt_hex_upper`), and the `DisplaySecret`
-// wrapper. It's pure `core::fmt` + `crate::traits` and `no_std`-safe.
-// Always-available so any tag/key/signature/hash-output type can use the
-// shared helpers without hand-maintaining a per-feature gate list.
+// `hex` is an internal utility module for public byte newtypes that expose
+// hex formatting, parsing, constant-time equality, or explicit secret display.
 // Public re-exports of `DisplaySecret` / `InvalidHexError` stay gated to the
 // features that surface them in the public API.
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aegis256",
+  feature = "ascon-aead",
+  feature = "ed25519",
+  feature = "x25519",
+  feature = "blake3"
+))]
 #[macro_use]
 mod hex;
 
@@ -377,6 +385,33 @@ pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationErr
   feature = "rapidhash"
 ))]
 pub use traits::{Digest, FastHash, Xof};
+
+/// Trait-first imports for rscrypto user code.
+///
+/// This prelude intentionally re-exports traits and common verification
+/// errors, not algorithm types. Keep primitive choices visible:
+///
+/// ```rust
+/// # #[cfg(feature = "sha2")]
+/// # {
+/// use rscrypto::{Sha256, prelude::*};
+///
+/// let digest = Sha256::digest(b"message");
+/// assert_eq!(digest.len(), Sha256::OUTPUT_SIZE);
+/// # }
+/// ```
+pub mod prelude {
+  #[cfg(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305",
+    feature = "aegis256",
+    feature = "ascon-aead"
+  ))]
+  pub use crate::traits::Aead;
+  pub use crate::traits::{Checksum, ChecksumCombine, ConstantTimeEq, Digest, FastHash, Mac, VerificationError, Xof};
+}
 
 #[cfg(all(doctest, feature = "full", feature = "getrandom"))]
 #[doc = include_str!("../README.md")]
@@ -590,6 +625,43 @@ mod length_framing_tests {
   #[should_panic(expected = "byte length bit count exceeds u64")]
   fn bytes_to_bits_rejects_bit_count_overflow() {
     let _ = super::bytes_to_bits((u64::MAX / 8).strict_add(1) as usize);
+  }
+}
+
+#[cfg(all(test, feature = "std", feature = "sha2", feature = "crc32"))]
+mod direct_io_write_tests {
+  use std::io::{IoSlice, Write};
+
+  use super::{Crc32C, Sha256};
+  use crate::traits::{Checksum as _, Digest as _};
+
+  #[test]
+  fn digest_state_accepts_direct_io_write() {
+    let mut digest = Sha256::new();
+    digest.write_all(b"hello ").unwrap();
+    digest.write_all(b"world").unwrap();
+
+    assert_eq!(digest.finalize(), Sha256::digest(b"hello world"));
+  }
+
+  #[test]
+  fn checksum_state_accepts_direct_io_write() {
+    let mut checksum = Crc32C::new();
+    checksum.write_all(b"hello ").unwrap();
+    checksum.write_all(b"world").unwrap();
+
+    assert_eq!(checksum.finalize(), Crc32C::checksum(b"hello world"));
+  }
+
+  #[test]
+  fn digest_vectored_write_consumes_all_buffers() {
+    let mut digest = Sha256::new();
+    let bufs = [IoSlice::new(b"hello "), IoSlice::new(b"world")];
+
+    let written = digest.write_vectored(&bufs).unwrap();
+
+    assert_eq!(written, b"hello world".len());
+    assert_eq!(digest.finalize(), Sha256::digest(b"hello world"));
   }
 }
 

@@ -5,7 +5,7 @@ use core::arch::asm;
 /// Round keys are loaded from memory into vector registers per call
 /// since RISC-V `vreg` is clobber-only (cannot be used as input/output).
 #[derive(Clone)]
-#[repr(C, align(16))]
+#[repr(C, align(64))]
 pub(super) struct RvRoundKeys {
   rk: [[u8; 16]; 15],
 }
@@ -114,13 +114,148 @@ pub(super) unsafe fn encrypt_block(keys: &RvRoundKeys, block: &mut [u8; 16]) {
   }
 }
 
+/// Encrypt four independent 16-byte blocks using AES-256 with Zvkned.
+///
+/// CTR mode feeds AES independent counter blocks. Running four states in one
+/// target-feature scope exposes the same instruction-level parallelism that
+/// the fallback vperm/fixslice kernels already use for large buffers.
+///
+/// # Safety
+/// Caller must ensure Zvkned vector crypto extension is available.
+#[target_feature(enable = "v", enable = "zvkned")]
+pub(super) unsafe fn encrypt_4blocks(keys: &RvRoundKeys, blocks: &mut [[u8; 16]; 4]) {
+  // SAFETY: four-block Zvkned AES-256 because:
+  // 1. The caller guarantees `v` + `zvkned` are available for this target-feature scope.
+  // 2. `blocks` is exactly four initialized 16-byte AES states and each pointer stays in bounds.
+  // 3. Round-key pointers come from `keys.rk`, which contains all 15 AES-256 round keys.
+  unsafe {
+    let b0 = blocks[0].as_mut_ptr();
+    let b1 = blocks[1].as_mut_ptr();
+    let b2 = blocks[2].as_mut_ptr();
+    let b3 = blocks[3].as_mut_ptr();
+    let rk = &keys.rk;
+
+    asm!(
+      "vsetivli zero, 4, e32, m1, ta, ma",
+      "vle32.v v1, ({b0})",
+      "vle32.v v2, ({b1})",
+      "vle32.v v3, ({b2})",
+      "vle32.v v4, ({b3})",
+      "vle32.v v5, ({rk0})",
+      "vaesz.vs v1, v5",
+      "vaesz.vs v2, v5",
+      "vaesz.vs v3, v5",
+      "vaesz.vs v4, v5",
+      "vle32.v v5, ({rk1})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk2})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk3})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk4})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk5})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk6})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk7})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk8})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk9})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk10})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk11})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk12})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk13})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk14})",
+      "vaesef.vs v1, v5",
+      "vaesef.vs v2, v5",
+      "vaesef.vs v3, v5",
+      "vaesef.vs v4, v5",
+      "vse32.v v1, ({b0})",
+      "vse32.v v2, ({b1})",
+      "vse32.v v3, ({b2})",
+      "vse32.v v4, ({b3})",
+      b0 = in(reg) b0,
+      b1 = in(reg) b1,
+      b2 = in(reg) b2,
+      b3 = in(reg) b3,
+      rk0 = in(reg) rk[0].as_ptr(),
+      rk1 = in(reg) rk[1].as_ptr(),
+      rk2 = in(reg) rk[2].as_ptr(),
+      rk3 = in(reg) rk[3].as_ptr(),
+      rk4 = in(reg) rk[4].as_ptr(),
+      rk5 = in(reg) rk[5].as_ptr(),
+      rk6 = in(reg) rk[6].as_ptr(),
+      rk7 = in(reg) rk[7].as_ptr(),
+      rk8 = in(reg) rk[8].as_ptr(),
+      rk9 = in(reg) rk[9].as_ptr(),
+      rk10 = in(reg) rk[10].as_ptr(),
+      rk11 = in(reg) rk[11].as_ptr(),
+      rk12 = in(reg) rk[12].as_ptr(),
+      rk13 = in(reg) rk[13].as_ptr(),
+      rk14 = in(reg) rk[14].as_ptr(),
+      out("v1") _,
+      out("v2") _,
+      out("v3") _,
+      out("v4") _,
+      out("v5") _,
+      options(nostack),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // AES-128 (11 round keys, 10 rounds)
 // ---------------------------------------------------------------------------
 
 /// AES-128 round keys stored as 11 × 16-byte arrays for Zvkned.
 #[derive(Clone)]
-#[repr(C, align(16))]
+#[repr(C, align(64))]
 pub(super) struct Rv128RoundKeys {
   rk: [[u8; 16]; 11],
 }
@@ -202,6 +337,113 @@ pub(super) unsafe fn encrypt_block_128(keys: &Rv128RoundKeys, block: &mut [u8; 1
       rk10 = in(reg) rk[10].as_ptr(),
       out("v1") _,
       out("v2") _,
+      options(nostack),
+    );
+  }
+}
+
+/// Encrypt four independent 16-byte blocks using AES-128 with Zvkned.
+///
+/// # Safety
+/// Caller must ensure Zvkned vector crypto extension is available.
+#[target_feature(enable = "v", enable = "zvkned")]
+pub(super) unsafe fn encrypt_4blocks_128(keys: &Rv128RoundKeys, blocks: &mut [[u8; 16]; 4]) {
+  // SAFETY: four-block Zvkned AES-128 because:
+  // 1. The caller guarantees `v` + `zvkned` are available for this target-feature scope.
+  // 2. `blocks` is exactly four initialized 16-byte AES states and each pointer stays in bounds.
+  // 3. Round-key pointers come from `keys.rk`, which contains all 11 AES-128 round keys.
+  unsafe {
+    let b0 = blocks[0].as_mut_ptr();
+    let b1 = blocks[1].as_mut_ptr();
+    let b2 = blocks[2].as_mut_ptr();
+    let b3 = blocks[3].as_mut_ptr();
+    let rk = &keys.rk;
+
+    asm!(
+      "vsetivli zero, 4, e32, m1, ta, ma",
+      "vle32.v v1, ({b0})",
+      "vle32.v v2, ({b1})",
+      "vle32.v v3, ({b2})",
+      "vle32.v v4, ({b3})",
+      "vle32.v v5, ({rk0})",
+      "vaesz.vs v1, v5",
+      "vaesz.vs v2, v5",
+      "vaesz.vs v3, v5",
+      "vaesz.vs v4, v5",
+      "vle32.v v5, ({rk1})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk2})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk3})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk4})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk5})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk6})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk7})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk8})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk9})",
+      "vaesem.vs v1, v5",
+      "vaesem.vs v2, v5",
+      "vaesem.vs v3, v5",
+      "vaesem.vs v4, v5",
+      "vle32.v v5, ({rk10})",
+      "vaesef.vs v1, v5",
+      "vaesef.vs v2, v5",
+      "vaesef.vs v3, v5",
+      "vaesef.vs v4, v5",
+      "vse32.v v1, ({b0})",
+      "vse32.v v2, ({b1})",
+      "vse32.v v3, ({b2})",
+      "vse32.v v4, ({b3})",
+      b0 = in(reg) b0,
+      b1 = in(reg) b1,
+      b2 = in(reg) b2,
+      b3 = in(reg) b3,
+      rk0 = in(reg) rk[0].as_ptr(),
+      rk1 = in(reg) rk[1].as_ptr(),
+      rk2 = in(reg) rk[2].as_ptr(),
+      rk3 = in(reg) rk[3].as_ptr(),
+      rk4 = in(reg) rk[4].as_ptr(),
+      rk5 = in(reg) rk[5].as_ptr(),
+      rk6 = in(reg) rk[6].as_ptr(),
+      rk7 = in(reg) rk[7].as_ptr(),
+      rk8 = in(reg) rk[8].as_ptr(),
+      rk9 = in(reg) rk[9].as_ptr(),
+      rk10 = in(reg) rk[10].as_ptr(),
+      out("v1") _,
+      out("v2") _,
+      out("v3") _,
+      out("v4") _,
+      out("v5") _,
       options(nostack),
     );
   }

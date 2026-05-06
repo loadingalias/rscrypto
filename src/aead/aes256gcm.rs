@@ -20,6 +20,8 @@ const MAX_PLAINTEXT_LEN: u64 = ((1u64 << 32).strict_sub(2)).strict_mul(16); // ~
 
 #[cfg(target_arch = "x86_64")]
 const X86_VAES_GCM_MIN_LEN: usize = 64;
+#[cfg(target_arch = "x86_64")]
+const X86_AESNI_GCM_MIN_LEN: usize = 64;
 
 define_aead_key_type!(Aes256GcmKey, KEY_SIZE, "AES-256-GCM secret key (32 bytes).");
 
@@ -107,6 +109,8 @@ pub struct Aes256Gcm {
   /// Precomputed H powers [H^4, H^3, H^2, H] in the POLYVAL domain
   /// for 4-block wide GHASH processing.
   h_powers_rev: [u128; 4],
+  /// Precomputed H powers [H^8, H^7, ..., H] for AArch64 8-block GHASH windows.
+  h_powers_rev_8: [u128; 8],
   backend: AeadBackend,
 }
 
@@ -180,15 +184,17 @@ impl Aes256Gcm {
 // GCM construction internals (NIST SP 800-38D)
 // ---------------------------------------------------------------------------
 
-/// Build the initial counter block J0 for a 96-bit IV.
+/// Build the initial counter block J0 and first CTR block for a 96-bit IV.
 ///
 /// J0 = IV || 0x00000001 (NIST SP 800-38D § 7.1, when len(IV) = 96).
 #[inline]
-fn make_j0(nonce: &Nonce96) -> [u8; 16] {
+fn make_j0_and_ctr(nonce: &Nonce96) -> ([u8; 16], [u8; 16]) {
   let mut j0 = [0u8; 16];
   j0[..12].copy_from_slice(nonce.as_bytes());
   j0[15] = 0x01; // Counter starts at 1.
-  j0
+  let mut ctr_block = j0;
+  ctr_block[15] = 0x02;
+  (j0, ctr_block)
 }
 
 /// Compute the GCM authentication tag.
@@ -330,20 +336,13 @@ fn compute_tag_short_wide(
   Ok(Some(encrypt_j0_tag(ek, j0, acc)))
 }
 
-#[inline]
+#[inline(always)]
 fn encrypt_j0_tag(ek: &aes::Aes256EncKey, j0: &[u8; 16], acc: u128) -> [u8; TAG_SIZE] {
-  let mut s = acc.to_be_bytes();
   let mut encrypted_j0 = *j0;
   aes::aes256_encrypt_block(ek, &mut encrypted_j0);
-
-  let mut i = 0usize;
-  while i < 16 {
-    s[i] ^= encrypted_j0[i];
-    i = i.strict_add(1);
-  }
-
+  let tag = (acc ^ u128::from_be_bytes(encrypted_j0)).to_be_bytes();
   ct::zeroize(&mut encrypted_j0);
-  s
+  tag
 }
 
 /// Compute the GCM authentication tag using 4-block wide GHASH.
@@ -371,17 +370,167 @@ fn compute_tag_wide(
   Ok(encrypt_j0_tag(ek, j0, acc))
 }
 
-/// Increment the 32-bit big-endian counter in bytes 12..15.
+/// Update GHASH using VPCLMUL without scalar block packing.
 ///
-/// Wraparound is intentional: this is the `inc_32` function from
-/// NIST SP 800-38D § 6.2, which defines the counter as a 32-bit
-/// integer that increments modulo 2^32. The MAX_PLAINTEXT_LEN bound
-/// (~64 GiB) ensures the encrypt loop tops out at 2^32 - 2 blocks
-/// before any wrap could occur, so wrap is unreachable in practice.
-#[inline]
-fn inc32(block: &mut [u8; 16]) {
-  let ctr = u32::from_be_bytes([block[12], block[13], block[14], block[15]]);
-  block[12..16].copy_from_slice(&ctr.wrapping_add(1).to_be_bytes());
+/// # Safety
+/// Caller must ensure VPCLMULQDQ, PCLMULQDQ, AVX-512F/VL/BW/DQ, and SSE2 are available.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+unsafe fn ghash_update_padded_wide_x86(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
+  let (chunks, tail) = data.as_chunks::<64>();
+  for chunk in chunks {
+    // SAFETY: direct-byte VPCLMUL GHASH aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `chunk` is exactly four initialized 16-byte GHASH blocks.
+    acc = unsafe { polyval::x86_aggregate_4blocks_be_bytes_inline(acc, h_powers_rev, chunk) };
+  }
+
+  let (full_blocks, remainder) = tail.as_chunks::<16>();
+  for block in full_blocks {
+    acc ^= u128::from_be_bytes(*block);
+    // SAFETY: x86 carryless multiply because:
+    // 1. This function's caller guarantees PCLMULQDQ and SSE2 availability.
+    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+    acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    acc ^= u128::from_be_bytes(block);
+    // SAFETY: x86 carryless multiply because:
+    // 1. This function's caller guarantees PCLMULQDQ and SSE2 availability.
+    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+    acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
+  }
+
+  acc
+}
+
+/// Update GHASH using PMULL without leaving the aarch64 target-feature scope.
+///
+/// # Safety
+/// Caller must ensure AES-CE and PMULL are available.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "aes,neon")]
+unsafe fn ghash_update_padded_wide_aarch64(
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  data: &[u8],
+) -> u128 {
+  let (full_blocks, remainder) = data.as_chunks::<16>();
+  let mut chunks = full_blocks.chunks_exact(4);
+
+  for chunk in &mut chunks {
+    let blocks = [
+      u128::from_be_bytes(chunk[0]),
+      u128::from_be_bytes(chunk[1]),
+      u128::from_be_bytes(chunk[2]),
+      u128::from_be_bytes(chunk[3]),
+    ];
+    // SAFETY: PMULL 4-block GHASH aggregation because:
+    // 1. This function's caller must guarantee AES-CE/PMULL availability.
+    // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays with valid initialized values.
+    acc = unsafe { polyval::aarch64_aggregate_4blocks_inline(acc, h_powers_rev, &blocks) };
+  }
+
+  for block in chunks.remainder() {
+    acc ^= u128::from_be_bytes(*block);
+    // SAFETY: PMULL carryless multiply because:
+    // 1. This function's caller must guarantee AES-CE/PMULL availability.
+    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+    acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    acc ^= u128::from_be_bytes(block);
+    // SAFETY: PMULL carryless multiply because:
+    // 1. This function's caller must guarantee AES-CE/PMULL availability.
+    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+    acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
+  }
+
+  acc
+}
+
+/// Update GHASH using POWER8 crypto without leaving the target-feature scope.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+unsafe fn ghash_update_padded_wide_ppc(mut acc: u128, h_polyval: u128, h_powers_rev: &[u128; 4], data: &[u8]) -> u128 {
+  let (full_blocks, remainder) = data.as_chunks::<16>();
+  let mut chunks = full_blocks.chunks_exact(4);
+
+  for chunk in &mut chunks {
+    let blocks = [
+      u128::from_be_bytes(chunk[0]),
+      u128::from_be_bytes(chunk[1]),
+      u128::from_be_bytes(chunk[2]),
+      u128::from_be_bytes(chunk[3]),
+    ];
+    // SAFETY: POWER8 4-block GHASH aggregation because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `h_powers_rev` and `blocks` are fixed 4-lane arrays with valid initialized values.
+    acc = unsafe { polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &blocks) };
+  }
+
+  for block in chunks.remainder() {
+    acc ^= u128::from_be_bytes(*block);
+    // SAFETY: POWER8 carryless multiply because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+    acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
+  }
+
+  if !remainder.is_empty() {
+    let mut block = [0u8; 16];
+    block[..remainder.len()].copy_from_slice(remainder);
+    acc ^= u128::from_be_bytes(block);
+    // SAFETY: POWER8 carryless multiply because:
+    // 1. This function's caller must guarantee POWER8 crypto availability.
+    // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+    acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
+  }
+
+  acc
+}
+
+/// Compute a GCM tag using POWER8 carryless multiply without per-chunk runtime dispatch.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(target_arch = "powerpc64")]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+unsafe fn compute_tag_wide_ppc(
+  ek: &aes::Aes256EncKey,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+  j0: &[u8; 16],
+  aad: &[u8],
+  ciphertext: &[u8],
+) -> Result<[u8; TAG_SIZE], LengthOverflow> {
+  // SAFETY: POWER8 GHASH update because:
+  // 1. This function's caller must guarantee POWER8 crypto availability.
+  // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+  let mut acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, h_powers_rev, aad) };
+  // SAFETY: POWER8 GHASH update because:
+  // 1. This function's caller must guarantee POWER8 crypto availability.
+  // 2. `ciphertext` is a valid byte slice; padding is handled inside the helper.
+  acc = unsafe { ghash_update_padded_wide_ppc(acc, h_polyval, h_powers_rev, ciphertext) };
+
+  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
+  acc ^= u128::from_be_bytes(length_block);
+  // SAFETY: POWER8 carryless multiply because:
+  // 1. This function's caller must guarantee POWER8 crypto availability.
+  // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+  acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
+
+  Ok(encrypt_j0_tag(ek, j0, acc))
 }
 
 #[inline]
@@ -394,6 +543,7 @@ fn should_use_wide_ghash(backend: AeadBackend, aad_len: usize, ciphertext_len: u
 
   match backend {
     AeadBackend::X86VaesVpclmul
+    | AeadBackend::X86AesniPclmul
     | AeadBackend::Aarch64AesPmull
     | AeadBackend::Aarch64Sve2AesPmull
     | AeadBackend::Power8Crypto => true,
@@ -431,18 +581,23 @@ impl Aead for Aes256Gcm {
     let mut h = [0u8; 16];
     aes::aes256_encrypt_block(&ek, &mut h);
 
-    // Precompute H powers for 4-block wide GHASH.
+    // Precompute H powers for 4/8-block wide GHASH.
     // GHASH loads H as BE, then applies mulX_POLYVAL to get the POLYVAL-domain key.
     let h_polyval = ghash::h_to_polyval(&h);
-    let powers = polyval::precompute_powers(h_polyval);
+    let powers = polyval::precompute_powers_8(h_polyval);
     // Reverse: [H, H^2, H^3, H^4] -> [H^4, H^3, H^2, H]
     let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    let h_powers_rev_8 = [
+      powers[7], powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
+    ];
+    let backend = resolve_backend();
 
     Self {
       ek,
       h,
       h_powers_rev,
-      backend: resolve_backend(),
+      h_powers_rev_8,
+      backend,
     }
   }
 
@@ -457,21 +612,108 @@ impl Aead for Aes256Gcm {
 
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
-    super::seal_bit_lengths(aad.len(), buffer.len())?;
+    let length_block = super::seal_bit_lengths(aad.len(), buffer.len())?.to_be_bits_block();
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = length_block;
 
-    let j0 = make_j0(nonce);
-    let mut ctr_block = j0;
-    inc32(&mut ctr_block);
+    let (j0, ctr_block) = make_j0_and_ctr(nonce);
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      // SAFETY: VAES + VPCLMULQDQ path because:
+      let h_polyval = self.h_powers_rev[3];
+      // SAFETY: x86 GHASH AAD path because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused x86 AES-GCM sealing because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES and VPCLMULQDQ.
-      // 2. The CTR helper operates in place on the provided `buffer` slice and handles tails internally.
-      unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
-      let tag_bytes = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
-        .map_err(|_| SealError::too_large())?;
+      // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
+      acc = unsafe {
+        aes::aes256_ctr32_encrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: x86 GHASH final multiply because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
+      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      return Ok(Aes256GcmTag::from_bytes(tag_bytes));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if self.backend == AeadBackend::X86AesniPclmul
+      && buffer.len() >= X86_AESNI_GCM_MIN_LEN
+      && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
+    {
+      let h_polyval = self.h_powers_rev[3];
+      let mut acc = ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad);
+      // SAFETY: fused x86 AES-NI/PCLMUL sealing because:
+      // 1. Backend resolution selected X86AesniPclmul only after CPUID confirmed AES-NI and PCLMULQDQ.
+      // 2. The extra PCLMUL_READY check confirms SSSE3 for in-register GHASH byte reversal.
+      // 3. The helper encrypts `buffer` in place and folds ciphertext into GHASH.
+      acc = unsafe {
+        aes::aes256_ctr32_encrypt_be_aesni_pclmul_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+        )
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: x86 GHASH final multiply because PCLMUL_READY was checked above.
+      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      return Ok(Aes256GcmTag::from_bytes(tag_bytes));
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if matches!(
+      self.backend,
+      AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+    ) {
+      let h_polyval = self.h_powers_rev[3];
+      // SAFETY: aarch64 GHASH AAD path because:
+      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
+      //    and PMULL.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused intrinsic AArch64 AES-GCM sealing because:
+      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
+      //    and PMULL.
+      // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
+      acc = unsafe {
+        aes::aes256_ctr32_encrypt_be_aarch64_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_8,
+        )
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: aarch64 GHASH final multiply because:
+      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
+      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+      acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      return Ok(Aes256GcmTag::from_bytes(tag_bytes));
+    }
+
+    #[cfg(target_arch = "powerpc64")]
+    if self.backend == AeadBackend::Power8Crypto {
+      aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
+      // SAFETY: POWER8 AES-GCM tag path because:
+      // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
+      //    crypto.
+      // 2. `buffer` now contains ciphertext and is valid for GHASH processing.
+      let tag_bytes =
+        unsafe { compute_tag_wide_ppc(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer) }
+          .map_err(|_| SealError::too_large())?;
       return Ok(Aes256GcmTag::from_bytes(tag_bytes));
     }
 
@@ -503,26 +745,124 @@ impl Aead for Aes256Gcm {
     tag: &Self::Tag,
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
-    super::open_bit_lengths(aad.len(), buffer.len())?;
+    let length_block = super::open_bit_lengths(aad.len(), buffer.len())?.to_be_bits_block();
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = length_block;
 
-    let j0 = make_j0(nonce);
+    let (j0, ctr_block) = make_j0_and_ctr(nonce);
 
     // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      // Verify tag BEFORE decryption (authenticate-then-decrypt).
-      let expected = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
-        .map_err(|_| OpenError::too_large())?;
+      let h_polyval = self.h_powers_rev[3];
+      // SAFETY: x86 GHASH AAD path because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused x86 AES-GCM open because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES and VPCLMULQDQ.
+      // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
+      acc = unsafe {
+        aes::aes256_ctr32_decrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: x86 GHASH final multiply because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
+      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
       if !ct::constant_time_eq(&expected, tag.as_bytes()) {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
-      let mut ctr_block = j0;
-      inc32(&mut ctr_block);
-      // SAFETY: VAES CTR path because:
-      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES support.
-      // 2. The CTR helper operates in place on the provided `buffer` slice and handles tails internally.
-      unsafe { aes::aes256_ctr32_encrypt_be_wide(&self.ek, &ctr_block, buffer) };
+      return Ok(());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    if self.backend == AeadBackend::X86AesniPclmul
+      && buffer.len() >= X86_AESNI_GCM_MIN_LEN
+      && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
+    {
+      let h_polyval = self.h_powers_rev[3];
+      let mut acc = ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad);
+      // SAFETY: fused x86 AES-NI/PCLMUL open because:
+      // 1. Backend resolution selected X86AesniPclmul only after CPUID confirmed AES-NI and PCLMULQDQ.
+      // 2. The extra PCLMUL_READY check confirms SSSE3 for in-register GHASH byte reversal.
+      // 3. The helper GHASHes ciphertext before decrypting each chunk in place.
+      acc = unsafe {
+        aes::aes256_ctr32_decrypt_be_aesni_pclmul_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+        )
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: x86 GHASH final multiply because PCLMUL_READY was checked above.
+      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
+      }
+      return Ok(());
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if matches!(
+      self.backend,
+      AeadBackend::Aarch64AesPmull | AeadBackend::Aarch64Sve2AesPmull
+    ) {
+      let h_polyval = self.h_powers_rev[3];
+      // SAFETY: aarch64 GHASH AAD path because:
+      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
+      //    and PMULL.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused intrinsic AArch64 AES-GCM open because:
+      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
+      //    and PMULL.
+      // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
+      acc = unsafe {
+        aes::aes256_ctr32_decrypt_be_aarch64_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_8,
+        )
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: aarch64 GHASH final multiply because:
+      // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
+      // 2. `acc` and `h_polyval` are initialized GHASH field elements.
+      acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
+      }
+      return Ok(());
+    }
+
+    #[cfg(target_arch = "powerpc64")]
+    if self.backend == AeadBackend::Power8Crypto {
+      // SAFETY: POWER8 AES-GCM tag path because:
+      // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
+      //    crypto.
+      // 2. `buffer` contains ciphertext and is valid for GHASH processing before decryption.
+      let expected =
+        unsafe { compute_tag_wide_ppc(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer) }
+          .map_err(|_| OpenError::too_large())?;
+      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+        ct::zeroize(buffer);
+        return Err(OpenError::verification());
+      }
+      aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
       return Ok(());
     }
 
@@ -537,8 +877,6 @@ impl Aead for Aes256Gcm {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
-      let mut ctr_block = j0;
-      inc32(&mut ctr_block);
       aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
       return Ok(());
     }
@@ -549,8 +887,6 @@ impl Aead for Aes256Gcm {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
-      let mut ctr_block = j0;
-      inc32(&mut ctr_block);
       aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
       return Ok(());
     }
@@ -559,8 +895,6 @@ impl Aead for Aes256Gcm {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }
-    let mut ctr_block = j0;
-    inc32(&mut ctr_block);
     aes::aes256_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
     Ok(())
   }
@@ -574,6 +908,10 @@ impl Drop for Aes256Gcm {
     // 1. `[u128; 4]` is a contiguous initialized 64-byte array.
     // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
     ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev.as_mut_ptr().cast::<u8>(), 64) });
+    // SAFETY: H-power byte view because:
+    // 1. `[u128; 8]` is a contiguous initialized 128-byte array.
+    // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+    ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_8.as_mut_ptr().cast::<u8>(), 128) });
     // ek's Drop is handled by Aes256EncKey's own Drop impl.
   }
 }

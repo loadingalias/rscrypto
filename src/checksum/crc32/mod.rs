@@ -1581,6 +1581,9 @@ mod tests {
   }
 }
 
+impl_std_io_write_for_checksum!(Crc32);
+impl_std_io_write_for_checksum!(Crc32C);
+
 #[cfg(test)]
 crate::define_crc_property_tests!(crc32_ieee_props, Crc32);
 #[cfg(test)]

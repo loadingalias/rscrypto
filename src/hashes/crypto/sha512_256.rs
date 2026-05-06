@@ -223,3 +223,5 @@ impl Digest for Sha512_256 {
     dispatch::digest(data)
   }
 }
+
+impl_std_io_write_for_digest!(Sha512_256);

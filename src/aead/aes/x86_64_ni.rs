@@ -99,6 +99,111 @@ pub(super) unsafe fn encrypt_4blocks(keys: &NiRoundKeys, blocks: __m512i) -> __m
   _mm512_aesenclast_epi128(state, _mm512_broadcast_i32x4(k[14]))
 }
 
+/// Encrypt 4 blocks in parallel using classic AES-NI (14-round AES-256).
+///
+/// # Safety
+/// Caller must ensure AES-NI and SSE2 are available.
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+pub(super) unsafe fn encrypt_4blocks_aesni(
+  keys: &NiRoundKeys,
+  b0: __m128i,
+  b1: __m128i,
+  b2: __m128i,
+  b3: __m128i,
+) -> (__m128i, __m128i, __m128i, __m128i) {
+  let k = &keys.rk;
+  let rk0 = k[0];
+  let mut s0 = _mm_xor_si128(b0, rk0);
+  let mut s1 = _mm_xor_si128(b1, rk0);
+  let mut s2 = _mm_xor_si128(b2, rk0);
+  let mut s3 = _mm_xor_si128(b3, rk0);
+
+  macro_rules! round {
+    ($idx:expr) => {{
+      let rk = k[$idx];
+      s0 = _mm_aesenc_si128(s0, rk);
+      s1 = _mm_aesenc_si128(s1, rk);
+      s2 = _mm_aesenc_si128(s2, rk);
+      s3 = _mm_aesenc_si128(s3, rk);
+    }};
+  }
+
+  round!(1);
+  round!(2);
+  round!(3);
+  round!(4);
+  round!(5);
+  round!(6);
+  round!(7);
+  round!(8);
+  round!(9);
+  round!(10);
+  round!(11);
+  round!(12);
+  round!(13);
+
+  let rk14 = k[14];
+  (
+    _mm_aesenclast_si128(s0, rk14),
+    _mm_aesenclast_si128(s1, rk14),
+    _mm_aesenclast_si128(s2, rk14),
+    _mm_aesenclast_si128(s3, rk14),
+  )
+}
+
+/// Encrypt 16 blocks as four independent VAES-512 dependency chains.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+pub(super) unsafe fn encrypt_16blocks(
+  keys: &NiRoundKeys,
+  b0: __m512i,
+  b1: __m512i,
+  b2: __m512i,
+  b3: __m512i,
+) -> (__m512i, __m512i, __m512i, __m512i) {
+  let k = &keys.rk;
+  let rk0 = _mm512_broadcast_i32x4(k[0]);
+  let mut s0 = _mm512_xor_si512(b0, rk0);
+  let mut s1 = _mm512_xor_si512(b1, rk0);
+  let mut s2 = _mm512_xor_si512(b2, rk0);
+  let mut s3 = _mm512_xor_si512(b3, rk0);
+
+  macro_rules! round {
+    ($idx:expr) => {{
+      let rk = _mm512_broadcast_i32x4(k[$idx]);
+      s0 = _mm512_aesenc_epi128(s0, rk);
+      s1 = _mm512_aesenc_epi128(s1, rk);
+      s2 = _mm512_aesenc_epi128(s2, rk);
+      s3 = _mm512_aesenc_epi128(s3, rk);
+    }};
+  }
+
+  round!(1);
+  round!(2);
+  round!(3);
+  round!(4);
+  round!(5);
+  round!(6);
+  round!(7);
+  round!(8);
+  round!(9);
+  round!(10);
+  round!(11);
+  round!(12);
+  round!(13);
+
+  let rk14 = _mm512_broadcast_i32x4(k[14]);
+  (
+    _mm512_aesenclast_epi128(s0, rk14),
+    _mm512_aesenclast_epi128(s1, rk14),
+    _mm512_aesenclast_epi128(s2, rk14),
+    _mm512_aesenclast_epi128(s3, rk14),
+  )
+}
+
 /// Encrypt a single 16-byte block using AES-256 with AES-NI.
 ///
 /// # Safety
@@ -209,6 +314,103 @@ pub(super) unsafe fn encrypt_4blocks_128(keys: &Ni128RoundKeys, blocks: __m512i)
   state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[8]));
   state = _mm512_aesenc_epi128(state, _mm512_broadcast_i32x4(k[9]));
   _mm512_aesenclast_epi128(state, _mm512_broadcast_i32x4(k[10]))
+}
+
+/// Encrypt 4 blocks in parallel using classic AES-NI (10-round AES-128).
+///
+/// # Safety
+/// Caller must ensure AES-NI and SSE2 are available.
+#[target_feature(enable = "aes,sse2")]
+#[inline]
+pub(super) unsafe fn encrypt_4blocks_128_aesni(
+  keys: &Ni128RoundKeys,
+  b0: __m128i,
+  b1: __m128i,
+  b2: __m128i,
+  b3: __m128i,
+) -> (__m128i, __m128i, __m128i, __m128i) {
+  let k = &keys.rk;
+  let rk0 = k[0];
+  let mut s0 = _mm_xor_si128(b0, rk0);
+  let mut s1 = _mm_xor_si128(b1, rk0);
+  let mut s2 = _mm_xor_si128(b2, rk0);
+  let mut s3 = _mm_xor_si128(b3, rk0);
+
+  macro_rules! round {
+    ($idx:expr) => {{
+      let rk = k[$idx];
+      s0 = _mm_aesenc_si128(s0, rk);
+      s1 = _mm_aesenc_si128(s1, rk);
+      s2 = _mm_aesenc_si128(s2, rk);
+      s3 = _mm_aesenc_si128(s3, rk);
+    }};
+  }
+
+  round!(1);
+  round!(2);
+  round!(3);
+  round!(4);
+  round!(5);
+  round!(6);
+  round!(7);
+  round!(8);
+  round!(9);
+
+  let rk10 = k[10];
+  (
+    _mm_aesenclast_si128(s0, rk10),
+    _mm_aesenclast_si128(s1, rk10),
+    _mm_aesenclast_si128(s2, rk10),
+    _mm_aesenclast_si128(s3, rk10),
+  )
+}
+
+/// Encrypt 16 AES-128 blocks as four independent VAES-512 dependency chains.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+pub(super) unsafe fn encrypt_16blocks_128(
+  keys: &Ni128RoundKeys,
+  b0: __m512i,
+  b1: __m512i,
+  b2: __m512i,
+  b3: __m512i,
+) -> (__m512i, __m512i, __m512i, __m512i) {
+  let k = &keys.rk;
+  let rk0 = _mm512_broadcast_i32x4(k[0]);
+  let mut s0 = _mm512_xor_si512(b0, rk0);
+  let mut s1 = _mm512_xor_si512(b1, rk0);
+  let mut s2 = _mm512_xor_si512(b2, rk0);
+  let mut s3 = _mm512_xor_si512(b3, rk0);
+
+  macro_rules! round {
+    ($idx:expr) => {{
+      let rk = _mm512_broadcast_i32x4(k[$idx]);
+      s0 = _mm512_aesenc_epi128(s0, rk);
+      s1 = _mm512_aesenc_epi128(s1, rk);
+      s2 = _mm512_aesenc_epi128(s2, rk);
+      s3 = _mm512_aesenc_epi128(s3, rk);
+    }};
+  }
+
+  round!(1);
+  round!(2);
+  round!(3);
+  round!(4);
+  round!(5);
+  round!(6);
+  round!(7);
+  round!(8);
+  round!(9);
+
+  let rk10 = _mm512_broadcast_i32x4(k[10]);
+  (
+    _mm512_aesenclast_epi128(s0, rk10),
+    _mm512_aesenclast_epi128(s1, rk10),
+    _mm512_aesenclast_epi128(s2, rk10),
+    _mm512_aesenclast_epi128(s3, rk10),
+  )
 }
 
 /// Encrypt a single 16-byte block using AES-128 with AES-NI.

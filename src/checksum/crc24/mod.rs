@@ -556,5 +556,7 @@ mod cross_check {
   }
 }
 
+impl_std_io_write_for_checksum!(Crc24OpenPgp);
+
 #[cfg(test)]
 crate::define_crc_property_tests!(crc24_openpgp_props, Crc24OpenPgp);

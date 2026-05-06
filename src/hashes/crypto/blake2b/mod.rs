@@ -1048,6 +1048,9 @@ impl Drop for Blake2b512 {
   }
 }
 
+impl_std_io_write_for_digest!(Blake2b256);
+impl_std_io_write_for_digest!(Blake2b512);
+
 // ─── Blake2b (variable output length) ───────────────────────────────────────
 
 /// Blake2b with runtime-configurable output length in 1..=64 bytes.

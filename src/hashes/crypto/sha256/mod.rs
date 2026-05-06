@@ -612,6 +612,8 @@ impl Digest for Sha256 {
   }
 }
 
+impl_std_io_write_for_digest!(Sha256);
+
 #[cfg(test)]
 mod tests {
   use super::Sha256;

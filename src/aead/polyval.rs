@@ -69,6 +69,100 @@ mod pclmul {
     }
   }
 
+  /// Process 4 POLYVAL-domain blocks using PCLMULQDQ and one shared reduction.
+  ///
+  /// Computes `(acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H`.
+  ///
+  /// # Safety
+  /// Caller must ensure PCLMULQDQ and SSE2 are available.
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[target_feature(enable = "pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_4blocks(acc: u128, h_powers_rev: &[u128; 4], blocks: &[u128; 4]) -> u128 {
+    // SAFETY: target_feature gate guarantees PCLMULQDQ + SSE2; all loads read initialized
+    // fixed-size stack/reference values.
+    unsafe {
+      let b0 = acc ^ blocks[0];
+      let d0 = _mm_loadu_si128((&b0 as *const u128).cast());
+      let d1 = _mm_loadu_si128((&blocks[1] as *const u128).cast());
+      let d2 = _mm_loadu_si128((&blocks[2] as *const u128).cast());
+      let d3 = _mm_loadu_si128((&blocks[3] as *const u128).cast());
+      let h0 = _mm_loadu_si128((&h_powers_rev[0] as *const u128).cast());
+      let h1 = _mm_loadu_si128((&h_powers_rev[1] as *const u128).cast());
+      let h2 = _mm_loadu_si128((&h_powers_rev[2] as *const u128).cast());
+      let h3 = _mm_loadu_si128((&h_powers_rev[3] as *const u128).cast());
+
+      aggregate_xmms([d0, d1, d2, d3], [h0, h1, h2, h3])
+    }
+  }
+
+  /// Process 4 big-endian GHASH blocks already held in XMM registers.
+  ///
+  /// The input registers contain ciphertext bytes in memory order. This helper reverses each lane
+  /// into the POLYVAL-domain representation used by GHASH internally, folds `acc` into the first
+  /// lane, and performs one 4-block aggregate.
+  ///
+  /// # Safety
+  /// Caller must ensure PCLMULQDQ, SSE2, and SSSE3 are available.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "pclmulqdq,sse2,ssse3")]
+  pub(super) unsafe fn aggregate_4blocks_be_xmm(
+    acc: u128,
+    h_powers_rev: &[u128; 4],
+    raw0: __m128i,
+    raw1: __m128i,
+    raw2: __m128i,
+    raw3: __m128i,
+  ) -> u128 {
+    // SAFETY: target_feature gate guarantees PCLMULQDQ + SSE2 + SSSE3; all loads read initialized
+    // fixed-size references, and PSHUFB only shuffles bytes within each register.
+    unsafe {
+      let reverse_bytes = _mm_set_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+      let acc_xmm = _mm_loadu_si128((&acc as *const u128).cast());
+      let d0 = _mm_xor_si128(_mm_shuffle_epi8(raw0, reverse_bytes), acc_xmm);
+      let d1 = _mm_shuffle_epi8(raw1, reverse_bytes);
+      let d2 = _mm_shuffle_epi8(raw2, reverse_bytes);
+      let d3 = _mm_shuffle_epi8(raw3, reverse_bytes);
+      let h0 = _mm_loadu_si128((&h_powers_rev[0] as *const u128).cast());
+      let h1 = _mm_loadu_si128((&h_powers_rev[1] as *const u128).cast());
+      let h2 = _mm_loadu_si128((&h_powers_rev[2] as *const u128).cast());
+      let h3 = _mm_loadu_si128((&h_powers_rev[3] as *const u128).cast());
+
+      aggregate_xmms([d0, d1, d2, d3], [h0, h1, h2, h3])
+    }
+  }
+
+  #[target_feature(enable = "pclmulqdq,sse2")]
+  #[inline]
+  unsafe fn aggregate_xmms(data: [__m128i; 4], h: [__m128i; 4]) -> u128 {
+    // SAFETY: caller is inside a PCLMULQDQ + SSE2 target-feature chain.
+    unsafe {
+      let mut lo_sum = _mm_setzero_si128();
+      let mut hi_sum = _mm_setzero_si128();
+
+      macro_rules! fold_product {
+        ($data:expr, $h:expr) => {{
+          let lo = _mm_clmulepi64_si128($data, $h, 0x00);
+          let hi = _mm_clmulepi64_si128($data, $h, 0x11);
+          let m1 = _mm_clmulepi64_si128($data, $h, 0x10);
+          let m2 = _mm_clmulepi64_si128($data, $h, 0x01);
+          let mid = _mm_xor_si128(m1, m2);
+          lo_sum = _mm_xor_si128(lo_sum, _mm_xor_si128(lo, _mm_slli_si128(mid, 8)));
+          hi_sum = _mm_xor_si128(hi_sum, _mm_xor_si128(hi, _mm_srli_si128(mid, 8)));
+        }};
+      }
+
+      fold_product!(data[0], h[0]);
+      fold_product!(data[1], h[1]);
+      fold_product!(data[2], h[2]);
+      fold_product!(data[3], h[3]);
+
+      let result = mont_reduce_sse2(lo_sum, hi_sum);
+      let mut out = 0u128;
+      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      out
+    }
+  }
+
   /// Montgomery reduction of a 256-bit product [lo:hi] modulo POLYVAL's polynomial.
   ///
   /// Equivalent to the portable `mont_reduce` but uses SSE2 lane-parallel shifts.
@@ -129,12 +223,11 @@ mod pmull {
       let b_lo = b as u64;
       let b_hi = (b >> 64) as u64;
 
-      // Schoolbook 128×128 → 256-bit product (4 PMULL instructions).
+      // Karatsuba 128×128 → 256-bit product (3 PMULL instructions).
       let ll = vreinterpretq_u64_p128(vmull_p64(a_lo, b_lo));
       let hh = vreinterpretq_u64_p128(vmull_p64(a_hi, b_hi));
-      let lh = vreinterpretq_u64_p128(vmull_p64(a_lo, b_hi));
-      let hl = vreinterpretq_u64_p128(vmull_p64(a_hi, b_lo));
-      let mid = veorq_u64(lh, hl);
+      let mm = vreinterpretq_u64_p128(vmull_p64(a_lo ^ a_hi, b_lo ^ b_hi));
+      let mid = veorq_u64(veorq_u64(mm, ll), hh);
 
       // Assemble 256-bit product [lo_128 : hi_128].
       let zero = vdupq_n_u64(0);
@@ -203,10 +296,10 @@ mod pmull {
     }
   }
 
-  /// 4-block wide schoolbook multiply + single Montgomery reduction.
+  /// 4-block wide Karatsuba multiply + single Montgomery reduction.
   ///
   /// Computes `(acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H` using
-  /// 16 independent `vmull_p64` instructions that the OOO core on Neoverse
+  /// 12 independent `vmull_p64` instructions that the OOO core on Neoverse
   /// V1/V2 (2 crypto pipes) can schedule freely, then a single reduction.
   #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "neon", enable = "aes")]
@@ -219,35 +312,127 @@ mod pmull {
       let b2 = blocks[2];
       let b3 = blocks[3];
 
-      // 16 vmull_p64: 4 blocks × 4 schoolbook products.
-      let ll0 = vreinterpretq_u64_p128(vmull_p64(b0 as u64, h_powers_rev[0] as u64));
-      let hh0 = vreinterpretq_u64_p128(vmull_p64((b0 >> 64) as u64, (h_powers_rev[0] >> 64) as u64));
-      let lh0 = vreinterpretq_u64_p128(vmull_p64(b0 as u64, (h_powers_rev[0] >> 64) as u64));
-      let hl0 = vreinterpretq_u64_p128(vmull_p64((b0 >> 64) as u64, h_powers_rev[0] as u64));
+      // 12 vmull_p64: 4 blocks × 3 Karatsuba products.
+      let b0_lo = b0 as u64;
+      let b0_hi = (b0 >> 64) as u64;
+      let h0_lo = h_powers_rev[0] as u64;
+      let h0_hi = (h_powers_rev[0] >> 64) as u64;
+      let ll0 = vreinterpretq_u64_p128(vmull_p64(b0_lo, h0_lo));
+      let hh0 = vreinterpretq_u64_p128(vmull_p64(b0_hi, h0_hi));
+      let mm0 = vreinterpretq_u64_p128(vmull_p64(b0_lo ^ b0_hi, h0_lo ^ h0_hi));
 
-      let ll1 = vreinterpretq_u64_p128(vmull_p64(b1 as u64, h_powers_rev[1] as u64));
-      let hh1 = vreinterpretq_u64_p128(vmull_p64((b1 >> 64) as u64, (h_powers_rev[1] >> 64) as u64));
-      let lh1 = vreinterpretq_u64_p128(vmull_p64(b1 as u64, (h_powers_rev[1] >> 64) as u64));
-      let hl1 = vreinterpretq_u64_p128(vmull_p64((b1 >> 64) as u64, h_powers_rev[1] as u64));
+      let b1_lo = b1 as u64;
+      let b1_hi = (b1 >> 64) as u64;
+      let h1_lo = h_powers_rev[1] as u64;
+      let h1_hi = (h_powers_rev[1] >> 64) as u64;
+      let ll1 = vreinterpretq_u64_p128(vmull_p64(b1_lo, h1_lo));
+      let hh1 = vreinterpretq_u64_p128(vmull_p64(b1_hi, h1_hi));
+      let mm1 = vreinterpretq_u64_p128(vmull_p64(b1_lo ^ b1_hi, h1_lo ^ h1_hi));
 
-      let ll2 = vreinterpretq_u64_p128(vmull_p64(b2 as u64, h_powers_rev[2] as u64));
-      let hh2 = vreinterpretq_u64_p128(vmull_p64((b2 >> 64) as u64, (h_powers_rev[2] >> 64) as u64));
-      let lh2 = vreinterpretq_u64_p128(vmull_p64(b2 as u64, (h_powers_rev[2] >> 64) as u64));
-      let hl2 = vreinterpretq_u64_p128(vmull_p64((b2 >> 64) as u64, h_powers_rev[2] as u64));
+      let b2_lo = b2 as u64;
+      let b2_hi = (b2 >> 64) as u64;
+      let h2_lo = h_powers_rev[2] as u64;
+      let h2_hi = (h_powers_rev[2] >> 64) as u64;
+      let ll2 = vreinterpretq_u64_p128(vmull_p64(b2_lo, h2_lo));
+      let hh2 = vreinterpretq_u64_p128(vmull_p64(b2_hi, h2_hi));
+      let mm2 = vreinterpretq_u64_p128(vmull_p64(b2_lo ^ b2_hi, h2_lo ^ h2_hi));
 
-      let ll3 = vreinterpretq_u64_p128(vmull_p64(b3 as u64, h_powers_rev[3] as u64));
-      let hh3 = vreinterpretq_u64_p128(vmull_p64((b3 >> 64) as u64, (h_powers_rev[3] >> 64) as u64));
-      let lh3 = vreinterpretq_u64_p128(vmull_p64(b3 as u64, (h_powers_rev[3] >> 64) as u64));
-      let hl3 = vreinterpretq_u64_p128(vmull_p64((b3 >> 64) as u64, h_powers_rev[3] as u64));
+      let b3_lo = b3 as u64;
+      let b3_hi = (b3 >> 64) as u64;
+      let h3_lo = h_powers_rev[3] as u64;
+      let h3_hi = (h_powers_rev[3] >> 64) as u64;
+      let ll3 = vreinterpretq_u64_p128(vmull_p64(b3_lo, h3_lo));
+      let hh3 = vreinterpretq_u64_p128(vmull_p64(b3_hi, h3_hi));
+      let mm3 = vreinterpretq_u64_p128(vmull_p64(b3_lo ^ b3_hi, h3_lo ^ h3_hi));
 
       // XOR the 4 products.
       let ll = veorq_u64(veorq_u64(ll0, ll1), veorq_u64(ll2, ll3));
       let hh = veorq_u64(veorq_u64(hh0, hh1), veorq_u64(hh2, hh3));
-      let lh = veorq_u64(veorq_u64(lh0, lh1), veorq_u64(lh2, lh3));
-      let hl = veorq_u64(veorq_u64(hl0, hl1), veorq_u64(hl2, hl3));
+      let mm = veorq_u64(veorq_u64(mm0, mm1), veorq_u64(mm2, mm3));
 
       // Assemble + reduce (same as single-block path).
-      let mid = veorq_u64(lh, hl);
+      let mid = veorq_u64(veorq_u64(mm, ll), hh);
+      let zero = vdupq_n_u64(0);
+      let lo = veorq_u64(ll, vextq_u64(zero, mid, 1));
+      let hi = veorq_u64(hh, vextq_u64(mid, zero, 1));
+      let result = mont_reduce_neon(lo, hi);
+
+      let r_lo = vgetq_lane_u64(result, 0) as u128;
+      let r_hi = vgetq_lane_u64(result, 1) as u128;
+      r_lo | (r_hi << 64)
+    }
+  }
+
+  /// 8-block GHASH aggregate from big-endian ciphertext lanes already held in NEON registers.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "neon", enable = "aes")]
+  #[inline]
+  pub(super) unsafe fn aggregate_8blocks_be_lanes(
+    acc: u128,
+    h_powers_rev: &[u128; 8],
+    blocks: &[uint8x16_t; 8],
+  ) -> u128 {
+    // SAFETY: target_feature gate guarantees NEON + PMULL. The byte-reversal maps memory-order
+    // GHASH lanes to the little-endian POLYVAL-domain lane representation.
+    unsafe {
+      #[inline(always)]
+      unsafe fn load_power(power: *const u128) -> uint64x2_t {
+        // SAFETY: caller passes a pointer into `h_powers_rev`; `vld1q_u64`
+        // accepts arbitrary alignment and reads exactly one initialized u128.
+        unsafe { vld1q_u64(power.cast::<u64>()) }
+      }
+
+      #[inline(always)]
+      unsafe fn u128_to_lanes(x: u128) -> uint64x2_t {
+        // SAFETY: caller is inside a NEON target scope. `vcreate_u64`
+        // initializes one 64-bit lane and `vcombine_u64` builds the pair.
+        unsafe { vcombine_u64(vcreate_u64(x as u64), vcreate_u64((x >> 64) as u64)) }
+      }
+
+      let mut ll = vdupq_n_u64(0);
+      let mut hh = vdupq_n_u64(0);
+      let mut mm = vdupq_n_u64(0);
+      let acc_lanes = u128_to_lanes(acc);
+
+      macro_rules! fold_product_with_acc {
+        ($idx:expr, $acc_lanes:expr) => {{
+          let rev64 = vrev64q_u8(blocks[$idx]);
+          let rev = vextq_u8(rev64, rev64, 8);
+          let lanes = veorq_u64(vreinterpretq_u64_u8(rev), $acc_lanes);
+          let h = load_power(h_powers_rev.as_ptr().add($idx));
+
+          let b_poly = vreinterpretq_p64_u64(lanes);
+          let h_poly = vreinterpretq_p64_u64(h);
+          ll = veorq_u64(
+            ll,
+            vreinterpretq_u64_p128(vmull_p64(vgetq_lane_p64(b_poly, 0), vgetq_lane_p64(h_poly, 0))),
+          );
+          hh = veorq_u64(hh, vreinterpretq_u64_p128(vmull_high_p64(b_poly, h_poly)));
+
+          let b_mid = veorq_u64(lanes, vextq_u64(lanes, lanes, 1));
+          let h_mid = veorq_u64(h, vextq_u64(h, h, 1));
+          let b_mid_poly = vreinterpretq_p64_u64(b_mid);
+          let h_mid_poly = vreinterpretq_p64_u64(h_mid);
+          mm = veorq_u64(
+            mm,
+            vreinterpretq_u64_p128(vmull_p64(
+              vgetq_lane_p64(b_mid_poly, 0),
+              vgetq_lane_p64(h_mid_poly, 0),
+            )),
+          );
+        }};
+      }
+
+      fold_product_with_acc!(0, acc_lanes);
+      fold_product_with_acc!(1, vdupq_n_u64(0));
+      fold_product_with_acc!(2, vdupq_n_u64(0));
+      fold_product_with_acc!(3, vdupq_n_u64(0));
+      fold_product_with_acc!(4, vdupq_n_u64(0));
+      fold_product_with_acc!(5, vdupq_n_u64(0));
+      fold_product_with_acc!(6, vdupq_n_u64(0));
+      fold_product_with_acc!(7, vdupq_n_u64(0));
+
+      let mid = veorq_u64(veorq_u64(mm, ll), hh);
       let zero = vdupq_n_u64(0);
       let lo = veorq_u64(ll, vextq_u64(zero, mid, 1));
       let hi = veorq_u64(hh, vextq_u64(mid, zero, 1));
@@ -761,31 +946,19 @@ mod rv_scalar_clmul {
 mod vpclmul {
   use core::arch::x86_64::*;
 
-  /// Process 4 blocks in parallel using VPCLMULQDQ schoolbook-then-reduce.
-  ///
-  /// Computes: (acc ^ b0) * H4 ^ b1 * H3 ^ b2 * H2 ^ b3 * H
-  ///
-  /// The 4 schoolbook 128x128 products are computed in parallel with 4
-  /// `_mm512_clmulepi64_epi128` instructions, XOR'd together into one
-  /// 256-bit aggregate, then reduced with a single Montgomery reduction.
+  /// Reduce four already packed POLYVAL-domain lanes into one accumulator.
   ///
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
   #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
-  pub(super) unsafe fn aggregate_4blocks(
-    acc: u128,
-    h_powers_rev: &[u128; 4], // [H^4, H^3, H^2, H]
-    blocks: &[u128; 4],       // [b0, b1, b2, b3] in correct domain
-  ) -> u128 {
-    // SAFETY: target_feature gate guarantees all required ISA extensions.
+  #[inline]
+  unsafe fn aggregate_lanes(data: __m512i, h_powers_rev: &[u128; 4]) -> u128 {
+    // SAFETY: x86 VPCLMUL aggregation because:
+    // 1. This function's caller guarantees all required target features.
+    // 2. `data` contains four initialized POLYVAL-domain lanes and `h_powers_rev` has four powers.
     unsafe {
-      // XOR accumulator into the first block.
-      let mut block_data = *blocks;
-      block_data[0] ^= acc;
-      let data = _mm512_loadu_si512(block_data.as_ptr().cast());
-
       // Load H powers [H^4, H^3, H^2, H].
       let h_vec = _mm512_loadu_si512(h_powers_rev.as_ptr().cast());
 
@@ -821,6 +994,217 @@ mod vpclmul {
       out
     }
   }
+
+  /// Convert four big-endian GHASH lanes and XOR `acc` into the first lane.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  #[inline]
+  unsafe fn be_lanes_with_acc(acc: u128, raw: __m512i) -> __m512i {
+    // SAFETY: direct GHASH lane conversion because:
+    // 1. This function's caller guarantees the required x86 target features.
+    // 2. `raw` contains four initialized big-endian GHASH lanes and `acc` is initialized.
+    unsafe {
+      let reverse_bytes = _mm512_set_epi32(
+        0x0001_0203,
+        0x0405_0607,
+        0x0809_0a0b,
+        0x0c0d_0e0f,
+        0x0001_0203,
+        0x0405_0607,
+        0x0809_0a0b,
+        0x0c0d_0e0f,
+        0x0001_0203,
+        0x0405_0607,
+        0x0809_0a0b,
+        0x0c0d_0e0f,
+        0x0001_0203,
+        0x0405_0607,
+        0x0809_0a0b,
+        0x0c0d_0e0f,
+      );
+      let data = _mm512_shuffle_epi8(raw, reverse_bytes);
+      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
+      _mm512_xor_si512(data, acc_lane)
+    }
+  }
+
+  /// Load four big-endian GHASH blocks and XOR `acc` into the first lane.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  #[inline]
+  unsafe fn load_be_4blocks(acc: u128, block_bytes: &[u8; 64]) -> __m512i {
+    // SAFETY: direct GHASH byte loading because:
+    // 1. This function's caller guarantees the required x86 target features.
+    // 2. `block_bytes` is exactly 64 initialized bytes and `acc` is an initialized field element.
+    unsafe {
+      let raw = _mm512_loadu_si512(block_bytes.as_ptr().cast());
+      be_lanes_with_acc(acc, raw)
+    }
+  }
+
+  /// Process 4 blocks in parallel using VPCLMULQDQ schoolbook-then-reduce.
+  ///
+  /// Computes: (acc ^ b0) * H4 ^ b1 * H3 ^ b2 * H2 ^ b3 * H
+  ///
+  /// The 4 schoolbook 128x128 products are computed in parallel with 4
+  /// `_mm512_clmulepi64_epi128` instructions, XOR'd together into one
+  /// 256-bit aggregate, then reduced with a single Montgomery reduction.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_4blocks(
+    acc: u128,
+    h_powers_rev: &[u128; 4], // [H^4, H^3, H^2, H]
+    blocks: &[u128; 4],       // [b0, b1, b2, b3] in correct domain
+  ) -> u128 {
+    // SAFETY: x86 VPCLMUL aggregation because:
+    // 1. This function's caller guarantees all required target features.
+    // 2. `blocks` and `h_powers_rev` are fixed 4-lane initialized arrays.
+    unsafe {
+      // XOR accumulator into the first block.
+      let mut block_data = *blocks;
+      block_data[0] ^= acc;
+      let data = _mm512_loadu_si512(block_data.as_ptr().cast());
+      aggregate_lanes(data, h_powers_rev)
+    }
+  }
+
+  /// Process 4 big-endian GHASH blocks directly from bytes.
+  ///
+  /// Equivalent to `aggregate_4blocks(acc, h_powers_rev, blocks)` with
+  /// `blocks[i] = u128::from_be_bytes(block_bytes[i])`, but keeps the
+  /// byte-reversal and lane packing in SIMD.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_4blocks_be_bytes(acc: u128, h_powers_rev: &[u128; 4], block_bytes: &[u8; 64]) -> u128 {
+    // SAFETY: direct-byte GHASH aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `block_bytes` is exactly four initialized 16-byte GHASH blocks.
+    unsafe { aggregate_lanes(load_be_4blocks(acc, block_bytes), h_powers_rev) }
+  }
+
+  /// Process 4 big-endian GHASH lanes already resident in a SIMD register.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_4blocks_be_lanes(acc: u128, h_powers_rev: &[u128; 4], raw: __m512i) -> u128 {
+    // SAFETY: direct-lane GHASH aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `raw` contains four initialized 16-byte ciphertext lanes in memory byte order.
+    unsafe { aggregate_lanes(be_lanes_with_acc(acc, raw), h_powers_rev) }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// x86_64: inline helpers for fused GCM paths
+// ---------------------------------------------------------------------------
+
+/// PCLMULQDQ-based 128×128 carryless multiply + Montgomery reduce.
+///
+/// # Safety
+/// Caller must ensure PCLMULQDQ and SSE2 are available.
+#[cfg(all(target_arch = "x86_64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[target_feature(enable = "pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
+  // SAFETY: x86 carryless multiply because:
+  // 1. Caller guarantees PCLMULQDQ and SSE2 availability.
+  // 2. `a` and `b` are initialized POLYVAL-domain field elements.
+  unsafe { pclmul::clmul128_reduce(a, b) }
+}
+
+/// PCLMULQDQ 4-block aggregate helper for already domain-converted blocks.
+///
+/// # Safety
+/// Caller must ensure PCLMULQDQ and SSE2 are available.
+#[cfg(all(target_arch = "x86_64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[target_feature(enable = "pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_pclmul_aggregate_4blocks_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 4],
+  blocks: &[u128; 4],
+) -> u128 {
+  // SAFETY: PCLMUL aggregate because:
+  // 1. Caller guarantees PCLMULQDQ and SSE2 availability.
+  // 2. `h_powers_rev` and `blocks` are initialized fixed-width inputs.
+  unsafe { pclmul::aggregate_4blocks(acc, h_powers_rev, blocks) }
+}
+
+/// PCLMULQDQ 4-block aggregate helper for big-endian GHASH bytes already in XMM registers.
+///
+/// # Safety
+/// Caller must ensure PCLMULQDQ, SSE2, and SSSE3 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "pclmulqdq,sse2,ssse3")]
+#[inline]
+pub(super) unsafe fn x86_pclmul_aggregate_4blocks_be_xmm_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 4],
+  raw0: core::arch::x86_64::__m128i,
+  raw1: core::arch::x86_64::__m128i,
+  raw2: core::arch::x86_64::__m128i,
+  raw3: core::arch::x86_64::__m128i,
+) -> u128 {
+  // SAFETY: direct-register PCLMUL GHASH aggregation because:
+  // 1. Caller guarantees PCLMULQDQ, SSE2, and SSSE3 availability.
+  // 2. `raw*` contain initialized 16-byte GHASH blocks in memory byte order.
+  unsafe { pclmul::aggregate_4blocks_be_xmm(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
+}
+
+/// 4-block VPCLMULQDQ aggregate helper that loads big-endian GHASH bytes directly.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_aggregate_4blocks_be_bytes_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 4],
+  block_bytes: &[u8; 64],
+) -> u128 {
+  // SAFETY: direct-byte VPCLMUL aggregation because:
+  // 1. Caller guarantees all required x86 target features.
+  // 2. `h_powers_rev` and `block_bytes` are fixed-size initialized inputs matching the backend
+  //    contract.
+  unsafe { vpclmul::aggregate_4blocks_be_bytes(acc, h_powers_rev, block_bytes) }
+}
+
+/// 4-block VPCLMULQDQ aggregate helper for big-endian GHASH lanes already in a register.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_aggregate_4blocks_be_lanes_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 4],
+  raw: core::arch::x86_64::__m512i,
+) -> u128 {
+  // SAFETY: direct-lane VPCLMUL aggregation because:
+  // 1. Caller guarantees all required x86 target features.
+  // 2. `h_powers_rev` and `raw` are initialized inputs matching the backend contract.
+  unsafe { vpclmul::aggregate_4blocks_be_lanes(acc, h_powers_rev, raw) }
 }
 
 // ---------------------------------------------------------------------------
@@ -835,11 +1219,14 @@ mod vpclmul {
 ///
 /// # Safety
 /// Caller must ensure PMULL is available.
-#[cfg(all(target_arch = "aarch64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "aarch64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "neon", enable = "aes")]
 #[inline]
 pub(super) unsafe fn aarch64_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
-  // SAFETY: PMULL availability guaranteed by caller.
+  // SAFETY: PMULL reduction because:
+  // 1. This helper is only callable from an `aes,neon` target-feature scope.
+  // 2. The caller guarantees PMULL/AES availability on the current CPU.
+  // 3. `a` and `b` are plain 128-bit field elements with no pointer aliasing contract.
   unsafe { pmull::clmul128_reduce_core(a, b) }
 }
 
@@ -857,15 +1244,36 @@ pub(super) unsafe fn aarch64_aggregate_4blocks_inline(acc: u128, h_powers_rev: &
   unsafe { pmull::aggregate_4blocks(acc, h_powers_rev, blocks) }
 }
 
+/// 8-block wide PMULL aggregate helper for big-endian GHASH lanes already in NEON registers.
+///
+/// # Safety
+/// Caller must ensure PMULL is available.
+#[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
+#[target_feature(enable = "neon", enable = "aes")]
+#[inline]
+pub(super) unsafe fn aarch64_aggregate_8blocks_be_lanes_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 8],
+  blocks: &[core::arch::aarch64::uint8x16_t; 8],
+) -> u128 {
+  // SAFETY: PMULL aggregate call because:
+  // 1. Caller guarantees PMULL availability before invoking this unsafe helper.
+  // 2. `h_powers_rev` and `blocks` are fixed 8-lane initialized inputs.
+  unsafe { pmull::aggregate_8blocks_be_lanes(acc, h_powers_rev, blocks) }
+}
+
 /// POWER VPMSUMD multiply + reduce helper.
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm-siv"))]
+#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 pub(super) unsafe fn ppc_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
-  // SAFETY: POWER8 crypto availability guaranteed by caller.
+  // SAFETY: POWER8 VPMSUMD reduction because:
+  // 1. This helper is only callable from a POWER8 crypto target-feature scope.
+  // 2. The caller guarantees POWER8 crypto availability on the current CPU.
+  // 3. `a` and `b` are plain 128-bit field elements with no pointer aliasing contract.
   unsafe { ppc_vpmsum::clmul128_reduce_core(a, b) }
 }
 
@@ -891,7 +1299,10 @@ pub(super) unsafe fn ppc_aggregate_4blocks_inline(acc: u128, h_powers_rev: &[u12
 #[target_feature(enable = "vector")]
 #[inline]
 pub(super) unsafe fn s390x_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
-  // SAFETY: z/Vector availability guaranteed by caller.
+  // SAFETY: s390x VGFM reduction because:
+  // 1. This helper is only callable from a z/Vector target-feature scope.
+  // 2. The caller guarantees z/Vector availability on the current CPU.
+  // 3. `a` and `b` are plain 128-bit field elements with no pointer aliasing contract.
   unsafe { s390x_vgfm::clmul128_reduce_core(a, b) }
 }
 
@@ -926,7 +1337,10 @@ pub(super) fn portable_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
 #[target_feature(enable = "v", enable = "zvbc")]
 #[inline]
 pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
-  // SAFETY: Zvbc availability guaranteed by caller.
+  // SAFETY: RISC-V vector carryless reduction because:
+  // 1. This helper is only callable from a `v,zvbc` target-feature scope.
+  // 2. The caller guarantees Zvbc availability on the current CPU.
+  // 3. `a` and `b` are plain 128-bit field elements with no pointer aliasing contract.
   unsafe { rv_clmul::clmul128_reduce(a, b) }
 }
 
@@ -938,7 +1352,10 @@ pub(super) unsafe fn riscv_vector_clmul128_reduce_inline(a: u128, b: u128) -> u1
 #[target_feature(enable = "zbc")]
 #[inline]
 pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
-  // SAFETY: Zbc availability guaranteed by caller.
+  // SAFETY: RISC-V scalar carryless reduction because:
+  // 1. This helper is only callable from a `zbc` target-feature scope.
+  // 2. The caller guarantees Zbc/Zbkc availability on the current CPU.
+  // 3. `a` and `b` are plain 128-bit field elements with no pointer aliasing contract.
   unsafe { rv_scalar_clmul::clmul128_reduce(a, b) }
 }
 
@@ -1063,18 +1480,35 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
 /// Used by both GHASH and POLYVAL to enable the schoolbook-then-reduce
 /// pattern: 4 parallel multiplies, 1 shared reduction.
 #[cfg(any(
-  feature = "aes-gcm",
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "powerpc64",
-  target_arch = "s390x",
-  test
+  test,
+  all(
+    feature = "aes-gcm-siv",
+    any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "s390x"
+    )
+  )
 ))]
 pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
   let h2 = clmul128_reduce(h, h);
   let h3 = clmul128_reduce(h2, h);
   let h4 = clmul128_reduce(h3, h);
   [h, h2, h3, h4]
+}
+
+/// Precompute hash key powers [H, H^2, ..., H^8] for 8-block GHASH windows.
+#[cfg(any(feature = "aes-gcm", target_arch = "aarch64", test))]
+pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
+  let h2 = clmul128_reduce(h, h);
+  let h3 = clmul128_reduce(h2, h);
+  let h4 = clmul128_reduce(h3, h);
+  let h5 = clmul128_reduce(h4, h);
+  let h6 = clmul128_reduce(h5, h);
+  let h7 = clmul128_reduce(h6, h);
+  let h8 = clmul128_reduce(h7, h);
+  [h, h2, h3, h4, h5, h6, h7, h8]
 }
 
 /// Process 4 blocks through the hash accumulator in one shot.
@@ -1100,6 +1534,10 @@ pub(super) fn accumulate_4blocks(
     if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
       // SAFETY: VPCLMULQDQ + AVX-512 availability verified via CPUID.
       return unsafe { vpclmul::aggregate_4blocks(acc, h_powers_rev, blocks) };
+    }
+    if crate::platform::caps().has(crate::platform::caps::x86::PCLMULQDQ) {
+      // SAFETY: PCLMULQDQ availability verified via CPUID; x86_64 guarantees SSE2.
+      return unsafe { x86_pclmul_aggregate_4blocks_inline(acc, h_powers_rev, blocks) };
     }
   }
 

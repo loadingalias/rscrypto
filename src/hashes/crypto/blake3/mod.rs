@@ -3165,6 +3165,8 @@ impl Digest for Blake3 {
   }
 }
 
+impl_std_io_write_for_digest!(Blake3);
+
 /// Lean XOF oneshot for single-chunk inputs (≤ 1024 bytes).
 ///
 /// Constructs `Blake3XofReader` directly without going through `root_output_oneshot`
