@@ -12,16 +12,16 @@ readme = "README.md"
 keywords = ["cryptography", "no-std", "aead", "blake3", "simd"]
 categories = ["cryptography", "no-std", "algorithms", "hardware-support", "embedded"]
 include = [
-    "/Cargo.toml",
-    "/LICENSE-APACHE",
-    "/LICENSE-MIT",
-    "/README.md",
-    "/.config/target-matrix.json",
-    "/src/**",
-    "!/src/**/*.md",
-    "!/src/**/*.txt",
-    "!/src/**/.gitignore",
-  ]
+  "/Cargo.toml",
+  "/LICENSE-APACHE",
+  "/LICENSE-MIT",
+  "/README.md",
+  "/.config/target-matrix.json",
+  "/src/**",
+  "!/src/**/*.md",
+  "!/src/**/*.txt",
+  "!/src/**/.gitignore",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -129,7 +129,10 @@ rayon = { version = "1.12.0", optional = true }
 serde = { version = "1", optional = true, default-features = false }
 
 [dev-dependencies]
-criterion = { version = "^0.8.2", default-features = false, features = ["html_reports", "plotters"] }
+criterion = { version = "^0.8.2", default-features = false, features = [
+  "html_reports",
+  "plotters",
+] }
 proptest = "^1.11.0"
 
 # Oracles
@@ -162,8 +165,6 @@ aes-gcm-siv = "0.11.1"
 aegis = "0.9.8"
 ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
 serde_json = "1"
-
-# Competitors (perf benches only — not differential oracles)
 aws-lc-rs = "1.16.3"
 ring = "0.17.14"
 dryoc = "0.7.2"

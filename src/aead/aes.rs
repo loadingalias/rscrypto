@@ -2416,6 +2416,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_16: &[u128; 16],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -2460,22 +2461,19 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
       let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
       let c0 = _mm512_xor_si512(p0, ks0);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), c0);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
 
       let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
       let c1 = _mm512_xor_si512(p1, ks1);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(64)).cast(), c1);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
 
       let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
       let c2 = _mm512_xor_si512(p2, ks2);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(128)).cast(), c2);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
 
       let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
       let c3 = _mm512_xor_si512(p3, ks3);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(192)).cast(), c3);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
 
       ctr = ctr.wrapping_add(16);
       offset = offset.strict_add(256);
@@ -2548,6 +2546,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_16: &[u128; 16],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -2592,25 +2591,22 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
       let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(c0, ks0));
 
       let c1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
       _mm512_storeu_si512(
         data.as_mut_ptr().add(offset.strict_add(64)).cast(),
         _mm512_xor_si512(c1, ks1),
       );
 
       let c2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
       _mm512_storeu_si512(
         data.as_mut_ptr().add(offset.strict_add(128)).cast(),
         _mm512_xor_si512(c2, ks2),
       );
 
       let c3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
       _mm512_storeu_si512(
         data.as_mut_ptr().add(offset.strict_add(192)).cast(),
         _mm512_xor_si512(c3, ks3),
@@ -3448,6 +3444,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_16: &[u128; 16],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -3492,22 +3489,19 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
       let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
       let c0 = _mm512_xor_si512(p0, ks0);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), c0);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
 
       let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
       let c1 = _mm512_xor_si512(p1, ks1);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(64)).cast(), c1);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
 
       let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
       let c2 = _mm512_xor_si512(p2, ks2);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(128)).cast(), c2);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
 
       let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
       let c3 = _mm512_xor_si512(p3, ks3);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset.strict_add(192)).cast(), c3);
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
 
       ctr = ctr.wrapping_add(16);
       offset = offset.strict_add(256);
@@ -3580,6 +3574,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
   mut acc: u128,
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
+  h_powers_rev_16: &[u128; 16],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -3624,25 +3619,22 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
       let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c0);
       _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(c0, ks0));
 
       let c1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c1);
       _mm512_storeu_si512(
         data.as_mut_ptr().add(offset.strict_add(64)).cast(),
         _mm512_xor_si512(c1, ks1),
       );
 
       let c2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c2);
       _mm512_storeu_si512(
         data.as_mut_ptr().add(offset.strict_add(128)).cast(),
         _mm512_xor_si512(c2, ks2),
       );
 
       let c3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
-      acc = super::polyval::x86_aggregate_4blocks_be_lanes_inline(acc, h_powers_rev, c3);
+      acc = super::polyval::x86_aggregate_16blocks_be_lanes_inline(acc, h_powers_rev_16, c0, c1, c2, c3);
       _mm512_storeu_si512(
         data.as_mut_ptr().add(offset.strict_add(192)).cast(),
         _mm512_xor_si512(c3, ks3),

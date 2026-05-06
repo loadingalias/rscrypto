@@ -111,6 +111,9 @@ pub struct Aes256Gcm {
   h_powers_rev: [u128; 4],
   /// Precomputed H powers [H^8, H^7, ..., H] for AArch64 8-block GHASH windows.
   h_powers_rev_8: [u128; 8],
+  /// Precomputed H powers [H^16, H^15, ..., H] for x86 16-block GHASH windows.
+  #[cfg(target_arch = "x86_64")]
+  h_powers_rev_16: [u128; 16],
   backend: AeadBackend,
 }
 
@@ -590,6 +593,11 @@ impl Aead for Aes256Gcm {
     let h_powers_rev_8 = [
       powers[7], powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
     ];
+    #[cfg(target_arch = "x86_64")]
+    let h_powers_rev_16 = {
+      let powers = polyval::precompute_powers_16(h_polyval);
+      core::array::from_fn(|i| powers[15usize.strict_sub(i)])
+    };
     let backend = resolve_backend();
 
     Self {
@@ -597,6 +605,8 @@ impl Aead for Aes256Gcm {
       h,
       h_powers_rev,
       h_powers_rev_8,
+      #[cfg(target_arch = "x86_64")]
+      h_powers_rev_16,
       backend,
     }
   }
@@ -630,7 +640,15 @@ impl Aead for Aes256Gcm {
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES and VPCLMULQDQ.
       // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
       acc = unsafe {
-        aes::aes256_ctr32_encrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+        aes::aes256_ctr32_encrypt_be_wide_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_16,
+        )
       };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
@@ -763,7 +781,15 @@ impl Aead for Aes256Gcm {
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES and VPCLMULQDQ.
       // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
       acc = unsafe {
-        aes::aes256_ctr32_decrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+        aes::aes256_ctr32_decrypt_be_wide_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_16,
+        )
       };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
@@ -912,6 +938,13 @@ impl Drop for Aes256Gcm {
     // 1. `[u128; 8]` is a contiguous initialized 128-byte array.
     // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
     ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_8.as_mut_ptr().cast::<u8>(), 128) });
+    #[cfg(target_arch = "x86_64")]
+    {
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 16]` is a contiguous initialized 256-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_16.as_mut_ptr().cast::<u8>(), 256) });
+    }
     // ek's Drop is handled by Aes256EncKey's own Drop impl.
   }
 }
