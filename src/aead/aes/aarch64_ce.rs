@@ -1019,15 +1019,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
     while offset.strict_add(128) <= data.len() {
       let prev = core::slice::from_raw_parts(data_ptr.add(offset.strict_sub(128)), 128);
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc = encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
-        keys,
-        iv_prefix,
-        ctr,
-        current,
-        acc,
-        h_powers_rev,
-        prev,
-      );
+      acc = encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(keys, iv_prefix, ctr, current, acc, h_powers_rev, prev);
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
@@ -1854,15 +1846,8 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
     while offset.strict_add(128) <= data.len() {
       let prev = core::slice::from_raw_parts(data_ptr.add(offset.strict_sub(128)), 128);
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc = encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
-        keys,
-        iv_prefix,
-        ctr,
-        current,
-        acc,
-        h_powers_rev,
-        prev,
-      );
+      acc =
+        encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(keys, iv_prefix, ctr, current, acc, h_powers_rev, prev);
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
@@ -1898,7 +1883,8 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   // SAFETY: AES-128-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
   // 2. The loop creates each 128-byte mutable chunk only after proving it is in bounds.
-  // 3. `decrypt_ctr32_be_xor_8blocks_ghash_current_128_core` folds ciphertext before plaintext stores.
+  // 3. `decrypt_ctr32_be_xor_8blocks_ghash_current_128_core` folds ciphertext before plaintext
+  //    stores.
   unsafe {
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
