@@ -995,6 +995,90 @@ mod vpclmul {
     }
   }
 
+  /// Reduce sixteen already packed POLYVAL-domain lanes into one accumulator.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  #[inline]
+  unsafe fn aggregate_16_lanes(data: [__m512i; 4], h_powers_rev: &[u128; 16]) -> u128 {
+    // SAFETY: x86 VPCLMUL 16-block aggregation because:
+    // 1. This function's caller guarantees all required target features.
+    // 2. `data` contains sixteen initialized POLYVAL-domain lanes in order.
+    // 3. `h_powers_rev` contains exactly [H^16, H^15, ..., H], matching the lanes.
+    unsafe {
+      let mut lo_sum = _mm512_setzero_si512();
+      let mut hi_sum = _mm512_setzero_si512();
+
+      macro_rules! fold_lanes {
+        ($data:expr, $power_offset:expr) => {{
+          let h_vec = _mm512_loadu_si512(h_powers_rev.as_ptr().add($power_offset).cast());
+          let lo = _mm512_clmulepi64_epi128($data, h_vec, 0x00);
+          let hi = _mm512_clmulepi64_epi128($data, h_vec, 0x11);
+          let m1 = _mm512_clmulepi64_epi128($data, h_vec, 0x10);
+          let m2 = _mm512_clmulepi64_epi128($data, h_vec, 0x01);
+          let mid = _mm512_xor_si512(m1, m2);
+
+          lo_sum = _mm512_xor_si512(lo_sum, _mm512_xor_si512(lo, _mm512_bslli_epi128(mid, 8)));
+          hi_sum = _mm512_xor_si512(hi_sum, _mm512_xor_si512(hi, _mm512_bsrli_epi128(mid, 8)));
+        }};
+      }
+
+      fold_lanes!(data[0], 0);
+      fold_lanes!(data[1], 4);
+      fold_lanes!(data[2], 8);
+      fold_lanes!(data[3], 12);
+
+      let lo_0 = _mm512_extracti64x2_epi64(lo_sum, 0);
+      let lo_1 = _mm512_extracti64x2_epi64(lo_sum, 1);
+      let lo_2 = _mm512_extracti64x2_epi64(lo_sum, 2);
+      let lo_3 = _mm512_extracti64x2_epi64(lo_sum, 3);
+      let lo = _mm_xor_si128(_mm_xor_si128(lo_0, lo_1), _mm_xor_si128(lo_2, lo_3));
+
+      let hi_0 = _mm512_extracti64x2_epi64(hi_sum, 0);
+      let hi_1 = _mm512_extracti64x2_epi64(hi_sum, 1);
+      let hi_2 = _mm512_extracti64x2_epi64(hi_sum, 2);
+      let hi_3 = _mm512_extracti64x2_epi64(hi_sum, 3);
+      let hi = _mm_xor_si128(_mm_xor_si128(hi_0, hi_1), _mm_xor_si128(hi_2, hi_3));
+
+      let result = super::pclmul::mont_reduce_sse2(lo, hi);
+      let mut out = 0u128;
+      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      out
+    }
+  }
+
+  /// Convert four big-endian GHASH lanes into POLYVAL-domain lanes.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
+  #[inline]
+  unsafe fn be_lanes(raw: __m512i) -> __m512i {
+    let reverse_bytes = _mm512_set_epi32(
+      0x0001_0203,
+      0x0405_0607,
+      0x0809_0a0b,
+      0x0c0d_0e0f,
+      0x0001_0203,
+      0x0405_0607,
+      0x0809_0a0b,
+      0x0c0d_0e0f,
+      0x0001_0203,
+      0x0405_0607,
+      0x0809_0a0b,
+      0x0c0d_0e0f,
+      0x0001_0203,
+      0x0405_0607,
+      0x0809_0a0b,
+      0x0c0d_0e0f,
+    );
+    _mm512_shuffle_epi8(raw, reverse_bytes)
+  }
+
   /// Convert four big-endian GHASH lanes and XOR `acc` into the first lane.
   ///
   /// # Safety
@@ -1007,25 +1091,7 @@ mod vpclmul {
     // 1. This function's caller guarantees the required x86 target features.
     // 2. `raw` contains four initialized big-endian GHASH lanes and `acc` is initialized.
     unsafe {
-      let reverse_bytes = _mm512_set_epi32(
-        0x0001_0203,
-        0x0405_0607,
-        0x0809_0a0b,
-        0x0c0d_0e0f,
-        0x0001_0203,
-        0x0405_0607,
-        0x0809_0a0b,
-        0x0c0d_0e0f,
-        0x0001_0203,
-        0x0405_0607,
-        0x0809_0a0b,
-        0x0c0d_0e0f,
-        0x0001_0203,
-        0x0405_0607,
-        0x0809_0a0b,
-        0x0c0d_0e0f,
-      );
-      let data = _mm512_shuffle_epi8(raw, reverse_bytes);
+      let data = be_lanes(raw);
       let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
       _mm512_xor_si512(data, acc_lane)
     }
@@ -1078,6 +1144,33 @@ mod vpclmul {
     }
   }
 
+  /// Process 16 POLYVAL-domain blocks using VPCLMULQDQ and one shared reduction.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(test)]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_16blocks(acc: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
+    // SAFETY: x86 VPCLMUL aggregation because:
+    // 1. This function's caller guarantees all required target features.
+    // 2. `blocks` and `h_powers_rev` are fixed 16-lane initialized arrays.
+    // 3. The accumulator is folded into the first lane, matching sequential GHASH/POLYVAL.
+    unsafe {
+      let mut block_data = *blocks;
+      block_data[0] ^= acc;
+      aggregate_16_lanes(
+        [
+          _mm512_loadu_si512(block_data.as_ptr().cast()),
+          _mm512_loadu_si512(block_data.as_ptr().add(4).cast()),
+          _mm512_loadu_si512(block_data.as_ptr().add(8).cast()),
+          _mm512_loadu_si512(block_data.as_ptr().add(12).cast()),
+        ],
+        h_powers_rev,
+      )
+    }
+  }
+
   /// Process 4 big-endian GHASH blocks directly from bytes.
   ///
   /// Equivalent to `aggregate_4blocks(acc, h_powers_rev, blocks)` with
@@ -1108,6 +1201,38 @@ mod vpclmul {
     // 1. This function's caller guarantees all required x86 target features.
     // 2. `raw` contains four initialized 16-byte ciphertext lanes in memory byte order.
     unsafe { aggregate_lanes(be_lanes_with_acc(acc, raw), h_powers_rev) }
+  }
+
+  /// Process 16 big-endian GHASH lanes already resident in SIMD registers.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_16blocks_be_lanes(
+    acc: u128,
+    h_powers_rev: &[u128; 16],
+    raw0: __m512i,
+    raw1: __m512i,
+    raw2: __m512i,
+    raw3: __m512i,
+  ) -> u128 {
+    // SAFETY: direct-lane GHASH aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `raw*` contain sixteen initialized 16-byte ciphertext lanes in memory byte order.
+    // 3. Only the first lane receives the incoming accumulator, matching GHASH recurrence.
+    unsafe {
+      aggregate_16_lanes(
+        [
+          be_lanes_with_acc(acc, raw0),
+          be_lanes(raw1),
+          be_lanes(raw2),
+          be_lanes(raw3),
+        ],
+        h_powers_rev,
+      )
+    }
   }
 }
 
@@ -1205,6 +1330,29 @@ pub(super) unsafe fn x86_aggregate_4blocks_be_lanes_inline(
   // 1. Caller guarantees all required x86 target features.
   // 2. `h_powers_rev` and `raw` are initialized inputs matching the backend contract.
   unsafe { vpclmul::aggregate_4blocks_be_lanes(acc, h_powers_rev, raw) }
+}
+
+/// 16-block VPCLMULQDQ aggregate helper for big-endian GHASH lanes already in registers.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_aggregate_16blocks_be_lanes_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 16],
+  raw0: core::arch::x86_64::__m512i,
+  raw1: core::arch::x86_64::__m512i,
+  raw2: core::arch::x86_64::__m512i,
+  raw3: core::arch::x86_64::__m512i,
+) -> u128 {
+  // SAFETY: direct-lane VPCLMUL aggregation because:
+  // 1. Caller guarantees all required x86 target features.
+  // 2. `h_powers_rev` and `raw*` are initialized inputs matching the backend contract.
+  // 3. The helper folds the incoming accumulator only into the first lane.
+  unsafe { vpclmul::aggregate_16blocks_be_lanes(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1511,6 +1659,21 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
   [h, h2, h3, h4, h5, h6, h7, h8]
 }
 
+/// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH windows.
+#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
+  let mut powers = [0u128; 16];
+  powers[0] = h;
+
+  let mut i = 1usize;
+  while i < powers.len() {
+    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
+    i = i.strict_add(1);
+  }
+
+  powers
+}
+
 /// Process 4 blocks through the hash accumulator in one shot.
 ///
 /// Computes: (acc ^ b0) * H^4 ^ b1 * H^3 ^ b2 * H^2 ^ b3 * H
@@ -1588,6 +1751,32 @@ pub(super) fn accumulate_4blocks(
   a = clmul128_reduce(a, h);
   a ^= blocks[3];
   clmul128_reduce(a, h)
+}
+
+/// Process 16 blocks through the hash accumulator in one shot.
+///
+/// Computes `(acc ^ b0) * H^16 ^ b1 * H^15 ^ ... ^ b15 * H`.
+#[cfg(test)]
+pub(super) fn accumulate_16blocks(acc: u128, h: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
+  #[cfg(target_arch = "x86_64")]
+  {
+    if crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+      // SAFETY: VPCLMUL aggregate call because:
+      // 1. Runtime caps confirmed AVX-512 + VPCLMUL support before entering the target-feature helper.
+      // 2. `h_powers_rev` and `blocks` are fixed 16-lane arrays, matching the helper contract.
+      return unsafe { vpclmul::aggregate_16blocks(acc, h_powers_rev, blocks) };
+    }
+  }
+
+  let _ = h;
+
+  let mut a = clmul128_reduce(acc ^ blocks[0], h_powers_rev[0]);
+  let mut i = 1usize;
+  while i < blocks.len() {
+    a ^= clmul128_reduce(blocks[i], h_powers_rev[i]);
+    i = i.strict_add(1);
+  }
+  a
 }
 
 /// POLYVAL accumulator state.
@@ -1932,6 +2121,24 @@ mod tests {
     assert_eq!(powers[3], clmul128_reduce(powers[2], h), "powers[3] should be H^4");
   }
 
+  /// Verify precompute_powers_16 extends the same power chain to H^16.
+  #[test]
+  fn precompute_powers_16_correct() {
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers_16(h);
+    assert_eq!(powers[0], h, "powers[0] should be H");
+
+    let mut i = 1usize;
+    while i < powers.len() {
+      assert_eq!(
+        powers[i],
+        clmul128_reduce(powers[i.strict_sub(1)], h),
+        "powers[{i}] should extend the H power chain"
+      );
+      i = i.strict_add(1);
+    }
+  }
+
   /// Verify accumulate_4blocks matches sequential block-by-block processing.
   #[test]
   fn accumulate_4blocks_matches_sequential() {
@@ -1962,6 +2169,32 @@ mod tests {
     let wide = accumulate_4blocks(acc, h, &h_powers_rev, &blocks);
 
     assert_eq!(wide, seq, "4-block aggregate must match sequential processing");
+  }
+
+  /// Verify accumulate_16blocks matches sequential block-by-block processing.
+  #[test]
+  fn accumulate_16blocks_matches_sequential() {
+    let h_bytes = hex_to_16("25629347589242761d31f826ba4b757b");
+    let h = u128::from_le_bytes(h_bytes);
+    let powers = precompute_powers_16(h);
+    let h_powers_rev = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
+    let blocks = core::array::from_fn(|i| {
+      let lane = (i as u128).wrapping_add(1);
+      0x4f4f_9566_8c83_dfb6_4017_62bb_2d01_a262u128.wrapping_mul(lane)
+        ^ 0xd1a2_4ddd_2721_d006_bbe4_5f20_d3c9_f362u128.rotate_left(i as u32)
+    });
+    let acc = 0x42u128;
+
+    let mut seq = acc;
+    let mut i = 0usize;
+    while i < blocks.len() {
+      seq ^= blocks[i];
+      seq = clmul128_reduce(seq, h);
+      i = i.strict_add(1);
+    }
+
+    let wide = accumulate_16blocks(acc, h, &h_powers_rev, &blocks);
+    assert_eq!(wide, seq, "16-block aggregate must match sequential processing");
   }
 
   /// accumulate_4blocks with zero accumulator and zero blocks must produce zero.
