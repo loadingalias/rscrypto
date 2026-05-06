@@ -3052,7 +3052,8 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
         offset = end;
       }
     } else {
-      let state = ce::encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
+      let state =
+        ce::encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
       acc = state.0;
       ctr = state.1;
       offset = state.2;
