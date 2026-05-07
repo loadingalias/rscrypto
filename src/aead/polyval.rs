@@ -962,12 +962,15 @@ mod vpclmul {
       // Load H powers [H^4, H^3, H^2, H].
       let h_vec = _mm512_loadu_si512(h_powers_rev.as_ptr().cast());
 
-      // 4-way parallel schoolbook: 4 VPCLMULQDQ instructions.
+      // 4-way parallel Karatsuba: 3 VPCLMULQDQ instructions.
       let lo = _mm512_clmulepi64_epi128(data, h_vec, 0x00); // a_lo * b_lo
       let hi = _mm512_clmulepi64_epi128(data, h_vec, 0x11); // a_hi * b_hi
-      let m1 = _mm512_clmulepi64_epi128(data, h_vec, 0x10); // a_hi * b_lo
-      let m2 = _mm512_clmulepi64_epi128(data, h_vec, 0x01); // a_lo * b_hi
-      let mid = _mm512_xor_si512(m1, m2);
+      let data_mid = _mm512_xor_si512(data, _mm512_shuffle_epi32::<0x4e>(data));
+      let h_mid = _mm512_xor_si512(h_vec, _mm512_shuffle_epi32::<0x4e>(h_vec));
+      let mid = _mm512_xor_si512(
+        _mm512_xor_si512(_mm512_clmulepi64_epi128(data_mid, h_mid, 0x00), lo),
+        hi,
+      );
 
       // Assemble per-lane 256-bit products [lo_128 : hi_128].
       let lo_128 = _mm512_xor_si512(lo, _mm512_bslli_epi128(mid, 8));
@@ -1017,9 +1020,12 @@ mod vpclmul {
           let h_vec = _mm512_loadu_si512(h_powers_rev.as_ptr().add($power_offset).cast());
           let lo = _mm512_clmulepi64_epi128($data, h_vec, 0x00);
           let hi = _mm512_clmulepi64_epi128($data, h_vec, 0x11);
-          let m1 = _mm512_clmulepi64_epi128($data, h_vec, 0x10);
-          let m2 = _mm512_clmulepi64_epi128($data, h_vec, 0x01);
-          let mid = _mm512_xor_si512(m1, m2);
+          let data_mid = _mm512_xor_si512($data, _mm512_shuffle_epi32::<0x4e>($data));
+          let h_mid = _mm512_xor_si512(h_vec, _mm512_shuffle_epi32::<0x4e>(h_vec));
+          let mid = _mm512_xor_si512(
+            _mm512_xor_si512(_mm512_clmulepi64_epi128(data_mid, h_mid, 0x00), lo),
+            hi,
+          );
 
           lo_sum = _mm512_xor_si512(lo_sum, _mm512_xor_si512(lo, _mm512_bslli_epi128(mid, 8)));
           hi_sum = _mm512_xor_si512(hi_sum, _mm512_xor_si512(hi, _mm512_bsrli_epi128(mid, 8)));
@@ -1072,9 +1078,12 @@ mod vpclmul {
           let h_vec = _mm256_loadu_si256(h_powers_rev.as_ptr().add($power_offset).cast());
           let lo = _mm256_clmulepi64_epi128($data, h_vec, 0x00);
           let hi = _mm256_clmulepi64_epi128($data, h_vec, 0x11);
-          let m1 = _mm256_clmulepi64_epi128($data, h_vec, 0x10);
-          let m2 = _mm256_clmulepi64_epi128($data, h_vec, 0x01);
-          let mid = _mm256_xor_si256(m1, m2);
+          let data_mid = _mm256_xor_si256($data, _mm256_shuffle_epi32::<0x4e>($data));
+          let h_mid = _mm256_xor_si256(h_vec, _mm256_shuffle_epi32::<0x4e>(h_vec));
+          let mid = _mm256_xor_si256(
+            _mm256_xor_si256(_mm256_clmulepi64_epi128(data_mid, h_mid, 0x00), lo),
+            hi,
+          );
 
           lo_sum = _mm256_xor_si256(lo_sum, _mm256_xor_si256(lo, _mm256_bslli_epi128(mid, 8)));
           hi_sum = _mm256_xor_si256(hi_sum, _mm256_xor_si256(hi, _mm256_bsrli_epi128(mid, 8)));
