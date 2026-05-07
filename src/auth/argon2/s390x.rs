@@ -36,7 +36,6 @@ use super::BLOCK_WORDS;
 
 // ─── Inline-asm primitives (z13+ vector facility) ──────────────────────────
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -53,7 +52,6 @@ unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
   out
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -71,7 +69,6 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 32 = ROR 32.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_32(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -88,7 +85,6 @@ unsafe fn verllg_32(x: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 40 = ROR 24.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_40(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -105,7 +101,6 @@ unsafe fn verllg_40(x: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 48 = ROR 16.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_48(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -122,7 +117,6 @@ unsafe fn verllg_48(x: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 1 = ROR 63.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_1(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -179,7 +173,6 @@ fn bla_mul(a: i64x2, b: i64x2) -> i64x2 {
 
 // ─── 4-way P-round ─────────────────────────────────────────────────────────
 
-#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "vector")]
 unsafe fn p_round(
@@ -226,7 +219,6 @@ unsafe fn p_round(
 
 // ─── 4-way BlaMka G ────────────────────────────────────────────────────────
 
-#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "vector")]
 unsafe fn gb(

@@ -42,7 +42,6 @@ fn to_u32x4(v: i64x2) -> [u32; 4] {
   unsafe { core::mem::transmute(v) }
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vaf(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -59,7 +58,6 @@ unsafe fn vaf(a: i64x2, b: i64x2) -> i64x2 {
   out
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -81,7 +79,6 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
 /// `verll` is a rotate-LEFT instruction; on u32, `rol(32 - ROR) == ror(ROR)`.
 /// The conversion happens in the `const` `bits` operand so emitted asm is a
 /// single `verll` with the correct immediate — zero runtime cost.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn rotr32_via_verll<const ROR: u32>(x: i64x2) -> i64x2 {
   const {
@@ -102,7 +99,6 @@ unsafe fn rotr32_via_verll<const ROR: u32>(x: i64x2) -> i64x2 {
   out
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vperm(a: i64x2, b: i64x2, mask: i64x2) -> i64x2 {
   let out: i64x2;
@@ -151,7 +147,6 @@ unsafe fn vload_u32_quad(p: *const u32) -> i64x2 {
   unsafe { core::ptr::read_unaligned(p.cast::<i64x2>()) }
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn g4(a: &mut i64x2, b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, mx: i64x2, my: i64x2) {
   // SAFETY: caller guarantees z/Vector and passes disjoint row registers.
@@ -167,7 +162,6 @@ unsafe fn g4(a: &mut i64x2, b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, mx: i64
   }
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn diagonalize(b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, masks: &DiagMasks) {
   // SAFETY: caller guarantees z/Vector and passes disjoint row registers.
@@ -178,7 +172,6 @@ unsafe fn diagonalize(b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, masks: &DiagM
   }
 }
 
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn undiagonalize(b: &mut i64x2, c: &mut i64x2, d: &mut i64x2, masks: &DiagMasks) {
   // SAFETY: caller guarantees z/Vector and passes disjoint row registers.
