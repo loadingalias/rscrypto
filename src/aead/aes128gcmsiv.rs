@@ -5,7 +5,7 @@
 use core::fmt;
 
 #[cfg(target_arch = "x86_64")]
-use super::polyval::{accumulate_4blocks, precompute_powers};
+use super::polyval::{accumulate_padded_x86, precompute_powers, precompute_powers_16};
 use super::{
   AeadBufferError, Nonce96, OpenError, SealError, aes, polyval,
   targets::{AeadBackend, AeadPrimitive, select_backend},
@@ -446,70 +446,20 @@ fn compute_tag_wide(
   plaintext: &[u8],
 ) -> [u8; TAG_SIZE] {
   let h = u128::from_le_bytes(*auth_key);
-  let powers = precompute_powers(h);
-  let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+  let (h_powers_rev, h_powers_rev_16) = if aad.len() >= 256 || plaintext.len() >= 256 {
+    let powers_16 = precompute_powers_16(h);
+    (
+      [powers_16[3], powers_16[2], powers_16[1], powers_16[0]],
+      Some(core::array::from_fn(|i| powers_16[15usize.strict_sub(i)])),
+    )
+  } else {
+    let powers = precompute_powers(h);
+    ([powers[3], powers[2], powers[1], powers[0]], None)
+  };
 
   let mut acc: u128 = 0;
-
-  // Process AAD in 4-block wide chunks.
-  let mut offset = 0usize;
-  while offset.strict_add(64) <= aad.len() {
-    let mut blocks = [0u128; 4];
-    let mut i = 0usize;
-    while i < 4 {
-      let base = offset.strict_add(i.strict_mul(16));
-      let mut block = [0u8; 16];
-      block.copy_from_slice(&aad[base..base.strict_add(16)]);
-      blocks[i] = u128::from_le_bytes(block);
-      i = i.strict_add(1);
-    }
-    acc = accumulate_4blocks(acc, h, &h_powers_rev, &blocks);
-    offset = offset.strict_add(64);
-  }
-  while offset.strict_add(16) <= aad.len() {
-    let mut block = [0u8; 16];
-    block.copy_from_slice(&aad[offset..offset.strict_add(16)]);
-    acc ^= u128::from_le_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h);
-    offset = offset.strict_add(16);
-  }
-  let remaining_aad = aad.len().strict_sub(offset);
-  if remaining_aad > 0 {
-    let mut block = [0u8; 16];
-    block[..remaining_aad].copy_from_slice(&aad[offset..]);
-    acc ^= u128::from_le_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h);
-  }
-
-  // Process plaintext in 4-block wide chunks.
-  offset = 0;
-  while offset.strict_add(64) <= plaintext.len() {
-    let mut blocks = [0u128; 4];
-    let mut i = 0usize;
-    while i < 4 {
-      let base = offset.strict_add(i.strict_mul(16));
-      let mut block = [0u8; 16];
-      block.copy_from_slice(&plaintext[base..base.strict_add(16)]);
-      blocks[i] = u128::from_le_bytes(block);
-      i = i.strict_add(1);
-    }
-    acc = accumulate_4blocks(acc, h, &h_powers_rev, &blocks);
-    offset = offset.strict_add(64);
-  }
-  while offset.strict_add(16) <= plaintext.len() {
-    let mut block = [0u8; 16];
-    block.copy_from_slice(&plaintext[offset..offset.strict_add(16)]);
-    acc ^= u128::from_le_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h);
-    offset = offset.strict_add(16);
-  }
-  let remaining_pt = plaintext.len().strict_sub(offset);
-  if remaining_pt > 0 {
-    let mut block = [0u8; 16];
-    block[..remaining_pt].copy_from_slice(&plaintext[offset..]);
-    acc ^= u128::from_le_bytes(block);
-    acc = polyval::clmul128_reduce(acc, h);
-  }
+  acc = accumulate_padded_x86(acc, h, &h_powers_rev, h_powers_rev_16.as_ref(), aad);
+  acc = accumulate_padded_x86(acc, h, &h_powers_rev, h_powers_rev_16.as_ref(), plaintext);
 
   let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
   acc ^= u128::from_le_bytes(length_block);

@@ -1149,7 +1149,7 @@ mod vpclmul {
   /// # Safety
   /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
   /// VPCLMULQDQ + PCLMULQDQ + SSE2.
-  #[cfg(test)]
+  #[cfg(any(feature = "aes-gcm-siv", test))]
   #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
   pub(super) unsafe fn aggregate_16blocks(acc: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
     // SAFETY: x86 VPCLMUL aggregation because:
@@ -1165,6 +1165,55 @@ mod vpclmul {
           _mm512_loadu_si512(block_data.as_ptr().add(4).cast()),
           _mm512_loadu_si512(block_data.as_ptr().add(8).cast()),
           _mm512_loadu_si512(block_data.as_ptr().add(12).cast()),
+        ],
+        h_powers_rev,
+      )
+    }
+  }
+
+  /// Process 4 little-endian POLYVAL blocks directly from bytes.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2, and `block_ptr` must point at at least
+  /// 64 initialized bytes.
+  #[cfg(feature = "aes-gcm-siv")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_4blocks_le_bytes(acc: u128, h_powers_rev: &[u128; 4], block_ptr: *const u8) -> u128 {
+    // SAFETY: direct-byte POLYVAL aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `block_ptr` points at four initialized 16-byte POLYVAL blocks.
+    // 3. POLYVAL uses little-endian field encoding, so byte memory order already matches the lane
+    //    representation expected by `aggregate_lanes`.
+    unsafe {
+      let data = _mm512_loadu_si512(block_ptr.cast());
+      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
+      aggregate_lanes(_mm512_xor_si512(data, acc_lane), h_powers_rev)
+    }
+  }
+
+  /// Process 16 little-endian POLYVAL blocks directly from bytes.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+  /// VPCLMULQDQ + PCLMULQDQ + SSE2, and `block_ptr` must point at at least
+  /// 256 initialized bytes.
+  #[cfg(feature = "aes-gcm-siv")]
+  #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_16blocks_le_bytes(acc: u128, h_powers_rev: &[u128; 16], block_ptr: *const u8) -> u128 {
+    // SAFETY: direct-byte POLYVAL aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `block_ptr` points at sixteen initialized 16-byte POLYVAL blocks.
+    // 3. Only the first lane receives the incoming accumulator, matching the POLYVAL recurrence.
+    unsafe {
+      let data0 = _mm512_loadu_si512(block_ptr.cast());
+      let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
+      aggregate_16_lanes(
+        [
+          _mm512_xor_si512(data0, acc_lane),
+          _mm512_loadu_si512(block_ptr.add(64).cast()),
+          _mm512_loadu_si512(block_ptr.add(128).cast()),
+          _mm512_loadu_si512(block_ptr.add(192).cast()),
         ],
         h_powers_rev,
       )
@@ -1244,7 +1293,7 @@ mod vpclmul {
 ///
 /// # Safety
 /// Caller must ensure PCLMULQDQ and SSE2 are available.
-#[cfg(all(target_arch = "x86_64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "pclmulqdq,sse2")]
 #[inline]
 pub(super) unsafe fn x86_clmul128_reduce_inline(a: u128, b: u128) -> u128 {
@@ -1270,6 +1319,47 @@ pub(super) unsafe fn x86_pclmul_aggregate_4blocks_inline(
   // 1. Caller guarantees PCLMULQDQ and SSE2 availability.
   // 2. `h_powers_rev` and `blocks` are initialized fixed-width inputs.
   unsafe { pclmul::aggregate_4blocks(acc, h_powers_rev, blocks) }
+}
+
+/// 4-block VPCLMULQDQ aggregate helper for little-endian POLYVAL bytes.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, and `block_ptr` points at
+/// at least 64 initialized bytes.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_aggregate_4blocks_le_bytes_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 4],
+  block_ptr: *const u8,
+) -> u128 {
+  // SAFETY: direct-byte VPCLMUL POLYVAL aggregation because:
+  // 1. Caller guarantees all required x86 target features.
+  // 2. `block_ptr` points at four initialized 16-byte POLYVAL blocks.
+  unsafe { vpclmul::aggregate_4blocks_le_bytes(acc, h_powers_rev, block_ptr) }
+}
+
+/// 16-block VPCLMULQDQ aggregate helper for little-endian POLYVAL bytes.
+///
+/// # Safety
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512BW + AVX-512DQ +
+/// VPCLMULQDQ + PCLMULQDQ + SSE2 are available, and `block_ptr` points at
+/// at least 256 initialized bytes.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_aggregate_16blocks_le_bytes_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 16],
+  block_ptr: *const u8,
+) -> u128 {
+  // SAFETY: direct-byte VPCLMUL POLYVAL aggregation because:
+  // 1. Caller guarantees all required x86 target features.
+  // 2. `block_ptr` points at sixteen initialized 16-byte POLYVAL blocks.
+  // 3. The helper folds the incoming accumulator only into the first lane.
+  unsafe { vpclmul::aggregate_16blocks_le_bytes(acc, h_powers_rev, block_ptr) }
 }
 
 /// PCLMULQDQ 4-block aggregate helper for big-endian GHASH bytes already in XMM registers.
@@ -1647,7 +1737,7 @@ pub(super) fn precompute_powers(h: u128) -> [u128; 4] {
 }
 
 /// Precompute hash key powers [H, H^2, ..., H^8] for 8-block GHASH windows.
-#[cfg(any(feature = "aes-gcm", target_arch = "aarch64", test))]
+#[cfg(feature = "aes-gcm")]
 pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
   let h2 = clmul128_reduce(h, h);
   let h3 = clmul128_reduce(h2, h);
@@ -1659,8 +1749,12 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
   [h, h2, h3, h4, h5, h6, h7, h8]
 }
 
-/// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH windows.
-#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+/// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
+#[cfg(any(
+  all(feature = "aes-gcm", target_arch = "x86_64"),
+  all(feature = "aes-gcm-siv", target_arch = "x86_64"),
+  test
+))]
 pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
   let mut powers = [0u128; 16];
   powers[0] = h;
@@ -1756,7 +1850,7 @@ pub(super) fn accumulate_4blocks(
 /// Process 16 blocks through the hash accumulator in one shot.
 ///
 /// Computes `(acc ^ b0) * H^16 ^ b1 * H^15 ^ ... ^ b15 * H`.
-#[cfg(test)]
+#[cfg(any(all(feature = "aes-gcm-siv", target_arch = "x86_64"), test))]
 pub(super) fn accumulate_16blocks(acc: u128, h: u128, h_powers_rev: &[u128; 16], blocks: &[u128; 16]) -> u128 {
   #[cfg(target_arch = "x86_64")]
   {
@@ -1777,6 +1871,85 @@ pub(super) fn accumulate_16blocks(acc: u128, h: u128, h_powers_rev: &[u128; 16],
     i = i.strict_add(1);
   }
   a
+}
+
+/// Process padded GCM-SIV POLYVAL input using x86 wide windows.
+///
+/// Full 16-byte blocks are folded with 16-block VPCLMUL windows when the caller
+/// provides H powers through H^16, then 4-block windows, then scalar tails.
+/// A final partial block is zero-padded as required by RFC 8452.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+pub(super) fn accumulate_padded_x86(
+  mut acc: u128,
+  h: u128,
+  h_powers_rev: &[u128; 4],
+  h_powers_rev_16: Option<&[u128; 16]>,
+  data: &[u8],
+) -> u128 {
+  let mut offset = 0usize;
+  let has_vpclmul = crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY);
+
+  if let Some(h16) = h_powers_rev_16 {
+    while offset.strict_add(256) <= data.len() {
+      if has_vpclmul {
+        // SAFETY: x86 VPCLMUL byte aggregation because:
+        // 1. Runtime caps confirmed AVX-512 + VPCLMUL support before entering the target-feature helper.
+        // 2. `offset + 256 <= data.len()` proves the helper can read sixteen initialized blocks.
+        acc = unsafe { x86_aggregate_16blocks_le_bytes_inline(acc, h16, data.as_ptr().add(offset)) };
+      } else {
+        let mut blocks = [0u128; 16];
+        let mut i = 0usize;
+        while i < 16 {
+          let base = offset.strict_add(i.strict_mul(16));
+          let mut block = [0u8; 16];
+          block.copy_from_slice(&data[base..base.strict_add(16)]);
+          blocks[i] = u128::from_le_bytes(block);
+          i = i.strict_add(1);
+        }
+        acc = accumulate_16blocks(acc, h, h16, &blocks);
+      }
+      offset = offset.strict_add(256);
+    }
+  }
+
+  while offset.strict_add(64) <= data.len() {
+    if has_vpclmul {
+      // SAFETY: x86 VPCLMUL byte aggregation because:
+      // 1. Runtime caps confirmed AVX-512 + VPCLMUL support before entering the target-feature helper.
+      // 2. `offset + 64 <= data.len()` proves the helper can read four initialized blocks.
+      acc = unsafe { x86_aggregate_4blocks_le_bytes_inline(acc, h_powers_rev, data.as_ptr().add(offset)) };
+    } else {
+      let mut blocks = [0u128; 4];
+      let mut i = 0usize;
+      while i < 4 {
+        let base = offset.strict_add(i.strict_mul(16));
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&data[base..base.strict_add(16)]);
+        blocks[i] = u128::from_le_bytes(block);
+        i = i.strict_add(1);
+      }
+      acc = accumulate_4blocks(acc, h, h_powers_rev, &blocks);
+    }
+    offset = offset.strict_add(64);
+  }
+
+  while offset.strict_add(16) <= data.len() {
+    let mut block = [0u8; 16];
+    block.copy_from_slice(&data[offset..offset.strict_add(16)]);
+    acc ^= u128::from_le_bytes(block);
+    acc = clmul128_reduce(acc, h);
+    offset = offset.strict_add(16);
+  }
+
+  let remaining = data.len().strict_sub(offset);
+  if remaining > 0 {
+    let mut block = [0u8; 16];
+    block[..remaining].copy_from_slice(&data[offset..]);
+    acc ^= u128::from_le_bytes(block);
+    acc = clmul128_reduce(acc, h);
+  }
+
+  acc
 }
 
 /// POLYVAL accumulator state.
@@ -2195,6 +2368,48 @@ mod tests {
 
     let wide = accumulate_16blocks(acc, h, &h_powers_rev, &blocks);
     assert_eq!(wide, seq, "16-block aggregate must match sequential processing");
+  }
+
+  /// Verify the x86 padded wide path matches scalar POLYVAL over boundary sizes.
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+  #[test]
+  fn accumulate_padded_x86_matches_sequential_boundaries() {
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers_16(h);
+    let h_powers_rev = [powers[3], powers[2], powers[1], powers[0]];
+    let h_powers_rev_16 = core::array::from_fn(|i| powers[15usize.strict_sub(i)]);
+    let acc = 0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00u128;
+    let lengths = [
+      0usize, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 255, 256, 257, 319, 320, 321,
+    ];
+
+    for len in lengths {
+      let mut data = [0u8; 321];
+      let mut i = 0usize;
+      while i < len {
+        data[i] = i.wrapping_mul(37).wrapping_add(19) as u8;
+        i = i.strict_add(1);
+      }
+
+      let mut expected = acc;
+      let mut offset = 0usize;
+      while offset.strict_add(16) <= len {
+        let mut block = [0u8; 16];
+        block.copy_from_slice(&data[offset..offset.strict_add(16)]);
+        expected ^= u128::from_le_bytes(block);
+        expected = clmul128_reduce(expected, h);
+        offset = offset.strict_add(16);
+      }
+      if offset < len {
+        let mut block = [0u8; 16];
+        block[..len.strict_sub(offset)].copy_from_slice(&data[offset..len]);
+        expected ^= u128::from_le_bytes(block);
+        expected = clmul128_reduce(expected, h);
+      }
+
+      let wide = accumulate_padded_x86(acc, h, &h_powers_rev, Some(&h_powers_rev_16), &data[..len]);
+      assert_eq!(wide, expected, "padded x86 aggregate mismatch at len {len}");
+    }
   }
 
   /// accumulate_4blocks with zero accumulator and zero blocks must produce zero.
