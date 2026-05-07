@@ -2138,6 +2138,40 @@ unsafe fn x86_gcm_ctr_blocks_be_4(iv_words: [u32; 3], ctr: u32) -> core::arch::x
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "avx512f,avx512bw")]
+#[inline]
+unsafe fn x86_gcm_ctr_blocks_be_16(
+  iv_words: [u32; 3],
+  ctr: u32,
+) -> (
+  core::arch::x86_64::__m512i,
+  core::arch::x86_64::__m512i,
+  core::arch::x86_64::__m512i,
+  core::arch::x86_64::__m512i,
+) {
+  use core::arch::x86_64::*;
+
+  let iv = _mm_set_epi32(0, iv_words[2] as i32, iv_words[1] as i32, iv_words[0] as i32);
+  let template = _mm512_broadcast_i32x4(iv);
+  let ctrs = _mm512_set1_epi32(ctr as i32);
+  let bswap = _mm512_broadcast_i32x4(_mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3));
+
+  let offsets0 = _mm512_set_epi32(3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0);
+  let offsets1 = _mm512_set_epi32(7, 0, 0, 0, 6, 0, 0, 0, 5, 0, 0, 0, 4, 0, 0, 0);
+  let offsets2 = _mm512_set_epi32(11, 0, 0, 0, 10, 0, 0, 0, 9, 0, 0, 0, 8, 0, 0, 0);
+  let offsets3 = _mm512_set_epi32(15, 0, 0, 0, 14, 0, 0, 0, 13, 0, 0, 0, 12, 0, 0, 0);
+
+  macro_rules! make {
+    ($offsets:expr) => {{
+      let be = _mm512_shuffle_epi8(_mm512_add_epi32(ctrs, $offsets), bswap);
+      _mm512_mask_mov_epi32(template, 0x8888, be)
+    }};
+  }
+
+  (make!(offsets0), make!(offsets1), make!(offsets2), make!(offsets3))
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm", test))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn x86_gcm_ctr_blocks_be_2(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m256i {
@@ -2151,6 +2185,40 @@ unsafe fn x86_gcm_ctr_blocks_be_2(iv_words: [u32; 3], ctr: u32) -> core::arch::x
 
   let z = _mm256_castsi128_si256(b0);
   _mm256_inserti128_si256(z, b1, 1)
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn x86_gcm_ctr_blocks_be_8_y256(
+  iv_words: [u32; 3],
+  ctr: u32,
+) -> (
+  core::arch::x86_64::__m256i,
+  core::arch::x86_64::__m256i,
+  core::arch::x86_64::__m256i,
+  core::arch::x86_64::__m256i,
+) {
+  use core::arch::x86_64::*;
+
+  let iv = _mm_set_epi32(0, iv_words[2] as i32, iv_words[1] as i32, iv_words[0] as i32);
+  let template = _mm256_broadcastsi128_si256(iv);
+  let ctrs = _mm256_set1_epi32(ctr as i32);
+  let bswap = _mm256_broadcastsi128_si256(_mm_set_epi8(12, 13, 14, 15, 8, 9, 10, 11, 4, 5, 6, 7, 0, 1, 2, 3));
+
+  let offsets0 = _mm256_set_epi32(1, 0, 0, 0, 0, 0, 0, 0);
+  let offsets1 = _mm256_set_epi32(3, 0, 0, 0, 2, 0, 0, 0);
+  let offsets2 = _mm256_set_epi32(5, 0, 0, 0, 4, 0, 0, 0);
+  let offsets3 = _mm256_set_epi32(7, 0, 0, 0, 6, 0, 0, 0);
+
+  macro_rules! make {
+    ($offsets:expr) => {{
+      let be = _mm256_shuffle_epi8(_mm256_add_epi32(ctrs, $offsets), bswap);
+      _mm256_blend_epi32::<0x88>(template, be)
+    }};
+  }
+
+  (make!(offsets0), make!(offsets1), make!(offsets2), make!(offsets3))
 }
 
 /// Build one big-endian GCM counter block directly in an XMM register.
@@ -2492,10 +2560,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(256) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
-      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
-      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
@@ -2624,10 +2689,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(256) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
-      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
-      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
@@ -2759,10 +2821,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_y256_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(128) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_2(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(2));
-      let ctr2 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(4));
-      let ctr3 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(6));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_8blocks_y256(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let p0 = _mm256_loadu_si256(data.as_ptr().add(offset).cast());
@@ -2901,10 +2960,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_y256_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(128) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_2(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(2));
-      let ctr2 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(4));
-      let ctr3 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(6));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_8blocks_y256(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let c0 = _mm256_loadu_si256(data.as_ptr().add(offset).cast());
@@ -3803,10 +3859,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(256) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
-      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
-      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
@@ -3935,10 +3988,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(256) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_4(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(4));
-      let ctr2 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(8));
-      let ctr3 = x86_gcm_ctr_blocks_be_4(iv_words, ctr.wrapping_add(12));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let c0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
@@ -4067,10 +4117,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_y256_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(128) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_2(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(2));
-      let ctr2 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(4));
-      let ctr3 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(6));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_8blocks_128_y256(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let p0 = _mm256_loadu_si256(data.as_ptr().add(offset).cast());
@@ -4209,10 +4256,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_y256_ghash(
     let mut offset = 0usize;
 
     while offset.strict_add(128) <= data.len() {
-      let ctr0 = x86_gcm_ctr_blocks_be_2(iv_words, ctr);
-      let ctr1 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(2));
-      let ctr2 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(4));
-      let ctr3 = x86_gcm_ctr_blocks_be_2(iv_words, ctr.wrapping_add(6));
+      let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_8blocks_128_y256(ni_rk, ctr0, ctr1, ctr2, ctr3);
 
       let c0 = _mm256_loadu_si256(data.as_ptr().add(offset).cast());
@@ -4896,6 +4940,53 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[target_feature(enable = "avx512f,avx512bw")]
+  /// # Safety
+  ///
+  /// Caller must ensure AVX-512F and AVX-512BW are available before calling this target-feature
+  /// helper.
+  unsafe fn x86_gcm_ctr_blocks_be_16_test_bytes(iv_words: [u32; 3], ctr: u32) -> [u8; 256] {
+    use core::arch::x86_64::*;
+
+    let mut out = [0u8; 256];
+    // SAFETY: test-only ZMM counter block stores because:
+    // 1. The caller verified AVX-512F + AVX-512BW before invoking this target-feature helper.
+    // 2. `out` is exactly 256 writable bytes, matching four contiguous `__m512i` stores.
+    // 3. The vectors under test are produced directly from the sixteen-block counter constructor.
+    unsafe {
+      let (c0, c1, c2, c3) = x86_gcm_ctr_blocks_be_16(iv_words, ctr);
+      _mm512_storeu_si512(out.as_mut_ptr().cast(), c0);
+      _mm512_storeu_si512(out.as_mut_ptr().add(64).cast(), c1);
+      _mm512_storeu_si512(out.as_mut_ptr().add(128).cast(), c2);
+      _mm512_storeu_si512(out.as_mut_ptr().add(192).cast(), c3);
+    }
+    out
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[target_feature(enable = "avx2")]
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available before calling this target-feature helper.
+  unsafe fn x86_gcm_ctr_blocks_be_8_y256_test_bytes(iv_words: [u32; 3], ctr: u32) -> [u8; 128] {
+    use core::arch::x86_64::*;
+
+    let mut out = [0u8; 128];
+    // SAFETY: test-only YMM counter block stores because:
+    // 1. The caller verified AVX2 before invoking this target-feature helper.
+    // 2. `out` is exactly 128 writable bytes, matching four contiguous `__m256i` stores.
+    // 3. The vectors under test are produced directly from the eight-block counter constructor.
+    unsafe {
+      let (c0, c1, c2, c3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
+      _mm256_storeu_si256(out.as_mut_ptr().cast(), c0);
+      _mm256_storeu_si256(out.as_mut_ptr().add(32).cast(), c1);
+      _mm256_storeu_si256(out.as_mut_ptr().add(64).cast(), c2);
+      _mm256_storeu_si256(out.as_mut_ptr().add(96).cast(), c3);
+    }
+    out
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
   #[test]
   fn x86_gcm_ctr_block_be_preserves_prefix_and_encodes_counter() {
     if !crate::platform::caps().has(crate::platform::caps::x86::SSE2) {
@@ -4960,6 +5051,54 @@ mod tests {
         actual.as_slice(),
         expected.as_slice(),
         "x86 ZMM GCM counter block mismatch"
+      );
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[test]
+  fn x86_gcm_ctr_blocks_be_16_preserves_prefix_and_wraps_counter() {
+    let required = crate::platform::caps::x86::AVX512F | crate::platform::caps::x86::AVX512BW;
+    if !crate::platform::caps().has(required) {
+      return;
+    }
+
+    let iv_prefix = *b"ctr wrap iv!";
+    let iv_words = x86_gcm_iv_words(&iv_prefix);
+
+    for ctr in [0x0102_0304, u32::MAX - 7] {
+      let mut expected = [0u8; 256];
+      fill_expected_gcm_counter_blocks(&iv_prefix, ctr, &mut expected);
+      // SAFETY: runtime caps above confirmed AVX-512F + AVX-512BW before calling the
+      // target-feature helper.
+      let actual = unsafe { x86_gcm_ctr_blocks_be_16_test_bytes(iv_words, ctr) };
+      assert_eq!(
+        actual.as_slice(),
+        expected.as_slice(),
+        "x86 vectorized ZMM GCM counter block mismatch"
+      );
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[test]
+  fn x86_gcm_ctr_blocks_be_8_y256_preserves_prefix_and_wraps_counter() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::AVX2) {
+      return;
+    }
+
+    let iv_prefix = *b"ctr wrap iv!";
+    let iv_words = x86_gcm_iv_words(&iv_prefix);
+
+    for ctr in [0x0102_0304, u32::MAX - 3] {
+      let mut expected = [0u8; 128];
+      fill_expected_gcm_counter_blocks(&iv_prefix, ctr, &mut expected);
+      // SAFETY: runtime caps above confirmed AVX2 before calling the target-feature helper.
+      let actual = unsafe { x86_gcm_ctr_blocks_be_8_y256_test_bytes(iv_words, ctr) };
+      assert_eq!(
+        actual.as_slice(),
+        expected.as_slice(),
+        "x86 vectorized YMM GCM counter block mismatch"
       );
     }
   }

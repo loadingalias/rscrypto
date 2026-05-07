@@ -80,6 +80,7 @@ pub(super) unsafe fn expand_key(key: &[u8; 32]) -> NiRoundKeys {
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
 pub(super) unsafe fn encrypt_4blocks(keys: &NiRoundKeys, blocks: __m512i) -> __m512i {
   let k = &keys.rk;
   let mut state = _mm512_xor_si512(blocks, _mm512_broadcast_i32x4(k[0]));
@@ -159,6 +160,7 @@ pub(super) unsafe fn encrypt_4blocks_aesni(
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
 pub(super) unsafe fn encrypt_16blocks(
   keys: &NiRoundKeys,
   b0: __m512i,
@@ -212,6 +214,7 @@ pub(super) unsafe fn encrypt_16blocks(
 /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VAES + AES + SSE2.
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,sse2,avx2,avx512f,avx512vl,vaes")]
+#[inline]
 pub(super) unsafe fn encrypt_8blocks_y256(
   keys: &NiRoundKeys,
   b0: __m256i,
@@ -356,6 +359,7 @@ pub(super) unsafe fn expand_key_128(key: &[u8; 16]) -> Ni128RoundKeys {
 /// # Safety
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
 pub(super) unsafe fn encrypt_4blocks_128(keys: &Ni128RoundKeys, blocks: __m512i) -> __m512i {
   let k = &keys.rk;
   let mut state = _mm512_xor_si512(blocks, _mm512_broadcast_i32x4(k[0]));
@@ -427,6 +431,7 @@ pub(super) unsafe fn encrypt_4blocks_128_aesni(
 /// Caller must ensure AVX-512F + AVX-512VL + VAES + AES + SSE2.
 #[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
 #[target_feature(enable = "aes,sse2,avx512f,avx512vl,vaes")]
+#[inline]
 pub(super) unsafe fn encrypt_16blocks_128(
   keys: &Ni128RoundKeys,
   b0: __m512i,
@@ -476,6 +481,7 @@ pub(super) unsafe fn encrypt_16blocks_128(
 /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VAES + AES + SSE2.
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,sse2,avx2,avx512f,avx512vl,vaes")]
+#[inline]
 pub(super) unsafe fn encrypt_8blocks_128_y256(
   keys: &Ni128RoundKeys,
   b0: __m256i,
