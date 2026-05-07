@@ -30,7 +30,6 @@ use super::kernels::{SIGMA, init_v, load_msg};
 // ─── Vector primitive operations (inline asm, z13+) ───────────────────────
 
 /// Vector add u64 lanes: `vag`.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -48,7 +47,6 @@ unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Vector XOR: `vx`.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -67,7 +65,6 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
 
 /// Element rotate left u64 by immediate: `verllg`.
 /// ROR 32 = ROL 32.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_32(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -84,7 +81,6 @@ unsafe fn verllg_32(x: i64x2) -> i64x2 {
 }
 
 /// Element rotate left u64 by 40 (= ROR 24): `verllg`.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_40(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -101,7 +97,6 @@ unsafe fn verllg_40(x: i64x2) -> i64x2 {
 }
 
 /// Element rotate left u64 by 48 (= ROR 16): `verllg`.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_48(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -118,7 +113,6 @@ unsafe fn verllg_48(x: i64x2) -> i64x2 {
 }
 
 /// Element rotate left u64 by 1 (= ROR 63): `verllg`.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn verllg_1(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -166,7 +160,6 @@ unsafe fn vload_u64_pair(p: *const u64) -> i64x2 {
 /// Blake2b G mixing on SIMD rows (2-wide).
 ///
 /// Each row is (lo, hi) = 2 × i64x2 for lanes [0,1] and [2,3].
-#[inline(always)]
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "vector")]
 unsafe fn g2(
@@ -213,7 +206,6 @@ unsafe fn g2(
 ///   B rotate-left-1:  (b0=[0,1], b1=[2,3]) -> ([1,2], [3,0])
 ///   C swap:           (c0, c1) -> (c1, c0)
 ///   D rotate-right-1: (d0=[0,1], d1=[2,3]) -> ([3,0], [1,2])
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn diagonalize(b0: &mut i64x2, b1: &mut i64x2, c0: &mut i64x2, c1: &mut i64x2, d0: &mut i64x2, d1: &mut i64x2) {
   let tb0 = *b0;
@@ -228,7 +220,6 @@ unsafe fn diagonalize(b0: &mut i64x2, b1: &mut i64x2, c0: &mut i64x2, c1: &mut i
 }
 
 /// Un-diagonalize: reverse the rotations.
-#[inline(always)]
 #[target_feature(enable = "vector")]
 unsafe fn undiagonalize(
   b0: &mut i64x2,
