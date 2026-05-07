@@ -164,7 +164,7 @@ fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
 fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
   match arch {
     Arch::X86_64 => {
-      if caps.has(x86::VAES_READY) && caps.has(x86::VPCLMUL_READY) {
+      if caps.has(x86::VAES_READY) && caps.has(x86::VPCLMUL_READY) && caps.has(x86::AESNI) {
         AeadBackend::X86VaesVpclmul
       } else if caps.has(x86::AESNI) && caps.has(x86::PCLMULQDQ) {
         AeadBackend::X86AesniPclmul
@@ -289,7 +289,7 @@ mod tests {
 
   #[test]
   fn gcm_prefers_x86_vaes_then_aesni() {
-    let vaes_caps = x86::VAES_READY | x86::VPCLMUL_READY;
+    let vaes_caps = x86::VAES_READY | x86::VPCLMUL_READY | x86::AESNI;
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::X86_64, vaes_caps),
       AeadBackend::X86VaesVpclmul
@@ -297,6 +297,12 @@ mod tests {
     assert_eq!(
       select_backend(AeadPrimitive::Aes128Gcm, Arch::X86_64, vaes_caps),
       AeadBackend::X86VaesVpclmul
+    );
+
+    let vaes_without_aesni = x86::VAES_READY | x86::VPCLMUL_READY;
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::X86_64, vaes_without_aesni),
+      AeadBackend::Portable
     );
 
     let aesni_caps = x86::AESNI | x86::PCLMULQDQ;

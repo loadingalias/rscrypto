@@ -1050,6 +1050,52 @@ mod vpclmul {
     }
   }
 
+  /// Reduce eight POLYVAL-domain lanes using 256-bit VPCLMULQDQ.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
+  /// PCLMULQDQ + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
+  #[inline]
+  unsafe fn aggregate_8_lanes_256(data: [__m256i; 4], h_powers_rev: &[u128; 8]) -> u128 {
+    // SAFETY: x86 VPCLMUL 8-block aggregation because:
+    // 1. This function's caller guarantees all required target features.
+    // 2. `data` contains eight initialized POLYVAL-domain lanes in order.
+    // 3. `h_powers_rev` contains exactly [H^8, H^7, ..., H], matching the lanes.
+    unsafe {
+      let mut lo_sum = _mm256_setzero_si256();
+      let mut hi_sum = _mm256_setzero_si256();
+
+      macro_rules! fold_lanes {
+        ($data:expr, $power_offset:expr) => {{
+          let h_vec = _mm256_loadu_si256(h_powers_rev.as_ptr().add($power_offset).cast());
+          let lo = _mm256_clmulepi64_epi128($data, h_vec, 0x00);
+          let hi = _mm256_clmulepi64_epi128($data, h_vec, 0x11);
+          let m1 = _mm256_clmulepi64_epi128($data, h_vec, 0x10);
+          let m2 = _mm256_clmulepi64_epi128($data, h_vec, 0x01);
+          let mid = _mm256_xor_si256(m1, m2);
+
+          lo_sum = _mm256_xor_si256(lo_sum, _mm256_xor_si256(lo, _mm256_bslli_epi128(mid, 8)));
+          hi_sum = _mm256_xor_si256(hi_sum, _mm256_xor_si256(hi, _mm256_bsrli_epi128(mid, 8)));
+        }};
+      }
+
+      fold_lanes!(data[0], 0);
+      fold_lanes!(data[1], 2);
+      fold_lanes!(data[2], 4);
+      fold_lanes!(data[3], 6);
+
+      let lo = _mm_xor_si128(_mm256_castsi256_si128(lo_sum), _mm256_extracti128_si256(lo_sum, 1));
+      let hi = _mm_xor_si128(_mm256_castsi256_si128(hi_sum), _mm256_extracti128_si256(hi_sum, 1));
+
+      let result = super::pclmul::mont_reduce_sse2(lo, hi);
+      let mut out = 0u128;
+      _mm_storeu_si128((&mut out as *mut u128).cast(), result);
+      out
+    }
+  }
+
   /// Convert four big-endian GHASH lanes into POLYVAL-domain lanes.
   ///
   /// # Safety
@@ -1079,6 +1125,27 @@ mod vpclmul {
     _mm512_shuffle_epi8(raw, reverse_bytes)
   }
 
+  /// Convert two big-endian GHASH lanes into POLYVAL-domain lanes.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX2 is available.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx2")]
+  #[inline]
+  unsafe fn be_lanes_256(raw: __m256i) -> __m256i {
+    let reverse_bytes = _mm256_set_epi32(
+      0x0001_0203,
+      0x0405_0607,
+      0x0809_0a0b,
+      0x0c0d_0e0f,
+      0x0001_0203,
+      0x0405_0607,
+      0x0809_0a0b,
+      0x0c0d_0e0f,
+    );
+    _mm256_shuffle_epi8(raw, reverse_bytes)
+  }
+
   /// Convert four big-endian GHASH lanes and XOR `acc` into the first lane.
   ///
   /// # Safety
@@ -1094,6 +1161,24 @@ mod vpclmul {
       let data = be_lanes(raw);
       let acc_lane = _mm512_zextsi128_si512(_mm_loadu_si128((&acc as *const u128).cast()));
       _mm512_xor_si512(data, acc_lane)
+    }
+  }
+
+  /// Convert two big-endian GHASH lanes and XOR `acc` into the first lane.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX2 and SSE2 are available.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx2,sse2")]
+  #[inline]
+  unsafe fn be_lanes_256_with_acc(acc: u128, raw: __m256i) -> __m256i {
+    // SAFETY: direct GHASH lane conversion because:
+    // 1. This function's caller guarantees the required x86 target features.
+    // 2. `raw` contains two initialized big-endian GHASH lanes and `acc` is initialized.
+    unsafe {
+      let data = be_lanes_256(raw);
+      let acc_lane = _mm256_castsi128_si256(_mm_loadu_si128((&acc as *const u128).cast()));
+      _mm256_xor_si256(data, acc_lane)
     }
   }
 
@@ -1283,6 +1368,38 @@ mod vpclmul {
       )
     }
   }
+
+  /// Process 8 big-endian GHASH lanes already resident in 256-bit SIMD registers.
+  ///
+  /// # Safety
+  /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
+  /// PCLMULQDQ + SSE2.
+  #[cfg(feature = "aes-gcm")]
+  #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
+  pub(super) unsafe fn aggregate_8blocks_be_lanes_256(
+    acc: u128,
+    h_powers_rev: &[u128; 8],
+    raw0: __m256i,
+    raw1: __m256i,
+    raw2: __m256i,
+    raw3: __m256i,
+  ) -> u128 {
+    // SAFETY: direct-lane GHASH aggregation because:
+    // 1. This function's caller guarantees all required x86 target features.
+    // 2. `raw*` contain eight initialized 16-byte ciphertext lanes in memory byte order.
+    // 3. Only the first lane receives the incoming accumulator, matching GHASH recurrence.
+    unsafe {
+      aggregate_8_lanes_256(
+        [
+          be_lanes_256_with_acc(acc, raw0),
+          be_lanes_256(raw1),
+          be_lanes_256(raw2),
+          be_lanes_256(raw3),
+        ],
+        h_powers_rev,
+      )
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1443,6 +1560,29 @@ pub(super) unsafe fn x86_aggregate_16blocks_be_lanes_inline(
   // 2. `h_powers_rev` and `raw*` are initialized inputs matching the backend contract.
   // 3. The helper folds the incoming accumulator only into the first lane.
   unsafe { vpclmul::aggregate_16blocks_be_lanes(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
+}
+
+/// 8-block VPCLMULQDQ aggregate helper for big-endian GHASH lanes already in 256-bit registers.
+///
+/// # Safety
+/// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
+/// PCLMULQDQ + SSE2 are available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
+#[inline]
+pub(super) unsafe fn x86_aggregate_8blocks_be_lanes_256_inline(
+  acc: u128,
+  h_powers_rev: &[u128; 8],
+  raw0: core::arch::x86_64::__m256i,
+  raw1: core::arch::x86_64::__m256i,
+  raw2: core::arch::x86_64::__m256i,
+  raw3: core::arch::x86_64::__m256i,
+) -> u128 {
+  // SAFETY: direct-lane VPCLMUL aggregation because:
+  // 1. Caller guarantees all required target features.
+  // 2. `h_powers_rev` and `raw*` are initialized inputs matching the backend contract.
+  // 3. The helper folds the incoming accumulator only into the first lane.
+  unsafe { vpclmul::aggregate_8blocks_be_lanes_256(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
 }
 
 // ---------------------------------------------------------------------------
@@ -1667,25 +1807,25 @@ fn clmul128_reduce_riscv_scalar(a: u128, b: u128) -> u128 {
 
 #[inline]
 fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
-  let caps = current_caps();
+  let _caps = current_caps();
 
   #[cfg(target_arch = "x86_64")]
-  if caps.has(crate::platform::caps::x86::PCLMULQDQ) {
+  if _caps.has(crate::platform::caps::x86::PCLMULQDQ) {
     return clmul128_reduce_x86_pclmul;
   }
 
   #[cfg(target_arch = "aarch64")]
-  if caps.has(crate::platform::caps::aarch64::PMULL) {
+  if _caps.has(crate::platform::caps::aarch64::PMULL) {
     return clmul128_reduce_aarch64_pmull;
   }
 
   #[cfg(target_arch = "s390x")]
-  if caps.has(crate::platform::caps::s390x::VECTOR) {
+  if _caps.has(crate::platform::caps::s390x::VECTOR) {
     return clmul128_reduce_s390x_vgfm;
   }
 
   #[cfg(target_arch = "powerpc64")]
-  if caps.has(crate::platform::caps::power::POWER8_CRYPTO) {
+  if _caps.has(crate::platform::caps::power::POWER8_CRYPTO) {
     return clmul128_reduce_power_vpmsum;
   }
 
@@ -1693,10 +1833,10 @@ fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
   {
     use crate::platform::caps::riscv;
 
-    if caps.has(riscv::ZVBC) {
+    if _caps.has(riscv::ZVBC) {
       return clmul128_reduce_riscv_vector;
     }
-    if caps.has(riscv::ZBC) || caps.has(riscv::ZBKC) {
+    if _caps.has(riscv::ZBC) || _caps.has(riscv::ZBKC) {
       return clmul128_reduce_riscv_scalar;
     }
   }
@@ -2368,6 +2508,71 @@ mod tests {
 
     let wide = accumulate_16blocks(acc, h, &h_powers_rev, &blocks);
     assert_eq!(wide, seq, "16-block aggregate must match sequential processing");
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VPCLMULQDQ +
+  /// PCLMULQDQ + SSE2 are available.
+  unsafe fn x86_aggregate_8blocks_be_lanes_256_test_call(
+    acc: u128,
+    h_powers_rev: &[u128; 8],
+    bytes: &[u8; 128],
+  ) -> u128 {
+    use core::arch::x86_64::*;
+
+    // SAFETY: test-only x86 lane aggregation because:
+    // 1. The caller verified the CPU features required by this target-feature helper.
+    // 2. `bytes` is exactly 128 initialized bytes, so all four 32-byte loads are in bounds.
+    // 3. The loaded lanes are passed directly to the helper under test.
+    unsafe {
+      let raw0 = _mm256_loadu_si256(bytes.as_ptr().cast());
+      let raw1 = _mm256_loadu_si256(bytes.as_ptr().add(32).cast());
+      let raw2 = _mm256_loadu_si256(bytes.as_ptr().add(64).cast());
+      let raw3 = _mm256_loadu_si256(bytes.as_ptr().add(96).cast());
+      x86_aggregate_8blocks_be_lanes_256_inline(acc, h_powers_rev, raw0, raw1, raw2, raw3)
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[test]
+  fn x86_aggregate_8blocks_be_lanes_256_matches_sequential() {
+    let required = crate::platform::caps::x86::VPCLMUL_READY | crate::platform::caps::x86::AVX2;
+    if !crate::platform::caps().has(required) {
+      return;
+    }
+
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers_8(h);
+    let h_powers_rev = core::array::from_fn(|i| powers[7usize.strict_sub(i)]);
+    let acc = 0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00u128;
+
+    let mut bytes = [0u8; 128];
+    let mut i = 0usize;
+    while i < bytes.len() {
+      bytes[i] = i.wrapping_mul(37).wrapping_add(19) as u8;
+      i = i.strict_add(1);
+    }
+
+    let mut expected = acc;
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&bytes[offset..offset.strict_add(16)]);
+      expected ^= u128::from_be_bytes(block);
+      expected = clmul128_reduce(expected, h);
+      offset = offset.strict_add(16);
+    }
+
+    // SAFETY: Runtime caps above confirmed AVX2 + VPCLMUL_READY before calling the target-feature
+    // helper. The byte array and H-power table are fully initialized.
+    let wide = unsafe { x86_aggregate_8blocks_be_lanes_256_test_call(acc, &h_powers_rev, &bytes) };
+    assert_eq!(
+      wide, expected,
+      "8-block 256-bit VPCLMUL GHASH aggregate must match sequential fold"
+    );
   }
 
   /// Verify the x86 padded wide path matches scalar POLYVAL over boundary sizes.
