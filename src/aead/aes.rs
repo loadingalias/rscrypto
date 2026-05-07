@@ -2155,6 +2155,30 @@ unsafe fn x86_gcm_ctr_block_be(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_
   )
 }
 
+/// Build four little-endian GCM-SIV counter blocks directly in a VAES register.
+///
+/// # Safety
+/// Caller must ensure AVX-512F is available.
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm-siv"))]
+#[target_feature(enable = "avx512f")]
+#[inline]
+unsafe fn x86_gcmsiv_ctr_blocks_le_4(suffix_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m512i {
+  use core::arch::x86_64::*;
+
+  let s0 = suffix_words[0] as i32;
+  let s1 = suffix_words[1] as i32;
+  let s2 = suffix_words[2] as i32;
+  let b0 = _mm_set_epi32(s2, s1, s0, ctr as i32);
+  let b1 = _mm_set_epi32(s2, s1, s0, ctr.wrapping_add(1) as i32);
+  let b2 = _mm_set_epi32(s2, s1, s0, ctr.wrapping_add(2) as i32);
+  let b3 = _mm_set_epi32(s2, s1, s0, ctr.wrapping_add(3) as i32);
+
+  let z = _mm512_zextsi128_si512(b0);
+  let z = _mm512_inserti32x4(z, b1, 1);
+  let z = _mm512_inserti32x4(z, b2, 2);
+  _mm512_inserti32x4(z, b3, 3)
+}
+
 #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "aes-gcm"))]
 #[inline]
 fn ghash_ciphertext_fallback(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
@@ -3047,7 +3071,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
         ctr = ctr.wrapping_add(8);
         offset = end;
       }
-    } else {
+    } else if offset.strict_add(128) <= data.len() {
       let state =
         ce::encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(ce_rk, &iv_prefix, ctr, data, acc, h_powers_rev_8);
       acc = state.0;
@@ -3720,6 +3744,11 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counte
       buf.copy_from_slice(&initial_counter[4..16]);
       buf
     };
+    let suffix_words = [
+      u32::from_le_bytes([iv_suffix[0], iv_suffix[1], iv_suffix[2], iv_suffix[3]]),
+      u32::from_le_bytes([iv_suffix[4], iv_suffix[5], iv_suffix[6], iv_suffix[7]]),
+      u32::from_le_bytes([iv_suffix[8], iv_suffix[9], iv_suffix[10], iv_suffix[11]]),
+    ];
     let mut ctr = u32::from_le_bytes([
       initial_counter[0],
       initial_counter[1],
@@ -3728,16 +3757,40 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counte
     ]);
     let mut offset = 0usize;
 
-    // Wide path: 4 blocks (64 bytes) per iteration.
+    while offset.strict_add(256) <= data.len() {
+      let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
+      let ctr1 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(4));
+      let ctr2 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(8));
+      let ctr3 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(12));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(p0, ks0));
+
+      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
+        _mm512_xor_si512(p1, ks1),
+      );
+
+      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
+        _mm512_xor_si512(p2, ks2),
+      );
+
+      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
+        _mm512_xor_si512(p3, ks3),
+      );
+
+      ctr = ctr.wrapping_add(16);
+      offset = offset.strict_add(256);
+    }
+
     while offset.strict_add(64) <= data.len() {
-      let mut ctr_blocks = [[0u8; 16]; 4];
-      let mut i = 0u32;
-      while i < 4 {
-        ctr_blocks[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
-        ctr_blocks[i as usize][4..16].copy_from_slice(&iv_suffix);
-        i = i.strict_add(1);
-      }
-      let ctr_vec = _mm512_loadu_si512(ctr_blocks.as_ptr().cast());
+      let ctr_vec = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
       let keystream = ni::encrypt_4blocks(ni_rk, ctr_vec);
       let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
       let ciphertext = _mm512_xor_si512(plaintext, keystream);
@@ -3806,6 +3859,11 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counte
       buf.copy_from_slice(&initial_counter[4..16]);
       buf
     };
+    let suffix_words = [
+      u32::from_le_bytes([iv_suffix[0], iv_suffix[1], iv_suffix[2], iv_suffix[3]]),
+      u32::from_le_bytes([iv_suffix[4], iv_suffix[5], iv_suffix[6], iv_suffix[7]]),
+      u32::from_le_bytes([iv_suffix[8], iv_suffix[9], iv_suffix[10], iv_suffix[11]]),
+    ];
     let mut ctr = u32::from_le_bytes([
       initial_counter[0],
       initial_counter[1],
@@ -3814,15 +3872,40 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counte
     ]);
     let mut offset = 0usize;
 
+    while offset.strict_add(256) <= data.len() {
+      let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
+      let ctr1 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(4));
+      let ctr2 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(8));
+      let ctr3 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(12));
+      let (ks0, ks1, ks2, ks3) = ni::encrypt_16blocks_128(ni_rk, ctr0, ctr1, ctr2, ctr3);
+
+      let p0 = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
+      _mm512_storeu_si512(data.as_mut_ptr().add(offset).cast(), _mm512_xor_si512(p0, ks0));
+
+      let p1 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(64)).cast());
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(64)).cast(),
+        _mm512_xor_si512(p1, ks1),
+      );
+
+      let p2 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(128)).cast());
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(128)).cast(),
+        _mm512_xor_si512(p2, ks2),
+      );
+
+      let p3 = _mm512_loadu_si512(data.as_ptr().add(offset.strict_add(192)).cast());
+      _mm512_storeu_si512(
+        data.as_mut_ptr().add(offset.strict_add(192)).cast(),
+        _mm512_xor_si512(p3, ks3),
+      );
+
+      ctr = ctr.wrapping_add(16);
+      offset = offset.strict_add(256);
+    }
+
     while offset.strict_add(64) <= data.len() {
-      let mut ctr_blocks = [[0u8; 16]; 4];
-      let mut i = 0u32;
-      while i < 4 {
-        ctr_blocks[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
-        ctr_blocks[i as usize][4..16].copy_from_slice(&iv_suffix);
-        i = i.strict_add(1);
-      }
-      let ctr_vec = _mm512_loadu_si512(ctr_blocks.as_ptr().cast());
+      let ctr_vec = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
       let keystream = ni::encrypt_4blocks_128(ni_rk, ctr_vec);
       let plaintext = _mm512_loadu_si512(data.as_ptr().add(offset).cast());
       let ciphertext = _mm512_xor_si512(plaintext, keystream);

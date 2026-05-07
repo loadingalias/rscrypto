@@ -323,6 +323,27 @@ unsafe fn ghash_finish_products(ll: uint64x2_t, hh: uint64x2_t, mm: uint64x2_t) 
 
 #[cfg(feature = "aes-gcm")]
 #[inline(always)]
+unsafe fn gcm_load_ciphertext_block(ptr: *const u8) -> uint8x16_t {
+  // SAFETY: opaque 16-byte ciphertext load for GCM open because:
+  // 1. The caller passes a pointer into a 128-byte chunk already bounds-checked by the enclosing
+  //    decrypt helper.
+  // 2. `ldr qN, [xN]` accepts arbitrary byte alignment on supported AArch64 targets.
+  // 3. The asm output is used only as an initialized NEON vector for GHASH; it does not alias or
+  //    mutate the input buffer.
+  unsafe {
+    let block: uint8x16_t;
+    core::arch::asm!(
+      "ldr {block:q}, [{ptr}]",
+      block = lateout(vreg) block,
+      ptr = in(reg) ptr,
+      options(readonly, nostack, preserves_flags),
+    );
+    block
+  }
+}
+
+#[cfg(feature = "aes-gcm")]
+#[inline(always)]
 unsafe fn ghash_load_power(power: *const u128) -> uint64x2_t {
   // SAFETY: GHASH H-power vector load because:
   // 1. The caller passes a pointer into a live H-power table.
@@ -748,15 +769,13 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
   data: &mut [u8],
   acc: u128,
   h_powers_rev: &[u128; 8],
-  prev_ciphertext: &[u8],
-) -> u128 {
+  prev_ciphertext: &[uint8x16_t; 8],
+) -> (u128, [uint8x16_t; 8]) {
   debug_assert!(data.len() >= 128);
-  debug_assert!(prev_ciphertext.len() >= 128);
 
-  // SAFETY: eight-block AES-256-GCM encryption with previous-ciphertext GHASH because:
+  // SAFETY: eight-block AES-256-GCM encryption with previous ciphertext lanes because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. `data` and `prev_ciphertext` have at least 128 bytes; all fixed vector loads/stores stay in
-  //    bounds.
+  // 2. `data` has at least 128 bytes and `prev_ciphertext` is an initialized eight-lane array.
   // 3. `prev_ciphertext` is already-produced ciphertext, so folding it while encrypting this chunk
   //    preserves GCM authentication order.
   unsafe {
@@ -776,7 +795,6 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
     let mut mm = vdupq_n_u64(0);
     let acc_lanes = ghash_u128_to_lanes(acc);
     let zero_lanes = vdupq_n_u64(0);
-    let prev_ptr = prev_ciphertext.as_ptr();
 
     macro_rules! round8 {
       ($round:expr) => {{
@@ -793,35 +811,35 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
 
     round8!(0);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr), 0, h_powers_rev, acc_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[0], 0, h_powers_rev, acc_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(1);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(16)), 1, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[1], 1, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(2);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(32)), 2, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[2], 2, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(3);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(48)), 3, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[3], 3, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(4);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(64)), 4, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[4], 4, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(5);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(80)), 5, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[5], 5, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(6);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(96)), 6, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[6], 6, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(7);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(112)), 7, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[7], 7, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(8);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
@@ -852,16 +870,24 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
     let p5 = vld1q_u8(data.as_ptr().add(80));
     let p6 = vld1q_u8(data.as_ptr().add(96));
     let p7 = vld1q_u8(data.as_ptr().add(112));
-    vst1q_u8(data.as_mut_ptr(), veorq_u8(p0, s0));
-    vst1q_u8(data.as_mut_ptr().add(16), veorq_u8(p1, s1));
-    vst1q_u8(data.as_mut_ptr().add(32), veorq_u8(p2, s2));
-    vst1q_u8(data.as_mut_ptr().add(48), veorq_u8(p3, s3));
-    vst1q_u8(data.as_mut_ptr().add(64), veorq_u8(p4, s4));
-    vst1q_u8(data.as_mut_ptr().add(80), veorq_u8(p5, s5));
-    vst1q_u8(data.as_mut_ptr().add(96), veorq_u8(p6, s6));
-    vst1q_u8(data.as_mut_ptr().add(112), veorq_u8(p7, s7));
+    let c0 = veorq_u8(p0, s0);
+    let c1 = veorq_u8(p1, s1);
+    let c2 = veorq_u8(p2, s2);
+    let c3 = veorq_u8(p3, s3);
+    let c4 = veorq_u8(p4, s4);
+    let c5 = veorq_u8(p5, s5);
+    let c6 = veorq_u8(p6, s6);
+    let c7 = veorq_u8(p7, s7);
+    vst1q_u8(data.as_mut_ptr(), c0);
+    vst1q_u8(data.as_mut_ptr().add(16), c1);
+    vst1q_u8(data.as_mut_ptr().add(32), c2);
+    vst1q_u8(data.as_mut_ptr().add(48), c3);
+    vst1q_u8(data.as_mut_ptr().add(64), c4);
+    vst1q_u8(data.as_mut_ptr().add(80), c5);
+    vst1q_u8(data.as_mut_ptr().add(96), c6);
+    vst1q_u8(data.as_mut_ptr().add(112), c7);
 
-    acc
+    (acc, [c0, c1, c2, c3, c4, c5, c6, c7])
   }
 }
 
@@ -917,35 +943,99 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_8blocks_ghash_current_core(
 
     round8!(0);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr), 0, h_powers_rev, acc_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr),
+      0,
+      h_powers_rev,
+      acc_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(1);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(16)), 1, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(16)),
+      1,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(2);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(32)), 2, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(32)),
+      2,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(3);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(48)), 3, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(48)),
+      3,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(4);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(64)), 4, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(64)),
+      4,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(5);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(80)), 5, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(80)),
+      5,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(6);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(96)), 6, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(96)),
+      6,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(7);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(112)), 7, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(112)),
+      7,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(8);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
@@ -1005,37 +1095,35 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
   // SAFETY: AES-256-GCM full-chunk loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
   // 2. This helper only creates 128-byte slices at offsets proven in bounds by the loop guards.
-  // 3. Previous-ciphertext and current-output slices are adjacent, non-overlapping 128-byte ranges.
-  // 4. The final pending block aggregate folds the last encrypted 128-byte chunk exactly once.
+  // 3. Previous ciphertext is carried as initialized NEON lanes between iterations.
+  // 4. The final pending lane aggregate folds the last encrypted 128-byte chunk exactly once.
   unsafe {
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
 
     let first = core::slice::from_raw_parts_mut(data_ptr, 128);
-    let _ = encrypt_ctr32_be_xor_8blocks_core(keys, iv_prefix, ctr, first);
+    let mut prev_blocks = encrypt_ctr32_be_xor_8blocks_core(keys, iv_prefix, ctr, first);
     ctr = ctr.wrapping_add(8);
     offset = offset.strict_add(128);
 
     while offset.strict_add(128) <= data.len() {
-      let prev = core::slice::from_raw_parts(data_ptr.add(offset.strict_sub(128)), 128);
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc = encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(keys, iv_prefix, ctr, current, acc, h_powers_rev, prev);
+      let (next_acc, next_blocks) = encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_core(
+        keys,
+        iv_prefix,
+        ctr,
+        current,
+        acc,
+        h_powers_rev,
+        &prev_blocks,
+      );
+      acc = next_acc;
+      prev_blocks = next_blocks;
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
 
-    let last = data.as_ptr().add(offset.strict_sub(128));
-    let pending_blocks = [
-      vld1q_u8(last),
-      vld1q_u8(last.add(16)),
-      vld1q_u8(last.add(32)),
-      vld1q_u8(last.add(48)),
-      vld1q_u8(last.add(64)),
-      vld1q_u8(last.add(80)),
-      vld1q_u8(last.add(96)),
-      vld1q_u8(last.add(112)),
-    ];
-    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev, &pending_blocks);
+    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev, &prev_blocks);
 
     (acc, ctr, offset)
   }
@@ -1589,15 +1677,13 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
   data: &mut [u8],
   acc: u128,
   h_powers_rev: &[u128; 8],
-  prev_ciphertext: &[u8],
-) -> u128 {
+  prev_ciphertext: &[uint8x16_t; 8],
+) -> (u128, [uint8x16_t; 8]) {
   debug_assert!(data.len() >= 128);
-  debug_assert!(prev_ciphertext.len() >= 128);
 
-  // SAFETY: eight-block AES-128-GCM encryption with previous-ciphertext GHASH because:
+  // SAFETY: eight-block AES-128-GCM encryption with previous ciphertext lanes because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. `data` and `prev_ciphertext` have at least 128 bytes; all fixed vector loads/stores stay in
-  //    bounds.
+  // 2. `data` has at least 128 bytes and `prev_ciphertext` is an initialized eight-lane array.
   // 3. `prev_ciphertext` is already-produced ciphertext, so folding it while encrypting this chunk
   //    preserves GCM authentication order.
   unsafe {
@@ -1617,7 +1703,6 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
     let mut mm = vdupq_n_u64(0);
     let acc_lanes = ghash_u128_to_lanes(acc);
     let zero_lanes = vdupq_n_u64(0);
-    let prev_ptr = prev_ciphertext.as_ptr();
 
     macro_rules! round8 {
       ($round:expr) => {{
@@ -1634,35 +1719,35 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
 
     round8!(0);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr), 0, h_powers_rev, acc_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[0], 0, h_powers_rev, acc_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(1);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(16)), 1, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[1], 1, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(2);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(32)), 2, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[2], 2, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(3);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(48)), 3, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[3], 3, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(4);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(64)), 4, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[4], 4, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(5);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(80)), 5, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[5], 5, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(6);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(96)), 6, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[6], 6, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(7);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(prev_ptr.add(112)), 7, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(ll, hh, mm, prev_ciphertext[7], 7, h_powers_rev, zero_lanes);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(8);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
@@ -1686,16 +1771,24 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
     let p5 = vld1q_u8(data.as_ptr().add(80));
     let p6 = vld1q_u8(data.as_ptr().add(96));
     let p7 = vld1q_u8(data.as_ptr().add(112));
-    vst1q_u8(data.as_mut_ptr(), veorq_u8(p0, s0));
-    vst1q_u8(data.as_mut_ptr().add(16), veorq_u8(p1, s1));
-    vst1q_u8(data.as_mut_ptr().add(32), veorq_u8(p2, s2));
-    vst1q_u8(data.as_mut_ptr().add(48), veorq_u8(p3, s3));
-    vst1q_u8(data.as_mut_ptr().add(64), veorq_u8(p4, s4));
-    vst1q_u8(data.as_mut_ptr().add(80), veorq_u8(p5, s5));
-    vst1q_u8(data.as_mut_ptr().add(96), veorq_u8(p6, s6));
-    vst1q_u8(data.as_mut_ptr().add(112), veorq_u8(p7, s7));
+    let c0 = veorq_u8(p0, s0);
+    let c1 = veorq_u8(p1, s1);
+    let c2 = veorq_u8(p2, s2);
+    let c3 = veorq_u8(p3, s3);
+    let c4 = veorq_u8(p4, s4);
+    let c5 = veorq_u8(p5, s5);
+    let c6 = veorq_u8(p6, s6);
+    let c7 = veorq_u8(p7, s7);
+    vst1q_u8(data.as_mut_ptr(), c0);
+    vst1q_u8(data.as_mut_ptr().add(16), c1);
+    vst1q_u8(data.as_mut_ptr().add(32), c2);
+    vst1q_u8(data.as_mut_ptr().add(48), c3);
+    vst1q_u8(data.as_mut_ptr().add(64), c4);
+    vst1q_u8(data.as_mut_ptr().add(80), c5);
+    vst1q_u8(data.as_mut_ptr().add(96), c6);
+    vst1q_u8(data.as_mut_ptr().add(112), c7);
 
-    acc
+    (acc, [c0, c1, c2, c3, c4, c5, c6, c7])
   }
 }
 
@@ -1751,35 +1844,99 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(
 
     round8!(0);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr), 0, h_powers_rev, acc_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr),
+      0,
+      h_powers_rev,
+      acc_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(1);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(16)), 1, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(16)),
+      1,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(2);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(32)), 2, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(32)),
+      2,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(3);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(48)), 3, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(48)),
+      3,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(4);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(64)), 4, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(64)),
+      4,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(5);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(80)), 5, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(80)),
+      5,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(6);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(96)), 6, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(96)),
+      6,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(7);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
-    ghash_fold_be_vec!(ll, hh, mm, vld1q_u8(data_ptr.add(112)), 7, h_powers_rev, zero_lanes);
+    ghash_fold_be_vec!(
+      ll,
+      hh,
+      mm,
+      gcm_load_ciphertext_block(data_ptr.add(112)),
+      7,
+      h_powers_rev,
+      zero_lanes
+    );
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
     round8!(8);
     gcm_schedule_barrier!(s0, s1, s2, s3, s4, s5, s6, s7, ll, hh, mm);
@@ -1832,38 +1989,35 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   // SAFETY: AES-128-GCM full-chunk loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
   // 2. This helper only creates 128-byte slices at offsets proven in bounds by the loop guards.
-  // 3. Previous-ciphertext and current-output slices are adjacent, non-overlapping 128-byte ranges.
-  // 4. The final pending block aggregate folds the last encrypted 128-byte chunk exactly once.
+  // 3. Previous ciphertext is carried as initialized NEON lanes between iterations.
+  // 4. The final pending lane aggregate folds the last encrypted 128-byte chunk exactly once.
   unsafe {
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
 
     let first = core::slice::from_raw_parts_mut(data_ptr, 128);
-    let _ = encrypt_ctr32_be_xor_8blocks_128_core(keys, iv_prefix, ctr, first);
+    let mut prev_blocks = encrypt_ctr32_be_xor_8blocks_128_core(keys, iv_prefix, ctr, first);
     ctr = ctr.wrapping_add(8);
     offset = offset.strict_add(128);
 
     while offset.strict_add(128) <= data.len() {
-      let prev = core::slice::from_raw_parts(data_ptr.add(offset.strict_sub(128)), 128);
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc =
-        encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(keys, iv_prefix, ctr, current, acc, h_powers_rev, prev);
+      let (next_acc, next_blocks) = encrypt_ctr32_be_xor_8blocks_ghash_prev_bytes_128_core(
+        keys,
+        iv_prefix,
+        ctr,
+        current,
+        acc,
+        h_powers_rev,
+        &prev_blocks,
+      );
+      acc = next_acc;
+      prev_blocks = next_blocks;
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
 
-    let last = data.as_ptr().add(offset.strict_sub(128));
-    let pending_blocks = [
-      vld1q_u8(last),
-      vld1q_u8(last.add(16)),
-      vld1q_u8(last.add(32)),
-      vld1q_u8(last.add(48)),
-      vld1q_u8(last.add(64)),
-      vld1q_u8(last.add(80)),
-      vld1q_u8(last.add(96)),
-      vld1q_u8(last.add(112)),
-    ];
-    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev, &pending_blocks);
+    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev, &prev_blocks);
 
     (acc, ctr, offset)
   }
