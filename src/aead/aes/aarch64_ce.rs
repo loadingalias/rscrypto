@@ -381,27 +381,7 @@ macro_rules! ghash_fold_be_vec {
 
 #[cfg(feature = "aes-gcm")]
 macro_rules! gcm_schedule_barrier {
-  ($s0:ident, $s1:ident, $s2:ident, $s3:ident, $s4:ident, $s5:ident, $s6:ident, $s7:ident, $ll:ident, $hh:ident, $mm:ident) => {{
-    // SAFETY: empty scheduling fence because:
-    // 1. The template is an assembler comment, so it emits no executable instructions.
-    // 2. All operands are initialized NEON registers observed only as inputs.
-    // 3. `nostack` and `preserves_flags` match the empty template and prevent hidden side effects.
-    core::arch::asm!(
-      "/* {0:v} {1:v} {2:v} {3:v} {4:v} {5:v} {6:v} {7:v} {8:v} {9:v} {10:v} */",
-      in(vreg) $s0,
-      in(vreg) $s1,
-      in(vreg) $s2,
-      in(vreg) $s3,
-      in(vreg) $s4,
-      in(vreg) $s5,
-      in(vreg) $s6,
-      in(vreg) $s7,
-      in(vreg) $ll,
-      in(vreg) $hh,
-      in(vreg) $mm,
-      options(nostack, preserves_flags),
-    );
-  }};
+  ($s0:ident, $s1:ident, $s2:ident, $s3:ident, $s4:ident, $s5:ident, $s6:ident, $s7:ident, $ll:ident, $hh:ident, $mm:ident) => {{}};
 }
 
 #[cfg(feature = "aes-gcm")]
