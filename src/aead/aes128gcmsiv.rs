@@ -85,6 +85,7 @@ define_aead_tag_type!(
 #[derive(Clone)]
 pub struct Aes128GcmSiv {
   master_ek: aes::Aes128EncKey,
+  #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
   backend: AeadBackend,
 }
 

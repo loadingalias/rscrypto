@@ -206,6 +206,59 @@ pub(super) unsafe fn encrypt_16blocks(
   )
 }
 
+/// Encrypt 8 AES-256 blocks as four independent VAES-256 dependency chains.
+///
+/// # Safety
+/// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,sse2,avx2,avx512f,avx512vl,vaes")]
+pub(super) unsafe fn encrypt_8blocks_y256(
+  keys: &NiRoundKeys,
+  b0: __m256i,
+  b1: __m256i,
+  b2: __m256i,
+  b3: __m256i,
+) -> (__m256i, __m256i, __m256i, __m256i) {
+  let k = &keys.rk;
+  let rk0 = _mm256_broadcastsi128_si256(k[0]);
+  let mut s0 = _mm256_xor_si256(b0, rk0);
+  let mut s1 = _mm256_xor_si256(b1, rk0);
+  let mut s2 = _mm256_xor_si256(b2, rk0);
+  let mut s3 = _mm256_xor_si256(b3, rk0);
+
+  macro_rules! round {
+    ($idx:expr) => {{
+      let rk = _mm256_broadcastsi128_si256(k[$idx]);
+      s0 = _mm256_aesenc_epi128(s0, rk);
+      s1 = _mm256_aesenc_epi128(s1, rk);
+      s2 = _mm256_aesenc_epi128(s2, rk);
+      s3 = _mm256_aesenc_epi128(s3, rk);
+    }};
+  }
+
+  round!(1);
+  round!(2);
+  round!(3);
+  round!(4);
+  round!(5);
+  round!(6);
+  round!(7);
+  round!(8);
+  round!(9);
+  round!(10);
+  round!(11);
+  round!(12);
+  round!(13);
+
+  let rk14 = _mm256_broadcastsi128_si256(k[14]);
+  (
+    _mm256_aesenclast_epi128(s0, rk14),
+    _mm256_aesenclast_epi128(s1, rk14),
+    _mm256_aesenclast_epi128(s2, rk14),
+    _mm256_aesenclast_epi128(s3, rk14),
+  )
+}
+
 /// Encrypt a single 16-byte block using AES-256 with AES-NI.
 ///
 /// # Safety
@@ -414,6 +467,55 @@ pub(super) unsafe fn encrypt_16blocks_128(
     _mm512_aesenclast_epi128(s1, rk10),
     _mm512_aesenclast_epi128(s2, rk10),
     _mm512_aesenclast_epi128(s3, rk10),
+  )
+}
+
+/// Encrypt 8 AES-128 blocks as four independent VAES-256 dependency chains.
+///
+/// # Safety
+/// Caller must ensure AVX2 + AVX-512F + AVX-512VL + VAES + AES + SSE2.
+#[cfg(feature = "aes-gcm")]
+#[target_feature(enable = "aes,sse2,avx2,avx512f,avx512vl,vaes")]
+pub(super) unsafe fn encrypt_8blocks_128_y256(
+  keys: &Ni128RoundKeys,
+  b0: __m256i,
+  b1: __m256i,
+  b2: __m256i,
+  b3: __m256i,
+) -> (__m256i, __m256i, __m256i, __m256i) {
+  let k = &keys.rk;
+  let rk0 = _mm256_broadcastsi128_si256(k[0]);
+  let mut s0 = _mm256_xor_si256(b0, rk0);
+  let mut s1 = _mm256_xor_si256(b1, rk0);
+  let mut s2 = _mm256_xor_si256(b2, rk0);
+  let mut s3 = _mm256_xor_si256(b3, rk0);
+
+  macro_rules! round {
+    ($idx:expr) => {{
+      let rk = _mm256_broadcastsi128_si256(k[$idx]);
+      s0 = _mm256_aesenc_epi128(s0, rk);
+      s1 = _mm256_aesenc_epi128(s1, rk);
+      s2 = _mm256_aesenc_epi128(s2, rk);
+      s3 = _mm256_aesenc_epi128(s3, rk);
+    }};
+  }
+
+  round!(1);
+  round!(2);
+  round!(3);
+  round!(4);
+  round!(5);
+  round!(6);
+  round!(7);
+  round!(8);
+  round!(9);
+
+  let rk10 = _mm256_broadcastsi128_si256(k[10]);
+  (
+    _mm256_aesenclast_epi128(s0, rk10),
+    _mm256_aesenclast_epi128(s1, rk10),
+    _mm256_aesenclast_epi128(s2, rk10),
+    _mm256_aesenclast_epi128(s3, rk10),
   )
 }
 

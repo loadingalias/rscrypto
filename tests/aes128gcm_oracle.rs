@@ -19,6 +19,16 @@ use aes_gcm::{
 };
 use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag, aead::Nonce96};
 
+fn deterministic_bytes(seed: u8, len: usize) -> Vec<u8> {
+  let mut out = Vec::with_capacity(len);
+  let mut x = seed as u32;
+  for _ in 0..len {
+    x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+    out.push((x >> 24) as u8);
+  }
+  out
+}
+
 fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 12], aad: &[u8], plaintext: &[u8]) {
   let key = Aes128GcmKey::from_bytes(*key_bytes);
   let nonce = Nonce96::from_bytes(*nonce_bytes);
@@ -112,6 +122,39 @@ fn aes128gcm_oracle_aad_size_sweep() {
   for aad_len in [0, 1, 15, 16, 17, 32, 33, 47, 48, 49, 64, 65, 80, 81, 128, 1024] {
     let aad: Vec<u8> = (0..aad_len).map(|i| (i & 0xFF) as u8).collect();
     assert_matches_oracle(&key, &nonce, &aad, plaintext);
+  }
+}
+
+#[test]
+fn aes128gcm_oracle_all_short_lengths() {
+  let key = [0xA8u8; 16];
+
+  for size in 0..=255usize {
+    let mut nonce = [0x18u8; 12];
+    nonce[8..12].copy_from_slice(&(size as u32).to_be_bytes());
+    let aad = if size % 3 == 0 {
+      Vec::new()
+    } else {
+      deterministic_bytes(0x42 ^ size as u8, size % 97)
+    };
+    let plaintext = deterministic_bytes(0x81 ^ size as u8, size);
+    assert_matches_oracle(&key, &nonce, &aad, &plaintext);
+  }
+}
+
+#[test]
+fn aes128gcm_oracle_large_aligned_and_unaligned_lengths() {
+  let key = [0x5Du8; 16];
+  let aad_cases = [Vec::new(), deterministic_bytes(0xAC, 257)];
+
+  for (case_idx, &size) in [4096usize, 4097, 8191, 8192, 8193, 16_384, 16_385].iter().enumerate() {
+    let mut nonce = [0x71u8; 12];
+    nonce[4..8].copy_from_slice(&(case_idx as u32).to_be_bytes());
+    nonce[8..12].copy_from_slice(&(size as u32).to_be_bytes());
+    let plaintext = deterministic_bytes(0x33 ^ case_idx as u8, size);
+    for aad in &aad_cases {
+      assert_matches_oracle(&key, &nonce, aad, &plaintext);
+    }
   }
 }
 
