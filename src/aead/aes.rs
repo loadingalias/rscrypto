@@ -2885,6 +2885,31 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_y256_ghash(
     ]);
     let mut offset = 0usize;
 
+    #[cfg(target_os = "linux")]
+    if data.len() >= 128 {
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      // SAFETY: external x86-64 VAES-256 AES-256-GCM seal kernel because:
+      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX2, AVX-512VL, AES-NI,
+      //    PCLMULQDQ, SSE2, and SSSE3 were selected by runtime/backend dispatch.
+      // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
+      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
+      //    `data.len()` mutable bytes.
+      // 4. `h_powers_rev_8` contains exactly the [H^8..H] powers required by the 8-block fold.
+      // 5. The kernel only processes complete 128-byte chunks and reports the processed byte count so the
+      //    Rust fallback below handles every remaining full/partial tail.
+      x86_64_asm::rscrypto_aes256_gcm_seal_8x_vaes256_x86_64_linux(
+        ni_rk.as_ptr(),
+        initial_counter.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      acc = state.acc();
+      ctr = state.ctr;
+      offset = state.processed;
+    }
+
     while offset.strict_add(128) <= data.len() {
       let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_8blocks_y256(ni_rk, ctr0, ctr1, ctr2, ctr3);
@@ -3023,6 +3048,31 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_y256_ghash(
       initial_counter[15],
     ]);
     let mut offset = 0usize;
+
+    #[cfg(target_os = "linux")]
+    if data.len() >= 128 {
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      // SAFETY: external x86-64 VAES-256 AES-256-GCM open kernel because:
+      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX2, AVX-512VL, AES-NI,
+      //    PCLMULQDQ, SSE2, and SSSE3 were selected by runtime/backend dispatch.
+      // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
+      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
+      //    `data.len()` mutable ciphertext bytes.
+      // 4. The kernel folds ciphertext into GHASH before storing plaintext.
+      // 5. The kernel only processes complete 128-byte chunks and reports the processed byte count so the
+      //    Rust fallback below handles every remaining full/partial tail.
+      x86_64_asm::rscrypto_aes256_gcm_open_8x_vaes256_x86_64_linux(
+        ni_rk.as_ptr(),
+        initial_counter.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      acc = state.acc();
+      ctr = state.ctr;
+      offset = state.processed;
+    }
 
     while offset.strict_add(128) <= data.len() {
       let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
@@ -4222,6 +4272,31 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_y256_ghash(
     ]);
     let mut offset = 0usize;
 
+    #[cfg(target_os = "linux")]
+    if data.len() >= 128 {
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      // SAFETY: external x86-64 VAES-256 AES-128-GCM seal kernel because:
+      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX2, AVX-512VL, AES-NI,
+      //    PCLMULQDQ, SSE2, and SSSE3 were selected by runtime/backend dispatch.
+      // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
+      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
+      //    `data.len()` mutable bytes.
+      // 4. `h_powers_rev_8` contains exactly the [H^8..H] powers required by the 8-block fold.
+      // 5. The kernel only processes complete 128-byte chunks and reports the processed byte count so the
+      //    Rust fallback below handles every remaining full/partial tail.
+      x86_64_asm::rscrypto_aes128_gcm_seal_8x_vaes256_x86_64_linux(
+        ni_rk.as_ptr(),
+        initial_counter.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      acc = state.acc();
+      ctr = state.ctr;
+      offset = state.processed;
+    }
+
     while offset.strict_add(128) <= data.len() {
       let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);
       let (ks0, ks1, ks2, ks3) = ni::encrypt_8blocks_128_y256(ni_rk, ctr0, ctr1, ctr2, ctr3);
@@ -4360,6 +4435,31 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_y256_ghash(
       initial_counter[15],
     ]);
     let mut offset = 0usize;
+
+    #[cfg(target_os = "linux")]
+    if data.len() >= 128 {
+      let mut state = x86_64_asm::AesGcmX86State::new(acc, ctr);
+      // SAFETY: external x86-64 VAES-256 AES-128-GCM open kernel because:
+      // 1. This target-feature function is only entered after VAES, VPCLMULQDQ, AVX2, AVX-512VL, AES-NI,
+      //    PCLMULQDQ, SSE2, and SSSE3 were selected by runtime/backend dispatch.
+      // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
+      // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
+      //    `data.len()` mutable ciphertext bytes.
+      // 4. The kernel folds ciphertext into GHASH before storing plaintext.
+      // 5. The kernel only processes complete 128-byte chunks and reports the processed byte count so the
+      //    Rust fallback below handles every remaining full/partial tail.
+      x86_64_asm::rscrypto_aes128_gcm_open_8x_vaes256_x86_64_linux(
+        ni_rk.as_ptr(),
+        initial_counter.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      acc = state.acc();
+      ctr = state.ctr;
+      offset = state.processed;
+    }
 
     while offset.strict_add(128) <= data.len() {
       let (ctr0, ctr1, ctr2, ctr3) = x86_gcm_ctr_blocks_be_8_y256(iv_words, ctr);

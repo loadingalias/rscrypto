@@ -69,4 +69,40 @@ unsafe extern "C" {
     h_powers_rev_16: *const u128,
     state: *mut AesGcmX86State,
   );
+
+  pub(super) fn rscrypto_aes128_gcm_seal_8x_vaes256_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_8: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  pub(super) fn rscrypto_aes128_gcm_open_8x_vaes256_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_8: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  pub(super) fn rscrypto_aes256_gcm_seal_8x_vaes256_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_8: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  pub(super) fn rscrypto_aes256_gcm_open_8x_vaes256_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_8: *const u128,
+    state: *mut AesGcmX86State,
+  );
 }
