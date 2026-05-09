@@ -8,6 +8,12 @@ pub(super) struct NiRoundKeys {
 }
 
 impl NiRoundKeys {
+  #[cfg(all(target_os = "linux", feature = "aes-gcm"))]
+  #[inline]
+  pub(super) fn as_ptr(&self) -> *const u8 {
+    self.rk.as_ptr().cast()
+  }
+
   /// Zeroize all round keys via volatile writes.
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 15].
@@ -305,6 +311,12 @@ pub(super) struct Ni128RoundKeys {
 }
 
 impl Ni128RoundKeys {
+  #[cfg(all(target_os = "linux", feature = "aes-gcm"))]
+  #[inline]
+  pub(super) fn as_ptr(&self) -> *const u8 {
+    self.rk.as_ptr().cast()
+  }
+
   /// Zeroize all round keys via volatile writes.
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 11].
