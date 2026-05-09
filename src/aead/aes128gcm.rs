@@ -116,9 +116,15 @@ pub struct Aes128Gcm {
   h_powers_rev: [u128; 4],
   /// Precomputed H powers [H^8, H^7, ..., H] for 8-block GHASH windows.
   h_powers_rev_8: [u128; 8],
-  /// Precomputed H powers [H^16, H^15, ..., H] for x86 16-block GHASH windows.
-  #[cfg(target_arch = "x86_64")]
+  /// Precomputed H powers [H^16, H^15, ..., H] for 16-block GHASH windows.
+  #[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_os = "macos")))]
   h_powers_rev_16: [u128; 16],
+  /// Precomputed `(lo64 ^ hi64)` for each 16-block GHASH power.
+  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  h_powers_rev_16_mid: [u128; 16],
+  /// Pair-packed 16-block GHASH powers for AArch64 assembly.
+  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  h_powers_rev_16_pair: [u128; 24],
   backend: AeadBackend,
 }
 
@@ -590,11 +596,15 @@ impl Aead for Aes128Gcm {
     let h_powers_rev_8 = [
       powers[7], powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
     ];
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_os = "macos")))]
     let h_powers_rev_16 = {
       let powers = polyval::precompute_powers_16(h_polyval);
       core::array::from_fn(|i| powers[15usize.strict_sub(i)])
     };
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    let h_powers_rev_16_mid = polyval::precompute_powers_16_mid(&h_powers_rev_16);
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    let h_powers_rev_16_pair = polyval::precompute_powers_16_pair(&h_powers_rev_16);
     let backend = resolve_backend();
 
     Self {
@@ -602,8 +612,12 @@ impl Aead for Aes128Gcm {
       h,
       h_powers_rev,
       h_powers_rev_8,
-      #[cfg(target_arch = "x86_64")]
+      #[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_os = "macos")))]
       h_powers_rev_16,
+      #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+      h_powers_rev_16_mid,
+      #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+      h_powers_rev_16_pair,
       backend,
     }
   }
@@ -732,17 +746,20 @@ impl Aead for Aes128Gcm {
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
       //    and PMULL.
       // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
-      acc = unsafe {
-        aes::aes128_ctr32_encrypt_be_aarch64_ghash(
-          &self.ek,
-          &ctr_block,
-          buffer,
-          acc,
-          h_polyval,
-          &self.h_powers_rev,
-          &self.h_powers_rev_8,
-        )
+      let tables = aes::Aarch64GcmTables {
+        h_polyval,
+        h_powers_rev: &self.h_powers_rev,
+        h_powers_rev_8: &self.h_powers_rev_8,
+        #[cfg(target_os = "macos")]
+        h_powers_rev_16: &self.h_powers_rev_16,
+        #[cfg(target_os = "macos")]
+        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
+        #[cfg(target_os = "macos")]
+        h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
+      // SAFETY: backend selection confirmed AES-CE/PMULL, and the helper encrypts the valid buffer
+      // in place while folding ciphertext into GHASH.
+      acc = unsafe { aes::aes128_ctr32_encrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc, &tables) };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: aarch64 GHASH final multiply because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
@@ -914,17 +931,20 @@ impl Aead for Aes128Gcm {
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
       //    and PMULL.
       // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
-      acc = unsafe {
-        aes::aes128_ctr32_decrypt_be_aarch64_ghash(
-          &self.ek,
-          &ctr_block,
-          buffer,
-          acc,
-          h_polyval,
-          &self.h_powers_rev,
-          &self.h_powers_rev_8,
-        )
+      let tables = aes::Aarch64GcmTables {
+        h_polyval,
+        h_powers_rev: &self.h_powers_rev,
+        h_powers_rev_8: &self.h_powers_rev_8,
+        #[cfg(target_os = "macos")]
+        h_powers_rev_16: &self.h_powers_rev_16,
+        #[cfg(target_os = "macos")]
+        h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
+        #[cfg(target_os = "macos")]
+        h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       };
+      // SAFETY: backend selection confirmed AES-CE/PMULL, and the helper GHASHes ciphertext before
+      // decrypting the valid buffer in place.
+      acc = unsafe { aes::aes128_ctr32_decrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc, &tables) };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: aarch64 GHASH final multiply because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
@@ -1001,12 +1021,23 @@ impl Drop for Aes128Gcm {
     // 1. `[u128; 8]` is a contiguous initialized 128-byte array.
     // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
     ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_8.as_mut_ptr().cast::<u8>(), 128) });
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_os = "macos")))]
     {
       // SAFETY: H-power byte view because:
       // 1. `[u128; 16]` is a contiguous initialized 256-byte array.
       // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
       ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_16.as_mut_ptr().cast::<u8>(), 256) });
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    {
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 16]` is a contiguous initialized 256-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_16_mid.as_mut_ptr().cast::<u8>(), 256) });
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 24]` is a contiguous initialized 384-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_16_pair.as_mut_ptr().cast::<u8>(), 384) });
     }
     // ek's Drop is handled by Aes128EncKey's own Drop impl.
   }

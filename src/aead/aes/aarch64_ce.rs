@@ -1,5 +1,9 @@
 use core::arch::aarch64::*;
 
+#[cfg(all(feature = "aes-gcm", target_os = "macos"))]
+#[path = "aarch64/asm.rs"]
+mod asm;
+
 /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
 #[derive(Clone, Copy)]
 #[repr(C, align(64))]
@@ -1068,16 +1072,52 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
   mut ctr: u32,
   data: &mut [u8],
   mut acc: u128,
-  h_powers_rev: &[u128; 8],
+  tables: &super::Aarch64GcmTables<'_>,
 ) -> (u128, u32, usize) {
   debug_assert!(data.len() >= 128);
 
   // SAFETY: AES-256-GCM full-chunk loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. This helper only creates 128-byte slices at offsets proven in bounds by the loop guards.
-  // 3. Previous ciphertext is carried as initialized NEON lanes between iterations.
-  // 4. The final pending lane aggregate folds the last encrypted 128-byte chunk exactly once.
+  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  //    processed byte count.
+  // 3. The Rust fallback only creates 128-byte slices at offsets proven in bounds by the loop guards.
+  // 4. Previous ciphertext is carried as initialized NEON lanes between Rust fallback iterations.
+  // 5. The final pending lane aggregate folds the last encrypted 128-byte fallback chunk exactly
+  //    once.
   unsafe {
+    #[cfg(target_os = "macos")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        asm::rscrypto_aes256_gcm_seal_16x_eor3_aarch64_apple_darwin(
+          keys.rk.as_ptr().cast::<u8>(),
+          iv_prefix.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          tables.h_powers_rev_16.as_ptr(),
+          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.h_powers_rev_16_pair.as_ptr(),
+          &mut state,
+        );
+        if state.processed != 0 {
+          return (state.acc(), state.ctr, state.processed);
+        }
+      }
+
+      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      asm::rscrypto_aes256_gcm_seal_8x_aarch64_apple_darwin(
+        keys.rk.as_ptr().cast::<u8>(),
+        iv_prefix.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        tables.h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      if state.processed != 0 {
+        return (state.acc(), state.ctr, state.processed);
+      }
+    }
+
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
 
@@ -1094,7 +1134,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
         ctr,
         current,
         acc,
-        h_powers_rev,
+        tables.h_powers_rev_8,
         &prev_blocks,
       );
       acc = next_acc;
@@ -1103,7 +1143,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
       offset = offset.strict_add(128);
     }
 
-    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev, &prev_blocks);
+    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, tables.h_powers_rev_8, &prev_blocks);
 
     (acc, ctr, offset)
   }
@@ -1118,19 +1158,54 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
   mut ctr: u32,
   data: &mut [u8],
   mut acc: u128,
-  h_powers_rev: &[u128; 8],
+  tables: &super::Aarch64GcmTables<'_>,
 ) -> (u128, u32, usize) {
   // SAFETY: AES-256-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. The loop creates each 128-byte mutable chunk only after proving it is in bounds.
-  // 3. `decrypt_ctr32_be_xor_8blocks_ghash_current_core` folds ciphertext before plaintext stores.
+  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  //    processed byte count.
+  // 3. The Rust fallback creates each 128-byte mutable chunk only after proving it is in bounds.
+  // 4. Both paths fold ciphertext before plaintext stores.
   unsafe {
+    #[cfg(target_os = "macos")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        asm::rscrypto_aes256_gcm_open_16x_eor3_aarch64_apple_darwin(
+          keys.rk.as_ptr().cast::<u8>(),
+          iv_prefix.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          tables.h_powers_rev_16.as_ptr(),
+          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.h_powers_rev_16_pair.as_ptr(),
+          &mut state,
+        );
+        if state.processed != 0 {
+          return (state.acc(), state.ctr, state.processed);
+        }
+      }
+
+      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      asm::rscrypto_aes256_gcm_open_8x_aarch64_apple_darwin(
+        keys.rk.as_ptr().cast::<u8>(),
+        iv_prefix.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        tables.h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      if state.processed != 0 {
+        return (state.acc(), state.ctr, state.processed);
+      }
+    }
+
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
 
     while offset.strict_add(128) <= data.len() {
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc = decrypt_ctr32_be_xor_8blocks_ghash_current_core(keys, iv_prefix, ctr, current, acc, h_powers_rev);
+      acc = decrypt_ctr32_be_xor_8blocks_ghash_current_core(keys, iv_prefix, ctr, current, acc, tables.h_powers_rev_8);
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }
@@ -1962,16 +2037,52 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   mut ctr: u32,
   data: &mut [u8],
   mut acc: u128,
-  h_powers_rev: &[u128; 8],
+  tables: &super::Aarch64GcmTables<'_>,
 ) -> (u128, u32, usize) {
   debug_assert!(data.len() >= 128);
 
   // SAFETY: AES-128-GCM full-chunk loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. This helper only creates 128-byte slices at offsets proven in bounds by the loop guards.
-  // 3. Previous ciphertext is carried as initialized NEON lanes between iterations.
-  // 4. The final pending lane aggregate folds the last encrypted 128-byte chunk exactly once.
+  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  //    processed byte count.
+  // 3. The Rust fallback only creates 128-byte slices at offsets proven in bounds by the loop guards.
+  // 4. Previous ciphertext is carried as initialized NEON lanes between Rust fallback iterations.
+  // 5. The final pending lane aggregate folds the last encrypted 128-byte fallback chunk exactly
+  //    once.
   unsafe {
+    #[cfg(target_os = "macos")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        asm::rscrypto_aes128_gcm_seal_16x_eor3_aarch64_apple_darwin(
+          keys.rk.as_ptr().cast::<u8>(),
+          iv_prefix.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          tables.h_powers_rev_16.as_ptr(),
+          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.h_powers_rev_16_pair.as_ptr(),
+          &mut state,
+        );
+        if state.processed != 0 {
+          return (state.acc(), state.ctr, state.processed);
+        }
+      }
+
+      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      asm::rscrypto_aes128_gcm_seal_8x_aarch64_apple_darwin(
+        keys.rk.as_ptr().cast::<u8>(),
+        iv_prefix.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        tables.h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      if state.processed != 0 {
+        return (state.acc(), state.ctr, state.processed);
+      }
+    }
+
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
 
@@ -1988,7 +2099,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
         ctr,
         current,
         acc,
-        h_powers_rev,
+        tables.h_powers_rev_8,
         &prev_blocks,
       );
       acc = next_acc;
@@ -1997,7 +2108,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
       offset = offset.strict_add(128);
     }
 
-    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, h_powers_rev, &prev_blocks);
+    acc = super::super::polyval::aarch64_aggregate_8blocks_be_lanes_inline(acc, tables.h_powers_rev_8, &prev_blocks);
 
     (acc, ctr, offset)
   }
@@ -2012,20 +2123,55 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
   mut ctr: u32,
   data: &mut [u8],
   mut acc: u128,
-  h_powers_rev: &[u128; 8],
+  tables: &super::Aarch64GcmTables<'_>,
 ) -> (u128, u32, usize) {
   // SAFETY: AES-128-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. The loop creates each 128-byte mutable chunk only after proving it is in bounds.
-  // 3. `decrypt_ctr32_be_xor_8blocks_ghash_current_128_core` folds ciphertext before plaintext
-  //    stores.
+  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  //    processed byte count.
+  // 3. The Rust fallback creates each 128-byte mutable chunk only after proving it is in bounds.
+  // 4. Both paths fold ciphertext before plaintext stores.
   unsafe {
+    #[cfg(target_os = "macos")]
+    {
+      if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+        let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+        asm::rscrypto_aes128_gcm_open_16x_eor3_aarch64_apple_darwin(
+          keys.rk.as_ptr().cast::<u8>(),
+          iv_prefix.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          tables.h_powers_rev_16.as_ptr(),
+          tables.h_powers_rev_16_mid.as_ptr(),
+          tables.h_powers_rev_16_pair.as_ptr(),
+          &mut state,
+        );
+        if state.processed != 0 {
+          return (state.acc(), state.ctr, state.processed);
+        }
+      }
+
+      let mut state = asm::AesGcmAarch64State::new(acc, ctr);
+      asm::rscrypto_aes128_gcm_open_8x_aarch64_apple_darwin(
+        keys.rk.as_ptr().cast::<u8>(),
+        iv_prefix.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+        tables.h_powers_rev_8.as_ptr(),
+        &mut state,
+      );
+      if state.processed != 0 {
+        return (state.acc(), state.ctr, state.processed);
+      }
+    }
+
     let data_ptr = data.as_mut_ptr();
     let mut offset = 0usize;
 
     while offset.strict_add(128) <= data.len() {
       let current = core::slice::from_raw_parts_mut(data_ptr.add(offset), 128);
-      acc = decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(keys, iv_prefix, ctr, current, acc, h_powers_rev);
+      acc =
+        decrypt_ctr32_be_xor_8blocks_ghash_current_128_core(keys, iv_prefix, ctr, current, acc, tables.h_powers_rev_8);
       ctr = ctr.wrapping_add(8);
       offset = offset.strict_add(128);
     }

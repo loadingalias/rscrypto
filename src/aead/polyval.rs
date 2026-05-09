@@ -1901,6 +1901,7 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
 /// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
 #[cfg(any(
   all(feature = "aes-gcm", target_arch = "x86_64"),
+  all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"),
   all(feature = "aes-gcm-siv", target_arch = "x86_64"),
   test
 ))]
@@ -1915,6 +1916,43 @@ pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
   }
 
   powers
+}
+
+/// Precompute `(lo64 ^ hi64)` for each 16-block GHASH power.
+#[cfg(all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"))]
+pub(super) fn precompute_powers_16_mid(h_powers_rev_16: &[u128; 16]) -> [u128; 16] {
+  core::array::from_fn(|i| {
+    let h = h_powers_rev_16[i];
+    ((h as u64) ^ ((h >> 64) as u64)) as u128
+  })
+}
+
+/// Precompute paired `(lo0, lo1)`, `(hi0, hi1)`, and `(mid0, mid1)` tables for
+/// AArch64 16-block GHASH assembly.
+#[cfg(all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"))]
+pub(super) fn precompute_powers_16_pair(h_powers_rev_16: &[u128; 16]) -> [u128; 24] {
+  core::array::from_fn(|i| {
+    let pair = i / 3;
+    let lane = i % 3;
+    let h0 = h_powers_rev_16[pair.strict_mul(2)];
+    let h1 = h_powers_rev_16[pair.strict_mul(2).strict_add(1)];
+    let lo0 = h0 as u64;
+    let hi0 = (h0 >> 64) as u64;
+    let lo1 = h1 as u64;
+    let hi1 = (h1 >> 64) as u64;
+
+    let low = match lane {
+      0 => lo0,
+      1 => hi0,
+      _ => lo0 ^ hi0,
+    };
+    let high = match lane {
+      0 => lo1,
+      1 => hi1,
+      _ => lo1 ^ hi1,
+    };
+    (low as u128) | ((high as u128) << 64)
+  })
 }
 
 /// Process 4 blocks through the hash accumulator in one shot.
