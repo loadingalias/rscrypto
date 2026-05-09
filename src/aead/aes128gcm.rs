@@ -119,6 +119,9 @@ pub struct Aes128Gcm {
   /// Precomputed H powers [H^16, H^15, ..., H] for 16-block GHASH windows.
   #[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_os = "macos")))]
   h_powers_rev_16: [u128; 16],
+  /// Precomputed H powers [H^32, H^31, ..., H] for x86 32-block GHASH windows.
+  #[cfg(target_arch = "x86_64")]
+  h_powers_rev_32: [u128; 32],
   /// Precomputed `(lo64 ^ hi64)` for each 16-block GHASH power.
   #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
   h_powers_rev_16_mid: [u128; 16],
@@ -601,6 +604,11 @@ impl Aead for Aes128Gcm {
       let powers = polyval::precompute_powers_16(h_polyval);
       core::array::from_fn(|i| powers[15usize.strict_sub(i)])
     };
+    #[cfg(target_arch = "x86_64")]
+    let h_powers_rev_32 = {
+      let powers = polyval::precompute_powers_32(h_polyval);
+      core::array::from_fn(|i| powers[31usize.strict_sub(i)])
+    };
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     let h_powers_rev_16_mid = polyval::precompute_powers_16_mid(&h_powers_rev_16);
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -614,6 +622,8 @@ impl Aead for Aes128Gcm {
       h_powers_rev_8,
       #[cfg(any(target_arch = "x86_64", all(target_arch = "aarch64", target_os = "macos")))]
       h_powers_rev_16,
+      #[cfg(target_arch = "x86_64")]
+      h_powers_rev_32,
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
       h_powers_rev_16_mid,
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -642,57 +652,26 @@ impl Aead for Aes128Gcm {
     // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      let x86_caps = crate::platform::caps();
-      let use_y256 = x86_caps.has(
-        crate::platform::caps::x86::AMD
-          | crate::platform::caps::x86::AVX2
-          | crate::platform::caps::x86::AESNI
-          | crate::platform::caps::x86::VAES_READY
-          | crate::platform::caps::x86::VPCLMUL_READY,
-      );
       let h_polyval = self.h_powers_rev[3];
-      let mut acc = if use_y256 {
-        ghash_update_padded(0, h_polyval, aad)
-      } else {
-        // SAFETY: x86 GHASH AAD path because:
-        // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
-        // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-        unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) }
-      };
-      acc = if use_y256 {
-        // SAFETY: fused x86 VAES-128 AES-GCM sealing because:
-        // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES_READY,
-        //    VPCLMUL_READY, and AES-NI.
-        // 2. The `use_y256` guard confirms AMD + AVX2 and repeats the full VAES/VPCLMUL/AES-NI requirement
-        //    for this helper's 256-bit lanes.
-        // 3. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
-        unsafe {
-          aes::aes128_ctr32_encrypt_be_y256_ghash(
-            &self.ek,
-            &ctr_block,
-            buffer,
-            acc,
-            h_polyval,
-            &self.h_powers_rev,
-            &self.h_powers_rev_8,
-          )
-        }
-      } else {
-        // SAFETY: fused x86 AES-GCM sealing because:
-        // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
-        //    AES-NI.
-        // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
-        unsafe {
-          aes::aes128_ctr32_encrypt_be_wide_ghash(
-            &self.ek,
-            &ctr_block,
-            buffer,
-            acc,
-            h_polyval,
-            &self.h_powers_rev,
-            &self.h_powers_rev_16,
-          )
-        }
+      // SAFETY: x86 GHASH AAD path because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused x86 AES-GCM sealing because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
+      //    AES-NI.
+      // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
+      acc = unsafe {
+        aes::aes128_ctr32_encrypt_be_wide_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_16,
+          &self.h_powers_rev_32,
+        )
       };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
@@ -819,57 +798,26 @@ impl Aead for Aes128Gcm {
     // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      let x86_caps = crate::platform::caps();
-      let use_y256 = x86_caps.has(
-        crate::platform::caps::x86::AMD
-          | crate::platform::caps::x86::AVX2
-          | crate::platform::caps::x86::AESNI
-          | crate::platform::caps::x86::VAES_READY
-          | crate::platform::caps::x86::VPCLMUL_READY,
-      );
       let h_polyval = self.h_powers_rev[3];
-      let mut acc = if use_y256 {
-        ghash_update_padded(0, h_polyval, aad)
-      } else {
-        // SAFETY: x86 GHASH AAD path because:
-        // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
-        // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-        unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) }
-      };
-      acc = if use_y256 {
-        // SAFETY: fused x86 VAES-128 AES-GCM open because:
-        // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES_READY,
-        //    VPCLMUL_READY, and AES-NI.
-        // 2. The `use_y256` guard confirms AMD + AVX2 and repeats the full VAES/VPCLMUL/AES-NI requirement
-        //    for this helper's 256-bit lanes.
-        // 3. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
-        unsafe {
-          aes::aes128_ctr32_decrypt_be_y256_ghash(
-            &self.ek,
-            &ctr_block,
-            buffer,
-            acc,
-            h_polyval,
-            &self.h_powers_rev,
-            &self.h_powers_rev_8,
-          )
-        }
-      } else {
-        // SAFETY: fused x86 AES-GCM open because:
-        // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
-        //    AES-NI.
-        // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
-        unsafe {
-          aes::aes128_ctr32_decrypt_be_wide_ghash(
-            &self.ek,
-            &ctr_block,
-            buffer,
-            acc,
-            h_polyval,
-            &self.h_powers_rev,
-            &self.h_powers_rev_16,
-          )
-        }
+      // SAFETY: x86 GHASH AAD path because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused x86 AES-GCM open because:
+      // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
+      //    AES-NI.
+      // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
+      acc = unsafe {
+        aes::aes128_ctr32_decrypt_be_wide_ghash(
+          &self.ek,
+          &ctr_block,
+          buffer,
+          acc,
+          h_polyval,
+          &self.h_powers_rev,
+          &self.h_powers_rev_16,
+          &self.h_powers_rev_32,
+        )
       };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
@@ -1027,6 +975,13 @@ impl Drop for Aes128Gcm {
       // 1. `[u128; 16]` is a contiguous initialized 256-byte array.
       // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
       ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_16.as_mut_ptr().cast::<u8>(), 256) });
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 32]` is a contiguous initialized 512-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_32.as_mut_ptr().cast::<u8>(), 512) });
     }
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
