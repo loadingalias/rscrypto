@@ -221,47 +221,43 @@
 .endm
 
 .macro GHASH_REDUCE
-  vextracti64x2 xmm16, zmm28, 0
-  vextracti64x2 xmm17, zmm28, 1
-  vpxorq xmm16, xmm16, xmm17
-  vextracti64x2 xmm17, zmm28, 2
-  vpxorq xmm16, xmm16, xmm17
-  vextracti64x2 xmm17, zmm28, 3
-  vpxorq xmm16, xmm16, xmm17
+  vmovdqa64 ymm20, ymm28
+  vextracti64x4 ymm21, zmm28, 1
+  vpxorq ymm20, ymm20, ymm21
+  vextracti64x2 xmm21, ymm20, 1
+  vpxorq xmm20, xmm20, xmm21
 
-  vextracti64x2 xmm19, zmm29, 0
-  vextracti64x2 xmm17, zmm29, 1
-  vpxorq xmm19, xmm19, xmm17
-  vextracti64x2 xmm17, zmm29, 2
-  vpxorq xmm19, xmm19, xmm17
-  vextracti64x2 xmm17, zmm29, 3
-  vpxorq xmm19, xmm19, xmm17
+  vmovdqa64 ymm22, ymm29
+  vextracti64x4 ymm21, zmm29, 1
+  vpxorq ymm22, ymm22, ymm21
+  vextracti64x2 xmm21, ymm22, 1
+  vpxorq xmm22, xmm22, xmm21
 
-  vpsllq xmm17, xmm16, 63
-  vpsllq xmm18, xmm16, 62
-  vpxorq xmm17, xmm17, xmm18
-  vpsllq xmm18, xmm16, 57
-  vpxorq xmm17, xmm17, xmm18
-  vpslldq xmm17, xmm17, 8
-  vpxorq xmm16, xmm16, xmm17
+  vpsllq xmm21, xmm20, 63
+  vpsllq xmm23, xmm20, 62
+  vpxorq xmm21, xmm21, xmm23
+  vpsllq xmm23, xmm20, 57
+  vpxorq xmm21, xmm21, xmm23
+  vpslldq xmm21, xmm21, 8
+  vpxorq xmm20, xmm20, xmm21
 
-  vpsrlq xmm17, xmm16, 1
-  vpxorq xmm17, xmm17, xmm16
-  vpsrlq xmm18, xmm16, 2
-  vpxorq xmm17, xmm17, xmm18
-  vpsrlq xmm18, xmm16, 7
-  vpxorq xmm17, xmm17, xmm18
+  vpsrlq xmm21, xmm20, 1
+  vpxorq xmm21, xmm21, xmm20
+  vpsrlq xmm23, xmm20, 2
+  vpxorq xmm21, xmm21, xmm23
+  vpsrlq xmm23, xmm20, 7
+  vpxorq xmm21, xmm21, xmm23
 
-  vpsllq xmm18, xmm16, 63
-  vpsllq xmm20, xmm16, 62
-  vpxorq xmm18, xmm18, xmm20
-  vpsllq xmm20, xmm16, 57
-  vpxorq xmm18, xmm18, xmm20
-  vpsrldq xmm18, xmm18, 8
+  vpsllq xmm23, xmm20, 63
+  vpsllq xmm24, xmm20, 62
+  vpxorq xmm23, xmm23, xmm24
+  vpsllq xmm24, xmm20, 57
+  vpxorq xmm23, xmm23, xmm24
+  vpsrldq xmm23, xmm23, 8
 
-  vpxorq xmm17, xmm17, xmm18
-  vpxorq xmm17, xmm17, xmm19
-  vmovdqu64 XMMWORD PTR [r9], xmm17
+  vpxorq xmm21, xmm21, xmm23
+  vpxorq xmm21, xmm21, xmm22
+  vmovdqu64 XMMWORD PTR [r9], xmm21
 .endm
 
 .macro GHASH_REDUCE_Y
@@ -301,16 +297,51 @@
 .endm
 
 .macro GHASH16_REG d0, d1, d2, d3
+  GHASH16_REG_H \d0, \d1, \d2, \d3, zmm12, zmm13, zmm14, zmm15
+.endm
+
+.macro GHASH16_REG_H d0, d1, d2, d3, h0, h1, h2, h3
   GHASH_PREP \d0, \d1, \d2, \d3
-  GHASH_FOLD \d0, zmm12
-  GHASH_FOLD \d1, zmm13
-  GHASH_FOLD \d2, zmm14
-  GHASH_FOLD \d3, zmm15
+  GHASH_FOLD \d0, \h0
+  GHASH_FOLD \d1, \h1
+  GHASH_FOLD \d2, \h2
+  GHASH_FOLD \d3, \h3
   GHASH_REDUCE
 .endm
 
 .macro GHASH16
   GHASH16_REG zmm0, zmm1, zmm2, zmm3
+.endm
+
+.macro GHASH32_PREP d0, d1, d2, d3, d4, d5, d6, d7
+  vpshufb \d0, \d0, zmm31
+  vpshufb \d1, \d1, zmm31
+  vpshufb \d2, \d2, zmm31
+  vpshufb \d3, \d3, zmm31
+  vpshufb \d4, \d4, zmm31
+  vpshufb \d5, \d5, zmm31
+  vpshufb \d6, \d6, zmm31
+  vpshufb \d7, \d7, zmm31
+
+  vpxord zmm30, zmm30, zmm30
+  vmovdqu64 xmm30, XMMWORD PTR [r9]
+  vpxord \d0, \d0, zmm30
+
+  vpxord zmm28, zmm28, zmm28
+  vpxord zmm29, zmm29, zmm29
+.endm
+
+.macro GHASH32_REG d0, d1, d2, d3, d4, d5, d6, d7
+  GHASH32_PREP \d0, \d1, \d2, \d3, \d4, \d5, \d6, \d7
+  GHASH_FOLD \d0, zmm12
+  GHASH_FOLD \d1, zmm13
+  GHASH_FOLD \d2, zmm14
+  GHASH_FOLD \d3, zmm15
+  GHASH_FOLD \d4, zmm16
+  GHASH_FOLD \d5, zmm17
+  GHASH_FOLD \d6, zmm18
+  GHASH_FOLD \d7, zmm19
+  GHASH_REDUCE
 .endm
 
 .macro GHASH8Y_REG d0, d1, d2, d3
@@ -334,7 +365,6 @@
   AES_ROUND 64
   GHASH_FOLD \d3, zmm15
   AES_ROUND 80
-  GHASH_REDUCE
   AES_ROUND 96
   AES_ROUND 112
   AES_ROUND 128
@@ -344,8 +374,43 @@
     AES_ROUND 176
     AES_ROUND 192
     AES_ROUND 208
+    GHASH_REDUCE
     AES_LAST 224
   .else
+    GHASH_REDUCE
+    AES_LAST 160
+  .endif
+.endm
+
+.macro AES_ENCRYPT_16_WITH_GHASH32 aes256, d0, d1, d2, d3, d4, d5, d6, d7
+  GHASH32_PREP \d0, \d1, \d2, \d3, \d4, \d5, \d6, \d7
+  AES_START
+  GHASH_FOLD \d0, zmm12
+  AES_ROUND 16
+  GHASH_FOLD \d1, zmm13
+  AES_ROUND 32
+  GHASH_FOLD \d2, zmm14
+  AES_ROUND 48
+  GHASH_FOLD \d3, zmm15
+  AES_ROUND 64
+  GHASH_FOLD \d4, zmm16
+  AES_ROUND 80
+  GHASH_FOLD \d5, zmm17
+  AES_ROUND 96
+  GHASH_FOLD \d6, zmm18
+  AES_ROUND 112
+  GHASH_FOLD \d7, zmm19
+  AES_ROUND 128
+  AES_ROUND 144
+  .if \aes256
+    AES_ROUND 160
+    AES_ROUND 176
+    AES_ROUND 192
+    AES_ROUND 208
+    GHASH_REDUCE
+    AES_LAST 224
+  .else
+    GHASH_REDUCE
     AES_LAST 160
   .endif
 .endm
@@ -362,7 +427,6 @@
   AES_Y_ROUND 64
   GHASH_FOLD_Y \d3, ymm15
   AES_Y_ROUND 80
-  GHASH_REDUCE_Y
   AES_Y_ROUND 96
   AES_Y_ROUND 112
   AES_Y_ROUND 128
@@ -372,9 +436,41 @@
     AES_Y_ROUND 176
     AES_Y_ROUND 192
     AES_Y_ROUND 208
+    GHASH_REDUCE_Y
     AES_Y_LAST 224
   .else
+    GHASH_REDUCE_Y
     AES_Y_LAST 160
+  .endif
+.endm
+
+.macro AES_GCM_STORE_Z open, d0, d1, d2, d3
+  .if \open
+    vmovdqu64 \d0, ZMMWORD PTR [rdx]
+    vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
+    vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
+    vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+    vpxord zmm20, zmm0, \d0
+    vpxord zmm21, zmm1, \d1
+    vpxord zmm22, zmm2, \d2
+    vpxord zmm23, zmm3, \d3
+    vmovdqu64 ZMMWORD PTR [rdx], zmm20
+    vmovdqu64 ZMMWORD PTR [rdx + 64], zmm21
+    vmovdqu64 ZMMWORD PTR [rdx + 128], zmm22
+    vmovdqu64 ZMMWORD PTR [rdx + 192], zmm23
+  .else
+    vmovdqu64 \d0, ZMMWORD PTR [rdx]
+    vmovdqu64 \d1, ZMMWORD PTR [rdx + 64]
+    vmovdqu64 \d2, ZMMWORD PTR [rdx + 128]
+    vmovdqu64 \d3, ZMMWORD PTR [rdx + 192]
+    vpxord \d0, \d0, zmm0
+    vpxord \d1, \d1, zmm1
+    vpxord \d2, \d2, zmm2
+    vpxord \d3, \d3, zmm3
+    vmovdqu64 ZMMWORD PTR [rdx], \d0
+    vmovdqu64 ZMMWORD PTR [rdx + 64], \d1
+    vmovdqu64 ZMMWORD PTR [rdx + 128], \d2
+    vmovdqu64 ZMMWORD PTR [rdx + 192], \d3
   .endif
 .endm
 
@@ -390,94 +486,99 @@
 
   vmovdqu64 zmm31, ZMMWORD PTR [rip + .Lrscrypto_x86_gcm_bswap]
   vmovdqu64 zmm26, ZMMWORD PTR [rip + .Lrscrypto_x86_dword_bswap]
+  mov eax, 0x8888
+  kmovw k1, eax
+
+  cmp rcx, 512
+  jb .L\name\()_single_16
+
   vmovdqu64 zmm12, ZMMWORD PTR [r8]
   vmovdqu64 zmm13, ZMMWORD PTR [r8 + 64]
   vmovdqu64 zmm14, ZMMWORD PTR [r8 + 128]
   vmovdqu64 zmm15, ZMMWORD PTR [r8 + 192]
-  mov eax, 0x8888
-  kmovw k1, eax
+  vmovdqu64 zmm16, ZMMWORD PTR [r8 + 256]
+  vmovdqu64 zmm17, ZMMWORD PTR [r8 + 320]
+  vmovdqu64 zmm18, ZMMWORD PTR [r8 + 384]
+  vmovdqu64 zmm19, ZMMWORD PTR [r8 + 448]
 
   GCM_COUNTERS_16
 
   AES_ENCRYPT_16 \aes256
-
-  .if \open
-    vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-    vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-    vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-    vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
-    vpxord zmm8, zmm0, zmm4
-    vpxord zmm9, zmm1, zmm5
-    vpxord zmm10, zmm2, zmm6
-    vpxord zmm11, zmm3, zmm7
-    vmovdqu64 ZMMWORD PTR [rdx], zmm8
-    vmovdqu64 ZMMWORD PTR [rdx + 64], zmm9
-    vmovdqu64 ZMMWORD PTR [rdx + 128], zmm10
-    vmovdqu64 ZMMWORD PTR [rdx + 192], zmm11
-  .else
-    vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-    vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-    vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-    vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
-    vpxord zmm4, zmm4, zmm0
-    vpxord zmm5, zmm5, zmm1
-    vpxord zmm6, zmm6, zmm2
-    vpxord zmm7, zmm7, zmm3
-    vmovdqu64 ZMMWORD PTR [rdx], zmm4
-    vmovdqu64 ZMMWORD PTR [rdx + 64], zmm5
-    vmovdqu64 ZMMWORD PTR [rdx + 128], zmm6
-    vmovdqu64 ZMMWORD PTR [rdx + 192], zmm7
-  .endif
+  AES_GCM_STORE_Z \open, zmm4, zmm5, zmm6, zmm7
 
   add rdx, 256
   sub rcx, 256
   add r10d, 16
   add QWORD PTR [r9 + 24], 256
-  cmp rcx, 256
-  jb .L\name\()_final_ghash
 
-  .p2align 5
-.L\name\()_loop:
   GCM_COUNTERS_16
 
-  AES_ENCRYPT_16_WITH_GHASH \aes256, zmm4, zmm5, zmm6, zmm7
-
-  .if \open
-    vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-    vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-    vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-    vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
-    vpxord zmm8, zmm0, zmm4
-    vpxord zmm9, zmm1, zmm5
-    vpxord zmm10, zmm2, zmm6
-    vpxord zmm11, zmm3, zmm7
-    vmovdqu64 ZMMWORD PTR [rdx], zmm8
-    vmovdqu64 ZMMWORD PTR [rdx + 64], zmm9
-    vmovdqu64 ZMMWORD PTR [rdx + 128], zmm10
-    vmovdqu64 ZMMWORD PTR [rdx + 192], zmm11
-  .else
-    vmovdqu64 zmm4, ZMMWORD PTR [rdx]
-    vmovdqu64 zmm5, ZMMWORD PTR [rdx + 64]
-    vmovdqu64 zmm6, ZMMWORD PTR [rdx + 128]
-    vmovdqu64 zmm7, ZMMWORD PTR [rdx + 192]
-    vpxord zmm4, zmm4, zmm0
-    vpxord zmm5, zmm5, zmm1
-    vpxord zmm6, zmm6, zmm2
-    vpxord zmm7, zmm7, zmm3
-    vmovdqu64 ZMMWORD PTR [rdx], zmm4
-    vmovdqu64 ZMMWORD PTR [rdx + 64], zmm5
-    vmovdqu64 ZMMWORD PTR [rdx + 128], zmm6
-    vmovdqu64 ZMMWORD PTR [rdx + 192], zmm7
-  .endif
+  AES_ENCRYPT_16 \aes256
+  AES_GCM_STORE_Z \open, zmm8, zmm9, zmm10, zmm11
 
   add rdx, 256
   sub rcx, 256
   add r10d, 16
   add QWORD PTR [r9 + 24], 256
-  cmp rcx, 256
-  jae .L\name\()_loop
+  cmp rcx, 512
+  jb .L\name\()_final_32
 
-.L\name\()_final_ghash:
+  .p2align 5
+.L\name\()_loop_32:
+  GCM_COUNTERS_16
+
+  AES_ENCRYPT_16_WITH_GHASH32 \aes256, zmm4, zmm5, zmm6, zmm7, zmm8, zmm9, zmm10, zmm11
+  AES_GCM_STORE_Z \open, zmm4, zmm5, zmm6, zmm7
+
+  add rdx, 256
+  sub rcx, 256
+  add r10d, 16
+  add QWORD PTR [r9 + 24], 256
+
+  GCM_COUNTERS_16
+
+  AES_ENCRYPT_16 \aes256
+  AES_GCM_STORE_Z \open, zmm8, zmm9, zmm10, zmm11
+
+  add rdx, 256
+  sub rcx, 256
+  add r10d, 16
+  add QWORD PTR [r9 + 24], 256
+  cmp rcx, 512
+  jae .L\name\()_loop_32
+
+.L\name\()_final_32:
+  GHASH32_REG zmm4, zmm5, zmm6, zmm7, zmm8, zmm9, zmm10, zmm11
+  cmp rcx, 256
+  jb .L\name\()_done
+
+  GCM_COUNTERS_16
+
+  AES_ENCRYPT_16 \aes256
+  AES_GCM_STORE_Z \open, zmm4, zmm5, zmm6, zmm7
+
+  add rdx, 256
+  sub rcx, 256
+  add r10d, 16
+  add QWORD PTR [r9 + 24], 256
+  GHASH16_REG_H zmm4, zmm5, zmm6, zmm7, zmm16, zmm17, zmm18, zmm19
+  jmp .L\name\()_done
+
+.L\name\()_single_16:
+  vmovdqu64 zmm12, ZMMWORD PTR [r8 + 256]
+  vmovdqu64 zmm13, ZMMWORD PTR [r8 + 320]
+  vmovdqu64 zmm14, ZMMWORD PTR [r8 + 384]
+  vmovdqu64 zmm15, ZMMWORD PTR [r8 + 448]
+
+  GCM_COUNTERS_16
+
+  AES_ENCRYPT_16 \aes256
+  AES_GCM_STORE_Z \open, zmm4, zmm5, zmm6, zmm7
+
+  add rdx, 256
+  sub rcx, 256
+  add r10d, 16
+  add QWORD PTR [r9 + 24], 256
   GHASH16_REG zmm4, zmm5, zmm6, zmm7
 
 .L\name\()_done:

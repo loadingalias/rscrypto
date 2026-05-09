@@ -2205,6 +2205,7 @@ unsafe fn x86_gcm_ctr_blocks_be_2(iv_words: [u32; 3], ctr: u32) -> core::arch::x
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "avx2")]
 #[inline]
+#[allow(dead_code)]
 unsafe fn x86_gcm_ctr_blocks_be_8_y256(
   iv_words: [u32; 3],
   ctr: u32,
@@ -2540,6 +2541,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
+  h_powers_rev_32: &[u128; 32],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -2583,7 +2585,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
       // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
       // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
       //    `data.len()` mutable bytes.
-      // 4. `h_powers_rev_16` contains exactly the [H^16..H] powers required by the 16-block fold.
+      // 4. `h_powers_rev_32` contains exactly the [H^32..H] powers required by the 32-block fold.
       // 5. The kernel only processes complete 256-byte chunks and reports the processed byte count so the
       //    Rust fallback below handles every remaining full/partial tail.
       x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
@@ -2591,7 +2593,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
         initial_counter.as_ptr(),
         data.as_mut_ptr(),
         data.len(),
-        h_powers_rev_16.as_ptr(),
+        h_powers_rev_32.as_ptr(),
         &mut state,
       );
       acc = state.acc();
@@ -2692,6 +2694,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
+  h_powers_rev_32: &[u128; 32],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -2745,7 +2748,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
         initial_counter.as_ptr(),
         data.as_mut_ptr(),
         data.len(),
-        h_powers_rev_16.as_ptr(),
+        h_powers_rev_32.as_ptr(),
         &mut state,
       );
       acc = state.acc();
@@ -2842,6 +2845,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
 /// PCLMULQDQ + AES + SSE2 + SSSE3.
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,ssse3,avx2,avx512f,avx512vl,vaes,vpclmulqdq,pclmulqdq")]
+#[allow(dead_code)]
 pub(crate) unsafe fn aes256_ctr32_encrypt_be_y256_ghash(
   ek: &Aes256EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
@@ -3006,6 +3010,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_y256_ghash(
 /// PCLMULQDQ + AES + SSE2 + SSSE3.
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,ssse3,avx2,avx512f,avx512vl,vaes,vpclmulqdq,pclmulqdq")]
+#[allow(dead_code)]
 pub(crate) unsafe fn aes256_ctr32_decrypt_be_y256_ghash(
   ek: &Aes256EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
@@ -3930,6 +3935,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
+  h_powers_rev_32: &[u128; 32],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -3973,7 +3979,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
       // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
       // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
       //    `data.len()` mutable bytes.
-      // 4. `h_powers_rev_16` contains exactly the [H^16..H] powers required by the 16-block fold.
+      // 4. `h_powers_rev_32` contains exactly the [H^32..H] powers required by the 32-block fold.
       // 5. The kernel only processes complete 256-byte chunks and reports the processed byte count so the
       //    Rust fallback below handles every remaining full/partial tail.
       x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
@@ -3981,7 +3987,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
         initial_counter.as_ptr(),
         data.as_mut_ptr(),
         data.len(),
-        h_powers_rev_16.as_ptr(),
+        h_powers_rev_32.as_ptr(),
         &mut state,
       );
       acc = state.acc();
@@ -4082,6 +4088,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
   h_polyval: u128,
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
+  h_powers_rev_32: &[u128; 32],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -4135,7 +4142,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
         initial_counter.as_ptr(),
         data.as_mut_ptr(),
         data.len(),
-        h_powers_rev_16.as_ptr(),
+        h_powers_rev_32.as_ptr(),
         &mut state,
       );
       acc = state.acc();
@@ -4229,6 +4236,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
 /// PCLMULQDQ + AES + SSE2 + SSSE3.
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,ssse3,avx2,avx512f,avx512vl,vaes,vpclmulqdq,pclmulqdq")]
+#[allow(dead_code)]
 pub(crate) unsafe fn aes128_ctr32_encrypt_be_y256_ghash(
   ek: &Aes128EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
@@ -4393,6 +4401,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_y256_ghash(
 /// PCLMULQDQ + AES + SSE2 + SSSE3.
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
 #[target_feature(enable = "aes,sse2,ssse3,avx2,avx512f,avx512vl,vaes,vpclmulqdq,pclmulqdq")]
+#[allow(dead_code)]
 pub(crate) unsafe fn aes128_ctr32_decrypt_be_y256_ghash(
   ek: &Aes128EncKey,
   initial_counter: &[u8; BLOCK_SIZE],
@@ -5577,15 +5586,21 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-  fn x86_gcm_test_powers_16() -> (u128, [u128; 4], [u128; 16]) {
+  fn x86_gcm_test_powers_16() -> (u128, [u128; 4], [u128; 16], [u128; 32]) {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
-    let powers = crate::aead::polyval::precompute_powers_16(h_polyval);
+    let powers = crate::aead::polyval::precompute_powers_32(h_polyval);
     (
       h_polyval,
       [powers[3], powers[2], powers[1], powers[0]],
       [
         powers[15], powers[14], powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7],
         powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
+      ],
+      [
+        powers[31], powers[30], powers[29], powers[28], powers[27], powers[26], powers[25], powers[24], powers[23],
+        powers[22], powers[21], powers[20], powers[19], powers[18], powers[17], powers[16], powers[15], powers[14],
+        powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7], powers[6], powers[5],
+        powers[4], powers[3], powers[2], powers[1], powers[0],
       ],
     )
   }
@@ -5938,7 +5953,7 @@ mod tests {
 
     let ek = aes128_expand_key(&[0x17u8; KEY_SIZE_128]);
     let counter = x86_gcm_wrap_counter_block();
-    let (h_polyval, h_powers_rev, h_powers_rev_16) = x86_gcm_test_powers_16();
+    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32) = x86_gcm_test_powers_16();
     let seed_acc = 0x1123_5813_2134_5589_1442_3337_6109_8715u128;
 
     let mut plaintext = [0u8; LEN];
@@ -5962,6 +5977,7 @@ mod tests {
         h_polyval,
         &h_powers_rev,
         &h_powers_rev_16,
+        &h_powers_rev_32,
       )
     };
 
@@ -5985,6 +6001,7 @@ mod tests {
         h_polyval,
         &h_powers_rev,
         &h_powers_rev_16,
+        &h_powers_rev_32,
       )
     };
 
@@ -6010,7 +6027,7 @@ mod tests {
 
     let ek = aes256_expand_key(&[0x29u8; KEY_SIZE]);
     let counter = x86_gcm_wrap_counter_block();
-    let (h_polyval, h_powers_rev, h_powers_rev_16) = x86_gcm_test_powers_16();
+    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32) = x86_gcm_test_powers_16();
     let seed_acc = 0x2357_1113_1719_2329_3137_4143_4753_5961u128;
 
     let mut plaintext = [0u8; LEN];
@@ -6034,6 +6051,7 @@ mod tests {
         h_polyval,
         &h_powers_rev,
         &h_powers_rev_16,
+        &h_powers_rev_32,
       )
     };
 
@@ -6057,6 +6075,7 @@ mod tests {
         h_polyval,
         &h_powers_rev,
         &h_powers_rev_16,
+        &h_powers_rev_32,
       )
     };
 

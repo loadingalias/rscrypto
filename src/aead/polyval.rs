@@ -1064,6 +1064,7 @@ mod vpclmul {
   #[cfg(feature = "aes-gcm")]
   #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
   #[inline]
+  #[allow(dead_code)]
   unsafe fn aggregate_8_lanes_256(data: [__m256i; 4], h_powers_rev: &[u128; 8]) -> u128 {
     // SAFETY: x86 VPCLMUL 8-block aggregation because:
     // 1. This function's caller guarantees all required target features.
@@ -1141,6 +1142,7 @@ mod vpclmul {
   #[cfg(feature = "aes-gcm")]
   #[target_feature(enable = "avx2")]
   #[inline]
+  #[allow(dead_code)]
   unsafe fn be_lanes_256(raw: __m256i) -> __m256i {
     let reverse_bytes = _mm256_set_epi32(
       0x0001_0203,
@@ -1180,6 +1182,7 @@ mod vpclmul {
   #[cfg(feature = "aes-gcm")]
   #[target_feature(enable = "avx2,sse2")]
   #[inline]
+  #[allow(dead_code)]
   unsafe fn be_lanes_256_with_acc(acc: u128, raw: __m256i) -> __m256i {
     // SAFETY: direct GHASH lane conversion because:
     // 1. This function's caller guarantees the required x86 target features.
@@ -1385,6 +1388,7 @@ mod vpclmul {
   /// PCLMULQDQ + SSE2.
   #[cfg(feature = "aes-gcm")]
   #[target_feature(enable = "avx2,avx512f,avx512vl,vpclmulqdq,pclmulqdq,sse2")]
+  #[allow(dead_code)]
   pub(super) unsafe fn aggregate_8blocks_be_lanes_256(
     acc: u128,
     h_powers_rev: &[u128; 8],
@@ -1907,6 +1911,21 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
 ))]
 pub(super) fn precompute_powers_16(h: u128) -> [u128; 16] {
   let mut powers = [0u128; 16];
+  powers[0] = h;
+
+  let mut i = 1usize;
+  while i < powers.len() {
+    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
+    i = i.strict_add(1);
+  }
+
+  powers
+}
+
+/// Precompute hash key powers [H, H^2, ..., H^32] for 32-block GHASH windows.
+#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
+  let mut powers = [0u128; 32];
   powers[0] = h;
 
   let mut i = 1usize;
@@ -2486,6 +2505,24 @@ mod tests {
   fn precompute_powers_16_correct() {
     let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
     let powers = precompute_powers_16(h);
+    assert_eq!(powers[0], h, "powers[0] should be H");
+
+    let mut i = 1usize;
+    while i < powers.len() {
+      assert_eq!(
+        powers[i],
+        clmul128_reduce(powers[i.strict_sub(1)], h),
+        "powers[{i}] should extend the H power chain"
+      );
+      i = i.strict_add(1);
+    }
+  }
+
+  /// Verify precompute_powers_32 extends the same power chain to H^32.
+  #[test]
+  fn precompute_powers_32_correct() {
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers_32(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
 
     let mut i = 1usize;

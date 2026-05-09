@@ -39,7 +39,7 @@ unsafe extern "C" {
     initial_counter: *const u8,
     data: *mut u8,
     len: usize,
-    h_powers_rev_16: *const u128,
+    h_powers_rev_32: *const u128,
     state: *mut AesGcmX86State,
   );
 
@@ -48,7 +48,7 @@ unsafe extern "C" {
     initial_counter: *const u8,
     data: *mut u8,
     len: usize,
-    h_powers_rev_16: *const u128,
+    h_powers_rev_32: *const u128,
     state: *mut AesGcmX86State,
   );
 
@@ -57,7 +57,7 @@ unsafe extern "C" {
     initial_counter: *const u8,
     data: *mut u8,
     len: usize,
-    h_powers_rev_16: *const u128,
+    h_powers_rev_32: *const u128,
     state: *mut AesGcmX86State,
   );
 
@@ -66,10 +66,11 @@ unsafe extern "C" {
     initial_counter: *const u8,
     data: *mut u8,
     len: usize,
-    h_powers_rev_16: *const u128,
+    h_powers_rev_32: *const u128,
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes128_gcm_seal_8x_vaes256_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -79,6 +80,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes128_gcm_open_8x_vaes256_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -88,6 +90,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes256_gcm_seal_8x_vaes256_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -97,6 +100,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes256_gcm_open_8x_vaes256_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,

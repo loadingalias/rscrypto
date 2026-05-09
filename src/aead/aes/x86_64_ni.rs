@@ -221,6 +221,7 @@ pub(super) unsafe fn encrypt_16blocks(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,sse2,avx2,avx512f,avx512vl,vaes")]
 #[inline]
+#[allow(dead_code)]
 pub(super) unsafe fn encrypt_8blocks_y256(
   keys: &NiRoundKeys,
   b0: __m256i,
@@ -494,6 +495,7 @@ pub(super) unsafe fn encrypt_16blocks_128(
 #[cfg(feature = "aes-gcm")]
 #[target_feature(enable = "aes,sse2,avx2,avx512f,avx512vl,vaes")]
 #[inline]
+#[allow(dead_code)]
 pub(super) unsafe fn encrypt_8blocks_128_y256(
   keys: &Ni128RoundKeys,
   b0: __m256i,
