@@ -7,6 +7,7 @@ use core::arch::global_asm;
 global_asm!(include_str!("asm/rscrypto_aes_gcm_x86_64_linux.s"));
 
 #[repr(C)]
+#[allow(dead_code)]
 pub(super) struct AesGcmX86State {
   acc_lo: u64,
   acc_hi: u64,
@@ -15,6 +16,7 @@ pub(super) struct AesGcmX86State {
   pub(super) processed: usize,
 }
 
+#[allow(dead_code)]
 impl AesGcmX86State {
   #[inline]
   pub(super) fn new(acc: u128, ctr: u32) -> Self {
@@ -34,6 +36,7 @@ impl AesGcmX86State {
 }
 
 unsafe extern "C" {
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -43,6 +46,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -52,6 +56,47 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_64: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_64: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_128: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_128: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -61,12 +106,53 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[allow(dead_code)]
   pub(super) fn rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
     data: *mut u8,
     len: usize,
     h_powers_rev_32: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_64: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_64: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_128: *const u128,
+    state: *mut AesGcmX86State,
+  );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+    h_powers_rev_128: *const u128,
     state: *mut AesGcmX86State,
   );
 
@@ -109,4 +195,20 @@ unsafe extern "C" {
     h_powers_rev_8: *const u128,
     state: *mut AesGcmX86State,
   );
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+  ) -> usize;
+
+  #[allow(dead_code)]
+  pub(super) fn rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux(
+    round_keys: *const u8,
+    initial_counter: *const u8,
+    data: *mut u8,
+    len: usize,
+  ) -> usize;
 }

@@ -1937,6 +1937,36 @@ pub(super) fn precompute_powers_32(h: u128) -> [u128; 32] {
   powers
 }
 
+/// Precompute hash key powers [H, H^2, ..., H^64] for 64-block GHASH windows.
+#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+pub(super) fn precompute_powers_64(h: u128) -> [u128; 64] {
+  let mut powers = [0u128; 64];
+  powers[0] = h;
+
+  let mut i = 1usize;
+  while i < powers.len() {
+    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
+    i = i.strict_add(1);
+  }
+
+  powers
+}
+
+/// Precompute hash key powers [H, H^2, ..., H^128] for 128-block GHASH windows.
+#[cfg(any(all(feature = "aes-gcm", target_arch = "x86_64"), test))]
+pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
+  let mut powers = [0u128; 128];
+  powers[0] = h;
+
+  let mut i = 1usize;
+  while i < powers.len() {
+    powers[i] = clmul128_reduce(powers[i.strict_sub(1)], h);
+    i = i.strict_add(1);
+  }
+
+  powers
+}
+
 /// Precompute `(lo64 ^ hi64)` for each 16-block GHASH power.
 #[cfg(all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"))]
 pub(super) fn precompute_powers_16_mid(h_powers_rev_16: &[u128; 16]) -> [u128; 16] {
@@ -2523,6 +2553,42 @@ mod tests {
   fn precompute_powers_32_correct() {
     let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
     let powers = precompute_powers_32(h);
+    assert_eq!(powers[0], h, "powers[0] should be H");
+
+    let mut i = 1usize;
+    while i < powers.len() {
+      assert_eq!(
+        powers[i],
+        clmul128_reduce(powers[i.strict_sub(1)], h),
+        "powers[{i}] should extend the H power chain"
+      );
+      i = i.strict_add(1);
+    }
+  }
+
+  /// Verify precompute_powers_64 extends the same power chain to H^64.
+  #[test]
+  fn precompute_powers_64_correct() {
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers_64(h);
+    assert_eq!(powers[0], h, "powers[0] should be H");
+
+    let mut i = 1usize;
+    while i < powers.len() {
+      assert_eq!(
+        powers[i],
+        clmul128_reduce(powers[i.strict_sub(1)], h),
+        "powers[{i}] should extend the H power chain"
+      );
+      i = i.strict_add(1);
+    }
+  }
+
+  /// Verify precompute_powers_128 extends the same power chain to H^128.
+  #[test]
+  fn precompute_powers_128_correct() {
+    let h = u128::from_le_bytes(hex_to_16("25629347589242761d31f826ba4b757b"));
+    let powers = precompute_powers_128(h);
     assert_eq!(powers[0], h, "powers[0] should be H");
 
     let mut i = 1usize;

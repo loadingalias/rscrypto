@@ -122,6 +122,12 @@ pub struct Aes128Gcm {
   /// Precomputed H powers [H^32, H^31, ..., H] for x86 32-block GHASH windows.
   #[cfg(target_arch = "x86_64")]
   h_powers_rev_32: [u128; 32],
+  /// Precomputed H powers [H^64, H^63, ..., H] for x86 64-block GHASH windows.
+  #[cfg(target_arch = "x86_64")]
+  h_powers_rev_64: [u128; 64],
+  /// Precomputed H powers [H^128, H^127, ..., H] for x86 128-block GHASH windows.
+  #[cfg(target_arch = "x86_64")]
+  h_powers_rev_128: [u128; 128],
   /// Precomputed `(lo64 ^ hi64)` for each 16-block GHASH power.
   #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
   h_powers_rev_16_mid: [u128; 16],
@@ -609,6 +615,16 @@ impl Aead for Aes128Gcm {
       let powers = polyval::precompute_powers_32(h_polyval);
       core::array::from_fn(|i| powers[31usize.strict_sub(i)])
     };
+    #[cfg(target_arch = "x86_64")]
+    let h_powers_rev_64 = {
+      let powers = polyval::precompute_powers_64(h_polyval);
+      core::array::from_fn(|i| powers[63usize.strict_sub(i)])
+    };
+    #[cfg(target_arch = "x86_64")]
+    let h_powers_rev_128 = {
+      let powers = polyval::precompute_powers_128(h_polyval);
+      core::array::from_fn(|i| powers[127usize.strict_sub(i)])
+    };
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     let h_powers_rev_16_mid = polyval::precompute_powers_16_mid(&h_powers_rev_16);
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -624,6 +640,10 @@ impl Aead for Aes128Gcm {
       h_powers_rev_16,
       #[cfg(target_arch = "x86_64")]
       h_powers_rev_32,
+      #[cfg(target_arch = "x86_64")]
+      h_powers_rev_64,
+      #[cfg(target_arch = "x86_64")]
+      h_powers_rev_128,
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
       h_powers_rev_16_mid,
       #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
@@ -671,6 +691,8 @@ impl Aead for Aes128Gcm {
           &self.h_powers_rev,
           &self.h_powers_rev_16,
           &self.h_powers_rev_32,
+          &self.h_powers_rev_64,
+          &self.h_powers_rev_128,
         )
       };
       acc ^= u128::from_be_bytes(length_block);
@@ -817,6 +839,8 @@ impl Aead for Aes128Gcm {
           &self.h_powers_rev,
           &self.h_powers_rev_16,
           &self.h_powers_rev_32,
+          &self.h_powers_rev_64,
+          &self.h_powers_rev_128,
         )
       };
       acc ^= u128::from_be_bytes(length_block);
@@ -982,6 +1006,14 @@ impl Drop for Aes128Gcm {
       // 1. `[u128; 32]` is a contiguous initialized 512-byte array.
       // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
       ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_32.as_mut_ptr().cast::<u8>(), 512) });
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 64]` is a contiguous initialized 1024-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_64.as_mut_ptr().cast::<u8>(), 1024) });
+      // SAFETY: H-power byte view because:
+      // 1. `[u128; 128]` is a contiguous initialized 2048-byte array.
+      // 2. `self` is mutably borrowed during drop, so no alias observes the byte view.
+      ct::zeroize(unsafe { core::slice::from_raw_parts_mut(self.h_powers_rev_128.as_mut_ptr().cast::<u8>(), 2048) });
     }
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     {
