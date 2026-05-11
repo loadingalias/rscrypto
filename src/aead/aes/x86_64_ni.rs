@@ -8,7 +8,7 @@ pub(super) struct NiRoundKeys {
 }
 
 impl NiRoundKeys {
-  #[cfg(all(target_os = "linux", feature = "aes-gcm"))]
+  #[cfg(all(target_os = "linux", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
   #[inline]
   pub(super) fn as_ptr(&self) -> *const u8 {
     self.rk.as_ptr().cast()
@@ -312,7 +312,7 @@ pub(super) struct Ni128RoundKeys {
 }
 
 impl Ni128RoundKeys {
-  #[cfg(all(target_os = "linux", feature = "aes-gcm"))]
+  #[cfg(all(target_os = "linux", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
   #[inline]
   pub(super) fn as_ptr(&self) -> *const u8 {
     self.rk.as_ptr().cast()

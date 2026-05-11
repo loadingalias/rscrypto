@@ -66,7 +66,11 @@ mod rv_scalar_aes;
 #[allow(unsafe_code)]
 #[path = "aes/riscv64_vperm_aes.rs"]
 mod rv_vperm_aes;
-#[cfg(all(target_arch = "x86_64", target_os = "linux", feature = "aes-gcm"))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv")
+))]
 #[path = "aes/x86_64/asm.rs"]
 mod x86_64_asm;
 #[cfg(all(target_arch = "aarch64", feature = "aes-gcm"))]
@@ -2542,6 +2546,8 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
   h_powers_rev_32: &[u128; 32],
+  h_powers_rev_64: &[u128; 64],
+  h_powers_rev_128: &[u128; 128],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -2585,17 +2591,37 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
       // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
       // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
       //    `data.len()` mutable bytes.
-      // 4. `h_powers_rev_32` contains exactly the [H^32..H] powers required by the 32-block fold.
-      // 5. The kernel only processes complete 256-byte chunks and reports the processed byte count so the
+      // 4. The selected H-power table matches the chosen 16-block, 64-block, or 128-block fold cadence.
+      // 5. The kernel only processes complete block batches and reports the processed byte count so the
       //    Rust fallback below handles every remaining full/partial tail.
-      x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
-        ni_rk.as_ptr(),
-        initial_counter.as_ptr(),
-        data.as_mut_ptr(),
-        data.len(),
-        h_powers_rev_32.as_ptr(),
-        &mut state,
-      );
+      if (4096..=65536).contains(&data.len()) && (data.len() & 2047) == 0 {
+        x86_64_asm::rscrypto_aes256_gcm_seal_128x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_128.as_ptr(),
+          &mut state,
+        );
+      } else if data.len() >= 1024 {
+        x86_64_asm::rscrypto_aes256_gcm_seal_64x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_64.as_ptr(),
+          &mut state,
+        );
+      } else {
+        x86_64_asm::rscrypto_aes256_gcm_seal_16x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_32.as_ptr(),
+          &mut state,
+        );
+      }
       acc = state.acc();
       ctr = state.ctr;
       offset = state.processed;
@@ -2695,6 +2721,8 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
   h_powers_rev_32: &[u128; 32],
+  h_powers_rev_64: &[u128; 64],
+  h_powers_rev_128: &[u128; 128],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -2740,17 +2768,38 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
       // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
       // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
       //    `data.len()` mutable bytes of ciphertext.
-      // 4. The kernel folds ciphertext into GHASH before storing plaintext.
-      // 5. The kernel only processes complete 256-byte chunks and reports the processed byte count so the
+      // 4. The selected kernel folds ciphertext into GHASH before storing plaintext using the matching
+      //    16-block, 64-block, or 128-block H-power table.
+      // 5. The kernel only processes complete block batches and reports the processed byte count so the
       //    Rust fallback below handles every remaining full/partial tail.
-      x86_64_asm::rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux(
-        ni_rk.as_ptr(),
-        initial_counter.as_ptr(),
-        data.as_mut_ptr(),
-        data.len(),
-        h_powers_rev_32.as_ptr(),
-        &mut state,
-      );
+      if (4096..=65536).contains(&data.len()) && (data.len() & 2047) == 0 {
+        x86_64_asm::rscrypto_aes256_gcm_open_128x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_128.as_ptr(),
+          &mut state,
+        );
+      } else if data.len() >= 1024 {
+        x86_64_asm::rscrypto_aes256_gcm_open_64x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_64.as_ptr(),
+          &mut state,
+        );
+      } else {
+        x86_64_asm::rscrypto_aes256_gcm_open_16x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_32.as_ptr(),
+          &mut state,
+        );
+      }
       acc = state.acc();
       ctr = state.ctr;
       offset = state.processed;
@@ -3936,6 +3985,8 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
   h_powers_rev_32: &[u128; 32],
+  h_powers_rev_64: &[u128; 64],
+  h_powers_rev_128: &[u128; 128],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -3979,17 +4030,37 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
       // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
       // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
       //    `data.len()` mutable bytes.
-      // 4. `h_powers_rev_32` contains exactly the [H^32..H] powers required by the 32-block fold.
-      // 5. The kernel only processes complete 256-byte chunks and reports the processed byte count so the
+      // 4. The selected H-power table matches the chosen 16-block, 64-block, or 128-block fold cadence.
+      // 5. The kernel only processes complete block batches and reports the processed byte count so the
       //    Rust fallback below handles every remaining full/partial tail.
-      x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
-        ni_rk.as_ptr(),
-        initial_counter.as_ptr(),
-        data.as_mut_ptr(),
-        data.len(),
-        h_powers_rev_32.as_ptr(),
-        &mut state,
-      );
+      if data.len() >= 4096 && (data.len() & 2047) == 0 {
+        x86_64_asm::rscrypto_aes128_gcm_seal_128x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_128.as_ptr(),
+          &mut state,
+        );
+      } else if data.len() >= 1024 {
+        x86_64_asm::rscrypto_aes128_gcm_seal_64x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_64.as_ptr(),
+          &mut state,
+        );
+      } else {
+        x86_64_asm::rscrypto_aes128_gcm_seal_16x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_32.as_ptr(),
+          &mut state,
+        );
+      }
       acc = state.acc();
       ctr = state.ctr;
       offset = state.processed;
@@ -4089,6 +4160,8 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
   h_powers_rev: &[u128; 4],
   h_powers_rev_16: &[u128; 16],
   h_powers_rev_32: &[u128; 32],
+  h_powers_rev_64: &[u128; 64],
+  h_powers_rev_128: &[u128; 128],
 ) -> u128 {
   use core::arch::x86_64::*;
 
@@ -4134,17 +4207,38 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
       // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
       // 3. `initial_counter` points to the full 16-byte GCM counter block, and `data` is valid for
       //    `data.len()` mutable bytes of ciphertext.
-      // 4. The kernel folds ciphertext into GHASH before storing plaintext.
-      // 5. The kernel only processes complete 256-byte chunks and reports the processed byte count so the
+      // 4. The selected kernel folds ciphertext into GHASH before storing plaintext using the matching
+      //    16-block, 64-block, or 128-block H-power table.
+      // 5. The kernel only processes complete block batches and reports the processed byte count so the
       //    Rust fallback below handles every remaining full/partial tail.
-      x86_64_asm::rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux(
-        ni_rk.as_ptr(),
-        initial_counter.as_ptr(),
-        data.as_mut_ptr(),
-        data.len(),
-        h_powers_rev_32.as_ptr(),
-        &mut state,
-      );
+      if data.len() >= 4096 && (data.len() & 2047) == 0 {
+        x86_64_asm::rscrypto_aes128_gcm_open_128x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_128.as_ptr(),
+          &mut state,
+        );
+      } else if data.len() >= 1024 {
+        x86_64_asm::rscrypto_aes128_gcm_open_64x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_64.as_ptr(),
+          &mut state,
+        );
+      } else {
+        x86_64_asm::rscrypto_aes128_gcm_open_16x_vaes512_x86_64_linux(
+          ni_rk.as_ptr(),
+          initial_counter.as_ptr(),
+          data.as_mut_ptr(),
+          data.len(),
+          h_powers_rev_32.as_ptr(),
+          &mut state,
+        );
+      }
       acc = state.acc();
       ctr = state.ctr;
       offset = state.processed;
@@ -4595,6 +4689,26 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_wide(ek: &Aes256EncKey, initial_counte
     ]);
     let mut offset = 0usize;
 
+    #[cfg(target_os = "linux")]
+    if data.len() >= 256 {
+      // SAFETY: external x86-64 VAES-512 AES-256-GCM-SIV CTR kernel because:
+      // 1. This target-feature function is only entered after VAES, AVX-512, AES-NI, and SSE2 were
+      //    selected by runtime/backend dispatch.
+      // 2. `ni_rk.as_ptr()` addresses 15 initialized 128-bit AES-256 round keys.
+      // 3. `initial_counter` points to the full 16-byte GCM-SIV counter block, and `data` is valid for
+      //    `data.len()` mutable bytes.
+      // 4. The kernel only processes complete 256-byte chunks and returns the processed byte count so the
+      //    Rust fallback below handles every remaining full/partial tail.
+      let processed = x86_64_asm::rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux(
+        ni_rk.as_ptr(),
+        initial_counter.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+      );
+      ctr = ctr.wrapping_add((processed / BLOCK_SIZE) as u32);
+      offset = processed;
+    }
+
     while offset.strict_add(256) <= data.len() {
       let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
       let ctr1 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr.wrapping_add(4));
@@ -4709,6 +4823,26 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counte
       initial_counter[3],
     ]);
     let mut offset = 0usize;
+
+    #[cfg(target_os = "linux")]
+    if data.len() >= 256 {
+      // SAFETY: external x86-64 VAES-512 AES-128-GCM-SIV CTR kernel because:
+      // 1. This target-feature function is only entered after VAES, AVX-512, AES-NI, and SSE2 were
+      //    selected by runtime/backend dispatch.
+      // 2. `ni_rk.as_ptr()` addresses 11 initialized 128-bit AES-128 round keys.
+      // 3. `initial_counter` points to the full 16-byte GCM-SIV counter block, and `data` is valid for
+      //    `data.len()` mutable bytes.
+      // 4. The kernel only processes complete 256-byte chunks and returns the processed byte count so the
+      //    Rust fallback below handles every remaining full/partial tail.
+      let processed = x86_64_asm::rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux(
+        ni_rk.as_ptr(),
+        initial_counter.as_ptr(),
+        data.as_mut_ptr(),
+        data.len(),
+      );
+      ctr = ctr.wrapping_add((processed / BLOCK_SIZE) as u32);
+      offset = processed;
+    }
 
     while offset.strict_add(256) <= data.len() {
       let ctr0 = x86_gcmsiv_ctr_blocks_le_4(suffix_words, ctr);
@@ -5586,9 +5720,9 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-  fn x86_gcm_test_powers_16() -> (u128, [u128; 4], [u128; 16], [u128; 32]) {
+  fn x86_gcm_test_powers_16() -> (u128, [u128; 4], [u128; 16], [u128; 32], [u128; 64], [u128; 128]) {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
-    let powers = crate::aead::polyval::precompute_powers_32(h_polyval);
+    let powers = crate::aead::polyval::precompute_powers_128(h_polyval);
     (
       h_polyval,
       [powers[3], powers[2], powers[1], powers[0]],
@@ -5602,6 +5736,8 @@ mod tests {
         powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7], powers[6], powers[5],
         powers[4], powers[3], powers[2], powers[1], powers[0],
       ],
+      core::array::from_fn(|i| powers[63usize.strict_sub(i)]),
+      core::array::from_fn(|i| powers[127usize.strict_sub(i)]),
     )
   }
 
@@ -5614,9 +5750,9 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-  fn fill_x86_gcm_test_plaintext<const N: usize>(out: &mut [u8; N]) {
+  fn fill_x86_gcm_test_plaintext(out: &mut [u8]) {
     let mut i = 0usize;
-    while i < N {
+    while i < out.len() {
       out[i] = (i as u8).wrapping_mul(0x3d).wrapping_add(0x47) ^ ((i >> 3) as u8).wrapping_mul(0x91);
       i = i.strict_add(1);
     }
@@ -5949,67 +6085,80 @@ mod tests {
       return;
     }
 
-    const LEN: usize = 1057;
-
     let ek = aes128_expand_key(&[0x17u8; KEY_SIZE_128]);
     let counter = x86_gcm_wrap_counter_block();
-    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32) = x86_gcm_test_powers_16();
+    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32, h_powers_rev_64, h_powers_rev_128) =
+      x86_gcm_test_powers_16();
     let seed_acc = 0x1123_5813_2134_5589_1442_3337_6109_8715u128;
 
-    let mut plaintext = [0u8; LEN];
-    fill_x86_gcm_test_plaintext(&mut plaintext);
+    for len in [1057usize, 1280, 1536, 1792, 2048, 2305, 4096, 8192] {
+      let mut plaintext = std::vec![0u8; len];
+      fill_x86_gcm_test_plaintext(&mut plaintext);
 
-    let mut expected = plaintext;
-    aes128_ctr32_encrypt_be(&ek, &counter, &mut expected);
-    let expected_acc = ghash_ciphertext_fallback(seed_acc, h_polyval, &expected);
+      let mut expected = plaintext.clone();
+      aes128_ctr32_encrypt_be(&ek, &counter, &mut expected);
+      let expected_acc = ghash_ciphertext_fallback(seed_acc, h_polyval, &expected);
 
-    let mut actual = plaintext;
-    // SAFETY: large x86 AES-128-GCM AVX-512 seal test because:
-    // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-    // 2. The 1057-byte input forces the Unix AVX-512 ASM bulk path to process full blocks.
-    // 3. The final byte is handled by the shared Rust tail after the ASM path returns.
-    let actual_acc = unsafe {
-      aes128_ctr32_encrypt_be_wide_ghash(
-        &ek,
-        &counter,
-        &mut actual,
-        seed_acc,
-        h_polyval,
-        &h_powers_rev,
-        &h_powers_rev_16,
-        &h_powers_rev_32,
-      )
-    };
+      let mut actual = plaintext.clone();
+      // SAFETY: large x86 AES-128-GCM AVX-512 seal test because:
+      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
+      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
+      //    tails.
+      // 3. Any remaining partial block is handled by the shared Rust tail after the ASM path returns.
+      let actual_acc = unsafe {
+        aes128_ctr32_encrypt_be_wide_ghash(
+          &ek,
+          &counter,
+          &mut actual,
+          seed_acc,
+          h_polyval,
+          &h_powers_rev,
+          &h_powers_rev_16,
+          &h_powers_rev_32,
+          &h_powers_rev_64,
+          &h_powers_rev_128,
+        )
+      };
 
-    assert_eq!(actual, expected, "AES-128 large AVX-512 ASM seal ciphertext mismatch");
-    assert_eq!(
-      actual_acc, expected_acc,
-      "AES-128 large AVX-512 ASM seal GHASH accumulator mismatch"
-    );
+      assert_eq!(
+        actual, expected,
+        "AES-128 large AVX-512 ASM seal ciphertext mismatch at len={len}"
+      );
+      assert_eq!(
+        actual_acc, expected_acc,
+        "AES-128 large AVX-512 ASM seal GHASH accumulator mismatch at len={len}"
+      );
 
-    let mut opened = actual;
-    // SAFETY: large x86 AES-128-GCM AVX-512 open test because:
-    // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-    // 2. The 1057-byte input forces the Unix AVX-512 ASM bulk path to process full blocks.
-    // 3. The helper GHASHes ciphertext before decrypting and leaves the final byte to the Rust tail.
-    let open_acc = unsafe {
-      aes128_ctr32_decrypt_be_wide_ghash(
-        &ek,
-        &counter,
-        &mut opened,
-        seed_acc,
-        h_polyval,
-        &h_powers_rev,
-        &h_powers_rev_16,
-        &h_powers_rev_32,
-      )
-    };
+      let mut opened = actual;
+      // SAFETY: large x86 AES-128-GCM AVX-512 open test because:
+      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
+      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
+      //    tails.
+      // 3. The helper GHASHes ciphertext before decrypting and leaves any partial block to the Rust tail.
+      let open_acc = unsafe {
+        aes128_ctr32_decrypt_be_wide_ghash(
+          &ek,
+          &counter,
+          &mut opened,
+          seed_acc,
+          h_polyval,
+          &h_powers_rev,
+          &h_powers_rev_16,
+          &h_powers_rev_32,
+          &h_powers_rev_64,
+          &h_powers_rev_128,
+        )
+      };
 
-    assert_eq!(opened, plaintext, "AES-128 large AVX-512 ASM open plaintext mismatch");
-    assert_eq!(
-      open_acc, expected_acc,
-      "AES-128 large AVX-512 ASM open GHASH accumulator mismatch"
-    );
+      assert_eq!(
+        opened, plaintext,
+        "AES-128 large AVX-512 ASM open plaintext mismatch at len={len}"
+      );
+      assert_eq!(
+        open_acc, expected_acc,
+        "AES-128 large AVX-512 ASM open GHASH accumulator mismatch at len={len}"
+      );
+    }
   }
 
   #[cfg(all(
@@ -6023,67 +6172,80 @@ mod tests {
       return;
     }
 
-    const LEN: usize = 1057;
-
     let ek = aes256_expand_key(&[0x29u8; KEY_SIZE]);
     let counter = x86_gcm_wrap_counter_block();
-    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32) = x86_gcm_test_powers_16();
+    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32, h_powers_rev_64, h_powers_rev_128) =
+      x86_gcm_test_powers_16();
     let seed_acc = 0x2357_1113_1719_2329_3137_4143_4753_5961u128;
 
-    let mut plaintext = [0u8; LEN];
-    fill_x86_gcm_test_plaintext(&mut plaintext);
+    for len in [1057usize, 1280, 1536, 1792, 2048, 2305, 4096, 8192] {
+      let mut plaintext = std::vec![0u8; len];
+      fill_x86_gcm_test_plaintext(&mut plaintext);
 
-    let mut expected = plaintext;
-    aes256_ctr32_encrypt_be(&ek, &counter, &mut expected);
-    let expected_acc = ghash_ciphertext_fallback(seed_acc, h_polyval, &expected);
+      let mut expected = plaintext.clone();
+      aes256_ctr32_encrypt_be(&ek, &counter, &mut expected);
+      let expected_acc = ghash_ciphertext_fallback(seed_acc, h_polyval, &expected);
 
-    let mut actual = plaintext;
-    // SAFETY: large x86 AES-256-GCM AVX-512 seal test because:
-    // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-    // 2. The 1057-byte input forces the Unix AVX-512 ASM bulk path to process full blocks.
-    // 3. The final byte is handled by the shared Rust tail after the ASM path returns.
-    let actual_acc = unsafe {
-      aes256_ctr32_encrypt_be_wide_ghash(
-        &ek,
-        &counter,
-        &mut actual,
-        seed_acc,
-        h_polyval,
-        &h_powers_rev,
-        &h_powers_rev_16,
-        &h_powers_rev_32,
-      )
-    };
+      let mut actual = plaintext.clone();
+      // SAFETY: large x86 AES-256-GCM AVX-512 seal test because:
+      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
+      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
+      //    tails.
+      // 3. Any remaining partial block is handled by the shared Rust tail after the ASM path returns.
+      let actual_acc = unsafe {
+        aes256_ctr32_encrypt_be_wide_ghash(
+          &ek,
+          &counter,
+          &mut actual,
+          seed_acc,
+          h_polyval,
+          &h_powers_rev,
+          &h_powers_rev_16,
+          &h_powers_rev_32,
+          &h_powers_rev_64,
+          &h_powers_rev_128,
+        )
+      };
 
-    assert_eq!(actual, expected, "AES-256 large AVX-512 ASM seal ciphertext mismatch");
-    assert_eq!(
-      actual_acc, expected_acc,
-      "AES-256 large AVX-512 ASM seal GHASH accumulator mismatch"
-    );
+      assert_eq!(
+        actual, expected,
+        "AES-256 large AVX-512 ASM seal ciphertext mismatch at len={len}"
+      );
+      assert_eq!(
+        actual_acc, expected_acc,
+        "AES-256 large AVX-512 ASM seal GHASH accumulator mismatch at len={len}"
+      );
 
-    let mut opened = actual;
-    // SAFETY: large x86 AES-256-GCM AVX-512 open test because:
-    // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
-    // 2. The 1057-byte input forces the Unix AVX-512 ASM bulk path to process full blocks.
-    // 3. The helper GHASHes ciphertext before decrypting and leaves the final byte to the Rust tail.
-    let open_acc = unsafe {
-      aes256_ctr32_decrypt_be_wide_ghash(
-        &ek,
-        &counter,
-        &mut opened,
-        seed_acc,
-        h_polyval,
-        &h_powers_rev,
-        &h_powers_rev_16,
-        &h_powers_rev_32,
-      )
-    };
+      let mut opened = actual;
+      // SAFETY: large x86 AES-256-GCM AVX-512 open test because:
+      // 1. Runtime caps above confirmed VAES + VPCLMULQDQ + AVX-512 state + AES-NI.
+      // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
+      //    tails.
+      // 3. The helper GHASHes ciphertext before decrypting and leaves any partial block to the Rust tail.
+      let open_acc = unsafe {
+        aes256_ctr32_decrypt_be_wide_ghash(
+          &ek,
+          &counter,
+          &mut opened,
+          seed_acc,
+          h_polyval,
+          &h_powers_rev,
+          &h_powers_rev_16,
+          &h_powers_rev_32,
+          &h_powers_rev_64,
+          &h_powers_rev_128,
+        )
+      };
 
-    assert_eq!(opened, plaintext, "AES-256 large AVX-512 ASM open plaintext mismatch");
-    assert_eq!(
-      open_acc, expected_acc,
-      "AES-256 large AVX-512 ASM open GHASH accumulator mismatch"
-    );
+      assert_eq!(
+        opened, plaintext,
+        "AES-256 large AVX-512 ASM open plaintext mismatch at len={len}"
+      );
+      assert_eq!(
+        open_acc, expected_acc,
+        "AES-256 large AVX-512 ASM open GHASH accumulator mismatch at len={len}"
+      );
+    }
   }
 
   #[test]
