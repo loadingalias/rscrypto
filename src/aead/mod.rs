@@ -153,6 +153,14 @@ pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keyst
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
+#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
+pub use poly1305::diag_chacha20poly1305_authenticate_aead;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use poly1305::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4;
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 

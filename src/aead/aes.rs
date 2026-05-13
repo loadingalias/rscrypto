@@ -86,6 +86,20 @@ pub(crate) struct Aarch64GcmTables<'a> {
   pub(crate) h_powers_rev_16_pair: &'a [u128; 24],
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+#[derive(Clone, Copy)]
+pub(crate) struct X86GcmTables<'a> {
+  pub(crate) h_polyval: u128,
+  pub(crate) h_powers_rev: &'a [u128; 4],
+  pub(crate) h_powers_rev_16: &'a [u128; 16],
+  #[cfg(target_os = "linux")]
+  pub(crate) h_powers_rev_32: &'a [u128; 32],
+  #[cfg(target_os = "linux")]
+  pub(crate) h_powers_rev_64: &'a [u128; 64],
+  #[cfg(target_os = "linux")]
+  pub(crate) h_powers_rev_128: &'a [u128; 128],
+}
+
 // ---------------------------------------------------------------------------
 // Aes256EncKey: enum-dispatched key storage
 // ---------------------------------------------------------------------------
@@ -2542,14 +2556,12 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
   mut acc: u128,
-  h_polyval: u128,
-  h_powers_rev: &[u128; 4],
-  h_powers_rev_16: &[u128; 16],
-  h_powers_rev_32: &[u128; 32],
-  h_powers_rev_64: &[u128; 64],
-  h_powers_rev_128: &[u128; 128],
+  tables: X86GcmTables<'_>,
 ) -> u128 {
   use core::arch::x86_64::*;
+  let h_polyval = tables.h_polyval;
+  let h_powers_rev = tables.h_powers_rev;
+  let h_powers_rev_16 = tables.h_powers_rev_16;
 
   // SAFETY: fused x86 AES-GCM sealing because:
   // 1. This function's caller guarantees all required x86 target features.
@@ -2600,7 +2612,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_128.as_ptr(),
+          tables.h_powers_rev_128.as_ptr(),
           &mut state,
         );
       } else if data.len() >= 1024 {
@@ -2609,7 +2621,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_64.as_ptr(),
+          tables.h_powers_rev_64.as_ptr(),
           &mut state,
         );
       } else {
@@ -2618,7 +2630,7 @@ pub(crate) unsafe fn aes256_ctr32_encrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_32.as_ptr(),
+          tables.h_powers_rev_32.as_ptr(),
           &mut state,
         );
       }
@@ -2717,14 +2729,12 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
   mut acc: u128,
-  h_polyval: u128,
-  h_powers_rev: &[u128; 4],
-  h_powers_rev_16: &[u128; 16],
-  h_powers_rev_32: &[u128; 32],
-  h_powers_rev_64: &[u128; 64],
-  h_powers_rev_128: &[u128; 128],
+  tables: X86GcmTables<'_>,
 ) -> u128 {
   use core::arch::x86_64::*;
+  let h_polyval = tables.h_polyval;
+  let h_powers_rev = tables.h_powers_rev;
+  let h_powers_rev_16 = tables.h_powers_rev_16;
 
   // SAFETY: fused x86 AES-GCM opening because:
   // 1. This function's caller guarantees all required x86 target features.
@@ -2778,7 +2788,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_128.as_ptr(),
+          tables.h_powers_rev_128.as_ptr(),
           &mut state,
         );
       } else if data.len() >= 1024 {
@@ -2787,7 +2797,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_64.as_ptr(),
+          tables.h_powers_rev_64.as_ptr(),
           &mut state,
         );
       } else {
@@ -2796,7 +2806,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_32.as_ptr(),
+          tables.h_powers_rev_32.as_ptr(),
           &mut state,
         );
       }
@@ -3981,14 +3991,12 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
   mut acc: u128,
-  h_polyval: u128,
-  h_powers_rev: &[u128; 4],
-  h_powers_rev_16: &[u128; 16],
-  h_powers_rev_32: &[u128; 32],
-  h_powers_rev_64: &[u128; 64],
-  h_powers_rev_128: &[u128; 128],
+  tables: X86GcmTables<'_>,
 ) -> u128 {
   use core::arch::x86_64::*;
+  let h_polyval = tables.h_polyval;
+  let h_powers_rev = tables.h_powers_rev;
+  let h_powers_rev_16 = tables.h_powers_rev_16;
 
   // SAFETY: fused x86 AES-GCM sealing because:
   // 1. This function's caller guarantees all required x86 target features.
@@ -4039,7 +4047,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_128.as_ptr(),
+          tables.h_powers_rev_128.as_ptr(),
           &mut state,
         );
       } else if data.len() >= 1024 {
@@ -4048,7 +4056,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_64.as_ptr(),
+          tables.h_powers_rev_64.as_ptr(),
           &mut state,
         );
       } else {
@@ -4057,7 +4065,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_32.as_ptr(),
+          tables.h_powers_rev_32.as_ptr(),
           &mut state,
         );
       }
@@ -4156,14 +4164,12 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
   initial_counter: &[u8; BLOCK_SIZE],
   data: &mut [u8],
   mut acc: u128,
-  h_polyval: u128,
-  h_powers_rev: &[u128; 4],
-  h_powers_rev_16: &[u128; 16],
-  h_powers_rev_32: &[u128; 32],
-  h_powers_rev_64: &[u128; 64],
-  h_powers_rev_128: &[u128; 128],
+  tables: X86GcmTables<'_>,
 ) -> u128 {
   use core::arch::x86_64::*;
+  let h_polyval = tables.h_polyval;
+  let h_powers_rev = tables.h_powers_rev;
+  let h_powers_rev_16 = tables.h_powers_rev_16;
 
   // SAFETY: fused x86 AES-GCM opening because:
   // 1. This function's caller guarantees all required x86 target features.
@@ -4217,7 +4223,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_128.as_ptr(),
+          tables.h_powers_rev_128.as_ptr(),
           &mut state,
         );
       } else if data.len() >= 1024 {
@@ -4226,7 +4232,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_64.as_ptr(),
+          tables.h_powers_rev_64.as_ptr(),
           &mut state,
         );
       } else {
@@ -4235,7 +4241,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_wide_ghash(
           initial_counter.as_ptr(),
           data.as_mut_ptr(),
           data.len(),
-          h_powers_rev_32.as_ptr(),
+          tables.h_powers_rev_32.as_ptr(),
           &mut state,
         );
       }
@@ -5720,25 +5726,58 @@ mod tests {
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
-  fn x86_gcm_test_powers_16() -> (u128, [u128; 4], [u128; 16], [u128; 32], [u128; 64], [u128; 128]) {
+  struct X86GcmTestPowers16 {
+    h_polyval: u128,
+    h_powers_rev: [u128; 4],
+    h_powers_rev_16: [u128; 16],
+    #[cfg(target_os = "linux")]
+    h_powers_rev_32: [u128; 32],
+    #[cfg(target_os = "linux")]
+    h_powers_rev_64: [u128; 64],
+    #[cfg(target_os = "linux")]
+    h_powers_rev_128: [u128; 128],
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  impl X86GcmTestPowers16 {
+    fn tables<'a>(&'a self) -> X86GcmTables<'a> {
+      X86GcmTables {
+        h_polyval: self.h_polyval,
+        h_powers_rev: &self.h_powers_rev,
+        h_powers_rev_16: &self.h_powers_rev_16,
+        #[cfg(target_os = "linux")]
+        h_powers_rev_32: &self.h_powers_rev_32,
+        #[cfg(target_os = "linux")]
+        h_powers_rev_64: &self.h_powers_rev_64,
+        #[cfg(target_os = "linux")]
+        h_powers_rev_128: &self.h_powers_rev_128,
+      }
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  fn x86_gcm_test_powers_16() -> X86GcmTestPowers16 {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
     let powers = crate::aead::polyval::precompute_powers_128(h_polyval);
-    (
+    X86GcmTestPowers16 {
       h_polyval,
-      [powers[3], powers[2], powers[1], powers[0]],
-      [
+      h_powers_rev: [powers[3], powers[2], powers[1], powers[0]],
+      h_powers_rev_16: [
         powers[15], powers[14], powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7],
         powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
       ],
-      [
+      #[cfg(target_os = "linux")]
+      h_powers_rev_32: [
         powers[31], powers[30], powers[29], powers[28], powers[27], powers[26], powers[25], powers[24], powers[23],
         powers[22], powers[21], powers[20], powers[19], powers[18], powers[17], powers[16], powers[15], powers[14],
         powers[13], powers[12], powers[11], powers[10], powers[9], powers[8], powers[7], powers[6], powers[5],
         powers[4], powers[3], powers[2], powers[1], powers[0],
       ],
-      core::array::from_fn(|i| powers[63usize.strict_sub(i)]),
-      core::array::from_fn(|i| powers[127usize.strict_sub(i)]),
-    )
+      #[cfg(target_os = "linux")]
+      h_powers_rev_64: core::array::from_fn(|i| powers[63usize.strict_sub(i)]),
+      #[cfg(target_os = "linux")]
+      h_powers_rev_128: core::array::from_fn(|i| powers[127usize.strict_sub(i)]),
+    }
   }
 
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
@@ -6087,8 +6126,7 @@ mod tests {
 
     let ek = aes128_expand_key(&[0x17u8; KEY_SIZE_128]);
     let counter = x86_gcm_wrap_counter_block();
-    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32, h_powers_rev_64, h_powers_rev_128) =
-      x86_gcm_test_powers_16();
+    let powers = x86_gcm_test_powers_16();
     let seed_acc = 0x1123_5813_2134_5589_1442_3337_6109_8715u128;
 
     for len in [1057usize, 1280, 1536, 1792, 2048, 2305, 4096, 8192] {
@@ -6097,7 +6135,7 @@ mod tests {
 
       let mut expected = plaintext.clone();
       aes128_ctr32_encrypt_be(&ek, &counter, &mut expected);
-      let expected_acc = ghash_ciphertext_fallback(seed_acc, h_polyval, &expected);
+      let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
 
       let mut actual = plaintext.clone();
       // SAFETY: large x86 AES-128-GCM AVX-512 seal test because:
@@ -6105,20 +6143,8 @@ mod tests {
       // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
       //    tails.
       // 3. Any remaining partial block is handled by the shared Rust tail after the ASM path returns.
-      let actual_acc = unsafe {
-        aes128_ctr32_encrypt_be_wide_ghash(
-          &ek,
-          &counter,
-          &mut actual,
-          seed_acc,
-          h_polyval,
-          &h_powers_rev,
-          &h_powers_rev_16,
-          &h_powers_rev_32,
-          &h_powers_rev_64,
-          &h_powers_rev_128,
-        )
-      };
+      let actual_acc =
+        unsafe { aes128_ctr32_encrypt_be_wide_ghash(&ek, &counter, &mut actual, seed_acc, powers.tables()) };
 
       assert_eq!(
         actual, expected,
@@ -6135,20 +6161,8 @@ mod tests {
       // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
       //    tails.
       // 3. The helper GHASHes ciphertext before decrypting and leaves any partial block to the Rust tail.
-      let open_acc = unsafe {
-        aes128_ctr32_decrypt_be_wide_ghash(
-          &ek,
-          &counter,
-          &mut opened,
-          seed_acc,
-          h_polyval,
-          &h_powers_rev,
-          &h_powers_rev_16,
-          &h_powers_rev_32,
-          &h_powers_rev_64,
-          &h_powers_rev_128,
-        )
-      };
+      let open_acc =
+        unsafe { aes128_ctr32_decrypt_be_wide_ghash(&ek, &counter, &mut opened, seed_acc, powers.tables()) };
 
       assert_eq!(
         opened, plaintext,
@@ -6174,8 +6188,7 @@ mod tests {
 
     let ek = aes256_expand_key(&[0x29u8; KEY_SIZE]);
     let counter = x86_gcm_wrap_counter_block();
-    let (h_polyval, h_powers_rev, h_powers_rev_16, h_powers_rev_32, h_powers_rev_64, h_powers_rev_128) =
-      x86_gcm_test_powers_16();
+    let powers = x86_gcm_test_powers_16();
     let seed_acc = 0x2357_1113_1719_2329_3137_4143_4753_5961u128;
 
     for len in [1057usize, 1280, 1536, 1792, 2048, 2305, 4096, 8192] {
@@ -6184,7 +6197,7 @@ mod tests {
 
       let mut expected = plaintext.clone();
       aes256_ctr32_encrypt_be(&ek, &counter, &mut expected);
-      let expected_acc = ghash_ciphertext_fallback(seed_acc, h_polyval, &expected);
+      let expected_acc = ghash_ciphertext_fallback(seed_acc, powers.h_polyval, &expected);
 
       let mut actual = plaintext.clone();
       // SAFETY: large x86 AES-256-GCM AVX-512 seal test because:
@@ -6192,20 +6205,8 @@ mod tests {
       // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
       //    tails.
       // 3. Any remaining partial block is handled by the shared Rust tail after the ASM path returns.
-      let actual_acc = unsafe {
-        aes256_ctr32_encrypt_be_wide_ghash(
-          &ek,
-          &counter,
-          &mut actual,
-          seed_acc,
-          h_polyval,
-          &h_powers_rev,
-          &h_powers_rev_16,
-          &h_powers_rev_32,
-          &h_powers_rev_64,
-          &h_powers_rev_128,
-        )
-      };
+      let actual_acc =
+        unsafe { aes256_ctr32_encrypt_be_wide_ghash(&ek, &counter, &mut actual, seed_acc, powers.tables()) };
 
       assert_eq!(
         actual, expected,
@@ -6222,20 +6223,8 @@ mod tests {
       // 2. These lengths force the Unix AVX-512 ASM bulk path through 64-block, 32-block, and 16-block
       //    tails.
       // 3. The helper GHASHes ciphertext before decrypting and leaves any partial block to the Rust tail.
-      let open_acc = unsafe {
-        aes256_ctr32_decrypt_be_wide_ghash(
-          &ek,
-          &counter,
-          &mut opened,
-          seed_acc,
-          h_polyval,
-          &h_powers_rev,
-          &h_powers_rev_16,
-          &h_powers_rev_32,
-          &h_powers_rev_64,
-          &h_powers_rev_128,
-        )
-      };
+      let open_acc =
+        unsafe { aes256_ctr32_decrypt_be_wide_ghash(&ek, &counter, &mut opened, seed_acc, powers.tables()) };
 
       assert_eq!(
         opened, plaintext,

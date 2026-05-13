@@ -24,7 +24,7 @@ pub(crate) const POLY1305_KEY_SIZE: usize = 32;
 
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 
-type XorKeystreamFn = fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]);
+pub(crate) type XorKeystreamFn = fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]);
 
 static XCHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
 static CHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
@@ -176,7 +176,7 @@ pub(crate) fn xor_keystream(
 }
 
 #[inline]
-fn xor_keystream_resolved(primitive: AeadPrimitive) -> XorKeystreamFn {
+pub(crate) fn xor_keystream_resolved(primitive: AeadPrimitive) -> XorKeystreamFn {
   match primitive {
     AeadPrimitive::XChaCha20Poly1305 => {
       XCHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH.get_or_init(|| resolve_xor_keystream(primitive))
@@ -565,6 +565,8 @@ mod tests {
   ))]
   use alloc::vec;
 
+  #[cfg(feature = "xchacha20poly1305")]
+  use super::hchacha20;
   #[cfg(any(
     target_arch = "x86_64",
     target_arch = "aarch64",
@@ -572,7 +574,7 @@ mod tests {
     target_arch = "s390x"
   ))]
   use super::xor_keystream_portable;
-  use super::{KEY_SIZE, NONCE_SIZE, block, hchacha20, xor_keystream};
+  use super::{KEY_SIZE, NONCE_SIZE, block, xor_keystream};
   use crate::aead::targets::AeadPrimitive;
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
@@ -601,6 +603,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(feature = "xchacha20poly1305")]
   fn hchacha20_matches_xchacha_draft_vector() {
     let key = [
       0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12,
