@@ -161,6 +161,22 @@ impl Aes256Gcm {
     <Self as Aead>::tag_from_slice(bytes)
   }
 
+  #[cfg(target_arch = "x86_64")]
+  #[inline]
+  fn x86_gcm_tables<'a>(&'a self) -> aes::X86GcmTables<'a> {
+    aes::X86GcmTables {
+      h_polyval: self.h_powers_rev[3],
+      h_powers_rev: &self.h_powers_rev,
+      h_powers_rev_16: &self.h_powers_rev_16,
+      #[cfg(target_os = "linux")]
+      h_powers_rev_32: &self.h_powers_rev_32,
+      #[cfg(target_os = "linux")]
+      h_powers_rev_64: &self.h_powers_rev_64,
+      #[cfg(target_os = "linux")]
+      h_powers_rev_128: &self.h_powers_rev_128,
+    }
+  }
+
   /// Encrypt `buffer` in place and return the detached authentication tag.
   #[inline]
   pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> Result<Aes256GcmTag, SealError> {
@@ -675,29 +691,17 @@ impl Aead for Aes256Gcm {
     // Wide path: VAES-512 CTR + VPCLMULQDQ GHASH when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      let h_polyval = self.h_powers_rev[3];
+      let tables = self.x86_gcm_tables();
+      let h_polyval = tables.h_polyval;
       // SAFETY: x86 GHASH AAD path because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) };
+      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) };
       // SAFETY: fused x86 AES-GCM sealing because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
       //    AES-NI.
       // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
-      acc = unsafe {
-        aes::aes256_ctr32_encrypt_be_wide_ghash(
-          &self.ek,
-          &ctr_block,
-          buffer,
-          acc,
-          h_polyval,
-          &self.h_powers_rev,
-          &self.h_powers_rev_16,
-          &self.h_powers_rev_32,
-          &self.h_powers_rev_64,
-          &self.h_powers_rev_128,
-        )
-      };
+      acc = unsafe { aes::aes256_ctr32_encrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, tables) };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
@@ -823,29 +827,17 @@ impl Aead for Aes256Gcm {
     // Wide path: VPCLMULQDQ GHASH + VAES-512 CTR when available.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86VaesVpclmul && buffer.len() >= X86_VAES_GCM_MIN_LEN {
-      let h_polyval = self.h_powers_rev[3];
+      let tables = self.x86_gcm_tables();
+      let h_polyval = tables.h_polyval;
       // SAFETY: x86 GHASH AAD path because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, &self.h_powers_rev, aad) };
+      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) };
       // SAFETY: fused x86 AES-GCM open because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
       //    AES-NI.
       // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
-      acc = unsafe {
-        aes::aes256_ctr32_decrypt_be_wide_ghash(
-          &self.ek,
-          &ctr_block,
-          buffer,
-          acc,
-          h_polyval,
-          &self.h_powers_rev,
-          &self.h_powers_rev_16,
-          &self.h_powers_rev_32,
-          &self.h_powers_rev_64,
-          &self.h_powers_rev_128,
-        )
-      };
+      acc = unsafe { aes::aes256_ctr32_decrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, tables) };
       acc ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.

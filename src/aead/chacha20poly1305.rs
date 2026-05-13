@@ -14,6 +14,15 @@ const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
 
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(debug_assertions),
+  not(feature = "portable-only")
+))]
+#[path = "chacha20poly1305/aarch64_asm.rs"]
+mod aarch64_asm;
+
 define_aead_key_type!(ChaCha20Poly1305Key, KEY_SIZE, "ChaCha20-Poly1305 secret key bytes.");
 
 define_aead_tag_type!(
@@ -144,6 +153,96 @@ impl ChaCha20Poly1305 {
     ct::zeroize(&mut poly_key);
     tag
   }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(debug_assertions),
+    not(feature = "portable-only")
+  ))]
+  fn encrypt_in_place_asm_aarch64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    let tag = aarch64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(debug_assertions),
+    not(feature = "portable-only")
+  ))]
+  fn decrypt_in_place_asm_aarch64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    let expected = aarch64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Some(Err(OpenError::verification()));
+    }
+    Some(Ok(()))
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  fn encrypt_in_place_interleaved_aarch64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    use crate::platform::caps::aarch64;
+
+    const FUSED_CHUNK: usize = 1024;
+
+    if buffer.len() < FUSED_CHUNK {
+      return None;
+    }
+
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+
+    if !caps.has(aarch64::NEON) {
+      return None;
+    }
+
+    let lengths = match super::AeadByteLengths::try_new(aad.len(), buffer.len()) {
+      Ok(lengths) => lengths,
+      Err(_) => return Some(Err(SealError::too_large())),
+    };
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let mut authenticator = poly1305::aarch64_neon::AeadPar4::new(&poly_key);
+    authenticator.update_padded_segment(aad);
+
+    let xor_keystream = chacha20::xor_keystream_resolved(AeadPrimitive::ChaCha20Poly1305);
+    let mut counter = 1u32;
+    let mut chunks = buffer.chunks_exact_mut(FUSED_CHUNK);
+    for chunk in &mut chunks {
+      xor_keystream(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
+      authenticator.update_padded_segment(chunk);
+      counter = counter.wrapping_add((FUSED_CHUNK / chacha20::BLOCK_SIZE) as u32);
+    }
+
+    let remainder = chunks.into_remainder();
+    if !remainder.is_empty() {
+      xor_keystream(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
+      authenticator.update_padded_segment(remainder);
+    }
+
+    let tag = ChaCha20Poly1305Tag::from_bytes(authenticator.finalize(lengths));
+    ct::zeroize(&mut poly_key);
+    Some(Ok(tag))
+  }
 }
 
 impl Aead for ChaCha20Poly1305 {
@@ -172,6 +271,21 @@ impl Aead for ChaCha20Poly1305 {
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_os = "macos",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if let Some(result) = self.encrypt_in_place_asm_aarch64(nonce, aad, buffer) {
+      return result;
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    if let Some(result) = self.encrypt_in_place_interleaved_aarch64(nonce, aad, buffer) {
+      return result;
+    }
+
     chacha20::xor_keystream(
       AeadPrimitive::ChaCha20Poly1305,
       self.key.as_bytes(),
@@ -198,6 +312,16 @@ impl Aead for ChaCha20Poly1305 {
     tag: &Self::Tag,
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_os = "macos",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if let Some(result) = self.decrypt_in_place_asm_aarch64(nonce, aad, buffer, tag) {
+      return result;
+    }
 
     let expected = self
       .compute_tag(nonce, aad, buffer)

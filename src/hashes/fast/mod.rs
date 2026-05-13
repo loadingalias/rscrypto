@@ -4,11 +4,15 @@
 //! for signatures, MACs, key derivation, or anything requiring cryptographic
 //! security.
 
+#[cfg(feature = "aeshash")]
+pub mod aeshash;
 #[cfg(feature = "rapidhash")]
 pub mod rapidhash;
 #[cfg(feature = "xxh3")]
 pub mod xxh3;
 
+#[cfg(feature = "aeshash")]
+pub use aeshash::{AesHash64, AesHash128};
 #[cfg(all(feature = "rapidhash", feature = "alloc"))]
 pub use rapidhash::{RapidBuildHasher, RapidHasher};
 #[cfg(feature = "rapidhash")]

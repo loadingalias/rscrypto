@@ -358,7 +358,7 @@ unsafe fn compute_block_x86_avx512(state: &mut State, block: &[u8; 16], partial:
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partial: bool) {
-  use core::arch::aarch64::{uint64x2_t, vaddq_u64, vcreate_u32, vmull_u32, vst1q_u64};
+  use core::arch::aarch64::{vaddq_u64, vaddvq_u64, vcreate_u32, vmull_u32};
 
   #[inline(always)]
   fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
@@ -373,10 +373,7 @@ unsafe fn compute_block_aarch64_neon(state: &mut State, block: &[u8; 16], partia
         vcreate_u32((u64::from(lhs[3]) << 32) | u64::from(lhs[2])),
         vcreate_u32((u64::from(rhs[3]) << 32) | u64::from(rhs[2])),
       );
-      let sum: uint64x2_t = vaddq_u64(lo, hi);
-      let mut lanes = [0u64; 2];
-      vst1q_u64(lanes.as_mut_ptr(), sum);
-      lanes[0] + lanes[1]
+      vaddvq_u64(vaddq_u64(lo, hi))
     }
   }
 
@@ -746,6 +743,7 @@ pub(crate) fn authenticate(message: &[u8], key: &[u8; 32]) -> [u8; 16] {
   state.finalize()
 }
 
+#[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag")), allow(dead_code))]
 pub(crate) fn authenticate_aead(
   primitive: AeadPrimitive,
   aad: &[u8],
@@ -761,9 +759,32 @@ pub(crate) fn authenticate_aead(
       return Ok(avx2_par4::authenticate_aead_par4(aad, ciphertext, key, lengths));
     }
   }
+  #[cfg(target_arch = "aarch64")]
+  {
+    use crate::platform::caps::aarch64;
+    if lengths.total_at_least(64) && current_caps().has(aarch64::NEON) {
+      return Ok(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths));
+    }
+  }
   authenticate_aead_with(aad, ciphertext, key, compute_block_resolved(primitive), lengths)
 }
 
+#[cfg(feature = "diag")]
+pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> Option<[u8; 16]> {
+  authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, key).ok()
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
+  aad: &[u8],
+  ciphertext: &[u8],
+  key: &[u8; 32],
+) -> Option<[u8; 16]> {
+  let lengths = super::AeadByteLengths::try_new(aad.len(), ciphertext.len()).ok()?;
+  Some(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths))
+}
+
+#[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag", test)), allow(dead_code))]
 fn authenticate_aead_with(
   aad: &[u8],
   ciphertext: &[u8],
@@ -785,7 +806,7 @@ fn authenticate_aead_with(
 
 #[cfg(target_arch = "aarch64")]
 #[path = "poly1305/aarch64_neon.rs"]
-mod aarch64_neon;
+pub(crate) mod aarch64_neon;
 #[cfg(target_arch = "x86_64")]
 #[allow(unsafe_op_in_unsafe_fn)]
 #[path = "poly1305/x86_64_avx2_par4.rs"]
@@ -948,6 +969,26 @@ mod tests {
     }
   }
 
+  #[test]
+  #[cfg(target_arch = "aarch64")]
+  fn neon_par4_matches_portable() {
+    if !crate::platform::caps().has(aarch64::NEON) {
+      return;
+    }
+
+    let key = [0x5au8; 32];
+    for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 80, 128] {
+      for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
+        let aad: Vec<u8> = (0..aad_len).map(|i| i.strict_mul(11).strict_add(7) as u8).collect();
+        let ct: Vec<u8> = (0..ct_len).map(|i| i.strict_mul(17).strict_add(3) as u8).collect();
+        let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+        let portable = authenticate_aead_portable(&aad, &ct, &key);
+        let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
+        assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
+      }
+    }
+  }
+
   /// Verify the RFC 8439 AEAD test vector goes through the parallel path.
   #[test]
   #[cfg(target_arch = "x86_64")]
@@ -975,6 +1016,36 @@ mod tests {
 
     let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
     let result = super::avx2_par4::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths);
+    assert_eq!(result, expected);
+  }
+
+  /// Verify the RFC 8439 AEAD test vector goes through the aarch64 parallel path.
+  #[test]
+  #[cfg(target_arch = "aarch64")]
+  fn neon_par4_rfc_8439_aead_vector() {
+    if !crate::platform::caps().has(aarch64::NEON) {
+      return;
+    }
+
+    let aad = [0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7];
+    let ciphertext = [
+      0xd3, 0x1a, 0x8d, 0x34, 0x64, 0x8e, 0x60, 0xdb, 0x7b, 0x86, 0xaf, 0xbc, 0x53, 0xef, 0x7e, 0xc2, 0xa4, 0xad, 0xed,
+      0x51, 0x29, 0x6e, 0x08, 0xfe, 0xa9, 0xe2, 0xb5, 0xa7, 0x36, 0xee, 0x62, 0xd6, 0x3d, 0xbe, 0xa4, 0x5e, 0x8c, 0xa9,
+      0x67, 0x12, 0x82, 0xfa, 0xfb, 0x69, 0xda, 0x92, 0x72, 0x8b, 0x1a, 0x71, 0xde, 0x0a, 0x9e, 0x06, 0x0b, 0x29, 0x05,
+      0xd6, 0xa5, 0xb6, 0x7e, 0xcd, 0x3b, 0x36, 0x92, 0xdd, 0xbd, 0x7f, 0x2d, 0x77, 0x8b, 0x8c, 0x98, 0x03, 0xae, 0xe3,
+      0x28, 0x09, 0x1b, 0x58, 0xfa, 0xb3, 0x24, 0xe4, 0xfa, 0xd6, 0x75, 0x94, 0x55, 0x85, 0x80, 0x8b, 0x48, 0x31, 0xd7,
+      0xbc, 0x3f, 0xf4, 0xde, 0xf0, 0x8e, 0x4b, 0x7a, 0x9d, 0xe5, 0x76, 0xd2, 0x65, 0x86, 0xce, 0xc6, 0x4b, 0x61, 0x16,
+    ];
+    let poly_key = [
+      0x7b, 0xac, 0x2b, 0x25, 0x2d, 0xb4, 0x47, 0xaf, 0x09, 0xb6, 0x7a, 0x55, 0xa4, 0xe9, 0x55, 0x84, 0x0a, 0xe1, 0xd6,
+      0x73, 0x10, 0x75, 0xd9, 0xeb, 0x2a, 0x93, 0x75, 0x78, 0x3e, 0xd5, 0x53, 0xff,
+    ];
+    let expected = [
+      0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a, 0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91,
+    ];
+
+    let lengths = AeadByteLengths::try_new(aad.len(), ciphertext.len()).unwrap();
+    let result = super::aarch64_neon::authenticate_aead_par4(&aad, &ciphertext, &poly_key, lengths);
     assert_eq!(result, expected);
   }
 }
