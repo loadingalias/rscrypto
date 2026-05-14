@@ -141,12 +141,11 @@ macro_rules! sha2_streaming {
       for chunk_size in [64, 4096] {
         g.bench_function(format!("rscrypto/{chunk_size}B"), |b| {
           b.iter(|| {
-            use rscrypto::Digest;
-            let mut h = <$ours>::new();
+            let mut h = <$ours as rscrypto::Digest>::new();
             for chunk in data.chunks(chunk_size) {
-              h.update(black_box(chunk));
+              rscrypto::Digest::update(&mut h, black_box(chunk));
             }
-            black_box(h.finalize())
+            black_box(rscrypto::Digest::finalize(&h))
           })
         });
 
@@ -211,7 +210,6 @@ fn sha256_internal(c: &mut Criterion) {
 
     g.bench_function(format!("rscrypto-stream-{chunk_size}B"), |b| {
       b.iter(|| {
-        use rscrypto::Digest;
         let mut h = rscrypto::Sha256::new();
         for chunk in data.chunks(chunk_size) {
           h.update(black_box(chunk));

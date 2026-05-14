@@ -629,7 +629,7 @@ mod direct_io_write_tests {
   use std::io::{IoSlice, Write};
 
   use super::{Crc32C, Sha256};
-  use crate::traits::{Checksum as _, Digest as _};
+  use crate::traits::Checksum as _;
 
   #[test]
   fn digest_state_accepts_direct_io_write() {

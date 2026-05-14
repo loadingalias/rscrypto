@@ -4,7 +4,7 @@ use super::{
   Sha256,
   kernels::{ALL, Sha256KernelId, compress_blocks_fn, required_caps},
 };
-use crate::{hashes::crypto::dispatch_util::SizeClassDispatch, traits::Digest as _};
+use crate::hashes::crypto::dispatch_util::SizeClassDispatch;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]

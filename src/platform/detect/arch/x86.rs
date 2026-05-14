@@ -131,6 +131,8 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
 
   // CPUID leaf 0: vendor string
   let cpuid0 = __cpuid(0);
+  // "GenuineIntel" has EBX/EDX/ECX = "Genu" / "ineI" / "ntel".
+  let is_intel = cpuid0.ebx == 0x756e_6547 && cpuid0.edx == 0x4965_6e69 && cpuid0.ecx == 0x6c65_746e;
   // "AuthenticAMD" has ebx = 0x68747541 ("Auth")
   let is_amd = cpuid0.ebx == 0x6874_7541;
 
@@ -385,6 +387,9 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
       caps |= x86::AMD_ZEN5;
     }
   }
+  if is_intel_sapphire_rapids(is_intel, family, model) {
+    caps |= x86::INTEL_SAPPHIRE_RAPIDS;
+  }
 
   CpuidBatch {
     caps,
@@ -450,6 +455,11 @@ fn hybrid_avx512_override() -> bool {
   std::env::var("RSCRYPTO_FORCE_AVX512")
     .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
     .unwrap_or(false)
+}
+
+#[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+fn is_intel_sapphire_rapids(is_intel: bool, family: u32, model: u32) -> bool {
+  is_intel && family == 6 && model == 0x8F
 }
 
 /// Detect Intel hybrid CPU (Alder Lake family and newer).
