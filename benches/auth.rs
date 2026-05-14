@@ -216,6 +216,63 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
   g.finish();
 }
 
+fn hmac_sha256_internal(c: &mut Criterion) {
+  print_auth_diag_once();
+
+  let data = common::random_bytes(4096);
+  let key = [0x24u8; 32];
+  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
+  let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key);
+  let mut g = c.benchmark_group("hmac-sha256/internal/fixed-message");
+
+  for len in [32usize, 64, 4096] {
+    let msg = &data[..len];
+    common::set_throughput(&mut g, len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-oneshot", len), msg, |b, d| {
+      b.iter(|| black_box(HmacSha256::mac(black_box(&key), black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-stream-new", len), msg, |b, d| {
+      b.iter(|| {
+        let mut mac = HmacSha256::new(black_box(&key));
+        mac.update(black_box(d));
+        black_box(mac.finalize())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-stream-reuse", len), msg, |b, d| {
+      let mut mac = HmacSha256::new(&key);
+      b.iter(|| {
+        mac.update(black_box(d));
+        let tag = mac.finalize();
+        mac.reset();
+        black_box(tag)
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto-oneshot", len), msg, |b, d| {
+      b.iter(|| {
+        use hmac::Mac as _;
+
+        let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key)).unwrap();
+        mac.update(black_box(d));
+        black_box(mac.finalize().into_bytes())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), msg, |b, d| {
+      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), msg, |b, d| {
+      b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
+    });
+  }
+
+  g.finish();
+}
+
 fn hkdf_sha256_expand(c: &mut Criterion) {
   print_auth_diag_once();
 
@@ -405,6 +462,77 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
       });
     }
     g_state.finish();
+  }
+}
+
+fn pbkdf2_sha256_internal(c: &mut Criterion) {
+  print_auth_diag_once();
+
+  let password = [0x55u8; 32];
+  let salt = [0x33u8; 16];
+  let state = Pbkdf2Sha256::new(&password);
+
+  for &iterations in &[1u32, 100, 1000] {
+    let nz_iters = core::num::NonZeroU32::new(iterations).unwrap();
+    let mut g = c.benchmark_group(format!("pbkdf2-sha256/internal/iters={iterations}"));
+
+    for &out_len in &[32usize, 64] {
+      g.throughput(criterion::Throughput::Bytes(out_len as u64));
+
+      g.bench_with_input(BenchmarkId::new("rscrypto-oneshot", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          Pbkdf2Sha256::derive_key(black_box(&password), black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("rscrypto-state", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          state.derive(black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          pbkdf2::pbkdf2_hmac::<sha2::Sha256>(black_box(&password), black_box(&salt), iterations, black_box(&mut out));
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          aws_lc_rs::pbkdf2::derive(
+            aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+            nz_iters,
+            black_box(&salt),
+            black_box(&password),
+            black_box(&mut out),
+          );
+          black_box(out[0])
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          ring::pbkdf2::derive(
+            ring::pbkdf2::PBKDF2_HMAC_SHA256,
+            nz_iters,
+            black_box(&salt),
+            black_box(&password),
+            black_box(&mut out),
+          );
+          black_box(out[0])
+        })
+      });
+    }
+
+    g.finish();
   }
 }
 
@@ -751,9 +879,11 @@ criterion_group!(
   hmac_sha384,
   hmac_sha512,
   hmac_sha256_streaming,
+  hmac_sha256_internal,
   hkdf_sha256_expand,
   hkdf_sha384_expand,
   pbkdf2_sha256_derive,
+  pbkdf2_sha256_internal,
   pbkdf2_sha512_derive,
   ed25519_public_key,
   ed25519_keypair_from_secret,
