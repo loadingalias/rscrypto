@@ -134,7 +134,6 @@ DEFAULT_HASH_ALGOS=(
   "blake3"
   "xxh3"
   "rapidhash"
-  "fast-hash"
   "ascon-hash256"
   "ascon-xof128"
 )
@@ -190,7 +189,6 @@ hash_filter_token() {
     ascon-hash256) echo "ascon-hash256" ;;
     ascon-xof128) echo "ascon-xof128" ;;
     xxh3) echo "xxh3" ;;
-    fast-hash) echo "^fast-hash-" ;;
     blake2) echo "^blake2/(rscrypto|rustcrypto|keyed|streaming)/" ;;
     blake3) echo "blake3" ;;
     *) echo "$algo" ;;
@@ -231,7 +229,7 @@ default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
     checksum) echo "crc" ;;
-    hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,fast_hash,blake2,blake3" ;;
+    hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake2,blake3" ;;
     auth) echo "auth" ;;
     aead) echo "aead" ;;
     *) echo "" ;;
@@ -270,7 +268,6 @@ bench_features_for_target() {
     ascon) echo "parallel,ascon-hash" ;;
     xxh3) echo "parallel,xxh3" ;;
     rapidhash) echo "parallel,rapidhash" ;;
-    fast_hash) echo "parallel,aeshash" ;;
     aead_kernels) echo "parallel,chacha20poly1305,diag" ;;
     blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
@@ -311,7 +308,6 @@ bench_target_for_hash_algo() {
     ascon-hash256|ascon-xof128) echo "ascon" ;;
     xxh3) echo "xxh3" ;;
     rapidhash) echo "rapidhash" ;;
-    fast-hash) echo "fast_hash" ;;
     blake2) echo "blake2" ;;
     blake3) echo "blake3" ;;
     *) return 1 ;;
@@ -380,10 +376,10 @@ expand_bench_shorthand() {
   IFS=',' read -r -a tokens <<< "$raw"
   for token in "${tokens[@]}"; do
     case "$token" in
-      comp) expanded+=("crc" "sha2" "sha3" "ascon" "auth" "aead" "xxh3" "rapidhash" "fast_hash" "blake3") ;;
+      comp) expanded+=("crc" "sha2" "sha3" "ascon" "auth" "aead" "xxh3" "rapidhash" "blake3") ;;
       kernels) expanded+=("blake3") ;;
       checksum_comp|checksum_kernels) expanded+=("crc") ;;
-      hashes_comp) expanded+=("sha2" "sha3" "ascon" "xxh3" "rapidhash" "fast_hash" "blake3") ;;
+      hashes_comp) expanded+=("sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
       auth_comp) expanded+=("auth") ;;
       aead_comp) expanded+=("aead") ;;
       hashes_kernels) expanded+=("blake3") ;;
@@ -466,7 +462,7 @@ fi
 if [[ -z "$BENCHES_INPUT" ]]; then
   targets_comp="true"
 else
-  for bench in sha2 sha3 ascon xxh3 rapidhash fast_hash; do
+  for bench in sha2 sha3 ascon xxh3 rapidhash; do
     if csv_has_token "$BENCHES_INPUT" "$bench"; then
       targets_comp="true"
       break
