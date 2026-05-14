@@ -419,6 +419,11 @@ pub mod x86 {
   /// standard SHA-512 round structure over deferred-Σ0.
   pub const AMD_ZEN5: Caps = Caps::bit(50);
 
+  /// Intel Sapphire Rapids Xeon (CPUID family 6, model 0x8F).
+  /// Used for microarchitecture-specific dispatch fixes when feature bits alone
+  /// do not explain a measured regression.
+  pub const INTEL_SAPPHIRE_RAPIDS: Caps = Caps::bit(51);
+
   // ─── Combined Capability Masks ───
   // These represent common feature combinations for dispatch decisions.
 

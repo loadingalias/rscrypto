@@ -322,43 +322,8 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Derive a key in one shot.
       #[inline]
-      #[allow(clippy::indexing_slicing)]
       pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
-        let compress = $dispatch::compress_dispatch().select(0);
-
-        let mut key_block = [0u8; $block_size_const];
-        if password.len() > $block_size_const {
-          let digest = <$digest_ty>::digest(password);
-          key_block[..$output_size_const].copy_from_slice(&digest);
-        } else {
-          key_block[..password.len()].copy_from_slice(password);
-        }
-
-        let mut ipad = [0x36u8; $block_size_const];
-        let mut opad = [0x5Cu8; $block_size_const];
-        for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-          *ipad_byte ^= key_byte;
-          *opad_byte ^= key_byte;
-        }
-
-        let mut inner_init = $h0;
-        compress(&mut inner_init, &ipad);
-
-        let mut outer_init = $h0;
-        compress(&mut outer_init, &opad);
-
-        let result = Self::derive_with_prefixes(compress, &inner_init, &outer_init, salt, iterations, okm);
-
-        ct::zeroize_no_fence(&mut key_block);
-        ct::zeroize_no_fence(&mut ipad);
-        ct::zeroize_no_fence(&mut opad);
-        for word in inner_init.iter_mut().chain(outer_init.iter_mut()) {
-          // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-          unsafe { core::ptr::write_volatile(word, 0) };
-        }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-
-        result
+        Self::new(password).derive(salt, iterations, okm)
       }
 
       /// Derive a key into a fixed-size array in one shot.

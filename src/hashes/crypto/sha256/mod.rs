@@ -399,6 +399,13 @@ impl Default for Sha256 {
 }
 
 impl Sha256 {
+  /// Create a new SHA-256 streaming state.
+  #[inline]
+  #[must_use]
+  pub fn new() -> Self {
+    Self::default()
+  }
+
   /// Compute the digest of `data` in one shot.
   ///
   /// This selects the best available kernel for the current platform and input
@@ -407,6 +414,25 @@ impl Sha256 {
   #[must_use]
   pub fn digest(data: &[u8]) -> [u8; 32] {
     dispatch::digest(data)
+  }
+
+  /// Update the streaming state with additional data.
+  #[inline]
+  pub fn update(&mut self, data: &[u8]) {
+    self.update_impl(data);
+  }
+
+  /// Return the digest for the current state without consuming it.
+  #[inline]
+  #[must_use]
+  pub fn finalize(&self) -> [u8; 32] {
+    self.finalize_impl()
+  }
+
+  /// Reset the streaming state to its initial value.
+  #[inline]
+  pub fn reset(&mut self) {
+    *self = Self::default();
   }
 
   #[inline]
@@ -442,10 +468,21 @@ impl Sha256 {
   }
 
   #[inline]
-  fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
+  fn update_impl(&mut self, data: &[u8]) {
     if data.is_empty() {
       return;
     }
+    if kernels::COMPILE_TIME_HW {
+      self.update_with(data, kernels::compile_time_best());
+      return;
+    }
+    let compress = self.select_compress(data.len());
+    self.update_with(data, compress);
+  }
+
+  #[inline]
+  fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
+    debug_assert!(!data.is_empty());
 
     debug_assert!(
       self
@@ -481,6 +518,14 @@ impl Sha256 {
       self.block[..data.len()].copy_from_slice(data);
       self.block_len = data.len();
     }
+  }
+
+  #[inline]
+  fn finalize_impl(&self) -> [u8; 32] {
+    if kernels::COMPILE_TIME_HW {
+      return self.finalize_inner_with(kernels::compile_time_best());
+    }
+    self.finalize_inner_with(self.compress_blocks)
   }
 
   #[inline(always)]
@@ -577,33 +622,22 @@ impl Digest for Sha256 {
 
   #[inline]
   fn new() -> Self {
-    Self::default()
+    Sha256::new()
   }
 
   #[inline]
   fn update(&mut self, data: &[u8]) {
-    if data.is_empty() {
-      return;
-    }
-    if kernels::COMPILE_TIME_HW {
-      self.update_with(data, kernels::compile_time_best());
-      return;
-    }
-    let compress = self.select_compress(data.len());
-    self.update_with(data, compress);
+    Sha256::update(self, data);
   }
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    if kernels::COMPILE_TIME_HW {
-      return self.finalize_inner_with(kernels::compile_time_best());
-    }
-    self.finalize_inner_with(self.compress_blocks)
+    Sha256::finalize(self)
   }
 
   #[inline]
   fn reset(&mut self) {
-    *self = Self::default();
+    Sha256::reset(self);
   }
 
   #[inline]
@@ -656,5 +690,17 @@ mod tests {
       );
       million_a.clear();
     }
+  }
+
+  #[test]
+  fn inherent_streaming_api_matches_oneshot() {
+    let mut h = Sha256::new();
+    h.update(b"abc");
+    assert_eq!(h.finalize(), Sha256::digest(b"abc"));
+
+    h.reset();
+    h.update(b"a");
+    h.update(b"bc");
+    assert_eq!(h.finalize(), Sha256::digest(b"abc"));
   }
 }

@@ -18,6 +18,19 @@ const SHA384_TAG_SIZE: usize = 48;
 const SHA512_TAG_SIZE: usize = 64;
 
 #[inline]
+fn hmac_sha256_oneshot_prefers_streaming(caps: crate::platform::Caps) -> bool {
+  #[cfg(target_arch = "x86_64")]
+  {
+    caps.has(crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS)
+  }
+  #[cfg(not(target_arch = "x86_64"))]
+  {
+    let _ = caps;
+    false
+  }
+}
+
+#[inline]
 pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
   key_block: &mut [u8; BLOCK_SIZE],
   build: impl FnOnce(&[u8; BLOCK_SIZE], &[u8; BLOCK_SIZE]) -> T,
@@ -156,6 +169,14 @@ impl Mac for HmacSha256 {
   #[inline]
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
+    if hmac_sha256_oneshot_prefers_streaming(crate::platform::caps()) {
+      // Sapphire Rapids regresses badly on the fused stack-buffer shape; the
+      // public streaming path keeps the same semantics with the measured fast call shape.
+      let mut mac = Self::new(key);
+      mac.update(data);
+      return mac.finalize();
+    }
+
     let mut ipad = [0x36u8; SHA256_BLOCK_SIZE];
     if key.len() > SHA256_BLOCK_SIZE {
       let digest = Sha256::digest(key);
@@ -843,6 +864,18 @@ mod tests {
     let mut tag = [0u8; SHA512_TAG_SIZE];
     tag.copy_from_slice(&bytes);
     tag
+  }
+
+  #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn hmac_sha256_sapphire_rapids_oneshot_policy_uses_streaming() {
+    let spr = crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS;
+    assert!(hmac_sha256_oneshot_prefers_streaming(spr));
+
+    let amd_zen5 = crate::platform::caps::x86::AMD | crate::platform::caps::x86::AMD_ZEN5;
+    assert!(!hmac_sha256_oneshot_prefers_streaming(amd_zen5));
+
+    assert!(!hmac_sha256_oneshot_prefers_streaming(crate::platform::Caps::NONE));
   }
 
   fn assert_hmac_sha384_kernel(id: Sha384KernelId) {

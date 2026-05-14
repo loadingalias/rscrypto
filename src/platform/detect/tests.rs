@@ -271,6 +271,17 @@ mod tests {
   }
 
   #[test]
+  #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+  fn test_is_intel_sapphire_rapids_known_model() {
+    assert!(is_intel_sapphire_rapids(true, 6, 0x8F));
+
+    assert!(!is_intel_sapphire_rapids(false, 6, 0x8F)); // AMD/unknown vendor
+    assert!(!is_intel_sapphire_rapids(true, 6, 0x6A)); // Ice Lake-SP
+    assert!(!is_intel_sapphire_rapids(true, 6, 0xCF)); // Emerald Rapids
+    assert!(!is_intel_sapphire_rapids(true, 25, 0)); // Non-family-6 CPU
+  }
+
+  #[test]
   #[allow(unsafe_code)]
   #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
   fn test_hybrid_avx512_override_default() {
