@@ -19,6 +19,7 @@ const POLY_KEY: [u8; 32] = [
 const NONCE_12: [u8; 12] = [0x07u8; 12];
 const AAD: &[u8] = b"rscrypto-bench";
 
+#[cfg(target_arch = "aarch64")]
 fn chacha20_xor_kernel(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let mut g = c.benchmark_group("aead-kernel/chacha20-xor");
@@ -26,26 +27,26 @@ fn chacha20_xor_kernel(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
-    #[cfg(target_arch = "aarch64")]
-    {
-      let mut buf = data.clone();
-      g.bench_with_input(BenchmarkId::new("aarch64-neon", len), data, |b, d| {
-        b.iter(|| {
-          buf.copy_from_slice(d);
-          rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon(
-            black_box(&KEY_32),
-            black_box(1),
-            black_box(&NONCE_12),
-            black_box(&mut buf),
-          );
-          black_box(buf.as_ptr())
-        })
-      });
-    }
+    let mut buf = data.clone();
+    g.bench_with_input(BenchmarkId::new("aarch64-neon", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon(
+          black_box(&KEY_32),
+          black_box(1),
+          black_box(&NONCE_12),
+          black_box(&mut buf),
+        );
+        black_box(buf.as_ptr())
+      })
+    });
   }
 
   g.finish();
 }
+
+#[cfg(not(target_arch = "aarch64"))]
+fn chacha20_xor_kernel(_: &mut Criterion) {}
 
 fn poly1305_auth_kernel(c: &mut Criterion) {
   let inputs = common::comp_sizes();
