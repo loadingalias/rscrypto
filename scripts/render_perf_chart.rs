@@ -169,8 +169,8 @@ fn find_speedups(line: &str) -> Vec<f64> {
   out
 }
 
-/// Find every plain integer in `line` (skips digits that are part of a
-/// decimal `X.YY` or `X.YYx` token).
+/// Find every plain integer in `line`, accepting comma group separators
+/// (skips digits that are part of a decimal `X.YY` or `X.YYx` token).
 fn find_integers(line: &str) -> Vec<u64> {
   let bytes = line.as_bytes();
   let mut out = Vec::new();
@@ -180,16 +180,27 @@ fn find_integers(line: &str) -> Vec<u64> {
       i = i.saturating_add(1);
       continue;
     }
-    let start = i;
+    let mut value = 0_u64;
+    let mut saw_digit = false;
     while i < bytes.len() && bytes[i].is_ascii_digit() {
+      value = value
+        .saturating_mul(10)
+        .saturating_add(u64::from(bytes[i].saturating_sub(b'0')));
+      saw_digit = true;
       i = i.saturating_add(1);
+      while i + 1 < bytes.len() && bytes[i] == b',' && bytes[i + 1].is_ascii_digit() {
+        i = i.saturating_add(1);
+        value = value
+          .saturating_mul(10)
+          .saturating_add(u64::from(bytes[i].saturating_sub(b'0')));
+        i = i.saturating_add(1);
+      }
     }
     if i < bytes.len() && (bytes[i] == b'.' || bytes[i] == b'x') {
       continue;
     }
-    let s = std::str::from_utf8(&bytes[start..i]).expect("ASCII digits");
-    if let Ok(v) = s.parse::<u64>() {
-      out.push(v);
+    if saw_digit {
+      out.push(value);
     }
   }
   out
