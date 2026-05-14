@@ -10,7 +10,10 @@ use core::{arch::global_asm, mem};
 
 use super::KEY_SIZE;
 
+#[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_chacha20_poly1305_aarch64_apple_darwin.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_chacha20_poly1305_aarch64_linux.s"));
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -54,6 +57,7 @@ const _: () = assert!(mem::size_of::<SealData>() == 64);
 const _: () = assert!(mem::align_of::<SealData>() == 16);
 
 unsafe extern "C" {
+  #[cfg(target_os = "macos")]
   fn rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin(
     out_ciphertext: *mut u8,
     plaintext: *const u8,
@@ -63,7 +67,28 @@ unsafe extern "C" {
     data: *mut SealData,
   );
 
+  #[cfg(target_os = "linux")]
+  fn rscrypto_chacha20_poly1305_seal_aarch64(
+    out_ciphertext: *mut u8,
+    plaintext: *const u8,
+    plaintext_len: usize,
+    aad: *const u8,
+    aad_len: usize,
+    data: *mut SealData,
+  );
+
+  #[cfg(target_os = "macos")]
   fn rscrypto_chacha20_poly1305_open_aarch64_apple_darwin(
+    out_plaintext: *mut u8,
+    ciphertext: *const u8,
+    plaintext_len: usize,
+    aad: *const u8,
+    aad_len: usize,
+    data: *mut OpenData,
+  );
+
+  #[cfg(target_os = "linux")]
+  fn rscrypto_chacha20_poly1305_open_aarch64(
     out_plaintext: *mut u8,
     ciphertext: *const u8,
     plaintext_len: usize,
@@ -87,8 +112,8 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   };
 
   // SAFETY: integrated aarch64 seal call because:
-  // 1. This module is only compiled for Apple aarch64, where ASIMD/NEON is part of the target
-  //    baseline.
+  // 1. This module is only compiled for macOS/Linux aarch64, where ASIMD/NEON is part of the target
+  //    baseline ABI.
   // 2. `buffer.as_ptr()` and `buffer.as_mut_ptr()` are valid for `buffer.len()` bytes and may alias;
   //    the assembly routine supports in-place seal, matching the AWS-LC ABI.
   // 3. `aad.as_ptr()` is valid for `aad.len()` bytes, including the conventional dangling pointer for
@@ -97,7 +122,17 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   //    the AWS-LC seal ABI for callers without extra trailing ciphertext.
   // 5. `data` is 16-byte aligned and matches the assembly input/output union layout.
   unsafe {
+    #[cfg(target_os = "macos")]
     rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin(
+      buffer.as_mut_ptr(),
+      buffer.as_ptr(),
+      buffer.len(),
+      aad.as_ptr(),
+      aad.len(),
+      &mut data,
+    );
+    #[cfg(target_os = "linux")]
+    rscrypto_chacha20_poly1305_seal_aarch64(
       buffer.as_mut_ptr(),
       buffer.as_ptr(),
       buffer.len(),
@@ -120,15 +155,25 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   };
 
   // SAFETY: integrated aarch64 open call because:
-  // 1. This module is only compiled for Apple aarch64, where ASIMD/NEON is part of the target
-  //    baseline.
+  // 1. This module is only compiled for macOS/Linux aarch64, where ASIMD/NEON is part of the target
+  //    baseline ABI.
   // 2. `buffer.as_ptr()` and `buffer.as_mut_ptr()` are valid for `buffer.len()` bytes and may alias;
   //    the assembly routine supports in-place open, matching the AWS-LC ABI.
   // 3. `aad.as_ptr()` is valid for `aad.len()` bytes, including the conventional dangling pointer for
   //    empty slices because the length is zero.
   // 4. `data` is 16-byte aligned and matches the assembly input/output union layout.
   unsafe {
+    #[cfg(target_os = "macos")]
     rscrypto_chacha20_poly1305_open_aarch64_apple_darwin(
+      buffer.as_mut_ptr(),
+      buffer.as_ptr(),
+      buffer.len(),
+      aad.as_ptr(),
+      aad.len(),
+      &mut data,
+    );
+    #[cfg(target_os = "linux")]
+    rscrypto_chacha20_poly1305_open_aarch64(
       buffer.as_mut_ptr(),
       buffer.as_ptr(),
       buffer.len(),

@@ -16,7 +16,7 @@ const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64)
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(debug_assertions),
   not(feature = "portable-only")
 ))]
@@ -156,7 +156,7 @@ impl ChaCha20Poly1305 {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(debug_assertions),
     not(feature = "portable-only")
   ))]
@@ -172,7 +172,7 @@ impl ChaCha20Poly1305 {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(debug_assertions),
     not(feature = "portable-only")
   ))]
@@ -273,7 +273,7 @@ impl Aead for ChaCha20Poly1305 {
 
     #[cfg(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       not(debug_assertions),
       not(feature = "portable-only")
     ))]
@@ -315,7 +315,7 @@ impl Aead for ChaCha20Poly1305 {
 
     #[cfg(all(
       target_arch = "aarch64",
-      target_os = "macos",
+      any(target_os = "macos", target_os = "linux"),
       not(debug_assertions),
       not(feature = "portable-only")
     ))]

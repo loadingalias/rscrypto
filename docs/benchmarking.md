@@ -27,7 +27,7 @@ Current expanded competitors:
 | SHA-2 / HMAC / HKDF / PBKDF2 | RustCrypto, `aws-lc-rs`, `ring` |
 | Ed25519 / X25519 | dalek, `aws-lc-rs`, `ring` where shape-compatible, `dryoc` |
 | BLAKE2 / password hashing | RustCrypto, `dryoc` where shape-compatible |
-| XXH3 / RapidHash | upstream crates, `gxhash`, `ahash`, `foldhash` |
+| XXH3 / RapidHash | upstream crates |
 | CRC | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast`, `crc64fast-nvme` |
 
 ## Excluded Competitors

@@ -724,11 +724,13 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
 
   g.bench_function("aws-lc-rs", |b| {
     b.iter(|| {
-      let first = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
-        Ok::<u8, ()>(bytes[0])
+      let shared = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
+        let mut out = [0u8; 32];
+        out.copy_from_slice(bytes);
+        Ok::<[u8; 32], ()>(out)
       })
       .unwrap();
-      black_box(first)
+      black_box(shared)
     })
   });
 

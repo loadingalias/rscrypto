@@ -1905,7 +1905,11 @@ pub(super) fn precompute_powers_8(h: u128) -> [u128; 8] {
 /// Precompute hash key powers [H, H^2, ..., H^16] for 16-block GHASH/POLYVAL windows.
 #[cfg(any(
   all(feature = "aes-gcm", target_arch = "x86_64"),
-  all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"),
+  all(
+    feature = "aes-gcm",
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux")
+  ),
   all(feature = "aes-gcm-siv", target_arch = "x86_64"),
   test
 ))]
@@ -1968,7 +1972,11 @@ pub(super) fn precompute_powers_128(h: u128) -> [u128; 128] {
 }
 
 /// Precompute `(lo64 ^ hi64)` for each 16-block GHASH power.
-#[cfg(all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(
+  feature = "aes-gcm",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux")
+))]
 pub(super) fn precompute_powers_16_mid(h_powers_rev_16: &[u128; 16]) -> [u128; 16] {
   core::array::from_fn(|i| {
     let h = h_powers_rev_16[i];
@@ -1978,7 +1986,11 @@ pub(super) fn precompute_powers_16_mid(h_powers_rev_16: &[u128; 16]) -> [u128; 1
 
 /// Precompute paired `(lo0, lo1)`, `(hi0, hi1)`, and `(mid0, mid1)` tables for
 /// AArch64 16-block GHASH assembly.
-#[cfg(all(feature = "aes-gcm", target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(
+  feature = "aes-gcm",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux")
+))]
 pub(super) fn precompute_powers_16_pair(h_powers_rev_16: &[u128; 16]) -> [u128; 24] {
   core::array::from_fn(|i| {
     let pair = i / 3;

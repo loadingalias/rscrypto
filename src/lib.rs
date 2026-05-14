@@ -252,8 +252,7 @@ mod secret;
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
-  feature = "rapidhash",
-  feature = "aeshash"
+  feature = "rapidhash"
 ))]
 pub mod hashes;
 
@@ -339,8 +338,6 @@ pub use hashes::crypto::{
 };
 #[cfg(feature = "sha2")]
 pub use hashes::crypto::{Sha224, Sha256, Sha384, Sha512, Sha512_256};
-#[cfg(feature = "aeshash")]
-pub use hashes::fast::{AesHash64, AesHash128};
 #[cfg(all(feature = "rapidhash", feature = "alloc"))]
 pub use hashes::fast::{RapidBuildHasher, RapidHasher};
 #[cfg(feature = "rapidhash")]
@@ -381,8 +378,7 @@ pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationErr
   feature = "blake3",
   feature = "ascon-hash",
   feature = "xxh3",
-  feature = "rapidhash",
-  feature = "aeshash"
+  feature = "rapidhash"
 ))]
 pub use traits::{Digest, FastHash, Xof};
 
@@ -770,8 +766,6 @@ mod send_sync_assertions {
     assert_send_sync::<Blake3XofReader>();
 
     // Fast hashes
-    assert_send_sync::<hashes::fast::AesHash64>();
-    assert_send_sync::<hashes::fast::AesHash128>();
     assert_send_sync::<Xxh3>();
     assert_send_sync::<Xxh3_128>();
     assert_send_sync::<RapidHash>();
@@ -900,8 +894,6 @@ mod send_sync_assertions {
     assert_clone::<AsconCxof128Reader>();
     assert_clone::<Blake3>();
     assert_clone::<Blake3XofReader>();
-    assert_clone::<hashes::fast::AesHash64>();
-    assert_clone::<hashes::fast::AesHash128>();
     assert_clone::<Xxh3>();
     assert_clone::<Xxh3_128>();
     assert_clone::<RapidHash>();
@@ -931,8 +923,6 @@ mod send_sync_assertions {
     assert_debug::<AsconCxof128Reader>();
     assert_debug::<Blake3>();
     assert_debug::<Blake3XofReader>();
-    assert_debug::<hashes::fast::AesHash64>();
-    assert_debug::<hashes::fast::AesHash128>();
     assert_debug::<Xxh3>();
     assert_debug::<Xxh3_128>();
     assert_debug::<RapidHash>();
