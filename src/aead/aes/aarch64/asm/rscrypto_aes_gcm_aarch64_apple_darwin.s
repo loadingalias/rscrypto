@@ -1126,11 +1126,11 @@ _\name:
         ret
     .endm
 
-    DEFINE_SEAL rscrypto_aes128_gcm_seal_8x_aarch64_apple_darwin, 10
-    DEFINE_OPEN rscrypto_aes128_gcm_open_8x_aarch64_apple_darwin, 10
-    DEFINE_SEAL rscrypto_aes256_gcm_seal_8x_aarch64_apple_darwin, 14
-    DEFINE_OPEN rscrypto_aes256_gcm_open_8x_aarch64_apple_darwin, 14
-    DEFINE_SEAL16_EOR3 rscrypto_aes128_gcm_seal_16x_eor3_aarch64_apple_darwin, 10
-    DEFINE_OPEN16_EOR3 rscrypto_aes128_gcm_open_16x_eor3_aarch64_apple_darwin, 10
-    DEFINE_SEAL16_EOR3 rscrypto_aes256_gcm_seal_16x_eor3_aarch64_apple_darwin, 14
-    DEFINE_OPEN16_EOR3 rscrypto_aes256_gcm_open_16x_eor3_aarch64_apple_darwin, 14
+    DEFINE_SEAL rscrypto_aes128_gcm_seal_8x_aarch64, 10
+    DEFINE_OPEN rscrypto_aes128_gcm_open_8x_aarch64, 10
+    DEFINE_SEAL rscrypto_aes256_gcm_seal_8x_aarch64, 14
+    DEFINE_OPEN rscrypto_aes256_gcm_open_8x_aarch64, 14
+    DEFINE_SEAL16_EOR3 rscrypto_aes128_gcm_seal_16x_eor3_aarch64, 10
+    DEFINE_OPEN16_EOR3 rscrypto_aes128_gcm_open_16x_eor3_aarch64, 10
+    DEFINE_SEAL16_EOR3 rscrypto_aes256_gcm_seal_16x_eor3_aarch64, 14
+    DEFINE_OPEN16_EOR3 rscrypto_aes256_gcm_open_16x_eor3_aarch64, 14

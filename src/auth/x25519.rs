@@ -31,22 +31,64 @@ use core::{
   hash::{Hash, Hasher},
 };
 
-use crate::{
-  SecretBytes,
-  auth::curve25519_edwards,
-  backend::curve25519::{FieldElement, clamp_secret_scalar},
-  traits::ct,
-};
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
+use crate::auth::curve25519_edwards;
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
+use crate::backend::curve25519::FieldElement;
+use crate::{SecretBytes, backend::curve25519::clamp_secret_scalar, traits::ct};
 
 const POINT_LENGTH: usize = 32;
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
 const RADIX_BITS: u32 = 51;
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
 const MASK51: u64 = (1u64 << RADIX_BITS) - 1;
 const BASEPOINT_BYTES: [u8; POINT_LENGTH] = {
   let mut bytes = [0u8; POINT_LENGTH];
   bytes[0] = 9;
   bytes
 };
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
 const A24: FieldElement = FieldElement::from_small(121665);
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")))]
+mod aarch64_asm;
+#[cfg(all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only")))]
+mod x86_64_asm;
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")))]
+use aarch64_asm as platform_asm;
+#[cfg(all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only")))]
+use x86_64_asm as platform_asm;
 
 define_unit_error! {
   /// X25519 key agreement failed because the derived secret was all-zero.
@@ -115,7 +157,21 @@ impl X25519SecretKey {
   /// Derive the matching public key.
   #[must_use]
   pub fn public_key(&self) -> X25519PublicKey {
-    public_key_from_scalar(&self.clamped_scalar_bytes())
+    #[cfg(any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    ))]
+    {
+      X25519PublicKey::from_bytes(platform_asm::x25519_base(&self.0))
+    }
+
+    #[cfg(not(any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    )))]
+    {
+      public_key_from_scalar(&self.clamped_scalar_bytes())
+    }
   }
 
   /// Compute an X25519 shared secret with `public`.
@@ -130,6 +186,7 @@ impl X25519SecretKey {
 
   #[inline]
   #[must_use]
+  #[allow(dead_code)]
   fn clamped_scalar_bytes(&self) -> [u8; Self::LENGTH] {
     let mut scalar = self.0;
     clamp_secret_scalar(&mut scalar);
@@ -158,6 +215,14 @@ impl_ct_eq!(X25519SecretKey);
 #[derive(Clone, Copy)]
 pub struct X25519PublicKey {
   bytes: [u8; Self::LENGTH],
+  #[allow(dead_code)]
+  #[cfg(any(
+    not(any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    )),
+    test
+  ))]
   u: FieldElement,
 }
 
@@ -172,8 +237,15 @@ impl X25519PublicKey {
   #[must_use]
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
     Self {
-      u: decode_u_coordinate(&bytes),
       bytes,
+      #[cfg(any(
+        not(any(
+          all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+          all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+        )),
+        test
+      ))]
+      u: decode_u_coordinate(&bytes),
     }
   }
 
@@ -186,8 +258,26 @@ impl X25519PublicKey {
 
   #[inline]
   #[must_use]
+  #[allow(dead_code)]
+  #[cfg(any(
+    not(any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    )),
+    test
+  ))]
   fn from_u(u: FieldElement) -> Self {
-    Self { bytes: u.to_bytes(), u }
+    Self {
+      bytes: u.to_bytes(),
+      #[cfg(any(
+        not(any(
+          all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+          all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+        )),
+        test
+      ))]
+      u,
+    }
   }
 
   /// Return the public key bytes.
@@ -290,7 +380,18 @@ impl X25519SharedSecret {
   /// Returns [`X25519Error`] when the derived shared secret is all-zero,
   /// which indicates a low-order peer input.
   pub fn diffie_hellman(secret: &X25519SecretKey, public: &X25519PublicKey) -> Result<Self, X25519Error> {
+    #[cfg(any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    ))]
+    let shared = platform_asm::x25519(&secret.0, &public.bytes);
+
+    #[cfg(not(any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    )))]
     let shared = montgomery_ladder(&secret.clamped_scalar_bytes(), &public.u).to_bytes();
+
     if is_all_zero(&shared) {
       Err(X25519Error::new())
     } else {
@@ -318,6 +419,13 @@ impl_ct_eq!(X25519SharedSecret);
 
 #[allow(clippy::indexing_slicing)]
 #[must_use]
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
 fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> FieldElement {
   let x1 = *u;
   let mut x2 = FieldElement::ONE;
@@ -366,6 +474,13 @@ fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> Fie
 
 #[inline]
 #[must_use]
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
 fn public_key_from_scalar(scalar_bytes: &[u8; POINT_LENGTH]) -> X25519PublicKey {
   let point = curve25519_edwards::basepoint_mul_dispatch(scalar_bytes);
   X25519PublicKey::from_u(point.to_montgomery_u())
@@ -381,6 +496,13 @@ fn is_all_zero(bytes: &[u8; POINT_LENGTH]) -> bool {
 }
 
 #[must_use]
+#[cfg(any(
+  not(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  test
+))]
 fn decode_u_coordinate(bytes: &[u8; POINT_LENGTH]) -> FieldElement {
   let mut canonical = *bytes;
   canonical[POINT_LENGTH - 1] &= 0x7f;
@@ -405,4 +527,62 @@ fn decode_u_coordinate(bytes: &[u8; POINT_LENGTH]) -> FieldElement {
   }
 
   FieldElement::from_limbs(limbs).normalize()
+}
+
+#[cfg(test)]
+mod tests {
+  #[cfg(any(
+    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  ))]
+  mod asm {
+    use super::super::{
+      POINT_LENGTH, X25519PublicKey, X25519SecretKey, decode_u_coordinate, montgomery_ladder, platform_asm,
+      public_key_from_scalar,
+    };
+
+    fn scalar(seed: u8) -> [u8; POINT_LENGTH] {
+      let mut out = [0u8; POINT_LENGTH];
+      for (index, byte) in out.iter_mut().enumerate() {
+        *byte = seed.wrapping_mul(37).wrapping_add((index as u8).wrapping_mul(19));
+      }
+      out
+    }
+
+    fn peer(seed: u8) -> [u8; POINT_LENGTH] {
+      let mut out = [0u8; POINT_LENGTH];
+      for (index, byte) in out.iter_mut().enumerate() {
+        *byte = seed
+          .wrapping_mul(53)
+          .wrapping_add((index as u8).wrapping_mul(11))
+          .wrapping_add(7);
+      }
+      out[POINT_LENGTH - 1] |= 0x80;
+      out
+    }
+
+    #[test]
+    fn fixed_base_asm_matches_portable_path() {
+      for seed in 0u8..32 {
+        let secret = X25519SecretKey::from_bytes(scalar(seed));
+        let expected = public_key_from_scalar(&secret.clamped_scalar_bytes()).to_bytes();
+        let actual = platform_asm::x25519_base(secret.as_bytes());
+
+        assert_eq!(actual, expected, "fixed-base mismatch for seed {seed}");
+      }
+    }
+
+    #[test]
+    fn ladder_asm_matches_portable_path() {
+      for seed in 0u8..32 {
+        let secret = X25519SecretKey::from_bytes(scalar(seed));
+        let public = X25519PublicKey::from_bytes(peer(seed));
+        let expected =
+          montgomery_ladder(&secret.clamped_scalar_bytes(), &decode_u_coordinate(public.as_bytes())).to_bytes();
+        let actual = platform_asm::x25519(secret.as_bytes(), public.as_bytes());
+
+        assert_eq!(actual, expected, "ladder mismatch for seed {seed}");
+      }
+    }
+  }
 }

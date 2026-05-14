@@ -77,7 +77,6 @@ blake3 = []
 ascon-hash = []
 xxh3 = []
 rapidhash = []
-aeshash = []
 
 hmac = ["sha2"]
 hkdf = ["hmac"]
@@ -99,7 +98,7 @@ ascon-aead = []
 
 checksums = ["crc16", "crc24", "crc32", "crc64"]
 crypto-hashes = ["sha2", "sha3", "blake2b", "blake2s", "blake3", "ascon-hash"]
-fast-hashes = ["xxh3", "rapidhash", "aeshash"]
+fast-hashes = ["xxh3", "rapidhash"]
 hashes = ["crypto-hashes", "fast-hashes"]
 macs = ["hmac", "kmac"]
 kdfs = ["hkdf", "pbkdf2"]
@@ -170,14 +169,6 @@ serde_json = "1"
 aws-lc-rs = "1.16.3"
 ring = "0.17.14"
 dryoc = "0.7.2"
-ahash = "0.8.12"
-foldhash = "0.2.0"
-
-[target.'cfg(all(any(target_arch = "x86", target_arch = "x86_64"), target_feature = "aes", target_feature = "sse2"))'.dev-dependencies]
-gxhash = "3.5.0"
-
-[target.'cfg(all(any(target_arch = "arm", target_arch = "aarch64"), target_feature = "aes", target_feature = "neon"))'.dev-dependencies]
-gxhash = "3.5.0"
 
 [lib]
 bench = false
@@ -232,11 +223,6 @@ required-features = ["sha3"]
 name = "ascon"
 harness = false
 required-features = ["ascon-hash"]
-
-[[bench]]
-name = "fast_hash"
-harness = false
-required-features = ["aeshash"]
 
 [[bench]]
 name = "auth"

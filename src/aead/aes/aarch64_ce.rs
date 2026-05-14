@@ -1,6 +1,6 @@
 use core::arch::aarch64::*;
 
-#[cfg(all(feature = "aes-gcm", target_os = "macos"))]
+#[cfg(all(feature = "aes-gcm", any(target_os = "macos", target_os = "linux")))]
 #[path = "aarch64/asm.rs"]
 mod asm;
 
@@ -1078,18 +1078,18 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
 
   // SAFETY: AES-256-GCM full-chunk loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  // 2. The external assembly path receives the checked slice pointer/length and reports its exact
   //    processed byte count.
   // 3. The Rust fallback only creates 128-byte slices at offsets proven in bounds by the loop guards.
   // 4. Previous ciphertext is carried as initialized NEON lanes between Rust fallback iterations.
   // 5. The final pending lane aggregate folds the last encrypted 128-byte fallback chunk exactly
   //    once.
   unsafe {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
         let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-        asm::rscrypto_aes256_gcm_seal_16x_eor3_aarch64_apple_darwin(
+        asm::rscrypto_aes256_gcm_seal_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
           data.as_mut_ptr(),
@@ -1105,7 +1105,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_core(
       }
 
       let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-      asm::rscrypto_aes256_gcm_seal_8x_aarch64_apple_darwin(
+      asm::rscrypto_aes256_gcm_seal_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
         data.as_mut_ptr(),
@@ -1162,16 +1162,16 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
 ) -> (u128, u32, usize) {
   // SAFETY: AES-256-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  // 2. The external assembly path receives the checked slice pointer/length and reports its exact
   //    processed byte count.
   // 3. The Rust fallback creates each 128-byte mutable chunk only after proving it is in bounds.
   // 4. Both paths fold ciphertext before plaintext stores.
   unsafe {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
         let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-        asm::rscrypto_aes256_gcm_open_16x_eor3_aarch64_apple_darwin(
+        asm::rscrypto_aes256_gcm_open_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
           data.as_mut_ptr(),
@@ -1187,7 +1187,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_core(
       }
 
       let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-      asm::rscrypto_aes256_gcm_open_8x_aarch64_apple_darwin(
+      asm::rscrypto_aes256_gcm_open_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
         data.as_mut_ptr(),
@@ -2043,18 +2043,18 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
 
   // SAFETY: AES-128-GCM full-chunk loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  // 2. The external assembly path receives the checked slice pointer/length and reports its exact
   //    processed byte count.
   // 3. The Rust fallback only creates 128-byte slices at offsets proven in bounds by the loop guards.
   // 4. Previous ciphertext is carried as initialized NEON lanes between Rust fallback iterations.
   // 5. The final pending lane aggregate folds the last encrypted 128-byte fallback chunk exactly
   //    once.
   unsafe {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
         let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-        asm::rscrypto_aes128_gcm_seal_16x_eor3_aarch64_apple_darwin(
+        asm::rscrypto_aes128_gcm_seal_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
           data.as_mut_ptr(),
@@ -2070,7 +2070,7 @@ pub(super) unsafe fn encrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
       }
 
       let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-      asm::rscrypto_aes128_gcm_seal_8x_aarch64_apple_darwin(
+      asm::rscrypto_aes128_gcm_seal_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
         data.as_mut_ptr(),
@@ -2127,16 +2127,16 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
 ) -> (u128, u32, usize) {
   // SAFETY: AES-128-GCM full-chunk open loop because:
   // 1. The caller guarantees AES-CE + PMULL availability.
-  // 2. The macOS assembly path receives the checked slice pointer/length and reports its exact
+  // 2. The external assembly path receives the checked slice pointer/length and reports its exact
   //    processed byte count.
   // 3. The Rust fallback creates each 128-byte mutable chunk only after proving it is in bounds.
   // 4. Both paths fold ciphertext before plaintext stores.
   unsafe {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
       if crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
         let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-        asm::rscrypto_aes128_gcm_open_16x_eor3_aarch64_apple_darwin(
+        asm::rscrypto_aes128_gcm_open_16x_eor3_aarch64(
           keys.rk.as_ptr().cast::<u8>(),
           iv_prefix.as_ptr(),
           data.as_mut_ptr(),
@@ -2152,7 +2152,7 @@ pub(super) unsafe fn decrypt_ctr32_be_xor_ghash_128b_chunks_128_core(
       }
 
       let mut state = asm::AesGcmAarch64State::new(acc, ctr);
-      asm::rscrypto_aes128_gcm_open_8x_aarch64_apple_darwin(
+      asm::rscrypto_aes128_gcm_open_8x_aarch64(
         keys.rk.as_ptr().cast::<u8>(),
         iv_prefix.as_ptr(),
         data.as_mut_ptr(),

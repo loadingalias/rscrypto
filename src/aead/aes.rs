@@ -78,11 +78,11 @@ pub(crate) struct Aarch64GcmTables<'a> {
   pub(crate) h_polyval: u128,
   pub(crate) h_powers_rev: &'a [u128; 4],
   pub(crate) h_powers_rev_8: &'a [u128; 8],
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   pub(crate) h_powers_rev_16: &'a [u128; 16],
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   pub(crate) h_powers_rev_16_mid: &'a [u128; 16],
-  #[cfg(target_os = "macos")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   pub(crate) h_powers_rev_16_pair: &'a [u128; 24],
 }
 
@@ -5230,11 +5230,11 @@ mod tests {
     h_polyval: u128,
     h_powers_rev: [u128; 4],
     h_powers_rev_8: [u128; 8],
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     h_powers_rev_16: [u128; 16],
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     h_powers_rev_16_mid: [u128; 16],
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     h_powers_rev_16_pair: [u128; 24],
   }
 
@@ -5245,11 +5245,11 @@ mod tests {
         h_polyval: self.h_polyval,
         h_powers_rev: &self.h_powers_rev,
         h_powers_rev_8: &self.h_powers_rev_8,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16: &self.h_powers_rev_16,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_mid: &self.h_powers_rev_16_mid,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         h_powers_rev_16_pair: &self.h_powers_rev_16_pair,
       }
     }
@@ -5263,7 +5263,7 @@ mod tests {
     let h_powers_rev_8 = [
       powers[7], powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
     ];
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let h_powers_rev_16 = {
       let powers = crate::aead::polyval::precompute_powers_16(h_polyval);
       [
@@ -5271,19 +5271,19 @@ mod tests {
         powers[6], powers[5], powers[4], powers[3], powers[2], powers[1], powers[0],
       ]
     };
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let h_powers_rev_16_mid = crate::aead::polyval::precompute_powers_16_mid(&h_powers_rev_16);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let h_powers_rev_16_pair = crate::aead::polyval::precompute_powers_16_pair(&h_powers_rev_16);
     Aarch64GcmTestPowers {
       h_polyval,
       h_powers_rev,
       h_powers_rev_8,
-      #[cfg(target_os = "macos")]
+      #[cfg(any(target_os = "macos", target_os = "linux"))]
       h_powers_rev_16,
-      #[cfg(target_os = "macos")]
+      #[cfg(any(target_os = "macos", target_os = "linux"))]
       h_powers_rev_16_mid,
-      #[cfg(target_os = "macos")]
+      #[cfg(any(target_os = "macos", target_os = "linux"))]
       h_powers_rev_16_pair,
     }
   }

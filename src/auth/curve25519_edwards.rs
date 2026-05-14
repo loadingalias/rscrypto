@@ -31,6 +31,7 @@ pub(crate) mod scalar;
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest available path.
 #[must_use]
+#[allow(dead_code)]
 pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {

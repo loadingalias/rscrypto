@@ -1,4 +1,4 @@
-//! macOS AArch64 external AES-GCM kernels.
+//! AArch64 external AES-GCM kernels.
 
 #![allow(unsafe_code)]
 
@@ -34,7 +34,8 @@ impl AesGcmAarch64State {
 }
 
 unsafe extern "C" {
-  pub(super) fn rscrypto_aes128_gcm_seal_8x_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes128_gcm_seal_8x_aarch64")]
+  pub(super) fn rscrypto_aes128_gcm_seal_8x_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -43,7 +44,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_open_8x_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes128_gcm_open_8x_aarch64")]
+  pub(super) fn rscrypto_aes128_gcm_open_8x_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -52,7 +54,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_seal_16x_eor3_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes128_gcm_seal_16x_eor3_aarch64")]
+  pub(super) fn rscrypto_aes128_gcm_seal_16x_eor3_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -63,7 +66,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes128_gcm_open_16x_eor3_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes128_gcm_open_16x_eor3_aarch64")]
+  pub(super) fn rscrypto_aes128_gcm_open_16x_eor3_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -74,7 +78,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_seal_8x_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes256_gcm_seal_8x_aarch64")]
+  pub(super) fn rscrypto_aes256_gcm_seal_8x_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -83,7 +88,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_open_8x_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes256_gcm_open_8x_aarch64")]
+  pub(super) fn rscrypto_aes256_gcm_open_8x_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -92,7 +98,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_seal_16x_eor3_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes256_gcm_seal_16x_eor3_aarch64")]
+  pub(super) fn rscrypto_aes256_gcm_seal_16x_eor3_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,
@@ -103,7 +110,8 @@ unsafe extern "C" {
     state: *mut AesGcmAarch64State,
   );
 
-  pub(super) fn rscrypto_aes256_gcm_open_16x_eor3_aarch64_apple_darwin(
+  #[cfg_attr(target_os = "linux", link_name = "_rscrypto_aes256_gcm_open_16x_eor3_aarch64")]
+  pub(super) fn rscrypto_aes256_gcm_open_16x_eor3_aarch64(
     round_keys: *const u8,
     iv_prefix: *const u8,
     data: *mut u8,

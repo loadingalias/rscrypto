@@ -63,6 +63,7 @@ impl FieldElement {
   /// Construct a small field element without reduction.
   #[inline]
   #[must_use]
+  #[allow(dead_code)]
   pub(crate) const fn from_small(value: u64) -> Self {
     Self([value, 0, 0, 0, 0])
   }
@@ -291,6 +292,7 @@ impl FieldElement {
   /// Constant-time conditional swap.
   #[inline]
   #[cfg(feature = "x25519")]
+  #[allow(dead_code)]
   pub(crate) fn conditional_swap(lhs: &mut Self, rhs: &mut Self, swap: u8) {
     let mask = 0u64.wrapping_sub(u64::from(swap & 1));
     for (lhs_limb, rhs_limb) in lhs.0.iter_mut().zip(rhs.0.iter_mut()) {
