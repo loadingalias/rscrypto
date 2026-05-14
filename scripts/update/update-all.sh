@@ -34,14 +34,16 @@ update_workspace() {
   echo "Updating: $workspace_name"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+  pushd "$workspace_path" >/dev/null
   if [[ "$CHECK_ONLY" == true ]]; then
-    echo "  [CHECK MODE] Would run cargo update + cargo upgrade in $workspace_path"
+    cargo upgrade --recursive --dry-run
+    cargo update --dry-run
+    popd >/dev/null
     return 0
   fi
 
-  pushd "$workspace_path" >/dev/null
-  cargo update --workspace
   cargo upgrade --recursive
+  cargo update
   popd >/dev/null
 }
 
@@ -93,10 +95,11 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Workspace updated: yes"
 echo "Fuzz workspaces seen: $FUZZ_COUNT"
 if [[ "$CHECK_ONLY" == true ]]; then
+  echo "Workspace updated: no"
   echo "Mode: check-only"
 else
+  echo "Workspace updated: yes"
   echo "Mode: applied"
 fi

@@ -41,6 +41,20 @@ pub fn kernel_for<T: KernelIntrospect>(len: usize) -> &'static str {
   T::kernel_name_for_len(len)
 }
 
+/// Compress SHA-256 blocks through the currently selected kernel.
+///
+/// This is intentionally `diag`-only and hidden from docs. It exists so
+/// benchmark probes can isolate raw selected-kernel block compression from the
+/// public digest/update/finalize wrappers.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+pub fn sha256_compress_blocks_for_bench(state: &mut [u32; 8], blocks: &[u8]) {
+  let dispatch = crate::hashes::crypto::sha256::dispatch::compress_dispatch();
+  let compress = dispatch.select(blocks.len());
+  compress(state, blocks);
+}
+
 macro_rules! impl_hash_kernel_introspect {
   ($ty:path, $kernel_for_len:path) => {
     impl KernelIntrospect for $ty {
