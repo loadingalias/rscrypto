@@ -353,6 +353,15 @@ pub struct Sha256 {
   bytes_hashed: u64,
   compress_blocks: CompressBlocksFn,
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  #[cfg(target_arch = "x86_64")]
+  update_mode: Sha256UpdateMode,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sha256UpdateMode {
+  RuntimeDispatch,
+  X86ShaDirect,
 }
 
 #[derive(Clone, Copy)]
@@ -362,6 +371,8 @@ pub(crate) struct Sha256Prefix {
   bytes_hashed: u64,
   compress_blocks: CompressBlocksFn,
   dispatch: Option<SizeClassDispatch<CompressBlocksFn>>,
+  #[cfg(target_arch = "x86_64")]
+  update_mode: Sha256UpdateMode,
 }
 
 #[cfg(feature = "hmac")]
@@ -394,6 +405,8 @@ impl Default for Sha256 {
       bytes_hashed: 0,
       compress_blocks: kernels::compile_time_best(),
       dispatch: None,
+      #[cfg(target_arch = "x86_64")]
+      update_mode: Sha256UpdateMode::RuntimeDispatch,
     }
   }
 }
@@ -476,12 +489,49 @@ impl Sha256 {
       self.update_with(data, kernels::compile_time_best());
       return;
     }
+    #[cfg(target_arch = "x86_64")]
+    {
+      if self.update_mode == Sha256UpdateMode::X86ShaDirect || self.try_enable_x86_sha_direct_update() {
+        self.update_with_x86_sha(data);
+        return;
+      }
+    }
     let compress = self.select_compress(data.len());
     self.update_with(data, compress);
   }
 
   #[inline]
-  fn update_with(&mut self, mut data: &[u8], compress_blocks: CompressBlocksFn) {
+  fn update_with(&mut self, data: &[u8], compress_blocks: CompressBlocksFn) {
+    self.update_with_fn(data, compress_blocks);
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  #[inline]
+  fn try_enable_x86_sha_direct_update(&mut self) -> bool {
+    if self.dispatch.is_some() || !sha256_streaming_prefers_direct_x86_sha(crate::platform::caps()) {
+      return false;
+    }
+
+    self.compress_blocks = kernels::compress_blocks_fn(kernels::Sha256KernelId::X86Sha);
+    self.update_mode = Sha256UpdateMode::X86ShaDirect;
+    true
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  #[inline]
+  fn update_with_x86_sha(&mut self, data: &[u8]) {
+    self.update_with_fn(data, |state, blocks| {
+      // SAFETY: Direct SHA-NI compression for the SPR streaming fast path because:
+      // 1. `Sha256UpdateMode::X86ShaDirect` is only enabled after runtime caps confirm Intel Sapphire
+      //    Rapids plus `sha` and `sse4.1`.
+      // 2. `update_with_fn` passes only complete SHA-256 blocks to the compression callback.
+      // 3. `state` is the initialized, hasher-owned SHA-256 chaining state.
+      unsafe { x86_64::compress_blocks_sha_ni(state, blocks) }
+    });
+  }
+
+  #[inline]
+  fn update_with_fn(&mut self, mut data: &[u8], mut compress_blocks: impl FnMut(&mut [u32; 8], &[u8])) {
     debug_assert!(!data.is_empty());
 
     debug_assert!(
@@ -573,6 +623,8 @@ impl Sha256 {
       bytes_hashed: self.bytes_hashed,
       compress_blocks: self.compress_blocks,
       dispatch: self.dispatch,
+      #[cfg(target_arch = "x86_64")]
+      update_mode: self.update_mode,
     }
   }
 
@@ -587,6 +639,8 @@ impl Sha256 {
       bytes_hashed: prefix.bytes_hashed,
       compress_blocks: prefix.compress_blocks,
       dispatch: prefix.dispatch,
+      #[cfg(target_arch = "x86_64")]
+      update_mode: prefix.update_mode,
     }
   }
 
@@ -598,7 +652,28 @@ impl Sha256 {
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;
     self.dispatch = prefix.dispatch;
+    self.reset_update_mode_to_aligned_prefix(prefix);
   }
+
+  #[inline]
+  #[cfg(all(feature = "hmac", target_arch = "x86_64"))]
+  fn reset_update_mode_to_aligned_prefix(&mut self, prefix: Sha256Prefix) {
+    self.update_mode = prefix.update_mode;
+  }
+
+  #[inline]
+  #[cfg(all(feature = "hmac", not(target_arch = "x86_64")))]
+  fn reset_update_mode_to_aligned_prefix(&mut self, _prefix: Sha256Prefix) {}
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn sha256_streaming_prefers_direct_x86_sha(caps: crate::platform::Caps) -> bool {
+  caps.has(
+    crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS
+      | crate::platform::caps::x86::SHA
+      | crate::platform::caps::x86::SSE41,
+  )
 }
 
 impl Drop for Sha256 {
@@ -651,6 +726,8 @@ impl_std_io_write_for_digest!(Sha256);
 #[cfg(test)]
 mod tests {
   use super::Sha256;
+  #[cfg(target_arch = "x86_64")]
+  use super::sha256_streaming_prefers_direct_x86_sha;
 
   fn hex32(bytes: &[u8; 32]) -> alloc::string::String {
     use alloc::string::String;
@@ -702,5 +779,22 @@ mod tests {
     h.update(b"a");
     h.update(b"bc");
     assert_eq!(h.finalize(), Sha256::digest(b"abc"));
+  }
+
+  #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn sapphire_rapids_streaming_policy_uses_direct_sha_ni() {
+    let spr_sha = crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS
+      | crate::platform::caps::x86::SHA
+      | crate::platform::caps::x86::SSE41;
+    assert!(sha256_streaming_prefers_direct_x86_sha(spr_sha));
+
+    assert!(!sha256_streaming_prefers_direct_x86_sha(
+      crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS | crate::platform::caps::x86::SHA
+    ));
+    assert!(!sha256_streaming_prefers_direct_x86_sha(
+      crate::platform::caps::x86::SHA | crate::platform::caps::x86::SSE41
+    ));
+    assert!(!sha256_streaming_prefers_direct_x86_sha(crate::platform::Caps::NONE));
   }
 }

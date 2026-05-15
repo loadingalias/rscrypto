@@ -80,7 +80,7 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
   #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
-    if caps.has(x86::SHA) {
+    if caps.has(x86::SHA | x86::SSE41) {
       return &X86_SHA_TABLE;
     }
   }
