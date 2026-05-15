@@ -157,4 +157,14 @@ mod tests {
     verify_sha256_kernels(b"abc").expect("kernels should agree");
     verify_sha256_kernels(&pattern(4096)).expect("kernels should agree");
   }
+
+  #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn x86_sha_kernel_requires_sha_and_sse41() {
+    let required = required_caps(Sha256KernelId::X86Sha);
+
+    assert!(required.has(crate::platform::caps::x86::SHA));
+    assert!(required.has(crate::platform::caps::x86::SSE41));
+    assert!(!crate::platform::caps::x86::SHA.has(required));
+  }
 }

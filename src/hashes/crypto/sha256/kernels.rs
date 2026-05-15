@@ -72,7 +72,10 @@ pub const ALL: &[Sha256KernelId] = &[
 
 #[cfg(target_arch = "x86_64")]
 fn compress_blocks_x86_sha(state: &mut [u32; 8], blocks: &[u8]) {
-  // SAFETY: Only called when dispatch has verified `x86::SHA` is available.
+  // SAFETY: SHA-NI compression through the dispatch wrapper because:
+  // 1. Runtime dispatch only selects this wrapper when `sha` and `sse4.1` are available.
+  // 2. Compile-time dispatch only selects this wrapper when `target_feature=sha,sse4.1`.
+  // 3. Callers pass complete SHA-256 block slices; the backend asserts that invariant.
   unsafe { super::x86_64::compress_blocks_sha_ni(state, blocks) }
 }
 
@@ -123,7 +126,7 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
   match id {
     Sha256KernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]
-    Sha256KernelId::X86Sha => x86::SHA,
+    Sha256KernelId::X86Sha => x86::SHA.union(x86::SSE41),
     #[cfg(target_arch = "aarch64")]
     Sha256KernelId::Aarch64Sha2 => aarch64::SHA2,
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
@@ -149,7 +152,11 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
 /// Whether the best SHA-256 kernel is known at compile time.
 pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
   && cfg!(any(
-    all(target_arch = "x86_64", target_feature = "sha"),
+    all(
+      target_arch = "x86_64",
+      target_feature = "sha",
+      target_feature = "sse4.1"
+    ),
     all(target_arch = "aarch64", target_feature = "sha2"),
     all(
       any(target_arch = "riscv64", target_arch = "riscv32"),
@@ -169,7 +176,7 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
   {
     return Sha256::compress_blocks_portable;
   }
-  #[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sha"))]
+  #[cfg(all(not(miri), target_arch = "x86_64", target_feature = "sha", target_feature = "sse4.1"))]
   {
     return compress_blocks_x86_sha;
   }
@@ -197,7 +204,11 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
 #[cfg(any(test, feature = "diag"))]
 pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
   "portable"
-} else if cfg!(all(target_arch = "x86_64", target_feature = "sha")) {
+} else if cfg!(all(
+  target_arch = "x86_64",
+  target_feature = "sha",
+  target_feature = "sse4.1"
+)) {
   "x86-sha"
 } else if cfg!(all(target_arch = "aarch64", target_feature = "sha2")) {
   "aarch64-sha2"
