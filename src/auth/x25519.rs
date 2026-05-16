@@ -36,6 +36,7 @@ use core::{
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 use crate::auth::curve25519_edwards;
@@ -44,6 +45,7 @@ use crate::auth::curve25519_edwards;
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 use crate::backend::curve25519::FieldElement;
@@ -55,6 +57,7 @@ const POINT_LENGTH: usize = 32;
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 const RADIX_BITS: u32 = 51;
@@ -63,6 +66,7 @@ const RADIX_BITS: u32 = 51;
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 const MASK51: u64 = (1u64 << RADIX_BITS) - 1;
@@ -76,18 +80,39 @@ const BASEPOINT_BYTES: [u8; POINT_LENGTH] = {
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 const A24: FieldElement = FieldElement::from_small(121665);
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 mod aarch64_asm;
-#[cfg(all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 mod x86_64_asm;
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 use aarch64_asm as platform_asm;
-#[cfg(all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
 use x86_64_asm as platform_asm;
 
 define_unit_error! {
@@ -158,16 +183,36 @@ impl X25519SecretKey {
   #[must_use]
   pub fn public_key(&self) -> X25519PublicKey {
     #[cfg(any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "aarch64",
+        target_os = "macos",
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     ))]
     {
       X25519PublicKey::from_bytes(platform_asm::x25519_base(&self.0))
     }
 
     #[cfg(not(any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "aarch64",
+        target_os = "macos",
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     )))]
     {
       public_key_from_scalar(&self.clamped_scalar_bytes())
@@ -221,6 +266,7 @@ pub struct X25519PublicKey {
       all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
       all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
     )),
+    miri,
     test
   ))]
   u: FieldElement,
@@ -243,6 +289,7 @@ impl X25519PublicKey {
           all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
           all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
         )),
+        miri,
         test
       ))]
       u: decode_u_coordinate(&bytes),
@@ -264,6 +311,7 @@ impl X25519PublicKey {
       all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
       all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
     )),
+    miri,
     test
   ))]
   fn from_u(u: FieldElement) -> Self {
@@ -274,6 +322,7 @@ impl X25519PublicKey {
           all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
           all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
         )),
+        miri,
         test
       ))]
       u,
@@ -381,14 +430,34 @@ impl X25519SharedSecret {
   /// which indicates a low-order peer input.
   pub fn diffie_hellman(secret: &X25519SecretKey, public: &X25519PublicKey) -> Result<Self, X25519Error> {
     #[cfg(any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "aarch64",
+        target_os = "macos",
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     ))]
     let shared = platform_asm::x25519(&secret.0, &public.bytes);
 
     #[cfg(not(any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
-      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      all(
+        target_arch = "aarch64",
+        target_os = "macos",
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
     )))]
     let shared = montgomery_ladder(&secret.clamped_scalar_bytes(), &public.u).to_bytes();
 
@@ -424,6 +493,7 @@ impl_ct_eq!(X25519SharedSecret);
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> FieldElement {
@@ -479,6 +549,7 @@ fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> Fie
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 fn public_key_from_scalar(scalar_bytes: &[u8; POINT_LENGTH]) -> X25519PublicKey {
@@ -501,6 +572,7 @@ fn is_all_zero(bytes: &[u8; POINT_LENGTH]) -> bool {
     all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
+  miri,
   test
 ))]
 fn decode_u_coordinate(bytes: &[u8; POINT_LENGTH]) -> FieldElement {
@@ -531,9 +603,28 @@ fn decode_u_coordinate(bytes: &[u8; POINT_LENGTH]) -> FieldElement {
 
 #[cfg(test)]
 mod tests {
-  #[cfg(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
-    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  #[cfg(miri)]
+  #[test]
+  fn miri_uses_portable_x25519_path() {
+    use super::{X25519PublicKey, X25519SecretKey, decode_u_coordinate, montgomery_ladder, public_key_from_scalar};
+
+    let secret = X25519SecretKey::from_bytes([7u8; X25519SecretKey::LENGTH]);
+    let expected_public = public_key_from_scalar(&secret.clamped_scalar_bytes()).to_bytes();
+    assert_eq!(secret.public_key().to_bytes(), expected_public);
+
+    let public = X25519PublicKey::basepoint();
+    let expected_shared =
+      montgomery_ladder(&secret.clamped_scalar_bytes(), &decode_u_coordinate(public.as_bytes())).to_bytes();
+    let shared = secret.diffie_hellman(&public).unwrap();
+    assert_eq!(shared.as_bytes(), &expected_shared);
+  }
+
+  #[cfg(all(
+    not(miri),
+    any(
+      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    )
   ))]
   mod asm {
     use super::super::{
