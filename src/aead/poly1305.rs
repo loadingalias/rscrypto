@@ -989,6 +989,23 @@ mod tests {
     }
   }
 
+  #[test]
+  #[cfg(target_arch = "aarch64")]
+  fn neon_par4_handles_high_carry_reduction() {
+    if !crate::platform::caps().has(aarch64::NEON) {
+      return;
+    }
+
+    let key = [0xffu8; 32];
+    let aad = [0xffu8; 257];
+    let ct = [0xffu8; 4096];
+    let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+
+    let portable = authenticate_aead_portable(&aad, &ct, &key);
+    let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
+    assert_eq!(parallel, portable);
+  }
+
   /// Verify the RFC 8439 AEAD test vector goes through the parallel path.
   #[test]
   #[cfg(target_arch = "x86_64")]

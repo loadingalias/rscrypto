@@ -285,29 +285,29 @@ fn mul_unreduced(a: [u32; 5], b: [u32; 5]) -> [u64; 5] {
 
 #[inline(always)]
 fn reduce_unreduced(mut d: [u64; 5]) -> [u32; 5] {
-  let mut c = (d[0] >> 26) as u32;
-  let mut h0 = (d[0] as u32) & LIMB_MASK;
-  d[1] = d[1].wrapping_add(u64::from(c));
+  let mut c = d[0] >> 26;
+  let mut h0 = d[0] & u64::from(LIMB_MASK);
+  d[1] = d[1].wrapping_add(c);
 
-  c = (d[1] >> 26) as u32;
-  let h1_base = (d[1] as u32) & LIMB_MASK;
-  d[2] = d[2].wrapping_add(u64::from(c));
+  c = d[1] >> 26;
+  let h1_base = d[1] & u64::from(LIMB_MASK);
+  d[2] = d[2].wrapping_add(c);
 
-  c = (d[2] >> 26) as u32;
+  c = d[2] >> 26;
   let h2 = (d[2] as u32) & LIMB_MASK;
-  d[3] = d[3].wrapping_add(u64::from(c));
+  d[3] = d[3].wrapping_add(c);
 
-  c = (d[3] >> 26) as u32;
+  c = d[3] >> 26;
   let h3 = (d[3] as u32) & LIMB_MASK;
-  d[4] = d[4].wrapping_add(u64::from(c));
+  d[4] = d[4].wrapping_add(c);
 
-  c = (d[4] >> 26) as u32;
+  c = d[4] >> 26;
   let h4 = (d[4] as u32) & LIMB_MASK;
   h0 = h0.wrapping_add(c * 5);
 
   c = h0 >> 26;
-  h0 &= LIMB_MASK;
+  h0 &= u64::from(LIMB_MASK);
   let h1 = h1_base.wrapping_add(c);
 
-  [h0, h1, h2, h3, h4]
+  [h0 as u32, h1 as u32, h2, h3, h4]
 }

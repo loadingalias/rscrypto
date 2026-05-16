@@ -6,31 +6,31 @@
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-**A Rust crypto crate for systems that need performance, portability, and small dependency graphs.**
+**Pure Rust cryptography for systems code: small builds, hardware acceleration, `no_std`, and no mandatory dependency stack.**
 
-`rscrypto` gives you hashes, MACs, KDFs, password hashing, signatures, key exchange, AEAD encryption, checksums, and fast non-cryptographic hashes behind one consistent API.
+`rscrypto` is one crate for the primitive families systems projects actually stitch together: hashes, MACs, KDFs, password hashing, signatures, key exchange, AEAD encryption, checksums, and fast non-cryptographic hashes.
 
-Use one leaf feature for a tiny build. Use `full` for the whole toolbox. No C. No FFI. No OpenSSL. No forced third-party dependency stack.
+Use a leaf feature for one primitive. Use `full` for the whole toolbox. No C. No FFI. No OpenSSL. No default third-party dependencies.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.75x geomean speedup across Linux with 3,717 wins out of 5,796 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.55x fastest-external geomean across Linux CI with 3,369 wins out of 5,895 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Latest public benchmark pass. Values above 1.00x mean <code>rscrypto</code> is faster than the compared Rust baseline.</i>
+  <i>Latest 2026-05-15 Linux CI benchmark pass. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
 
-- **One crate instead of a stitched-together crypto stack.** Covers the common primitive families without making you compose half a dozen APIs.
-- **Small when you want small.** Leaf features like `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, and `argon2` keep builds focused.
-- **Portable Rust first.** The portable implementation is the source of truth; optimized kernels are accelerators, not separate logic forks.
-- **Hardware acceleration where it matters.** Runtime and compile-time dispatch use ISA-specific kernels on supported x86/x86_64, Arm/AArch64, IBM Z, POWER, RISC-V, Apple Silicon, and WASM targets.
-- **`no_std` ready.** Built for servers, CLIs, embedded targets, bare-metal experiments, and WASM.
-- **Zero default third-party dependencies.** `getrandom`, `serde`, and `rayon` are opt-in.
-- **Security hygiene by default.** Constant-time verification, opaque errors, zeroized secrets, strict arithmetic, official vectors, fuzzing, Miri, and CI across multiple CPU targets.
+- **One coherent primitive stack.** Avoid composing half a dozen crates with different APIs, feature models, and security conventions.
+- **Small builds stay small.** Enable `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, `argon2`, or any other leaf without pulling in the world.
+- **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference implementation.
+- **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, POWER, RISC-V, and WASM all have portable fallbacks, with optimized kernels where they pay.
+- **`no_std` is a first-class target.** Server, CLI, embedded, bare-metal, and WASM builds use the same crate surface.
+- **Audit knobs are explicit.** `portable-only` forces runtime dispatch to the audited portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
+- **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
 `rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module.
 
@@ -40,22 +40,22 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.1.1", default-features = false, features = ["sha2"] }
 ```
 
 Full toolbox with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", features = ["full", "getrandom"] }
+rscrypto = { version = "0.1.1", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, or nonces from the operating system.
 
-## Quick start
+## Quick Start
 
 ```rust
-use rscrypto::{Sha256, prelude::*};
+use rscrypto::{Digest, Sha256};
 
 let one_shot = Sha256::digest(b"hello world");
 
@@ -66,17 +66,17 @@ h.update(b"world");
 assert_eq!(h.finalize(), one_shot);
 ```
 
-That is the basic API shape: one-shot when convenient, streaming when needed.
+The common API shape is deliberately boring: one-shot when convenient, streaming when needed.
 
-## Encrypt data
+## Encrypt Data
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["chacha20poly1305"] }
+rscrypto = { version = "0.1.1", default-features = false, features = ["chacha20poly1305"] }
 ```
 
 ```rust
-use rscrypto::{aead::Nonce96, Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
+use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
 
 let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
 let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
@@ -86,21 +86,21 @@ let aad = b"transfer:v1";
 let mut message = *b"pay bob 10";
 
 let tag = cipher
-    .encrypt_in_place(&nonce, aad, &mut message)
-    .expect("encryption succeeds");
+  .encrypt_in_place(&nonce, aad, &mut message)
+  .expect("encryption succeeds");
 
 cipher
-    .decrypt_in_place(&nonce, aad, &mut message, &tag)
-    .expect("authentication succeeds");
+  .decrypt_in_place(&nonce, aad, &mut message, &tag)
+  .expect("authentication succeeds");
 
 assert_eq!(&message, b"pay bob 10");
 ```
 
-## Hash passwords
+## Hash Passwords
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
+rscrypto = { version = "0.1.1", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
 ```
 
 ```rust
@@ -111,16 +111,16 @@ let params = Argon2Params::new().build().expect("valid Argon2 params");
 let encoded = Argon2id::hash_string(&params, password).expect("password hash created");
 
 assert!(
-    Argon2id::verify_string_with_policy(
-        password,
-        &encoded,
-        &Argon2VerifyPolicy::default(),
-    )
-    .is_ok()
+  Argon2id::verify_string_with_policy(
+    password,
+    &encoded,
+    &Argon2VerifyPolicy::default(),
+  )
+  .is_ok()
 );
 ```
 
-## What you get
+## What You Get
 
 | Need | Included | Feature path |
 |---|---|---|
@@ -134,8 +134,6 @@ assert!(
 
 Fast non-cryptographic hashes and CRCs are for indexing, checksumming, deduplication, and integrity plumbing. Do not use them for passwords, signatures, MACs, key derivation, or authentication.
 
-BLAKE3 uses the standard BLAKE3 construction, but under the `rscrypto` deployment model: leaf-feature builds, a portable source of truth, optional parallel and ISA acceleration, differential testing, and `portable-only` for audit-constrained builds.
-
 Feature flags are layered deliberately:
 
 - **Leaf primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `crc32`, and similar.
@@ -146,23 +144,22 @@ Full feature inventory: [`docs/features.md`](docs/features.md). Public type inve
 
 ## Performance
 
-Latest public benchmark pass: Linux plus macOS Apple Silicon, compared against established Rust baselines. Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster.
+Latest public benchmark pass: 2026-05-15, commit `e29c837`, nine Linux CI runners plus one local macOS Apple Silicon run. Speedup is `external_crate_time / rscrypto_time` for latency rows and equivalent throughput ratio for throughput rows; values above `1.00x` mean `rscrypto` is faster.
 
 | Area | Compared against | Result |
 |---|---|---:|
-| **Linux overall** | strongest matched Rust baselines | **1.75x geomean** |
-| Matched comparisons | Linux | **3,717 wins / 5,796 pairs** |
-| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | **4.41x geomean** |
-| SHA-3 / SHAKE | RustCrypto `sha3` | **2.18x / 2.60x geomean** |
-| BLAKE3, `>=64 KiB` | `blake3` | **2.37x geomean** |
-| AEAD | RustCrypto AEADs, `aegis` | **1.84x geomean** |
-| Ed25519 signing | `ed25519-dalek` | **1.57x geomean** |
+| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.55x geomean** |
+| Linux CI scorecard | fastest external | **3,369 wins / 5,895 pairs** |
+| Full current corpus | Linux CI + local Apple Silicon | **1.53x geomean** |
+| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | **5.07x geomean** |
+| SHA-3 / SHAKE | RustCrypto `sha3` | **2.18x / 2.59x geomean** |
+| BLAKE3, `>=64 KiB` | `blake3` | **2.39x geomean** |
+| AEAD | RustCrypto AEADs, `aegis`, `ring`, `aws-lc-rs` | **1.36x geomean** |
+| macOS Apple Silicon local | fastest matched Rust baseline per case | **1.34x geomean** |
 
-macOS Apple Silicon results include AEAD at **2.60x** and checksums at **4.18x**, with broad parity on SHA-2 and SHA-3.
+The honest weak spots right now: SHA-256 streaming is 0.68x on Linux CI, PBKDF2-SHA256 at `iters=1` is 0.77x, Ed25519 verify is 0.93x, and sustained AES-GCM on POWER10/RISC-V is not competitive. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
 
-See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, host details, and per-platform scorecards.
-
-## Portability and acceleration
+## Portability And Acceleration
 
 `rscrypto` keeps the portable Rust path as the byte-for-byte authority. ISA-specific kernels are selected only when the target and runtime CPU support them.
 
@@ -179,7 +176,7 @@ Use `portable-only` when you need deterministic dispatch, audit-constrained buil
 
 Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture notes: [`docs/architecture.md`](docs/architecture.md).
 
-## Security posture
+## Security Posture
 
 - Constant-time MAC, AEAD, and signature verification.
 - Opaque verification errors that avoid leaking failure details.
@@ -198,6 +195,7 @@ Vulnerabilities should be reported through [GitHub Private Vulnerability Reporti
 - API reference: [docs.rs/rscrypto](https://docs.rs/rscrypto)
 - Examples: [`examples/`](examples/)
 - Feature flags: [`docs/features.md`](docs/features.md)
+- Public type inventory: [`docs/types.md`](docs/types.md)
 - Platform matrix: [`docs/platforms.md`](docs/platforms.md)
 - Security guidance: [`docs/security.md`](docs/security.md)
 - Migration guides: [`docs/migration/`](docs/migration/)

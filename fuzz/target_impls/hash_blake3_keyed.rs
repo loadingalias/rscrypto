@@ -35,7 +35,7 @@ pub fn run(data: &[u8]) {
   // Differential: rscrypto ↔ blake3 crate (keyed mode)
   {
     let oracle = blake3::keyed_hash(&key, data);
-    assert_eq!(&expected[..], oracle.as_bytes(), "keyed blake3 oracle mismatch");
+    assert_eq!(expected.as_bytes(), oracle.as_bytes(), "keyed blake3 oracle mismatch");
 
     // XOF differential
     let mut h = Blake3::new_keyed(&key);

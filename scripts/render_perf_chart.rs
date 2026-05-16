@@ -32,7 +32,7 @@ struct Row {
 /// the top of the chart. If a category drops below another, reorder here.
 const ROWS: &[Row] = &[
   Row { label: "Checksums",        line_starts_with: "- **Checksums:**",        skip: 0 },
-  Row { label: "SHAKE / cSHAKE",   line_starts_with: "- **SHA-3 / SHAKE:**",    skip: 1 },
+  Row { label: "SHAKE",            line_starts_with: "- **SHA-3 / SHAKE:**",    skip: 1 },
   Row { label: "BLAKE3 \u{2265}64 KiB", line_starts_with: "- **BLAKE3:**",      skip: 0 },
   Row { label: "SHA-3",            line_starts_with: "- **SHA-3 / SHAKE:**",    skip: 0 },
   Row { label: "AEAD",             line_starts_with: "- **AEAD:**",             skip: 0 },
