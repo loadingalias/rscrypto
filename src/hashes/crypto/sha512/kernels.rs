@@ -69,7 +69,10 @@ impl Sha512KernelId {
 
 #[cfg(target_arch = "aarch64")]
 fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
-  // SAFETY: Only called when dispatch has verified `aarch64::SHA512` is available.
+  // SAFETY: Dispatch-gated AArch64 SHA-512 compression because:
+  // 1. `required_caps(Aarch64Sha512)` is `aarch64::SHA512`.
+  // 2. `dispatch_tables::select_runtime_table` selects this kernel only when that cap is present.
+  // 3. All callers pass a byte slice containing whole 128-byte SHA-512 blocks.
   unsafe { super::aarch64::compress_blocks_aarch64_sha512(state, blocks) }
 }
 

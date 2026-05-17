@@ -243,6 +243,20 @@ impl Sha512 {
     dispatch::digest(data)
   }
 
+  /// Compute `SHA512(prefix || data)` where `prefix` is exactly 64 bytes.
+  ///
+  /// This is the hot fixed-prefix shape used by Ed25519 challenge hashing
+  /// (`R || A || message`). It avoids constructing a streaming hasher and
+  /// shifts only the first half block plus the final tail.
+  #[inline]
+  #[must_use]
+  #[cfg(feature = "ed25519")]
+  pub(crate) fn digest_64_byte_prefix(prefix: &[u8; 64], data: &[u8]) -> [u8; 64] {
+    let total_len = 64u128.strict_add(data.len() as u128);
+    let compress = dispatch::compress_dispatch().select(len_hint_from_u128(total_len));
+    Self::digest_64_byte_prefix_with(prefix, data, compress)
+  }
+
   #[inline]
   pub(crate) fn compress_blocks_portable(state: &mut [u64; 8], blocks: &[u8]) {
     debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
@@ -314,12 +328,44 @@ impl Sha512 {
   }
 
   #[inline(always)]
-  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 64] {
-    let mut state = self.state;
-    let mut block = self.block;
-    let mut block_len = self.block_len;
+  #[cfg(any(feature = "ed25519", test))]
+  fn digest_64_byte_prefix_with(prefix: &[u8; 64], data: &[u8], compress_blocks: CompressBlocksFn) -> [u8; 64] {
+    let total_len = 64u128.strict_add(data.len() as u128);
+    let mut state = H0;
+    let mut block = [0u8; BLOCK_LEN];
+    block[..64].copy_from_slice(prefix);
 
-    let total_len = self.bytes_hashed.strict_add(block_len as u128);
+    let first_take = core::cmp::min(64, data.len());
+    let first_end = 64usize.strict_add(first_take);
+    block[64..first_end].copy_from_slice(&data[..first_take]);
+    let mut rest = &data[first_take..];
+
+    if first_take < 64 {
+      return Self::finalize_state(state, block, first_end, total_len, compress_blocks);
+    }
+
+    compress_blocks(&mut state, &block);
+
+    let full_len = rest.len().strict_sub(rest.len() % BLOCK_LEN);
+    if full_len != 0 {
+      let (blocks, tail) = rest.split_at(full_len);
+      compress_blocks(&mut state, blocks);
+      rest = tail;
+    }
+
+    block = [0u8; BLOCK_LEN];
+    block[..rest.len()].copy_from_slice(rest);
+    Self::finalize_state(state, block, rest.len(), total_len, compress_blocks)
+  }
+
+  #[inline(always)]
+  fn finalize_state(
+    mut state: [u64; 8],
+    mut block: [u8; BLOCK_LEN],
+    mut block_len: usize,
+    total_len: u128,
+    compress_blocks: CompressBlocksFn,
+  ) -> [u8; 64] {
     let bit_len = total_len << 3;
 
     block[block_len] = 0x80;
@@ -336,15 +382,21 @@ impl Sha512 {
     block[112..128].copy_from_slice(&bit_len.to_be_bytes());
     compress_blocks(&mut state, &block);
 
+    Self::state_to_digest(&state)
+  }
+
+  #[inline(always)]
+  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 64] {
+    let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
+    Self::finalize_state(self.state, self.block, self.block_len, total_len, compress_blocks)
+  }
+
+  #[inline(always)]
+  fn state_to_digest(state: &[u64; 8]) -> [u8; 64] {
     let mut out = [0u8; 64];
-    out[0..8].copy_from_slice(&state[0].to_be_bytes());
-    out[8..16].copy_from_slice(&state[1].to_be_bytes());
-    out[16..24].copy_from_slice(&state[2].to_be_bytes());
-    out[24..32].copy_from_slice(&state[3].to_be_bytes());
-    out[32..40].copy_from_slice(&state[4].to_be_bytes());
-    out[40..48].copy_from_slice(&state[5].to_be_bytes());
-    out[48..56].copy_from_slice(&state[6].to_be_bytes());
-    out[56..64].copy_from_slice(&state[7].to_be_bytes());
+    for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+      chunk.copy_from_slice(&word.to_be_bytes());
+    }
     out
   }
 

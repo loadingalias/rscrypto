@@ -63,6 +63,10 @@ fn digest_oneshot_with_kernel(id: Sha512KernelId, data: &[u8]) -> [u8; 64] {
   out
 }
 
+fn digest_64_byte_prefix_with_kernel(id: Sha512KernelId, prefix: &[u8; 64], data: &[u8]) -> [u8; 64] {
+  Sha512::digest_64_byte_prefix_with(prefix, data, compress_blocks_fn(id))
+}
+
 #[allow(dead_code)]
 #[must_use]
 pub fn run_all_sha512_kernels(data: &[u8]) -> Vec<KernelResult> {
@@ -175,6 +179,46 @@ mod tests {
             );
           }
         }
+      }
+    }
+  }
+
+  #[test]
+  fn all_kernels_match_sha2_oracle_for_64_byte_prefix() {
+    let caps = crate::platform::caps();
+    #[cfg(not(miri))]
+    let lens = [
+      0usize, 1, 47, 48, 49, 63, 64, 65, 111, 112, 113, 127, 128, 129, 191, 192, 193, 255, 256, 257, 1000, 4096,
+    ];
+    #[cfg(miri)]
+    let lens = [0usize, 1, 63, 64, 65, 111, 112, 113, 127, 128, 129, 255, 256];
+
+    let mut prefix = [0u8; 64];
+    for (i, byte) in prefix.iter_mut().enumerate() {
+      *byte = (i as u8).wrapping_mul(17).wrapping_add(0x5a);
+    }
+
+    for &id in ALL {
+      if !caps.has(required_caps(id)) {
+        continue;
+      }
+
+      for &len in &lens {
+        let msg = pattern(len);
+        let mut oracle_input = Vec::with_capacity(prefix.len().strict_add(msg.len()));
+        oracle_input.extend_from_slice(&prefix);
+        oracle_input.extend_from_slice(&msg);
+
+        let actual = digest_64_byte_prefix_with_kernel(id, &prefix, &msg);
+        let expected = digest_oneshot_with_kernel(id, &oracle_input);
+
+        assert_eq!(
+          actual,
+          expected,
+          "sha512 64-byte-prefix mismatch kernel={} len={}",
+          id.as_str(),
+          len
+        );
       }
     }
   }

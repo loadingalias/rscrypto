@@ -40,6 +40,13 @@ use crate::{
 
 pub(crate) mod hash;
 use self::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH};
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+mod aarch64_asm;
 #[cfg(target_arch = "x86_64")]
 pub(crate) use crate::auth::curve25519_edwards::point_avx2;
 pub(crate) use crate::auth::curve25519_edwards::{constants, field, point, scalar};
@@ -428,21 +435,13 @@ pub fn verify(
   signature: &Ed25519Signature,
 ) -> Result<(), VerificationError> {
   let (r_bytes, s_bytes) = split_signature(signature);
-  let r_point = point::ExtendedPoint::from_bytes(&r_bytes).ok_or(VerificationError::new())?;
-  if r_point.is_small_order() {
-    return Err(VerificationError::new());
-  }
   if public_key.is_small_order() {
     return Err(VerificationError::new());
   }
   let a_point = public_key.point().ok_or(VerificationError::new())?;
   let s = scalar::from_canonical_bytes(&s_bytes).ok_or(VerificationError::new())?;
 
-  let mut challenge_hasher = Sha512::new();
-  challenge_hasher.update(&r_bytes);
-  challenge_hasher.update(public_key.as_bytes());
-  challenge_hasher.update(message);
-  let challenge_digest = challenge_hasher.finalize();
+  let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
   let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
   let neg_challenge = scalar::negate_mod(&challenge);
   let neg_challenge_bytes = scalar::to_bytes(&neg_challenge);
@@ -450,6 +449,21 @@ pub fn verify(
 
   // Strict Ed25519 verification: compute [s]B + [-h]A and compare it
   // directly with R after rejecting weak points.
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if let Some(result) = verify_aarch64_encoded_r(&r_bytes, &s_canonical, &neg_challenge_bytes, public_key.as_bytes()) {
+    return result;
+  }
+
+  let r_point = point::ExtendedPoint::from_bytes(&r_bytes).ok_or(VerificationError::new())?;
+  if r_point.is_small_order() {
+    return Err(VerificationError::new());
+  }
+
   let combined = straus_dispatch(&s_canonical, &neg_challenge_bytes, &a_point);
 
   if combined.equals_projective(&r_point) {
@@ -477,11 +491,7 @@ fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey
   let nonce_bytes = scalar::to_bytes(&nonce_scalar);
   let r_encoded = basepoint_mul_dispatch(&nonce_bytes).to_bytes().unwrap_or_default();
 
-  let mut challenge_hasher = Sha512::new();
-  challenge_hasher.update(&r_encoded);
-  challenge_hasher.update(public.as_bytes());
-  challenge_hasher.update(message);
-  let challenge_digest = challenge_hasher.finalize();
+  let challenge_digest = hash_challenge(&r_encoded, public.as_bytes(), message);
   let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
   let s = scalar::mul_add_mod(&challenge, &secret_scalar, &nonce_scalar);
   let s_bytes = scalar::to_bytes(&s);
@@ -520,8 +530,96 @@ fn split_signature(signature: &Ed25519Signature) -> ([u8; 32], [u8; 32]) {
   (r_bytes, s_bytes)
 }
 
+#[inline]
+#[must_use]
+fn hash_challenge(r_bytes: &[u8; PUBLIC_KEY_LENGTH], public_key: &[u8; PUBLIC_KEY_LENGTH], message: &[u8]) -> [u8; 64] {
+  let mut prefix = [0u8; 64];
+  prefix[..PUBLIC_KEY_LENGTH].copy_from_slice(r_bytes);
+  prefix[PUBLIC_KEY_LENGTH..].copy_from_slice(public_key);
+  Sha512::digest_64_byte_prefix(&prefix, message)
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+const SMALL_ORDER_ENCODINGS: [[u8; PUBLIC_KEY_LENGTH]; 8] = [
+  [
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ],
+  [
+    0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b, 0x76, 0x0d, 0x10, 0x67, 0x0f, 0x2a, 0x20, 0x53,
+    0xfa, 0x2c, 0x39, 0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0x7a,
+  ],
+  [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80,
+  ],
+  [
+    0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4, 0x89, 0xf2, 0xef, 0x98, 0xf0, 0xd5, 0xdf, 0xac,
+    0x05, 0xd3, 0xc6, 0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x05,
+  ],
+  [
+    0xec, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
+  ],
+  [
+    0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4, 0x89, 0xf2, 0xef, 0x98, 0xf0, 0xd5, 0xdf, 0xac,
+    0x05, 0xd3, 0xc6, 0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x85,
+  ],
+  [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ],
+  [
+    0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b, 0x76, 0x0d, 0x10, 0x67, 0x0f, 0x2a, 0x20, 0x53,
+    0xfa, 0x2c, 0x39, 0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0xfa,
+  ],
+];
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+fn verify_aarch64_encoded_r(
+  r_bytes: &[u8; PUBLIC_KEY_LENGTH],
+  s_canonical: &[u8; SECRET_KEY_LENGTH],
+  neg_challenge_bytes: &[u8; SECRET_KEY_LENGTH],
+  public_key: &[u8; PUBLIC_KEY_LENGTH],
+) -> Option<Result<(), VerificationError>> {
+  if is_small_order_encoded(r_bytes) {
+    return Some(Err(VerificationError::new()));
+  }
+
+  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge_bytes, public_key).map(|combined| {
+    if ct::constant_time_eq(&combined, r_bytes) {
+      Ok(())
+    } else {
+      Err(VerificationError::new())
+    }
+  })
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "macos",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+#[must_use]
+fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
+  SMALL_ORDER_ENCODINGS
+    .iter()
+    .any(|small_order| ct::constant_time_eq(bytes, small_order))
+}
+
 // ---------------------------------------------------------------------------
-// Dispatch: IFMA → AVX2 → portable
+// Dispatch: Apple AArch64 verify fast path → IFMA → AVX2 → portable
 // ---------------------------------------------------------------------------
 
 pub(crate) use crate::auth::curve25519_edwards::basepoint_mul_dispatch;
@@ -721,5 +819,121 @@ mod tests {
     let signature = Ed25519Signature::from_bytes(signature_bytes);
 
     assert!(keypair.public_key().verify(b"strict verify", &signature).is_err());
+  }
+
+  #[test]
+  fn challenge_hash_matches_streaming_sha512_at_boundaries() {
+    use crate::{hashes::crypto::Sha512, traits::Digest};
+
+    let r = [0x31u8; Ed25519Signature::LENGTH / 2];
+    let public = [0xA7u8; Ed25519PublicKey::LENGTH];
+    let long_message = [0x5Cu8; 257];
+    let messages: [&[u8]; 9] = [
+      b"",
+      b"a",
+      &[0x11; 47],
+      &[0x22; 48],
+      &[0x33; 49],
+      &[0x44; 63],
+      &[0x55; 64],
+      &[0x66; 65],
+      &long_message,
+    ];
+
+    for message in messages {
+      let mut streaming = Sha512::new();
+      streaming.update(&r);
+      streaming.update(&public);
+      streaming.update(message);
+
+      assert_eq!(super::hash_challenge(&r, &public, message), streaming.finalize());
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn aarch64_small_order_encoding_table_matches_point_detection() {
+    for encoded in super::SMALL_ORDER_ENCODINGS {
+      assert!(super::is_small_order_encoded(&encoded));
+      assert!(point::ExtendedPoint::from_bytes(&encoded).is_some_and(|point| point.is_small_order()));
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn aarch64_verify_rejects_all_small_order_r_encodings() {
+    let secret = Ed25519SecretKey::from_bytes([0x46; Ed25519SecretKey::LENGTH]);
+    let keypair = Ed25519Keypair::from_secret_key(secret);
+
+    for encoded in super::SMALL_ORDER_ENCODINGS {
+      let mut signature_bytes = keypair.sign(b"strict verify").to_bytes();
+      signature_bytes[..32].copy_from_slice(&encoded);
+      let signature = Ed25519Signature::from_bytes(signature_bytes);
+
+      assert!(keypair.public_key().verify(b"strict verify", &signature).is_err());
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn aarch64_double_scalar_matches_portable_verify_core() {
+    let secret = Ed25519SecretKey::from_bytes([0x91; Ed25519SecretKey::LENGTH]);
+    let keypair = Ed25519Keypair::from_secret_key(secret);
+    let long_message = [0xA5u8; 257];
+    let messages: [&[u8]; 4] = [b"", b"a", b"rscrypto-ed25519-aarch64", &long_message];
+
+    for message in messages {
+      let public = keypair.public_key();
+      let signature = keypair.sign(message);
+      let (r_bytes, s_bytes) = super::split_signature(&signature);
+      let a_point = public.point().unwrap();
+      let s = scalar::from_canonical_bytes(&s_bytes).unwrap();
+
+      let challenge_digest = super::hash_challenge(&r_bytes, public.as_bytes(), message);
+      let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
+      let neg_challenge = scalar::negate_mod(&challenge);
+      let neg_challenge_bytes = scalar::to_bytes(&neg_challenge);
+      let s_canonical = scalar::to_bytes(&s);
+
+      let portable = point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point)
+        .to_bytes()
+        .unwrap();
+      let asm =
+        super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, public.as_bytes())
+          .unwrap();
+
+      assert_eq!(asm, portable);
+      assert_eq!(asm, r_bytes);
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn aarch64_verify_backend_rejects_invalid_public_encoding() {
+    let s = [0u8; Ed25519SecretKey::LENGTH];
+    let h = [0u8; Ed25519SecretKey::LENGTH];
+    let invalid_public_key = [0xffu8; Ed25519PublicKey::LENGTH];
+
+    assert!(super::aarch64_asm::double_scalar_basepoint_encoded(&s, &h, &invalid_public_key).is_none());
   }
 }
