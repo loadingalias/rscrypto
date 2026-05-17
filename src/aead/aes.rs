@@ -1144,6 +1144,450 @@ unsafe fn ppc_encrypt_blocks_128_inline(keys: &ppc::Ppc128RoundKeys, blocks: &mu
   }
 }
 
+/// AES-256 CTR encryption fused with POWER VPMSUMD GHASH accumulation for GCM sealing.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(crate) unsafe fn aes256_ctr32_encrypt_be_ppc_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  // SAFETY: fused POWER AES-GCM sealing because:
+  // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
+  // 2. `data` is a valid mutable byte slice; all chunk processing uses checked slice bounds.
+  // 3. Ciphertext is folded into GHASH immediately after each CTR chunk is written.
+  unsafe {
+    let ppc_rk = match &ek.inner {
+      KeyInner::Power8Crypto(rk) => rk,
+      _ => {
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        keystream[i as usize][..12].copy_from_slice(&iv_prefix);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      ppc::encrypt_4blocks_core(ppc_rk, &mut keystream);
+
+      let mut ciphertext_blocks = [0u128; 4];
+      let mut lane = 0usize;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let ks = u128::from_ne_bytes(keystream[lane]);
+        let mut plaintext = [0u8; BLOCK_SIZE];
+        plaintext.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        let ciphertext = (u128::from_ne_bytes(plaintext) ^ ks).to_ne_bytes();
+        data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        ciphertext_blocks[lane] = u128::from_be_bytes(ciphertext);
+        lane = lane.strict_add(1);
+      }
+
+      acc = super::polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &ciphertext_blocks);
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ppc::encrypt_block_core(ppc_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut plaintext = [0u8; BLOCK_SIZE];
+        plaintext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let ciphertext = (u128::from_ne_bytes(plaintext) ^ ks).to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-256 CTR decryption fused with POWER VPMSUMD GHASH accumulation for GCM opening.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(crate) unsafe fn aes256_ctr32_decrypt_be_ppc_ghash(
+  ek: &Aes256EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  // SAFETY: fused POWER AES-GCM opening because:
+  // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
+  // 2. Ciphertext is copied into GHASH input before in-place decryption.
+  // 3. All chunk processing uses checked slice bounds and handles partial tails.
+  unsafe {
+    let ppc_rk = match &ek.inner {
+      KeyInner::Power8Crypto(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes256_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let mut ciphertext_blocks = [0u128; 4];
+      let mut lane = 0usize;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        ciphertext_blocks[lane] = u128::from_be_bytes(ciphertext);
+        lane = lane.strict_add(1);
+      }
+      acc = super::polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &ciphertext_blocks);
+
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        keystream[i as usize][..12].copy_from_slice(&iv_prefix);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      ppc::encrypt_4blocks_core(ppc_rk, &mut keystream);
+
+      lane = 0;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let ks = u128::from_ne_bytes(keystream[lane]);
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        let plaintext = (u128::from_ne_bytes(ciphertext) ^ ks).to_ne_bytes();
+        data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext);
+        lane = lane.strict_add(1);
+      }
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ppc::encrypt_block_core(ppc_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+
+        let plaintext = (u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream)).to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR encryption fused with POWER VPMSUMD GHASH accumulation for GCM sealing.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(crate) unsafe fn aes128_ctr32_encrypt_be_ppc_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  // SAFETY: fused POWER AES-GCM sealing because:
+  // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
+  // 2. `data` is a valid mutable byte slice; all chunk processing uses checked slice bounds.
+  // 3. Ciphertext is folded into GHASH immediately after each CTR chunk is written.
+  unsafe {
+    let ppc_rk = match &ek.inner {
+      Key128Inner::Power8Crypto(rk) => rk,
+      _ => {
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return ghash_ciphertext_fallback(acc, h_polyval, data);
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        keystream[i as usize][..12].copy_from_slice(&iv_prefix);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      ppc::encrypt_4blocks_128_core(ppc_rk, &mut keystream);
+
+      let mut ciphertext_blocks = [0u128; 4];
+      let mut lane = 0usize;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let ks = u128::from_ne_bytes(keystream[lane]);
+        let mut plaintext = [0u8; BLOCK_SIZE];
+        plaintext.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        let ciphertext = (u128::from_ne_bytes(plaintext) ^ ks).to_ne_bytes();
+        data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        ciphertext_blocks[lane] = u128::from_be_bytes(ciphertext);
+        lane = lane.strict_add(1);
+      }
+
+      acc = super::polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &ciphertext_blocks);
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ppc::encrypt_block_128_core(ppc_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let ks = u128::from_ne_bytes(keystream);
+        let mut plaintext = [0u8; BLOCK_SIZE];
+        plaintext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        let ciphertext = (u128::from_ne_bytes(plaintext) ^ ks).to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&ciphertext);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          block[i] = data[offset.strict_add(i)];
+          i = i.strict_add(1);
+        }
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
+/// AES-128 CTR decryption fused with POWER VPMSUMD GHASH accumulation for GCM opening.
+///
+/// # Safety
+/// Caller must ensure POWER8 crypto is available.
+#[cfg(all(target_arch = "powerpc64", feature = "aes-gcm"))]
+#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
+pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
+  ek: &Aes128EncKey,
+  initial_counter: &[u8; BLOCK_SIZE],
+  data: &mut [u8],
+  mut acc: u128,
+  h_polyval: u128,
+  h_powers_rev: &[u128; 4],
+) -> u128 {
+  // SAFETY: fused POWER AES-GCM opening because:
+  // 1. This function's caller guarantees POWER8 crypto and VPMSUMD availability.
+  // 2. Ciphertext is copied into GHASH input before in-place decryption.
+  // 3. All chunk processing uses checked slice bounds and handles partial tails.
+  unsafe {
+    let ppc_rk = match &ek.inner {
+      Key128Inner::Power8Crypto(rk) => rk,
+      _ => {
+        acc = ghash_ciphertext_fallback(acc, h_polyval, data);
+        aes128_ctr32_encrypt_be(ek, initial_counter, data);
+        return acc;
+      }
+    };
+
+    let iv_prefix: [u8; 12] = {
+      let mut buf = [0u8; 12];
+      buf.copy_from_slice(&initial_counter[..12]);
+      buf
+    };
+    let mut ctr = u32::from_be_bytes([
+      initial_counter[12],
+      initial_counter[13],
+      initial_counter[14],
+      initial_counter[15],
+    ]);
+    let mut offset = 0usize;
+
+    while offset.strict_add(64) <= data.len() {
+      let mut ciphertext_blocks = [0u128; 4];
+      let mut lane = 0usize;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        ciphertext_blocks[lane] = u128::from_be_bytes(ciphertext);
+        lane = lane.strict_add(1);
+      }
+      acc = super::polyval::ppc_aggregate_4blocks_inline(acc, h_powers_rev, &ciphertext_blocks);
+
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while i < 4 {
+        keystream[i as usize][..12].copy_from_slice(&iv_prefix);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      ppc::encrypt_4blocks_128_core(ppc_rk, &mut keystream);
+
+      lane = 0;
+      while lane < 4 {
+        let block_offset = offset.strict_add(lane.strict_mul(BLOCK_SIZE));
+        let ks = u128::from_ne_bytes(keystream[lane]);
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+        let plaintext = (u128::from_ne_bytes(ciphertext) ^ ks).to_ne_bytes();
+        data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext);
+        lane = lane.strict_add(1);
+      }
+
+      ctr = ctr.wrapping_add(4);
+      offset = offset.strict_add(64);
+    }
+
+    while offset < data.len() {
+      let mut counter_block = [0u8; BLOCK_SIZE];
+      counter_block[..12].copy_from_slice(&iv_prefix);
+      counter_block[12..16].copy_from_slice(&ctr.to_be_bytes());
+
+      let mut keystream = counter_block;
+      ppc::encrypt_block_128_core(ppc_rk, &mut keystream);
+
+      let remaining = data.len().strict_sub(offset);
+      if remaining >= BLOCK_SIZE {
+        let mut ciphertext = [0u8; BLOCK_SIZE];
+        ciphertext.copy_from_slice(&data[offset..offset.strict_add(BLOCK_SIZE)]);
+        acc ^= u128::from_be_bytes(ciphertext);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+
+        let plaintext = (u128::from_ne_bytes(ciphertext) ^ u128::from_ne_bytes(keystream)).to_ne_bytes();
+        data[offset..offset.strict_add(BLOCK_SIZE)].copy_from_slice(&plaintext);
+        offset = offset.strict_add(BLOCK_SIZE);
+      } else {
+        let mut block = [0u8; BLOCK_SIZE];
+        block[..remaining].copy_from_slice(&data[offset..offset.strict_add(remaining)]);
+        acc ^= u128::from_be_bytes(block);
+        acc = super::polyval::ppc_clmul128_reduce_inline(acc, h_polyval);
+
+        let mut i = 0usize;
+        while i < remaining {
+          data[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+
+    acc
+  }
+}
+
 // ---------------------------------------------------------------------------
 // s390x: inline helpers for fused paths (#[inline(always)])
 // ---------------------------------------------------------------------------
@@ -2297,7 +2741,10 @@ unsafe fn x86_gcmsiv_ctr_blocks_le_4(suffix_words: [u32; 3], ctr: u32) -> core::
   _mm512_inserti32x4(z, b3, 3)
 }
 
-#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), feature = "aes-gcm"))]
+#[cfg(all(
+  any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64"),
+  feature = "aes-gcm"
+))]
 #[inline]
 fn ghash_ciphertext_fallback(mut acc: u128, h_polyval: u128, data: &[u8]) -> u128 {
   let (blocks, remainder) = data.as_chunks::<16>();

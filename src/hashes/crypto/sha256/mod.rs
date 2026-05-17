@@ -485,16 +485,18 @@ impl Sha256 {
     if data.is_empty() {
       return;
     }
-    if kernels::COMPILE_TIME_HW {
-      self.update_with(data, kernels::compile_time_best());
-      return;
-    }
     #[cfg(target_arch = "x86_64")]
     {
+      // Check this before `COMPILE_TIME_HW`: SPR + `target-cpu=native` otherwise
+      // keeps streaming on the slow function-pointer wrapper shape.
       if self.update_mode == Sha256UpdateMode::X86ShaDirect || self.try_enable_x86_sha_direct_update() {
         self.update_with_x86_sha(data);
         return;
       }
+    }
+    if kernels::COMPILE_TIME_HW {
+      self.update_with(data, kernels::compile_time_best());
+      return;
     }
     let compress = self.select_compress(data.len());
     self.update_with(data, compress);

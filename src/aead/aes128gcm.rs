@@ -536,39 +536,6 @@ unsafe fn ghash_update_padded_wide_ppc(mut acc: u128, h_polyval: u128, h_powers_
   acc
 }
 
-/// Compute a GCM tag using POWER8 carryless multiply without per-chunk runtime dispatch.
-///
-/// # Safety
-/// Caller must ensure POWER8 crypto is available.
-#[cfg(target_arch = "powerpc64")]
-#[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
-unsafe fn compute_tag_wide_ppc(
-  ek: &aes::Aes128EncKey,
-  h_polyval: u128,
-  h_powers_rev: &[u128; 4],
-  j0: &[u8; 16],
-  aad: &[u8],
-  ciphertext: &[u8],
-) -> Result<[u8; TAG_SIZE], LengthOverflow> {
-  // SAFETY: POWER8 GHASH update because:
-  // 1. This function's caller must guarantee POWER8 crypto availability.
-  // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-  let mut acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, h_powers_rev, aad) };
-  // SAFETY: POWER8 GHASH update because:
-  // 1. This function's caller must guarantee POWER8 crypto availability.
-  // 2. `ciphertext` is a valid byte slice; padding is handled inside the helper.
-  acc = unsafe { ghash_update_padded_wide_ppc(acc, h_polyval, h_powers_rev, ciphertext) };
-
-  let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
-  acc ^= u128::from_be_bytes(length_block);
-  // SAFETY: POWER8 carryless multiply because:
-  // 1. This function's caller must guarantee POWER8 crypto availability.
-  // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-  acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
-
-  Ok(encrypt_j0_tag(ek, j0, acc))
-}
-
 #[inline]
 fn should_use_wide_ghash(backend: AeadBackend, aad_len: usize, ciphertext_len: usize) -> bool {
   const MIN_WIDE_INPUT: usize = 64;
@@ -689,7 +656,7 @@ impl Aead for Aes128Gcm {
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
     let length_block = super::seal_bit_lengths(aad.len(), buffer.len())?.to_be_bits_block();
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64")))]
     let _ = length_block;
 
     let (j0, ctr_block) = make_j0_and_ctr(nonce);
@@ -785,14 +752,23 @@ impl Aead for Aes128Gcm {
 
     #[cfg(target_arch = "powerpc64")]
     if self.backend == AeadBackend::Power8Crypto {
-      aes::aes128_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
-      // SAFETY: POWER8 AES-GCM tag path because:
+      let h_polyval = self.h_powers_rev[3];
+      // SAFETY: POWER8 GHASH AAD path because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
-      // 2. `buffer` now contains ciphertext and is valid for GHASH processing.
-      let tag_bytes =
-        unsafe { compute_tag_wide_ppc(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer) }
-          .map_err(|_| SealError::too_large())?;
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused POWER AES-GCM sealing because:
+      // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
+      //    crypto.
+      // 2. The helper encrypts `buffer` in place and folds ciphertext into GHASH.
+      acc = unsafe {
+        aes::aes128_ctr32_encrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
+      acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
 
@@ -825,7 +801,7 @@ impl Aead for Aes128Gcm {
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
     let length_block = super::open_bit_lengths(aad.len(), buffer.len())?.to_be_bits_block();
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64")))]
     let _ = length_block;
 
     let (j0, ctr_block) = make_j0_and_ctr(nonce);
@@ -933,18 +909,27 @@ impl Aead for Aes128Gcm {
 
     #[cfg(target_arch = "powerpc64")]
     if self.backend == AeadBackend::Power8Crypto {
-      // SAFETY: POWER8 AES-GCM tag path because:
+      let h_polyval = self.h_powers_rev[3];
+      // SAFETY: POWER8 GHASH AAD path because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
-      // 2. `buffer` contains ciphertext and is valid for GHASH processing before decryption.
-      let expected =
-        unsafe { compute_tag_wide_ppc(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer) }
-          .map_err(|_| OpenError::too_large())?;
+      // 2. `aad` is a valid byte slice; padding is handled inside the helper.
+      let mut acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) };
+      // SAFETY: fused POWER AES-GCM open because:
+      // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
+      //    crypto.
+      // 2. The helper GHASHes ciphertext before decrypting the valid buffer in place.
+      acc = unsafe {
+        aes::aes128_ctr32_decrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+      };
+      acc ^= u128::from_be_bytes(length_block);
+      // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
+      acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
       if !ct::constant_time_eq(&expected, tag.as_bytes()) {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
-      aes::aes128_ctr32_encrypt_be(&self.ek, &ctr_block, buffer);
       return Ok(());
     }
 

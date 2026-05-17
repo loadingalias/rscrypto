@@ -118,14 +118,21 @@ fn hmac_sha384(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(HmacSha384::mac(black_box(&key), black_box(d))))
+      let mut mac = HmacSha384::new(&key);
+      b.iter(|| {
+        mac.update(black_box(d));
+        let tag = mac.finalize();
+        mac.reset();
+        black_box(tag)
+      })
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      let base_mac = RustCryptoHmacSha384::new_from_slice(&key).unwrap();
       b.iter(|| {
         use hmac::Mac as _;
 
-        let mut mac = RustCryptoHmacSha384::new_from_slice(black_box(&key)).unwrap();
+        let mut mac = base_mac.clone();
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -156,14 +163,21 @@ fn hmac_sha512(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(HmacSha512::mac(black_box(&key), black_box(d))))
+      let mut mac = HmacSha512::new(&key);
+      b.iter(|| {
+        mac.update(black_box(d));
+        let tag = mac.finalize();
+        mac.reset();
+        black_box(tag)
+      })
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      let base_mac = RustCryptoHmacSha512::new_from_slice(&key).unwrap();
       b.iter(|| {
         use hmac::Mac as _;
 
-        let mut mac = RustCryptoHmacSha512::new_from_slice(black_box(&key)).unwrap();
+        let mut mac = base_mac.clone();
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
