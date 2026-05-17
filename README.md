@@ -13,13 +13,13 @@
 Use a leaf feature for one primitive. Use `full` for the whole toolbox. No C. No FFI. No OpenSSL. No default third-party dependencies.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.55x fastest-external geomean across Linux CI with 3,369 wins out of 5,895 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.52x fastest-external geomean across Linux CI with 3,807 wins out of 6,552 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Latest 2026-05-15 Linux CI benchmark pass. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Latest 2026-05-17 Linux CI benchmark pass. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
@@ -144,20 +144,22 @@ Full feature inventory: [`docs/features.md`](docs/features.md). Public type inve
 
 ## Performance
 
-Latest public benchmark pass: 2026-05-15, commit `e29c837`, nine Linux CI runners plus one local macOS Apple Silicon run. Speedup is `external_crate_time / rscrypto_time` for latency rows and equivalent throughput ratio for throughput rows; values above `1.00x` mean `rscrypto` is faster.
+Latest public benchmark pass: 2026-05-17, commit `1c30a68`, nine Linux CI runners plus one local macOS Apple Silicon run. Speedup is `external_crate_time / rscrypto_time` for latency rows and equivalent throughput ratio for throughput rows; values above `1.00x` mean `rscrypto` is faster.
 
 | Area | Compared against | Result |
 |---|---|---:|
-| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.55x geomean** |
-| Linux CI scorecard | fastest external | **3,369 wins / 5,895 pairs** |
-| Full current corpus | Linux CI + local Apple Silicon | **1.53x geomean** |
-| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | **5.07x geomean** |
-| SHA-3 / SHAKE | RustCrypto `sha3` | **2.18x / 2.59x geomean** |
-| BLAKE3, `>=64 KiB` | `blake3` | **2.39x geomean** |
-| AEAD | RustCrypto AEADs, `aegis`, `ring`, `aws-lc-rs` | **1.36x geomean** |
-| macOS Apple Silicon local | fastest matched Rust baseline per case | **1.34x geomean** |
+| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.52x geomean** |
+| Linux CI scorecard | fastest external | **3,807 wins / 6,552 pairs** |
+| Full current corpus | Linux CI + local Apple Silicon | **1.51x geomean** |
+| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | **5.10x geomean** |
+| SHA-3 / SHAKE | RustCrypto `sha3` | **2.17x / 2.60x geomean** |
+| BLAKE3, `>=64 KiB` | `blake3` | **2.38x geomean** |
+| AEAD | RustCrypto AEADs, `aegis`, `ring`, `aws-lc-rs` | **1.37x geomean** |
+| HMAC-SHA384 / HMAC-SHA512 | `ring`, RustCrypto, AWS-LC | **1.23x / 1.23x geomean** |
+| macOS Apple Silicon local | fastest matched Rust baseline per case | **1.35x geomean** |
+| macOS Ed25519 verify | fastest matched Rust baseline per case | **1.01x geomean** |
 
-The honest weak spots right now: SHA-256 streaming is 0.68x on Linux CI, PBKDF2-SHA256 at `iters=1` is 0.77x, Ed25519 verify is 0.93x, and sustained AES-GCM on POWER10/RISC-V is not competitive. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
+The honest weak spots right now: password hashing is the new broad pressure point at 0.81x across Linux CI fastest-external rows, PBKDF2-SHA256 at `iters=1` is 0.77x, Linux CI Ed25519 verify is 0.95x, local Apple Silicon Ed25519 signing is 0.66x, and sustained AES-GCM on POWER10/RISC-V is not competitive. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 
