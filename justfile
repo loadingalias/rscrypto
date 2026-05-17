@@ -1,17 +1,19 @@
 # Local Linux dev box (Tailscale + EC2 + one-way Mutagen).
 # Scripts live at ~/dev-machines and sync this workspace to /home/ubuntu/rscrypto.
 
-ssh-linux:
-    @"$HOME/dev-machines/connect.sh" linux rscrypto
+# Wake/connect the Linux dev box. Optional .github/runs-on.yml runner aliases
+# select metadata only; x86 aliases still use the existing linux-dev Tailnet node.
+ssh-linux target="linux":
+    @"$HOME/dev-machines/connect.sh" "{{ target }}" rscrypto
 
-ssh-kill-linux:
-    @"$HOME/dev-machines/kill.sh" linux rscrypto
+ssh-kill-linux target="linux":
+    @"$HOME/dev-machines/kill.sh" "{{ target }}" rscrypto
 
 ssh-status:
     @"$HOME/dev-machines/status.sh"
 
-ssh-bootstrap-linux:
-    @"$HOME/dev-machines/bootstrap.sh" linux rscrypto
+ssh-bootstrap-linux target="linux":
+    @"$HOME/dev-machines/bootstrap.sh" "{{ target }}" rscrypto
 
 build:
     cargo build --workspace --all-targets --all-features

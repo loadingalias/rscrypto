@@ -410,6 +410,10 @@ mod tests {
       AeadBackend::Power8Crypto
     );
     assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Power, power::POWER8_CRYPTO),
+      AeadBackend::Power8Crypto
+    );
+    assert_eq!(
       select_backend(AeadPrimitive::Aes128Gcm, Arch::Power, power::POWER8_CRYPTO),
       AeadBackend::Power8Crypto
     );
