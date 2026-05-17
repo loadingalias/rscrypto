@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.0](https://github.com/loadingalias/rscrypto/compare/v0.1.1...v0.2.0) - 2026-05-17
+
+### 📦 Other Changes
+
+- benchmarks: refresh 2026-05-17 release scorecard ([3a3a479](https://github.com/loadingalias/rscrypto/commit/3a3a47946d3aa7b3ff0de979a802bfba3fb7a972))
+- aead: fuse POWER AES-GCM CTR and GHASH paths hashes: route x86 SHA-256 native streaming before compile-time kernels bench: reuse HMAC state in SHA-384 and SHA-512 benches build: parameterize Linux dev machine just aliases ([1c30a68](https://github.com/loadingalias/rscrypto/commit/1c30a68b667f964982a519a938065f98989322b2))
+- bench: cfg-gate aead kernel bench by arch ([2cc1000](https://github.com/loadingalias/rscrypto/commit/2cc1000751a68ec3613a38b078f20f1441d42fb8))
+- benchmarks: refresh overview and harden chart parsing ([36b252b](https://github.com/loadingalias/rscrypto/commit/36b252be035f4a589c8813a68cf38afc32b5d0b2))
+- aead: extend aarch64 AEAD assembly to Linux auth: add s2n-bignum X25519 assembly backends hashes: remove AES hash primitive from fast hashes bench: drop gxhash competitor benches and fix X25519 aws-lc output benchmarks: refresh benchmark overview after full extraction workspace: drop AES-hash feature and competitor deps ([59b2b37](https://github.com/loadingalias/rscrypto/commit/59b2b374815c063263f50ddebf7870d07cf65581))
+- aead: fuse aarch64 ChaCha20-Poly1305 and batch Poly1305 NEON ([7609841](https://github.com/loadingalias/rscrypto/commit/7609841719881f8387f8453fe51581e42ffecbf1))
+- aead: fuse x86 AES-GCM assembly with vector counters ([56f75c5](https://github.com/loadingalias/rscrypto/commit/56f75c5f8679325bc6eba89cdf69d5cf5f050ded))
+- aead: add AArch64 and x86-64 AES-GCM assembly kernels benchmarks: refresh AES-GCM status ([11ebc4a](https://github.com/loadingalias/rscrypto/commit/11ebc4aed956710955f83100aa438c435b3aaaf9))
+- crypto: drop s390x target-feature inline hints ([ff3060e](https://github.com/loadingalias/rscrypto/commit/ff3060e2c0a696884e531a6c18616df828457a5a))
+- aead: drop aarch64 AES-GCM scheduling barrier ([4702023](https://github.com/loadingalias/rscrypto/commit/4702023bc56edef99b04b0e7492af8c1d10d7a9e))
+- aead: format aarch64 AES-GCM chunk helpers ([31339f2](https://github.com/loadingalias/rscrypto/commit/31339f2cc954ab3e3a066b0bb7c48e5b28a60659))
+- aead: batch AES-GCM and GCM-SIV arch kernels ([2088e3f](https://github.com/loadingalias/rscrypto/commit/2088e3f8fd731640772e7162594f6bfe45b493b4))
+- bench: fix AEAD required feature gate build: restore s390x inline target-feature gate ([48c75d6](https://github.com/loadingalias/rscrypto/commit/48c75d61782ed186e48ca084fad853b2c0efe8be))
+- aead: route AES-GCM through backend-wide GHASH and s390x CTR batching workspace: gate examples and benches by required features ci: include AES-128 GCM benches in CI selectors benchmarks: refresh benchmark overview for expanded AEAD coverage ([16983ef](https://github.com/loadingalias/rscrypto/commit/16983ef467eb2c839df9dd0b8542a82cbeeab64c))
+- workspace: gate gxhash dev-dependency on AES SIMD targets bench: skip gxhash competitor rows on unsupported targets ([dc3cf94](https://github.com/loadingalias/rscrypto/commit/dc3cf94f11e0c73f50ad989039c16b617cf1d414))
+- aead: ship AES-128-GCM and AES-128-GCM-SIV with full SIMD kernel coverage hashes: add Blake3KeyedHash type with constant-time equality bench: add aws-lc-rs, ring, dryoc, gxhash, ahash, and foldhash competitor rows workspace: wire competitor dev-deps, ungate internal hex module, refresh docs ([0a39948](https://github.com/loadingalias/rscrypto/commit/0a39948a73df05c816163dc7c49b043efc976326))
+- workspace: sharpen adoption docs and publish migration guides ([30f9846](https://github.com/loadingalias/rscrypto/commit/30f9846d52a8e6ce0a3d39adf9e0dacfda5cd5f4))
+
+
+
 ## [0.1.1](https://github.com/loadingalias/rscrypto/compare/v0.1.0...v0.1.1) - 2026-05-02
 
 ### 🏗️ Build
