@@ -10,4 +10,4 @@ aead = ["rscrypto/aead"]
 traits_io = []
 
 [dependencies]
-rscrypto = { version = "0.1.0", path = "../..", features = ["std"] }
+rscrypto = { path = "../..", features = ["std"] }
