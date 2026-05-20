@@ -37,3 +37,7 @@ fuzz-packages/**/Cargo.lock
 # Testing
 proptest-regressions
 *.proptest-regressions
+.playwright-mcp/
+assets/distribution/
+rscrypto-visual-asset-system-desktop.png
+rscrypto-visual-asset-system-mobile.png

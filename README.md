@@ -40,14 +40,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1.1", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.2.0", default-features = false, features = ["sha2"] }
 ```
 
 Full toolbox with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1.1", features = ["full", "getrandom"] }
+rscrypto = { version = "0.2.0", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, or nonces from the operating system.
@@ -72,7 +72,7 @@ The common API shape is deliberately boring: one-shot when convenient, streaming
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1.1", default-features = false, features = ["chacha20poly1305"] }
+rscrypto = { version = "0.2.0", default-features = false, features = ["chacha20poly1305"] }
 ```
 
 ```rust
@@ -100,7 +100,7 @@ assert_eq!(&message, b"pay bob 10");
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.1.1", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
+rscrypto = { version = "0.2.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
 ```
 
 ```rust
