@@ -1,5 +1,6 @@
 #![cfg(feature = "rsa")]
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 use core::{
   ffi::c_void,
   mem::MaybeUninit,
@@ -13,7 +14,9 @@ use std::{
   time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 use aws_lc_rs::signature as aws_signature;
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 use aws_lc_sys as aws_lc;
 use proptest::prelude::*;
 use ring::signature as ring_signature;
@@ -389,14 +392,26 @@ fn assert_ring_pkcs1v15_sha256(spki: &[u8], message: &[u8], signature: &[u8], ex
   assert_eq!(key.verify(message, signature).is_ok(), expected);
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn assert_aws_lc_rs_pss_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA256, spki);
   assert_eq!(key.verify(message, signature).is_ok(), expected);
 }
 
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+fn assert_aws_lc_rs_pss_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
+  let _ = (spki, message, signature, expected);
+}
+
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn assert_aws_lc_rs_pkcs1v15_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let key = aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA256, spki);
   assert_eq!(key.verify(message, signature).is_ok(), expected);
+}
+
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+fn assert_aws_lc_rs_pkcs1v15_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
+  let _ = (spki, message, signature, expected);
 }
 
 fn assert_ring_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
@@ -430,6 +445,7 @@ fn assert_ring_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], signa
   assert_eq!(actual, expected, "ring mismatch for {scheme}/{sha}");
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn assert_aws_lc_rs_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let actual = match (scheme, sha) {
     ("pss", "SHA256") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA256, pkcs1)
@@ -455,8 +471,15 @@ fn assert_aws_lc_rs_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], 
   assert_eq!(actual, expected, "aws-lc-rs mismatch for {scheme}/{sha}");
 }
 
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+fn assert_aws_lc_rs_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
+  let _ = (scheme, sha, pkcs1, message, signature, expected);
+}
+
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 struct AwsLcPublicKey(NonNull<aws_lc::EVP_PKEY>);
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 impl Drop for AwsLcPublicKey {
   fn drop(&mut self) {
     // SAFETY: Releases the owned AWS-LC EVP_PKEY because:
@@ -467,8 +490,10 @@ impl Drop for AwsLcPublicKey {
   }
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 struct AwsLcMdCtx(NonNull<aws_lc::EVP_MD_CTX>);
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 impl Drop for AwsLcMdCtx {
   fn drop(&mut self) {
     // SAFETY: Releases the owned AWS-LC EVP_MD_CTX because:
@@ -479,6 +504,7 @@ impl Drop for AwsLcMdCtx {
   }
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn aws_lc_md(sha: &str) -> *const aws_lc::EVP_MD {
   match sha {
     "SHA256" => {
@@ -506,6 +532,7 @@ fn aws_lc_md(sha: &str) -> *const aws_lc::EVP_MD {
   }
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn aws_lc_parse_public_key(spki: &[u8]) -> Option<AwsLcPublicKey> {
   let mut cbs = MaybeUninit::<aws_lc::CBS>::uninit();
   // SAFETY: Initializes and parses an AWS-LC CBS over `spki` because:
@@ -519,6 +546,7 @@ fn aws_lc_parse_public_key(spki: &[u8]) -> Option<AwsLcPublicKey> {
   NonNull::new(key).map(AwsLcPublicKey)
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn aws_lc_new_md_ctx() -> Option<AwsLcMdCtx> {
   // SAFETY: Allocates a fresh AWS-LC EVP_MD_CTX because:
   // 1. The function takes no caller-owned pointers.
@@ -528,6 +556,7 @@ fn aws_lc_new_md_ctx() -> Option<AwsLcMdCtx> {
   NonNull::new(ctx).map(AwsLcMdCtx)
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn aws_lc_sys_verify(
   scheme: &str,
   sha: &str,
@@ -599,6 +628,7 @@ fn aws_lc_sys_verify(
   }
 }
 
+#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn assert_aws_lc_sys_cavp(
   scheme: &str,
   sha: &str,
@@ -612,6 +642,19 @@ fn assert_aws_lc_sys_cavp(
   let actual = aws_lc_sys_verify(scheme, sha, salt_len, &spki, message, signature)
     .unwrap_or_else(|| panic!("AWS-LC sys setup failed for {scheme}/{sha} salt_len={salt_len:?}"));
   assert_eq!(actual, expected, "AWS-LC sys mismatch for {scheme}/{sha}");
+}
+
+#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
+fn assert_aws_lc_sys_cavp(
+  scheme: &str,
+  sha: &str,
+  salt_len: Option<usize>,
+  pkcs1: &[u8],
+  message: &[u8],
+  signature: &[u8],
+  expected: bool,
+) {
+  let _ = (scheme, sha, salt_len, pkcs1, message, signature, expected);
 }
 
 fn assert_rustcrypto_cavp(

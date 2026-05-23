@@ -4,16 +4,15 @@ use proptest::prelude::*;
 use rscrypto::{hashes::crypto::Shake128, traits::Xof as _};
 
 fn shake128_ref(data: &[u8], out: &mut [u8]) {
-  use sha3::digest::{ExtendableOutput, Update, XofReader};
-  let mut h = sha3::Shake128::default();
+  use tiny_keccak::{Hasher as _, Xof as _};
+  let mut h = tiny_keccak::Shake::v128();
   h.update(data);
-  let mut reader = h.finalize_xof();
-  reader.read(out);
+  h.squeeze(out);
 }
 
 proptest! {
   #[test]
-  fn shake128_one_shot_matches_sha3_crate(
+  fn shake128_one_shot_matches_tiny_keccak(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..2048,
   ) {
@@ -27,7 +26,7 @@ proptest! {
   }
 
   #[test]
-  fn shake128_streaming_matches_sha3_crate(
+  fn shake128_streaming_matches_tiny_keccak(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..2048,
   ) {
@@ -51,7 +50,7 @@ proptest! {
   }
 
   #[test]
-  fn shake128_multi_squeeze_matches_sha3_crate(
+  fn shake128_multi_squeeze_matches_tiny_keccak(
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..2048,
     split in any::<usize>(),
@@ -60,12 +59,11 @@ proptest! {
 
     let mut expected = vec![0u8; out_len];
     {
-      use sha3::digest::{ExtendableOutput, Update, XofReader};
-      let mut h = sha3::Shake128::default();
+      use tiny_keccak::{Hasher as _, Xof as _};
+      let mut h = tiny_keccak::Shake::v128();
       h.update(&data);
-      let mut reader = h.finalize_xof();
-      reader.read(&mut expected[..split]);
-      reader.read(&mut expected[split..]);
+      h.squeeze(&mut expected[..split]);
+      h.squeeze(&mut expected[split..]);
     }
 
     let mut actual = vec![0u8; out_len];
