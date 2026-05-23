@@ -97,7 +97,10 @@ if [[ "$FULL_WORKSPACE" == true && "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1
     show_error "$LOG_DIR/deny.log"
     exit 1
   fi
-  if ! cargo audit >>"$LOG_DIR/deny.log" 2>&1; then
+  # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
+  # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
+  # known Marvin advisory until the oracle dependency is removed or fixed.
+  if ! cargo audit --ignore RUSTSEC-2023-0071 >>"$LOG_DIR/deny.log" 2>&1; then
     fail
     show_error "$LOG_DIR/deny.log"
     exit 1
