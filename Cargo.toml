@@ -172,7 +172,7 @@ aws-lc-rs = "1.17.0"
 aws-lc-sys = "0.41.0"
 ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
-dryoc = "0.7.2"
+dryoc = "0.8.0"
 
 [lib]
 bench = false
