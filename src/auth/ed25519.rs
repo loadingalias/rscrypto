@@ -42,13 +42,20 @@ pub(crate) mod hash;
 use self::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH, SIGNATURE_LENGTH};
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
 mod aarch64_asm;
 #[cfg(target_arch = "x86_64")]
 pub(crate) use crate::auth::curve25519_edwards::point_avx2;
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+))]
+mod x86_64_asm;
 pub(crate) use crate::auth::curve25519_edwards::{constants, field, point, scalar};
 
 // Keep the planned internal layout explicit at compile time.
@@ -451,7 +458,7 @@ pub fn verify(
   // directly with R after rejecting weak points.
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -489,7 +496,7 @@ fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey
   let nonce_digest = nonce_hasher.finalize();
   let nonce_scalar = scalar::reduce_bytes_mod_order(&nonce_digest);
   let nonce_bytes = scalar::to_bytes(&nonce_scalar);
-  let r_encoded = basepoint_mul_dispatch(&nonce_bytes).to_bytes().unwrap_or_default();
+  let r_encoded = basepoint_mul_encoded_dispatch(&nonce_bytes);
 
   let challenge_digest = hash_challenge(&r_encoded, public.as_bytes(), message);
   let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
@@ -497,6 +504,48 @@ fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey
   let s_bytes = scalar::to_bytes(&s);
 
   assemble_signature(&r_encoded, &s_bytes)
+}
+
+#[inline]
+#[must_use]
+fn basepoint_mul_encoded_dispatch(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  {
+    aarch64_asm::basepoint_mul_encoded(scalar_bytes)
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  {
+    x86_64_asm::basepoint_mul_encoded(scalar_bytes)
+  }
+
+  #[cfg(not(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
+  )))]
+  {
+    basepoint_mul_dispatch(scalar_bytes).to_bytes().unwrap_or_default()
+  }
 }
 
 #[must_use]
@@ -541,7 +590,7 @@ fn hash_challenge(r_bytes: &[u8; PUBLIC_KEY_LENGTH], public_key: &[u8; PUBLIC_KE
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -582,7 +631,7 @@ const SMALL_ORDER_ENCODINGS: [[u8; PUBLIC_KEY_LENGTH]; 8] = [
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -607,7 +656,7 @@ fn verify_aarch64_encoded_r(
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -619,7 +668,7 @@ fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Dispatch: Apple AArch64 verify fast path → IFMA → AVX2 → portable
+// Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable
 // ---------------------------------------------------------------------------
 
 pub(crate) use crate::auth::curve25519_edwards::basepoint_mul_dispatch;
@@ -852,7 +901,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -866,7 +915,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -884,9 +933,42 @@ mod tests {
     }
   }
 
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ),
+    all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    )
+  ))]
+  #[test]
+  fn asm_basepoint_mul_encoded_matches_portable() {
+    use crate::hashes::crypto::Sha512;
+
+    let mut one = [0u8; Ed25519SecretKey::LENGTH];
+    one[0] = 1;
+    let digest = Sha512::digest(b"rscrypto-ed25519-signing-nonce-test");
+    let reduced = scalar::to_bytes(&scalar::reduce_bytes_mod_order(&digest));
+
+    for scalar_bytes in [[0u8; Ed25519SecretKey::LENGTH], one, reduced] {
+      let portable = point::ExtendedPoint::scalar_mul_basepoint(&scalar_bytes)
+        .to_bytes()
+        .unwrap();
+      let asm = super::basepoint_mul_encoded_dispatch(&scalar_bytes);
+
+      assert_eq!(asm, portable);
+    }
+  }
+
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -924,7 +1006,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "macos",
+    any(target_os = "macos", target_os = "linux"),
     not(feature = "portable-only"),
     not(miri)
   ))]

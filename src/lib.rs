@@ -158,7 +158,7 @@ assert!(
   ),
   feature(portable_simd)
 )]
-#![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics, riscv_target_feature))]
+#![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -212,6 +212,7 @@ pub mod aead;
   feature = "hkdf",
   feature = "kmac",
   feature = "ed25519",
+  feature = "rsa",
   feature = "x25519",
   feature = "phc-strings",
   feature = "argon2",
@@ -308,6 +309,12 @@ pub use auth::{HkdfSha256, HkdfSha384};
 pub use auth::{HmacSha256, HmacSha384, HmacSha512};
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
+#[cfg(feature = "rsa")]
+pub use auth::{
+  RsaKeyError, RsaPkcs1v15Profile, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent,
+  RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile,
+  RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+};
 #[cfg(feature = "scrypt")]
 pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
 #[cfg(feature = "x25519")]

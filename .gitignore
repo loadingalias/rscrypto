@@ -26,6 +26,14 @@ docs/llvm-ppc64le-readvolatile-issue.md
 
 # Fuzzing
 corpus
+!fuzz/corpus/
+fuzz/corpus/*
+!fuzz/corpus/auth_rsa_public_key/
+!fuzz/corpus/auth_rsa_public_key/**
+!fuzz/corpus/auth_rsa_verify/
+!fuzz/corpus/auth_rsa_verify/**
+!fuzz/corpus/auth_rsa_protocol/
+!fuzz/corpus/auth_rsa_protocol/**
 artifacts
 coverage
 dictionary
