@@ -3,6 +3,8 @@
 //! # Quick Start
 //!
 //! ```rust
+//! # #[cfg(feature = "auth")]
+//! # {
 //! use rscrypto::{Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HmacSha256, Mac};
 //!
 //! let key = b"shared-secret";
@@ -35,6 +37,7 @@
 //! let alice_shared = alice.diffie_hellman(&bob.public_key())?;
 //! let bob_shared = bob.diffie_hellman(&alice.public_key())?;
 //! assert_eq!(alice_shared, bob_shared);
+//! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -76,19 +79,20 @@
 //! # Error Conventions
 //!
 //! - Authentication failures use [`crate::VerificationError`].
-//! - HKDF oversized-output requests use [`HkdfOutputLengthError`].
-//! - X25519 low-order public inputs use [`X25519Error`].
+//! - HKDF oversized-output requests use `HkdfOutputLengthError`.
+//! - X25519 low-order public inputs use `X25519Error`.
 //!
 //! # Modules
 //!
-//! - [`argon2`] - Argon2d/Argon2i/Argon2id password hashing (RFC 9106).
-//! - [`ed25519`] - Ed25519 key and signature types.
-//! - [`hmac`] - HMAC-based authentication.
-//! - [`hkdf`] - HKDF extract-then-expand key derivation.
-//! - [`kmac`] - KMAC256 variable-output MAC.
-//! - [`phc`] - PHC string-format codec shared by password hashers.
-//! - [`scrypt`] - scrypt password hashing (RFC 7914).
-//! - [`x25519`] - X25519 Diffie-Hellman key agreement.
+//! - `argon2` - Argon2d/Argon2i/Argon2id password hashing (RFC 9106).
+//! - `ed25519` - Ed25519 key and signature types.
+//! - `hmac` - HMAC-based authentication.
+//! - `hkdf` - HKDF extract-then-expand key derivation.
+//! - `kmac` - KMAC256 variable-output MAC.
+//! - `phc` - PHC string-format codec shared by password hashers.
+//! - `rsa` - RSA public-key parsing and verification.
+//! - `scrypt` - scrypt password hashing (RFC 7914).
+//! - `x25519` - X25519 Diffie-Hellman key agreement.
 
 #[cfg(feature = "argon2")]
 pub mod argon2;
@@ -106,6 +110,8 @@ pub mod kmac;
 pub mod pbkdf2;
 #[cfg(feature = "phc-strings")]
 pub mod phc;
+#[cfg(feature = "rsa")]
+pub mod rsa;
 #[cfg(feature = "scrypt")]
 pub mod scrypt;
 #[cfg(feature = "x25519")]
@@ -125,6 +131,12 @@ pub use kmac::Kmac256;
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 #[cfg(feature = "phc-strings")]
 pub use phc::PhcError;
+#[cfg(feature = "rsa")]
+pub use rsa::{
+  RsaKeyError, RsaPkcs1v15Profile, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent,
+  RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile,
+  RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+};
 #[cfg(feature = "scrypt")]
 pub use scrypt::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
 #[cfg(feature = "x25519")]

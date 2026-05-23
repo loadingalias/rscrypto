@@ -172,6 +172,21 @@ path = "fuzz_targets/auth_x25519.rs"
 doc = false
 
 [[bin]]
+name = "auth_rsa_public_key"
+path = "fuzz_targets/auth_rsa_public_key.rs"
+doc = false
+
+[[bin]]
+name = "auth_rsa_verify"
+path = "fuzz_targets/auth_rsa_verify.rs"
+doc = false
+
+[[bin]]
+name = "auth_rsa_protocol"
+path = "fuzz_targets/auth_rsa_protocol.rs"
+doc = false
+
+[[bin]]
 name = "auth_kmac256"
 path = "fuzz_targets/auth_kmac256.rs"
 doc = false

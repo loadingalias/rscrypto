@@ -83,6 +83,7 @@ hkdf = ["hmac"]
 pbkdf2 = ["hmac"]
 kmac = ["sha3"]
 ed25519 = ["sha2"]
+rsa = ["alloc", "sha2"]
 x25519 = []
 
 phc-strings = ["alloc"]
@@ -103,7 +104,7 @@ hashes = ["crypto-hashes", "fast-hashes"]
 macs = ["hmac", "kmac"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
-signatures = ["ed25519"]
+signatures = ["ed25519", "rsa"]
 key-exchange = ["x25519"]
 auth = ["macs", "kdfs", "password-hashing", "signatures", "key-exchange"]
 aead = ["aes-gcm", "aes-gcm-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
@@ -150,6 +151,7 @@ blake2 = "0.11.0-rc.6"
 pbkdf2 = "0.13.0"
 scrypt = { version = "0.12.0", default-features = false }
 sha2 = "0.11.0"
+sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.11.0"
 keccak = "0.2.0"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
@@ -167,7 +169,9 @@ aegis = "0.9.8"
 ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
 serde_json = "1"
 aws-lc-rs = "1.17.0"
+aws-lc-sys = "0.41.0"
 ring = "0.17.14"
+rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
 dryoc = "0.7.2"
 
 [lib]
@@ -228,6 +232,11 @@ required-features = ["ascon-hash"]
 name = "auth"
 harness = false
 required-features = ["hkdf", "pbkdf2", "ed25519", "x25519"]
+
+[[bench]]
+name = "rsa"
+harness = false
+required-features = ["rsa"]
 
 [[bench]]
 name = "password_hashing"

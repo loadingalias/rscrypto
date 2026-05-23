@@ -51,6 +51,11 @@ use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signat
 use rscrypto::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
 use rscrypto::{HmacSha256, HmacSha384, HmacSha512};
+#[cfg(feature = "rsa")]
+use rscrypto::{
+  RsaKeyError, RsaPkcs1v15Profile, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponentPolicy,
+  RsaPublicKeyPolicy, RsaPublicOpError, RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKeyAlgorithm,
+};
 use rscrypto::{VerificationError, ct};
 #[cfg(feature = "x25519")]
 use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
@@ -224,6 +229,46 @@ fn root_surface_signature_exports_compile() {
   assert_eq!(public.as_bytes().len(), 32);
   assert_eq!(signature.as_bytes().len(), 64);
   assert!(public.verify(b"root-surface-ed25519", &signature).is_ok());
+}
+
+#[test]
+#[cfg(feature = "rsa")]
+fn root_surface_rsa_exports_compile() {
+  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
+  assert_eq!(policy.min_modulus_bits(), 2048);
+  assert_eq!(policy.max_modulus_bits(), 8192);
+  let _ = RsaPublicExponentPolicy::Common65537;
+  let _ = RsaKeyError::InvalidModulus;
+  let _ = RsaPublicOpError::RepresentativeOutOfRange;
+  let _ = RsaProtocolAlgorithmError::UnsupportedAlgorithm;
+  let _ = RsaPssProfile::Sha256;
+  let _ = RsaPkcs1v15Profile::Sha256;
+  assert_eq!(
+    RsaSignatureProfile::pss(RsaPssProfile::Sha256).pss_parts(),
+    Some((RsaPssProfile::Sha256, 32))
+  );
+  assert_eq!(
+    RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384).pkcs1v15_profile(),
+    Some(RsaPkcs1v15Profile::Sha384)
+  );
+  assert_eq!(
+    RsaSignatureProfile::from_tls13_signature_scheme(0x0804).unwrap(),
+    RsaSignatureProfile::pss(RsaPssProfile::Sha256)
+  );
+  assert!(
+    RsaX509PublicKeyAlgorithm::RsaPss
+      .permits_signature_profile(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
+      .is_ok()
+  );
+  assert!(
+    RsaX509PublicKeyAlgorithm::RsaEncryption
+      .signature_profile_from_tls13_signature_scheme(0x0804)
+      .is_ok()
+  );
+  let advertised = RsaX509PublicKeyAlgorithm::RsaEncryption.advertised_tls13_signature_schemes();
+  assert_eq!(advertised.len(), 3);
+  assert!(advertised.contains(0x0804));
+  let _ = RsaTlsSignatureSchemes::MAX_LEN;
 }
 
 #[test]
