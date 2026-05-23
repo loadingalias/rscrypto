@@ -25,6 +25,11 @@ targets = [
 
 [advisories]
 yanked = "warn"
+# RustCrypto `rsa` is a dev-only differential oracle and benchmark baseline.
+# rscrypto never exposes it in production paths; production RSA verification
+# uses `src/auth/rsa.rs`. Keep this scoped to the known Marvin advisory until
+# the oracle dependency is removed or RustCrypto ships a fixed release.
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 # Common Open Source Licenses
