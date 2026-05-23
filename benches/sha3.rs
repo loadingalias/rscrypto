@@ -89,14 +89,13 @@ fn shake128(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("sha3", len), data, |b, d| {
+    g.bench_with_input(BenchmarkId::new("tiny-keccak", len), data, |b, d| {
       b.iter(|| {
-        use sha3::digest::{ExtendableOutput, Update, XofReader};
-        let mut hasher = sha3::Shake128::default();
+        use tiny_keccak::{Hasher as _, Xof as _};
+        let mut hasher = tiny_keccak::Shake::v128();
         hasher.update(black_box(d));
-        let mut reader = hasher.finalize_xof();
         let mut out = [0u8; 32];
-        reader.read(&mut out);
+        hasher.squeeze(&mut out);
         black_box(out)
       })
     });
@@ -124,14 +123,13 @@ fn shake256(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("sha3", len), data, |b, d| {
+    g.bench_with_input(BenchmarkId::new("tiny-keccak", len), data, |b, d| {
       b.iter(|| {
-        use sha3::digest::{ExtendableOutput, Update, XofReader};
-        let mut hasher = sha3::Shake256::default();
+        use tiny_keccak::{Hasher as _, Xof as _};
+        let mut hasher = tiny_keccak::Shake::v256();
         hasher.update(black_box(d));
-        let mut reader = hasher.finalize_xof();
         let mut out = [0u8; 32];
-        reader.read(&mut out);
+        hasher.squeeze(&mut out);
         black_box(out)
       })
     });

@@ -40,16 +40,15 @@ pub fn run(data: &[u8]) {
     assert_eq!(&ours[..], oracle.as_slice(), "sha3-512 mismatch");
   }
 
-  // Differential: rscrypto SHAKE ↔ sha3 crate
+  // Differential: rscrypto SHAKE ↔ tiny-keccak
   {
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use tiny_keccak::{Hasher as _, Xof as _};
 
-    let mut oracle = sha3::Shake256::default();
+    let mut oracle = tiny_keccak::Shake::v256();
     oracle.update(data);
-    let mut oracle_reader = oracle.finalize_xof();
     let mut expected = vec![0u8; out_len];
-    oracle_reader.read(&mut expected[..split_out]);
-    oracle_reader.read(&mut expected[split_out..]);
+    oracle.squeeze(&mut expected[..split_out]);
+    oracle.squeeze(&mut expected[split_out..]);
 
     let mut h = Shake256::new();
     h.update(data);
@@ -66,14 +65,13 @@ pub fn run(data: &[u8]) {
   }
 
   {
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use tiny_keccak::{Hasher as _, Xof as _};
 
-    let mut oracle = sha3::Shake128::default();
+    let mut oracle = tiny_keccak::Shake::v128();
     oracle.update(data);
-    let mut oracle_reader = oracle.finalize_xof();
     let mut expected = vec![0u8; out_len];
-    oracle_reader.read(&mut expected[..split_out]);
-    oracle_reader.read(&mut expected[split_out..]);
+    oracle.squeeze(&mut expected[..split_out]);
+    oracle.squeeze(&mut expected[split_out..]);
 
     let mut h = Shake128::new();
     h.update(data);
