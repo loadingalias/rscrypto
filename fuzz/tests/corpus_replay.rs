@@ -69,8 +69,14 @@ mod auth_phc;
 #[path = "../target_impls/auth_rsa_public_key.rs"]
 mod auth_rsa_public_key;
 
+#[path = "../target_impls/auth_rsa_import.rs"]
+mod auth_rsa_import;
+
 #[path = "../target_impls/auth_rsa_protocol.rs"]
 mod auth_rsa_protocol;
+
+#[path = "../target_impls/auth_rsa_private_ops.rs"]
+mod auth_rsa_private_ops;
 
 #[path = "../target_impls/auth_rsa_verify.rs"]
 mod auth_rsa_verify;
@@ -253,9 +259,21 @@ fn replay_auth_rsa_public_key_corpus() {
 }
 
 #[test]
+fn replay_auth_rsa_import_corpus() {
+    let replayed = replay_corpus_dir("auth_rsa_import", corpus_dir("auth_rsa_import"), auth_rsa_import::run);
+    assert_ne!(replayed, 0, "auth_rsa_import corpus should not be empty");
+}
+
+#[test]
 fn replay_auth_rsa_protocol_corpus() {
     let replayed = replay_corpus_dir("auth_rsa_protocol", corpus_dir("auth_rsa_protocol"), auth_rsa_protocol::run);
     assert_ne!(replayed, 0, "auth_rsa_protocol corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_rsa_private_ops_corpus() {
+    let replayed = replay_corpus_dir("auth_rsa_private_ops", corpus_dir("auth_rsa_private_ops"), auth_rsa_private_ops::run);
+    assert_ne!(replayed, 0, "auth_rsa_private_ops corpus should not be empty");
 }
 
 #[test]

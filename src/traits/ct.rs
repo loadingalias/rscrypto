@@ -163,7 +163,6 @@ pub fn zeroize(buf: &mut [u8]) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-#[cfg(feature = "pbkdf2")]
 mod word_zero_sealed {
   /// Marker for primitive integer types whose zero representation is
   /// `0` and whose `write_volatile` of zero is a sound clear.
@@ -171,6 +170,7 @@ mod word_zero_sealed {
   /// Sealed: only the integer types listed here are accepted as scratch
   /// types for [`zeroize_words_no_fence`] / [`zeroize_words`]. New
   /// implementors must be reviewed for soundness (no padding, no Drop).
+  #[allow(dead_code)]
   pub trait WordZero: Copy {
     const ZERO: Self;
   }
@@ -195,7 +195,6 @@ mod word_zero_sealed {
   }
 }
 
-#[cfg(feature = "pbkdf2")]
 pub(crate) use word_zero_sealed::WordZero;
 
 /// Volatile-zero a slice of `WordZero` integers without a compiler fence.
@@ -205,8 +204,8 @@ pub(crate) use word_zero_sealed::WordZero;
 /// loops over `core::ptr::write_volatile` patterns. Caller is responsible
 /// for emitting a single `compiler_fence(SeqCst)` after all related
 /// zeroizations.
-#[cfg(feature = "pbkdf2")]
 #[inline(always)]
+#[allow(dead_code)]
 pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
   for word in words {
     // SAFETY: `word` is a valid, aligned, dereferenceable pointer to `T`.
@@ -214,6 +213,14 @@ pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
     // or Drop, so `write_volatile(word, T::ZERO)` is a sound clear.
     unsafe { core::ptr::write_volatile(word, T::ZERO) };
   }
+}
+
+/// Volatile-zero a slice of `WordZero` integers and emit a compiler fence.
+#[inline(always)]
+#[allow(dead_code)]
+pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
+  zeroize_words_no_fence(words);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 #[cfg(test)]

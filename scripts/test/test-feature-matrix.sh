@@ -29,6 +29,8 @@ FEATURE_SETS=(
   "std,hashes,diag"
   "macs"
   "kdfs"
+  "rsa"
+  "rsa,getrandom"
   "signatures"
   "key-exchange"
   "auth"

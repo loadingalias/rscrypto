@@ -53,8 +53,10 @@ use rscrypto::{HkdfSha256, HkdfSha384};
 use rscrypto::{HmacSha256, HmacSha384, HmacSha512};
 #[cfg(feature = "rsa")]
 use rscrypto::{
-  RsaKeyError, RsaPkcs1v15Profile, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponentPolicy,
-  RsaPublicKeyPolicy, RsaPublicOpError, RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKeyAlgorithm,
+  RsaEncryptionError, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
+  RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
+  RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 use rscrypto::{VerificationError, ct};
 #[cfg(feature = "x25519")]
@@ -239,10 +241,21 @@ fn root_surface_rsa_exports_compile() {
   assert_eq!(policy.max_modulus_bits(), 8192);
   let _ = RsaPublicExponentPolicy::Common65537;
   let _ = RsaKeyError::InvalidModulus;
+  let _ = RsaKeyGenerationError::InvalidModulusBits;
+  let _ = RsaEncryptionError::InvalidLength;
+  let _ = RsaPrivateOpError::InvalidLength;
   let _ = RsaPublicOpError::RepresentativeOutOfRange;
   let _ = RsaProtocolAlgorithmError::UnsupportedAlgorithm;
+  let _ = RsaOaepProfile::Sha256;
   let _ = RsaPssProfile::Sha256;
   let _ = RsaPkcs1v15Profile::Sha256;
+  let _: Option<RsaPublicExponent> = None;
+  let _: Option<RsaPublicKey> = None;
+  let _: Option<RsaPublicScratch> = None;
+  let _: Option<RsaPrivateKey> = None;
+  let _: Option<RsaPrivateKeyParts<'static>> = None;
+  let _: Option<RsaPrivateScratch> = None;
+  let _: Option<RsaX509PublicKey> = None;
   assert_eq!(
     RsaSignatureProfile::pss(RsaPssProfile::Sha256).pss_parts(),
     Some((RsaPssProfile::Sha256, 32))
@@ -269,6 +282,315 @@ fn root_surface_rsa_exports_compile() {
   assert_eq!(advertised.len(), 3);
   assert!(advertised.contains(0x0804));
   let _ = RsaTlsSignatureSchemes::MAX_LEN;
+}
+
+#[test]
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
+fn root_surface_rsa_generated_key_end_to_end() {
+  const X509_SHA256_WITH_RSA_ENCRYPTION: &[u8] = &[
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, 0x05, 0x00,
+  ];
+  const X509_PSS_SHA256_ALGORITHM: &[u8] = &[
+    0x30, 0x41, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a, 0x30, 0x34, 0xa0, 0x0f, 0x30, 0x0d,
+    0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0xa1, 0x1c, 0x30, 0x1a, 0x06, 0x09,
+    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+    0x04, 0x02, 0x01, 0x05, 0x00, 0xa2, 0x03, 0x02, 0x01, 0x20,
+  ];
+
+  let policy = RsaPublicKeyPolicy::legacy_verification();
+  let key = RsaPrivateKey::generate_with_policy(2048, &policy).unwrap();
+  let public_key = key.public_key();
+  let x509_key = RsaX509PublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy).unwrap();
+  let message = b"root-surface-rsa-generated-key";
+  let mut private_scratch = key.private_scratch();
+  let mut public_scratch = public_key.public_scratch();
+  let mut x509_scratch = x509_key.public_key().public_scratch();
+
+  let pkcs1_der = key.to_pkcs1_der();
+  let pkcs8_der = key.to_pkcs8_der();
+  assert_eq!(
+    RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1_der, &policy)
+      .unwrap()
+      .public_key(),
+    public_key
+  );
+  assert_eq!(
+    RsaPrivateKey::from_pkcs8_der_with_policy(&pkcs8_der, &policy)
+      .unwrap()
+      .public_key(),
+    public_key
+  );
+  assert_eq!(
+    RsaPublicKey::from_pkcs1_der_with_policy(&public_key.to_pkcs1_der(), &policy).unwrap(),
+    *public_key
+  );
+  assert_eq!(
+    RsaPublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy).unwrap(),
+    *public_key
+  );
+
+  let mut signature = vec![0u8; key.signature_len()];
+  for (pkcs1v15_profile, pss_profile) in [
+    (RsaPkcs1v15Profile::Sha256, RsaPssProfile::Sha256),
+    (RsaPkcs1v15Profile::Sha384, RsaPssProfile::Sha384),
+    (RsaPkcs1v15Profile::Sha512, RsaPssProfile::Sha512),
+  ] {
+    let pkcs1v15_profile = RsaSignatureProfile::pkcs1v15(pkcs1v15_profile);
+    key.sign_signature(pkcs1v15_profile, message, &mut signature).unwrap();
+    public_key
+      .verify_signature(pkcs1v15_profile, message, &signature)
+      .unwrap();
+    public_key
+      .verify_signature_with_scratch(pkcs1v15_profile, message, &signature, &mut public_scratch)
+      .unwrap();
+    key
+      .sign_signature_with_scratch(pkcs1v15_profile, message, &mut signature, &mut private_scratch)
+      .unwrap();
+    public_key
+      .verify_signature(pkcs1v15_profile, message, &signature)
+      .unwrap();
+    public_key
+      .verify_signature_with_scratch(pkcs1v15_profile, message, &signature, &mut public_scratch)
+      .unwrap();
+
+    let pss_profile = RsaSignatureProfile::pss(pss_profile);
+    key.sign_signature(pss_profile, message, &mut signature).unwrap();
+    public_key.verify_signature(pss_profile, message, &signature).unwrap();
+    public_key
+      .verify_signature_with_scratch(pss_profile, message, &signature, &mut public_scratch)
+      .unwrap();
+    key
+      .sign_signature_with_scratch(pss_profile, message, &mut signature, &mut private_scratch)
+      .unwrap();
+    public_key.verify_signature(pss_profile, message, &signature).unwrap();
+    public_key
+      .verify_signature_with_scratch(pss_profile, message, &signature, &mut public_scratch)
+      .unwrap();
+  }
+  let explicit_pss_profile = RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha384, 24);
+  key
+    .sign_signature_with_scratch(explicit_pss_profile, message, &mut signature, &mut private_scratch)
+    .unwrap();
+  public_key
+    .verify_signature(explicit_pss_profile, message, &signature)
+    .unwrap();
+  public_key
+    .verify_signature_with_scratch(explicit_pss_profile, message, &signature, &mut public_scratch)
+    .unwrap();
+
+  key
+    .sign_x509_signature_algorithm_der(X509_SHA256_WITH_RSA_ENCRYPTION, message, &mut signature)
+    .unwrap();
+  x509_key
+    .verify_signature_from_x509_algorithm_der(X509_SHA256_WITH_RSA_ENCRYPTION, message, &signature)
+    .unwrap();
+  x509_key
+    .verify_signature_from_x509_algorithm_der_with_scratch(
+      X509_SHA256_WITH_RSA_ENCRYPTION,
+      message,
+      &signature,
+      &mut x509_scratch,
+    )
+    .unwrap();
+  key
+    .sign_x509_signature_algorithm_der_with_scratch(
+      X509_PSS_SHA256_ALGORITHM,
+      message,
+      &mut signature,
+      &mut private_scratch,
+    )
+    .unwrap();
+  x509_key
+    .verify_signature_from_x509_algorithm_der(X509_PSS_SHA256_ALGORITHM, message, &signature)
+    .unwrap();
+  x509_key
+    .verify_signature_from_x509_algorithm_der_with_scratch(
+      X509_PSS_SHA256_ALGORITHM,
+      message,
+      &signature,
+      &mut x509_scratch,
+    )
+    .unwrap();
+
+  key
+    .sign_tls13_signature_scheme(0x0804, message, &mut signature)
+    .unwrap();
+  x509_key
+    .verify_tls13_signature_scheme(0x0804, message, &signature)
+    .unwrap();
+  x509_key
+    .verify_tls13_signature_scheme_with_scratch(0x0804, message, &signature, &mut x509_scratch)
+    .unwrap();
+  key
+    .sign_tls13_signature_scheme_with_scratch(0x0804, message, &mut signature, &mut private_scratch)
+    .unwrap();
+  x509_key
+    .verify_tls13_signature_scheme(0x0804, message, &signature)
+    .unwrap();
+  x509_key
+    .verify_tls13_signature_scheme_with_scratch(0x0804, message, &signature, &mut x509_scratch)
+    .unwrap();
+
+  key
+    .sign_tls_certificate_signature_scheme(0x0401, message, &mut signature)
+    .unwrap();
+  x509_key
+    .verify_tls_certificate_signature_scheme(0x0401, message, &signature)
+    .unwrap();
+  x509_key
+    .verify_tls_certificate_signature_scheme_with_scratch(0x0401, message, &signature, &mut x509_scratch)
+    .unwrap();
+  key
+    .sign_tls_certificate_signature_scheme_with_scratch(0x0401, message, &mut signature, &mut private_scratch)
+    .unwrap();
+  x509_key
+    .verify_tls_certificate_signature_scheme(0x0401, message, &signature)
+    .unwrap();
+  x509_key
+    .verify_tls_certificate_signature_scheme_with_scratch(0x0401, message, &signature, &mut x509_scratch)
+    .unwrap();
+
+  key.sign_jwt_alg("PS256", message, &mut signature).unwrap();
+  public_key.verify_jwt_alg("PS256", message, &signature).unwrap();
+  public_key
+    .verify_jwt_alg_with_scratch("PS256", message, &signature, &mut public_scratch)
+    .unwrap();
+  key
+    .sign_jwt_alg_with_scratch("RS256", message, &mut signature, &mut private_scratch)
+    .unwrap();
+  public_key.verify_jwt_alg("RS256", message, &signature).unwrap();
+  public_key
+    .verify_jwt_alg_with_scratch("RS256", message, &signature, &mut public_scratch)
+    .unwrap();
+
+  key.sign_cose_algorithm_id(-37, message, &mut signature).unwrap();
+  public_key.verify_cose_algorithm_id(-37, message, &signature).unwrap();
+  public_key
+    .verify_cose_algorithm_id_with_scratch(-37, message, &signature, &mut public_scratch)
+    .unwrap();
+  key
+    .sign_cose_algorithm_id_with_scratch(-257, message, &mut signature, &mut private_scratch)
+    .unwrap();
+  public_key.verify_cose_algorithm_id(-257, message, &signature).unwrap();
+  public_key
+    .verify_cose_algorithm_id_with_scratch(-257, message, &signature, &mut public_scratch)
+    .unwrap();
+
+  let label = b"root-surface-rsa-label";
+  let plaintext = b"root-surface-rsa-oaep";
+  let mut ciphertext = vec![0u8; key.signature_len()];
+  let mut decrypted = vec![0u8; key.signature_len()];
+  for oaep_profile in [RsaOaepProfile::Sha256, RsaOaepProfile::Sha384, RsaOaepProfile::Sha512] {
+    public_key
+      .encrypt_oaep(oaep_profile, label, plaintext, &mut ciphertext)
+      .unwrap();
+    public_key
+      .encrypt_oaep_with_scratch(oaep_profile, label, plaintext, &mut ciphertext, &mut public_scratch)
+      .unwrap();
+    let decrypted_len = key
+      .decrypt_oaep(oaep_profile, label, &ciphertext, &mut decrypted)
+      .unwrap();
+    assert_eq!(&decrypted[..decrypted_len], plaintext);
+    let decrypted_len = key
+      .decrypt_oaep_with_scratch(oaep_profile, label, &ciphertext, &mut decrypted, &mut private_scratch)
+      .unwrap();
+    assert_eq!(&decrypted[..decrypted_len], plaintext);
+  }
+
+  let legacy_plaintext = b"root-surface-rsaes-pkcs1v15";
+  public_key.encrypt_pkcs1v15(legacy_plaintext, &mut ciphertext).unwrap();
+  public_key
+    .encrypt_pkcs1v15_with_scratch(legacy_plaintext, &mut ciphertext, &mut public_scratch)
+    .unwrap();
+  let decrypted_len = key.decrypt_pkcs1v15(&ciphertext, &mut decrypted).unwrap();
+  assert_eq!(&decrypted[..decrypted_len], legacy_plaintext);
+  let decrypted_len = key
+    .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut private_scratch)
+    .unwrap();
+  assert_eq!(&decrypted[..decrypted_len], legacy_plaintext);
+}
+
+#[test]
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
+fn root_surface_rsa_default_generated_key_end_to_end() {
+  let key = RsaPrivateKey::generate(3072).unwrap();
+  assert_eq!(key.public_key().modulus_bits(), 3072);
+  let public_key = key.public_key();
+  let message = b"root-surface-rsa-default-generated-key";
+  let mut private_scratch = key.private_scratch();
+  let mut public_scratch = public_key.public_scratch();
+
+  let pkcs1_der = key.to_pkcs1_der();
+  let pkcs8_der = key.to_pkcs8_der();
+  assert_eq!(
+    RsaPrivateKey::from_pkcs1_der(&pkcs1_der).unwrap().public_key(),
+    public_key
+  );
+  assert_eq!(
+    RsaPrivateKey::from_pkcs8_der(&pkcs8_der).unwrap().public_key(),
+    public_key
+  );
+  assert_eq!(
+    RsaPublicKey::from_pkcs1_der(&public_key.to_pkcs1_der()).unwrap(),
+    *public_key
+  );
+  assert_eq!(
+    RsaPublicKey::from_spki_der(&public_key.to_spki_der()).unwrap(),
+    *public_key
+  );
+
+  let mut signature = vec![0u8; key.signature_len()];
+  let pkcs1v15_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
+  key
+    .sign_signature_with_scratch(pkcs1v15_profile, message, &mut signature, &mut private_scratch)
+    .unwrap();
+  public_key
+    .verify_signature_with_scratch(pkcs1v15_profile, message, &signature, &mut public_scratch)
+    .unwrap();
+
+  let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
+  key
+    .sign_signature_with_scratch(pss_profile, message, &mut signature, &mut private_scratch)
+    .unwrap();
+  public_key
+    .verify_signature_with_scratch(pss_profile, message, &signature, &mut public_scratch)
+    .unwrap();
+
+  let label = b"root-surface-rsa-default-label";
+  let plaintext = b"root-surface-rsa-default-oaep";
+  let seed = [0x37; 32];
+  let mut ciphertext = vec![0u8; key.signature_len()];
+  let mut decrypted = vec![0u8; key.signature_len()];
+  public_key
+    .encrypt_oaep_with_seed_and_scratch(
+      RsaOaepProfile::Sha256,
+      label,
+      plaintext,
+      &seed,
+      &mut ciphertext,
+      &mut public_scratch,
+    )
+    .unwrap();
+  let decrypted_len = key
+    .decrypt_oaep_with_scratch(
+      RsaOaepProfile::Sha256,
+      label,
+      &ciphertext,
+      &mut decrypted,
+      &mut private_scratch,
+    )
+    .unwrap();
+  assert_eq!(&decrypted[..decrypted_len], plaintext);
+
+  let legacy_plaintext = b"root-surface-rsa-default-rsaes-pkcs1v15";
+  let legacy_seed = vec![0x5b; key.signature_len().strict_sub(legacy_plaintext.len()).strict_sub(3)];
+  public_key
+    .encrypt_pkcs1v15_with_seed_and_scratch(legacy_plaintext, &legacy_seed, &mut ciphertext, &mut public_scratch)
+    .unwrap();
+  let decrypted_len = key
+    .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut private_scratch)
+    .unwrap();
+  assert_eq!(&decrypted[..decrypted_len], legacy_plaintext);
 }
 
 #[test]

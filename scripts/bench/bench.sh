@@ -9,6 +9,7 @@ Usage:
 Selectors:
   aead
   auth
+  rsa
   blake2
   blake3
   crc32c

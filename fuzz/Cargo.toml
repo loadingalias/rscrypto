@@ -7,6 +7,12 @@ edition = "2024"
 [package.metadata]
 cargo-fuzz = true
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(fuzzing)',
+  'cfg(rscrypto_internal_fuzzing)',
+] }
+
 [dependencies]
 libfuzzer-sys = "0.4"
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "support", features = ["aead", "traits_io"] }
@@ -42,7 +48,7 @@ blake3 = "1.8"
 digest = "0.11"
 sha2 = "0.11"
 sha3 = "0.11"
-tiny-keccak = { version = "2.0", features = ["cshake", "kmac"] }
+tiny-keccak = { version = "2.0", features = ["cshake", "kmac", "shake"] }
 
 # Fast hashes
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
@@ -177,8 +183,18 @@ path = "fuzz_targets/auth_rsa_public_key.rs"
 doc = false
 
 [[bin]]
+name = "auth_rsa_import"
+path = "fuzz_targets/auth_rsa_import.rs"
+doc = false
+
+[[bin]]
 name = "auth_rsa_verify"
 path = "fuzz_targets/auth_rsa_verify.rs"
+doc = false
+
+[[bin]]
+name = "auth_rsa_private_ops"
+path = "fuzz_targets/auth_rsa_private_ops.rs"
 doc = false
 
 [[bin]]

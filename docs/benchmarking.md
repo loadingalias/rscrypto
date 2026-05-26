@@ -9,6 +9,25 @@ extraction method behind it.
 - Compare against established Rust baselines and the fastest relevant external
   implementation per primitive family.
 - Keep raw Criterion output under `benchmark_results/<date>/<os>/<arch>/`.
+- Keep the generated result header intact. It records date, time, mode,
+  platform, and commit.
+- Use `just bench rsa` for RSA verifier benchmarks. RSA uses the same
+  Criterion result format and extraction path as the other primitive benches.
+- RSA import rows are not pure ASN.1 parser rows. The rscrypto
+  `parse-validate-spki-rscrypto` row measures SPKI/PKCS#1 DER parsing plus RSA
+  public-key validation without constructing Montgomery state. The
+  `import-spki-precompute-rscrypto` row measures `RsaPublicKey::from_spki_der`,
+  including validation and Montgomery precompute. The diagnostic
+  `precompute-r2-rscrypto` row isolates current `R^2 mod n` setup for imported
+  public keys. Treat pure DER parsing, key import, and precompute as separate
+  optimization targets when reading local results.
+- Diagnostic RSA runs with `diag` include `rsa-oracle-failure-timing`, which
+  measures valid RSA-2048 PSS verification beside short signatures,
+  representatives equal to the modulus, fixed-width padding failures, tampered
+  signatures, unsupported and legacy JWT/TLS selectors, legacy/non-RSA COSE
+  selectors, COSE padding confusion, and X.509 PSS SHA-1/default rejection
+  paths. Use it as timing-review input, not as a standalone proof that an
+  oracle class is closed.
 - Rewrite `benchmark_results/OVERVIEW.md` from extracted raw results, not by
   hand-editing headline numbers.
 - Use speedup as `external_crate_time / rscrypto_time`; values above `1.00x`
@@ -26,6 +45,7 @@ Current expanded competitors:
 | AEAD | RustCrypto AEADs, `aws-lc-rs`, `ring`, `aegis` |
 | SHA-2 / HMAC / HKDF / PBKDF2 | RustCrypto, `aws-lc-rs`, `ring` |
 | Ed25519 / X25519 | dalek, `aws-lc-rs`, `ring` where shape-compatible, `dryoc` |
+| RSA verification | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs` |
 | BLAKE2 / password hashing | RustCrypto, `dryoc` where shape-compatible |
 | XXH3 / RapidHash | upstream crates |
 | CRC | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast`, `crc64fast-nvme` |
@@ -38,9 +58,10 @@ These are intentional exclusions, not omissions.
   build friction across no_std, wasm, and cross-target CI. `dryoc` covers the
   libsodium-style pure-Rust comparison, while `aws-lc-rs` covers the C/ASM
   speed-floor story.
-- `openssl`: FFI and system-OpenSSL link friction. `aws-lc-rs` covers the same
-  performance niche without the deployment ambiguity.
-- `boring`: redundant with `aws-lc-rs` for this benchmark purpose.
+- `openssl`: excluded because FFI and system-OpenSSL linkage make the
+  deployment story ambiguous for the normal bench matrix.
+- `boring`: excluded because it is redundant with `aws-lc-rs` for the current
+  benchmark matrix.
 - `twox-hash`: useful for migration coverage, but not a primary performance
   baseline for modern XXH3; `xxhash-rust` already covers that lane.
 - generic `crc`: already used as a correctness oracle. The performance bar is

@@ -54,6 +54,12 @@
 //! rscrypto = { version = "0.1", default-features = false, features = ["hkdf"] }
 //!
 //! # Ed25519 only
+//! rscrypto = { version = "0.1", default-features = false, features = ["ed25519"] }
+//!
+//! # RSA
+//! rscrypto = { version = "0.1", default-features = false, features = ["rsa"] }
+//!
+//! # Signature primitives
 //! rscrypto = { version = "0.1", default-features = false, features = ["signatures"] }
 //!
 //! # X25519 only
@@ -90,7 +96,8 @@
 //! - `hkdf` - HKDF extract-then-expand key derivation.
 //! - `kmac` - KMAC256 variable-output MAC.
 //! - `phc` - PHC string-format codec shared by password hashers.
-//! - `rsa` - RSA public-key parsing and verification.
+//! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
+//!   RSAES-PKCS1-v1_5.
 //! - `scrypt` - scrypt password hashing (RFC 7914).
 //! - `x25519` - X25519 Diffie-Hellman key agreement.
 
@@ -133,9 +140,10 @@ pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 pub use phc::PhcError;
 #[cfg(feature = "rsa")]
 pub use rsa::{
-  RsaKeyError, RsaPkcs1v15Profile, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent,
-  RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile,
-  RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+  RsaEncryptionError, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
+  RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
+  RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
 pub use scrypt::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};

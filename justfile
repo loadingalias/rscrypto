@@ -36,7 +36,7 @@ check-all *args="":
 ci-check:
     @scripts/ci/ci-check.sh
 
-# Executable feature-flag matrix: compile + test 26 combinations.
+# Executable feature-flag matrix: compile + test supported feature combinations.
 test-feature-matrix:
     @scripts/test/test-feature-matrix.sh
 
