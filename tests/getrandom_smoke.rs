@@ -5,6 +5,7 @@
 
 #![cfg(feature = "getrandom")]
 
+#[allow(unused_macros)]
 macro_rules! random_smoke {
   ($name:ident, $ty:ty) => {
     #[test]

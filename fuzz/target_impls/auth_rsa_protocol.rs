@@ -27,12 +27,31 @@ const X509_PSS_DEFAULT_SHA1_ALGORITHM: &[u8] = &[
 ];
 const X509_MALFORMED_INDEFINITE_SEQUENCE: &[u8] = &[0x30, 0x80, 0x00, 0x00];
 
-const JWT_ALGS: [&str; 12] = [
-  "PS256", "PS384", "PS512", "RS256", "RS384", "RS512", "none", "HS256", "ES256", "EdDSA", "ps256", "",
+const JWT_ALGS: [&str; 16] = [
+  "PS256", "PS384", "PS512", "RS256", "RS384", "RS512", "none", "HS256", "ES256", "EdDSA", "ps256", "", "PS1",
+  "RS1", "PS256\0", "RS256 ",
 ];
-const COSE_ALGORITHMS: [i64; 12] = [-37, -38, -39, -257, -258, -259, -65535, -7, 0, 1, 37, i64::MAX];
-const TLS_SCHEMES: [u16; 14] = [
-  0x0804, 0x0805, 0x0806, 0x0809, 0x080a, 0x080b, 0x0401, 0x0501, 0x0601, 0x0201, 0x0203, 0x0403, 0, 0xffff,
+const COSE_ALGORITHMS: [i64; 16] = [
+  -37,
+  -38,
+  -39,
+  -257,
+  -258,
+  -259,
+  -65535,
+  -7,
+  0,
+  1,
+  37,
+  i64::MAX,
+  -65_536,
+  i64::MIN,
+  -1,
+  i64::MAX - 1,
+];
+const TLS_SCHEMES: [u16; 19] = [
+  0x0804, 0x0805, 0x0806, 0x0809, 0x080a, 0x080b, 0x0401, 0x0501, 0x0601, 0x0101, 0x0201, 0x0420,
+  0x0520, 0x0620, 0x0301, 0x0203, 0x0403, 0, 0xffff,
 ];
 const X509_ALGORITHMS: [&[u8]; 6] = [
   X509_PSS_SHA256_ALGORITHM,

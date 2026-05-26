@@ -150,6 +150,10 @@ DEFAULT_AUTH_ALGOS=(
   "x25519"
 )
 
+DEFAULT_RSA_ALGOS=(
+  "rsa"
+)
+
 DEFAULT_AEAD_ALGOS=(
   "xchacha20-poly1305"
   "chacha20-poly1305"
@@ -160,7 +164,13 @@ DEFAULT_AEAD_ALGOS=(
   "aegis-256"
 )
 
-ALL_KNOWN_ALGOS=("${DEFAULT_CHECKSUM_ALGOS[@]}" "${DEFAULT_HASH_ALGOS[@]}" "${DEFAULT_AUTH_ALGOS[@]}" "${DEFAULT_AEAD_ALGOS[@]}")
+ALL_KNOWN_ALGOS=(
+  "${DEFAULT_CHECKSUM_ALGOS[@]}"
+  "${DEFAULT_HASH_ALGOS[@]}"
+  "${DEFAULT_AUTH_ALGOS[@]}"
+  "${DEFAULT_RSA_ALGOS[@]}"
+  "${DEFAULT_AEAD_ALGOS[@]}"
+)
 
 checksum_filter_token() {
   local algo="${1:-}"
@@ -211,6 +221,14 @@ auth_filter_token() {
   esac
 }
 
+rsa_filter_token() {
+  local algo="${1:-}"
+  case "$algo" in
+    rsa) echo "rsa" ;;
+    *) echo "$algo" ;;
+  esac
+}
+
 aead_filter_token() {
   local algo="${1:-}"
   case "$algo" in
@@ -230,7 +248,8 @@ default_benches_for_crate() {
   case "$crate" in
     checksum) echo "crc" ;;
     hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake2,blake3" ;;
-    auth) echo "auth" ;;
+    auth) echo "auth,rsa" ;;
+    rsa) echo "rsa" ;;
     aead) echo "aead" ;;
     *) echo "" ;;
   esac
@@ -272,6 +291,7 @@ bench_features_for_target() {
     blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
     auth) echo "parallel,hmac,hkdf,pbkdf2,ed25519,x25519,diag" ;;
+    rsa) echo "parallel,rsa,diag" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256" ;;
     *) echo "parallel" ;;
   esac
@@ -343,6 +363,14 @@ append_algo_plan_row() {
     crate="auth"
     bench="auth"
     token="${raw_filter:-$(auth_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
+  if array_contains "$algo" "${DEFAULT_RSA_ALGOS[@]}"; then
+    crate="auth"
+    bench="rsa"
+    token="${raw_filter:-$(rsa_filter_token "$algo")}"
     PLAN_ROWS+=("$crate|$bench|$token")
     return 0
   fi
@@ -563,6 +591,10 @@ if [[ -n "$ONLY_INPUT" ]]; then
         ;;
       auth)
         for algo in "${DEFAULT_AUTH_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        for algo in "${DEFAULT_RSA_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        ;;
+      rsa)
+        for algo in "${DEFAULT_RSA_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
       aead)
         for algo in "${DEFAULT_AEAD_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
@@ -650,6 +682,8 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
         elif array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
           append_unique "hashes" raw_crates
         elif array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
+          append_unique "auth" raw_crates
+        elif array_contains "$algo" "${DEFAULT_RSA_ALGOS[@]}"; then
           append_unique "auth" raw_crates
         elif array_contains "$algo" "${DEFAULT_AEAD_ALGOS[@]}"; then
           append_unique "aead" raw_crates

@@ -35,7 +35,7 @@ rscrypto = { version = "0.1", features = ["full", "portable-only"] }
 | `macs` | `hmac`, `kmac` |
 | `kdfs` | `hkdf`, `pbkdf2` |
 | `password-hashing` | `argon2`, `scrypt`, `phc-strings` |
-| `signatures` | `ed25519` |
+| `signatures` | `ed25519`, `rsa` |
 | `key-exchange` | `x25519` |
 | `aead` | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
@@ -49,7 +49,7 @@ rscrypto = { version = "0.1", features = ["full", "portable-only"] }
 | MACs | `hmac` → `sha2`; `kmac` → `sha3` |
 | KDFs | `hkdf` → `hmac`; `pbkdf2` → `hmac` |
 | Password hashing | `argon2` → `blake2b`, `alloc`; `scrypt` → `pbkdf2`, `alloc`; `phc-strings` → `alloc` |
-| Signatures | `ed25519` → `sha2` |
+| Signatures | `ed25519` → `sha2`; `rsa` → `alloc`, `sha2` |
 | Key exchange | `x25519` |
 | AEADs | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
@@ -63,7 +63,7 @@ rscrypto = { version = "0.1", features = ["full", "portable-only"] }
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |
-| `diag` | Diagnostic introspection of the dispatch decisions taken at runtime. Requires `std`. |
+| `diag` | Diagnostic introspection of dispatch decisions and selected benchmark-only component hooks. Requires `std`; hidden diagnostic symbols are not stable application API. |
 | `portable-only` | Hard-disables runtime SIMD invocation. See below. |
 
 ## `portable-only`

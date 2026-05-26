@@ -95,7 +95,7 @@ assert!(
 //!
 //! - `checksums`: CRC families.
 //! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash, AES-round fast hash.
-//! - `auth`: MACs, KDFs, password hashing, Ed25519, X25519.
+//! - `auth`: MACs, KDFs, password hashing, Ed25519, RSA signing/verification/OAEP, X25519.
 //! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
 //! - `full`: all public primitive families.
 //!
@@ -103,11 +103,14 @@ assert!(
 //!
 //! # Security Posture
 //!
-//! Constant-time MAC, AEAD, and signature verification with `black_box`
-//! barriers. Opaque verification errors that leak no failure detail. Zeroize
-//! on drop for every secret-bearing type. `strict_*` arithmetic on counters
-//! and lengths; release builds keep `overflow-checks = true`. Continuous
-//! libFuzzer with corpus replay in CI; Miri on the portable backends.
+//! Constant-time equality and fixed-width verification checks where the input
+//! shape has already reached the primitive boundary. Public structural rejects
+//! such as malformed lengths, unsupported algorithms, or out-of-range RSA
+//! representatives may fail before the full primitive work. Opaque verification
+//! errors leak no failure detail. Zeroize on drop for every secret-bearing
+//! type. `strict_*` arithmetic on counters and lengths; release builds keep
+//! `overflow-checks = true`. Continuous libFuzzer with corpus replay in CI;
+//! Miri on the portable backends.
 //!
 //! `rscrypto` is a primitives crate, not a FIPS 140-3 validated module. It
 //! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,
@@ -311,9 +314,10 @@ pub use auth::{HmacSha256, HmacSha384, HmacSha512};
 pub use auth::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
 #[cfg(feature = "rsa")]
 pub use auth::{
-  RsaKeyError, RsaPkcs1v15Profile, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent,
-  RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile,
-  RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+  RsaEncryptionError, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
+  RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
+  RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
 pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};

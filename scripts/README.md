@@ -17,6 +17,7 @@ its caller. This is the 'dev' engine, so to speak.
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `just test-all-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
+| `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/pre-push.sh`               | `just ci-pre-push`, optional `.git/hooks/pre-push` |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 

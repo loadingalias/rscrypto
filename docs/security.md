@@ -28,6 +28,41 @@
 - Prefer `try_random()` in services and long-running processes.
 - `random()` is a convenience wrapper that panics if the platform entropy source fails.
 
+## RSA Evidence Boundary
+
+RSA release claims require explicit evidence. Treat local tests, hosted CI, and
+benchmark results as separate evidence classes; do not substitute one for
+another.
+
+Mandatory local macOS evidence before RSA performance work:
+
+- `just check-all && just test` passes on the current worktree.
+- `just test --all` covers RSA API, parser, padding, private-operation, CAVP,
+  Wycheproof, allocation, and protocol tests through the normal test lane.
+- `just test-fuzz` covers RSA parser, protocol-mapping, import, and
+  private-operation fuzz targets through the normal fuzz lane.
+
+Mandatory hosted CI evidence before a release claim:
+
+- The normal check and test jobs pass for the release commit.
+- Any skipped external helper is reported as skipped support evidence, not as a
+  passed release requirement.
+
+Mandatory RSA release evidence:
+
+- Public verify/encrypt and private sign/decrypt/keygen/import/export pass the
+  normal check, test, fuzz, and benchmark lanes.
+- Constant-time audit findings are resolved by code, tests, or written
+  rejection.
+- Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
+  RSASSA-PKCS1-v1_5.
+- Linux x86_64 and Linux aarch64 leakage tests pass once the dudect-equivalent
+  gate exists.
+- Miri covers every feasible safe private-key parser, signing, decryption,
+  scratch-width, padding-reject, and key-generation helper path.
+- Optional OpenSSL CLI and AWS-LC checks may support review; skipped optional
+  helpers never count as completed release evidence.
+
 ## Secret Serialization
 
 - Secret key and shared-secret types mask `Debug`, but raw bytes remain extractable by explicit API.

@@ -39,6 +39,8 @@ dangling_pointers_from_locals = "deny"
 integer_to_ptr_transmutes = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(miri)',
+  'cfg(fuzzing)',
+  'cfg(rscrypto_internal_fuzzing)',
   'cfg(target_feature, values("movdiri", "movdir64b", "serialize"))',
 ] }
 
@@ -172,7 +174,7 @@ ring = "0.17.14"
 rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_digit", "sha2"] }
 dryoc = "0.8.0"
 
-[target.'cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))'.dev-dependencies]
+[target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
 aws-lc-rs = "1.17.0"
 aws-lc-sys = "0.41.0"
 

@@ -80,12 +80,14 @@ PHC string-format encode/decode shared by both families: `auth::phc` (feature `p
 
 ## Signatures & Key Exchange
 
-Features: `signatures` / `key-exchange` or `ed25519` / `x25519`.
+Features: `signatures` / `key-exchange` or `ed25519` / `rsa` / `x25519`.
 
 | Type | Size | Standard |
 |------|------|----------|
 | `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
 | `Ed25519Keypair` | -- | RFC 8032 |
+| `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
+| `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile` | -- | RFC 8017 / RFC 4055 |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
 
 ## AEAD

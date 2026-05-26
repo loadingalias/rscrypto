@@ -4,10 +4,14 @@ extern crate alloc;
 
 use alloc::collections::BTreeMap;
 
-use rscrypto::{RsaKeyError, RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile};
+use rscrypto::{
+  RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy,
+  RsaSignatureProfile,
+};
 use serde_json::Value;
 
 const CAVP_SIGVER_186_3: &str = include_str!("../testdata/rsa/nist_cavp/rsa_sigver_186_3_subset.json");
+const CAVP_SIGGEN_186_3_PRIVATE: &str = include_str!("../testdata/rsa/nist_cavp/rsa_siggen_186_3_private_subset.json");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Counts {
@@ -73,6 +77,28 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
   out
 }
 
+fn hex_to_canonical_vec(hex: &str) -> Vec<u8> {
+  let mut value = hex_to_vec(hex);
+  let first_nonzero = value
+    .iter()
+    .position(|&byte| byte != 0)
+    .unwrap_or(value.len().strict_sub(1));
+  if first_nonzero != 0 {
+    value.drain(..first_nonzero);
+  }
+  value
+}
+
+fn hex_to_u64(hex: &str) -> u64 {
+  let bytes = hex_to_canonical_vec(hex);
+  assert!(bytes.len() <= core::mem::size_of::<u64>());
+  let mut value = 0u64;
+  for byte in bytes {
+    value = (value << 8) | u64::from(byte);
+  }
+  value
+}
+
 fn hex_value(byte: u8) -> u8 {
   match byte {
     b'0'..=b'9' => byte - b'0',
@@ -118,6 +144,37 @@ fn cavp_tests(suite: &Value) -> &[Value] {
   suite["tests"].as_array().expect("CAVP test list must be an array")
 }
 
+fn fixed_width_one(len: usize) -> Vec<u8> {
+  let mut out = vec![0u8; len];
+  *out.last_mut().expect("non-empty RSA modulus") = 1;
+  out
+}
+
+fn private_key_from_cavp_siggen(test: &Value, policy: &RsaPublicKeyPolicy) -> RsaPrivateKey {
+  let modulus = hex_to_canonical_vec(field(test, "n"));
+  let private_exponent = hex_to_canonical_vec(field(test, "d"));
+  let prime_p = hex_to_canonical_vec(field(test, "p"));
+  let prime_q = hex_to_canonical_vec(field(test, "q"));
+  let exponent_p = hex_to_canonical_vec(field(test, "dp"));
+  let exponent_q = hex_to_canonical_vec(field(test, "dq"));
+  let coefficient = hex_to_canonical_vec(field(test, "qinv"));
+
+  RsaPrivateKey::from_components_with_policy(
+    RsaPrivateKeyParts {
+      modulus: &modulus,
+      public_exponent: hex_to_u64(field(test, "e")),
+      private_exponent: &private_exponent,
+      prime_p: &prime_p,
+      prime_q: &prime_q,
+      exponent_p: &exponent_p,
+      exponent_q: &exponent_q,
+      coefficient: &coefficient,
+    },
+    policy,
+  )
+  .expect("CAVP RSA private-key components must validate")
+}
+
 #[test]
 fn nist_cavp_odd_public_exponents_require_explicit_policy() {
   let suite: Value = serde_json::from_str(CAVP_SIGVER_186_3).expect("CAVP JSON must parse");
@@ -132,6 +189,198 @@ fn nist_cavp_odd_public_exponents_require_explicit_policy() {
   let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
   let key = RsaPublicKey::from_pkcs1_der_with_policy(&key_der, &policy).unwrap();
   assert_eq!(key.modulus_bits(), 2048);
+}
+
+fn expected_siggen_coverage() -> BTreeMap<(String, u64, String), usize> {
+  BTreeMap::from([
+    (("pkcs1v15".to_owned(), 2048, "SHA256".to_owned()), 1),
+    (("pkcs1v15".to_owned(), 2048, "SHA384".to_owned()), 1),
+    (("pkcs1v15".to_owned(), 2048, "SHA512".to_owned()), 1),
+    (("pkcs1v15".to_owned(), 3072, "SHA256".to_owned()), 1),
+    (("pkcs1v15".to_owned(), 3072, "SHA384".to_owned()), 1),
+    (("pkcs1v15".to_owned(), 3072, "SHA512".to_owned()), 1),
+    (("pss".to_owned(), 2048, "SHA256".to_owned()), 1),
+    (("pss".to_owned(), 2048, "SHA384".to_owned()), 1),
+    (("pss".to_owned(), 2048, "SHA512".to_owned()), 1),
+    (("pss".to_owned(), 3072, "SHA256".to_owned()), 1),
+    (("pss".to_owned(), 3072, "SHA384".to_owned()), 1),
+    (("pss".to_owned(), 3072, "SHA512".to_owned()), 1),
+  ])
+}
+
+#[test]
+fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
+  let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
+  assert_eq!(suite["counts"]["total"].as_u64(), Some(12));
+  assert_eq!(suite["counts"]["pkcs1v15"].as_u64(), Some(6));
+  assert_eq!(suite["counts"]["pss"].as_u64(), Some(6));
+  assert_eq!(suite["source_files"][0].as_str(), Some("SigGen15_186-3.txt"));
+  assert_eq!(suite["source_files"][1].as_str(), Some("SigGenPSS_186-3.txt"));
+
+  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let mut pkcs1v15 = 0usize;
+  let mut pss = 0usize;
+  let mut coverage: BTreeMap<(String, u64, String), usize> = BTreeMap::new();
+
+  for test in cavp_tests(&suite) {
+    let coverage_key = (
+      field(test, "scheme").to_owned(),
+      test["mod"].as_u64().expect("CAVP modulus size must be numeric"),
+      field(test, "sha").to_owned(),
+    );
+    coverage
+      .entry(coverage_key)
+      .and_modify(|count| *count = (*count).strict_add(1))
+      .or_insert(1);
+
+    let key = private_key_from_cavp_siggen(test, &policy);
+    let message = hex_to_vec(field(test, "msg"));
+    let expected_signature = hex_to_vec(field(test, "sig"));
+    let mut signature = vec![0u8; key.public_key().modulus().len()];
+    let mut scratch_signature = vec![0u8; key.public_key().modulus().len()];
+    let mut scratch = key.private_scratch();
+    let blinding_factor = fixed_width_one(key.public_key().modulus().len());
+    let blinding_factor_inverse = fixed_width_one(key.public_key().modulus().len());
+
+    match field(test, "scheme") {
+      "pkcs1v15" => {
+        pkcs1v15 = pkcs1v15.strict_add(1);
+        key
+          .sign_pkcs1v15_with_blinding_factor(
+            pkcs1_profile(field(test, "sha")),
+            &message,
+            &blinding_factor,
+            &blinding_factor_inverse,
+            &mut signature,
+          )
+          .expect("CAVP PKCS1v1.5 private signing must succeed");
+        assert_eq!(signature, expected_signature, "CAVP PKCS1v1.5 signature mismatch");
+        key
+          .sign_pkcs1v15_with_blinding_factor_and_scratch(
+            pkcs1_profile(field(test, "sha")),
+            &message,
+            &blinding_factor,
+            &blinding_factor_inverse,
+            &mut scratch_signature,
+            &mut scratch,
+          )
+          .expect("CAVP PKCS1v1.5 scratch private signing must succeed");
+        assert_eq!(
+          scratch_signature, expected_signature,
+          "CAVP PKCS1v1.5 scratch signature mismatch"
+        );
+        key
+          .public_key()
+          .verify_pkcs1v15(pkcs1_profile(field(test, "sha")), &message, &signature)
+          .expect("CAVP PKCS1v1.5 generated signature must verify");
+      }
+      "pss" => {
+        pss = pss.strict_add(1);
+        let salt = hex_to_vec(field(test, "salt"));
+        key
+          .sign_pss_with_salt_and_blinding_factor(
+            pss_profile(field(test, "sha")),
+            &message,
+            &salt,
+            &blinding_factor,
+            &blinding_factor_inverse,
+            &mut signature,
+          )
+          .expect("CAVP PSS private signing must succeed");
+        assert_eq!(signature, expected_signature, "CAVP PSS signature mismatch");
+        key
+          .sign_pss_with_salt_and_blinding_factor_and_scratch(
+            pss_profile(field(test, "sha")),
+            &message,
+            &salt,
+            &blinding_factor,
+            &blinding_factor_inverse,
+            &mut scratch_signature,
+            &mut scratch,
+          )
+          .expect("CAVP PSS scratch private signing must succeed");
+        assert_eq!(
+          scratch_signature, expected_signature,
+          "CAVP PSS scratch signature mismatch"
+        );
+        key
+          .public_key()
+          .verify_signature(
+            RsaSignatureProfile::pss_with_salt_len(pss_profile(field(test, "sha")), salt.len()),
+            &message,
+            &signature,
+          )
+          .expect("CAVP PSS generated signature must verify");
+      }
+      other => panic!("unsupported CAVP SigGen scheme `{other}`"),
+    }
+  }
+
+  assert_eq!(pkcs1v15, 6);
+  assert_eq!(pss, 6);
+  assert_eq!(coverage, expected_siggen_coverage());
+}
+
+#[cfg(feature = "getrandom")]
+#[test]
+fn nist_cavp_sha2_siggen_profile_signing_matches_expected_results() {
+  let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
+  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let mut pkcs1v15 = 0usize;
+  let mut pss = 0usize;
+
+  for test in cavp_tests(&suite) {
+    let key = private_key_from_cavp_siggen(test, &policy);
+    let message = hex_to_vec(field(test, "msg"));
+    let expected_signature = hex_to_vec(field(test, "sig"));
+    let mut signature = vec![0u8; key.public_key().modulus().len()];
+    let mut scratch_signature = vec![0u8; key.public_key().modulus().len()];
+    let mut scratch = key.private_scratch();
+
+    match field(test, "scheme") {
+      "pkcs1v15" => {
+        pkcs1v15 = pkcs1v15.strict_add(1);
+        let profile = RsaSignatureProfile::pkcs1v15(pkcs1_profile(field(test, "sha")));
+        key
+          .sign_signature(profile, &message, &mut signature)
+          .expect("CAVP PKCS1v1.5 profile signing must succeed");
+        assert_eq!(
+          signature, expected_signature,
+          "CAVP PKCS1v1.5 profile signature mismatch"
+        );
+        key
+          .sign_signature_with_scratch(profile, &message, &mut scratch_signature, &mut scratch)
+          .expect("CAVP PKCS1v1.5 scratch profile signing must succeed");
+        assert_eq!(
+          scratch_signature, expected_signature,
+          "CAVP PKCS1v1.5 scratch profile signature mismatch"
+        );
+      }
+      "pss" => {
+        pss = pss.strict_add(1);
+        let salt_len = hex_to_vec(field(test, "salt")).len();
+        let profile = RsaSignatureProfile::pss_with_salt_len(pss_profile(field(test, "sha")), salt_len);
+        key
+          .sign_signature(profile, &message, &mut signature)
+          .expect("CAVP PSS profile signing must succeed");
+        key
+          .public_key()
+          .verify_signature(profile, &message, &signature)
+          .expect("CAVP PSS profile signature must verify");
+        key
+          .sign_signature_with_scratch(profile, &message, &mut scratch_signature, &mut scratch)
+          .expect("CAVP PSS scratch profile signing must succeed");
+        key
+          .public_key()
+          .verify_signature(profile, &message, &scratch_signature)
+          .expect("CAVP PSS scratch profile signature must verify");
+      }
+      other => panic!("unsupported CAVP SigGen scheme `{other}`"),
+    }
+  }
+
+  assert_eq!(pkcs1v15, 6);
+  assert_eq!(pss, 6);
 }
 
 fn expected_coverage() -> BTreeMap<(String, u64, String, Option<u64>), usize> {
