@@ -221,7 +221,11 @@ jobs:
       run_script: |
         if [[ "${{ inputs.supply_chain_mode }}" == "full" ]]; then
           cargo deny check all
-          cargo audit
+          # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production
+          # RSA verification is implemented in `src/auth/rsa.rs`; keep this
+          # scoped to the known Marvin advisory until the oracle dependency is
+          # removed or fixed.
+          cargo audit --ignore RUSTSEC-2023-0071
         else
           cargo deny check advisories
         fi
