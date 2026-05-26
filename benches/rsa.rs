@@ -2,6 +2,11 @@
 
 use core::hint::black_box;
 
+#[cfg(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+))]
 use aws_lc_rs::signature as aws_signature;
 use criterion::{Criterion, criterion_group, criterion_main};
 use ring::signature as ring_signature;
@@ -18,6 +23,26 @@ use rscrypto::auth::rsa::{
   diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, Sha256, Sha384, Sha512};
+
+#[cfg(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+))]
+macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {
+    $($tokens)*
+  };
+}
+
+#[cfg(not(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+)))]
+macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {};
+}
 
 const MESSAGE_PSS: &[u8] = b"rscrypto RSA-PSS verification fixture";
 const MESSAGE_PKCS1V15: &[u8] = b"rscrypto RSA-PKCS1-v1_5 verification fixture";
@@ -250,8 +275,11 @@ fn rsa_components_for_size(
   let ring_pss_key = ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA256, &pss_pkcs1);
   let ring_pkcs1_key =
     ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PKCS1_2048_8192_SHA256, &pkcs1_pkcs1);
-  let aws_pss_key = aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA256, &pss_pkcs1);
-  let aws_pkcs1_key = aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA256, &pkcs1_pkcs1);
+  aws_lc_bench! {
+    let aws_pss_key = aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA256, &pss_pkcs1);
+    let aws_pkcs1_key =
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA256, &pkcs1_pkcs1);
+  }
 
   let rustcrypto_pss_key = RustCryptoRsaPublicKey::from_public_key_der(pss_spki)
     .ok()
@@ -377,9 +405,11 @@ fn rsa_components_for_size(
   group.bench_function("verify-pss-sha256-ring", |b| {
     b.iter(|| ring_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).unwrap())
   });
-  group.bench_function("verify-pss-sha256-aws-lc-rs", |b| {
-    b.iter(|| aws_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).unwrap())
-  });
+  aws_lc_bench! {
+    group.bench_function("verify-pss-sha256-aws-lc-rs", |b| {
+      b.iter(|| aws_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).unwrap())
+    });
+  }
   group.bench_function("verify-pkcs1v15-sha256-rscrypto", |b| {
     b.iter(|| {
       pkcs1_key
@@ -431,13 +461,15 @@ fn rsa_components_for_size(
         .unwrap()
     })
   });
-  group.bench_function("verify-pkcs1v15-sha256-aws-lc-rs", |b| {
-    b.iter(|| {
-      aws_pkcs1_key
-        .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
-        .unwrap()
-    })
-  });
+  aws_lc_bench! {
+    group.bench_function("verify-pkcs1v15-sha256-aws-lc-rs", |b| {
+      b.iter(|| {
+        aws_pkcs1_key
+          .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
+          .unwrap()
+      })
+    });
+  }
 
   group.finish();
 }
