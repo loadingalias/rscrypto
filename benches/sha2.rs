@@ -6,6 +6,26 @@ use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
+#[cfg(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+))]
+macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {
+    $($tokens)*
+  };
+}
+
+#[cfg(not(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+)))]
+macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {};
+}
+
 #[cfg(feature = "diag")]
 fn print_sha2_diag_once() {
   use std::sync::Once;
@@ -88,9 +108,11 @@ macro_rules! sha2_oneshot_ietf {
           })
         });
 
-        g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-          b.iter(|| black_box(aws_lc_rs::digest::digest($aws_alg, black_box(d))))
-        });
+        aws_lc_bench! {
+          g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+            b.iter(|| black_box(aws_lc_rs::digest::digest($aws_alg, black_box(d))))
+          });
+        }
 
         g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
           b.iter(|| black_box(ring::digest::digest($ring_alg, black_box(d))))

@@ -20,12 +20,34 @@ type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
 type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
 type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
 
-/// `KeyType` newtype so `aws_lc_rs::hkdf::Prk::expand(...)` can produce a
-/// variable-length OKM matching the bench's `out_len`.
-struct AwsHkdfLen(usize);
-impl aws_lc_rs::hkdf::KeyType for AwsHkdfLen {
-  fn len(&self) -> usize {
-    self.0
+#[cfg(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+))]
+macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {
+    $($tokens)*
+  };
+}
+
+#[cfg(not(all(
+  any(unix, windows),
+  not(target_arch = "wasm32"),
+  not(any(target_arch = "s390x", target_arch = "powerpc64"))
+)))]
+macro_rules! aws_lc_bench {
+  ($($tokens:tt)*) => {};
+}
+
+// `KeyType` newtype so `aws_lc_rs::hkdf::Prk::expand(...)` can produce a
+// variable-length OKM matching the bench's `out_len`.
+aws_lc_bench! {
+  struct AwsHkdfLen(usize);
+  impl aws_lc_rs::hkdf::KeyType for AwsHkdfLen {
+    fn len(&self) -> usize {
+      self.0
+    }
   }
 }
 
@@ -72,7 +94,9 @@ fn hmac_sha256(c: &mut Criterion) {
 
   let inputs = common::comp_sizes();
   let key = [0x42u8; 32];
-  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
+  aws_lc_bench! {
+    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
+  }
   let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key);
   let mut g = c.benchmark_group("hmac-sha256");
 
@@ -93,9 +117,11 @@ fn hmac_sha256(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
@@ -110,7 +136,9 @@ fn hmac_sha384(c: &mut Criterion) {
 
   let inputs = common::comp_sizes();
   let key = [0x42u8; 48];
-  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA384, &key);
+  aws_lc_bench! {
+    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA384, &key);
+  }
   let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA384, &key);
   let mut g = c.benchmark_group("hmac-sha384");
 
@@ -138,9 +166,11 @@ fn hmac_sha384(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
@@ -155,7 +185,9 @@ fn hmac_sha512(c: &mut Criterion) {
 
   let inputs = common::comp_sizes();
   let key = [0x42u8; 64];
-  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA512, &key);
+  aws_lc_bench! {
+    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA512, &key);
+  }
   let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA512, &key);
   let mut g = c.benchmark_group("hmac-sha512");
 
@@ -183,9 +215,11 @@ fn hmac_sha512(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
@@ -235,7 +269,9 @@ fn hmac_sha256_internal(c: &mut Criterion) {
 
   let data = common::random_bytes(4096);
   let key = [0x24u8; 32];
-  let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
+  aws_lc_bench! {
+    let aws_key = aws_lc_rs::hmac::Key::new(aws_lc_rs::hmac::HMAC_SHA256, &key);
+  }
   let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key);
   let mut g = c.benchmark_group("hmac-sha256/internal/fixed-message");
 
@@ -275,9 +311,11 @@ fn hmac_sha256_internal(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), msg, |b, d| {
-      b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), msg, |b, d| {
+        b.iter(|| black_box(aws_lc_rs::hmac::sign(&aws_key, black_box(d))))
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", len), msg, |b, d| {
       b.iter(|| black_box(ring::hmac::sign(&ring_key, black_box(d))))
@@ -295,7 +333,9 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
   let info = [0x33u8; 48];
   let hkdf = HkdfSha256::new(&salt, &ikm);
   let rustcrypto = RustCryptoHkdfSha256::new(Some(&salt), &ikm);
-  let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA256, &salt).extract(&ikm);
+  aws_lc_bench! {
+    let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA256, &salt).extract(&ikm);
+  }
   let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &salt).extract(&ikm);
   let mut g = c.benchmark_group("hkdf-sha256/expand");
 
@@ -317,17 +357,19 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        aws_prk
-          .expand(&[black_box(&info)], AwsHkdfLen(len))
-          .unwrap()
-          .fill(black_box(&mut out))
-          .unwrap();
-        black_box(out[0])
-      })
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          aws_prk
+            .expand(&[black_box(&info)], AwsHkdfLen(len))
+            .unwrap()
+            .fill(black_box(&mut out))
+            .unwrap();
+          black_box(out[0])
+        })
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
@@ -353,7 +395,9 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
   let info = [0x33u8; 80];
   let hkdf = HkdfSha384::new(&salt, &ikm);
   let rustcrypto = RustCryptoHkdfSha384::new(Some(&salt), &ikm);
-  let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA384, &salt).extract(&ikm);
+  aws_lc_bench! {
+    let aws_prk = aws_lc_rs::hkdf::Salt::new(aws_lc_rs::hkdf::HKDF_SHA384, &salt).extract(&ikm);
+  }
   let ring_prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA384, &salt).extract(&ikm);
   let mut g = c.benchmark_group("hkdf-sha384/expand");
 
@@ -375,17 +419,19 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-      let mut out = vec![0u8; len];
-      b.iter(|| {
-        aws_prk
-          .expand(&[black_box(&info)], AwsHkdfLen(len))
-          .unwrap()
-          .fill(black_box(&mut out))
-          .unwrap();
-        black_box(out[0])
-      })
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+        let mut out = vec![0u8; len];
+        b.iter(|| {
+          aws_prk
+            .expand(&[black_box(&info)], AwsHkdfLen(len))
+            .unwrap()
+            .fill(black_box(&mut out))
+            .unwrap();
+          black_box(out[0])
+        })
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
@@ -433,19 +479,21 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
         })
       });
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          aws_lc_rs::pbkdf2::derive(
-            aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
-            nz_iters,
-            black_box(&salt),
-            black_box(&password),
-            black_box(&mut out),
-          );
-          black_box(out[0])
-        })
-      });
+      aws_lc_bench! {
+        g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+          let mut out = vec![0u8; len];
+          b.iter(|| {
+            aws_lc_rs::pbkdf2::derive(
+              aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+              nz_iters,
+              black_box(&salt),
+              black_box(&password),
+              black_box(&mut out),
+            );
+            black_box(out[0])
+          })
+        });
+      }
 
       g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
@@ -517,19 +565,21 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
         })
       });
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          aws_lc_rs::pbkdf2::derive(
-            aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
-            nz_iters,
-            black_box(&salt),
-            black_box(&password),
-            black_box(&mut out),
-          );
-          black_box(out[0])
-        })
-      });
+      aws_lc_bench! {
+        g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+          let mut out = vec![0u8; len];
+          b.iter(|| {
+            aws_lc_rs::pbkdf2::derive(
+              aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA256,
+              nz_iters,
+              black_box(&salt),
+              black_box(&password),
+              black_box(&mut out),
+            );
+            black_box(out[0])
+          })
+        });
+      }
 
       g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
@@ -580,19 +630,21 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
         })
       });
 
-      g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
-        let mut out = vec![0u8; len];
-        b.iter(|| {
-          aws_lc_rs::pbkdf2::derive(
-            aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA512,
-            nz_iters,
-            black_box(&salt),
-            black_box(&password),
-            black_box(&mut out),
-          );
-          black_box(out[0])
-        })
-      });
+      aws_lc_bench! {
+        g.bench_with_input(BenchmarkId::new("aws-lc-rs", out_len), &out_len, |b, &len| {
+          let mut out = vec![0u8; len];
+          b.iter(|| {
+            aws_lc_rs::pbkdf2::derive(
+              aws_lc_rs::pbkdf2::PBKDF2_HMAC_SHA512,
+              nz_iters,
+              black_box(&salt),
+              black_box(&password),
+              black_box(&mut out),
+            );
+            black_box(out[0])
+          })
+        });
+      }
 
       g.bench_with_input(BenchmarkId::new("ring", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
@@ -672,7 +724,9 @@ fn ed25519_sign(c: &mut Criterion) {
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
   let keypair = Ed25519Keypair::from_secret_key(secret);
   let signing_key = SigningKey::from_bytes(&secret_bytes);
-  let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  aws_lc_bench! {
+    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  }
   let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
   let (_dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
   let mut dryoc_sig: [u8; 64] = [0u8; 64];
@@ -693,9 +747,11 @@ fn ed25519_sign(c: &mut Criterion) {
       b.iter(|| black_box(black_box(&signing_key).sign(black_box(d))))
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-      b.iter(|| black_box(aws_kp.sign(black_box(d))))
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| black_box(aws_kp.sign(black_box(d))))
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| black_box(ring_kp.sign(black_box(d))))
@@ -713,7 +769,9 @@ fn ed25519_sign(c: &mut Criterion) {
 }
 
 fn ed25519_verify(c: &mut Criterion) {
-  use aws_lc_rs::signature::KeyPair as _;
+  aws_lc_bench! {
+    use aws_lc_rs::signature::KeyPair as _;
+  }
   use dryoc::classic::crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair, crypto_sign_verify_detached};
   use ring::signature::KeyPair as _;
 
@@ -723,9 +781,11 @@ fn ed25519_verify(c: &mut Criterion) {
   let public: Ed25519PublicKey = keypair.public_key();
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   let verifying_key = signing_key.verifying_key();
-  let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
-  let aws_pubkey: Vec<u8> = aws_kp.public_key().as_ref().to_vec();
-  let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, aws_pubkey);
+  aws_lc_bench! {
+    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+    let aws_pubkey: Vec<u8> = aws_kp.public_key().as_ref().to_vec();
+    let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, aws_pubkey);
+  }
   let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
   let ring_pubkey: Vec<u8> = ring_kp.public_key().as_ref().to_vec();
   let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, ring_pubkey);
@@ -740,7 +800,9 @@ fn ed25519_verify(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
     let ours = keypair.sign(data);
     let dalek = signing_key.sign(data);
-    let aws_sig = aws_kp.sign(data);
+    aws_lc_bench! {
+      let aws_sig = aws_kp.sign(data);
+    }
     let ring_sig = ring_kp.sign(data);
     let mut dryoc_sig: [u8; 64] = [0u8; 64];
     crypto_sign_detached(&mut dryoc_sig, data, &dryoc_sk).unwrap();
@@ -761,12 +823,14 @@ fn ed25519_verify(c: &mut Criterion) {
       })
     });
 
-    g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-      b.iter(|| {
-        aws_upk.verify(black_box(d), aws_sig.as_ref()).unwrap();
-        black_box(())
-      })
-    });
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| {
+          aws_upk.verify(black_box(d), aws_sig.as_ref()).unwrap();
+          black_box(())
+        })
+      });
+    }
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| {
@@ -811,14 +875,16 @@ fn x25519_public_key(c: &mut Criterion) {
     })
   });
 
-  g.bench_function("aws-lc-rs", |b| {
-    b.iter(|| {
-      let priv_key =
-        aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, black_box(&secret_bytes))
-          .unwrap();
-      black_box(priv_key.compute_public_key().unwrap())
-    })
-  });
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs", |b| {
+      b.iter(|| {
+        let priv_key =
+          aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, black_box(&secret_bytes))
+            .unwrap();
+        black_box(priv_key.compute_public_key().unwrap())
+      })
+    });
+  }
 
   g.bench_function("dryoc", |b| {
     let mut public = [0u8; 32];
@@ -841,17 +907,20 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   let bob_public = X25519SecretKey::from_bytes(bob_bytes).public_key();
   let dalek_alice = DalekX25519Secret::from(alice_bytes);
   let dalek_bob_public = DalekX25519PublicKey::from(&DalekX25519Secret::from(bob_bytes));
-  let aws_alice =
-    aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).unwrap();
-  let aws_bob_pub_bytes: [u8; 32] = {
-    let bob_priv =
-      aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &bob_bytes).unwrap();
-    let pk = bob_priv.compute_public_key().unwrap();
-    let mut out = [0u8; 32];
-    out.copy_from_slice(pk.as_ref());
-    out
-  };
-  let aws_bob_unparsed = aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::X25519, aws_bob_pub_bytes);
+  aws_lc_bench! {
+    let aws_alice =
+      aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).unwrap();
+    let aws_bob_pub_bytes: [u8; 32] = {
+      let bob_priv =
+        aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &bob_bytes).unwrap();
+      let pk = bob_priv.compute_public_key().unwrap();
+      let mut out = [0u8; 32];
+      out.copy_from_slice(pk.as_ref());
+      out
+    };
+    let aws_bob_unparsed =
+      aws_lc_rs::agreement::UnparsedPublicKey::new(&aws_lc_rs::agreement::X25519, aws_bob_pub_bytes);
+  }
   let mut dryoc_bob_pub = [0u8; 32];
   crypto_scalarmult_base(&mut dryoc_bob_pub, &bob_bytes);
   let mut g = c.benchmark_group("x25519/diffie-hellman");
@@ -864,17 +933,19 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
     b.iter(|| black_box(black_box(&dalek_alice).diffie_hellman(black_box(&dalek_bob_public))))
   });
 
-  g.bench_function("aws-lc-rs", |b| {
-    b.iter(|| {
-      let shared = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
-        let mut out = [0u8; 32];
-        out.copy_from_slice(bytes);
-        Ok::<[u8; 32], ()>(out)
+  aws_lc_bench! {
+    g.bench_function("aws-lc-rs", |b| {
+      b.iter(|| {
+        let shared = aws_lc_rs::agreement::agree(black_box(&aws_alice), black_box(&aws_bob_unparsed), (), |bytes| {
+          let mut out = [0u8; 32];
+          out.copy_from_slice(bytes);
+          Ok::<[u8; 32], ()>(out)
+        })
+        .unwrap();
+        black_box(shared)
       })
-      .unwrap();
-      black_box(shared)
-    })
-  });
+    });
+  }
 
   g.bench_function("dryoc", |b| {
     let mut shared = [0u8; 32];
