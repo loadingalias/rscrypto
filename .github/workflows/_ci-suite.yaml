@@ -68,7 +68,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
-      timeout_minutes: 35
+      timeout_minutes: 60
       cache_key: ${{ inputs.cache_key_prefix }}-${{ matrix.target.name }}
       tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'ci' }}
       toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}

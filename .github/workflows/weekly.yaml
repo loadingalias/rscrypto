@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: weekly-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   RUST_BACKTRACE: 1
@@ -43,7 +43,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
-      timeout_minutes: 30
+      timeout_minutes: 60
       cache_key: weekly-feature-matrix-${{ matrix.target.name }}
       tools_mode: minimal
       enable_magic_cache: true

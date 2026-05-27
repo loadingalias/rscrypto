@@ -40,7 +40,7 @@ unsafe extern "C" {
 
 #[inline]
 pub(super) fn supports_bignum_mont_words(words: usize) -> bool {
-  matches!(words, 32 | 48 | 64)
+  matches!(words, 32 | 48 | 64 | 128)
 }
 
 #[inline]
@@ -67,9 +67,9 @@ pub(super) fn mont_mul_cios_words(
 
   // SAFETY: RSA Montgomery assembly call because:
   // 1. This module is compiled only for macOS AArch64 and embeds the matching Darwin symbol.
-  // 2. The caller checks all slices have one of the supported public RSA limb widths: 32, 48, or 64
-  //    `u64` limbs. The `t` capacity check preserves the shared RSA helper contract; this kernel uses
-  //    stack scratch internally.
+  // 2. The caller checks all slices have one of the supported public RSA limb widths: 32, 48, 64, or
+  //    128 `u64` limbs. The `t` capacity check preserves the shared RSA helper contract; this kernel
+  //    uses stack scratch internally.
   // 3. All pointers are derived from live Rust slices and are valid for the assembly's fixed
   //    read/write ranges. The assembly does not retain pointers after returning.
   // 4. `out` does not alias `a`, `b`, or `modulus` in current non-in-place callers.
@@ -93,8 +93,8 @@ pub(super) fn mont_square_cios_words_in_place(
 
   // SAFETY: RSA in-place Montgomery square assembly call because:
   // 1. This module is compiled only for macOS AArch64 and embeds the matching Darwin symbol.
-  // 2. The caller checks `value` and `modulus` are 32, 48, or 64 `u64` limbs. The `t` capacity check
-  //    preserves the shared RSA helper contract; this kernel uses stack scratch internally.
+  // 2. The caller checks `value` and `modulus` are 32, 48, 64, or 128 `u64` limbs. The `t` capacity
+  //    check preserves the shared RSA helper contract; this kernel uses stack scratch internally.
   // 3. `value.as_mut_ptr()` is intentionally passed as `out`, `a`, and `b`; the assembly consumes all
   //    input limbs before writing `out`.
   // 4. All pointers are derived from live Rust slices and the assembly does not retain them.
@@ -127,7 +127,7 @@ pub(super) fn mont_mul_cios_words_in_place_left(
 
   // SAFETY: RSA in-place Montgomery multiply assembly call because:
   // 1. This module is compiled only for macOS AArch64 and embeds the matching Darwin symbol.
-  // 2. The caller checks `left`, `right`, and `modulus` are 32, 48, or 64 `u64` limbs. The `t`
+  // 2. The caller checks `left`, `right`, and `modulus` are 32, 48, 64, or 128 `u64` limbs. The `t`
   //    capacity check preserves the shared RSA helper contract; this kernel uses stack scratch
   //    internally.
   // 3. `left.as_mut_ptr()` is intentionally passed as both `out` and `a`; the assembly consumes all
@@ -200,8 +200,8 @@ pub(super) fn public_e65537_mont_words(
 
   // SAFETY: RSA public e=65537 Montgomery chain because:
   // 1. This module is compiled only for macOS AArch64 and embeds the matching Darwin symbols.
-  // 2. The caller checks all slices have one of the supported public RSA limb widths: 32, 48, or 64
-  //    `u64` limbs, with `t` sized to the shared scratch contract.
+  // 2. The caller checks all slices have one of the supported public RSA limb widths: 32, 48, 64, or
+  //    128 `u64` limbs, with `t` sized to the shared scratch contract.
   // 3. `out` and `acc` are distinct caller-owned scratch limbs. `out` first preserves the Montgomery
   //    base, while `acc` is squared in place and multiplied by that preserved base.
   // 4. All pointers are derived from live Rust slices and the assembly does not retain them.
