@@ -1106,7 +1106,7 @@ impl AddressBlock {
     input.0[5] = variant_y as u64;
     input.0[6] = counter;
 
-    let mut zero = MemoryBlock::zero();
+    let zero = MemoryBlock::zero();
     let mut intermediate = MemoryBlock::zero();
     // SAFETY: the CompressFn came from `active_compress()` (or
     // `compress_fn_for` in per-kernel tests), which only returns a
@@ -1115,10 +1115,6 @@ impl AddressBlock {
       compress(&mut intermediate.0, &zero.0, &input.0, /* xor_into = */ false);
       compress(&mut self.words.0, &zero.0, &intermediate.0, /* xor_into = */ false);
     }
-    zeroize_u64_slice_no_fence(&mut zero.0);
-    zeroize_u64_slice_no_fence(&mut intermediate.0);
-    zeroize_u64_slice_no_fence(&mut input.0);
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
 

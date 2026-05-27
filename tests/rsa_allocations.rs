@@ -349,7 +349,11 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   let mut scratch = key.public_scratch();
-  assert_eq!(allocation_count(), 2);
+  assert_eq!(allocation_count(), 3);
+
+  key
+    .public_operation_with_scratch(&input, &mut out, &mut scratch)
+    .unwrap();
 
   reset_allocations();
   key

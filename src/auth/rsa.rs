@@ -43,7 +43,10 @@
 //! feature.
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use core::fmt;
+use core::{
+  fmt,
+  hash::{Hash, Hasher},
+};
 
 use crate::{
   hashes::crypto::{Sha256, Sha384, Sha512},
@@ -4917,6 +4920,7 @@ impl fmt::Debug for RsaPublicKey {
 
 /// Caller-owned scratch for RSA public operations.
 pub struct RsaPublicScratch {
+  r2: Box<[u64]>,
   limbs: Box<[u64]>,
   bytes: Box<[u8]>,
   limb_count: usize,
@@ -4924,6 +4928,7 @@ pub struct RsaPublicScratch {
 }
 
 struct RsaPublicArithmeticScratch<'a> {
+  r2: &'a [u64],
   t: &'a mut [u64],
   x: &'a mut [u64],
   tmp: &'a mut [u64],
@@ -4938,6 +4943,7 @@ impl RsaPublicScratch {
     let limbs = key.modulus.limbs.len();
     let bytes = key.modulus.bytes.len();
     Self {
+      r2: public_montgomery_r2(&key.modulus.limbs),
       limbs: vec![0u64; limbs.strict_mul(6).strict_add(2)].into_boxed_slice(),
       bytes: vec![0u8; bytes.strict_mul(3)].into_boxed_slice(),
       limb_count: limbs,
@@ -4946,11 +4952,11 @@ impl RsaPublicScratch {
   }
 
   fn arithmetic_scratch(&mut self) -> RsaPublicArithmeticScratch<'_> {
-    split_limb_scratch(&mut self.limbs, self.limb_count)
+    split_limb_scratch(&mut self.limbs, self.limb_count, &self.r2)
   }
 
   fn split_all(&mut self) -> (RsaPublicArithmeticScratch<'_>, &mut [u8], &mut [u8], &mut [u8]) {
-    let arithmetic_scratch = split_limb_scratch(&mut self.limbs, self.limb_count);
+    let arithmetic_scratch = split_limb_scratch(&mut self.limbs, self.limb_count, &self.r2);
     let (encoded, db, db_mask) = split_byte_scratch(&mut self.bytes, self.byte_count);
     (arithmetic_scratch, encoded, db, db_mask)
   }
@@ -4964,14 +4970,21 @@ impl fmt::Debug for RsaPublicScratch {
   }
 }
 
-fn split_limb_scratch(limbs: &mut [u64], limb_count: usize) -> RsaPublicArithmeticScratch<'_> {
+fn split_limb_scratch<'a>(limbs: &'a mut [u64], limb_count: usize, r2: &'a [u64]) -> RsaPublicArithmeticScratch<'a> {
   let t_len = limb_count.strict_mul(2).strict_add(2);
   let (t, rest) = limbs.split_at_mut(t_len);
   let (x, rest) = rest.split_at_mut(limb_count);
   let (tmp, rest) = rest.split_at_mut(limb_count);
   let (base, rest) = rest.split_at_mut(limb_count);
   let (acc, _) = rest.split_at_mut(limb_count);
-  RsaPublicArithmeticScratch { t, x, tmp, base, acc }
+  RsaPublicArithmeticScratch {
+    r2,
+    t,
+    x,
+    tmp,
+    base,
+    acc,
+  }
 }
 
 fn split_byte_scratch(bytes: &mut [u8], byte_count: usize) -> (&mut [u8], &mut [u8], &mut [u8]) {
@@ -4980,11 +4993,11 @@ fn split_byte_scratch(bytes: &mut [u8], byte_count: usize) -> (&mut [u8], &mut [
   (encoded, db, db_mask)
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone)]
 struct RsaPublicModulus {
   bytes: Box<[u8]>,
   limbs: Box<[u64]>,
-  r2: Box<[u64]>,
+  r2: Option<Box<[u64]>>,
   bits: usize,
   n0: u64,
 }
@@ -4993,17 +5006,42 @@ impl Drop for RsaPublicModulus {
   fn drop(&mut self) {
     ct::zeroize(&mut self.bytes);
     ct::zeroize_words(&mut self.limbs);
-    ct::zeroize_words(&mut self.r2);
+    if let Some(r2) = &mut self.r2 {
+      ct::zeroize_words(r2);
+    }
     ct::zeroize_words(core::slice::from_mut(&mut self.bits));
     ct::zeroize_words(core::slice::from_mut(&mut self.n0));
   }
 }
 
+impl PartialEq for RsaPublicModulus {
+  fn eq(&self, other: &Self) -> bool {
+    self.bits == other.bits && self.bytes == other.bytes
+  }
+}
+
+impl Eq for RsaPublicModulus {}
+
+impl Hash for RsaPublicModulus {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.bytes.hash(state);
+    self.bits.hash(state);
+  }
+}
+
 impl RsaPublicModulus {
   fn new(bytes: &[u8], bits: usize) -> Self {
+    Self::new_inner(bytes, bits, false)
+  }
+
+  fn new_with_montgomery_r2(bytes: &[u8], bits: usize) -> Self {
+    Self::new_inner(bytes, bits, true)
+  }
+
+  fn new_inner(bytes: &[u8], bits: usize, precompute_r2: bool) -> Self {
     let limbs = limbs_from_be(bytes);
     let n0 = montgomery_n0(limbs.first().copied().unwrap_or(1));
-    let r2 = public_montgomery_r2(&limbs);
+    let r2 = precompute_r2.then(|| public_montgomery_r2(&limbs));
     Self {
       bytes: Box::from(bytes),
       limbs: limbs.into_boxed_slice(),
@@ -5011,6 +5049,10 @@ impl RsaPublicModulus {
       bits,
       n0,
     }
+  }
+
+  fn montgomery_r2(&self) -> &[u64] {
+    self.r2.as_deref().expect("private RSA modulus missing Montgomery R^2")
   }
 
   fn public_operation(
@@ -5030,8 +5072,14 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: RsaPublicArithmeticScratch<'_>,
   ) -> Result<(), RsaPublicOpError> {
-    let RsaPublicArithmeticScratch { t, x, tmp, base, acc } = scratch;
-    let r2 = &self.r2;
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5181,8 +5229,14 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
-    let RsaPublicArithmeticScratch { t, x, tmp, base, acc } = scratch.arithmetic_scratch();
-    let r2 = &self.r2;
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch.arithmetic_scratch();
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5226,8 +5280,14 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
-    let RsaPublicArithmeticScratch { t, x, tmp, base, acc } = scratch.arithmetic_scratch();
-    let r2 = &self.r2;
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch.arithmetic_scratch();
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5284,8 +5344,14 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
-    let RsaPublicArithmeticScratch { t, x, tmp, base, acc } = scratch.arithmetic_scratch();
-    let r2 = &self.r2;
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch.arithmetic_scratch();
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5348,8 +5414,14 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
-    let RsaPublicArithmeticScratch { t, x, tmp, base, acc } = scratch.arithmetic_scratch();
-    let r2 = &self.r2;
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch.arithmetic_scratch();
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5412,8 +5484,14 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
-    let RsaPublicArithmeticScratch { t, x, tmp, base, acc } = scratch.arithmetic_scratch();
-    let r2 = &self.r2;
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch.arithmetic_scratch();
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5612,7 +5690,7 @@ fn private_key_components_from_parts(
   let modulus_bits = validate_modulus(components.modulus, policy)?;
   validate_private_key_components(components)?;
   let public = RsaPublicKey {
-    modulus: RsaPublicModulus::new(components.modulus, modulus_bits),
+    modulus: RsaPublicModulus::new_with_montgomery_r2(components.modulus, modulus_bits),
     exponent: components.public_exponent,
   };
   let prime_p_modulus = private_component_modulus(components.prime_p).map_err(|_| RsaKeyError::InvalidModulus)?;
@@ -5860,7 +5938,7 @@ fn keygen_build_private_key_from_primes(
   let checked_modulus_bits =
     validate_modulus(modulus.as_slice(), policy).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
   let public = RsaPublicKey {
-    modulus: RsaPublicModulus::new(modulus.as_slice(), checked_modulus_bits),
+    modulus: RsaPublicModulus::new_with_montgomery_r2(modulus.as_slice(), checked_modulus_bits),
     exponent: public_exponent,
   };
   let prime_p_modulus =
@@ -7208,7 +7286,7 @@ fn private_component_modulus(bytes: &[u8]) -> Result<RsaPublicModulus, RsaPrivat
     .strict_sub(1)
     .strict_mul(8)
     .strict_add(8usize.strict_sub(first.leading_zeros() as usize));
-  Ok(RsaPublicModulus::new(bytes, bits))
+  Ok(RsaPublicModulus::new_with_montgomery_r2(bytes, bits))
 }
 
 fn left_pad_be(src: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
@@ -7440,14 +7518,14 @@ fn private_exponentiate_representative(
   private_mont_mul(
     base.as_mut_slice(),
     representative.as_slice(),
-    &modulus.r2,
+    modulus.montgomery_r2(),
     modulus,
     t.as_mut_slice(),
   );
   private_mont_mul(
     acc.as_mut_slice(),
     one.as_slice(),
-    &modulus.r2,
+    modulus.montgomery_r2(),
     modulus,
     t.as_mut_slice(),
   );
@@ -7513,14 +7591,14 @@ fn private_exponentiate_representative_with_scratch(
   private_mont_mul(
     scratch.base.as_mut_slice(),
     scratch.representative.as_slice(),
-    &modulus.r2,
+    modulus.montgomery_r2(),
     modulus,
     scratch.t.as_mut_slice(),
   );
   private_mont_mul(
     scratch.acc.as_mut_slice(),
     scratch.one.as_slice(),
-    &modulus.r2,
+    modulus.montgomery_r2(),
     modulus,
     scratch.t.as_mut_slice(),
   );
@@ -7679,14 +7757,14 @@ fn mod_mul_representatives(
   private_mont_mul(
     left_mont.as_mut_slice(),
     left_limbs.as_slice(),
-    &modulus.r2,
+    modulus.montgomery_r2(),
     modulus,
     t.as_mut_slice(),
   );
   private_mont_mul(
     right_mont.as_mut_slice(),
     right_limbs.as_slice(),
-    &modulus.r2,
+    modulus.montgomery_r2(),
     modulus,
     t.as_mut_slice(),
   );
@@ -7766,8 +7844,8 @@ fn mod_mul_representatives_with_scratch(
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
-  private_mont_mul(left_mont, left_limbs, &modulus.r2, modulus, t);
-  private_mont_mul(right_mont, right_limbs, &modulus.r2, modulus, t);
+  private_mont_mul(left_mont, left_limbs, modulus.montgomery_r2(), modulus, t);
+  private_mont_mul(right_mont, right_limbs, modulus.montgomery_r2(), modulus, t);
   private_mont_mul(product_mont, left_mont, right_mont, modulus, t);
   private_mont_reduce(product, product_mont, modulus, t);
   limbs_to_be(product, out);
@@ -8174,8 +8252,8 @@ fn montgomery_n0(n0: u64) -> u64 {
 
 #[allow(clippy::indexing_slicing)]
 fn mont_square_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
-  copy_limbs(tmp, value);
-  mont_mul(value, tmp, tmp, modulus, t);
+  let _ = tmp;
+  mont_square_product(value, modulus, t);
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -8227,7 +8305,7 @@ fn mont_square_cios_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPu
     not(miri)
   ))]
   if value.len() == modulus.limbs.len()
-    && rsa_x86_64_asm::supports_bignum_mont_words(modulus.limbs.len())
+    && rsa_x86_64_asm::supports_bignum_mont_square_words(modulus.limbs.len())
     && t.len() >= rsa_x86_64_asm::bignum_mont_scratch_words(modulus.limbs.len())
   {
     rsa_x86_64_asm::mont_square_cios_words_in_place(value, &modulus.limbs, modulus.n0, modulus.limbs.len(), t);
@@ -8283,10 +8361,32 @@ fn mont_mul_cios_in_place_left(
 #[inline]
 #[must_use]
 fn use_cios_montgomery(modulus: &RsaPublicModulus) -> bool {
-  // Current local threshold evidence favors CIOS through RSA-4096 and product
-  // Montgomery for RSA-8192. Keep the cutoff explicit until broader target
-  // measurements justify moving it.
-  modulus.limbs.len() <= 64
+  let limbs = modulus.limbs.len();
+  if limbs <= 64 {
+    return true;
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if limbs == 128 && rsa_aarch64_asm::supports_bignum_mont_words(limbs) {
+    return true;
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  if limbs == 128 && rsa_x86_64_asm::supports_bignum_mont_words(limbs) {
+    return true;
+  }
+
+  false
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -8543,7 +8643,6 @@ fn comba_mul_into(out: &mut [u64], a: &[u64], b: &[u64]) {
   out[product_limbs] = carry_hi;
 }
 
-#[cfg(feature = "diag")]
 fn add_product_to_acc(acc_lo: &mut u64, acc_mid: &mut u64, acc_hi: &mut u64, a: u64, b: u64) {
   let product = u128::from(a).strict_mul(u128::from(b));
   let product_lo = product as u64;
@@ -8555,6 +8654,75 @@ fn add_product_to_acc(acc_lo: &mut u64, acc_mid: &mut u64, acc_hi: &mut u64, a: 
   let (mid, lo_carry_overflow) = mid.overflowing_add(u64::from(lo_overflow));
   *acc_mid = mid;
   *acc_hi = acc_hi.strict_add(u64::from(product_hi_overflow).strict_add(u64::from(lo_carry_overflow)));
+}
+
+#[allow(clippy::indexing_slicing)]
+fn square_into_wide_product(out: &mut [u64], value: &[u64]) {
+  let n = value.len();
+  debug_assert!(out.len() >= n.strict_mul(2).strict_add(2));
+
+  out.fill(0);
+  let mut carry_lo = 0u64;
+  let mut carry_hi = 0u64;
+  let product_limbs = n.strict_mul(2);
+
+  for column in 0..product_limbs.strict_sub(1) {
+    let mut acc_lo = carry_lo;
+    let mut acc_mid = carry_hi;
+    let mut acc_hi = 0u64;
+    let min_i = column.saturating_sub(n.strict_sub(1));
+    let max_i = column.min(n.strict_sub(1));
+
+    for i in min_i..=max_i {
+      let j = column.strict_sub(i);
+      if i > j {
+        break;
+      }
+      add_product_to_acc(&mut acc_lo, &mut acc_mid, &mut acc_hi, value[i], value[j]);
+      if i != j {
+        add_product_to_acc(&mut acc_lo, &mut acc_mid, &mut acc_hi, value[i], value[j]);
+      }
+    }
+
+    out[column] = acc_lo;
+    carry_lo = acc_mid;
+    carry_hi = acc_hi;
+  }
+
+  out[product_limbs.strict_sub(1)] = carry_lo;
+  out[product_limbs] = carry_hi;
+}
+
+#[allow(clippy::indexing_slicing)]
+fn mont_square_product(out: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
+  let n = modulus.limbs.len();
+  debug_assert_eq!(out.len(), n);
+  debug_assert!(t.len() >= n.strict_mul(2).strict_add(2));
+
+  square_into_wide_product(t, out);
+
+  for i in 0..n {
+    let q = t[i].wrapping_mul(modulus.n0);
+    let mut carry = 0u128;
+    for j in 0..n {
+      let index = i.strict_add(j);
+      let acc = u128::from(q) * u128::from(modulus.limbs[j]) + u128::from(t[index]) + carry;
+      t[index] = acc as u64;
+      carry = acc >> 64;
+    }
+    add_carry(t, i.strict_add(n), carry as u64);
+  }
+
+  for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
+    *dst = src;
+  }
+
+  if t[n.strict_add(n)..].iter().any(|&limb| limb != 0) {
+    let _ = sub_modulus_in_place(out, &modulus.limbs);
+  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
+    let borrow = sub_modulus_in_place(out, &modulus.limbs);
+    debug_assert!(!borrow);
+  }
 }
 
 #[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
@@ -11584,13 +11752,47 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[test]
-  fn montgomery_auto_threshold_uses_cios_through_rsa4096_only() {
+  fn montgomery_auto_threshold_uses_backend_cios_for_rsa8192() {
     let rsa4096 = RsaPublicModulus::new(&[0xff; 512], 4096);
     let rsa4160 = RsaPublicModulus::new(&[0xff; 520], 4160);
     let rsa8192 = RsaPublicModulus::new(&[0xff; 1024], 8192);
 
     assert!(use_cios_montgomery(&rsa4096));
     assert!(!use_cios_montgomery(&rsa4160));
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_os = "macos",
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+    assert!(use_cios_montgomery(&rsa8192));
+
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+    assert_eq!(
+      use_cios_montgomery(&rsa8192),
+      rsa_x86_64_asm::supports_bignum_mont_words(128)
+    );
+
+    #[cfg(not(any(
+      all(
+        target_arch = "aarch64",
+        target_os = "macos",
+        not(feature = "portable-only"),
+        not(miri)
+      ),
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      )
+    )))]
     assert!(!use_cios_montgomery(&rsa8192));
   }
 
@@ -11690,10 +11892,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn diag_montgomery_r2_precompute_matches_imported_key() {
     let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
     let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let scratch = key.public_scratch();
 
     assert_eq!(
       diag_rsa_precompute_public_montgomery_r2(key.modulus()),
-      Ok(limb_checksum(&key.modulus.r2))
+      Ok(limb_checksum(&scratch.r2))
     );
   }
 
