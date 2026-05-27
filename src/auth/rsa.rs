@@ -5052,7 +5052,10 @@ impl RsaPublicModulus {
   }
 
   fn montgomery_r2(&self) -> &[u64] {
-    self.r2.as_deref().expect("private RSA modulus missing Montgomery R^2")
+    match self.r2.as_deref() {
+      Some(r2) => r2,
+      None => unreachable!("private RSA modulus missing Montgomery R^2"),
+    }
   }
 
   fn public_operation(
@@ -8666,7 +8669,8 @@ fn square_into_wide_product(out: &mut [u64], value: &[u64]) {
   let mut carry_hi = 0u64;
   let product_limbs = n.strict_mul(2);
 
-  for column in 0..product_limbs.strict_sub(1) {
+  let mut column = 0usize;
+  while column < product_limbs.strict_sub(1) {
     let mut acc_lo = carry_lo;
     let mut acc_mid = carry_hi;
     let mut acc_hi = 0u64;
@@ -8687,6 +8691,7 @@ fn square_into_wide_product(out: &mut [u64], value: &[u64]) {
     out[column] = acc_lo;
     carry_lo = acc_mid;
     carry_hi = acc_hi;
+    column = column.strict_add(1);
   }
 
   out[product_limbs.strict_sub(1)] = carry_lo;
