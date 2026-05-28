@@ -11,8 +11,9 @@ extraction method behind it.
 - Keep raw Criterion output under `benchmark_results/<date>/<os>/<arch>/`.
 - Keep the generated result header intact. It records date, time, mode,
   platform, and commit.
-- Use `just bench rsa` for RSA verifier benchmarks. RSA uses the same
-  Criterion result format and extraction path as the other primitive benches.
+- Use `just bench rsa` for RSA import and verifier benchmarks. RSA uses the
+  same Criterion result format and extraction path as the other primitive
+  benches.
 - RSA import rows are not pure ASN.1 parser rows. The rscrypto
   `parse-validate-spki-rscrypto` row measures SPKI/PKCS#1 DER parsing plus RSA
   public-key validation without constructing Montgomery state. The
@@ -45,7 +46,7 @@ Current expanded competitors:
 | AEAD | RustCrypto AEADs, `aws-lc-rs`, `ring`, `aegis` |
 | SHA-2 / HMAC / HKDF / PBKDF2 | RustCrypto, `aws-lc-rs`, `ring` |
 | Ed25519 / X25519 | dalek, `aws-lc-rs`, `ring` where shape-compatible, `dryoc` |
-| RSA verification | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs` |
+| RSA import / verification | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs` |
 | BLAKE2 / password hashing | RustCrypto, `dryoc` where shape-compatible |
 | XXH3 / RapidHash | upstream crates |
 | CRC | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast`, `crc64fast-nvme` |

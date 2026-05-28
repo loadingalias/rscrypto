@@ -180,6 +180,7 @@ pub(super) fn mont_reduce_cios_words(
 }
 
 #[inline]
+#[allow(clippy::too_many_arguments)] // Assembly ABI boundary; a wrapper struct would only repack these operands.
 pub(super) fn public_e65537_mont_words(
   out: &mut [u64],
   input: &[u64],

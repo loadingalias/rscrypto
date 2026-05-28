@@ -40,4 +40,4 @@ Other `no_std` targets in the same families (e.g. `thumbv7em-*`, larger RISC-V p
 
 ## Per-Platform Benchmark Scorecard
 
-Current geomean speedups by platform (Linux CI plus macOS Apple Silicon) live in [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#platform-scorecard).
+Current geomean speedups by platform (Linux CI) live in [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).

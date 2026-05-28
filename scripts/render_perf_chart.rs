@@ -12,9 +12,7 @@
 //!
 //! No external dependencies — pure `std`.
 
-use std::fs;
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{fs, path::PathBuf, process::ExitCode};
 
 const OVERVIEW_PATH: &str = "benchmark_results/OVERVIEW.md";
 const OUT_PATH: &str = "assets/readme/perf.svg";
@@ -31,12 +29,36 @@ struct Row {
 /// Sorted descending by expected speedup so the strongest result lands at
 /// the top of the chart. If a category drops below another, reorder here.
 const ROWS: &[Row] = &[
-  Row { label: "Checksums",        line_starts_with: "- **Checksums:**",        skip: 0 },
-  Row { label: "SHAKE",            line_starts_with: "- **SHA-3 / SHAKE:**",    skip: 1 },
-  Row { label: "BLAKE3 \u{2265}64 KiB", line_starts_with: "- **BLAKE3:**",      skip: 0 },
-  Row { label: "SHA-3",            line_starts_with: "- **SHA-3 / SHAKE:**",    skip: 0 },
-  Row { label: "AEAD",             line_starts_with: "- **AEAD:**",             skip: 0 },
-  Row { label: "Ed25519 sign",     line_starts_with: "- **Ed25519 / X25519:**", skip: 0 },
+  Row {
+    label: "Checksums",
+    line_starts_with: "- **Checksums:**",
+    skip: 0,
+  },
+  Row {
+    label: "BLAKE3 \u{2265}64 KiB",
+    line_starts_with: "- **BLAKE3:**",
+    skip: 0,
+  },
+  Row {
+    label: "SHA-3",
+    line_starts_with: "- **SHA-3 / SHAKE:**",
+    skip: 0,
+  },
+  Row {
+    label: "SHAKE",
+    line_starts_with: "- **SHA-3 / SHAKE:**",
+    skip: 1,
+  },
+  Row {
+    label: "AEAD",
+    line_starts_with: "- **AEAD:**",
+    skip: 0,
+  },
+  Row {
+    label: "RSA import+verify",
+    line_starts_with: "- **RSA:**",
+    skip: 0,
+  },
 ];
 
 /// Hero-card palette. Solid dark background, light text, brighter rust
@@ -53,7 +75,8 @@ const BAR: &str = "#f4a460";
 const BAR_LABEL: &str = "#e6edf3";
 const CAPTION: &str = "#7d8590";
 
-const STYLES: &str = r#"<style>text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>"#;
+const STYLES: &str =
+  r#"<style>text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }</style>"#;
 
 fn main() -> ExitCode {
   match run() {
@@ -66,8 +89,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-  let overview = fs::read_to_string(OVERVIEW_PATH)
-    .map_err(|e| format!("read {OVERVIEW_PATH}: {e}\n(run from the repo root)"))?;
+  let overview =
+    fs::read_to_string(OVERVIEW_PATH).map_err(|e| format!("read {OVERVIEW_PATH}: {e}\n(run from the repo root)"))?;
 
   let bars: Vec<(String, f64)> = ROWS
     .iter()
@@ -262,8 +285,8 @@ fn render_svg(bars: &[(String, f64)], subtitle: &str, max_x: f64) -> String {
 
   // Title.
   svg.push_str(&format!(
-    "<text x=\"{cx}\" y=\"24\" text-anchor=\"middle\" font-size=\"15\" font-weight=\"600\" fill=\"{TITLE}\">\
-     Speedup vs the strongest Rust baseline (geomean)</text>",
+    "<text x=\"{cx}\" y=\"24\" text-anchor=\"middle\" font-size=\"15\" font-weight=\"600\" fill=\"{TITLE}\">Speedup \
+     vs the strongest Rust baseline (geomean)</text>",
     cx = width / 2,
   ));
 
@@ -326,8 +349,8 @@ fn render_svg(bars: &[(String, f64)], subtitle: &str, max_x: f64) -> String {
 
   // Source caption.
   svg.push_str(&format!(
-    "<text x=\"{cx}\" y=\"312\" text-anchor=\"middle\" font-size=\"9\" fill=\"{CAPTION}\">\
-     Source: benchmark_results/OVERVIEW.md</text>",
+    "<text x=\"{cx}\" y=\"312\" text-anchor=\"middle\" font-size=\"9\" fill=\"{CAPTION}\">Source: \
+     benchmark_results/OVERVIEW.md</text>",
     cx = width / 2,
   ));
 
