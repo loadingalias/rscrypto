@@ -21,6 +21,7 @@ fi
 
 case "$RSCRYPTO_TEST_MODE" in
   commit) PROFILE="commit" ;;
+  weekly) PROFILE="weekly" ;;
   *)      PROFILE="default" ;;
 esac
 echo "Using nextest profile: $PROFILE"

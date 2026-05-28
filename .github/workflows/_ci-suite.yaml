@@ -32,6 +32,11 @@ on:
         description: "'shallow' (PR smoke) or 'deep' (full feature sweep) for no-std/wasm."
         required: true
         type: string
+      test_mode:
+        description: "Test mode passed to rscrypto test scripts."
+        required: false
+        type: string
+        default: local
 
 permissions:
   contents: read
@@ -75,6 +80,7 @@ jobs:
       enable_magic_cache: ${{ matrix.target.type == 'runson' }}
       enable_rust_cache: true
       run_script: |
+        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
         case "${{ matrix.target.name }}" in
           *windows-msvc)
             echo "Windows lane: compile-only smoke"
@@ -113,6 +119,7 @@ jobs:
         lscpu
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
+        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
         bash scripts/ci/ci-check.sh
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
           export RAIL_SINCE="${{ inputs.base_ref }}"
@@ -138,6 +145,7 @@ jobs:
         lscpu
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
+        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
         bash scripts/ci/ci-check.sh
         if [[ "${{ inputs.scope }}" == "rail" ]]; then
           export RAIL_SINCE="${{ inputs.base_ref }}"
@@ -163,6 +171,7 @@ jobs:
         lscpu
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
+        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
         export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
         export RSCRYPTO_SKIP_DOCTESTS=1
         bash scripts/ci/ci-check.sh

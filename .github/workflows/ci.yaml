@@ -59,6 +59,7 @@ jobs:
       cache_key_prefix: commit
       supply_chain_mode: light
       cross_depth: shallow
+      test_mode: commit
 
   complete:
     name: Complete
