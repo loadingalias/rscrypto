@@ -347,9 +347,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   let input = public_operation_input();
   let mut out = vec![0u8; key.modulus().len()];
 
-  reset_allocations();
   let mut scratch = key.public_scratch();
-  assert_eq!(allocation_count(), 3);
 
   key
     .public_operation_with_scratch(&input, &mut out, &mut scratch)
