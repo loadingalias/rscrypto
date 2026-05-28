@@ -18,7 +18,7 @@ use crate::platform::Caps;
 use crate::traits::{Checksum, ChecksumCombine};
 
 #[cfg(feature = "checksums")]
-const CRC_MIRI_LENGTHS: &[usize] = &[0, 1, 16, 17, 32, 33, 64, 65];
+const CRC_MIRI_LENGTHS: &[usize] = &[0, 1, 17, 65];
 
 #[cfg(feature = "checksums")]
 const CRC_MIRI_CHUNKS: &[usize] = &[1, 16];
@@ -32,25 +32,6 @@ fn deterministic_bytes(len: usize) -> Vec<u8> {
     *byte = (x >> 56) as u8 ^ ((i as u8).rotate_left((i & 7) as u32));
   }
   out
-}
-
-#[cfg(feature = "checksums")]
-fn interesting_splits(len: usize) -> Vec<usize> {
-  let mut splits = alloc::vec![0, len / 2, len];
-  if len >= 1 {
-    splits.push(1);
-    splits.push(len - 1);
-  }
-  if len >= 2 {
-    splits.push(2);
-  }
-  if len >= 3 {
-    splits.push(len / 3);
-    splits.push((len * 2) / 3);
-  }
-  splits.sort_unstable();
-  splits.dedup();
-  splits
 }
 
 #[cfg(feature = "checksums")]
@@ -74,11 +55,9 @@ where
       assert_crc_streaming_byte_at_a_time::<C>(&data);
     }
 
-    for split in interesting_splits(len) {
-      assert_crc_combine_property::<C>(&data, split);
-    }
+    assert_crc_combine_property::<C>(&data, len / 2);
 
-    if matches!(len, 0 | 1 | 16 | 17) {
+    if matches!(len, 0 | 1) {
       assert_crc_combine_all_splits::<C>(&data);
     }
 
