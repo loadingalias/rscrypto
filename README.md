@@ -6,24 +6,27 @@
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-**Pure Rust cryptography for systems code: small builds, hardware acceleration, `no_std`, and no mandatory dependency stack.**
+**Pure Rust cryptography for systems code: RSA, Ed25519, X25519, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
 
-`rscrypto` is one crate for the primitive families systems projects actually stitch together: hashes, MACs, KDFs, password hashing, signatures, key exchange, AEAD encryption, checksums, and fast non-cryptographic hashes.
+`rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed without a mandatory C, OpenSSL, or system-library story.
 
-Use a leaf feature for one primitive. Use `full` for the whole toolbox. No C. No FFI. No OpenSSL. No default third-party dependencies.
+Use one leaf feature for one primitive, or `full` for the whole toolbox. The portable Rust backend is always present. SIMD and assembly are accelerators, not alternate semantics.
+
+**Current Linux CI scorecard:** `1.61x` fastest-external geomean, `3,545 / 5,832` wins, and `5,210 / 5,832` wins-or-ties across matched primitive/operation/platform cases.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.52x fastest-external geomean across Linux CI with 3,807 wins out of 6,552 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.61x fastest-external geomean across Linux CI with 3,545 wins and 5,210 wins-or-ties out of 5,832 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Latest 2026-05-17 Linux CI benchmark pass. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Latest 2026-05-27 Linux CI benchmark pass. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
 
+- **RSA is included now.** Strict DER import/export, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, key generation, X.509/JWT/COSE/TLS profile mapping, blinded private operations, and reusable scratch APIs.
 - **One coherent primitive stack.** Avoid composing half a dozen crates with different APIs, feature models, and security conventions.
 - **Small builds stay small.** Enable `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, `argon2`, or any other leaf without pulling in the world.
 - **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference implementation.
@@ -67,6 +70,56 @@ assert_eq!(h.finalize(), one_shot);
 ```
 
 The common API shape is deliberately boring: one-shot when convenient, streaming when needed.
+
+## Verify RSA Signatures
+
+```toml
+[dependencies]
+rscrypto = { version = "0.2.0", default-features = false, features = ["rsa"] }
+```
+
+```rust
+use rscrypto::{RsaPssProfile, RsaPublicKey};
+
+fn verify_release_signature(public_key_der: &[u8], message: &[u8], signature: &[u8]) -> bool {
+  let Ok(key) = RsaPublicKey::from_spki_der(public_key_der) else {
+    return false;
+  };
+
+  key.verify_pss(RsaPssProfile::Sha256, message, signature).is_ok()
+}
+```
+
+For repeated verification with the same key, allocate scratch once:
+
+```rust
+use rscrypto::{RsaPssProfile, RsaPublicKey, RsaSignatureProfile};
+
+fn verify_batch(public_key_der: &[u8], signed_messages: &[(&[u8], &[u8])]) -> bool {
+  let Ok(key) = RsaPublicKey::from_spki_der(public_key_der) else {
+    return false;
+  };
+  let mut scratch = key.public_scratch();
+
+  signed_messages.iter().all(|(message, signature)| {
+    key
+      .verify_signature_with_scratch(
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        message,
+        signature,
+        &mut scratch,
+      )
+      .is_ok()
+  })
+}
+```
+
+Enable `getrandom` for OS-backed RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding:
+
+```toml
+[dependencies]
+rscrypto = { version = "0.2.0", default-features = false, features = ["rsa", "getrandom"] }
+```
 
 ## Encrypt Data
 
@@ -144,22 +197,23 @@ Full feature inventory: [`docs/features.md`](docs/features.md). Public type inve
 
 ## Performance
 
-Latest public benchmark pass: 2026-05-17, commit `1c30a68`, nine Linux CI runners plus one local macOS Apple Silicon run. Speedup is `external_crate_time / rscrypto_time` for latency rows and equivalent throughput ratio for throughput rows; values above `1.00x` mean `rscrypto` is faster.
+Latest public benchmark pass: 2026-05-27, commit `26845c8`, nine Linux CI runners. Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster. This run is filter-based and does not include Argon2, scrypt, or Ascon-AEAD rows, so those claims stay out of the README until the full corpus is rerun.
 
 | Area | Compared against | Result |
 |---|---|---:|
-| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.52x geomean** |
-| Linux CI scorecard | fastest external | **3,807 wins / 6,552 pairs** |
-| Full current corpus | Linux CI + local Apple Silicon | **1.51x geomean** |
-| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | **5.10x geomean** |
-| SHA-3 / SHAKE | RustCrypto `sha3` | **2.17x / 2.60x geomean** |
-| BLAKE3, `>=64 KiB` | `blake3` | **2.38x geomean** |
-| AEAD | RustCrypto AEADs, `aegis`, `ring`, `aws-lc-rs` | **1.37x geomean** |
-| HMAC-SHA384 / HMAC-SHA512 | `ring`, RustCrypto, AWS-LC | **1.23x / 1.23x geomean** |
-| macOS Apple Silicon local | fastest matched Rust baseline per case | **1.35x geomean** |
-| macOS Ed25519 verify | fastest matched Rust baseline per case | **1.01x geomean** |
+| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.61x geomean** |
+| Linux CI scorecard | fastest external | **3,545 wins / 5,832 pairs** |
+| Linux CI wins or ties | fastest external | **5,210 / 5,832 pairs** |
+| Checksums | `crc`, `crc32fast`, `crc64fast`, `crc-fast` | **5.03x geomean** |
+| SHA-3 / SHAKE | RustCrypto `sha3` | **2.15x / 1.86x geomean** |
+| BLAKE3, `>=64 KiB` | `blake3` | **2.31x geomean** |
+| AEAD | RustCrypto AEADs, `aegis`, `ring`, `aws-lc-rs` | **1.57x geomean** |
+| RSA import + verify | RustCrypto `rsa`, `ring`, AWS-LC | **1.32x geomean, 76% wins** |
+| RSA verify only | `ring`, AWS-LC, RustCrypto `rsa` | **0.98x geomean** |
+| Ed25519 sign / verify | dalek, `dryoc`, `ring`, AWS-LC | **1.14x / 1.00x geomean** |
+| X25519 | dalek, `dryoc`, AWS-LC | **0.95x geomean** |
 
-The honest weak spots right now: password hashing is the new broad pressure point at 0.81x across Linux CI fastest-external rows, PBKDF2-SHA256 at `iters=1` is 0.77x, Linux CI Ed25519 verify is 0.95x, local Apple Silicon Ed25519 signing is 0.66x, and sustained AES-GCM on POWER10/RISC-V is not competitive. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
+The honest weak spots right now: PBKDF2-SHA256 at `iters=1` is 0.81x, X25519 Diffie-Hellman is 0.92x, RSA-4096 verification is 0.94x, and small-message AEAD overhead still loses plenty of 1-byte and 32-byte rows even when sustained throughput recovers. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 

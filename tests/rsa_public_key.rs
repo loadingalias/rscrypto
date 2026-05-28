@@ -39,8 +39,8 @@ use rscrypto::auth::rsa::{
   diag_rsa_verify_pss_encoded, diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{
-  RsaKeyError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaProtocolAlgorithmError, RsaPssProfile,
-  RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey,
+  RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicKey,
+  RsaPublicKeyPolicy, RsaPublicOpError, RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey,
   RsaX509PublicKeyAlgorithm, VerificationError,
 };
 
@@ -1741,7 +1741,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
   assert_generated_profile!(
     RsaPkcs1v15Profile::Sha256,
     RsaPssProfile::Sha256,
-    RsaOaepProfile::Sha256,
+    rscrypto::RsaOaepProfile::Sha256,
     sha2_010::Sha256,
     [0x47; 32],
     "-sha256",
@@ -1754,7 +1754,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
   assert_generated_profile!(
     RsaPkcs1v15Profile::Sha384,
     RsaPssProfile::Sha384,
-    RsaOaepProfile::Sha384,
+    rscrypto::RsaOaepProfile::Sha384,
     sha2_010::Sha384,
     [0x48; 48],
     "-sha384",
@@ -1767,7 +1767,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
   assert_generated_profile!(
     RsaPkcs1v15Profile::Sha512,
     RsaPssProfile::Sha512,
-    RsaOaepProfile::Sha512,
+    rscrypto::RsaOaepProfile::Sha512,
     sha2_010::Sha512,
     [0x49; 64],
     "-sha512",
@@ -1907,7 +1907,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
     assert_generated_modern_profile!(
       RsaPkcs1v15Profile::Sha256,
       RsaPssProfile::Sha256,
-      RsaOaepProfile::Sha256,
+      rscrypto::RsaOaepProfile::Sha256,
       sha2_010::Sha256,
       [0x73; 32],
       "-sha256",
@@ -1920,7 +1920,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
     assert_generated_modern_profile!(
       RsaPkcs1v15Profile::Sha384,
       RsaPssProfile::Sha384,
-      RsaOaepProfile::Sha384,
+      rscrypto::RsaOaepProfile::Sha384,
       sha2_010::Sha384,
       [0x74; 48],
       "-sha384",
@@ -1933,7 +1933,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
     assert_generated_modern_profile!(
       RsaPkcs1v15Profile::Sha512,
       RsaPssProfile::Sha512,
-      RsaOaepProfile::Sha512,
+      rscrypto::RsaOaepProfile::Sha512,
       sha2_010::Sha512,
       [0x75; 64],
       "-sha512",

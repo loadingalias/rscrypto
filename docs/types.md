@@ -87,8 +87,13 @@ Features: `signatures` / `key-exchange` or `ed25519` / `rsa` / `x25519`.
 | `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
 | `Ed25519Keypair` | -- | RFC 8032 |
 | `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
-| `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile` | -- | RFC 8017 / RFC 4055 |
+| `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`, `RsaPublicKeyPolicy` | -- | RFC 8017 / RFC 4055 / protocol-specific profiles |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
+
+RSA public-key verification and import require `rsa` (`alloc`, `sha2`). OS-backed
+private operations and key generation require `getrandom`; deterministic
+caller-supplied salt/blinding APIs remain available for constrained integrations
+that own their entropy boundary.
 
 ## AEAD
 
@@ -122,6 +127,11 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `ScryptError` | scrypt parameter validation | Adjust N / r / p per RFC 7914 |
 | `PhcError` | PHC string parse / encode | Fix encoded form |
 | `X25519Error` | Low-order DH point | Reject peer key |
+| `RsaKeyError` | RSA DER or component validation failure | Reject key / tighten import policy |
+| `RsaPublicOpError` | RSA public operation input shape/range failure | Fix representative length or reject input |
+| `RsaPrivateOpError` | RSA private operation, padding, entropy, or fault-check failure | Reject input; do not expose reason to peer |
+| `RsaKeyGenerationError` | RSA key generation policy or entropy failure | Adjust key size/policy or entropy source |
+| `RsaProtocolAlgorithmError` | Unsupported/confused JWT/COSE/TLS/X.509 RSA selector | Reject algorithm mapping |
 | `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
 | `InvalidHexError` | Hex decode failure | Fix input |
 | `platform::OverrideError` | Override after detection init | Set before first call |
