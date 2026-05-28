@@ -65,7 +65,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ${{ matrix.target.runner }}
-      timeout_minutes: 360
+      timeout_minutes: 60
       cache_key: weekly-miri-${{ matrix.target.name }}
       tools_mode: minimal
       toolchain_components: "miri, rust-src"
@@ -79,7 +79,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 360
+      timeout_minutes: 60
       cache_key: weekly-miri-tree-borrows
       tools_mode: minimal
       toolchain_components: "miri, rust-src"
