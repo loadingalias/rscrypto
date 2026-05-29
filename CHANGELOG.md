@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.3.0](https://github.com/loadingalias/rscrypto/compare/v0.2.0...v0.3.0) - 2026-05-28
+
+### 🏗️ Build
+
+- allow dev-only RustCrypto rsa audit oracle ([ea83045](https://github.com/loadingalias/rscrypto/commit/ea8304559ea2b4f917c30f462376f49c55481d7c))
+
+### 👷 CI
+
+- focus Miri on UB-risk coverage ([c358b72](https://github.com/loadingalias/rscrypto/commit/c358b72cd897df3e5ff10d9c58b07fe6bd03f5a1))
+- harden weekly validation timeouts and SHA3 fuzz build ([0705bfd](https://github.com/loadingalias/rscrypto/commit/0705bfdc2a4026f7d11437f90e89e175d91d55b8))
+- scope workflow cancellation and widen native lane timeouts ([26845c8](https://github.com/loadingalias/rscrypto/commit/26845c85530d90725d3ad90c7871d7a474d80d27))
+- ignore dev-only rsa audit advisory and refresh action pins workspace: refresh dependency lockfile ([9ea0db1](https://github.com/loadingalias/rscrypto/commit/9ea0db181d9cd1072a5df0bcb0b61cdba4f3fdd2))
+
+### 📦 Other Changes
+
+- auth: drop brittle RSA scratch allocation setup count ([ee4c7fb](https://github.com/loadingalias/rscrypto/commit/ee4c7fb2b136ff8fd11a9e5f5cf8401d0ad2add3))
+- workspace: refresh RSA package metadata and docs benchmarks: refresh 2026-05-27 Linux scorecard bench: add RSA scorecard row to README chart auth: clear RSA public clippy lints ([e65cb1c](https://github.com/loadingalias/rscrypto/commit/e65cb1c125f87633254e16895b72b4a2793aa458))
+- auth: clear RSA portable-only clippy lints ([cc12c7c](https://github.com/loadingalias/rscrypto/commit/cc12c7cdaa89e69216c0c5714cf39d0434eb4698))
+- auth: defer RSA public Montgomery precompute and widen 8192-bit verify backends ([3b2a991](https://github.com/loadingalias/rscrypto/commit/3b2a9911ec7a50654b01ef2ee18aadc239062e9e))
+- auth: complete RSA private ops, protocols, and assembly backends ([218d15c](https://github.com/loadingalias/rscrypto/commit/218d15c7c4bf154a90f86c036d777d4875472c96))
+- workspace: allow dev-only RustCrypto rsa advisory oracle ([8a7d608](https://github.com/loadingalias/rscrypto/commit/8a7d608e8a7cc81071fce980e42f9ce9b94c2543))
+- auth: add RSA verifier, vectors, fuzzing, and Ed25519 assembly backends bench: add RSA verification benchmarks and fixtures workspace: wire RSA dependencies and tracked fuzz corpora ([a3d1e79](https://github.com/loadingalias/rscrypto/commit/a3d1e7920776c7bd9dc751de137f223016673451))
+- workspace: refresh README release snippets and local asset ignores ([1d838fe](https://github.com/loadingalias/rscrypto/commit/1d838febe1e8d2d751b8c38d32d838b9a5c2db04))
+- workspace: fix fuzz support path dependency and refresh locks ci: refresh weekly action pins ([a906007](https://github.com/loadingalias/rscrypto/commit/a906007a4b91c691c99ada30883243c714061cd2))
+
+
+
 ## [0.2.0](https://github.com/loadingalias/rscrypto/compare/v0.1.1...v0.2.0) - 2026-05-17
 
 ### 📦 Other Changes
