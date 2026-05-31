@@ -27,22 +27,9 @@ platform coverage.
       script, fixture, diagnostic hook, ASM wrapper, benchmark helper, or
       abstraction that is not justified by correctness, security, portability,
       or measured performance evidence.
-- [ ] Complete a constant-time audit of private exponentiation, CRT
-      recombination, Montgomery arithmetic, reduction, comparison, blinding
-      inverse derivation, padding decode, private-key import, and key
-      generation. Every finding must either become a code change, a focused
-      test, or a written rejection with a concrete reason.
-- [ ] Prove same-width RSA failure opacity for OAEP, RSAES-PKCS1-v1_5, PSS,
-      and RSASSA-PKCS1-v1_5. Public errors must remain opaque, caller outputs
-      must clear on every failure, and valid-vs-invalid padding classes must
-      not expose useful protocol detail.
-- [ ] Add dudect or equivalent leakage testing for Linux x86_64 and Linux
-      aarch64 private signing, private decryption, blinding-factor generation,
-      and blinding-inverse derivation. Define pass/fail thresholds before any
-      private-key RSA release claim.
-- [ ] Finish RSA Miri release evidence. The existing safe-path list must cover
-      every feasible private-key parser, signing, decryption, scratch-width,
-      padding-reject, and key-generation helper path found by the audit.
+- [ ] Run the manual RSA workflow for the release commit and retain artifacts:
+      Linux x64 `just test-miri --rsa`, Linux x64 `just test-rsa-leakage`, and
+      Linux arm64 `just test-rsa-leakage`.
 - [ ] Keep RSA-specific scripts, fixtures, fuzz seeds, scorecard tools, and
       diagnostic hooks minimal. Each artifact must be justified by security
       evidence, side-channel evidence, oracle coverage, or benchmark evidence

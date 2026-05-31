@@ -53,13 +53,13 @@ Mandatory RSA release evidence:
 - Public verify/encrypt and private sign/decrypt/keygen/import/export pass the
   normal check, test, fuzz, and benchmark lanes.
 - Constant-time audit findings are resolved by code, tests, or written
-  rejection.
+  rejection in `docs/security/rsa-side-channel-audit.md`.
 - Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
   RSASSA-PKCS1-v1_5.
-- Linux x86_64 and Linux aarch64 leakage tests pass once the dudect-equivalent
-  gate exists.
+- `just test-rsa-leakage` passes on Linux x86_64 and Linux aarch64.
 - Miri covers every feasible safe private-key parser, signing, decryption,
-  scratch-width, padding-reject, and key-generation helper path.
+  scratch-width, padding-reject, and key-generation helper path through
+  `just test-miri --rsa`.
 - Optional OpenSSL CLI and AWS-LC checks may support review; skipped optional
   helpers never count as completed release evidence.
 

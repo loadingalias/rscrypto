@@ -43,14 +43,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.2.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.3.0", default-features = false, features = ["sha2"] }
 ```
 
 Full toolbox with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.2.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.3.0", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, or nonces from the operating system.
@@ -75,7 +75,7 @@ The common API shape is deliberately boring: one-shot when convenient, streaming
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.2.0", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.3.0", default-features = false, features = ["rsa"] }
 ```
 
 ```rust
@@ -118,14 +118,14 @@ Enable `getrandom` for OS-backed RSA key generation, signing salt/blinding, OAEP
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.2.0", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.3.0", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Encrypt Data
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.2.0", default-features = false, features = ["chacha20poly1305"] }
+rscrypto = { version = "0.3.0", default-features = false, features = ["chacha20poly1305"] }
 ```
 
 ```rust
@@ -153,7 +153,7 @@ assert_eq!(&message, b"pay bob 10");
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.2.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
+rscrypto = { version = "0.3.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
 ```
 
 ```rust
@@ -241,6 +241,8 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture not
 - AEAD failed-open paths wipe output buffers.
 - Portable and accelerated backends are differentially tested for byte-identical output.
 - Official test vectors, fuzz corpus replay, Miri, `cargo deny`, and `cargo audit` run in CI.
+- RSA private-operation release claims require the manual Miri and first-order leakage gates in
+  [`docs/security/rsa-side-channel-audit.md`](docs/security/rsa-side-channel-audit.md).
 
 Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
 

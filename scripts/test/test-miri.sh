@@ -25,6 +25,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 #
 # Usage:
 #   ./scripts/test/test-miri.sh           # Run focused Miri surface
+#   ./scripts/test/test-miri.sh --rsa     # Run RSA release-evidence Miri surface
 #   ./scripts/test/test-miri.sh --all     # Run exhaustive lib tests under Miri
 #   RSCRYPTO_MIRI_SCOPE=exhaustive ./scripts/test/test-miri.sh
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -59,6 +60,10 @@ case "${1:-}" in
     MIRI_SCOPE="exhaustive"
     shift
     ;;
+  --rsa | rsa)
+    MIRI_SCOPE="rsa"
+    shift
+    ;;
   --focused | focused)
     MIRI_SCOPE="focused"
     shift
@@ -66,7 +71,7 @@ case "${1:-}" in
   "")
     ;;
   *)
-    echo "Usage: $0 [--focused|--all]"
+    echo "Usage: $0 [--focused|--rsa|--all]"
     echo "Set RSCRYPTO_MIRI_FEATURES to override the default feature set: $MIRI_FEATURES"
     exit 2
     ;;
@@ -74,7 +79,7 @@ esac
 
 if [ "$#" -ne 0 ]; then
   echo "Unexpected extra arguments: $*"
-  echo "Usage: $0 [--focused|--all]"
+  echo "Usage: $0 [--focused|--rsa|--all]"
   exit 2
 fi
 
@@ -85,6 +90,16 @@ run_miri_lib_filter() {
   echo ""
   echo "━━━ $label ━━━"
   cargo miri test --lib --features "$MIRI_FEATURES" "$filter"
+}
+
+run_miri_lib_filter_features() {
+  local label="$1"
+  local filter="$2"
+  local features="$3"
+
+  echo ""
+  echo "━━━ $label ━━━"
+  cargo miri test --lib --features "$features" "$filter"
 }
 
 run_miri_test_target() {
@@ -116,13 +131,32 @@ case "$MIRI_SCOPE" in
     run_miri_lib_filter "X25519 portable path under Miri" "auth::x25519::tests::miri_uses_portable_x25519_path"
     run_miri_test_target "Argon2 MatrixView/portable kernel under Miri" "argon2_miri" "argon2"
     ;;
+  rsa)
+    echo "Scope: RSA release-evidence parser, private-operation, padding-reject, scratch, and deterministic keygen paths"
+
+    run_miri_lib_filter_features "RSA private parser/import under Miri" \
+      "auth::rsa::tests::pkcs1_private_key_parser_preserves_components_and_public_key" \
+      "rsa,diag"
+    run_miri_lib_filter_features "RSA private sign/decrypt/oracle surface under Miri" \
+      "auth::rsa::tests::private_key_signs_pkcs1v15_and_pss_end_to_end" \
+      "rsa,diag"
+    run_miri_lib_filter_features "RSA OAEP same-width reject surface under Miri" \
+      "auth::rsa::tests::oaep_decrypt_api_rejects_same_width_oracle_classes_opaquely" \
+      "rsa,diag"
+    run_miri_lib_filter_features "RSA PKCS1v1.5 same-width reject surface under Miri" \
+      "auth::rsa::tests::pkcs1v15_encrypt_decrypt_rejects_oracle_classes_opaquely" \
+      "rsa,diag"
+    run_miri_lib_filter_features "RSA deterministic key-generation helpers under Miri" \
+      "auth::rsa::tests::keygen_derives_private_components_from_fixture_primes_end_to_end" \
+      "rsa,diag,getrandom"
+    ;;
   exhaustive)
     echo "Scope: exhaustive lib tests under Miri"
     cargo miri test --lib --features "$MIRI_FEATURES"
     ;;
   *)
     echo "Invalid RSCRYPTO_MIRI_SCOPE: $MIRI_SCOPE"
-    echo "Expected: focused or exhaustive"
+    echo "Expected: focused, rsa, or exhaustive"
     exit 2
     ;;
 esac
