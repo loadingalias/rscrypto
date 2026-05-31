@@ -14,7 +14,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.1", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.3.0", default-features = false, features = ["sha2"] }
 //! ```
 //!
 //! # Guides
@@ -94,7 +94,7 @@ assert!(
 //! # Feature Groups
 //!
 //! - `checksums`: CRC families.
-//! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash, AES-round fast hash.
+//! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash.
 //! - `auth`: MACs, KDFs, password hashing, Ed25519, RSA signing/verification/OAEP, X25519.
 //! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
 //! - `full`: all public primitive families.

@@ -827,6 +827,22 @@ pub fn diag_rsa_precompute_public_montgomery_r2(modulus: &[u8]) -> Result<u64, R
   Ok(limb_checksum(&r2))
 }
 
+/// Derive a blinding-factor inverse for RSA side-channel diagnostics.
+///
+/// This helper is intentionally available only with `diag,getrandom`; normal
+/// callers should use the signing and decryption APIs, which generate and clear
+/// blinding material internally.
+#[cfg(all(feature = "diag", feature = "getrandom"))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "diag", feature = "getrandom"))))]
+#[doc(hidden)]
+pub fn diag_rsa_blinding_factor_inverse(
+  key: &RsaPrivateKey,
+  factor: &[u8],
+  out: &mut [u8],
+) -> Result<(), RsaPrivateOpError> {
+  key.components.blinding_factor_inverse(factor, out)
+}
+
 /// Public exponent policy for RSA public-key parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RsaPublicExponentPolicy {
@@ -7888,13 +7904,14 @@ fn private_import_product_unsigned_be(left: &[u8], right: &[u8]) -> Option<Secre
       carry = acc >> 64;
     }
 
-    let mut index = left_index.strict_add(right.as_slice().len());
-    while carry != 0 {
-      let limb = product.as_mut_slice().get_mut(index)?;
+    let index = left_index.strict_add(right.as_slice().len());
+    for limb in product.as_mut_slice().get_mut(index..)?.iter_mut() {
       let acc = u128::from(*limb).strict_add(carry);
       *limb = acc as u64;
       carry = acc >> 64;
-      index = index.strict_add(1);
+    }
+    if carry != 0 {
+      return None;
     }
   }
 
@@ -7955,15 +7972,17 @@ fn private_product_add_unsigned_be_to_fixed(
       carry = acc >> 64;
     }
 
-    let mut index = left_index.strict_add(right_limbs.len());
-    while carry != 0 {
-      let limb = product
-        .get_mut(index)
-        .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    let index = left_index.strict_add(right_limbs.len());
+    let carry_limbs = product
+      .get_mut(index..)
+      .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
+    for limb in carry_limbs {
       let acc = u128::from(*limb).strict_add(carry);
       *limb = acc as u64;
       carry = acc >> 64;
-      index = index.strict_add(1);
+    }
+    if carry != 0 {
+      return Err(RsaPrivateOpError::RepresentativeOutOfRange);
     }
   }
 
@@ -7996,16 +8015,18 @@ fn private_import_decrement_unsigned_be(bytes: &[u8]) -> Result<SecretBigEndianB
   }
 
   let mut out = bytes.to_vec();
+  let mut borrow = 1u8;
   for byte in out.iter_mut().rev() {
-    if *byte == 0 {
-      *byte = 0xff;
-    } else {
-      *byte = byte.strict_sub(1);
-      return Ok(private_import_canonical_unsigned_be(out));
-    }
+    let (difference, overflow) = byte.overflowing_sub(borrow);
+    *byte = difference;
+    borrow = u8::from(overflow);
   }
 
-  Err(RsaKeyError::InvalidModulus)
+  if borrow != 0 {
+    Err(RsaKeyError::InvalidModulus)
+  } else {
+    Ok(private_import_canonical_unsigned_be(out))
+  }
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -8022,17 +8043,10 @@ fn private_sub_small_unsigned_be_to_fixed(
   out.copy_from_slice(bytes);
   let mut borrow = u16::from(decrement);
   for byte in out.iter_mut().rev() {
-    if borrow == 0 {
-      return Ok(());
-    }
     let low = (borrow & 0xff) as u8;
-    if *byte >= low {
-      *byte = byte.strict_sub(low);
-      borrow >>= 8;
-    } else {
-      *byte = byte.wrapping_sub(low);
-      borrow = (borrow >> 8).strict_add(1);
-    }
+    let (difference, overflow) = byte.overflowing_sub(low);
+    *byte = difference;
+    borrow = (borrow >> 8).strict_add(u16::from(overflow));
   }
 
   if borrow == 0 {
@@ -8052,9 +8066,7 @@ fn private_import_unsigned_be_mod(value: &[u8], modulus: &[u8]) -> SecretBigEndi
   for &byte in value {
     for bit in (0..8).rev() {
       double_mod_in_place(remainder.as_mut_slice(), modulus.as_slice());
-      if (byte >> bit) & 1 == 1 {
-        add_one_mod_in_place(remainder.as_mut_slice(), modulus.as_slice());
-      }
+      add_bit_mod_in_place(remainder.as_mut_slice(), modulus.as_slice(), (byte >> bit) & 1);
     }
   }
 
@@ -8077,9 +8089,7 @@ fn private_import_unsigned_be_mod_to_fixed(
   for &byte in value {
     for bit in (0..8).rev() {
       double_mod_in_place(remainder, &modulus.limbs);
-      if (byte >> bit) & 1 == 1 {
-        add_one_mod_in_place(remainder, &modulus.limbs);
-      }
+      add_bit_mod_in_place(remainder, &modulus.limbs, (byte >> bit) & 1);
     }
   }
 
@@ -8088,25 +8098,16 @@ fn private_import_unsigned_be_mod_to_fixed(
 }
 
 #[allow(clippy::indexing_slicing)]
-fn add_one_mod_in_place(value: &mut [u64], modulus: &[u64]) {
+fn add_bit_mod_in_place(value: &mut [u64], modulus: &[u64], bit: u8) {
   debug_assert_eq!(value.len(), modulus.len());
 
-  let mut carry = 1u64;
+  let mut carry = u64::from(bit & 1);
   for limb in value.iter_mut() {
-    if carry == 0 {
-      break;
-    }
     let (sum, overflow) = limb.overflowing_add(carry);
     *limb = sum;
     carry = u64::from(overflow);
   }
-
-  if carry != 0 {
-    let _ = sub_modulus_in_place(value, modulus);
-  } else if cmp_limbs(value, modulus) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(value, modulus);
-    debug_assert!(!borrow);
-  }
+  subtract_modulus_if_needed(value, modulus, carry);
 }
 
 fn private_import_limbs_to_canonical_be(limbs: &[u64]) -> SecretBigEndianBuffer {
@@ -8162,17 +8163,43 @@ fn limb_checksum(limbs: &[u64]) -> u64 {
   limbs.iter().copied().fold(0u64, |acc, limb| acc.rotate_left(13) ^ limb)
 }
 
+fn ct_nonzero_u64(value: u64) -> u64 {
+  (value | value.wrapping_neg()) >> 63
+}
+
 #[allow(clippy::indexing_slicing)]
-fn sub_modulus_in_place(value: &mut [u64], modulus: &[u64]) -> bool {
+fn sub_modulus_in_place(value: &mut [u64], modulus: &[u64]) -> u64 {
   debug_assert_eq!(value.len(), modulus.len());
-  let mut borrow = false;
+  let mut borrow = 0u64;
   for index in 0..value.len() {
     let (tmp, b1) = value[index].overflowing_sub(modulus[index]);
-    let (tmp, b2) = tmp.overflowing_sub(u64::from(borrow));
+    let (tmp, b2) = tmp.overflowing_sub(borrow);
     value[index] = tmp;
-    borrow = b1 || b2;
+    borrow = u64::from(b1 || b2);
   }
   borrow
+}
+
+#[allow(clippy::indexing_slicing)]
+fn add_modulus_masked(value: &mut [u64], modulus: &[u64], choice: u64) {
+  debug_assert_eq!(value.len(), modulus.len());
+  let mask = 0u64.wrapping_sub(choice & 1);
+  let mut carry = 0u64;
+  for index in 0..value.len() {
+    let addend = modulus[index] & mask;
+    let (sum, overflow) = value[index].overflowing_add(addend);
+    let (sum, carry_overflow) = sum.overflowing_add(carry);
+    value[index] = sum;
+    carry = u64::from(overflow || carry_overflow);
+  }
+}
+
+#[allow(clippy::indexing_slicing)]
+fn subtract_modulus_if_needed(value: &mut [u64], modulus: &[u64], extra: u64) {
+  debug_assert_eq!(value.len(), modulus.len());
+  let borrow = sub_modulus_in_place(value, modulus);
+  let restore = borrow & (ct_nonzero_u64(extra) ^ 1);
+  add_modulus_masked(value, modulus, restore);
 }
 
 #[cfg(feature = "diag")]
@@ -8189,9 +8216,7 @@ fn add_mod_in_place(value: &mut [u64], addend: &[u64], modulus: &[u64]) {
     carry = u64::from(overflow || carry_overflow);
   }
 
-  if carry != 0 || cmp_limbs(value, modulus) != core::cmp::Ordering::Less {
-    let _ = sub_modulus_in_place(value, modulus);
-  }
+  subtract_modulus_if_needed(value, modulus, carry);
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -8203,13 +8228,7 @@ fn double_mod_in_place(value: &mut [u64], modulus: &[u64]) {
     *limb = (*limb << 1) | carry;
     carry = next;
   }
-
-  if carry != 0 {
-    let _ = sub_modulus_in_place(value, modulus);
-  } else if cmp_limbs(value, modulus) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(value, modulus);
-    debug_assert!(!borrow);
-  }
+  subtract_modulus_if_needed(value, modulus, carry);
 }
 
 #[cfg(feature = "diag")]
@@ -8504,12 +8523,7 @@ fn mont_mul_cios(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
     *dst = src;
   }
 
-  if t[n] != 0 {
-    let _ = sub_modulus_in_place(out, &modulus.limbs);
-  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(out, &modulus.limbs);
-    debug_assert!(!borrow);
-  }
+  subtract_modulus_if_needed(out, &modulus.limbs, t[n]);
 }
 
 #[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
@@ -8568,12 +8582,7 @@ fn mont_reduce_cios(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, 
     *dst = src;
   }
 
-  if t[n] != 0 {
-    let _ = sub_modulus_in_place(out, &modulus.limbs);
-  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(out, &modulus.limbs);
-    debug_assert!(!borrow);
-  }
+  subtract_modulus_if_needed(out, &modulus.limbs, t[n]);
 }
 
 #[cfg(feature = "diag")]
@@ -8606,12 +8615,8 @@ fn mont_mul_comba(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModu
     *dst = src;
   }
 
-  if t[n.strict_add(n)..].iter().any(|&limb| limb != 0) {
-    let _ = sub_modulus_in_place(out, &modulus.limbs);
-  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(out, &modulus.limbs);
-    debug_assert!(!borrow);
-  }
+  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
+  subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
 #[cfg(feature = "diag")]
@@ -8722,12 +8727,8 @@ fn mont_square_product(out: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64
     *dst = src;
   }
 
-  if t[n.strict_add(n)..].iter().any(|&limb| limb != 0) {
-    let _ = sub_modulus_in_place(out, &modulus.limbs);
-  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(out, &modulus.limbs);
-    debug_assert!(!borrow);
-  }
+  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
+  subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
 #[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
@@ -8773,12 +8774,8 @@ fn mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t
     *dst = src;
   }
 
-  if t[n.strict_add(n)..].iter().any(|&limb| limb != 0) {
-    let _ = sub_modulus_in_place(out, &modulus.limbs);
-  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(out, &modulus.limbs);
-    debug_assert!(!borrow);
-  }
+  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
+  subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
 #[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
@@ -8810,21 +8807,16 @@ fn mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &m
     *dst = src;
   }
 
-  if t[n.strict_add(n)..].iter().any(|&limb| limb != 0) {
-    let _ = sub_modulus_in_place(out, &modulus.limbs);
-  } else if cmp_limbs(out, &modulus.limbs) != core::cmp::Ordering::Less {
-    let borrow = sub_modulus_in_place(out, &modulus.limbs);
-    debug_assert!(!borrow);
-  }
+  let extra = t[n.strict_add(n)..].iter().copied().fold(0u64, |acc, limb| acc | limb);
+  subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
 #[allow(clippy::indexing_slicing)]
-fn add_carry(t: &mut [u64], mut index: usize, mut carry: u64) {
-  while carry != 0 {
-    let (sum, overflow) = t[index].overflowing_add(carry);
-    t[index] = sum;
+fn add_carry(t: &mut [u64], index: usize, mut carry: u64) {
+  for limb in &mut t[index..] {
+    let (sum, overflow) = limb.overflowing_add(carry);
+    *limb = sum;
     carry = u64::from(overflow);
-    index = index.strict_add(1);
   }
 }
 
@@ -11812,7 +11804,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let _ = sub_modulus_in_place(value, modulus);
     } else if cmp_limbs(value, modulus) != core::cmp::Ordering::Less {
       let borrow = sub_modulus_in_place(value, modulus);
-      debug_assert!(!borrow);
+      debug_assert_eq!(borrow, 0);
     }
   }
 

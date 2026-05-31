@@ -54,6 +54,10 @@ test-all:
 test-miri *crates="":
     @scripts/test/test-miri.sh {{ crates }}
 
+# RSA first-order timing leakage gate.
+test-rsa-leakage:
+    @scripts/test/test-rsa-leakage.sh
+
 # Fuzz: build scoped packages + run full harness. Pass a target name to run a single target.
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{ args }}

@@ -1,0 +1,99 @@
+name: RSA
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RSCRYPTO_TEST_MODE: rsa
+
+permissions:
+  contents: read
+
+jobs:
+  rsa-miri:
+    name: RSA Miri (Linux x64)
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 360
+      cache_key: rsa-miri-linux-x64
+      tools_mode: minimal
+      toolchain_components: "miri, rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: |
+        set -euo pipefail
+        mkdir -p ci-evidence
+        {
+          uname -a
+          lscpu
+          just test-miri --rsa
+        } 2>&1 | tee ci-evidence/rsa-miri-linux-x64.log
+      artifact_name: rsa-miri-linux-x64
+      artifact_path: ci-evidence/rsa-miri-linux-x64.log
+      artifact_always: true
+
+  rsa-leakage:
+    name: RSA Leakage (${{ matrix.target.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: linux-x64
+            runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+          - name: linux-arm64
+            runner: runs-on=${{ github.run_id }}/runner=linux-arm64-ci
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 180
+      cache_key: rsa-leakage-${{ matrix.target.name }}
+      tools_mode: minimal
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: |
+        set -euo pipefail
+        mkdir -p ci-evidence
+        {
+          uname -a
+          lscpu
+          RSCRYPTO_RSA_LEAKAGE_SAMPLES="${RSCRYPTO_RSA_LEAKAGE_SAMPLES:-4000}" \
+          RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD="${RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD:-8.0}" \
+            just test-rsa-leakage
+        } 2>&1 | tee "ci-evidence/rsa-leakage-${{ matrix.target.name }}.log"
+      artifact_name: rsa-leakage-${{ matrix.target.name }}
+      artifact_path: ci-evidence/rsa-leakage-${{ matrix.target.name }}.log
+      artifact_always: true
+
+  complete:
+    name: Complete (RSA)
+    needs: [rsa-miri, rsa-leakage]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert RSA lanes passed
+        run: |
+          failed=0
+          for lane in \
+            "rsa-miri=${{ needs.rsa-miri.result }}" \
+            "rsa-leakage=${{ needs.rsa-leakage.result }}"
+          do
+            name="${lane%%=*}"
+            result="${lane#*=}"
+            if [ "$result" != "success" ]; then
+              echo "FAIL: $name ($result)"
+              failed=1
+            else
+              echo "  OK: $name"
+            fi
+          done
+          if [ "$failed" -eq 1 ]; then
+            exit 1
+          fi

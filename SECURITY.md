@@ -69,9 +69,9 @@ I follow a **30-day disclosure deadline**. If a fix is not available within 30 d
 
 | Version | Supported |
 | ------- | --------- |
-| `0.1.x` | Yes |
+| `0.3.x` | Yes |
 
-Only the latest `0.1.x` release receives security patches. We strongly recommend staying current.
+Only the latest published minor release receives security patches. We strongly recommend staying current.
 
 ## Safe Harbor
 
