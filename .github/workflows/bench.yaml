@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "CRATES (Empty = All)"
+        description: "PRIMITIVES/SELECTORS (Empty or all = all public primitive benches)"
         required: false
         type: string
+        default: "all"
       platforms:
         description: "RUNNERS (Empty = All). Options: zen4, spr, icl, zen5, g3, g4, s390x, power10, riscv."
         required: false
@@ -90,7 +91,7 @@ jobs:
         BENCH_RUN_ARCH="${{ matrix.platform }}" \
         BENCH_RUN_COMMIT="$RUN_COMMIT" \
         BENCH_RUN_MODE=ci \
-        BENCH_ONLY="${{ inputs.targets }}" \
+        BENCH_ONLY="${{ inputs.targets || 'all' }}" \
         BENCH_FILTER="${{ inputs.filter }}" \
         BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
         BENCH_ALLOW_FULL_HASHES_COMP=true \

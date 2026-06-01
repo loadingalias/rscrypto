@@ -2,13 +2,16 @@
 
 > Same algorithms (RFC 7693), with named convenience types replacing `Blake2b<U32>`-style generic instantiations and `Blake2b256::keyed_digest(key, data)` replacing the separate `Blake2bMac<U32>` MAC type.
 
-Verified against `blake2 = "0.10.6"` (max stable) and `blake2 = "0.11.0-rc.6"` (next major) — both produce byte-identical output to the `rscrypto` 0.1 line. The 0.11 RC reworked the trait surface but not the algorithm; this guide's bytes apply to both versions. Code samples target the 0.10 API since that is what `cargo add blake2` selects today.
+Verified against `blake2 = "0.10.6"` and `blake2 = "0.11.0-rc.6"`; both
+produce byte-identical output to `rscrypto`. The 0.11 RC reworked the trait
+surface but not the algorithm. Code samples target the 0.10 API because that
+is still common in existing projects.
 
 ## TL;DR
 
-| | Before (`blake2` 0.10.x) | After (`rscrypto` 0.1) |
+| | Before (`blake2` 0.10.x) | After (`rscrypto` 0.3) |
 |---|---|---|
-| Cargo dep | `blake2 = "0.10"` | `rscrypto = { version = "0.1", features = ["blake2b", "blake2s"] }` |
+| Cargo dep | `blake2 = "0.10"` | `rscrypto = { version = "0.3", features = ["blake2b", "blake2s"] }` |
 | Import | `use blake2::{Blake2b512, Digest};` | `use rscrypto::{Blake2b512, Digest};` |
 | Call | `Blake2b512::digest(data)` | `Blake2b512::digest(data)` |
 
@@ -25,7 +28,7 @@ blake2 = "0.10"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["blake2b", "blake2s"] }
+rscrypto = { version = "0.3", features = ["blake2b", "blake2s"] }
 ```
 
 ## Algorithm map
@@ -123,5 +126,5 @@ For streaming keyed mode, use `Blake2b512::new_keyed(&key)`. The MAC type and th
 - **MAC unification.** RustCrypto separates `Blake2bMac` from `Blake2b` because the MAC and the hash use different parameter blocks. rscrypto exposes both modes from the same type via `keyed_digest` / `new_keyed`. Personalisation, salt, and tree-hashing parameters are reachable through `Blake2bParams` / `Blake2sParams`.
 - **`finalize` consumes vs. borrows.** Same as `sha2` / `sha3` — drop `.clone()`.
 - **`Output<D>` → `[u8; N]`.** Same as `sha2` / `sha3`.
-- **`subtle` constant-time tag comparison.** RustCrypto's `Mac::verify(&tag)` does the constant-time check for you. rscrypto leaves verification at the call site — use `subtle::ConstantTimeEq::ct_eq` for tag comparison instead of `==`.
+- **Constant-time tag comparison.** RustCrypto's `Mac::verify(&tag)` does the constant-time check for you. rscrypto leaves Blake2 keyed-output verification at the call site — import `rscrypto::ConstantTimeEq` and call `tag.ct_eq(&expected)` instead of `==`.
 - **`no_std`.** Both crates support `no_std`. rscrypto runtime-detects SIMD when `std` is enabled and falls back to compile-time `target_feature` selection in `no_std` builds.

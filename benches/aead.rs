@@ -38,6 +38,8 @@ macro_rules! aws_lc_bench {
 
 const KEY_32: [u8; 32] = [0x42u8; 32];
 const NONCE_12: [u8; 12] = [0x07u8; 12];
+const KEY_16: [u8; 16] = [0x42u8; 16];
+const NONCE_16: [u8; 16] = [0x07u8; 16];
 const NONCE_24: [u8; 24] = [0x07u8; 24];
 const NONCE_32: [u8; 32] = [0x07u8; 32];
 const AAD: &[u8] = b"rscrypto-bench";
@@ -866,8 +868,6 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
 // AES-128-GCM
 // ---------------------------------------------------------------------------
 
-const KEY_16: [u8; 16] = [0x42u8; 16];
-
 fn aes128_gcm_encrypt(c: &mut Criterion) {
   aws_lc_bench! {
     use aws_lc_rs::aead as aws_aead;
@@ -1152,6 +1152,103 @@ fn aegis256_decrypt(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Ascon-AEAD128
+// ---------------------------------------------------------------------------
+
+fn ascon_aead128_encrypt(c: &mut Criterion) {
+  use ascon_aead::aead::{AeadInPlace as _, KeyInit as _, generic_array::GenericArray};
+
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
+  let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
+  let cipher_ac = ascon_aead::AsconAead128::new(GenericArray::from_slice(&KEY_16));
+  let nonce_ac = GenericArray::from_slice(&NONCE_16);
+  let mut g = c.benchmark_group("ascon-aead128/encrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let mut buf = data.clone();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ascon-aead", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        black_box(
+          cipher_ac
+            .encrypt_in_place_detached(black_box(nonce_ac), black_box(AAD), black_box(&mut buf))
+            .unwrap(),
+        )
+      })
+    });
+  }
+
+  g.finish();
+}
+
+fn ascon_aead128_decrypt(c: &mut Criterion) {
+  use ascon_aead::aead::{AeadInPlace as _, KeyInit as _, generic_array::GenericArray};
+
+  let inputs = common::comp_sizes();
+  let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
+  let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
+  let cipher_ac = ascon_aead::AsconAead128::new(GenericArray::from_slice(&KEY_16));
+  let nonce_ac = GenericArray::from_slice(&NONCE_16);
+  let mut g = c.benchmark_group("ascon-aead128/decrypt");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    let mut ciphertext = data.clone();
+    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+
+    let mut ct_ac = data.clone();
+    let tag_ac = cipher_ac.encrypt_in_place_detached(nonce_ac, AAD, &mut ct_ac).unwrap();
+
+    let mut buf = ciphertext.clone();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
+      b.iter(|| {
+        buf.copy_from_slice(ct);
+        cipher_rs
+          .decrypt_in_place(
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut buf),
+            black_box(&tag_rs),
+          )
+          .unwrap();
+        black_box(&buf);
+      })
+    });
+
+    let mut buf_ac = ct_ac.clone();
+
+    g.bench_with_input(BenchmarkId::new("ascon-aead", len), &ct_ac, |b, ct| {
+      b.iter(|| {
+        buf_ac.copy_from_slice(ct);
+        cipher_ac
+          .decrypt_in_place_detached(
+            black_box(nonce_ac),
+            black_box(AAD),
+            black_box(&mut buf_ac),
+            black_box(&tag_ac),
+          )
+          .unwrap();
+        black_box(&buf_ac);
+      })
+    });
+  }
+
+  g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Criterion harness
 // ---------------------------------------------------------------------------
 
@@ -1171,5 +1268,7 @@ criterion_group!(
   aes128_gcm_decrypt,
   aegis256_encrypt,
   aegis256_decrypt,
+  ascon_aead128_encrypt,
+  ascon_aead128_decrypt,
 );
 criterion_main!(benches);

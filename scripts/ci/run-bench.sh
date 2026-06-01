@@ -130,12 +130,14 @@ DEFAULT_HASH_ALGOS=(
   "sha3-512"
   "shake128"
   "shake256"
+  "cshake256"
   "blake2"
   "blake3"
   "xxh3"
   "rapidhash"
   "ascon-hash256"
   "ascon-xof128"
+  "ascon-cxof128"
 )
 
 DEFAULT_AUTH_ALGOS=(
@@ -150,6 +152,17 @@ DEFAULT_AUTH_ALGOS=(
   "x25519"
 )
 
+DEFAULT_SP800185_ALGOS=(
+  "kmac256"
+)
+
+DEFAULT_PASSWORD_HASHING_ALGOS=(
+  "argon2d"
+  "argon2i"
+  "argon2id"
+  "scrypt"
+)
+
 DEFAULT_RSA_ALGOS=(
   "rsa"
 )
@@ -162,14 +175,33 @@ DEFAULT_AEAD_ALGOS=(
   "aes-256-gcm"
   "aes-128-gcm"
   "aegis-256"
+  "ascon-aead128"
 )
 
 ALL_KNOWN_ALGOS=(
   "${DEFAULT_CHECKSUM_ALGOS[@]}"
   "${DEFAULT_HASH_ALGOS[@]}"
   "${DEFAULT_AUTH_ALGOS[@]}"
+  "${DEFAULT_SP800185_ALGOS[@]}"
+  "${DEFAULT_PASSWORD_HASHING_ALGOS[@]}"
   "${DEFAULT_RSA_ALGOS[@]}"
   "${DEFAULT_AEAD_ALGOS[@]}"
+)
+
+ALL_REQUIRED_BENCHES=(
+  "crc"
+  "sha2"
+  "sha3"
+  "kmac_cshake"
+  "ascon"
+  "xxh3"
+  "rapidhash"
+  "blake2"
+  "blake3"
+  "auth"
+  "password_hashing"
+  "rsa"
+  "aead"
 )
 
 checksum_filter_token() {
@@ -195,12 +227,33 @@ hash_filter_token() {
     sha3-512) echo "sha3-512" ;;
     sha512) echo "^sha512/" ;;
     sha512-256) echo "sha512-256" ;;
+    cshake256) echo "cshake256" ;;
 
     ascon-hash256) echo "ascon-hash256" ;;
     ascon-xof128) echo "ascon-xof128" ;;
+    ascon-cxof128) echo "ascon-cxof128" ;;
     xxh3) echo "xxh3" ;;
     blake2) echo "^blake2/(rscrypto|rustcrypto|keyed|streaming)/" ;;
     blake3) echo "blake3" ;;
+    *) echo "$algo" ;;
+  esac
+}
+
+sp800185_filter_token() {
+  local algo="${1:-}"
+  case "$algo" in
+    kmac256) echo "kmac256" ;;
+    *) echo "$algo" ;;
+  esac
+}
+
+password_hashing_filter_token() {
+  local algo="${1:-}"
+  case "$algo" in
+    argon2d) echo "^argon2d-" ;;
+    argon2i) echo "^argon2i-" ;;
+    argon2id) echo "^argon2id-" ;;
+    scrypt) echo "^scrypt-" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -239,6 +292,7 @@ aead_filter_token() {
     aes-256-gcm) echo "^aes-256-gcm/" ;;
     aes-128-gcm) echo "^aes-128-gcm/" ;;
     aegis-256) echo "aegis-256" ;;
+    ascon-aead128) echo "ascon-aead128" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -247,8 +301,8 @@ default_benches_for_crate() {
   local crate="${1:-}"
   case "$crate" in
     checksum) echo "crc" ;;
-    hashes) echo "sha2,sha3,ascon,xxh3,rapidhash,blake2,blake3" ;;
-    auth) echo "auth,rsa" ;;
+    hashes) echo "sha2,sha3,kmac_cshake,ascon,xxh3,rapidhash,blake2,blake3" ;;
+    auth) echo "auth,kmac_cshake,password_hashing,rsa" ;;
     rsa) echo "rsa" ;;
     aead) echo "aead" ;;
     *) echo "" ;;
@@ -284,15 +338,17 @@ bench_features_for_target() {
     crc) echo "parallel,checksums" ;;
     sha2) echo "parallel,sha2,diag" ;;
     sha3) echo "parallel,sha3" ;;
+    kmac_cshake) echo "parallel,sha3,kmac" ;;
     ascon) echo "parallel,ascon-hash" ;;
     xxh3) echo "parallel,xxh3" ;;
     rapidhash) echo "parallel,rapidhash" ;;
-    aead_kernels) echo "parallel,chacha20poly1305,diag" ;;
+    aead_kernels) echo "parallel,sha2,chacha20poly1305,diag" ;;
     blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
     auth) echo "parallel,hmac,hkdf,pbkdf2,ed25519,x25519,diag" ;;
+    password_hashing) echo "parallel,argon2,scrypt,phc-strings" ;;
     rsa) echo "parallel,rsa,diag" ;;
-    aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256" ;;
+    aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead" ;;
     *) echo "parallel" ;;
   esac
 }
@@ -325,7 +381,8 @@ bench_target_for_hash_algo() {
   case "$algo" in
     sha224|sha256|sha384|sha512|sha512-256) echo "sha2" ;;
     sha3-224|sha3-256|sha3-384|sha3-512|shake128|shake256) echo "sha3" ;;
-    ascon-hash256|ascon-xof128) echo "ascon" ;;
+    cshake256) echo "kmac_cshake" ;;
+    ascon-hash256|ascon-xof128|ascon-cxof128) echo "ascon" ;;
     xxh3) echo "xxh3" ;;
     rapidhash) echo "rapidhash" ;;
     blake2) echo "blake2" ;;
@@ -367,6 +424,22 @@ append_algo_plan_row() {
     return 0
   fi
 
+  if array_contains "$algo" "${DEFAULT_SP800185_ALGOS[@]}"; then
+    crate="auth"
+    bench="kmac_cshake"
+    token="${raw_filter:-$(sp800185_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
+  if array_contains "$algo" "${DEFAULT_PASSWORD_HASHING_ALGOS[@]}"; then
+    crate="auth"
+    bench="password_hashing"
+    token="${raw_filter:-$(password_hashing_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
   if array_contains "$algo" "${DEFAULT_RSA_ALGOS[@]}"; then
     crate="auth"
     bench="rsa"
@@ -404,10 +477,10 @@ expand_bench_shorthand() {
   IFS=',' read -r -a tokens <<< "$raw"
   for token in "${tokens[@]}"; do
     case "$token" in
-      comp) expanded+=("crc" "sha2" "sha3" "ascon" "auth" "aead" "xxh3" "rapidhash" "blake3") ;;
+      comp) expanded+=("crc" "sha2" "sha3" "kmac_cshake" "ascon" "auth" "aead" "xxh3" "rapidhash" "blake3") ;;
       kernels) expanded+=("blake3") ;;
       checksum_comp|checksum_kernels) expanded+=("crc") ;;
-      hashes_comp) expanded+=("sha2" "sha3" "ascon" "xxh3" "rapidhash" "blake3") ;;
+      hashes_comp) expanded+=("sha2" "sha3" "kmac_cshake" "ascon" "xxh3" "rapidhash" "blake3") ;;
       auth_comp) expanded+=("auth") ;;
       aead_comp) expanded+=("aead") ;;
       hashes_kernels) expanded+=("blake3") ;;
@@ -427,6 +500,7 @@ MEASURE_MS_INPUT="${BENCH_MEASURE_MS:-}"
 SAMPLE_SIZE_INPUT="${BENCH_SAMPLE_SIZE:-}"
 PROFILE_TIME_SECS_INPUT="${BENCH_PROFILE_TIME_SECS:-}"
 ATTACH_CRITERION_INPUT="$(to_bool "${BENCH_ATTACH_CRITERION:-false}")"
+DRY_RUN_PLAN_INPUT="$(to_bool "${BENCH_DRY_RUN_PLAN:-false}")"
 ALLOW_FULL_HASHES_COMP_INPUT="$(to_bool "${BENCH_ALLOW_FULL_HASHES_COMP:-false}")"
 
 ENFORCE_BLAKE3_GAP_GATE_INPUT="$(to_bool "${BENCH_ENFORCE_BLAKE3_GAP_GATE:-false}")"
@@ -490,7 +564,7 @@ fi
 if [[ -z "$BENCHES_INPUT" ]]; then
   targets_comp="true"
 else
-  for bench in sha2 sha3 ascon xxh3 rapidhash; do
+  for bench in sha2 sha3 kmac_cshake ascon xxh3 rapidhash; do
     if csv_has_token "$BENCHES_INPUT" "$bench"; then
       targets_comp="true"
       break
@@ -545,6 +619,7 @@ if [[ -n "$FILTER_INPUT" ]]; then
 fi
 echo "Criterion args: ${CRITERION_ARGS[*]-<none>}"
 echo "Attach raw Criterion: $ATTACH_CRITERION_INPUT"
+echo "Dry-run plan: $DRY_RUN_PLAN_INPUT"
 echo "Allow full hashes/comp: $ALLOW_FULL_HASHES_COMP_INPUT"
 echo "Enforce BLAKE3 gap gate: $ENFORCE_BLAKE3_GAP_GATE_INPUT"
 if [[ -n "$PLATFORM_INPUT" ]]; then
@@ -580,6 +655,7 @@ run_blake3_enforced_gates() {
 PLAN_ROWS=()
 RAW_FILTERS=()
 SELECTED_ALGOS=()
+HAS_ALL_SELECTOR="false"
 
 if [[ -n "$ONLY_INPUT" ]]; then
   IFS=',' read -r -a only_values <<< "$ONLY_INPUT"
@@ -587,10 +663,13 @@ if [[ -n "$ONLY_INPUT" ]]; then
     key="$(normalize_selector "$selector")"
     case "$key" in
       all)
+        HAS_ALL_SELECTOR="true"
         for algo in "${ALL_KNOWN_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
       auth)
         for algo in "${DEFAULT_AUTH_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        for algo in "${DEFAULT_SP800185_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        for algo in "${DEFAULT_PASSWORD_HASHING_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         for algo in "${DEFAULT_RSA_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
       rsa)
@@ -683,6 +762,10 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
           append_unique "hashes" raw_crates
         elif array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
           append_unique "auth" raw_crates
+        elif array_contains "$algo" "${DEFAULT_SP800185_ALGOS[@]}"; then
+          append_unique "auth" raw_crates
+        elif array_contains "$algo" "${DEFAULT_PASSWORD_HASHING_ALGOS[@]}"; then
+          append_unique "auth" raw_crates
         elif array_contains "$algo" "${DEFAULT_RSA_ALGOS[@]}"; then
           append_unique "auth" raw_crates
         elif array_contains "$algo" "${DEFAULT_AEAD_ALGOS[@]}"; then
@@ -724,6 +807,24 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
 fi
 
 dedupe_plan_rows
+
+if [[ "$HAS_ALL_SELECTOR" == "true" && -z "$CRATES_INPUT" && -z "$BENCHES_INPUT" ]]; then
+  for required_bench in "${ALL_REQUIRED_BENCHES[@]}"; do
+    found_bench="false"
+    for row in "${PLAN_ROWS[@]:+${PLAN_ROWS[@]}}"; do
+      IFS='|' read -r _ bench _ <<< "$row"
+      if [[ "$bench" == "$required_bench" ]]; then
+        found_bench="true"
+        break
+      fi
+    done
+    if [[ "$found_bench" == "false" ]]; then
+      echo "error: BENCH_ONLY=all did not schedule required bench target '$required_bench'" | tee -a "$LOG_PATH"
+      maybe_attach_criterion
+      exit 2
+    fi
+  done
+fi
 
 if [[ -n "$CRATES_INPUT" && "${#PLAN_ROWS[@]}" -gt 0 ]]; then
   IFS=',' read -r -a crate_filters <<< "$CRATES_INPUT"
@@ -797,6 +898,12 @@ if [[ "${#PLAN_ROWS[@]}" -gt 0 ]]; then
     IFS='|' read -r crate bench filter <<< "$row"
     echo "  - crate=$crate bench=$bench filter=$filter" | tee -a "$LOG_PATH"
   done
+
+  if [[ "$DRY_RUN_PLAN_INPUT" == "true" ]]; then
+    echo "Dry-run requested; benchmark commands were not executed." | tee -a "$LOG_PATH"
+    maybe_attach_criterion
+    exit 0
+  fi
 
   for row in "${PLAN_ROWS[@]}"; do
     IFS='|' read -r crate bench filter <<< "$row"

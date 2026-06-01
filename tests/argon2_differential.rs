@@ -155,13 +155,14 @@ proptest! {
 
 /// Forced p ≥ 4 differential. The proptest sweep above caps p at 2 so it
 /// runs in reasonable time across hundreds of cases; this fixed-config test
-/// exercises the higher-lane parallel-fill path (with `parallel` enabled, it
-/// takes the rayon `fill_slice_parallel` route; without, it sequentially
-/// iterates 4 lanes — both must match the RustCrypto oracle).
+/// uses enough per-lane work to exercise the higher-lane parallel-fill path
+/// when `parallel` is enabled. Without `parallel`, it sequentially iterates
+/// 4 lanes — both routes must match the RustCrypto oracle.
 #[test]
 fn argon2id_p4_matches_oracle() {
-  // m_kib must be ≥ 8·p, so p=4 implies m ≥ 32 KiB.
-  let m_kib = 32u32;
+  // m_kib must be ≥ 8·p, and segment_len must be large enough for the
+  // implementation to amortize Rayon scheduling.
+  let m_kib = 512u32;
   let t = 2u32;
   let p = 4u32;
   let out_len = 32usize;
@@ -178,7 +179,7 @@ fn argon2id_p4_matches_oracle() {
 /// at 8 because beyond that the per-lane segment shrinks below useful scope.
 #[test]
 fn argon2id_p8_matches_oracle() {
-  let m_kib = 64u32; // ≥ 8·8 = 64 KiB
+  let m_kib = 1024u32; // segment_len = 32, enough work to take the Rayon path
   let t = 1u32;
   let p = 8u32;
   let out_len = 32usize;

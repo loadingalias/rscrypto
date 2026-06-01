@@ -1,7 +1,9 @@
 # Full Type Inventory
 
 Complete public type inventory for `rscrypto`.
-The README keeps only the top-level API map; this file carries the detailed type list.
+The README keeps only the top-level API map; this file carries the detailed root
+re-exports and the module-level helper types that are part of the documented
+public API.
 
 ## Traits
 
@@ -16,6 +18,10 @@ The README keeps only the top-level API map; this file carries the detailed type
 | `Aead` | Authenticated encryption |
 | `ConstantTimeEq` | Constant-time byte equality |
 
+Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
+`ChecksumCombine`, `ConstantTimeEq`, `Digest`, `FastHash`, `Mac`,
+`VerificationError`, and `Xof`.
+
 ## Checksums
 
 Features: `checksums` or `crc16` / `crc24` / `crc32` / `crc64`.
@@ -27,6 +33,15 @@ Features: `checksums` or `crc16` / `crc24` / `crc32` / `crc64`.
 | `Crc32` / `Crc32C` | `u32` | Ethernet/gzip, iSCSI/ext4 |
 | `Crc64` / `Crc64Nvme` | `u64` | XZ Utils, NVMe |
 
+Aliases: `checksum::Crc32Ieee`, `checksum::Crc32Castagnoli`, and
+`checksum::Crc64Xz`.
+
+Module helpers: `checksum::config::{Crc16Config, Crc16Force, Crc24Config,
+Crc24Force, Crc32Config, Crc32Force, Crc64Config, Crc64Force}`,
+`checksum::buffered::{BufferedCrc16Ccitt, BufferedCrc16Ibm,
+BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc64,
+BufferedCrc64Nvme}`, and `checksum::io::{ChecksumReader, ChecksumWriter}`.
+
 ## Cryptographic Hashes
 
 Features: `crypto-hashes` or `sha2` / `sha3` / `blake2b` / `blake2s` / `blake3` / `ascon-hash`.
@@ -37,12 +52,17 @@ Features: `crypto-hashes` or `sha2` / `sha3` / `blake2b` / `blake2s` / `blake3` 
 | `Sha3_224` / `Sha3_256` / `Sha3_384` / `Sha3_512` | 28-64B | FIPS 202 |
 | `Shake128` / `Shake256` | XOF | FIPS 202 |
 | `Cshake256` | XOF | SP 800-185 |
-| `Blake2b256` / `Blake2b512` | 32B / 64B | RFC 7693 |
-| `Blake2s128` / `Blake2s256` | 16B / 32B | RFC 7693 |
-| `Blake3` | 32B / XOF | BLAKE3 spec |
+| `Blake2b`, `Blake2b256`, `Blake2b512`, `Blake2bParams` | 1-64B / 32B / 64B | RFC 7693 |
+| `Blake2s128`, `Blake2s256`, `Blake2sParams` | 16B / 32B | RFC 7693 |
+| `Blake3`, `Blake3KeyedHash` | 32B / XOF | BLAKE3 spec |
 | `AsconHash256` / `AsconXof` / `AsconCxof128` | 32B / XOF | Ascon v1.2 |
 
-XOF readers: `Shake128XofReader`, `Shake256XofReader`, `Cshake256XofReader`, `Blake3XofReader`, `AsconXofReader`, `AsconCxof128Reader`.
+XOF readers: `Shake128XofReader`, `Shake256XofReader`,
+`Cshake256XofReader`, `Blake3XofReader`, `AsconXofReader`, and
+`AsconCxof128Reader`.
+
+Aliases: `hashes::crypto::AsconXof128` and `hashes::crypto::AsconXof128Reader`.
+`hashes::io::{DigestReader, DigestWriter}` provides `std::io` adapters.
 
 ## Fast Hashes
 
@@ -52,8 +72,12 @@ Features: `fast-hashes` or `xxh3` / `rapidhash`.
 |------|--------|
 | `Xxh3` / `Xxh3_128` | `u64` / `u128` |
 | `RapidHash` / `RapidHash128` | `u64` / `u128` |
+| `RapidHashFast64` / `RapidHashFast128` | `u64` / `u128` |
 
-`BuildHasher` support requires `alloc`: `Xxh3BuildHasher`, `RapidBuildHasher`.
+Aliases: `hashes::fast::Xxh3_64` and `hashes::fast::RapidHash64`.
+
+`BuildHasher` support requires `alloc`: `Xxh3BuildHasher`, `Xxh3Hasher`,
+`RapidBuildHasher`, and `RapidHasher`.
 
 ## MACs & KDFs
 
@@ -88,6 +112,7 @@ Features: `signatures` / `key-exchange` or `ed25519` / `rsa` / `x25519`.
 | `Ed25519Keypair` | -- | RFC 8032 |
 | `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
 | `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`, `RsaPublicKeyPolicy` | -- | RFC 8017 / RFC 4055 / protocol-specific profiles |
+| `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
 
 RSA public-key verification and import require `rsa` (`alloc`, `sha2`). OS-backed
@@ -112,6 +137,9 @@ Feature: `aead` or individual leaves.
 
 Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32B).
 
+AEAD support types: `SealError`, `OpenError`, `AeadBufferError`,
+`NonceCounter`, `NonceCounterExhausted`, and `NonceCounterSealError`.
+
 ## Error Types
 
 | Error | When | Recovery |
@@ -130,6 +158,7 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `RsaKeyError` | RSA DER or component validation failure | Reject key / tighten import policy |
 | `RsaPublicOpError` | RSA public operation input shape/range failure | Fix representative length or reject input |
 | `RsaPrivateOpError` | RSA private operation, padding, entropy, or fault-check failure | Reject input; do not expose reason to peer |
+| `RsaEncryptionError` | RSA public encryption shape, padding, or entropy failure | Fix input / entropy source |
 | `RsaKeyGenerationError` | RSA key generation policy or entropy failure | Adjust key size/policy or entropy source |
 | `RsaProtocolAlgorithmError` | Unsupported/confused JWT/COSE/TLS/X.509 RSA selector | Reject algorithm mapping |
 | `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
@@ -143,3 +172,4 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 | `ct::constant_time_eq` | Constant-time byte comparison |
 | `ct::zeroize` | Volatile-write buffer wipe |
 | `DisplaySecret` | Opt-in hex display for secret keys |
+| `SecretBytes<N>` | Fixed-size secret byte buffer that zeroizes on drop |

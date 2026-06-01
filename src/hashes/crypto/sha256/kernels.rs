@@ -157,6 +157,7 @@ pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
       target_feature = "sha",
       target_feature = "sse4.1"
     ),
+    all(target_arch = "aarch64", target_os = "macos"),
     all(target_arch = "aarch64", target_feature = "sha2"),
     all(
       any(target_arch = "riscv64", target_arch = "riscv32"),
@@ -180,7 +181,11 @@ pub(crate) fn compile_time_best() -> CompressBlocksFn {
   {
     return compress_blocks_x86_sha;
   }
-  #[cfg(all(not(miri), target_arch = "aarch64", target_feature = "sha2"))]
+  #[cfg(all(
+    not(miri),
+    target_arch = "aarch64",
+    any(target_os = "macos", target_feature = "sha2")
+  ))]
   {
     return compress_blocks_aarch64_sha2;
   }
@@ -210,7 +215,10 @@ pub(crate) const COMPILE_TIME_NAME: &str = if cfg!(miri) {
   target_feature = "sse4.1"
 )) {
   "x86-sha"
-} else if cfg!(all(target_arch = "aarch64", target_feature = "sha2")) {
+} else if cfg!(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_feature = "sha2")
+)) {
   "aarch64-sha2"
 } else if cfg!(all(
   any(target_arch = "riscv64", target_arch = "riscv32"),
