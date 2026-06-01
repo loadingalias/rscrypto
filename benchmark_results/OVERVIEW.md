@@ -4,10 +4,10 @@ Sources:
 
 - Linux benchmark CI run [#26537297244](https://github.com/loadingalias/rscrypto/actions/runs/26537297244), created 2026-05-27 20:37:14 UTC.
 - Linux commit: `26845c85530d90725d3ad90c7871d7a474d80d27`.
-- Apple Silicon local run: `benchmark_results/2026-05-31/macos/aarch64/results.txt`, created 2026-05-31 22:48:16 local time on an MBP M1.
-- Apple Silicon commit: `63ba9f3d35c31078a0c3a3f6ab86640db6c4a97c`.
+- Apple Silicon local run: `benchmark_results/2026-06-01/macos/aarch64/results.txt`, created 2026-06-01 11:45:23 local time on an MBP M1.
+- Apple Silicon commit: `b06b946d217248d634c43688211c9ebe5c2692e8`.
 
-Scope: the 2026-05-27 nine-runner Linux CI benchmark matrix for commit `26845c8`, plus the 2026-05-31 local Apple Silicon full run for commit `63ba9f3`. Ratios are `external_crate_time / rscrypto_time`; higher is always better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and size.
+Scope: the 2026-05-27 nine-runner Linux CI benchmark matrix for commit `26845c8`, plus the 2026-06-01 local Apple Silicon full run for commit `b06b946`. Ratios are `external_crate_time / rscrypto_time`; higher is always better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and size.
 
 Coverage note: the Linux CI run is filter-based and does not include Argon2, scrypt, or Ascon-AEAD rows. Do not publish password-hashing or Ascon-AEAD claims from that Linux pass except PBKDF2, which is present under `bench=auth`. The Apple Silicon local run is a full run and includes Argon2, scrypt, and Ascon-AEAD rows. Do not combine Linux and Apple Silicon totals as one aggregate because they were collected on different commits and benchmark scopes. IBM POWER10 and IBM Z still exclude `aws-lc-rs` rows where that dependency is not enabled for the target.
 
@@ -17,27 +17,27 @@ Coverage note: the Linux CI run is filter-based and does not include Argon2, scr
 | --- | --- | --- | --- | --- | --- |
 | Linux CI: all matched performance pairs | 9,409 | 6479/2105/825 | 69% | 1.77x | 1.20x |
 | Linux CI: fastest external per case | 5,832 | 3545/1665/622 | 61% | 1.61x | 1.11x |
-| Apple Silicon: all matched performance pairs | 1,156 | 699/380/77 | 60% | 1.80x | 1.12x |
-| Apple Silicon: fastest external per case | 703 | 344/300/59 | 49% | 1.39x | 1.05x |
+| Apple Silicon: all matched performance pairs | 787 | 524/249/14 | 67% | 1.92x | 1.16x |
+| Apple Silicon: fastest external per case | 463 | 235/215/13 | 51% | 1.25x | 1.05x |
 
 Shareable release summary:
 
 - **Headline:** 3,545 of 5,832 matched Linux CI fastest-external comparisons are wins; 5,210 are wins or ties. Linux CI fastest-external geomean is 1.61x.
-- **Apple Silicon headline:** 344 of 703 matched MBP M1 fastest-external comparisons are wins; 644 are wins or ties. Apple Silicon fastest-external geomean is 1.39x across the full local run.
+- **Apple Silicon headline:** 235 of 463 matched MBP M1 fastest-external comparisons are wins; 450 are wins or ties. Apple Silicon fastest-external geomean is 1.25x across the full local run.
 - **Checksums:** 5.03x geomean across Linux CI fastest-external checksum comparisons.
-- **Apple Silicon checksums:** 5.39x geomean across fastest-external checksum comparisons.
+- **Apple Silicon checksums:** 2.76x geomean across fastest-external checksum comparisons.
 - **SHA-3 / SHAKE:** 2.15x SHA-3 geomean and 1.86x SHAKE geomean across Linux CI fastest-external comparisons.
-- **Apple Silicon SHA-3 / SHAKE:** 1.03x SHA-3 all-pair geomean and 1.37x SHAKE fastest-external geomean.
+- **Apple Silicon SHA-3 / SHAKE:** 0.94x SHA-3 fastest-external geomean and 1.32x SHAKE fastest-external geomean.
 - **BLAKE3:** 2.31x geomean for Linux CI fastest-external rows at `>=64 KiB`.
-- **Apple Silicon BLAKE3:** 1.86x geomean for fastest-external rows at `>=64 KiB`; the 64 KiB rows lose, while larger rows recover.
+- **Apple Silicon BLAKE3:** 1.80x geomean for fastest-external rows at `>=64 KiB`; the 64 KiB rows lose, while larger rows recover.
 - **AEAD:** 1.57x geomean across Linux CI fastest-external AEAD comparisons.
-- **Apple Silicon AEAD:** 1.52x geomean across fastest-external AEAD comparisons, with 152 wins-or-ties out of 154 rows.
+- **Apple Silicon AEAD:** 1.47x geomean across fastest-external AEAD comparisons, with 174 wins-or-ties out of 176 rows.
 - **RSA:** 75 wins and 24 losses across 99 Linux CI fastest-external RSA import and verification comparisons; geomean is 1.32x. Verification-only is effectively tied at 0.98x.
-- **Apple Silicon RSA:** 11 wins out of 11 fastest-external RSA import and verification comparisons; geomean is 1.44x. Verification-only is 1.19x.
+- **Apple Silicon RSA:** 11 wins out of 11 fastest-external RSA import and verification comparisons; geomean is 1.45x. Verification-only is 1.19x.
 - **Ed25519 / X25519:** 1.14x Ed25519 sign geomean, 1.00x Ed25519 verify geomean, and 0.95x X25519 geomean across Linux CI fastest-external comparisons.
 - **Apple Silicon Ed25519 / X25519:** 1.02x Ed25519 sign geomean, 1.00x Ed25519 verify geomean, and 1.00x X25519 geomean across fastest-external comparisons.
 - **Linux top losses:** PBKDF2-SHA256 `iters=1` is 0.81x, X25519 DH is 0.92x, and RSA-4096 verification is 0.94x.
-- **Apple Silicon top losses:** Argon2 small-memory rows are 0.19x..0.25x, SHA-512 1-byte hashing is 0.59x, HMAC-SHA256 setup rows are below parity, and 64 KiB BLAKE3 rows lose before larger inputs recover.
+- **Apple Silicon top losses:** BLAKE3 keyed and derive-key 64 KiB rows are 0.82x and 0.89x, HMAC-SHA256 bulk rows against `aws-lc-rs` are 0.87x..0.93x, empty-message ChaCha20-Poly1305 rows are 0.87x..0.93x, and SHA3-256 streaming rows are 0.93x..0.95x.
 
 Use the headline and category bullets for README, release notes, and social
 posts. Use the loss table below when discussing tradeoffs; it prevents the
@@ -56,7 +56,7 @@ claim from sounding like a synthetic benchmark victory lap.
 | Intel Ice Lake | 1,944 | 648 | 431/128/89 | 67% | 1.47x | 1.16x |
 | Intel Sapphire Rapids | 1,944 | 648 | 434/141/73 | 67% | 1.60x | 1.14x |
 | RISE RISC-V | 1,944 | 648 | 295/212/141 | 46% | 1.11x | 1.03x |
-| Apple Silicon MBP M1 | 2,090 | 703 | 344/300/59 | 49% | 1.39x | 1.05x |
+| Apple Silicon MBP M1 | 1,600 | 463 | 235/215/13 | 51% | 1.25x | 1.05x |
 
 ## Category Summary
 
@@ -70,15 +70,15 @@ claim from sounding like a synthetic benchmark victory lap.
 
 ## Apple Silicon Category Summary
 
-The 2026-05-31 macOS/aarch64 run is local MBP M1 evidence, not CI. It is a full run, so its totals include Argon2, scrypt, and Ascon-AEAD rows that are absent from the Linux CI pass above.
+The 2026-06-01 macOS/aarch64 run is local MBP M1 evidence, not CI. It is a full run, so its totals include Argon2, scrypt, and Ascon-AEAD rows that are absent from the Linux CI pass above.
 
 | Category | Rows | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
-| Checksums | 77 | 59/16/2 | 77% | 5.39x | 1.66x |
-| Hashes/MACs | 403 | 145/209/49 | 36% | 1.10x | 1.01x |
-| Auth/KDF/password | 47 | 13/28/6 | 28% | 0.94x | 1.01x |
-| RSA | 11 | 11/0/0 | 100% | 1.44x | 1.21x |
-| AEAD | 154 | 105/47/2 | 68% | 1.52x | 1.19x |
+| Checksums | 10 | 8/2/0 | 80% | 2.76x | 1.06x |
+| Hashes/MACs | 231 | 76/145/10 | 33% | 1.10x | 1.02x |
+| Auth/KDF/password | 35 | 11/23/1 | 31% | 1.03x | 1.01x |
+| RSA | 11 | 11/0/0 | 100% | 1.45x | 1.22x |
+| AEAD | 176 | 129/45/2 | 73% | 1.47x | 1.15x |
 
 ## Primitive Summary
 
@@ -198,21 +198,21 @@ All-pair Linux CI comparisons by external implementation.
 ## README Numbers
 
 - **Headline:** 3,545 of 5,832 matched Linux CI fastest-external comparisons are wins; 5,210 are wins or ties. Linux CI geomean is 1.61x.
-- **Apple Silicon headline:** 344 of 703 matched MBP M1 fastest-external comparisons are wins; 644 are wins or ties. Apple Silicon geomean is 1.39x across the full local run.
+- **Apple Silicon headline:** 235 of 463 matched MBP M1 fastest-external comparisons are wins; 450 are wins or ties. Apple Silicon geomean is 1.25x across the full local run.
 - **Checksums:** 5.03x geomean across Linux CI fastest-external checksum comparisons.
-- **Apple Silicon checksums:** 5.39x geomean across fastest-external checksum comparisons.
+- **Apple Silicon checksums:** 2.76x geomean across fastest-external checksum comparisons.
 - **SHA-3 / SHAKE:** 2.15x SHA-3 geomean and 1.86x SHAKE geomean across Linux CI fastest-external comparisons.
-- **Apple Silicon SHA-3 / SHAKE:** 1.03x SHA-3 all-pair geomean and 1.37x SHAKE fastest-external geomean.
+- **Apple Silicon SHA-3 / SHAKE:** 0.94x SHA-3 fastest-external geomean and 1.32x SHAKE fastest-external geomean.
 - **BLAKE3:** 2.31x geomean for Linux CI fastest-external rows at `>=64 KiB`.
-- **Apple Silicon BLAKE3:** 1.86x geomean for fastest-external rows at `>=64 KiB`.
+- **Apple Silicon BLAKE3:** 1.80x geomean for fastest-external rows at `>=64 KiB`.
 - **AEAD:** 1.57x geomean across Linux CI fastest-external AEAD comparisons.
-- **Apple Silicon AEAD:** 1.52x geomean across fastest-external AEAD comparisons.
+- **Apple Silicon AEAD:** 1.47x geomean across fastest-external AEAD comparisons.
 - **RSA:** 1.32x geomean and 76% wins across Linux CI fastest-external RSA import and verification comparisons; verification-only is 0.98x.
-- **Apple Silicon RSA:** 1.44x geomean and 100% wins across fastest-external RSA import and verification comparisons; verification-only is 1.19x.
+- **Apple Silicon RSA:** 1.45x geomean and 100% wins across fastest-external RSA import and verification comparisons; verification-only is 1.19x.
 - **Ed25519 / X25519:** 1.14x Ed25519 sign geomean, 1.00x Ed25519 verify geomean, and 0.95x X25519 geomean across Linux CI fastest-external comparisons.
 - **Apple Silicon Ed25519 / X25519:** 1.02x Ed25519 sign geomean, 1.00x Ed25519 verify geomean, and 1.00x X25519 geomean across fastest-external comparisons.
 - **Linux top losses:** PBKDF2-SHA256 `iters=1` is 0.81x, X25519 DH is 0.92x, and RSA-4096 verification is 0.94x.
-- **Apple Silicon top losses:** Argon2 small-memory rows are 0.19x..0.25x, SHA-512 1-byte hashing is 0.59x, HMAC-SHA256 setup rows are below parity, and 64 KiB BLAKE3 rows lose before larger inputs recover.
+- **Apple Silicon top losses:** BLAKE3 keyed and derive-key 64 KiB rows are 0.82x and 0.89x, HMAC-SHA256 bulk rows against `aws-lc-rs` are 0.87x..0.93x, empty-message ChaCha20-Poly1305 rows are 0.87x..0.93x, and SHA3-256 streaming rows are 0.93x..0.95x.
 
 ## Raw Results
 
@@ -227,4 +227,4 @@ All-pair Linux CI comparisons by external implementation.
 | Intel Ice Lake | `ci` | `2026-05-27 20_37_14` | 1,944 | `benchmark_results/2026-05-27/linux/intel-icl/results.txt` |
 | Intel Sapphire Rapids | `ci` | `2026-05-27 20_37_14` | 1,944 | `benchmark_results/2026-05-27/linux/intel-spr/results.txt` |
 | RISE RISC-V | `ci` | `2026-05-27 20_37_14` | 1,944 | `benchmark_results/2026-05-27/linux/rise-riscv/results.txt` |
-| Apple Silicon MBP M1 | `local` | `2026-05-31 22_48_16` | 2,090 | `benchmark_results/2026-05-31/macos/aarch64/results.txt` |
+| Apple Silicon MBP M1 | `local` | `2026-06-01 11_45_23` | 1,600 | `benchmark_results/2026-06-01/macos/aarch64/results.txt` |
