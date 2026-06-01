@@ -58,33 +58,37 @@ enforce_msrv_inheritance = false
 
 [release]
 tag_prefix = "v"
-tag_format = "{prefix}{version}"  # Single crate: just v0.1.0
+tag_format = "{prefix}{version}" # Single crate: just v0.1.0
+
 require_clean = true
-publish_delay = 5
-create_github_release = false
+push = true
+create_github_release = true
 sign_tags = true
+publish_delay = 5
+
 changelog_path = "CHANGELOG.md"
 changelog_relative_to = "workspace"
 skip_changelog_for = []
 require_changelog_entries = false
 require_release_notes = true
+release_notes_dir = "release-notes"
 
 
 [change-detection]
-  infrastructure = [
-    ".github/**",
-    ".config/**",
-    "scripts/**",
-    "justfile",
-    "Cargo.lock",
-    "rust-toolchain.toml",
-    "deny.toml",
-    "rustfmt.toml",
-    ".cargo/config.toml",
-  ]
-unknown_file_policy = "owned_build_test"  # Enable build+test fallback for unclassified crate-owned files
-confidence_profile = "balanced"  # Planner confidence profile: strict, balanced, fast
-bot_pr_confidence_profile = "strict"  # Optional planner profile override for bot-authored PRs
+infrastructure = [
+  ".github/**",
+  ".config/**",
+  "scripts/**",
+  "justfile",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "deny.toml",
+  "rustfmt.toml",
+  ".cargo/config.toml",
+]
+unknown_file_policy = "owned_build_test" # Enable build+test fallback for unclassified crate-owned files
+confidence_profile = "balanced" # Planner confidence profile: strict, balanced, fast
+bot_pr_confidence_profile = "strict" # Optional planner profile override for bot-authored PRs
 
 [run]
-default_profile = "local"  # Default run profile (built-ins: local, ci, nightly)
+default_profile = "local" # Default run profile (built-ins: local, ci, nightly)
