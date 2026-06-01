@@ -117,4 +117,4 @@ Drop both `crc64fast` and `crc64fast-nvme` from Cargo.toml; `features = ["crc64"
 - **No reset, no resume in `crc64fast`.** Build a fresh `Digest` per checksum. rscrypto adds `.reset()` and `Crc64::resume(prev)` on top of the same shape.
 - **`no_std`.** `crc64fast` requires `std` for SIMD detection. rscrypto's `Crc64` is `no_std`-capable; runtime detection is gated on the `std` feature, with compile-time `target_feature` selection in `no_std` builds and a portable fallback always present.
 - **Hardware coverage.** `crc64fast` ships x86_64 (PCLMUL) and aarch64 (PMULL) backends. rscrypto adds VPCLMULQDQ (large buffers on x86_64), SVE2 PMULL (aarch64), VPMSUMD (Power), VGFM (s390x), and Zbc/Zvbc (RISC-V).
-- **Force a backend.** `RSCRYPTO_CRC64_FORCE=portable` (std only) or the `portable-only` feature pins the audited portable kernel for FIPS / DO-178C / IEC 62443 lanes. `crc64fast` has no equivalent.
+- **Force a backend.** `RSCRYPTO_CRC64_FORCE=portable` (std only) or the `portable-only` feature pins the portable kernel for FIPS / DO-178C / IEC 62443 lanes. `crc64fast` has no equivalent.

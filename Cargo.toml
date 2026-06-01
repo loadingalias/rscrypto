@@ -126,8 +126,8 @@ diag = ["std"]
 # Hard-disable runtime SIMD dispatch: `platform::caps()` returns the empty
 # capability set, so every algorithm's three-tier dispatcher falls through to
 # its portable backend. Intended for FIPS / DO-178C / ISO 26262 / IEC 62443
-# deployment modes where the on-running code path must be the audited
-# constant-time portable implementation regardless of host capabilities.
+# deployment modes where the on-running code path must be the constant-time
+# portable implementation regardless of host capabilities.
 # Note: this flag suppresses *invocation* of SIMD kernels; it does not
 # remove SIMD code from the binary. Targets needing binary-level exclusion
 # should additionally restrict `target-feature` via RUSTFLAGS.

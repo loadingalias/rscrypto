@@ -2,7 +2,7 @@
 
 > Replace `sha3_kmac::Kmac256` (fallible `new`, consuming `finalize_into`) with `rscrypto::Kmac256` (infallible `new`, borrowing `finalize_into`). Same NIST SP 800-185 algorithm; outputs are byte-identical at every length.
 
-Verified against `sha3-kmac = "0.3.0"` and the `rscrypto` 0.1 line.
+Verified against `sha3-kmac = "0.3.0"` and the `rscrypto` 0.3 line.
 
 ## TL;DR
 
