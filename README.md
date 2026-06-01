@@ -13,7 +13,7 @@
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the whole shebang. The portable Rust backend is always present. SIMD and assembly are only accelerators.
 
-**Current benchmark scorecards:** Linux CI is `1.61x` fastest-external geomean with `3,545 / 5,832` wins and `5,210 / 5,832` wins-or-ties. Apple Silicon (MBP M1, macOS/aarch64 local full run) is `1.39x` fastest-external geomean with `344 / 703` wins and `644 / 703` wins-or-ties.
+**Current benchmark scorecards:** Linux CI is `1.61x` fastest-external geomean with `3,545 / 5,832` wins and `5,210 / 5,832` wins-or-ties. Apple Silicon (MBP M1, macOS/aarch64 local full run) is `1.25x` fastest-external geomean with `235 / 463` wins and `450 / 463` wins-or-ties.
 
 <p align="center">
   <img alt="rscrypto benchmark scorecard: 1.61x fastest-external geomean across Linux CI with 3,545 wins and 5,210 wins-or-ties out of 5,832 matched benchmark comparisons."
@@ -22,7 +22,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 </p>
 
 <p align="center">
-  <i>Chart: 2026-05-27 Linux CI benchmark pass. Apple Silicon numbers from the 2026-05-31 MBP M1 local full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Chart: 2026-05-27 Linux CI benchmark pass. Apple Silicon numbers from the 2026-06-01 MBP M1 local full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
@@ -201,7 +201,7 @@ Full feature inventory: [`docs/features.md`](docs/features.md). Public type inve
 Current public benchmark evidence comes from two passes:
 
 - Linux CI: 2026-05-27, commit `26845c8`, nine Linux runners. This run is filter-based and does not include Argon2, scrypt, or Ascon-AEAD rows.
-- Apple Silicon: 2026-05-31, commit `63ba9f3`, local MBP M1 macOS/aarch64 full run, including Argon2, scrypt, and Ascon-AEAD rows.
+- Apple Silicon: 2026-06-01, commit `b06b946`, local MBP M1 macOS/aarch64 full run, including Argon2, scrypt, and Ascon-AEAD rows.
 
 Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster. Do not combine the Linux and Apple Silicon totals as one aggregate because they were collected on different commits and benchmark scopes.
 
@@ -210,19 +210,19 @@ Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rsc
 | **Linux CI fastest external** | strongest matched Rust baseline per case | **1.61x geomean** |
 | Linux CI scorecard | fastest external | **3,545 wins / 5,832 pairs** |
 | Linux CI wins or ties | fastest external | **5,210 / 5,832 pairs** |
-| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.39x geomean** |
-| Apple Silicon scorecard | fastest external | **344 wins / 703 pairs** |
-| Apple Silicon wins or ties | fastest external | **644 / 703 pairs** |
-| Checksums | Linux CI / Apple Silicon | **5.03x / 5.39x geomean** |
-| SHA-3 / SHAKE | Linux CI / Apple Silicon | **Linux: 2.15x / 1.86x; Apple Silicon: 1.03x / 1.37x geomean** (platform-sensitive) |
-| BLAKE3, `>=64 KiB` | Linux CI / Apple Silicon | **2.31x / 1.86x geomean** |
-| AEAD | Linux CI / Apple Silicon | **1.57x / 1.52x geomean** |
-| RSA import + verify | Linux CI / Apple Silicon | **1.32x, 76% wins / 1.44x, 100% wins** |
+| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.25x geomean** |
+| Apple Silicon scorecard | fastest external | **235 wins / 463 pairs** |
+| Apple Silicon wins or ties | fastest external | **450 / 463 pairs** |
+| Checksums | Linux CI / Apple Silicon | **5.03x / 2.76x geomean** |
+| SHA-3 / SHAKE | Linux CI / Apple Silicon | **Linux: 2.15x / 1.86x; Apple Silicon: 0.94x / 1.32x geomean** (platform-sensitive) |
+| BLAKE3, `>=64 KiB` | Linux CI / Apple Silicon | **2.31x / 1.80x geomean** |
+| AEAD | Linux CI / Apple Silicon | **1.57x / 1.47x geomean** |
+| RSA import + verify | Linux CI / Apple Silicon | **1.32x, 76% wins / 1.45x, 100% wins** |
 | RSA verify only | Linux CI / Apple Silicon | **0.98x / 1.19x geomean** |
 | Ed25519 sign / verify | Linux CI / Apple Silicon | **Linux: 1.14x / 1.00x; Apple Silicon: 1.02x / 1.00x geomean** |
 | X25519 | Linux CI / Apple Silicon | **0.95x / 1.00x geomean** |
 
-The honest weak spots right now: Linux CI still shows PBKDF2-SHA256 at `iters=1` at 0.81x, X25519 Diffie-Hellman at 0.92x, RSA-4096 verification at 0.94x, and small-message AEAD overhead on plenty of 1-byte and 32-byte rows. Apple Silicon still has SHA-256 bulk throughput pressure against ring/aws-lc-rs and XXH3-64 small-input latency pressure; SHA-3/SHAKE should be described per-platform because the Linux 2.15x SHA-3 result does not carry to the MBP M1 run. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
+The honest weak spots right now: Linux CI still shows PBKDF2-SHA256 at `iters=1` at 0.81x, X25519 Diffie-Hellman at 0.92x, RSA-4096 verification at 0.94x, and small-message AEAD overhead on plenty of 1-byte and 32-byte rows. Apple Silicon still has BLAKE3 64 KiB losses, HMAC-SHA256 bulk pressure against `aws-lc-rs`, empty-message ChaCha20-Poly1305 overhead, and SHA3-256 streaming losses; SHA-3/SHAKE should be described per-platform because the Linux 2.15x SHA-3 result does not carry to the MBP M1 run. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 
