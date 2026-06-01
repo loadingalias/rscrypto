@@ -150,12 +150,35 @@ fn ascon_xof128_many(c: &mut Criterion) {
   g.finish();
 }
 
+fn ascon_cxof128(c: &mut Criterion) {
+  const CUSTOMIZATION: &[u8] = b"rscrypto-bench";
+  const OUT_LEN: usize = 32;
+
+  let inputs = common::comp_sizes();
+  let mut g = c.benchmark_group("ascon-cxof128");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        let mut out = [0u8; OUT_LEN];
+        rscrypto::AsconCxof128::hash_into(black_box(CUSTOMIZATION), black_box(d), &mut out).unwrap();
+        black_box(out)
+      })
+    });
+  }
+
+  g.finish();
+}
+
 criterion_group!(
   benches,
   ascon_hash256,
   ascon_hash256_streaming,
   ascon_hash256_many,
   ascon_xof128,
-  ascon_xof128_many
+  ascon_xof128_many,
+  ascon_cxof128
 );
 criterion_main!(benches);

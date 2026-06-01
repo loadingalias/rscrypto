@@ -8,7 +8,7 @@ Internal module map and advanced entry points for contributors and users who nee
 src/
 +-- lib.rs              # Public API, re-exports
 +-- aead/               # AES-GCM, AES-GCM-SIV, ChaCha20, XChaCha20, AEGIS, Ascon
-+-- auth/               # HMAC, HKDF, PBKDF2, KMAC, Argon2, scrypt, PHC, Ed25519, X25519
++-- auth/               # HMAC, HKDF, PBKDF2, KMAC, Argon2, scrypt, PHC, Ed25519, RSA, X25519
 +-- checksum/           # CRC families, config, buffered, introspection
 +-- hashes/
 |   +-- crypto/         # SHA-2, SHA-3, SHAKE, cSHAKE, Blake2, Blake3, Ascon, Keccak

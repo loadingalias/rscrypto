@@ -46,7 +46,7 @@ pub fn kernel_for<T: KernelIntrospect>(len: usize) -> &'static str {
 /// This is intentionally `diag`-only and hidden from docs. It exists so
 /// benchmark probes can isolate raw selected-kernel block compression from the
 /// public digest/update/finalize wrappers.
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "sha2"))]
 #[doc(hidden)]
 #[inline]
 pub fn sha256_compress_blocks_for_bench(state: &mut [u32; 8], blocks: &[u8]) {

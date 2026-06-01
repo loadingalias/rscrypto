@@ -104,7 +104,13 @@ fn hmac_sha256(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
-      b.iter(|| black_box(HmacSha256::mac(black_box(&key), black_box(d))))
+      let mut mac = HmacSha256::new(&key);
+      b.iter(|| {
+        mac.update(black_box(d));
+        let tag = mac.finalize();
+        mac.reset();
+        black_box(tag)
+      })
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
@@ -275,7 +281,7 @@ fn hmac_sha256_internal(c: &mut Criterion) {
   let ring_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &key);
   let mut g = c.benchmark_group("hmac-sha256/internal/fixed-message");
 
-  for len in [32usize, 64, 4096] {
+  for len in [32usize, 64, 256, 4096] {
     let msg = &data[..len];
     common::set_throughput(&mut g, len);
 

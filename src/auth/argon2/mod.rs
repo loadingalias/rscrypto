@@ -119,6 +119,11 @@ const DEFAULT_OUTPUT_LEN: usize = 32;
 /// i.e. on 16-u64 slabs.
 const P_LANE_WORDS: usize = 16;
 
+/// Minimum per-lane segment work before Rayon lane parallelism is worth its
+/// fixed scheduling cost.
+#[cfg(feature = "parallel")]
+const MIN_PARALLEL_SEGMENT_BLOCKS: u32 = 32;
+
 #[repr(align(64))]
 #[derive(Clone, Copy)]
 struct MemoryBlock([u64; BLOCK_WORDS]);
@@ -1652,10 +1657,10 @@ fn fill_slice_parallel(
 }
 
 /// Dispatch one slice fill: parallel when `parallel` is on and `lanes > 1`,
-/// sequential otherwise. The `lanes == 1` fast-path skips rayon entirely
-/// — no thread dispatch, no `Send`/`Sync` machinery — which keeps the
-/// single-lane (OWASP-default) configuration free of any parallel
-/// overhead.
+/// and each lane segment has enough work to amortize Rayon scheduling;
+/// sequential otherwise. Tiny segments are common in test / benchmark
+/// cost shapes (`m=64,p=2` means only 8 blocks per spawned task), where
+/// Rayon overhead dominates the actual Argon2 fill on Apple Silicon.
 #[inline]
 fn fill_slice(
   matrix: &mut Matrix,
@@ -1667,7 +1672,7 @@ fn fill_slice(
   time_cost: u32,
 ) {
   #[cfg(feature = "parallel")]
-  if matrix.lanes > 1 {
+  if matrix.lanes > 1 && matrix.segment_len >= MIN_PARALLEL_SEGMENT_BLOCKS {
     fill_slice_parallel(matrix, compress, pass, slice, variant, version, time_cost);
     return;
   }

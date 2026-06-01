@@ -5,11 +5,9 @@
 //! and verify that the parallel path is byte-for-byte deterministic and
 //! agrees with the RustCrypto `argon2` oracle.
 //!
-//! The RFC 9106 Appendix A KAT suite (`tests/argon2_vectors.rs`) and the
-//! lower-lane differential suite (`tests/argon2_differential.rs`) already
-//! exercise the parallel path under `--features parallel` because they
-//! use `p ≥ 2`; this file adds the explicit higher-lane oracles plus a
-//! determinism check that would catch any data-race-induced corruption.
+//! Tiny `p >= 2` shapes intentionally stay sequential because Rayon
+//! scheduling dominates short lane segments; this file uses larger
+//! high-lane configs to exercise the real parallel path.
 #![cfg(all(feature = "argon2", feature = "parallel", not(miri)))]
 
 use rscrypto::{Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
@@ -46,13 +44,13 @@ const SALT: &[u8] = b"rscrypto-parallel-salt-bytes!!";
 
 // ─── High-lane-count oracle parity ─────────────────────────────────────────
 
-/// At p = 8 the rayon driver spawns 8 concurrent tasks per slice. Across
+/// At p = 8 the rayon driver fills 8 lane segments per slice. Across
 /// 4 slices × `time_cost` passes that is 8·4·t fill_segment calls per
 /// hash; any data-race or aliasing bug in the parallel path almost
 /// certainly perturbs a block, which would change the final tag.
 #[test]
 fn argon2id_p8_matches_oracle() {
-  let m = 256u32; // m >= 8*p
+  let m = 1024u32; // segment_len = 32, enough work to take the Rayon path
   let t = 2u32;
   let p = 8u32;
   let out_len = 32usize;
@@ -67,7 +65,7 @@ fn argon2id_p8_matches_oracle() {
 
 #[test]
 fn argon2d_p8_matches_oracle() {
-  let m = 256u32;
+  let m = 1024u32;
   let t = 2u32;
   let p = 8u32;
   let out_len = 32usize;
@@ -82,7 +80,7 @@ fn argon2d_p8_matches_oracle() {
 
 #[test]
 fn argon2i_p8_matches_oracle() {
-  let m = 256u32;
+  let m = 1024u32;
   let t = 2u32;
   let p = 8u32;
   let out_len = 32usize;
@@ -97,7 +95,7 @@ fn argon2i_p8_matches_oracle() {
 
 #[test]
 fn argon2id_p16_matches_oracle() {
-  let m = 512u32; // m >= 8*p; keep small enough for a fast unit test
+  let m = 2048u32; // segment_len = 32, enough work to take the Rayon path
   let t = 2u32;
   let p = 16u32;
   let out_len = 32usize;
@@ -118,7 +116,7 @@ fn argon2id_p16_matches_oracle() {
 /// produce the same tag. Any non-determinism would indicate a data race.
 #[test]
 fn argon2id_parallel_is_deterministic() {
-  let params = rs_params(256, 2, 8, 32);
+  let params = rs_params(1024, 2, 8, 32);
 
   let mut reference = [0u8; 32];
   Argon2id::hash(&params, PASSWORD, SALT, &mut reference).unwrap();
@@ -132,7 +130,7 @@ fn argon2id_parallel_is_deterministic() {
 
 #[test]
 fn argon2d_parallel_is_deterministic() {
-  let params = rs_params(256, 2, 8, 32);
+  let params = rs_params(1024, 2, 8, 32);
 
   let mut reference = [0u8; 32];
   Argon2d::hash(&params, PASSWORD, SALT, &mut reference).unwrap();

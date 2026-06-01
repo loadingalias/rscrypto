@@ -17,17 +17,19 @@ const SHA512_FAMILY_BLOCK_SIZE: usize = 128;
 const SHA384_TAG_SIZE: usize = 48;
 const SHA512_TAG_SIZE: usize = 64;
 
+#[cfg(target_arch = "x86_64")]
 #[inline]
 fn hmac_sha256_oneshot_prefers_streaming(caps: crate::platform::Caps) -> bool {
+  caps.has(crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS)
+}
+
+#[inline]
+fn hmac_sha256_oneshot_should_stream() -> bool {
   #[cfg(target_arch = "x86_64")]
-  {
-    caps.has(crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS)
-  }
+  return hmac_sha256_oneshot_prefers_streaming(crate::platform::caps());
+
   #[cfg(not(target_arch = "x86_64"))]
-  {
-    let _ = caps;
-    false
-  }
+  return false;
 }
 
 #[inline]
@@ -44,9 +46,10 @@ pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
 
   let result = build(&ipad, &opad);
 
-  ct::zeroize(key_block);
-  ct::zeroize(&mut ipad);
-  ct::zeroize(&mut opad);
+  ct::zeroize_no_fence(key_block);
+  ct::zeroize_no_fence(&mut ipad);
+  ct::zeroize_no_fence(&mut opad);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
   result
 }
@@ -169,7 +172,7 @@ impl Mac for HmacSha256 {
   #[inline]
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
-    if hmac_sha256_oneshot_prefers_streaming(crate::platform::caps()) {
+    if hmac_sha256_oneshot_should_stream() {
       // Sapphire Rapids regresses badly on the fused stack-buffer shape; the
       // public streaming path keeps the same semantics with the measured fast call shape.
       let mut mac = Self::new(key);
