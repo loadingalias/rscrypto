@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/loadingalias/rscrypto/compare/v0.3.0...v0.3.1) - 2026-06-01
+
+### 📦 Other Changes
+
+- workspace: enable cargo-rail release publishing ([bb7ec88](https://github.com/loadingalias/rscrypto/commit/bb7ec88d59a2cce916d82af9b182f4905be6600b))
+- bench: add Ascon coverage and refresh HMAC measurement shape ([b06b946](https://github.com/loadingalias/rscrypto/commit/b06b946d217248d634c43688211c9ebe5c2692e8))
+
+
+
 ## [0.3.0](https://github.com/loadingalias/rscrypto/compare/v0.2.0...v0.3.0) - 2026-05-28
 
 ### 🏗️ Build
