@@ -33,7 +33,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference implementation.
 - **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM all have portable fallbacks, with optimized kernels where they pay.
 - **`no_std` is a first-class target.** Server, CLI, embedded, bare-metal, and WASM builds use the same crate and feature model.
-- **Audit knobs are explicit.** `portable-only` forces runtime dispatch to the audited portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
+- **Audit knobs are explicit.** `portable-only` forces runtime dispatch to the constant-time portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
 `rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module.
@@ -44,14 +44,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["sha2"] }
 ```
 
 Full primitive stack with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, or nonces from the operating system.
@@ -76,7 +76,7 @@ The common API shape is deliberately simple/boring: one-shot when convenient, st
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.0", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
 ```
 
 ```rust
@@ -119,14 +119,14 @@ Enable `getrandom` for OS-backed RSA key generation, signing salt/blinding, OAEP
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.0", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Encrypt Data
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.0", default-features = false, features = ["chacha20poly1305"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["chacha20poly1305"] }
 ```
 
 ```rust
@@ -154,7 +154,7 @@ assert_eq!(&message, b"pay bob 10");
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
 ```
 
 ```rust

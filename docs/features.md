@@ -10,22 +10,22 @@ Every primitive has its own leaf feature so size-conscious builds compile only w
 
 ```toml
 # One algorithm, no_std.
-rscrypto = { version = "0.3.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["sha2"] }
 
 # RSA public-key import and verification, no_std + alloc.
-rscrypto = { version = "0.3.0", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
 
 # RSA key generation, signing, encryption, and private-operation blinding.
-rscrypto = { version = "0.3.0", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.3.1", default-features = false, features = ["rsa", "getrandom"] }
 
 # Everything.
-rscrypto = { version = "0.3.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
 
 # Everything, with parallel BLAKE3 / Argon2 lanes via Rayon.
-rscrypto = { version = "0.3.0", features = ["full", "parallel", "getrandom"] }
+rscrypto = { version = "0.3.1", features = ["full", "parallel", "getrandom"] }
 
 # Audit-constrained: forces the portable backend at runtime.
-rscrypto = { version = "0.3.0", features = ["full", "portable-only"] }
+rscrypto = { version = "0.3.1", features = ["full", "portable-only"] }
 ```
 
 ## Umbrella Features
@@ -74,7 +74,7 @@ rscrypto = { version = "0.3.0", features = ["full", "portable-only"] }
 
 ## `portable-only`
 
-`portable-only` makes `platform::caps()` return the empty capability set, so every algorithm's three-tier dispatcher falls through to its portable backend. Intended for FIPS, DO-178C, ISO 26262, IEC 62443, and similar deployments where the running code path must be the audited constant-time portable implementation regardless of host capabilities.
+`portable-only` makes `platform::caps()` return the empty capability set, so every algorithm's three-tier dispatcher falls through to its portable backend. Intended for FIPS, DO-178C, ISO 26262, IEC 62443, and similar deployments where the running code path must be the constant-time portable implementation regardless of host capabilities.
 
 This flag suppresses *invocation* of SIMD kernels but does **not** remove SIMD code from the binary. For binary-level exclusion, also restrict `target-feature` via `RUSTFLAGS`.
 

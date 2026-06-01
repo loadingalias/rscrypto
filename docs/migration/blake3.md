@@ -140,4 +140,4 @@ Renames: `reader.fill(&mut out)` → `reader.squeeze(&mut out)`. The one-shot fo
   implements `io::Write` when `std` is enabled, and still exposes
   `Blake3::writer(W)` for transparent pass-through writes to an inner writer.
 - **`mmap` helpers.** `blake3` ships `Hasher::update_mmap(path)` etc. rscrypto leaves memory-mapping to the caller — wrap with `Blake3::reader(File::open(path)?)` and `io::copy` if you need the same shape.
-- **`no_std`.** Both crates support `no_std` with portable fallbacks. rscrypto runtime-detects SIMD when `std` is enabled; force the audited portable kernel via the `portable-only` feature for FIPS / DO-178C / IEC 62443 lanes.
+- **`no_std`.** Both crates support `no_std` with portable fallbacks. rscrypto runtime-detects SIMD when `std` is enabled; force the portable kernel via the `portable-only` feature for FIPS / DO-178C / IEC 62443 lanes.
