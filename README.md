@@ -250,8 +250,7 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture not
 - AEAD failed-open paths wipe output buffers.
 - Portable and accelerated backends are differentially tested for byte-identical output.
 - Official test vectors, fuzz corpus replay, Miri, `cargo deny`, and `cargo audit` run in CI.
-- RSA private-operation release claims require the manual Miri and first-order leakage gates in
-  [`docs/security/rsa-side-channel-audit.md`](docs/security/rsa-side-channel-audit.md).
+- RSA private-operation release claims require the dedicated RSA Miri and first-order leakage gates.
 
 Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
 

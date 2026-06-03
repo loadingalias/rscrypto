@@ -2,13 +2,13 @@
 
 > Replace `Hmac::<Sha256>` (generic over digest) with `HmacSha256` (named per hash). Key construction is now infallible, `finalize()` borrows, and the one-shot helper `HmacSha256::mac(key, data)` collapses the four-line idiom into one.
 
-Verified against `hmac = "0.13.0"` and the `rscrypto` 0.1 line.
+Verified against `hmac = "0.13.0"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.1) |
+| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.1", features = ["hmac"] }` |
+| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.3.1", features = ["hmac"] }` |
 | Import | `use hmac::{Hmac, Mac, KeyInit}; use sha2::Sha256;` | `use rscrypto::{HmacSha256, Mac};` |
 | Call | `Hmac::<Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes()` | `HmacSha256::mac(key, data)` |
 
@@ -24,7 +24,7 @@ sha2 = "0.11"            # required as the generic parameter
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["hmac"] }
+rscrypto = { version = "0.3.1", features = ["hmac"] }
 ```
 
 The `hmac` feature implies `sha2` — no second dep to manage.

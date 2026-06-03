@@ -2,13 +2,13 @@
 
 > Same algorithm (RFC 8452), same nonce-misuse-resistant guarantees. Replace `Aes256GcmSiv` / `Key<Aes256GcmSiv>` / `Nonce` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API.
 
-Verified against `aes-gcm-siv = "0.11.1"` and the `rscrypto` 0.1 line.
+Verified against `aes-gcm-siv = "0.11.1"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`aes-gcm-siv` 0.11.x) | After (`rscrypto` 0.1) |
+| | Before (`aes-gcm-siv` 0.11.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `aes-gcm-siv = "0.11"` | `rscrypto = { version = "0.1", features = ["aes-gcm-siv"] }` |
+| Cargo dep | `aes-gcm-siv = "0.11"` | `rscrypto = { version = "0.3.1", features = ["aes-gcm-siv"] }` |
 | Import | `use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::Nonce96};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -23,7 +23,7 @@ aes-gcm-siv = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["aes-gcm-siv"] }
+rscrypto = { version = "0.3.1", features = ["aes-gcm-siv"] }
 ```
 
 ## Algorithm map

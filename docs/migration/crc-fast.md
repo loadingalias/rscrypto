@@ -2,13 +2,13 @@
 
 > Replace `crc-fast`'s enum-driven `checksum(CrcAlgorithm::*, data)` calls with rscrypto's named CRC types. SIMD coverage is comparable on x86_64 and aarch64; rscrypto adds Power, s390x, and RISC-V kernels and removes the `u64`-everywhere return type.
 
-Verified against `crc-fast = "1.10.0"` and the `rscrypto` 0.1 line.
+Verified against `crc-fast = "1.10.0"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`crc-fast` 1.x) | After (`rscrypto` 0.1) |
+| | Before (`crc-fast` 1.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `crc-fast = "1.10"` | `rscrypto = { version = "0.1", features = ["crc32", "crc64"] }` |
+| Cargo dep | `crc-fast = "1.10"` | `rscrypto = { version = "0.3.1", features = ["crc32", "crc64"] }` |
 | Import | `use crc_fast::{checksum, CrcAlgorithm};` | `use rscrypto::checksum::{Checksum, Crc32};` |
 | Call | `checksum(CrcAlgorithm::Crc32IsoHdlc, data) as u32` | `Crc32::checksum(data)` |
 
@@ -23,7 +23,7 @@ crc-fast = "1.10"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["crc32", "crc64"] }
+rscrypto = { version = "0.3.1", features = ["crc32", "crc64"] }
 ```
 
 Drop `crc16` / `crc24` from the feature list if you don't use them. `features = ["checksums"]` is the umbrella shortcut.

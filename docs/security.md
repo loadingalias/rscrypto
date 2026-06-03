@@ -52,8 +52,6 @@ Mandatory RSA release evidence:
 
 - Public verify/encrypt and private sign/decrypt/keygen/import/export pass the
   normal check, test, fuzz, and benchmark lanes.
-- Constant-time audit findings are resolved by code, tests, or written
-  rejection in `docs/security/rsa-side-channel-audit.md`.
 - Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
   RSASSA-PKCS1-v1_5.
 - `just test-rsa-leakage` passes on Linux x86_64 and Linux aarch64.
@@ -62,6 +60,13 @@ Mandatory RSA release evidence:
   `just test-miri --rsa`.
 - Optional OpenSSL CLI and AWS-LC checks may support review; skipped optional
   helpers never count as completed release evidence.
+
+The RSA leakage gate is regression evidence, not a proof of constant time.
+Parsing, public operations, key generation, and OS-backed blinding-factor
+rejection may branch on public data or fresh randomness. Online private
+sign/decrypt paths must keep secret-dependent padding, exponentiation, CRT, and
+failure-output behavior covered by tests, fuzzing, Miri, and the RSA leakage
+workflow before a release claim.
 
 ## Secret Serialization
 

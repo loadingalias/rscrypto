@@ -2,13 +2,13 @@
 
 > Drop-in replacement for `crc32fast::Hasher`. Same algorithm (CRC-32/IEEE), wider hardware coverage, identical method names — `update` / `finalize` / `reset` carry over verbatim.
 
-Verified against `crc32fast = "1.5.0"` and the `rscrypto` 0.1 line.
+Verified against `crc32fast = "1.5.0"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`crc32fast` 1.x) | After (`rscrypto` 0.1) |
+| | Before (`crc32fast` 1.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `crc32fast = "1.5"` | `rscrypto = { version = "0.1", features = ["crc32"] }` |
+| Cargo dep | `crc32fast = "1.5"` | `rscrypto = { version = "0.3.1", features = ["crc32"] }` |
 | Import | `use crc32fast::Hasher;` | `use rscrypto::checksum::{Checksum, Crc32};` |
 | Call | `crc32fast::hash(data)` | `Crc32::checksum(data)` |
 
@@ -23,7 +23,7 @@ crc32fast = "1.5"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["crc32"] }
+rscrypto = { version = "0.3.1", features = ["crc32"] }
 ```
 
 `features = ["crc32"]` enables both CRC-32/IEEE (`Crc32`) and CRC-32C/Castagnoli (`Crc32C`) at no extra build cost.

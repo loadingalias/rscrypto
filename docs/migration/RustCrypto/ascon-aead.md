@@ -2,13 +2,13 @@
 
 > NIST SP 800-232 lightweight AEAD. Replace `AsconAead128` / `Key<T>` / `Nonce<T>` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API. 128-bit key, 128-bit nonce, 128-bit tag — all the bytes are 16.
 
-Verified against `ascon-aead = "0.5.2"` and the `rscrypto` 0.1 line.
+Verified against `ascon-aead = "0.5.2"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`ascon-aead` 0.5.x) | After (`rscrypto` 0.1) |
+| | Before (`ascon-aead` 0.5.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `ascon-aead = "0.5"` | `rscrypto = { version = "0.1", features = ["ascon-aead"] }` |
+| Cargo dep | `ascon-aead = "0.5"` | `rscrypto = { version = "0.3.1", features = ["ascon-aead"] }` |
 | Import | `use ascon_aead::{AsconAead128, Key, Nonce, aead::{Aead, KeyInit, Payload}};` | `use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::Nonce128};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -23,7 +23,7 @@ ascon-aead = "0.5"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["ascon-aead"] }
+rscrypto = { version = "0.3.1", features = ["ascon-aead"] }
 ```
 
 ## Algorithm map
