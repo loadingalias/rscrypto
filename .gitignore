@@ -20,8 +20,8 @@ AGENTS.md
 
 # Junk
 docs/tasks/*
-!docs/tasks/rsa.md
 docs/distribution
+docs/notes
 benchmark_results/*
 docs/llvm-ppc64le-readvolatile-issue.md
 

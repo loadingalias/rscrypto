@@ -2,13 +2,13 @@
 
 > Same algorithm (NIST LWC Ascon-Hash256). `ascon_hash::AsconHash256` becomes `rscrypto::AsconHash256`; everything else (trait shape, `update`, `finalize`) carries over.
 
-Verified against `ascon-hash = "0.4.0"` and the `rscrypto` 0.1 line.
+Verified against `ascon-hash = "0.4.0"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`ascon-hash` 0.4.x) | After (`rscrypto` 0.1) |
+| | Before (`ascon-hash` 0.4.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `ascon-hash = "0.4"` | `rscrypto = { version = "0.1", features = ["ascon-hash"] }` |
+| Cargo dep | `ascon-hash = "0.4"` | `rscrypto = { version = "0.3.1", features = ["ascon-hash"] }` |
 | Import | `use ascon_hash::{AsconHash256, digest::Digest};` | `use rscrypto::{AsconHash256, Digest};` |
 | Call | `AsconHash256::digest(data)` | `AsconHash256::digest(data)` |
 
@@ -23,7 +23,7 @@ ascon-hash = "0.4"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["ascon-hash"] }
+rscrypto = { version = "0.3.1", features = ["ascon-hash"] }
 ```
 
 ## Algorithm map

@@ -2,13 +2,13 @@
 
 > Replace the parameterized `Crc::<W>::new(&CRC_*)` builder with rscrypto's named CRC types. Same outputs, hardware-accelerated dispatch, no generic width to thread through call sites.
 
-Verified against `crc = "3.4.0"` and the `rscrypto` 0.1 line.
+Verified against `crc = "3.4.0"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`crc` 3.x) | After (`rscrypto` 0.1) |
+| | Before (`crc` 3.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `crc = "3.4"` | `rscrypto = { version = "0.1", features = ["checksums"] }` |
+| Cargo dep | `crc = "3.4"` | `rscrypto = { version = "0.3.1", features = ["checksums"] }` |
 | Import | `use crc::{Crc, CRC_32_ISO_HDLC};` | `use rscrypto::checksum::{Checksum, Crc32};` |
 | Call | `Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(data)` | `Crc32::checksum(data)` |
 
@@ -23,7 +23,7 @@ crc = "3.4"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["checksums"] }
+rscrypto = { version = "0.3.1", features = ["checksums"] }
 ```
 
 `features = ["checksums"]` enables every CRC family. To trim the build, pick only what you use: `crc16`, `crc24`, `crc32` (covers IEEE + Castagnoli), `crc64` (covers XZ + NVME).

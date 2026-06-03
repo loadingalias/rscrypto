@@ -2,16 +2,15 @@
 
 > Same algorithms (RFC 7693), with named convenience types replacing `Blake2b<U32>`-style generic instantiations and `Blake2b256::keyed_digest(key, data)` replacing the separate `Blake2bMac<U32>` MAC type.
 
-Verified against `blake2 = "0.10.6"` and `blake2 = "0.11.0-rc.6"`; both
-produce byte-identical output to `rscrypto`. The 0.11 RC reworked the trait
-surface but not the algorithm. Code samples target the 0.10 API because that
-is still common in existing projects.
+Verified against `blake2 = "0.11.0-rc.6"` and the `rscrypto` 0.3.1 line.
+Code samples use the 0.10-style names where they remain the clearest migration
+shape for existing projects.
 
 ## TL;DR
 
-| | Before (`blake2` 0.10.x) | After (`rscrypto` 0.3) |
+| | Before (`blake2` 0.10.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `blake2 = "0.10"` | `rscrypto = { version = "0.3", features = ["blake2b", "blake2s"] }` |
+| Cargo dep | `blake2 = "0.10"` | `rscrypto = { version = "0.3.1", features = ["blake2b", "blake2s"] }` |
 | Import | `use blake2::{Blake2b512, Digest};` | `use rscrypto::{Blake2b512, Digest};` |
 | Call | `Blake2b512::digest(data)` | `Blake2b512::digest(data)` |
 
@@ -28,7 +27,7 @@ blake2 = "0.10"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.3", features = ["blake2b", "blake2s"] }
+rscrypto = { version = "0.3.1", features = ["blake2b", "blake2s"] }
 ```
 
 ## Algorithm map

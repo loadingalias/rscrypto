@@ -2,13 +2,13 @@
 
 > Replace the bare `scrypt(password, salt, &Params, &mut out)` function with `Scrypt::hash(&ScryptParams, password, salt, &mut out)`. Same RFC 7914 algorithm, byte-identical output, PHC string round-trip built in (no `password-hash` crate dependency).
 
-Verified against `scrypt = "0.12.0"` and the `rscrypto` 0.1 line.
+Verified against `scrypt = "0.12.0"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`scrypt` 0.12.x) | After (`rscrypto` 0.1) |
+| | Before (`scrypt` 0.12.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `scrypt = "0.12"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.1", features = ["scrypt", "phc-strings"] }` |
+| Cargo dep | `scrypt = "0.12"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.3.1", features = ["scrypt", "phc-strings"] }` |
 | Import | `use scrypt::{scrypt, Params};` | `use rscrypto::{Scrypt, ScryptParams};` |
 | Raw KDF | `scrypt(pw, salt, &Params::new(log_n, r, p)?, &mut out)?` | `Scrypt::hash(&ScryptParams::new()...build()?, pw, salt, &mut out)?` |
 
@@ -24,7 +24,7 @@ password-hash = "0.5"            # only if you need PHC strings
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["scrypt", "phc-strings"] }
+rscrypto = { version = "0.3.1", features = ["scrypt", "phc-strings"] }
 ```
 
 Drop `phc-strings` if you only need the raw KDF and not PHC `$scrypt$...$...` storage strings. Drop `getrandom` from the feature list if you supply your own salt.

@@ -2,13 +2,13 @@
 
 > Replace `twox_hash::XxHash3_64::oneshot` with `rscrypto::Xxh3::hash`. Streaming flows through `core::hash::Hasher` in both crates, so the only changes are the type name and the import path.
 
-Verified against `twox-hash = "2.1.2"` and the `rscrypto` 0.1 line.
+Verified against `twox-hash = "2.1.2"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`twox-hash` 2.x) | After (`rscrypto` 0.1) |
+| | Before (`twox-hash` 2.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `twox-hash = "2.1"` | `rscrypto = { version = "0.1", features = ["xxh3"] }` |
+| Cargo dep | `twox-hash = "2.1"` | `rscrypto = { version = "0.3.1", features = ["xxh3"] }` |
 | Import | `use twox_hash::XxHash3_64;` | `use rscrypto::{FastHash, Xxh3};` |
 | Call | `XxHash3_64::oneshot(data)` | `Xxh3::hash(data)` |
 
@@ -23,7 +23,7 @@ twox-hash = "2.1"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["xxh3"] }
+rscrypto = { version = "0.3.1", features = ["xxh3"] }
 ```
 
 ## Algorithm map

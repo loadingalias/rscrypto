@@ -2,13 +2,13 @@
 
 > Replace `xxhash_rust::xxh3::xxh3_64` with `rscrypto::Xxh3::hash` (and `xxh3_128` with `Xxh3_128::hash`). One-shot bit-equivalent. Streaming routes through `Xxh3Hasher` (a `core::hash::Hasher`).
 
-Verified against `xxhash-rust = "0.8.15"` (with `xxh3` feature) and the `rscrypto` 0.1 line.
+Verified against `xxhash-rust = "0.8.15"` (with `xxh3` feature) and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`xxhash-rust` 0.8.x) | After (`rscrypto` 0.1) |
+| | Before (`xxhash-rust` 0.8.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `xxhash-rust = { version = "0.8", features = ["xxh3"] }` | `rscrypto = { version = "0.1", features = ["xxh3"] }` |
+| Cargo dep | `xxhash-rust = { version = "0.8", features = ["xxh3"] }` | `rscrypto = { version = "0.3.1", features = ["xxh3"] }` |
 | Import | `use xxhash_rust::xxh3::xxh3_64;` | `use rscrypto::{FastHash, Xxh3};` |
 | Call | `xxh3_64(data)` | `Xxh3::hash(data)` |
 
@@ -23,7 +23,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["xxh3"] }
+rscrypto = { version = "0.3.1", features = ["xxh3"] }
 ```
 
 ## Algorithm map

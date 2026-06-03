@@ -2,13 +2,13 @@
 
 > Replace the three free functions `crc32c::crc32c`, `crc32c_append`, `crc32c_combine` with `rscrypto::Crc32C`'s trait-method equivalents. Same Castagnoli polynomial, byte-identical output, hardware-accelerated dispatch on every supported target.
 
-Verified against `crc32c = "0.6.8"` and the `rscrypto` 0.1 line.
+Verified against `crc32c = "0.6.8"` and the `rscrypto` 0.3.1 line.
 
 ## TL;DR
 
-| | Before (`crc32c` 0.6.x) | After (`rscrypto` 0.1) |
+| | Before (`crc32c` 0.6.x) | After (`rscrypto` 0.3.1) |
 |---|---|---|
-| Cargo dep | `crc32c = "0.6"` | `rscrypto = { version = "0.1", features = ["crc32"] }` |
+| Cargo dep | `crc32c = "0.6"` | `rscrypto = { version = "0.3.1", features = ["crc32"] }` |
 | Import | `use crc32c::{crc32c, crc32c_append, crc32c_combine};` | `use rscrypto::checksum::{Checksum, ChecksumCombine, Crc32C};` |
 | Call | `crc32c(data)` | `Crc32C::checksum(data)` |
 
@@ -23,7 +23,7 @@ crc32c = "0.6"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.1", features = ["crc32"] }
+rscrypto = { version = "0.3.1", features = ["crc32"] }
 ```
 
 The `crc32` feature enables both `Crc32` (IEEE) and `Crc32C` (Castagnoli) at no extra binary cost.
