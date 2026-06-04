@@ -109,11 +109,23 @@ const RSA_KEYGEN_PUBLIC_EXPONENT: u64 = 65_537;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_MILLER_RABIN_ROUNDS: usize = 32;
 #[cfg(feature = "getrandom")]
-const RSA_KEYGEN_PRIME_ATTEMPTS: usize = 16_384;
-#[cfg(feature = "getrandom")]
 const RSA_KEYGEN_PAIR_ATTEMPTS: usize = 64;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_MIN_PRIME_DISTANCE_SECURITY_MARGIN_BITS: usize = 100;
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_DRBG_ENTROPY_BYTES: usize = 32;
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_DRBG_NONCE_BYTES: usize = 16;
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_DRBG_OUT_BYTES: usize = 32;
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_DRBG_KEY_BYTES: usize = 32;
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES: usize = 64;
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_DRBG_PERSONALIZATION: &[u8] = b"rscrypto RSA FIPS 186-5 A.1.3 HMAC_DRBG";
+#[cfg(feature = "getrandom")]
+const RSA_KEYGEN_SQRT2_HALF_TOP64: [u8; 8] = [0xb5, 0x04, 0xf3, 0x33, 0xf9, 0xde, 0x64, 0x84];
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_SMALL_PRIMES: &[u16] = &[
   3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113,
@@ -229,6 +241,30 @@ impl fmt::Display for RsaKeyGenerationError {
 }
 
 impl core::error::Error for RsaKeyGenerationError {}
+
+/// RSA private-key generation contract exposed by this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RsaKeyGenerationContract {
+  /// Probable-prime generation following FIPS 186-5 Appendix A.1.3 in code.
+  ///
+  /// The implementation uses an internal HMAC_DRBG seeded from `getrandom`,
+  /// applies the FIPS A.1.1/A.1.3 prime constraints, and derives `d` modulo
+  /// `lcm(p - 1, q - 1)`. This is an algorithmic conformance statement only;
+  /// this crate is not a CMVP-validated FIPS 140-3 cryptographic module.
+  Fips1865A13ProbablePrime,
+  /// Probable-prime generation using OS randomness and randomized Miller-Rabin.
+  ///
+  /// This is **not** an exact FIPS 186-5 Appendix A.1.3 implementation. In
+  /// particular, the RNG boundary is `getrandom`, not an approved DRBG instance,
+  /// and generated primes are sampled from this crate's fixed probable-prime
+  /// candidate shape rather than the full FIPS interval.
+  #[deprecated(
+    since = "0.3.2",
+    note = "RSA key generation now follows FIPS 186-5 A.1.3 probable-prime generation in code"
+  )]
+  OsRandomProbablePrimeNonFips,
+}
 
 /// Errors returned by RSA private-key operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1047,10 +1083,24 @@ pub struct RsaPrivateKeyParts<'a> {
 }
 
 impl RsaPrivateKey {
+  /// Key-generation contract used by [`Self::generate`] and
+  /// [`Self::generate_with_policy`].
+  ///
+  /// The contract is intentionally explicit: generated keys use probable-prime
+  /// RSA generation following FIPS 186-5 Appendix A.1.3 in code. This is not a
+  /// CMVP/FIPS 140-3 validation claim.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  pub const GENERATION_CONTRACT: RsaKeyGenerationContract = RsaKeyGenerationContract::Fips1865A13ProbablePrime;
+
   /// Generate a new RSA private key with public exponent `65537`.
   ///
   /// New key material uses the modern RSA policy: 3072 through 8192 modulus
   /// bits. Use imported legacy RSA-2048 keys only for compatibility.
+  ///
+  /// Generation follows [`Self::GENERATION_CONTRACT`]: FIPS 186-5 Appendix
+  /// A.1.3 probable-prime RSA generation in code. This is not a CMVP/FIPS 140-3
+  /// validation claim.
   ///
   /// # Errors
   ///
@@ -1067,6 +1117,10 @@ impl RsaPrivateKey {
   /// The generated exponent is always `65537`; the policy only controls
   /// accepted modulus size. This is mainly for tests and deployments that must
   /// mint RSA-2048 compatibility keys.
+  ///
+  /// Generation follows [`Self::GENERATION_CONTRACT`]: FIPS 186-5 Appendix
+  /// A.1.3 probable-prime RSA generation in code. This is not a CMVP/FIPS 140-3
+  /// validation claim.
   ///
   /// # Errors
   ///
@@ -5868,6 +5922,128 @@ fn validate_private_crt_component(component: &[u8], upper_bound: &[u8]) -> Resul
 }
 
 #[cfg(feature = "getrandom")]
+struct RsaKeygenDrbg {
+  key: [u8; RSA_KEYGEN_DRBG_KEY_BYTES],
+  value: [u8; RSA_KEYGEN_DRBG_OUT_BYTES],
+}
+
+#[cfg(feature = "getrandom")]
+impl RsaKeygenDrbg {
+  fn from_os_entropy() -> Result<Self, RsaKeyGenerationError> {
+    let mut seed = [0u8; RSA_KEYGEN_DRBG_ENTROPY_BYTES + RSA_KEYGEN_DRBG_NONCE_BYTES];
+    if getrandom::fill(&mut seed).is_err() {
+      ct::zeroize(&mut seed);
+      return Err(RsaKeyGenerationError::EntropyUnavailable);
+    }
+
+    let drbg = Self::new(&seed, RSA_KEYGEN_DRBG_PERSONALIZATION);
+    ct::zeroize(&mut seed);
+    Ok(drbg)
+  }
+
+  fn new(entropy_and_nonce: &[u8], personalization: &[u8]) -> Self {
+    let mut drbg = Self {
+      key: [0u8; RSA_KEYGEN_DRBG_KEY_BYTES],
+      value: [1u8; RSA_KEYGEN_DRBG_OUT_BYTES],
+    };
+    drbg.update(&[entropy_and_nonce, personalization]);
+    drbg
+  }
+
+  fn fill(&mut self, out: &mut [u8]) {
+    let mut offset = 0usize;
+    while offset < out.len() {
+      self.value = keygen_hmac_sha256(&self.key, &[&self.value]);
+      let chunk_len = core::cmp::min(RSA_KEYGEN_DRBG_OUT_BYTES, out.len().strict_sub(offset));
+      if let (Some(dst), Some(src)) = (
+        out.get_mut(offset..offset.strict_add(chunk_len)),
+        self.value.get(..chunk_len),
+      ) {
+        dst.copy_from_slice(src);
+      }
+      offset = offset.strict_add(chunk_len);
+    }
+    self.update(&[]);
+  }
+
+  fn update(&mut self, seed_material: &[&[u8]]) {
+    self.key = keygen_drbg_update_key(&self.key, &self.value, 0, seed_material);
+    self.value = keygen_hmac_sha256(&self.key, &[&self.value]);
+
+    if seed_material.iter().all(|part| part.is_empty()) {
+      return;
+    }
+
+    self.key = keygen_drbg_update_key(&self.key, &self.value, 1, seed_material);
+    self.value = keygen_hmac_sha256(&self.key, &[&self.value]);
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl Drop for RsaKeygenDrbg {
+  fn drop(&mut self) {
+    ct::zeroize(&mut self.key);
+    ct::zeroize(&mut self.value);
+  }
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_drbg_update_key(
+  key: &[u8; RSA_KEYGEN_DRBG_KEY_BYTES],
+  value: &[u8; RSA_KEYGEN_DRBG_OUT_BYTES],
+  domain: u8,
+  seed_material: &[&[u8]],
+) -> [u8; RSA_KEYGEN_DRBG_OUT_BYTES] {
+  let domain = [domain];
+  let mut mac_parts = Vec::with_capacity(seed_material.len().strict_add(2));
+  mac_parts.push(&value[..]);
+  mac_parts.push(&domain[..]);
+  mac_parts.extend_from_slice(seed_material);
+  keygen_hmac_sha256(key, &mac_parts)
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_hmac_sha256(key: &[u8], data: &[&[u8]]) -> [u8; RSA_KEYGEN_DRBG_OUT_BYTES] {
+  let mut key_block = [0u8; RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES];
+  if key.len() > RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES {
+    let digest = Sha256::digest(key);
+    if let Some(dst) = key_block.get_mut(..RSA_KEYGEN_DRBG_OUT_BYTES) {
+      dst.copy_from_slice(digest.as_ref());
+    }
+  } else {
+    if let Some(dst) = key_block.get_mut(..key.len()) {
+      dst.copy_from_slice(key);
+    }
+  }
+
+  let mut ipad = [0x36u8; RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES];
+  let mut opad = [0x5cu8; RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES];
+  for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
+    *ipad_byte ^= key_byte;
+    *opad_byte ^= key_byte;
+  }
+
+  let mut inner = Sha256::new();
+  inner.update(&ipad);
+  for part in data {
+    inner.update(part);
+  }
+  let inner_digest = inner.finalize();
+
+  let mut outer = Sha256::new();
+  outer.update(&opad);
+  outer.update(inner_digest.as_ref());
+  let tag = outer.finalize();
+
+  ct::zeroize(&mut key_block);
+  ct::zeroize(&mut ipad);
+  ct::zeroize(&mut opad);
+  let mut out = [0u8; RSA_KEYGEN_DRBG_OUT_BYTES];
+  out.copy_from_slice(tag.as_ref());
+  out
+}
+
+#[cfg(feature = "getrandom")]
 fn generate_rsa_private_key(
   modulus_bits: usize,
   policy: &RsaPublicKeyPolicy,
@@ -5875,16 +6051,26 @@ fn generate_rsa_private_key(
   if policy.min_modulus_bits > policy.max_modulus_bits
     || modulus_bits < policy.min_modulus_bits
     || modulus_bits > policy.max_modulus_bits
+    || modulus_bits < MIN_RSA_MODULUS_BITS
+    || !modulus_bits.is_multiple_of(2)
     || !policy.exponent_policy.accepts(RSA_KEYGEN_PUBLIC_EXPONENT)
+    || !keygen_public_exponent_is_fips_valid(RSA_KEYGEN_PUBLIC_EXPONENT)
   {
     return Err(RsaKeyGenerationError::InvalidModulusBits);
   }
 
-  let prime_p_bits = modulus_bits.strict_add(1) / 2;
+  let mut drbg = RsaKeygenDrbg::from_os_entropy()?;
+  let prime_p_bits = modulus_bits / 2;
   let prime_q_bits = modulus_bits / 2;
   for _ in 0..RSA_KEYGEN_PAIR_ATTEMPTS {
-    let prime_p = keygen_generate_prime(prime_p_bits)?;
-    let prime_q = match keygen_generate_prime(prime_q_bits) {
+    let prime_p = keygen_generate_prime(&mut drbg, prime_p_bits, modulus_bits, None, modulus_bits.strict_mul(5))?;
+    let prime_q = match keygen_generate_prime(
+      &mut drbg,
+      prime_q_bits,
+      modulus_bits,
+      Some(prime_p.as_slice()),
+      modulus_bits.strict_mul(10),
+    ) {
       Ok(prime_q) => prime_q,
       Err(err) => {
         let mut prime_p = prime_p;
@@ -5898,6 +6084,11 @@ fn generate_rsa_private_key(
   }
 
   Err(RsaKeyGenerationError::PrimeSearchFailed)
+}
+
+#[cfg(feature = "getrandom")]
+const fn keygen_public_exponent_is_fips_valid(exponent: u64) -> bool {
+  exponent > (1u64 << 16) && exponent % 2 == 1
 }
 
 #[cfg(feature = "getrandom")]
@@ -5932,12 +6123,14 @@ fn keygen_build_private_key_from_primes(
     private_import_decrement_unsigned_be(prime_p.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
   let q_minus_one =
     private_import_decrement_unsigned_be(prime_q.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
-  let phi = private_import_product_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())
-    .ok_or(RsaKeyGenerationError::ArithmeticFailure)?;
+  let lambda = keygen_lcm_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())?;
   let private_exponent = SecretBigEndianBuffer::new(keygen_inverse_small_mod_odd(
     RSA_KEYGEN_PUBLIC_EXPONENT,
-    phi.as_slice(),
+    lambda.as_slice(),
   )?);
+  if !keygen_private_exponent_is_large_enough(private_exponent.as_slice(), modulus_bits) {
+    return Ok(None);
+  }
   let exponent_p = private_import_unsigned_be_mod(private_exponent.as_slice(), p_minus_one.as_slice());
   let exponent_q = private_import_unsigned_be_mod(private_exponent.as_slice(), q_minus_one.as_slice());
   let coefficient = SecretBigEndianBuffer::new(keygen_prime_mod_inverse(prime_q.as_slice(), prime_p.as_slice())?);
@@ -5985,19 +6178,35 @@ fn keygen_build_private_key_from_primes(
 }
 
 #[cfg(feature = "getrandom")]
-fn keygen_generate_prime(bits: usize) -> Result<Vec<u8>, RsaKeyGenerationError> {
+fn keygen_generate_prime(
+  drbg: &mut RsaKeygenDrbg,
+  bits: usize,
+  modulus_bits: usize,
+  other_prime: Option<&[u8]>,
+  tested_candidate_limit: usize,
+) -> Result<Vec<u8>, RsaKeyGenerationError> {
   if bits < 2 {
     return Err(RsaKeyGenerationError::InvalidModulusBits);
   }
 
-  for _ in 0..RSA_KEYGEN_PRIME_ATTEMPTS {
-    let candidate = keygen_random_odd_candidate(bits)?;
+  let mut tested_candidates = 0usize;
+  while tested_candidates < tested_candidate_limit {
+    let candidate = keygen_random_odd_candidate(drbg, bits);
+    if !keygen_probable_prime_meets_fips_lower_bound(&candidate, bits)
+      || other_prime.is_some_and(|prime| !keygen_prime_distance_is_sufficient(&candidate, prime, modulus_bits))
+    {
+      let mut candidate = candidate;
+      ct::zeroize(&mut candidate);
+      continue;
+    }
+
+    tested_candidates = tested_candidates.strict_add(1);
     if keygen_has_small_prime_factor(&candidate) || keygen_conflicts_with_public_exponent(&candidate) {
       let mut candidate = candidate;
       ct::zeroize(&mut candidate);
       continue;
     }
-    match keygen_is_probable_prime(&candidate) {
+    match keygen_is_probable_prime(drbg, &candidate) {
       Ok(true) => return Ok(candidate),
       Ok(false) => {
         let mut candidate = candidate;
@@ -6015,22 +6224,45 @@ fn keygen_generate_prime(bits: usize) -> Result<Vec<u8>, RsaKeyGenerationError> 
 }
 
 #[cfg(feature = "getrandom")]
-fn keygen_random_odd_candidate(bits: usize) -> Result<Vec<u8>, RsaKeyGenerationError> {
+const fn keygen_miller_rabin_rounds(_candidate_bits: usize) -> usize {
+  RSA_KEYGEN_MILLER_RABIN_ROUNDS
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_random_odd_candidate(drbg: &mut RsaKeygenDrbg, bits: usize) -> Vec<u8> {
   let len = bits.strict_add(7) / 8;
   let mut candidate = vec![0u8; len];
-  if getrandom::fill(&mut candidate).is_err() {
-    ct::zeroize(&mut candidate);
-    return Err(RsaKeyGenerationError::EntropyUnavailable);
-  }
+  drbg.fill(&mut candidate);
   keygen_mask_unused_top_bits(&mut candidate, bits);
-  keygen_set_bit(&mut candidate, bits.strict_sub(1));
-  if bits > 2 {
-    keygen_set_bit(&mut candidate, bits.strict_sub(2));
-  }
   if let Some(last) = candidate.last_mut() {
     *last |= 1;
   }
-  Ok(candidate)
+  candidate
+}
+
+#[cfg(all(feature = "getrandom", test))]
+fn keygen_candidate_has_fixed_shape(candidate: &[u8], bits: usize) -> bool {
+  unsigned_be_bit_len(candidate) == bits
+    && candidate.last().is_some_and(|last| last & 1 == 1)
+    && bits > 1
+    && keygen_bit_is_set(candidate, bits.strict_sub(1))
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_probable_prime_meets_fips_lower_bound(candidate: &[u8], bits: usize) -> bool {
+  if bits.is_multiple_of(8)
+    && let Some(prefix) = candidate.get(..RSA_KEYGEN_SQRT2_HALF_TOP64.len())
+  {
+    match prefix.cmp(&RSA_KEYGEN_SQRT2_HALF_TOP64) {
+      core::cmp::Ordering::Greater => return true,
+      core::cmp::Ordering::Less => return false,
+      core::cmp::Ordering::Equal => {}
+    }
+  }
+
+  private_import_product_unsigned_be(candidate, candidate)
+    .as_ref()
+    .is_some_and(|square| unsigned_be_bit_len(square.as_slice()) >= bits.strict_mul(2))
 }
 
 #[cfg(feature = "getrandom")]
@@ -6053,6 +6285,15 @@ fn keygen_set_bit(bytes: &mut [u8], bit: usize) {
   if let Some(byte) = bytes.get_mut(byte_index) {
     *byte |= 1u8 << (bit % 8);
   }
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_bit_is_set(bytes: &[u8], bit: usize) -> bool {
+  let byte_from_end = bit / 8;
+  let Some(byte_index) = bytes.len().checked_sub(byte_from_end.strict_add(1)) else {
+    return false;
+  };
+  bytes.get(byte_index).is_some_and(|byte| byte & (1u8 << (bit % 8)) != 0)
 }
 
 #[cfg(feature = "getrandom")]
@@ -6086,7 +6327,7 @@ fn keygen_prime_distance_is_sufficient(prime_p: &[u8], prime_q: &[u8], modulus_b
 }
 
 #[cfg(feature = "getrandom")]
-fn keygen_is_probable_prime(candidate: &[u8]) -> Result<bool, RsaKeyGenerationError> {
+fn keygen_is_probable_prime(drbg: &mut RsaKeygenDrbg, candidate: &[u8]) -> Result<bool, RsaKeyGenerationError> {
   let n_minus_one =
     private_import_decrement_unsigned_be(candidate).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
   let mut n_minus_one_fixed = vec![0u8; candidate.len()];
@@ -6105,8 +6346,8 @@ fn keygen_is_probable_prime(candidate: &[u8]) -> Result<bool, RsaKeyGenerationEr
 
   let result = (|| {
     let modulus = private_component_modulus(candidate).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
-    for _ in 0..RSA_KEYGEN_MILLER_RABIN_ROUNDS {
-      let mut base = keygen_random_miller_rabin_base(candidate, &n_minus_one_fixed)?;
+    for _ in 0..keygen_miller_rabin_rounds(unsigned_be_bit_len(candidate)) {
+      let mut base = keygen_random_miller_rabin_base(drbg, candidate, &n_minus_one_fixed)?;
       let accepted = keygen_miller_rabin_accepts_base(&modulus, &odd_part, powers_of_two, &n_minus_one_fixed, &base);
       ct::zeroize(&mut base);
       if !accepted? {
@@ -6123,6 +6364,7 @@ fn keygen_is_probable_prime(candidate: &[u8]) -> Result<bool, RsaKeyGenerationEr
 
 #[cfg(feature = "getrandom")]
 fn keygen_random_miller_rabin_base(
+  drbg: &mut RsaKeygenDrbg,
   candidate: &[u8],
   n_minus_one_fixed: &[u8],
 ) -> Result<Vec<u8>, RsaKeyGenerationError> {
@@ -6135,12 +6377,7 @@ fn keygen_random_miller_rabin_base(
 
   for _ in 0..128 {
     let mut base = vec![0u8; candidate.len()];
-    if getrandom::fill(&mut base).is_err() {
-      ct::zeroize(&mut base);
-      ct::zeroize(&mut n_minus_two);
-      ct::zeroize(&mut two);
-      return Err(RsaKeyGenerationError::EntropyUnavailable);
-    }
+    drbg.fill(&mut base);
     keygen_mask_unused_top_bits(&mut base, unsigned_be_bit_len(candidate));
     if unsigned_be_cmp(&base, &two) != core::cmp::Ordering::Less
       && unsigned_be_cmp(&base, &n_minus_two) != core::cmp::Ordering::Greater
@@ -6215,6 +6452,100 @@ fn keygen_prime_mod_inverse(value: &[u8], prime_modulus: &[u8]) -> Result<Vec<u8
     };
   ct::zeroize(&mut value_fixed);
   result
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_lcm_unsigned_be(left: &[u8], right: &[u8]) -> Result<SecretBigEndianBuffer, RsaKeyGenerationError> {
+  let gcd = keygen_gcd_unsigned_be(left, right)?;
+  let quotient = keygen_div_exact_unsigned_be(left, gcd.as_slice())?;
+  private_import_product_unsigned_be(quotient.as_slice(), right).ok_or(RsaKeyGenerationError::ArithmeticFailure)
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_gcd_unsigned_be(left: &[u8], right: &[u8]) -> Result<SecretBigEndianBuffer, RsaKeyGenerationError> {
+  let mut a = keygen_canonical_vec(left.to_vec());
+  let mut b = keygen_canonical_vec(right.to_vec());
+  while !is_zero_unsigned_be(&b) {
+    let remainder = private_import_unsigned_be_mod(&a, &b);
+    ct::zeroize(&mut a);
+    a = b;
+    b = remainder.as_slice().to_vec();
+  }
+  ct::zeroize(&mut b);
+  Ok(SecretBigEndianBuffer::new(a))
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_div_exact_unsigned_be(
+  dividend: &[u8],
+  divisor: &[u8],
+) -> Result<SecretBigEndianBuffer, RsaKeyGenerationError> {
+  if is_zero_unsigned_be(divisor) {
+    return Err(RsaKeyGenerationError::ArithmeticFailure);
+  }
+  if unsigned_be_cmp(dividend, divisor) == core::cmp::Ordering::Less {
+    return Err(RsaKeyGenerationError::ArithmeticFailure);
+  }
+
+  let quotient_len = dividend.len();
+  let mut quotient = vec![0u8; quotient_len];
+  let mut remainder = vec![0u8; divisor.len().strict_add(1)];
+  let dividend_bits = unsigned_be_bit_len(dividend);
+  for bit_index in (0..dividend_bits).rev() {
+    keygen_shift_left_one_fixed(&mut remainder);
+    if keygen_bit_is_set(dividend, bit_index)
+      && let Some(last) = remainder.last_mut()
+    {
+      *last |= 1;
+    }
+    let remainder_canonical = keygen_canonical_vec(remainder.clone());
+    if unsigned_be_cmp(&remainder_canonical, divisor) != core::cmp::Ordering::Less {
+      let divisor_fixed = keygen_left_pad_vec(divisor, remainder.len())?;
+      let mut difference = vec![0u8; remainder.len()];
+      private_sub_unsigned_be_to_fixed(&remainder, divisor_fixed.as_slice(), &mut difference)
+        .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
+      remainder.copy_from_slice(&difference);
+      ct::zeroize(&mut difference);
+      keygen_set_bit(&mut quotient, bit_index);
+    }
+  }
+
+  let remainder_canonical = keygen_canonical_vec(remainder.clone());
+  ct::zeroize(&mut remainder);
+  if !is_zero_unsigned_be(&remainder_canonical) {
+    ct::zeroize(&mut quotient);
+    return Err(RsaKeyGenerationError::ArithmeticFailure);
+  }
+
+  Ok(SecretBigEndianBuffer::new(keygen_canonical_vec(quotient)))
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_left_pad_vec(src: &[u8], len: usize) -> Result<Vec<u8>, RsaKeyGenerationError> {
+  if src.len() > len {
+    return Err(RsaKeyGenerationError::ArithmeticFailure);
+  }
+  let mut out = vec![0u8; len];
+  keygen_left_pad(src, &mut out)?;
+  Ok(out)
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_shift_left_one_fixed(bytes: &mut [u8]) {
+  let mut carry = 0u8;
+  for byte in bytes.iter_mut().rev() {
+    let next_carry = *byte >> 7;
+    *byte = (*byte << 1) | carry;
+    carry = next_carry;
+  }
+}
+
+#[cfg(feature = "getrandom")]
+fn keygen_private_exponent_is_large_enough(private_exponent: &[u8], modulus_bits: usize) -> bool {
+  let minimum_bit = modulus_bits / 2;
+  let mut minimum = vec![0u8; minimum_bit.strict_add(8) / 8];
+  keygen_set_bit(&mut minimum, minimum_bit);
+  unsigned_be_cmp(private_exponent, &minimum) == core::cmp::Ordering::Greater
 }
 
 #[cfg(feature = "getrandom")]
@@ -8946,6 +9277,15 @@ mod tests {
       .unwrap_or_else(|| panic!("missing string field `{name}`"))
   }
 
+  #[cfg(feature = "getrandom")]
+  fn test_keygen_drbg(label: &'static [u8]) -> RsaKeygenDrbg {
+    let mut seed = [0u8; RSA_KEYGEN_DRBG_ENTROPY_BYTES + RSA_KEYGEN_DRBG_NONCE_BYTES];
+    for (index, byte) in seed.iter_mut().enumerate() {
+      *byte = (index as u8).wrapping_mul(17).wrapping_add(0xa5);
+    }
+    RsaKeygenDrbg::new(&seed, label)
+  }
+
   fn integer_unsigned(value: &[u8]) -> Vec<u8> {
     let first_nonzero = value.iter().position(|&byte| byte != 0);
     let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
@@ -10806,6 +11146,141 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[cfg(feature = "getrandom")]
   #[test]
+  fn keygen_contract_is_explicitly_fips_186_5_a1_3_probable_prime() {
+    assert_eq!(
+      RsaPrivateKey::GENERATION_CONTRACT,
+      RsaKeyGenerationContract::Fips1865A13ProbablePrime
+    );
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_random_candidate_has_fips_a1_3_raw_shape() {
+    let mut drbg = test_keygen_drbg(b"candidate-shape");
+    for bits in [2usize, 3, 9, 128, 1024] {
+      let candidate = keygen_random_odd_candidate(&mut drbg, bits);
+      assert_eq!(candidate.len(), bits.strict_add(7) / 8);
+      assert_eq!(candidate.last().copied().unwrap_or_default() & 1, 1);
+      assert!(unsigned_be_bit_len(&candidate) <= bits);
+    }
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_fips_a1_3_lower_bound_matches_square_test_at_boundary() {
+    let below = [0xb5, 0x04, 0xf3, 0x33, 0xf9, 0xde, 0x64, 0x83];
+    let at_or_above = [0xb5, 0x04, 0xf3, 0x33, 0xf9, 0xde, 0x64, 0x84];
+    let above = [0xb5, 0x04, 0xf3, 0x33, 0xf9, 0xde, 0x64, 0x85];
+
+    assert!(!keygen_probable_prime_meets_fips_lower_bound(&below, 64));
+    assert_eq!(
+      keygen_probable_prime_meets_fips_lower_bound(&at_or_above, 64),
+      private_import_product_unsigned_be(&at_or_above, &at_or_above)
+        .as_ref()
+        .is_some_and(|square| unsigned_be_bit_len(square.as_slice()) >= 128)
+    );
+    assert!(keygen_probable_prime_meets_fips_lower_bound(&above, 64));
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_generated_prime_satisfies_fips_a1_3_prime_constraints() {
+    let mut drbg = test_keygen_drbg(b"generated-prime-constraints");
+    let prime = keygen_generate_prime(&mut drbg, 128, 256, None, 256usize.strict_mul(5)).unwrap();
+
+    assert!(keygen_probable_prime_meets_fips_lower_bound(&prime, 128));
+    assert_eq!(prime.last().copied().unwrap_or_default() & 1, 1);
+    assert!(!keygen_has_small_prime_factor(&prime));
+    assert!(!keygen_conflicts_with_public_exponent(&prime));
+    assert!(keygen_is_probable_prime(&mut drbg, &prime).unwrap());
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_lcm_private_exponent_contract_is_enforced() {
+    let p_minus_one = private_import_decrement_unsigned_be(&rsa_private_prime_p()).unwrap();
+    let q_minus_one = private_import_decrement_unsigned_be(&rsa_private_prime_q()).unwrap();
+    let lambda = keygen_lcm_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice()).unwrap();
+    let phi = private_import_product_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice()).unwrap();
+
+    assert_eq!(
+      private_import_unsigned_be_mod(phi.as_slice(), lambda.as_slice()).as_slice(),
+      [0]
+    );
+    assert!(unsigned_be_cmp(lambda.as_slice(), phi.as_slice()) != core::cmp::Ordering::Greater);
+    assert!(keygen_private_exponent_is_large_enough(
+      &rsa_private_exponent(),
+      unsigned_be_bit_len(&rsa_private_modulus())
+    ));
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_candidate_shape_helper_tracks_fips_search_acceptance_shape() {
+    let mut drbg = test_keygen_drbg(b"accepted-candidate-shape");
+    let mut accepted = None;
+    while accepted.is_none() {
+      let candidate = keygen_random_odd_candidate(&mut drbg, 128);
+      if keygen_probable_prime_meets_fips_lower_bound(&candidate, 128) {
+        accepted = Some(candidate);
+      }
+    }
+    let candidate = accepted.unwrap();
+    assert!(
+      keygen_candidate_has_fixed_shape(&candidate, 128),
+      "accepted FIPS A.1.3 candidate must be odd and full-width"
+    );
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_prefilter_rejects_small_prime_factors_without_rejecting_larger_prime() {
+    assert!(keygen_has_small_prime_factor(&999u16.to_be_bytes()));
+    assert!(!keygen_has_small_prime_factor(&1009u16.to_be_bytes()));
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_public_exponent_conflict_detects_p_minus_one_not_coprime_to_e() {
+    let conflicting = RSA_KEYGEN_PUBLIC_EXPONENT.strict_add(1).to_be_bytes();
+    assert!(keygen_conflicts_with_public_exponent(&conflicting));
+    assert!(!keygen_conflicts_with_public_exponent(
+      &RSA_KEYGEN_PUBLIC_EXPONENT.to_be_bytes()
+    ));
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_miller_rabin_uses_fixed_round_count_above_fips_table_minimums() {
+    assert_eq!(keygen_miller_rabin_rounds(1024), 32);
+    assert_eq!(keygen_miller_rabin_rounds(1536), 32);
+    assert_eq!(keygen_miller_rabin_rounds(2048), 32);
+
+    assert!(keygen_miller_rabin_rounds(1024) >= 5);
+    assert!(keygen_miller_rabin_rounds(1536) >= 4);
+    assert!(keygen_miller_rabin_rounds(2048) >= 4);
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
+  fn keygen_miller_rabin_accepts_prime_and_rejects_composite_for_fixed_bases() {
+    let prime = 1009u16.to_be_bytes();
+    let prime_modulus = private_component_modulus(&prime).unwrap();
+    assert!(
+      keygen_miller_rabin_accepts_base(&prime_modulus, &[63], 4, &1008u16.to_be_bytes(), &[0, 11]).unwrap(),
+      "1009 must pass a direct Miller-Rabin round for base 11"
+    );
+
+    let composite = 341u16.to_be_bytes();
+    let composite_modulus = private_component_modulus(&composite).unwrap();
+    assert!(
+      !keygen_miller_rabin_accepts_base(&composite_modulus, &[85], 2, &340u16.to_be_bytes(), &[0, 2]).unwrap(),
+      "341 must fail a direct Miller-Rabin round for base 2"
+    );
+  }
+
+  #[cfg(feature = "getrandom")]
+  #[test]
   fn keygen_derives_private_components_from_fixture_primes_end_to_end() {
     let modulus = rsa_private_modulus();
     let components = keygen_build_private_key_from_primes(
@@ -10902,8 +11377,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let key = RsaPrivateKey { components };
       assert_eq!(key.public_key().modulus_bits(), modulus_bits);
       assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
-      assert!(keygen_is_probable_prime(key.components.prime_p.as_bytes()).unwrap());
-      assert!(keygen_is_probable_prime(key.components.prime_q.as_bytes()).unwrap());
+      let mut primality_drbg = test_keygen_drbg(b"cavp-primality");
+      assert!(keygen_is_probable_prime(&mut primality_drbg, key.components.prime_p.as_bytes()).unwrap());
+      assert!(keygen_is_probable_prime(&mut primality_drbg, key.components.prime_q.as_bytes()).unwrap());
 
       let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
       let message = b"rscrypto NIST CAVP keygen candidate private operation";
@@ -11235,13 +11711,15 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn keygen_random_prime_search_returns_probable_prime() {
-    let prime = keygen_generate_prime(128).unwrap();
+    let mut drbg = test_keygen_drbg(b"random-prime-search");
+    let prime = keygen_generate_prime(&mut drbg, 128, 256, None, 256usize.strict_mul(5)).unwrap();
 
     assert_eq!(unsigned_be_bit_len(&prime), 128);
     assert_eq!(prime.last().copied().unwrap_or_default() & 1, 1);
     assert!(!keygen_has_small_prime_factor(&prime));
     assert!(!keygen_conflicts_with_public_exponent(&prime));
-    assert!(keygen_is_probable_prime(&prime).unwrap());
+    assert!(keygen_probable_prime_meets_fips_lower_bound(&prime, 128));
+    assert!(keygen_is_probable_prime(&mut drbg, &prime).unwrap());
   }
 
   #[test]

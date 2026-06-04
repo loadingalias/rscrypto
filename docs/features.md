@@ -65,7 +65,7 @@ rscrypto = { version = "0.3.1", features = ["full", "portable-only"] }
 |---|---|
 | `std` | Enables runtime CPU detection and `std` I/O adapters. Implies `alloc`. |
 | `alloc` | Enables APIs that allocate (e.g. PHC string encoding, `Vec`-returning helpers). |
-| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA OS-backed key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. |
+| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. RSA key generation uses OS entropy to seed its internal HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |

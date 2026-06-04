@@ -27,7 +27,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 
 ## Why rscrypto?
 
-- **RSA is now a first class citizen.** Strict DER import/export, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, key generation, X.509/JWT/COSE/TLS profile mapping, blinded private operations, and reusable scratch APIs.
+- **RSA is now a first class citizen.** Strict DER import/export, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, FIPS 186-5 A.1.3 probable-prime key generation in code, X.509/JWT/COSE/TLS profile mapping, blinded private operations, and reusable scratch APIs.
 - **One coherent primitive stack.** Avoid composing half a dozen crates with different APIs, feature models, and security conventions.
 - **Small builds stay small.** Enable `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, `argon2`, or any other leaf without pulling in the world.
 - **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference implementation.
@@ -36,7 +36,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **Audit knobs are explicit.** `portable-only` forces runtime dispatch to the constant-time portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
-`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module.
+`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. RSA key generation follows FIPS 186-5 Appendix A.1.3 in code; that is an algorithmic contract, not a CMVP validation claim.
 
 ## Install
 
@@ -54,7 +54,7 @@ Full primitive stack with OS randomness enabled:
 rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
 ```
 
-Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, or nonces from the operating system.
+Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-generation entropy from the operating system.
 
 ## Quick Start
 
@@ -115,7 +115,7 @@ fn verify_batch(public_key_der: &[u8], signed_messages: &[(&[u8], &[u8])]) -> bo
 }
 ```
 
-Enable `getrandom` for OS-backed RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding:
+Enable `getrandom` for RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. RSA key generation uses `getrandom` to seed an internal HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
 
 ```toml
 [dependencies]

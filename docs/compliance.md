@@ -14,6 +14,11 @@ Inside a typical boundary, these are the NIST-aligned items:
 | Hash / XOF | `Sha*`, `Shake*` (`FIPS 180-4`, `FIPS 202`) |
 | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
 | Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
+| RSA key generation | `RsaPrivateKey::generate` follows FIPS 186-5 Appendix A.1.3 probable-prime generation in code and seeds an internal HMAC_DRBG from `getrandom` |
+
+This table is a standards-alignment inventory only; it is not a validation
+claim. In particular, the RSA key-generation DRBG is internal implementation
+machinery, not a crate-wide validated random bit generator service.
 
 ## Non-Approved In This Release
 
