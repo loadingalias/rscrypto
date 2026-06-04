@@ -51,9 +51,7 @@ use crate::checksum::diag::{Crc64Polynomial, Crc64SelectionDiag};
 #[allow(unused_imports)]
 pub(super) use crate::traits::{Checksum, ChecksumCombine};
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get the name of the CRC-64/XZ kernel that would be selected for a given buffer length.
 ///
@@ -129,9 +127,7 @@ pub(crate) fn crc64_nvme_selected_kernel_name(len: usize) -> &'static str {
   table.select_names(len).crc64_nvme_name
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Selection Diagnostics
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
 #[inline]
@@ -201,9 +197,7 @@ pub(crate) fn diag_crc64_nvme(len: usize) -> Crc64SelectionDiag {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // These wrap the portable/arch-specific implementations to match the Crc64Fn
 // signature. Each wrapper bakes in the appropriate polynomial tables.
@@ -235,8 +229,7 @@ fn crc64_nvme_portable(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ reference (bitwise) kernel wrapper.
 ///
-/// This is the canonical reference implementation - obviously correct,
-/// audit-friendly, and used for verification of all optimized paths.
+/// Used to verify optimized paths against the bitwise CRC model.
 #[cfg(any(test, feature = "std"))]
 fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_XZ_POLY, crc, data)
@@ -244,8 +237,7 @@ fn crc64_xz_reference(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME reference (bitwise) kernel wrapper.
 ///
-/// This is the canonical reference implementation - obviously correct,
-/// audit-friendly, and used for verification of all optimized paths.
+/// Used to verify optimized paths against the bitwise CRC model.
 #[cfg(any(test, feature = "std"))]
 fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
   crc64_bitwise(CRC64_NVME_POLY, crc, data)
@@ -264,9 +256,7 @@ fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
 #[cfg(feature = "alloc")]
 const CRC64_BUFFERED_THRESHOLD: usize = 64;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Auto Kernels (using new dispatch module)
-// ─────────────────────────────────────────────────────────────────────────────
 
 type Crc64DispatchFn = crate::checksum::dispatchers::Crc64Fn;
 #[cfg(feature = "std")]
@@ -554,9 +544,7 @@ define_crc_dispatch! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-64 Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-64-XZ checksum (ECMA-182).
 ///
@@ -893,9 +881,7 @@ impl Crc64Nvme {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-64 Wrappers (generated via macro)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Buffer size for buffered CRC wrappers.
 ///
@@ -979,9 +965,7 @@ define_buffered_crc! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Crc64 {
@@ -997,9 +981,7 @@ impl crate::checksum::introspect::KernelIntrospect for Crc64Nvme {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1350,9 +1332,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Buffered CRC Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[cfg(feature = "alloc")]
   #[test]
@@ -1462,14 +1442,10 @@ mod tests {
     assert_eq!(crc1, crc2, "finalize should be idempotent");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Cross-Check Tests: Reference Implementation Verification
-  // ─────────────────────────────────────────────────────────────────────────────
-
   /// Cross-check all kernels against the bitwise reference implementation.
   ///
   /// This is the canonical test that verifies correctness of all optimized
-  /// implementations against the obviously-correct bitwise reference.
+  /// implementations against the bitwise reference.
   mod cross_check {
     use alloc::{vec, vec::Vec};
 

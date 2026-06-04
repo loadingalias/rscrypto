@@ -12,9 +12,7 @@ use proptest::prelude::*;
 use rscrypto::{Checksum, ChecksumCombine, Crc32, Crc32C};
 
 proptest! {
-  // ─────────────────────────────────────────────────────────────────────────────
   // Cross-validation against crc-fast-rust
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc32_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {

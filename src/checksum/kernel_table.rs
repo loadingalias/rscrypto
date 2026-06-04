@@ -14,9 +14,7 @@ use crate::checksum::dispatchers::Crc32Fn;
 use crate::checksum::dispatchers::Crc64Fn;
 use crate::platform::Caps;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Global Kernel Table Cache
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Global cached kernel table, resolved once on first use.
 ///
@@ -45,10 +43,6 @@ pub(crate) fn active_table() -> &'static KernelTable {
 pub(crate) fn active_crc64_table() -> &'static KernelTable {
   ACTIVE_CRC64_TABLE.get_or_init(|| select_crc64_table(crate::platform::caps()))
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Oneshot Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Maximum input size for the inline bytewise fast-path.
 ///
@@ -241,9 +235,7 @@ pub(crate) fn crc24_openpgp(data: &[u8]) -> u32 {
   kernel(INIT, data) & MASK
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Data Structures
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Hot-path kernel function pointers for one size class (56 bytes, fits one cache line).
 ///
@@ -509,9 +501,7 @@ pub fn is_hardware_accelerated() -> bool {
   active_table().is_hardware_accelerated()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Platform Table Selection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Select the appropriate kernel table for the current platform.
 ///
@@ -700,9 +690,7 @@ fn capability_match_crc64(caps: Caps) -> Option<&'static KernelTable> {
   capability_match(caps)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Portable Fallback Table
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Portable table - no SIMD, table-based only.
 ///
@@ -747,9 +735,7 @@ pub static PORTABLE_TABLE: KernelTable = KernelTable::from_sets(
   PORTABLE_SET,
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
 // aarch64 Platform Tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64_tables {
@@ -794,7 +780,6 @@ mod aarch64_tables {
     }
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Apple M1-M3 Table
   //
   // Benchmark source: macOS local (2026-01-20)
@@ -809,15 +794,12 @@ mod aarch64_tables {
   //   crc32c:      pmull-eor3-v9s3x2e-s3, streams=1, 75.32 GiB/s
   //   crc64/xz:    pmull, streams=3, 62.58 GiB/s
   //   crc64/nvme:  pmull-eor3, streams=3, 62.57 GiB/s
-  // ───────────────────────────────────────────────────────────────────────────
   // AppleM1M3 Table
   //
   // Generated from benchmark-derived dispatch data. Do not edit manually.
-  // ───────────────────────────────────────────────────────────────────────────
   // AppleM1M3 Table
   //
   // Generated from benchmark-derived dispatch data. Do not edit manually.
-  // ───────────────────────────────────────────────────────────────────────────
   pub static APPLE_M1M3_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY
       .union(crate::platform::caps::aarch64::PMULL_EOR3_READY)
@@ -949,7 +931,6 @@ mod aarch64_tables {
     },
   };
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Graviton2 Table
   //
   // Benchmark source: Namespace linux-arm64 runner (2026-01-20)
@@ -968,7 +949,6 @@ mod aarch64_tables {
   // Note: Graviton2 benchmark shows pmull-eor3 winning for CRC-64/XZ even
   // without SHA3 feature flag - the EOR3 instruction is available through
   // a different path on this hardware.
-  // ───────────────────────────────────────────────────────────────────────────
   #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub static GRAVITON2_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
@@ -1099,7 +1079,6 @@ mod aarch64_tables {
     },
   };
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Graviton3 Table
   //
   // Benchmark source: `src/checksum/bench_baseline/linux_arm64_graviton3_kernels.txt`
@@ -1109,7 +1088,6 @@ mod aarch64_tables {
   // Key differences vs Graviton2:
   // - Higher throughput (~25% faster across the board)
   // - Different optimal kernel choices for CRC16@s and CRC64/NVME
-  // ───────────────────────────────────────────────────────────────────────────
   #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_XS: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
@@ -1248,11 +1226,9 @@ mod aarch64_tables {
     G3_L,
   );
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Graviton4 Table
   //
   // Starts from Graviton3, but keeps 2-way PMULL+EOR3 for CRC16 large classes.
-  // ───────────────────────────────────────────────────────────────────────────
   #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub static GRAVITON4_TABLE: KernelTable = KernelTable::from_sets(
     crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
@@ -1283,19 +1259,15 @@ mod aarch64_tables {
     },
   );
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Generic ARM PMULL+EOR3 Table (conservative)
   //
   // For unknown ARM platforms with PMULL + SHA3 features.
   // Uses Apple M1-M3 selections (good EOR3 support).
-  // ───────────────────────────────────────────────────────────────────────────
   pub static GENERIC_ARM_PMULL_EOR3_TABLE: KernelTable = APPLE_M1M3_TABLE;
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Generic ARM PMULL Table (conservative)
   //
   // For unknown ARM platforms with CRC + PMULL but *without* SHA3/EOR3.
-  // ───────────────────────────────────────────────────────────────────────────
   pub static GENERIC_ARM_PMULL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_READY),
     boundaries: [64, 256, 4096],
@@ -1686,9 +1658,7 @@ mod aarch64_tables {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86_64 Platform Tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64_tables {
@@ -1719,7 +1689,6 @@ mod x86_64_tables {
     }
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Zen5 Table
   //
   // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
@@ -1728,8 +1697,6 @@ mod x86_64_tables {
   // Key differences vs Zen4:
   // - Different optimal multi-stream counts for CRC16/24 kernels
   // - CRC64 (large) prefers VPCLMUL-2way over the 4×512 kernel
-  // ───────────────────────────────────────────────────────────────────────────
-  // ───────────────────────────────────────────────────────────────────────────
   // Zen4 Table
   //
   // Benchmark source: Namespace linux-x86 runner (2026-01-20)
@@ -1744,7 +1711,6 @@ mod x86_64_tables {
   //   crc32c:      fusion-vpclmul-v3x2, streams=1, 72.53 GiB/s
   //   crc64/xz:    vpclmul, streams=2, 71.56 GiB/s
   //   crc64/nvme:  vpclmul, streams=2, 75.18 GiB/s
-  // ───────────────────────────────────────────────────────────────────────────
   pub static ZEN4_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
@@ -1876,12 +1842,10 @@ mod x86_64_tables {
     },
   };
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Generic x86-64 VPCLMUL Table
   //
   // For unknown x86-64 platforms with VPCLMULQDQ.
   // Uses Zen4 selections (good AVX-512/VPCLMUL support).
-  // ───────────────────────────────────────────────────────────────────────────
   pub static GENERIC_X86_VPCLMUL_TABLE: KernelTable = ZEN4_TABLE;
 
   /// VPCLMUL table that never selects SSE4.2 CRC32C instructions/fusion.
@@ -2016,7 +1980,6 @@ mod x86_64_tables {
     },
   };
 
-  // ───────────────────────────────────────────────────────────────────────────
   // Generic x86-64 PCLMUL Table (conservative)
   //
   // Benchmark source: historical Windows "Default" baseline (no AVX-512).
@@ -2031,7 +1994,6 @@ mod x86_64_tables {
   //   crc32c:      xs=hwcrc, s=hwcrc, m=hwcrc-2way, l=fusion-sse-v4s3x3-2way
   //   crc64/xz:    xs=pclmul-small, s=pclmul-small, m=pclmul-4way, l=pclmul
   //   crc64/nvme:  xs=pclmul-small, s=pclmul-small, m=pclmul-2way, l=pclmul-2way
-  // ───────────────────────────────────────────────────────────────────────────
   pub static GENERIC_X86_PCLMUL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::PCLMUL_READY.union(crate::platform::caps::x86::CRC32C_READY),
     boundaries: [64, 256, 4096],
@@ -2427,9 +2389,7 @@ mod x86_64_tables {
 #[cfg(target_arch = "x86_64")]
 pub use x86_64_tables::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // s390x Platform Tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "s390x")]
 mod s390x_tables {
@@ -2648,9 +2608,7 @@ mod s390x_tables {
 #[cfg(target_arch = "s390x")]
 pub use s390x_tables::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // powerpc64 Platform Tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "powerpc64")]
 mod power_tables {
@@ -2869,9 +2827,7 @@ mod power_tables {
 #[cfg(target_arch = "powerpc64")]
 pub use power_tables::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // riscv64 Platform Tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "riscv64")]
 mod riscv64_tables {
@@ -3114,9 +3070,7 @@ mod riscv64_tables {
 #[cfg(target_arch = "riscv64")]
 pub use riscv64_tables::*;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -3183,9 +3137,7 @@ mod tests {
     assert!(core::ptr::eq(table, &PORTABLE_TABLE));
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Oneshot Function Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   /// Standard test vector for CRC verification.
   const TEST_DATA: &[u8] = b"123456789";

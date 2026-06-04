@@ -2,7 +2,7 @@
 
 > Replace the three free functions `crc32c::crc32c`, `crc32c_append`, `crc32c_combine` with `rscrypto::Crc32C`'s trait-method equivalents. Same Castagnoli polynomial, byte-identical output, hardware-accelerated dispatch on every supported target.
 
-Verified against `crc32c = "0.6.8"` and the `rscrypto` 0.3.1 line.
+Output is covered by the CRC-32C oracle/property tests in `tests/crc32_properties.rs`.
 
 ## TL;DR
 

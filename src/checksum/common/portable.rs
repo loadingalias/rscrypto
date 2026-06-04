@@ -33,10 +33,6 @@
 #![allow(clippy::indexing_slicing)]
 #![cfg_attr(all(target_arch = "wasm32", target_feature = "simd128"), allow(unsafe_code))]
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Small Input Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(any(feature = "crc16", feature = "crc32", feature = "crc64"))]
 macro_rules! tail_step {
   ($crc:ident, $table:ident, $byte:expr, $crc_ty:ty) => {
@@ -166,9 +162,7 @@ fn tail8_16(mut crc: u16, data: &[u8], table: &[u16; 256]) -> u16 {
   tail8_body!(crc, data, table, u16)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Portable Implementations
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-16 state using slice-by-8 algorithm.
 ///
@@ -205,9 +199,7 @@ pub(crate) fn slice8_16(mut crc: u16, data: &[u8], tables: &[[u16; 256]; 8]) -> 
   tail8_16(crc, remainder, &tables[0])
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-24 Portable Implementations (MSB-first, OpenPGP)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-24 state using slice-by-8 algorithm (MSB-first).
 ///
@@ -246,9 +238,7 @@ pub(crate) fn slice8_24(crc: u32, data: &[u8], tables: &[[u32; 256]; 8]) -> u32 
   (state >> 8) & MASK24
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 Portable Implementations
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-32 state using slice-by-8 algorithm.
 ///
@@ -397,9 +387,7 @@ pub fn slice16_32(mut crc: u32, data: &[u8], tables: &[[u32; 256]; 16]) -> u32 {
   slice16_32_scalar(crc, tail, tables)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-64 Portable Implementations
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-64 state using slice-by-8 algorithm.
 ///
@@ -549,17 +537,13 @@ pub fn slice16_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u64 {
   slice16_64_scalar(crc, tail, tables)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Generate CRC-16 tables for testing (CCITT polynomial 0x8408 reflected).
   #[cfg(feature = "crc16")]
@@ -598,9 +582,7 @@ mod tests {
     tables
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-32 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(feature = "crc32")]
@@ -640,9 +622,7 @@ mod tests {
     assert_eq!(slice8_16(!0, &[], &tables), !0);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-24 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[cfg(feature = "crc24")]
   const CRC24_OPENPGP_INIT: u32 = 0x00B7_04CE;
@@ -664,9 +644,7 @@ mod tests {
     assert_eq!(out, 0x0021_CF02);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-64 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Generate CRC-64 tables for testing.
   #[cfg(feature = "crc64")]

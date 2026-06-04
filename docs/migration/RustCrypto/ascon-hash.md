@@ -3,6 +3,7 @@
 > Same algorithm (NIST LWC Ascon-Hash256). `ascon_hash::AsconHash256` becomes `rscrypto::AsconHash256`; everything else (trait shape, `update`, `finalize`) carries over.
 
 Verified against `ascon-hash = "0.4.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/ascon_official_vectors.rs`, `tests/ascon_hash_oracle.rs`, `tests/ascon_cxof_vectors.rs`, and `tests/ascon_differential.rs`.
 
 ## TL;DR
 

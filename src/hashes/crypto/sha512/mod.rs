@@ -360,12 +360,24 @@ impl Sha512 {
 
   #[inline(always)]
   fn finalize_state(
+    state: [u64; 8],
+    block: [u8; BLOCK_LEN],
+    block_len: usize,
+    total_len: u128,
+    compress_blocks: CompressBlocksFn,
+  ) -> [u8; 64] {
+    let state = Self::finalize_state_words(state, block, block_len, total_len, compress_blocks);
+    Self::state_to_digest(&state)
+  }
+
+  #[inline(always)]
+  pub(crate) fn finalize_state_words(
     mut state: [u64; 8],
     mut block: [u8; BLOCK_LEN],
     mut block_len: usize,
     total_len: u128,
     compress_blocks: CompressBlocksFn,
-  ) -> [u8; 64] {
+  ) -> [u64; 8] {
     let bit_len = total_len << 3;
 
     block[block_len] = 0x80;
@@ -382,7 +394,7 @@ impl Sha512 {
     block[112..128].copy_from_slice(&bit_len.to_be_bytes());
     compress_blocks(&mut state, &block);
 
-    Self::state_to_digest(&state)
+    state
   }
 
   #[inline(always)]

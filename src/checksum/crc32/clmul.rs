@@ -5,9 +5,7 @@
 
 use crate::checksum::common::tables::{CRC32_IEEE_POLY, CRC32C_POLY};
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GF(2) polynomial arithmetic (CRC-32 width)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Carryless multiplication of two 64-bit values, returning 128-bit result (hi, lo).
 #[must_use]
@@ -147,9 +145,7 @@ pub(super) const fn fold16_coeff_for_bytes_crc32(reflected_poly: u32, shift_byte
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Constant sets for the folding kernels
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Folding constants for a reflected CRC-32 polynomial.
 #[derive(Clone, Copy, Debug)]

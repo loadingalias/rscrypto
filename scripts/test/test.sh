@@ -106,12 +106,10 @@ run_rail_scoped_doctests() {
   esac
 }
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Dispatch:
 #   --all             → full workspace
 #   <crate> [<crate>] → test the named crate(s) directly
 #   (no args)         → rail-scoped (cargo-rail planner selects affected crates)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ALL_FLAG=false
 CRATES=()

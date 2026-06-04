@@ -666,6 +666,28 @@ impl Sha256 {
   #[inline]
   #[cfg(all(feature = "hmac", not(target_arch = "x86_64")))]
   fn reset_update_mode_to_aligned_prefix(&mut self, _prefix: Sha256Prefix) {}
+
+  #[cfg(all(feature = "hmac", test))]
+  #[inline]
+  #[allow(dead_code)]
+  pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
+    Self {
+      state: H0,
+      block: [0u8; BLOCK_LEN],
+      block_len: 0,
+      bytes_hashed: 0,
+      compress_blocks,
+      dispatch: Some(SizeClassDispatch {
+        boundaries: [usize::MAX; 3],
+        xs: compress_blocks,
+        s: compress_blocks,
+        m: compress_blocks,
+        l: compress_blocks,
+      }),
+      #[cfg(target_arch = "x86_64")]
+      update_mode: Sha256UpdateMode::RuntimeDispatch,
+    }
+  }
 }
 
 #[cfg(target_arch = "x86_64")]

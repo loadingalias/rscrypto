@@ -72,9 +72,7 @@ use crate::checksum::diag::{Crc32Polynomial, Crc32SelectionDiag};
 #[allow(unused_imports)]
 pub(super) use crate::traits::{Checksum, ChecksumCombine};
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Tables (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Portable kernel tables (pre-computed at compile time).
 mod kernel_tables {
@@ -87,9 +85,7 @@ mod kernel_tables {
 #[cfg(target_arch = "x86_64")]
 pub(crate) const CRC32_FOLD_BLOCK_BYTES: usize = 128;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Portable Kernel Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(any(test, feature = "std"))]
 #[cfg_attr(all(test, not(feature = "std")), allow(dead_code))]
@@ -113,14 +109,9 @@ fn crc32c_portable(crc: u32, data: &[u8]) -> u32 {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reference Kernel Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
-
 /// CRC-32 (IEEE) reference (bitwise) kernel wrapper.
 ///
-/// This is the canonical reference implementation - obviously correct,
-/// audit-friendly, and used for verification of all optimized paths.
+/// Used to verify optimized paths against the bitwise CRC model.
 #[cfg(any(test, feature = "std"))]
 fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32_IEEE_POLY, crc, data)
@@ -128,8 +119,7 @@ fn crc32_reference(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-32C (Castagnoli) reference (bitwise) kernel wrapper.
 ///
-/// This is the canonical reference implementation - obviously correct,
-/// audit-friendly, and used for verification of all optimized paths.
+/// Used to verify optimized paths against the bitwise CRC model.
 #[cfg(any(test, feature = "std"))]
 fn crc32c_reference(crc: u32, data: &[u8]) -> u32 {
   crc32_bitwise(CRC32C_POLY, crc, data)
@@ -179,9 +169,7 @@ fn crc32c_buffered_threshold() -> usize {
   THRESHOLD
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get the name of the kernel that would be selected for a given buffer length.
 #[inline]
@@ -259,9 +247,7 @@ pub(crate) fn crc32c_selected_kernel_name(len: usize) -> &'static str {
   table.select_names(len).crc32c_name
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Selection Diagnostics
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
 #[inline]
@@ -351,9 +337,7 @@ pub(crate) fn diag_crc32c(len: usize) -> Crc32SelectionDiag {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Auto Kernels (using new dispatch module)
-// ─────────────────────────────────────────────────────────────────────────────
 
 type Crc32DispatchFn = crate::checksum::dispatchers::Crc32Fn;
 #[cfg(feature = "std")]
@@ -668,9 +652,7 @@ define_crc_dispatch! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-32 (IEEE) checksum.
 ///
@@ -958,9 +940,7 @@ impl Crc32C {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-32 Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Buffer size for buffered CRC wrappers.
 ///
@@ -986,9 +966,7 @@ define_buffered_crc! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Crc32 {
@@ -1004,9 +982,7 @@ impl crate::checksum::introspect::KernelIntrospect for Crc32C {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -1318,10 +1294,6 @@ mod tests {
       let _ = kernel; // suppress unused warning
     }
   }
-
-  // ─────────────────────────────────────────────────────────────────────────────
-  // Cross-Check Tests: Reference Implementation Verification
-  // ─────────────────────────────────────────────────────────────────────────────
 
   mod cross_check {
     use alloc::{vec, vec::Vec};

@@ -157,9 +157,7 @@ impl Simd {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Load helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
 fn load_block(block: &Block) -> [Simd; 8] {
@@ -181,9 +179,7 @@ fn load_block(block: &Block) -> [Simd; 8] {
   unsafe { out.assume_init() }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Folding helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc32ClmulConstants) -> u32 {
@@ -402,9 +398,7 @@ unsafe fn update_simd_4way(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public kernels (IEEE + CRC32C)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "vector")]
@@ -492,9 +486,7 @@ unsafe fn crc32c_kernel_nway<const N: usize>(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Safe wrappers (dispatcher entrypoints)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn crc32_ieee_vgfm_safe(crc: u32, data: &[u8]) -> u32 {
@@ -546,9 +538,7 @@ pub fn crc32c_vgfm_4way_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_kernel_nway::<4>(crc, data, &super::clmul::CRC32C_STREAM, &super::clmul::CRC32C_CLMUL) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

@@ -13,9 +13,7 @@ use crate::platform::caps::s390x;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel function types
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Core compression function (single block).
 pub(crate) type CompressFn = fn(&[u32; 8], &[u32; 16], u64, u32, u32) -> [u32; 16];
@@ -39,9 +37,7 @@ pub(crate) type ChunkCompressBlocksFn = fn(&mut [u32; 8], u64, u32, &mut u8, &[u
 #[cfg(target_arch = "x86_64")]
 pub(crate) type X86CompressCvBytesFn = unsafe fn(&[u32; 8], *const u8, u64, u32, u32) -> [u32; 8];
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel struct
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
 pub(crate) struct Kernel {
@@ -61,9 +57,7 @@ pub(crate) struct Kernel {
   pub(crate) name: &'static str,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel IDs
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -1253,9 +1247,7 @@ pub const fn required_caps(id: Blake3KernelId) -> Caps {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Portable implementations
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 fn chunk_compress_blocks_portable(
@@ -1779,9 +1771,7 @@ unsafe fn hash4_contiguous_full_chunks_simd(input: *const u8, key: &[u32; 8], co
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // s390x vector wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
@@ -2006,9 +1996,7 @@ unsafe fn hash_many_contiguous_s390x_vector_wrapper(
   unsafe { hash_many_contiguous_s390x_vector(input, num_chunks, key, counter, flags, out) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // powerpc64 VSX wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "vsx")]
@@ -2222,9 +2210,7 @@ unsafe fn hash_many_contiguous_power_vsx_wrapper(
   unsafe { hash_many_contiguous_power_vsx(input, num_chunks, key, counter, flags, out) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // riscv64 RVV wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
@@ -2505,9 +2491,7 @@ unsafe fn hash_many_contiguous_riscv_v_wrapper(
   unsafe { hash_many_contiguous_riscv_v(input, num_chunks, key, counter, flags, out) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86_64 SSSE3 wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 fn x86_compress_cv_portable_wrapper(
@@ -2570,9 +2554,7 @@ unsafe fn x86_compress_cv_avx512_wrapper(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86_64 AVX2 wrappers (single-block / streaming hot paths)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 fn compress_avx2_wrapper(
@@ -2609,9 +2591,7 @@ fn parent_cv_avx2_wrapper(
   unsafe { super::x86_64::parent_cv_avx2(left_child_cv, right_child_cv, key_words, flags) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86_64 AVX-512 wrappers (single-block / streaming hot paths)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 fn compress_avx512_wrapper(
@@ -2650,9 +2630,7 @@ fn parent_cv_avx512_wrapper(
   unsafe { super::x86_64::parent_cv_avx512(left_child_cv, right_child_cv, key_words, flags) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86_64 SSE4.1 wrappers (single-block / streaming hot paths)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 fn compress_sse41_wrapper(
@@ -3063,9 +3041,7 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // aarch64 NEON wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 fn compress_neon_wrapper(

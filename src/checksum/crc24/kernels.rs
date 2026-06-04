@@ -31,9 +31,7 @@ use crate::checksum::common::kernels;
 /// Portable slice-by-8 kernel name.
 pub const PORTABLE_SLICE8: &str = kernels::PORTABLE_SLICE8;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Tables and Functions (per architecture)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64 {

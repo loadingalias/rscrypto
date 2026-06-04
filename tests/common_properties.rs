@@ -25,23 +25,18 @@ use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Cr
 
 const REF_CRC24_OPENPGP: RefCrc<u32> = RefCrc::<u32>::new(&crc::CRC_24_OPENPGP);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Combine Correctness Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // These tests prove the fundamental combine property:
 //   crc(A || B) == combine(crc(A), crc(B), len(B))
 //
 // We verify against independent reference crates. This proves the combine
 // operation matches external implementations, not just internal consistency.
-// ─────────────────────────────────────────────────────────────────────────────
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(256))]
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16 Combine Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc16_ccitt_combine_correctness(
@@ -83,9 +78,7 @@ proptest! {
       split, data.len());
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-24 Combine Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc24_openpgp_combine_correctness(
@@ -106,9 +99,7 @@ proptest! {
       split, data.len());
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-32 Combine Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc32_ieee_combine_correctness(
@@ -148,9 +139,7 @@ proptest! {
       split, data.len());
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-64 Combine Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc64_xz_combine_correctness(
@@ -191,9 +180,7 @@ proptest! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Chunking Equivalence Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // These tests prove that any chunking of input through the streaming API
 // produces the same result as a one-shot computation. This is a fundamental
@@ -202,7 +189,6 @@ proptest! {
 //
 // We use arbitrary chunk patterns (variable-size chunks) to stress-test
 // boundary conditions in SIMD kernels and buffering logic.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Apply an arbitrary chunk pattern to data and feed it to a hasher.
 ///
@@ -258,9 +244,7 @@ fn apply_chunking_vectored<C: Checksum>(data: &[u8], chunk_pattern: &[usize]) ->
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(256))]
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16 Chunking Equivalence
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc16_ccitt_chunking_equivalence(
@@ -286,9 +270,7 @@ proptest! {
     prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-24 Chunking Equivalence
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc24_openpgp_chunking_equivalence(
@@ -302,9 +284,7 @@ proptest! {
     prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-32 Chunking Equivalence
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc32_ieee_chunking_equivalence(
@@ -330,9 +310,7 @@ proptest! {
     prop_assert_eq!(vectored, oneshot, "vectored chunking pattern {:?} produced different result", chunk_pattern);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-64 Chunking Equivalence
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc64_xz_chunking_equivalence(
@@ -359,13 +337,10 @@ proptest! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Edge Case Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // Focused tests for boundary conditions that property tests might not hit
 // frequently enough: empty data, single bytes, powers of two, etc.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Test combine at all split points for small data.
 /// This exhaustively tests edge cases that random sampling might miss.
@@ -492,9 +467,7 @@ test_chunking_edge_cases!(crc32c_chunking_edge_cases, Crc32C);
 test_chunking_edge_cases!(crc64_xz_chunking_edge_cases, Crc64);
 test_chunking_edge_cases!(crc64_nvme_chunking_edge_cases, Crc64Nvme);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Resume Correctness Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // The resume() API allows continuing a CRC computation from a previous
 // checksum value. This tests that:
@@ -502,14 +475,11 @@ test_chunking_edge_cases!(crc64_nvme_chunking_edge_cases, Crc64Nvme);
 //
 // This is equivalent to the combine property but uses streaming instead of
 // the mathematical combine function.
-// ─────────────────────────────────────────────────────────────────────────────
 
 proptest! {
   #![proptest_config(ProptestConfig::with_cases(256))]
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16 Resume Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc16_ccitt_resume_correctness(
@@ -545,9 +515,7 @@ proptest! {
     prop_assert_eq!(result, expected, "resume(crc(A)).update(B) != crc(A||B)");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-24 Resume Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc24_openpgp_resume_correctness(
@@ -566,9 +534,7 @@ proptest! {
     prop_assert_eq!(result, expected, "resume(crc(A)).update(B) != crc(A||B)");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-32 Resume Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc32_ieee_resume_correctness(
@@ -604,9 +570,7 @@ proptest! {
     prop_assert_eq!(result, expected, "resume(crc(A)).update(B) != crc(A||B)");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-64 Resume Correctness
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc64_xz_resume_correctness(

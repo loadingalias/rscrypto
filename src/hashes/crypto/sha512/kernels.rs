@@ -63,9 +63,7 @@ impl Sha512KernelId {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Safe wrappers — dispatch validates caps before calling.
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {

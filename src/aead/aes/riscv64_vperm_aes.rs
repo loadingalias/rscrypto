@@ -553,9 +553,7 @@ pub(super) unsafe fn encrypt_4blocks(rk: &[u32; super::EXPANDED_KEY_WORDS], bloc
   }
 }
 
-// ---------------------------------------------------------------------------
 // AES-128 (10 rounds)
-// ---------------------------------------------------------------------------
 
 /// AES-128 full-block encryption (10 rounds) using Hamburg vperm.
 ///

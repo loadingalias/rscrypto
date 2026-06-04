@@ -3,6 +3,8 @@
 `aws-lc-rs` is a safe wrapper around AWS-LC. Migrate it
 primitive-by-primitive. Do not treat it as a whole-crate swap.
 
+The direct examples below are covered by `tests/migration_aws_lc_rs.rs`.
+
 ## Cargo.toml
 
 ```toml

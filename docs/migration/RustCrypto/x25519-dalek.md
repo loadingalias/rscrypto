@@ -3,6 +3,7 @@
 > Replace `StaticSecret` / `EphemeralSecret` / `PublicKey` / `SharedSecret` with rscrypto's unified `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret`. Same RFC 7748 algorithm, byte-identical shared secrets, plus an explicit error on low-order peer input.
 
 Verified against `x25519-dalek = "2.0.1"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs`, and `tests/x25519_wycheproof.rs`.
 
 ## TL;DR
 

@@ -37,9 +37,7 @@ use core::arch::x86_64::*;
 
 use super::{BLOCK_LEN, K, big_sigma0, big_sigma1, ch, maj};
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 256-bit SIMD sigma with VPRORQ (dual-block schedule)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 256-bit, VPRORQ.
 #[cfg(target_arch = "x86_64")]
@@ -67,9 +65,7 @@ unsafe fn small_sigma1_256(x: __m256i) -> __m256i {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 128-bit SIMD sigma with VPRORQ (single-block schedule)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 128-bit, VPRORQ.
 #[cfg(target_arch = "x86_64")]
@@ -97,9 +93,7 @@ unsafe fn small_sigma1_128(x: __m128i) -> __m128i {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Dual-block message schedule helpers (256-bit)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Cross-register extraction (256-bit): [a[1], a[2], a[3], b[0]].
 #[cfg(target_arch = "x86_64")]
@@ -130,9 +124,7 @@ unsafe fn schedule_pair_256(w: &mut [__m256i; 8], i: usize) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Single-block message schedule helpers (128-bit)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Cross-register extraction (128-bit): [a[1], b[0]].
 #[cfg(target_arch = "x86_64")]
@@ -160,9 +152,7 @@ unsafe fn schedule_pair_128(w: &mut [__m128i; 8], i: usize) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Common helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Byte-swap mask for big-endian u64 word loads (128-bit).
 #[cfg(target_arch = "x86_64")]
@@ -210,9 +200,7 @@ unsafe fn extract_128(v: __m128i) -> (u64, u64) {
   unsafe { (_mm_extract_epi64(v, 0) as u64, _mm_extract_epi64(v, 1) as u64) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Entry point
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// SHA-512 multi-block compression using AVX-512VL + BMI2.
 ///
@@ -424,9 +412,7 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
   } // unsafe
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Rotation-based schedule (eliminates cross-lane permute)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute one schedule pair using **array rotation** (128-bit, single-block, VPRORQ).
 ///
@@ -500,9 +486,7 @@ unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Decoupled kernel (schedule one-ahead of rounds, rotation + VPRORQ)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// SHA-512 multi-block compression using AVX-512VL + BMI2, **decoupled schedule
 /// with rotation-based message expansion and VPRORQ native rotates**.

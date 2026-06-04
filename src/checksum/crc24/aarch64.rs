@@ -21,9 +21,7 @@ use super::{
   reflected::{crc24_reflected_update_bitrev_bytes, from_reflected_state, to_reflected_state},
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -176,9 +174,7 @@ impl Simd {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 8-lane width32 update (128B blocks)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
@@ -473,9 +469,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Single-stream kernel entry points
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
@@ -579,9 +573,7 @@ unsafe fn crc24_width32_pmull_3way(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public Safe Kernel
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-24/OPENPGP PMULL kernel.
 ///

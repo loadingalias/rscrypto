@@ -78,3 +78,30 @@ fn kmac256_nist_sample_6_matches() {
   streaming.finalize_into(&mut streaming_out);
   assert_eq!(streaming_out, expected, "kmac256 sample 6 streaming mismatch");
 }
+
+#[test]
+fn kmac256_verify_rejects_empty_and_corrupted_tags() {
+  let key = key_bytes();
+  let data = ascending_bytes(200);
+  let expected = Kmac256::mac_array::<64>(&key, b"My Tagged Application", &data);
+
+  assert!(
+    Kmac256::verify_tag(&key, b"My Tagged Application", &data, &[]).is_err(),
+    "KMAC256 must reject an empty expected tag"
+  );
+
+  let one_byte = [expected[0] ^ 0x80];
+  assert!(
+    Kmac256::verify_tag(&key, b"My Tagged Application", &data, &one_byte).is_err(),
+    "KMAC256 accepted a corrupted one-byte tag"
+  );
+
+  for index in [0, expected.len() / 2, expected.len() - 1] {
+    let mut corrupted = expected;
+    corrupted[index] ^= 0x80;
+    assert!(
+      Kmac256::verify_tag(&key, b"My Tagged Application", &data, &corrupted).is_err(),
+      "KMAC256 accepted a tag corrupted at byte {index}"
+    );
+  }
+}

@@ -6,8 +6,6 @@
 //! The schedule computes 2 words at a time: W[t] and W[t+1] are independent
 //! (they depend on W[t-2]/W[t-1] respectively, both from prior rounds), so
 //! we get true 2-wide parallelism for sigma computations and additions.
-//!
-//! Expected speedup: ~10-25% over the portable scalar implementation.
 
 #![allow(clippy::indexing_slicing)] // Fixed-size arrays + compression schedule
 
@@ -15,10 +13,6 @@
 use core::arch::wasm32::*;
 
 use super::{BLOCK_LEN, K, big_sigma0, big_sigma1, ch, maj};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SIMD sigma functions for message schedule (2 × u64 lanes)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// SIMD rotate right: 3 ops per rotate (no native u64 rotate in WASM SIMD).
 #[cfg(target_arch = "wasm32")]
@@ -41,9 +35,7 @@ fn small_sigma1_v(x: v128) -> v128 {
   v128_xor(v128_xor(rotr_v(x, 19), rotr_v(x, 61)), u64x2_shr(x, 6))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Message schedule helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Load 2 big-endian u64 message words from `ptr`, byte-swapping each.
 #[cfg(target_arch = "wasm32")]
@@ -84,9 +76,7 @@ fn schedule_pair(w: &mut [v128; 8], i: usize) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Block compression
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// SHA-512 multi-block compression using WebAssembly SIMD128.
 ///

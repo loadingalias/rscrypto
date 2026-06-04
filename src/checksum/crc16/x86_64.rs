@@ -170,9 +170,7 @@ unsafe fn update_simd_width32_reflected(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PCLMULQDQ multi-stream (2/4/7/8-way, 128B blocks)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
@@ -734,9 +732,7 @@ unsafe fn crc16_width32_pclmul(mut state: u16, data: &[u8], keys: &[u64; 23], po
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // AVX-512 VPCLMULQDQ Tier
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
@@ -1368,9 +1364,7 @@ unsafe fn crc16_width32_vpclmul(mut state: u16, data: &[u8], keys: &[u64; 23], p
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public Safe Kernels (matching CRC-64 pure fn(u16, &[u8]) -> u16 signature)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-16/CCITT PCLMULQDQ kernel.
 ///

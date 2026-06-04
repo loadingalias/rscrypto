@@ -241,6 +241,37 @@ impl HkdfSha256 {
   pub fn prk(&self) -> &[u8; SHA256_OUTPUT_SIZE] {
     &self.prk
   }
+
+  #[cfg(test)]
+  pub(crate) fn extract_with_compress_for_test(
+    salt: &[u8],
+    input_key_material: &[u8],
+    compress: Sha256CompressBlocksFn,
+  ) -> Self {
+    let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
+    let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
+    let prk = HmacSha256::mac_with_compress_for_test(salt, input_key_material, compress);
+
+    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
+    key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&prk);
+
+    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = SHA256_H0;
+      compress(&mut inner_init, ipad);
+
+      let mut outer_init = SHA256_H0;
+      compress(&mut outer_init, opad);
+
+      (inner_init, outer_init)
+    });
+
+    Self {
+      prk,
+      inner_init,
+      outer_init,
+      compress,
+    }
+  }
 }
 
 impl Drop for HkdfSha256 {
@@ -630,11 +661,18 @@ mod tests {
   use hkdf::Hkdf as RustCryptoHkdf;
 
   use super::*;
-  use crate::hashes::crypto::sha384::kernels::{
-    ALL as SHA384_KERNELS, Sha384KernelId, compress_blocks_fn as sha384_compress_blocks_fn,
-    required_caps as sha384_required_caps,
+  use crate::hashes::crypto::{
+    sha256::kernels::{
+      ALL as SHA256_KERNELS, Sha256KernelId, compress_blocks_fn as sha256_compress_blocks_fn,
+      required_caps as sha256_required_caps,
+    },
+    sha384::kernels::{
+      ALL as SHA384_KERNELS, Sha384KernelId, compress_blocks_fn as sha384_compress_blocks_fn,
+      required_caps as sha384_required_caps,
+    },
   };
 
+  type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
   type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
 
   fn pattern(len: usize, mul: u8, add: u8) -> Vec<u8> {
@@ -645,6 +683,67 @@ mod tests {
           .wrapping_add(((i >> 2) as u8).wrapping_add(add))
       })
       .collect()
+  }
+
+  fn assert_hkdf_sha256_kernel(id: Sha256KernelId) {
+    let compress = sha256_compress_blocks_fn(id);
+    let cases = [
+      (0usize, 0usize, 0usize, 0usize),
+      (13, 22, 10, 1),
+      (16, 32, 31, 32),
+      (32, 48, 32, 33),
+      (64, 56, 55, 64),
+      (96, 80, 56, 65),
+      (128, 96, 57, 256),
+      (160, 128, 128, 1024),
+    ];
+
+    for &(salt_len, ikm_len, info_len, out_len) in &cases {
+      let salt = pattern(salt_len, 11, 3);
+      let ikm = pattern(ikm_len, 17, 7);
+      let info = pattern(info_len, 29, 13);
+      let mut expected = vec![0u8; out_len];
+      RustCryptoHkdfSha256::new(Some(&salt), &ikm)
+        .expand(&info, &mut expected)
+        .unwrap();
+
+      let public = HkdfSha256::new(&salt, &ikm);
+      let forced = HkdfSha256::extract_with_compress_for_test(&salt, &ikm, compress);
+
+      let mut public_out = vec![0u8; out_len];
+      public.expand(&info, &mut public_out).unwrap();
+      assert_eq!(
+        public_out,
+        expected,
+        "hkdf-sha256 public mismatch kernel={} salt_len={} ikm_len={} info_len={} out_len={}",
+        id.as_str(),
+        salt_len,
+        ikm_len,
+        info_len,
+        out_len
+      );
+
+      let mut forced_out = vec![0u8; out_len];
+      forced.expand(&info, &mut forced_out).unwrap();
+      assert_eq!(
+        forced_out,
+        expected,
+        "hkdf-sha256 forced mismatch kernel={} salt_len={} ikm_len={} info_len={} out_len={}",
+        id.as_str(),
+        salt_len,
+        ikm_len,
+        info_len,
+        out_len
+      );
+      assert_eq!(
+        forced.prk(),
+        public.prk(),
+        "hkdf-sha256 prk mismatch kernel={} salt_len={} ikm_len={}",
+        id.as_str(),
+        salt_len,
+        ikm_len
+      );
+    }
   }
 
   fn assert_hkdf_sha384_kernel(id: Sha384KernelId) {
@@ -702,6 +801,16 @@ mod tests {
         salt_len,
         ikm_len
       );
+    }
+  }
+
+  #[test]
+  fn hkdf_sha256_forced_kernels_match_oracle() {
+    let caps = crate::platform::caps();
+    for &id in SHA256_KERNELS {
+      if caps.has(sha256_required_caps(id)) {
+        assert_hkdf_sha256_kernel(id);
+      }
     }
   }
 

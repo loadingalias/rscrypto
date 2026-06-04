@@ -27,9 +27,7 @@ use super::{
 /// Element 1: bytes 15,14,13,12,11,10,9,8  →  reverses bytes [8..16]
 const BSWAP_MASK: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8];
 
-// ─────────────────────────────────────────────────────────────────────────────
 // z/Vector primitive operations (inline asm, z13+)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Add u64 lanes: `vag`.
 #[inline]
@@ -146,9 +144,7 @@ unsafe fn vpdi_swap(a: i64x2) -> i64x2 {
   out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Load / store helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Load 128 bits from memory (unaligned, native byte order).
 #[inline(always)]
@@ -179,9 +175,7 @@ unsafe fn load_bswap_mask() -> i64x2 {
   unsafe { vload_raw(BSWAP_MASK.as_ptr()) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD accumulate + scramble
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "vector")]
@@ -287,9 +281,7 @@ unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Long-path loop (SIMD inner, scalar merge)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "vector")]
 unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
@@ -340,9 +332,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Top-level kernel functions (safe wrappers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Long-path entry point (>240B) — no ≤240B branches.
 pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {

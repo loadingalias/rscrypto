@@ -3,6 +3,7 @@
 > Same algorithm (RFC 8452), same nonce-misuse-resistant guarantees. Replace `Aes256GcmSiv` / `Key<Aes256GcmSiv>` / `Nonce` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API.
 
 Verified against `aes-gcm-siv = "0.11.1"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/aes128gcmsiv_oracle.rs`, `tests/aes256gcmsiv_oracle.rs`, and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 

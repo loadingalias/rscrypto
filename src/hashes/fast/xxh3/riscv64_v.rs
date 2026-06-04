@@ -32,9 +32,7 @@ use super::{
   SECRET_MERGEACCS_START, STRIPE_LEN,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD accumulate + scramble
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Accumulate one 64-byte stripe into the accumulator.
 ///
@@ -223,9 +221,7 @@ unsafe fn scramble_acc(acc: &mut [u64; ACC_NB], secret: *const u8) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Long-path loop (SIMD inner, scalar merge)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "v")]
 unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
@@ -280,9 +276,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Top-level kernel functions (safe wrappers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Long-path entry point (>240B) — no ≤240B branches.
 ///

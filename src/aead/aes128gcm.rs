@@ -222,9 +222,7 @@ impl Aes128Gcm {
   }
 }
 
-// ---------------------------------------------------------------------------
 // GCM construction internals (NIST SP 800-38D)
-// ---------------------------------------------------------------------------
 
 /// Build the initial counter block J0 and first CTR block for a 96-bit IV.
 ///
@@ -554,10 +552,6 @@ fn should_use_wide_ghash(backend: AeadBackend, aad_len: usize, ciphertext_len: u
     _ => false,
   }
 }
-
-// ---------------------------------------------------------------------------
-// Aead trait implementation
-// ---------------------------------------------------------------------------
 
 #[inline]
 fn resolve_backend() -> AeadBackend {
@@ -1019,9 +1013,7 @@ impl Drop for Aes128Gcm {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

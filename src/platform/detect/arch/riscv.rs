@@ -1,5 +1,4 @@
 // RISC-V Detection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "riscv64")]
 fn detect_riscv64() -> Detected {

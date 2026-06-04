@@ -2,8 +2,6 @@
 //!
 //! Vectorizes the message schedule computation using 128-bit SIMD (4 × u32
 //! lanes). Compression rounds remain scalar (sequential data dependency).
-//!
-//! Expected speedup: ~1.5-2x over the portable scalar implementation.
 
 #![allow(clippy::indexing_slicing)] // Fixed-size arrays + compression schedule
 
@@ -12,10 +10,6 @@ use core::arch::wasm32::*;
 
 use super::{BLOCK_LEN, K, ch, maj};
 use crate::hashes::util::rotr32;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SIMD message schedule helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Load 4 big-endian message words from `ptr` into a v128, byte-swapping each.
 #[cfg(target_arch = "wasm32")]
@@ -60,9 +54,7 @@ fn schedule_word(w: &[v128; 16], idx: usize) -> u32 {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Message schedule expansion (SIMD)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Expand the message schedule: compute W[16..64] from W[0..16] using SIMD.
 ///
@@ -119,9 +111,7 @@ fn schedule_4(w: &mut [v128; 16], i: usize) {
   w[i & 0xF] = slot;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Block compression
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// SHA-256 multi-block compression using WebAssembly SIMD128.
 ///

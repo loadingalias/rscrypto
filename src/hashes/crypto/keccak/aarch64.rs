@@ -23,9 +23,7 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
-// ---------------------------------------------------------------------------
 // Shared NEON round macro (used by both 1-state and 2-state kernels)
-// ---------------------------------------------------------------------------
 
 /// One round of Keccak-f[1600] using full-width SHA3 CE on uint64x2_t.
 ///
@@ -129,9 +127,7 @@ macro_rules! keccakf_sha3_neon_round {
   }};
 }
 
-// ---------------------------------------------------------------------------
 // 1-state full NEON kernel
-// ---------------------------------------------------------------------------
 
 /// Single-state Keccak-f[1600] using full-width SHA3 CE NEON instructions.
 ///
@@ -312,9 +308,7 @@ pub(crate) fn keccakf_aarch64_sha3_absorb_single<const RATE: usize>(state: &mut 
   unsafe { keccakf_sha3_absorb_single_impl::<RATE>(state, block) }
 }
 
-// ---------------------------------------------------------------------------
 // 2-state interleaved kernel (lane 0 = state A, lane 1 = state B)
-// ---------------------------------------------------------------------------
 
 /// Combine lane 0 from `state_a[i]` and lane 1 from `state_b[i]` into one
 /// uint64x2_t register.

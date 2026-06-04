@@ -6,6 +6,7 @@ use super::{
 };
 use crate::{hashes::crypto::dispatch_util::SizeClassDispatch, traits::Digest as _};
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct KernelResult {
   pub name: &'static str,
@@ -108,12 +109,41 @@ mod tests {
           assert_eq!(
             h.finalize(),
             ours,
-            "sha224 chunk mismatch kernel={} len={}",
+            "sha224 chunk mismatch kernel={} len={} chunk={}",
             id.as_str(),
-            len
+            len,
+            chunk
           );
+        }
+
+        // Exhaustive two-split for small buffers (padding edges).
+        #[cfg(not(miri))]
+        let split_limit = 256;
+        #[cfg(miri)]
+        let split_limit = 128;
+        if len <= split_limit {
+          for split in 0..=len {
+            let (a, b) = msg.split_at(split);
+            let mut h = hasher_for_kernel(id);
+            h.update(a);
+            h.update(b);
+            assert_eq!(
+              h.finalize(),
+              ours,
+              "sha224 split mismatch kernel={} len={} split={}",
+              id.as_str(),
+              len,
+              split
+            );
+          }
         }
       }
     }
+  }
+
+  #[test]
+  fn run_all_agree() {
+    verify_sha224_kernels(b"abc").expect("kernels should agree");
+    verify_sha224_kernels(&pattern(4096)).expect("kernels should agree");
   }
 }

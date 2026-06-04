@@ -1386,9 +1386,7 @@ pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
   unsafe { encrypt_block_core(keys, block) }
 }
 
-// ---------------------------------------------------------------------------
 // AES-128 (11 round keys, 10 rounds)
-// ---------------------------------------------------------------------------
 
 /// AES-128 round keys stored as 11 × 128-bit NEON vectors for AES-CE.
 ///

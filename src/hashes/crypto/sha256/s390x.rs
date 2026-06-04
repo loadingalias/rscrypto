@@ -46,7 +46,7 @@ pub(crate) unsafe fn compress_blocks_kimd(state: &mut [u32; 8], blocks: &[u8]) {
   //
   // CC=0: complete. CC=2: partial (kernel preemption) — retry.
   //
-  // SAFETY: MSA verified by caller. Parameter block is &mut [u32; 8]
+  // SAFETY: The caller guarantees the MSA facility. Parameter block is &mut [u32; 8]
   // (32 bytes, 4-aligned). Data from valid slice.
   unsafe {
     core::arch::asm!(

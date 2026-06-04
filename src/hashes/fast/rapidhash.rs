@@ -779,9 +779,7 @@ unsafe fn rapidhash_core_large<const AVALANCHE: bool>(data: &[u8], mut seed: u64
   rapidhash_final::<AVALANCHE>(a, b, remainder, secrets)
 }
 
-// ---------------------------------------------------------------------------
 // Inner-algorithm core for RapidHashFast64 / RapidHashFast128
-// ---------------------------------------------------------------------------
 //
 // Distinct from V3: size-tuned dispatch (3-stream mid-range, 7-stream large),
 // cold-path separation for codegen quality, and inner-module finalization.

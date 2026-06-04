@@ -3,6 +3,7 @@
 > Covers both `ChaCha20Poly1305` (96-bit nonce, RFC 8439) and `XChaCha20Poly1305` (192-bit nonce). Same algorithm, byte-identical ciphertext+tag; replace `Key<T>` / `Nonce` / `XNonce` / `Payload { msg, aad }` with `ChaCha20Poly1305Key` + `Nonce96` / `Nonce192` and a buffer-style API.
 
 Verified against `chacha20poly1305 = "0.10.1"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/chacha20poly1305.rs`, `tests/xchacha20poly1305.rs`, and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 

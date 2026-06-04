@@ -28,9 +28,7 @@ use crate::checksum::common::{
 const CRC32_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32_IEEE_POLY);
 const CRC32C_SHIFT8_MATRIX: Gf2Matrix32 = generate_shift8_matrix_32(CRC32C_POLY);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Hardware CRC extension (CRC-only)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-32 (IEEE) update using ARMv8 CRC extension.
 ///
@@ -186,9 +184,7 @@ pub fn crc32c_armv8_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_armv8(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Hardware CRC extension (multi-stream wrappers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "crc")]
@@ -356,9 +352,7 @@ pub fn crc32c_armv8_3way_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_armv8_nway::<3>(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // "SVE2 PMULL" Tier (ILP-oriented split + combine)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Round-robin scheduling across independent CRC states to expose ILP.
 const CRC32_SVE2_PMULL_STRIPE_BYTES: usize = 16 * 1024;
@@ -447,9 +441,7 @@ pub fn crc32c_iscsi_sve2_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v12e_v1_safe, CRC32C_SHIFT8_MATRIX)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PMULL tier multi-stream wrappers (2/3-way)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn crc32_iso_hdlc_pmull_2way_safe(crc: u32, data: &[u8]) -> u32 {
@@ -471,9 +463,7 @@ pub fn crc32c_iscsi_pmull_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // EOR3 tier multi-stream wrappers (2/3-way)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn crc32_iso_hdlc_pmull_eor3_2way_safe(crc: u32, data: &[u8]) -> u32 {
@@ -505,9 +495,7 @@ pub fn crc32c_iscsi_pmull_eor3_3way_safe(crc: u32, data: &[u8]) -> u32 {
   crc32_sve2_pmull_nway::<3>(crc, data, crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe, CRC32C_SHIFT8_MATRIX)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Small-buffer wrappers (selected for len < fold block)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn crc32_iso_hdlc_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
@@ -535,13 +523,11 @@ pub fn crc32c_iscsi_sve2_pmull_small_safe(crc: u32, data: &[u8]) -> u32 {
   crc32c_iscsi_pmull_v12e_v1_safe(crc, data)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Dispatch inline wrappers (bypass function-pointer dispatch for small sizes)
 //
 // These use `#[inline]` + `#[target_feature]` so the PMULL fusion
 // kernel is inlined directly into the dispatch caller, eliminating the
 // indirect-call + target_feature-barrier overhead that dominates at 32-64 B.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Inline CRC-32 (IEEE) via PMULL fusion for the dispatch fast path.
 ///
@@ -597,9 +583,7 @@ pub(crate) unsafe fn crc32c_iscsi_hwcrc_inline(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_armv8(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PMULL helpers (fusion kernels)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "aes")]
@@ -640,9 +624,7 @@ unsafe fn clmul_hi_and_xor(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint6
   unsafe { veorq_u64(clmul_hi(a, b), c) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fusion: CRC-32C (iSCSI) - PMULL v12e_v1
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "crc,aes")]
@@ -801,9 +783,7 @@ pub fn crc32c_iscsi_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_iscsi_pmull_v12e_v1(crc, data.as_ptr(), data.len()) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fusion: CRC-32 (ISO-HDLC / IEEE) - PMULL v12e_v1
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "crc,aes")]
@@ -962,9 +942,7 @@ pub fn crc32_iso_hdlc_pmull_v12e_v1_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32_iso_hdlc_pmull_v12e_v1(crc, data.as_ptr(), data.len()) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fusion: PMULL v9s3x2e_s3 (no EOR3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 unsafe fn xor3_u64x2(a: uint64x2_t, b: uint64x2_t, c: uint64x2_t) -> uint64x2_t {
@@ -1384,9 +1362,7 @@ pub fn crc32_iso_hdlc_pmull_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32_iso_hdlc_pmull_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Fusion: EOR3 variants (CRC + PMULL + SHA3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "crc,aes,sha3")]
@@ -1874,9 +1850,7 @@ pub fn crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3(crc, data.as_ptr(), data.len()) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

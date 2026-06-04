@@ -6,9 +6,7 @@
 use super::kernel_tables;
 use crate::checksum::common::portable;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Polynomial-specific wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Canonical kernel name for byte-at-a-time table lookup kernels.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
@@ -44,9 +42,7 @@ pub fn crc32c_slice16(crc: u32, data: &[u8]) -> u32 {
   crc32_slice16(crc, data, &kernel_tables::CRC32C_TABLES_16)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Generic bytewise/slice-by-16 (delegating to common::portable)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-32 state using a byte-at-a-time lookup table.
 #[inline(always)]

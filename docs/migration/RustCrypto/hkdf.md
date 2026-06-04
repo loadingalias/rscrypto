@@ -3,6 +3,7 @@
 > Replace `Hkdf::<Sha256>::new(Some(salt), ikm)` with `HkdfSha256::new(salt, ikm)`. The `Option<&[u8]>` salt becomes a plain `&[u8]` (empty slice == "no salt"); fused one-shot `HkdfSha256::derive_array::<N>(...)` collapses extract+expand.
 
 Verified against `hkdf = "0.13.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/hkdf_sha256_vectors.rs`, `tests/hkdf_sha384_vectors.rs`, the HKDF proptests, and `tests/hkdf_wycheproof.rs`.
 
 ## TL;DR
 

@@ -1,5 +1,24 @@
 # Security Guidance
 
+## Constant-Time Claim Boundary
+
+Constant-time claims are scoped to secret-bearing comparisons and operations,
+not to every function in the crate.
+
+| Surface | Claim boundary | Evidence |
+|---|---|---|
+| MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| Ed25519 verification | Signature acceptance/rejection uses a single opaque verification error at the public API boundary. | RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| X25519 scalar multiplication | Scalar multiplication is intended to avoid secret-dependent field behavior and rejects all-zero shared secrets. | RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| RSA private sign/decrypt | Release claims require RSA vectors, fuzzing, Miri, and leakage-gate evidence for representative private-operation paths. | The RSA evidence boundary below. |
+
+These are not global constant-time claims: parsers, DER/PHC decoding, algorithm
+or profile negotiation, key generation, OS randomness paths, public RSA
+verify/encrypt paths, raw hashes, checksums, and fast non-cryptographic hashes.
+Test vectors, differential tests, Miri, fuzzing, and leakage tests are evidence,
+not formal proofs.
+
 ## Verification Failures
 
 - `VerificationError` and `OpenError::Verification` are intentionally opaque.
@@ -57,7 +76,9 @@ Mandatory RSA release evidence:
   HMAC_DRBG for key generation; this is not a CMVP/FIPS 140-3 validation claim.
 - Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
   RSASSA-PKCS1-v1_5.
-- `just test-rsa-leakage` passes on Linux x86_64 and Linux aarch64.
+- `just test-rsa-leakage` passes on Linux x86_64 and Linux aarch64. The
+  leakage gate samples representative RSA-2048 SHA-256 private sign/decrypt
+  paths; profile breadth remains covered by normal RSA vector and oracle tests.
 - Miri covers every feasible safe private-key parser, signing, decryption,
   scratch-width, padding-reject, and key-generation helper path through
   `just test-miri --rsa`.

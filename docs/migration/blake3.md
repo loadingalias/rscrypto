@@ -5,6 +5,7 @@
 > equality stays constant-time for authenticator use.
 
 Verified against `blake3 = "1.8.5"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/blake3_official_vectors.rs` and `tests/blake3_differential.rs`.
 
 ## TL;DR
 

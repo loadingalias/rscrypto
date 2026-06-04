@@ -49,8 +49,6 @@ use core::arch::x86_64::{
 
 use super::BLOCK_WORDS;
 
-// ─── Rotation masks ─────────────────────────────────────────────────────────
-//
 // AVX2 ROR-24 / ROR-16 are byte shuffles. Each 64-bit lane within the YMM
 // rotates its 8 bytes by 3 (for ROR-24) or by 2 (for ROR-16). The masks are
 // duplicated across the two 128-bit halves of the YMM (`_mm256_shuffle_epi8`
@@ -67,9 +65,7 @@ static ROT16_MASK: Align32 = Align32([
   2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
 ]);
 
-// ═══════════════════════════════════════════════════════════════════════════
 // AVX2 kernel
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// AVX2 BlaMka compression kernel.
 ///
@@ -284,9 +280,7 @@ unsafe fn ror63_avx2(x: __m256i) -> __m256i {
   unsafe { _mm256_or_si256(_mm256_add_epi64(x, x), _mm256_srli_epi64(x, 63)) }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // AVX-512 kernel (8-way ZMM row pass + 4-way YMM-VL column pass)
-// ═══════════════════════════════════════════════════════════════════════════
 
 /// AVX-512 BlaMka compression kernel.
 ///

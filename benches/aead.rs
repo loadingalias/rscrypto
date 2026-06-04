@@ -32,9 +32,7 @@ macro_rules! aws_lc_bench {
   ($($tokens:tt)*) => {};
 }
 
-// ---------------------------------------------------------------------------
 // Key / nonce material (deterministic, not secret for benchmarking)
-// ---------------------------------------------------------------------------
 
 const KEY_32: [u8; 32] = [0x42u8; 32];
 const NONCE_12: [u8; 12] = [0x07u8; 12];
@@ -44,9 +42,7 @@ const NONCE_24: [u8; 24] = [0x07u8; 24];
 const NONCE_32: [u8; 32] = [0x07u8; 32];
 const AAD: &[u8] = b"rscrypto-bench";
 
-// ---------------------------------------------------------------------------
 // XChaCha20-Poly1305
-// ---------------------------------------------------------------------------
 
 // dryoc 0.7.2 does not expose `crypto_aead_xchacha20poly1305_ietf` as a single-shot AEAD;
 // only the secretstream framing is available, which is not apples-to-apples with rscrypto's
@@ -143,9 +139,7 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // ChaCha20-Poly1305
-// ---------------------------------------------------------------------------
 
 fn chacha20_poly1305_encrypt(c: &mut Criterion) {
   aws_lc_bench! {
@@ -345,9 +339,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // AES-256-GCM-SIV
-// ---------------------------------------------------------------------------
 
 fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
   aws_lc_bench! {
@@ -503,9 +495,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // AES-128-GCM-SIV
-// ---------------------------------------------------------------------------
 
 fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
   aws_lc_bench! {
@@ -661,9 +651,7 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // AES-256-GCM
-// ---------------------------------------------------------------------------
 
 fn aes256_gcm_encrypt(c: &mut Criterion) {
   aws_lc_bench! {
@@ -864,9 +852,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // AES-128-GCM
-// ---------------------------------------------------------------------------
 
 fn aes128_gcm_encrypt(c: &mut Criterion) {
   aws_lc_bench! {
@@ -1067,9 +1053,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // AEGIS-256
-// ---------------------------------------------------------------------------
 
 fn aegis256_encrypt(c: &mut Criterion) {
   let inputs = common::comp_sizes();
@@ -1151,9 +1135,7 @@ fn aegis256_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Ascon-AEAD128
-// ---------------------------------------------------------------------------
 
 fn ascon_aead128_encrypt(c: &mut Criterion) {
   use ascon_aead::aead::{AeadInPlace as _, KeyInit as _, generic_array::GenericArray};
@@ -1248,9 +1230,7 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
   g.finish();
 }
 
-// ---------------------------------------------------------------------------
 // Criterion harness
-// ---------------------------------------------------------------------------
 
 criterion_group!(
   benches,

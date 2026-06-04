@@ -43,9 +43,7 @@
 //! This keeps the code explicit and allows each CRC module to define its
 //! own kernel arrays and selection logic while reusing common patterns.
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Common Constants
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Reference (bitwise) kernel name - canonical implementation for verification.
 pub const REFERENCE: &str = "reference/bitwise";
@@ -58,13 +56,9 @@ pub const PORTABLE_SLICE16: &str = "portable/slice16";
 #[cfg(any(feature = "crc16", feature = "crc24"))]
 pub const PORTABLE_SLICE8: &str = "portable/slice8";
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Stream Mapping
-// ─────────────────────────────────────────────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Stream Selection Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Calculate the maximum stream count supported for a given buffer length.
 ///
@@ -104,9 +98,7 @@ pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stre
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

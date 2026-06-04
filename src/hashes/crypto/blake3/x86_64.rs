@@ -39,9 +39,7 @@ pub(crate) const fn counter_high(counter: u64) -> u32 {
   (counter >> 32) as u32
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CV-only compression helpers (avoid `[u32; 16]` materialization)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
@@ -158,9 +156,7 @@ pub(crate) unsafe fn compress_cv_avx512_bytes(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SSE4.1 / AVX2 / AVX-512 per-block compressor (world-class schedule)
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // This schedule is adapted from the upstream BLAKE3 project's high-performance
 // `rust_sse41` compressor (CC0-1.0 / Apache-2.0 / LLVM-exception). It avoids
@@ -624,9 +620,7 @@ pub(crate) unsafe fn parent_cv_sse41(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // High-level kernel wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// AVX2 chunk compression: process multiple 64-byte blocks.
 ///
@@ -841,5 +835,3 @@ pub(crate) unsafe fn parent_cv_avx512(
     compress_cv_avx512(&key_words, m0, m1, m2, m3, 0, BLOCK_LEN as u32, PARENT | flags)
   }
 }
-
-// ─────────────────────────────────────────────────

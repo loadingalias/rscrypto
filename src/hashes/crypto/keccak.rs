@@ -228,11 +228,9 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
   state[20] = !state[20];
 }
 
-// ---------------------------------------------------------------------------
 // aarch64 named-variable round loop (shared by keccakf_portable and
 // keccakf_absorb_portable). All 25 state variables are passed explicitly
 // to avoid macro hygiene issues with module-level macros.
-// ---------------------------------------------------------------------------
 
 /// 24-round Keccak-f[1600] loop on named variables (aarch64).
 ///
@@ -514,9 +512,7 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
   state[24] = a24;
 }
 
-// ---------------------------------------------------------------------------
 // Permuter trait + platform-specific implementations
-// ---------------------------------------------------------------------------
 //
 // Direct-call permuters replace the old function-pointer dispatch. Each
 // platform gets a concrete `Permuter` that calls the best kernel directly,
@@ -722,9 +718,7 @@ impl Permuter for S390xPermuter {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Platform-specific permuter selection
-// ---------------------------------------------------------------------------
 
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) type PlatformPermuter = Aarch64Permuter;
@@ -741,9 +735,7 @@ pub(crate) type PublicKeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, Platf
 pub(crate) type KeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter, true>;
 pub(crate) type PublicKeccakXof<const RATE: usize> = KeccakXofImpl<RATE, PlatformPermuter, false>;
 
-// ---------------------------------------------------------------------------
 // Sponge core
-// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 pub(crate) struct KeccakCoreImpl<const RATE: usize, P: Permuter, const ZEROIZE: bool> {
@@ -897,9 +889,7 @@ impl<const RATE: usize, P: Permuter> KeccakCoreImpl<RATE, P, false> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Single-state oneshot (Digest::digest fast-path)
-// ---------------------------------------------------------------------------
 
 /// Hash a message in one shot, bypassing the `KeccakCoreImpl` sponge wrapper.
 ///
@@ -942,9 +932,7 @@ pub(crate) fn oneshot_fixed<const RATE: usize, const OUT: usize>(ds: u8, data: &
   out
 }
 
-// ---------------------------------------------------------------------------
 // 2-state parallel oneshot (digest_pair)
-// ---------------------------------------------------------------------------
 
 /// XOR a RATE-sized block into the Keccak state.
 #[inline(always)]

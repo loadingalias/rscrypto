@@ -132,9 +132,7 @@ pub(crate) const CRC16_CCITT_STREAM_REFLECTED: Width32StreamConstants =
 pub(crate) const CRC16_IBM_STREAM_REFLECTED: Width32StreamConstants =
   Width32StreamConstants::new(CRC16_IBM_POLY as u32);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Constant Generation (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Carryless multiplication of two 64-bit values, returning the 128-bit result (hi, lo).
 #[must_use]

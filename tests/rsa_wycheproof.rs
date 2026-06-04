@@ -321,6 +321,11 @@ fn assert_oaep_wycheproof_vectors(
             test["tcId"],
             field(test, "comment")
           );
+          assert!(
+            plaintext.iter().all(|&byte| byte == 0),
+            "Wycheproof OAEP tcId {} decrypt must clear plaintext on failure",
+            test["tcId"]
+          );
           if !scratch_invalid_checked {
             let mut scratch_plaintext = vec![0xa5; key.public_key().modulus().len()];
             assert!(
@@ -522,7 +527,7 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(json: &str, expected_key_size: u64, 
 
     for test in test_cases(group) {
       let ciphertext = hex_to_vec(field(test, "ct"));
-      let mut plaintext = vec![0u8; key.public_key().modulus().len()];
+      let mut plaintext = vec![0xa5; key.public_key().modulus().len()];
       let decrypted = key.decrypt_pkcs1v15_with_blinding_factor(
         &ciphertext,
         &blinding_factor,
@@ -572,6 +577,11 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(json: &str, expected_key_size: u64, 
             "Wycheproof RSAES-PKCS1-v1_5 tcId {} accepted invalid ciphertext: {}",
             test["tcId"],
             field(test, "comment")
+          );
+          assert!(
+            plaintext.iter().all(|&byte| byte == 0),
+            "Wycheproof RSAES-PKCS1-v1_5 tcId {} decrypt must clear plaintext on failure",
+            test["tcId"]
           );
           if !scratch_invalid_checked {
             let mut scratch_plaintext = vec![0xa5; key.public_key().modulus().len()];

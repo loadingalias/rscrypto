@@ -131,9 +131,7 @@ impl Simd {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Multi-stream coefficients (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // 2-way: update step shifts by 2×128B = 256B.
 const XZ_FOLD_256B: (u64, u64) = fold16_coeff_for_bytes(CRC64_XZ_POLY, 256);
@@ -153,9 +151,7 @@ const NVME_COMBINE_4WAY: [(u64, u64); 3] = [
   fold16_coeff_for_bytes(CRC64_NVME_POLY, 128),
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Load helpers (endianness)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
 fn load_block(block: &Block) -> [Simd; 8] {
@@ -177,9 +173,7 @@ fn load_block(block: &Block) -> [Simd; 8] {
   unsafe { out.assume_init() }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Folding helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
@@ -395,9 +389,7 @@ unsafe fn update_simd_4way(
   } // unsafe
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public kernels (XZ + NVME)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "vector")]
 unsafe fn crc64_vgfm(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 16]) -> u64 {
@@ -619,9 +611,7 @@ pub(crate) unsafe fn crc64_nvme_vgfm_4way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Safe wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 pub fn crc64_xz_vgfm_safe(crc: u64, data: &[u8]) -> u64 {

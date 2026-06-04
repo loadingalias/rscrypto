@@ -149,9 +149,7 @@ pub(super) unsafe fn encrypt_4blocks(keys: &RvScalarRoundKeys, blocks: &mut [[u8
   store_halves(&mut blocks[3], next_lo3, next_hi3);
 }
 
-// ---------------------------------------------------------------------------
 // AES-128 (11 round keys, 10 rounds)
-// ---------------------------------------------------------------------------
 
 /// AES-128 round keys stored as 11 pairs of 64-bit halves for scalar AES.
 #[derive(Clone)]

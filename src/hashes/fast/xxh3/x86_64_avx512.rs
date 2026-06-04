@@ -23,9 +23,7 @@ use super::{
 /// 512-bit register, this swaps adjacent u64 elements (the `idx ^ 1` effect).
 const SWAP32: i32 = 0x4E;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD accumulate + scramble
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "avx512f")]
@@ -94,9 +92,7 @@ unsafe fn scramble_acc(acc: &mut __m512i, secret: *const u8) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Long-path loop (SIMD inner, scalar merge)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "avx512f")]
 unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
@@ -147,9 +143,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Top-level kernel functions (safe wrappers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Long-path entry point (>240B) — no ≤240B branches.
 pub fn xxh3_64_long_default(input: &[u8]) -> u64 {

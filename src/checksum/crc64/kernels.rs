@@ -26,18 +26,14 @@ pub use kernels::REFERENCE;
 
 use crate::checksum::common::kernels;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Tables (per architecture)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc64Fn;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// XZ PCLMUL kernels: [1-way, 2-way, 4-way, 7-way, 8-way]
   pub const XZ_PCLMUL: [Crc64Fn; 5] = [
@@ -61,9 +57,7 @@ pub mod x86_64 {
   /// XZ VPCLMUL 4×512-bit kernel.
   pub const XZ_VPCLMUL_4X512: Crc64Fn = arch::crc64_xz_vpclmul_4x512_safe;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-NVME Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// NVME PCLMUL kernels: [1-way, 2-way, 4-way, 7-way, 8-way]
   pub const NVME_PCLMUL: [Crc64Fn; 5] = [
@@ -94,10 +88,8 @@ pub mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc64Fn;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
   // Note: aarch64 only supports up to 3-way, slots 3-4 are duplicates
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// XZ PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)]
   pub const XZ_PMULL: [Crc64Fn; 5] = [
@@ -130,9 +122,7 @@ pub mod aarch64 {
   /// XZ SVE2 PMULL small buffer kernel.
   pub const XZ_SVE2_PMULL_SMALL: Crc64Fn = arch::crc64_xz_sve2_pmull_small_safe;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-NVME Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// NVME PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)]
   pub const NVME_PMULL: [Crc64Fn; 5] = [
@@ -171,9 +161,7 @@ pub mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc64Fn;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// XZ VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const XZ_VPMSUM: [Crc64Fn; 5] = [
@@ -184,9 +172,7 @@ pub mod power {
     arch::crc64_xz_vpmsum_8way_safe, // dup for index consistency
   ];
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-NVME Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// NVME VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const NVME_VPMSUM: [Crc64Fn; 5] = [
@@ -203,10 +189,8 @@ pub mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc64Fn;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
   // Note: s390x only supports up to 4-way, slots 3-4 are duplicates
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// XZ VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
   pub const XZ_VGFM: [Crc64Fn; 5] = [
@@ -217,9 +201,7 @@ pub mod s390x {
     arch::crc64_xz_vgfm_4way_safe, // dup for index consistency
   ];
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-NVME Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// NVME VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)]
   pub const NVME_VGFM: [Crc64Fn; 5] = [
@@ -255,10 +237,8 @@ pub mod riscv64 {
     "riscv64/zvbc-4way",
   ];
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-XZ Kernel Function Arrays
   // Note: riscv64 Zbc exposes up to 8-way; slot 4 is duplicated for index consistency.
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// XZ Zbc kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const XZ_ZBC: [Crc64Fn; 5] = [
@@ -278,9 +258,7 @@ pub mod riscv64 {
     arch::crc64_xz_zvbc_4way_safe, // dup for index consistency
   ];
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC64-NVME Kernel Function Arrays
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// NVME Zbc kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)]
   pub const NVME_ZBC: [Crc64Fn; 5] = [

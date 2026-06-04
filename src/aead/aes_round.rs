@@ -6,9 +6,7 @@
 ))]
 const BLOCK_SIZE: usize = 16;
 
-// ---------------------------------------------------------------------------
 // Hamburg vperm lookup tables (tower-field GF(2^4) AES S-box decomposition)
-// ---------------------------------------------------------------------------
 //
 // These tables implement the Hamburg technique (CHES 2009) for computing the
 // AES S-box using only 4-bit nibble lookups via byte-shuffle instructions

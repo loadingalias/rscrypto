@@ -192,6 +192,15 @@ mod argon2 {
       ("$argon2id$v=19$m=8,t=1,p=1$YQ$aGFzaGhhc2g", PhcError::InvalidLength),
       // Bad base64 character in salt.
       ("$argon2id$v=19$m=8,t=1,p=1$YWE!YWE$aGFzaA", PhcError::InvalidBase64),
+      // Padding is not part of PHC base64.
+      ("$argon2id$v=19$m=8,t=1,p=1$YWE=$aGFzaA", PhcError::InvalidBase64),
+      // One-character base64 tails are structurally impossible.
+      ("$argon2id$v=19$m=8,t=1,p=1$A$aGFzaA", PhcError::InvalidBase64),
+      // Extra segments must not be ignored.
+      (
+        "$argon2id$v=19$m=8,t=1,p=1$YWFhYWFhYWE$aGFzaA$ignored",
+        PhcError::MalformedInput,
+      ),
     ];
 
     for (input, expected) in cases {
@@ -276,6 +285,12 @@ mod scrypt {
       ("$scrypt$ln=8,r=1,p=1,extra=1$YWE$aGFzaA", PhcError::UnknownParam),
       // Bad base64 in hash.
       ("$scrypt$ln=8,r=1,p=1$YWE$aGFz#A", PhcError::InvalidBase64),
+      // Non-canonical numeric params are rejected, not normalized.
+      ("$scrypt$ln=08,r=1,p=1$YWE$aGFzaA", PhcError::MalformedParams),
+      // Padding is not part of PHC base64.
+      ("$scrypt$ln=8,r=1,p=1$YWE=$aGFzaA", PhcError::InvalidBase64),
+      // Extra segments must not be ignored.
+      ("$scrypt$ln=8,r=1,p=1$YWE$aGFzaA$ignored", PhcError::MalformedInput),
     ];
 
     for (input, expected) in cases {
@@ -284,5 +299,11 @@ mod scrypt {
         Err(actual) => assert_eq!(actual, *expected, "wrong error for {input:?}"),
       }
     }
+  }
+
+  #[test]
+  fn scrypt_oversize_input_rejected() {
+    let big = "$scrypt$ln=8,r=1,p=1$YWE$".to_string() + &"A".repeat(8192);
+    assert_eq!(Scrypt::decode_string(&big).unwrap_err(), PhcError::InputTooLong);
   }
 }

@@ -216,9 +216,7 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
   } // unsafe
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PMULL multi-stream (2-way/3-way, 128B blocks)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
@@ -455,9 +453,7 @@ unsafe fn update_simd_3way(
   } // unsafe
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PMULL+EOR3 Multi-Stream (2-way/3-way with EOR3, 128B blocks)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// 2-way striping with EOR3 folding.
 ///
@@ -961,9 +957,7 @@ pub(crate) unsafe fn crc64_nvme_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_nvme_pmull_3way(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PMULL+EOR3 Kernels (ARMv8.2-SHA3)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-64-XZ using PMULL+EOR3 folding.
 ///
@@ -1115,9 +1109,7 @@ pub(crate) unsafe fn crc64_nvme_pmull_eor3_3way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Dispatcher Wrappers (safe interface)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Safe wrapper for CRC-64-XZ PMULL kernel.
 #[inline]
@@ -1361,9 +1353,7 @@ pub fn crc64_nvme_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
   unsafe { crc64_nvme_pmull_3way(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Tests require SIMD intrinsics that Miri cannot interpret.
 #[cfg(all(test, not(miri)))]
@@ -1600,9 +1590,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // PMULL+EOR3 tests (ARMv8.2-SHA3)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_crc64_xz_pmull_eor3_matches_vector() {
@@ -1712,9 +1700,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // PMULL+EOR3 Multi-Stream tests (2-way and 3-way)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_crc64_xz_pmull_eor3_2way_matches_portable_various_lengths() {

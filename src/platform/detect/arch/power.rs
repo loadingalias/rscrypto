@@ -1,5 +1,4 @@
 // Power Detection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "powerpc64")]
 fn detect_power() -> Detected {
@@ -15,9 +14,7 @@ fn detect_power() -> Detected {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Power Runtime Detection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Runtime Power detection for Linux/Android via /proc/self/auxv.
 ///
@@ -103,5 +100,3 @@ fn runtime_power() -> Caps {
   // `-C target-feature` for static dispatch in those environments.
   Caps::NONE
 }
-
-// ─────────────────────────────────────────────────────────────────────────────

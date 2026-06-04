@@ -51,6 +51,21 @@ impl Sha224KernelId {
   }
 }
 
+#[cfg(test)]
+pub const ALL: &[Sha224KernelId] = &[
+  Sha224KernelId::Portable,
+  #[cfg(target_arch = "x86_64")]
+  Sha224KernelId::X86Sha,
+  #[cfg(target_arch = "aarch64")]
+  Sha224KernelId::Aarch64Sha2,
+  #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+  Sha224KernelId::RiscvZknh,
+  #[cfg(target_arch = "wasm32")]
+  Sha224KernelId::WasmSimd128,
+  #[cfg(target_arch = "s390x")]
+  Sha224KernelId::S390xKimd,
+];
+
 // Delegate to SHA-256 kernels — identical compression function.
 #[must_use]
 pub(crate) fn compress_blocks_fn(id: Sha224KernelId) -> CompressBlocksFn {

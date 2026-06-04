@@ -3,6 +3,7 @@
 > Same algorithms (RFC 7693), with named convenience types replacing `Blake2b<U32>`-style generic instantiations and `Blake2b256::keyed_digest(key, data)` replacing the separate `Blake2bMac<U32>` MAC type.
 
 Verified against `blake2 = "0.11.0-rc.6"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/blake2_official_vectors.rs` and `tests/blake2_differential.rs`.
 Code samples use the 0.10-style names where they remain the clearest migration
 shape for existing projects.
 

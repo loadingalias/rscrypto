@@ -57,9 +57,7 @@
 //! }
 //! ```
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Platform-Tuned Constants
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Prefetch distance for large buffer kernels (xl size, 1MB+).
 ///
@@ -86,9 +84,7 @@ pub const LARGE_BLOCK_DISTANCE: usize = 1024;
 #[cfg(target_arch = "aarch64")]
 pub const LARGE_BLOCK_DISTANCE: usize = 768;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86-64 Prefetch Intrinsics
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 mod x86_64_impl {
@@ -113,9 +109,7 @@ mod x86_64_impl {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ARM64 Prefetch Intrinsics
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64_impl {
@@ -151,9 +145,7 @@ mod aarch64_impl {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public API
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 pub(crate) use aarch64_impl::prefetch_read_l1;
@@ -173,9 +165,7 @@ pub const LARGE_BLOCK_DISTANCE: usize = 512;
 /// This function performs no memory access and is always safe to call.
 pub(crate) unsafe fn prefetch_read_l1(_ptr: *const u8) {}
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

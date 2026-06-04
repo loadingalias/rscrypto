@@ -1,8 +1,9 @@
 # Migration: `crc64fast` → `rscrypto`
 
-> Drop-in replacement for `crc64fast::Digest`. Same polynomial (CRC-64/XZ, ECMA-182), broader hardware coverage. The aside below also covers `crc64fast-nvme` → `Crc64Nvme`.
+> Same CRC-64/XZ output with method renames from `Digest` / `write` / `sum64` to `Crc64` / `update` / `finalize`. The aside below also covers `crc64fast-nvme` → `Crc64Nvme`.
 
 Verified against `crc64fast = "1.1.0"`, `crc64fast-nvme = "1.2.1"`, and the `rscrypto` 0.3.1 line.
+Evidence: `tests/crc64_properties.rs` compares one-shot and streaming output against both crates.
 
 ## TL;DR
 

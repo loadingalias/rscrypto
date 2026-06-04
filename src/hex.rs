@@ -132,9 +132,7 @@ impl fmt::Debug for DisplaySecret<'_> {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Macros
-// ---------------------------------------------------------------------------
 
 /// Implement `LowerHex`, `UpperHex`, `Display`, `Debug`, and `FromStr` for
 /// a public byte-array newtype that has `as_bytes()`, `from_bytes()`, and
@@ -334,9 +332,7 @@ macro_rules! impl_getrandom {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

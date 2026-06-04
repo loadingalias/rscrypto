@@ -6,9 +6,7 @@
 use super::kernel_tables;
 use crate::checksum::common::portable;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Polynomial-specific wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-64-XZ slice-by-8 computation.
 #[cfg_attr(miri, allow(dead_code))]
@@ -38,9 +36,7 @@ pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
   crc64_slice16(crc, data, &kernel_tables::NVME_TABLES_16)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Byte-at-a-time (fast-path for tiny buffers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-64-XZ byte-at-a-time lookup computation.
 ///
@@ -71,9 +67,7 @@ fn crc64_bytewise(mut crc: u64, data: &[u8], table: &[u64; 256]) -> u64 {
   crc
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Generic slice-by-8/16 (delegating to common::portable)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Update CRC-64 state using slice-by-8 algorithm.
 ///

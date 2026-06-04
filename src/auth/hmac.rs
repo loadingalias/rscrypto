@@ -105,6 +105,51 @@ impl HmacSha256 {
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA256_TAG_SIZE]) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
+
+  #[cfg(test)]
+  #[allow(dead_code)]
+  pub(crate) fn new_with_compress_for_test(
+    key: &[u8],
+    compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
+  ) -> Self {
+    let mut key_block = [0u8; SHA256_BLOCK_SIZE];
+    if key.len() > SHA256_BLOCK_SIZE {
+      let digest = Sha256::digest(key);
+      key_block[..SHA256_TAG_SIZE].copy_from_slice(&digest);
+    } else {
+      key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner = Sha256::new_with_compress_for_test(compress);
+      inner.update(ipad);
+      let inner_init = inner.aligned_prefix();
+
+      let mut outer = Sha256::new_with_compress_for_test(compress);
+      outer.update(opad);
+      let outer_init = outer.aligned_prefix();
+
+      (inner, inner_init, outer_init)
+    });
+
+    Self {
+      inner,
+      inner_init,
+      outer_init,
+    }
+  }
+
+  #[cfg(test)]
+  #[allow(dead_code)]
+  pub(crate) fn mac_with_compress_for_test(
+    key: &[u8],
+    data: &[u8],
+    compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
+  ) -> [u8; SHA256_TAG_SIZE] {
+    let mut mac = Self::new_with_compress_for_test(key, compress);
+    mac.update(data);
+    mac.finalize()
+  }
 }
 
 impl Mac for HmacSha256 {
@@ -478,7 +523,7 @@ impl Mac for HmacSha384 {
           inner_buf[data_end] = 0x80;
           inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
           compress(&mut state, &inner_buf);
-          ct::zeroize_no_fence(&mut inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+          ct::zeroize_no_fence(&mut inner_buf);
         }};
       }
 
@@ -529,7 +574,7 @@ impl Mac for HmacSha384 {
     }
 
     ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut outer[..SHA512_FAMILY_BLOCK_SIZE]);
+    ct::zeroize_no_fence(&mut outer);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };
@@ -742,7 +787,7 @@ impl Mac for HmacSha512 {
           inner_buf[data_end] = 0x80;
           inner_buf[padded.strict_sub(8)..padded].copy_from_slice(&total_inner_bits.to_be_bytes());
           compress(&mut state, &inner_buf);
-          ct::zeroize_no_fence(&mut inner_buf[..SHA512_FAMILY_BLOCK_SIZE]);
+          ct::zeroize_no_fence(&mut inner_buf);
         }};
       }
 
@@ -793,7 +838,7 @@ impl Mac for HmacSha512 {
     }
 
     ct::zeroize_no_fence(&mut ipad);
-    ct::zeroize_no_fence(&mut outer[..SHA512_FAMILY_BLOCK_SIZE]);
+    ct::zeroize_no_fence(&mut outer);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };

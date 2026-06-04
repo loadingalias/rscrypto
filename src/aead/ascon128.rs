@@ -46,9 +46,7 @@ fn load_bytes(data: &[u8]) -> u64 {
   u64::from_le_bytes(buf)
 }
 
-// ---------------------------------------------------------------------------
 // Key
-// ---------------------------------------------------------------------------
 
 define_aead_key_type!(AsconAead128Key, KEY_SIZE, "Ascon-AEAD128 128-bit secret key.");
 
@@ -64,15 +62,11 @@ impl AsconAead128Key {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tag
-// ---------------------------------------------------------------------------
 
 define_aead_tag_type!(AsconAead128Tag, TAG_SIZE, "Ascon-AEAD128 128-bit authentication tag.");
 
-// ---------------------------------------------------------------------------
 // AEAD
-// ---------------------------------------------------------------------------
 
 /// Ascon-AEAD128 authenticated encryption with associated data.
 ///
@@ -194,10 +188,6 @@ impl AsconAead128 {
     <Self as Aead>::decrypt(self, nonce, aad, ciphertext_and_tag, out)
   }
 
-  // -----------------------------------------------------------------------
-  // Internal helpers
-  // -----------------------------------------------------------------------
-
   /// Initialize the 320-bit state from IV, key, and nonce.
   #[inline]
   fn initialize(&self, nonce: &Nonce128) -> [u64; 5] {
@@ -262,10 +252,6 @@ impl AsconAead128 {
     tag
   }
 }
-
-// ---------------------------------------------------------------------------
-// Aead trait implementation
-// ---------------------------------------------------------------------------
 
 impl Aead for AsconAead128 {
   const KEY_SIZE: usize = KEY_SIZE;

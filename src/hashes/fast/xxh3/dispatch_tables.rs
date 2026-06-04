@@ -33,9 +33,7 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Portable,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Platform-specific tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// x86-64 with AVX-512F: single-iteration per stripe.
 #[cfg(target_arch = "x86_64")]

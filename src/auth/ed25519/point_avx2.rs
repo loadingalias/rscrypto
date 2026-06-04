@@ -246,9 +246,7 @@ unsafe fn hamburg_affine_constants() -> FieldElement2625x4 {
   FieldElement2625x4::new(&d2_fe, &d2_fe, &d2_fe_2, &d2_fe)
 }
 
-// ---------------------------------------------------------------------------
 // Scalar multiplication
-// ---------------------------------------------------------------------------
 
 /// Convert an affine `CachedPoint` (from the basepoint table) to
 /// Hamburg-scaled `CachedPointAvx2` format.
@@ -995,9 +993,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
   acc.to_extended()
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
@@ -1179,10 +1175,6 @@ mod tests {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Phase 3: Scalar multiplication tests
-  // -----------------------------------------------------------------------
-
   #[test]
   fn scalar_mul_vartime_matches_scalar() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1336,10 +1328,6 @@ mod tests {
     }
   }
 
-  // -----------------------------------------------------------------------
-  // Phase 2: Point operation tests
-  // -----------------------------------------------------------------------
-
   #[test]
   fn double_of_identity_is_identity() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1359,9 +1347,7 @@ mod tests {
     }
   }
 
-  // -----------------------------------------------------------------------
   // IFMA point operation tests
-  // -----------------------------------------------------------------------
 
   #[test]
   fn ifma_pack_unpack_roundtrip() {

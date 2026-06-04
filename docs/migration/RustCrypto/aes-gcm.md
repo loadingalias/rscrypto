@@ -3,6 +3,7 @@
 > Replace the `Aes256Gcm` / `Key<Aes256Gcm>` / `Nonce` / `Payload { msg, aad }` builder with rscrypto's named types and a buffer-style `encrypt(&nonce, aad, plaintext, &mut out)`. Same algorithm, byte-identical ciphertext+tag, no `Vec` allocations on the hot path.
 
 Verified against `aes-gcm = "0.10.3"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/aes128gcm_oracle.rs`, `tests/aes256gcm_oracle.rs`, and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
