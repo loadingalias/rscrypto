@@ -15,6 +15,9 @@ rsa = { version = "0.9", features = ["sha2"] }
 
 # After
 rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
+
+# After, when generating keys or using randomized private/encryption APIs
+rscrypto = { version = "0.3.1", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Map
@@ -25,7 +28,7 @@ rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
 | `RsaPrivateKey` | `RsaPrivateKey` |
 | PKCS#1 / PKCS#8 / SPKI import-export traits | inherent DER import-export methods |
 | `Pss`, `Pkcs1v15Sign`, `Oaep` | `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile` |
-| caller-managed RNG | `getrandom` constructors or explicit deterministic test hooks |
+| caller-managed RNG | `getrandom`-seeded internal randomness for generated values, or explicit deterministic test hooks |
 
 ## Import Keys
 
@@ -47,6 +50,27 @@ let public = private.public_key();
 
 For public keys, use `RsaPublicKey::from_spki_der()` for SPKI DER and
 `RsaPublicKey::from_pkcs1_der()` for PKCS#1 DER.
+
+## Generate Keys
+
+```rust
+// After
+use rscrypto::{RsaKeyGenerationContract, RsaPrivateKey};
+
+assert_eq!(
+  RsaPrivateKey::GENERATION_CONTRACT,
+  RsaKeyGenerationContract::Fips1865A13ProbablePrime,
+);
+
+let private_key = RsaPrivateKey::generate(3072)?;
+let public_key = private_key.public_key();
+```
+
+Enable `getrandom` for key generation. rscrypto does not take a caller-managed
+RNG parameter for `RsaPrivateKey::generate`; it seeds an internal HMAC_DRBG from
+OS entropy and uses that DRBG for the FIPS 186-5 Appendix A.1.3 probable-prime
+generation path. This is a code-level key-generation contract, not a
+CMVP/FIPS 140-3 validation claim.
 
 ## Verify RSA-PSS
 

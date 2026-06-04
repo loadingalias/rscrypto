@@ -115,8 +115,9 @@ Features: `signatures` / `key-exchange` or `ed25519` / `rsa` / `x25519`.
 | `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
 
-RSA public-key verification and import require `rsa` (`alloc`, `sha2`). OS-backed
-private operations and key generation require `getrandom`; deterministic
+RSA public-key verification and import require `rsa` (`alloc`, `sha2`).
+OS-backed private operations and RSA key generation require `getrandom`. Key
+generation seeds an internal HMAC_DRBG from OS entropy; deterministic
 caller-supplied salt/blinding APIs remain available for constrained integrations
 that own their entropy boundary.
 
