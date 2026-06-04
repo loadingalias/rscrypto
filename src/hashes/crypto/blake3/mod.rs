@@ -1260,7 +1260,6 @@ fn compress(chaining_value: &[u32; 8], block_words: &[u32; 16], counter: u64, bl
 
 #[inline(always)]
 fn first_8_words(words: [u32; 16]) -> [u32; 8] {
-  // SAFETY: fixed-size arrays
   [
     words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7],
   ]
@@ -3381,9 +3380,7 @@ impl Xof for Blake3XofReader {
 
 impl_xof_read!(Blake3XofReader);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Unified tiny-input fast path helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Compress a single block directly to the root hash words (8 words).
 ///
@@ -3510,9 +3507,7 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
   first_8_words((kernel.compress)(&cv, &final_words, 0, last_len as u32, final_flags))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // x86_64 tiny one-shot helpers (keyed/derive sensitive)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
@@ -3890,9 +3885,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   cv
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // aarch64 tiny one-shot helpers (keyed/derive sensitive)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
@@ -4099,10 +4092,18 @@ mod tests {
   #[test]
   fn verify_keyed_rejects_mismatched_tag() {
     let data = b"authenticated payload";
-    let mut bad = Blake3::keyed_digest(KEY, data).to_bytes();
-    bad[0] ^= 0x01;
-    let bad = Blake3KeyedHash::from_bytes(bad);
-    assert_eq!(Blake3::verify_keyed(KEY, data, &bad), Err(VerificationError::new()));
+    let expected = Blake3::keyed_digest(KEY, data).to_bytes();
+
+    for index in [0, expected.len() / 2, expected.len() - 1] {
+      let mut bad = expected;
+      bad[index] ^= 0x01;
+      let bad = Blake3KeyedHash::from_bytes(bad);
+      assert_eq!(
+        Blake3::verify_keyed(KEY, data, &bad),
+        Err(VerificationError::new()),
+        "BLAKE3 keyed verify accepted a tag corrupted at byte {index}"
+      );
+    }
   }
 
   #[test]

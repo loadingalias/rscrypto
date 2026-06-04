@@ -57,18 +57,14 @@ mod s390x;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Tables (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 mod kernel_tables {
   use super::*;
   pub static OPENPGP_TABLES_8: [[u32; 256]; 8] = generate_crc24_tables_8(CRC24_OPENPGP_POLY);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Reference Kernel Wrapper
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise reference implementation for CRC-24/OPENPGP.
 #[cfg(any(test, feature = "std"))]
@@ -77,9 +73,7 @@ fn crc24_openpgp_reference(crc: u32, data: &[u8]) -> u32 {
   crc24_bitwise(CRC24_OPENPGP_POLY, crc, data)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Auto Dispatch Function (using new dispatch module)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "std")]
 type Crc24DispatchFn = crate::checksum::dispatchers::Crc24Fn;
@@ -190,9 +184,7 @@ fn crc24_openpgp_dispatch_vectored(crc: u32, bufs: &[&[u8]]) -> u32 {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get the name of the CRC-24/OPENPGP kernel that would be selected for a given buffer length.
 ///
@@ -216,9 +208,7 @@ pub(crate) fn crc24_openpgp_selected_kernel_name(len: usize) -> &'static str {
   table.select_names(len).crc24_openpgp_name
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-24 Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-24/OPENPGP checksum.
 ///
@@ -347,9 +337,7 @@ impl Crc24OpenPgp {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-24 Wrapper
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Buffer size for buffered CRC-24 wrappers.
 #[cfg(feature = "alloc")]
@@ -371,9 +359,7 @@ define_buffered_crc! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Crc24OpenPgp {
@@ -437,10 +423,6 @@ mod tests {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Cross-Check Tests: All accelerated kernels vs bitwise reference
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod cross_check {
   extern crate std;
@@ -448,9 +430,7 @@ mod cross_check {
   use super::*;
   use crate::checksum::common::tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS, generate_test_data};
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-24/OPENPGP Cross-Check Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   const INIT: u32 = 0x00B7_04CE;
   const MASK: u32 = 0x00FF_FFFF;

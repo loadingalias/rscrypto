@@ -5,7 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Miri Memory Safety Tests for rscrypto
 #
 # Miri interprets Rust code and checks for undefined behavior, memory safety
@@ -28,7 +27,6 @@ source "$SCRIPT_DIR/../lib/common.sh"
 #   ./scripts/test/test-miri.sh --rsa     # Run RSA release-evidence Miri surface
 #   ./scripts/test/test-miri.sh --all     # Run exhaustive lib tests under Miri
 #   RSCRYPTO_MIRI_SCOPE=exhaustive ./scripts/test/test-miri.sh
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Running Memory Safety Tests via Miri..."
@@ -112,9 +110,7 @@ run_miri_test_target() {
   cargo miri test --test "$target" --features "$features"
 }
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Run Miri Tests
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 echo "Testing: rscrypto"
 echo "Mode: $MIRI_SCOPE"

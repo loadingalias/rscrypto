@@ -3,6 +3,7 @@
 > Replace the runtime-variant `Argon2::new(Algorithm::*, Version, Params)` with type-level `Argon2id` / `Argon2i` / `Argon2d`. Same RFC 9106 spec, byte-identical output, PHC string round-trip built in (no `password-hash` crate dependency).
 
 Verified against `argon2 = "0.6.0-rc.8"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/argon2_vectors.rs`, `tests/argon2_differential.rs`, `tests/argon2_kernels.rs`, `tests/argon2_parallel.rs`, and `tests/phc_roundtrip.rs`.
 The examples use the 0.5-style call shape because that is still common in
 existing projects; the current oracle coverage in this repository is the 0.6
 RC dev-dependency.

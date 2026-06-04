@@ -30,9 +30,7 @@ where
   C: Checksum + ChecksumCombine,
   C::Output: Eq + core::fmt::Debug,
 {
-  // ─────────────────────────────────────────────────────────────────────────
   // Combine Property Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Test that combine produces crc(A || B) from crc(A) and crc(B).
   ///
@@ -86,9 +84,7 @@ where
     assert_eq!(combined, crc_data, "combine(crc(''), crc(B), len(B)) != crc(B)");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Streaming Consistency Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Test that streaming updates produce the same result as one-shot.
   #[inline]
@@ -149,9 +145,7 @@ where
     assert_eq!(second, third, "finalize() not idempotent (2nd != 3rd)");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Reset Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Test that reset returns the hasher to its initial state.
   #[inline]
@@ -167,9 +161,7 @@ where
     assert_eq!(after_reset, fresh, "reset did not restore initial state");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Combine + Streaming Integration Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Test that streaming and combine work together correctly.
   ///
@@ -201,9 +193,7 @@ where
     assert_eq!(combined, full, "streaming + combine != full CRC");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Edge Cases
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// Test empty input.
   #[inline]
@@ -305,9 +295,7 @@ macro_rules! define_crc_property_tests {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Shared Cross-Check Test Infrastructure
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Lengths covering SIMD boundaries, alignment edges, and common sizes.
 ///
@@ -344,9 +332,7 @@ pub fn generate_test_data(len: usize) -> alloc::vec::Vec<u8> {
     .collect()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests for the test harness itself
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod harness_self_tests {

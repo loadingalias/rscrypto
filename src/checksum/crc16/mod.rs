@@ -47,9 +47,7 @@ mod s390x;
 #[cfg(target_arch = "x86_64")]
 mod x86_64;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Tables (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 mod kernel_tables {
   use super::*;
@@ -59,9 +57,7 @@ mod kernel_tables {
   pub static IBM_TABLES_8: [[u16; 256]; 8] = generate_crc16_tables_8(CRC16_IBM_POLY);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Reference Kernel Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise reference implementation for CRC-16/CCITT.
 #[cfg(any(test, feature = "std"))]
@@ -77,9 +73,7 @@ fn crc16_ibm_reference(crc: u16, data: &[u8]) -> u16 {
   crc16_bitwise(CRC16_IBM_POLY, crc, data)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Dispatch Functions (using new dispatch module)
-// ─────────────────────────────────────────────────────────────────────────────
 
 type Crc16DispatchFn = crate::checksum::dispatchers::Crc16Fn;
 #[cfg(feature = "std")]
@@ -226,9 +220,7 @@ define_crc_dispatch! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get the name of the CRC-16/CCITT kernel that would be selected for a given buffer length.
 ///
@@ -274,9 +266,7 @@ pub(crate) fn crc16_ibm_selected_kernel_name(len: usize) -> &'static str {
   table.select_names(len).crc16_ibm_name
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-16/X25 checksum (also known as IBM-SDLC).
 ///
@@ -562,9 +552,7 @@ impl Crc16Ibm {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Buffered CRC-16 Wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Buffer size for buffered CRC-16 wrappers.
 #[cfg(feature = "alloc")]
@@ -602,9 +590,7 @@ define_buffered_crc! {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Introspection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(feature = "diag")]
 impl crate::checksum::introspect::KernelIntrospect for Crc16Ccitt {
@@ -702,10 +688,6 @@ mod tests {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Cross-Check Tests: All accelerated kernels vs bitwise reference
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod cross_check {
   extern crate std;
@@ -713,9 +695,7 @@ mod cross_check {
   use super::*;
   use crate::checksum::common::tests::{STREAMING_CHUNK_SIZES, TEST_LENGTHS, generate_test_data};
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Cross-Check Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn ccitt_all_lengths() {
@@ -804,9 +784,7 @@ mod cross_check {
     assert_eq!(reference, expected, "Reference kernel check value mismatch");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/IBM Cross-Check Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn ibm_all_lengths() {
@@ -895,9 +873,7 @@ mod cross_check {
     assert_eq!(reference, expected, "Reference kernel check value mismatch");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Portable Kernel Explicit Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn ccitt_portable_matches_reference() {

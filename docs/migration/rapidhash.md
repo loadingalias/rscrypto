@@ -3,6 +3,7 @@
 > Replace `rapidhash::v3::rapidhash_v3` with `rscrypto::RapidHash::hash`. Bit-equivalent, single feature flag, no version-pinning gymnastics.
 
 Verified against `rapidhash = "4.4.1"` (V3 with avalanche, default secrets) and the `rscrypto` 0.3.1 line.
+Evidence: `tests/rapidhash_differential.rs`.
 
 ## TL;DR
 

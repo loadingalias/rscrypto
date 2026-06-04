@@ -42,9 +42,16 @@ fn hmac_sha256_rfc4231_vectors() {
 fn hmac_sha256_verify_rejects_corrupted_tag() {
   let key = b"shared-secret";
   let data = b"auth message";
-  let mut tag = HmacSha256::mac(key, data);
-  tag[0] ^= 0x80;
-  assert!(HmacSha256::verify_tag(key, data, &tag).is_err());
+  let tag = HmacSha256::mac(key, data);
+
+  for index in [0, tag.len() / 2, tag.len() - 1] {
+    let mut corrupted = tag;
+    corrupted[index] ^= 0x80;
+    assert!(
+      HmacSha256::verify_tag(key, data, &corrupted).is_err(),
+      "HMAC-SHA256 accepted a tag corrupted at byte {index}"
+    );
+  }
 }
 
 /// Verify the oneshot path matches the streaming path across padding boundaries.

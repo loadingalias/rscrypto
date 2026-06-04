@@ -50,9 +50,7 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 12], aad: &[u8
   assert_eq!(ours, plaintext, "decrypt round-trip failed (len={})", plaintext.len());
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Oracle Agreement
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[test]
 fn aes256gcmsiv_matches_rustcrypto_oracle() {
@@ -135,9 +133,7 @@ fn aes256gcmsiv_is_deterministic_under_nonce_reuse() {
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Forgery Rejection
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[test]
 fn aes256gcmsiv_rejects_modified_tag() {

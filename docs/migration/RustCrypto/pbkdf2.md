@@ -3,6 +3,7 @@
 > Replace the free function `pbkdf2_hmac::<Sha256>(password, salt, iters, &mut out)` with `Pbkdf2Sha256::derive_key_array::<N>(password, salt, iters)?`. Adds a fallible result (rejects 0 iterations and over-long output), a stateful precompute when you derive multiple keys from the same password, and a constant-time `verify_password` helper.
 
 Verified against `pbkdf2 = "0.13.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/pbkdf2_kat_vectors.rs`, `tests/pbkdf2_differential.rs`, and `tests/pbkdf2_wycheproof.rs`.
 
 ## TL;DR
 

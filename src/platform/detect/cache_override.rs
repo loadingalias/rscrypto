@@ -1,6 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
 // Override System
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(all(feature = "std", not(miri)))]
 use std::sync::OnceLock;
@@ -103,9 +101,7 @@ fn detect_with_override() -> Detected {
   detect_uncached()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Atomic Cache (no_std with 64-bit atomics)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
 mod atomic_cache {

@@ -3,6 +3,7 @@
 > Replace `xxhash_rust::xxh3::xxh3_64` with `rscrypto::Xxh3::hash` (and `xxh3_128` with `Xxh3_128::hash`). One-shot bit-equivalent. Streaming routes through `Xxh3Hasher` (a `core::hash::Hasher`).
 
 Verified against `xxhash-rust = "0.8.15"` (with `xxh3` feature) and the `rscrypto` 0.3.1 line.
+Evidence: `tests/xxh3_differential.rs`.
 
 ## TL;DR
 

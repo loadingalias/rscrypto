@@ -3,6 +3,7 @@
 > Replace `Hmac::<Sha256>` (generic over digest) with `HmacSha256` (named per hash). Key construction is now infallible, `finalize()` borrows, and the one-shot helper `HmacSha256::mac(key, data)` collapses the four-line idiom into one.
 
 Verified against `hmac = "0.13.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, the HMAC proptests, and `tests/hmac_wycheproof.rs`.
 
 ## TL;DR
 

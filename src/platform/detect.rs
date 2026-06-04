@@ -38,9 +38,7 @@ impl core::fmt::Display for OverrideError {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Main API
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Detected CPU state: capabilities and architecture.
 ///
@@ -153,9 +151,7 @@ pub fn arch() -> Arch {
 include!("detect/compile_time.rs");
 include!("detect/cache_override.rs");
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Uncached Detection
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Detect capabilities without caching (for testing/benchmarking).
 #[cold]

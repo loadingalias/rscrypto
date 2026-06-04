@@ -104,6 +104,38 @@ fn hmac_sha512_rfc4231_vectors() {
 }
 
 #[test]
+fn hmac_sha384_verify_rejects_corrupted_tag_positions() {
+  let key = b"shared-secret";
+  let data = b"auth message";
+  let tag = HmacSha384::mac(key, data);
+
+  for index in [0, tag.len() / 2, tag.len() - 1] {
+    let mut corrupted = tag;
+    corrupted[index] ^= 0x80;
+    assert!(
+      HmacSha384::verify_tag(key, data, &corrupted).is_err(),
+      "HMAC-SHA384 accepted a tag corrupted at byte {index}"
+    );
+  }
+}
+
+#[test]
+fn hmac_sha512_verify_rejects_corrupted_tag_positions() {
+  let key = b"shared-secret";
+  let data = b"auth message";
+  let tag = HmacSha512::mac(key, data);
+
+  for index in [0, tag.len() / 2, tag.len() - 1] {
+    let mut corrupted = tag;
+    corrupted[index] ^= 0x80;
+    assert!(
+      HmacSha512::verify_tag(key, data, &corrupted).is_err(),
+      "HMAC-SHA512 accepted a tag corrupted at byte {index}"
+    );
+  }
+}
+
+#[test]
 fn hmac_sha2_64bit_family_oneshot_matches_streaming() {
   let key = &[0x42u8; 64];
 

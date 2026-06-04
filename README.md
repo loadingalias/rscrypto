@@ -9,11 +9,11 @@
 
 **Pure Rust cryptography: RSA, Ed25519, X25519, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
 
-`rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed without a mandatory C, OpenSSL, or system lib story.
+`rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed w/o dragging in mandatory C, OpenSSL, or system lib story.
 
-Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the whole shebang. The portable Rust backend is always present. SIMD and assembly are only accelerators.
+Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the whole shebang. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current benchmark scorecards:** Linux CI is `1.61x` fastest-external geomean with `3,545 / 5,832` wins and `5,210 / 5,832` wins-or-ties. Apple Silicon (MBP M1, macOS/aarch64 local full run) is `1.25x` fastest-external geomean with `235 / 463` wins and `450 / 463` wins-or-ties.
+**Current Benchmark Results:** Linux is currently`1.61x` fastest-external geomean w/ `3,545 / 5,832` wins and `5,210 / 5,832` wins-or-ties. Apple Silicon (MBP M1, my local dev machine) is `1.25x` fastest-external geomean with `235 / 463` wins and `450 / 463` wins-or-ties.
 
 <p align="center">
   <img alt="rscrypto benchmark scorecard: 1.61x fastest-external geomean across Linux CI with 3,545 wins and 5,210 wins-or-ties out of 5,832 matched benchmark comparisons."
@@ -27,16 +27,16 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 
 ## Why rscrypto?
 
-- **RSA is now a first class citizen.** Strict DER import/export, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, FIPS 186-5 A.1.3 probable-prime key generation in code, X.509/JWT/COSE/TLS profile mapping, blinded private operations, and reusable scratch APIs.
-- **One coherent primitive stack.** Avoid composing half a dozen crates with different APIs, feature models, and security conventions.
+- **RSA is a first class citizen.** Strict DER import/export, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, FIPS 186-5 A.1.3 probable-prime key generation in code, X.509/JWT/COSE/TLS profile mapping, blinded private operations, and reusable scratch APIs.
+- **One coherent primitive stack.** Avoid composing a dozen crates with different APIs, feature models, and security conventions.
 - **Small builds stay small.** Enable `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, `argon2`, or any other leaf without pulling in the world.
-- **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference implementation.
-- **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM all have portable fallbacks, with optimized kernels where they pay.
+- **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference impl.
+- **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM all have portable fallbacks, w/ optimized kernels where they pay.
 - **`no_std` is a first-class target.** Server, CLI, embedded, bare-metal, and WASM builds use the same crate and feature model.
 - **Audit knobs are explicit.** `portable-only` forces runtime dispatch to the constant-time portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
-`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. RSA key generation follows FIPS 186-5 Appendix A.1.3 in code; that is an algorithmic contract, not a CMVP validation claim.
+`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module.
 
 ## Install
 
@@ -47,14 +47,14 @@ Minimal `no_std` SHA-2 build:
 rscrypto = { version = "0.3.1", default-features = false, features = ["sha2"] }
 ```
 
-Full primitive stack with OS randomness enabled:
+Full primitive stack w/ OS randomness enabled:
 
 ```toml
 [dependencies]
 rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
 ```
 
-Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-generation entropy from the operating system.
+Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-gen entropy from the operating system.
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ h.update(b"world");
 assert_eq!(h.finalize(), one_shot);
 ```
 
-The common API shape is deliberately simple/boring: one-shot when convenient, streaming when it's needed.
+The common API shape is deliberately simple: one-shot when convenient, streaming when it's needed.
 
 ## Verify RSA Signatures
 
@@ -115,7 +115,7 @@ fn verify_batch(public_key_der: &[u8], signed_messages: &[(&[u8], &[u8])]) -> bo
 }
 ```
 
-Enable `getrandom` for RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. RSA key generation uses `getrandom` to seed an internal HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
+Enable `getrandom` for RSA key gen, signing salt/blinding, OAEP encryption randomness, and private-op blinding. RSA key generation uses `getrandom` to seed an internal HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
 
 ```toml
 [dependencies]
@@ -178,34 +178,35 @@ assert!(
 
 | Need | Included | Feature path |
 |---|---|---|
-| Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
+| Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
 | MACs and KDFs | HMAC-SHA-2, KMAC256, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
-| Password hashing | Argon2d/i/id, scrypt, PHC string encode/verify | `auth`, `argon2`, `scrypt`, `phc-strings` |
-| Public-key primitives | Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange | `auth`, `signatures`, `ed25519`, `rsa`, `x25519` |
-| AEAD encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
+| Password Hashing | Argon2d/i/id, scrypt, PHC string encode/verify | `auth`, `argon2`, `scrypt`, `phc-strings` |
+| Public-key Primitives | Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange | `auth`, `signatures`, `ed25519`, `rsa`, `x25519` |
+| AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
-| Fast non-crypto hashes | XXH3-64/128, RapidHash 64/128 | `xxh3`, `rapidhash` |
+| Fast Non-crypto Hashes | XXH3-64/128, RapidHash 64/128 | `xxh3`, `rapidhash` |
 
 Fast non-cryptographic hashes and CRCs are for indexing, checksumming, dedup, and integrity plumbing. Do not use them for passwords, signatures, MACs, key derivation, or authentication... it's obviously not safe.
 
-Feature flags are layered deliberately:
+Flags are layered deliberately:
 
-- **Leaf primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `crc32`, etc.
+- **Leaf Primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `crc32`, etc.
 - **Families/Groups:** `hashes`, `checksums`, `macs`, `kdfs`, `password-hashing`, `aead`, `signatures`, `key-exchange`.
-- **Deployment controls:** `std`, `alloc`, `getrandom`, `parallel`, `serde`, `serde-secrets`, `portable-only`.
+- **Deployment Controls:** `std`, `alloc`, `getrandom`, `parallel`, `serde`, `serde-secrets`, `portable-only`.
 
-Full feature inventory: [`docs/features.md`](docs/features.md). Public type inventory: [`docs/types.md`](docs/types.md).
+Full Feature Inventory: [`docs/features.md`](docs/features.md).
+Public Type Inventory: [`docs/types.md`](docs/types.md).
 
 ## Performance
 
-Current public benchmark evidence comes from two passes:
+Current public benchmark evidence comes from two passes that are both updated regularly and programmatically:
 
-- Linux CI: 2026-05-27, commit `26845c8`, nine Linux runners. This run is filter-based and does not include Argon2, scrypt, or Ascon-AEAD rows.
-- Apple Silicon: 2026-06-01, commit `b06b946`, local MBP M1 macOS/aarch64 full run, including Argon2, scrypt, and Ascon-AEAD rows.
+- Linux (CI): Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V.
+- Apple Silicon: My local MBP M1, Apple Silicon aarch64.
 
-Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster. Do not combine the Linux and Apple Silicon totals as one aggregate because they were collected on different commits and benchmark scopes.
+Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster.
 
-| Area | Compared against | Result |
+| Area | Compared Against | Result |
 |---|---|---:|
 | **Linux CI fastest external** | strongest matched Rust baseline per case | **1.61x geomean** |
 | Linux CI scorecard | fastest external | **3,545 wins / 5,832 pairs** |
@@ -222,11 +223,11 @@ Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rsc
 | Ed25519 sign / verify | Linux CI / Apple Silicon | **Linux: 1.14x / 1.00x; Apple Silicon: 1.02x / 1.00x geomean** |
 | X25519 | Linux CI / Apple Silicon | **0.95x / 1.00x geomean** |
 
-The honest weak spots right now: Linux CI still shows PBKDF2-SHA256 at `iters=1` at 0.81x, X25519 Diffie-Hellman at 0.92x, RSA-4096 verification at 0.94x, and small-message AEAD overhead on plenty of 1-byte and 32-byte rows. Apple Silicon still has BLAKE3 64 KiB losses, HMAC-SHA256 bulk pressure against `aws-lc-rs`, empty-message ChaCha20-Poly1305 overhead, and SHA3-256 streaming losses; SHA-3/SHAKE should be described per-platform because the Linux 2.15x SHA-3 result does not carry to the MBP M1 run. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
+The honest weak spots right now: Linux still shows PBKDF2-SHA256 at `iters=1` at 0.81x, X25519 Diffie-Hellman at 0.92x, RSA-4096 verification at 0.94x, and small-message AEAD overhead on plenty of 1-byte and 32-byte rows. Apple Silicon still has BLAKE3 64 KiB losses, HMAC-SHA256 bulk pressure against `aws-lc-rs`, empty-message ChaCha20-Poly1305 overhead, and SHA3-256 streaming losses; SHA-3/SHAKE should be described per-platform because the Linux 2.15x SHA-3 result does not carry to the MBP M1 run. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 
-`rscrypto` keeps the portable Rust path as the byte-for-byte authority. ISA-specific kernels are selected only when the target and runtime CPU support them.
+`rscrypto` keeps the portable Rust path as the byte-for-byte authority. ISA kernels are selected only when the target and runtime CPU support them.
 
 | Target family | Acceleration examples |
 |---|---|
@@ -243,13 +244,13 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture not
 
 ## Security
 
-- Constant-time MAC, AEAD, and signature verification.
+- Scoped constant-time verification and secret-bearing operations; [`docs/security.md`](docs/security.md) names the boundary.
 - Opaque verification errors that avoid leaking failure details.
 - Secret-bearing types zeroize on drop and mask `Debug`.
 - Strict arithmetic for counters, lengths, offsets, and indices.
 - AEAD failed-open paths wipe output buffers.
 - Portable and accelerated backends are differentially tested for byte-identical output.
-- Official test vectors, fuzz corpus replay, Miri, `cargo deny`, and `cargo audit` run in CI.
+- Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
 - RSA private-operation release claims require the dedicated RSA Miri and first-order leakage gates.
 
 Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
@@ -264,6 +265,7 @@ Vulnerabilities should be reported through [GitHub Private Vulnerability Reporti
 - Public type inventory: [`docs/types.md`](docs/types.md)
 - Platform matrix: [`docs/platforms.md`](docs/platforms.md)
 - Security guidance: [`docs/security.md`](docs/security.md)
+- Test vector coverage: [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md)
 - Migration guides: [`docs/migration/`](docs/migration/)
 - Benchmark methodology: [`docs/benchmarking.md`](docs/benchmarking.md)
 - Benchmarks: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)

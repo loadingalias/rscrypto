@@ -47,9 +47,7 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 32], aad: &[u8
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Oracle Agreement
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[test]
 fn aegis256_matches_oracle() {
@@ -97,9 +95,7 @@ fn aegis256_oracle_large_input() {
   assert_matches_oracle(&key, &nonce, b"large", &plaintext);
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Forgery Rejection
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[test]
 fn aegis256_rejects_modified_tag() {

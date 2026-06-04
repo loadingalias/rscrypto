@@ -7,9 +7,7 @@
 //! `r = 8`, `p = 1`, `output = 32 bytes`).
 //!
 //! The implementation reuses [`crate::Pbkdf2Sha256`] for the setup /
-//! finalisation legs and is portable Rust throughout. Platform-specific
-//! Salsa20/8 kernels (SSE2 / AVX2 / NEON / VSX / simd128 / RVV) plug into
-//! the existing [`KernelId`] dispatch in a later phase.
+//! finalisation legs and is portable Rust throughout.
 //!
 //! # Examples
 //!

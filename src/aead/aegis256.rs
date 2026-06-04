@@ -40,10 +40,6 @@ const C1: [u8; 16] = [
   0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd,
 ];
 
-// ---------------------------------------------------------------------------
-// Block helpers
-// ---------------------------------------------------------------------------
-
 #[cfg(not(target_arch = "s390x"))]
 type Block = [u8; BLOCK_SIZE];
 
@@ -83,9 +79,7 @@ fn zero_block() -> Block {
   [0u8; BLOCK_SIZE]
 }
 
-// ---------------------------------------------------------------------------
 // Portable backend
-// ---------------------------------------------------------------------------
 //
 // On s390x, the `s390x_vperm` module provides a Hamburg vperm backend.
 // Gate this section to suppress dead-code warnings.
@@ -233,9 +227,7 @@ fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
   tag
 }
 
-// ---------------------------------------------------------------------------
 // riscv64 scalar AES backend (Zkne)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "aarch64")]
 #[allow(unsafe_op_in_unsafe_fn)]
@@ -290,21 +282,15 @@ fn resolve_backend() -> AeadBackend {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Key
-// ---------------------------------------------------------------------------
 
 define_aead_key_type!(Aegis256Key, KEY_SIZE, "AEGIS-256 256-bit secret key.");
 
-// ---------------------------------------------------------------------------
 // Tag
-// ---------------------------------------------------------------------------
 
 define_aead_tag_type!(Aegis256Tag, TAG_SIZE, "AEGIS-256 128-bit authentication tag.");
 
-// ---------------------------------------------------------------------------
 // AEAD
-// ---------------------------------------------------------------------------
 
 /// AEGIS-256 authenticated encryption with associated data.
 ///
@@ -439,9 +425,7 @@ impl Aegis256 {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Portable encrypt/decrypt helpers
-// ---------------------------------------------------------------------------
 
 #[cfg(not(target_arch = "s390x"))]
 fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
@@ -509,10 +493,6 @@ fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
 
   finalize(&mut s, aad.len(), ct_len)
 }
-
-// ---------------------------------------------------------------------------
-// Aead trait implementation
-// ---------------------------------------------------------------------------
 
 impl Aead for Aegis256 {
   const KEY_SIZE: usize = KEY_SIZE;
@@ -688,9 +668,7 @@ impl Aead for Aegis256 {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

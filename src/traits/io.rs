@@ -125,9 +125,7 @@ fn debug_adapter<R: core::fmt::Debug, H: core::fmt::Debug>(
     .finish()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Checksum I/O Adapters
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Wraps a [`Read`](std::io::Read) and computes a checksum transparently.
 ///
@@ -373,9 +371,7 @@ impl<W: std::io::Write, C: crate::Checksum> std::io::Write for ChecksumWriter<W,
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Digest I/O Adapters
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Wraps a [`Read`](std::io::Read) and computes a digest transparently.
 ///

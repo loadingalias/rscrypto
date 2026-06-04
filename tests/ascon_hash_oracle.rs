@@ -21,9 +21,7 @@ use rscrypto::{
   traits::{Digest as _, Xof as _},
 };
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Ascon-Hash256 Oracle
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn assert_hash_matches_oracle(input: &[u8]) {
   let ours = AsconHash256::digest(input);
@@ -81,9 +79,7 @@ fn ascon_hash256_oracle_streaming() {
   assert_eq!(ours_digest, oracle_digest);
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Ascon-XOF128 Oracle
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn assert_xof_matches_oracle(input: &[u8], squeeze_len: usize) {
   // rscrypto XOF.

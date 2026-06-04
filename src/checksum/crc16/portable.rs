@@ -15,9 +15,7 @@ pub fn crc16_ibm_slice8(crc: u16, data: &[u8]) -> u16 {
   portable::slice8_16(crc, data, &kernel_tables::IBM_TABLES_8)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Byte-at-a-time (fast-path for tiny buffers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-16/CCITT byte-at-a-time lookup computation.
 ///

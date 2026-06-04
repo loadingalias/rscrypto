@@ -20,9 +20,7 @@ pub use kernels::REFERENCE;
 
 use crate::checksum::common::kernels;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Tables (per architecture)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64 {

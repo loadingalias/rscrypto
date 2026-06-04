@@ -4,9 +4,6 @@
 //! `sha256sum0`, `sha256sum1`, `sha256sig0`, `sha256sig1` to accelerate the
 //! sigma/sum operations in SHA-256 compression. Each replaces 5-10 base
 //! instructions (shifts, rotates, XORs) with a single dedicated instruction.
-//!
-//! Expected speedup: ~1.4-2x over the portable scalar implementation.
-//!
 //! # Safety
 //!
 //! All functions require the `zknh` target feature.
@@ -26,25 +23,25 @@ use super::BLOCK_LEN;
 
 #[inline(always)]
 fn sum0(x: u32) -> u32 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha256sum0(x) }
 }
 
 #[inline(always)]
 fn sum1(x: u32) -> u32 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha256sum1(x) }
 }
 
 #[inline(always)]
 fn sig0(x: u32) -> u32 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha256sig0(x) }
 }
 
 #[inline(always)]
 fn sig1(x: u32) -> u32 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha256sig1(x) }
 }
 

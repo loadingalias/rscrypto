@@ -3,7 +3,7 @@
 //! This module provides the canonical "source of truth" for CRC computation.
 //! These implementations process one bit at a time, making them:
 //!
-//! - **Obviously correct**: The algorithm directly mirrors the mathematical definition
+//! - **Direct bitwise model**: The algorithm mirrors the mathematical definition
 //! - **Audit-friendly**: ~10 lines of code per width, no lookup tables
 //! - **Const-evaluable**: Can verify check values at compile time
 //!
@@ -37,9 +37,7 @@
 // Clippy cannot prove this in const fn contexts, but bounds are statically guaranteed.
 #![allow(clippy::indexing_slicing)]
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Reference Implementation
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise CRC-16 computation (reflected, LSB-first).
 ///
@@ -72,9 +70,7 @@ pub const fn crc16_bitwise(poly: u16, init: u16, data: &[u8]) -> u16 {
   crc
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-24 Reference Implementation
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise CRC-24 computation (non-reflected, MSB-first).
 ///
@@ -116,9 +112,7 @@ pub const fn crc24_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
   (crc >> 8) & 0x00FF_FFFF
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 Reference Implementation
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise CRC-32 computation (reflected, LSB-first).
 ///
@@ -151,9 +145,7 @@ pub const fn crc32_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
   crc
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-64 Reference Implementation
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Bitwise CRC-64 computation (reflected, LSB-first).
 ///
@@ -186,9 +178,7 @@ pub const fn crc64_bitwise(poly: u64, init: u64, data: &[u8]) -> u64 {
   crc
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Compile-Time Verification
-// ─────────────────────────────────────────────────────────────────────────────
 
 // These const assertions verify the reference implementations against known
 // check values at compile time. If these fail, the build fails.
@@ -258,17 +248,13 @@ const _: () = {
   assert!(check == 0xAE8B_1486_0A79_9888);
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(feature = "crc16")]
@@ -303,9 +289,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-24 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(feature = "crc24")]
@@ -328,9 +312,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-32 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(feature = "crc32")]
@@ -368,9 +350,7 @@ mod tests {
     assert_eq!(raw ^ !0u32, 0xE306_9283);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-64 Tests
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(feature = "crc64")]
@@ -411,9 +391,7 @@ mod tests {
     assert_eq!(raw ^ !0u64, 0xAE8B_1486_0A79_9888);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Cross-Width Consistency
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(all(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]

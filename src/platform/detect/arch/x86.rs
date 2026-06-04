@@ -1,5 +1,4 @@
 // x86_64 Detection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 fn detect_x86_64() -> Detected {
@@ -18,9 +17,7 @@ fn detect_x86_64() -> Detected {
   #[cfg(not(feature = "std"))]
   let caps = caps_static;
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Hybrid Intel AVX-512 Safety: Clear AVX-512 caps on hybrid CPUs
-  // ─────────────────────────────────────────────────────────────────────────────
   // On hybrid Intel CPUs (Alder Lake, Raptor Lake, etc.), the P-cores have
   // AVX-512 but E-cores don't. If a thread migrates to an E-core while
   // executing AVX-512 code, it will SIGILL. The only safe approach is to
@@ -153,9 +150,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     base_model
   };
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // OS Support Detection via OSXSAVE + XGETBV
-  // ─────────────────────────────────────────────────────────────────────────────
   // CRITICAL: CPUID reports what the CPU supports, not what the OS allows.
   // We must check OSXSAVE (indicates OS uses XSAVE) and read XCR0 to verify
   // the OS will actually save/restore AVX/AVX-512 registers. Without this,
@@ -176,9 +171,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   let os_avx = (xcr0 & XCR0_AVX_MASK) == XCR0_AVX_MASK;
   let os_avx512 = os_avx && (xcr0 & XCR0_AVX512_MASK) == XCR0_AVX512_MASK;
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // ECX features (leaf 1) - SSE/basic features (no OS gating needed)
-  // ─────────────────────────────────────────────────────────────────────────────
   if cpuid1.ecx & (1 << 0) != 0 {
     caps |= x86::SSE3;
   }
@@ -204,9 +197,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     caps |= x86::RDRAND;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // AVX-class features (require OS AVX support via XCR0)
-  // ─────────────────────────────────────────────────────────────────────────────
   if os_avx {
     if cpuid1.ecx & (1 << 28) != 0 {
       caps |= x86::AVX;
@@ -222,9 +213,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // Extended feature flags (leaf 7, subleaf 0)
   let cpuid7 = __cpuid_count(7, 0);
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // EBX features (leaf 7) - non-AVX features (no OS gating needed)
-  // ─────────────────────────────────────────────────────────────────────────────
   if cpuid7.ebx & (1 << 3) != 0 {
     caps |= x86::BMI1;
   }
@@ -238,16 +227,12 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     caps |= x86::SHA;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // AVX2 (requires OS AVX support for YMM registers)
-  // ─────────────────────────────────────────────────────────────────────────────
   if os_avx && cpuid7.ebx & (1 << 5) != 0 {
     caps |= x86::AVX2;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // AVX-512 features (require OS AVX-512 support for ZMM/opmask registers)
-  // ─────────────────────────────────────────────────────────────────────────────
   if os_avx512 {
     if cpuid7.ebx & (1 << 16) != 0 {
       caps |= x86::AVX512F;
@@ -297,9 +282,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // EDX features (leaf 7) - non-AVX features
-  // ─────────────────────────────────────────────────────────────────────────────
   if cpuid7.edx & (1 << 18) != 0 {
     caps |= x86::RDSEED;
   }
@@ -316,9 +299,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // Extended feature flags (leaf 7, subleaf 1)
   let cpuid7_1 = __cpuid_count(7, 1);
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // EAX features (leaf 7, subleaf 1)
-  // ─────────────────────────────────────────────────────────────────────────────
   // SHA512 doesn't require AVX-512 (uses XMM registers)
   if cpuid7_1.eax & (1 << 0) != 0 {
     caps |= x86::SHA512;

@@ -30,9 +30,7 @@ const BLOCK_LEN: usize = STRIPE_LEN * STRIPES_PER_BLOCK;
 const SCRAMBLE_SECRET_OFFSET: usize = DEFAULT_SECRET_SIZE - STRIPE_LEN;
 const LAST_ACC_SECRET_OFFSET: usize = DEFAULT_SECRET_SIZE - STRIPE_LEN - SECRET_LASTACC_START;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD accumulate + scramble
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "neon")]
@@ -148,9 +146,7 @@ unsafe fn scramble_acc(acc: &mut [uint64x2_t; 4], secret: *const u8) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Prefetch helper
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Prefetch the next stripe's input data into L1 cache.
 ///
@@ -173,9 +169,7 @@ unsafe fn prefetch_stripe(input_ptr: *const u8) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Long-path loop (SIMD inner, scalar merge)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "neon")]
 unsafe fn hash_long_internal_loop<const PREFETCH: bool>(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
@@ -245,9 +239,7 @@ unsafe fn hash_long_internal_loop_for_len(input: &[u8], secret: &[u8]) -> [u64; 
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Top-level kernel functions (safe wrappers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Long-path entry point (>240B) — no ≤240B branches.
 ///

@@ -9,9 +9,7 @@ pub fn crc24_openpgp_slice8(crc: u32, data: &[u8]) -> u32 {
   portable::slice8_24(crc, data, &kernel_tables::OPENPGP_TABLES_8)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Byte-at-a-time (fast-path for tiny buffers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-24/OpenPGP byte-at-a-time lookup computation (MSB-first).
 ///

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Coverage Reporting for rscrypto
 #
 # Generates Rust source coverage from two deterministic sources:
@@ -16,7 +15,6 @@ set -euo pipefail
 #   ./scripts/test/test-coverage.sh                # Total LCOV: nextest + fuzz replay
 #   ./scripts/test/test-coverage.sh --nextest      # Test suite LCOV only
 #   ./scripts/test/test-coverage.sh --fuzz         # Fuzz corpus replay LCOV only
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

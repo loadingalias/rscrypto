@@ -15,9 +15,7 @@ use core::cell::UnsafeCell;
 #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
 use core::mem::MaybeUninit;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // OnceCache<T> - Single-value lazy cache
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// A lazy cache for a single `Copy` value.
 ///
@@ -113,7 +111,6 @@ impl<T: Copy> OnceCache<T> {
     {
       use core::sync::atomic::Ordering;
 
-      // Fast path: already initialized
       let state = self.state.load(Ordering::Acquire);
       if state == Self::READY {
         // SAFETY: Value is fully initialized when state is READY.
@@ -122,14 +119,13 @@ impl<T: Copy> OnceCache<T> {
         return unsafe { (*self.value.get()).assume_init() };
       }
 
-      // Slow path: try to initialize
       if state == Self::UNINIT
         && self
           .state
           .compare_exchange(Self::UNINIT, Self::INITING, Ordering::AcqRel, Ordering::Acquire)
           .is_ok()
       {
-        // We won the race - initialize the value
+        // This thread owns initialization until READY is published.
         let value = f();
         // SAFETY: We hold exclusive access during INITING state.
         // No other thread can observe or write to the value until we publish READY.
@@ -168,9 +164,7 @@ impl<T: Copy> Default for OnceCache<T> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

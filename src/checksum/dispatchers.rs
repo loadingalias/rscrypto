@@ -2,9 +2,7 @@
 //!
 //! This module provides the function signature types used by kernel dispatch tables.
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-16 Kernel Function Type
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Function signature for CRC-16 kernels.
 ///
@@ -21,9 +19,7 @@
 #[cfg(feature = "crc16")]
 pub type Crc16Fn = fn(u16, &[u8]) -> u16;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-24 Kernel Function Type
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Function signature for CRC-24 kernels.
 ///
@@ -41,9 +37,7 @@ pub type Crc16Fn = fn(u16, &[u8]) -> u16;
 #[cfg(feature = "crc24")]
 pub type Crc24Fn = fn(u32, &[u8]) -> u32;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 Kernel Function Type
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Function signature for CRC-32 kernels.
 ///
@@ -67,9 +61,7 @@ pub type Crc24Fn = fn(u32, &[u8]) -> u32;
 #[cfg(feature = "crc32")]
 pub type Crc32Fn = fn(u32, &[u8]) -> u32;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-64 Kernel Function Type
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Function signature for CRC-64 kernels.
 ///

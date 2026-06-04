@@ -71,9 +71,7 @@ mod tests {
     assert_eq!(det.arch, Arch::Other);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Compile-Time Detection Tests (caps_static)
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_caps_static_is_const() {
@@ -204,9 +202,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Apple Silicon Detection Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(all(target_arch = "aarch64", target_os = "macos", feature = "std", not(miri)))]
@@ -224,9 +220,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // SVE Vector Length Detection Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
@@ -241,9 +235,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Hybrid Intel Detection Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
@@ -376,9 +368,7 @@ mod tests {
     }
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Arch Round-Trip Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   // Mirror of the arch_to_u8 mapping used in atomic_cache (no_std).
   // Note: Arch doesn't have #[repr(u8)], so this is a custom mapping
@@ -480,9 +470,7 @@ mod tests {
     assert_eq!(seen.len(), 11, "Expected 11 Arch variants with unique encodings");
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Override Mechanism Tests
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn test_has_override_exists() {

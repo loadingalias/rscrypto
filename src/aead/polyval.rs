@@ -28,9 +28,7 @@ pub(crate) const KEY_SIZE: usize = 16;
 #[cfg(test)]
 const POLY: u128 = (1u128 << 127) | (1u128 << 126) | (1u128 << 121) | 1;
 
-// ---------------------------------------------------------------------------
 // x86_64 PCLMULQDQ backend
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "x86_64")]
 mod pclmul {
@@ -199,9 +197,7 @@ mod pclmul {
   }
 }
 
-// ---------------------------------------------------------------------------
 // aarch64 PMULL backend
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "aarch64")]
 mod pmull {
@@ -445,9 +441,7 @@ mod pmull {
   }
 }
 
-// ---------------------------------------------------------------------------
 // s390x VGFM backend (Galois field multiply)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "s390x")]
 #[allow(unsafe_code)]
@@ -667,9 +661,7 @@ mod s390x_vgfm {
   }
 }
 
-// ---------------------------------------------------------------------------
 // powerpc64 VPMSUMD backend (polynomial multiply-sum doubleword)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "powerpc64")]
 #[allow(unsafe_code)]
@@ -796,9 +788,7 @@ mod ppc_vpmsum {
   }
 }
 
-// ---------------------------------------------------------------------------
 // riscv64 Zvbc backend (vector carryless multiply)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "riscv64")]
 #[allow(unsafe_code)]
@@ -873,9 +863,7 @@ mod rv_clmul {
   }
 }
 
-// ---------------------------------------------------------------------------
 // riscv64 Zbc backend (scalar carryless multiply)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "riscv64")]
 #[allow(unsafe_code)]
@@ -938,9 +926,7 @@ mod rv_scalar_clmul {
   }
 }
 
-// ---------------------------------------------------------------------------
 // x86_64 VPCLMULQDQ wide backend (4-block aggregate)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "x86_64")]
 mod vpclmul {
@@ -1415,9 +1401,7 @@ mod vpclmul {
   }
 }
 
-// ---------------------------------------------------------------------------
 // x86_64: inline helpers for fused GCM paths
-// ---------------------------------------------------------------------------
 
 /// PCLMULQDQ-based 128×128 carryless multiply + Montgomery reduce.
 ///
@@ -1598,9 +1582,7 @@ pub(super) unsafe fn x86_aggregate_8blocks_be_lanes_256_inline(
   unsafe { vpclmul::aggregate_8blocks_be_lanes_256(acc, h_powers_rev, raw0, raw1, raw2, raw3) }
 }
 
-// ---------------------------------------------------------------------------
 // aarch64: inline helper for fused paths (#[target_feature] + #[inline(always)])
-// ---------------------------------------------------------------------------
 
 /// PMULL-based 128×128 carryless multiply + Montgomery reduce, guaranteed
 /// to inline.
@@ -1750,9 +1732,7 @@ pub(super) unsafe fn riscv_scalar_clmul128_reduce_inline(a: u128, b: u128) -> u1
   unsafe { rv_scalar_clmul::clmul128_reduce(a, b) }
 }
 
-// ---------------------------------------------------------------------------
 // Combined multiply + reduce with hardware dispatch
-// ---------------------------------------------------------------------------
 
 type Clmul128ReduceFn = fn(u128, u128) -> u128;
 
@@ -2272,9 +2252,7 @@ impl Drop for Polyval {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Pornin's bmul64: constant-time 64×64 → low-64 carryless multiplication
-// ---------------------------------------------------------------------------
 
 /// Carryless multiply of two 64-bit values, returning the LOW 64 bits.
 ///
@@ -2317,9 +2295,7 @@ fn bmul64(x: u64, y: u64) -> u64 {
   z0 | z1 | z2 | z3
 }
 
-// ---------------------------------------------------------------------------
 // 128×128 → 256-bit carryless multiplication (Karatsuba)
-// ---------------------------------------------------------------------------
 
 /// Multiply two 128-bit field elements, producing a 256-bit result
 /// as four u64 words [v0, v1, v2, v3] (v0 = lowest).
@@ -2369,9 +2345,7 @@ pub(super) fn clmul128(a: u128, b: u128) -> [u64; 4] {
   [z0, z0h, z1 ^ z2h, z1h]
 }
 
-// ---------------------------------------------------------------------------
 // Montgomery reduction for POLYVAL
-// ---------------------------------------------------------------------------
 
 /// Reduce a 256-bit product to 128 bits using Montgomery reduction.
 ///
@@ -2405,9 +2379,7 @@ pub(super) fn mont_reduce(v: [u64; 4]) -> u128 {
   (v2 as u128) | ((v3 as u128) << 64)
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

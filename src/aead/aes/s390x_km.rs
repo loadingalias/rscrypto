@@ -70,8 +70,8 @@ pub(super) unsafe fn encrypt_block_raw(raw_key: &[u8; 32], block: &mut [u8; 16])
   //
   // CC=0: complete. CC=2: partial (kernel preemption) - retry.
   //
-  // SAFETY: MSA verified by caller. Parameter block is the raw
-  // 32-byte AES-256 key. Source and destination are valid,
+  // SAFETY: The caller guarantees the MSA facility before entering this raw wrapper. The parameter
+  // block is the raw 32-byte AES-256 key. Source and destination are valid,
   // non-overlapping 16-byte buffers.
   unsafe {
     core::arch::asm!(
@@ -141,9 +141,7 @@ pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize
   crate::traits::ct::zeroize(&mut src[..len]);
 }
 
-// ---------------------------------------------------------------------------
 // AES-128 (KM function code 18)
-// ---------------------------------------------------------------------------
 
 /// AES-128 key for the KM (Cipher Message) instruction.
 #[derive(Clone)]
@@ -197,8 +195,8 @@ pub(super) unsafe fn encrypt_block_raw_128(raw_key: &[u8; 16], block: &mut [u8; 
   // KM function code 18 = AES-128 encrypt. Same encoding as AES-256
   // (.insn rre, 0xB92E0000); only the function code in r0 differs.
   //
-  // SAFETY: MSA verified by caller. Parameter block is the raw
-  // 16-byte AES-128 key. Source and destination are valid,
+  // SAFETY: The caller guarantees the MSA facility before entering this raw wrapper. The parameter
+  // block is the raw 16-byte AES-128 key. Source and destination are valid,
   // non-overlapping 16-byte buffers.
   unsafe {
     core::arch::asm!(
@@ -244,7 +242,7 @@ pub(super) unsafe fn encrypt_blocks_128(key: &Km128Key, blocks: &mut [u8], count
   let src_ptr = src.as_ptr();
   let dest_ptr = blocks.as_mut_ptr();
 
-  // SAFETY: MSA verified by caller; src/dest are non-overlapping len-byte spans.
+  // SAFETY: The caller guarantees the MSA facility; src/dest are non-overlapping len-byte spans.
   unsafe {
     core::arch::asm!(
       "0:",

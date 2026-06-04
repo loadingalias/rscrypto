@@ -69,9 +69,7 @@ impl Simd {
     self.hi
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
   // Zbc carryless multiply primitives
-  // ─────────────────────────────────────────────────────────────────────────
 
   #[inline]
   #[target_feature(enable = "zbc")]
@@ -141,9 +139,7 @@ const fn bitrev_bytes_u64(mut x: u64) -> u64 {
   x
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Load helpers (bit-reverse each byte)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline(always)]
 fn load_block_bitrev(block: &Block) -> [Simd; 8] {
@@ -180,9 +176,7 @@ fn load_block_split_bitrev(block: &Block) -> ([u64; 8], [u64; 8]) {
   (hi, lo)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ZBC (scalar carryless multiply) backend
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "zbc")]
@@ -514,9 +508,7 @@ unsafe fn crc24_width32_zbc_4way(mut state: u32, data: &[u8], keys: &[u64; 23]) 
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // ZVBC (vector carryless multiply) backend
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Carryless multiply of two `u64` values using ZVBC (returns 128-bit result as `{hi, lo}`).
 ///
@@ -911,9 +903,7 @@ unsafe fn crc24_width32_zvbc_4way(mut state: u32, data: &[u8], keys: &[u64; 23])
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public Safe Kernels
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-24/OPENPGP Zbc kernel.
 ///

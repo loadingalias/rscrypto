@@ -253,17 +253,6 @@ pub enum RsaKeyGenerationContract {
   /// `lcm(p - 1, q - 1)`. This is an algorithmic conformance statement only;
   /// this crate is not a CMVP-validated FIPS 140-3 cryptographic module.
   Fips1865A13ProbablePrime,
-  /// Probable-prime generation using OS randomness and randomized Miller-Rabin.
-  ///
-  /// This is **not** an exact FIPS 186-5 Appendix A.1.3 implementation. In
-  /// particular, the RNG boundary is `getrandom`, not an approved DRBG instance,
-  /// and generated primes are sampled from this crate's fixed probable-prime
-  /// candidate shape rather than the full FIPS interval.
-  #[deprecated(
-    since = "0.3.2",
-    note = "RSA key generation now follows FIPS 186-5 A.1.3 probable-prime generation in code"
-  )]
-  OsRandomProbablePrimeNonFips,
 }
 
 /// Errors returned by RSA private-key operations.
@@ -2008,13 +1997,14 @@ impl RsaPrivateKey {
     blinding_factor_inverse: &[u8],
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_oaep_with_blinding_factor(
+    let result = self.components.decrypt_oaep_with_blinding_factor(
       profile,
       label,
       ciphertext,
       RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
       out,
-    )
+    );
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding.
@@ -2035,11 +2025,12 @@ impl RsaPrivateKey {
     blinding_factor_inverse: &[u8],
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_pkcs1v15_with_blinding_factor(
+    let result = self.components.decrypt_pkcs1v15_with_blinding_factor(
       ciphertext,
       RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
       out,
-    )
+    );
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-OAEP with caller-supplied blinding and scratch.
@@ -2065,14 +2056,15 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_oaep_with_blinding_factor_and_scratch(
+    let result = self.components.decrypt_oaep_with_blinding_factor_and_scratch(
       profile,
       label,
       ciphertext,
       RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
       out,
       scratch,
-    )
+    );
+    clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding and scratch.
@@ -2095,12 +2087,13 @@ impl RsaPrivateKey {
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    self.components.decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+    let result = self.components.decrypt_pkcs1v15_with_blinding_factor_and_scratch(
       ciphertext,
       RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
       out,
       scratch,
-    )
+    );
+    clear_decryption_output_on_error(result, out)
   }
 }
 
@@ -6201,6 +6194,7 @@ fn keygen_generate_prime(
     }
 
     tested_candidates = tested_candidates.strict_add(1);
+    // Trial division rejects obvious composites before the expensive B.3 Miller-Rabin work.
     if keygen_has_small_prime_factor(&candidate) || keygen_conflicts_with_public_exponent(&candidate) {
       let mut candidate = candidate;
       ct::zeroize(&mut candidate);

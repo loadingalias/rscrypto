@@ -33,9 +33,7 @@ const EXPANDED_KEY_WORDS: usize = 4 * (ROUNDS + 1); // 60
 /// Number of 32-bit words in the AES-128 expanded key schedule.
 pub(crate) const EXPANDED_KEY_WORDS_128: usize = 4 * (ROUNDS_128 + 1); // 44
 
-// ---------------------------------------------------------------------------
 // x86_64 AES-NI backend
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "aarch64")]
 #[path = "aes/aarch64_ce.rs"]
@@ -100,9 +98,7 @@ pub(crate) struct X86GcmTables<'a> {
   pub(crate) h_powers_rev_128: &'a [u128; 128],
 }
 
-// ---------------------------------------------------------------------------
 // Aes256EncKey: enum-dispatched key storage
-// ---------------------------------------------------------------------------
 
 /// AES-256 expanded round keys.
 ///
@@ -193,9 +189,7 @@ impl Drop for Aes256EncKey {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Aes128EncKey: enum-dispatched key storage
-// ---------------------------------------------------------------------------
 
 /// AES-128 expanded round keys.
 ///
@@ -282,9 +276,7 @@ impl Drop for Aes128EncKey {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Constant-time GF(2^8) arithmetic for the AES S-box
-// ---------------------------------------------------------------------------
 
 /// Multiply two elements in GF(2^8) mod the AES irreducible polynomial
 /// p(x) = x^8 + x^4 + x^3 + x + 1 (0x11b).
@@ -382,9 +374,7 @@ const fn rot_word(w: u32) -> u32 {
   w.rotate_left(8)
 }
 
-// ---------------------------------------------------------------------------
 // AES round constants
-// ---------------------------------------------------------------------------
 
 /// AES key schedule round constants (rcon).
 /// Only the high byte is nonzero: rcon[i] = (rc[i], 0, 0, 0).
@@ -401,9 +391,7 @@ const RCON: [u32; 10] = [
   0x3600_0000,
 ];
 
-// ---------------------------------------------------------------------------
 // Key expansion
-// ---------------------------------------------------------------------------
 
 /// Portable AES-256 key expansion into 60 big-endian u32 words.
 #[inline]
@@ -690,8 +678,7 @@ pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKe
 #[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
-  // Legacy helper retained for callers that still mention the old backend
-  // label. The implementation now uses the constant-time RV64 fixslice path.
+  // Preserve the old RISC-V ttable entry point while routing to the constant-time fixslice schedule.
   Aes256EncKey {
     inner: riscv64_fixslice_key_inner(key),
   }
@@ -730,16 +717,13 @@ pub(crate) fn aes128_expand_key_riscv_vperm(key: &[u8; KEY_SIZE_128]) -> Aes128E
 #[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  // Legacy helper retained for parity with AES-256. The implementation now
-  // uses the constant-time RV64 fixslice path.
+  // Preserve the old RISC-V ttable entry point while routing to the constant-time fixslice schedule.
   Aes128EncKey {
     inner: riscv64_fixslice_key_inner_128(key),
   }
 }
 
-// ---------------------------------------------------------------------------
 // aarch64: inline helpers for fused paths (#[target_feature] + #[inline(always)])
-// ---------------------------------------------------------------------------
 //
 // aarch64 intrinsics are `#[inline(always)]` with `#[target_feature]`, so
 // callers must also have matching features (unlike x86). We use both
@@ -1013,9 +997,7 @@ pub(super) unsafe fn aarch64_ctr32_le_xor_8blocks_128_inline(
   unsafe { ce::encrypt_ctr32_le_xor_8blocks_128_core(keys, iv_suffix, ctr, data) }
 }
 
-// ---------------------------------------------------------------------------
 // powerpc64: hot-path helpers for fused target-feature scopes
-// ---------------------------------------------------------------------------
 
 /// Expand AES-256 key directly to POWER round keys.
 ///
@@ -1588,9 +1570,7 @@ pub(crate) unsafe fn aes128_ctr32_decrypt_be_ppc_ghash(
   }
 }
 
-// ---------------------------------------------------------------------------
 // s390x: inline helpers for fused paths (#[inline(always)])
-// ---------------------------------------------------------------------------
 
 /// Encrypt a single AES-256 block with s390x KM using a raw 32-byte key.
 ///
@@ -1654,9 +1634,7 @@ pub(super) unsafe fn s390x_encrypt_blocks_128_inline(key: &km::Km128Key, blocks:
   unsafe { km::encrypt_blocks_128(key, blocks, count) }
 }
 
-// ---------------------------------------------------------------------------
 // Block encryption
-// ---------------------------------------------------------------------------
 
 /// Encrypt a single 16-byte block with AES-256.
 ///
@@ -2232,9 +2210,7 @@ const fn mix_column(col: [u8; 4]) -> u32 {
   (r0 as u32) << 24 | (r1 as u32) << 16 | (r2 as u32) << 8 | r3 as u32
 }
 
-// ---------------------------------------------------------------------------
 // AES-CTR for GCM-SIV
-// ---------------------------------------------------------------------------
 
 /// AES-256 CTR encryption/decryption for GCM-SIV.
 ///
@@ -2403,9 +2379,7 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
   }
 }
 
-// ---------------------------------------------------------------------------
 // AES-CTR for GCM (big-endian 32-bit counter in bytes 12..15)
-// ---------------------------------------------------------------------------
 
 #[cfg(all(
   feature = "aes-gcm",
@@ -2582,9 +2556,7 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
   }
 }
 
-// ---------------------------------------------------------------------------
 // Wide AES-CTR for GCM (big-endian 32-bit counter, VAES-512)
-// ---------------------------------------------------------------------------
 
 /// Build four big-endian GCM counter blocks directly in a VAES register.
 ///
@@ -3872,9 +3844,7 @@ pub(crate) unsafe fn aes256_ctr32_decrypt_be_aarch64_ghash(
   }
 }
 
-// ---------------------------------------------------------------------------
 // AES-128 CTR for GCM (big-endian 32-bit counter in bytes 12..15)
-// ---------------------------------------------------------------------------
 
 /// AES-128 CTR encryption/decryption for GCM.
 ///
@@ -5369,9 +5339,7 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_wide(ek: &Aes128EncKey, initial_counte
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

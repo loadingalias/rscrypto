@@ -3,6 +3,7 @@
 > Same algorithms (FIPS 180-4), same `Sha224` / `Sha256` / `Sha384` / `Sha512` / `Sha512_256` names, same `new()` / `update()` / `finalize()` shape. The output type changes from `Output<D>` (a `GenericArray`) to `[u8; N]`, and `finalize()` now borrows instead of consuming.
 
 Verified against `sha2 = "0.11.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/sha2_official_vectors.rs`, `tests/sha256_differential.rs`, and `tests/sha512_differential.rs`.
 
 ## TL;DR
 

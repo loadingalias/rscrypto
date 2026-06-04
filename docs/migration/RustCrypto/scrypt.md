@@ -3,6 +3,7 @@
 > Replace the bare `scrypt(password, salt, &Params, &mut out)` function with `Scrypt::hash(&ScryptParams, password, salt, &mut out)`. Same RFC 7914 algorithm, byte-identical output, PHC string round-trip built in (no `password-hash` crate dependency).
 
 Verified against `scrypt = "0.12.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/scrypt_vectors.rs`, `tests/scrypt_differential.rs`, and `tests/phc_roundtrip.rs`.
 
 ## TL;DR
 

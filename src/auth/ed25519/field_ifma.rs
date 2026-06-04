@@ -27,9 +27,7 @@ use super::{
   field_avx2::{Lanes, Shuffle},
 };
 
-// ---------------------------------------------------------------------------
 // Constants
-// ---------------------------------------------------------------------------
 
 const MASK51: i64 = (1i64 << 51) - 1;
 #[cfg(test)]
@@ -39,9 +37,7 @@ const MASK52: i64 = (1i64 << 52) - 1;
 const BIAS_0: i64 = 2 * ((1i64 << 51) - 19);
 const BIAS_N: i64 = 2 * ((1i64 << 51) - 1);
 
-// ---------------------------------------------------------------------------
 // Type
-// ---------------------------------------------------------------------------
 
 /// Four field elements packed for AVX-512 IFMA parallel processing.
 ///
@@ -51,9 +47,7 @@ const BIAS_N: i64 = 2 * ((1i64 << 51) - 1);
 #[cfg(target_arch = "x86_64")]
 pub(crate) struct FieldElement51x4(pub(crate) [__m256i; 5]);
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /// Multiply a u64x4 vector by 19 using shift-and-add.
 ///
@@ -115,9 +109,7 @@ unsafe fn select_by_bit(bit: __m256i, val: __m256i) -> __m256i {
   _mm256_and_si256(mask, val)
 }
 
-// ---------------------------------------------------------------------------
 // FieldElement51x4 implementation
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "x86_64")]
 impl FieldElement51x4 {
@@ -402,14 +394,12 @@ impl FieldElement51x4 {
     let f = &self.0;
     let g = &rhs.0;
 
-    // -----------------------------------------------------------------------
     // Phase 1: 5×5 schoolbook with dual accumulators (50 IFMA ops)
     //
     // Interleaved lo/hi scheduling: each product term issues madd52lo then
     // madd52hi before the next term. This exposes the independent lo and hi
     // dependency chains to Intel's dual-issue IFMA ports (0 and 1), letting
     // the OOO engine overlap them instead of serialising all-lo-then-all-hi.
-    // -----------------------------------------------------------------------
 
     // z0 = f0*g0
     let lo0 = madd52lo(zero, f[0], g[0]);
@@ -479,13 +469,11 @@ impl FieldElement51x4 {
     let lo8 = madd52lo(zero, f[4], g[4]);
     let hi8 = madd52hi(zero, f[4], g[4]);
 
-    // -----------------------------------------------------------------------
     // Phase 2: Combine lo + hi into 10 actual limbs
     //
     // z_k = lo_k + 2 * hi_{k-1}
     // The factor 2 comes from: bits [103:52] have value v * 2^52 = v * 2 * 2^51,
     // so they contribute v * 2 to the next limb.
-    // -----------------------------------------------------------------------
 
     let z0 = lo0;
     let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
@@ -498,11 +486,9 @@ impl FieldElement51x4 {
     let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
     let z9 = _mm256_add_epi64(hi8, hi8);
 
-    // -----------------------------------------------------------------------
     // Phase 3: Reduce upper limbs by ×19 and fold into lower 5
     //
     // 2^(51*5) = 2^255 ≡ 19 (mod p)
-    // -----------------------------------------------------------------------
 
     let z5_19 = mul19(z5);
     let z6_19 = mul19(z6);
@@ -593,10 +579,8 @@ impl FieldElement51x4 {
       _mm256_srli_epi64::<52>(rhs.0[4]),
     ];
 
-    // -----------------------------------------------------------------------
     // Phase 1: 5×5 schoolbook on 52-bit inputs (50 IFMA ops)
     // Same interleaved lo/hi scheduling as mul().
-    // -----------------------------------------------------------------------
 
     // z0 = f0*g0
     let lo0 = madd52lo(zero, f_lo[0], g_lo[0]);
@@ -666,7 +650,6 @@ impl FieldElement51x4 {
     let lo8 = madd52lo(zero, f_lo[4], g_lo[4]);
     let hi8 = madd52hi(zero, f_lo[4], g_lo[4]);
 
-    // -----------------------------------------------------------------------
     // Phase 1b: Corrections for overflow bits (f_hi * g_lo + f_lo * g_hi)
     //
     // For each product index k, add contributions from overflow bits:
@@ -675,7 +658,6 @@ impl FieldElement51x4 {
     // Since f_hi[i] is 0 or 1, select(f_hi[i], g_lo[j]) is either 0 or g_lo[j].
     // These corrections go into hi accumulators because the overflow bit
     // has weight 2^52 = 2 × 2^51, matching the hi accumulator's weight.
-    // -----------------------------------------------------------------------
 
     // k=0: i=0,j=0
     let hi0 = _mm256_add_epi64(hi0, select_by_bit(f_hi[0], g_lo[0]));
@@ -745,11 +727,9 @@ impl FieldElement51x4 {
     let hi8 = _mm256_add_epi64(hi8, select_by_bit(f_hi[4], g_lo[4]));
     let hi8 = _mm256_add_epi64(hi8, select_by_bit(g_hi[4], f_lo[4]));
 
-    // -----------------------------------------------------------------------
     // Phase 2: Combine lo + hi into 10 actual limbs
     //
     // z_k = lo_k + 2 * hi_{k-1}
-    // -----------------------------------------------------------------------
 
     let z0 = lo0;
     let z1 = _mm256_add_epi64(_mm256_add_epi64(lo1, hi0), hi0);
@@ -762,7 +742,6 @@ impl FieldElement51x4 {
     let z8 = _mm256_add_epi64(_mm256_add_epi64(lo8, hi7), hi7);
     let z9 = _mm256_add_epi64(hi8, hi8);
 
-    // -----------------------------------------------------------------------
     // Phase 2b: f_hi * g_hi corrections
     //
     // When both f_hi[i] and g_hi[j] are 1, the product is 2^52 * 2^52 =
@@ -774,7 +753,6 @@ impl FieldElement51x4 {
     // k=0: → z2, k=1: → z3, ..., k=6: → z8, k=7: → z9 (k=8 overflows
     // but z_{10} doesn't exist; it would fold via ×19 but the magnitude
     // is negligible: at most 4).
-    // -----------------------------------------------------------------------
 
     let four = _mm256_set1_epi64x(4);
 
@@ -834,9 +812,7 @@ impl FieldElement51x4 {
     let hh_8_x4 = _mm256_slli_epi64::<2>(hh_8);
     let z5 = _mm256_add_epi64(z5, mul19(hh_8_x4));
 
-    // -----------------------------------------------------------------------
     // Phase 3: Reduce upper limbs by ×19 and fold into lower 5
-    // -----------------------------------------------------------------------
 
     let z5_19 = mul19(z5);
     let z6_19 = mul19(z6);
@@ -1254,9 +1230,7 @@ impl FieldElement51x4 {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]

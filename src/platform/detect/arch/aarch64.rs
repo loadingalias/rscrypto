@@ -1,5 +1,4 @@
 // aarch64 Detection
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "aarch64")]
 fn detect_aarch64() -> Detected {
@@ -376,9 +375,7 @@ fn runtime_aarch64() -> Caps {
   caps
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Apple Silicon Detection (macOS/iOS)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Apple Silicon chip generation.
 #[cfg(all(
@@ -539,7 +536,6 @@ pub(crate) fn detect_aarch64_tune_family() -> Option<Aarch64TuneFamily> {
   None
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 /// Detect SME features on Apple platforms via sysctlbyname.
 ///
 /// Apple exposes SME and related features through hw.optional.arm.FEAT_* sysctl keys.
@@ -701,7 +697,6 @@ fn detect_apple_sme_tile_size() -> u16 {
   0 // SME not supported or unknown
 }
 // SVE Vector Length Detection (Linux aarch64)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Detect SVE vector length in bits via prctl(PR_SVE_GET_VL).
 ///
@@ -757,9 +752,7 @@ fn detect_sve_vlen() -> u16 {
   0
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SME Vector Length Detection (Linux aarch64)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Detect SME streaming vector length in bits via prctl(PR_SME_GET_VL).
 ///
@@ -816,9 +809,7 @@ fn detect_sme_vlen() -> u16 {
   0
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // MIDR_EL1 Detection (Linux aarch64)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(all(
   target_arch = "aarch64",

@@ -54,9 +54,7 @@ fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8
   assert_eq!(ours, plaintext, "decrypt round-trip failed (len={})", plaintext.len());
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Oracle Agreement
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[test]
 fn ascon_aead128_matches_oracle() {
@@ -104,9 +102,7 @@ fn ascon_aead128_oracle_large_input() {
   assert_matches_oracle(&key, &nonce, b"large", &plaintext);
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Forgery Rejection
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[test]
 fn ascon_aead128_rejects_modified_tag() {

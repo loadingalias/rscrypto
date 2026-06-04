@@ -3,6 +3,7 @@
 > Replace the parameterized `Crc::<W>::new(&CRC_*)` builder with rscrypto's named CRC types. Same outputs, hardware-accelerated dispatch, no generic width to thread through call sites.
 
 Verified against `crc = "3.4.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/crc16_properties.rs`, `tests/crc24_properties.rs`, `tests/crc32_properties.rs`, and `tests/crc64_properties.rs`.
 
 ## TL;DR
 

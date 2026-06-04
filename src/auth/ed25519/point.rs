@@ -6,6 +6,7 @@
 use core::fmt;
 
 use super::{field::FieldElement, scalar};
+use crate::traits::ct;
 
 #[path = "basepoint_tables.rs"]
 mod basepoint_tables;
@@ -377,12 +378,18 @@ impl ExtendedPoint {
   /// Compare two extended points without converting to affine coordinates.
   #[must_use]
   pub(crate) fn equals_projective(&self, rhs: &Self) -> bool {
-    if self.z.is_zero() || rhs.z.is_zero() {
-      return false;
-    }
-
-    self.x.mul(&rhs.z).normalize() == rhs.x.mul(&self.z).normalize()
-      && self.y.mul(&rhs.z).normalize() == rhs.y.mul(&self.z).normalize()
+    let zero = [0u8; 32];
+    let lhs_z = self.z.normalize().to_bytes();
+    let rhs_z = rhs.z.normalize().to_bytes();
+    let lhs_x = self.x.mul(&rhs.z).normalize().to_bytes();
+    let rhs_x = rhs.x.mul(&self.z).normalize().to_bytes();
+    let lhs_y = self.y.mul(&rhs.z).normalize().to_bytes();
+    let rhs_y = rhs.y.mul(&self.z).normalize().to_bytes();
+    let diff = u8::from(ct::constant_time_eq(&lhs_z, &zero))
+      | u8::from(ct::constant_time_eq(&rhs_z, &zero))
+      | u8::from(!ct::constant_time_eq(&lhs_x, &rhs_x))
+      | u8::from(!ct::constant_time_eq(&lhs_y, &rhs_y));
+    core::hint::black_box(diff) == 0
   }
 
   /// Construct from raw field elements (no validation).

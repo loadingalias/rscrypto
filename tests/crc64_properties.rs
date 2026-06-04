@@ -59,9 +59,7 @@ proptest! {
     prop_assert_eq!(ours.finalize(), reference.sum64());
   }
 
-  // ─────────────────────────────────────────────────────────────────────────────
   // Cross-validation against crc-fast-rust
-  // ─────────────────────────────────────────────────────────────────────────────
 
   #[test]
   fn crc64_xz_matches_crc_fast_rust(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {

@@ -6,6 +6,9 @@ is a close primitive migration, not a type-compatible one.
 
 The RSA test lane checks these operations against RustCrypto `rsa`, `ring`,
 AWS-LC, CAVP/Wycheproof vectors, and OpenSSL CLI when available.
+Evidence: `tests/rsa_wycheproof.rs`, `tests/rsa_nist_cavp.rs`,
+`tests/rsa_public_key.rs`, `tests/rsa_profile_confusion.rs`, and the RSA
+interoperability tests used by the stack migration guides.
 
 ## Cargo.toml
 

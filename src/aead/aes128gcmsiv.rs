@@ -155,9 +155,7 @@ impl Aes128GcmSiv {
   }
 }
 
-// ---------------------------------------------------------------------------
 // RFC 8452 construction internals (AES-128 variant)
-// ---------------------------------------------------------------------------
 
 /// Derive per-message authentication and encryption keys from the cached
 /// master-key schedule and nonce (RFC 8452 §4, AES-128 variant).
@@ -478,9 +476,7 @@ fn compute_tag_wide(
   s
 }
 
-// ---------------------------------------------------------------------------
 // aarch64 fused encrypt/decrypt (single #[target_feature] scope)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "aes,neon")]
@@ -780,9 +776,7 @@ unsafe fn decrypt_fused_aarch64(
   }
 }
 
-// ---------------------------------------------------------------------------
 // powerpc64 fused encrypt/decrypt (single #[target_feature] scope)
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "powerpc64")]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
@@ -1047,9 +1041,7 @@ unsafe fn decrypt_fused_ppc(
   }
 }
 
-// ---------------------------------------------------------------------------
 // s390x fused encrypt/decrypt
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
@@ -1310,10 +1302,6 @@ unsafe fn decrypt_fused_s390x(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Aead trait implementation
-// ---------------------------------------------------------------------------
-
 impl Aead for Aes128GcmSiv {
   const KEY_SIZE: usize = KEY_SIZE;
   const NONCE_SIZE: usize = NONCE_SIZE;
@@ -1526,9 +1514,7 @@ impl Aead for Aes128GcmSiv {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tests (RFC 8452 Appendix C.1 vectors)
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

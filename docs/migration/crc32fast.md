@@ -1,8 +1,8 @@
 # Migration: `crc32fast` → `rscrypto`
 
-> Drop-in replacement for `crc32fast::Hasher`. Same algorithm (CRC-32/IEEE), wider hardware coverage, identical method names — `update` / `finalize` / `reset` carry over verbatim.
+> Same CRC-32/IEEE output with a small API migration. `update` / `finalize` / `reset` carry over, while combine and resume use rscrypto's checksum traits.
 
-Verified against `crc32fast = "1.5.0"` and the `rscrypto` 0.3.1 line.
+Output is covered by the CRC-32 oracle/property tests in `tests/crc32_properties.rs`.
 
 ## TL;DR
 

@@ -27,9 +27,7 @@ use core::arch::x86_64::*;
 
 use super::field::FieldElement;
 
-// ---------------------------------------------------------------------------
 // Constants
-// ---------------------------------------------------------------------------
 
 const LOW_25_BITS: i64 = (1 << 25) - 1;
 const LOW_26_BITS: i64 = (1 << 26) - 1;
@@ -46,9 +44,7 @@ const D_BLEND: i32 = 0b1010_0000u8 as i32;
 #[cfg(target_arch = "x86_64")]
 pub(crate) struct FieldElement2625x4(pub(crate) [__m256i; 5]);
 
-// ---------------------------------------------------------------------------
 // Shuffle patterns for _mm256_permutevar8x32_epi32
-// ---------------------------------------------------------------------------
 
 /// Lane rearrangement patterns for `shuffle`.
 #[derive(Clone, Copy)]
@@ -99,9 +95,7 @@ impl Shuffle {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Blend lane selectors for _mm256_blend_epi32
-// ---------------------------------------------------------------------------
 
 /// Lane selection masks for `blend`.
 ///
@@ -134,10 +128,6 @@ pub(crate) enum Lanes {
   /// Select all lanes
   ABCD = 0b1111_1111,
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 /// Zero-extend packed u32 pairs into two u64x4 vectors suitable for `vpmuludq`.
 ///
@@ -203,9 +193,7 @@ unsafe fn add64(a: __m256i, b: __m256i) -> __m256i {
   _mm256_add_epi64(a, b)
 }
 
-// ---------------------------------------------------------------------------
 // FieldElement2625x4 implementation
-// ---------------------------------------------------------------------------
 
 #[cfg(target_arch = "x86_64")]
 impl FieldElement2625x4 {
@@ -304,9 +292,7 @@ impl FieldElement2625x4 {
     ]
   }
 
-  // -------------------------------------------------------------------------
   // Lane-wise arithmetic
-  // -------------------------------------------------------------------------
 
   /// Lane-wise addition (lazy — no carry propagation).
   ///
@@ -391,9 +377,7 @@ impl FieldElement2625x4 {
     Self::zero().sub(self)
   }
 
-  // -------------------------------------------------------------------------
   // Data movement
-  // -------------------------------------------------------------------------
 
   /// Rearrange field element lanes according to the given pattern.
   ///
@@ -477,9 +461,7 @@ impl FieldElement2625x4 {
     swapped.add(&neg_ac) // (B-A, A+B, D-C, C+D)
   }
 
-  // -------------------------------------------------------------------------
   // Carry reduction
-  // -------------------------------------------------------------------------
 
   /// Full carry propagation across 10 limbs.
   ///
@@ -579,9 +561,7 @@ impl FieldElement2625x4 {
     ])
   }
 
-  // -------------------------------------------------------------------------
   // Multiplication (4-way parallel schoolbook)
-  // -------------------------------------------------------------------------
 
   /// Multiply two vectorized field elements (4 independent multiplications).
   ///
@@ -766,9 +746,7 @@ impl FieldElement2625x4 {
     Self::reduce64(&mut z)
   }
 
-  // -------------------------------------------------------------------------
   // Squaring (with symmetry optimization)
-  // -------------------------------------------------------------------------
 
   /// Compute the square accumulators in the u64 domain (before reduction).
   ///
@@ -1007,9 +985,7 @@ impl FieldElement2625x4 {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]

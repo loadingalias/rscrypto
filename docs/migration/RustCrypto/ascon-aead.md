@@ -3,6 +3,7 @@
 > NIST SP 800-232 lightweight AEAD. Replace `AsconAead128` / `Key<T>` / `Nonce<T>` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API. 128-bit key, 128-bit nonce, 128-bit tag — all the bytes are 16.
 
 Verified against `ascon-aead = "0.5.2"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/ascon_aead_oracle.rs`.
 
 ## TL;DR
 

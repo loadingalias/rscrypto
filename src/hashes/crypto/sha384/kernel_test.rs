@@ -153,6 +153,28 @@ mod tests {
             chunk
           );
         }
+
+        // Exhaustive two-split for small buffers (padding edges).
+        #[cfg(not(miri))]
+        let split_limit = 256;
+        #[cfg(miri)]
+        let split_limit = 128;
+        if len <= split_limit {
+          for split in 0..=len {
+            let (a, b) = msg.split_at(split);
+            let mut h = hasher_for_kernel(id);
+            h.update(a);
+            h.update(b);
+            assert_eq!(
+              h.finalize(),
+              ours,
+              "sha384 split mismatch kernel={} len={} split={}",
+              id.as_str(),
+              len,
+              split
+            );
+          }
+        }
       }
     }
   }

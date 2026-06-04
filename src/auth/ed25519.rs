@@ -667,9 +667,7 @@ fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
     .any(|small_order| ct::constant_time_eq(bytes, small_order))
 }
 
-// ---------------------------------------------------------------------------
 // Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable
-// ---------------------------------------------------------------------------
 
 pub(crate) use crate::auth::curve25519_edwards::basepoint_mul_dispatch;
 

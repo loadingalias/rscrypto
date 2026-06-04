@@ -3,6 +3,7 @@
 > Replace `crc-fast`'s enum-driven `checksum(CrcAlgorithm::*, data)` calls with rscrypto's named CRC types. SIMD coverage is comparable on x86_64 and aarch64; rscrypto adds Power, s390x, and RISC-V kernels and removes the `u64`-everywhere return type.
 
 Verified against `crc-fast = "1.10.0"` and the `rscrypto` 0.3.1 line.
+Evidence: `tests/crc16_properties.rs`, `tests/crc32_properties.rs`, and `tests/crc64_properties.rs`.
 
 ## TL;DR
 

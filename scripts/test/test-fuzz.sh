@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Fuzz Testing for rscrypto
 #
 # Fuzzing now has two layers:
@@ -18,7 +17,6 @@ set -euo pipefail
 #   ./scripts/test/test-fuzz.sh --build            # Build without running
 #   ./scripts/test/test-fuzz.sh --list             # List available targets
 #   ./scripts/test/test-fuzz.sh --clean            # Clean fuzz artifacts
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-local}
 

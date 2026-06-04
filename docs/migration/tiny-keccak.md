@@ -3,6 +3,7 @@
 > Replace `tiny_keccak::Kmac::v256` and `tiny_keccak::CShake::v256` with `rscrypto::Kmac256` and `rscrypto::Cshake256`. Same SP 800-185 algorithms, byte-identical output, infallible construction, and a `verify` helper for KMAC tags.
 
 Verified against `tiny-keccak = "2.0.2"` (with `kmac` and `cshake` features) and the `rscrypto` 0.3.1 line.
+Evidence: `tests/kmac256_differential.rs`, `tests/cshake256_differential.rs`, `tests/cshake256_nist_vectors.rs`, and `tests/kmac_wycheproof.rs`.
 
 ## TL;DR
 

@@ -21,18 +21,14 @@ use crate::checksum::common::kernels;
 /// Portable slice-by-8 kernel name.
 pub const PORTABLE_SLICE8: &str = kernels::PORTABLE_SLICE8;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Kernel Name Tables and Functions (per architecture)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 pub mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc16Fn;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Kernel Functions
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// CCITT PCLMUL kernel.
   pub const CCITT_PCLMUL: [Crc16Fn; 5] = [
@@ -55,9 +51,7 @@ pub mod x86_64 {
     arch::crc16_ccitt_vpclmul_8way_safe,
   ];
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/IBM Kernel Functions
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// IBM PCLMUL kernel.
   pub const IBM_PCLMUL: [Crc16Fn; 5] = [
@@ -86,9 +80,7 @@ pub mod aarch64 {
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc16Fn;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/CCITT Kernel Functions
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// CCITT PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
   pub const CCITT_PMULL: [Crc16Fn; 5] = [
@@ -112,9 +104,7 @@ pub mod aarch64 {
   /// CCITT PMULL small-buffer kernel.
   pub const CCITT_PMULL_SMALL_KERNEL: Crc16Fn = arch::crc16_ccitt_pmull_small_safe;
 
-  // ─────────────────────────────────────────────────────────────────────────
   // CRC-16/IBM Kernel Functions
-  // ─────────────────────────────────────────────────────────────────────────
 
   /// IBM PMULL kernels: [1-way, 2-way, 3-way, 3-way(dup), 3-way(dup)].
   pub const IBM_PMULL: [Crc16Fn; 5] = [

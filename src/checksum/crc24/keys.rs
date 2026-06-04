@@ -82,9 +82,7 @@ impl Crc24StreamConstants {
 pub(crate) const CRC24_OPENPGP_STREAM_REFLECTED: Crc24StreamConstants =
   Crc24StreamConstants::new(CRC24_OPENPGP_POLY_REFLECTED);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Constant Generation (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Carryless multiplication of two 64-bit values, returning the 128-bit result (hi, lo).
 #[must_use]

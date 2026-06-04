@@ -106,6 +106,10 @@ impl Kmac256 {
   /// not recompute from `(key, customization, data)` like [`Self::verify_tag`].
   #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify(&self, expected: &[u8]) -> Result<(), VerificationError> {
+    if expected.is_empty() {
+      return Err(VerificationError::new());
+    }
+
     let mut reader = self.finalize_reader(expected.len());
     let mut diff = 0u8;
     let mut block = [0u8; 64];

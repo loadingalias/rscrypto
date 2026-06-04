@@ -734,7 +734,7 @@ pub(crate) unsafe fn root_output_blocks1(
   flags: u32,
   out: *mut u8,
 ) {
-  // SAFETY: caller guarantees CPU features and output validity.
+  // SAFETY: This function's contract requires SSE4.1+SSSE3 and `out` writable for 64 bytes.
   unsafe {
     root_output_blocks1_from_ptr(
       chaining_value,
@@ -761,7 +761,7 @@ pub(crate) unsafe fn root_output_blocks1_bytes(
   flags: u32,
   out: *mut u8,
 ) {
-  // SAFETY: caller guarantees CPU features and output validity.
+  // SAFETY: This function's contract requires SSE4.1+SSSE3 and `out` writable for 64 bytes.
   unsafe { root_output_blocks1_from_ptr(chaining_value, block_bytes.as_ptr(), counter, block_len, flags, out) }
 }
 

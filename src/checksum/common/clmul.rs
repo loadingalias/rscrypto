@@ -20,9 +20,7 @@
 
 use crate::checksum::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY};
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GF(2) Polynomial Arithmetic
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Carryless multiplication of two 64-bit values, returning 128-bit result.
 ///
@@ -127,9 +125,7 @@ const fn xpow_mod(n: u32, poly: u64) -> u64 {
   result
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // TiKV/Intel CRC64 folding constants
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Folding constants needed by the TiKV/Intel CRC64 CLMUL algorithm.
 #[derive(Clone, Copy, Debug)]
@@ -243,14 +239,11 @@ const fn compute_tikv_mu(poly: u64) -> u64 {
   inv
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Pre-computed constant sets for CRC-64.
 pub(crate) const CRC64_XZ_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::new(CRC64_XZ_POLY);
 pub(crate) const CRC64_NVME_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::new(CRC64_NVME_POLY);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Multi-stream folding constants for CRC-64.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Multi-stream folding constants for CRC-64 CLMUL kernels.
 ///
@@ -332,9 +325,7 @@ pub(crate) const CRC64_XZ_STREAM: Crc64StreamConstants = Crc64StreamConstants::n
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(crate) const CRC64_NVME_STREAM: Crc64StreamConstants = Crc64StreamConstants::new(CRC64_NVME_POLY);
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

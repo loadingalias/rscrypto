@@ -7,9 +7,7 @@
 
 use rscrypto::{Checksum, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Test Vectors (from public CRC standards)
-// ─────────────────────────────────────────────────────────────────────────────
 
 const CHECK_STRING: &[u8] = b"123456789";
 
@@ -22,9 +20,7 @@ const CRC32C_CHECK: u32 = 0xE306_9283;
 const CRC64_XZ_CHECK: u64 = 0x995D_C9BB_DF19_39FA;
 const CRC64_NVME_CHECK: u64 = 0xAE8B_1486_0A79_9888;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Portable Fallback Correctness Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // These tests verify that the CRC implementations produce correct results.
 // On non-SIMD platforms (like wasm32), these exercise the portable fallback.
@@ -93,9 +89,7 @@ fn crc64_nvme_produces_correct_result() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Streaming API Equivalence Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // These tests verify that the streaming API produces the same result as one-shot,
 // exercising both code paths and ensuring the portable fallback works correctly
@@ -147,9 +141,7 @@ fn crc64_streaming_matches_oneshot() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Empty Input Tests
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // Verify that empty input produces the expected initial/identity value.
 
@@ -184,9 +176,7 @@ fn crc64_empty_input() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Various Input Sizes (Exercises Different Code Paths)
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // Test with various input sizes to exercise:
 // - Tail handling (< 8 bytes)

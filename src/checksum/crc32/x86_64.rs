@@ -107,9 +107,7 @@ pub fn crc32c_sse42_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_sse42(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32C HWCRC Multi-stream Kernels (SSE4.2)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "sse4.2")]
@@ -213,9 +211,7 @@ pub fn crc32c_sse42_8way_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_sse42_nway::<8>(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32C Fusion Kernels (SSE4.2 + PCLMULQDQ, AVX-512 tiers)
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // Derived from Corsix `fast-crc32` generator output (v4s3x3 / v3x2 families).
 // These kernels fuse hardware CRC instructions with carryless multiply folding.
@@ -467,9 +463,7 @@ pub fn crc32c_iscsi_sse_v4s3x3_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32c_iscsi_sse_v4s3x3(crc, data.as_ptr(), data.len()) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32C Fusion Multi-stream Wrappers (SSE/AVX-512)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 fn crc32c_fusion_nway<const N: usize>(crc: u32, data: &[u8], update: fn(u32, &[u8]) -> u32) -> u32 {
@@ -726,9 +720,7 @@ pub fn crc32c_iscsi_avx512_vpclmulqdq_v3x2_8way_safe(crc: u32, data: &[u8]) -> u
   crc32c_fusion_nway::<8>(crc, data, crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 (IEEE) PCLMULQDQ Folding Kernel (SSSE3 + PCLMULQDQ)
-// ─────────────────────────────────────────────────────────────────────────────
 //
 // The kernel below implements the reflected CRC-32/ISO-HDLC polynomial using a
 // 128-byte block folding strategy and a final reduction stage.
@@ -759,9 +751,7 @@ const CRC32_IEEE_KEYS_REFLECTED: [u64; 23] = [
   0x00000001_1542778a,
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 (IEEE) Folding Constant Generation (compile-time)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Carryless multiplication of two 64-bit values, returning the 128-bit result (hi, lo).
 #[must_use]
@@ -1159,9 +1149,7 @@ pub fn crc32_ieee_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32_ieee_pclmul_small(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 (IEEE) Multi-stream Folding (SSSE3 + PCLMULQDQ)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
@@ -1712,9 +1700,7 @@ pub fn crc32_ieee_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
   unsafe { crc32_ieee_vpclmul(crc, data) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // CRC-32 (IEEE) Multi-stream Folding (AVX-512 VPCLMULQDQ)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]

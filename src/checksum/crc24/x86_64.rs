@@ -25,9 +25,7 @@ use super::{
   reflected::{crc24_reflected_update_bitrev_bytes, from_reflected_state, to_reflected_state},
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
@@ -150,9 +148,7 @@ impl Simd128 {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 8-lane width32 update (128B blocks)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
@@ -223,9 +219,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // PCLMULQDQ multi-stream (2/4/7/8-way, 128B blocks)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
@@ -792,9 +786,7 @@ unsafe fn crc24_width32_pclmul_stream(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Single-stream kernel entry points
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
@@ -851,9 +843,7 @@ unsafe fn crc24_width32_pclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) ->
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // AVX-512 VPCLMULQDQ Tier
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
@@ -1521,9 +1511,7 @@ unsafe fn crc24_width32_vpclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public Safe Kernels
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// CRC-24/OPENPGP PCLMULQDQ kernel.
 ///

@@ -4,9 +4,6 @@
 //! `sha512sig0`, `sha512sig1`, `sha512sum0`, `sha512sum1` to accelerate the
 //! sigma/sum operations in SHA-512 compression. Each replaces a 3-instruction
 //! rotate-shift-xor sequence with a single dedicated instruction.
-//!
-//! Expected speedup: ~1.4-1.75x over the portable scalar implementation.
-//!
 //! # Safety
 //!
 //! All functions require the `zknh` target feature.
@@ -24,25 +21,25 @@ use super::BLOCK_LEN;
 
 #[inline(always)]
 fn sum0(x: u64) -> u64 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha512sum0(x) }
 }
 
 #[inline(always)]
 fn sum1(x: u64) -> u64 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha512sum1(x) }
 }
 
 #[inline(always)]
 fn sig0(x: u64) -> u64 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha512sig0(x) }
 }
 
 #[inline(always)]
 fn sig1(x: u64) -> u64 {
-  // SAFETY: zknh target feature guaranteed by caller.
+  // SAFETY: `compress_blocks_zknh` calls this wrapper only inside its Zknh target-feature scope.
   unsafe { sha512sig1(x) }
 }
 

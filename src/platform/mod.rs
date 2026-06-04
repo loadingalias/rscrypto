@@ -33,18 +33,14 @@
 //! - Compile-time capability query: **0ns** after optimization
 //! - Cached runtime capability query: **~3ns**
 //! - First runtime detection: **~1μs** (CPUID/sysctl, once per process)
-// ─────────────────────────────────────────────────────────────────────────────
 // Core modules
-// ─────────────────────────────────────────────────────────────────────────────
 
 pub mod caps;
 pub mod detect;
 #[cfg(not(miri))]
 mod target_matrix;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public API - Types
-// ─────────────────────────────────────────────────────────────────────────────
 
 pub use caps::{Arch, Caps};
 pub use detect::{Detected, OverrideError};
@@ -57,9 +53,7 @@ pub use detect::{Detected, OverrideError};
 // - `caps::s390x` - IBM Z features (vector, crypto)
 // - `caps::power` - POWER features (AltiVec, VSX, etc.)
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Public API - Functions
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get detected CPU capabilities and architecture.
 ///
@@ -159,9 +153,7 @@ pub const fn caps_static() -> Caps {
   detect::caps_static()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Description (for diagnostics)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// A zero-allocation description of detected CPU capabilities and architecture.
 ///

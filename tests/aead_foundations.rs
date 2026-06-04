@@ -1,7 +1,10 @@
 #[cfg(feature = "aead")]
 use rscrypto::{
-  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key,
-  aead::{AeadBufferError, Nonce96, OpenError},
+  Aead, Aegis256, Aegis256Key, Aegis256Tag, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag,
+  Aes128GcmTag, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag, Aes256GcmTag, AsconAead128,
+  AsconAead128Key, AsconAead128Tag, ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag, XChaCha20Poly1305,
+  XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
+  aead::{AeadBufferError, Nonce96, Nonce128, Nonce192, Nonce256, OpenError},
 };
 
 #[cfg(feature = "aead")]
@@ -73,10 +76,91 @@ fn aead_open_reports_buffer_and_verification_failures() {
   );
 
   sealed[0] ^= 1;
-  let mut opened = [0u8; 4];
+  let mut opened = [0xA5; 4];
   assert_eq!(
     aead.decrypt(&nonce, b"aad", &sealed, &mut opened),
     Err(OpenError::verification())
+  );
+  assert_eq!(
+    opened, [0u8; 4],
+    "combined decrypt must clear output on verification failure"
+  );
+}
+
+#[test]
+#[cfg(feature = "aead")]
+fn all_aeads_clear_in_place_buffer_on_verification_failure() {
+  macro_rules! assert_clears {
+    ($name:literal, $cipher:expr, $nonce:expr, $tag:ty) => {{
+      let cipher = $cipher;
+      let nonce = $nonce;
+      let mut buffer = *b"failed-open-clear";
+      let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap();
+      let mut bad_tag = tag.to_bytes();
+      bad_tag[0] ^= 0x80;
+      let bad_tag = <$tag>::from_bytes(bad_tag);
+
+      assert_eq!(
+        cipher.decrypt_in_place(&nonce, b"aad", &mut buffer, &bad_tag),
+        Err(OpenError::verification()),
+        "{} must reject a forged tag",
+        $name
+      );
+      assert!(
+        buffer.iter().all(|&byte| byte == 0),
+        "{} must clear the caller buffer on failed open",
+        $name
+      );
+    }};
+  }
+
+  assert_clears!(
+    "ChaCha20-Poly1305",
+    ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; ChaCha20Poly1305::KEY_SIZE])),
+    Nonce96::from_bytes([0x21; Nonce96::LENGTH]),
+    ChaCha20Poly1305Tag
+  );
+  assert_clears!(
+    "XChaCha20-Poly1305",
+    XChaCha20Poly1305::new(&XChaCha20Poly1305Key::from_bytes([0x12; XChaCha20Poly1305::KEY_SIZE])),
+    Nonce192::from_bytes([0x22; Nonce192::LENGTH]),
+    XChaCha20Poly1305Tag
+  );
+  assert_clears!(
+    "AES-128-GCM",
+    Aes128Gcm::new(&Aes128GcmKey::from_bytes([0x13; Aes128Gcm::KEY_SIZE])),
+    Nonce96::from_bytes([0x23; Nonce96::LENGTH]),
+    Aes128GcmTag
+  );
+  assert_clears!(
+    "AES-256-GCM",
+    Aes256Gcm::new(&Aes256GcmKey::from_bytes([0x14; Aes256Gcm::KEY_SIZE])),
+    Nonce96::from_bytes([0x24; Nonce96::LENGTH]),
+    Aes256GcmTag
+  );
+  assert_clears!(
+    "AES-128-GCM-SIV",
+    Aes128GcmSiv::new(&Aes128GcmSivKey::from_bytes([0x15; Aes128GcmSiv::KEY_SIZE])),
+    Nonce96::from_bytes([0x25; Nonce96::LENGTH]),
+    Aes128GcmSivTag
+  );
+  assert_clears!(
+    "AES-256-GCM-SIV",
+    Aes256GcmSiv::new(&Aes256GcmSivKey::from_bytes([0x16; Aes256GcmSiv::KEY_SIZE])),
+    Nonce96::from_bytes([0x26; Nonce96::LENGTH]),
+    Aes256GcmSivTag
+  );
+  assert_clears!(
+    "AEGIS-256",
+    Aegis256::new(&Aegis256Key::from_bytes([0x17; Aegis256::KEY_SIZE])),
+    Nonce256::from_bytes([0x27; Nonce256::LENGTH]),
+    Aegis256Tag
+  );
+  assert_clears!(
+    "Ascon-AEAD128",
+    AsconAead128::new(&AsconAead128Key::from_bytes([0x18; AsconAead128::KEY_SIZE])),
+    Nonce128::from_bytes([0x28; Nonce128::LENGTH]),
+    AsconAead128Tag
   );
 }
 

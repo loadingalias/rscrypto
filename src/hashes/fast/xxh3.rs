@@ -188,7 +188,6 @@ const fn xxh64_avalanche(mut input: u64) -> u64 {
   input
 }
 
-// ---------------------------------------------------------------------------
 #[inline(always)]
 fn mix16_b(data: &[[u8; 8]; 2], secret: &[[u8; 8]; 2], seed: u64) -> u64 {
   let input_lo = u64::from_ne_bytes(data[0]).to_le();

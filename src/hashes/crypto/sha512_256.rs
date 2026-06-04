@@ -146,26 +146,8 @@ impl Sha512_256 {
 
   #[inline]
   fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
-    let mut state = self.state;
-    let mut block = self.block;
-    let mut block_len = self.block_len;
-    let total_len = self.bytes_hashed.strict_add(block_len as u128);
-
-    block[block_len] = 0x80;
-    block_len = block_len.strict_add(1);
-
-    if block_len > 112 {
-      block[block_len..].fill(0);
-      compress_blocks(&mut state, &block);
-      block = [0u8; BLOCK_LEN];
-      block_len = 0;
-    }
-
-    block[block_len..112].fill(0);
-
-    let bit_len = total_len << 3;
-    block[112..128].copy_from_slice(&bit_len.to_be_bytes());
-    compress_blocks(&mut state, &block);
+    let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
+    let state = Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks);
 
     let mut out = [0u8; 32];
     for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {

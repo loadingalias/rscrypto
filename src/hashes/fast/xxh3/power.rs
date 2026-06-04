@@ -18,9 +18,7 @@ use super::{
   SECRET_MERGEACCS_START, STRIPE_LEN,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
 // VSX primitive operations (inline asm, POWER8+)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Add u64 lanes: `vaddudm`.
 #[inline]
@@ -101,9 +99,7 @@ unsafe fn vmul_low32(a: i64x2, b: i64x2) -> i64x2 {
   out
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Load, store, swap
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Load 128 bits from memory (unaligned).
 #[inline(always)]
@@ -125,9 +121,7 @@ fn vswap(a: i64x2) -> i64x2 {
   core::simd::simd_swizzle!(a, [1, 0])
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // SIMD accumulate + scramble
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
@@ -226,9 +220,7 @@ unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Long-path loop (SIMD inner, scalar merge)
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
@@ -278,9 +270,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Top-level kernel functions (safe wrappers)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Long-path entry point (>240B) — no ≤240B branches.
 pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {

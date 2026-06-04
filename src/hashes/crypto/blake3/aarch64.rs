@@ -29,9 +29,7 @@ use core::arch::aarch64::*;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod asm;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Constants
-// ─────────────────────────────────────────────────────────────────────────────
 use super::{BLOCK_LEN, CHUNK_LEN, CHUNK_START, IV, MSG_SCHEDULE, OUT_LEN, PARENT, words16_from_le_bytes_64};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -106,9 +104,7 @@ unsafe fn chunk_compress_blocks_asm(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Rotation helpers for NEON - Optimized versions
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Static shuffle table for 8-bit rotation.
 /// Each u32 [b0, b1, b2, b3] becomes [b1, b2, b3, b0].
@@ -177,9 +173,7 @@ unsafe fn rotr7(v: uint32x4_t) -> uint32x4_t {
   unsafe { vsliq_n_u32(vshrq_n_u32(v, 7), v, 25) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Lane rotation helpers (for diagonalization)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Rotate lanes left by 1: [a, b, c, d] -> [b, c, d, a]
 #[cfg(target_arch = "aarch64")]
@@ -205,9 +199,7 @@ unsafe fn rot_lanes_left_3(v: uint32x4_t) -> uint32x4_t {
   unsafe { vextq_u32(v, v, 3) }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Transpose operations
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Transpose 4 uint32x4_t vectors (4x4 matrix transpose).
 ///
@@ -370,9 +362,7 @@ unsafe fn load_msg_vecs_transposed_contiguous(base: *const u8, block_offset: usi
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Single-block compression (NEON accelerated)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Helper: take the low 64-bit lane (2x u32) from each input and concatenate.
 #[cfg(target_arch = "aarch64")]
@@ -585,9 +575,7 @@ unsafe fn compress_neon_bytes(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 4-way parallel hashing (hash4_neon)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Parallel G function for 4 independent chunks.
 ///
@@ -1371,9 +1359,7 @@ pub(crate) unsafe fn parent_cvs_many_neon(
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // High-level kernel wrappers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// NEON chunk compression: process multiple 64-byte blocks.
 ///

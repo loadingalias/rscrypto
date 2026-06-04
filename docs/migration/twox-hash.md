@@ -2,7 +2,8 @@
 
 > Replace `twox_hash::XxHash3_64::oneshot` with `rscrypto::Xxh3::hash`. Streaming flows through `core::hash::Hasher` in both crates, so the only changes are the type name and the import path.
 
-Verified against `twox-hash = "2.1.2"` and the `rscrypto` 0.3.1 line.
+XXH3 output is covered by `tests/xxh3_differential.rs` against `xxhash-rust`.
+The `twox-hash` mapping is API migration guidance for its 2.x XXH3 surface.
 
 ## TL;DR
 

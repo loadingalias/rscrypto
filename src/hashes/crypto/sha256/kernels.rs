@@ -66,9 +66,7 @@ pub const ALL: &[Sha256KernelId] = &[
   Sha256KernelId::S390xKimd,
 ];
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Safe wrappers — dispatch validates caps before calling.
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "x86_64")]
 fn compress_blocks_x86_sha(state: &mut [u32; 8], blocks: &[u8]) {
@@ -138,7 +136,6 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Compile-time dispatch bypass.
 //
 // When the target feature is statically known (e.g. `-C target-cpu=native` on
@@ -147,7 +144,6 @@ pub const fn required_caps(id: Sha256KernelId) -> Caps {
 //
 // No user-facing feature flags — the compiler sets `target_feature` cfg
 // automatically from `-C target-cpu` or platform defaults.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Whether the best SHA-256 kernel is known at compile time.
 pub(crate) const COMPILE_TIME_HW: bool = cfg!(not(miri))
