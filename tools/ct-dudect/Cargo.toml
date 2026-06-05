@@ -1,0 +1,16 @@
+[package]
+name = "rscrypto-ct-dudect"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[dependencies]
+dudect-bencher = "0.7.0"
+rscrypto = { path = "../..", default-features = false, features = ["std", "full"] }
+
+[[bin]]
+name = "rscrypto-ct-dudect"
+path = "src/main.rs"

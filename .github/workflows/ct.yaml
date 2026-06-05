@@ -1,0 +1,142 @@
+name: Constant-Time
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "RUNNERS (Empty = all). Options: zen4, spr, icl, zen5, g3, g4, s390x, power10, riscv, windows, windows-arm64."
+        required: false
+        type: string
+        default: "all"
+      smoke:
+        description: "Run smoke sample counts instead of full dudect sample counts."
+        required: false
+        type: boolean
+        default: false
+      samples:
+        description: "Override dudect sample count for every case. Empty = ct.toml per-case counts."
+        required: false
+        type: string
+      dudect_timeout:
+        description: "Timeout in seconds for each per-case dudect command."
+        required: false
+        type: string
+        default: "1800"
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RSCRYPTO_CT_MODE: ci
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Resolve CT Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      has_targets: ${{ steps.plan.outputs.has_targets }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Build CT Matrix
+        id: plan
+        shell: bash
+        env:
+          GH_RUN_ID: ${{ github.run_id }}
+          CT_PLATFORMS: ${{ inputs.platforms || 'all' }}
+        run: scripts/ci/emit-manual-matrix.sh ct
+
+  ct:
+    name: CT Full (${{ matrix.display_name }})
+    needs: plan
+    if: ${{ needs.plan.outputs.has_targets == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.runner }}
+      timeout_minutes: ${{ matrix.timeout_minutes }}
+      cache_key: ""
+      tools_mode: ${{ matrix.tools_mode }}
+      toolchain_components: ${{ matrix.toolchain_components }}
+      enable_magic_cache: ${{ matrix.enable_magic_cache }}
+      enable_rust_cache: false
+      pre_script: |
+        set -euo pipefail
+        mkdir -p ct-evidence
+        {
+          echo "CT platform: ${{ matrix.platform }}"
+          echo "CT target: ${{ matrix.target }}"
+          echo "CT runner: ${{ matrix.runner }}"
+          uname -a || true
+          rustc -vV
+          cargo -V
+          case "$(uname -s)" in
+            Linux)
+              lscpu || true
+              sed -n '1,80p' /proc/cpuinfo || true
+              ;;
+            MINGW*|MSYS*|CYGWIN*)
+              systeminfo || true
+              ;;
+            Darwin)
+              sysctl -a machdep.cpu hw.optional 2>/dev/null || true
+              ;;
+          esac
+        } 2>&1 | tee "ct-evidence/host-${{ matrix.artifact_suffix }}.log"
+      run_script: |
+        set -euo pipefail
+        mkdir -p ct-evidence
+        status=0
+        args=(--target "${{ matrix.target }}" --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}")
+        if [[ "${{ inputs.smoke }}" == "true" ]]; then
+          args+=(--smoke)
+        fi
+        if [[ -n "${{ inputs.samples }}" ]]; then
+          args+=(--samples "${{ inputs.samples }}")
+        fi
+
+        {
+          echo "Running: just ct-full ${args[*]}"
+          just ct-full "${args[@]}"
+        } 2>&1 | tee "ct-evidence/ct-full-${{ matrix.artifact_suffix }}.log" || status=$?
+
+        if [[ -d target/ct ]]; then
+          tar -czf "ct-evidence/target-ct-${{ matrix.artifact_suffix }}.tar.gz" target/ct
+        fi
+
+        exit "$status"
+      artifact_name: ct-${{ matrix.artifact_suffix }}
+      artifact_path: ct-evidence/
+      artifact_always: true
+
+  complete:
+    name: Complete (CT)
+    needs: [plan, ct]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert CT lanes passed
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan="${{ needs.plan.result }}"
+          ct="${{ needs.ct.result }}"
+          if [[ "$plan" != "success" ]]; then
+            echo "CT matrix plan failed: $plan"
+            exit 1
+          fi
+          if [[ "$ct" != "success" ]]; then
+            echo "CT full result: $ct"
+            exit 1
+          fi
+          echo "CT full: $ct"

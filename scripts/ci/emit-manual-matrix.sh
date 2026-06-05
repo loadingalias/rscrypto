@@ -3,9 +3,9 @@ set -euo pipefail
 
 MODE="${1:-}"
 case "$MODE" in
-  bench) ;;
+  bench|ct) ;;
   *)
-    echo "usage: scripts/ci/emit-manual-matrix.sh <bench>" >&2
+    echo "usage: scripts/ci/emit-manual-matrix.sh <bench|ct>" >&2
     exit 2
     ;;
 esac
@@ -38,6 +38,8 @@ normalize_platform() {
     ibm-s390x|s390x) echo "ibm-s390x" ;;
     ibm-power10|power10|p10) echo "ibm-power10" ;;
     rise-riscv|riscv|riscv64|th1520|em-rv1) echo "rise-riscv" ;;
+    windows-x64|win-x64|windows|win) echo "windows-x64" ;;
+    windows-arm64|win-arm64|woa) echo "windows-arm64" ;;
     all) echo "all" ;;
     *) echo "" ;;
   esac
@@ -85,6 +87,50 @@ append_row_for_platform() {
   esac
 }
 
+append_ct_row_for_platform() {
+  local platform="${1:-}"
+  local runner_uarch="runs-on=${GH_RUN_ID_VAL}/runner="
+  case "$platform" in
+    amd-zen4)
+      ROWS+=("{\"platform\":\"amd-zen4\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    intel-spr)
+      ROWS+=("{\"platform\":\"intel-spr\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    intel-icl)
+      ROWS+=("{\"platform\":\"intel-icl\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    amd-zen5)
+      ROWS+=("{\"platform\":\"amd-zen5\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    graviton3)
+      ROWS+=("{\"platform\":\"graviton3\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    graviton4)
+      ROWS+=("{\"platform\":\"graviton4\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    ibm-s390x)
+      ROWS+=("{\"platform\":\"ibm-s390x\",\"target\":\"s390x-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt, rust-src\",\"enable_magic_cache\":false}")
+      ;;
+    ibm-power10)
+      ROWS+=("{\"platform\":\"ibm-power10\",\"target\":\"powerpc64le-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt, rust-src\",\"enable_magic_cache\":false}")
+      ;;
+    rise-riscv)
+      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt, rust-src\",\"enable_magic_cache\":false}")
+      ;;
+    windows-x64)
+      ROWS+=("{\"platform\":\"windows-x64\",\"target\":\"x86_64-pc-windows-msvc\",\"os\":\"windows\",\"display_name\":\"Windows x64 MSVC\",\"artifact_suffix\":\"windows-x64\",\"timeout_minutes\":${CT_WINDOWS_TIMEOUT_MINUTES},\"runner\":\"windows-latest\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    windows-arm64)
+      ROWS+=("{\"platform\":\"windows-arm64\",\"target\":\"aarch64-pc-windows-msvc\",\"os\":\"windows\",\"display_name\":\"Windows ARM64 MSVC\",\"artifact_suffix\":\"windows-arm64\",\"timeout_minutes\":${CT_WINDOWS_TIMEOUT_MINUTES},\"runner\":\"windows-11-arm\",\"tools_mode\":\"minimal\",\"toolchain_components\":\"${COMPONENTS_STD}\",\"enable_magic_cache\":false}")
+      ;;
+    *)
+      echo "error: unsupported CT platform '$platform'" >&2
+      exit 2
+      ;;
+  esac
+}
+
 GH_RUN_ID_VAL="${GH_RUN_ID:-${GITHUB_RUN_ID:-}}"
 if [[ -z "$GH_RUN_ID_VAL" ]]; then
   echo "error: GH_RUN_ID or GITHUB_RUN_ID must be set" >&2
@@ -96,7 +142,7 @@ COMPONENTS_STD="clippy, rustfmt, rust-src"
 RUNSON_TIMEOUT_MINUTES=180
 IBM_TIMEOUT_MINUTES=240
 RISCV_TIMEOUT_MINUTES=240
-ALL_PLATFORMS=(
+BENCH_PLATFORMS_ALL=(
   "amd-zen4"
   "intel-spr"
   "intel-icl"
@@ -107,12 +153,35 @@ ALL_PLATFORMS=(
   "ibm-power10"
   "rise-riscv"
 )
+CT_PLATFORMS_ALL=(
+  "amd-zen4"
+  "intel-spr"
+  "intel-icl"
+  "amd-zen5"
+  "graviton3"
+  "graviton4"
+  "ibm-s390x"
+  "ibm-power10"
+  "rise-riscv"
+  "windows-x64"
+  "windows-arm64"
+)
+CT_RUNSON_TIMEOUT_MINUTES=360
+CT_IBM_TIMEOUT_MINUTES=420
+CT_RISCV_TIMEOUT_MINUTES=480
+CT_WINDOWS_TIMEOUT_MINUTES=360
 
-PLATFORMS_INPUT="${BENCH_PLATFORMS:-}"
+if [[ "$MODE" == "ct" ]]; then
+  PLATFORMS_INPUT="${CT_PLATFORMS:-}"
+  ALL_PLATFORMS=("${CT_PLATFORMS_ALL[@]}")
+else
+  PLATFORMS_INPUT="${BENCH_PLATFORMS:-}"
+  ALL_PLATFORMS=("${BENCH_PLATFORMS_ALL[@]}")
+fi
 PLATFORMS_INPUT="$(echo "$PLATFORMS_INPUT" | xargs)"
 
 if [[ -z "$PLATFORMS_INPUT" ]]; then
-  echo "error: BENCH_PLATFORMS is required (example: amd-zen4,intel-spr or all)" >&2
+  echo "error: ${MODE^^}_PLATFORMS is required (example: amd-zen4,intel-spr or all)" >&2
   exit 2
 fi
 
@@ -121,8 +190,8 @@ IFS=',' read -r -a platform_tokens <<< "$PLATFORMS_INPUT"
 for token in "${platform_tokens[@]:+${platform_tokens[@]}}"; do
   normalized="$(normalize_platform "$token")"
   if [[ -z "$normalized" ]]; then
-    echo "error: unknown bench platform '$token'" >&2
-    echo "supported: ${ALL_PLATFORMS[*]}, aliases: zen4 spr icl zen5 g3 g4 s390x power10 riscv, or all" >&2
+    echo "error: unknown $MODE platform '$token'" >&2
+    echo "supported: ${ALL_PLATFORMS[*]}, aliases: zen4 spr icl zen5 g3 g4 s390x power10 riscv windows windows-arm64, or all" >&2
     exit 2
   fi
 
@@ -137,7 +206,11 @@ for token in "${platform_tokens[@]:+${platform_tokens[@]}}"; do
 done
 
 for platform in "${SELECTED_PLATFORMS[@]:+${SELECTED_PLATFORMS[@]}}"; do
-  append_row_for_platform "$platform"
+  if [[ "$MODE" == "ct" ]]; then
+    append_ct_row_for_platform "$platform"
+  else
+    append_row_for_platform "$platform"
+  fi
 done
 
 HAS_TARGETS="false"

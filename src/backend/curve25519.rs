@@ -483,19 +483,10 @@ fn subtract_modulus(limbs: [u64; FIELD_LIMBS]) -> ([u64; FIELD_LIMBS], bool) {
 #[inline]
 #[must_use]
 fn sub_limb(lhs: u64, rhs: u64, borrow: bool) -> (u64, bool) {
-  let subtrahend = u128::from(rhs).wrapping_add(u128::from(u8::from(borrow)));
-  let lhs_wide = u128::from(lhs);
-
-  if lhs_wide >= subtrahend {
-    ((lhs_wide.wrapping_sub(subtrahend)) as u64, false)
-  } else {
-    (
-      (lhs_wide
-        .wrapping_add(u128::from(1u64 << RADIX_BITS))
-        .wrapping_sub(subtrahend)) as u64,
-      true,
-    )
-  }
+  let diff = lhs.wrapping_sub(rhs).wrapping_sub(u64::from(borrow));
+  let borrow_out = (diff >> 63) != 0;
+  let correction = (1u64 << RADIX_BITS) & 0u64.wrapping_sub(u64::from(borrow_out));
+  (diff.wrapping_add(correction), borrow_out)
 }
 
 /// Clamp a Curve25519 secret scalar per RFC 7748 / RFC 8032.

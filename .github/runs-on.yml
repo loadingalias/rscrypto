@@ -98,7 +98,7 @@ runners:
     family: ["c7i", "m7i", "c7a", "m7a", "c6i", "m6i"]
     image: ubuntu24-full-x64
     spot: false
-    volume: 50gb:gp3
+    volume: 100gb:gp3
     ssh: true
     extras: ["s3-cache"]
     tags:
@@ -111,7 +111,7 @@ runners:
     family: ["c7g", "m7g", "c8g", "m8g"]
     image: ubuntu24-full-arm64
     spot: false
-    volume: 50gb:gp3
+    volume: 100gb:gp3
     ssh: true
     extras: ["s3-cache"]
     tags:

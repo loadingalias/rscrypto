@@ -1,5 +1,9 @@
 # Rust
 /target
+tools/**/target
+
+# Python
+__pycache__/
 
 # OS
 Thumbs.db
