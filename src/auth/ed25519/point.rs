@@ -65,6 +65,12 @@ pub(crate) struct CachedPoint {
 }
 
 impl CachedPoint {
+  const IDENTITY: Self = Self {
+    y_plus_x: FieldElement::ONE,
+    y_minus_x: FieldElement::ONE,
+    t2d: FieldElement::ZERO,
+  };
+
   /// Borrow the cached-point components.
   #[cfg(target_arch = "x86_64")]
   #[must_use]
@@ -241,9 +247,7 @@ impl ExtendedPoint {
   pub(crate) fn to_bytes(self) -> Option<[u8; 32]> {
     let (x, y) = self.to_affine()?;
     let mut bytes = y.to_bytes();
-    if x.is_negative() {
-      bytes[31] |= 0x80;
-    }
+    bytes[31] |= u8::from(x.is_negative()) << 7;
     Some(bytes)
   }
 
@@ -322,12 +326,9 @@ impl ExtendedPoint {
     let digits = scalar::as_radix_16(scalar);
     let mut acc = Self::identity();
 
-    for (position, digit) in digits.iter().copied().enumerate() {
-      if digit != 0
-        && let Some(table) = BASEPOINT_RADIX16_TABLE.get(position)
-      {
-        acc = add_signed_cached(acc, table, digit);
-      }
+    for (digit, table) in digits.iter().copied().zip(BASEPOINT_RADIX16_TABLE.iter()) {
+      let point = select_signed_cached(table, digit);
+      acc = acc.add_cached(&point);
     }
 
     acc
@@ -406,20 +407,68 @@ impl ExtendedPoint {
   }
 }
 
-/// Add a signed digit from an affine cached table (basepoint table).
+#[inline(always)]
+#[must_use]
+fn ct_eq_mask_u8(lhs: u8, rhs: u8) -> u64 {
+  let diff = u64::from(lhs ^ rhs);
+  let is_zero = ((diff | diff.wrapping_neg()) >> 63) ^ 1;
+  0u64.wrapping_sub(is_zero)
+}
+
+#[inline(always)]
+#[must_use]
+fn ct_negative_mask_i8(value: i8) -> u64 {
+  let bit = ((i16::from(value) >> 15) & 1) as u64;
+  0u64.wrapping_sub(bit)
+}
+
+#[inline(always)]
+#[must_use]
+fn ct_abs_i8(value: i8) -> u8 {
+  let value = i16::from(value);
+  let sign = value >> 15;
+  ((value ^ sign) - sign) as u8
+}
+
+#[inline(always)]
+#[must_use]
+fn select_field(lhs: &FieldElement, rhs: &FieldElement, mask: u64) -> FieldElement {
+  let mut out = [0u64; 5];
+  for (dst, (&left, &right)) in out.iter_mut().zip(lhs.limbs().iter().zip(rhs.limbs().iter())) {
+    *dst = left ^ (mask & (left ^ right));
+  }
+  FieldElement::from_limbs(out)
+}
+
+#[inline(always)]
+#[must_use]
+fn select_cached(lhs: &CachedPoint, rhs: &CachedPoint, mask: u64) -> CachedPoint {
+  CachedPoint {
+    y_plus_x: select_field(&lhs.y_plus_x, &rhs.y_plus_x, mask),
+    y_minus_x: select_field(&lhs.y_minus_x, &rhs.y_minus_x, mask),
+    t2d: select_field(&lhs.t2d, &rhs.t2d, mask),
+  }
+}
+
 #[inline]
 #[must_use]
-fn add_signed_cached(acc: ExtendedPoint, table: &[CachedPoint; 8], digit: i8) -> ExtendedPoint {
-  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
-  let Some(point) = table.get(index).copied() else {
-    return acc;
-  };
-
-  if digit > 0 {
-    acc.add_cached(&point)
-  } else {
-    acc.add_cached(&point.neg())
+fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
+  let abs = core::hint::black_box(ct_abs_i8(digit));
+  let mut selected = CachedPoint::IDENTITY;
+  for (i, candidate) in table.iter().enumerate() {
+    // SAFETY: Volatile table read is used as a compiler barrier because:
+    // 1. `candidate` is a valid shared reference to one `CachedPoint` entry.
+    // 2. `CachedPoint` is `Copy`, so the volatile read does not create ownership aliasing.
+    // 3. Every table entry is read unconditionally; the selected digit affects only masks below.
+    // Without this barrier, LLVM can rewrite the masked selection into a secret-dependent branch
+    // ladder.
+    let candidate = unsafe { core::ptr::read_volatile(candidate) };
+    let mask = core::hint::black_box(ct_eq_mask_u8(abs, (i as u8).wrapping_add(1)));
+    selected = select_cached(&selected, &candidate, mask);
   }
+
+  let neg = selected.neg();
+  select_cached(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
 }
 
 /// Add a signed digit from a projective cached table (runtime table).

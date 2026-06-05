@@ -3,7 +3,9 @@
 ## Constant-Time Claim Boundary
 
 Constant-time claims are scoped to secret-bearing comparisons and operations,
-not to every function in the crate.
+not to every function in the crate. The rulebook for release claims, allowed
+leakage, target scope, and invalidation lives in
+[`docs/constant-time.md`](constant-time.md).
 
 | Surface | Claim boundary | Evidence |
 |---|---|---|

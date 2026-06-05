@@ -11,6 +11,16 @@ LOG_DIR=$(mktemp -d)
 trap 'rm -rf "$LOG_DIR"' EXIT
 TARGET_DIR="$LOG_DIR/target"
 
+cleanup_feature_artifacts() {
+  cargo clean --target-dir "$TARGET_DIR" -p rscrypto >/dev/null 2>&1 || true
+}
+
+show_feature_matrix_disk() {
+  if [[ "${CI:-}" == "true" || -n "${GITHUB_ACTIONS:-}" ]]; then
+    df -h "$LOG_DIR" | sed 's/^/    /'
+  fi
+}
+
 FEATURE_SETS=(
   "crc16"
   "crc24"
@@ -73,8 +83,10 @@ for feature_set in "${FEATURE_SETS[@]}"; do
   if ! CARGO_TARGET_DIR="$TARGET_DIR" $CARGO_CMD --no-default-features --features "$feature_set" >"$log_path" 2>&1; then
     fail
     show_error "$log_path"
+    show_feature_matrix_disk
     exit 1
   fi
+  cleanup_feature_artifacts
   ok
 done
 

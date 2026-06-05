@@ -58,6 +58,27 @@ test-miri *crates="":
 test-rsa-leakage:
     @scripts/test/test-rsa-leakage.sh
 
+# Build and validate the host CT evidence bundle.
+ct *args="":
+    @scripts/ct/artifacts.sh {{ args }}
+    @scripts/ct/validate.py {{ args }}
+
+# Run empirical DudeCT timing checks for the host target. Pass args such as `--smoke` or `--filter x25519`.
+ct-dudect *args="":
+    @scripts/ct/dudect.sh {{ args }}
+
+# Build deterministic CT artifacts, run timing evidence, and emit CT reports.
+ct-full *args="":
+    @scripts/ct/full.py {{ args }}
+
+# Build CT harness artifacts. Pass args such as `--target x86_64-unknown-linux-gnu`.
+ct-artifacts *args="":
+    @scripts/ct/artifacts.sh {{ args }}
+
+# Validate CT manifest and generated artifacts. Pass args such as `--manifest-only`.
+ct-validate *args="":
+    @scripts/ct/validate.py {{ args }}
+
 # Fuzz: build scoped packages + run full harness. Pass a target name to run a single target.
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{ args }}

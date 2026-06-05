@@ -1,0 +1,799 @@
+[manifest]
+schema_version = 1
+policy = "docs/constant-time.md"
+owner = "rscrypto"
+backend_scope = ["llvm"]
+default_claim = "not-claimed"
+release_report = "ct-report.json"
+harness = "tools/ct-harness"
+artifact_script = "scripts/ct/artifacts.sh"
+
+[status]
+ct_claimed = "all required evidence has passed for the exact primitive/configuration pair"
+ct_intended = "implementation is intended to satisfy the policy, but release evidence is incomplete"
+best_effort = "implementation may reduce leakage, but no release constant-time claim is made"
+unsupported = "no constant-time claim and no planned evidence for this release"
+
+[leakage.common_secret_data]
+may_leak = ["public_length", "public_algorithm", "public_shape_error", "opaque_success_or_failure"]
+must_not_leak = [
+  "secret_branch",
+  "secret_address",
+  "secret_table_index",
+  "secret_divisor",
+  "secret_loop_bound",
+  "secret_error_path",
+  "secret_panic_path",
+  "secret_allocation",
+  "secret_formatting",
+  "secret_dispatch",
+  "secret_variable_latency_instruction",
+]
+
+[evidence.profile.tier_a]
+required = ["harness", "provenance", "llvm_ir", "asm", "object_disasm", "asm_heuristics", "dudect", "taint", "miri"]
+required_where_practical = ["binsec"]
+
+[evidence.profile.tier_b]
+required = ["harness", "provenance", "llvm_ir", "asm", "object_disasm", "asm_heuristics", "dudect"]
+required_where_practical = ["taint", "binsec", "miri"]
+
+[evidence.profile.tier_c]
+required = ["classification", "opaque_failure_review"]
+required_where_practical = ["asm"]
+
+[[harness]]
+name = "ct-harness"
+path = "tools/ct-harness"
+kind = "staticlib"
+status = "covered"
+symbols = [
+  "ct_entry_constant_time_eq",
+  "ct_entry_secret_bytes32_eq",
+  "ct_entry_x25519_secret_eq",
+  "ct_entry_ed25519_secret_eq",
+  "ct_entry_secret_bytes32_debug_masked",
+  "ct_entry_hmac_sha256_verify",
+  "ct_entry_hmac_sha384_verify",
+  "ct_entry_hmac_sha512_verify",
+  "ct_entry_kmac256_verify",
+  "ct_entry_blake3_verify_keyed",
+  "ct_entry_chacha20poly1305_open",
+  "ct_entry_aes128gcm_open",
+  "ct_entry_aes256gcm_open",
+  "ct_entry_aes128gcmsiv_open",
+  "ct_entry_aes256gcmsiv_open",
+  "ct_entry_xchacha20poly1305_open",
+  "ct_entry_aegis256_open",
+  "ct_entry_ascon_aead128_open",
+  "ct_entry_x25519",
+  "ct_entry_ed25519_sign",
+  "ct_entry_ed25519_verify",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+  "ct_entry_hkdf_sha256_derive",
+  "ct_entry_hkdf_sha384_derive",
+  "ct_entry_pbkdf2_sha256_derive",
+  "ct_entry_pbkdf2_sha256_verify",
+  "ct_entry_pbkdf2_sha256_verify_full",
+  "ct_entry_pbkdf2_sha512_derive",
+  "ct_entry_pbkdf2_sha512_verify",
+  "ct_entry_argon2i_hash",
+  "ct_entry_argon2i_verify",
+  "ct_entry_argon2d_hash",
+  "ct_entry_argon2d_verify",
+  "ct_entry_argon2id_hash",
+  "ct_entry_argon2id_verify",
+  "ct_entry_scrypt_verify",
+  "ct_entry_blake2b256_keyed_digest",
+  "ct_entry_blake2b512_keyed_digest",
+  "ct_entry_blake2s128_keyed_digest",
+  "ct_entry_blake2s256_keyed_digest",
+  "ct_entry_blake3_keyed_digest",
+  "ct_entry_public_sha256_digest",
+  "ct_entry_public_crc32_checksum",
+  "ct_entry_classification_public_only",
+  "ct_entry_classification_best_effort",
+]
+covers = [
+  "ct.constant_time_eq",
+  "secret_wrappers.equality_and_display",
+  "mac.hmac_verify",
+  "mac.kmac256_verify",
+  "keyed_hash.blake3_verify",
+  "aead.open_authentication",
+  "kx.x25519",
+  "signature.ed25519_sign",
+  "signature.ed25519_verify_failure_shape",
+  "rsa.private_ops",
+  "rsa.private_key_material",
+  "kdf.hkdf",
+  "kdf.pbkdf2",
+  "password.argon2i",
+  "password.argon2d_argon2id",
+  "password.scrypt",
+  "aead.symmetric_transform",
+  "keyed_hash.blake2_blake3",
+  "public_hashes_and_checksums",
+]
+notes = "Harness coverage is complete for Step 3/4/5. This does not make release CT claims; ct-claimed still requires the evidence gates in the required profiles."
+
+[[dudect_case]]
+name = "constant_time_eq_equal_vs_first_diff"
+primitive = "ct.constant_time_eq"
+filter = "constant_time_eq"
+left_class = "equal 64-byte inputs"
+right_class = "same length with first byte different"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "secret_wrappers_eq_and_debug_fixed_vs_random"
+primitive = "secret_wrappers.equality_and_display"
+filter = "secret_wrappers"
+left_class = "fixed secret bytes"
+right_class = "random secret bytes"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "hmac_sha256_valid_vs_invalid_tag"
+primitive = "mac.hmac_verify"
+filter = "hmac"
+left_class = "valid tag"
+right_class = "invalid first tag byte"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "kmac256_valid_vs_invalid_tag"
+primitive = "mac.kmac256_verify"
+filter = "kmac"
+left_class = "valid tag"
+right_class = "invalid first tag byte"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake3_keyed_valid_vs_invalid_tag"
+primitive = "keyed_hash.blake3_verify"
+filter = "blake3_keyed_valid"
+left_class = "valid keyed digest"
+right_class = "invalid first digest byte"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "xchacha20poly1305_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "xchacha20poly1305"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "x25519_fixed_vs_random_scalar"
+primitive = "kx.x25519"
+filter = "x25519"
+left_class = "fixed scalar"
+right_class = "random scalar"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ed25519_sign_fixed_vs_random_secret"
+primitive = "signature.ed25519_sign"
+filter = "ed25519_sign_fixed_vs_random_secret"
+left_class = "fixed signing secret"
+right_class = "random signing secret"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ed25519_public_key_fixed_vs_random_secret"
+primitive = "signature.ed25519_sign"
+filter = "ed25519_public_key_fixed_vs_random_secret"
+left_class = "fixed signing secret public-key derivation"
+right_class = "random signing secret public-key derivation"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ed25519_keypair_sign_fixed_vs_random_secret"
+primitive = "signature.ed25519_sign"
+filter = "ed25519_keypair_sign_fixed_vs_random_secret"
+left_class = "fixed keypair signing secret"
+right_class = "random keypair signing secret"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ed25519_sha512_secret_expand_fixed_vs_random_secret"
+primitive = "signature.ed25519_sign"
+filter = "ed25519_sha512_secret_expand_fixed_vs_random_secret"
+left_class = "fixed signing secret SHA-512 expansion"
+right_class = "random signing secret SHA-512 expansion"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "rsa_pkcs1v15_fixed_vs_random_message"
+primitive = "rsa.private_ops"
+filter = "rsa_pkcs1v15"
+left_class = "fixed message"
+right_class = "random same-length message"
+samples = 128
+smoke_samples = 128
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_roundtrip_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key"
+left_class = "valid PKCS#8 private key A"
+right_class = "valid same-size PKCS#8 private key B"
+samples = 128
+smoke_samples = 16
+
+[[dudect_case]]
+name = "hkdf_sha2_fixed_vs_random_ikm"
+primitive = "kdf.hkdf"
+filter = "hkdf"
+left_class = "fixed input key material"
+right_class = "random input key material"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "pbkdf2_sha2_fixed_vs_random_password"
+primitive = "kdf.pbkdf2"
+filter = "pbkdf2"
+left_class = "fixed password"
+right_class = "random same-length password"
+samples = 2000
+smoke_samples = 256
+
+[[dudect_case]]
+name = "argon2i_fixed_vs_random_password"
+primitive = "password.argon2i"
+filter = "argon2i"
+left_class = "fixed password"
+right_class = "random same-length password"
+samples = 128
+smoke_samples = 16
+
+[[dudect_case]]
+name = "chacha20poly1305_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake2_blake3_keyed_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake2_blake3"
+left_class = "fixed keyed-hash key"
+right_class = "random keyed-hash key"
+samples = 20000
+smoke_samples = 2000
+
+[[target]]
+name = "x86_64-unknown-linux-gnu"
+group = "linux"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "linux-x64-ci"
+
+[[target]]
+name = "aarch64-unknown-linux-gnu"
+group = "linux"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "linux-arm64-ci"
+
+[[target]]
+name = "x86_64-unknown-linux-musl"
+group = "linux"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "aarch64-unknown-linux-musl"
+group = "linux"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "x86_64-pc-windows-msvc"
+group = "win"
+backend = "llvm"
+linker = "msvc-link-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "windows-latest"
+
+[[target]]
+name = "aarch64-pc-windows-msvc"
+group = "win"
+backend = "llvm"
+linker = "msvc-link-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "windows-11-arm"
+
+[[target]]
+name = "s390x-unknown-linux-gnu"
+group = "ibm"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "powerpc64le-unknown-linux-gnu"
+group = "ibm"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "riscv64gc-unknown-linux-gnu"
+group = "linux"
+backend = "llvm"
+linker = "platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "thumbv6m-none-eabi"
+group = "no_std"
+backend = "llvm"
+linker = "none-or-platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "riscv32imac-unknown-none-elf"
+group = "no_std"
+backend = "llvm"
+linker = "none-or-platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "aarch64-unknown-none"
+group = "no_std"
+backend = "llvm"
+linker = "none-or-platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "x86_64-unknown-none"
+group = "no_std"
+backend = "llvm"
+linker = "none-or-platform-default-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "wasm32-unknown-unknown"
+group = "wasm"
+backend = "llvm"
+linker = "rust-lld-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[target]]
+name = "wasm32-wasip1"
+group = "wasm"
+backend = "llvm"
+linker = "rust-lld-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+ci = "missing"
+
+[[primitive]]
+id = "ct.constant_time_eq"
+tier = "A"
+claim = "ct-intended"
+features = ["always"]
+entrypoints = ["rscrypto::traits::ct::constant_time_eq", "rscrypto::ConstantTimeEq::ct_eq"]
+secrets = ["left_bytes", "right_bytes"]
+public = ["left_len", "right_len"]
+may_leak = ["input_length", "length_mismatch"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Length mismatch is public shape. Equal-length byte contents must not influence timing."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_constant_time_eq"]
+
+[[primitive]]
+id = "secret_wrappers.equality_and_display"
+tier = "A"
+claim = "ct-intended"
+features = ["always"]
+entrypoints = ["rscrypto::SecretBytes::eq", "secret-key newtype Eq impls", "shared-secret newtype Eq impls", "secret-key Debug impls"]
+secrets = ["secret_bytes"]
+public = ["type", "length"]
+may_leak = ["type", "input_length"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Secret Debug must remain masked. Explicit display_secret APIs are caller opt-in and outside opaque logging claims."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_secret_bytes32_eq",
+  "ct_entry_x25519_secret_eq",
+  "ct_entry_ed25519_secret_eq",
+  "ct_entry_secret_bytes32_debug_masked",
+]
+
+[[primitive]]
+id = "mac.hmac_verify"
+tier = "A"
+claim = "ct-intended"
+features = ["hmac"]
+variants = ["HmacSha256", "HmacSha384", "HmacSha512"]
+entrypoints = ["HmacSha256::verify_tag", "HmacSha384::verify_tag", "HmacSha512::verify_tag", "Mac::verify", "Mac::verify_tag"]
+secrets = ["key", "computed_tag", "expected_tag"]
+public = ["data", "tag_length"]
+may_leak = ["input_length", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_hmac_sha256_verify", "ct_entry_hmac_sha384_verify", "ct_entry_hmac_sha512_verify"]
+
+[[primitive]]
+id = "mac.kmac256_verify"
+tier = "A"
+claim = "ct-intended"
+features = ["kmac"]
+entrypoints = ["Kmac256::verify_tag", "Kmac256::verify"]
+secrets = ["key", "computed_tag", "expected_tag"]
+public = ["customization", "data", "output_length"]
+may_leak = ["input_length", "output_length", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_kmac256_verify"]
+
+[[primitive]]
+id = "keyed_hash.blake3_verify"
+tier = "A"
+claim = "ct-intended"
+features = ["blake3"]
+entrypoints = ["Blake3::verify_keyed", "Blake3KeyedHash::eq", "Blake3KeyedHash::ct_eq"]
+secrets = ["key", "computed_tag", "expected_tag"]
+public = ["data"]
+may_leak = ["input_length", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_blake3_verify_keyed"]
+
+[[primitive]]
+id = "aead.open_authentication"
+tier = "A"
+claim = "ct-intended"
+features = ["aead"]
+variants = [
+  "Aes128Gcm",
+  "Aes256Gcm",
+  "Aes128GcmSiv",
+  "Aes256GcmSiv",
+  "ChaCha20Poly1305",
+  "XChaCha20Poly1305",
+  "Aegis256",
+  "AsconAead128",
+]
+entrypoints = ["Aead::decrypt_in_place", "Aead::decrypt", "*::decrypt_in_place", "*::decrypt"]
+secrets = ["key", "computed_tag", "expected_tag", "opened_plaintext"]
+public = ["nonce", "aad", "ciphertext", "ciphertext_length", "tag_length"]
+may_leak = ["input_length", "opaque_success_or_failure", "public_buffer_size_error"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Failure may be reported only as opaque authentication failure and must wipe caller-visible plaintext buffers on failed open."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_aes128gcm_open",
+  "ct_entry_aes256gcm_open",
+  "ct_entry_aes128gcmsiv_open",
+  "ct_entry_aes256gcmsiv_open",
+  "ct_entry_chacha20poly1305_open",
+  "ct_entry_xchacha20poly1305_open",
+  "ct_entry_aegis256_open",
+  "ct_entry_ascon_aead128_open",
+]
+
+[[primitive]]
+id = "kx.x25519"
+tier = "A"
+claim = "ct-intended"
+features = ["x25519"]
+entrypoints = ["X25519SecretKey::public_key", "X25519SecretKey::diffie_hellman", "X25519SharedSecret::diffie_hellman"]
+secrets = ["scalar", "shared_secret"]
+public = ["public_key", "all_zero_shared_secret_rejection"]
+may_leak = ["opaque_success_or_failure", "public_key"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_x25519"]
+
+[[primitive]]
+id = "signature.ed25519_sign"
+tier = "A"
+claim = "ct-intended"
+features = ["ed25519"]
+entrypoints = ["Ed25519SecretKey::public_key", "Ed25519SecretKey::sign", "Ed25519Keypair::from_secret_key", "Ed25519Keypair::sign"]
+secrets = ["secret_key", "expanded_secret", "nonce_prefix", "scalar"]
+public = ["message", "message_length"]
+may_leak = ["message_length"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_ed25519_sign"]
+
+[[primitive]]
+id = "signature.ed25519_verify_failure_shape"
+tier = "C"
+claim = "best-effort"
+features = ["ed25519"]
+entrypoints = ["Ed25519PublicKey::verify", "auth::ed25519::verify"]
+secrets = []
+public = ["public_key", "message", "signature"]
+may_leak = ["public_shape_error", "opaque_success_or_failure"]
+must_not_leak = ["failure_detail"]
+required = ["tier_c"]
+notes = "Verification is public-key work. The CT policy covers opaque failure shape, not secret arithmetic."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_ed25519_verify"]
+coverage = "public failure-shape harness"
+
+[[primitive]]
+id = "rsa.private_ops"
+tier = "A"
+claim = "ct-intended"
+features = ["rsa"]
+entrypoints = [
+  "RsaPrivateKey::sign_signature",
+  "RsaPrivateKey::sign_signature_with_scratch",
+  "RsaPrivateKey::sign_pkcs1v15",
+  "RsaPrivateKey::sign_pkcs1v15_with_scratch",
+  "RsaPrivateKey::sign_pss",
+  "RsaPrivateKey::sign_pss_with_scratch",
+  "RsaPrivateKey::decrypt_oaep",
+  "RsaPrivateKey::decrypt_oaep_with_scratch",
+  "RsaPrivateKey::decrypt_pkcs1v15",
+  "RsaPrivateKey::decrypt_pkcs1v15_with_scratch",
+  "RsaPrivateKey::*_with_blinding_factor*",
+]
+secrets = ["private_exponent", "crt_factors", "crt_exponents", "plaintext", "padding_state", "blinding_inverse"]
+public = ["message", "ciphertext", "profile", "modulus_length", "salt_length", "rng_failure"]
+may_leak = ["input_length", "public_profile", "opaque_success_or_failure", "public_rng_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Top-level OS randomness and public profile parsing may fail publicly. Steady-state private math and same-width padding/failure behavior are CT-critical."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_rsa_pkcs1v15_sign_fixed_blinding", "ct_entry_rsa_oaep_decrypt_fixed_blinding"]
+
+[[primitive]]
+id = "rsa.private_key_material"
+tier = "A"
+claim = "ct-intended"
+features = ["rsa"]
+entrypoints = ["RsaPrivateKey::from_components", "RsaPrivateKey::from_pkcs1_der", "RsaPrivateKey::from_pkcs8_der", "RsaPrivateKey::to_pkcs1_der", "RsaPrivateKey::to_pkcs8_der"]
+secrets = ["private_key_components", "serialized_private_key"]
+public = ["der_length", "format_shape", "public_policy"]
+may_leak = ["input_length", "public_shape_error", "public_policy_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Private-key parsing and serialization are tracked because secret material is present. Public DER shape errors may remain public."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_rsa_private_key_pkcs8_roundtrip"]
+coverage = "private key parse/serialize material-handling harness"
+
+[[primitive]]
+id = "kdf.hkdf"
+tier = "B"
+claim = "ct-intended"
+features = ["hkdf"]
+variants = ["HkdfSha256", "HkdfSha384"]
+entrypoints = ["HkdfSha256::new", "HkdfSha256::extract", "HkdfSha256::expand", "HkdfSha384::new", "HkdfSha384::extract", "HkdfSha384::expand"]
+secrets = ["input_key_material", "prk", "okm"]
+public = ["salt", "info", "output_length"]
+may_leak = ["input_length", "output_length", "public_length_error"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_b"]
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_hkdf_sha256_derive", "ct_entry_hkdf_sha384_derive"]
+
+[[primitive]]
+id = "kdf.pbkdf2"
+tier = "A"
+claim = "ct-intended"
+features = ["pbkdf2"]
+variants = ["Pbkdf2Sha256", "Pbkdf2Sha512"]
+entrypoints = ["Pbkdf2Sha256::derive", "Pbkdf2Sha256::verify", "Pbkdf2Sha256::verify_password", "Pbkdf2Sha512::derive", "Pbkdf2Sha512::verify", "Pbkdf2Sha512::verify_password"]
+secrets = ["password", "derived_key", "expected_key"]
+public = ["salt", "iterations", "output_length"]
+may_leak = ["input_length", "output_length", "public_parameter_error", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_pbkdf2_sha256_derive",
+  "ct_entry_pbkdf2_sha256_verify",
+  "ct_entry_pbkdf2_sha256_verify_full",
+  "ct_entry_pbkdf2_sha512_derive",
+  "ct_entry_pbkdf2_sha512_verify",
+]
+
+[[primitive]]
+id = "password.argon2i"
+tier = "A"
+claim = "ct-intended"
+features = ["argon2"]
+entrypoints = ["Argon2i::hash", "Argon2i::verify", "Argon2i::verify_string", "Argon2i::verify_string_with_policy"]
+secrets = ["password", "derived_key", "expected_key"]
+public = ["salt", "params", "phc_string"]
+may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Argon2i uses data-independent memory indexing and is the side-channel-sensitive Argon2 profile."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_argon2i_hash", "ct_entry_argon2i_verify"]
+
+[[primitive]]
+id = "password.argon2d_argon2id"
+tier = "A"
+claim = "best-effort"
+features = ["argon2"]
+entrypoints = ["Argon2d::*", "Argon2id::*"]
+secrets = ["password", "derived_key", "expected_key"]
+public = ["salt", "params", "phc_string"]
+may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]
+must_not_leak = ["secret-dependent final comparison"]
+required = ["classification", "final_compare_review"]
+notes = "Argon2d and the data-dependent portion of Argon2id intentionally use password-derived memory access. Do not present them as local side-channel constant-time profiles."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_argon2d_hash",
+  "ct_entry_argon2d_verify",
+  "ct_entry_argon2id_hash",
+  "ct_entry_argon2id_verify",
+  "ct_entry_classification_best_effort",
+]
+coverage = "best-effort classification plus final-comparison harness coverage; not eligible for ct-claimed local side-channel CT status"
+
+[[primitive]]
+id = "password.scrypt"
+tier = "A"
+claim = "best-effort"
+features = ["scrypt"]
+entrypoints = ["Scrypt::derive", "Scrypt::verify", "Scrypt::verify_string", "Scrypt::verify_string_with_policy"]
+secrets = ["password", "derived_key", "expected_key"]
+public = ["salt", "params", "phc_string"]
+may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]
+must_not_leak = ["secret-dependent final comparison"]
+required = ["classification", "final_compare_review"]
+notes = "scrypt ROMix uses password-derived data-dependent memory access. Final derived-key comparison remains CT-critical, but the algorithm is not a local side-channel CT claim."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_scrypt_verify", "ct_entry_classification_best_effort"]
+coverage = "best-effort classification plus final-comparison harness coverage; not eligible for ct-claimed local side-channel CT status"
+
+[[primitive]]
+id = "aead.symmetric_transform"
+tier = "B"
+claim = "ct-intended"
+features = ["aead"]
+variants = [
+  "AES",
+  "GHASH",
+  "POLYVAL",
+  "ChaCha20",
+  "Poly1305",
+  "Aegis256",
+  "AsconAead128",
+]
+entrypoints = ["Aead::encrypt_in_place", "Aead::decrypt_in_place", "AES block helpers", "GHASH/POLYVAL helpers", "ChaCha20 keystream helpers", "Poly1305 block helpers"]
+secrets = ["key", "plaintext", "opened_plaintext", "poly_key", "hash_subkey"]
+public = ["nonce", "aad", "input_length", "backend_caps"]
+may_leak = ["input_length", "public_backend_dispatch"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_b"]
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_aes128gcm_open",
+  "ct_entry_aes256gcm_open",
+  "ct_entry_aes128gcmsiv_open",
+  "ct_entry_aes256gcmsiv_open",
+  "ct_entry_chacha20poly1305_open",
+  "ct_entry_xchacha20poly1305_open",
+  "ct_entry_aegis256_open",
+  "ct_entry_ascon_aead128_open",
+]
+coverage = "AEAD open harnesses exercise encrypt/decrypt transforms and authentication backends through production public APIs; later BINSEC/asm leaf harnesses may split smaller kernels."
+
+[[primitive]]
+id = "keyed_hash.blake2_blake3"
+tier = "B"
+claim = "ct-intended"
+features = ["blake2b", "blake2s", "blake3"]
+entrypoints = ["Blake2 keyed constructors", "Blake3::keyed_digest", "Blake3::derive_key"]
+secrets = ["key", "key_material", "derived_key", "keyed_output"]
+public = ["data", "context", "output_length"]
+may_leak = ["input_length", "output_length"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_b"]
+notes = "Caller-visible verification must use ConstantTimeEq or a typed verify helper."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_blake2b256_keyed_digest",
+  "ct_entry_blake2b512_keyed_digest",
+  "ct_entry_blake2s128_keyed_digest",
+  "ct_entry_blake2s256_keyed_digest",
+  "ct_entry_blake3_keyed_digest",
+  "ct_entry_blake3_verify_keyed",
+]
+
+[[primitive]]
+id = "public_hashes_and_checksums"
+tier = "C"
+claim = "best-effort"
+features = ["checksums", "crypto-hashes", "fast-hashes"]
+entrypoints = ["Digest::*", "Xof::*", "Checksum::*", "FastHash::*"]
+secrets = []
+public = ["data", "seed", "output_length"]
+may_leak = ["input_length", "public_data"]
+must_not_leak = []
+required = ["classification"]
+notes = "Raw public hashes, checksums, and non-cryptographic hashes are not release constant-time claims as whole APIs. Keyed hash modes are tracked separately."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_public_sha256_digest",
+  "ct_entry_public_crc32_checksum",
+  "ct_entry_classification_public_only",
+]
+coverage = "classification-only public-data surface with representative digest/checksum artifact hooks"

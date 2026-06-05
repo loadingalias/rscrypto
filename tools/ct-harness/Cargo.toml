@@ -1,0 +1,15 @@
+[package]
+name = "rscrypto-ct-harness"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+name = "rscrypto_ct_harness"
+crate-type = ["staticlib"]
+bench = false
+
+[dependencies]
+rscrypto = { path = "../..", default-features = false, features = ["std", "full"] }
