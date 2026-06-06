@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 dudect-bencher = "0.7.0"
-rscrypto = { path = "../..", default-features = false, features = ["std", "full"] }
+rscrypto = { path = "../..", default-features = false, features = ["std", "full", "diag"] }
 
 [[bin]]
 name = "rscrypto-ct-dudect"

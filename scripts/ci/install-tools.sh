@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI.
-# Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|minimal|none]
+# Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
@@ -136,6 +136,16 @@ install_if_missing() {
   cargo binstall "$tool" --no-confirm --force 2>/dev/null || cargo install "$tool" --locked
 }
 
+install_just_portable() {
+  if command -v just &>/dev/null; then
+    echo "  just: cached"
+    return 0
+  fi
+
+  echo "  just: installing via cargo"
+  cargo install just --locked
+}
+
 # Compare dot-separated numeric versions. Returns 0 when $1 >= $2.
 version_gte() {
   local lhs="$1"
@@ -181,6 +191,68 @@ ensure_cargo_rail() {
   fi
 
   cargo binstall "cargo-rail@${required}" --no-confirm --force 2>/dev/null || cargo install cargo-rail --locked --version "$required" --force
+}
+
+install_binsec() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "  binsec: skipped (Linux-only CT kernel lane)"
+    return 0
+  fi
+
+  local package="${BINSEC_OPAM_PACKAGE:-binsec.0.11.1}"
+  local decoder_package="${BINSEC_DECODER_OPAM_PACKAGE:-unisim_archisec.0.0.14}"
+
+  if command -v binsec &>/dev/null && command -v opam &>/dev/null; then
+    if opam list --installed --short | grep -qx "${decoder_package%%.*}"; then
+      echo "  binsec: cached"
+      return 0
+    fi
+    echo "  binsec: cached without $decoder_package; installing decoder"
+  fi
+
+  echo "  binsec: installing via OPAM"
+  if ! command -v opam &>/dev/null; then
+    if command -v apt-get &>/dev/null; then
+      sudo apt-get update
+      sudo apt-get install -y --no-install-recommends opam m4 pkg-config libgmp-dev zlib1g-dev build-essential
+    else
+      echo "opam is required to install BINSEC on this runner" >&2
+      return 1
+    fi
+  fi
+
+  export OPAMYES=1
+  export OPAMSWITCH="${OPAMSWITCH:-rscrypto-ct}"
+
+  if [[ ! -d "$HOME/.opam" ]]; then
+    opam init --bare --disable-sandboxing -y
+  fi
+
+  if ! opam switch list --short | grep -qx "$OPAMSWITCH"; then
+    opam switch create "$OPAMSWITCH" ocaml-base-compiler.5.2.1 -y
+  fi
+
+  eval "$(opam env --switch="$OPAMSWITCH" --set-switch)"
+  opam install "$decoder_package" "$package" -y
+  eval "$(opam env --switch="$OPAMSWITCH" --set-switch)"
+
+  if [[ -n "${GITHUB_PATH:-}" ]]; then
+    echo "$HOME/.opam/$OPAMSWITCH/bin" >> "$GITHUB_PATH"
+  fi
+  export PATH="$HOME/.opam/$OPAMSWITCH/bin:$PATH"
+
+  binsec -version || true
+}
+
+install_ct_linux_packages() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    return 0
+  fi
+  if ! command -v apt-get &>/dev/null; then
+    return 0
+  fi
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends musl-tools
 }
 
 echo ""
@@ -251,6 +323,12 @@ case "$MODE" in
     rustup component add llvm-tools-preview 2>/dev/null || true
     ;;
 
+  ct-linux)
+    install_just_portable
+    install_ct_linux_packages
+    install_binsec
+    ;;
+
   minimal)
     # Minimal set for quick jobs
     install_binstall
@@ -263,7 +341,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|minimal|none]"
+    echo "Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
     exit 1
     ;;
 esac

@@ -579,7 +579,7 @@ pub fn diag_hash_portable(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel(
+  argon2_hash_with_kernel_diag_blake2b(
     params,
     password,
     salt,
@@ -1016,6 +1016,59 @@ fn h_prime(input_parts: &[&[u8]], out: &mut [u8]) {
   ct::zeroize(&mut v_prev);
 }
 
+#[cfg(feature = "diag")]
+fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
+  let out_len = out.len();
+  assert!(out_len > 0, "H' output length must be positive");
+  let len_le = u32::try_from(out_len)
+    .unwrap_or_else(|_| unreachable!("Argon2 H' out_len <= u32::MAX, validated by Argon2Params::validate"))
+    .to_le_bytes();
+
+  if out_len <= 64 {
+    let parts = [&len_le[..], input_parts[0]];
+    if input_parts.len() == 1 {
+      crate::hashes::crypto::blake2b::diag_hash_parts_portable(out_len as u8, &parts, out);
+    } else {
+      let mut data = [0u8; BLOCK_SIZE + 16];
+      let mut pos = 0usize;
+      data[pos..pos.strict_add(4)].copy_from_slice(&len_le);
+      pos = pos.strict_add(4);
+      for part in input_parts {
+        data[pos..pos.strict_add(part.len())].copy_from_slice(part);
+        pos = pos.strict_add(part.len());
+      }
+      crate::hashes::crypto::blake2b::diag_hash_parts_portable(out_len as u8, &[&data[..pos]], out);
+    }
+    return;
+  }
+
+  let r = (out_len.strict_add(31) / 32).strict_sub(2);
+  let mut data = [0u8; BLOCK_SIZE + 16];
+  let mut pos = 0usize;
+  data[pos..pos.strict_add(4)].copy_from_slice(&len_le);
+  pos = pos.strict_add(4);
+  for part in input_parts {
+    data[pos..pos.strict_add(part.len())].copy_from_slice(part);
+    pos = pos.strict_add(part.len());
+  }
+
+  let mut v_prev = [0u8; 64];
+  crate::hashes::crypto::blake2b::diag_hash_parts_portable(64, &[&data[..pos]], &mut v_prev);
+  out[..32].copy_from_slice(&v_prev[..32]);
+
+  for i in 1..r {
+    let mut v_next = [0u8; 64];
+    crate::hashes::crypto::blake2b::diag_hash_parts_portable(64, &[&v_prev], &mut v_next);
+    out[i.strict_mul(32)..i.strict_mul(32).strict_add(32)].copy_from_slice(&v_next[..32]);
+    v_prev = v_next;
+  }
+
+  let tail_off = r.strict_mul(32);
+  let tail_len = out_len.strict_sub(tail_off);
+  crate::hashes::crypto::blake2b::diag_hash_parts_portable(tail_len as u8, &[&v_prev], &mut out[tail_off..]);
+  ct::zeroize(&mut v_prev);
+}
+
 // ─── H0 initialisation (RFC 9106 §3.2) ──────────────────────────────────────
 
 /// Compute the 64-byte `H0` seed.
@@ -1046,6 +1099,53 @@ fn compute_h0(params: &Argon2Params, password: &[u8], salt: &[u8], variant: Argo
   hasher.update(&len_u32("associated_data", params.associated_data.len()));
   hasher.update(&params.associated_data);
   hasher.finalize()
+}
+
+#[cfg(feature = "diag")]
+fn compute_h0_diag_blake2b_portable(
+  params: &Argon2Params,
+  password: &[u8],
+  salt: &[u8],
+  variant: Argon2Variant,
+) -> [u8; 64] {
+  let len_u32 = |label: &'static str, len: usize| -> [u8; 4] {
+    u32::try_from(len)
+      .unwrap_or_else(|_| panic!("Argon2 H0: {label} length exceeded MAX_VAR_BYTES; check_inputs should have rejected"))
+      .to_le_bytes()
+  };
+
+  let parallelism = params.parallelism.to_le_bytes();
+  let output_len = params.output_len.to_le_bytes();
+  let memory_cost = params.memory_cost_kib.to_le_bytes();
+  let time_cost = params.time_cost.to_le_bytes();
+  let version = params.version.as_u32().to_le_bytes();
+  let variant = variant.y().to_le_bytes();
+  let password_len = len_u32("password", password.len());
+  let salt_len = len_u32("salt", salt.len());
+  let secret_len = len_u32("secret", params.secret.len());
+  let associated_data_len = len_u32("associated_data", params.associated_data.len());
+  let mut out = [0u8; 64];
+  crate::hashes::crypto::blake2b::diag_hash_parts_portable(
+    64,
+    &[
+      &parallelism,
+      &output_len,
+      &memory_cost,
+      &time_cost,
+      &version,
+      &variant,
+      &password_len,
+      password,
+      &salt_len,
+      salt,
+      &secret_len,
+      &params.secret,
+      &associated_data_len,
+      &params.associated_data,
+    ],
+    &mut out,
+  );
+  out
 }
 
 // ─── Block conversion ───────────────────────────────────────────────────────
@@ -1699,6 +1799,30 @@ fn argon2_hash_with_kernel(
   out: &mut [u8],
   compress: CompressFn,
 ) -> Result<(), Argon2Error> {
+  argon2_hash_with_kernel_inner(params, password, salt, variant, out, compress, false)
+}
+
+#[cfg(feature = "diag")]
+fn argon2_hash_with_kernel_diag_blake2b(
+  params: &Argon2Params,
+  password: &[u8],
+  salt: &[u8],
+  variant: Argon2Variant,
+  out: &mut [u8],
+  compress: CompressFn,
+) -> Result<(), Argon2Error> {
+  argon2_hash_with_kernel_inner(params, password, salt, variant, out, compress, true)
+}
+
+fn argon2_hash_with_kernel_inner(
+  params: &Argon2Params,
+  password: &[u8],
+  salt: &[u8],
+  variant: Argon2Variant,
+  out: &mut [u8],
+  compress: CompressFn,
+  #[cfg_attr(not(feature = "diag"), allow(unused_variables))] diag_blake2b: bool,
+) -> Result<(), Argon2Error> {
   params.validate()?;
   params.check_inputs(password, salt)?;
   if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES || out.len() != params.output_len as usize {
@@ -1706,7 +1830,20 @@ fn argon2_hash_with_kernel(
   }
 
   // Compute H0.
-  let mut h0 = compute_h0(params, password, salt, variant);
+  let mut h0 = {
+    #[cfg(feature = "diag")]
+    {
+      if diag_blake2b {
+        compute_h0_diag_blake2b_portable(params, password, salt, variant)
+      } else {
+        compute_h0(params, password, salt, variant)
+      }
+    }
+    #[cfg(not(feature = "diag"))]
+    {
+      compute_h0(params, password, salt, variant)
+    }
+  };
 
   // Allocate the memory matrix.
   let mut matrix = Matrix::new(params.memory_cost_kib, params.parallelism)?;
@@ -1718,10 +1855,24 @@ fn argon2_hash_with_kernel(
     let mut buf = [0u8; BLOCK_SIZE];
     // B[lane][0] = H'(H0 || LE32(0) || LE32(lane), BLOCK_SIZE)
     let lane_le = lane.to_le_bytes();
+    #[cfg(feature = "diag")]
+    if diag_blake2b {
+      h_prime_diag_blake2b_portable(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
+    } else {
+      h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
+    }
+    #[cfg(not(feature = "diag"))]
     h_prime(&[&h0, &0u32.to_le_bytes(), &lane_le], &mut buf);
     matrix.set(lane, 0, block_from_bytes(&buf));
 
     // B[lane][1] = H'(H0 || LE32(1) || LE32(lane), BLOCK_SIZE)
+    #[cfg(feature = "diag")]
+    if diag_blake2b {
+      h_prime_diag_blake2b_portable(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+    } else {
+      h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
+    }
+    #[cfg(not(feature = "diag"))]
     h_prime(&[&h0, &1u32.to_le_bytes(), &lane_le], &mut buf);
     matrix.set(lane, 1, block_from_bytes(&buf));
     ct::zeroize(&mut buf);
@@ -1753,6 +1904,13 @@ fn argon2_hash_with_kernel(
     }
   }
   let mut acc_bytes = block_to_bytes(&acc);
+  #[cfg(feature = "diag")]
+  if diag_blake2b {
+    h_prime_diag_blake2b_portable(&[&acc_bytes], out);
+  } else {
+    h_prime(&[&acc_bytes], out);
+  }
+  #[cfg(not(feature = "diag"))]
   h_prime(&[&acc_bytes], out);
 
   // Wipe scratch

@@ -260,6 +260,7 @@ impl FieldElement2625x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX2 is available.
+  #[inline]
   #[target_feature(enable = "avx2")]
   #[allow(unsafe_op_in_unsafe_fn)]
   pub(crate) unsafe fn split(&self) -> [FieldElement; 4] {
@@ -441,6 +442,40 @@ impl FieldElement2625x4 {
       Lanes::CD => do_blend!(0b1111_0000),
       Lanes::ABCD => do_blend!(0b1111_1111),
     }
+  }
+
+  /// Select `other` where `mask` is all-ones and `self` where `mask` is zero.
+  ///
+  /// # Safety
+  ///
+  /// Caller must ensure AVX2 is available.
+  #[inline]
+  #[target_feature(enable = "avx2")]
+  #[allow(unsafe_op_in_unsafe_fn)]
+  pub(crate) unsafe fn select_mask(&self, other: &Self, mask: u64) -> Self {
+    let mask = _mm256_set1_epi64x(mask as i64);
+    Self([
+      _mm256_xor_si256(
+        self.0[0],
+        _mm256_and_si256(mask, _mm256_xor_si256(self.0[0], other.0[0])),
+      ),
+      _mm256_xor_si256(
+        self.0[1],
+        _mm256_and_si256(mask, _mm256_xor_si256(self.0[1], other.0[1])),
+      ),
+      _mm256_xor_si256(
+        self.0[2],
+        _mm256_and_si256(mask, _mm256_xor_si256(self.0[2], other.0[2])),
+      ),
+      _mm256_xor_si256(
+        self.0[3],
+        _mm256_and_si256(mask, _mm256_xor_si256(self.0[3], other.0[3])),
+      ),
+      _mm256_xor_si256(
+        self.0[4],
+        _mm256_and_si256(mask, _mm256_xor_si256(self.0[4], other.0[4])),
+      ),
+    ])
   }
 
   /// Compute `(B−A, A+B, D−C, C+D)` — the key building block for HWCD

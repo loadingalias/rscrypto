@@ -324,17 +324,49 @@ impl Core {
     }
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   fn new_with_compress_for_test(
     nn: u8,
     key: &[u8],
     compress: kernels::CompressFn,
     compress_blocks: kernels::CompressBlocksFn,
   ) -> Self {
-    let mut core = Self::new(nn, key);
-    core.compress = compress;
-    core.compress_blocks = compress_blocks;
-    core
+    assert!(
+      nn >= 1 && nn as usize <= MAX_OUTPUT_LEN,
+      "Blake2b output length must be 1-64"
+    );
+    assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
+
+    let kk = key.len() as u8;
+    let h = init_state(nn, kk);
+    let stored_key = if kk > 0 {
+      let mut bytes = [0u8; MAX_KEY_LEN];
+      bytes[..key.len()].copy_from_slice(key);
+      MaybeUninit::new(bytes)
+    } else {
+      MaybeUninit::uninit()
+    };
+    let mut buf = [0u8; BLOCK_SIZE];
+    let buf_len = if kk > 0 {
+      buf[..key.len()].copy_from_slice(key);
+      BLOCK_SIZE as u8
+    } else {
+      0
+    };
+
+    Self {
+      h,
+      buf,
+      buf_len,
+      t: Blake2bCounter::zero(),
+      nn,
+      kk,
+      key: stored_key,
+      salt: [0u8; SALT_LEN],
+      personal: [0u8; PERSONAL_LEN],
+      compress,
+      compress_blocks,
+    }
   }
 
   /// Reset to the initial state (including re-buffering the key if keyed and
@@ -888,7 +920,8 @@ impl Blake2b256 {
 }
 
 impl Blake2b256 {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
+  #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(
     compress: kernels::CompressFn,
     compress_blocks: kernels::CompressBlocksFn,
@@ -896,7 +929,8 @@ impl Blake2b256 {
     Self(Core::new_with_compress_for_test(32, &[], compress, compress_blocks))
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
+  #[allow(dead_code)]
   pub(crate) fn keyed_with_compress_for_test(
     key: &[u8],
     compress: kernels::CompressFn,
@@ -905,6 +939,38 @@ impl Blake2b256 {
     assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
     Self(Core::new_with_compress_for_test(32, key, compress, compress_blocks))
   }
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_blake2b256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
+  let mut out = [0u8; 32];
+  oneshot_small_into_with_params(
+    32,
+    key,
+    None,
+    b"binsec",
+    &mut out,
+    kernels::compress_fn(kernels::Blake2bKernelId::Portable),
+  );
+  out
+}
+
+#[cfg(feature = "diag")]
+pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mut [u8]) {
+  let data_len = parts.iter().fold(0usize, |acc, part| acc.strict_add(part.len()));
+  assert!(
+    data_len <= BLOCK_SIZE,
+    "diag Blake2b portable parts helper only supports one-block inputs"
+  );
+  let mut data = [0u8; BLOCK_SIZE];
+  let mut pos = 0usize;
+  for part in parts {
+    data[pos..pos.strict_add(part.len())].copy_from_slice(part);
+    pos = pos.strict_add(part.len());
+  }
+  oneshot_small_into_with_params(output_len, &[], None, &data[..pos], out, kernels::compress);
+  ct::zeroize(&mut data);
 }
 
 impl Default for Blake2b256 {
@@ -1003,7 +1069,8 @@ impl Blake2b512 {
 }
 
 impl Blake2b512 {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
+  #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(
     compress: kernels::CompressFn,
     compress_blocks: kernels::CompressBlocksFn,

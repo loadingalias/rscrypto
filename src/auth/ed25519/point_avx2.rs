@@ -214,6 +214,41 @@ impl CachedPointAvx2 {
   }
 }
 
+#[inline(always)]
+#[must_use]
+fn ct_eq_mask_u8(lhs: u8, rhs: u8) -> u64 {
+  let diff = u64::from(lhs ^ rhs);
+  let is_zero = ((diff | diff.wrapping_neg()) >> 63) ^ 1;
+  0u64.wrapping_sub(is_zero)
+}
+
+#[inline(always)]
+#[must_use]
+fn ct_negative_mask_i8(value: i8) -> u64 {
+  let bit = ((i16::from(value) >> 15) & 1) as u64;
+  0u64.wrapping_sub(bit)
+}
+
+#[inline(always)]
+#[must_use]
+fn ct_abs_i8(value: i8) -> u8 {
+  let value = i16::from(value);
+  let sign = value >> 15;
+  ((value ^ sign) - sign) as u8
+}
+
+/// Constant-time cached-point selection for AVX2 fixed-base tables.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn select_cached_avx2(lhs: &CachedPointAvx2, rhs: &CachedPointAvx2, mask: u64) -> CachedPointAvx2 {
+  CachedPointAvx2(lhs.0.select_mask(&rhs.0, mask))
+}
+
 /// Hamburg scaling constants for projective cached: `(d2, d2, 2·d2, 2·d1)`.
 ///
 /// # Safety
@@ -270,7 +305,7 @@ unsafe fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -
   CachedPointAvx2(packed.mul(constants))
 }
 
-/// Add a signed digit from an affine cached table (basepoint table).
+/// Select a signed digit from an affine cached basepoint table.
 ///
 /// # Safety
 ///
@@ -278,23 +313,23 @@ unsafe fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -
 #[inline]
 #[target_feature(enable = "avx2")]
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_signed_cached_avx2(
-  acc: ExtendedPointAvx2,
+unsafe fn select_signed_cached_avx2(
   table: &[CachedPoint; 8],
   digit: i8,
   affine_k: &FieldElement2625x4,
-) -> ExtendedPointAvx2 {
-  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
-  let Some(point) = table.get(index) else {
-    return acc;
-  };
-
-  let cached = cached_from_affine(point, affine_k);
-  if digit > 0 {
-    acc.add_cached(&cached)
-  } else {
-    acc.add_cached(&cached.neg())
+  identity: &CachedPointAvx2,
+) -> CachedPointAvx2 {
+  let abs = core::hint::black_box(ct_abs_i8(digit));
+  let mut selected = *identity;
+  for (i, candidate) in table.iter().enumerate() {
+    let candidate = core::ptr::read_volatile(candidate);
+    let cached = cached_from_affine(&candidate, affine_k);
+    let mask = core::hint::black_box(ct_eq_mask_u8(abs, (i as u8).wrapping_add(1)));
+    selected = select_cached_avx2(&selected, &cached, mask);
   }
+
+  let neg = selected.neg();
+  select_cached_avx2(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
 }
 
 /// Add a signed wNAF digit from an affine cached odd-multiples table.
@@ -414,16 +449,37 @@ pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> Exten
   let digits = scalar::as_radix_16(scalar_bytes);
   let affine_k = hamburg_affine_constants();
   let mut acc = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity());
+  let identity = acc.to_cached();
 
-  for (position, digit) in digits.iter().copied().enumerate() {
-    if digit != 0
-      && let Some(table) = BASEPOINT_RADIX16_TABLE.get(position)
-    {
-      acc = add_signed_cached_avx2(acc, table, digit, &affine_k);
-    }
+  for (digit, table) in digits.iter().copied().zip(BASEPOINT_RADIX16_TABLE.iter()) {
+    let point = select_signed_cached_avx2(table, digit, &affine_k, &identity);
+    acc = acc.add_cached(&point);
   }
 
   acc.to_extended()
+}
+
+/// Select one signed fixed-base table digit through the production AVX2 selector.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[cfg(feature = "diag")]
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 20] {
+  use super::point::BASEPOINT_RADIX16_TABLE;
+
+  let affine_k = hamburg_affine_constants();
+  let identity = ExtendedPointAvx2::from_extended(&ExtendedPoint::identity()).to_cached();
+  let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_TABLE[0], digit, &affine_k, &identity);
+  let fields = selected.0.split();
+  let mut out = [0u64; 20];
+  for (chunk, field) in out.chunks_exact_mut(5).zip(fields.iter()) {
+    chunk.copy_from_slice(field.limbs());
+  }
+  out
 }
 
 /// Build a runtime table of odd multiples `[1P, 3P, 5P, ..., (2n-1)P]` in
@@ -672,6 +728,18 @@ impl CachedPointIfma {
   }
 }
 
+/// Constant-time cached-point selection for IFMA fixed-base tables.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
+#[inline]
+#[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
+unsafe fn select_cached_ifma(lhs: &CachedPointIfma, rhs: &CachedPointIfma, mask: u64) -> CachedPointIfma {
+  CachedPointIfma(lhs.0.select_mask(&rhs.0, mask))
+}
+
 /// Hamburg scaling constants for projective cached (IFMA): `(d2, d2, 2·d2, 2·d1)`.
 ///
 /// # Safety
@@ -717,6 +785,7 @@ unsafe fn cached_from_affine_ifma(cp: &CachedPoint, constants: &FieldElement51x4
 }
 
 /// Add a signed digit from an affine cached table (IFMA).
+/// Select a signed digit from an affine cached basepoint table.
 ///
 /// # Safety
 ///
@@ -724,22 +793,23 @@ unsafe fn cached_from_affine_ifma(cp: &CachedPoint, constants: &FieldElement51x4
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
 #[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add_signed_cached_ifma(
-  acc: ExtendedPointIfma,
+unsafe fn select_signed_cached_ifma(
   table: &[CachedPoint; 8],
   digit: i8,
   affine_k: &FieldElement51x4,
-) -> ExtendedPointIfma {
-  let index = usize::from(digit.unsigned_abs()).wrapping_sub(1);
-  let Some(point) = table.get(index) else {
-    return acc;
-  };
-  let cached = cached_from_affine_ifma(point, affine_k);
-  if digit > 0 {
-    acc.add_cached(&cached)
-  } else {
-    acc.add_cached(&cached.neg())
+  identity: &CachedPointIfma,
+) -> CachedPointIfma {
+  let abs = core::hint::black_box(ct_abs_i8(digit));
+  let mut selected = *identity;
+  for (i, candidate) in table.iter().enumerate() {
+    let candidate = core::ptr::read_volatile(candidate);
+    let cached = cached_from_affine_ifma(&candidate, affine_k);
+    let mask = core::hint::black_box(ct_eq_mask_u8(abs, (i as u8).wrapping_add(1)));
+    selected = select_cached_ifma(&selected, &cached, mask);
   }
+
+  let neg = selected.neg();
+  select_cached_ifma(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
 }
 
 /// Add a signed digit from a runtime CachedPointIfma table.
@@ -820,16 +890,37 @@ pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> Exten
   let digits = scalar::as_radix_16(scalar_bytes);
   let affine_k = hamburg_affine_constants_ifma();
   let mut acc = ExtendedPointIfma::from_extended(&ExtendedPoint::identity());
+  let identity = acc.to_cached();
 
-  for (position, digit) in digits.iter().copied().enumerate() {
-    if digit != 0
-      && let Some(table) = BASEPOINT_RADIX16_TABLE.get(position)
-    {
-      acc = add_signed_cached_ifma(acc, table, digit, &affine_k);
-    }
+  for (digit, table) in digits.iter().copied().zip(BASEPOINT_RADIX16_TABLE.iter()) {
+    let point = select_signed_cached_ifma(table, digit, &affine_k, &identity);
+    acc = acc.add_cached(&point);
   }
 
   acc.to_extended()
+}
+
+/// Select one signed fixed-base table digit through the production IFMA selector.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2, AVX-512 IFMA, and AVX-512 VL are available.
+#[cfg(feature = "diag")]
+#[inline]
+#[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+#[allow(unsafe_op_in_unsafe_fn)]
+pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 20] {
+  use super::point::BASEPOINT_RADIX16_TABLE;
+
+  let affine_k = hamburg_affine_constants_ifma();
+  let identity = ExtendedPointIfma::from_extended(&ExtendedPoint::identity()).to_cached();
+  let selected = select_signed_cached_ifma(&BASEPOINT_RADIX16_TABLE[0], digit, &affine_k, &identity);
+  let fields = selected.0.split();
+  let mut out = [0u64; 20];
+  for (chunk, field) in out.chunks_exact_mut(5).zip(fields.iter()) {
+    chunk.copy_from_slice(field.limbs());
+  }
+  out
 }
 
 // Radix-16 IFMA Straus removed — superseded by straus_wnaf_vartime_ifma.

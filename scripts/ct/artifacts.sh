@@ -43,8 +43,39 @@ fi
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
+HOST="$(rustc -vV | awk '/^host:/ { print $2 }')"
+target_env_name() {
+  local suffix="$1"
+  local upper_target="${TARGET^^}"
+  upper_target="${upper_target//-/_}"
+  printf 'CARGO_TARGET_%s_%s\n' "$upper_target" "$suffix"
+}
+
+if [[ "$TARGET" != "$HOST" && "$TARGET" == *linux* ]]; then
+  linker_env="$(target_env_name LINKER)"
+  rustflags_env="$(target_env_name RUSTFLAGS)"
+
+  if [[ -z "${!linker_env:-}" && "$TARGET" == *-linux-musl && "$(uname -m)" == "${TARGET%%-*}" ]] && command -v musl-gcc >/dev/null 2>&1; then
+    export "$linker_env=musl-gcc"
+  elif [[ -z "${!linker_env:-}" && -x "$ROOT/scripts/check/zig-cc.sh" ]] && command -v zig >/dev/null 2>&1; then
+    export "$linker_env=$ROOT/scripts/check/zig-cc.sh"
+    export ZIG_CC_TARGET="${ZIG_CC_TARGET:-$TARGET}"
+  fi
+
+  if [[ -z "${!rustflags_env:-}" ]]; then
+    case "$TARGET" in
+      x86_64-unknown-linux-gnu)
+        export "$rustflags_env=-C target-cpu=x86-64"
+        ;;
+      aarch64-unknown-linux-gnu)
+        export "$rustflags_env=-C target-feature=+neon,+lse"
+        ;;
+    esac
+  fi
+fi
+
 SYSROOT="$(rustc --print sysroot)"
-LLVM_BIN="$SYSROOT/lib/rustlib/$(rustc -vV | awk '/^host:/ { print $2 }')/bin"
+LLVM_BIN="$SYSROOT/lib/rustlib/$HOST/bin"
 resolve_tool() {
   local tool="$1"
   if [[ -x "$tool" ]]; then
@@ -67,8 +98,17 @@ for tool in "$LLVM_OBJDUMP" "$LLVM_NM" "$LLVM_SIZE"; do
   fi
 done
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "python3 is required to generate CT provenance" >&2
+PYTHON="${PYTHON:-}"
+if [[ -z "$PYTHON" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+  fi
+fi
+
+if [[ -z "$PYTHON" ]]; then
+  echo "python3 or python is required to generate CT provenance" >&2
   exit 1
 fi
 
@@ -123,13 +163,13 @@ if command -v rustfilt >/dev/null 2>&1; then
   done
 fi
 
-python3 scripts/ct/asm_heuristics.py \
+"$PYTHON" scripts/ct/asm_heuristics.py \
   --target "$TARGET" \
   --profile "$PROFILE" \
   --artifact-dir "$ARTIFACT_DIR" \
   --out-dir "$OUT_DIR"
 
-python3 scripts/ct/provenance.py \
+"$PYTHON" scripts/ct/provenance.py \
   --target "$TARGET" \
   --profile "$PROFILE" \
   --artifact-dir "$ARTIFACT_DIR" \

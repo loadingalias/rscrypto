@@ -242,7 +242,7 @@ impl HkdfSha256 {
     &self.prk
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
@@ -272,6 +272,16 @@ impl HkdfSha256 {
       compress,
     }
   }
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_hkdf_sha256_derive_portable(input_key_material: &[u8; SHA256_OUTPUT_SIZE]) -> [u8; SHA256_OUTPUT_SIZE] {
+  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
+  );
+  HkdfSha256::extract_with_compress_for_test(b"salt", input_key_material, compress)
+    .expand_array::<SHA256_OUTPUT_SIZE>(b"info")
+    .unwrap_or([0u8; SHA256_OUTPUT_SIZE])
 }
 
 impl Drop for HkdfSha256 {
@@ -461,7 +471,7 @@ impl HkdfSha384 {
     &self.prk
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
@@ -491,6 +501,16 @@ impl HkdfSha384 {
       compress,
     }
   }
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_SIZE]) -> [u8; SHA384_OUTPUT_SIZE] {
+  let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
+  );
+  HkdfSha384::extract_with_compress_for_test(b"salt", input_key_material, compress)
+    .expand_array::<SHA384_OUTPUT_SIZE>(b"info")
+    .unwrap_or([0u8; SHA384_OUTPUT_SIZE])
 }
 
 impl Drop for HkdfSha384 {

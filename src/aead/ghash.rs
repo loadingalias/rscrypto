@@ -49,6 +49,14 @@ pub(crate) fn h_to_polyval(h_bytes: &[u8; KEY_SIZE]) -> u128 {
   mul_x_polyval(h)
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_ghash_block_portable(h_bytes: &[u8; KEY_SIZE], block: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
+  let h = h_to_polyval(h_bytes);
+  let block = u128::from_be_bytes(*block);
+  super::polyval::clmul128_reduce_portable(block, h).to_be_bytes()
+}
+
 /// GHASH accumulator state.
 ///
 /// Internally operates in the "reflected" domain (identical to POLYVAL's

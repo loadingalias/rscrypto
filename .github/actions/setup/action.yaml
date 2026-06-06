@@ -9,7 +9,7 @@ inputs:
     required: false
     default: ""
   tools-mode:
-    description: Tool install mode (standard, ci, supply-chain, bench, ibm, fuzz, coverage, minimal, none).
+    description: Tool install mode (standard, ci, supply-chain, bench, ibm, fuzz, coverage, ct-linux, minimal, none).
     required: false
     default: "standard"
   toolchain-components:
@@ -50,6 +50,13 @@ runs:
       with:
         path: ~/.cargo/bin
         key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v10
+
+    - name: Cache BINSEC OPAM Switch
+      if: inputs.tools-mode == 'ct-linux'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+      with:
+        path: ~/.opam
+        key: binsec-opam-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-v1
 
     - name: Install Cargo Tools
       if: inputs.tools-mode != 'none'

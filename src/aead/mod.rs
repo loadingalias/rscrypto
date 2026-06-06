@@ -95,8 +95,16 @@ mod polyval;
 mod targets;
 #[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305;
+#[cfg(all(feature = "diag", feature = "aegis256", not(target_arch = "s390x")))]
+pub use aegis256::diag_aegis256_update_portable;
 #[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
+#[cfg(all(
+  feature = "diag",
+  feature = "aegis256",
+  not(any(target_arch = "s390x", target_arch = "riscv64"))
+))]
+pub use aes_round::diag_aes_enc_round_portable;
 #[cfg(feature = "aes-gcm")]
 pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
 #[cfg(feature = "aes-gcm-siv")]
@@ -105,6 +113,8 @@ pub use aes128gcmsiv::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag};
 pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 #[cfg(feature = "aes-gcm-siv")]
 pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
+#[cfg(all(feature = "diag", feature = "ascon-aead"))]
+pub use ascon128::diag_ascon_aead128_tag_portable;
 #[cfg(feature = "ascon-aead")]
 pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 #[cfg(all(
@@ -151,16 +161,20 @@ pub use chacha20::diag_chacha20_xor_keystream_wasm_simd128;
 pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+pub use ghash::diag_ghash_block_portable;
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
-#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
-pub use poly1305::diag_chacha20poly1305_authenticate_aead;
 #[cfg(all(
   feature = "diag",
   target_arch = "aarch64",
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use poly1305::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4;
+#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
+pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
+#[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
+pub use polyval::diag_polyval_reduce_portable;
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 

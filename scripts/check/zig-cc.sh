@@ -15,8 +15,10 @@ set -euo pipefail
 # Usage (automatic via CC env var in check-linux.sh):
 #   CC="path/to/zig-cc.sh" cargo check --target x86_64-unknown-linux-gnu
 
-# Extract the target from --target= argument, pass everything else through
-TARGET=""
+# Extract the target from --target= argument, pass everything else through.
+# Cargo linker invocations do not pass --target, so CT/BINSEC tooling may set
+# ZIG_CC_TARGET explicitly when this script is used as the linker.
+TARGET="${ZIG_CC_TARGET:-}"
 ARGS=()
 for arg in "$@"; do
 	if [[ "$arg" == --target=* ]]; then

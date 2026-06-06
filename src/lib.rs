@@ -302,6 +302,8 @@ pub use auth::HkdfOutputLengthError;
 pub use auth::Kmac256;
 #[cfg(feature = "phc-strings")]
 pub use auth::PhcError;
+#[cfg(all(feature = "diag", feature = "ed25519"))]
+pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(feature = "argon2")]
 pub use auth::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
 #[cfg(feature = "ed25519")]
@@ -323,6 +325,23 @@ pub use auth::{
 pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+#[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
+pub use auth::{
+  diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
+};
+#[cfg(all(feature = "diag", feature = "hkdf"))]
+pub use auth::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
+#[cfg(all(feature = "diag", feature = "hmac"))]
+pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
+#[cfg(all(feature = "diag", feature = "pbkdf2"))]
+pub use auth::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
+#[cfg(all(feature = "rsa", feature = "diag"))]
+pub use auth::{
+  diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_select_window_power_4,
+  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+};
+#[cfg(all(feature = "diag", feature = "x25519"))]
+pub use backend::curve25519::diag_curve25519_conditional_swap;
 #[cfg(feature = "crc24")]
 pub use checksum::Crc24OpenPgp;
 #[cfg(feature = "crc16")]

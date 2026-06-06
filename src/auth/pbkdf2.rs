@@ -349,7 +349,8 @@ macro_rules! define_pbkdf2_sha2 {
       }
 
       /// Test-only: build with a specific digest compress function.
-      #[cfg(test)]
+      #[cfg(any(test, feature = "diag"))]
+      #[allow(dead_code)]
       #[allow(clippy::indexing_slicing)]
       pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
         let mut key_block = [0u8; $block_size_const];
@@ -431,7 +432,7 @@ define_pbkdf2_sha2! {
 }
 
 /// Test-only: one-shot SHA-256 digest using a specific compress function.
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
 #[allow(clippy::indexing_slicing)]
 fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -> [u8; SHA256_OUTPUT_SIZE] {
   let mut state = SHA256_H0;
@@ -455,6 +456,34 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
     chunk.copy_from_slice(&word.to_be_bytes());
   }
   out
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_pbkdf2_sha256_verify_portable(
+  password: &[u8; SHA256_OUTPUT_SIZE],
+  expected: &[u8; SHA256_OUTPUT_SIZE],
+) -> bool {
+  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
+  );
+  Pbkdf2Sha256::new_with_compress_for_test(password, compress)
+    .verify(b"salt", 1, expected)
+    .is_ok()
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_pbkdf2_sha512_verify_portable(
+  password: &[u8; SHA512_OUTPUT_SIZE],
+  expected: &[u8; SHA512_OUTPUT_SIZE],
+) -> bool {
+  let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
+  );
+  Pbkdf2Sha512::new_with_compress_for_test(password, compress)
+    .verify(b"salt", 1, expected)
+    .is_ok()
 }
 
 /// Compute one PBKDF2-SHA256 block: `F(Password, Salt, c, i)`.
@@ -709,7 +738,8 @@ define_pbkdf2_sha2! {
 }
 
 /// Test-only: one-shot SHA-512 digest using a specific compress function.
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
+#[allow(dead_code)]
 #[allow(clippy::indexing_slicing)]
 fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -> [u8; SHA512_OUTPUT_SIZE] {
   let mut state = SHA512_H0;

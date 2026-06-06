@@ -10,13 +10,10 @@ use std::thread;
 #[cfg(feature = "parallel")]
 use super::dispatch_tables;
 use super::{DERIVE_KEY_CONTEXT, DERIVE_KEY_MATERIAL, IV, KEYED_HASH, digest_oneshot_words, dispatch};
-#[cfg(feature = "std")]
-use super::{KEY_LEN, words8_from_le_bytes_32};
 
 #[cfg(feature = "std")]
 thread_local! {
   static DERIVE_KEY_CONTEXT_LOCAL_CACHE: RefCell<Option<(String, [u32; 8])>> = const { RefCell::new(None) };
-  static KEYED_WORDS_LOCAL_CACHE: RefCell<Option<([u8; KEY_LEN], [u32; 8])>> = const { RefCell::new(None) };
 }
 
 #[cfg(feature = "std")]
@@ -54,25 +51,6 @@ pub(super) fn derive_context_key_words_cached(context: &str) -> [u32; 8] {
   computed
 }
 
-#[cfg(feature = "std")]
-#[inline]
-pub(super) fn keyed_words_cached(key: &[u8; KEY_LEN]) -> [u32; 8] {
-  if let Some(words) = KEYED_WORDS_LOCAL_CACHE.with(|slot| {
-    let borrowed = slot.borrow();
-    borrowed.as_ref().and_then(|(cached_key, cached_words)| {
-      crate::traits::ct::constant_time_eq(cached_key, key).then_some(*cached_words)
-    })
-  }) {
-    return words;
-  }
-
-  let words = words8_from_le_bytes_32(key);
-  KEYED_WORDS_LOCAL_CACHE.with(|slot| {
-    *slot.borrow_mut() = Some((*key, words));
-  });
-  words
-}
-
 #[inline]
 pub(super) fn policy_kind_from_flags(flags: u32, is_xof: bool) -> ParallelPolicyKind {
   match (is_xof, flags) {
@@ -84,20 +62,6 @@ pub(super) fn policy_kind_from_flags(flags: u32, is_xof: bool) -> ParallelPolicy
     (true, DERIVE_KEY_MATERIAL) => ParallelPolicyKind::DeriveXof,
     _ => ParallelPolicyKind::Oneshot,
   }
-}
-
-#[cfg(feature = "std")]
-pub(super) fn clear_keyed_words_cache() {
-  KEYED_WORDS_LOCAL_CACHE.with(|slot| {
-    if let Some((ref mut key_bytes, ref mut words)) = *slot.borrow_mut() {
-      crate::traits::ct::zeroize(key_bytes);
-      for w in words.iter_mut() {
-        // SAFETY: `w` is a valid, aligned, dereferenceable pointer to initialized memory.
-        unsafe { core::ptr::write_volatile(w, 0) };
-      }
-    }
-    *slot.borrow_mut() = None;
-  });
 }
 
 #[derive(Clone, Copy)]

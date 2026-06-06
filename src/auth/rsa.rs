@@ -48,6 +48,8 @@ use core::{
   hash::{Hash, Hasher},
 };
 
+use crypto_bigint::{BoxedUint, NonZero};
+
 use crate::{
   hashes::crypto::{Sha256, Sha384, Sha512},
   traits::{Digest, VerificationError, ct},
@@ -5702,6 +5704,14 @@ fn parse_pkcs8_private_key_der_with_policy(
   der: &[u8],
   policy: &RsaPublicKeyPolicy,
 ) -> Result<RsaPrivateKeyComponents, RsaKeyError> {
+  let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
+  private_key_components_from_parts(&components, policy)
+}
+
+fn parse_pkcs8_private_key_der_parts_with_policy<'a>(
+  der: &'a [u8],
+  policy: &RsaPublicKeyPolicy,
+) -> Result<RsaPrivateKeyDerComponents<'a>, RsaKeyError> {
   let mut root = DerReader::new(der);
   let private_key_info = root.read_constructed(TAG_SEQUENCE)?;
   root.finish()?;
@@ -5712,7 +5722,7 @@ fn parse_pkcs8_private_key_der_with_policy(
   let private_key = private_key_info.read_primitive(TAG_OCTET_STRING)?;
   private_key_info.finish()?;
 
-  parse_pkcs1_private_key_der_with_policy(private_key, policy)
+  parse_pkcs1_private_key_der_parts_with_policy(private_key, policy)
 }
 
 #[allow(dead_code)]
@@ -5720,6 +5730,14 @@ fn parse_pkcs1_private_key_der_with_policy(
   der: &[u8],
   policy: &RsaPublicKeyPolicy,
 ) -> Result<RsaPrivateKeyComponents, RsaKeyError> {
+  let components = parse_pkcs1_private_key_der_parts_with_policy(der, policy)?;
+  private_key_components_from_parts(&components, policy)
+}
+
+fn parse_pkcs1_private_key_der_parts_with_policy<'a>(
+  der: &'a [u8],
+  policy: &RsaPublicKeyPolicy,
+) -> Result<RsaPrivateKeyDerComponents<'a>, RsaKeyError> {
   if policy.min_modulus_bits > policy.max_modulus_bits {
     return Err(RsaKeyError::InvalidModulus);
   }
@@ -5742,7 +5760,79 @@ fn parse_pkcs1_private_key_der_with_policy(
   };
   private_key.finish()?;
 
-  private_key_components_from_parts(&components, policy)
+  Ok(components)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_validate_pkcs8_private_key_der(der: &[u8], policy: &RsaPublicKeyPolicy) -> Result<usize, RsaKeyError> {
+  let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
+  validate_modulus(components.modulus, policy)?;
+  validate_private_key_components(&components)?;
+  Ok(components.modulus.len())
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_validate_pkcs8_private_key_der_stage(
+  der: &[u8],
+  policy: &RsaPublicKeyPolicy,
+  stage: u8,
+) -> Result<usize, RsaKeyError> {
+  let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
+  validate_modulus(components.modulus, policy)?;
+  validate_private_key_components_through_stage(&components, stage)?;
+  Ok(components.modulus.len())
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_import_pkcs8_private_key_der_stage(
+  der: &[u8],
+  policy: &RsaPublicKeyPolicy,
+  stage: u8,
+) -> Result<usize, RsaKeyError> {
+  let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
+  let modulus_bits = validate_modulus(components.modulus, policy)?;
+  validate_private_key_components(&components)?;
+  if stage == 50 {
+    return Ok(components.modulus.len());
+  }
+
+  let public = RsaPublicKey {
+    modulus: RsaPublicModulus::new_with_montgomery_r2(components.modulus, modulus_bits),
+    exponent: components.public_exponent,
+  };
+  let mut observed = public.modulus.bytes.len();
+  if stage == 51 {
+    return Ok(core::hint::black_box(observed));
+  }
+
+  let prime_p_modulus = private_component_modulus(components.prime_p).map_err(|_| RsaKeyError::InvalidModulus)?;
+  observed ^= prime_p_modulus.limbs.len();
+  if stage == 52 {
+    return Ok(core::hint::black_box(observed));
+  }
+
+  let prime_q_modulus = private_component_modulus(components.prime_q).map_err(|_| RsaKeyError::InvalidModulus)?;
+  observed ^= prime_q_modulus.limbs.len();
+  if stage == 53 {
+    return Ok(core::hint::black_box(observed));
+  }
+
+  let private_exponent = SecretBigEndianInteger::new(components.private_exponent)?;
+  let prime_p = SecretBigEndianInteger::new(components.prime_p)?;
+  let prime_q = SecretBigEndianInteger::new(components.prime_q)?;
+  let exponent_p = SecretBigEndianInteger::new(components.exponent_p)?;
+  let exponent_q = SecretBigEndianInteger::new(components.exponent_q)?;
+  let coefficient = SecretBigEndianInteger::new(components.coefficient)?;
+  observed ^= private_exponent.bytes.len();
+  observed ^= prime_p.bytes.len();
+  observed ^= prime_q.bytes.len();
+  observed ^= exponent_p.bytes.len();
+  observed ^= exponent_q.bytes.len();
+  observed ^= coefficient.bytes.len();
+  Ok(core::hint::black_box(observed))
 }
 
 fn private_key_components_from_parts(
@@ -5836,6 +5926,13 @@ fn read_zero_version(bytes: &[u8]) -> Result<(), RsaKeyError> {
 }
 
 fn validate_private_key_components(components: &RsaPrivateKeyDerComponents<'_>) -> Result<(), RsaKeyError> {
+  validate_private_key_components_through_stage(components, u8::MAX)
+}
+
+fn validate_private_key_components_through_stage(
+  components: &RsaPrivateKeyDerComponents<'_>,
+  stage: u8,
+) -> Result<(), RsaKeyError> {
   let RsaPrivateKeyDerComponents {
     modulus,
     public_exponent,
@@ -5847,50 +5944,98 @@ fn validate_private_key_components(components: &RsaPrivateKeyDerComponents<'_>) 
     coefficient,
   } = *components;
 
-  if !is_canonical_positive_unsigned_be(private_exponent)
-    || unsigned_be_cmp(private_exponent, modulus) != core::cmp::Ordering::Less
+  if !is_canonical_positive_unsigned_be(private_exponent) || !ct_unsigned_be_lt_public_shape(private_exponent, modulus)
   {
     return Err(RsaKeyError::InvalidModulus);
   }
   validate_private_prime_factor(prime_p)?;
   validate_private_prime_factor(prime_q)?;
-  if prime_p == prime_q || !product_matches_unsigned_be(prime_p, prime_q, modulus) {
+  if stage == 0 {
+    return Ok(());
+  }
+  if ct_slices_eq_public_shape(prime_p, prime_q) || !product_matches_unsigned_be_fixed(prime_p, prime_q, modulus) {
     return Err(RsaKeyError::InvalidModulus);
+  }
+  if stage == 1 {
+    return Ok(());
   }
   validate_private_crt_component(exponent_p, prime_p)?;
   validate_private_crt_component(exponent_q, prime_q)?;
   validate_private_crt_component(coefficient, prime_p)?;
+  if stage == 2 {
+    return Ok(());
+  }
 
-  let p_minus_one = private_import_decrement_unsigned_be(prime_p)?;
-  let q_minus_one = private_import_decrement_unsigned_be(prime_q)?;
-  let d_mod_p_minus_one = private_import_unsigned_be_mod(private_exponent, p_minus_one.as_slice());
-  if d_mod_p_minus_one.as_slice() != exponent_p {
+  let mut p_minus_one = vec![0u8; prime_p.len()];
+  let mut q_minus_one = vec![0u8; prime_q.len()];
+  private_import_decrement_unsigned_be_to_fixed(prime_p, &mut p_minus_one)?;
+  private_import_decrement_unsigned_be_to_fixed(prime_q, &mut q_minus_one)?;
+  if stage == 30 {
+    return Ok(());
+  }
+
+  let mut d_mod_p_minus_one = vec![0u8; p_minus_one.len()];
+  private_import_unsigned_be_mod_to_len(private_exponent, &p_minus_one, &mut d_mod_p_minus_one)?;
+  if stage == 32 {
+    return Ok(());
+  }
+  if !ct_eq_left_padded_unsigned_be(exponent_p, &d_mod_p_minus_one) {
     return Err(RsaKeyError::InvalidModulus);
   }
-  let d_mod_q_minus_one = private_import_unsigned_be_mod(private_exponent, q_minus_one.as_slice());
-  if d_mod_q_minus_one.as_slice() != exponent_q {
+  if stage == 31 {
+    return Ok(());
+  }
+  let mut d_mod_q_minus_one = vec![0u8; q_minus_one.len()];
+  private_import_unsigned_be_mod_to_len(private_exponent, &q_minus_one, &mut d_mod_q_minus_one)?;
+  if !ct_eq_left_padded_unsigned_be(exponent_q, &d_mod_q_minus_one) {
     return Err(RsaKeyError::InvalidModulus);
+  }
+  if stage == 3 {
+    return Ok(());
   }
   let public_exponent = public_exponent.as_u64().to_be_bytes();
-  let Some(e_times_d) = private_import_product_unsigned_be(&public_exponent, private_exponent) else {
-    return Err(RsaKeyError::InvalidModulus);
-  };
-  let e_times_d_mod_p_minus_one = private_import_unsigned_be_mod(e_times_d.as_slice(), p_minus_one.as_slice());
-  if e_times_d_mod_p_minus_one.as_slice() != [1] {
+  let mut e_times_d = vec![0u8; public_exponent.len().strict_add(private_exponent.len())];
+  private_import_product_unsigned_be_to_fixed(&public_exponent, private_exponent, &mut e_times_d)?;
+  if stage == 40 {
+    return Ok(());
+  }
+  let mut e_times_d_mod_p_minus_one = vec![0u8; p_minus_one.len()];
+  private_import_unsigned_be_mod_to_len(&e_times_d, &p_minus_one, &mut e_times_d_mod_p_minus_one)?;
+  if !ct_eq_left_padded_unsigned_be(&[1], &e_times_d_mod_p_minus_one) {
     return Err(RsaKeyError::InvalidModulus);
   }
-  let e_times_d_mod_q_minus_one = private_import_unsigned_be_mod(e_times_d.as_slice(), q_minus_one.as_slice());
-  if e_times_d_mod_q_minus_one.as_slice() != [1] {
+  if stage == 41 {
+    return Ok(());
+  }
+  let mut e_times_d_mod_q_minus_one = vec![0u8; q_minus_one.len()];
+  private_import_unsigned_be_mod_to_len(&e_times_d, &q_minus_one, &mut e_times_d_mod_q_minus_one)?;
+  if !ct_eq_left_padded_unsigned_be(&[1], &e_times_d_mod_q_minus_one) {
+    return Err(RsaKeyError::InvalidModulus);
+  }
+  if stage == 42 {
+    return Ok(());
+  }
+  if stage == 4 {
+    return Ok(());
+  }
+
+  let mut q_times_coefficient = vec![0u8; prime_q.len().strict_add(coefficient.len())];
+  private_import_product_unsigned_be_to_fixed(prime_q, coefficient, &mut q_times_coefficient)?;
+  let mut q_times_coefficient_mod_p = vec![0u8; prime_p.len()];
+  private_import_unsigned_be_mod_to_len(&q_times_coefficient, prime_p, &mut q_times_coefficient_mod_p)?;
+  if !ct_eq_left_padded_unsigned_be(&[1], &q_times_coefficient_mod_p) {
     return Err(RsaKeyError::InvalidModulus);
   }
 
-  let Some(q_times_coefficient) = private_import_product_unsigned_be(prime_q, coefficient) else {
-    return Err(RsaKeyError::InvalidModulus);
-  };
-  let q_times_coefficient_mod_p = private_import_unsigned_be_mod(q_times_coefficient.as_slice(), prime_p);
-  if q_times_coefficient_mod_p.as_slice() != [1] {
-    return Err(RsaKeyError::InvalidModulus);
-  }
+  ct::zeroize(&mut p_minus_one);
+  ct::zeroize(&mut q_minus_one);
+  ct::zeroize(&mut d_mod_p_minus_one);
+  ct::zeroize(&mut d_mod_q_minus_one);
+  ct::zeroize(&mut e_times_d);
+  ct::zeroize(&mut e_times_d_mod_p_minus_one);
+  ct::zeroize(&mut e_times_d_mod_q_minus_one);
+  ct::zeroize(&mut q_times_coefficient);
+  ct::zeroize(&mut q_times_coefficient_mod_p);
 
   Ok(())
 }
@@ -5906,9 +6051,7 @@ fn validate_private_prime_factor(bytes: &[u8]) -> Result<(), RsaKeyError> {
 }
 
 fn validate_private_crt_component(component: &[u8], upper_bound: &[u8]) -> Result<(), RsaKeyError> {
-  if !is_canonical_positive_unsigned_be(component)
-    || unsigned_be_cmp(component, upper_bound) != core::cmp::Ordering::Less
-  {
+  if !is_canonical_positive_unsigned_be(component) || !ct_unsigned_be_lt_public_shape(component, upper_bound) {
     return Err(RsaKeyError::InvalidModulus);
   }
   Ok(())
@@ -7603,7 +7746,11 @@ fn copy_limbs(dst: &mut [u64], src: &[u64]) {
 }
 
 fn is_zero_unsigned_be(bytes: &[u8]) -> bool {
-  bytes.iter().all(|&byte| byte == 0)
+  let mut acc = 0u8;
+  for &byte in bytes {
+    acc |= byte;
+  }
+  acc == 0
 }
 
 fn is_canonical_positive_unsigned_be(bytes: &[u8]) -> bool {
@@ -7617,20 +7764,68 @@ fn unsigned_be_cmp(left: &[u8], right: &[u8]) -> core::cmp::Ordering {
   }
 }
 
-fn product_matches_unsigned_be(left: &[u8], right: &[u8], expected: &[u8]) -> bool {
-  private_import_product_unsigned_be(left, right)
-    .as_ref()
-    .is_some_and(|product| product.as_slice() == expected)
+fn ct_lt_u8(left: u8, right: u8) -> u8 {
+  ((u16::from(left).wrapping_sub(u16::from(right)) >> 8) & 1) as u8
+}
+
+fn ct_unsigned_be_lt_public_shape(left: &[u8], right: &[u8]) -> bool {
+  match left.len().cmp(&right.len()) {
+    core::cmp::Ordering::Less => true,
+    core::cmp::Ordering::Greater => false,
+    core::cmp::Ordering::Equal => {
+      let mut lt = 0u8;
+      let mut gt = 0u8;
+      for (&left_byte, &right_byte) in left.iter().zip(right) {
+        let undecided = (lt | gt) ^ 1;
+        lt |= undecided & ct_lt_u8(left_byte, right_byte);
+        gt |= undecided & ct_lt_u8(right_byte, left_byte);
+      }
+      lt == 1
+    }
+  }
+}
+
+fn ct_slices_eq_public_shape(left: &[u8], right: &[u8]) -> bool {
+  if left.len() != right.len() {
+    return false;
+  }
+  ct::constant_time_eq(left, right)
+}
+
+fn product_matches_unsigned_be_fixed(left: &[u8], right: &[u8], expected: &[u8]) -> bool {
+  let mut product = vec![0u8; expected.len()];
+  let matched = private_import_product_unsigned_be_to_fixed(left, right, &mut product).is_ok()
+    && ct::constant_time_eq(&product, expected);
+  ct::zeroize(&mut product);
+  matched
+}
+
+fn ct_eq_left_padded_unsigned_be(value: &[u8], expected: &[u8]) -> bool {
+  if value.len() > expected.len() {
+    return false;
+  }
+  let mut padded = vec![0u8; expected.len()];
+  let offset = expected.len().strict_sub(value.len());
+  padded[offset..].copy_from_slice(value);
+  let eq = ct::constant_time_eq(&padded, expected);
+  ct::zeroize(&mut padded);
+  eq
 }
 
 fn private_component_modulus(bytes: &[u8]) -> Result<RsaPublicModulus, RsaPrivateOpError> {
-  let (&first, _) = bytes.split_first().ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-  let bits = bytes
-    .len()
-    .strict_sub(1)
-    .strict_mul(8)
-    .strict_add(8usize.strict_sub(first.leading_zeros() as usize));
-  Ok(RsaPublicModulus::new_with_montgomery_r2(bytes, bits))
+  if bytes.is_empty() {
+    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
+  }
+  let limbs = limbs_from_be(bytes);
+  let n0 = montgomery_n0(limbs.first().copied().unwrap_or(1));
+  let r2 = private_montgomery_r2(bytes).map_err(|_| RsaPrivateOpError::RepresentativeOutOfRange)?;
+  Ok(RsaPublicModulus {
+    bytes: Box::from(bytes),
+    limbs: limbs.into_boxed_slice(),
+    r2: Some(r2),
+    bits: bytes.len().strict_mul(8),
+    n0,
+  })
 }
 
 fn left_pad_be(src: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
@@ -8051,6 +8246,7 @@ fn private_exponentiate_window(
 }
 
 #[allow(clippy::indexing_slicing)]
+#[inline(always)]
 fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
   let limbs = out.len();
   debug_assert_eq!(table.len(), limbs.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES));
@@ -8058,16 +8254,40 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
   for index in 0..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES as u8 {
     let start = usize::from(index).strict_mul(limbs);
     let entry = &table[start..start.strict_add(limbs)];
-    let mask = 0u64.wrapping_sub(u64::from(private_choice_eq_u8(window, index)));
-    for (dst, &limb) in out.iter_mut().zip(entry) {
+    let mask = core::hint::black_box(private_choice_eq_mask_u8(window, index));
+    for (dst, limb) in out.iter_mut().zip(entry) {
+      // SAFETY: Volatile table read is used as a compiler barrier because:
+      // 1. `limb` is a valid shared reference to one fixed-window table limb.
+      // 2. `u64` is `Copy`, so the volatile read does not create ownership aliasing.
+      // 3. Every table limb is read unconditionally; the secret window affects only masks.
+      let limb = unsafe { core::ptr::read_volatile(limb) };
       *dst = (*dst & !mask) | (limb & mask);
     }
   }
 }
 
-fn private_choice_eq_u8(left: u8, right: u8) -> u8 {
-  let diff = left ^ right;
-  ((diff | diff.wrapping_neg()) >> 7) ^ 1
+#[cfg(feature = "diag")]
+#[inline(always)]
+pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> [u64; 4] {
+  let mut out = [0u64; 4];
+  private_select_window_power(&mut out, table, window);
+  out
+}
+
+#[cfg(feature = "diag")]
+#[inline(always)]
+pub fn diag_rsa_private_component_validation_32(component: &[u8; 32], upper_bound: &[u8; 32], other: &[u8; 32]) -> u8 {
+  let canonical = u8::from(is_canonical_positive_unsigned_be(component));
+  let less_than_bound = u8::from(ct_unsigned_be_lt_public_shape(component, upper_bound));
+  let distinct = u8::from(!ct_slices_eq_public_shape(component, other));
+  let odd = component[component.len() - 1] & 1;
+  canonical & less_than_bound & distinct & odd
+}
+
+fn private_choice_eq_mask_u8(left: u8, right: u8) -> u64 {
+  let diff = u64::from(left ^ right);
+  let is_zero = ((diff | diff.wrapping_neg()) >> 63) ^ 1;
+  0u64.wrapping_sub(is_zero)
 }
 
 fn mod_mul_representatives(
@@ -8243,6 +8463,58 @@ fn private_import_product_unsigned_be(left: &[u8], right: &[u8]) -> Option<Secre
   Some(private_import_limbs_to_canonical_be(product.as_slice()))
 }
 
+fn private_import_product_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -> Result<(), RsaKeyError> {
+  let left_limb_count = left.len().strict_add(7) / 8;
+  let right_limb_count = right.len().strict_add(7) / 8;
+  let out_limb_count = out.len().strict_add(7) / 8;
+  if left_limb_count.strict_add(right_limb_count) > out_limb_count {
+    return Err(RsaKeyError::InvalidModulus);
+  }
+
+  let left = SecretLimbs::from_be(left);
+  let right = SecretLimbs::from_be(right);
+  let mut product = SecretLimbs::zeroed(out_limb_count);
+
+  for (left_index, &left_limb) in left.as_slice().iter().enumerate() {
+    let mut carry = 0u128;
+    for (right_index, &right_limb) in right.as_slice().iter().enumerate() {
+      let index = left_index.strict_add(right_index);
+      let Some(limb) = product.as_mut_slice().get_mut(index) else {
+        return Err(RsaKeyError::InvalidModulus);
+      };
+      let acc = u128::from(*limb)
+        .strict_add(u128::from(left_limb).strict_mul(u128::from(right_limb)))
+        .strict_add(carry);
+      *limb = acc as u64;
+      carry = acc >> 64;
+    }
+
+    let index = left_index.strict_add(right.as_slice().len());
+    let Some(carry_limbs) = product.as_mut_slice().get_mut(index..) else {
+      return Err(RsaKeyError::InvalidModulus);
+    };
+    for limb in carry_limbs {
+      let acc = u128::from(*limb).strict_add(carry);
+      *limb = acc as u64;
+      carry = acc >> 64;
+    }
+    if carry != 0 {
+      return Err(RsaKeyError::InvalidModulus);
+    }
+  }
+
+  let mut full = vec![0u8; out_limb_count.strict_mul(8)];
+  limbs_to_be(product.as_slice(), &mut full);
+  let excess = full.len().strict_sub(out.len());
+  if !is_zero_unsigned_be(&full[..excess]) {
+    ct::zeroize(&mut full);
+    return Err(RsaKeyError::InvalidModulus);
+  }
+  out.copy_from_slice(&full[excess..]);
+  ct::zeroize(&mut full);
+  Ok(())
+}
+
 #[allow(clippy::indexing_slicing)]
 fn private_product_add_unsigned_be_to_fixed(
   left: &[u8],
@@ -8334,12 +8606,19 @@ fn private_product_add_unsigned_be_to_fixed(
   }
 }
 
+#[cfg(feature = "getrandom")]
 fn private_import_decrement_unsigned_be(bytes: &[u8]) -> Result<SecretBigEndianBuffer, RsaKeyError> {
-  if is_zero_unsigned_be(bytes) || bytes == [1] {
+  let mut out = vec![0u8; bytes.len()];
+  private_import_decrement_unsigned_be_to_fixed(bytes, &mut out)?;
+  Ok(private_import_canonical_unsigned_be(out))
+}
+
+fn private_import_decrement_unsigned_be_to_fixed(bytes: &[u8], out: &mut [u8]) -> Result<(), RsaKeyError> {
+  if bytes.is_empty() || bytes.len() != out.len() || is_zero_unsigned_be(bytes) || bytes == [1] {
     return Err(RsaKeyError::InvalidModulus);
   }
 
-  let mut out = bytes.to_vec();
+  out.copy_from_slice(bytes);
   let mut borrow = 1u8;
   for byte in out.iter_mut().rev() {
     let (difference, overflow) = byte.overflowing_sub(borrow);
@@ -8347,10 +8626,10 @@ fn private_import_decrement_unsigned_be(bytes: &[u8]) -> Result<SecretBigEndianB
     borrow = u8::from(overflow);
   }
 
-  if borrow != 0 {
-    Err(RsaKeyError::InvalidModulus)
+  if borrow == 0 {
+    Ok(())
   } else {
-    Ok(private_import_canonical_unsigned_be(out))
+    Err(RsaKeyError::InvalidModulus)
   }
 }
 
@@ -8396,6 +8675,23 @@ fn private_import_unsigned_be_mod(value: &[u8], modulus: &[u8]) -> SecretBigEndi
   }
 
   private_import_limbs_to_canonical_be(remainder.as_slice())
+}
+
+#[inline(never)]
+fn private_import_unsigned_be_mod_to_len(value: &[u8], modulus: &[u8], out: &mut [u8]) -> Result<(), RsaKeyError> {
+  if modulus.is_empty() || modulus.len() != out.len() || is_zero_unsigned_be(modulus) {
+    return Err(RsaKeyError::InvalidModulus);
+  }
+
+  let value_bits = value.len().strict_mul(8) as u32;
+  let modulus_bits = modulus.len().strict_mul(8) as u32;
+  let value = BoxedUint::from_be_slice(value, value_bits).map_err(|_| RsaKeyError::InvalidModulus)?;
+  let modulus = BoxedUint::from_be_slice(modulus, modulus_bits).map_err(|_| RsaKeyError::InvalidModulus)?;
+  let modulus = NonZero::new(modulus).into_option().ok_or(RsaKeyError::InvalidModulus)?;
+  let remainder = value.rem(&modulus);
+  let full = remainder.to_be_bytes();
+  out.copy_from_slice(&full);
+  Ok(())
 }
 
 fn private_import_unsigned_be_mod_to_fixed(
@@ -8483,6 +8779,17 @@ fn public_montgomery_r2(limbs: &[u64]) -> Box<[u64]> {
   r2.into_boxed_slice()
 }
 
+fn private_montgomery_r2(modulus: &[u8]) -> Result<Box<[u64]>, RsaKeyError> {
+  let mut power = vec![0u8; modulus.len().strict_mul(2).strict_add(1)];
+  power[0] = 1;
+  let mut reduced = vec![0u8; modulus.len()];
+  private_import_unsigned_be_mod_to_len(&power, modulus, &mut reduced)?;
+  ct::zeroize(&mut power);
+  let limbs = limbs_from_be(&reduced).into_boxed_slice();
+  ct::zeroize(&mut reduced);
+  Ok(limbs)
+}
+
 #[cfg(feature = "diag")]
 fn limb_checksum(limbs: &[u64]) -> u64 {
   limbs.iter().copied().fold(0u64, |acc, limb| acc.rotate_left(13) ^ limb)
@@ -8500,7 +8807,7 @@ fn sub_modulus_in_place(value: &mut [u64], modulus: &[u64]) -> u64 {
     let (tmp, b1) = value[index].overflowing_sub(modulus[index]);
     let (tmp, b2) = tmp.overflowing_sub(borrow);
     value[index] = tmp;
-    borrow = u64::from(b1 || b2);
+    borrow = u64::from(b1) | u64::from(b2);
   }
   borrow
 }
@@ -8515,7 +8822,7 @@ fn add_modulus_masked(value: &mut [u64], modulus: &[u64], choice: u64) {
     let (sum, overflow) = value[index].overflowing_add(addend);
     let (sum, carry_overflow) = sum.overflowing_add(carry);
     value[index] = sum;
-    carry = u64::from(overflow || carry_overflow);
+    carry = u64::from(overflow) | u64::from(carry_overflow);
   }
 }
 
@@ -8538,7 +8845,7 @@ fn add_mod_in_place(value: &mut [u64], addend: &[u64], modulus: &[u64]) {
     let (sum, overflow) = value[index].overflowing_add(addend[index]);
     let (sum, carry_overflow) = sum.overflowing_add(carry);
     value[index] = sum;
-    carry = u64::from(overflow || carry_overflow);
+    carry = u64::from(overflow) | u64::from(carry_overflow);
   }
 
   subtract_modulus_if_needed(value, modulus, carry);

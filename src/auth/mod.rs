@@ -126,16 +126,28 @@ pub mod x25519;
 
 #[cfg(feature = "argon2")]
 pub use argon2::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
+#[cfg(all(feature = "diag", feature = "ed25519"))]
+pub use curve25519_edwards::diag_ed25519_select_basepoint_cached_limb_digest;
+#[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
+pub use curve25519_edwards::{
+  diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
+};
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
 pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
+#[cfg(all(feature = "diag", feature = "hkdf"))]
+pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
 #[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha384, HmacSha512};
+#[cfg(all(feature = "diag", feature = "hmac"))]
+pub use hmac::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
 #[cfg(feature = "kmac")]
 pub use kmac::Kmac256;
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
+#[cfg(all(feature = "diag", feature = "pbkdf2"))]
+pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
 #[cfg(feature = "phc-strings")]
 pub use phc::PhcError;
 #[cfg(feature = "rsa")]
@@ -144,6 +156,12 @@ pub use rsa::{
   RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
   RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
   RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+};
+#[cfg(all(feature = "rsa", feature = "diag"))]
+pub use rsa::{
+  diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
+  diag_rsa_private_select_window_power_4, diag_rsa_validate_pkcs8_private_key_der,
+  diag_rsa_validate_pkcs8_private_key_der_stage,
 };
 #[cfg(feature = "scrypt")]
 pub use scrypt::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
