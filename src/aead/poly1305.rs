@@ -536,6 +536,7 @@ impl State {
     }
   }
 
+  #[inline(always)]
   fn compute_block_portable(&mut self, block: &[u8; 16], partial: bool) {
     let hibit = if partial { 0 } else { FULL_BLOCK_HIBIT };
 
@@ -653,6 +654,7 @@ impl State {
     compute_block(self, &block, false);
   }
 
+  #[inline(always)]
   fn finalize(self) -> [u8; 16] {
     let mut h0 = self.h[0];
     let mut h1 = self.h[1];
@@ -772,6 +774,14 @@ pub(crate) fn authenticate_aead(
 #[cfg(feature = "diag")]
 pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> Option<[u8; 16]> {
   authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, key).ok()
+}
+
+#[cfg(feature = "diag")]
+#[inline(always)]
+pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], partial: bool) -> [u8; 16] {
+  let mut state = State::new(key);
+  state.compute_block_portable(block, partial);
+  state.finalize()
 }
 
 #[cfg(all(feature = "diag", target_arch = "aarch64"))]

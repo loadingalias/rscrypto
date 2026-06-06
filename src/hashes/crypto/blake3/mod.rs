@@ -2400,6 +2400,14 @@ fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; 
   digest_oneshot(kernel, key_words, flags, input)
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash {
+  let key_words = words8_from_le_bytes_32(key);
+  let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
+  Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, b"binsec"))
+}
+
 /// BLAKE3 digest state.
 ///
 /// Defined by the BLAKE3 specification.
@@ -2473,9 +2481,6 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3KeyedHash {
-    #[cfg(feature = "std")]
-    let key_words = control::keyed_words_cached(key);
-    #[cfg(not(feature = "std"))]
     let key_words = words8_from_le_bytes_32(key);
     Blake3KeyedHash::from_bytes(digest_public_oneshot(key_words, KEYED_HASH, data))
   }
@@ -3055,10 +3060,6 @@ impl Drop for Blake3 {
         // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
         unsafe { core::ptr::write_volatile(word, 0) };
       }
-    }
-    #[cfg(feature = "std")]
-    if self.chunk_state.flags & KEYED_HASH != 0 {
-      control::clear_keyed_words_cache();
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }

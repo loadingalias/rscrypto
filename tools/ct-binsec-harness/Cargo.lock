@@ -82,7 +82,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rscrypto-ct-harness"
+name = "rscrypto-ct-binsec-harness"
 version = "0.0.0"
 dependencies = [
  "rscrypto",

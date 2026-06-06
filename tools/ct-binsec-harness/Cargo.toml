@@ -1,0 +1,21 @@
+[package]
+name = "rscrypto-ct-binsec-harness"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+lto = false
+panic = "abort"
+strip = false
+
+[dependencies]
+rscrypto = { path = "../..", default-features = false, features = ["aead", "argon2", "blake2b", "blake2s", "blake3", "diag", "ed25519", "hkdf", "hmac", "kmac", "pbkdf2", "portable-only", "rsa", "x25519"] }
+
+[[bin]]
+name = "rscrypto-ct-binsec-harness"
+path = "src/main.rs"

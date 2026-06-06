@@ -50,6 +50,16 @@ def host_target(root: Path) -> str:
   return next(line.split(":", 1)[1].strip() for line in verbose.splitlines() if line.startswith("host:"))
 
 
+def is_host_executable_target(target: str, host: str) -> bool:
+  if target == host:
+    return True
+  compatible_linux_musl = {
+    "x86_64-unknown-linux-gnu": {"x86_64-unknown-linux-musl"},
+    "aarch64-unknown-linux-gnu": {"aarch64-unknown-linux-musl"},
+  }
+  return target in compatible_linux_musl.get(host, set())
+
+
 def now_utc() -> str:
   return datetime.now(UTC).isoformat()
 
@@ -128,6 +138,33 @@ def result_record(result: CommandResult) -> dict[str, Any]:
   }
 
 
+def skipped_step(name: str, reason: str) -> dict[str, Any]:
+  timestamp = now_utc()
+  return {
+    "name": name,
+    "command": [],
+    "status": "not_applicable",
+    "returncode": None,
+    "stdout": "",
+    "stderr": "",
+    "started_at_utc": timestamp,
+    "finished_at_utc": timestamp,
+    "duration_seconds": 0.0,
+    "reason": reason,
+  }
+
+
+def shell_script(root: Path, relative: str, *args: str) -> list[str]:
+  script = str(root / relative)
+  if os.name == "nt":
+    return ["bash", script, *args]
+  return [script, *args]
+
+
+def python_script(root: Path, relative: str, *args: str) -> list[str]:
+  return [sys.executable, str(root / relative), *args]
+
+
 def primitive_ids_requiring_dudect(ct: dict[str, Any]) -> set[str]:
   ids = set()
   for primitive in ct.get("primitive", []):
@@ -143,6 +180,25 @@ def primitive_ids_requiring_dudect(ct: dict[str, Any]) -> set[str]:
   return ids
 
 
+def target_record(ct: dict[str, Any], target: str) -> dict[str, Any] | None:
+  for row in ct.get("target", []):
+    if row.get("name") == target:
+      return row
+  return None
+
+
+def binsec_policy(ct: dict[str, Any], target: str) -> tuple[str, str]:
+  row = target_record(ct, target)
+  if row is None:
+    return "unsupported", "target is not listed in ct.toml"
+  policy = str(row.get("binsec", "unsupported"))
+  if policy == "required":
+    return policy, "native BINSEC evidence is required for this target"
+  if policy == "unsupported":
+    return policy, str(row.get("binsec_reason", "native BINSEC loading is not supported for this target"))
+  return "unsupported", f"unknown BINSEC policy {policy!r}; treating as unsupported"
+
+
 def manifest_dudect_cases(ct: dict[str, Any]) -> list[dict[str, Any]]:
   cases = []
   for case in ct.get("dudect_case", []):
@@ -154,10 +210,9 @@ def manifest_dudect_cases(ct: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def case_sample_count(case: dict[str, Any], *, smoke: bool, override: int | None, fallback: int) -> int:
-  if override is not None:
-    return override
-  key = "smoke_samples" if smoke else "samples"
-  value = case.get(key, fallback)
+  _ = smoke
+  _ = override
+  value = case.get("samples", fallback)
   return int(value)
 
 
@@ -210,7 +265,7 @@ def dudect_case_result(
   timeout: int | None,
 ) -> dict[str, Any]:
   command = [
-    str(root / "scripts" / "ct" / "dudect.sh"),
+    *shell_script(root, "scripts/ct/dudect.sh"),
     "--target",
     target,
     "--profile",
@@ -228,14 +283,20 @@ def dudect_case_result(
   copied = copy_latest_dudect_outputs(out_dir, case["name"])
   report_path = out_dir / "dudect" / "cases" / case["name"] / "dudect-report.json"
   report = load_json_if_exists(report_path)
+  case_report = None
   status = result.status
   failure_count = None
   if report is not None:
     failure_count = report.get("failure_count")
+    for row in report.get("cases", []):
+      if row.get("name") == case["name"]:
+        case_report = row
+        status = str(row.get("status", status))
+        break
     if failure_count:
       status = "fail"
 
-  return {
+  row = {
     "name": case["name"],
     "primitive": case["primitive"],
     "filter": case["filter"],
@@ -246,6 +307,24 @@ def dudect_case_result(
     "artifacts": copied,
     "report": str(report_path) if report_path.exists() else None,
   }
+  if case_report is not None:
+    for key in (
+      "gate",
+      "diagnostic_reason",
+      "left_class",
+      "right_class",
+      "seed",
+      "max_t",
+      "abs_max_t",
+      "max_tau",
+      "needed_samples_for_tau_threshold",
+      "threshold_abs_max_t",
+      "samples_millions",
+      "raw_csv",
+    ):
+      if key in case_report:
+        row[key] = case_report[key]
+  return row
 
 
 def known_findings(target: str) -> list[dict[str, str]]:
@@ -267,6 +346,12 @@ def markdown_report(report: dict[str, Any]) -> str:
   ]
   for step in report["steps"]:
     lines.append(f"- `{step['name']}`: `{step['status']}`")
+  lines.extend(["", "## BINSEC Kernels", ""])
+  if report["binsec"]["enabled"]:
+    for kernel in report["binsec"]["kernels"]:
+      lines.append(f"- `{kernel['kernel']}` (`{kernel['primitive']}`): `{kernel['status']}`")
+  else:
+    lines.append(f"- `{report['binsec']['policy']}`: {report['binsec']['reason']}")
   lines.extend(["", "## DudeCT Cases", ""])
   for case in report["dudect"]["cases"]:
     detail = f", failures={case['failure_count']}" if case.get("failure_count") is not None else ""
@@ -290,15 +375,21 @@ def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--target", default=None)
   parser.add_argument("--profile", default="release")
-  parser.add_argument("--samples", type=int, default=None, help="override manifest dudect sample counts")
   parser.add_argument("--threshold", type=float, default=float(os.environ.get("RSCRYPTO_CT_DUDECT_THRESHOLD", "10.0")))
-  parser.add_argument("--smoke", action="store_true", help="run dudect with smoke sample count")
-  parser.add_argument("--skip-dudect", action="store_true")
+  parser.add_argument("--binsec-timeout", type=int, default=120)
   parser.add_argument("--dudect-timeout", type=int, default=300)
   args = parser.parse_args()
 
   root = Path(__file__).resolve().parents[2]
   target = args.target or host_target(root)
+  host = host_target(root)
+  if not is_host_executable_target(target, host):
+    print(
+      f"ct-full target must match the physical runner target: requested {target}, host is {host}",
+      file=sys.stderr,
+    )
+    return 2
+
   profile = args.profile
   out_dir = root / "target" / "ct" / target / profile
   full_dir = out_dir / "full"
@@ -313,7 +404,7 @@ def main() -> int:
     root,
     logs_dir,
     "ct-artifacts",
-    [str(root / "scripts" / "ct" / "artifacts.sh"), "--target", target, "--profile", profile],
+    shell_script(root, "scripts/ct/artifacts.sh", "--target", target, "--profile", profile),
     timeout=None,
   )
   steps.append(result_record(artifacts_result))
@@ -322,31 +413,84 @@ def main() -> int:
     root,
     logs_dir,
     "ct-validate-artifacts",
-    [str(root / "scripts" / "ct" / "validate.py"), "--target", target, "--profile", profile],
+    python_script(root, "scripts/ct/validate.py", "--target", target, "--profile", profile, "--strict-coverage"),
     timeout=None,
   )
   steps.append(result_record(validate_result))
+  if artifacts_result.status != "pass" or validate_result.status != "pass":
+    for step in steps:
+      if step["status"] != "pass":
+        print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)
+    return 1
+
+  binsec_kernels = []
+  binsec_mode, binsec_reason = binsec_policy(ct, target)
+  binsec_enabled = binsec_mode == "required"
+  if binsec_enabled:
+    print("ct-full: binsec", flush=True)
+    binsec_result = run_command(
+      root,
+      logs_dir,
+      "ct-binsec",
+      [
+        *python_script(root, "scripts/ct/binsec.py"),
+        "--target",
+        target,
+        "--profile",
+        profile,
+        "--timeout",
+        str(args.binsec_timeout),
+      ],
+      timeout=None,
+    )
+    steps.append(result_record(binsec_result))
+
+    binsec_root = out_dir / "binsec"
+    for report_path in sorted(binsec_root.glob("*/binsec-report.json")):
+      report = load_json_if_exists(report_path)
+      if report is None:
+        binsec_kernels.append(
+          {
+            "kernel": report_path.parent.name,
+            "primitive": None,
+            "status": "unknown",
+            "report": str(report_path),
+            "reason": "invalid or unreadable report",
+          }
+        )
+        continue
+      binsec_kernels.append(
+        {
+          "kernel": report.get("kernel"),
+          "primitive": report.get("primitive"),
+          "required": bool(report.get("required", False)),
+          "status": report.get("status"),
+          "report": str(report_path),
+          "reason": report.get("reason"),
+        }
+      )
+  else:
+    steps.append(skipped_step("ct-binsec", binsec_reason))
 
   dudect_cases = []
-  if not args.skip_dudect:
-    fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
-    for case in manifest_cases:
-      samples = case_sample_count(case, smoke=args.smoke, override=args.samples, fallback=fallback_samples)
-      print(f"ct-full: dudect {case['name']}", flush=True)
-      dudect_cases.append(
-        dudect_case_result(
-          root,
-          out_dir,
-          logs_dir,
-          target,
-          profile,
-          samples,
-          args.threshold,
-          args.smoke,
-          case,
-          args.dudect_timeout,
-        )
+  fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
+  for case in manifest_cases:
+    samples = case_sample_count(case, smoke=False, override=None, fallback=fallback_samples)
+    print(f"ct-full: dudect {case['name']}", flush=True)
+    dudect_cases.append(
+      dudect_case_result(
+        root,
+        out_dir,
+        logs_dir,
+        target,
+        profile,
+        samples,
+        args.threshold,
+        False,
+        case,
+        args.dudect_timeout,
       )
+    )
 
   executed_dudect = {case["primitive"] for case in dudect_cases}
   passing_dudect = {case["primitive"] for case in dudect_cases if case["status"] == "pass"}
@@ -366,18 +510,32 @@ def main() -> int:
   for path in sorted((out_dir / "dudect" / "cases").glob("*/dudect-report.json")):
     artifact_records.append(file_record(path, out_dir, "dudect_report"))
 
+  for path in sorted((out_dir / "binsec").glob("*/binsec-report.json")):
+    artifact_records.append(file_record(path, out_dir, "binsec_report"))
+
   findings = []
   for step in steps:
-    if step["status"] != "pass":
+    if step["status"] in {"fail", "timeout"}:
       findings.append({"kind": "step_failure", "severity": "blocker", "summary": f"{step['name']} failed"})
   for case in dudect_cases:
-    if case["status"] != "pass":
+    if case.get("gate") != "diagnostic" and case["status"] != "pass":
       findings.append(
         {
           "kind": "dudect_failure",
           "severity": "blocker",
           "summary": f"{case['name']} did not pass",
           "primitive": case["primitive"],
+        }
+      )
+  for kernel in binsec_kernels:
+    if kernel.get("status") not in {"secure"} and kernel.get("required", False):
+      findings.append(
+        {
+          "kind": "binsec_failure",
+          "severity": "blocker",
+          "summary": f"{kernel.get('kernel')} did not pass BINSEC",
+          "primitive": kernel.get("primitive"),
+          "reason": kernel.get("reason"),
         }
       )
   for primitive in missing_dudect:
@@ -411,12 +569,19 @@ def main() -> int:
     },
     "steps": steps,
     "dudect": {
-      "enabled": not args.skip_dudect,
+      "enabled": True,
       "manifest_case_count": len(manifest_cases),
-      "samples": args.samples,
+      "samples": "manifest",
       "threshold_abs_max_t": args.threshold,
-      "smoke": args.smoke,
+      "smoke": False,
       "cases": dudect_cases,
+    },
+    "binsec": {
+      "enabled": binsec_enabled,
+      "policy": binsec_mode,
+      "reason": binsec_reason,
+      "timeout_seconds": args.binsec_timeout,
+      "kernels": binsec_kernels,
     },
     "coverage": {
       "required_dudect_primitives": sorted(required_dudect),
@@ -430,6 +595,7 @@ def main() -> int:
     "notes": [
       "This report is an evidence index, not a constant-time proof.",
       "DudeCT passes mean no leakage was detected for the sampled classes and host configuration.",
+      "Native BINSEC evidence is required only for targets whose ct.toml binsec policy is required.",
       "Uncovered CT-intended primitives remain blockers for ct-claimed release status.",
     ],
   }

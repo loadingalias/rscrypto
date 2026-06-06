@@ -274,3 +274,9 @@ pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; 
   out[12..16].copy_from_slice(&(r3 ^ k3).to_be_bytes());
   out
 }
+
+#[cfg(all(feature = "diag", not(any(target_arch = "s390x", target_arch = "riscv64"))))]
+#[must_use]
+pub fn diag_aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
+  aes_enc_round_portable(block, round_key)
+}

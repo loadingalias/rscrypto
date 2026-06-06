@@ -31,12 +31,14 @@ must_not_leak = [
 ]
 
 [evidence.profile.tier_a]
-required = ["harness", "provenance", "llvm_ir", "asm", "object_disasm", "asm_heuristics", "dudect", "taint", "miri"]
+required = ["harness", "provenance", "llvm_ir", "asm", "object_disasm", "asm_heuristics", "dudect"]
 required_where_practical = ["binsec"]
+auxiliary = ["taint", "miri"]
 
 [evidence.profile.tier_b]
 required = ["harness", "provenance", "llvm_ir", "asm", "object_disasm", "asm_heuristics", "dudect"]
-required_where_practical = ["taint", "binsec", "miri"]
+required_where_practical = ["binsec"]
+auxiliary = ["taint", "miri"]
 
 [evidence.profile.tier_c]
 required = ["classification", "opaque_failure_review"]
@@ -140,7 +142,25 @@ smoke_samples = 2000
 [[dudect_case]]
 name = "hmac_sha256_valid_vs_invalid_tag"
 primitive = "mac.hmac_verify"
-filter = "hmac"
+filter = "hmac_sha256_valid_vs_invalid_tag"
+left_class = "valid tag"
+right_class = "invalid first tag byte"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "hmac_sha384_valid_vs_invalid_tag"
+primitive = "mac.hmac_verify"
+filter = "hmac_sha384_valid_vs_invalid_tag"
+left_class = "valid tag"
+right_class = "invalid first tag byte"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "hmac_sha512_valid_vs_invalid_tag"
+primitive = "mac.hmac_verify"
+filter = "hmac_sha512_valid_vs_invalid_tag"
 left_class = "valid tag"
 right_class = "invalid first tag byte"
 samples = 20000
@@ -165,9 +185,72 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "aes128gcm_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes128gcm_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes256gcm_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes256gcm_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes128gcmsiv_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes128gcmsiv_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes256gcmsiv_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aes256gcmsiv_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "chacha20poly1305_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "chacha20poly1305_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "xchacha20poly1305_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
-filter = "xchacha20poly1305"
+filter = "xchacha20poly1305_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aegis256_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "aegis256_fixed_vs_random_key_open"
+left_class = "valid open with fixed secret key"
+right_class = "valid open with random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ascon_aead128_fixed_vs_random_key_open"
+primitive = "aead.open_authentication"
+filter = "ascon_aead128_fixed_vs_random_key_open"
 left_class = "valid open with fixed secret key"
 right_class = "valid open with random secret key"
 samples = 20000
@@ -228,13 +311,35 @@ samples = 128
 smoke_samples = 128
 
 [[dudect_case]]
-name = "rsa_private_key_pkcs8_roundtrip_key_a_vs_key_b"
+name = "rsa_private_key_pkcs8_import_key_a_vs_key_b"
 primitive = "rsa.private_key_material"
-filter = "rsa_private_key"
+filter = "rsa_private_key_pkcs8_import"
 left_class = "valid PKCS#8 private key A"
-right_class = "valid same-size PKCS#8 private key B"
-samples = 128
+right_class = "valid same-size same-shape PKCS#8 private key B"
+samples = 50000
 smoke_samples = 16
+gate = "diagnostic"
+notes = "Diagnostic only: unrelated valid RSA keys differ in public modulus, and public modulus material may leak by policy."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_key"
+left_class = "valid PKCS#8 private key A validation"
+right_class = "valid same-size same-shape PKCS#8 private key B validation"
+samples = 50000
+smoke_samples = 16
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_export_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_export"
+left_class = "validated private key A"
+right_class = "validated same-size same-shape private key B"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+notes = "Diagnostic only: canonical DER private-key export is a secret-output formatting operation with value-dependent INTEGER shape. It is correctness-tested, but not a required CT release claim."
 
 [[dudect_case]]
 name = "hkdf_sha2_fixed_vs_random_ikm"
@@ -264,22 +369,1158 @@ samples = 128
 smoke_samples = 16
 
 [[dudect_case]]
-name = "chacha20poly1305_fixed_vs_random_key_seal"
+name = "aes128gcm_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
-filter = "key_seal"
+filter = "aes128gcm_fixed_vs_random_key_seal"
 left_class = "fixed secret key"
 right_class = "random secret key"
 samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
-name = "blake2_blake3_keyed_fixed_vs_random_key"
-primitive = "keyed_hash.blake2_blake3"
-filter = "blake2_blake3"
-left_class = "fixed keyed-hash key"
-right_class = "random keyed-hash key"
+name = "aes256gcm_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes256gcm_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
 samples = 20000
 smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes128gcmsiv_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes128gcmsiv_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aes256gcmsiv_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aes256gcmsiv_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "chacha20poly1305_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "chacha20poly1305_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "xchacha20poly1305_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "xchacha20poly1305_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "aegis256_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "aegis256_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ascon_aead128_fixed_vs_random_key_seal"
+primitive = "aead.symmetric_transform"
+filter = "ascon_aead128_fixed_vs_random_key_seal"
+left_class = "fixed secret key"
+right_class = "random secret key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake2b256_keyed_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake2b256_keyed"
+left_class = "fixed BLAKE2b-256 key"
+right_class = "random same-length BLAKE2b-256 key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake2b512_keyed_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake2b512_keyed"
+left_class = "fixed BLAKE2b-512 key"
+right_class = "random same-length BLAKE2b-512 key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake2s128_keyed_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake2s128_keyed"
+left_class = "fixed BLAKE2s-128 key"
+right_class = "random same-length BLAKE2s-128 key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake2s256_keyed_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake2s256_keyed"
+left_class = "fixed BLAKE2s-256 key"
+right_class = "random same-length BLAKE2s-256 key"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake3_keyed_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake3_keyed_fixed"
+left_class = "fixed BLAKE3 key"
+right_class = "random same-length BLAKE3 key"
+samples = 20000
+smoke_samples = 2000
+
+[[evidence_unit]]
+id = "mac.hmac_verify.sha256"
+primitive = "mac.hmac_verify"
+variant = "HmacSha256"
+dudect = ["hmac_sha256_valid_vs_invalid_tag"]
+binsec = ["mac.hmac_verify.sha256.portable.all"]
+
+[[evidence_unit]]
+id = "mac.hmac_verify.sha384"
+primitive = "mac.hmac_verify"
+variant = "HmacSha384"
+dudect = ["hmac_sha384_valid_vs_invalid_tag"]
+binsec = ["mac.hmac_verify.sha384.portable.all"]
+
+[[evidence_unit]]
+id = "mac.hmac_verify.sha512"
+primitive = "mac.hmac_verify"
+variant = "HmacSha512"
+dudect = ["hmac_sha512_valid_vs_invalid_tag"]
+binsec = ["mac.hmac_verify.sha512.portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.aes128gcm"
+primitive = "aead.open_authentication"
+variant = "Aes128Gcm"
+dudect = ["aes128gcm_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.ghash_block_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.aes256gcm"
+primitive = "aead.open_authentication"
+variant = "Aes256Gcm"
+dudect = ["aes256gcm_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.ghash_block_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.aes128gcmsiv"
+primitive = "aead.open_authentication"
+variant = "Aes128GcmSiv"
+dudect = ["aes128gcmsiv_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.polyval_reduce_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.aes256gcmsiv"
+primitive = "aead.open_authentication"
+variant = "Aes256GcmSiv"
+dudect = ["aes256gcmsiv_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.polyval_reduce_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.chacha20poly1305"
+primitive = "aead.open_authentication"
+variant = "ChaCha20Poly1305"
+dudect = ["chacha20poly1305_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.poly1305_block_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.xchacha20poly1305"
+primitive = "aead.open_authentication"
+variant = "XChaCha20Poly1305"
+dudect = ["xchacha20poly1305_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.poly1305_block_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.aegis256"
+primitive = "aead.open_authentication"
+variant = "Aegis256"
+dudect = ["aegis256_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.aes_round_portable.all"]
+
+[[evidence_unit]]
+id = "aead.open_authentication.ascon_aead128"
+primitive = "aead.open_authentication"
+variant = "AsconAead128"
+dudect = ["ascon_aead128_fixed_vs_random_key_open"]
+binsec = ["aead.open_authentication.ascon_aead128_tag_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aes128gcm"
+primitive = "aead.symmetric_transform"
+variant = "Aes128Gcm"
+dudect = ["aes128gcm_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.ghash_block_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aes256gcm"
+primitive = "aead.symmetric_transform"
+variant = "Aes256Gcm"
+dudect = ["aes256gcm_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.ghash_block_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aes128gcmsiv"
+primitive = "aead.symmetric_transform"
+variant = "Aes128GcmSiv"
+dudect = ["aes128gcmsiv_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.polyval_reduce_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aes256gcmsiv"
+primitive = "aead.symmetric_transform"
+variant = "Aes256GcmSiv"
+dudect = ["aes256gcmsiv_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.polyval_reduce_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.chacha20poly1305"
+primitive = "aead.symmetric_transform"
+variant = "ChaCha20Poly1305"
+dudect = ["chacha20poly1305_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.xchacha20poly1305"
+primitive = "aead.symmetric_transform"
+variant = "XChaCha20Poly1305"
+dudect = ["xchacha20poly1305_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.aegis256"
+primitive = "aead.symmetric_transform"
+variant = "Aegis256"
+dudect = ["aegis256_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.aes_round_portable.all"]
+
+[[evidence_unit]]
+id = "aead.symmetric_transform.ascon_aead128"
+primitive = "aead.symmetric_transform"
+variant = "AsconAead128"
+dudect = ["ascon_aead128_fixed_vs_random_key_seal"]
+binsec = ["aead.symmetric_transform.ascon_aead128_tag_portable.all"]
+
+[[evidence_unit]]
+id = "kdf.hkdf.sha256"
+primitive = "kdf.hkdf"
+variant = "HkdfSha256"
+dudect = ["hkdf_sha2_fixed_vs_random_ikm"]
+binsec = ["kdf.hkdf.sha256_derive.portable.all"]
+notes = "The DudeCT case executes HkdfSha256 and HkdfSha384 with the same class input."
+
+[[evidence_unit]]
+id = "kdf.hkdf.sha384"
+primitive = "kdf.hkdf"
+variant = "HkdfSha384"
+dudect = ["hkdf_sha2_fixed_vs_random_ikm"]
+binsec = ["kdf.hkdf.sha384_derive.portable.all"]
+notes = "The DudeCT case executes HkdfSha256 and HkdfSha384 with the same class input."
+
+[[evidence_unit]]
+id = "kdf.pbkdf2.sha256"
+primitive = "kdf.pbkdf2"
+variant = "Pbkdf2Sha256"
+dudect = ["pbkdf2_sha2_fixed_vs_random_password"]
+binsec = ["kdf.pbkdf2.sha256_verify.portable.all"]
+notes = "The DudeCT case executes Pbkdf2Sha256 and Pbkdf2Sha512 with the same class input."
+
+[[evidence_unit]]
+id = "kdf.pbkdf2.sha512"
+primitive = "kdf.pbkdf2"
+variant = "Pbkdf2Sha512"
+dudect = ["pbkdf2_sha2_fixed_vs_random_password"]
+binsec = ["kdf.pbkdf2.sha512_verify.portable.all"]
+notes = "The DudeCT case executes Pbkdf2Sha256 and Pbkdf2Sha512 with the same class input."
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.64.x86_64_linux"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_64"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_LHS_64", kind = "global", bytes = 64 },
+  { name = "CT_BINSEC_RHS_64", kind = "global", bytes = 64 },
+]
+public = [
+  { name = "LEN_64", kind = "const", value = 64 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.32.x86_64_linux"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_32"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "LEN_32", kind = "const", value = 32 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.16.x86_64_linux"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_16"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_LHS_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_RHS_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "LEN_16", kind = "const", value = 16 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "secret_wrappers.secret_bytes32_eq.x86_64_linux"
+primitive = "secret_wrappers.equality_and_display"
+symbol = "ct_binsec_secret_bytes32_eq"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "LEN_32", kind = "const", value = 32 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.poly1305_block_portable.x86_64_linux"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_poly1305_block_portable"
+tier = "B"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_POLY1305_KEY", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_POLY1305_BLOCK", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "CT_BINSEC_POLY1305_PARTIAL", kind = "global", bytes = 1 },
+]
+assumptions = []
+notes = "Validates the production portable Poly1305 one-block update and final mask-based reduction. The partial flag is public message-length shape under the CT policy."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kx.x25519.curve25519_conditional_swap.x86_64_linux"
+primitive = "kx.x25519"
+symbol = "ct_binsec_curve25519_conditional_swap"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_CURVE25519_LHS", kind = "global", bytes = 40 },
+  { name = "CT_BINSEC_CURVE25519_RHS", kind = "global", bytes = 40 },
+  { name = "CT_BINSEC_CURVE25519_SWAP", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "CURVE25519_LIMBS", kind = "const", value = 5 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "rsa.private_ops.window_select.4limb.x86_64_linux"
+primitive = "rsa.private_ops"
+symbol = "ct_binsec_rsa_private_select_window_power_4"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+secrets = [
+  { name = "CT_BINSEC_RSA_WINDOW_TABLE", kind = "global", bytes = 512 },
+  { name = "CT_BINSEC_RSA_WINDOW", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "RSA_WINDOW_LIMBS", kind = "const", value = 4 },
+  { name = "RSA_WINDOW_TABLE_ENTRIES", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Validates the production fixed-window private exponent table selector. Full RSA private operations remain covered by DudeCT plus assembly/provenance gates because complete exponentiation is too large for BINSEC."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ed25519_sign.basepoint_select.x86_64_linux"
+primitive = "signature.ed25519_sign"
+symbol = "ct_binsec_ed25519_select_basepoint_cached"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-cpu=x86-64"]
+sse_depth = 5000
+secrets = [
+  { name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 },
+]
+assumptions = []
+notes = "Production passes an Ed25519 signed radix-16 digit; the BINSEC harness intentionally checks the full byte domain."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ed25519_sign.basepoint_select_avx2.x86_64_linux"
+primitive = "signature.ed25519_sign"
+symbol = "ct_binsec_ed25519_select_basepoint_cached_avx2"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+avx2"]
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 },
+]
+assumptions = []
+notes = "Production passes an Ed25519 signed radix-16 digit; this kernel validates the AVX2 fixed-base selector used by the accelerated signing/public-key path."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ed25519_sign.basepoint_select_ifma.x86_64_linux"
+primitive = "signature.ed25519_sign"
+symbol = "ct_binsec_ed25519_select_basepoint_cached_ifma"
+tier = "A"
+required = true
+targets = ["x86_64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+avx2,+avx512ifma,+avx512vl"]
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 },
+]
+assumptions = []
+notes = "Required because the IFMA selector is a shipped accelerated Ed25519 signing/public-key path on AVX-512 IFMA x86_64 CPUs. If BINSEC/Rel lacks vpmadd52 semantics on a runner, the target remains blocked until the verifier is extended or the IFMA path is removed from CT-claimed dispatch."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.64.aarch64_linux"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_64"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_LHS_64", kind = "global", bytes = 64 },
+  { name = "CT_BINSEC_RHS_64", kind = "global", bytes = 64 },
+]
+public = [
+  { name = "LEN_64", kind = "const", value = 64 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.32.aarch64_linux"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_32"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "LEN_32", kind = "const", value = 32 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.16.aarch64_linux"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_16"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_LHS_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_RHS_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "LEN_16", kind = "const", value = 16 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "secret_wrappers.secret_bytes32_eq.aarch64_linux"
+primitive = "secret_wrappers.equality_and_display"
+symbol = "ct_binsec_secret_bytes32_eq"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "LEN_32", kind = "const", value = 32 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.poly1305_block_portable.aarch64_linux"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_poly1305_block_portable"
+tier = "B"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_POLY1305_KEY", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_POLY1305_BLOCK", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "CT_BINSEC_POLY1305_PARTIAL", kind = "global", bytes = 1 },
+]
+assumptions = []
+notes = "Validates the production portable Poly1305 one-block update and final mask-based reduction. The partial flag is public message-length shape under the CT policy."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kx.x25519.curve25519_conditional_swap.aarch64_linux"
+primitive = "kx.x25519"
+symbol = "ct_binsec_curve25519_conditional_swap"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_CURVE25519_LHS", kind = "global", bytes = 40 },
+  { name = "CT_BINSEC_CURVE25519_RHS", kind = "global", bytes = 40 },
+  { name = "CT_BINSEC_CURVE25519_SWAP", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "CURVE25519_LIMBS", kind = "const", value = 5 },
+]
+assumptions = []
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "rsa.private_ops.window_select.4limb.aarch64_linux"
+primitive = "rsa.private_ops"
+symbol = "ct_binsec_rsa_private_select_window_power_4"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_RSA_WINDOW_TABLE", kind = "global", bytes = 512 },
+  { name = "CT_BINSEC_RSA_WINDOW", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "RSA_WINDOW_LIMBS", kind = "const", value = 4 },
+  { name = "RSA_WINDOW_TABLE_ENTRIES", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Validates the production fixed-window private exponent table selector. Full RSA private operations remain covered by DudeCT plus assembly/provenance gates because complete exponentiation is too large for BINSEC."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ed25519_sign.basepoint_select.aarch64_linux"
+primitive = "signature.ed25519_sign"
+symbol = "ct_binsec_ed25519_select_basepoint_cached"
+tier = "A"
+required = true
+targets = ["aarch64-unknown-linux-gnu"]
+rustflags = ["-C", "target-feature=+neon,+lse"]
+secrets = [
+  { name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 },
+]
+assumptions = []
+notes = "Production passes an Ed25519 signed radix-16 digit; the BINSEC harness intentionally checks the full byte domain."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "ct.constant_time_eq.portable.all"
+primitive = "ct.constant_time_eq"
+symbol = "ct_binsec_constant_time_eq_64"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_LHS_64", kind = "global", bytes = 64 },
+  { name = "CT_BINSEC_RHS_64", kind = "global", bytes = 64 },
+]
+public = [
+  { name = "LEN_64", kind = "const", value = 64 },
+]
+assumptions = []
+notes = "Portable all-target kernel for the fixed-length equality primitive. Target-specific kernels may add stronger ISA coverage."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "secret_wrappers.secret_bytes32_eq.portable.all"
+primitive = "secret_wrappers.equality_and_display"
+symbol = "ct_binsec_secret_bytes32_eq"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "LEN_32", kind = "const", value = 32 },
+]
+assumptions = []
+notes = "Portable all-target kernel for secret wrapper equality."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "mac.hmac_verify.sha256.portable.all"
+primitive = "mac.hmac_verify"
+symbol = "ct_binsec_hmac_sha256_verify"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_TAG_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+]
+assumptions = []
+notes = "Bounded production HMAC-SHA256 verify leaf with fixed public message length."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "mac.hmac_verify.sha384.portable.all"
+primitive = "mac.hmac_verify"
+symbol = "ct_binsec_hmac_sha384_verify"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_48", kind = "global", bytes = 48 },
+  { name = "CT_BINSEC_TAG_48", kind = "global", bytes = 48 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+]
+assumptions = []
+notes = "Bounded production HMAC-SHA384 verify leaf with fixed public message length."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "mac.hmac_verify.sha512.portable.all"
+primitive = "mac.hmac_verify"
+symbol = "ct_binsec_hmac_sha512_verify"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_64", kind = "global", bytes = 64 },
+  { name = "CT_BINSEC_TAG_64", kind = "global", bytes = 64 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+]
+assumptions = []
+notes = "Bounded production HMAC-SHA512 verify leaf with fixed public message length."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "mac.kmac256_verify.portable.all"
+primitive = "mac.kmac256_verify"
+symbol = "ct_binsec_kmac256_verify"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_TAG_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+]
+assumptions = []
+notes = "Bounded production KMAC256 verify leaf with fixed public customization and message length."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "keyed_hash.blake3_verify.portable.all"
+primitive = "keyed_hash.blake3_verify"
+symbol = "ct_binsec_blake3_verify_keyed"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_TAG_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+]
+assumptions = []
+notes = "Bounded production BLAKE3 keyed verification leaf."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.poly1305_block_portable.all"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_poly1305_block_portable"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_POLY1305_KEY", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_POLY1305_BLOCK", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "CT_BINSEC_POLY1305_PARTIAL", kind = "global", bytes = 1 },
+]
+assumptions = []
+notes = "All-target Poly1305 authentication kernel used by AEAD open authentication."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kx.x25519.conditional_swap.portable.all"
+primitive = "kx.x25519"
+symbol = "ct_binsec_curve25519_conditional_swap"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_CURVE25519_LHS", kind = "global", bytes = 40 },
+  { name = "CT_BINSEC_CURVE25519_RHS", kind = "global", bytes = 40 },
+  { name = "CT_BINSEC_CURVE25519_SWAP", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "CURVE25519_LIMBS", kind = "const", value = 5 },
+]
+assumptions = []
+notes = "All-target conditional swap kernel for Curve25519 scalar multiplication."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ed25519_sign.basepoint_select.portable.all"
+primitive = "signature.ed25519_sign"
+symbol = "ct_binsec_ed25519_select_basepoint_cached"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 },
+]
+assumptions = []
+notes = "All-target portable Ed25519 fixed-base selector kernel. ISA-specific accelerated selectors remain separately required where shipped."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "rsa.private_ops.window_select.portable.all"
+primitive = "rsa.private_ops"
+symbol = "ct_binsec_rsa_private_select_window_power_4"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_RSA_WINDOW_TABLE", kind = "global", bytes = 512 },
+  { name = "CT_BINSEC_RSA_WINDOW", kind = "global", bytes = 1 },
+]
+public = [
+  { name = "RSA_WINDOW_LIMBS", kind = "const", value = 4 },
+  { name = "RSA_WINDOW_TABLE_ENTRIES", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "All-target RSA private fixed-window selector kernel."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "rsa.private_key_material.pkcs8_leaf.portable.all"
+primitive = "rsa.private_key_material"
+symbol = "ct_binsec_rsa_private_component_validation_32"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_RSA_COMPONENT_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RSA_UPPER_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_RSA_OTHER_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "RSA_COMPONENT_LEN", kind = "const", value = 32 },
+]
+assumptions = []
+notes = "Bounded RSA private-material validation leaf for accepted same-width secret components: canonical/nonzero shape, secret upper-bound comparison, distinct-prime check, and oddness. DER shape parsing remains covered by artifacts/heuristics and DudeCT stage diagnostics."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kdf.hkdf.sha256_derive.portable.all"
+primitive = "kdf.hkdf"
+symbol = "ct_binsec_hkdf_sha256_derive"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_IKM_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "OKM_LEN", kind = "const", value = 32 },
+]
+assumptions = []
+notes = "Bounded production HKDF-SHA256 derive leaf with fixed public salt/info/output length."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kdf.hkdf.sha384_derive.portable.all"
+primitive = "kdf.hkdf"
+symbol = "ct_binsec_hkdf_sha384_derive"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_IKM_48", kind = "global", bytes = 48 },
+]
+public = [
+  { name = "OKM_LEN", kind = "const", value = 48 },
+]
+assumptions = []
+notes = "Bounded production HKDF-SHA384 derive leaf with fixed public salt/info/output length."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kdf.pbkdf2.sha256_verify.portable.all"
+primitive = "kdf.pbkdf2"
+symbol = "ct_binsec_pbkdf2_sha256_verify"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_PASSWORD_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_TAG_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "ITERATIONS", kind = "const", value = 1 },
+]
+assumptions = []
+notes = "Bounded production PBKDF2-SHA256 verify leaf with fixed public salt and iteration count."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "kdf.pbkdf2.sha512_verify.portable.all"
+primitive = "kdf.pbkdf2"
+symbol = "ct_binsec_pbkdf2_sha512_verify"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_PASSWORD_64", kind = "global", bytes = 64 },
+  { name = "CT_BINSEC_TAG_64", kind = "global", bytes = 64 },
+]
+public = [
+  { name = "ITERATIONS", kind = "const", value = 1 },
+]
+assumptions = []
+notes = "Bounded production PBKDF2-SHA512 verify leaf with fixed public salt and iteration count."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "password.argon2i.hash.portable.all"
+primitive = "password.argon2i"
+symbol = "ct_binsec_argon2i_hash"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 50000
+secrets = [
+  { name = "CT_BINSEC_ARGON2_DST", kind = "global", bytes = 1024 },
+  { name = "CT_BINSEC_ARGON2_X", kind = "global", bytes = 1024 },
+  { name = "CT_BINSEC_ARGON2_Y", kind = "global", bytes = 1024 },
+]
+public = [
+  { name = "ARGON2_COMPRESS_XOR_INTO", kind = "const", value = 1 },
+]
+assumptions = []
+notes = "Argon2 portable compression leaf with symbolic block inputs. Full Argon2i hash remains covered by DudeCT because the public API allocates its matrix and is not a closed BINSEC kernel."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.symmetric_transform.chacha20poly1305_seal.portable.all"
+primitive = "aead.symmetric_transform"
+symbol = "ct_binsec_chacha20poly1305_seal"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 10000
+secrets = [
+  { name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_AEAD_BUFFER_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 32 },
+]
+assumptions = []
+notes = "Bounded production ChaCha20-Poly1305 seal leaf covering stream transform plus Poly1305 tag generation."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.aes_round_portable.all"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_aes_round_portable"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "AES_ROUND_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded portable AES round leaf used by AES-GCM, AES-GCM-SIV, and AEGIS evidence where whole accelerated aarch64 API kernels use instructions unsupported by BINSEC."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.symmetric_transform.aes_round_portable.all"
+primitive = "aead.symmetric_transform"
+symbol = "ct_binsec_aes_round_portable"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "AES_ROUND_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded portable AES round leaf used by AES-GCM, AES-GCM-SIV, and AEGIS evidence where whole accelerated aarch64 API kernels use instructions unsupported by BINSEC."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.ghash_block_portable.all"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_ghash_block_portable"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "GHASH_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded portable GHASH block leaf for AES-GCM authentication."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.symmetric_transform.ghash_block_portable.all"
+primitive = "aead.symmetric_transform"
+symbol = "ct_binsec_ghash_block_portable"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "GHASH_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded portable GHASH block leaf for AES-GCM authentication."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.polyval_reduce_portable.all"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_polyval_reduce_portable"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "POLYVAL_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded portable POLYVAL multiply/reduce leaf for AES-GCM-SIV authentication."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.symmetric_transform.polyval_reduce_portable.all"
+primitive = "aead.symmetric_transform"
+symbol = "ct_binsec_polyval_reduce_portable"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "POLYVAL_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded portable POLYVAL multiply/reduce leaf for AES-GCM-SIV authentication."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.open_authentication.ascon_aead128_tag_portable.all"
+primitive = "aead.open_authentication"
+symbol = "ct_binsec_ascon_aead128_tag_portable"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 40000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_NONCE_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_RHS_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "ASCON_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded Ascon-AEAD128 tag recomputation and constant-time comparison leaf."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "aead.symmetric_transform.ascon_aead128_tag_portable.all"
+primitive = "aead.symmetric_transform"
+symbol = "ct_binsec_ascon_aead128_tag_portable"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 40000
+secrets = [
+  { name = "CT_BINSEC_KEY_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_NONCE_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_TAG_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_RHS_16", kind = "global", bytes = 16 },
+]
+public = [
+  { name = "ASCON_BLOCK_LEN", kind = "const", value = 16 },
+]
+assumptions = []
+notes = "Bounded Ascon-AEAD128 tag recomputation and constant-time comparison leaf."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "keyed_hash.blake2_blake3.digest.portable.all"
+primitive = "keyed_hash.blake2_blake3"
+symbol = "ct_binsec_blake2_blake3_keyed_digest"
+tier = "B"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+]
+assumptions = []
+notes = "Bounded production keyed BLAKE2/BLAKE3 digest leaf."
+claim = "ct-intended"
 
 [[target]]
 name = "x86_64-unknown-linux-gnu"
@@ -288,6 +1529,7 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
+binsec = "required"
 ci = "linux-x64-ci"
 
 [[target]]
@@ -297,6 +1539,7 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
+binsec = "required"
 ci = "linux-arm64-ci"
 
 [[target]]
@@ -306,7 +1549,8 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-ci = "missing"
+binsec = "required"
+ci = "linux-x64-ci"
 
 [[target]]
 name = "aarch64-unknown-linux-musl"
@@ -315,7 +1559,8 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-ci = "missing"
+binsec = "required"
+ci = "linux-arm64-ci"
 
 [[target]]
 name = "x86_64-pc-windows-msvc"
@@ -324,6 +1569,8 @@ backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
+binsec = "unsupported"
+binsec_reason = "BINSEC PE/Windows CT workflow is not part of the current release evidence gate."
 ci = "windows-latest"
 
 [[target]]
@@ -333,7 +1580,31 @@ backend = "llvm"
 linker = "msvc-link-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
+binsec = "unsupported"
+binsec_reason = "BINSEC PE/Windows CT workflow is not part of the current release evidence gate."
 ci = "windows-11-arm"
+
+[[target]]
+name = "aarch64-apple-darwin"
+group = "macos"
+backend = "llvm"
+linker = "apple-ld-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+binsec = "unsupported"
+binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workflow; macOS evidence is artifact/heuristic plus DudeCT."
+ci = "macos-15-xlarge"
+
+[[target]]
+name = "x86_64-apple-darwin"
+group = "macos"
+backend = "llvm"
+linker = "apple-ld-unpinned"
+claim = "ct-intended"
+physical_timing = "required"
+binsec = "unsupported"
+binsec_reason = "BINSEC does not provide native Mach-O loading for this CT workflow; macOS evidence is artifact/heuristic plus DudeCT."
+ci = "macos-15-large"
 
 [[target]]
 name = "s390x-unknown-linux-gnu"
@@ -342,7 +1613,9 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-ci = "missing"
+binsec = "unsupported"
+binsec_reason = "BINSEC/Rel does not list s390x as a supported ISA for this workflow; s390x evidence is artifact/heuristic plus DudeCT on the native Linux runner."
+ci = "ubuntu-24.04-s390x"
 
 [[target]]
 name = "powerpc64le-unknown-linux-gnu"
@@ -351,7 +1624,8 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-ci = "missing"
+binsec = "required"
+ci = "ubuntu-24.04-ppc64le-p10"
 
 [[target]]
 name = "riscv64gc-unknown-linux-gnu"
@@ -360,7 +1634,8 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-ci = "missing"
+binsec = "required"
+ci = "ubuntu-24.04-riscv"
 
 [[target]]
 name = "thumbv6m-none-eabi"
@@ -368,8 +1643,11 @@ group = "no_std"
 backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
-physical_timing = "required"
-ci = "missing"
+physical_timing = "unsupported"
+physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+binsec = "unsupported"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
+ci = "linux-x64-ci"
 
 [[target]]
 name = "riscv32imac-unknown-none-elf"
@@ -377,8 +1655,11 @@ group = "no_std"
 backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
-physical_timing = "required"
-ci = "missing"
+physical_timing = "unsupported"
+physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+binsec = "unsupported"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
+ci = "linux-x64-ci"
 
 [[target]]
 name = "aarch64-unknown-none"
@@ -386,8 +1667,11 @@ group = "no_std"
 backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
-physical_timing = "required"
-ci = "missing"
+physical_timing = "unsupported"
+physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+binsec = "unsupported"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
+ci = "linux-arm64-ci"
 
 [[target]]
 name = "x86_64-unknown-none"
@@ -395,8 +1679,11 @@ group = "no_std"
 backend = "llvm"
 linker = "none-or-platform-default-unpinned"
 claim = "ct-intended"
-physical_timing = "required"
-ci = "missing"
+physical_timing = "unsupported"
+physical_timing_reason = "Bare-metal targets are artifact/heuristic CT lanes in this workflow; no native physical DudeCT runner exists for this target."
+binsec = "unsupported"
+binsec_reason = "Bare-metal targets do not run the native Linux BINSEC executable harness in this workflow."
+ci = "linux-x64-ci"
 
 [[target]]
 name = "wasm32-unknown-unknown"
@@ -404,8 +1691,11 @@ group = "wasm"
 backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
-physical_timing = "required"
-ci = "missing"
+physical_timing = "unsupported"
+physical_timing_reason = "WASM targets are artifact/heuristic CT lanes in this workflow; native physical DudeCT timing requires a separate WASM host/runtime policy."
+binsec = "unsupported"
+binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
+ci = "linux-x64-ci"
 
 [[target]]
 name = "wasm32-wasip1"
@@ -413,8 +1703,11 @@ group = "wasm"
 backend = "llvm"
 linker = "rust-lld-unpinned"
 claim = "ct-intended"
-physical_timing = "required"
-ci = "missing"
+physical_timing = "unsupported"
+physical_timing_reason = "WASM targets are artifact/heuristic CT lanes in this workflow; native physical DudeCT timing requires a separate WASM host/runtime policy."
+binsec = "unsupported"
+binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
+ci = "linux-x64-ci"
 
 [[primitive]]
 id = "ct.constant_time_eq"
@@ -614,17 +1907,17 @@ id = "rsa.private_key_material"
 tier = "A"
 claim = "ct-intended"
 features = ["rsa"]
-entrypoints = ["RsaPrivateKey::from_components", "RsaPrivateKey::from_pkcs1_der", "RsaPrivateKey::from_pkcs8_der", "RsaPrivateKey::to_pkcs1_der", "RsaPrivateKey::to_pkcs8_der"]
+entrypoints = ["RsaPrivateKey::from_components", "RsaPrivateKey::from_pkcs1_der", "RsaPrivateKey::from_pkcs8_der"]
 secrets = ["private_key_components", "serialized_private_key"]
-public = ["der_length", "format_shape", "public_policy"]
-may_leak = ["input_length", "public_shape_error", "public_policy_failure"]
+public = ["der_length", "format_shape", "public_policy", "public_modulus", "public_exponent"]
+may_leak = ["input_length", "public_shape_error", "public_policy_failure", "public_key", "public_modulus", "public_exponent"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Private-key parsing and serialization are tracked because secret material is present. Public DER shape errors may remain public."
+notes = "Private-key import and validation are CT-critical for accepted same-shape secret material. Canonical DER export is a secret-output formatting operation and is outside the required CT release claim unless a future fixed-shape export API is added."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_rsa_private_key_pkcs8_roundtrip"]
-coverage = "private key parse/serialize material-handling harness"
+coverage = "private key import/validation material-handling harness plus diagnostic serialization coverage"
 
 [[primitive]]
 id = "kdf.hkdf"
@@ -726,14 +2019,16 @@ tier = "B"
 claim = "ct-intended"
 features = ["aead"]
 variants = [
-  "AES",
-  "GHASH",
-  "POLYVAL",
-  "ChaCha20",
-  "Poly1305",
+  "Aes128Gcm",
+  "Aes256Gcm",
+  "Aes128GcmSiv",
+  "Aes256GcmSiv",
+  "ChaCha20Poly1305",
+  "XChaCha20Poly1305",
   "Aegis256",
   "AsconAead128",
 ]
+components = ["AES", "GHASH", "POLYVAL", "ChaCha20", "Poly1305", "Aegis256 state update", "Ascon permutation"]
 entrypoints = ["Aead::encrypt_in_place", "Aead::decrypt_in_place", "AES block helpers", "GHASH/POLYVAL helpers", "ChaCha20 keystream helpers", "Poly1305 block helpers"]
 secrets = ["key", "plaintext", "opened_plaintext", "poly_key", "hash_subkey"]
 public = ["nonce", "aad", "input_length", "backend_caps"]

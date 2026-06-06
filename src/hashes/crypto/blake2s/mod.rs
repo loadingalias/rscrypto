@@ -230,7 +230,7 @@ impl Core {
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   fn new_with_compress_for_test(
     nn: u8,
     key: &[u8],
@@ -799,7 +799,8 @@ impl Blake2s256 {
     oneshot_hash_array::<32>(32, key, data)
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
+  #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(
     compress: kernels::CompressFn,
     compress_blocks: kernels::CompressBlocksFn,
@@ -807,7 +808,8 @@ impl Blake2s256 {
     Self(Core::new_with_compress_for_test(32, &[], compress, compress_blocks))
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
+  #[allow(dead_code)]
   pub(crate) fn keyed_with_compress_for_test(
     key: &[u8],
     compress: kernels::CompressFn,
@@ -816,6 +818,21 @@ impl Blake2s256 {
     assert!(!key.is_empty(), "use new_with_compress_for_test() for unkeyed hashing");
     Self(Core::new_with_compress_for_test(32, key, compress, compress_blocks))
   }
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_blake2s256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
+  let mut out = [0u8; 32];
+  oneshot_small_into_with_params(
+    32,
+    key,
+    None,
+    b"binsec",
+    &mut out,
+    kernels::compress_fn(kernels::Blake2sKernelId::Portable),
+  );
+  out
 }
 
 impl Default for Blake2s256 {

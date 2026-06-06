@@ -355,6 +355,26 @@ impl Aead for AsconAead128 {
   }
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_ascon_aead128_tag_portable(
+  key: &[u8; KEY_SIZE],
+  nonce: &[u8; NONCE_SIZE],
+  block: &[u8; RATE],
+  expected: &[u8; TAG_SIZE],
+) -> bool {
+  let key = AsconAead128Key::from_bytes(*key);
+  let nonce = Nonce128::from_bytes(*nonce);
+  let cipher = AsconAead128::new(&key);
+  let mut s = cipher.initialize(&nonce);
+  AsconAead128::process_aad(&mut s, b"binsec");
+  s[0] ^= load_bytes(&block[..8]);
+  s[1] ^= load_bytes(&block[8..]);
+  permute_8_portable(&mut s);
+  let tag = cipher.finalize(&mut s);
+  ct::constant_time_eq(&tag, expected)
+}
+
 #[cfg(test)]
 mod tests {
   use alloc::{vec, vec::Vec};

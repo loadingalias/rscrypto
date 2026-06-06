@@ -79,6 +79,7 @@ impl CachedPoint {
   }
 
   #[must_use]
+  #[inline(always)]
   fn neg(&self) -> Self {
     Self {
       y_plus_x: self.y_minus_x,
@@ -450,7 +451,7 @@ fn select_cached(lhs: &CachedPoint, rhs: &CachedPoint, mask: u64) -> CachedPoint
   }
 }
 
-#[inline]
+#[inline(always)]
 #[must_use]
 fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
   let abs = core::hint::black_box(ct_abs_i8(digit));
@@ -469,6 +470,17 @@ fn select_signed_cached(table: &[CachedPoint; 8], digit: i8) -> CachedPoint {
 
   let neg = selected.neg();
   select_cached(&selected, &neg, core::hint::black_box(ct_negative_mask_i8(digit)))
+}
+
+#[cfg(feature = "diag")]
+#[inline(always)]
+pub fn diag_select_basepoint_cached_limb_digest(digit: i8) -> [u64; 15] {
+  let selected = select_signed_cached(&BASEPOINT_RADIX16_TABLE[0], digit);
+  let mut out = [0u64; 15];
+  out[0..5].copy_from_slice(selected.y_plus_x.limbs());
+  out[5..10].copy_from_slice(selected.y_minus_x.limbs());
+  out[10..15].copy_from_slice(selected.t2d.limbs());
+  out
 }
 
 /// Add a signed digit from a projective cached table (runtime table).

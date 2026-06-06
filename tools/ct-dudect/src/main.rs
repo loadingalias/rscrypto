@@ -1,11 +1,15 @@
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
 use rscrypto::{
-  Argon2Params, Argon2i, Blake2b256, Blake2b512, Blake2s128, Blake2s256, Blake3, Blake3KeyedHash,
-  ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, Kmac256,
-  Pbkdf2Sha256, Pbkdf2Sha512, RsaPkcs1v15Profile, RsaPrivateKey, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
-  aead::{Nonce96, Nonce192},
+  Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
+  Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
+  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519Keypair,
+  Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512,
+  RsaPkcs1v15Profile, RsaPrivateKey, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  aead::{Nonce96, Nonce128, Nonce192, Nonce256},
+  diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
+  diag_rsa_validate_pkcs8_private_key_der_stage,
   traits::ct,
+  RsaPublicKeyPolicy,
 };
 
 const DEFAULT_SAMPLES: usize = 20_000;
@@ -13,6 +17,8 @@ const MESSAGE: &[u8] = b"rscrypto constant-time dudect timing lane input";
 const AAD: &[u8] = b"rscrypto-ct";
 const AEAD_PLAINTEXT: [u8; 44] = *b"constant-time seal buffer for key validation";
 const RSA_PKCS1_2048: &str = include_str!("../../../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
+const RSA_CT_KEY_A_INDEX: usize = 0;
+const RSA_CT_KEY_B_SAME_SHAPE_INDEX: usize = 2;
 
 fn samples() -> usize {
   std::env::var("RSCRYPTO_CT_DUDECT_SAMPLES")
@@ -156,22 +162,31 @@ fn secret_wrappers_eq_and_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut
   }
 }
 
-fn hmac_sha256_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
-    let key = rand_array::<32>(rng);
-    let mut expected = HmacSha256::mac(&key, MESSAGE);
-    if matches!(class, Class::Right) {
-      expected[0] ^= 1;
-    }
-    inputs.push((class, key, expected));
-  }
+macro_rules! hmac_valid_vs_invalid_tag {
+  ($name:ident, $ty:ty, $tag_len:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let key = rand_array::<32>(rng);
+        let mut expected = <$ty>::mac(&key, MESSAGE);
+        if matches!(class, Class::Right) {
+          expected[0] ^= 1;
+        }
+        inputs.push((class, key, expected));
+      }
 
-  for (class, key, expected) in inputs {
-    runner.run_one(class, || HmacSha256::verify_tag(&key, MESSAGE, &expected).is_ok());
-  }
+      for (class, key, expected) in inputs {
+        let _ = $tag_len;
+        runner.run_one(class, || <$ty>::verify_tag(&key, MESSAGE, &expected).is_ok());
+      }
+    }
+  };
 }
+
+hmac_valid_vs_invalid_tag!(hmac_sha256_valid_vs_invalid_tag, HmacSha256, 32);
+hmac_valid_vs_invalid_tag!(hmac_sha384_valid_vs_invalid_tag, HmacSha384, 48);
+hmac_valid_vs_invalid_tag!(hmac_sha512_valid_vs_invalid_tag, HmacSha512, 64);
 
 fn kmac256_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
@@ -208,31 +223,108 @@ fn blake3_keyed_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mut BenchRng) 
   }
 }
 
-fn xchacha20poly1305_fixed_vs_random_key_open(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let nonce = Nonce192::from_bytes([0x19; Nonce192::LENGTH]);
-  let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
-    let key = if matches!(class, Class::Left) {
-      [0x17; XChaCha20Poly1305::KEY_SIZE]
-    } else {
-      rand_array::<{ XChaCha20Poly1305::KEY_SIZE }>(rng)
-    };
-    let key = XChaCha20Poly1305Key::from_bytes(key);
-    let cipher = XChaCha20Poly1305::new(&key);
-    let mut ciphertext = AEAD_PLAINTEXT;
-    let tag = cipher.encrypt_in_place(&nonce, AAD, &mut ciphertext).unwrap();
-    inputs.push((class, key, nonce, ciphertext, tag));
-  }
+macro_rules! aead_fixed_vs_random_key_open {
+  ($name:ident, $cipher:ty, $key:ty, $nonce:ty, $fixed_key:expr, $key_len:expr, $nonce_byte:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let nonce = <$nonce>::from_bytes([$nonce_byte; <$nonce>::LENGTH]);
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let key = if matches!(class, Class::Left) {
+          $fixed_key
+        } else {
+          rand_array::<$key_len>(rng)
+        };
+        let key = <$key>::from_bytes(key);
+        let cipher = <$cipher>::new(&key);
+        let mut ciphertext = AEAD_PLAINTEXT;
+        let tag = cipher.encrypt_in_place(&nonce, AAD, &mut ciphertext).unwrap();
+        inputs.push((class, key, nonce, ciphertext, tag));
+      }
 
-  for (class, key, nonce, ciphertext, tag) in inputs {
-    let cipher = XChaCha20Poly1305::new(&key);
-    runner.run_one(class, || {
-      let mut buffer = ciphertext;
-      cipher.decrypt_in_place(&nonce, AAD, &mut buffer, &tag).is_ok()
-    });
-  }
+      for (class, key, nonce, ciphertext, tag) in inputs {
+        let cipher = <$cipher>::new(&key);
+        runner.run_one(class, || {
+          let mut buffer = ciphertext;
+          cipher.decrypt_in_place(&nonce, AAD, &mut buffer, &tag).is_ok()
+        });
+      }
+    }
+  };
 }
+
+aead_fixed_vs_random_key_open!(
+  aes128gcm_fixed_vs_random_key_open,
+  Aes128Gcm,
+  Aes128GcmKey,
+  Nonce96,
+  [0x13; Aes128Gcm::KEY_SIZE],
+  16,
+  0x13
+);
+aead_fixed_vs_random_key_open!(
+  aes256gcm_fixed_vs_random_key_open,
+  Aes256Gcm,
+  Aes256GcmKey,
+  Nonce96,
+  [0x14; Aes256Gcm::KEY_SIZE],
+  32,
+  0x14
+);
+aead_fixed_vs_random_key_open!(
+  aes128gcmsiv_fixed_vs_random_key_open,
+  Aes128GcmSiv,
+  Aes128GcmSivKey,
+  Nonce96,
+  [0x15; Aes128GcmSiv::KEY_SIZE],
+  16,
+  0x15
+);
+aead_fixed_vs_random_key_open!(
+  aes256gcmsiv_fixed_vs_random_key_open,
+  Aes256GcmSiv,
+  Aes256GcmSivKey,
+  Nonce96,
+  [0x16; Aes256GcmSiv::KEY_SIZE],
+  32,
+  0x16
+);
+aead_fixed_vs_random_key_open!(
+  chacha20poly1305_fixed_vs_random_key_open,
+  ChaCha20Poly1305,
+  ChaCha20Poly1305Key,
+  Nonce96,
+  [0x17; ChaCha20Poly1305::KEY_SIZE],
+  32,
+  0x17
+);
+aead_fixed_vs_random_key_open!(
+  xchacha20poly1305_fixed_vs_random_key_open,
+  XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
+  Nonce192,
+  [0x18; XChaCha20Poly1305::KEY_SIZE],
+  32,
+  0x18
+);
+aead_fixed_vs_random_key_open!(
+  aegis256_fixed_vs_random_key_open,
+  Aegis256,
+  Aegis256Key,
+  Nonce256,
+  [0x19; Aegis256::KEY_SIZE],
+  32,
+  0x19
+);
+aead_fixed_vs_random_key_open!(
+  ascon_aead128_fixed_vs_random_key_open,
+  AsconAead128,
+  AsconAead128Key,
+  Nonce128,
+  [0x1A; AsconAead128::KEY_SIZE],
+  16,
+  0x1A
+);
 
 fn x25519_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
   let peer = X25519SecretKey::from_bytes([9u8; X25519SecretKey::LENGTH]).public_key();
@@ -324,7 +416,7 @@ fn ed25519_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut 
 }
 
 fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let der = rsa_pkcs8_der(0);
+  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
   let sig_len = key.signature_len();
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
@@ -356,19 +448,146 @@ fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRn
   }
 }
 
-fn rsa_private_key_pkcs8_roundtrip_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let der_a = rsa_pkcs8_der(0);
-  let der_b = rsa_pkcs8_der(1);
+fn rsa_private_key_pkcs8_import_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
+  let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    inputs.push(random_class(rng));
+  }
+
+  let mut der = vec![0u8; der_a.len()];
+  for class in inputs {
+    let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
+    der.copy_from_slice(selected);
+    runner.run_one(class, || {
+      let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+      key.signature_len()
+    });
+  }
+}
+
+fn rsa_private_key_pkcs8_validate_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, u8::MAX);
+}
+
+fn rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 0);
+}
+
+fn rsa_private_key_pkcs8_validate_stage1_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 1);
+}
+
+fn rsa_private_key_pkcs8_validate_stage2_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 2);
+}
+
+fn rsa_private_key_pkcs8_validate_stage3_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 3);
+}
+
+fn rsa_private_key_pkcs8_validate_stage4_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 4);
+}
+
+fn rsa_private_key_pkcs8_validate_stage30_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 30);
+}
+
+fn rsa_private_key_pkcs8_validate_stage31_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 31);
+}
+
+fn rsa_private_key_pkcs8_validate_stage32_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 32);
+}
+
+fn rsa_private_key_pkcs8_validate_stage40_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 40);
+}
+
+fn rsa_private_key_pkcs8_validate_stage41_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 41);
+}
+
+fn rsa_private_key_pkcs8_validate_stage42_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner, rng, 42);
+}
+
+fn rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner, rng, 50);
+}
+
+fn rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner, rng, 51);
+}
+
+fn rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner, rng, 52);
+}
+
+fn rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner, rng, 53);
+}
+
+fn rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner, rng, 54);
+}
+
+fn rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng, stage: u8) {
+  let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
+  let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
+  let policy = RsaPublicKeyPolicy::default();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    inputs.push(random_class(rng));
+  }
+
+  let mut der = vec![0u8; der_a.len()];
+  for class in inputs {
+    let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
+    der.copy_from_slice(selected);
+    runner.run_one(class, || diag_rsa_import_pkcs8_private_key_der_stage(&der, &policy, stage).unwrap());
+  }
+}
+
+fn rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng, stage: u8) {
+  let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
+  let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
+  let policy = RsaPublicKeyPolicy::default();
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    inputs.push(random_class(rng));
+  }
+
+  let mut der = vec![0u8; der_a.len()];
+  for class in inputs {
+    let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
+    der.copy_from_slice(selected);
+    runner.run_one(class, || {
+      if stage == u8::MAX {
+        diag_rsa_validate_pkcs8_private_key_der(&der, &policy).unwrap()
+      } else {
+        diag_rsa_validate_pkcs8_private_key_der_stage(&der, &policy, stage).unwrap()
+      }
+    });
+  }
+}
+
+fn rsa_private_key_pkcs8_export_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let key_a = RsaPrivateKey::from_pkcs8_der(&rsa_pkcs8_der(RSA_CT_KEY_A_INDEX)).unwrap();
+  let key_b = RsaPrivateKey::from_pkcs8_der(&rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX)).unwrap();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     inputs.push(random_class(rng));
   }
 
   for class in inputs {
-    let der = if matches!(class, Class::Left) { &der_a } else { &der_b };
+    let key = if matches!(class, Class::Left) { &key_a } else { &key_b };
     runner.run_one(class, || {
-      let key = RsaPrivateKey::from_pkcs8_der(der).unwrap();
-      key.to_pkcs8_der().len()
+      let der = key.to_pkcs8_der();
+      der.len()
     });
   }
 }
@@ -439,29 +658,132 @@ fn argon2i_fixed_vs_random_password(runner: &mut CtRunner, rng: &mut BenchRng) {
   }
 }
 
-fn chacha20poly1305_fixed_vs_random_key_seal(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let nonce = Nonce96::from_bytes([0x24; Nonce96::LENGTH]);
-  let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
-    let key = if matches!(class, Class::Left) {
-      [0x11; ChaCha20Poly1305::KEY_SIZE]
-    } else {
-      rand_array::<{ ChaCha20Poly1305::KEY_SIZE }>(rng)
-    };
-    inputs.push((class, ChaCha20Poly1305Key::from_bytes(key), nonce));
-  }
+macro_rules! aead_fixed_vs_random_key_seal {
+  ($name:ident, $cipher:ty, $key:ty, $nonce:ty, $fixed_key:expr, $key_len:expr, $nonce_byte:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let nonce = <$nonce>::from_bytes([$nonce_byte; <$nonce>::LENGTH]);
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let key = if matches!(class, Class::Left) {
+          $fixed_key
+        } else {
+          rand_array::<$key_len>(rng)
+        };
+        inputs.push((class, <$key>::from_bytes(key), nonce));
+      }
 
-  for (class, key, nonce) in inputs {
-    let cipher = ChaCha20Poly1305::new(&key);
-    runner.run_one(class, || {
-      let mut buffer = AEAD_PLAINTEXT;
-      cipher.encrypt_in_place(&nonce, AAD, &mut buffer).is_ok()
-    });
-  }
+      for (class, key, nonce) in inputs {
+        let cipher = <$cipher>::new(&key);
+        runner.run_one(class, || {
+          let mut buffer = AEAD_PLAINTEXT;
+          cipher.encrypt_in_place(&nonce, AAD, &mut buffer).is_ok()
+        });
+      }
+    }
+  };
 }
 
-fn blake2_blake3_keyed_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+aead_fixed_vs_random_key_seal!(
+  aes128gcm_fixed_vs_random_key_seal,
+  Aes128Gcm,
+  Aes128GcmKey,
+  Nonce96,
+  [0x33; Aes128Gcm::KEY_SIZE],
+  16,
+  0x33
+);
+aead_fixed_vs_random_key_seal!(
+  aes256gcm_fixed_vs_random_key_seal,
+  Aes256Gcm,
+  Aes256GcmKey,
+  Nonce96,
+  [0x34; Aes256Gcm::KEY_SIZE],
+  32,
+  0x34
+);
+aead_fixed_vs_random_key_seal!(
+  aes128gcmsiv_fixed_vs_random_key_seal,
+  Aes128GcmSiv,
+  Aes128GcmSivKey,
+  Nonce96,
+  [0x35; Aes128GcmSiv::KEY_SIZE],
+  16,
+  0x35
+);
+aead_fixed_vs_random_key_seal!(
+  aes256gcmsiv_fixed_vs_random_key_seal,
+  Aes256GcmSiv,
+  Aes256GcmSivKey,
+  Nonce96,
+  [0x36; Aes256GcmSiv::KEY_SIZE],
+  32,
+  0x36
+);
+aead_fixed_vs_random_key_seal!(
+  chacha20poly1305_fixed_vs_random_key_seal,
+  ChaCha20Poly1305,
+  ChaCha20Poly1305Key,
+  Nonce96,
+  [0x37; ChaCha20Poly1305::KEY_SIZE],
+  32,
+  0x37
+);
+aead_fixed_vs_random_key_seal!(
+  xchacha20poly1305_fixed_vs_random_key_seal,
+  XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
+  Nonce192,
+  [0x38; XChaCha20Poly1305::KEY_SIZE],
+  32,
+  0x38
+);
+aead_fixed_vs_random_key_seal!(
+  aegis256_fixed_vs_random_key_seal,
+  Aegis256,
+  Aegis256Key,
+  Nonce256,
+  [0x39; Aegis256::KEY_SIZE],
+  32,
+  0x39
+);
+aead_fixed_vs_random_key_seal!(
+  ascon_aead128_fixed_vs_random_key_seal,
+  AsconAead128,
+  AsconAead128Key,
+  Nonce128,
+  [0x3A; AsconAead128::KEY_SIZE],
+  16,
+  0x3A
+);
+
+macro_rules! blake2_keyed_fixed_vs_random {
+  ($name:ident, $ty:ty) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let key = if matches!(class, Class::Left) {
+          [0xA3; 32]
+        } else {
+          rand_array::<32>(rng)
+        };
+        inputs.push((class, key));
+      }
+
+      for (class, key) in inputs {
+        runner.run_one(class, || <$ty>::keyed_digest(&key, MESSAGE)[0]);
+      }
+    }
+  };
+}
+
+blake2_keyed_fixed_vs_random!(blake2b256_keyed_fixed_vs_random_key, Blake2b256);
+blake2_keyed_fixed_vs_random!(blake2b512_keyed_fixed_vs_random_key, Blake2b512);
+blake2_keyed_fixed_vs_random!(blake2s128_keyed_fixed_vs_random_key, Blake2s128);
+blake2_keyed_fixed_vs_random!(blake2s256_keyed_fixed_vs_random_key, Blake2s256);
+
+fn blake3_keyed_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     let class = random_class(rng);
@@ -474,14 +796,7 @@ fn blake2_blake3_keyed_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut Benc
   }
 
   for (class, key) in inputs {
-    runner.run_one(class, || {
-      let mut acc = Blake2b256::keyed_digest(&key, MESSAGE)[0];
-      acc ^= Blake2b512::keyed_digest(&key, MESSAGE)[0];
-      acc ^= Blake2s128::keyed_digest(&key, MESSAGE)[0];
-      acc ^= Blake2s256::keyed_digest(&key, MESSAGE)[0];
-      acc ^= Blake3::keyed_digest(&key, MESSAGE).to_bytes()[0];
-      acc
-    });
+    runner.run_one(class, || Blake3::keyed_digest(&key, MESSAGE).to_bytes()[0]);
   }
 }
 
@@ -489,19 +804,57 @@ ctbench_main_with_seeds!(
   (constant_time_eq_equal_vs_first_diff, Some(0x727363727970746f)),
   (secret_wrappers_eq_and_debug_fixed_vs_random, Some(0x7365637265745f77)),
   (hmac_sha256_valid_vs_invalid_tag, Some(0x686d61635f736861)),
+  (hmac_sha384_valid_vs_invalid_tag, Some(0x686d61633338345f)),
+  (hmac_sha512_valid_vs_invalid_tag, Some(0x686d61633531325f)),
   (kmac256_valid_vs_invalid_tag, Some(0x6b6d61633235365f)),
   (blake3_keyed_valid_vs_invalid_tag, Some(0x626c616b65335f63)),
+  (aes128gcm_fixed_vs_random_key_open, Some(0x616573313238676f)),
+  (aes256gcm_fixed_vs_random_key_open, Some(0x616573323536676f)),
+  (aes128gcmsiv_fixed_vs_random_key_open, Some(0x6131323867736f70)),
+  (aes256gcmsiv_fixed_vs_random_key_open, Some(0x6132353667736f70)),
+  (chacha20poly1305_fixed_vs_random_key_open, Some(0x6368613230706f70)),
   (xchacha20poly1305_fixed_vs_random_key_open, Some(0x7863686163686132)),
+  (aegis256_fixed_vs_random_key_open, Some(0x61656769736f706e)),
+  (ascon_aead128_fixed_vs_random_key_open, Some(0x6173636f6e6f706e)),
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (ed25519_sign_fixed_vs_random_secret, Some(0x656432353531395f)),
   (ed25519_public_key_fixed_vs_random_secret, Some(0x6564323535313950)),
   (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
   (rsa_pkcs1v15_fixed_vs_random_message, Some(0x7273615f7369676e)),
-  (rsa_private_key_pkcs8_roundtrip_key_a_vs_key_b, Some(0x7273615f6b657973)),
+  (rsa_private_key_pkcs8_import_key_a_vs_key_b, Some(0x7273615f6b657969)),
+  (rsa_private_key_pkcs8_validate_key_a_vs_key_b, Some(0x7273615f76616c69)),
+  (rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b, Some(0x7273615f76733030)),
+  (rsa_private_key_pkcs8_validate_stage1_key_a_vs_key_b, Some(0x7273615f76733031)),
+  (rsa_private_key_pkcs8_validate_stage2_key_a_vs_key_b, Some(0x7273615f76733032)),
+  (rsa_private_key_pkcs8_validate_stage3_key_a_vs_key_b, Some(0x7273615f76733033)),
+  (rsa_private_key_pkcs8_validate_stage4_key_a_vs_key_b, Some(0x7273615f76733034)),
+  (rsa_private_key_pkcs8_validate_stage30_key_a_vs_key_b, Some(0x7273615f76333030)),
+  (rsa_private_key_pkcs8_validate_stage31_key_a_vs_key_b, Some(0x7273615f76333031)),
+  (rsa_private_key_pkcs8_validate_stage32_key_a_vs_key_b, Some(0x7273615f76333032)),
+  (rsa_private_key_pkcs8_validate_stage40_key_a_vs_key_b, Some(0x7273615f76343030)),
+  (rsa_private_key_pkcs8_validate_stage41_key_a_vs_key_b, Some(0x7273615f76343031)),
+  (rsa_private_key_pkcs8_validate_stage42_key_a_vs_key_b, Some(0x7273615f76343032)),
+  (rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b, Some(0x7273615f69353030)),
+  (rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b, Some(0x7273615f69353031)),
+  (rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b, Some(0x7273615f69353032)),
+  (rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b, Some(0x7273615f69353033)),
+  (rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b, Some(0x7273615f69353034)),
+  (rsa_private_key_pkcs8_export_key_a_vs_key_b, Some(0x7273615f6b657978)),
   (hkdf_sha2_fixed_vs_random_ikm, Some(0x686b64665f736861)),
   (pbkdf2_sha2_fixed_vs_random_password, Some(0x70626b6466325f73)),
   (argon2i_fixed_vs_random_password, Some(0x6172676f6e32695f)),
+  (aes128gcm_fixed_vs_random_key_seal, Some(0x6165733132386773)),
+  (aes256gcm_fixed_vs_random_key_seal, Some(0x6165733235366773)),
+  (aes128gcmsiv_fixed_vs_random_key_seal, Some(0x6131323867737365)),
+  (aes256gcmsiv_fixed_vs_random_key_seal, Some(0x6132353667737365)),
   (chacha20poly1305_fixed_vs_random_key_seal, Some(0x6368616368613230)),
-  (blake2_blake3_keyed_fixed_vs_random_key, Some(0x626c616b65325f33))
+  (xchacha20poly1305_fixed_vs_random_key_seal, Some(0x7863686132307365)),
+  (aegis256_fixed_vs_random_key_seal, Some(0x6165676973736561)),
+  (ascon_aead128_fixed_vs_random_key_seal, Some(0x6173636f6e736561)),
+  (blake2b256_keyed_fixed_vs_random_key, Some(0x6232623235365f6b)),
+  (blake2b512_keyed_fixed_vs_random_key, Some(0x6232623531325f6b)),
+  (blake2s128_keyed_fixed_vs_random_key, Some(0x6232733132385f6b)),
+  (blake2s256_keyed_fixed_vs_random_key, Some(0x6232733235365f6b)),
+  (blake3_keyed_fixed_vs_random_key, Some(0x626c616b65335f6b))
 );

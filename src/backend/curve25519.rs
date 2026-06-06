@@ -393,6 +393,16 @@ impl FieldElement {
   }
 }
 
+#[cfg(all(feature = "diag", feature = "x25519"))]
+#[inline(always)]
+pub fn diag_curve25519_conditional_swap(lhs: &mut [u64; FIELD_LIMBS], rhs: &mut [u64; FIELD_LIMBS], swap: u8) {
+  let mut lhs_element = FieldElement::from_limbs(*lhs);
+  let mut rhs_element = FieldElement::from_limbs(*rhs);
+  FieldElement::conditional_swap(&mut lhs_element, &mut rhs_element, swap);
+  *lhs = *lhs_element.limbs();
+  *rhs = *rhs_element.limbs();
+}
+
 impl Default for FieldElement {
   #[inline]
   fn default() -> Self {

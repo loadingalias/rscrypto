@@ -1752,7 +1752,7 @@ fn current_caps() -> crate::platform::Caps {
 }
 
 #[inline]
-fn clmul128_reduce_portable(a: u128, b: u128) -> u128 {
+pub(super) fn clmul128_reduce_portable(a: u128, b: u128) -> u128 {
   mont_reduce(clmul128(a, b))
 }
 
@@ -1844,6 +1844,12 @@ fn resolve_clmul128_reduce() -> Clmul128ReduceFn {
 pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
   let clmul = CLMUL128_REDUCE_DISPATCH.get_or_init(resolve_clmul128_reduce);
   clmul(a, b)
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
+  clmul128_reduce_portable(u128::from_le_bytes(*a), u128::from_le_bytes(*b)).to_le_bytes()
 }
 
 /// Precompute hash key powers [H, H^2, H^3, H^4] for 4-block wide processing.

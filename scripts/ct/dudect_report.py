@@ -75,10 +75,57 @@ CASE_METADATA = {
     "left_class": "fixed message",
     "right_class": "random same-length message",
   },
-  "rsa_private_key_pkcs8_roundtrip_key_a_vs_key_b": {
+  "rsa_private_key_pkcs8_import_key_a_vs_key_b": {
     "primitive": "rsa.private_key_material",
     "left_class": "valid PKCS#8 private key A",
-    "right_class": "valid same-size PKCS#8 private key B",
+    "right_class": "valid same-size same-shape PKCS#8 private key B",
+    "gate": "diagnostic",
+    "reason": "Classes differ in RSA public modulus; public key material may leak by CT policy.",
+  },
+  "rsa_private_key_pkcs8_validate_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "valid PKCS#8 private key A validation",
+    "right_class": "valid same-size same-shape PKCS#8 private key B validation",
+  },
+  "rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "validated PKCS#8 private key A before materialization",
+    "right_class": "validated same-size same-shape PKCS#8 private key B before materialization",
+  },
+  "rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "PKCS#8 private key A after public modulus setup",
+    "right_class": "same-size same-shape PKCS#8 private key B after public modulus setup",
+    "gate": "diagnostic",
+    "reason": "Includes RSA public modulus setup; public key material may leak by CT policy.",
+  },
+  "rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "PKCS#8 private key A after p modulus setup",
+    "right_class": "same-size same-shape PKCS#8 private key B after p modulus setup",
+    "gate": "diagnostic",
+    "reason": "Includes prior RSA public modulus setup; public key material may leak by CT policy.",
+  },
+  "rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "PKCS#8 private key A after q modulus setup",
+    "right_class": "same-size same-shape PKCS#8 private key B after q modulus setup",
+    "gate": "diagnostic",
+    "reason": "Includes prior RSA public modulus setup; public key material may leak by CT policy.",
+  },
+  "rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "PKCS#8 private key A after secret integer boxing",
+    "right_class": "same-size same-shape PKCS#8 private key B after secret integer boxing",
+    "gate": "diagnostic",
+    "reason": "Includes prior RSA public modulus setup; public key material may leak by CT policy.",
+  },
+  "rsa_private_key_pkcs8_export_key_a_vs_key_b": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "validated private key A",
+    "right_class": "validated same-size same-shape private key B",
+    "gate": "diagnostic",
+    "reason": "Canonical DER private-key export is a secret-output formatting operation with value-dependent INTEGER shape.",
   },
   "hkdf_sha2_fixed_vs_random_ikm": {
     "primitive": "kdf.hkdf",
@@ -100,10 +147,30 @@ CASE_METADATA = {
     "left_class": "fixed secret key",
     "right_class": "random secret key",
   },
-  "blake2_blake3_keyed_fixed_vs_random_key": {
+  "blake2b256_keyed_fixed_vs_random_key": {
     "primitive": "keyed_hash.blake2_blake3",
-    "left_class": "fixed keyed-hash key",
-    "right_class": "random keyed-hash key",
+    "left_class": "fixed BLAKE2b-256 keyed-hash key",
+    "right_class": "random BLAKE2b-256 keyed-hash key",
+  },
+  "blake2b512_keyed_fixed_vs_random_key": {
+    "primitive": "keyed_hash.blake2_blake3",
+    "left_class": "fixed BLAKE2b-512 keyed-hash key",
+    "right_class": "random BLAKE2b-512 keyed-hash key",
+  },
+  "blake2s128_keyed_fixed_vs_random_key": {
+    "primitive": "keyed_hash.blake2_blake3",
+    "left_class": "fixed BLAKE2s-128 keyed-hash key",
+    "right_class": "random BLAKE2s-128 keyed-hash key",
+  },
+  "blake2s256_keyed_fixed_vs_random_key": {
+    "primitive": "keyed_hash.blake2_blake3",
+    "left_class": "fixed BLAKE2s-256 keyed-hash key",
+    "right_class": "random BLAKE2s-256 keyed-hash key",
+  },
+  "blake3_keyed_fixed_vs_random_key": {
+    "primitive": "keyed_hash.blake2_blake3",
+    "left_class": "fixed BLAKE3 keyed-hash key",
+    "right_class": "random BLAKE3 keyed-hash key",
   },
 }
 
@@ -188,19 +255,23 @@ def main() -> int:
   for name in sorted(results):
     result = results[name]
     metadata = CASE_METADATA.get(name, {})
+    gate = metadata.get("gate", "required")
     passed = result["abs_max_t"] <= args.threshold
+    diagnostic = gate == "diagnostic"
     cases.append(
       {
         "name": name,
         "primitive": metadata.get("primitive", "unknown"),
         "left_class": metadata.get("left_class", "unknown"),
         "right_class": metadata.get("right_class", "unknown"),
+        "gate": gate,
+        "diagnostic_reason": metadata.get("reason"),
         "seed": seeds.get(name),
         "requested_samples": args.samples,
         "raw_csv": raw_rows.get(name, {"row_count": 0, "labels": {}}),
         **result,
         "threshold_abs_max_t": args.threshold,
-        "status": "pass" if passed else "fail",
+        "status": "pass" if passed else ("diagnostic-fail" if diagnostic else "fail"),
       }
     )
 
@@ -229,7 +300,8 @@ def main() -> int:
     "raw_csv_sha256": sha256_file(args.csv) if args.csv.exists() else None,
     "cases": cases,
     "case_count": len(cases),
-    "failure_count": sum(1 for case in cases if case["status"] != "pass"),
+    "failure_count": sum(1 for case in cases if case["status"] == "fail"),
+    "diagnostic_failure_count": sum(1 for case in cases if case["status"] == "diagnostic-fail"),
     "notes": [
       "DudeCT is empirical timing evidence, not a proof.",
       "A pass means no leakage was detected for this configuration, host, and input classification.",

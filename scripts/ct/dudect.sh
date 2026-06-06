@@ -8,6 +8,7 @@ SAMPLES="${RSCRYPTO_CT_DUDECT_SAMPLES:-20000}"
 THRESHOLD="${RSCRYPTO_CT_DUDECT_THRESHOLD:-10.0}"
 FILTER=""
 SMOKE=0
+PYTHON="${PYTHON:-}"
 
 usage() {
   cat <<'USAGE'
@@ -65,13 +66,38 @@ if [[ -z "$TARGET" ]]; then
 fi
 
 HOST_TARGET="$(rustc -vV | awk -F': ' '/^host:/ {print $2}')"
-if [[ "$TARGET" != "$HOST_TARGET" ]]; then
+target_runs_on_host() {
+  local target="$1"
+  local host="$2"
+  [[ "$target" == "$host" ]] && return 0
+  case "$host:$target" in
+    x86_64-unknown-linux-gnu:x86_64-unknown-linux-musl) return 0 ;;
+    aarch64-unknown-linux-gnu:aarch64-unknown-linux-musl) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if ! target_runs_on_host "$TARGET" "$HOST_TARGET"; then
   echo "dudect target must match physical host target: requested $TARGET, host is $HOST_TARGET" >&2
   exit 2
 fi
 
 if [[ "$SMOKE" == "1" && "$SAMPLES" == "${RSCRYPTO_CT_DUDECT_SAMPLES:-20000}" ]]; then
   SAMPLES=2000
+fi
+
+target_env_name() {
+  local suffix="$1"
+  local upper_target="${TARGET^^}"
+  upper_target="${upper_target//-/_}"
+  printf 'CARGO_TARGET_%s_%s\n' "$upper_target" "$suffix"
+}
+
+if [[ "$TARGET" != "$HOST_TARGET" && "$TARGET" == *-linux-musl && "$(uname -m)" == "${TARGET%%-*}" ]]; then
+  linker_env="$(target_env_name LINKER)"
+  if [[ -z "${!linker_env:-}" ]] && command -v musl-gcc >/dev/null 2>&1; then
+    export "$linker_env=musl-gcc"
+  fi
 fi
 
 OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE/dudect"
@@ -81,7 +107,7 @@ REPORT_PATH="$OUT_DIR/dudect-report.json"
 mkdir -p "$OUT_DIR"
 rm -f "$STDOUT_PATH" "$CSV_PATH" "$REPORT_PATH"
 
-CARGO_ARGS=(run --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$ROOT/target/ct-dudect-build")
+CARGO_ARGS=(run --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$ROOT/target/ct-dudect-build" --target "$TARGET")
 if [[ "$PROFILE" == "release" ]]; then
   CARGO_ARGS+=(--release)
 elif [[ "$PROFILE" != "debug" ]]; then
@@ -100,7 +126,20 @@ echo "$COMMAND"
   RSCRYPTO_CT_DUDECT_SAMPLES="$SAMPLES" cargo "${CARGO_ARGS[@]}"
 ) | tee "$STDOUT_PATH"
 
-"$ROOT/scripts/ct/dudect_report.py" \
+if [[ -z "$PYTHON" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON="python"
+  fi
+fi
+
+if [[ -z "$PYTHON" ]]; then
+  echo "python3 or python is required to generate the dudect report" >&2
+  exit 1
+fi
+
+"$PYTHON" "$ROOT/scripts/ct/dudect_report.py" \
   --stdout "$STDOUT_PATH" \
   --csv "$CSV_PATH" \
   --out "$REPORT_PATH" \

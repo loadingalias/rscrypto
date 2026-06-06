@@ -449,8 +449,9 @@ impl Sha512 {
     self.dispatch = prefix.dispatch;
   }
 
-  #[cfg(all(feature = "hmac", test))]
+  #[cfg(all(feature = "hmac", any(test, feature = "diag")))]
   #[inline]
+  #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
     Self {
       state: H0,

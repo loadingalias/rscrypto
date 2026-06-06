@@ -7,13 +7,31 @@ not to every function in the crate. The rulebook for release claims, allowed
 leakage, target scope, and invalidation lives in
 [`docs/constant-time.md`](constant-time.md).
 
+The current release evidence gate is `just ct-check`, which runs the same hard
+pipeline as `just ct-full` for the selected native target:
+
+| Platform class | CT evidence currently claimed |
+|---|---|
+| Linux `x86_64`/`aarch64`, GNU and MUSL | Artifact/heuristic review, DudeCT, and BINSEC for manifest-declared CT kernels. |
+| Linux `powerpc64le`/`riscv64gc` | Artifact/heuristic review, DudeCT, and BINSEC where the runner and BINSEC toolchain complete successfully. |
+| Linux `s390x` | Artifact/heuristic review and DudeCT. BINSEC is not claimed for s390x today. |
+| macOS `aarch64`/`x86_64` | Artifact/heuristic review and DudeCT. BINSEC is not claimed for Mach-O today. |
+| Windows MSVC `x86_64`/`aarch64` | Artifact/heuristic review and DudeCT. BINSEC is not claimed for PE/COFF today. |
+| `no_std` and WASM | Not part of the release CT claim today. They need separate hardware, bytecode, or engine-specific evidence before being claimed. |
+
+For claimed native targets, the CT manifest must cover the hot paths that
+actually execute: accelerated ASM, SIMD, hardware-instruction backends, and
+portable fallbacks used by CT-critical primitives. A backend being fast or
+selected at runtime does not exempt it from the manifest or evidence gates.
+
 | Surface | Claim boundary | Evidence |
 |---|---|---|
-| MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| Ed25519 verification | Signature acceptance/rejection uses a single opaque verification error at the public API boundary. | RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| X25519 scalar multiplication | Scalar multiplication is intended to avoid secret-dependent field behavior and rejects all-zero shared secrets. | RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| RSA private sign/decrypt | Release claims require RSA vectors, fuzzing, Miri, and leakage-gate evidence for representative private-operation paths. | The RSA evidence boundary below. |
+| MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | CT manifest coverage, `just ct-check`, HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | CT manifest coverage, `just ct-check`, AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| Ed25519 signing and secret-key public derivation | Secret scalar paths must avoid secret-dependent branches, table indices, memory addresses, and failure shape. | CT manifest coverage, `just ct-check`, RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| Ed25519 verification | Signature acceptance/rejection uses a single opaque verification error at the public API boundary. Public verification is not a private-key CT claim unless promoted by the manifest. | RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| X25519 scalar multiplication | Scalar multiplication must avoid secret-dependent field behavior and rejects all-zero shared secrets. | CT manifest coverage, `just ct-check`, RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| RSA private sign/decrypt | Private-operation paths require same-width opaque failures and CT evidence for manifest-declared hot paths. | CT manifest coverage, `just ct-check`, and the RSA evidence boundary below. |
 
 These are not global constant-time claims: parsers, DER/PHC decoding, algorithm
 or profile negotiation, key generation, OS randomness paths, public RSA
@@ -71,16 +89,22 @@ Mandatory hosted CI evidence before a release claim:
 
 Mandatory RSA release evidence:
 
-- Public verify/encrypt and private sign/decrypt/keygen/import/export pass the
+- Public verify/encrypt and private sign/decrypt/keygen/import pass the
   normal check, test, fuzz, and benchmark lanes.
+- Canonical PKCS#1/PKCS#8 private-key export is correctness-tested, but it is
+  not a required constant-time claim. DER INTEGER encoding is value-shaped by
+  standard; use a future fixed-shape export format if serialization itself must
+  be constant-time.
 - RSA key generation follows the crate's FIPS 186-5 Appendix A.1.3
   probable-prime contract in code. It uses `getrandom` only to seed an internal
   HMAC_DRBG for key generation; this is not a CMVP/FIPS 140-3 validation claim.
 - Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
   RSASSA-PKCS1-v1_5.
-- `just test-rsa-leakage` passes on Linux x86_64 and Linux aarch64. The
-  leakage gate samples representative RSA-2048 SHA-256 private sign/decrypt
-  paths; profile breadth remains covered by normal RSA vector and oracle tests.
+- `just ct-check` passes on every claimed native target. The CT gate covers
+  manifest-declared RSA private-operation hot paths through artifacts,
+  heuristics, DudeCT, and BINSEC where supported.
+- `just test-rsa-leakage` remains a targeted RSA regression check on Linux
+  x86_64 and Linux aarch64. It supports the CT gate; it does not replace it.
 - Miri covers every feasible safe private-key parser, signing, decryption,
   scratch-width, padding-reject, and key-generation helper path through
   `just test-miri --rsa`.

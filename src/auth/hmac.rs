@@ -106,7 +106,7 @@ impl HmacSha256 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
@@ -139,7 +139,7 @@ impl HmacSha256 {
     }
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   #[allow(dead_code)]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
@@ -150,6 +150,16 @@ impl HmacSha256 {
     mac.update(data);
     mac.finalize()
   }
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_hmac_sha256_verify_portable(key: &[u8; SHA256_TAG_SIZE], expected: &[u8; SHA256_TAG_SIZE]) -> bool {
+  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
+  );
+  let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
+  ct::constant_time_eq(&tag, expected)
 }
 
 impl Mac for HmacSha256 {
@@ -389,7 +399,7 @@ impl HmacSha384 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha384::kernels::CompressBlocksFn,
@@ -421,7 +431,7 @@ impl HmacSha384 {
     }
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
@@ -431,6 +441,16 @@ impl HmacSha384 {
     mac.update(data);
     mac.finalize()
   }
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_hmac_sha384_verify_portable(key: &[u8; SHA384_TAG_SIZE], expected: &[u8; SHA384_TAG_SIZE]) -> bool {
+  let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
+  );
+  let tag = HmacSha384::mac_with_compress_for_test(key, b"binsec", compress);
+  ct::constant_time_eq(&tag, expected)
 }
 
 impl Mac for HmacSha384 {
@@ -653,7 +673,7 @@ impl HmacSha512 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha512::kernels::CompressBlocksFn,
@@ -685,7 +705,7 @@ impl HmacSha512 {
     }
   }
 
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
@@ -695,6 +715,16 @@ impl HmacSha512 {
     mac.update(data);
     mac.finalize()
   }
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_hmac_sha512_verify_portable(key: &[u8; SHA512_TAG_SIZE], expected: &[u8; SHA512_TAG_SIZE]) -> bool {
+  let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
+  );
+  let tag = HmacSha512::mac_with_compress_for_test(key, b"binsec", compress);
+  ct::constant_time_eq(&tag, expected)
 }
 
 impl Mac for HmacSha512 {

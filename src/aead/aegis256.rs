@@ -458,6 +458,18 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   finalize(&mut s, aad.len(), msg_len)
 }
 
+#[cfg(all(feature = "diag", not(target_arch = "s390x")))]
+#[must_use]
+pub fn diag_aegis256_update_portable(
+  key: &[u8; KEY_SIZE],
+  nonce: &[u8; NONCE_SIZE],
+  block: &[u8; BLOCK_SIZE],
+) -> [u8; TAG_SIZE] {
+  let mut s = init(key, nonce);
+  update(&mut s, block);
+  finalize(&mut s, 0, BLOCK_SIZE)
+}
+
 #[cfg(not(target_arch = "s390x"))]
 fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);

@@ -71,6 +71,16 @@ ct-dudect *args="":
 ct-full *args="":
     @scripts/ct/full.py {{ args }}
 
+# Full constant-time gate. This is intentionally the same hard gate as
+# `ct-full`: artifacts/heuristics, DudeCT, and BINSEC all run or the command
+# fails.
+ct-check *args="":
+    @scripts/ct/full.py {{ args }}
+
+# Run BINSEC/Rel checks for manifest-declared binary CT kernels.
+ct-binsec *args="":
+    @scripts/ct/binsec.py {{ args }}
+
 # Build CT harness artifacts. Pass args such as `--target x86_64-unknown-linux-gnu`.
 ct-artifacts *args="":
     @scripts/ct/artifacts.sh {{ args }}

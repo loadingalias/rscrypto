@@ -48,6 +48,48 @@ a binary property. Source that is written in a constant-time style is not enough
 if the compiler, linker, target features, or build profile change the executed
 machine code.
 
+## Current Validation Engine
+
+The release gate is `just ct-check`. It is intentionally the same hard gate as
+`just ct-full`: build CT artifacts, validate the manifest/artifacts, run every
+manifest-declared DudeCT case, and run BINSEC where the target policy requires
+it.
+
+The current gates are:
+
+| Gate | What it checks today | Applies to |
+|---|---|---|
+| Artifact and heuristic review | Build provenance, LLVM IR, assembly, object disassembly, symbol maps, reviewed hashes, and suspicious instruction/control-flow patterns. | Native LLVM targets in the CT matrix. |
+| DudeCT timing evidence | Empirical timing tests for every manifest-declared CT-critical primitive case. A failure or missing required case fails `ct-check`. | Native host-executable targets. |
+| BINSEC binary evidence | Binary-level symbolic checks for manifest-declared CT leaf kernels. A required non-`secure` kernel fails `ct-check`. | Linux ELF targets whose ISA/object path is supported by this workflow. |
+
+This is an evidence pipeline. It is not a whole-crate formal proof, and it does
+not claim that ergonomic public APIs with parsing, allocation, and conversion
+logic are symbolically verified end to end. Public APIs are covered by the
+manifest, artifacts, heuristics, and DudeCT cases; BINSEC is aimed at small
+CT-critical kernels where binary symbolic execution is tractable and meaningful.
+
+## Current Target Scope
+
+Current release evidence is scoped as follows:
+
+| Target class | Current CT gate |
+|---|---|
+| Linux `x86_64`, `aarch64`, GNU and MUSL | Artifact/heuristics + DudeCT + BINSEC. |
+| Linux `powerpc64le` and `riscv64gc` | Artifact/heuristics + DudeCT + BINSEC, subject to runner/tool availability. |
+| Linux `s390x` | Artifact/heuristics + DudeCT. BINSEC is not claimed for this ISA in the current workflow. |
+| macOS `aarch64` and `x86_64` | Artifact/heuristics + DudeCT. BINSEC is not claimed for Mach-O in the current workflow. |
+| Windows `x86_64` and `aarch64` MSVC | Artifact/heuristics + DudeCT. BINSEC is not claimed for PE/COFF in the current workflow. |
+| `no_std` bare-metal targets | Not release-claimed today. Artifact-only coverage can be added, but timing evidence requires real hardware and BINSEC requires a supported ELF/ISA harness. |
+| WASM targets | Not release-claimed today. WASM needs separate bytecode checks and engine-specific timing evidence. |
+
+The native hot paths matter most for the current claim: accelerated ASM, SIMD,
+hardware-instruction, and portable fallback code used by CT-critical primitives
+must have manifest coverage and must pass the required gates for the target
+class above. If a target class has no executable timing environment or no
+supported BINSEC object/ISA path, it must remain outside the release CT claim
+until that evidence exists.
+
 ## Definition
 
 For this crate, "constant-time" means:
@@ -128,6 +170,8 @@ promotes them:
 - Encoding public data.
 - Parsing public keys, signatures, ciphertext containers, PHC strings, DER, or
   protocol metadata.
+- Canonical serialization/export of secret material, unless a manifest entry
+  names a fixed-shape export API as CT-critical.
 - Public-key verification as a public operation, except for opaque failure
   shape at the API boundary.
 
@@ -171,22 +215,22 @@ no constant-time claim until its required evidence passes.
 ## Evidence Rule
 
 Required evidence is defined per primitive in the CT manifest. The default
-shape is:
+shape for a current claimed native target is:
 
 - Stable CT entrypoint harness.
 - Build provenance capture.
 - LLVM IR and assembly/object artifacts.
 - Reviewed artifact hash.
 - Automated assembly heuristics with explicit waivers.
-- Dudect-style statistical leakage run where practical.
-- Taint-style dynamic check where supported.
-- Binary-level symbolic check for small high-risk kernels where practical.
+- DudeCT-style statistical leakage run on native executable targets.
+- Binary-level symbolic check for small high-risk kernels on supported Linux
+  ELF targets.
 - Miri and unsafe validation for code paths that rely on unsafe Rust.
 
 A primitive/configuration pair may be marked `ct-claimed` only when all required
-evidence for that manifest entry passes. If physical timing evidence is not
-available for a shipped target, the target may be `ct-intended` or
-`best-effort`, but not `ct-claimed`.
+evidence for that manifest entry and target class passes. If physical timing
+evidence is not available for a shipped target, the target may be `ct-intended`
+or `best-effort`, but not `ct-claimed`.
 
 Statistical checks must be worded correctly:
 

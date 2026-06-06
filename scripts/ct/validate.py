@@ -14,6 +14,11 @@ from pathlib import Path
 
 VALID_CLAIMS = {"ct-claimed", "ct-intended", "best-effort", "unsupported"}
 VALID_HARNESS_STATUSES = {"covered", "partial", "missing", "not-applicable"}
+VALID_BINSEC_TIERS = {"A", "B", "C"}
+VALID_BINSEC_INPUT_KINDS = {"global", "const"}
+VALID_BINSEC_POLICIES = {"required", "unsupported"}
+VALID_PHYSICAL_TIMING_POLICIES = {"required", "unsupported"}
+CT_REQUIRED_PROFILE_NAMES = {"tier_a", "tier_b"}
 PROVENANCE_REQUIRED_KEYS = {
   "schema_version",
   "kind",
@@ -101,6 +106,50 @@ def matrix_targets(matrix: dict) -> set[str]:
   return {target for values in groups.values() for target in values}
 
 
+def ci_targets(matrix: dict) -> set[str]:
+  return {row.get("name", "") for row in matrix.get("ci", []) if row.get("name")}
+
+
+def primitive_requires_evidence(ct: dict, primitive: dict, evidence: str) -> bool:
+  if evidence == "binsec" and primitive.get("binsec") == "deferred":
+    return False
+  for profile_name in primitive.get("required", []):
+    profile = ct.get("evidence", {}).get("profile", {}).get(profile_name, {})
+    if evidence in profile.get("required", []) or evidence in profile.get("required_where_practical", []):
+      return True
+  return False
+
+
+def claimed_targets(ct: dict) -> set[str]:
+  return {target.get("name", "") for target in ct.get("target", []) if target.get("claim") in {"ct-intended", "ct-claimed"}}
+
+
+def binsec_required_targets(ct: dict) -> set[str]:
+  return {
+    target.get("name", "")
+    for target in ct.get("target", [])
+    if target.get("claim") in {"ct-intended", "ct-claimed"} and target.get("binsec") == "required"
+  }
+
+
+def binsec_kernel_targets(ct: dict, kernel: dict) -> set[str]:
+  targets = kernel.get("targets", [])
+  if "*" in targets:
+    return binsec_required_targets(ct)
+  return set(targets)
+
+
+def ct_required_primitives(ct: dict) -> list[dict]:
+  rows = []
+  for primitive in ct.get("primitive", []):
+    if primitive.get("claim") not in {"ct-intended", "ct-claimed"}:
+      continue
+    if not set(primitive.get("required", [])).intersection(CT_REQUIRED_PROFILE_NAMES):
+      continue
+    rows.append(primitive)
+  return rows
+
+
 def generated_symbols(artifact_dir: Path) -> set[str]:
   symbols: set[str] = set()
   for path in artifact_dir.glob("*.symbols.txt"):
@@ -134,6 +183,7 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
 
   expected_targets = matrix_targets(matrix)
   actual_targets = {target.get("name", "") for target in ct.get("target", [])}
+  ci_target_set = ci_targets(matrix)
   missing = sorted(expected_targets - actual_targets)
   extra = sorted(actual_targets - expected_targets)
   if missing:
@@ -153,6 +203,18 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
     for required in ("group", "linker", "physical_timing", "ci"):
       if not target.get(required):
         fail(errors, f"target {name} missing {required}")
+    if target.get("physical_timing") not in VALID_PHYSICAL_TIMING_POLICIES:
+      fail(errors, f"target {name} has invalid physical_timing policy {target.get('physical_timing')!r}")
+    if target.get("physical_timing") == "unsupported" and not target.get("physical_timing_reason"):
+      fail(errors, f"target {name} physical_timing unsupported requires physical_timing_reason")
+    if target.get("binsec") not in VALID_BINSEC_POLICIES:
+      fail(errors, f"target {name} has invalid binsec policy {target.get('binsec')!r}")
+    if target.get("binsec") == "unsupported" and not target.get("binsec_reason"):
+      fail(errors, f"target {name} binsec unsupported requires binsec_reason")
+    if target.get("binsec") == "required" and "linux" not in name:
+      fail(errors, f"target {name} requires BINSEC but is not a Linux target")
+    if claim in {"ct-intended", "ct-claimed"} and name not in ci_target_set:
+      fail(errors, f"target {name} is {claim} but is missing from .config/target-matrix.json ci")
 
   harness_sections = ct.get("harness", [])
   all_harness_symbols = {symbol for harness in harness_sections for symbol in harness.get("symbols", [])}
@@ -202,7 +264,197 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       if covered not in primitive_ids:
         fail(errors, f"harness {harness.get('name', '<unnamed>')} covers unknown primitive {covered}")
 
+  dudect_names: set[str] = set()
+  dudect_by_name: dict[str, dict] = {}
+  for case in ct.get("dudect_case", []):
+    name = case.get("name", "<unnamed>")
+    if name in dudect_names:
+      fail(errors, f"duplicate DudeCT case name {name}")
+    dudect_names.add(name)
+    dudect_by_name[name] = case
+    primitive = case.get("primitive")
+    if primitive not in primitive_ids:
+      fail(errors, f"DudeCT case {name} references unknown primitive {primitive!r}")
+    if not case.get("filter"):
+      fail(errors, f"DudeCT case {name} missing filter")
+
+  unit_ids: set[str] = set()
+  for unit in ct.get("evidence_unit", []):
+    unit_id = unit.get("id", "<unnamed>")
+    if unit_id in unit_ids:
+      fail(errors, f"duplicate evidence unit id {unit_id}")
+    unit_ids.add(unit_id)
+
+    primitive = unit.get("primitive")
+    if primitive not in primitive_ids:
+      fail(errors, f"evidence unit {unit_id} references unknown primitive {primitive!r}")
+    if not unit.get("variant"):
+      fail(errors, f"evidence unit {unit_id} missing variant")
+
+    dudect = unit.get("dudect", [])
+    if not isinstance(dudect, list):
+      fail(errors, f"evidence unit {unit_id} dudect must be a list")
+      dudect = []
+    for case_name in dudect:
+      case = dudect_by_name.get(case_name)
+      if case is None:
+        fail(errors, f"evidence unit {unit_id} references unknown DudeCT case {case_name!r}")
+        continue
+      if case.get("primitive") != primitive:
+        fail(errors, f"evidence unit {unit_id} references DudeCT case {case_name} for different primitive {case.get('primitive')!r}")
+      if case.get("gate") == "diagnostic":
+        fail(errors, f"evidence unit {unit_id} cannot rely on diagnostic DudeCT case {case_name}")
+    binsec = unit.get("binsec", [])
+    if binsec and not isinstance(binsec, list):
+      fail(errors, f"evidence unit {unit_id} binsec must be a list")
+
+  binsec_ids: set[str] = set()
+  binsec_by_id: dict[str, dict] = {}
+  for kernel in ct.get("binsec_kernel", []):
+    kernel_id = kernel.get("id", "<unnamed>")
+    if kernel_id in binsec_ids:
+      fail(errors, f"duplicate BINSEC kernel id {kernel_id}")
+    binsec_ids.add(kernel_id)
+    binsec_by_id[kernel_id] = kernel
+
+    primitive = kernel.get("primitive")
+    if primitive not in primitive_ids:
+      fail(errors, f"BINSEC kernel {kernel_id} references unknown primitive {primitive!r}")
+
+    symbol = kernel.get("symbol")
+    if not isinstance(symbol, str) or not symbol.startswith("ct_binsec_"):
+      fail(errors, f"BINSEC kernel {kernel_id} has invalid symbol {symbol!r}")
+
+    tier = kernel.get("tier")
+    if tier not in VALID_BINSEC_TIERS:
+      fail(errors, f"BINSEC kernel {kernel_id} has invalid tier {tier!r}")
+
+    if not isinstance(kernel.get("required"), bool):
+      fail(errors, f"BINSEC kernel {kernel_id} required must be boolean")
+
+    claim = kernel.get("claim")
+    if claim not in VALID_CLAIMS:
+      fail(errors, f"BINSEC kernel {kernel_id} has invalid claim {claim!r}")
+    if claim == "ct-claimed":
+      fail(errors, f"BINSEC kernel {kernel_id} is ct-claimed before release evidence gates exist")
+
+    targets = kernel.get("targets")
+    if not isinstance(targets, list) or not targets:
+      fail(errors, f"BINSEC kernel {kernel_id} targets must be a non-empty list")
+    else:
+      for target in targets:
+        if target == "*":
+          continue
+        if target not in actual_targets:
+          fail(errors, f"BINSEC kernel {kernel_id} references unknown target {target!r}")
+
+    secrets = kernel.get("secrets")
+    if not isinstance(secrets, list) or not secrets:
+      fail(errors, f"BINSEC kernel {kernel_id} secrets must be a non-empty list")
+    else:
+      for secret in secrets:
+        name = secret.get("name") if isinstance(secret, dict) else None
+        kind = secret.get("kind") if isinstance(secret, dict) else None
+        bytes_len = secret.get("bytes") if isinstance(secret, dict) else None
+        if not isinstance(name, str) or not name:
+          fail(errors, f"BINSEC kernel {kernel_id} has secret with invalid name")
+        if kind not in VALID_BINSEC_INPUT_KINDS:
+          fail(errors, f"BINSEC kernel {kernel_id} secret {name!r} has invalid kind {kind!r}")
+        if kind == "global" and (not isinstance(bytes_len, int) or bytes_len <= 0):
+          fail(errors, f"BINSEC kernel {kernel_id} secret {name!r} bytes must be positive")
+
+    public = kernel.get("public", [])
+    if not isinstance(public, list):
+      fail(errors, f"BINSEC kernel {kernel_id} public must be a list")
+    else:
+      for item in public:
+        is_table = isinstance(item, dict)
+        name = item.get("name") if is_table else None
+        kind = item.get("kind") if is_table else None
+        if not isinstance(name, str) or not name:
+          fail(errors, f"BINSEC kernel {kernel_id} has public input with invalid name")
+        if kind not in VALID_BINSEC_INPUT_KINDS:
+          fail(errors, f"BINSEC kernel {kernel_id} public input {name!r} has invalid kind {kind!r}")
+        if kind == "const" and is_table and "value" not in item:
+          fail(errors, f"BINSEC kernel {kernel_id} public const {name!r} missing value")
+
+    assumptions = kernel.get("assumptions", [])
+    if not isinstance(assumptions, list) or any(not isinstance(assumption, str) for assumption in assumptions):
+      fail(errors, f"BINSEC kernel {kernel_id} assumptions must be a list of strings")
+
+  for unit in ct.get("evidence_unit", []):
+    unit_id = unit.get("id", "<unnamed>")
+    primitive = unit.get("primitive")
+    for kernel_id in unit.get("binsec", []):
+      kernel = binsec_by_id.get(kernel_id)
+      if kernel is None:
+        fail(errors, f"evidence unit {unit_id} references unknown BINSEC kernel {kernel_id!r}")
+        continue
+      if kernel.get("primitive") != primitive:
+        fail(errors, f"evidence unit {unit_id} references BINSEC kernel {kernel_id} for different primitive {kernel.get('primitive')!r}")
+      if not kernel.get("required", False):
+        fail(errors, f"evidence unit {unit_id} cannot rely on non-required BINSEC kernel {kernel_id}")
+
   return ct
+
+
+def validate_strict_coverage(ct: dict, errors: list[str]) -> None:
+  targets = binsec_required_targets(ct)
+  dudect_primitives = {case.get("primitive") for case in ct.get("dudect_case", [])}
+  dudect_case_names = {case.get("name") for case in ct.get("dudect_case", []) if case.get("gate") != "diagnostic"}
+  evidence_units_by_primitive: dict[str, list[dict]] = {}
+  for unit in ct.get("evidence_unit", []):
+    primitive = unit.get("primitive")
+    if isinstance(primitive, str):
+      evidence_units_by_primitive.setdefault(primitive, []).append(unit)
+
+  required_binsec_targets: dict[str, set[str]] = {}
+  for kernel in ct.get("binsec_kernel", []):
+    if not kernel.get("required", False):
+      continue
+    primitive = kernel.get("primitive")
+    if not isinstance(primitive, str):
+      continue
+    required_binsec_targets.setdefault(primitive, set()).update(binsec_kernel_targets(ct, kernel))
+
+  for primitive in ct_required_primitives(ct):
+    primitive_id = primitive.get("id", "<unnamed>")
+    if primitive_requires_evidence(ct, primitive, "dudect") and primitive_id not in dudect_primitives:
+      fail(errors, f"primitive {primitive_id} requires DudeCT but has no [[dudect_case]]")
+    variants = primitive.get("variants", [])
+    if primitive_requires_evidence(ct, primitive, "dudect") and variants:
+      units = evidence_units_by_primitive.get(primitive_id, [])
+      covered_variants = {unit.get("variant") for unit in units if unit.get("dudect")}
+      missing_variants = sorted(set(variants) - covered_variants)
+      extra_variants = sorted(covered_variants - set(variants))
+      if missing_variants:
+        fail(errors, f"primitive {primitive_id} requires DudeCT evidence for variant(s): {', '.join(missing_variants)}")
+      if extra_variants:
+        fail(errors, f"primitive {primitive_id} has evidence unit(s) for unknown variant(s): {', '.join(extra_variants)}")
+      for unit in units:
+        unit_id = unit.get("id", "<unnamed>")
+        for case_name in unit.get("dudect", []):
+          if case_name not in dudect_case_names:
+            fail(errors, f"primitive {primitive_id} evidence unit {unit_id} lacks a non-diagnostic DudeCT case {case_name!r}")
+    if primitive_requires_evidence(ct, primitive, "binsec"):
+      covered_targets = required_binsec_targets.get(primitive_id, set())
+      missing_targets = sorted(targets - covered_targets)
+      if missing_targets:
+        fail(
+          errors,
+          f"primitive {primitive_id} requires BINSEC but lacks required kernels for target(s): {', '.join(missing_targets)}",
+        )
+      variants = primitive.get("variants", [])
+      if variants:
+        units = evidence_units_by_primitive.get(primitive_id, [])
+        units_by_variant = {unit.get("variant"): unit for unit in units}
+        for variant in sorted(variants):
+          unit = units_by_variant.get(variant)
+          if unit is None:
+            fail(errors, f"primitive {primitive_id} requires BINSEC evidence unit for variant {variant}")
+            continue
+          if not unit.get("binsec"):
+            fail(errors, f"primitive {primitive_id} variant {variant} requires BINSEC kernel evidence")
 
 
 def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: list[str], warnings: list[str]) -> None:
@@ -470,6 +722,7 @@ def main() -> int:
   parser.add_argument("--profile", default="release", help="profile to validate artifacts for")
   parser.add_argument("--manifest-only", action="store_true", help="validate ct.toml only")
   parser.add_argument("--require-dudect", action="store_true", help="require a passing dudect report")
+  parser.add_argument("--strict-coverage", action="store_true", help="require DudeCT and BINSEC manifest coverage for every claimed primitive/target")
   args = parser.parse_args()
 
   root = Path(__file__).resolve().parents[2]
@@ -477,6 +730,8 @@ def main() -> int:
   warnings: list[str] = []
 
   ct = validate_manifest(root, errors, warnings)
+  if args.strict_coverage:
+    validate_strict_coverage(ct, errors)
   if not args.manifest_only:
     target = args.target
     if target is None:
