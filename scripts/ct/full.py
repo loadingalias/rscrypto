@@ -345,17 +345,25 @@ def markdown_report(report: dict[str, Any]) -> str:
     "",
   ]
   for step in report["steps"]:
-    lines.append(f"- `{step['name']}`: `{step['status']}`")
+    reason = f" - {step['reason']}" if step.get("reason") else ""
+    lines.append(f"- `{step['name']}`: `{step['status']}`{reason}")
   lines.extend(["", "## BINSEC Kernels", ""])
   if report["binsec"]["enabled"]:
     for kernel in report["binsec"]["kernels"]:
-      lines.append(f"- `{kernel['kernel']}` (`{kernel['primitive']}`): `{kernel['status']}`")
+      reason = f" - {kernel['reason']}" if kernel.get("reason") and kernel.get("status") != "secure" else ""
+      lines.append(f"- `{kernel['kernel']}` (`{kernel['primitive']}`): `{kernel['status']}`{reason}")
   else:
     lines.append(f"- `{report['binsec']['policy']}`: {report['binsec']['reason']}")
   lines.extend(["", "## DudeCT Cases", ""])
   for case in report["dudect"]["cases"]:
     detail = f", failures={case['failure_count']}" if case.get("failure_count") is not None else ""
-    lines.append(f"- `{case['name']}` (`{case['primitive']}`): `{case['status']}`{detail}")
+    reason = f" - {case['diagnostic_reason']}" if case.get("diagnostic_reason") and case.get("status") != "pass" else ""
+    lines.append(f"- `{case['name']}` (`{case['primitive']}`): `{case['status']}`{detail}{reason}")
+  if report["findings"]:
+    lines.extend(["", "## Findings", ""])
+    for finding in report["findings"]:
+      reason = f" - {finding['reason']}" if finding.get("reason") else ""
+      lines.append(f"- `{finding['severity']}` `{finding['kind']}`: {finding['summary']}{reason}")
   if report["coverage"]["missing_dudect_primitives"]:
     lines.extend(["", "## Missing DudeCT Coverage", ""])
     for primitive in report["coverage"]["missing_dudect_primitives"]:

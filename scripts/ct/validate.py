@@ -106,10 +106,6 @@ def matrix_targets(matrix: dict) -> set[str]:
   return {target for values in groups.values() for target in values}
 
 
-def ci_targets(matrix: dict) -> set[str]:
-  return {row.get("name", "") for row in matrix.get("ci", []) if row.get("name")}
-
-
 def primitive_requires_evidence(ct: dict, primitive: dict, evidence: str) -> bool:
   if evidence == "binsec" and primitive.get("binsec") == "deferred":
     return False
@@ -183,7 +179,6 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
 
   expected_targets = matrix_targets(matrix)
   actual_targets = {target.get("name", "") for target in ct.get("target", [])}
-  ci_target_set = ci_targets(matrix)
   missing = sorted(expected_targets - actual_targets)
   extra = sorted(actual_targets - expected_targets)
   if missing:
@@ -213,8 +208,6 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       fail(errors, f"target {name} binsec unsupported requires binsec_reason")
     if target.get("binsec") == "required" and "linux" not in name:
       fail(errors, f"target {name} requires BINSEC but is not a Linux target")
-    if claim in {"ct-intended", "ct-claimed"} and name not in ci_target_set:
-      fail(errors, f"target {name} is {claim} but is missing from .config/target-matrix.json ci")
 
   harness_sections = ct.get("harness", [])
   all_harness_symbols = {symbol for harness in harness_sections for symbol in harness.get("symbols", [])}

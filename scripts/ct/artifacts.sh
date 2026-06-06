@@ -129,7 +129,10 @@ cargo rustc \
   --emit=llvm-ir,asm,obj
 
 DEPS_DIR="$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"
-mapfile -t EMITTED < <(
+EMITTED=()
+while IFS= read -r artifact; do
+  EMITTED+=("$artifact")
+done < <(
   find "$DEPS_DIR" -maxdepth 1 -type f \
     \( -name 'rscrypto_ct_harness*.ll' -o -name 'rscrypto_ct_harness*.s' -o -name 'rscrypto_ct_harness*.o' -o -name 'rscrypto_ct_harness*.obj' \) \
     | sort
@@ -144,7 +147,10 @@ for artifact in "${EMITTED[@]}"; do
   cp "$artifact" "$ARTIFACT_DIR/"
 done
 
-mapfile -t OBJECTS < <(find "$ARTIFACT_DIR" -maxdepth 1 -type f \( -name '*.o' -o -name '*.obj' \) | sort)
+OBJECTS=()
+while IFS= read -r obj; do
+  OBJECTS+=("$obj")
+done < <(find "$ARTIFACT_DIR" -maxdepth 1 -type f \( -name '*.o' -o -name '*.obj' \) | sort)
 if [[ ${#OBJECTS[@]} -eq 0 ]]; then
   echo "no CT harness object file found in $ARTIFACT_DIR" >&2
   exit 1

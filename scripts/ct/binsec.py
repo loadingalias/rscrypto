@@ -193,7 +193,9 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> Path:
       rustflags = ["-C", "target-cpu=x86-64"]
     elif target.startswith("aarch64-"):
       rustflags = ["-C", "target-cpu=generic"]
-    elif target.startswith("s390x-") or target.startswith("powerpc64le-") or target.startswith("riscv"):
+    elif target.startswith("powerpc64le-"):
+      rustflags = ["-C", "target-feature=+altivec,+vsx,+power8-vector"]
+    elif target.startswith("s390x-") or target.startswith("riscv"):
       rustflags = ["-C", "target-cpu=generic"]
   if rustflags:
     existing = env.get("RUSTFLAGS", "")
@@ -274,6 +276,12 @@ def parse_status(stdout: str, returncode: int) -> tuple[str, str]:
     return "secure", "binsec reported secure"
   if "[checkct:result] program status is : insecure" in lowered:
     return "insecure", "binsec reported insecure"
+  if "[checkct:result] program status is : unknown" in lowered:
+    if "smt-timeout" in lowered or "solver timeout" in lowered:
+      return "unknown", "binsec exploration incomplete: SMT solver timeout"
+    if "exploration is incomplete" in lowered:
+      return "unknown", "binsec exploration incomplete"
+    return "unknown", "binsec reported unknown"
   return "unknown", "binsec did not emit a recognized checkct result"
 
 
