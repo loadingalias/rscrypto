@@ -8690,7 +8690,17 @@ fn private_import_unsigned_be_mod_to_len(value: &[u8], modulus: &[u8], out: &mut
   let modulus = NonZero::new(modulus).into_option().ok_or(RsaKeyError::InvalidModulus)?;
   let remainder = value.rem(&modulus);
   let full = remainder.to_be_bytes();
-  out.copy_from_slice(&full);
+  out.fill(0);
+  if full.len() >= out.len() {
+    let excess = full.len().strict_sub(out.len());
+    if !is_zero_unsigned_be(&full[..excess]) {
+      return Err(RsaKeyError::InvalidModulus);
+    }
+    out.copy_from_slice(&full[excess..]);
+  } else {
+    let offset = out.len().strict_sub(full.len());
+    out[offset..].copy_from_slice(&full);
+  }
   Ok(())
 }
 
@@ -8780,7 +8790,8 @@ fn public_montgomery_r2(limbs: &[u64]) -> Box<[u64]> {
 }
 
 fn private_montgomery_r2(modulus: &[u8]) -> Result<Box<[u64]>, RsaKeyError> {
-  let mut power = vec![0u8; modulus.len().strict_mul(2).strict_add(1)];
+  let limb_count = modulus.len().strict_add(7) / 8;
+  let mut power = vec![0u8; limb_count.strict_mul(16).strict_add(1)];
   power[0] = 1;
   let mut reduced = vec![0u8; modulus.len()];
   private_import_unsigned_be_mod_to_len(&power, modulus, &mut reduced)?;
