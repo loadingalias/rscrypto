@@ -116,8 +116,8 @@ impl HmacSha256 {
     if key.len() > SHA256_BLOCK_SIZE {
       let digest = Sha256::digest(key);
       key_block[..SHA256_TAG_SIZE].copy_from_slice(&digest);
-    } else {
-      key_block[..key.len()].copy_from_slice(key);
+    } else if let Some(dst) = key_block.get_mut(..key.len()) {
+      dst.copy_from_slice(key);
     }
 
     let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
@@ -408,8 +408,8 @@ impl HmacSha384 {
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
       let digest = Sha384::digest(key);
       key_block[..SHA384_TAG_SIZE].copy_from_slice(&digest);
-    } else {
-      key_block[..key.len()].copy_from_slice(key);
+    } else if let Some(dst) = key_block.get_mut(..key.len()) {
+      dst.copy_from_slice(key);
     }
 
     let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
@@ -682,8 +682,8 @@ impl HmacSha512 {
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
       let digest = Sha512::digest(key);
       key_block[..SHA512_TAG_SIZE].copy_from_slice(&digest);
-    } else {
-      key_block[..key.len()].copy_from_slice(key);
+    } else if let Some(dst) = key_block.get_mut(..key.len()) {
+      dst.copy_from_slice(key);
     }
 
     let (inner, inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {

@@ -341,14 +341,18 @@ impl Core {
     let h = init_state(nn, kk);
     let stored_key = if kk > 0 {
       let mut bytes = [0u8; MAX_KEY_LEN];
-      bytes[..key.len()].copy_from_slice(key);
+      if let Some(dst) = bytes.get_mut(..key.len()) {
+        dst.copy_from_slice(key);
+      }
       MaybeUninit::new(bytes)
     } else {
       MaybeUninit::uninit()
     };
     let mut buf = [0u8; BLOCK_SIZE];
     let buf_len = if kk > 0 {
-      buf[..key.len()].copy_from_slice(key);
+      if let Some(dst) = buf.get_mut(..key.len()) {
+        dst.copy_from_slice(key);
+      }
       BLOCK_SIZE as u8
     } else {
       0
@@ -966,10 +970,14 @@ pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mu
   let mut data = [0u8; BLOCK_SIZE];
   let mut pos = 0usize;
   for part in parts {
-    data[pos..pos.strict_add(part.len())].copy_from_slice(part);
+    let next = pos.strict_add(part.len());
+    if let Some(dst) = data.get_mut(pos..next) {
+      dst.copy_from_slice(part);
+    }
     pos = pos.strict_add(part.len());
   }
-  oneshot_small_into_with_params(output_len, &[], None, &data[..pos], out, kernels::compress);
+  let input = data.get(..pos).unwrap_or(&[]);
+  oneshot_small_into_with_params(output_len, &[], None, input, out, kernels::compress);
   ct::zeroize(&mut data);
 }
 

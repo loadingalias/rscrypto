@@ -7806,7 +7806,10 @@ fn ct_eq_left_padded_unsigned_be(value: &[u8], expected: &[u8]) -> bool {
   }
   let mut padded = vec![0u8; expected.len()];
   let offset = expected.len().strict_sub(value.len());
-  padded[offset..].copy_from_slice(value);
+  let Some(dst) = padded.get_mut(offset..) else {
+    return false;
+  };
+  dst.copy_from_slice(value);
   let eq = ct::constant_time_eq(&padded, expected);
   ct::zeroize(&mut padded);
   eq
@@ -8280,7 +8283,7 @@ pub fn diag_rsa_private_component_validation_32(component: &[u8; 32], upper_boun
   let canonical = u8::from(is_canonical_positive_unsigned_be(component));
   let less_than_bound = u8::from(ct_unsigned_be_lt_public_shape(component, upper_bound));
   let distinct = u8::from(!ct_slices_eq_public_shape(component, other));
-  let odd = component[component.len() - 1] & 1;
+  let odd = component.last().copied().unwrap_or(0) & 1;
   canonical & less_than_bound & distinct & odd
 }
 
@@ -8506,11 +8509,19 @@ fn private_import_product_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &
   let mut full = vec![0u8; out_limb_count.strict_mul(8)];
   limbs_to_be(product.as_slice(), &mut full);
   let excess = full.len().strict_sub(out.len());
-  if !is_zero_unsigned_be(&full[..excess]) {
+  let Some(prefix) = full.get(..excess) else {
+    ct::zeroize(&mut full);
+    return Err(RsaKeyError::InvalidModulus);
+  };
+  if !is_zero_unsigned_be(prefix) {
     ct::zeroize(&mut full);
     return Err(RsaKeyError::InvalidModulus);
   }
-  out.copy_from_slice(&full[excess..]);
+  let Some(suffix) = full.get(excess..) else {
+    ct::zeroize(&mut full);
+    return Err(RsaKeyError::InvalidModulus);
+  };
+  out.copy_from_slice(suffix);
   ct::zeroize(&mut full);
   Ok(())
 }
@@ -8693,13 +8704,16 @@ fn private_import_unsigned_be_mod_to_len(value: &[u8], modulus: &[u8], out: &mut
   out.fill(0);
   if full.len() >= out.len() {
     let excess = full.len().strict_sub(out.len());
-    if !is_zero_unsigned_be(&full[..excess]) {
+    let prefix = full.get(..excess).ok_or(RsaKeyError::InvalidModulus)?;
+    if !is_zero_unsigned_be(prefix) {
       return Err(RsaKeyError::InvalidModulus);
     }
-    out.copy_from_slice(&full[excess..]);
+    let suffix = full.get(excess..).ok_or(RsaKeyError::InvalidModulus)?;
+    out.copy_from_slice(suffix);
   } else {
     let offset = out.len().strict_sub(full.len());
-    out[offset..].copy_from_slice(&full);
+    let dst = out.get_mut(offset..).ok_or(RsaKeyError::InvalidModulus)?;
+    dst.copy_from_slice(&full);
   }
   Ok(())
 }
@@ -8792,7 +8806,10 @@ fn public_montgomery_r2(limbs: &[u64]) -> Box<[u64]> {
 fn private_montgomery_r2(modulus: &[u8]) -> Result<Box<[u64]>, RsaKeyError> {
   let limb_count = modulus.len().strict_add(7) / 8;
   let mut power = vec![0u8; limb_count.strict_mul(16).strict_add(1)];
-  power[0] = 1;
+  let Some(first) = power.get_mut(0) else {
+    return Err(RsaKeyError::InvalidModulus);
+  };
+  *first = 1;
   let mut reduced = vec![0u8; modulus.len()];
   private_import_unsigned_be_mod_to_len(&power, modulus, &mut reduced)?;
   ct::zeroize(&mut power);
