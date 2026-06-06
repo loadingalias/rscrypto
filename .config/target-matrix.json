@@ -36,17 +36,6 @@
     { "name": "x86_64-unknown-linux-musl", "type": "runson", "pool": "linux-x64-ci" },
     { "name": "aarch64-unknown-linux-musl", "type": "runson", "pool": "linux-arm64-ci" },
     { "name": "x86_64-pc-windows-msvc",    "type": "gha",    "runner": "windows-latest" },
-    { "name": "aarch64-pc-windows-msvc",   "type": "gha",    "runner": "windows-11-arm" },
-    { "name": "aarch64-apple-darwin",      "type": "gha",    "runner": "macos-15-xlarge" },
-    { "name": "x86_64-apple-darwin",       "type": "gha",    "runner": "macos-15-large" },
-    { "name": "s390x-unknown-linux-gnu",   "type": "gha",    "runner": "ubuntu-24.04-s390x" },
-    { "name": "powerpc64le-unknown-linux-gnu", "type": "gha", "runner": "ubuntu-24.04-ppc64le-p10" },
-    { "name": "riscv64gc-unknown-linux-gnu", "type": "gha",  "runner": "ubuntu-24.04-riscv" },
-    { "name": "thumbv6m-none-eabi",        "type": "cross",  "runner": "linux-x64-ci" },
-    { "name": "riscv32imac-unknown-none-elf", "type": "cross", "runner": "linux-x64-ci" },
-    { "name": "aarch64-unknown-none",      "type": "cross",  "runner": "linux-arm64-ci" },
-    { "name": "x86_64-unknown-none",       "type": "cross",  "runner": "linux-x64-ci" },
-    { "name": "wasm32-unknown-unknown",    "type": "cross",  "runner": "linux-x64-ci" },
-    { "name": "wasm32-wasip1",             "type": "cross",  "runner": "linux-x64-ci" }
+    { "name": "aarch64-pc-windows-msvc",   "type": "gha",    "runner": "windows-11-arm" }
   ]
 }

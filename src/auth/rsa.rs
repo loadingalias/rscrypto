@@ -48,8 +48,6 @@ use core::{
   hash::{Hash, Hasher},
 };
 
-use crypto_bigint::{BoxedUint, NonZero};
-
 use crate::{
   hashes::crypto::{Sha256, Sha384, Sha512},
   traits::{Digest, VerificationError, ct},
@@ -8694,13 +8692,8 @@ fn private_import_unsigned_be_mod_to_len(value: &[u8], modulus: &[u8], out: &mut
     return Err(RsaKeyError::InvalidModulus);
   }
 
-  let value_bits = value.len().strict_mul(8) as u32;
-  let modulus_bits = modulus.len().strict_mul(8) as u32;
-  let value = BoxedUint::from_be_slice(value, value_bits).map_err(|_| RsaKeyError::InvalidModulus)?;
-  let modulus = BoxedUint::from_be_slice(modulus, modulus_bits).map_err(|_| RsaKeyError::InvalidModulus)?;
-  let modulus = NonZero::new(modulus).into_option().ok_or(RsaKeyError::InvalidModulus)?;
-  let remainder = value.rem(&modulus);
-  let full = remainder.to_be_bytes();
+  let full = private_import_unsigned_be_mod(value, modulus);
+  let full = full.as_slice();
   out.fill(0);
   if full.len() >= out.len() {
     let excess = full.len().strict_sub(out.len());
@@ -8713,7 +8706,7 @@ fn private_import_unsigned_be_mod_to_len(value: &[u8], modulus: &[u8], out: &mut
   } else {
     let offset = out.len().strict_sub(full.len());
     let dst = out.get_mut(offset..).ok_or(RsaKeyError::InvalidModulus)?;
-    dst.copy_from_slice(&full);
+    dst.copy_from_slice(full);
   }
   Ok(())
 }

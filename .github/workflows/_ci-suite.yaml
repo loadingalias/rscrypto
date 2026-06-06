@@ -51,7 +51,7 @@ jobs:
       wasm: ${{ steps.matrix.outputs.wasm }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
       - name: Load matrix
         id: matrix
         env:
@@ -192,11 +192,11 @@ jobs:
         target: ${{ fromJSON(needs.target-matrix.outputs.no_std) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      runner: ubuntu-latest
       timeout_minutes: 25
       cache_key: ${{ inputs.cache_key_prefix }}-no-std-${{ matrix.target }}
-      tools_mode: minimal
-      enable_magic_cache: true
+      tools_mode: none
+      enable_magic_cache: false
       enable_rust_cache: true
       run_script: bash scripts/ci/nostd-wasm-suite.sh "${{ matrix.target }}" "${{ inputs.cross_depth }}"
 
@@ -209,11 +209,11 @@ jobs:
         target: ${{ fromJSON(needs.target-matrix.outputs.wasm) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      runner: ubuntu-latest
       timeout_minutes: 25
       cache_key: ${{ inputs.cache_key_prefix }}-wasm-${{ matrix.target }}
-      tools_mode: minimal
-      enable_magic_cache: true
+      tools_mode: none
+      enable_magic_cache: false
       enable_rust_cache: true
       run_script: bash scripts/ci/nostd-wasm-suite.sh "${{ matrix.target }}" "${{ inputs.cross_depth }}"
 
