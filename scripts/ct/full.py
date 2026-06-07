@@ -252,6 +252,26 @@ def load_json_if_exists(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
+  records = []
+  for relative, kind in (
+    ("provenance.json", "provenance"),
+    ("evidence-index.json", "evidence_index"),
+    ("asm-heuristics.json", "asm_heuristics"),
+  ):
+    path = out_dir / relative
+    if path.exists():
+      records.append(file_record(path, out_dir, kind))
+
+  for path in sorted((out_dir / "dudect" / "cases").glob("*/dudect-report.json")):
+    records.append(file_record(path, out_dir, "dudect_report"))
+
+  for path in sorted((out_dir / "binsec").glob("*/binsec-report.json")):
+    records.append(file_record(path, out_dir, "binsec_report"))
+
+  return records
+
+
 def dudect_case_result(
   root: Path,
   out_dir: Path,
@@ -292,8 +312,9 @@ def dudect_case_result(
       if row.get("name") == case["name"]:
         case_report = row
         status = str(row.get("status", status))
+        failure_count = 1 if status == "fail" else 0
         break
-    if failure_count:
+    if case_report is None and failure_count:
       status = "fail"
 
   row = {
@@ -331,7 +352,42 @@ def known_findings(target: str) -> list[dict[str, str]]:
   return []
 
 
+def binsec_result_category(kernel: dict[str, Any]) -> str:
+  status = str(kernel.get("status", "unknown"))
+  reason = str(kernel.get("reason", "")).lower()
+  if status == "secure":
+    return "pass"
+  if status == "insecure":
+    return "ct_failure"
+  if status in {"unknown", "blocked"} and (
+    "timeout" in reason or "incomplete" in reason or "unknown" in reason or status == "blocked"
+  ):
+    return "proof_inconclusive"
+  return "tooling_failure"
+
+
+def summarize_status(rows: list[dict[str, Any]], key: str = "status") -> dict[str, int]:
+  summary: dict[str, int] = {}
+  for row in rows:
+    status = str(row.get(key, "unknown"))
+    summary[status] = summary.get(status, 0) + 1
+  return summary
+
+
+def summarize_findings(findings: list[dict[str, Any]], diagnostics: list[dict[str, Any]]) -> dict[str, Any]:
+  by_category: dict[str, int] = {}
+  for finding in findings:
+    category = str(finding.get("category", finding.get("kind", "unknown")))
+    by_category[category] = by_category.get(category, 0) + 1
+  return {
+    "blockers": len(findings),
+    "diagnostics": len(diagnostics),
+    "by_category": by_category,
+  }
+
+
 def markdown_report(report: dict[str, Any]) -> str:
+  summary = report.get("summary", {})
   lines = [
     "# rscrypto CT Report",
     "",
@@ -339,31 +395,58 @@ def markdown_report(report: dict[str, Any]) -> str:
     f"- Target: `{report['target']}`",
     f"- Profile: `{report['profile']}`",
     f"- Status: `{report['status']}`",
-    f"- Failure count: `{report['failure_count']}`",
+    f"- Blocking findings: `{summary.get('blockers', report['failure_count'])}`",
+    f"- Non-blocking diagnostics: `{summary.get('diagnostics', 0)}`",
     "",
-    "## Evidence Steps",
+    "## What To Fix",
     "",
   ]
+  if report["findings"]:
+    for finding in report["findings"]:
+      reason = f" - {finding['reason']}" if finding.get("reason") else ""
+      category = finding.get("category", finding["kind"])
+      lines.append(f"- `{category}` `{finding['kind']}`: {finding['summary']}{reason}")
+  else:
+    lines.append("- No blocking CT evidence findings.")
+
+  if report.get("diagnostics"):
+    lines.extend(["", "## Diagnostics"])
+    for finding in report["diagnostics"]:
+      reason = f" - {finding['reason']}" if finding.get("reason") else ""
+      lines.append(f"- `{finding['kind']}`: {finding['summary']}{reason}")
+
+  lines.extend(["", "## Gate Summary", ""])
   for step in report["steps"]:
     reason = f" - {step['reason']}" if step.get("reason") else ""
     lines.append(f"- `{step['name']}`: `{step['status']}`{reason}")
-  lines.extend(["", "## BINSEC Kernels", ""])
+
+  lines.extend(["", "## BINSEC Summary", ""])
   if report["binsec"]["enabled"]:
-    for kernel in report["binsec"]["kernels"]:
-      reason = f" - {kernel['reason']}" if kernel.get("reason") and kernel.get("status") != "secure" else ""
-      lines.append(f"- `{kernel['kernel']}` (`{kernel['primitive']}`): `{kernel['status']}`{reason}")
+    counts = report["binsec"].get("status_counts", {})
+    lines.append(", ".join(f"`{status}`={count}" for status, count in sorted(counts.items())) or "- no kernels")
+    non_secure = [kernel for kernel in report["binsec"]["kernels"] if kernel.get("status") != "secure"]
+    if non_secure:
+      lines.append("")
+      for kernel in non_secure:
+        category = kernel.get("category", "unknown")
+        reason = f" - {kernel['reason']}" if kernel.get("reason") else ""
+        lines.append(f"- `{category}` `{kernel['kernel']}` (`{kernel['primitive']}`): `{kernel['status']}`{reason}")
+    else:
+      lines.append("")
+      lines.append("- All required BINSEC kernels reported `secure`.")
   else:
     lines.append(f"- `{report['binsec']['policy']}`: {report['binsec']['reason']}")
-  lines.extend(["", "## DudeCT Cases", ""])
-  for case in report["dudect"]["cases"]:
-    detail = f", failures={case['failure_count']}" if case.get("failure_count") is not None else ""
-    reason = f" - {case['diagnostic_reason']}" if case.get("diagnostic_reason") and case.get("status") != "pass" else ""
-    lines.append(f"- `{case['name']}` (`{case['primitive']}`): `{case['status']}`{detail}{reason}")
-  if report["findings"]:
-    lines.extend(["", "## Findings", ""])
-    for finding in report["findings"]:
-      reason = f" - {finding['reason']}" if finding.get("reason") else ""
-      lines.append(f"- `{finding['severity']}` `{finding['kind']}`: {finding['summary']}{reason}")
+
+  lines.extend(["", "## DudeCT Summary", ""])
+  counts = report["dudect"].get("status_counts", {})
+  lines.append(", ".join(f"`{status}`={count}" for status, count in sorted(counts.items())) or "- no cases")
+  non_pass = [case for case in report["dudect"]["cases"] if case.get("status") != "pass"]
+  if non_pass:
+    lines.append("")
+    for case in non_pass:
+      detail = f", failures={case['failure_count']}" if case.get("failure_count") is not None else ""
+      reason = f" - {case['diagnostic_reason']}" if case.get("diagnostic_reason") else ""
+      lines.append(f"- `{case['name']}` (`{case['primitive']}`): `{case['status']}`{detail}{reason}")
   if report["coverage"]["missing_dudect_primitives"]:
     lines.extend(["", "## Missing DudeCT Coverage", ""])
     for primitive in report["coverage"]["missing_dudect_primitives"]:
@@ -373,10 +456,102 @@ def markdown_report(report: dict[str, Any]) -> str:
     for finding in report["known_findings"]:
       lines.append(f"- `{finding['severity']}` `{finding['id']}`: {finding['summary']}")
   lines.extend(["", "## Artifacts", ""])
-  for artifact in report["artifacts"]:
-    lines.append(f"- `{artifact['kind']}`: `{artifact['path']}`")
+  artifact_counts = summarize_status(report["artifacts"], "kind")
+  for kind, count in sorted(artifact_counts.items()):
+    lines.append(f"- `{kind}`: `{count}` file(s)")
   lines.append("")
   return "\n".join(lines)
+
+
+def build_findings(
+  steps: list[dict[str, Any]],
+  dudect_cases: list[dict[str, Any]],
+  binsec_kernels: list[dict[str, Any]],
+  missing_dudect: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+  findings: list[dict[str, Any]] = []
+  diagnostics: list[dict[str, Any]] = []
+  has_binsec_kernel_reports = bool(binsec_kernels)
+
+  for step in steps:
+    if step["status"] not in {"fail", "timeout"}:
+      continue
+    if step["name"] == "ct-binsec" and has_binsec_kernel_reports:
+      continue
+    findings.append(
+      {
+        "kind": "gate_failure",
+        "category": "tooling_failure",
+        "severity": "blocker",
+        "summary": f"{step['name']} failed before complete evidence could be collected",
+      }
+    )
+
+  for case in dudect_cases:
+    if case["status"] == "pass":
+      continue
+    if case.get("gate") == "diagnostic":
+      diagnostics.append(
+        {
+          "kind": "dudect_diagnostic",
+          "severity": "diagnostic",
+          "summary": f"{case['name']} showed timing separation outside the release CT claim",
+          "primitive": case["primitive"],
+          "reason": case.get("diagnostic_reason"),
+        }
+      )
+      continue
+    findings.append(
+      {
+        "kind": "dudect_failure",
+        "category": "timing_failure",
+        "severity": "blocker",
+        "summary": f"{case['name']} did not pass DudeCT",
+        "primitive": case["primitive"],
+      }
+    )
+
+  for kernel in binsec_kernels:
+    if kernel.get("status") == "secure" or not kernel.get("required", False):
+      continue
+    category = str(kernel.get("category", binsec_result_category(kernel)))
+    kind = "binsec_inconclusive" if category == "proof_inconclusive" else "binsec_failure"
+    summary = (
+      f"{kernel.get('kernel')} did not complete a BINSEC proof"
+      if category == "proof_inconclusive"
+      else f"{kernel.get('kernel')} did not pass BINSEC"
+    )
+    findings.append(
+      {
+        "kind": kind,
+        "category": category,
+        "severity": "blocker",
+        "summary": summary,
+        "primitive": kernel.get("primitive"),
+        "reason": kernel.get("reason"),
+      }
+    )
+
+  for primitive in missing_dudect:
+    findings.append(
+      {
+        "kind": "missing_dudect",
+        "category": "coverage_gap",
+        "severity": "blocker",
+        "summary": f"{primitive} requires DudeCT evidence but has no executed manifest case",
+        "primitive": primitive,
+      }
+    )
+
+  return findings, diagnostics
+
+
+def write_full_report(out_dir: Path, report: dict[str, Any]) -> tuple[Path, Path]:
+  json_path = out_dir / "ct-report.json"
+  md_path = out_dir / "ct-report.md"
+  json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+  md_path.write_text(markdown_report(report))
+  return json_path, md_path
 
 
 def main() -> int:
@@ -406,6 +581,8 @@ def main() -> int:
 
   ct = load_toml(root / "ct.toml")
   manifest_cases = manifest_dudect_cases(ct)
+  binsec_mode, binsec_reason = binsec_policy(ct, target)
+  binsec_enabled = binsec_mode == "required"
   steps = []
 
   artifacts_result = run_command(
@@ -429,11 +606,63 @@ def main() -> int:
     for step in steps:
       if step["status"] != "pass":
         print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)
+    findings, diagnostics = build_findings(steps, [], [], [])
+    report = {
+      "schema_version": 1,
+      "kind": "rscrypto.ct.full-report",
+      "crate": "rscrypto",
+      "generated_at_utc": now_utc(),
+      "target": target,
+      "target_triple": target,
+      "profile": profile,
+      "status": "fail",
+      "failure_count": len(findings),
+      "summary": summarize_findings(findings, diagnostics),
+      "host": {
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+      },
+      "steps": steps,
+      "dudect": {
+        "enabled": True,
+        "manifest_case_count": len(manifest_cases),
+        "samples": "manifest",
+        "threshold_abs_max_t": args.threshold,
+        "smoke": False,
+        "cases": [],
+        "status_counts": {},
+      },
+      "binsec": {
+        "enabled": binsec_enabled,
+        "policy": binsec_mode,
+        "reason": binsec_reason,
+        "timeout_seconds": args.binsec_timeout,
+        "kernels": [],
+        "status_counts": {},
+      },
+      "coverage": {
+        "required_dudect_primitives": sorted(primitive_ids_requiring_dudect(ct)),
+        "executed_dudect_primitives": [],
+        "passing_dudect_primitives": [],
+        "missing_dudect_primitives": [],
+      },
+      "findings": findings,
+      "diagnostics": diagnostics,
+      "known_findings": known_findings(target),
+      "artifacts": collect_artifact_records(out_dir),
+      "notes": [
+        "Gate one failed before timing and proof evidence could be completed.",
+        "Inspect the listed gate logs first; later gates were not run.",
+      ],
+    }
+    json_path, md_path = write_full_report(out_dir, report)
+    print(f"ct-full report: {json_path}")
+    print(f"ct-full summary: {md_path}")
     return 1
 
   binsec_kernels = []
-  binsec_mode, binsec_reason = binsec_policy(ct, target)
-  binsec_enabled = binsec_mode == "required"
   if binsec_enabled:
     print("ct-full: binsec", flush=True)
     binsec_result = run_command(
@@ -461,9 +690,11 @@ def main() -> int:
           {
             "kernel": report_path.parent.name,
             "primitive": None,
+            "required": True,
             "status": "unknown",
             "report": str(report_path),
             "reason": "invalid or unreadable report",
+            "category": "tooling_failure",
           }
         )
         continue
@@ -475,6 +706,7 @@ def main() -> int:
           "status": report.get("status"),
           "report": str(report_path),
           "reason": report.get("reason"),
+          "category": binsec_result_category(report),
         }
       )
   else:
@@ -505,56 +737,8 @@ def main() -> int:
   required_dudect = primitive_ids_requiring_dudect(ct)
   missing_dudect = sorted(required_dudect - executed_dudect)
 
-  artifact_records = []
-  for relative, kind in (
-    ("provenance.json", "provenance"),
-    ("evidence-index.json", "evidence_index"),
-    ("asm-heuristics.json", "asm_heuristics"),
-  ):
-    path = out_dir / relative
-    if path.exists():
-      artifact_records.append(file_record(path, out_dir, kind))
-
-  for path in sorted((out_dir / "dudect" / "cases").glob("*/dudect-report.json")):
-    artifact_records.append(file_record(path, out_dir, "dudect_report"))
-
-  for path in sorted((out_dir / "binsec").glob("*/binsec-report.json")):
-    artifact_records.append(file_record(path, out_dir, "binsec_report"))
-
-  findings = []
-  for step in steps:
-    if step["status"] in {"fail", "timeout"}:
-      findings.append({"kind": "step_failure", "severity": "blocker", "summary": f"{step['name']} failed"})
-  for case in dudect_cases:
-    if case.get("gate") != "diagnostic" and case["status"] != "pass":
-      findings.append(
-        {
-          "kind": "dudect_failure",
-          "severity": "blocker",
-          "summary": f"{case['name']} did not pass",
-          "primitive": case["primitive"],
-        }
-      )
-  for kernel in binsec_kernels:
-    if kernel.get("status") not in {"secure"} and kernel.get("required", False):
-      findings.append(
-        {
-          "kind": "binsec_failure",
-          "severity": "blocker",
-          "summary": f"{kernel.get('kernel')} did not pass BINSEC",
-          "primitive": kernel.get("primitive"),
-          "reason": kernel.get("reason"),
-        }
-      )
-  for primitive in missing_dudect:
-    findings.append(
-      {
-        "kind": "missing_dudect",
-        "severity": "blocker",
-        "summary": f"{primitive} requires dudect evidence but has no executed manifest case",
-        "primitive": primitive,
-      }
-    )
+  artifact_records = collect_artifact_records(out_dir)
+  findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
 
   known = known_findings(target)
   failure_count = len(findings)
@@ -569,6 +753,7 @@ def main() -> int:
     "profile": profile,
     "status": status,
     "failure_count": failure_count,
+    "summary": summarize_findings(findings, diagnostics),
     "host": {
       "system": platform.system(),
       "release": platform.release(),
@@ -583,6 +768,7 @@ def main() -> int:
       "threshold_abs_max_t": args.threshold,
       "smoke": False,
       "cases": dudect_cases,
+      "status_counts": summarize_status(dudect_cases),
     },
     "binsec": {
       "enabled": binsec_enabled,
@@ -590,6 +776,7 @@ def main() -> int:
       "reason": binsec_reason,
       "timeout_seconds": args.binsec_timeout,
       "kernels": binsec_kernels,
+      "status_counts": summarize_status(binsec_kernels),
     },
     "coverage": {
       "required_dudect_primitives": sorted(required_dudect),
@@ -598,6 +785,7 @@ def main() -> int:
       "missing_dudect_primitives": missing_dudect,
     },
     "findings": findings,
+    "diagnostics": diagnostics,
     "known_findings": known,
     "artifacts": artifact_records,
     "notes": [
@@ -609,10 +797,7 @@ def main() -> int:
   }
 
   full_dir.mkdir(parents=True, exist_ok=True)
-  json_path = out_dir / "ct-report.json"
-  md_path = out_dir / "ct-report.md"
-  json_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-  md_path.write_text(markdown_report(report))
+  json_path, md_path = write_full_report(out_dir, report)
   print(f"ct-full report: {json_path}")
   print(f"ct-full summary: {md_path}")
   return 0 if status == "pass" else 1

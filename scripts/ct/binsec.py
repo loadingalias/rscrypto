@@ -295,6 +295,7 @@ def write_report(
   reason: str,
   artifacts: dict[str, str],
   binsec_version: str | None,
+  timeout_seconds: int | None,
 ) -> None:
   report = {
     "schema_version": 1,
@@ -310,6 +311,8 @@ def write_report(
     "required": bool(kernel.get("required", False)),
     "status": status,
     "reason": reason,
+    "timeout_seconds": timeout_seconds,
+    "sse_depth": kernel.get("sse_depth"),
     "binsec_version": binsec_version,
     "artifacts": artifacts,
   }
@@ -322,7 +325,11 @@ def main() -> int:
   parser.add_argument("--profile", default="release", help="build profile")
   parser.add_argument("--kernel", default=None, help="kernel id or symbol to run")
   parser.add_argument("--timeout", default="120", help="BINSEC timeout in seconds")
-  parser.add_argument("--allow-missing-binsec", action="store_true", help="write blocked reports instead of failing when binsec is absent")
+  parser.add_argument(
+    "--allow-missing-binsec",
+    action="store_true",
+    help="write blocked reports instead of failing when binsec is absent",
+  )
   args = parser.parse_args()
 
   target = args.target or rustc_host()
@@ -350,7 +357,10 @@ def main() -> int:
     binsec_version = (version.stdout or version.stderr).strip() or None
 
   if binsec is None and not args.allow_missing_binsec:
-    print("binsec not found; install BINSEC/Rel or pass --allow-missing-binsec to emit blocked reports", file=sys.stderr)
+    print(
+      "binsec not found; install BINSEC/Rel or pass --allow-missing-binsec to emit blocked reports",
+      file=sys.stderr,
+    )
     return 2
 
   if args.kernel is None and out_root.exists():
@@ -378,10 +388,12 @@ def main() -> int:
         reason="binsec not found",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        timeout_seconds=None,
       )
       continue
 
     rustflags = [str(flag) for flag in kernel.get("rustflags", [])]
+    kernel_timeout = int(kernel.get("timeout", args.timeout))
     binary = build_harness(target, profile, rustflags)
     names = symbol_names(binary)
 
@@ -398,6 +410,7 @@ def main() -> int:
         reason=f"missing symbol {kernel['symbol']}",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        timeout_seconds=kernel_timeout,
       )
       failures += 1
       continue
@@ -411,6 +424,7 @@ def main() -> int:
         reason="missing symbol ct_binsec_done",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        timeout_seconds=kernel_timeout,
       )
       failures += 1
       continue
@@ -438,12 +452,12 @@ def main() -> int:
       "-checkct-stats-file",
       str(stats),
       "-sse-timeout",
-      str(args.timeout),
+      str(kernel_timeout),
     ]
     if kernel.get("sse_depth") is not None:
       binsec_cmd.extend(["-sse-depth", str(kernel["sse_depth"])])
     binsec_cmd.append(str(driver))
-    result = run(binsec_cmd, timeout=int(args.timeout) + 60)
+    result = run(binsec_cmd, timeout=kernel_timeout + 60)
     log.write_text(result.stdout + result.stderr)
     artifacts["binsec.log"] = sha256_file(log)
     if stats.exists():
@@ -459,6 +473,7 @@ def main() -> int:
       reason=reason,
       artifacts=artifacts,
       binsec_version=binsec_version,
+      timeout_seconds=kernel_timeout,
     )
     if status != "secure" and kernel.get("required", False):
       failures += 1

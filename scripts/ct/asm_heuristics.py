@@ -180,7 +180,31 @@ def mnemonic(line: str) -> str | None:
   return None
 
 
-def finding(symbol: str, path: Path, line_number: int, line: str, kind: str, severity: str, rationale: str) -> dict[str, Any]:
+def is_s390x_return(target: str, inst: str, line: str) -> bool:
+  return target.startswith("s390x-") and inst == "br" and re.search(r"\bbr\s+%r14\b", line.lower()) is not None
+
+
+def is_s390x_register_branch(target: str, inst: str) -> bool:
+  return target.startswith("s390x-") and inst == "br"
+
+
+def is_indirect_jump(target: str, inst: str) -> bool:
+  if inst not in INDIRECT_JUMP_MNEMONICS:
+    return False
+  if target.startswith("s390x-"):
+    return False
+  return True
+
+
+def finding(
+  symbol: str,
+  path: Path,
+  line_number: int,
+  line: str,
+  kind: str,
+  severity: str,
+  rationale: str,
+) -> dict[str, Any]:
   return {
     "symbol": symbol,
     "file": f"artifacts/{path.name}",
@@ -194,7 +218,7 @@ def finding(symbol: str, path: Path, line_number: int, line: str, kind: str, sev
   }
 
 
-def scan_symbol(symbol: str, path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+def scan_symbol(target: str, symbol: str, path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
   findings: list[dict[str, Any]] = []
   for line_number, line in lines:
     inst = mnemonic(line)
@@ -226,7 +250,22 @@ def scan_symbol(symbol: str, path: Path, lines: list[tuple[int, str]]) -> list[d
           "Division/remainder-family instructions are variable-latency on common targets and require explicit review.",
         )
       )
-    elif inst in INDIRECT_JUMP_MNEMONICS:
+    elif is_s390x_return(target, inst, line):
+      continue
+    elif is_s390x_register_branch(target, inst):
+      findings.append(
+        finding(
+          symbol,
+          path,
+          line_number,
+          line,
+          "register_branch",
+          "warn",
+          "s390x register branch found inside a CT harness symbol. "
+          "It may be public jump-table control flow, but needs review.",
+        )
+      )
+    elif is_indirect_jump(target, inst):
       findings.append(
         finding(
           symbol,
@@ -289,7 +328,11 @@ def scan_symbol(symbol: str, path: Path, lines: list[tuple[int, str]]) -> list[d
   return findings
 
 
-def summarize(symbols: set[str], functions: dict[str, list[tuple[int, str]]], findings: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize(
+  symbols: set[str],
+  functions: dict[str, list[tuple[int, str]]],
+  findings: list[dict[str, Any]],
+) -> dict[str, Any]:
   findings_by_symbol: dict[str, list[dict[str, Any]]] = {}
   for item in findings:
     findings_by_symbol.setdefault(item["symbol"], []).append(item)
@@ -338,7 +381,7 @@ def main() -> int:
     for symbol in sorted(symbols):
       lines = functions.get(symbol)
       if lines:
-        findings.extend(scan_symbol(symbol, path, lines))
+        findings.extend(scan_symbol(args.target, symbol, path, lines))
     break
 
   apply_waivers(findings, configured_waivers, args.target)
@@ -358,6 +401,7 @@ def main() -> int:
         "conditional_branch",
         "call",
         "indirect_call",
+        "register_branch",
         "register_indexed_memory",
         "suspicious_relocation_target",
       ],

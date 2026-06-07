@@ -132,6 +132,16 @@ jobs:
         fuzz-packages/*/artifacts/
       artifact_always: false
 
+  # ─── Constant-time evidence on benchmark-published physical lanes. ──
+  ct:
+    name: Constant-Time Evidence (weekly)
+    uses: ./.github/workflows/ct.yaml
+    with:
+      platforms: all
+      dudect_timeout: "1800"
+      binsec_timeout: "900"
+      upload_raw_artifacts: false
+
   # ─── Coverage (nextest + fuzz corpus → codecov). ──
   coverage:
     name: Coverage
@@ -198,7 +208,7 @@ jobs:
   # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, coverage]
+    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, ct, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -211,6 +221,7 @@ jobs:
             "miri=${{ needs.miri.result }}" \
             "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \
             "fuzzing=${{ needs.fuzzing.result }}" \
+            "ct=${{ needs.ct.result }}" \
             "coverage=${{ needs.coverage.result }}"
           do
             name="${lane%%=*}"

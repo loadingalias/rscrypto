@@ -51,11 +51,16 @@ target_env_name() {
   printf 'CARGO_TARGET_%s_%s\n' "$upper_target" "$suffix"
 }
 
+rustflags_env="$(target_env_name RUSTFLAGS)"
+if [[ -z "${!rustflags_env:-}" && "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
+  export "$rustflags_env=-C target-feature=+vector"
+fi
+
 if [[ "$TARGET" != "$HOST" && "$TARGET" == *linux* ]]; then
   linker_env="$(target_env_name LINKER)"
-  rustflags_env="$(target_env_name RUSTFLAGS)"
 
-  if [[ -z "${!linker_env:-}" && "$TARGET" == *-linux-musl && "$(uname -m)" == "${TARGET%%-*}" ]] && command -v musl-gcc >/dev/null 2>&1; then
+  if [[ -z "${!linker_env:-}" && "$TARGET" == *-linux-musl && "$(uname -m)" == "${TARGET%%-*}" ]] \
+    && command -v musl-gcc >/dev/null 2>&1; then
     export "$linker_env=musl-gcc"
   elif [[ -z "${!linker_env:-}" && -x "$ROOT/scripts/check/zig-cc.sh" ]] && command -v zig >/dev/null 2>&1; then
     export "$linker_env=$ROOT/scripts/check/zig-cc.sh"
@@ -134,7 +139,10 @@ while IFS= read -r artifact; do
   EMITTED+=("$artifact")
 done < <(
   find "$DEPS_DIR" -maxdepth 1 -type f \
-    \( -name 'rscrypto_ct_harness*.ll' -o -name 'rscrypto_ct_harness*.s' -o -name 'rscrypto_ct_harness*.o' -o -name 'rscrypto_ct_harness*.obj' \) \
+    \( -name 'rscrypto_ct_harness*.ll' \
+    -o -name 'rscrypto_ct_harness*.s' \
+    -o -name 'rscrypto_ct_harness*.o' \
+    -o -name 'rscrypto_ct_harness*.obj' \) \
     | sort
 )
 
