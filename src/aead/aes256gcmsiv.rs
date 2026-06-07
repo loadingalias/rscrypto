@@ -238,6 +238,29 @@ fn compute_tag(
   s
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes256gcmsiv_derive_keys(cipher: &Aes256GcmSiv, nonce: &Nonce96) -> ([u8; 16], [u8; 32]) {
+  derive_keys(&cipher.master_ek, nonce)
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes256gcmsiv_raw_tag_aes(enc_key: &[u8; 32], block: &[u8; 16]) -> [u8; 16] {
+  let mut out = *block;
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: diagnostic s390x CT runs execute on the native MSA runner.
+    unsafe { aes::s390x_encrypt_block_raw_inline(enc_key, &mut out) };
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    let ek = aes::aes256_expand_key(enc_key);
+    aes::aes256_encrypt_block(&ek, &mut out);
+  }
+  out
+}
+
 #[cfg(target_arch = "riscv64")]
 #[derive(Clone, Copy)]
 enum RiscvPolyvalBackend {

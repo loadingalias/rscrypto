@@ -109,10 +109,16 @@ pub use aes_round::diag_aes_enc_round_portable;
 pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
 #[cfg(feature = "aes-gcm-siv")]
 pub use aes128gcmsiv::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag};
+#[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
+pub use aes128gcmsiv::{
+  diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest, diag_aes128gcmsiv_raw_tag_aes,
+};
 #[cfg(feature = "aes-gcm")]
 pub use aes256gcm::{Aes256Gcm, Aes256GcmKey, Aes256GcmTag};
 #[cfg(feature = "aes-gcm-siv")]
 pub use aes256gcmsiv::{Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag};
+#[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
+pub use aes256gcmsiv::{diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes};
 #[cfg(all(feature = "diag", feature = "ascon-aead"))]
 pub use ascon128::diag_ascon_aead128_tag_portable;
 #[cfg(feature = "ascon-aead")]

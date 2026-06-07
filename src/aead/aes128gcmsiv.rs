@@ -230,6 +230,40 @@ fn compute_tag(
   s
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes128gcmsiv_derive_keys(cipher: &Aes128GcmSiv, nonce: &Nonce96) -> ([u8; 16], [u8; 16]) {
+  derive_keys(&cipher.master_ek, nonce)
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes128gcmsiv_polyval_digest(auth_key: &[u8; 16], aad: &[u8], plaintext: &[u8]) -> [u8; 16] {
+  let mut pv = polyval::Polyval::new(auth_key);
+  pv.update_padded(aad);
+  pv.update_padded(plaintext);
+  let length_block = super::AeadByteLengths::from_usize(aad.len(), plaintext.len()).to_le_bits_block();
+  pv.update_block(&length_block);
+  pv.finalize()
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes128gcmsiv_raw_tag_aes(enc_key: &[u8; 16], block: &[u8; 16]) -> [u8; 16] {
+  let mut out = *block;
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: diagnostic s390x CT runs execute on the native MSA runner.
+    unsafe { aes::s390x_encrypt_block_raw_128_inline(enc_key, &mut out) };
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    let ek = aes::aes128_expand_key(enc_key);
+    aes::aes128_encrypt_block(&ek, &mut out);
+  }
+  out
+}
+
 #[cfg(target_arch = "riscv64")]
 #[derive(Clone, Copy)]
 enum RiscvPolyvalBackend {

@@ -221,6 +221,61 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
+left_class = "derive message keys from fixed AES-128-GCM-SIV master key"
+right_class = "derive message keys from random AES-128-GCM-SIV master key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for per-message key derivation."
+
+[[dudect_case]]
+name = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
+left_class = "derive message keys from fixed AES-256-GCM-SIV master key"
+right_class = "derive message keys from random AES-256-GCM-SIV master key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for per-message key derivation."
+
+[[dudect_case]]
+name = "gcm_siv_diag_polyval_fixed_vs_random_auth_key"
+primitive = "aead.open_authentication"
+filter = "gcm_siv_diag_polyval_fixed_vs_random_auth_key"
+left_class = "POLYVAL with fixed authentication key"
+right_class = "POLYVAL with random authentication key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for POLYVAL under secret H."
+
+[[dudect_case]]
+name = "aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key"
+left_class = "AES-128 tag block under fixed raw encryption key"
+right_class = "AES-128 tag block under random raw encryption key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for raw tag AES."
+
+[[dudect_case]]
+name = "aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key"
+left_class = "AES-256 tag block under fixed raw encryption key"
+right_class = "AES-256 tag block under random raw encryption key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for raw tag AES."
+
+[[dudect_case]]
 name = "chacha20poly1305_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "chacha20poly1305_fixed_vs_random_key_open"
