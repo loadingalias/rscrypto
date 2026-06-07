@@ -1586,6 +1586,20 @@ pub(super) unsafe fn s390x_encrypt_block_raw_inline(raw_key: &[u8; KEY_SIZE], bl
   unsafe { km::encrypt_block_raw(raw_key, block) }
 }
 
+/// Encrypt multiple AES-256 blocks with s390x KM using a raw 32-byte key.
+///
+/// # Safety
+/// Caller must ensure MSA is available.
+#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[inline(always)]
+pub(super) unsafe fn s390x_encrypt_blocks_raw_inline(raw_key: &[u8; KEY_SIZE], blocks: &mut [u8], count: usize) {
+  // SAFETY: s390x KM AES-256 raw-key block batch because:
+  // 1. The caller guarantees MSA/CPACF availability.
+  // 2. `blocks` is valid for at least `count * 16` writable bytes.
+  // 3. `raw_key` is a fixed 32-byte AES-256 key.
+  unsafe { km::encrypt_blocks_raw(raw_key, blocks, count) }
+}
+
 /// Encrypt multiple AES-256 blocks with KM (batch), guaranteed to inline.
 ///
 /// # Safety
@@ -1615,6 +1629,24 @@ pub(super) unsafe fn s390x_encrypt_block_raw_128_inline(raw_key: &[u8; KEY_SIZE_
   // 2. `raw_key` is a fixed 16-byte AES-128 key.
   // 3. `block` is exactly one initialized 16-byte AES block.
   unsafe { km::encrypt_block_raw_128(raw_key, block) }
+}
+
+/// Encrypt multiple AES-128 blocks with s390x KM using a raw 16-byte key.
+///
+/// # Safety
+/// Caller must ensure MSA is available.
+#[cfg(all(target_arch = "s390x", feature = "aes-gcm-siv"))]
+#[inline(always)]
+pub(super) unsafe fn s390x_encrypt_blocks_raw_128_inline(
+  raw_key: &[u8; KEY_SIZE_128],
+  blocks: &mut [u8],
+  count: usize,
+) {
+  // SAFETY: s390x KM AES-128 raw-key block batch because:
+  // 1. The caller guarantees MSA/CPACF availability.
+  // 2. `blocks` is valid for at least `count * 16` writable bytes.
+  // 3. `raw_key` is a fixed 16-byte AES-128 key.
+  unsafe { km::encrypt_blocks_raw_128(raw_key, blocks, count) }
 }
 
 /// Encrypt multiple AES-128 blocks with KM (batch), guaranteed to inline.
@@ -2210,6 +2242,50 @@ const fn mix_column(col: [u8; 4]) -> u32 {
   (r0 as u32) << 24 | (r1 as u32) << 16 | (r2 as u32) << 8 | r3 as u32
 }
 
+#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[inline]
+pub(super) fn ctr_tail_block_count(remaining: usize) -> usize {
+  let full_blocks = remaining.strict_div(BLOCK_SIZE);
+  let tail_block = usize::from(!remaining.is_multiple_of(BLOCK_SIZE));
+  full_blocks.strict_add(tail_block).min(4)
+}
+
+#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[inline]
+pub(super) fn xor_keystream_tail(
+  data: &mut [u8],
+  offset: usize,
+  keystream: &[[u8; BLOCK_SIZE]; 4],
+  block_count: usize,
+) -> usize {
+  let remaining_total = data.len().strict_sub(offset);
+  let mut processed = 0usize;
+  let mut lane = 0usize;
+
+  while lane < block_count && processed < remaining_total {
+    let block_offset = offset.strict_add(processed);
+    let remaining = remaining_total.strict_sub(processed);
+    if remaining >= BLOCK_SIZE {
+      let ks = u128::from_ne_bytes(keystream[lane]);
+      let mut d = [0u8; BLOCK_SIZE];
+      d.copy_from_slice(&data[block_offset..block_offset.strict_add(BLOCK_SIZE)]);
+      let xored = u128::from_ne_bytes(d) ^ ks;
+      data[block_offset..block_offset.strict_add(BLOCK_SIZE)].copy_from_slice(&xored.to_ne_bytes());
+      processed = processed.strict_add(BLOCK_SIZE);
+    } else {
+      let mut i = 0usize;
+      while i < remaining {
+        data[block_offset.strict_add(i)] ^= keystream[lane][i];
+        i = i.strict_add(1);
+      }
+      processed = processed.strict_add(remaining);
+    }
+    lane = lane.strict_add(1);
+  }
+
+  processed
+}
+
 // AES-CTR for GCM-SIV
 
 /// AES-256 CTR encryption/decryption for GCM-SIV.
@@ -2265,6 +2341,30 @@ pub(crate) fn aes256_ctr32_encrypt(ek: &Aes256EncKey, initial_counter: &[u8; BLO
     }
 
     counter_block[4..16].copy_from_slice(&iv_suffix);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  if matches!(&ek.inner, KeyInner::S390xMsa(_)) {
+    while offset < data.len() {
+      let remaining = data.len().strict_sub(offset);
+      let block_count = ctr_tail_block_count(remaining);
+      if block_count <= 1 {
+        break;
+      }
+
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while (i as usize) < block_count {
+        keystream[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
+        keystream[i as usize][4..16].copy_from_slice(&counter_block[4..16]);
+        i = i.strict_add(1);
+      }
+
+      aes256_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
+      let processed = xor_keystream_tail(data, offset, &keystream, block_count);
+      offset = offset.strict_add(processed);
+      ctr = ctr.wrapping_add(block_count as u32);
+    }
   }
 
   while offset < data.len() {
@@ -2350,6 +2450,30 @@ pub(crate) fn aes128_ctr32_encrypt(ek: &Aes128EncKey, initial_counter: &[u8; BLO
     }
 
     counter_block[4..16].copy_from_slice(&iv_suffix);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  if matches!(&ek.inner, Key128Inner::S390xMsa(_)) {
+    while offset < data.len() {
+      let remaining = data.len().strict_sub(offset);
+      let block_count = ctr_tail_block_count(remaining);
+      if block_count <= 1 {
+        break;
+      }
+
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while (i as usize) < block_count {
+        keystream[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
+        keystream[i as usize][4..16].copy_from_slice(&counter_block[4..16]);
+        i = i.strict_add(1);
+      }
+
+      aes128_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
+      let processed = xor_keystream_tail(data, offset, &keystream, block_count);
+      offset = offset.strict_add(processed);
+      ctr = ctr.wrapping_add(block_count as u32);
+    }
   }
 
   while offset < data.len() {
@@ -2524,6 +2648,30 @@ pub(crate) fn aes256_ctr32_encrypt_be(ek: &Aes256EncKey, initial_counter: &[u8; 
     }
 
     counter_block[..12].copy_from_slice(&iv_prefix);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  if matches!(&ek.inner, KeyInner::S390xMsa(_)) {
+    while offset < data.len() {
+      let remaining = data.len().strict_sub(offset);
+      let block_count = ctr_tail_block_count(remaining);
+      if block_count <= 1 {
+        break;
+      }
+
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while (i as usize) < block_count {
+        keystream[i as usize][..12].copy_from_slice(&counter_block[..12]);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      aes256_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
+      let processed = xor_keystream_tail(data, offset, &keystream, block_count);
+      offset = offset.strict_add(processed);
+      ctr = ctr.wrapping_add(block_count as u32);
+    }
   }
 
   while offset < data.len() {
@@ -3934,6 +4082,30 @@ pub(crate) fn aes128_ctr32_encrypt_be(ek: &Aes128EncKey, initial_counter: &[u8; 
     }
 
     counter_block[..12].copy_from_slice(&iv_prefix);
+  }
+
+  #[cfg(target_arch = "s390x")]
+  if matches!(&ek.inner, Key128Inner::S390xMsa(_)) {
+    while offset < data.len() {
+      let remaining = data.len().strict_sub(offset);
+      let block_count = ctr_tail_block_count(remaining);
+      if block_count <= 1 {
+        break;
+      }
+
+      let mut keystream = [[0u8; BLOCK_SIZE]; 4];
+      let mut i = 0u32;
+      while (i as usize) < block_count {
+        keystream[i as usize][..12].copy_from_slice(&counter_block[..12]);
+        keystream[i as usize][12..16].copy_from_slice(&ctr.wrapping_add(i).to_be_bytes());
+        i = i.strict_add(1);
+      }
+
+      aes128_encrypt_blocks_ecb(ek, &mut keystream[..block_count]);
+      let processed = xor_keystream_tail(data, offset, &keystream, block_count);
+      offset = offset.strict_add(processed);
+      ctr = ctr.wrapping_add(block_count as u32);
+    }
   }
 
   while offset < data.len() {

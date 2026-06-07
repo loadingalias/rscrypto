@@ -91,6 +91,43 @@ pub(super) unsafe fn encrypt_block_raw(raw_key: &[u8; 32], block: &mut [u8; 16])
   crate::traits::ct::zeroize(&mut src);
 }
 
+/// Encrypt multiple independent 16-byte blocks using a raw AES-256 key and one KM call.
+///
+/// # Safety
+/// Caller must ensure the MSA (CPACF) facility is available.
+/// `blocks` must contain exactly `count * 16` bytes.
+pub(super) unsafe fn encrypt_blocks_raw(raw_key: &[u8; 32], blocks: &mut [u8], count: usize) {
+  debug_assert_eq!(blocks.len(), count.strict_mul(16));
+
+  let len = count.strict_mul(16);
+  let mut src = [0u8; 16 * 8];
+  src[..len].copy_from_slice(&blocks[..len]);
+
+  let parm = raw_key.as_ptr();
+  let src_ptr = src.as_ptr();
+  let dest_ptr = blocks.as_mut_ptr();
+
+  // SAFETY: The caller guarantees the MSA facility. Source and destination
+  // are valid non-overlapping len-byte spans and the parameter block is a
+  // raw 32-byte AES-256 key.
+  unsafe {
+    core::arch::asm!(
+      "0:",
+      ".insn rre, 0xB92E0000, 2, 4",
+      "jo 0b",
+      inout("r0") 20u64 => _,
+      in("r1") parm,
+      inout("r2") dest_ptr => _,
+      inout("r3") len as u64 => _,
+      inout("r4") src_ptr => _,
+      inout("r5") len as u64 => _,
+      options(nostack),
+    );
+  }
+
+  crate::traits::ct::zeroize(&mut src[..len]);
+}
+
 /// Encrypt a single 16-byte block using the KM instruction (AES-256 ECB).
 ///
 /// # Safety
@@ -214,6 +251,44 @@ pub(super) unsafe fn encrypt_block_raw_128(raw_key: &[u8; 16], block: &mut [u8; 
   }
 
   crate::traits::ct::zeroize(&mut src);
+}
+
+/// Encrypt multiple independent 16-byte blocks using a raw AES-128 key and one KM call.
+///
+/// # Safety
+/// Caller must ensure the MSA (CPACF) facility is available.
+/// `blocks` must contain exactly `count * 16` bytes.
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+pub(super) unsafe fn encrypt_blocks_raw_128(raw_key: &[u8; 16], blocks: &mut [u8], count: usize) {
+  debug_assert_eq!(blocks.len(), count.strict_mul(16));
+
+  let len = count.strict_mul(16);
+  let mut src = [0u8; 16 * 8];
+  src[..len].copy_from_slice(&blocks[..len]);
+
+  let parm = raw_key.as_ptr();
+  let src_ptr = src.as_ptr();
+  let dest_ptr = blocks.as_mut_ptr();
+
+  // SAFETY: The caller guarantees the MSA facility. Source and destination
+  // are valid non-overlapping len-byte spans and the parameter block is a
+  // raw 16-byte AES-128 key.
+  unsafe {
+    core::arch::asm!(
+      "0:",
+      ".insn rre, 0xB92E0000, 2, 4",
+      "jo 0b",
+      inout("r0") 18u64 => _,
+      in("r1") parm,
+      inout("r2") dest_ptr => _,
+      inout("r3") len as u64 => _,
+      inout("r4") src_ptr => _,
+      inout("r5") len as u64 => _,
+      options(nostack),
+    );
+  }
+
+  crate::traits::ct::zeroize(&mut src[..len]);
 }
 
 /// Encrypt a single 16-byte block using the KM instruction (AES-128 ECB).

@@ -45,96 +45,110 @@ CASE_METADATA = {
     "left_class": "valid open with fixed secret key",
     "right_class": "valid open with random secret key",
   },
+  "aes128gcm_fixed_vs_random_key_open": {
+    "primitive": "aead.open_authentication",
+    "left_class": "s390x_aes_aead_highlevel: valid open with fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: valid open with random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD open varies the public ciphertext/tag transcript with the key class; "
+      "required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
+    ),
+  },
+  "aes256gcm_fixed_vs_random_key_open": {
+    "primitive": "aead.open_authentication",
+    "left_class": "s390x_aes_aead_highlevel: valid open with fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: valid open with random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD open varies the public ciphertext/tag transcript with the key class; "
+      "required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
+    ),
+  },
+  "aes128gcmsiv_fixed_vs_random_key_open": {
+    "primitive": "aead.open_authentication",
+    "left_class": "s390x_aes_aead_highlevel: valid open with fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: valid open with random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD open varies the public ciphertext/tag transcript with the key class; "
+      "required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
+    ),
+  },
+  "aes256gcmsiv_fixed_vs_random_key_open": {
+    "primitive": "aead.open_authentication",
+    "left_class": "s390x_aes_aead_highlevel: valid open with fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: valid open with random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD open varies the public ciphertext/tag transcript with the key class; "
+      "required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
+    ),
+  },
   "aes128_gcm_siv_diag_derive_fixed_vs_random_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_gcmsiv_key_diag: derive AES-128-GCM-SIV message keys from fixed master key",
     "right_class": "s390x_gcmsiv_key_diag: derive AES-128-GCM-SIV message keys from random master key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for per-message key derivation.",
   },
   "aes256_gcm_siv_diag_derive_fixed_vs_random_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_gcmsiv_key_diag: derive AES-256-GCM-SIV message keys from fixed master key",
     "right_class": "s390x_gcmsiv_key_diag: derive AES-256-GCM-SIV message keys from random master key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for per-message key derivation.",
   },
   "gcm_siv_diag_polyval_fixed_vs_random_auth_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_gcmsiv_key_diag: POLYVAL with fixed authentication key",
     "right_class": "s390x_gcmsiv_key_diag: POLYVAL with random authentication key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for POLYVAL under secret H.",
   },
   "aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_gcmsiv_key_diag: AES-128 tag block under fixed raw encryption key",
     "right_class": "s390x_gcmsiv_key_diag: AES-128 tag block under random raw encryption key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for raw tag AES.",
   },
   "aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_gcmsiv_key_diag: AES-256 tag block under fixed raw encryption key",
     "right_class": "s390x_gcmsiv_key_diag: AES-256 tag block under random raw encryption key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for raw tag AES.",
   },
   "aes128_gcm_diag_ctr32_be_fixed_vs_random_key": {
     "primitive": "aead.symmetric_transform",
     "left_class": "s390x_aes_aead_diag: AES-128-GCM CTR with fixed secret key",
     "right_class": "s390x_aes_aead_diag: AES-128-GCM CTR with random secret key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM timing trace for exact 44-byte CTR over the active AES backend.",
   },
   "aes256_gcm_diag_ctr32_be_fixed_vs_random_key": {
     "primitive": "aead.symmetric_transform",
     "left_class": "s390x_aes_aead_diag: AES-256-GCM CTR with fixed secret key",
     "right_class": "s390x_aes_aead_diag: AES-256-GCM CTR with random secret key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM timing trace for exact 44-byte CTR over the active AES backend.",
   },
   "aes128_gcm_diag_ghash_fixed_vs_random_h": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_aes_aead_diag: AES-128-GCM GHASH with fixed secret H",
     "right_class": "s390x_aes_aead_diag: AES-128-GCM GHASH with random secret H",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM timing trace for GHASH under the active carryless multiply backend.",
   },
   "aes256_gcm_diag_ghash_fixed_vs_random_h": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_aes_aead_diag: AES-256-GCM GHASH with fixed secret H",
     "right_class": "s390x_aes_aead_diag: AES-256-GCM GHASH with random secret H",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM timing trace for GHASH under the active carryless multiply backend.",
   },
   "aes128_gcm_diag_tag_aes_fixed_vs_random_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_aes_aead_diag: AES-128-GCM final tag AES with fixed secret key",
     "right_class": "s390x_aes_aead_diag: AES-128-GCM final tag AES with random secret key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM timing trace for final tag AES under secret key variation.",
   },
   "aes256_gcm_diag_tag_aes_fixed_vs_random_key": {
     "primitive": "aead.open_authentication",
     "left_class": "s390x_aes_aead_diag: AES-256-GCM final tag AES with fixed secret key",
     "right_class": "s390x_aes_aead_diag: AES-256-GCM final tag AES with random secret key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM timing trace for final tag AES under secret key variation.",
   },
   "aes128_gcm_siv_diag_ctr32_fixed_vs_random_key": {
     "primitive": "aead.symmetric_transform",
     "left_class": "s390x_aes_aead_diag: AES-128-GCM-SIV CTR with fixed raw encryption key",
     "right_class": "s390x_aes_aead_diag: AES-128-GCM-SIV CTR with random raw encryption key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for exact 44-byte CTR over the active AES backend.",
   },
   "aes256_gcm_siv_diag_ctr32_fixed_vs_random_key": {
     "primitive": "aead.symmetric_transform",
     "left_class": "s390x_aes_aead_diag: AES-256-GCM-SIV CTR with fixed raw encryption key",
     "right_class": "s390x_aes_aead_diag: AES-256-GCM-SIV CTR with random raw encryption key",
-    "gate": "diagnostic",
-    "reason": "s390x AES-GCM-SIV timing trace for exact 44-byte CTR over the active AES backend.",
   },
   "aes128_gcm_siv_diag_raw_tag_aes_varying_block": {
     "primitive": "aead.open_authentication",
@@ -248,6 +262,46 @@ CASE_METADATA = {
     "primitive": "password.argon2i",
     "left_class": "fixed password",
     "right_class": "random same-length password",
+  },
+  "aes128gcm_fixed_vs_random_key_seal": {
+    "primitive": "aead.symmetric_transform",
+    "left_class": "s390x_aes_aead_highlevel: fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD seal varies public ciphertext/tag output with the key class; "
+      "required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
+    ),
+  },
+  "aes256gcm_fixed_vs_random_key_seal": {
+    "primitive": "aead.symmetric_transform",
+    "left_class": "s390x_aes_aead_highlevel: fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD seal varies public ciphertext/tag output with the key class; "
+      "required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
+    ),
+  },
+  "aes128gcmsiv_fixed_vs_random_key_seal": {
+    "primitive": "aead.symmetric_transform",
+    "left_class": "s390x_aes_aead_highlevel: fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD seal varies public ciphertext/tag output with the key class; "
+      "required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
+    ),
+  },
+  "aes256gcmsiv_fixed_vs_random_key_seal": {
+    "primitive": "aead.symmetric_transform",
+    "left_class": "s390x_aes_aead_highlevel: fixed secret key",
+    "right_class": "s390x_aes_aead_highlevel: random secret key",
+    "gate": "diagnostic",
+    "reason": (
+      "High-level AEAD seal varies public ciphertext/tag output with the key class; "
+      "required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
+    ),
   },
   "chacha20poly1305_fixed_vs_random_key_seal": {
     "primitive": "aead.symmetric_transform",

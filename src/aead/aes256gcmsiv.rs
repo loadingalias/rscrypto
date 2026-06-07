@@ -1184,6 +1184,37 @@ unsafe fn decrypt_fused_ppc(
 // s390x fused encrypt/decrypt (#[target_feature(enable = "vector")] for POLYVAL)
 
 #[cfg(target_arch = "s390x")]
+unsafe fn s390x_ctr32_le_xor_raw(enc_key_bytes: &[u8; 32], counter_block: &mut [u8; 16], buffer: &mut [u8]) {
+  let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+  let mut offset = 0usize;
+
+  while offset < buffer.len() {
+    let remaining = buffer.len().strict_sub(offset);
+    let block_count = aes::ctr_tail_block_count(remaining);
+    let mut keystream = [[0u8; 16]; 4];
+    let mut i = 0u32;
+    while (i as usize) < block_count {
+      keystream[i as usize][0..4].copy_from_slice(&ctr.wrapping_add(i).to_le_bytes());
+      keystream[i as usize][4..16].copy_from_slice(&counter_block[4..16]);
+      i = i.strict_add(1);
+    }
+
+    let flat_len = block_count.strict_mul(16);
+    // SAFETY: `keystream` is a contiguous four-block array. `flat_len`
+    // is `block_count * 16`, and `block_count <= 4`.
+    let flat = unsafe { core::slice::from_raw_parts_mut(keystream.as_mut_ptr().cast::<u8>(), flat_len) };
+    // SAFETY: caller guarantees MSA; `flat` spans exactly `block_count` initialized blocks.
+    unsafe { aes::s390x_encrypt_blocks_raw_inline(enc_key_bytes, flat, block_count) };
+
+    let processed = aes::xor_keystream_tail(buffer, offset, &keystream, block_count);
+    offset = offset.strict_add(processed);
+    ctr = ctr.wrapping_add(block_count as u32);
+  }
+
+  counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+}
+
+#[cfg(target_arch = "s390x")]
 #[target_feature(enable = "vector")]
 unsafe fn encrypt_fused_s390x(
   auth_key: &mut [u8; 16],
@@ -1289,30 +1320,7 @@ unsafe fn encrypt_fused_s390x(
     // --- 5. AES-CTR encryption ---
     let mut counter_block = tag;
     counter_block[15] |= 0x80;
-    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
-    offset = 0;
-    while offset < buffer.len() {
-      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
-      let mut keystream = counter_block;
-      aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut keystream);
-
-      let remaining = buffer.len().strict_sub(offset);
-      if remaining >= 16 {
-        let mut d = [0u8; 16];
-        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
-        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
-        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
-        offset = offset.strict_add(16);
-      } else {
-        let mut i = 0usize;
-        while i < remaining {
-          buffer[offset.strict_add(i)] ^= keystream[i];
-          i = i.strict_add(1);
-        }
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
+    s390x_ctr32_le_xor_raw(enc_key_bytes, &mut counter_block, buffer);
 
     ct::zeroize(enc_key_bytes);
     tag
@@ -1339,30 +1347,7 @@ unsafe fn decrypt_fused_s390x(
     // --- 2. AES-CTR decryption (SIV: decrypt before verify) ---
     let mut counter_block = tag.0;
     counter_block[15] |= 0x80;
-    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
-    let mut offset = 0usize;
-    while offset < buffer.len() {
-      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
-      let mut keystream = counter_block;
-      aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut keystream);
-
-      let remaining = buffer.len().strict_sub(offset);
-      if remaining >= 16 {
-        let mut d = [0u8; 16];
-        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
-        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
-        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
-        offset = offset.strict_add(16);
-      } else {
-        let mut i = 0usize;
-        while i < remaining {
-          buffer[offset.strict_add(i)] ^= keystream[i];
-          i = i.strict_add(1);
-        }
-        offset = offset.strict_add(remaining);
-      }
-      ctr = ctr.wrapping_add(1);
-    }
+    s390x_ctr32_le_xor_raw(enc_key_bytes, &mut counter_block, buffer);
 
     // --- 3. POLYVAL tag computation over decrypted plaintext ---
     let h = u128::from_le_bytes(*auth_key);
@@ -1377,7 +1362,7 @@ unsafe fn decrypt_fused_s390x(
     }
 
     // Process AAD in 4-block (64-byte) chunks.
-    offset = 0;
+    let mut offset = 0usize;
     while offset.strict_add(64) <= aad.len() {
       let mut b = [0u128; 4];
       let mut i = 0usize;
