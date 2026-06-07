@@ -209,6 +209,35 @@ def manifest_dudect_cases(ct: dict[str, Any]) -> list[dict[str, Any]]:
   return cases
 
 
+def dudect_filter_tokens(value: str | None) -> list[str]:
+  if value is None:
+    return []
+  return [token.strip().lower() for token in value.split(",") if token.strip()]
+
+
+def case_matches_dudect_filter(case: dict[str, Any], tokens: list[str]) -> bool:
+  if not tokens:
+    return True
+  haystack = " ".join(
+    str(case.get(key, "")).lower()
+    for key in (
+      "name",
+      "filter",
+      "primitive",
+      "left_class",
+      "right_class",
+    )
+  )
+  return any(token in haystack for token in tokens)
+
+
+def filter_dudect_cases(cases: list[dict[str, Any]], filter_value: str | None) -> tuple[list[dict[str, Any]], list[str]]:
+  tokens = dudect_filter_tokens(filter_value)
+  if not tokens:
+    return cases, []
+  return [case for case in cases if case_matches_dudect_filter(case, tokens)], tokens
+
+
 def case_sample_count(case: dict[str, Any], *, smoke: bool, override: int | None, fallback: int) -> int:
   _ = smoke
   _ = override
@@ -438,6 +467,14 @@ def markdown_report(report: dict[str, Any]) -> str:
     lines.append(f"- `{report['binsec']['policy']}`: {report['binsec']['reason']}")
 
   lines.extend(["", "## DudeCT Summary", ""])
+  coverage_mode = report["dudect"].get("coverage_mode", "full")
+  selected = report["dudect"].get("selected_case_count", len(report["dudect"].get("cases", [])))
+  manifest_total = report["dudect"].get("manifest_case_count", selected)
+  lines.append(f"- Coverage mode: `{coverage_mode}`")
+  lines.append(f"- Selected cases: `{selected}` / `{manifest_total}`")
+  if report["dudect"].get("filter"):
+    lines.append(f"- Filter: `{report['dudect']['filter']}`")
+  lines.append("")
   counts = report["dudect"].get("status_counts", {})
   lines.append(", ".join(f"`{status}`={count}" for status, count in sorted(counts.items())) or "- no cases")
   non_pass = [case for case in report["dudect"]["cases"] if case.get("status") != "pass"]
@@ -561,6 +598,11 @@ def main() -> int:
   parser.add_argument("--threshold", type=float, default=float(os.environ.get("RSCRYPTO_CT_DUDECT_THRESHOLD", "10.0")))
   parser.add_argument("--binsec-timeout", type=int, default=120)
   parser.add_argument("--dudect-timeout", type=int, default=300)
+  parser.add_argument(
+    "--dudect-filter",
+    default="",
+    help="comma-separated DudeCT manifest case/name/filter substrings; empty runs every manifest case",
+  )
   args = parser.parse_args()
 
   root = Path(__file__).resolve().parents[2]
@@ -580,7 +622,12 @@ def main() -> int:
   logs_dir.mkdir(parents=True, exist_ok=True)
 
   ct = load_toml(root / "ct.toml")
-  manifest_cases = manifest_dudect_cases(ct)
+  all_manifest_cases = manifest_dudect_cases(ct)
+  manifest_cases, dudect_filter = filter_dudect_cases(all_manifest_cases, args.dudect_filter)
+  filtered_dudect = bool(dudect_filter)
+  if filtered_dudect and not manifest_cases:
+    print(f"ct-full: --dudect-filter {args.dudect_filter!r} matched no manifest DudeCT cases", file=sys.stderr)
+    return 2
   binsec_mode, binsec_reason = binsec_policy(ct, target)
   binsec_enabled = binsec_mode == "required"
   steps = []
@@ -627,7 +674,11 @@ def main() -> int:
       "steps": steps,
       "dudect": {
         "enabled": True,
-        "manifest_case_count": len(manifest_cases),
+        "manifest_case_count": len(all_manifest_cases),
+        "selected_case_count": len(manifest_cases),
+        "filter": args.dudect_filter or None,
+        "filter_tokens": dudect_filter,
+        "coverage_mode": "filtered" if filtered_dudect else "full",
         "samples": "manifest",
         "threshold_abs_max_t": args.threshold,
         "smoke": False,
@@ -735,7 +786,7 @@ def main() -> int:
   executed_dudect = {case["primitive"] for case in dudect_cases}
   passing_dudect = {case["primitive"] for case in dudect_cases if case["status"] == "pass"}
   required_dudect = primitive_ids_requiring_dudect(ct)
-  missing_dudect = sorted(required_dudect - executed_dudect)
+  missing_dudect = [] if filtered_dudect else sorted(required_dudect - executed_dudect)
 
   artifact_records = collect_artifact_records(out_dir)
   findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
@@ -763,7 +814,11 @@ def main() -> int:
     "steps": steps,
     "dudect": {
       "enabled": True,
-      "manifest_case_count": len(manifest_cases),
+      "manifest_case_count": len(all_manifest_cases),
+      "selected_case_count": len(manifest_cases),
+      "filter": args.dudect_filter or None,
+      "filter_tokens": dudect_filter,
+      "coverage_mode": "filtered" if filtered_dudect else "full",
       "samples": "manifest",
       "threshold_abs_max_t": args.threshold,
       "smoke": False,
@@ -792,7 +847,11 @@ def main() -> int:
       "This report is an evidence index, not a constant-time proof.",
       "DudeCT passes mean no leakage was detected for the sampled classes and host configuration.",
       "Native BINSEC evidence is required only for targets whose ct.toml binsec policy is required.",
-      "Uncovered CT-intended primitives remain blockers for ct-claimed release status.",
+      (
+        "Filtered DudeCT runs are diagnostic CI evidence; skipped manifest cases are not release coverage."
+        if filtered_dudect
+        else "Uncovered CT-intended primitives remain blockers for ct-claimed release status."
+      ),
     ],
   }
 

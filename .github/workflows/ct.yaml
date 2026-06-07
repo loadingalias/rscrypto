@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: "1800"
+      dudect_filter:
+        description: "Optional comma-separated DudeCT manifest case/name/filter substrings. Empty = all cases."
+        required: false
+        type: string
+        default: ""
       binsec_timeout:
         description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
         required: false
@@ -35,6 +40,11 @@ on:
         required: false
         type: string
         default: "1800"
+      dudect_filter:
+        description: "Optional comma-separated DudeCT manifest case/name/filter substrings. Empty = all cases."
+        required: false
+        type: string
+        default: ""
       binsec_timeout:
         description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
         required: false
@@ -111,11 +121,15 @@ jobs:
         mkdir -p ct-evidence
         status=0
         raw_artifacts="${{ inputs.upload_raw_artifacts && 'true' || 'false' }}"
+        dudect_filter="${{ inputs.dudect_filter || '' }}"
         args=(
           --target "${{ matrix.target }}"
           --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}"
           --binsec-timeout "${{ inputs.binsec_timeout || '900' }}"
         )
+        if [[ -n "$dudect_filter" ]]; then
+          args+=(--dudect-filter "$dudect_filter")
+        fi
         package_args=(--target "${{ matrix.target }}" --suffix "${{ matrix.artifact_suffix }}" --out-dir ct-evidence)
 
         {
