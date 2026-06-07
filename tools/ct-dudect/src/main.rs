@@ -5,7 +5,11 @@ use rscrypto::{
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519Keypair,
   Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512,
   RsaPkcs1v15Profile, RsaPrivateKey, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
-  aead::{Nonce96, Nonce128, Nonce192, Nonce256},
+  aead::{
+    Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcmsiv_derive_keys,
+    diag_aes128gcmsiv_polyval_digest, diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcmsiv_derive_keys,
+    diag_aes256gcmsiv_raw_tag_aes,
+  },
   diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
   diag_rsa_validate_pkcs8_private_key_der_stage,
   traits::ct,
@@ -325,6 +329,95 @@ aead_fixed_vs_random_key_open!(
   16,
   0x1A
 );
+
+fn aes128_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce = Nonce96::from_bytes([0x51; Nonce96::LENGTH]);
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let key = if matches!(class, Class::Left) {
+      [0x51; Aes128GcmSiv::KEY_SIZE]
+    } else {
+      rand_array::<{ Aes128GcmSiv::KEY_SIZE }>(rng)
+    };
+    inputs.push((class, Aes128GcmSiv::new(&Aes128GcmSivKey::from_bytes(key)), nonce));
+  }
+
+  for (class, cipher, nonce) in inputs {
+    runner.run_one(class, || diag_aes128gcmsiv_derive_keys(&cipher, &nonce));
+  }
+}
+
+fn aes256_gcm_siv_diag_derive_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let nonce = Nonce96::from_bytes([0x52; Nonce96::LENGTH]);
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let key = if matches!(class, Class::Left) {
+      [0x52; Aes256GcmSiv::KEY_SIZE]
+    } else {
+      rand_array::<{ Aes256GcmSiv::KEY_SIZE }>(rng)
+    };
+    inputs.push((class, Aes256GcmSiv::new(&Aes256GcmSivKey::from_bytes(key)), nonce));
+  }
+
+  for (class, cipher, nonce) in inputs {
+    runner.run_one(class, || diag_aes256gcmsiv_derive_keys(&cipher, &nonce));
+  }
+}
+
+fn gcm_siv_diag_polyval_fixed_vs_random_auth_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let auth_key = if matches!(class, Class::Left) {
+      [0x53; 16]
+    } else {
+      rand_array::<16>(rng)
+    };
+    inputs.push((class, auth_key));
+  }
+
+  for (class, auth_key) in inputs {
+    runner.run_one(class, || diag_aes128gcmsiv_polyval_digest(&auth_key, AAD, &AEAD_PLAINTEXT));
+  }
+}
+
+fn aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let block = [0x54; 16];
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let enc_key = if matches!(class, Class::Left) {
+      [0x54; Aes128GcmSiv::KEY_SIZE]
+    } else {
+      rand_array::<{ Aes128GcmSiv::KEY_SIZE }>(rng)
+    };
+    inputs.push((class, enc_key, block));
+  }
+
+  for (class, enc_key, block) in inputs {
+    runner.run_one(class, || diag_aes128gcmsiv_raw_tag_aes(&enc_key, &block));
+  }
+}
+
+fn aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let block = [0x55; 16];
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let enc_key = if matches!(class, Class::Left) {
+      [0x55; Aes256GcmSiv::KEY_SIZE]
+    } else {
+      rand_array::<{ Aes256GcmSiv::KEY_SIZE }>(rng)
+    };
+    inputs.push((class, enc_key, block));
+  }
+
+  for (class, enc_key, block) in inputs {
+    runner.run_one(class, || diag_aes256gcmsiv_raw_tag_aes(&enc_key, &block));
+  }
+}
 
 fn x25519_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
   let peer = X25519SecretKey::from_bytes([9u8; X25519SecretKey::LENGTH]).public_key();
@@ -812,6 +905,11 @@ ctbench_main_with_seeds!(
   (aes256gcm_fixed_vs_random_key_open, Some(0x616573323536676f)),
   (aes128gcmsiv_fixed_vs_random_key_open, Some(0x6131323867736f70)),
   (aes256gcmsiv_fixed_vs_random_key_open, Some(0x6132353667736f70)),
+  (aes128_gcm_siv_diag_derive_fixed_vs_random_key, Some(0x6131323867646572)),
+  (aes256_gcm_siv_diag_derive_fixed_vs_random_key, Some(0x6132353667646572)),
+  (gcm_siv_diag_polyval_fixed_vs_random_auth_key, Some(0x6763736976706f6c)),
+  (aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key, Some(0x6131323867746167)),
+  (aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key, Some(0x6132353667746167)),
   (chacha20poly1305_fixed_vs_random_key_open, Some(0x6368613230706f70)),
   (xchacha20poly1305_fixed_vs_random_key_open, Some(0x7863686163686132)),
   (aegis256_fixed_vs_random_key_open, Some(0x61656769736f706e)),
