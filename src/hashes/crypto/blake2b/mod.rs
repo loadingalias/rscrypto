@@ -962,23 +962,21 @@ pub fn diag_blake2b256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
 
 #[cfg(feature = "diag")]
 pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mut [u8]) {
-  let data_len = parts.iter().fold(0usize, |acc, part| acc.strict_add(part.len()));
-  assert!(
-    data_len <= BLOCK_SIZE,
-    "diag Blake2b portable parts helper only supports one-block inputs"
+  assert_eq!(
+    out.len(),
+    output_len as usize,
+    "diag Blake2b portable output length must match output buffer"
   );
-  let mut data = [0u8; BLOCK_SIZE];
-  let mut pos = 0usize;
+  let mut state = Core::new_with_compress_for_test(
+    output_len,
+    &[],
+    kernels::compress_fn(kernels::Blake2bKernelId::Portable),
+    kernels::compress_blocks_fn(kernels::Blake2bKernelId::Portable),
+  );
   for part in parts {
-    let next = pos.strict_add(part.len());
-    if let Some(dst) = data.get_mut(pos..next) {
-      dst.copy_from_slice(part);
-    }
-    pos = pos.strict_add(part.len());
+    state.update(part);
   }
-  let input = data.get(..pos).unwrap_or(&[]);
-  oneshot_small_into_with_params(output_len, &[], None, input, out, kernels::compress);
-  ct::zeroize(&mut data);
+  state.finalize_into(out);
 }
 
 impl Default for Blake2b256 {
@@ -1386,6 +1384,24 @@ mod tests {
       let actual = Blake2b512::digest(data);
       assert_eq!(actual, expected, "Blake2b512 mismatch for len={}", data.len());
     }
+  }
+
+  #[test]
+  #[cfg(feature = "diag")]
+  fn diag_hash_parts_portable_handles_multiblock_parts() {
+    let first = [0x11u8; 4];
+    let second = [0x22u8; 1024];
+    let third = [0x33u8; 17];
+
+    let mut oracle = OracleBlake2b512::new();
+    oracle.update(first);
+    oracle.update(second);
+    oracle.update(third);
+    let expected = oracle.finalize();
+
+    let mut actual = [0u8; 64];
+    diag_hash_parts_portable(64, &[&first, &second, &third], &mut actual);
+    assert_eq!(&actual[..], expected.as_slice());
   }
 
   // ── Streaming ─────────────────────────────────────────────────────────
