@@ -1,12 +1,10 @@
 name: Constant-Time
 
 on:
-  schedule:
-    - cron: "17 7 * * 0"
-  workflow_dispatch:
+  workflow_call:
     inputs:
       platforms:
-        description: "RUNNERS (Empty/all = bench-published physical CT lanes). Options: zen4, spr, icl, zen5, g3, g4, s390x, power10, riscv."
+        description: "RUNNERS (Empty/all = bench-published physical CT lanes)."
         required: false
         type: string
         default: "all"
@@ -20,6 +18,33 @@ on:
         required: false
         type: string
         default: "900"
+      upload_raw_artifacts:
+        description: "Upload raw CT build/proof artifacts for debugging. Default uploads compact reports only."
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "RUNNERS (Empty/all = bench-published physical CT lanes)."
+        required: false
+        type: string
+        default: "all"
+      dudect_timeout:
+        description: "Timeout in seconds for each per-case dudect command."
+        required: false
+        type: string
+        default: "1800"
+      binsec_timeout:
+        description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
+        required: false
+        type: string
+        default: "900"
+      upload_raw_artifacts:
+        description: "Upload raw CT build/proof artifacts for debugging. Default uploads compact reports only."
+        required: false
+        type: boolean
+        default: false
 
 env:
   RUST_BACKTRACE: 1
@@ -85,16 +110,23 @@ jobs:
         set -euo pipefail
         mkdir -p ct-evidence
         status=0
-        args=(--target "${{ matrix.target }}" --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}" --binsec-timeout "${{ inputs.binsec_timeout || '900' }}")
+        raw_artifacts="${{ inputs.upload_raw_artifacts && 'true' || 'false' }}"
+        args=(
+          --target "${{ matrix.target }}"
+          --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}"
+          --binsec-timeout "${{ inputs.binsec_timeout || '900' }}"
+        )
+        package_args=(--target "${{ matrix.target }}" --suffix "${{ matrix.artifact_suffix }}" --out-dir ct-evidence)
 
         {
           echo "Running: just ct-check ${args[*]}"
           just ct-check "${args[@]}"
         } 2>&1 | tee "ct-evidence/ct-full-${{ matrix.artifact_suffix }}.log" || status=$?
 
-        if [[ -d target/ct ]]; then
-          tar -czf "ct-evidence/target-ct-${{ matrix.artifact_suffix }}.tar.gz" target/ct
+        if [[ "$raw_artifacts" == "true" ]]; then
+          package_args+=(--raw)
         fi
+        python3 scripts/ct/package_evidence.py "${package_args[@]}"
 
         exit "$status"
       artifact_name: ct-${{ matrix.artifact_suffix }}
