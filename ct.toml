@@ -192,6 +192,8 @@ left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
 right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes256gcm_fixed_vs_random_key_open"
@@ -201,6 +203,8 @@ left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
 right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes128gcmsiv_fixed_vs_random_key_open"
@@ -210,6 +214,8 @@ left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
 right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "aes256gcmsiv_fixed_vs_random_key_open"
@@ -219,6 +225,8 @@ left_class = "s390x_aes_aead_highlevel: valid open with fixed secret key"
 right_class = "s390x_aes_aead_highlevel: valid open with random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD open varies the public ciphertext/tag transcript with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "aes128_gcm_siv_diag_derive_fixed_vs_random_key"
@@ -228,8 +236,6 @@ left_class = "s390x_gcmsiv_key_diag: derive message keys from fixed AES-128-GCM-
 right_class = "s390x_gcmsiv_key_diag: derive message keys from random AES-128-GCM-SIV master key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for per-message key derivation."
 
 [[dudect_case]]
 name = "aes256_gcm_siv_diag_derive_fixed_vs_random_key"
@@ -239,8 +245,6 @@ left_class = "s390x_gcmsiv_key_diag: derive message keys from fixed AES-256-GCM-
 right_class = "s390x_gcmsiv_key_diag: derive message keys from random AES-256-GCM-SIV master key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for per-message key derivation."
 
 [[dudect_case]]
 name = "gcm_siv_diag_polyval_fixed_vs_random_auth_key"
@@ -250,8 +254,6 @@ left_class = "s390x_gcmsiv_key_diag: POLYVAL with fixed authentication key"
 right_class = "s390x_gcmsiv_key_diag: POLYVAL with random authentication key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for POLYVAL under secret H."
 
 [[dudect_case]]
 name = "aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key"
@@ -261,8 +263,6 @@ left_class = "s390x_gcmsiv_key_diag: AES-128 tag block under fixed raw encryptio
 right_class = "s390x_gcmsiv_key_diag: AES-128 tag block under random raw encryption key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for raw tag AES."
 
 [[dudect_case]]
 name = "aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key"
@@ -272,8 +272,6 @@ left_class = "s390x_gcmsiv_key_diag: AES-256 tag block under fixed raw encryptio
 right_class = "s390x_gcmsiv_key_diag: AES-256 tag block under random raw encryption key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for raw tag AES."
 
 [[dudect_case]]
 name = "aes128_gcm_diag_ctr32_be_fixed_vs_random_key"
@@ -283,8 +281,6 @@ left_class = "s390x_aes_aead_diag: AES-128-GCM CTR with fixed secret key"
 right_class = "s390x_aes_aead_diag: AES-128-GCM CTR with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM timing trace for exact 44-byte CTR over the active AES backend."
 
 [[dudect_case]]
 name = "aes256_gcm_diag_ctr32_be_fixed_vs_random_key"
@@ -294,8 +290,6 @@ left_class = "s390x_aes_aead_diag: AES-256-GCM CTR with fixed secret key"
 right_class = "s390x_aes_aead_diag: AES-256-GCM CTR with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM timing trace for exact 44-byte CTR over the active AES backend."
 
 [[dudect_case]]
 name = "aes128_gcm_diag_ghash_fixed_vs_random_h"
@@ -305,8 +299,6 @@ left_class = "s390x_aes_aead_diag: AES-128-GCM GHASH with fixed secret H"
 right_class = "s390x_aes_aead_diag: AES-128-GCM GHASH with random secret H"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM timing trace for GHASH under the active carryless multiply backend."
 
 [[dudect_case]]
 name = "aes256_gcm_diag_ghash_fixed_vs_random_h"
@@ -316,8 +308,6 @@ left_class = "s390x_aes_aead_diag: AES-256-GCM GHASH with fixed secret H"
 right_class = "s390x_aes_aead_diag: AES-256-GCM GHASH with random secret H"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM timing trace for GHASH under the active carryless multiply backend."
 
 [[dudect_case]]
 name = "aes128_gcm_diag_tag_aes_fixed_vs_random_key"
@@ -327,8 +317,6 @@ left_class = "s390x_aes_aead_diag: AES-128-GCM final tag AES with fixed secret k
 right_class = "s390x_aes_aead_diag: AES-128-GCM final tag AES with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM timing trace for final tag AES under secret key variation."
 
 [[dudect_case]]
 name = "aes256_gcm_diag_tag_aes_fixed_vs_random_key"
@@ -338,8 +326,6 @@ left_class = "s390x_aes_aead_diag: AES-256-GCM final tag AES with fixed secret k
 right_class = "s390x_aes_aead_diag: AES-256-GCM final tag AES with random secret key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM timing trace for final tag AES under secret key variation."
 
 [[dudect_case]]
 name = "aes128_gcm_siv_diag_ctr32_fixed_vs_random_key"
@@ -349,8 +335,6 @@ left_class = "s390x_aes_aead_diag: AES-128-GCM-SIV CTR with fixed raw encryption
 right_class = "s390x_aes_aead_diag: AES-128-GCM-SIV CTR with random raw encryption key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for exact 44-byte CTR over the active AES backend."
 
 [[dudect_case]]
 name = "aes256_gcm_siv_diag_ctr32_fixed_vs_random_key"
@@ -360,8 +344,6 @@ left_class = "s390x_aes_aead_diag: AES-256-GCM-SIV CTR with fixed raw encryption
 right_class = "s390x_aes_aead_diag: AES-256-GCM-SIV CTR with random raw encryption key"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "s390x AES-GCM-SIV timing trace for exact 44-byte CTR over the active AES backend."
 
 [[dudect_case]]
 name = "aes128_gcm_siv_diag_raw_tag_aes_varying_block"
@@ -543,6 +525,8 @@ left_class = "s390x_aes_aead_highlevel: fixed secret key"
 right_class = "s390x_aes_aead_highlevel: random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes256gcm_fixed_vs_random_key_seal"
@@ -552,6 +536,8 @@ left_class = "s390x_aes_aead_highlevel: fixed secret key"
 right_class = "s390x_aes_aead_highlevel: random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM evidence is carried by the secret-only CTR/GHASH/tag-AES probes."
 
 [[dudect_case]]
 name = "aes128gcmsiv_fixed_vs_random_key_seal"
@@ -561,6 +547,8 @@ left_class = "s390x_aes_aead_highlevel: fixed secret key"
 right_class = "s390x_aes_aead_highlevel: random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "aes256gcmsiv_fixed_vs_random_key_seal"
@@ -570,6 +558,8 @@ left_class = "s390x_aes_aead_highlevel: fixed secret key"
 right_class = "s390x_aes_aead_highlevel: random secret key"
 samples = 20000
 smoke_samples = 2000
+gate = "diagnostic"
+reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
 name = "chacha20poly1305_fixed_vs_random_key_seal"
@@ -677,28 +667,36 @@ binsec = ["mac.hmac_verify.sha512.portable.all"]
 id = "aead.open_authentication.aes128gcm"
 primitive = "aead.open_authentication"
 variant = "Aes128Gcm"
-dudect = ["aes128gcm_fixed_vs_random_key_open"]
+dudect = ["aes128_gcm_diag_ghash_fixed_vs_random_h", "aes128_gcm_diag_tag_aes_fixed_vs_random_key"]
 binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.ghash_block_portable.all"]
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes256gcm"
 primitive = "aead.open_authentication"
 variant = "Aes256Gcm"
-dudect = ["aes256gcm_fixed_vs_random_key_open"]
+dudect = ["aes256_gcm_diag_ghash_fixed_vs_random_h", "aes256_gcm_diag_tag_aes_fixed_vs_random_key"]
 binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.ghash_block_portable.all"]
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes128gcmsiv"
 primitive = "aead.open_authentication"
 variant = "Aes128GcmSiv"
-dudect = ["aes128gcmsiv_fixed_vs_random_key_open"]
+dudect = [
+  "aes128_gcm_siv_diag_derive_fixed_vs_random_key",
+  "gcm_siv_diag_polyval_fixed_vs_random_auth_key",
+  "aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key",
+]
 binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.polyval_reduce_portable.all"]
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes256gcmsiv"
 primitive = "aead.open_authentication"
 variant = "Aes256GcmSiv"
-dudect = ["aes256gcmsiv_fixed_vs_random_key_open"]
+dudect = [
+  "aes256_gcm_siv_diag_derive_fixed_vs_random_key",
+  "gcm_siv_diag_polyval_fixed_vs_random_auth_key",
+  "aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key",
+]
 binsec = ["aead.open_authentication.aes_round_portable.all", "aead.open_authentication.polyval_reduce_portable.all"]
 
 [[evidence_unit]]
@@ -733,28 +731,28 @@ binsec = ["aead.open_authentication.ascon_aead128_tag_portable.all"]
 id = "aead.symmetric_transform.aes128gcm"
 primitive = "aead.symmetric_transform"
 variant = "Aes128Gcm"
-dudect = ["aes128gcm_fixed_vs_random_key_seal"]
+dudect = ["aes128_gcm_diag_ctr32_be_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.ghash_block_portable.all"]
 
 [[evidence_unit]]
 id = "aead.symmetric_transform.aes256gcm"
 primitive = "aead.symmetric_transform"
 variant = "Aes256Gcm"
-dudect = ["aes256gcm_fixed_vs_random_key_seal"]
+dudect = ["aes256_gcm_diag_ctr32_be_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.ghash_block_portable.all"]
 
 [[evidence_unit]]
 id = "aead.symmetric_transform.aes128gcmsiv"
 primitive = "aead.symmetric_transform"
 variant = "Aes128GcmSiv"
-dudect = ["aes128gcmsiv_fixed_vs_random_key_seal"]
+dudect = ["aes128_gcm_siv_diag_ctr32_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.polyval_reduce_portable.all"]
 
 [[evidence_unit]]
 id = "aead.symmetric_transform.aes256gcmsiv"
 primitive = "aead.symmetric_transform"
 variant = "Aes256GcmSiv"
-dudect = ["aes256gcmsiv_fixed_vs_random_key_seal"]
+dudect = ["aes256_gcm_siv_diag_ctr32_fixed_vs_random_key"]
 binsec = ["aead.symmetric_transform.aes_round_portable.all", "aead.symmetric_transform.polyval_reduce_portable.all"]
 
 [[evidence_unit]]
