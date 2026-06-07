@@ -329,6 +329,8 @@ left_class = "valid PKCS#8 private key A validation"
 right_class = "valid same-size same-shape PKCS#8 private key B validation"
 samples = 50000
 smoke_samples = 16
+gate = "diagnostic"
+notes = "Diagnostic only: full RSA private-key import validation performs value-dependent big-integer consistency checks over unrelated keys. Required CT evidence is scoped to bounded same-width validation leaves and steady-state private operations."
 
 [[dudect_case]]
 name = "rsa_private_key_pkcs8_export_key_a_vs_key_b"
@@ -1920,11 +1922,11 @@ public = ["der_length", "format_shape", "public_policy", "public_modulus", "publ
 may_leak = ["input_length", "public_shape_error", "public_policy_failure", "public_key", "public_modulus", "public_exponent"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Private-key import and validation are CT-critical for accepted same-shape secret material. Canonical DER export is a secret-output formatting operation and is outside the required CT release claim unless a future fixed-shape export API is added."
+notes = "RSA private-key import validation is correctness-critical, but broad unrelated-key validation is diagnostic evidence because it performs value-dependent big-integer consistency checks. Required CT evidence is scoped to bounded same-width validation leaves and steady-state private operations. Canonical DER export is a secret-output formatting operation and is outside the required CT release claim unless a future fixed-shape export API is added."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_rsa_private_key_pkcs8_roundtrip"]
-coverage = "private key import/validation material-handling harness plus diagnostic serialization coverage"
+coverage = "bounded private-key validation leaf plus diagnostic import/validation/export material-handling coverage"
 
 [[primitive]]
 id = "kdf.hkdf"
