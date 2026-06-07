@@ -380,6 +380,58 @@ fn encrypt_j0_tag(ek: &aes::Aes256EncKey, j0: &[u8; 16], acc: u128) -> [u8; TAG_
   tag
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes256gcm_ctr32_be(cipher: &Aes256Gcm, nonce: &Nonce96, plaintext: &[u8; 44]) -> [u8; 16] {
+  let (_, ctr_block) = make_j0_and_ctr(nonce);
+  let mut buffer = *plaintext;
+  aes::aes256_ctr32_encrypt_be(&cipher.ek, &ctr_block, &mut buffer);
+  diag_fold16(&buffer)
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes256gcm_ghash(cipher: &Aes256Gcm, aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
+  let h_polyval = cipher.h_powers_rev[3];
+  let mut acc = 0u128;
+  if should_use_wide_ghash(cipher.backend, aad.len(), ciphertext.len()) {
+    acc = ghash_update_padded_wide(acc, h_polyval, &cipher.h_powers_rev, aad);
+    acc = ghash_update_padded_wide(acc, h_polyval, &cipher.h_powers_rev, ciphertext);
+  } else {
+    acc = ghash_update_padded(acc, h_polyval, aad);
+    acc = ghash_update_padded(acc, h_polyval, ciphertext);
+  }
+  let length_block = match super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len()) {
+    Ok(lengths) => lengths.to_be_bits_block(),
+    Err(_) => return [0u8; 16],
+  };
+  acc ^= u128::from_be_bytes(length_block);
+  acc = polyval::clmul128_reduce(acc, h_polyval);
+  acc.to_be_bytes()
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes256gcm_tag_aes(cipher: &Aes256Gcm, nonce: &Nonce96, acc: &[u8; 16]) -> [u8; 16] {
+  let (j0, _) = make_j0_and_ctr(nonce);
+  encrypt_j0_tag(&cipher.ek, &j0, u128::from_be_bytes(*acc))
+}
+
+#[cfg(feature = "diag")]
+fn diag_fold16(data: &[u8]) -> [u8; 16] {
+  let (blocks, tail) = data.as_chunks::<16>();
+  let mut acc = 0u128;
+  for block in blocks {
+    acc ^= u128::from_ne_bytes(*block);
+  }
+  if !tail.is_empty() {
+    let mut block = [0u8; 16];
+    block[..tail.len()].copy_from_slice(tail);
+    acc ^= u128::from_ne_bytes(block);
+  }
+  acc.to_ne_bytes()
+}
+
 /// Compute the GCM authentication tag using 4-block wide GHASH.
 ///
 /// Same semantics as `compute_tag` but processes AAD and ciphertext in

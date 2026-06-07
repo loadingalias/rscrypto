@@ -264,6 +264,63 @@ pub fn diag_aes128gcmsiv_raw_tag_aes(enc_key: &[u8; 16], block: &[u8; 16]) -> [u
   out
 }
 
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_aes128gcmsiv_ctr32(enc_key: &[u8; 16], tag: &[u8; 16], plaintext: &[u8; 44]) -> [u8; 16] {
+  let mut counter_block = *tag;
+  counter_block[15] |= 0x80;
+  let mut buffer = *plaintext;
+  #[cfg(target_arch = "s390x")]
+  {
+    let mut ctr = u32::from_le_bytes([counter_block[0], counter_block[1], counter_block[2], counter_block[3]]);
+    let mut offset = 0usize;
+    while offset < buffer.len() {
+      counter_block[0..4].copy_from_slice(&ctr.to_le_bytes());
+      let mut keystream = counter_block;
+      // SAFETY: diagnostic s390x CT runs execute on the native MSA runner.
+      unsafe { aes::s390x_encrypt_block_raw_128_inline(enc_key, &mut keystream) };
+
+      let remaining = buffer.len().strict_sub(offset);
+      if remaining >= 16 {
+        let mut d = [0u8; 16];
+        d.copy_from_slice(&buffer[offset..offset.strict_add(16)]);
+        let xored = u128::from_ne_bytes(d) ^ u128::from_ne_bytes(keystream);
+        buffer[offset..offset.strict_add(16)].copy_from_slice(&xored.to_ne_bytes());
+        offset = offset.strict_add(16);
+      } else {
+        let mut i = 0usize;
+        while i < remaining {
+          buffer[offset.strict_add(i)] ^= keystream[i];
+          i = i.strict_add(1);
+        }
+        offset = offset.strict_add(remaining);
+      }
+      ctr = ctr.wrapping_add(1);
+    }
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    let ek = aes::aes128_expand_key(enc_key);
+    aes::aes128_ctr32_encrypt(&ek, &counter_block, &mut buffer);
+  }
+  diag_fold16(&buffer)
+}
+
+#[cfg(feature = "diag")]
+fn diag_fold16(data: &[u8]) -> [u8; 16] {
+  let (blocks, tail) = data.as_chunks::<16>();
+  let mut acc = 0u128;
+  for block in blocks {
+    acc ^= u128::from_ne_bytes(*block);
+  }
+  if !tail.is_empty() {
+    let mut block = [0u8; 16];
+    block[..tail.len()].copy_from_slice(tail);
+    acc ^= u128::from_ne_bytes(block);
+  }
+  acc.to_ne_bytes()
+}
+
 #[cfg(target_arch = "riscv64")]
 #[derive(Clone, Copy)]
 enum RiscvPolyvalBackend {
