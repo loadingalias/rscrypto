@@ -8692,22 +8692,16 @@ fn private_import_unsigned_be_mod_to_len(value: &[u8], modulus: &[u8], out: &mut
     return Err(RsaKeyError::InvalidModulus);
   }
 
-  let full = private_import_unsigned_be_mod(value, modulus);
-  let full = full.as_slice();
-  out.fill(0);
-  if full.len() >= out.len() {
-    let excess = full.len().strict_sub(out.len());
-    let prefix = full.get(..excess).ok_or(RsaKeyError::InvalidModulus)?;
-    if !is_zero_unsigned_be(prefix) {
-      return Err(RsaKeyError::InvalidModulus);
+  let modulus = SecretLimbs::from_be(modulus);
+  let mut remainder = SecretLimbs::zeroed(modulus.as_slice().len());
+  for &byte in value {
+    for bit in (0..8).rev() {
+      double_mod_in_place(remainder.as_mut_slice(), modulus.as_slice());
+      add_bit_mod_in_place(remainder.as_mut_slice(), modulus.as_slice(), (byte >> bit) & 1);
     }
-    let suffix = full.get(excess..).ok_or(RsaKeyError::InvalidModulus)?;
-    out.copy_from_slice(suffix);
-  } else {
-    let offset = out.len().strict_sub(full.len());
-    let dst = out.get_mut(offset..).ok_or(RsaKeyError::InvalidModulus)?;
-    dst.copy_from_slice(full);
   }
+
+  limbs_to_be(remainder.as_slice(), out);
   Ok(())
 }
 

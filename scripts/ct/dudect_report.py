@@ -86,6 +86,8 @@ CASE_METADATA = {
     "primitive": "rsa.private_key_material",
     "left_class": "valid PKCS#8 private key A validation",
     "right_class": "valid same-size same-shape PKCS#8 private key B validation",
+    "gate": "diagnostic",
+    "reason": "Full RSA private-key import validation performs value-dependent big-integer consistency checks over unrelated keys; required CT evidence is scoped to bounded validation leaves and steady-state private operations.",
   },
   "rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b": {
     "primitive": "rsa.private_key_material",

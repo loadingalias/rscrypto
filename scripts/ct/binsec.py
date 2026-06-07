@@ -296,6 +296,7 @@ def write_report(
   artifacts: dict[str, str],
   binsec_version: str | None,
   timeout_seconds: int | None,
+  smt_timeout_seconds: int | None,
 ) -> None:
   report = {
     "schema_version": 1,
@@ -312,6 +313,7 @@ def write_report(
     "status": status,
     "reason": reason,
     "timeout_seconds": timeout_seconds,
+    "smt_timeout_seconds": smt_timeout_seconds,
     "sse_depth": kernel.get("sse_depth"),
     "binsec_version": binsec_version,
     "artifacts": artifacts,
@@ -325,6 +327,7 @@ def main() -> int:
   parser.add_argument("--profile", default="release", help="build profile")
   parser.add_argument("--kernel", default=None, help="kernel id or symbol to run")
   parser.add_argument("--timeout", default="120", help="BINSEC timeout in seconds")
+  parser.add_argument("--smt-timeout", default=None, help="SMT solver timeout in seconds; defaults to --timeout")
   parser.add_argument(
     "--allow-missing-binsec",
     action="store_true",
@@ -389,11 +392,13 @@ def main() -> int:
         artifacts=artifacts,
         binsec_version=binsec_version,
         timeout_seconds=None,
+        smt_timeout_seconds=None,
       )
       continue
 
     rustflags = [str(flag) for flag in kernel.get("rustflags", [])]
     kernel_timeout = int(kernel.get("timeout", args.timeout))
+    kernel_smt_timeout = int(kernel.get("smt_timeout", args.smt_timeout if args.smt_timeout is not None else kernel_timeout))
     binary = build_harness(target, profile, rustflags)
     names = symbol_names(binary)
 
@@ -411,6 +416,7 @@ def main() -> int:
         artifacts=artifacts,
         binsec_version=binsec_version,
         timeout_seconds=kernel_timeout,
+        smt_timeout_seconds=kernel_smt_timeout,
       )
       failures += 1
       continue
@@ -425,6 +431,7 @@ def main() -> int:
         artifacts=artifacts,
         binsec_version=binsec_version,
         timeout_seconds=kernel_timeout,
+        smt_timeout_seconds=kernel_smt_timeout,
       )
       failures += 1
       continue
@@ -451,6 +458,8 @@ def main() -> int:
       str(cfg),
       "-checkct-stats-file",
       str(stats),
+      "-smt-timeout",
+      str(kernel_smt_timeout),
       "-sse-timeout",
       str(kernel_timeout),
     ]
@@ -474,6 +483,7 @@ def main() -> int:
       artifacts=artifacts,
       binsec_version=binsec_version,
       timeout_seconds=kernel_timeout,
+      smt_timeout_seconds=kernel_smt_timeout,
     )
     if status != "secure" and kernel.get("required", False):
       failures += 1
