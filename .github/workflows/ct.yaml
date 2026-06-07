@@ -121,7 +121,11 @@ jobs:
         mkdir -p ct-evidence
         status=0
         raw_artifacts="${{ inputs.upload_raw_artifacts && 'true' || 'false' }}"
-        dudect_filter="${{ inputs.dudect_filter || '' }}"
+        raw_dudect_filter="${{ inputs.dudect_filter || '' }}"
+        dudect_filter="$(printf '%s' "$raw_dudect_filter" | tr -d '[:space:]')"
+        if [[ "$raw_dudect_filter" != "$dudect_filter" ]]; then
+          echo "Normalized whitespace in DudeCT filter input."
+        fi
         args=(
           --target "${{ matrix.target }}"
           --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}"
@@ -133,8 +137,8 @@ jobs:
         package_args=(--target "${{ matrix.target }}" --suffix "${{ matrix.artifact_suffix }}" --out-dir ct-evidence)
 
         {
-          echo "Running: just ct-check ${args[*]}"
-          just ct-check "${args[@]}"
+          echo "Running: scripts/ct/full.py ${args[*]}"
+          scripts/ct/full.py "${args[@]}"
         } 2>&1 | tee "ct-evidence/ct-full-${{ matrix.artifact_suffix }}.log" || status=$?
 
         if [[ "$raw_artifacts" == "true" ]]; then
