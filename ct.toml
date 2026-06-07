@@ -276,6 +276,116 @@ gate = "diagnostic"
 reason = "s390x AES-GCM-SIV timing trace for raw tag AES."
 
 [[dudect_case]]
+name = "aes128_gcm_diag_ctr32_be_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes128_gcm_diag_ctr32_be_fixed_vs_random_key"
+left_class = "s390x_aes_aead_diag: AES-128-GCM CTR with fixed secret key"
+right_class = "s390x_aes_aead_diag: AES-128-GCM CTR with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM timing trace for exact 44-byte CTR over the active AES backend."
+
+[[dudect_case]]
+name = "aes256_gcm_diag_ctr32_be_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes256_gcm_diag_ctr32_be_fixed_vs_random_key"
+left_class = "s390x_aes_aead_diag: AES-256-GCM CTR with fixed secret key"
+right_class = "s390x_aes_aead_diag: AES-256-GCM CTR with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM timing trace for exact 44-byte CTR over the active AES backend."
+
+[[dudect_case]]
+name = "aes128_gcm_diag_ghash_fixed_vs_random_h"
+primitive = "aead.open_authentication"
+filter = "aes128_gcm_diag_ghash_fixed_vs_random_h"
+left_class = "s390x_aes_aead_diag: AES-128-GCM GHASH with fixed secret H"
+right_class = "s390x_aes_aead_diag: AES-128-GCM GHASH with random secret H"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM timing trace for GHASH under the active carryless multiply backend."
+
+[[dudect_case]]
+name = "aes256_gcm_diag_ghash_fixed_vs_random_h"
+primitive = "aead.open_authentication"
+filter = "aes256_gcm_diag_ghash_fixed_vs_random_h"
+left_class = "s390x_aes_aead_diag: AES-256-GCM GHASH with fixed secret H"
+right_class = "s390x_aes_aead_diag: AES-256-GCM GHASH with random secret H"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM timing trace for GHASH under the active carryless multiply backend."
+
+[[dudect_case]]
+name = "aes128_gcm_diag_tag_aes_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes128_gcm_diag_tag_aes_fixed_vs_random_key"
+left_class = "s390x_aes_aead_diag: AES-128-GCM final tag AES with fixed secret key"
+right_class = "s390x_aes_aead_diag: AES-128-GCM final tag AES with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM timing trace for final tag AES under secret key variation."
+
+[[dudect_case]]
+name = "aes256_gcm_diag_tag_aes_fixed_vs_random_key"
+primitive = "aead.open_authentication"
+filter = "aes256_gcm_diag_tag_aes_fixed_vs_random_key"
+left_class = "s390x_aes_aead_diag: AES-256-GCM final tag AES with fixed secret key"
+right_class = "s390x_aes_aead_diag: AES-256-GCM final tag AES with random secret key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM timing trace for final tag AES under secret key variation."
+
+[[dudect_case]]
+name = "aes128_gcm_siv_diag_ctr32_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes128_gcm_siv_diag_ctr32_fixed_vs_random_key"
+left_class = "s390x_aes_aead_diag: AES-128-GCM-SIV CTR with fixed raw encryption key"
+right_class = "s390x_aes_aead_diag: AES-128-GCM-SIV CTR with random raw encryption key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for exact 44-byte CTR over the active AES backend."
+
+[[dudect_case]]
+name = "aes256_gcm_siv_diag_ctr32_fixed_vs_random_key"
+primitive = "aead.symmetric_transform"
+filter = "aes256_gcm_siv_diag_ctr32_fixed_vs_random_key"
+left_class = "s390x_aes_aead_diag: AES-256-GCM-SIV CTR with fixed raw encryption key"
+right_class = "s390x_aes_aead_diag: AES-256-GCM-SIV CTR with random raw encryption key"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for exact 44-byte CTR over the active AES backend."
+
+[[dudect_case]]
+name = "aes128_gcm_siv_diag_raw_tag_aes_varying_block"
+primitive = "aead.open_authentication"
+filter = "aes128_gcm_siv_diag_raw_tag_aes_varying_block"
+left_class = "s390x_aes_aead_diag: AES-128-GCM-SIV raw tag AES with fixed block"
+right_class = "s390x_aes_aead_diag: AES-128-GCM-SIV raw tag AES with random block"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for raw tag AES under block variation."
+
+[[dudect_case]]
+name = "aes256_gcm_siv_diag_raw_tag_aes_varying_block"
+primitive = "aead.open_authentication"
+filter = "aes256_gcm_siv_diag_raw_tag_aes_varying_block"
+left_class = "s390x_aes_aead_diag: AES-256-GCM-SIV raw tag AES with fixed block"
+right_class = "s390x_aes_aead_diag: AES-256-GCM-SIV raw tag AES with random block"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "s390x AES-GCM-SIV timing trace for raw tag AES under block variation."
+
+[[dudect_case]]
 name = "chacha20poly1305_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
 filter = "chacha20poly1305_fixed_vs_random_key_open"
