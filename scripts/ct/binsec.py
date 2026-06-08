@@ -269,9 +269,13 @@ def binsec_script(kernel: dict, *, start_symbol: str, done_symbol: str) -> str:
 
 
 def parse_status(stdout: str, returncode: int) -> tuple[str, str]:
-  if returncode != 0:
-    return "unknown", "binsec exited nonzero"
   lowered = stdout.lower()
+  if returncode != 0:
+    if "native bitwuzla binding is required" in lowered or "solver" in lowered:
+      return "unknown", "binsec SMT solver unavailable"
+    if "can not resolve decoder" in lowered:
+      return "unknown", "binsec decoder unavailable for target"
+    return "unknown", "binsec exited nonzero"
   if "[checkct:result] program status is : secure" in lowered:
     return "secure", "binsec reported secure"
   if "[checkct:result] program status is : insecure" in lowered:
@@ -297,6 +301,7 @@ def write_report(
   binsec_version: str | None,
   timeout_seconds: int | None,
   smt_timeout_seconds: int | None,
+  smt_solver: str | None,
 ) -> None:
   report = {
     "schema_version": 1,
@@ -314,6 +319,7 @@ def write_report(
     "reason": reason,
     "timeout_seconds": timeout_seconds,
     "smt_timeout_seconds": smt_timeout_seconds,
+    "smt_solver": smt_solver,
     "sse_depth": kernel.get("sse_depth"),
     "binsec_version": binsec_version,
     "artifacts": artifacts,
@@ -328,6 +334,11 @@ def main() -> int:
   parser.add_argument("--kernel", default=None, help="kernel id or symbol to run")
   parser.add_argument("--timeout", default="120", help="BINSEC timeout in seconds")
   parser.add_argument("--smt-timeout", default=None, help="SMT solver timeout in seconds; defaults to --timeout")
+  parser.add_argument(
+    "--smt-solver",
+    default=os.environ.get("BINSEC_SMT_SOLVER", "bitwuzla:builtin"),
+    help="BINSEC SMT solver backend; default: BINSEC_SMT_SOLVER or bitwuzla:builtin",
+  )
   parser.add_argument(
     "--allow-missing-binsec",
     action="store_true",
@@ -393,6 +404,7 @@ def main() -> int:
         binsec_version=binsec_version,
         timeout_seconds=None,
         smt_timeout_seconds=None,
+        smt_solver=args.smt_solver,
       )
       continue
 
@@ -417,6 +429,7 @@ def main() -> int:
         binsec_version=binsec_version,
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
+        smt_solver=args.smt_solver,
       )
       failures += 1
       continue
@@ -432,6 +445,7 @@ def main() -> int:
         binsec_version=binsec_version,
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
+        smt_solver=args.smt_solver,
       )
       failures += 1
       continue
@@ -458,6 +472,8 @@ def main() -> int:
       str(cfg),
       "-checkct-stats-file",
       str(stats),
+      "-smt-solver",
+      str(args.smt_solver),
       "-smt-timeout",
       str(kernel_smt_timeout),
       "-sse-timeout",
@@ -484,6 +500,7 @@ def main() -> int:
       binsec_version=binsec_version,
       timeout_seconds=kernel_timeout,
       smt_timeout_seconds=kernel_smt_timeout,
+      smt_solver=args.smt_solver,
     )
     if status != "secure" and kernel.get("required", False):
       failures += 1

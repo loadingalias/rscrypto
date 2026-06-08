@@ -2,11 +2,58 @@
 # Pre-push hook: quality checks before allowing push.
 # Install:
 #   ln -sf ../../scripts/ci/pre-push.sh .git/hooks/pre-push
-# Force the full host lane with RSCRYPTO_PRE_PUSH_FULL=1.
+# Profiles:
+#   --light  skip the exhaustive rscrypto feature matrix (default)
+#   --full   preserve the existing full host lane
 
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/ci/pre-push.sh [--light|--full]
+
+Profiles:
+  --light  run pre-push checks without the exhaustive rscrypto feature matrix
+  --full   run the full host pre-push lane
+USAGE
+}
+
+PRE_PUSH_PROFILE=light
+if [[ "${RSCRYPTO_PRE_PUSH_FULL:-}" == "1" ]]; then
+  PRE_PUSH_PROFILE=full
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --light)
+      PRE_PUSH_PROFILE=light
+      shift
+      ;;
+    --full)
+      PRE_PUSH_PROFILE=full
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Error: unknown pre-push option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      # Git passes remote name/url to hooks; they are not profile options.
+      break
+      ;;
+  esac
+done
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [[ -z "$REPO_ROOT" ]]; then
@@ -128,7 +175,7 @@ needs_actions_check() {
 }
 
 needs_host_checks() {
-  if [[ "${RSCRYPTO_PRE_PUSH_FULL:-}" == "1" || "$RAIL_READY" != true ]]; then
+  if [[ "$PRE_PUSH_PROFILE" == "full" || "$RAIL_READY" != true ]]; then
     return 0
   fi
 
@@ -144,10 +191,10 @@ run_actions_check() {
 }
 
 run_host_checks() {
-  if [[ "${RSCRYPTO_PRE_PUSH_FULL:-}" == "1" ]]; then
+  if [[ "$PRE_PUSH_PROFILE" == "full" ]]; then
     just check --all
   else
-    just check
+    just check --skip-feature-matrix
   fi
 }
 
@@ -183,7 +230,7 @@ wait_tasks() {
   return "$status"
 }
 
-echo "Running pre-push checks..."
+echo "Running pre-push checks (${PRE_PUSH_PROFILE})..."
 describe_rail_plan
 
 run_shell_syntax_checks

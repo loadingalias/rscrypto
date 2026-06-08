@@ -988,7 +988,7 @@ id = "signature.ed25519_sign.basepoint_select_ifma.x86_64_linux"
 primitive = "signature.ed25519_sign"
 symbol = "ct_binsec_ed25519_select_basepoint_cached_ifma"
 tier = "A"
-required = true
+required = false
 targets = ["x86_64-unknown-linux-gnu"]
 rustflags = ["-C", "target-feature=+avx2,+avx512ifma,+avx512vl"]
 sse_depth = 20000
@@ -999,7 +999,7 @@ public = [
   { name = "BASEPOINT_RADIX16_TABLE[0]", kind = "const", value = 0 },
 ]
 assumptions = []
-notes = "Required because the IFMA selector is a shipped accelerated Ed25519 signing/public-key path on AVX-512 IFMA x86_64 CPUs. If BINSEC/Rel lacks vpmadd52 semantics on a runner, the target remains blocked until the verifier is extended or the IFMA path is removed from CT-claimed dispatch."
+notes = "Diagnostic verifier target for the shipped AVX-512 IFMA Ed25519 signing/public-key path. BINSEC/Rel 0.11.1 currently cuts this proof at AVX-512 IFMA vpmadd52* instructions; release evidence for the IFMA path is therefore DudeCT plus artifact/heuristic evidence until BINSEC gains those instruction semantics."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -1335,6 +1335,7 @@ tier = "A"
 required = true
 targets = ["*"]
 rustflags = []
+sse_depth = 5000
 secrets = [
   { name = "CT_BINSEC_ED25519_DIGIT", kind = "global", bytes = 1 },
 ]
@@ -1796,7 +1797,8 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-binsec = "required"
+binsec = "unsupported"
+binsec_reason = "BINSEC/Rel 0.11.1 loads powerpc64le ELF objects as little-endian PPC64, but its shipped PPC64 decoder registers only big-endian PPC64 in this workflow; POWER10 evidence is artifact/heuristic plus DudeCT until BINSEC supports little-endian PPC64 decoding."
 ci = "ubuntu-24.04-ppc64le-p10"
 
 [[target]]

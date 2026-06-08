@@ -56,7 +56,7 @@ runs:
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
       with:
         path: ~/.opam
-        key: binsec-opam-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-v1
+        key: binsec-opam-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-v2
 
     - name: Install Cargo Tools
       if: inputs.tools-mode != 'none'
