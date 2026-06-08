@@ -549,7 +549,7 @@ def build_findings(
     )
 
   for kernel in binsec_kernels:
-    if kernel.get("status") == "secure" or not kernel.get("required", False):
+    if kernel.get("status") == "secure":
       continue
     category = str(kernel.get("category", binsec_result_category(kernel)))
     kind = "binsec_inconclusive" if category == "proof_inconclusive" else "binsec_failure"
@@ -558,6 +558,17 @@ def build_findings(
       if category == "proof_inconclusive"
       else f"{kernel.get('kernel')} did not pass BINSEC"
     )
+    if not kernel.get("required", False) and category != "ct_failure":
+      diagnostics.append(
+        {
+          "kind": "binsec_diagnostic",
+          "severity": "diagnostic",
+          "summary": summary,
+          "primitive": kernel.get("primitive"),
+          "reason": kernel.get("reason"),
+        }
+      )
+      continue
     findings.append(
       {
         "kind": kind,
@@ -597,6 +608,11 @@ def main() -> int:
   parser.add_argument("--profile", default="release")
   parser.add_argument("--threshold", type=float, default=float(os.environ.get("RSCRYPTO_CT_DUDECT_THRESHOLD", "10.0")))
   parser.add_argument("--binsec-timeout", type=int, default=120)
+  parser.add_argument(
+    "--binsec-smt-solver",
+    default=os.environ.get("BINSEC_SMT_SOLVER", "bitwuzla:builtin"),
+    help="BINSEC SMT solver backend; default: BINSEC_SMT_SOLVER or bitwuzla:builtin",
+  )
   parser.add_argument("--dudect-timeout", type=int, default=300)
   parser.add_argument(
     "--dudect-filter",
@@ -690,6 +706,7 @@ def main() -> int:
         "policy": binsec_mode,
         "reason": binsec_reason,
         "timeout_seconds": args.binsec_timeout,
+        "smt_solver": args.binsec_smt_solver,
         "kernels": [],
         "status_counts": {},
       },
@@ -728,6 +745,8 @@ def main() -> int:
         profile,
         "--timeout",
         str(args.binsec_timeout),
+        "--smt-solver",
+        args.binsec_smt_solver,
       ],
       timeout=None,
     )
@@ -830,6 +849,7 @@ def main() -> int:
       "policy": binsec_mode,
       "reason": binsec_reason,
       "timeout_seconds": args.binsec_timeout,
+      "smt_solver": args.binsec_smt_solver,
       "kernels": binsec_kernels,
       "status_counts": summarize_status(binsec_kernels),
     },

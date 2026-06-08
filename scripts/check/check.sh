@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Host-only checks: fmt, check, clippy, optional deny/audit, doc
-# Usage: check.sh [--all] [crate1 crate2 ...]
+# Host-only checks: fmt, check, optional rscrypto feature matrix, clippy,
+# optional deny/audit, doc
+# Usage: check.sh [--skip-feature-matrix] [--all] [crate1 crate2 ...]
 
 # Prefer cargo-installed tools over any preinstalled runner tools.
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -13,8 +14,28 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 maybe_disable_sccache
 
+RUN_FEATURE_MATRIX=true
+CHECK_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --skip-feature-matrix)
+      RUN_FEATURE_MATRIX=false
+      ;;
+    --feature-matrix)
+      RUN_FEATURE_MATRIX=true
+      ;;
+    *)
+      CHECK_ARGS+=("$arg")
+      ;;
+  esac
+done
+
 # Parse args and set CRATE_FLAGS, SCOPE_DESC
-get_crate_flags "$@"
+if [[ ${#CHECK_ARGS[@]} -gt 0 ]]; then
+  get_crate_flags "${CHECK_ARGS[@]}"
+else
+  get_crate_flags
+fi
 
 # Determine if full workspace (for audit/deny)
 FULL_WORKSPACE=false
@@ -22,8 +43,13 @@ if [[ "$CRATE_FLAGS" == "--workspace" ]]; then
   FULL_WORKSPACE=true
 fi
 
-CHECK_RSCRYPTO_FEATURE_MATRIX=false
+RSCRYPTO_FEATURE_MATRIX_IN_SCOPE=false
 if [[ "$FULL_WORKSPACE" == true || "$CRATE_FLAGS" == *" -p rscrypto"* ]]; then
+  RSCRYPTO_FEATURE_MATRIX_IN_SCOPE=true
+fi
+
+CHECK_RSCRYPTO_FEATURE_MATRIX=false
+if [[ "$RSCRYPTO_FEATURE_MATRIX_IN_SCOPE" == true && "$RUN_FEATURE_MATRIX" == true ]]; then
   CHECK_RSCRYPTO_FEATURE_MATRIX=true
 fi
 
@@ -77,6 +103,8 @@ if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
     exit 1
   fi
   ok
+elif [[ "$RSCRYPTO_FEATURE_MATRIX_IN_SCOPE" == true ]]; then
+  skip "rscrypto feature matrix" "disabled for this check profile"
 fi
 
 # Clippy

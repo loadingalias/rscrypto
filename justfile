@@ -141,9 +141,15 @@ pin-actions:
 check-actions:
     @scripts/ci/pin-actions.sh --verify-only
 
-# Local pre-push hook entry (symlink into .git/hooks/pre-push).
-ci-pre-push:
-    @scripts/ci/pre-push.sh
+# Run pre-push light once, then push without re-running the Git hook.
+push *args="":
+    @scripts/ci/pre-push.sh --light
+    git push --no-verify {{ args }}
+
+# Run the full pre-push lane once, then push without re-running the Git hook.
+push-full *args="":
+    @scripts/ci/pre-push.sh --full
+    git push --no-verify {{ args }}
 
 # ─── Assets ────────────────────────────────────────────────────────
 

@@ -201,14 +201,9 @@ install_binsec() {
 
   local package="${BINSEC_OPAM_PACKAGE:-binsec.0.11.1}"
   local decoder_package="${BINSEC_DECODER_OPAM_PACKAGE:-unisim_archisec.0.0.14}"
-
-  if command -v binsec &>/dev/null && command -v opam &>/dev/null; then
-    if opam list --installed --short | grep -qx "${decoder_package%%.*}"; then
-      echo "  binsec: cached"
-      return 0
-    fi
-    echo "  binsec: cached without $decoder_package; installing decoder"
-  fi
+  local solver_packages_raw="${BINSEC_SOLVER_OPAM_PACKAGES:-bitwuzla.1.0.6 bitwuzla-cxx.0.9.0}"
+  local -a solver_packages
+  read -r -a solver_packages <<< "$solver_packages_raw"
 
   echo "  binsec: installing via OPAM"
   if ! command -v opam &>/dev/null; then
@@ -233,7 +228,31 @@ install_binsec() {
   fi
 
   eval "$(opam env --switch="$OPAMSWITCH" --set-switch)"
-  opam install "$decoder_package" "$package" -y
+  local -a required_packages=("$decoder_package" "${solver_packages[@]}" "$package")
+  local -a missing_packages=()
+  local installed_packages
+  installed_packages="$(opam list --installed --short)"
+
+  local required
+  for required in "${required_packages[@]}"; do
+    if ! grep -qx "${required%%.*}" <<<"$installed_packages"; then
+      missing_packages+=("$required")
+    fi
+  done
+
+  if command -v binsec &>/dev/null && [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    echo "  binsec: cached"
+  else
+    if [[ "${#missing_packages[@]}" -gt 0 ]]; then
+      echo "  binsec: installing missing OPAM package(s): ${missing_packages[*]}"
+    else
+      echo "  binsec: binary missing from PATH; reinstalling $package"
+    fi
+    opam install "${required_packages[@]}" -y
+    # BINSEC links optional solver bindings at build time; reinstall if a cached
+    # switch gained solver packages after BINSEC was first installed.
+    opam reinstall "$package" -y
+  fi
   eval "$(opam env --switch="$OPAMSWITCH" --set-switch)"
 
   if [[ -n "${GITHUB_PATH:-}" ]]; then

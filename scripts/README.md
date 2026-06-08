@@ -18,7 +18,7 @@ its caller. This is the 'dev' engine, so to speak.
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
-| `ci/pre-push.sh`               | `just ci-pre-push`, optional `.git/hooks/pre-push` |
+| `ci/pre-push.sh`               | `just push`, `just push-full`, optional `.git/hooks/pre-push` |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
 ## Cross-platform Check Helpers
