@@ -1413,7 +1413,7 @@ tier = "B"
 required = true
 targets = ["*"]
 rustflags = []
-sse_depth = 30000
+sse_depth = 40000
 secrets = [
   { name = "CT_BINSEC_IKM_48", kind = "global", bytes = 48 },
 ]
