@@ -275,7 +275,27 @@ def disassemble(binary: Path, out: Path) -> None:
   out.write_text(result.stdout)
 
 
-def binsec_script(kernel: dict, *, start_symbol: str, done_symbol: str) -> str:
+def elf_sections(binary: Path) -> set[str]:
+  objdump = llvm_tool("llvm-objdump")
+  result = run([objdump, "--section-headers", str(binary)])
+  if result.returncode != 0:
+    return set()
+  names: set[str] = set()
+  for line in result.stdout.splitlines():
+    parts = line.split()
+    if len(parts) >= 2 and parts[0].isdigit():
+      names.add(parts[1])
+  return names
+
+
+def binsec_load_sections(binary: Path) -> list[str]:
+  available = elf_sections(binary)
+  preferred = [".text", ".rodata", ".data.rel.ro", ".got", ".got.plt", ".data", ".bss"]
+  selected = [section for section in preferred if section in available]
+  return selected or [".text", ".rodata", ".data", ".bss"]
+
+
+def binsec_script(kernel: dict, *, start_symbol: str, done_symbol: str, load_sections: list[str]) -> str:
   secret_lines = []
   for secret in kernel.get("secrets", []):
     if secret.get("kind") == "global":
@@ -288,7 +308,7 @@ def binsec_script(kernel: dict, *, start_symbol: str, done_symbol: str) -> str:
 
   assumptions = [f"assume {assumption}" for assumption in kernel.get("assumptions", [])]
   body = [
-    "load sections .text, .rodata, .data, .bss from file",
+    f"load sections {', '.join(load_sections)} from file",
     f"starting from <{start_symbol}>",
     "with concrete stack pointer",
     *secret_lines,
@@ -337,6 +357,7 @@ def write_report(
   smt_solver: str | None,
   rustflags: list[str] | None = None,
   harness_elf_type: str | None = None,
+  load_sections: list[str] | None = None,
 ) -> None:
   report = {
     "schema_version": 1,
@@ -357,6 +378,7 @@ def write_report(
     "smt_solver": smt_solver,
     "rustflags": rustflags or [],
     "harness_elf_type": harness_elf_type,
+    "load_sections": load_sections or [],
     "sse_depth": kernel.get("sse_depth"),
     "binsec_version": binsec_version,
     "artifacts": artifacts,
@@ -444,6 +466,7 @@ def main() -> int:
         smt_solver=args.smt_solver,
         rustflags=[],
         harness_elf_type=None,
+        load_sections=[],
       )
       continue
 
@@ -472,6 +495,7 @@ def main() -> int:
         smt_solver=args.smt_solver,
         rustflags=effective_rustflags,
         harness_elf_type=harness_elf_type,
+        load_sections=[],
       )
       failures += 1
       continue
@@ -490,6 +514,7 @@ def main() -> int:
         smt_solver=args.smt_solver,
         rustflags=effective_rustflags,
         harness_elf_type=harness_elf_type,
+        load_sections=[],
       )
       failures += 1
       continue
@@ -508,6 +533,7 @@ def main() -> int:
         smt_solver=args.smt_solver,
         rustflags=effective_rustflags,
         harness_elf_type=harness_elf_type,
+        load_sections=[],
       )
       failures += 1
       continue
@@ -515,13 +541,16 @@ def main() -> int:
     driver = out_dir / "driver.elf"
     shutil.copy2(binary, driver)
     artifacts["driver.elf"] = sha256_file(driver)
+    load_sections = binsec_load_sections(driver)
 
     disasm = out_dir / "driver.disasm"
     disassemble(driver, disasm)
     artifacts["driver.disasm"] = sha256_file(disasm)
 
     cfg = out_dir / "checkct.cfg"
-    cfg.write_text(binsec_script(kernel, start_symbol=start_symbol, done_symbol=done_symbol))
+    cfg.write_text(
+      binsec_script(kernel, start_symbol=start_symbol, done_symbol=done_symbol, load_sections=load_sections)
+    )
     artifacts["checkct.cfg"] = sha256_file(cfg)
 
     stats = out_dir / "binsec-stats.toml"
@@ -565,6 +594,7 @@ def main() -> int:
       smt_solver=args.smt_solver,
       rustflags=effective_rustflags,
       harness_elf_type=harness_elf_type,
+      load_sections=load_sections,
     )
     if status != "secure" and kernel.get("required", False):
       failures += 1
