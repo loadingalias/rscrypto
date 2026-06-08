@@ -20,6 +20,7 @@ use rscrypto::{
 
 const DEFAULT_SAMPLES: usize = 20_000;
 const MESSAGE: &[u8] = b"rscrypto constant-time dudect timing lane input";
+const BLAKE3_PARALLEL_MESSAGE_LEN: usize = 1024 * 1024;
 const AAD: &[u8] = b"rscrypto-ct";
 const AEAD_PLAINTEXT: [u8; 44] = *b"constant-time seal buffer for key validation";
 const RSA_PKCS1_2048: &str = include_str!("../../../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
@@ -124,6 +125,16 @@ fn argon2i_params() -> Argon2Params {
     .memory_cost_kib(32)
     .time_cost(1)
     .parallelism(1)
+    .output_len(16)
+    .build()
+    .unwrap()
+}
+
+fn argon2i_parallel_params() -> Argon2Params {
+  Argon2Params::new()
+    .memory_cost_kib(512)
+    .time_cost(1)
+    .parallelism(4)
     .output_len(16)
     .build()
     .unwrap()
@@ -933,6 +944,28 @@ fn argon2i_fixed_vs_random_password(runner: &mut CtRunner, rng: &mut BenchRng) {
   }
 }
 
+fn argon2i_parallel_fixed_vs_random_password(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let params = argon2i_parallel_params();
+  let salt = [0xA5; 16];
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let password = if matches!(class, Class::Left) {
+      [0x71; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, password));
+  }
+
+  for (class, password) in inputs {
+    runner.run_one(class, || {
+      let mut out = [0u8; 16];
+      Argon2i::hash(&params, &password, &salt, &mut out).is_ok()
+    });
+  }
+}
+
 macro_rules! aead_fixed_vs_random_key_seal {
   ($name:ident, $cipher:ty, $key:ty, $nonce:ty, $fixed_key:expr, $key_len:expr, $nonce_byte:expr) => {
     fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
@@ -1075,6 +1108,24 @@ fn blake3_keyed_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   }
 }
 
+fn blake3_keyed_parallel_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let message = vec![0xA5; BLAKE3_PARALLEL_MESSAGE_LEN];
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let key = if matches!(class, Class::Left) {
+      [0xA4; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, key));
+  }
+
+  for (class, key) in inputs {
+    runner.run_one(class, || Blake3::keyed_digest(&key, &message).to_bytes()[0]);
+  }
+}
+
 ctbench_main_with_seeds!(
   (constant_time_eq_equal_vs_first_diff, Some(0x727363727970746f)),
   (secret_wrappers_eq_and_debug_fixed_vs_random, Some(0x7365637265745f77)),
@@ -1134,6 +1185,7 @@ ctbench_main_with_seeds!(
   (hkdf_sha2_fixed_vs_random_ikm, Some(0x686b64665f736861)),
   (pbkdf2_sha2_fixed_vs_random_password, Some(0x70626b6466325f73)),
   (argon2i_fixed_vs_random_password, Some(0x6172676f6e32695f)),
+  (argon2i_parallel_fixed_vs_random_password, Some(0x6172673269706172)),
   (aes128gcm_fixed_vs_random_key_seal, Some(0x6165733132386773)),
   (aes256gcm_fixed_vs_random_key_seal, Some(0x6165733235366773)),
   (aes128gcmsiv_fixed_vs_random_key_seal, Some(0x6131323867737365)),
@@ -1146,5 +1198,6 @@ ctbench_main_with_seeds!(
   (blake2b512_keyed_fixed_vs_random_key, Some(0x6232623531325f6b)),
   (blake2s128_keyed_fixed_vs_random_key, Some(0x6232733132385f6b)),
   (blake2s256_keyed_fixed_vs_random_key, Some(0x6232733235365f6b)),
-  (blake3_keyed_fixed_vs_random_key, Some(0x626c616b65335f6b))
+  (blake3_keyed_fixed_vs_random_key, Some(0x626c616b65335f6b)),
+  (blake3_keyed_parallel_fixed_vs_random_key, Some(0x62336b6579706172))
 );
