@@ -180,6 +180,19 @@ def primitive_ids_requiring_dudect(ct: dict[str, Any]) -> set[str]:
   return ids
 
 
+def is_diagnostic_dudect_case(case: dict[str, Any]) -> bool:
+  return case.get("gate") == "diagnostic"
+
+
+def required_dudect_cases(ct: dict[str, Any]) -> list[dict[str, Any]]:
+  return [case for case in manifest_dudect_cases(ct) if not is_diagnostic_dudect_case(case)]
+
+
+def required_dudect_primitives(ct: dict[str, Any]) -> set[str]:
+  required_primitives = primitive_ids_requiring_dudect(ct)
+  return {case["primitive"] for case in required_dudect_cases(ct) if case["primitive"] in required_primitives}
+
+
 def target_record(ct: dict[str, Any], target: str) -> dict[str, Any] | None:
   for row in ct.get("target", []):
     if row.get("name") == target:
@@ -236,6 +249,16 @@ def filter_dudect_cases(cases: list[dict[str, Any]], filter_value: str | None) -
   if not tokens:
     return cases, []
   return [case for case in cases if case_matches_dudect_filter(case, tokens)], tokens
+
+
+def filter_dudect_cases_by_gate(cases: list[dict[str, Any]], gate: str) -> list[dict[str, Any]]:
+  if gate == "all":
+    return cases
+  if gate == "required":
+    return [case for case in cases if not is_diagnostic_dudect_case(case)]
+  if gate == "diagnostic":
+    return [case for case in cases if is_diagnostic_dudect_case(case)]
+  raise ValueError(f"unsupported DudeCT gate {gate!r}")
 
 
 def case_sample_count(case: dict[str, Any], *, smoke: bool, override: int | None, fallback: int) -> int:
@@ -350,6 +373,10 @@ def dudect_case_result(
     "name": case["name"],
     "primitive": case["primitive"],
     "filter": case["filter"],
+    "gate": case.get("gate", "required"),
+    "diagnostic_reason": case.get("reason") or case.get("notes"),
+    "left_class": case.get("left_class"),
+    "right_class": case.get("right_class"),
     "status": status,
     "requested_samples": samples,
     "failure_count": failure_count,
@@ -374,6 +401,13 @@ def dudect_case_result(
     ):
       if key in case_report:
         row[key] = case_report[key]
+  row["primitive"] = case["primitive"]
+  row["gate"] = case.get("gate", "required")
+  row["diagnostic_reason"] = case.get("reason") or case.get("notes") or row.get("diagnostic_reason")
+  row["left_class"] = case.get("left_class", row.get("left_class"))
+  row["right_class"] = case.get("right_class", row.get("right_class"))
+  if row["gate"] == "diagnostic" and row["status"] == "fail":
+    row["status"] = "diagnostic-fail"
   return row
 
 
@@ -470,10 +504,19 @@ def markdown_report(report: dict[str, Any]) -> str:
   coverage_mode = report["dudect"].get("coverage_mode", "full")
   selected = report["dudect"].get("selected_case_count", len(report["dudect"].get("cases", [])))
   manifest_total = report["dudect"].get("manifest_case_count", selected)
+  gate_total = report["dudect"].get("gate_case_count", selected)
+  gate = report["dudect"].get("gate", "all")
+  lines.append(f"- Gate: `{gate}`")
   lines.append(f"- Coverage mode: `{coverage_mode}`")
-  lines.append(f"- Selected cases: `{selected}` / `{manifest_total}`")
+  lines.append(f"- Selected cases: `{selected}` / `{gate_total}` gate cases (`{manifest_total}` total manifest cases)")
   if report["dudect"].get("filter"):
     lines.append(f"- Filter: `{report['dudect']['filter']}`")
+  coverage = report.get("coverage", {})
+  if coverage:
+    required = len(coverage.get("required_dudect_primitives", []))
+    executed_required = len(coverage.get("executed_required_dudect_primitives", []))
+    passing_required = len(coverage.get("passing_required_dudect_primitives", []))
+    lines.append(f"- Required primitive coverage: `{passing_required}` passing / `{executed_required}` executed / `{required}` required")
   lines.append("")
   counts = report["dudect"].get("status_counts", {})
   lines.append(", ".join(f"`{status}`={count}" for status, count in sorted(counts.items())) or "- no cases")
@@ -617,7 +660,13 @@ def main() -> int:
   parser.add_argument(
     "--dudect-filter",
     default="",
-    help="comma-separated DudeCT manifest case/name/filter substrings; empty runs every manifest case",
+    help="comma-separated DudeCT case/name/filter substrings; empty runs every case in the selected gate",
+  )
+  parser.add_argument(
+    "--dudect-gate",
+    choices=("required", "diagnostic", "all"),
+    default=os.environ.get("RSCRYPTO_CT_DUDECT_GATE", "required"),
+    help="DudeCT gate class to execute; required is the release evidence gate, diagnostic is non-blocking trace evidence",
   )
   args = parser.parse_args()
 
@@ -639,10 +688,14 @@ def main() -> int:
 
   ct = load_toml(root / "ct.toml")
   all_manifest_cases = manifest_dudect_cases(ct)
-  manifest_cases, dudect_filter = filter_dudect_cases(all_manifest_cases, args.dudect_filter)
+  gate_manifest_cases = filter_dudect_cases_by_gate(all_manifest_cases, args.dudect_gate)
+  manifest_cases, dudect_filter = filter_dudect_cases(gate_manifest_cases, args.dudect_filter)
   filtered_dudect = bool(dudect_filter)
   if filtered_dudect and not manifest_cases:
-    print(f"ct-full: --dudect-filter {args.dudect_filter!r} matched no manifest DudeCT cases", file=sys.stderr)
+    print(
+      f"ct-full: --dudect-filter {args.dudect_filter!r} matched no {args.dudect_gate} DudeCT cases",
+      file=sys.stderr,
+    )
     return 2
   binsec_mode, binsec_reason = binsec_policy(ct, target)
   binsec_enabled = binsec_mode == "required"
@@ -691,10 +744,12 @@ def main() -> int:
       "dudect": {
         "enabled": True,
         "manifest_case_count": len(all_manifest_cases),
+        "gate_case_count": len(gate_manifest_cases),
         "selected_case_count": len(manifest_cases),
         "filter": args.dudect_filter or None,
         "filter_tokens": dudect_filter,
-        "coverage_mode": "filtered" if filtered_dudect else "full",
+        "gate": args.dudect_gate,
+        "coverage_mode": "filtered" if filtered_dudect else args.dudect_gate,
         "samples": "manifest",
         "threshold_abs_max_t": args.threshold,
         "smoke": False,
@@ -712,8 +767,11 @@ def main() -> int:
       },
       "coverage": {
         "required_dudect_primitives": sorted(primitive_ids_requiring_dudect(ct)),
+        "manifest_required_dudect_primitives": sorted(required_dudect_primitives(ct)),
         "executed_dudect_primitives": [],
+        "executed_required_dudect_primitives": [],
         "passing_dudect_primitives": [],
+        "passing_required_dudect_primitives": [],
         "missing_dudect_primitives": [],
       },
       "findings": findings,
@@ -803,9 +861,22 @@ def main() -> int:
     )
 
   executed_dudect = {case["primitive"] for case in dudect_cases}
+  executed_required_dudect = {case["primitive"] for case in dudect_cases if case.get("gate") != "diagnostic"}
   passing_dudect = {case["primitive"] for case in dudect_cases if case["status"] == "pass"}
+  passing_required_dudect = {
+    case["primitive"] for case in dudect_cases if case["status"] == "pass" and case.get("gate") != "diagnostic"
+  }
   required_dudect = primitive_ids_requiring_dudect(ct)
-  missing_dudect = [] if filtered_dudect else sorted(required_dudect - executed_dudect)
+  manifest_required_dudect = required_dudect_primitives(ct)
+  missing_dudect = (
+    []
+    if filtered_dudect or args.dudect_gate != "required"
+    else sorted(required_dudect - executed_required_dudect)
+  )
+  missing_manifest_required_dudect = (
+    [] if filtered_dudect or args.dudect_gate != "required" else sorted(required_dudect - manifest_required_dudect)
+  )
+  missing_dudect = sorted(set(missing_dudect) | set(missing_manifest_required_dudect))
 
   artifact_records = collect_artifact_records(out_dir)
   findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
@@ -834,10 +905,12 @@ def main() -> int:
     "dudect": {
       "enabled": True,
       "manifest_case_count": len(all_manifest_cases),
+      "gate_case_count": len(gate_manifest_cases),
       "selected_case_count": len(manifest_cases),
       "filter": args.dudect_filter or None,
       "filter_tokens": dudect_filter,
-      "coverage_mode": "filtered" if filtered_dudect else "full",
+      "gate": args.dudect_gate,
+      "coverage_mode": "filtered" if filtered_dudect else args.dudect_gate,
       "samples": "manifest",
       "threshold_abs_max_t": args.threshold,
       "smoke": False,
@@ -855,8 +928,11 @@ def main() -> int:
     },
     "coverage": {
       "required_dudect_primitives": sorted(required_dudect),
+      "manifest_required_dudect_primitives": sorted(manifest_required_dudect),
       "executed_dudect_primitives": sorted(executed_dudect),
+      "executed_required_dudect_primitives": sorted(executed_required_dudect),
       "passing_dudect_primitives": sorted(passing_dudect),
+      "passing_required_dudect_primitives": sorted(passing_required_dudect),
       "missing_dudect_primitives": missing_dudect,
     },
     "findings": findings,

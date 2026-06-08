@@ -12,8 +12,8 @@ use rscrypto::{
   Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, Ed25519PublicKey,
   Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256,
-  Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, Scrypt, ScryptParams, SecretBytes,
-  Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, Scrypt,
+  ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
   traits::ct,
@@ -809,6 +809,64 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
+  out: *mut u8,
+  out_len: usize,
+  pkcs8_der: *const u8,
+  pkcs8_der_len: usize,
+  message: *const u8,
+  message_len: usize,
+  salt: *const u8,
+  salt_len: usize,
+  blinding_factor: *const u8,
+  blinding_factor_len: usize,
+  blinding_inverse: *const u8,
+  blinding_inverse_len: usize,
+) -> u8 {
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(out) = (unsafe { output_slice(out, out_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(blinding_factor) = (unsafe { input_slice(blinding_factor, blinding_factor_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(blinding_inverse) = (unsafe { input_slice(blinding_inverse, blinding_inverse_len) }) else {
+    return STATUS_ERR;
+  };
+
+  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+    return STATUS_ERR;
+  };
+  let mut scratch = key.private_scratch();
+  key
+    .sign_pss_with_salt_and_blinding_factor_and_scratch(
+      RsaPssProfile::Sha256,
+      message,
+      salt,
+      blinding_factor,
+      blinding_inverse,
+      out,
+      &mut scratch,
+    )
+    .map(|()| STATUS_OK)
+    .unwrap_or(STATUS_ERR)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
   out: *mut u8,
   out_len: usize,
@@ -856,6 +914,55 @@ pub extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
     .decrypt_oaep_with_blinding_factor_and_scratch(
       RsaOaepProfile::Sha256,
       label,
+      ciphertext,
+      blinding_factor,
+      blinding_inverse,
+      out,
+      &mut scratch,
+    )
+    .unwrap_or(usize::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
+  out: *mut u8,
+  out_len: usize,
+  pkcs8_der: *const u8,
+  pkcs8_der_len: usize,
+  ciphertext: *const u8,
+  ciphertext_len: usize,
+  blinding_factor: *const u8,
+  blinding_factor_len: usize,
+  blinding_inverse: *const u8,
+  blinding_inverse_len: usize,
+) -> usize {
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(out) = (unsafe { output_slice(out, out_len) }) else {
+    return usize::MAX;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
+    return usize::MAX;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(ciphertext) = (unsafe { input_slice(ciphertext, ciphertext_len) }) else {
+    return usize::MAX;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(blinding_factor) = (unsafe { input_slice(blinding_factor, blinding_factor_len) }) else {
+    return usize::MAX;
+  };
+  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  let Some(blinding_inverse) = (unsafe { input_slice(blinding_inverse, blinding_inverse_len) }) else {
+    return usize::MAX;
+  };
+
+  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+    return usize::MAX;
+  };
+  let mut scratch = key.private_scratch();
+  key
+    .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
       ciphertext,
       blinding_factor,
       blinding_inverse,

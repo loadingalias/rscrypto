@@ -4,7 +4,8 @@ use rscrypto::{
   Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519Keypair,
   Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512,
-  RsaPkcs1v15Profile, RsaPrivateKey, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes, Sha512, X25519SecretKey,
+  XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash,
     diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys,
@@ -12,6 +13,7 @@ use rscrypto::{
     diag_aes256gcm_ghash, diag_aes256gcm_tag_aes, diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys,
     diag_aes256gcmsiv_raw_tag_aes,
   },
+  auth::diag_rsa_private_component_validation_32,
   diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
   diag_rsa_validate_pkcs8_private_key_der_stage,
   traits::ct,
@@ -734,6 +736,145 @@ fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRn
   }
 }
 
+fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
+  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let sig_len = key.signature_len();
+  let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
+  let salt = [0x7a; 32];
+
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let message = if matches!(class, Class::Left) {
+      [0x42; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    inputs.push((class, message));
+  }
+
+  for (class, message) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      key
+        .sign_pss_with_salt_and_blinding_factor(
+          RsaPssProfile::Sha256,
+          &message,
+          &salt,
+          &blinding_factor,
+          &blinding_inverse,
+          &mut out,
+        )
+        .is_ok()
+    });
+  }
+}
+
+fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
+  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let sig_len = key.signature_len();
+  let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
+  let label = b"rscrypto-ct-oaep";
+  let seed = [0x52; 32];
+
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let plaintext = if matches!(class, Class::Left) {
+      [0x42; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    let mut ciphertext = vec![0u8; sig_len];
+    key
+      .public_key()
+      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, &plaintext, &seed, &mut ciphertext)
+      .unwrap();
+    inputs.push((class, ciphertext));
+  }
+
+  for (class, ciphertext) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      key
+        .decrypt_oaep_with_blinding_factor(
+          RsaOaepProfile::Sha256,
+          label,
+          &ciphertext,
+          &blinding_factor,
+          &blinding_inverse,
+          &mut out,
+        )
+        .is_ok()
+    });
+  }
+}
+
+fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
+  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let sig_len = key.signature_len();
+  let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
+  let seed_len = sig_len.strict_sub(32).strict_sub(3);
+  let seed = vec![0x5d; seed_len];
+
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let plaintext = if matches!(class, Class::Left) {
+      [0x42; 32]
+    } else {
+      rand_array::<32>(rng)
+    };
+    let mut ciphertext = vec![0u8; sig_len];
+    key
+      .public_key()
+      .encrypt_pkcs1v15_with_seed(&plaintext, &seed, &mut ciphertext)
+      .unwrap();
+    inputs.push((class, ciphertext));
+  }
+
+  for (class, ciphertext) in inputs {
+    runner.run_one(class, || {
+      let mut out = vec![0u8; sig_len];
+      key
+        .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_inverse, &mut out)
+        .is_ok()
+    });
+  }
+}
+
+fn rsa_private_component_validation_fixed_vs_random_component(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let upper_bound = [0xff; 32];
+  let other = [0xa5; 32];
+  let fixed = [0x43; 32];
+
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let mut component = if matches!(class, Class::Left) {
+      fixed
+    } else {
+      let mut random = rand_array::<32>(rng);
+      random[0] |= 1;
+      random[31] |= 1;
+      if random == other {
+        random[1] ^= 1;
+      }
+      random
+    };
+    component[0] |= 1;
+    component[31] |= 1;
+    inputs.push((class, component));
+  }
+
+  for (class, component) in inputs {
+    runner.run_one(class, || diag_rsa_private_component_validation_32(&component, &upper_bound, &other));
+  }
+}
+
 fn rsa_private_key_pkcs8_import_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
   let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
@@ -1163,6 +1304,10 @@ ctbench_main_with_seeds!(
   (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
   (rsa_pkcs1v15_fixed_vs_random_message, Some(0x7273615f7369676e)),
+  (rsa_pss_fixed_vs_random_message, Some(0x7273615f70737373)),
+  (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
+  (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
+  (rsa_private_component_validation_fixed_vs_random_component, Some(0x7273615f636f6d70)),
   (rsa_private_key_pkcs8_import_key_a_vs_key_b, Some(0x7273615f6b657969)),
   (rsa_private_key_pkcs8_validate_key_a_vs_key_b, Some(0x7273615f76616c69)),
   (rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b, Some(0x7273615f76733030)),

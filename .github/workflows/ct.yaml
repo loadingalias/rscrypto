@@ -14,10 +14,15 @@ on:
         type: string
         default: "1800"
       dudect_filter:
-        description: "Optional comma-separated DudeCT manifest case/name/filter substrings. Empty = all cases."
+        description: "Optional comma-separated DudeCT case/name/filter substrings. Empty = all cases in selected gate."
         required: false
         type: string
         default: ""
+      dudect_gate:
+        description: "DudeCT gate to run: required, diagnostic, or all. Required is release evidence."
+        required: false
+        type: string
+        default: "required"
       binsec_timeout:
         description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
         required: false
@@ -41,10 +46,19 @@ on:
         type: string
         default: "1800"
       dudect_filter:
-        description: "Optional comma-separated DudeCT manifest case/name/filter substrings. Empty = all cases."
+        description: "Optional comma-separated DudeCT case/name/filter substrings. Empty = all cases in selected gate."
         required: false
         type: string
         default: ""
+      dudect_gate:
+        description: "DudeCT gate to run: required, diagnostic, or all. Required is release evidence."
+        required: false
+        type: choice
+        options:
+          - required
+          - diagnostic
+          - all
+        default: "required"
       binsec_timeout:
         description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
         required: false
@@ -122,14 +136,24 @@ jobs:
         status=0
         raw_artifacts="${{ inputs.upload_raw_artifacts && 'true' || 'false' }}"
         raw_dudect_filter="${{ inputs.dudect_filter || '' }}"
+        raw_dudect_gate="${{ inputs.dudect_gate || 'required' }}"
         dudect_filter="$(printf '%s' "$raw_dudect_filter" | tr -d '[:space:]')"
+        dudect_gate="$(printf '%s' "$raw_dudect_gate" | tr -d '[:space:]')"
         if [[ "$raw_dudect_filter" != "$dudect_filter" ]]; then
           echo "Normalized whitespace in DudeCT filter input."
         fi
+        case "$dudect_gate" in
+          required|diagnostic|all) ;;
+          *)
+            echo "Invalid DudeCT gate: $dudect_gate" >&2
+            exit 2
+            ;;
+        esac
         args=(
           --target "${{ matrix.target }}"
           --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}"
           --binsec-timeout "${{ inputs.binsec_timeout || '900' }}"
+          --dudect-gate "$dudect_gate"
         )
         if [[ -n "$dudect_filter" ]]; then
           args+=(--dudect-filter "$dudect_filter")

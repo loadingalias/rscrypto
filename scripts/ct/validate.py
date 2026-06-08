@@ -146,6 +146,14 @@ def ct_required_primitives(ct: dict) -> list[dict]:
   return rows
 
 
+def is_diagnostic_dudect_case(case: dict) -> bool:
+  return case.get("gate") == "diagnostic"
+
+
+def required_dudect_cases(ct: dict) -> list[dict]:
+  return [case for case in ct.get("dudect_case", []) if not is_diagnostic_dudect_case(case)]
+
+
 def generated_symbols(artifact_dir: Path) -> set[str]:
   symbols: set[str] = set()
   for path in artifact_dir.glob("*.symbols.txt"):
@@ -162,6 +170,20 @@ def recorded_hashes(path: Path) -> dict[str, str]:
     if len(parts) == 2:
       recorded[parts[1]] = parts[0]
   return recorded
+
+
+def dudect_registered_benches(root: Path, errors: list[str]) -> set[str]:
+  path = root / "tools" / "ct-dudect" / "src" / "main.rs"
+  if not path.exists():
+    fail(errors, f"DudeCT source missing: {path}")
+    return set()
+  text = path.read_text()
+  start = text.find("ctbench_main_with_seeds!(")
+  if start < 0:
+    fail(errors, "DudeCT source has no ctbench_main_with_seeds! registry")
+    return set()
+  body = text[start:]
+  return set(re.findall(r"^\s*\(([A-Za-z0-9_]+),\s*Some\(", body, re.MULTILINE))
 
 
 def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dict:
@@ -270,6 +292,17 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       fail(errors, f"DudeCT case {name} references unknown primitive {primitive!r}")
     if not case.get("filter"):
       fail(errors, f"DudeCT case {name} missing filter")
+    if case.get("gate") == "diagnostic" and not (case.get("reason") or case.get("notes")):
+      fail(errors, f"diagnostic DudeCT case {name} requires reason or notes")
+
+  registered_dudect = dudect_registered_benches(root, errors)
+  if registered_dudect:
+    missing_from_manifest = sorted(registered_dudect - dudect_names)
+    missing_from_runner = sorted(dudect_names - registered_dudect)
+    if missing_from_manifest:
+      fail(errors, f"DudeCT runner has unmanifested bench(es): {', '.join(missing_from_manifest)}")
+    if missing_from_runner:
+      fail(errors, f"ct.toml has DudeCT case(s) missing from runner: {', '.join(missing_from_runner)}")
 
   unit_ids: set[str] = set()
   for unit in ct.get("evidence_unit", []):
@@ -393,8 +426,8 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
 
 def validate_strict_coverage(ct: dict, errors: list[str]) -> None:
   targets = binsec_required_targets(ct)
-  dudect_primitives = {case.get("primitive") for case in ct.get("dudect_case", [])}
-  dudect_case_names = {case.get("name") for case in ct.get("dudect_case", []) if case.get("gate") != "diagnostic"}
+  dudect_primitives = {case.get("primitive") for case in required_dudect_cases(ct)}
+  dudect_case_names = {case.get("name") for case in required_dudect_cases(ct)}
   evidence_units_by_primitive: dict[str, list[dict]] = {}
   for unit in ct.get("evidence_unit", []):
     primitive = unit.get("primitive")
@@ -413,7 +446,7 @@ def validate_strict_coverage(ct: dict, errors: list[str]) -> None:
   for primitive in ct_required_primitives(ct):
     primitive_id = primitive.get("id", "<unnamed>")
     if primitive_requires_evidence(ct, primitive, "dudect") and primitive_id not in dudect_primitives:
-      fail(errors, f"primitive {primitive_id} requires DudeCT but has no [[dudect_case]]")
+      fail(errors, f"primitive {primitive_id} requires at least one non-diagnostic DudeCT case")
     variants = primitive.get("variants", [])
     if primitive_requires_evidence(ct, primitive, "dudect") and variants:
       units = evidence_units_by_primitive.get(primitive_id, [])

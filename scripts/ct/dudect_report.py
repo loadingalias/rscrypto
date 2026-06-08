@@ -194,6 +194,26 @@ CASE_METADATA = {
     "left_class": "fixed message",
     "right_class": "random same-length message",
   },
+  "rsa_pss_fixed_vs_random_message": {
+    "primitive": "rsa.private_ops",
+    "left_class": "fixed message",
+    "right_class": "random same-length message",
+  },
+  "rsa_oaep_decrypt_fixed_vs_random_plaintext": {
+    "primitive": "rsa.private_ops",
+    "left_class": "valid OAEP ciphertext for fixed plaintext",
+    "right_class": "valid OAEP ciphertext for random same-length plaintext",
+  },
+  "rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext": {
+    "primitive": "rsa.private_ops",
+    "left_class": "valid PKCS#1 v1.5 ciphertext for fixed plaintext",
+    "right_class": "valid PKCS#1 v1.5 ciphertext for random same-length plaintext",
+  },
+  "rsa_private_component_validation_fixed_vs_random_component": {
+    "primitive": "rsa.private_key_material",
+    "left_class": "fixed same-width private component",
+    "right_class": "random same-width private component",
+  },
   "rsa_private_key_pkcs8_import_key_a_vs_key_b": {
     "primitive": "rsa.private_key_material",
     "left_class": "valid PKCS#8 private key A",

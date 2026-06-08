@@ -52,15 +52,17 @@ machine code.
 
 The release gate is `just ct-check`. It is intentionally the same hard gate as
 `just ct-full`: build CT artifacts, validate the manifest/artifacts, run every
-manifest-declared DudeCT case, and run BINSEC where the target policy requires
-it.
+required DudeCT case, and run BINSEC where the target policy requires it.
+Diagnostic DudeCT cases are available for investigation, but they do not satisfy
+release coverage and do not block the required gate unless promoted in
+[`ct.toml`](../ct.toml).
 
 The current gates are:
 
 | Gate | What it checks today | Applies to |
 |---|---|---|
 | Artifact and heuristic review | Build provenance, LLVM IR, assembly, object disassembly, symbol maps, reviewed hashes, and suspicious instruction/control-flow patterns. | Native LLVM targets in the CT matrix. |
-| DudeCT timing evidence | Empirical timing tests for every manifest-declared CT-critical primitive case. A failure or missing required case fails `ct-check`. | Native host-executable targets. |
+| DudeCT timing evidence | Empirical timing tests for every required manifest-declared CT-critical primitive case. A failure or missing required case fails `ct-check`; diagnostic cases are reported separately. | Native host-executable targets. |
 | BINSEC binary evidence | Binary-level symbolic checks for manifest-declared CT leaf kernels. A required non-`secure` kernel fails `ct-check`. | Linux ELF targets whose ISA/object path is supported by this workflow. |
 
 This is an evidence pipeline. It is not a whole-crate formal proof, and it does
@@ -226,6 +228,11 @@ shape for a current claimed native target is:
 - Binary-level symbolic check for small high-risk kernels on supported Linux
   ELF targets.
 - Miri and unsafe validation for code paths that rely on unsafe Rust.
+
+Diagnostic cases must stay visibly separate from release evidence. They can be
+run with `--dudect-gate diagnostic` or `--dudect-gate all`, but a primitive that
+requires DudeCT still needs at least one non-diagnostic manifest case, and each
+declared variant needs its own evidence unit when variants are listed.
 
 A primitive/configuration pair may be marked `ct-claimed` only when all required
 evidence for that manifest entry and target class passes. If physical timing
