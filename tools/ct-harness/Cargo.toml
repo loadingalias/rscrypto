@@ -12,4 +12,4 @@ crate-type = ["staticlib"]
 bench = false
 
 [dependencies]
-rscrypto = { path = "../..", default-features = false, features = ["std", "full"] }
+rscrypto = { path = "../..", default-features = false, features = ["std", "full", "parallel"] }

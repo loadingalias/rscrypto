@@ -518,6 +518,15 @@ samples = 128
 smoke_samples = 16
 
 [[dudect_case]]
+name = "argon2i_parallel_fixed_vs_random_password"
+primitive = "password.argon2i"
+filter = "argon2i_parallel"
+left_class = "parallel Argon2i p=4 with fixed password"
+right_class = "parallel Argon2i p=4 with random same-length password"
+samples = 256
+smoke_samples = 16
+
+[[dudect_case]]
 name = "aes128gcm_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
 filter = "aes128gcm_fixed_vs_random_key_seal"
@@ -641,6 +650,15 @@ left_class = "fixed BLAKE3 key"
 right_class = "random same-length BLAKE3 key"
 samples = 20000
 smoke_samples = 2000
+
+[[dudect_case]]
+name = "blake3_keyed_parallel_fixed_vs_random_key"
+primitive = "keyed_hash.blake2_blake3"
+filter = "blake3_keyed_parallel"
+left_class = "parallel BLAKE3 keyed digest over 1 MiB with fixed key"
+right_class = "parallel BLAKE3 keyed digest over 1 MiB with random same-length key"
+samples = 4096
+smoke_samples = 512
 
 [[evidence_unit]]
 id = "mac.hmac_verify.sha256"

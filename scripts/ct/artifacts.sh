@@ -190,6 +190,6 @@ fi
   --out-dir "$OUT_DIR" \
   --build-target-dir "$BUILD_TARGET_DIR" \
   --backend llvm \
-  --features std,full
+  --features std,full,parallel
 
 echo "CT artifacts written to $OUT_DIR"
