@@ -170,7 +170,45 @@ def configure_cross_linker(env: dict[str, str], target: str) -> None:
   env.setdefault("ZIG_CC_TARGET", target)
 
 
-def build_harness(target: str, profile: str, rustflags: list[str]) -> Path:
+def default_target_rustflags(target: str) -> list[str]:
+  if target.startswith("x86_64-"):
+    return ["-C", "target-cpu=x86-64"]
+  if target.startswith("aarch64-"):
+    return ["-C", "target-cpu=generic"]
+  if target.startswith("powerpc64le-"):
+    return ["-C", "target-feature=+altivec,+vsx,+power8-vector"]
+  if target.startswith("s390x-") or target.startswith("riscv"):
+    return ["-C", "target-cpu=generic"]
+  return []
+
+
+def binsec_proof_rustflags(target: str) -> list[str]:
+  if target.endswith("-unknown-linux-gnu"):
+    return ["-C", "relocation-model=static", "-C", "link-arg=-no-pie"]
+  return []
+
+
+def elf_type(binary: Path) -> str | None:
+  try:
+    header = binary.read_bytes()[:18]
+  except OSError:
+    return None
+  if len(header) < 18 or header[:4] != b"\x7fELF":
+    return None
+  byteorder = "little" if header[5] == 1 else "big" if header[5] == 2 else None
+  if byteorder is None:
+    return None
+  value = int.from_bytes(header[16:18], byteorder)
+  names = {
+    1: "relocatable",
+    2: "exec",
+    3: "dyn",
+    4: "core",
+  }
+  return names.get(value, f"unknown-{value}")
+
+
+def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path, list[str]]:
   if profile != "release":
     raise SystemExit("only --profile release is supported for BINSEC today")
 
@@ -188,18 +226,13 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> Path:
   ]
   env = os.environ.copy()
   configure_cross_linker(env, target)
+  effective_rustflags = list(rustflags)
   if not rustflags:
-    if target.startswith("x86_64-"):
-      rustflags = ["-C", "target-cpu=x86-64"]
-    elif target.startswith("aarch64-"):
-      rustflags = ["-C", "target-cpu=generic"]
-    elif target.startswith("powerpc64le-"):
-      rustflags = ["-C", "target-feature=+altivec,+vsx,+power8-vector"]
-    elif target.startswith("s390x-") or target.startswith("riscv"):
-      rustflags = ["-C", "target-cpu=generic"]
-  if rustflags:
+    effective_rustflags.extend(default_target_rustflags(target))
+  effective_rustflags.extend(binsec_proof_rustflags(target))
+  if effective_rustflags:
     existing = env.get("RUSTFLAGS", "")
-    env["RUSTFLAGS"] = " ".join([existing, *rustflags]).strip()
+    env["RUSTFLAGS"] = " ".join([existing, *effective_rustflags]).strip()
   result = subprocess.run(cmd, cwd=ROOT, env=env, text=True, check=False)
   if result.returncode != 0:
     raise SystemExit(result.returncode)
@@ -208,7 +241,7 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> Path:
   binary = target_dir / target / "release" / f"{HARNESS_BIN}{suffix}"
   if not binary.exists():
     raise SystemExit(f"BINSEC harness binary missing: {binary}")
-  return binary
+  return binary, effective_rustflags
 
 
 def symbol_names(binary: Path) -> set[str]:
@@ -302,6 +335,8 @@ def write_report(
   timeout_seconds: int | None,
   smt_timeout_seconds: int | None,
   smt_solver: str | None,
+  rustflags: list[str] | None = None,
+  harness_elf_type: str | None = None,
 ) -> None:
   report = {
     "schema_version": 1,
@@ -320,6 +355,8 @@ def write_report(
     "timeout_seconds": timeout_seconds,
     "smt_timeout_seconds": smt_timeout_seconds,
     "smt_solver": smt_solver,
+    "rustflags": rustflags or [],
+    "harness_elf_type": harness_elf_type,
     "sse_depth": kernel.get("sse_depth"),
     "binsec_version": binsec_version,
     "artifacts": artifacts,
@@ -405,13 +442,16 @@ def main() -> int:
         timeout_seconds=None,
         smt_timeout_seconds=None,
         smt_solver=args.smt_solver,
+        rustflags=[],
+        harness_elf_type=None,
       )
       continue
 
     rustflags = [str(flag) for flag in kernel.get("rustflags", [])]
     kernel_timeout = int(kernel.get("timeout", args.timeout))
     kernel_smt_timeout = int(kernel.get("smt_timeout", args.smt_timeout if args.smt_timeout is not None else kernel_timeout))
-    binary = build_harness(target, profile, rustflags)
+    binary, effective_rustflags = build_harness(target, profile, rustflags)
+    harness_elf_type = elf_type(binary)
     names = symbol_names(binary)
 
     assert binary is not None
@@ -430,6 +470,8 @@ def main() -> int:
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
         smt_solver=args.smt_solver,
+        rustflags=effective_rustflags,
+        harness_elf_type=harness_elf_type,
       )
       failures += 1
       continue
@@ -446,6 +488,26 @@ def main() -> int:
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
         smt_solver=args.smt_solver,
+        rustflags=effective_rustflags,
+        harness_elf_type=harness_elf_type,
+      )
+      failures += 1
+      continue
+    if target.endswith("-unknown-linux-gnu") and harness_elf_type == "dyn":
+      write_report(
+        report_path,
+        kernel=kernel,
+        target=target,
+        profile=profile,
+        status="unknown",
+        reason="BINSEC harness is PIE; static ELF proof binary required",
+        artifacts=artifacts,
+        binsec_version=binsec_version,
+        timeout_seconds=kernel_timeout,
+        smt_timeout_seconds=kernel_smt_timeout,
+        smt_solver=args.smt_solver,
+        rustflags=effective_rustflags,
+        harness_elf_type=harness_elf_type,
       )
       failures += 1
       continue
@@ -501,6 +563,8 @@ def main() -> int:
       timeout_seconds=kernel_timeout,
       smt_timeout_seconds=kernel_smt_timeout,
       smt_solver=args.smt_solver,
+      rustflags=effective_rustflags,
+      harness_elf_type=harness_elf_type,
     )
     if status != "secure" and kernel.get("required", False):
       failures += 1
