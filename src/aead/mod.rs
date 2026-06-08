@@ -99,11 +99,7 @@ mod xchacha20poly1305;
 pub use aegis256::diag_aegis256_update_portable;
 #[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};
-#[cfg(all(
-  feature = "diag",
-  feature = "aegis256",
-  not(any(target_arch = "s390x", target_arch = "riscv64"))
-))]
+#[cfg(all(feature = "diag", feature = "aegis256"))]
 pub use aes_round::diag_aes_enc_round_portable;
 #[cfg(feature = "aes-gcm")]
 pub use aes128gcm::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag};
