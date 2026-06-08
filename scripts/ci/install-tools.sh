@@ -193,6 +193,30 @@ ensure_cargo_rail() {
   cargo binstall "cargo-rail@${required}" --no-confirm --force 2>/dev/null || cargo install cargo-rail --locked --version "$required" --force
 }
 
+install_binsec_system_packages() {
+  if [[ "$(uname -s)" != "Linux" ]]; then
+    return 0
+  fi
+  if ! command -v apt-get &>/dev/null; then
+    return 0
+  fi
+  if [[ "${BINSEC_SYSTEM_PACKAGES_READY:-}" == "1" ]]; then
+    return 0
+  fi
+
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    libgmp-dev \
+    libmpfr-dev \
+    m4 \
+    opam \
+    pkg-config \
+    zlib1g-dev
+  BINSEC_SYSTEM_PACKAGES_READY=1
+}
+
 install_binsec() {
   if [[ "$(uname -s)" != "Linux" ]]; then
     echo "  binsec: skipped (Linux-only CT kernel lane)"
@@ -205,15 +229,12 @@ install_binsec() {
   local -a solver_packages
   read -r -a solver_packages <<< "$solver_packages_raw"
 
+  install_binsec_system_packages
+
   echo "  binsec: installing via OPAM"
   if ! command -v opam &>/dev/null; then
-    if command -v apt-get &>/dev/null; then
-      sudo apt-get update
-      sudo apt-get install -y --no-install-recommends opam m4 pkg-config libgmp-dev zlib1g-dev build-essential
-    else
-      echo "opam is required to install BINSEC on this runner" >&2
-      return 1
-    fi
+    echo "opam is required to install BINSEC on this runner" >&2
+    return 1
   fi
 
   export OPAMYES=1
@@ -270,7 +291,7 @@ install_ct_linux_packages() {
   if ! command -v apt-get &>/dev/null; then
     return 0
   fi
-  sudo apt-get update
+  install_binsec_system_packages
   sudo apt-get install -y --no-install-recommends musl-tools
 }
 
