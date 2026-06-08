@@ -72,7 +72,9 @@ symbols = [
   "ct_entry_ed25519_sign",
   "ct_entry_ed25519_verify",
   "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
   "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
   "ct_entry_rsa_private_key_pkcs8_roundtrip",
   "ct_entry_hkdf_sha256_derive",
   "ct_entry_hkdf_sha384_derive",
@@ -458,6 +460,42 @@ samples = 128
 smoke_samples = 128
 
 [[dudect_case]]
+name = "rsa_pss_fixed_vs_random_message"
+primitive = "rsa.private_ops"
+filter = "rsa_pss_fixed_vs_random_message"
+left_class = "fixed message"
+right_class = "random same-length message"
+samples = 128
+smoke_samples = 128
+
+[[dudect_case]]
+name = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
+primitive = "rsa.private_ops"
+filter = "rsa_oaep_decrypt_fixed_vs_random_plaintext"
+left_class = "valid OAEP ciphertext for fixed plaintext"
+right_class = "valid OAEP ciphertext for random same-length plaintext"
+samples = 128
+smoke_samples = 128
+
+[[dudect_case]]
+name = "rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext"
+primitive = "rsa.private_ops"
+filter = "rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext"
+left_class = "valid PKCS#1 v1.5 ciphertext for fixed plaintext"
+right_class = "valid PKCS#1 v1.5 ciphertext for random same-length plaintext"
+samples = 128
+smoke_samples = 128
+
+[[dudect_case]]
+name = "rsa_private_component_validation_fixed_vs_random_component"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_component_validation_fixed_vs_random_component"
+left_class = "fixed same-width private component"
+right_class = "random same-width private component"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
 name = "rsa_private_key_pkcs8_import_key_a_vs_key_b"
 primitive = "rsa.private_key_material"
 filter = "rsa_private_key_pkcs8_import"
@@ -478,6 +516,182 @@ samples = 50000
 smoke_samples = 16
 gate = "diagnostic"
 notes = "Diagnostic only: full RSA private-key import validation performs value-dependent big-integer consistency checks over unrelated keys. Required CT evidence is scoped to bounded same-width validation leaves and steady-state private operations."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 0"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 0"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage1_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage1_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 1"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 1"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage2_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage2_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 2"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 2"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage3_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage3_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 3"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 3"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage4_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage4_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 4"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 4"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage30_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage30_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 30"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 30"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage31_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage31_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 31"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 31"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage32_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage32_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 32"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 32"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage40_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage40_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 40"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 40"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage41_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage41_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 41"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 41"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_validate_stage42_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_validate_stage42_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A validation through stage 42"
+right_class = "valid same-size same-shape PKCS#8 private key B validation through stage 42"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key validation stages may include public modulus and value-shaped consistency work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A before materialization"
+right_class = "valid same-size same-shape PKCS#8 private key B before materialization"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key import stages may include public modulus and value-shaped materialization work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A after public modulus setup"
+right_class = "valid same-size same-shape PKCS#8 private key B after public modulus setup"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key import stages may include public modulus and value-shaped materialization work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A after p modulus setup"
+right_class = "valid same-size same-shape PKCS#8 private key B after p modulus setup"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key import stages may include public modulus and value-shaped materialization work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A after q modulus setup"
+right_class = "valid same-size same-shape PKCS#8 private key B after q modulus setup"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key import stages may include public modulus and value-shaped materialization work. Required private-material CT evidence is the bounded component-validation leaf."
+
+[[dudect_case]]
+name = "rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b"
+primitive = "rsa.private_key_material"
+filter = "rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b"
+left_class = "valid PKCS#8 private key A after secret integer boxing"
+right_class = "valid same-size same-shape PKCS#8 private key B after secret integer boxing"
+samples = 50000
+smoke_samples = 16
+gate = "diagnostic"
+reason = "Stage diagnostic only: DER/private-key import stages may include public modulus and value-shaped materialization work. Required private-material CT evidence is the bounded component-validation leaf."
 
 [[dudect_case]]
 name = "rsa_private_key_pkcs8_export_key_a_vs_key_b"
@@ -800,6 +1014,41 @@ primitive = "aead.symmetric_transform"
 variant = "AsconAead128"
 dudect = ["ascon_aead128_fixed_vs_random_key_seal"]
 binsec = ["aead.symmetric_transform.ascon_aead128_tag_portable.all"]
+
+[[evidence_unit]]
+id = "rsa.private_ops.pkcs1v15_sign"
+primitive = "rsa.private_ops"
+variant = "Pkcs1v15Sign"
+dudect = ["rsa_pkcs1v15_fixed_vs_random_message"]
+binsec = ["rsa.private_ops.window_select.portable.all"]
+
+[[evidence_unit]]
+id = "rsa.private_ops.pss_sign"
+primitive = "rsa.private_ops"
+variant = "PssSign"
+dudect = ["rsa_pss_fixed_vs_random_message"]
+binsec = ["rsa.private_ops.window_select.portable.all"]
+
+[[evidence_unit]]
+id = "rsa.private_ops.oaep_decrypt"
+primitive = "rsa.private_ops"
+variant = "OaepDecrypt"
+dudect = ["rsa_oaep_decrypt_fixed_vs_random_plaintext"]
+binsec = ["rsa.private_ops.window_select.portable.all"]
+
+[[evidence_unit]]
+id = "rsa.private_ops.pkcs1v15_decrypt"
+primitive = "rsa.private_ops"
+variant = "Pkcs1v15Decrypt"
+dudect = ["rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext"]
+binsec = ["rsa.private_ops.window_select.portable.all"]
+
+[[evidence_unit]]
+id = "rsa.private_key_material.component_validation_32"
+primitive = "rsa.private_key_material"
+variant = "ComponentValidation32"
+dudect = ["rsa_private_component_validation_fixed_vs_random_component"]
+binsec = ["rsa.private_key_material.pkcs8_leaf.portable.all"]
 
 [[evidence_unit]]
 id = "kdf.hkdf.sha256"
@@ -2071,6 +2320,7 @@ id = "rsa.private_ops"
 tier = "A"
 claim = "ct-intended"
 features = ["rsa"]
+variants = ["Pkcs1v15Sign", "PssSign", "OaepDecrypt", "Pkcs1v15Decrypt"]
 entrypoints = [
   "RsaPrivateKey::sign_signature",
   "RsaPrivateKey::sign_signature_with_scratch",
@@ -2092,13 +2342,19 @@ required = ["tier_a"]
 notes = "Top-level OS randomness and public profile parsing may fail publicly. Steady-state private math and same-width padding/failure behavior are CT-critical."
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_rsa_pkcs1v15_sign_fixed_blinding", "ct_entry_rsa_oaep_decrypt_fixed_blinding"]
+symbols = [
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+]
 
 [[primitive]]
 id = "rsa.private_key_material"
 tier = "A"
 claim = "ct-intended"
 features = ["rsa"]
+variants = ["ComponentValidation32"]
 entrypoints = ["RsaPrivateKey::from_components", "RsaPrivateKey::from_pkcs1_der", "RsaPrivateKey::from_pkcs8_der"]
 secrets = ["private_key_components", "serialized_private_key"]
 public = ["der_length", "format_shape", "public_policy", "public_modulus", "public_exponent"]

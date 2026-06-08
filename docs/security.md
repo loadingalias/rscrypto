@@ -101,8 +101,11 @@ Mandatory RSA release evidence:
 - Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
   RSASSA-PKCS1-v1_5.
 - `just ct-check` passes on every claimed native target. The CT gate covers
-  manifest-declared RSA private-operation hot paths through artifacts,
-  heuristics, DudeCT, and BINSEC where supported.
+  manifest-declared RSA private-operation variants through artifacts,
+  heuristics, DudeCT, and BINSEC where supported: RSASSA-PKCS1-v1_5 signing,
+  RSASSA-PSS signing, RSAES-OAEP decryption, RSAES-PKCS1-v1_5 decryption, and
+  the bounded private-component validation leaf. Broad DER import/export cases
+  remain diagnostic unless a future fixed-shape API is promoted in `ct.toml`.
 - `just test-rsa-leakage` remains a targeted RSA regression check on Linux
   x86_64 and Linux aarch64. It supports the CT gate; it does not replace it.
 - Miri covers every feasible safe private-key parser, signing, decryption,
