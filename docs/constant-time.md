@@ -36,7 +36,7 @@ artifact.
 
 ## Current Backend Boundary
 
-Phase 1 claims are LLVM-only.
+Phase 1 release evidence is LLVM-only.
 
 For now, `rscrypto` makes no constant-time claim for Cranelift, GCC codegen, or
 other Rust codegen backends. Those backends can become claimed configurations
@@ -50,20 +50,25 @@ machine code.
 
 ## Current Validation Engine
 
-The release gate is `just ct-check`. It is intentionally the same hard gate as
-`just ct-full`: build CT artifacts, validate the manifest/artifacts, run every
-required DudeCT case, and run BINSEC where the target policy requires it.
+The release gate is `just ct-full`: build CT artifacts, validate the
+manifest/artifacts, run every required DudeCT case, and run BINSEC where the
+target policy requires it.
 Diagnostic DudeCT cases are available for investigation, but they do not satisfy
 release coverage and do not block the required gate unless promoted in
 [`ct.toml`](../ct.toml).
+
+Manifest rows use `ct-intended` to mark primitives and target/configuration
+pairs that are in scope for release evidence. A completed release claim exists
+only after the generated evidence report passes the required gates for that
+exact target and primitive.
 
 The current gates are:
 
 | Gate | What it checks today | Applies to |
 |---|---|---|
 | Artifact and heuristic review | Build provenance, LLVM IR, assembly, object disassembly, symbol maps, reviewed hashes, and suspicious instruction/control-flow patterns. | Native LLVM targets in the CT matrix. |
-| DudeCT timing evidence | Empirical timing tests for every required manifest-declared CT-critical primitive case. A failure or missing required case fails `ct-check`; diagnostic cases are reported separately. | Native host-executable targets. |
-| BINSEC binary evidence | Binary-level symbolic checks for manifest-declared CT leaf kernels. A required non-`secure` kernel fails `ct-check`. | Linux ELF targets whose ISA/object path is supported by this workflow. |
+| DudeCT timing evidence | Empirical timing tests for every required manifest-declared CT-critical primitive case. A failure or missing required case fails `ct-full`; diagnostic cases are reported separately. | Native host-executable targets. |
+| BINSEC binary evidence | Binary-level symbolic checks for manifest-declared CT leaf kernels. A required non-`secure` kernel fails `ct-full`. | Linux ELF targets whose ISA/object path is supported by this workflow. |
 
 This is an evidence pipeline. It is not a whole-crate formal proof, and it does
 not claim that ergonomic public APIs with parsing, allocation, and conversion

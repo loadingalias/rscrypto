@@ -14,8 +14,8 @@ src/
 |   +-- crypto/         # SHA-2, SHA-3, SHAKE, cSHAKE, Blake2, Blake3, Ascon, Keccak
 |   +-- fast/           # XXH3, RapidHash
 +-- hex.rs              # Hex encoding, DisplaySecret
-+-- platform/           # CPU detection, SIMD dispatch
-+-- backend/            # Internal dispatch infrastructure (curve25519, etc.)
++-- platform/           # CPU feature detection and dispatch metadata
++-- backend/            # Internal caches and shared kernels (curve25519, Ascon)
 +-- traits/             # Checksum, Digest, Mac, Xof, FastHash, Aead, ct, io
 ```
 

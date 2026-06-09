@@ -18,7 +18,7 @@ fn main() {
   threaded_example();
 }
 
-/// Basic combine() demonstration.
+/// Basic combine() demo.
 fn combine_basics() {
   println!("Combine basics\n");
 

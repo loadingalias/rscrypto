@@ -1,8 +1,5 @@
-# Local Linux dev box (Tailscale + EC2 + one-way Mutagen).
-# Scripts live at ~/dev-machines and sync this workspace to /home/ubuntu/rscrypto.
+# Linux Dev Box via Tailscale + AWS EC2 + Mutagen; Mutagen is one-way sync from the local repo to remote.
 
-# Wake/connect the Linux dev box. Optional .github/runs-on.yml runner aliases
-# select metadata only; x86 aliases still use the existing linux-dev Tailnet node.
 ssh-linux target="linux":
     @"$HOME/dev-machines/connect.sh" "{{ target }}" rscrypto
 
@@ -15,145 +12,117 @@ ssh-status:
 ssh-bootstrap-linux target="linux":
     @"$HOME/dev-machines/bootstrap.sh" "{{ target }}" rscrypto
 
+# Builds
 build:
     cargo build --workspace --all-targets --all-features
 
-# Build the workspace (release).
 build-release:
     cargo build --workspace --all-targets --all-features --release
 
-# ─── Checks ────────────────────────────────────────────────────────
-
-# Host fmt, check, clippy, docs (+ rscrypto feature matrix when in scope).
+# Checks
 check *args="":
     @scripts/check/check.sh {{ args }}
 
-# Host + cross-targets (windows, linux, ibm, no_std, wasm).
 check-all *args="":
     @scripts/check/check-all.sh {{ args }}
 
-# Native CI quality lane (runs on target machines in CI).
 ci-check:
     @scripts/ci/ci-check.sh
 
-# Executable feature-flag matrix: compile + test supported feature combinations.
 test-feature-matrix:
     @scripts/test/test-feature-matrix.sh
 
-# ─── Tests ─────────────────────────────────────────────────────────
-
-# Rail-scoped tests (cargo-rail picks affected crates). Pass crate names to narrow (e.g. `just test aead`).
+# Tests
 test *crates="":
     @scripts/test/test.sh {{ crates }}
 
-# Full workspace tests.
 test-all:
     @scripts/test/test.sh --all
 
-# Miri memory-safety tests. Pass a crate name to narrow.
 test-miri *crates="":
     @scripts/test/test-miri.sh {{ crates }}
 
-# RSA first-order timing leakage gate.
 test-rsa-leakage:
     @scripts/test/test-rsa-leakage.sh
 
-# Build and validate the host CT evidence bundle.
+test-fuzz *args="":
+    @scripts/test/test-fuzz.sh {{ args }}
+
+# Constant-Time (CT) Validation Engine
 ct *args="":
     @scripts/ct/artifacts.sh {{ args }}
     @scripts/ct/validate.py {{ args }}
 
-# Run empirical DudeCT timing checks for the host target. Pass args such as `--smoke` or `--filter x25519`.
+# Run DudeCT Timing Checks
 ct-dudect *args="":
     @scripts/ct/dudect.sh {{ args }}
 
-# Build deterministic CT artifacts, run timing evidence, and emit CT reports.
+# Build CT Artifacts; Run Timing Evidence; Emit CT Reports
 ct-full *args="":
     @scripts/ct/full.py {{ args }}
 
-# Full constant-time gate. This is intentionally the same hard gate as
-# `ct-full`: artifacts/heuristics, DudeCT, and BINSEC all run or the command
-# fails.
-ct-check *args="":
-    @scripts/ct/full.py {{ args }}
-
-# Run BINSEC/Rel checks for manifest-declared binary CT kernels.
+# Run BINSEC; Manifest-Declared Binary CT Kernels
 ct-binsec *args="":
     @scripts/ct/binsec.py {{ args }}
 
-# Build CT harness artifacts. Pass args such as `--target x86_64-unknown-linux-gnu`.
+# Build CT Harness Artifacts
 ct-artifacts *args="":
     @scripts/ct/artifacts.sh {{ args }}
 
-# Validate CT manifest and generated artifacts. Pass args such as `--manifest-only`.
+# Validate CT Manifest & Generated Artifacts
 ct-validate *args="":
     @scripts/ct/validate.py {{ args }}
 
-# Fuzz: build scoped packages + run full harness. Pass a target name to run a single target.
-test-fuzz *args="":
-    @scripts/test/test-fuzz.sh {{ args }}
+# Coverage
 
-# ─── Coverage ──────────────────────────────────────────────────────
-
-# Total source coverage: nextest + deterministic fuzz corpus replay.
+# Total Coverage: nextest + fuzz corpus replay
 test-coverage:
     @scripts/test/test-coverage.sh
 
-# Nextest-only LCOV coverage.
+# Nextest LCOV
 test-nextest-coverage:
     @scripts/test/test-coverage.sh --nextest
 
-# Fuzz-corpus replay LCOV coverage.
+# Fuzz-corpus replay LCOV
 test-fuzz-coverage:
     @scripts/test/test-coverage.sh --fuzz
 
-# Alias for total source coverage.
-test-all-coverage:
-    @scripts/test/test-coverage.sh
-
-# ─── Benches ───────────────────────────────────────────────────────
+# Benches
 # Results land in benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt
-# (same layout the /extract-bench skill uses for CI artifacts).
 
-# Full workspace bench. Pass a scope (aead, blake3, crc64, ...) to narrow.
 bench *args="":
     @scripts/bench/bench.sh {{ args }}
 
-# Criterion --quick samples (fast local sanity check).
 bench-quick *args="":
     @scripts/bench/bench.sh --quick {{ args }}
 
-# ─── Maintenance ───────────────────────────────────────────────────
+# Maintenance
 
-# Update root/fuzz manifests and GitHub Actions refs/pins.
+# Update Root/Fuzz Manifests & GHA Pins
 update:
     @scripts/update/update-all.sh
 
-# Show what `just update` would change without applying.
 update-check:
     @scripts/update/update-all.sh --check
 
-# Refresh .github/actions-lock.yaml SHAs for the currently locked refs.
+# Refresh .github/actions-lock.yaml SHAs
 pin-actions:
     @scripts/ci/pin-actions.sh --update-lock
 
-# Verify workflow actions match the pin lock file.
 check-actions:
     @scripts/ci/pin-actions.sh --verify-only
 
-# Run pre-push light once, then push without re-running the Git hook.
 push *args="":
     @scripts/ci/pre-push.sh --light
     git push --no-verify {{ args }}
 
-# Run the full pre-push lane once, then push without re-running the Git hook.
 push-full *args="":
     @scripts/ci/pre-push.sh --full
     git push --no-verify {{ args }}
 
-# ─── Assets ────────────────────────────────────────────────────────
+# Assets
 
-# Regenerate README perf chart SVGs from benchmark_results/OVERVIEW.md.
+# Regenerate README Perf SVG from benchmark_results/OVERVIEW.md.
 chart:
     @mkdir -p target
     @rustc --edition 2024 -O scripts/render_perf_chart.rs -o target/render_perf_chart

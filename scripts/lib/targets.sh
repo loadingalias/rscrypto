@@ -2,6 +2,8 @@
 # Target definitions for cross-platform checks.
 #
 # Single source of truth: .config/target-matrix.json
+# shellcheck disable=SC2034
+# Target arrays are caller-visible outputs for sourced check scripts.
 
 TARGETS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_MATRIX_SH="$TARGETS_LIB_DIR/target-matrix.sh"

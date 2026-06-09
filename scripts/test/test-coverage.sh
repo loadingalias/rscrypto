@@ -22,10 +22,6 @@ cd "$REPO_ROOT"
 
 # shellcheck source=scripts/lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
-maybe_disable_sccache
-
-COV_DIR="$REPO_ROOT/coverage"
-mkdir -p "$COV_DIR"
 
 RUN_NEXTEST=true
 RUN_FUZZ=true
@@ -40,6 +36,29 @@ case "${1:-}" in
     exit 0
     ;;
 esac
+
+maybe_disable_sccache
+apply_ci_resource_profile
+
+export RSCRYPTO_TEST_MODE=${RSCRYPTO_TEST_MODE:-${CARGO_RAIL_TEST_MODE:-local}}
+export CARGO_RAIL_TEST_MODE=${CARGO_RAIL_TEST_MODE:-$RSCRYPTO_TEST_MODE}
+echo "Coverage test mode: $RSCRYPTO_TEST_MODE"
+
+case "$RSCRYPTO_TEST_MODE" in
+  commit) NEXTEST_PROFILE="commit" ;;
+  weekly) NEXTEST_PROFILE="weekly" ;;
+  *)      NEXTEST_PROFILE="default" ;;
+esac
+echo "Using nextest profile: $NEXTEST_PROFILE"
+
+NEXTEST_ARGS=(-P "$NEXTEST_PROFILE" --config-file "$REPO_ROOT/.config/nextest.toml")
+if [ -n "${RSCRYPTO_TEST_THREADS:-}" ]; then
+  NEXTEST_ARGS+=(--test-threads "$RSCRYPTO_TEST_THREADS")
+  echo "Using test thread override: $RSCRYPTO_TEST_THREADS"
+fi
+
+COV_DIR="$REPO_ROOT/coverage"
+mkdir -p "$COV_DIR"
 
 require_tool() {
   command -v "$1" &>/dev/null || { echo "Error: $1 not found"; exit 1; }
@@ -60,7 +79,7 @@ cargo llvm-cov clean --workspace
 
 if [ "$RUN_NEXTEST" = true ]; then
   echo "━━━ Test Suite Coverage Capture (cargo-nextest) ━━━"
-  cargo llvm-cov nextest --no-report --workspace --all-features
+  cargo llvm-cov nextest --no-report --workspace --all-features "${NEXTEST_ARGS[@]}"
 fi
 
 if [ "$RUN_FUZZ" = true ]; then

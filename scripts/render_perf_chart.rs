@@ -40,13 +40,13 @@ const ROWS: &[Row] = &[
     skip: 0,
   },
   Row {
-    label: "Hashes/MACs/XOFs",
-    line_starts_with: "- **Hashes/MACs/XOFs:**",
+    label: "RSA",
+    line_starts_with: "- **RSA:**",
     skip: 0,
   },
   Row {
-    label: "RSA",
-    line_starts_with: "- **RSA:**",
+    label: "Hashes/MACs/XOFs",
+    line_starts_with: "- **Hashes/MACs/XOFs:**",
     skip: 0,
   },
   Row {

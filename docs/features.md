@@ -24,11 +24,21 @@ rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
 # Everything, with parallel BLAKE3 / Argon2 lanes via Rayon.
 rscrypto = { version = "0.3.1", features = ["full", "parallel", "getrandom"] }
 
-# Audit-constrained: forces the portable backend at runtime.
+# Audit-constrained: makes runtime dispatch ignore host SIMD/ASM capabilities.
 rscrypto = { version = "0.3.1", features = ["full", "portable-only"] }
 ```
 
-## Umbrella Features
+## Complete Feature Index
+
+### Core Features
+
+| Feature | Pulls in | Use |
+|---|---|---|
+| `default` | `std` | Normal server, CLI, and app builds. |
+| `std` | `alloc` | Runtime CPU detection and `std::io` adapters. |
+| `alloc` | -- | Allocating APIs such as PHC string encoding and `Vec`-returning helpers. |
+
+### Umbrella Features
 
 | Feature | Pulls in |
 |---|---|
@@ -45,37 +55,54 @@ rscrypto = { version = "0.3.1", features = ["full", "portable-only"] }
 | `key-exchange` | `x25519` |
 | `aead` | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
-## Algorithm Features
+### Algorithm Leaf Features
 
-| Family | Leaf features (implied dependencies in `→`) |
-|---|---|
-| Checksums | `crc16`, `crc24`, `crc32`, `crc64` |
-| Cryptographic hashes | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash` |
-| Fast hashes | `xxh3`, `rapidhash` |
-| MACs | `hmac` → `sha2`; `kmac` → `sha3` |
-| KDFs | `hkdf` → `hmac`; `pbkdf2` → `hmac` |
-| Password hashing | `argon2` → `blake2b`, `alloc`; `scrypt` → `pbkdf2`, `alloc`; `phc-strings` → `alloc` |
-| Signatures | `ed25519` → `sha2`; `rsa` → `alloc`, `sha2` |
-| Key exchange | `x25519` |
-| AEADs | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
+| Feature | Pulls in | Enables |
+|---|---|---|
+| `crc16` | -- | CRC-16/IBM and CRC-16/CCITT |
+| `crc24` | -- | CRC-24/OpenPGP |
+| `crc32` | -- | CRC-32/IEEE and CRC-32C |
+| `crc64` | -- | CRC-64/XZ and CRC-64/NVMe |
+| `sha2` | -- | SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/256 |
+| `sha3` | -- | SHA3-224/256/384/512, SHAKE128/256, cSHAKE256 |
+| `blake2b` | -- | BLAKE2b variable output, BLAKE2b-256, BLAKE2b-512 |
+| `blake2s` | -- | BLAKE2s-128, BLAKE2s-256 |
+| `blake3` | -- | BLAKE3 hash, keyed hash, and XOF |
+| `ascon-hash` | -- | Ascon-Hash256, Ascon-XOF128, Ascon-CXOF128 |
+| `xxh3` | -- | XXH3-64 and XXH3-128 |
+| `rapidhash` | -- | RapidHash-64 and RapidHash-128 |
+| `hmac` | `sha2` | HMAC-SHA256/384/512 |
+| `kmac` | `sha3` | KMAC256 |
+| `hkdf` | `hmac` | HKDF-SHA256 and HKDF-SHA384 |
+| `pbkdf2` | `hmac` | PBKDF2-HMAC-SHA256 and PBKDF2-HMAC-SHA512 |
+| `phc-strings` | `alloc` | PHC string encode/decode support |
+| `argon2` | `blake2b`, `alloc` | Argon2i, Argon2d, Argon2id |
+| `scrypt` | `pbkdf2`, `alloc` | scrypt |
+| `ed25519` | `sha2` | Ed25519 signatures |
+| `rsa` | `alloc`, `sha2` | RSA public/private keys, RSA signatures, OAEP, PKCS#1 v1.5, key generation |
+| `x25519` | -- | X25519 key exchange |
+| `aes-gcm` | -- | AES-128-GCM and AES-256-GCM |
+| `aes-gcm-siv` | -- | AES-128-GCM-SIV and AES-256-GCM-SIV |
+| `chacha20poly1305` | -- | ChaCha20-Poly1305 |
+| `xchacha20poly1305` | -- | XChaCha20-Poly1305 |
+| `aegis256` | -- | AEGIS-256 |
+| `ascon-aead` | -- | Ascon-AEAD128 |
 
-## Auxiliary Features
+### Auxiliary Features
 
 | Feature | Effect |
 |---|---|
-| `std` | Enables runtime CPU detection and `std` I/O adapters. Implies `alloc`. |
-| `alloc` | Enables APIs that allocate (e.g. PHC string encoding, `Vec`-returning helpers). |
 | `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. RSA key generation uses OS entropy to seed its internal HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |
 | `diag` | Diagnostic introspection of dispatch decisions and selected benchmark-only component hooks. Requires `std`; hidden diagnostic symbols are not stable application API. |
-| `portable-only` | Hard-disables runtime SIMD invocation. See below. |
+| `portable-only` | Makes runtime capability detection report no SIMD/ASM capabilities. See below. |
 
 ## `portable-only`
 
-`portable-only` makes `platform::caps()` return the empty capability set, so every algorithm's three-tier dispatcher falls through to its portable backend. Intended for FIPS, DO-178C, ISO 26262, IEC 62443, and similar deployments where the running code path must be the constant-time portable implementation regardless of host capabilities.
+`portable-only` makes `platform::caps()` return the empty capability set. Dispatchers that select from runtime capabilities fall through to portable backends instead of invoking host SIMD/ASM kernels. Intended for FIPS, DO-178C, ISO 26262, IEC 62443, and similar deployments where the running code path must ignore host acceleration.
 
-This flag suppresses *invocation* of SIMD kernels but does **not** remove SIMD code from the binary. For binary-level exclusion, also restrict `target-feature` via `RUSTFLAGS`.
+This flag does **not** change `platform::caps_static()`, remove SIMD code from the binary, or create a constant-time proof by itself. For binary-level exclusion, also restrict `target-feature` via `RUSTFLAGS`. For release evidence boundaries, use [`constant-time.md`](constant-time.md).
 
 See [`compliance.md`](compliance.md) for framework-by-framework deployment posture.

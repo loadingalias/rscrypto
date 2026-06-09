@@ -9,20 +9,20 @@
 
 **Pure Rust cryptography: RSA, Ed25519, X25519, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
 
-`rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed w/o dragging in mandatory C, OpenSSL, or system lib story.
+`rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed without dragging in mandatory C, OpenSSL, or system library coupling.
 
-Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the whole shebang. The portable Rust backend is always present. SIMD and ASM are only accelerators.
+Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current benchmark evidence:** Linux is currently `1.60x` fastest-external geomean w/ `3,627 / 5,994` wins and `5,345 / 5,994` wins-or-ties. Apple Silicon (MBP M1 local full run) is `1.39x` fastest-external geomean w/ `368 / 702` wins and `643 / 702` wins-or-ties.
+**Current benchmark evidence:** Linux CI is currently `1.60x` fastest-external geomean with `3,958 / 6,525` wins and `5,878 / 6,525` wins-or-ties. Apple Silicon local macOS/aarch64 is `1.41x` fastest-external geomean with `373 / 725` wins and `693 / 725` wins-or-ties.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.60x fastest-external geomean across Linux CI with 3,627 wins and 5,345 wins-or-ties out of 5,994 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.60x fastest-external geomean across Linux CI with 3,958 wins and 5,878 wins-or-ties out of 6,525 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Chart: 2026-06-08 Linux CI benchmark pass. Apple Silicon numbers from the 2026-06-08 MBP M1 local full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Chart: 2026-06-09 Linux CI benchmark pass. Apple Silicon numbers from the 2026-06-09 local macOS/aarch64 full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
@@ -33,7 +33,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference impl.
 - **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM all have portable fallbacks, w/ optimized kernels where they pay.
 - **`no_std` is a first-class target.** Server, CLI, embedded, bare-metal, and WASM builds use the same crate and feature model.
-- **Audit knobs are explicit.** `portable-only` forces runtime dispatch to the constant-time portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
+- **Audit knobs are explicit.** `portable-only` collapses runtime capability detection to the portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
 `rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module.
@@ -186,7 +186,7 @@ assert!(
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
 | Fast Non-crypto Hashes | XXH3-64/128, RapidHash 64/128 | `xxh3`, `rapidhash` |
 
-Fast non-cryptographic hashes and CRCs are for indexing, checksumming, dedup, and integrity plumbing. Do not use them for passwords, signatures, MACs, key derivation, or authentication... it's obviously not safe.
+Fast non-cryptographic hashes and CRCs are for indexing, checksumming, dedup, and integrity plumbing. Do not use them for passwords, signatures, MACs, key derivation, or authentication.
 
 Flags are layered deliberately:
 
@@ -244,35 +244,38 @@ review.
 
 ## Performance
 
-Current public benchmark evidence comes from two passes that are both updated regularly and programmatically:
+Current public benchmark evidence comes from two full passes that are both updated regularly and programmatically:
 
 - Linux (CI): Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V.
-- Apple Silicon: My local MBP M1, Apple Silicon aarch64.
+- Apple Silicon: local macOS/aarch64 full run.
+
+Current source: Linux CI run [#27227999222](https://github.com/loadingalias/rscrypto/actions/runs/27227999222), created 2026-06-09 18:43:21 UTC, and local Apple Silicon run `benchmark_results/2026-06-09/macos/aarch64/results.txt`; both are for commit `7dbf097a8db537fc85943f5ae6b2fd2dcc06342b`.
 
 Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster.
 
 | Area | Compared Against | Result |
 |---|---|---:|
 | **Linux CI fastest external** | strongest matched Rust baseline per case | **1.60x geomean** |
-| Linux CI scorecard | fastest external | **3,627 wins / 5,994 pairs** |
-| Linux CI wins or ties | fastest external | **5,345 / 5,994 pairs** |
-| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.39x geomean** |
-| Apple Silicon scorecard | fastest external | **368 wins / 702 pairs** |
-| Apple Silicon wins or ties | fastest external | **643 / 702 pairs** |
-| Linux CI all matched pairs | every external comparison row | **1.75x geomean; 8,708 / 9,544 wins-or-ties** |
-| Checksums | Linux CI / Apple Silicon | **2.62x / 2.85x geomean** |
-| Hashes, MACs, XOFs | Linux CI / Apple Silicon | **1.40x / 1.07x geomean** |
-| Auth/KDF | Linux CI / Apple Silicon | **1.17x / 1.01x geomean** |
-| Password hashing | Linux CI / Apple Silicon | **0.97x / 1.07x geomean** |
-| Public-key | Linux CI / Apple Silicon | **0.99x / 1.02x geomean** |
-| RSA import + verify | Linux CI / Apple Silicon | **1.30x / 1.45x geomean** |
-| AEAD | Linux CI / Apple Silicon | **1.56x / 1.44x geomean** |
+| Linux CI scorecard | fastest external | **3,958 wins / 6,525 pairs** |
+| Linux CI wins or ties | fastest external | **5,878 / 6,525 pairs** |
+| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.41x geomean** |
+| Apple Silicon scorecard | fastest external | **373 wins / 725 pairs** |
+| Apple Silicon wins or ties | fastest external | **693 / 725 pairs** |
+| Linux CI all matched pairs | every external comparison row | **1.76x geomean; 9,352 / 10,174 wins-or-ties** |
+| Checksums | Linux CI / Apple Silicon | **2.52x / 2.66x geomean** |
+| Hashes, MACs, XOFs | Linux CI / Apple Silicon | **1.41x / 1.10x geomean** |
+| Auth/KDF | Linux CI / Apple Silicon | **1.24x / 1.01x geomean** |
+| Password hashing | Linux CI / Apple Silicon | **0.96x / 1.07x geomean** |
+| Public-key | Linux CI / Apple Silicon | **1.10x / 1.03x geomean** |
+| RSA import + verify | Linux CI / Apple Silicon | **1.55x / 1.46x geomean** |
+| AEAD | Linux CI / Apple Silicon | **1.56x / 1.48x geomean** |
 
-The honest weak spots right now: Linux public-key/RSA pressure, X25519 and
-Ed25519 derivation cases, password/KDF front-end overhead, Apple Silicon
-ChaCha20-Poly1305, Apple Silicon SHA/XXH3 holes, and PBKDF2-SHA256 at
-`iters=1`. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
-for raw runs, methodology, platform scorecards, and loss tables.
+The honest weak spots right now: Linux scrypt/password hashing, Linux
+ChaCha20-Poly1305 rows against `ring` and `aws-lc-rs`, near-parity
+Ed25519/X25519 operations, RISE RISC-V checksum point losses, and Apple Silicon
+SHA3/XXH3 plus localized BLAKE3/CRC32(C) rows. See
+[`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
+methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 
@@ -305,6 +308,8 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture not
 Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
 
 Vulnerabilities should be reported through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new) or the process in [`SECURITY.md`](SECURITY.md).
+
+Do not report real-world vulnerabilities through public GitHub issues.
 
 ## Docs
 

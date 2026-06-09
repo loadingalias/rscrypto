@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034
+# Package arrays are caller-visible outputs for sourced fuzz scripts.
 
 FUZZ_ROOT="${FUZZ_ROOT:-$REPO_ROOT/fuzz}"
 FUZZ_SCOPED_ROOT="${FUZZ_SCOPED_ROOT:-$REPO_ROOT/fuzz-packages}"
@@ -20,7 +22,7 @@ fuzz_package_label() {
     return 0
   fi
 
-  echo "scoped/${package_dir#$FUZZ_SCOPED_ROOT/}"
+  echo "scoped/${package_dir#"$FUZZ_SCOPED_ROOT"/}"
 }
 
 discover_fuzz_packages() {
@@ -76,7 +78,7 @@ fuzz_in_package() {
   shift 2
 
   (
-    cd "$REPO_ROOT"
+    cd "$REPO_ROOT" || exit
     CARGO_TARGET_DIR="$FUZZ_SHARED_TARGET_DIR" cargo fuzz "$subcommand" --fuzz-dir "$package_dir" "$@"
   )
 }

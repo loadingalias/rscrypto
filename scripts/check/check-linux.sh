@@ -48,8 +48,8 @@ for i in "${!LINUX_TARGETS[@]}"; do
   target="${LINUX_TARGETS[$i]}"
   target_dir="target/cross-check/$target"
   log_file="$LOG_DIR/$target.log"
-  logs[$i]="$log_file"
-  targets[$i]="$target"
+  logs[i]="$log_file"
+  targets[i]="$target"
 
   (
     # shellcheck disable=SC2086
@@ -59,7 +59,7 @@ for i in "${!LINUX_TARGETS[@]}"; do
       exit 1
     fi
   ) &
-  pids[$i]=$!
+  pids[i]=$!
 done
 
 FAILED=0

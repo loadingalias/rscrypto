@@ -1,6 +1,6 @@
 [package]
 name = "rscrypto"
-description = "Pure Rust cryptography: RSA, Ed25519, X25519, SHA-2/3, BLAKE3, AES-GCM, ChaCha20-Poly1305, Argon2, HMAC/HKDF, CRC. no_std, WASM, hardware acceleration."
+description = "Pure Rust Cryptography: RSA, Ed25519, X25519, SHA-2/3, BLAKE2/3, AES-GCM/GCM-SIV, X/ChaCha20-Poly1305, Argon2, HMAC/HKDF, CRC. no_std, WASM, hardware acceleration."
 version = "0.3.1"
 edition = "2024"
 rust-version = "1.91.0"
@@ -25,6 +25,9 @@ include = [
   "/docs/**",
   "/examples/**",
   "/src/**",
+  "!/private/tasks/**",
+  "!/docs/**/notes/**",
+  "!/docs/llvm-ppc64le-readvolatile-issue.md",
   "!/src/**/*.md",
   "!/src/**/*.txt",
   "!/src/**/.gitignore",
@@ -123,14 +126,9 @@ serde-secrets = ["serde"]
 parallel = ["std", "blake3", "argon2", "dep:rayon"]
 diag = ["std"]
 
-# Hard-disable runtime SIMD dispatch: `platform::caps()` returns the empty
-# capability set, so every algorithm's three-tier dispatcher falls through to
-# its portable backend. Intended for FIPS / DO-178C / ISO 26262 / IEC 62443
-# deployment modes where the on-running code path must be the constant-time
-# portable implementation regardless of host capabilities.
-# Note: this flag suppresses *invocation* of SIMD kernels; it does not
-# remove SIMD code from the binary. Targets needing binary-level exclusion
-# should additionally restrict `target-feature` via RUSTFLAGS.
+# Force runtime dispatch through portable fallbacks. This does not remove
+# compiled SIMD/ASM code or replace CT evidence; use target-feature flags when
+# binary-level exclusion is required.
 portable-only = []
 
 [dependencies]
@@ -291,7 +289,7 @@ strip = "none"
 debug-assertions = true
 overflow-checks = true
 lto = false
-incremental = false # Higher sccache hit rates and faster build/check/test cycles
+incremental = false # I get higher sccache hit rates and faster build/check cycles locally.
 codegen-units = 256
 
 [profile.release]
@@ -305,4 +303,4 @@ codegen-units = 1
 
 [profile.bench]
 inherits = "release"
-debug = true # Enable debug symbols for profiling and analysis
+debug = true

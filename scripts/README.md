@@ -14,7 +14,7 @@ its caller. This is the 'dev' engine, so to speak.
 | `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `scripts/ci/ci-check.sh`, `weekly.yaml` |
 | `test/test-miri.sh`            | `just test-miri`, `weekly.yaml` |
 | `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
-| `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `just test-all-coverage`, `weekly.yaml` |
+| `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
