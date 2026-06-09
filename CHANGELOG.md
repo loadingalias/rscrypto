@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0](https://github.com/loadingalias/rscrypto/compare/v0.3.1...v0.4.0) - 2026-06-09
+
+### 🏗️ Build
+
+- add light and full push preflight commands ci: harden BINSEC solver setup and CT diagnostics ([5a8c2eb](https://github.com/loadingalias/rscrypto/commit/5a8c2ebeaa48989b0fe788b661ab1f5922f17148))
+
+### 👷 CI
+
+- load BINSEC proof relocation sections ([6421da9](https://github.com/loadingalias/rscrypto/commit/6421da978e6f6f87238fc488d39d50014834a2ac))
+- build BINSEC proof harnesses as non-PIE ([783eac4](https://github.com/loadingalias/rscrypto/commit/783eac422c783d8170640898786e6b496f298402))
+- preinstall BINSEC solver system packages ([df71e54](https://github.com/loadingalias/rscrypto/commit/df71e540e83cb99885fd43539b0f59dfda53e412))
+- harden manual CT DudeCT filters ([55ca702](https://github.com/loadingalias/rscrypto/commit/55ca702d86e1a222ccbb3f52d3e11f5de04432b2))
+- add s390x AES AEAD DudeCT trace cases ([53812a5](https://github.com/loadingalias/rscrypto/commit/53812a5fae16995dd72f0df29a3d886725d7cd5c))
+- add AES-GCM-SIV DudeCT trace cases ([5e6a24f](https://github.com/loadingalias/rscrypto/commit/5e6a24fa1dc76de5709abf2303a30e60b6ce7987))
+- add DudeCT filters for targeted CT runs ([fcc326e](https://github.com/loadingalias/rscrypto/commit/fcc326e1b1f00e8dfd3dc59d3e147094564d8a64))
+- scope RSA CT evidence and pass BINSEC SMT timeout auth: harden RSA modular import fixed-width output ([c93dc79](https://github.com/loadingalias/rscrypto/commit/c93dc79f6d1c6df3b7aadcc5846e86c3cd17b74b))
+
+### 📦 Other Changes
+
+- workspace: refresh release package metadata, ignore rules, and lockfile pins ci: bump action pins and harden check, coverage, and fuzz scripts docs: align release docs, CT policy, examples, and module snippets with 0.3.1 benchmarks: refresh 2026-06-09 overview and README perf chart ([147c747](https://github.com/loadingalias/rscrypto/commit/147c747b17ce61d7bb3ea3e46ded2a74875bb002))
+- aead: align aegis256 AES helper cfgs on POWER and s390x ci: repair CT asm heuristic parsing and RISC-V BINSEC policy docs: narrow RISC-V CT evidence claims ([7dbf097](https://github.com/loadingalias/rscrypto/commit/7dbf097a8db537fc85943f5ae6b2fd2dcc06342b))
+- crypto: harden asm dispatch and backend equivalence gates ([643dd44](https://github.com/loadingalias/rscrypto/commit/643dd44a9ebecefa5de99f73bc4934fa86846144))
+- aead: batch s390x AES-GCM-SIV CTR keystream blocks ci: route AES AEAD CT evidence through secret-only probes ([e9676b7](https://github.com/loadingalias/rscrypto/commit/e9676b746eca6885fde17962c004f80c8aca9b9e))
+- hashes: fix Blake2b diag multiblock oracle ([053c810](https://github.com/loadingalias/rscrypto/commit/053c8106401ea1cc0078e869f8883ab6059d23fc))
+- auth: clear CT helper slice lints hashes: clear Blake2b diagnostic slice lints ([32f0e12](https://github.com/loadingalias/rscrypto/commit/32f0e12c5cfb5b0a15e72651d8aff57af8c66a9a))
+- auth: align RSA keygen with FIPS 186-5 A.1.3 ([5ceb703](https://github.com/loadingalias/rscrypto/commit/5ceb703cea4b5355eff022fbb1013f2bdcf30e19))
+
+
+
 ## [0.3.1](https://github.com/loadingalias/rscrypto/compare/v0.3.0...v0.3.1) - 2026-06-01
 
 ### 📦 Other Changes
