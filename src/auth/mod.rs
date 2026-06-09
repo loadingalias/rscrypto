@@ -48,25 +48,25 @@
 //! ```toml
 //! [dependencies]
 //! # HMAC + KMAC only
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["macs"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["macs"] }
 //!
 //! # HKDF only
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["hkdf"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["hkdf"] }
 //!
 //! # Ed25519 only
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["ed25519"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["ed25519"] }
 //!
 //! # RSA
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
 //!
 //! # Signature primitives
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["signatures"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["signatures"] }
 //!
 //! # X25519 only
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["key-exchange"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["key-exchange"] }
 //!
 //! # Everything in auth/key-derivation
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["auth"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["auth"] }
 //! ```
 //!
 //! # API Conventions

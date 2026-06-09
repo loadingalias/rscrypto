@@ -10,22 +10,22 @@ Every primitive has its own leaf feature so size-conscious builds compile only w
 
 ```toml
 # One algorithm, no_std.
-rscrypto = { version = "0.3.1", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["sha2"] }
 
 # RSA public-key import and verification, no_std + alloc.
-rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
 
 # RSA key generation, signing, encryption, and private-operation blinding.
-rscrypto = { version = "0.3.1", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "getrandom"] }
 
 # Everything.
-rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
+rscrypto = { version = "0.4.0", features = ["full", "getrandom"] }
 
 # Everything, with parallel BLAKE3 / Argon2 lanes via Rayon.
-rscrypto = { version = "0.3.1", features = ["full", "parallel", "getrandom"] }
+rscrypto = { version = "0.4.0", features = ["full", "parallel", "getrandom"] }
 
 # Audit-constrained: makes runtime dispatch ignore host SIMD/ASM capabilities.
-rscrypto = { version = "0.3.1", features = ["full", "portable-only"] }
+rscrypto = { version = "0.4.0", features = ["full", "portable-only"] }
 ```
 
 ## Complete Feature Index

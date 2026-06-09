@@ -19,7 +19,7 @@
 
 ### 📦 Other Changes
 
-- workspace: refresh release package metadata, ignore rules, and lockfile pins ci: bump action pins and harden check, coverage, and fuzz scripts docs: align release docs, CT policy, examples, and module snippets with 0.3.1 benchmarks: refresh 2026-06-09 overview and README perf chart ([147c747](https://github.com/loadingalias/rscrypto/commit/147c747b17ce61d7bb3ea3e46ded2a74875bb002))
+- workspace: refresh release package metadata, ignore rules, and lockfile pins ci: bump action pins and harden check, coverage, and fuzz scripts docs: align release docs, CT policy, examples, and module snippets with 0.4.0 benchmarks: refresh 2026-06-09 overview and README perf chart ([147c747](https://github.com/loadingalias/rscrypto/commit/147c747b17ce61d7bb3ea3e46ded2a74875bb002))
 - aead: align aegis256 AES helper cfgs on POWER and s390x ci: repair CT asm heuristic parsing and RISC-V BINSEC policy docs: narrow RISC-V CT evidence claims ([7dbf097](https://github.com/loadingalias/rscrypto/commit/7dbf097a8db537fc85943f5ae6b2fd2dcc06342b))
 - crypto: harden asm dispatch and backend equivalence gates ([643dd44](https://github.com/loadingalias/rscrypto/commit/643dd44a9ebecefa5de99f73bc4934fa86846144))
 - aead: batch s390x AES-GCM-SIV CTR keystream blocks ci: route AES AEAD CT evidence through secret-only probes ([e9676b7](https://github.com/loadingalias/rscrypto/commit/e9676b746eca6885fde17962c004f80c8aca9b9e))
@@ -804,4 +804,3 @@
 
 
 All notable changes to rscrypto will be documented in this file.
-

@@ -17,10 +17,10 @@ interoperability tests used by the stack migration guides.
 rsa = { version = "0.9", features = ["sha2"] }
 
 # After
-rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
 
 # After, when generating keys or using randomized private/encryption APIs
-rscrypto = { version = "0.3.1", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Map

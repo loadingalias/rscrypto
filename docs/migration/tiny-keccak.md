@@ -2,14 +2,14 @@
 
 > Replace `tiny_keccak::Kmac::v256` and `tiny_keccak::CShake::v256` with `rscrypto::Kmac256` and `rscrypto::Cshake256`. Same SP 800-185 algorithms, byte-identical output, infallible construction, and a `verify` helper for KMAC tags.
 
-Verified against `tiny-keccak = "2.0.2"` (with `kmac` and `cshake` features) and the `rscrypto` 0.3.1 line.
+Verified against `tiny-keccak = "2.0.2"` (with `kmac` and `cshake` features) and the `rscrypto` 0.4.0 line.
 Evidence: `tests/kmac256_differential.rs`, `tests/cshake256_differential.rs`, `tests/cshake256_nist_vectors.rs`, and `tests/kmac_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`tiny-keccak` 2.x) | After (`rscrypto` 0.3.1) |
+| | Before (`tiny-keccak` 2.x) | After (`rscrypto` 0.4.0) |
 |---|---|---|
-| Cargo dep | `tiny-keccak = { version = "2.0", features = ["kmac", "cshake"] }` | `rscrypto = { version = "0.3.1", features = ["kmac"] }` |
+| Cargo dep | `tiny-keccak = { version = "2.0", features = ["kmac", "cshake"] }` | `rscrypto = { version = "0.4.0", features = ["kmac"] }` |
 | KMAC import | `use tiny_keccak::{Hasher, Kmac};` | `use rscrypto::Kmac256;` |
 | KMAC call | `let mut k = Kmac::v256(key, custom); k.update(data); k.finalize(&mut tag);` | `Kmac256::mac_into(key, custom, data, &mut tag);` |
 | cSHAKE import | `use tiny_keccak::{Hasher, CShake};` | `use rscrypto::{Cshake256, Xof};` |
@@ -26,7 +26,7 @@ tiny-keccak = { version = "2.0", features = ["kmac", "cshake"] }
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.3.1", features = ["kmac"] }
+rscrypto = { version = "0.4.0", features = ["kmac"] }
 ```
 
 The `kmac` feature implies `sha3` (which provides the underlying `Cshake256` sponge for both `Kmac256` and the standalone cSHAKE primitive).

@@ -44,14 +44,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.1", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["sha2"] }
 ```
 
 Full primitive stack w/ OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.1", features = ["full", "getrandom"] }
+rscrypto = { version = "0.4.0", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-gen entropy from the operating system.
@@ -76,7 +76,7 @@ The common API shape is deliberately simple: one-shot when convenient, streaming
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.1", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
 ```
 
 ```rust
@@ -119,14 +119,14 @@ Enable `getrandom` for RSA key gen, signing salt/blinding, OAEP encryption rando
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.1", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Encrypt Data
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.1", default-features = false, features = ["chacha20poly1305"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["chacha20poly1305"] }
 ```
 
 ```rust
@@ -154,7 +154,7 @@ assert_eq!(&message, b"pay bob 10");
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.3.1", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
 ```
 
 ```rust

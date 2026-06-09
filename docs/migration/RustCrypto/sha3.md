@@ -2,14 +2,14 @@
 
 > Same algorithms (FIPS 202: SHA3-224/256/384/512, SHAKE128/256), `[u8; N]` outputs replace `Output<D>`, and the SHAKE chain `finalize_xof().read(&mut out)` becomes `finalize_xof().squeeze(&mut out)`.
 
-Verified against `sha3 = "0.12.0"` and the `rscrypto` 0.3.1 line.
+Verified against `sha3 = "0.12.0"` and the `rscrypto` 0.4.0 line.
 Evidence: `tests/sha3_official_vectors.rs`, `tests/sha3_differential.rs`, `tests/shake128_differential.rs`, and `tests/shake256_differential.rs`.
 
 ## TL;DR
 
-| | Before (`sha3` 0.12.x) | After (`rscrypto` 0.3.1) |
+| | Before (`sha3` 0.12.x) | After (`rscrypto` 0.4.0) |
 |---|---|---|
-| Cargo dep | `sha3 = "0.12"` | `rscrypto = { version = "0.3.1", features = ["sha3"] }` |
+| Cargo dep | `sha3 = "0.12"` | `rscrypto = { version = "0.4.0", features = ["sha3"] }` |
 | Import | `use sha3::{Sha3_256, Digest};` | `use rscrypto::{Sha3_256, Digest};` |
 | Call | `Sha3_256::digest(data)` | `Sha3_256::digest(data)` |
 
@@ -24,7 +24,7 @@ sha3 = "0.12"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.3.1", features = ["sha3"] }
+rscrypto = { version = "0.4.0", features = ["sha3"] }
 ```
 
 ## Algorithm map

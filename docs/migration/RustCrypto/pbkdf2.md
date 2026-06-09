@@ -2,14 +2,14 @@
 
 > Replace the free function `pbkdf2_hmac::<Sha256>(password, salt, iters, &mut out)` with `Pbkdf2Sha256::derive_key_array::<N>(password, salt, iters)?`. Adds a fallible result (rejects 0 iterations and over-long output), a stateful precompute when you derive multiple keys from the same password, and a constant-time `verify_password` helper.
 
-Verified against `pbkdf2 = "0.13.0"` and the `rscrypto` 0.3.1 line.
+Verified against `pbkdf2 = "0.13.0"` and the `rscrypto` 0.4.0 line.
 Evidence: `tests/pbkdf2_kat_vectors.rs`, `tests/pbkdf2_differential.rs`, and `tests/pbkdf2_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`pbkdf2` 0.13.x) | After (`rscrypto` 0.3.1) |
+| | Before (`pbkdf2` 0.13.x) | After (`rscrypto` 0.4.0) |
 |---|---|---|
-| Cargo dep | `pbkdf2 = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.3.1", features = ["pbkdf2"] }` |
+| Cargo dep | `pbkdf2 = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.4.0", features = ["pbkdf2"] }` |
 | Import | `use pbkdf2::pbkdf2_hmac; use sha2::Sha256;` | `use rscrypto::Pbkdf2Sha256;` |
 | Call | `pbkdf2_hmac::<Sha256>(pw, salt, iters, &mut okm)` | `Pbkdf2Sha256::derive_key(pw, salt, iters, &mut okm)?` |
 
@@ -25,7 +25,7 @@ sha2 = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.3.1", features = ["pbkdf2"] }
+rscrypto = { version = "0.4.0", features = ["pbkdf2"] }
 ```
 
 The `pbkdf2` feature implies `hmac` which implies `sha2`.

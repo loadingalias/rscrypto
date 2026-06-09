@@ -58,7 +58,7 @@ enforce_msrv_inheritance = false
 
 [release]
 tag_prefix = "v"
-tag_format = "{prefix}{version}" # Single crate: just v0.1.0
+tag_format = "{prefix}{version}" # Single crate: just v0.4.0
 
 require_clean = true
 push = true
