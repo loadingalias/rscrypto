@@ -163,7 +163,7 @@ impl Ed25519SecretKey {
   #[must_use]
   pub fn public_key(&self) -> Ed25519PublicKey {
     let expanded = hash::ExpandedSecret::from_secret_key(self);
-    Ed25519PublicKey::from_point(basepoint_mul_dispatch(expanded.scalar_bytes()))
+    public_key_from_scalar(expanded.scalar_bytes())
   }
 
   /// Sign a message with this secret key.
@@ -235,10 +235,12 @@ impl Ed25519PublicKey {
 
   #[inline]
   #[must_use]
-  fn from_point(point: point::ExtendedPoint) -> Self {
+  fn from_basepoint_mul(bytes: [u8; Self::LENGTH], point: point::ExtendedPoint) -> Self {
+    // `[a]B` for clamped Ed25519 secret scalars is in the prime-order subgroup,
+    // so weak-key validation is only needed for untrusted encoded public keys.
     Self {
-      bytes: point.to_bytes().unwrap_or_default(),
-      small_order: point.is_small_order(),
+      bytes,
+      small_order: false,
       point: Some(point),
     }
   }
@@ -383,7 +385,9 @@ pub struct Ed25519Keypair {
 
 impl PartialEq for Ed25519Keypair {
   fn eq(&self, other: &Self) -> bool {
-    self.secret == other.secret && self.public == other.public
+    let secret_eq = self.secret == other.secret;
+    let public_eq = self.public == other.public;
+    secret_eq & public_eq
   }
 }
 
@@ -394,7 +398,7 @@ impl Ed25519Keypair {
   #[must_use]
   pub fn from_secret_key(secret: Ed25519SecretKey) -> Self {
     let expanded = hash::ExpandedSecret::from_secret_key(&secret);
-    let public = Ed25519PublicKey::from_point(basepoint_mul_dispatch(expanded.scalar_bytes()));
+    let public = public_key_from_scalar(expanded.scalar_bytes());
     Self {
       secret,
       public,
@@ -669,7 +673,39 @@ fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
 
 // Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable
 
+#[cfg(not(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(feature = "portable-only"),
+  not(miri)
+)))]
 pub(crate) use crate::auth::curve25519_edwards::basepoint_mul_dispatch;
+
+#[inline]
+#[must_use]
+fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519PublicKey {
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  {
+    let (bytes, point) = x86_64_asm::basepoint_mul_public(scalar_bytes);
+    Ed25519PublicKey::from_basepoint_mul(bytes, point)
+  }
+
+  #[cfg(not(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  )))]
+  {
+    let point = basepoint_mul_dispatch(scalar_bytes);
+    Ed25519PublicKey::from_basepoint_mul(point.to_bytes().unwrap_or_default(), point)
+  }
+}
 
 /// Dispatch `[s]B + [-h]A` (Straus double-scalar mul) to the fastest
 /// available path.
@@ -750,6 +786,22 @@ mod tests {
   fn secret_key_debug_is_redacted() {
     let dbg = format!("{:?}", Ed25519SecretKey::from_bytes([0u8; 32]));
     assert_eq!(dbg, "Ed25519SecretKey(****)");
+  }
+
+  #[test]
+  fn keypair_equality_requires_matching_secret_and_public_halves() {
+    let first = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([1u8; Ed25519SecretKey::LENGTH]));
+    let second = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([2u8; Ed25519SecretKey::LENGTH]));
+
+    let mut secret_mismatch = first.clone();
+    secret_mismatch.secret = second.secret.clone();
+    let mut public_mismatch = first.clone();
+    public_mismatch.public = second.public;
+
+    assert_eq!(first, first);
+    assert_ne!(first, secret_mismatch);
+    assert_ne!(first, public_mismatch);
+    assert_ne!(first, second);
   }
 
   #[test]
@@ -961,6 +1013,18 @@ mod tests {
       let asm = super::basepoint_mul_encoded_dispatch(&scalar_bytes);
 
       assert_eq!(asm, portable);
+
+      #[cfg(all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        not(feature = "portable-only"),
+        not(miri)
+      ))]
+      {
+        let (asm_public, asm_point) = super::x86_64_asm::basepoint_mul_public(&scalar_bytes);
+        assert_eq!(asm_public, portable);
+        assert_eq!(asm_point.to_bytes().unwrap(), portable);
+      }
     }
   }
 

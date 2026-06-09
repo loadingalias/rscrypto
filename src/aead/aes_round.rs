@@ -1,7 +1,7 @@
 //! Shared portable AES round helpers for AEGIS and Hamburg vperm constants.
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -112,7 +112,7 @@ pub(crate) const MC_ROT2: [u8; 16] = [
 // shared RISC-V/s390x vperm constants; diagnostic proof harnesses need this
 // bounded portable leaf even on targets with architecture-specific AES paths.
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -143,7 +143,7 @@ const fn gf256_mul(a: u8, b: u8) -> u8 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -153,7 +153,7 @@ const fn gf256_sq(x: u8) -> u8 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -175,7 +175,7 @@ const fn gf256_inv(x: u8) -> u8 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -187,7 +187,7 @@ const fn sbox(x: u8) -> u8 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -197,7 +197,7 @@ const fn col_byte(col: u32, row: usize) -> u8 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -208,7 +208,7 @@ const fn xtime(x: u8) -> u8 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -225,7 +225,7 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -260,7 +260,7 @@ const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
 }
 
 #[cfg(any(
-  feature = "diag",
+  all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
   all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
 ))]
@@ -286,7 +286,7 @@ pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; 
   out
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "aegis256"))]
 #[must_use]
 pub fn diag_aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {
   aes_enc_round_portable(block, round_key)

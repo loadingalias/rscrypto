@@ -77,11 +77,13 @@ Current release evidence is scoped as follows:
 
 | Target class | Current CT gate |
 |---|---|
-| Linux `x86_64`, `aarch64`, GNU and MUSL | Artifact/heuristics + DudeCT + BINSEC. |
-| Linux `powerpc64le` and `riscv64gc` | Artifact/heuristics + DudeCT + BINSEC, subject to runner/tool availability. |
-| Linux `s390x` | Artifact/heuristics + DudeCT. BINSEC is not claimed for this ISA in the current workflow. |
-| macOS `aarch64` and `x86_64` | Artifact/heuristics + DudeCT. BINSEC is not claimed for Mach-O in the current workflow. |
-| Windows `x86_64` and `aarch64` MSVC | Artifact/heuristics + DudeCT. BINSEC is not claimed for PE/COFF in the current workflow. |
+| Linux `x86_64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the AMD Zen4, AMD Zen5, Intel Ice Lake, and Intel Sapphire Rapids release lanes. |
+| Linux `aarch64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the AWS Graviton3 and Graviton4 release lanes. |
+| Linux `riscv64gc-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the RISE RISC-V release lane. |
+| Linux `s390x-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Z release lane. BINSEC is not claimed for this ISA in the current workflow. |
+| Linux `powerpc64le-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Power10 release lane. BINSEC is not claimed for little-endian POWER in the current workflow. |
+| macOS `aarch64-apple-darwin` | Local artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O in the current workflow. |
+| Linux MUSL, macOS `x86_64`, and Windows MSVC | `ct-intended` only until physical release lanes and object-format evidence are added. |
 | `no_std` bare-metal targets | Not release-claimed today. Artifact-only coverage can be added, but timing evidence requires real hardware and BINSEC requires a supported ELF/ISA harness. |
 | WASM targets | Not release-claimed today. WASM needs separate bytecode checks and engine-specific timing evidence. |
 

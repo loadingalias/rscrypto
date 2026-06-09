@@ -8,7 +8,10 @@
 
 use core::arch::global_asm;
 
-use super::constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH};
+use super::{
+  constants::{PUBLIC_KEY_LENGTH, SECRET_KEY_LENGTH},
+  field, point,
+};
 use crate::platform::{self, caps::x86};
 
 const AFFINE_POINT_LIMBS: usize = 8;
@@ -36,6 +39,19 @@ fn has_bmi2_adx() -> bool {
 /// Compute `[s]B` and return the compressed Ed25519 point.
 #[inline]
 pub(super) fn basepoint_mul_encoded(s: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  let out = basepoint_mul_affine(s);
+  encode_affine_point(&out)
+}
+
+/// Compute `[s]B` and return both compressed bytes and cached affine point.
+#[inline]
+pub(super) fn basepoint_mul_public(s: &[u8; SECRET_KEY_LENGTH]) -> ([u8; PUBLIC_KEY_LENGTH], point::ExtendedPoint) {
+  let out = basepoint_mul_affine(s);
+  (encode_affine_point(&out), extended_point_from_affine(&out))
+}
+
+#[inline]
+fn basepoint_mul_affine(s: &[u8; SECRET_KEY_LENGTH]) -> [u64; AFFINE_POINT_LIMBS] {
   let s_words = words_from_le_bytes(s);
   let mut out = [0u64; AFFINE_POINT_LIMBS];
 
@@ -59,7 +75,7 @@ pub(super) fn basepoint_mul_encoded(s: &[u8; SECRET_KEY_LENGTH]) -> [u8; PUBLIC_
     unsafe { rscrypto_edwards25519_scalarmulbase_alt(out.as_mut_ptr(), s_words.as_ptr()) };
   }
 
-  encode_affine_point(&out)
+  out
 }
 
 #[inline]
@@ -87,4 +103,20 @@ fn encode_affine_point(point: &[u64; AFFINE_POINT_LIMBS]) -> [u8; PUBLIC_KEY_LEN
   encoded[PUBLIC_KEY_LENGTH - 1] &= 0x7f;
   encoded[PUBLIC_KEY_LENGTH - 1] |= ((point[0] & 1) as u8) << 7;
   encoded
+}
+
+#[inline]
+fn extended_point_from_affine(words: &[u64; AFFINE_POINT_LIMBS]) -> point::ExtendedPoint {
+  let x = field_element_from_words(&words[..FIELD_LIMBS]);
+  let y = field_element_from_words(&words[FIELD_LIMBS..AFFINE_POINT_LIMBS]);
+  point::ExtendedPoint::from_affine(x, y)
+}
+
+#[inline]
+fn field_element_from_words(words: &[u64]) -> field::FieldElement {
+  let mut bytes = [0u8; PUBLIC_KEY_LENGTH];
+  for (dst, word) in bytes.chunks_exact_mut(8).zip(words.iter().copied()) {
+    dst.copy_from_slice(&word.to_le_bytes());
+  }
+  field::FieldElement::from_bytes(&bytes).expect("Ed25519 assembly must return canonical affine coordinates")
 }

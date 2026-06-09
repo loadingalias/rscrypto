@@ -767,7 +767,10 @@ pub(super) unsafe fn aarch64_encrypt_block_inline(keys: &ce::CeRoundKeys, block:
 ///
 /// # Safety
 /// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+))]
 #[target_feature(enable = "aes,neon")]
 #[inline]
 unsafe fn aarch64_encrypt_blocks_inline(keys: &ce::CeRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
@@ -907,7 +910,10 @@ pub(super) unsafe fn aarch64_encrypt_block_128_inline(keys: &ce::Ce128RoundKeys,
 ///
 /// # Safety
 /// Caller must ensure AES-CE is available.
-#[cfg(all(target_arch = "aarch64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+))]
 #[target_feature(enable = "aes,neon")]
 #[inline]
 unsafe fn aarch64_encrypt_blocks_128_inline(keys: &ce::Ce128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {

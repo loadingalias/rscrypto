@@ -2,7 +2,7 @@
 
 Internal task file for the rscrypto constant-time evidence pipeline.
 
-Source snapshot: 2026-06-06.
+Source snapshot: 2026-06-09.
 
 ## Thesis
 
@@ -37,13 +37,13 @@ Current platform scope:
 
 | Target class | Current CT evidence |
 |---|---|
-| Linux `x86_64`/`aarch64`, GNU and MUSL | Artifact/heuristics + DudeCT + BINSEC. |
-| Linux `powerpc64le`/`riscv64gc` | Artifact/heuristics + DudeCT + BINSEC, subject to runner/tool completion. |
-| Linux `s390x` | Artifact/heuristics + DudeCT. BINSEC is not claimed for s390x today. |
-| macOS `aarch64`/`x86_64` | Artifact/heuristics + DudeCT. BINSEC is not claimed for Mach-O today. |
-| Windows MSVC `x86_64`/`aarch64` | Artifact/heuristics + DudeCT. BINSEC is not claimed for PE/COFF today. |
-| `no_std` bare-metal | Not release-claimed today. |
-| WASM | Not release-claimed today. |
+| Linux `x86_64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on AMD Zen4, AMD Zen5, Intel Ice Lake, and Intel Sapphire Rapids release lanes. |
+| Linux `aarch64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on AWS Graviton3 and Graviton4 release lanes. |
+| Linux `riscv64gc-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the RISE RISC-V release lane. |
+| Linux `s390x-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Z release lane. BINSEC is not claimed for s390x today. |
+| Linux `powerpc64le-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Power10 release lane. BINSEC is not claimed for little-endian POWER today. |
+| macOS `aarch64-apple-darwin` | Local artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. |
+| Linux MUSL, macOS `x86_64`, Windows MSVC, `no_std`, and WASM | `ct-intended` or artifact-only as classified in `ct.toml`, but outside the current published physical CT release claim. |
 
 The practical rule: if a native target ships an accelerated ASM, SIMD,
 hardware-instruction, or portable fallback path for a CT-critical primitive,
@@ -70,8 +70,9 @@ for that target class.
 - Declared required evidence profiles.
 - Added manifest-driven DudeCT cases.
 - Added manifest-driven BINSEC kernel rows for supported Linux targets.
-- Added target policy rows that explicitly exclude macOS Mach-O, Windows
-  PE/COFF, `no_std`, WASM, and s390x BINSEC from current release claims.
+- Added target policy rows that explicitly exclude Linux MUSL, macOS `x86_64`,
+  Windows PE/COFF, `no_std`, WASM, s390x BINSEC, and little-endian POWER BINSEC
+  from current release claims.
 
 ### Harnesses
 
@@ -139,8 +140,8 @@ Current BINSEC scope:
 - AEAD whole APIs remain covered by artifacts/heuristics and DudeCT; BINSEC
   targets the relevant leaf kernels such as AES round, GHASH, POLYVAL,
   Poly1305, and Ascon tag paths.
-- macOS Mach-O, Windows PE/COFF, WASM, bare-metal, and s390x BINSEC are not
-  claimed today.
+- macOS Mach-O, Windows PE/COFF, WASM, bare-metal, s390x BINSEC, and
+  little-endian POWER BINSEC are not claimed today.
 
 Local status:
 
@@ -150,33 +151,36 @@ Local status:
 ### CI Wiring
 
 - Added [`.github/workflows/ct.yaml`](../../.github/workflows/ct.yaml).
-- The workflow supports manual trigger and a weekly scheduled run.
-- `platforms=all` currently emits native Linux, macOS, Windows, and Linux MUSL
-  CT lanes.
+- The workflow supports manual trigger and is callable from scheduled release
+  evidence workflows.
+- `platforms=all` currently emits the bench-published physical CT lanes:
+  AMD Zen4, AMD Zen5, Intel Ice Lake, Intel Sapphire Rapids, Graviton3,
+  Graviton4, IBM z16/s390x, IBM Power10, and RISE RISC-V.
 - Linux CT lanes use `tools_mode=ct-linux`, which installs Linux CT support and
   BINSEC through the shared setup path.
 - Artifacts are uploaded even on failure:
   host logs, CT logs, and compressed `target/ct` evidence bundles.
 
-## Not Done Yet
+## Remaining Work
 
-These are the remaining blockers before making a public release CT claim.
+These are the remaining items before expanding the public CT claim beyond the
+current published native LLVM release lanes.
 
-### 1. Run The CI Matrix
+### 1. Publish A Pinned Green Evidence Run
 
-The workflow is wired, but the full GitHub matrix has not yet produced a clean
-set of release artifacts.
+The workflow is wired and produces per-lane `ct-*` artifacts. Public docs should
+pin a specific green run URL and commit before citing a release evidence set.
 
 Next action:
 
 ```text
-Push the current branch, manually run .github/workflows/ct.yaml with
-platforms=all, and inspect every uploaded ct-* artifact.
+Run .github/workflows/ct.yaml with platforms=all and inspect every uploaded
+ct-* artifact.
 ```
 
 Expected outcome:
 
-- Native Linux, macOS, Windows, and MUSL lanes either pass or produce precise
+- Every bench-published physical lane either passes or produces precise
   artifacts showing what failed.
 - Any failure is classified as tool setup, harness/configuration, real timing
   signal, BINSEC unsupported instruction, or actual CT bug.
@@ -193,14 +197,13 @@ Remaining work:
   outside the secret-dependent leakage policy.
 - Keep waivers versioned and target-scoped.
 
-### 3. Publish A CT Matrix
+### 3. Keep The Public CT Matrix Fresh
 
-The docs now describe the current target boundary, but they do not yet include
-the actual pass/fail evidence from CI.
+The public docs describe the target boundary and artifact names. Release notes
+should cite the actual pass/fail evidence from the pinned CI run.
 
-Remaining work after the first clean CI run:
+Remaining work for every release:
 
-- Add a public CT matrix to the docs.
 - Link or summarize uploaded artifacts.
 - State which primitive/target pairs are claimed, intended, unsupported, or
   deferred.
@@ -300,9 +303,11 @@ The next push is successful when:
   host-executable targets.
 - All Linux targets with `binsec = "required"` have required BINSEC kernels
   marked `secure`.
-- macOS and Windows pass the two gates available today.
-- `no_std`, WASM, s390x BINSEC, GCC, and Cranelift remain explicitly outside
-  the release claim until their own evidence exists.
+- Apple Silicon local `just ct-full` evidence is captured when macOS is part of
+  the release claim.
+- Linux MUSL, macOS `x86_64`, Windows, `no_std`, WASM, s390x BINSEC,
+  little-endian POWER BINSEC, GCC, and Cranelift remain explicitly outside the
+  release claim until their own evidence exists.
 
 ## Final Claim Shape
 

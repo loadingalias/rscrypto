@@ -22,7 +22,13 @@ Lclamp:
 .text
 
 
+.globl	_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin
+.private_extern	_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin
+
 .align	6
+_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin:
+	b	Lseal_entry
+
 Lpoly_hash_ad_internal:
 .cfi_startproc
 	cbnz	x4, Lpoly_hash_intro
@@ -117,11 +123,9 @@ Lpoly_hash_ad_ret:
 //
 // void chacha20_poly1305_seal(uint8_t *pt, uint8_t *ct, size_t len_in, uint8_t *ad, size_t len_ad, union open_data *seal_data);
 //
-.globl	_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin
-.private_extern	_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin
 
 .align	6
-_rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin:
+Lseal_entry:
 	hint	#25
 .cfi_startproc
 	stp	x29, x30, [sp, #-80]!

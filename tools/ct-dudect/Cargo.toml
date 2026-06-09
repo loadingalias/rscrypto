@@ -7,6 +7,15 @@ license = "MIT OR Apache-2.0"
 
 [workspace]
 
+[profile.release]
+opt-level = 3
+debug = false
+strip = "debuginfo"
+overflow-checks = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
 [dependencies]
 dudect-bencher = "0.7.0"
 rscrypto = { path = "../..", default-features = false, features = ["std", "full", "parallel", "diag"] }

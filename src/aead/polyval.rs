@@ -1846,7 +1846,7 @@ pub(super) fn clmul128_reduce(a: u128, b: u128) -> u128 {
   clmul(a, b)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
 #[must_use]
 pub fn diag_polyval_reduce_portable(a: &[u8; 16], b: &[u8; 16]) -> [u8; 16] {
   clmul128_reduce_portable(u128::from_le_bytes(*a), u128::from_le_bytes(*b)).to_le_bytes()

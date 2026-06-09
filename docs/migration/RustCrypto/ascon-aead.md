@@ -80,7 +80,7 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 ## Notes
 
-- **NIST SP 800-232 standardised in 2026.** Both crates ship the final spec (the 16-byte key / 16-byte nonce / 16-byte tag layout). Outputs are bit-identical (verified in the harness).
+- **NIST SP 800-232 finalised on 2025-08-13.** Both crates ship the final spec (the 16-byte key / 16-byte nonce / 16-byte tag layout). Outputs are bit-identical (verified in the harness).
 - **Why Ascon?** Designed for severely resource-constrained targets (ATmega, Cortex-M0+, RFID). Code size ~3 KB, no AES tables, no `unsafe` / SIMD requirement, constant-time on every target. If you're embedded, prefer Ascon over AES-GCM where you can.
 - **128-bit key is the only key length.** Ascon-AEAD does not have a 256-bit variant; the 128-bit spec is what NIST standardised.
 - **Nonce reuse semantics.** Ascon-AEAD-128 is *not* nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Use a counter or a fresh random 128-bit nonce per message; the larger nonce space (128 bits vs. AES-GCM's 96) makes random nonces safer at high volume.

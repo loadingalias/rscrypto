@@ -127,7 +127,7 @@ When the stored PHC string came from an untrusted source (user input, distribute
 ```rust
 // After
 use rscrypto::{Argon2id, Argon2VerifyPolicy};
-let policy = Argon2VerifyPolicy::default();          // OWASP 2024 defaults
+let policy = Argon2VerifyPolicy::default();          // OWASP Password Storage Cheat Sheet defaults
 // or: Argon2VerifyPolicy::new(max_m_kib, max_t, max_p, max_output_len)
 Argon2id::verify_string_with_policy(password, stored_phc, &policy)?;
 ```
@@ -147,9 +147,9 @@ The secret (pepper) and associated data are not embedded in the PHC string — t
 ## Notes
 
 - **Variant as type, not enum value.** `Argon2id::hash(...)` instead of `argon2.algorithm(Algorithm::Argon2id).hash_password_into(...)`. Enum-driven dispatch becomes type-driven; in tests this catches accidental variant swaps at compile time.
-- **`Argon2VerifyPolicy` is the migration win.** RustCrypto requires hand-rolling the cost-cap check before calling `verify_password`. rscrypto bakes it in. Use `Argon2VerifyPolicy::default()` (OWASP 2024 caps) unless you have a specific reason to relax.
+- **`Argon2VerifyPolicy` is the migration win.** RustCrypto requires hand-rolling the cost-cap check before calling `verify_password`. rscrypto bakes it in. Use `Argon2VerifyPolicy::default()` (OWASP Password Storage Cheat Sheet caps, checked 2026-06-09) unless you have a specific reason to relax.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings — your existing stored hashes still verify.
-- **`Argon2Params::default()` matches OWASP 2024.** `m=19456 KiB, t=2, p=1, output_len=32 bytes` per the OWASP Password Storage Cheat Sheet. RustCrypto's `Params::default()` matches; both crates will track the cheat sheet over time.
+- **`Argon2Params::default()` matches OWASP Password Storage Cheat Sheet guidance.** `m=19456 KiB, t=2, p=1, output_len=32 bytes` per the sheet as checked on 2026-06-09. RustCrypto's `Params::default()` matches; both crates will track the cheat sheet over time.
 - **`v=0x10` decode-only support.** Both crates can decode legacy `v=16` (Argon2 v1.0) PHC strings for compatibility; both produce `v=19` (v1.3) on encode.
 - **Memory cost is real.** `Argon2id::hash` allocates `memory_cost_kib * 1024` bytes for the lane state. `params.build()?` enforces `m >= 8 * p`; allocate failures (out-of-memory) surface as `Argon2Error::AllocationFailed` at hash time.
 - **Parallel lanes (`parallel` feature).** rscrypto's `parallel` umbrella feature enables Rayon-based lane parallelism for `p > 1`. RustCrypto's `argon2` is single-threaded only.

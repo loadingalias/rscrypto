@@ -1,7 +1,8 @@
 //! SHA-256 aarch64 SHA2 Crypto Extension kernel.
 //!
-//! Uses ARMv8 SHA2 instructions (`vsha256hq_u32`, `vsha256h2q_u32`,
-//! `vsha256su0q_u32`, `vsha256su1q_u32`) for hardware-accelerated compression.
+//! Uses ARMv8 SHA2 instructions for hardware-accelerated compression. Darwin uses
+//! the same hand-scheduled assembly strategy as the SHA-512 Apple backend for
+//! multi-block compression; other targets use SHA2 intrinsics.
 //!
 //! # Safety
 //!
@@ -13,8 +14,18 @@
 
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+use core::arch::global_asm;
 
 use crate::hashes::util::Aligned64;
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+global_asm!(include_str!("asm/rscrypto_sha256_aarch64_apple_darwin.s"));
+
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+unsafe extern "C" {
+  fn rscrypto_sha256_block_data_order_hw(state: *mut u32, blocks: *const u8, block_count: usize);
+}
 
 /// Flat K[0..64] round constants for SHA-256, used as a `vld1q_u32` source.
 ///
@@ -176,13 +187,45 @@ pub(crate) unsafe fn compress_single_block_aarch64_sha2(state: &mut [u32; 8], bl
 /// in-place. State lives in two NEON registers (ABCD, EFGH) across blocks.
 ///
 /// Single-block calls dispatch to a fully-unrolled variant that eliminates
-/// branch overhead; multi-block calls use the compact loop which wins on
-/// I-cache for sustained throughput.
+/// branch overhead; multi-block calls use the platform sustained-throughput
+/// kernel.
 ///
 /// # Safety
 ///
 /// Caller must ensure `sha2` CPU feature is available.
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[target_feature(enable = "sha2")]
+pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: &[u8]) {
+  debug_assert_eq!(blocks.len() % 64, 0);
+  let (block_chunks, remainder) = blocks.as_chunks::<64>();
+  debug_assert!(remainder.is_empty());
+
+  if block_chunks.is_empty() {
+    return;
+  }
+
+  if block_chunks.len() == 1 {
+    // SAFETY: caller guarantees `sha2` feature.
+    unsafe {
+      compress_single_block_aarch64_sha2(state, &block_chunks[0]);
+    }
+    return;
+  }
+
+  // SAFETY: Calls the Apple AArch64 SHA-256 compression primitive because:
+  // 1. Runtime dispatch only reaches this function after `aarch64::SHA2` has been detected.
+  // 2. `state` is a valid writable pointer to eight initialized u32 words.
+  // 3. `blocks` is non-empty and its length is a multiple of 64 bytes, asserted above.
+  // 4. `block_count` is derived from the chunk count, so the assembly reads only complete input
+  //    blocks. The routine uses a fixed instruction schedule per block; the loop count is the public
+  //    input length.
+  unsafe {
+    rscrypto_sha256_block_data_order_hw(state.as_mut_ptr(), blocks.as_ptr(), block_chunks.len());
+  }
+}
+
 #[cfg(target_arch = "aarch64")]
+#[cfg(not(target_os = "macos"))]
 #[target_feature(enable = "sha2")]
 pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: &[u8]) {
   debug_assert_eq!(blocks.len() % 64, 0);
@@ -202,101 +245,89 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
     return;
   }
 
-  #[cfg(target_os = "macos")]
-  {
+  // SAFETY: NEON/SHA2 intrinsics are available via this function's #[target_feature] attribute.
+  // Pointer arithmetic on each block pointer is bounded by the 64-byte block type yielded by
+  // `as_chunks::<64>()`, and K-table loads stay inside the 64-word constant table.
+  unsafe {
+    // Load state: ABCD = [A,B,C,D], EFGH = [E,F,G,H]
+    let mut abcd = vld1q_u32(state.as_ptr());
+    let mut efgh = vld1q_u32(state.as_ptr().add(4));
+
+    let kp = K32.0.as_ptr();
+
     for block in blocks {
-      // SAFETY: caller guarantees `sha2` feature.
-      unsafe {
-        compress_single_block_aarch64_sha2(state, block);
+      let abcd_save = abcd;
+      let efgh_save = efgh;
+      let ptr = block.as_ptr();
+
+      // Load and byte-swap 4 message vectors (16 words = 1 block).
+      let mut s0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr)));
+      let mut s1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(16))));
+      let mut s2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(32))));
+      let mut s3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(48))));
+
+      // Rounds 0-3
+      let mut tmp = vaddq_u32(s0, vld1q_u32(kp));
+      let mut abcd_prev = abcd;
+      abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+      efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+      // Rounds 4-7
+      tmp = vaddq_u32(s1, vld1q_u32(kp.add(4)));
+      abcd_prev = abcd;
+      abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+      efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+      // Rounds 8-11
+      tmp = vaddq_u32(s2, vld1q_u32(kp.add(8)));
+      abcd_prev = abcd;
+      abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+      efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+      // Rounds 12-15
+      tmp = vaddq_u32(s3, vld1q_u32(kp.add(12)));
+      abcd_prev = abcd;
+      abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+      efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+      // Rounds 16-63: compact loop (3 iterations × 16 rounds each).
+      //
+      // Keep the message schedule interleaved with the hash rounds. That
+      // matches the faster sha2 crate kernel on Graviton3/4 and avoids
+      // lengthening the schedule dependency chain ahead of the hash work.
+      for t in (16..64).step_by(16) {
+        s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
+        tmp = vaddq_u32(s0, vld1q_u32(kp.add(t)));
+        abcd_prev = abcd;
+        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+        s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
+        tmp = vaddq_u32(s1, vld1q_u32(kp.add(t + 4)));
+        abcd_prev = abcd;
+        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+        s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
+        tmp = vaddq_u32(s2, vld1q_u32(kp.add(t + 8)));
+        abcd_prev = abcd;
+        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
+
+        s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
+        tmp = vaddq_u32(s3, vld1q_u32(kp.add(t + 12)));
+        abcd_prev = abcd;
+        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
+        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
       }
+
+      // Add saved state back.
+      abcd = vaddq_u32(abcd, abcd_save);
+      efgh = vaddq_u32(efgh, efgh_save);
     }
-  }
 
-  #[cfg(not(target_os = "macos"))]
-  {
-    // SAFETY: NEON/SHA2 intrinsics are available via this function's #[target_feature] attribute.
-    // Pointer arithmetic on `ptr` is bounded by `blocks.len()`.
-    unsafe {
-      // Load state: ABCD = [A,B,C,D], EFGH = [E,F,G,H]
-      let mut abcd = vld1q_u32(state.as_ptr());
-      let mut efgh = vld1q_u32(state.as_ptr().add(4));
-
-      let kp = K32.0.as_ptr();
-
-      for block in blocks {
-        let abcd_save = abcd;
-        let efgh_save = efgh;
-        let ptr = block.as_ptr();
-
-        // Load and byte-swap 4 message vectors (16 words = 1 block).
-        let mut s0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr)));
-        let mut s1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(16))));
-        let mut s2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(32))));
-        let mut s3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(ptr.add(48))));
-
-        // Rounds 0-3
-        let mut tmp = vaddq_u32(s0, vld1q_u32(kp));
-        let mut abcd_prev = abcd;
-        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-        // Rounds 4-7
-        tmp = vaddq_u32(s1, vld1q_u32(kp.add(4)));
-        abcd_prev = abcd;
-        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-        // Rounds 8-11
-        tmp = vaddq_u32(s2, vld1q_u32(kp.add(8)));
-        abcd_prev = abcd;
-        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-        // Rounds 12-15
-        tmp = vaddq_u32(s3, vld1q_u32(kp.add(12)));
-        abcd_prev = abcd;
-        abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-        efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-        // Rounds 16-63: compact loop (3 iterations × 16 rounds each).
-        //
-        // Keep the message schedule interleaved with the hash rounds. That
-        // matches the faster sha2 crate kernel on Graviton3/4 and avoids
-        // lengthening the schedule dependency chain ahead of the hash work.
-        for t in (16..64).step_by(16) {
-          s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);
-          tmp = vaddq_u32(s0, vld1q_u32(kp.add(t)));
-          abcd_prev = abcd;
-          abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-          efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-          s1 = vsha256su1q_u32(vsha256su0q_u32(s1, s2), s3, s0);
-          tmp = vaddq_u32(s1, vld1q_u32(kp.add(t + 4)));
-          abcd_prev = abcd;
-          abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-          efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-          s2 = vsha256su1q_u32(vsha256su0q_u32(s2, s3), s0, s1);
-          tmp = vaddq_u32(s2, vld1q_u32(kp.add(t + 8)));
-          abcd_prev = abcd;
-          abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-          efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-
-          s3 = vsha256su1q_u32(vsha256su0q_u32(s3, s0), s1, s2);
-          tmp = vaddq_u32(s3, vld1q_u32(kp.add(t + 12)));
-          abcd_prev = abcd;
-          abcd = vsha256hq_u32(abcd_prev, efgh, tmp);
-          efgh = vsha256h2q_u32(efgh, abcd_prev, tmp);
-        }
-
-        // Add saved state back.
-        abcd = vaddq_u32(abcd, abcd_save);
-        efgh = vaddq_u32(efgh, efgh_save);
-      }
-
-      // Store state back.
-      vst1q_u32(state.as_mut_ptr(), abcd);
-      vst1q_u32(state.as_mut_ptr().add(4), efgh);
-    } // unsafe
-  }
+    // Store state back.
+    vst1q_u32(state.as_mut_ptr(), abcd);
+    vst1q_u32(state.as_mut_ptr().add(4), efgh);
+  } // unsafe
 }
