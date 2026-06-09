@@ -1,5 +1,29 @@
 # Security Policy
 
+## Public Security Evidence
+
+`rscrypto` is a pure Rust primitive crate with no mandatory production C/FFI
+dependency. The repository uses external crates such as `aws-lc-rs`, `ring`,
+RustCrypto crates, and other implementations as dev, oracle, migration, fuzz,
+or benchmark comparators; they are not required production dependencies.
+
+Release security claims are evidence-bound:
+
+| Evidence class | Public source | What to inspect |
+|---|---|---|
+| Constant-time release gate | [`ct.toml`](ct.toml), [`docs/constant-time.md`](docs/constant-time.md), [`ct.yaml`](.github/workflows/ct.yaml) | A green `Complete (CT)` job for the release commit plus `ct-*` artifacts: `ct-report-<lane>.md`, `ct-report-<lane>.json`, host provenance, full logs, and failed/inconclusive reports if present. |
+| Constant-time tooling | [`tools/`](tools/), [`scripts/ct/`](scripts/ct/) | Stable CT harness entrypoints, DudeCT runner, BINSEC harness generator, manifest validation, full-run orchestration, and evidence packaging. |
+| RSA private-key gate | [`rsa.yaml`](.github/workflows/rsa.yaml), [`docs/security.md`](docs/security.md#rsa-evidence-boundary) | `rsa-miri-linux-x64`, `rsa-leakage-linux-x64`, and `rsa-leakage-linux-arm64` artifacts for the release commit. |
+| Fuzzing | [`fuzz/`](fuzz/), [`fuzz-packages/`](fuzz-packages/), weekly CI | Per-primitive fuzz targets, corpus replay, parser targets, private-operation targets, and uploaded fuzz corpus artifacts. |
+| Memory safety | Miri lanes in CI and RSA workflow | Normal Miri, Tree Borrows where enabled, and RSA-specific Miri output. |
+| Correctness vectors | [`tests/`](tests/), [`testdata/`](testdata/), [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md) | Wycheproof, NIST/RFC/vector fixtures, oracle/differential tests, malformed-input tests, and backend equivalence tests. |
+| Coverage reporting | [`codecov.yml`](codecov.yml), weekly CI | Source coverage from normal tests plus fuzz corpus replay, with tests/fuzz/scripts excluded from coverage denominator. |
+
+Do not cite a constant-time claim for a commit unless the CT workflow's final
+`Complete (CT)` job is green and the expected artifacts are present for the
+claimed target set. A statistical timing pass should be described as "no
+leakage detected for this configuration", not as a formal proof.
+
 ## Reporting a Vulnerability
 
 I take the security of `rscrypto` seriously. If you believe you have found a security vulnerability, please report it as described below.
@@ -8,7 +32,7 @@ I take the security of `rscrypto` seriously. If you believe you have found a sec
 
 ### How to Report
 
-Use GitHub's [Private Vulnerability Reporting](../../security/advisories/new).
+Use GitHub's [Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new).
 
 Include as much detail as possible:
 - Affected version(s) and commit hash

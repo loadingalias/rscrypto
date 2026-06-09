@@ -62,6 +62,14 @@ mod aegis256;
   all(feature = "aegis256", target_arch = "riscv64"),
   all(feature = "aegis256", test),
 ))]
+#[cfg_attr(
+  all(
+    feature = "aegis256",
+    target_arch = "riscv64",
+    not(any(feature = "aes-gcm", feature = "aes-gcm-siv"))
+  ),
+  allow(dead_code)
+)]
 mod aes;
 #[cfg(feature = "aes-gcm")]
 mod aes128gcm;

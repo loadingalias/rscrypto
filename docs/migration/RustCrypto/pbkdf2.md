@@ -32,10 +32,10 @@ The `pbkdf2` feature implies `hmac` which implies `sha2`.
 
 ## Algorithm map
 
-| `pbkdf2` instantiation | rscrypto type | OWASP min iters (2026) |
+| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-06-09 |
 |---|---|---|
 | `pbkdf2_hmac::<Sha256>` | `Pbkdf2Sha256` | `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` (600,000) |
-| `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512` | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (210,000) |
+| `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512` | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (220,000) |
 | `pbkdf2_hmac::<Sha1>` | not mapped — SHA-1 deprecated for KDF since 2010 |  |
 
 ## API patterns
@@ -107,6 +107,6 @@ Drop the `subtle` dependency for the verify path. The stateful form is `state.ve
 - **No PHC string format.** Both crates compute raw bytes. If you store `$pbkdf2-sha256$i=600000$salt$hash`-style PHC strings, use `pbkdf2::password_hash` (RustCrypto) or rscrypto's `phc-strings` feature with `Pbkdf2*` (forthcoming integration). For now, the raw-bytes path is byte-equivalent and storing the parts separately works.
 - **Rejects zero iterations.** `pbkdf2 = "0.13"` will silently run zero rounds and return the salt-derived initial state. rscrypto returns `Err(Pbkdf2Error::InvalidIterations)`. If you have legacy callers that pass 0 (presumably as a typo), this is a hard catch — exactly what you want.
 - **Output length cap (RFC 8018 §5.2 step 1).** PBKDF2 limits output to `(2^32 - 1) * hLen`. `pbkdf2` does not check; rscrypto returns `Err(Pbkdf2Error::OutputTooLong)`. The cap is in the gigabytes — only relevant for adversarial inputs.
-- **Minimum salt length.** rscrypto exposes `Pbkdf2Sha256::MIN_SALT_LEN = 16` as a guidance constant; not enforced at runtime (RFC 8018 §4 recommends ≥ 8 bytes; OWASP 2026 recommends 16). Use it as a `const` check in your wrapper.
-- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 210,000 for SHA-512) reflect OWASP 2026 guidance. Bump these as the OWASP cheat sheet bumps; rscrypto will track.
+- **Minimum salt length.** rscrypto exposes `Pbkdf2Sha256::MIN_SALT_LEN = 16` as a guidance constant; not enforced at runtime (RFC 8018 §4 recommends at least 8 bytes; the OWASP Password Storage Cheat Sheet recommends 16). Use it as a `const` check in your wrapper.
+- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-06-09. Bump these as the OWASP cheat sheet bumps; rscrypto will track.
 - **`no_std`.** Both crates work in `no_std`.

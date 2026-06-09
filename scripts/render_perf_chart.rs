@@ -35,28 +35,33 @@ const ROWS: &[Row] = &[
     skip: 0,
   },
   Row {
-    label: "BLAKE3 \u{2265}64 KiB",
-    line_starts_with: "- **BLAKE3:**",
-    skip: 0,
-  },
-  Row {
-    label: "SHA-3",
-    line_starts_with: "- **SHA-3 / SHAKE:**",
-    skip: 0,
-  },
-  Row {
-    label: "SHAKE",
-    line_starts_with: "- **SHA-3 / SHAKE:**",
-    skip: 1,
-  },
-  Row {
     label: "AEAD",
     line_starts_with: "- **AEAD:**",
     skip: 0,
   },
   Row {
-    label: "RSA import+verify",
+    label: "Hashes/MACs/XOFs",
+    line_starts_with: "- **Hashes/MACs/XOFs:**",
+    skip: 0,
+  },
+  Row {
+    label: "RSA",
     line_starts_with: "- **RSA:**",
+    skip: 0,
+  },
+  Row {
+    label: "Auth/KDF",
+    line_starts_with: "- **Auth/KDF:**",
+    skip: 0,
+  },
+  Row {
+    label: "Public-key",
+    line_starts_with: "- **Public-key:**",
+    skip: 0,
+  },
+  Row {
+    label: "Password hashing",
+    line_starts_with: "- **Password hashing:**",
     skip: 0,
   },
 ];
@@ -104,7 +109,7 @@ fn run() -> Result<(), String> {
     total = format_thousands(total),
   );
 
-  let svg = render_svg(&bars, &subtitle, 5.0_f64);
+  let svg = render_svg(&bars, &subtitle, 3.0_f64);
   write_file(OUT_PATH, &svg)?;
 
   eprintln!("wrote {OUT_PATH} ({} bytes)", svg.len());
@@ -258,11 +263,11 @@ fn escape_xml(s: &str) -> String {
 
 fn render_svg(bars: &[(String, f64)], subtitle: &str, max_x: f64) -> String {
   let width: u32 = 700;
-  let height: u32 = 320;
+  let height: u32 = 370;
   let plot_x_start = 190.0_f64;
   let plot_x_end = 640.0_f64;
   let plot_y_start = 68.0_f64;
-  let plot_y_end = 272.0_f64;
+  let plot_y_end = 322.0_f64;
   let plot_w = plot_x_end - plot_x_start;
 
   let bar_count = bars.len() as f64;
@@ -298,7 +303,8 @@ fn render_svg(bars: &[(String, f64)], subtitle: &str, max_x: f64) -> String {
   ));
 
   // Gridlines + x-axis tick labels.
-  for tick in 0..=5 {
+  let max_tick = max_x.ceil() as u32;
+  for tick in 0..=max_tick {
     let x = plot_x_start + (f64::from(tick) / max_x) * plot_w;
     let (stroke, dash) = if tick == 1 {
       (PARITY, " stroke-dasharray=\"4,4\"")
@@ -311,7 +317,7 @@ fn render_svg(bars: &[(String, f64)], subtitle: &str, max_x: f64) -> String {
       y2 = plot_y_end,
     ));
     svg.push_str(&format!(
-      "<text x=\"{x:.1}\" y=\"288\" text-anchor=\"middle\" font-size=\"10\" fill=\"{AXIS}\">{tick}x</text>",
+      "<text x=\"{x:.1}\" y=\"338\" text-anchor=\"middle\" font-size=\"10\" fill=\"{AXIS}\">{tick}x</text>",
     ));
   }
 
@@ -349,7 +355,7 @@ fn render_svg(bars: &[(String, f64)], subtitle: &str, max_x: f64) -> String {
 
   // Source caption.
   svg.push_str(&format!(
-    "<text x=\"{cx}\" y=\"312\" text-anchor=\"middle\" font-size=\"9\" fill=\"{CAPTION}\">Source: \
+    "<text x=\"{cx}\" y=\"362\" text-anchor=\"middle\" font-size=\"9\" fill=\"{CAPTION}\">Source: \
      benchmark_results/OVERVIEW.md</text>",
     cx = width / 2,
   ));

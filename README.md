@@ -13,16 +13,16 @@
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the whole shebang. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current Benchmark Results:** Linux is currently`1.61x` fastest-external geomean w/ `3,545 / 5,832` wins and `5,210 / 5,832` wins-or-ties. Apple Silicon (MBP M1, my local dev machine) is `1.25x` fastest-external geomean with `235 / 463` wins and `450 / 463` wins-or-ties.
+**Current benchmark evidence:** Linux is currently `1.60x` fastest-external geomean w/ `3,627 / 5,994` wins and `5,345 / 5,994` wins-or-ties. Apple Silicon (MBP M1 local full run) is `1.39x` fastest-external geomean w/ `368 / 702` wins and `643 / 702` wins-or-ties.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.61x fastest-external geomean across Linux CI with 3,545 wins and 5,210 wins-or-ties out of 5,832 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.60x fastest-external geomean across Linux CI with 3,627 wins and 5,345 wins-or-ties out of 5,994 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Chart: 2026-05-27 Linux CI benchmark pass. Apple Silicon numbers from the 2026-06-01 MBP M1 local full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Chart: 2026-06-08 Linux CI benchmark pass. Apple Silicon numbers from the 2026-06-08 MBP M1 local full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
@@ -197,6 +197,51 @@ Flags are layered deliberately:
 Full Feature Inventory: [`docs/features.md`](docs/features.md).
 Public Type Inventory: [`docs/types.md`](docs/types.md).
 
+## Constant-Time Verification
+
+`rscrypto` treats constant-time as a release evidence claim, not a style claim.
+For a release commit, [`ct.yaml`](.github/workflows/ct.yaml) must finish green
+with the complete artifact set below, and [`ct.toml`](ct.toml) is the
+machine-readable source of truth for which primitives, kernels, targets, and
+gates are required. The policy and invalidation rules live in
+[`docs/constant-time.md`](docs/constant-time.md).
+
+A green CT release run uploads compact evidence for the physical runner lanes
+that mirror the public benchmark matrix:
+
+| Physical lane | Target evidence | Artifact |
+|---|---|---|
+| AMD Zen4, AMD Zen5, Intel Ice Lake, Intel Sapphire Rapids | Linux `x86_64` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-amd-zen4`, `ct-amd-zen5`, `ct-intel-icl`, `ct-intel-spr` |
+| AWS Graviton3 and Graviton4 | Linux `aarch64` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-graviton3`, `ct-graviton4` |
+| RISE RISC-V | Linux `riscv64gc` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-rise-riscv` |
+| IBM z16 / s390x | Linux `s390x` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for s390x today. | `ct-ibm-s390x` |
+| IBM Power10 / ppc64le | Linux `powerpc64le` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for little-endian POWER today. | `ct-ibm-power10` |
+| Apple Silicon | Local macOS `aarch64` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. | local `ct-evidence/` package |
+
+Each CT artifact contains a short `README.md`, `ct-report-<lane>.md`,
+`ct-report-<lane>.json`, host provenance, the full CT log, and any failed or
+inconclusive component reports. For public release notes, pin the exact green
+run URL and commit next to these artifact names.
+
+The CT tooling is checked in under [`tools/`](tools/) and [`scripts/ct/`](scripts/ct/):
+stable harness entrypoints, the DudeCT runner, the BINSEC harness generator,
+manifest validation, full-run orchestration, and artifact packaging.
+
+Secret-bearing primitive coverage is deliberately explicit:
+
+| Surface | Required CT evidence |
+|---|---|
+| Equality and verification leaves | Constant-time equality, secret-byte equality, HMAC-SHA-2 verification, KMAC256 verification, keyed BLAKE2/BLAKE3 leaves, HKDF output derivation, and PBKDF2 verification leaves. |
+| AEAD authentication and symmetric transforms | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, and Ascon-AEAD128 required leaves, including AES rounds, GHASH, POLYVAL, Poly1305, tag generation, and open/authentication failure shape. |
+| Public-key secret operations | X25519 scalar multiplication, Ed25519 signing and secret public-key derivation, RSA private signing/decryption leaves, RSA private-operation window selection, and bounded private-component validation leaves. |
+| Password hashing | Argon2i secret-bearing hash leaves and final verification comparisons are CT-gated. Argon2d, Argon2id, and scrypt are classified as best-effort for local side-channel CT because their algorithms use data-dependent memory access; their final comparisons and parser/failure boundaries still run through the security test/fuzz evidence. |
+| Public-only work | Raw hashes, checksums, non-cryptographic hashes, public-key verification math, DER/PHC parsing, serialization, key generation, OS randomness, and benchmark-only paths are not blanket constant-time claims unless `ct.toml` promotes a specific leaf. |
+
+RSA has a second dedicated gate because private-key code deserves extra scrutiny:
+[`rsa.yaml`](.github/workflows/rsa.yaml) uploads `rsa-miri-linux-x64`,
+`rsa-leakage-linux-x64`, and `rsa-leakage-linux-arm64` artifacts for release
+review.
+
 ## Performance
 
 Current public benchmark evidence comes from two passes that are both updated regularly and programmatically:
@@ -208,22 +253,26 @@ Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rsc
 
 | Area | Compared Against | Result |
 |---|---|---:|
-| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.61x geomean** |
-| Linux CI scorecard | fastest external | **3,545 wins / 5,832 pairs** |
-| Linux CI wins or ties | fastest external | **5,210 / 5,832 pairs** |
-| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.25x geomean** |
-| Apple Silicon scorecard | fastest external | **235 wins / 463 pairs** |
-| Apple Silicon wins or ties | fastest external | **450 / 463 pairs** |
-| Checksums | Linux CI / Apple Silicon | **5.03x / 2.76x geomean** |
-| SHA-3 / SHAKE | Linux CI / Apple Silicon | **Linux: 2.15x / 1.86x; Apple Silicon: 0.94x / 1.32x geomean** (platform-sensitive) |
-| BLAKE3, `>=64 KiB` | Linux CI / Apple Silicon | **2.31x / 1.80x geomean** |
-| AEAD | Linux CI / Apple Silicon | **1.57x / 1.47x geomean** |
-| RSA import + verify | Linux CI / Apple Silicon | **1.32x, 76% wins / 1.45x, 100% wins** |
-| RSA verify only | Linux CI / Apple Silicon | **0.98x / 1.19x geomean** |
-| Ed25519 sign / verify | Linux CI / Apple Silicon | **Linux: 1.14x / 1.00x; Apple Silicon: 1.02x / 1.00x geomean** |
-| X25519 | Linux CI / Apple Silicon | **0.95x / 1.00x geomean** |
+| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.60x geomean** |
+| Linux CI scorecard | fastest external | **3,627 wins / 5,994 pairs** |
+| Linux CI wins or ties | fastest external | **5,345 / 5,994 pairs** |
+| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.39x geomean** |
+| Apple Silicon scorecard | fastest external | **368 wins / 702 pairs** |
+| Apple Silicon wins or ties | fastest external | **643 / 702 pairs** |
+| Linux CI all matched pairs | every external comparison row | **1.75x geomean; 8,708 / 9,544 wins-or-ties** |
+| Checksums | Linux CI / Apple Silicon | **2.62x / 2.85x geomean** |
+| Hashes, MACs, XOFs | Linux CI / Apple Silicon | **1.40x / 1.07x geomean** |
+| Auth/KDF | Linux CI / Apple Silicon | **1.17x / 1.01x geomean** |
+| Password hashing | Linux CI / Apple Silicon | **0.97x / 1.07x geomean** |
+| Public-key | Linux CI / Apple Silicon | **0.99x / 1.02x geomean** |
+| RSA import + verify | Linux CI / Apple Silicon | **1.30x / 1.45x geomean** |
+| AEAD | Linux CI / Apple Silicon | **1.56x / 1.44x geomean** |
 
-The honest weak spots right now: Linux still shows PBKDF2-SHA256 at `iters=1` at 0.81x, X25519 Diffie-Hellman at 0.92x, RSA-4096 verification at 0.94x, and small-message AEAD overhead on plenty of 1-byte and 32-byte rows. Apple Silicon still has BLAKE3 64 KiB losses, HMAC-SHA256 bulk pressure against `aws-lc-rs`, empty-message ChaCha20-Poly1305 overhead, and SHA3-256 streaming losses; SHA-3/SHAKE should be described per-platform because the Linux 2.15x SHA-3 result does not carry to the MBP M1 run. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs, methodology, platform scorecards, and loss tables.
+The honest weak spots right now: Linux public-key/RSA pressure, X25519 and
+Ed25519 derivation cases, password/KDF front-end overhead, Apple Silicon
+ChaCha20-Poly1305, Apple Silicon SHA/XXH3 holes, and PBKDF2-SHA256 at
+`iters=1`. See [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
+for raw runs, methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 

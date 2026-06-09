@@ -23,11 +23,11 @@
 //!
 //! # Security
 //!
-//! For NIST SP 800-132 / OWASP 2023 compliance baselines, pair type-specific
-//! minimums are:
+//! For NIST SP 800-132 / OWASP Password Storage Cheat Sheet compliance baselines, pair
+//! type-specific minimums are:
 //!
 //! - `Pbkdf2Sha256`: at least `600_000` iterations
-//! - `Pbkdf2Sha512`: at least `210_000` iterations
+//! - `Pbkdf2Sha512`: at least `220_000` iterations
 //! - salt length: at least `16` bytes (128 bits) for both types
 //!
 //! These are policy minima for production password-hashing deployments.
@@ -35,7 +35,7 @@
 
 use core::fmt;
 
-use super::hmac::hmac_prefix_state;
+use super::hmac::{HmacSha256, hmac_prefix_state};
 use crate::{
   hashes::crypto::{
     Sha256, Sha512,
@@ -141,8 +141,10 @@ macro_rules! define_pbkdf2_sha2 {
       digest_ty: $digest_ty:ty,
       h0: $h0:path,
       dispatch: $dispatch:ident,
+      new_fast_path: $new_fast_path:path,
       f_fn: $f_fn:path,
       iter1_fn: $iter1_fn:path,
+      derive_key_fast_path: $derive_key_fast_path:path,
       test_oneshot: $test_oneshot:path,
       word_ty: $word_ty:ty,
       recommended_iterations: $recommended_iterations:expr,
@@ -174,6 +176,10 @@ macro_rules! define_pbkdf2_sha2 {
       #[must_use]
       #[allow(clippy::indexing_slicing)] // password.len() <= block size in the else branch.
       pub fn new(password: &[u8]) -> Self {
+        if let Some(state) = $new_fast_path(password) {
+          return state;
+        }
+
         let compress = $dispatch::compress_dispatch().select(0);
 
         let mut key_block = [0u8; $block_size_const];
@@ -323,6 +329,9 @@ macro_rules! define_pbkdf2_sha2 {
       /// Derive a key in one shot.
       #[inline]
       pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        if $derive_key_fast_path(password, salt, iterations, okm)? {
+          return Ok(());
+        }
         Self::new(password).derive(salt, iterations, okm)
       }
 
@@ -423,8 +432,10 @@ define_pbkdf2_sha2! {
     digest_ty: Sha256,
     h0: SHA256_H0,
     dispatch: sha256_dispatch,
+    new_fast_path: pbkdf2_sha256_new_fast_path,
     f_fn: pbkdf2_sha256_f,
     iter1_fn: pbkdf2_sha256_iter1,
+    derive_key_fast_path: pbkdf2_sha256_derive_key_fast_path,
     test_oneshot: sha256_oneshot_with_compress,
     word_ty: u32,
     recommended_iterations: 600_000,
@@ -484,6 +495,112 @@ pub fn diag_pbkdf2_sha512_verify_portable(
   Pbkdf2Sha512::new_with_compress_for_test(password, compress)
     .verify(b"salt", 1, expected)
     .is_ok()
+}
+
+#[inline]
+#[allow(clippy::indexing_slicing)]
+fn pbkdf2_sha256_new_fast_path(password: &[u8]) -> Option<Pbkdf2Sha256> {
+  if !pbkdf2_sha256_spr_prefers_hmac_iter1() {
+    return None;
+  }
+
+  let mut key_block = [0u8; SHA256_BLOCK_SIZE];
+  if password.len() > SHA256_BLOCK_SIZE {
+    let digest = Sha256::digest(password);
+    key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&digest);
+  } else {
+    key_block[..password.len()].copy_from_slice(password);
+  }
+
+  let (inner_init, outer_init, compress) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+    let mut inner = Sha256::new();
+    inner.update(ipad);
+    let inner_prefix = inner.aligned_prefix();
+
+    let mut outer = Sha256::new();
+    outer.update(opad);
+    let outer_prefix = outer.aligned_prefix();
+
+    let (inner_init, compress) = inner_prefix.pbkdf2_parts();
+    let (outer_init, _) = outer_prefix.pbkdf2_parts();
+    (inner_init, outer_init, compress)
+  });
+
+  Some(Pbkdf2Sha256 {
+    inner_init,
+    outer_init,
+    compress,
+  })
+}
+
+#[inline]
+#[must_use]
+fn pbkdf2_sha256_spr_prefers_hmac_iter1() -> bool {
+  #[cfg(target_arch = "x86_64")]
+  {
+    crate::platform::caps().has(crate::platform::caps::x86::INTEL_SAPPHIRE_RAPIDS)
+  }
+
+  #[cfg(not(target_arch = "x86_64"))]
+  {
+    false
+  }
+}
+
+#[allow(clippy::indexing_slicing)]
+#[inline]
+fn pbkdf2_sha256_hmac_iter1_small(password: &[u8], salt: &[u8], okm: &mut [u8]) {
+  debug_assert!(salt.len() <= SHA256_INLINE_SALT_MAX);
+  debug_assert!(okm.len() <= SHA256_OUTPUT_SIZE * 2);
+
+  let mut msg = [0u8; SHA256_INLINE_SALT_MAX + 4];
+  msg[..salt.len()].copy_from_slice(salt);
+  let msg_len = salt.len().strict_add(4);
+
+  for (i, chunk) in okm.chunks_mut(SHA256_OUTPUT_SIZE).enumerate() {
+    let block_index = (i as u32).strict_add(1);
+    msg[salt.len()..msg_len].copy_from_slice(&block_index.to_be_bytes());
+    let tag = HmacSha256::mac(password, &msg[..msg_len]);
+    chunk.copy_from_slice(&tag[..chunk.len()]);
+  }
+}
+
+#[inline]
+fn pbkdf2_sha256_derive_key_fast_path(
+  password: &[u8],
+  salt: &[u8],
+  iterations: u32,
+  okm: &mut [u8],
+) -> Result<bool, Pbkdf2Error> {
+  pbkdf2_sha256_derive_key_fast_path_with_preference(
+    password,
+    salt,
+    iterations,
+    okm,
+    pbkdf2_sha256_spr_prefers_hmac_iter1(),
+  )
+}
+
+#[inline]
+fn pbkdf2_sha256_derive_key_fast_path_with_preference(
+  password: &[u8],
+  salt: &[u8],
+  iterations: u32,
+  okm: &mut [u8],
+  prefer_hmac_iter1: bool,
+) -> Result<bool, Pbkdf2Error> {
+  if iterations != 1 || okm.is_empty() {
+    return Ok(false);
+  }
+  if salt.len() > SHA256_INLINE_SALT_MAX || okm.len() > SHA256_OUTPUT_SIZE.strict_mul(2) {
+    return Ok(false);
+  }
+  if !prefer_hmac_iter1 {
+    return Ok(false);
+  }
+
+  pbkdf2_sha256_hmac_iter1_small(password, salt, okm);
+  Ok(true)
 }
 
 /// Compute one PBKDF2-SHA256 block: `F(Password, Salt, c, i)`.
@@ -718,8 +835,8 @@ define_pbkdf2_sha2! {
   /// ```rust
   /// use rscrypto::Pbkdf2Sha512;
   ///
-  /// let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 210_000)?;
-  /// assert!(Pbkdf2Sha512::verify_password(b"password", b"salt", 210_000, &dk).is_ok());
+  /// let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 220_000)?;
+  /// assert!(Pbkdf2Sha512::verify_password(b"password", b"salt", 220_000, &dk).is_ok());
   /// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
   /// ```
   Pbkdf2Sha512 {
@@ -729,12 +846,29 @@ define_pbkdf2_sha2! {
     digest_ty: Sha512,
     h0: SHA512_H0,
     dispatch: sha512_dispatch,
+    new_fast_path: pbkdf2_sha512_new_fast_path,
     f_fn: pbkdf2_sha512_f,
     iter1_fn: pbkdf2_sha512_iter1,
+    derive_key_fast_path: pbkdf2_sha512_derive_key_fast_path,
     test_oneshot: sha512_oneshot_with_compress,
     word_ty: u64,
-    recommended_iterations: 210_000,
+    recommended_iterations: 220_000,
   }
+}
+
+#[inline]
+fn pbkdf2_sha512_new_fast_path(_password: &[u8]) -> Option<Pbkdf2Sha512> {
+  None
+}
+
+#[inline]
+fn pbkdf2_sha512_derive_key_fast_path(
+  _password: &[u8],
+  _salt: &[u8],
+  _iterations: u32,
+  _okm: &mut [u8],
+) -> Result<bool, Pbkdf2Error> {
+  Ok(false)
 }
 
 /// Test-only: one-shot SHA-512 digest using a specific compress function.
@@ -984,6 +1118,38 @@ mod tests {
         0x0b, 0xd5, 0x09, 0x11, 0x20, 0x41, 0xd3, 0xa1, 0x97, 0x83,
       ]
     );
+  }
+
+  #[test]
+  fn sha256_hmac_iter1_small_matches_state_path() {
+    let password = [0x55u8; 32];
+    let salt = [0x33u8; 16];
+    let state = Pbkdf2Sha256::new(&password);
+
+    for len in [1usize, 16, 31, 32, 33, 63, 64] {
+      let mut expected = vec![0u8; len];
+      let mut actual = vec![0u8; len];
+      state.derive(&salt, 1, &mut expected).unwrap();
+      pbkdf2_sha256_hmac_iter1_small(&password, &salt, &mut actual);
+      assert_eq!(actual, expected, "len={len}");
+    }
+  }
+
+  #[test]
+  fn sha256_hmac_iter1_fast_path_selects_two_output_blocks_when_preferred() {
+    let password = [0x55u8; 32];
+    let salt = [0x33u8; 16];
+    let mut expected = [0u8; 64];
+    let mut actual = [0u8; 64];
+
+    oracle_sha256(&password, &salt, 1, &mut expected);
+    assert!(pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut actual, true).unwrap());
+    assert_eq!(actual, expected);
+
+    let mut rejected = [0u8; 65];
+    assert!(!pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut rejected, true).unwrap());
+    assert!(!pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 2, &mut actual, true).unwrap());
+    assert!(!pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut actual, false).unwrap());
   }
 
   #[cfg(not(miri))]

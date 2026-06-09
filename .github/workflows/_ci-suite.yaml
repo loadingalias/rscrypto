@@ -82,8 +82,14 @@ jobs:
       run_script: |
         export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
         case "${{ matrix.target.name }}" in
-          *windows-msvc)
-            echo "Windows lane: compile-only smoke"
+          x86_64-pc-windows-msvc)
+            echo "Windows x86_64 lane: compile smoke plus BLAKE3 ASM runtime vectors"
+            cargo check --workspace --lib --all-features
+            cargo test --workspace --all-features --no-run
+            cargo test --workspace --features blake3 --test blake3_official_vectors --test blake3_differential
+            ;;
+          aarch64-pc-windows-msvc)
+            echo "Windows AArch64 lane: compile-only smoke"
             cargo check --workspace --lib --all-features
             cargo test --workspace --all-features --no-run
             ;;

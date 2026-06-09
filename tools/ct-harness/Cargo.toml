@@ -6,6 +6,15 @@ publish = false
 
 [workspace]
 
+[profile.release]
+opt-level = 3
+debug = false
+strip = "debuginfo"
+overflow-checks = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
+
 [lib]
 name = "rscrypto_ct_harness"
 crate-type = ["staticlib"]

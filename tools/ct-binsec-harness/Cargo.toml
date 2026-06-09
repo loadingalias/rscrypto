@@ -14,7 +14,22 @@ panic = "abort"
 strip = false
 
 [dependencies]
-rscrypto = { path = "../..", default-features = false, features = ["aead", "argon2", "blake2b", "blake2s", "blake3", "diag", "ed25519", "hkdf", "hmac", "kmac", "pbkdf2", "portable-only", "rsa", "x25519"] }
+rscrypto = { path = "../..", default-features = false, features = [
+  "aead",
+  "argon2",
+  "blake2b",
+  "blake2s",
+  "blake3",
+  "diag",
+  "ed25519",
+  "hkdf",
+  "hmac",
+  "kmac",
+  "pbkdf2",
+  "portable-only",
+  "rsa",
+  "x25519",
+] }
 
 [[bin]]
 name = "rscrypto-ct-binsec-harness"

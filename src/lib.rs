@@ -128,9 +128,30 @@ assert!(
 #![cfg_attr(target_arch = "powerpc64", feature(portable_simd, powerpc_target_feature))]
 // s390x VGFM/hash backends use vector asm and portable SIMD.
 #![cfg_attr(target_arch = "s390x", feature(asm_experimental_reg, portable_simd))]
-// riscv64 backends use nightly target-feature flags; individual backend
-// families opt into asm register classes, crypto intrinsics, or portable SIMD.
-#![cfg_attr(target_arch = "riscv64", feature(riscv_target_feature))]
+// RISC-V CRC/vector/AES-style backends still need nightly target-feature names.
+// SHA-2's Zknh intrinsics are gated separately by `riscv_ext_intrinsics`.
+#![cfg_attr(
+  all(
+    target_arch = "riscv64",
+    any(
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "blake2b",
+      feature = "blake2s",
+      feature = "blake3",
+      feature = "xxh3",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "chacha20poly1305",
+      feature = "xchacha20poly1305",
+      feature = "aegis256",
+      feature = "argon2"
+    )
+  ),
+  feature(riscv_target_feature)
+)]
 #![cfg_attr(
   all(
     target_arch = "riscv64",

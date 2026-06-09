@@ -1,0 +1,11 @@
+[package]
+name = "rscrypto-wasm-runtime-vectors"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.91.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+rscrypto = { path = "../..", default-features = false, features = ["alloc", "hashes"] }

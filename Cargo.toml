@@ -206,7 +206,14 @@ required-features = ["password-hashing", "getrandom"]
 [[bench]]
 name = "aead"
 harness = false
-required-features = ["aes-gcm", "aes-gcm-siv", "chacha20poly1305", "xchacha20poly1305", "aegis256", "ascon-aead"]
+required-features = [
+  "aes-gcm",
+  "aes-gcm-siv",
+  "chacha20poly1305",
+  "xchacha20poly1305",
+  "aegis256",
+  "ascon-aead",
+]
 
 [[bench]]
 name = "aead_kernels"

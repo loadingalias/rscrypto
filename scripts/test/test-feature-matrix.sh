@@ -44,6 +44,7 @@ FEATURE_SETS=(
   "signatures"
   "key-exchange"
   "auth"
+  "aegis256"
   "alloc,auth"
   "std,auth"
   "std,password-hashing,getrandom"

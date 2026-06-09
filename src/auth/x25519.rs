@@ -33,7 +33,11 @@ use core::{
 
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -42,7 +46,11 @@ use core::{
 use crate::auth::curve25519_edwards;
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -54,7 +62,11 @@ use crate::{SecretBytes, backend::curve25519::clamp_secret_scalar, traits::ct};
 const POINT_LENGTH: usize = 32;
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -63,7 +75,11 @@ const POINT_LENGTH: usize = 32;
 const RADIX_BITS: u32 = 51;
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -77,7 +93,11 @@ const BASEPOINT_BYTES: [u8; POINT_LENGTH] = {
 };
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -87,7 +107,7 @@ const A24: FieldElement = FieldElement::from_small(121665);
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -102,7 +122,7 @@ mod x86_64_asm;
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "macos",
+  any(target_os = "macos", target_os = "linux"),
   not(feature = "portable-only"),
   not(miri)
 ))]
@@ -185,7 +205,7 @@ impl X25519SecretKey {
     #[cfg(any(
       all(
         target_arch = "aarch64",
-        target_os = "macos",
+        any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only"),
         not(miri)
       ),
@@ -203,7 +223,7 @@ impl X25519SecretKey {
     #[cfg(not(any(
       all(
         target_arch = "aarch64",
-        target_os = "macos",
+        any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only"),
         not(miri)
       ),
@@ -263,7 +283,11 @@ pub struct X25519PublicKey {
   #[allow(dead_code)]
   #[cfg(any(
     not(any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only")
+      ),
       all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
     )),
     miri,
@@ -286,7 +310,11 @@ impl X25519PublicKey {
       bytes,
       #[cfg(any(
         not(any(
-          all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+          all(
+            target_arch = "aarch64",
+            any(target_os = "macos", target_os = "linux"),
+            not(feature = "portable-only")
+          ),
           all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
         )),
         miri,
@@ -308,7 +336,11 @@ impl X25519PublicKey {
   #[allow(dead_code)]
   #[cfg(any(
     not(any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only")
+      ),
       all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
     )),
     miri,
@@ -319,7 +351,11 @@ impl X25519PublicKey {
       bytes: u.to_bytes(),
       #[cfg(any(
         not(any(
-          all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+          all(
+            target_arch = "aarch64",
+            any(target_os = "macos", target_os = "linux"),
+            not(feature = "portable-only")
+          ),
           all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
         )),
         miri,
@@ -432,7 +468,7 @@ impl X25519SharedSecret {
     #[cfg(any(
       all(
         target_arch = "aarch64",
-        target_os = "macos",
+        any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only"),
         not(miri)
       ),
@@ -448,7 +484,7 @@ impl X25519SharedSecret {
     #[cfg(not(any(
       all(
         target_arch = "aarch64",
-        target_os = "macos",
+        any(target_os = "macos", target_os = "linux"),
         not(feature = "portable-only"),
         not(miri)
       ),
@@ -490,7 +526,11 @@ impl_ct_eq!(X25519SharedSecret);
 #[must_use]
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -546,7 +586,11 @@ fn montgomery_ladder(scalar_bytes: &[u8; POINT_LENGTH], u: &FieldElement) -> Fie
 #[must_use]
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -569,7 +613,11 @@ fn is_all_zero(bytes: &[u8; POINT_LENGTH]) -> bool {
 #[must_use]
 #[cfg(any(
   not(any(
-    all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
     all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
   )),
   miri,
@@ -622,7 +670,11 @@ mod tests {
   #[cfg(all(
     not(miri),
     any(
-      all(target_arch = "aarch64", target_os = "macos", not(feature = "portable-only")),
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only")
+      ),
       all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
     )
   ))]

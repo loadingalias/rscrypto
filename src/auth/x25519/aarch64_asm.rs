@@ -10,7 +10,10 @@ use core::arch::global_asm;
 
 use super::POINT_LENGTH;
 
+#[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_x25519_aarch64_apple_darwin.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_x25519_aarch64_unknown_linux.s"));
 
 unsafe extern "C" {
   fn rscrypto_curve25519_x25519_byte_alt(out: *mut u8, scalar: *const u8, point: *const u8);
@@ -21,7 +24,8 @@ unsafe extern "C" {
 pub(super) fn x25519(scalar: &[u8; POINT_LENGTH], point: &[u8; POINT_LENGTH]) -> [u8; POINT_LENGTH] {
   let mut out = [0u8; POINT_LENGTH];
   // SAFETY: X25519 byte backend call because:
-  // 1. This module is compiled only for macOS aarch64, matching the embedded assembly target.
+  // 1. This module is compiled only for supported aarch64 OS ABIs, matching the embedded assembly
+  //    target.
   // 2. `out`, `scalar`, and `point` are fixed 32-byte arrays and valid for the assembly ABI.
   // 3. The assembly clamps the scalar and masks the point top bit per RFC 7748.
   // 4. The routine does not implement low-order all-zero rejection; the Rust caller checks that.
@@ -33,7 +37,8 @@ pub(super) fn x25519(scalar: &[u8; POINT_LENGTH], point: &[u8; POINT_LENGTH]) ->
 pub(super) fn x25519_base(scalar: &[u8; POINT_LENGTH]) -> [u8; POINT_LENGTH] {
   let mut out = [0u8; POINT_LENGTH];
   // SAFETY: X25519 fixed-base byte backend call because:
-  // 1. This module is compiled only for macOS aarch64, matching the embedded assembly target.
+  // 1. This module is compiled only for supported aarch64 OS ABIs, matching the embedded assembly
+  //    target.
   // 2. `out` and `scalar` are fixed 32-byte arrays and valid for the assembly ABI.
   // 3. The assembly applies the RFC 7748 scalar clamping internally.
   unsafe { rscrypto_curve25519_x25519base_byte_alt(out.as_mut_ptr(), scalar.as_ptr()) };

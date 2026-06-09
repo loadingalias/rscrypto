@@ -377,6 +377,12 @@ pub(crate) struct Sha256Prefix {
 
 #[cfg(feature = "hmac")]
 impl Sha256Prefix {
+  #[cfg(feature = "pbkdf2")]
+  #[inline]
+  pub(crate) fn pbkdf2_parts(&self) -> ([u32; 8], CompressBlocksFn) {
+    (self.state, self.compress_blocks)
+  }
+
   /// Volatile-zero key-derived state to prevent lingering in memory.
   pub(crate) fn zeroize(&mut self) {
     for word in self.state.iter_mut() {

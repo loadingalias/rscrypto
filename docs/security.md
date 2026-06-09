@@ -7,17 +7,20 @@ not to every function in the crate. The rulebook for release claims, allowed
 leakage, target scope, and invalidation lives in
 [`docs/constant-time.md`](constant-time.md).
 
-The current release evidence gate is `just ct-check`, which runs the same hard
-pipeline as `just ct-full` for the selected native target:
+The local release evidence gate is `just ct-check`, which runs the same hard
+pipeline as `just ct-full` for the selected native target. Hosted release
+evidence is collected by [`ct.yaml`](../.github/workflows/ct.yaml) and packaged
+per physical runner:
 
 | Platform class | CT evidence currently claimed |
 |---|---|
-| Linux `x86_64`/`aarch64`, GNU and MUSL | Artifact/heuristic review, DudeCT, and BINSEC for manifest-declared CT kernels. |
-| Linux `powerpc64le`/`riscv64gc` | Artifact/heuristic review, DudeCT, and BINSEC where the runner and BINSEC toolchain complete successfully. |
-| Linux `s390x` | Artifact/heuristic review and DudeCT. BINSEC is not claimed for s390x today. |
-| macOS `aarch64`/`x86_64` | Artifact/heuristic review and DudeCT. BINSEC is not claimed for Mach-O today. |
-| Windows MSVC `x86_64`/`aarch64` | Artifact/heuristic review and DudeCT. BINSEC is not claimed for PE/COFF today. |
-| `no_std` and WASM | Not part of the release CT claim today. They need separate hardware, bytecode, or engine-specific evidence before being claimed. |
+| Linux `x86_64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC for manifest-declared CT kernels on AMD Zen4, AMD Zen5, Intel Ice Lake, and Intel Sapphire Rapids lanes. |
+| Linux `aarch64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC for manifest-declared CT kernels on AWS Graviton3 and Graviton4 lanes. |
+| Linux `riscv64gc-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the RISE RISC-V lane. |
+| Linux `s390x-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Z lane. BINSEC is not claimed for s390x today. |
+| Linux `powerpc64le-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Power10 lane. BINSEC is not claimed for little-endian POWER today. |
+| macOS `aarch64-apple-darwin` | Local artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. |
+| Linux MUSL, macOS `x86_64`, Windows MSVC, `no_std`, and WASM | Intended or artifact-only coverage as classified in [`ct.toml`](../ct.toml), but not part of the current published physical CT release claim. They need separate hardware, bytecode, object-format, or engine-specific evidence before being claimed. |
 
 For claimed native targets, the CT manifest must cover the hot paths that
 actually execute: accelerated ASM, SIMD, hardware-instruction backends, and

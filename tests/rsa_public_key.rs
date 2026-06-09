@@ -4615,6 +4615,38 @@ fn generated_rsa_size_fixtures_verify_for_benchmark_matrix() {
   }
 }
 
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(feature = "portable-only")))]
+#[test]
+fn aarch64_linux_dispatch_verifies_generated_rsa_fixtures() {
+  for (bits, spki, pss_sig, pkcs1_sig) in [
+    (3072, RSA3072_SPKI, RSA3072_PSS_SHA256, RSA3072_PKCS1V15_SHA256),
+    (4096, RSA4096_SPKI, RSA4096_PSS_SHA256, RSA4096_PKCS1V15_SHA256),
+    (8192, RSA8192_SPKI, RSA8192_PSS_SHA256, RSA8192_PKCS1V15_SHA256),
+  ] {
+    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let mut scratch = key.public_scratch();
+
+    assert_eq!(key.modulus_bits(), bits);
+    assert!(
+      key
+        .verify_pss_with_scratch(RsaPssProfile::Sha256, pss_fixture_message(), pss_sig, &mut scratch)
+        .is_ok(),
+      "RSA-{bits} PSS fixture failed through AArch64 Linux dispatch"
+    );
+    assert!(
+      key
+        .verify_pkcs1v15_with_scratch(
+          RsaPkcs1v15Profile::Sha256,
+          pkcs1v15_fixture_message(),
+          pkcs1_sig,
+          &mut scratch,
+        )
+        .is_ok(),
+      "RSA-{bits} PKCS1v15 fixture failed through AArch64 Linux dispatch"
+    );
+  }
+}
+
 proptest! {
   #[test]
   fn arbitrary_der_inputs_do_not_panic(input in proptest::collection::vec(any::<u8>(), 0..4096)) {

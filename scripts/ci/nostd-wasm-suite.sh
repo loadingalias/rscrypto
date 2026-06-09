@@ -15,6 +15,29 @@ DEPTH="${2:-shallow}"
 
 rustup target add "$TARGET"
 
+install_wasmtime() {
+  if command -v wasmtime >/dev/null 2>&1; then
+    return
+  fi
+
+  curl -fsSL https://wasmtime.dev/install.sh | bash
+  export PATH="$HOME/.wasmtime/bin:$PATH"
+}
+
+run_wasm_runtime_vectors() {
+  if [[ "$TARGET" != "wasm32-wasip1" ]]; then
+    return
+  fi
+
+  install_wasmtime
+  export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime"
+
+  local manifest="tools/wasm-runtime-vectors/Cargo.toml"
+  cargo run --manifest-path "$manifest" --target "$TARGET"
+  RUSTFLAGS="-C target-feature=+simd128" \
+    cargo run --manifest-path "$manifest" --target "$TARGET"
+}
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Cross-compile sweep: $TARGET ($DEPTH)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -49,9 +72,12 @@ if [[ "$DEPTH" == "shallow" ]]; then
       ;;
     wasm32-unknown-unknown)
       cargo check --target "$TARGET" --no-default-features --features hashes --lib
+      RUSTFLAGS="-C target-feature=+simd128" cargo check --target "$TARGET" --no-default-features --features hashes --lib
       ;;
   esac
 fi
+
+run_wasm_runtime_vectors
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✓ $TARGET ($DEPTH) passed"

@@ -106,7 +106,7 @@ When the stored PHC string came from an untrusted source, an attacker-supplied h
 ```rust
 // After
 use rscrypto::{Scrypt, ScryptVerifyPolicy};
-let policy = ScryptVerifyPolicy::default();         // OWASP 2024 defaults
+let policy = ScryptVerifyPolicy::default();         // OWASP Password Storage Cheat Sheet defaults
 // or: ScryptVerifyPolicy::new(max_log_n, max_r, max_p, max_output_len)
 Scrypt::verify_string_with_policy(password, stored_phc, &policy)?;
 ```
@@ -116,7 +116,7 @@ RustCrypto's `scrypt` has no equivalent policy gate — adding one externally re
 ## Notes
 
 - **`Params::new` is 3 args, not 4.** RustCrypto `scrypt = "0.12"` removed the explicit output-length parameter — output size is whatever buffer you pass to `scrypt(...)`. rscrypto restores it on the builder for cross-call safety (`output_len` is part of the `ScryptParams`, not the call site).
-- **OWASP 2024 defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32` — matches the OWASP Password Storage Cheat Sheet. RustCrypto's `Params::default()` matches.
+- **OWASP Password Storage Cheat Sheet defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32` — matches the sheet as checked on 2026-06-09. RustCrypto's `Params::default()` matches.
 - **`MIN_SALT_LEN` is policy, not enforcement.** rscrypto exposes `Scrypt::MIN_SALT_LEN = 16` as a guidance constant. Neither crate rejects shorter salts at hash time (RFC 7914 §12 test vectors include empty salts) — assert against the constant in your wrapper if you want enforcement.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings.
 - **Memory cost.** `Scrypt::hash` allocates `128 * r * N` bytes (default: ~128 MB at `log_n=17, r=8`). Use `ScryptVerifyPolicy::default()` to cap incoming PHC strings to OWASP-compliant bounds; otherwise an attacker submitting a `ln=24` PHC could request 16 GiB of allocation in your verify path.

@@ -16,7 +16,7 @@ const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64)
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "linux",
+  any(target_os = "linux", target_os = "macos"),
   not(debug_assertions),
   not(feature = "portable-only")
 ))]
@@ -156,7 +156,7 @@ impl ChaCha20Poly1305 {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "macos"),
     not(debug_assertions),
     not(feature = "portable-only")
   ))]
@@ -166,13 +166,17 @@ impl ChaCha20Poly1305 {
     aad: &[u8],
     buffer: &mut [u8],
   ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    if buffer.is_empty() {
+      return None;
+    }
+
     let tag = aarch64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "linux", target_os = "macos"),
     not(debug_assertions),
     not(feature = "portable-only")
   ))]
@@ -183,6 +187,10 @@ impl ChaCha20Poly1305 {
     buffer: &mut [u8],
     tag: &ChaCha20Poly1305Tag,
   ) -> Option<Result<(), OpenError>> {
+    if buffer.is_empty() {
+      return None;
+    }
+
     let expected = aarch64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
     if !ct::constant_time_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
@@ -273,7 +281,7 @@ impl Aead for ChaCha20Poly1305 {
 
     #[cfg(all(
       target_arch = "aarch64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "macos"),
       not(debug_assertions),
       not(feature = "portable-only")
     ))]
@@ -315,7 +323,7 @@ impl Aead for ChaCha20Poly1305 {
 
     #[cfg(all(
       target_arch = "aarch64",
-      target_os = "linux",
+      any(target_os = "linux", target_os = "macos"),
       not(debug_assertions),
       not(feature = "portable-only")
     ))]
