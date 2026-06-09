@@ -10,7 +10,11 @@
 
 In `no_std` builds, only the compile-time tier runs.
 
-The `portable-only` feature hard-disables tier 2 even with `std` enabled. See [`features.md`](features.md#portable-only).
+With `std` enabled, the `portable-only` feature makes `platform::caps()` report
+no runtime SIMD/ASM capabilities, so dispatchers that consult runtime caps fall
+through to portable backends. It does not remove SIMD code from the binary or
+override compile-time `target_feature` selection. See
+[`features.md`](features.md#portable-only).
 
 ## Acceleration Matrix
 
@@ -40,4 +44,7 @@ Other `no_std` targets in the same families (e.g. `thumbv7em-*`, larger RISC-V p
 
 ## Per-Platform Benchmark Scorecard
 
-Current geomean speedups by platform live in [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix). The current public set includes the 2026-06-08 nine-runner Linux CI matrix and a 2026-06-08 local Apple Silicon MBP M1 full run.
+Current geomean speedups by platform live in
+[`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
+The current public set includes the 2026-06-08 nine-runner Linux CI matrix and
+a 2026-06-09 local Apple Silicon macOS/aarch64 full run.

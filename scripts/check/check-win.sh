@@ -49,7 +49,7 @@ if ! XWIN_CACHE_DIR="$XWIN_CACHE_DIR_DEFAULT" \
   # unexpected errors.
   if tail -80 "$LOG_DIR/xwin-init.log" | grep -Eq \
       'failed to lookup address information|Could not resolve host|Name or service not known|Temporary failure in name resolution|HTTP GET request .* failed'; then
-    printf " ${YELLOW}○${RESET}\n"
+    printf " %b○%b\n" "$YELLOW" "$RESET"
     skip "Windows targets" "SDK cache init requires network downloads"
     exit 0
   fi
@@ -78,8 +78,8 @@ for i in "${!WIN_TARGETS[@]}"; do
   target_cache_dir="$XWIN_CACHE_DIR_DEFAULT/$target"
   mkdir -p "$target_cache_dir"
   log_file="$LOG_DIR/$target.log"
-  logs[$i]="$log_file"
-  targets[$i]="$target"
+  logs[i]="$log_file"
+  targets[i]="$target"
 
   (
     # shellcheck disable=SC2086
@@ -90,7 +90,7 @@ for i in "${!WIN_TARGETS[@]}"; do
       exit 1
     fi
   ) &
-  pids[$i]=$!
+  pids[i]=$!
 done
 
 FAILED=0

@@ -10,14 +10,14 @@ use rscrypto::{
   HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3, aead::Nonce96,
 };
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn core::error::Error>> {
   println!("rscrypto basic example\n");
 
   checksum_api();
   digest_api();
-  auth_api();
-  aead_api();
-  hex_api();
+  auth_api()?;
+  aead_api()?;
+  hex_api()?;
   serialization_api();
   xof_api();
   fast_hash_api();
@@ -75,7 +75,7 @@ fn digest_api() {
 }
 
 /// MACs and KDFs keep the same one-shot vs stateful split.
-fn auth_api() {
+fn auth_api() -> Result<(), Box<dyn core::error::Error>> {
   println!("Auth\n");
 
   let key = b"shared-secret";
@@ -94,22 +94,19 @@ fn auth_api() {
 
   let hkdf = HkdfSha256::new(b"salt", b"input key material");
   let mut okm = [0u8; 42];
-  if let Err(err) = hkdf.expand(b"context", &mut okm) {
-    panic!("HKDF expand must succeed: {err}");
-  }
+  hkdf.expand(b"context", &mut okm)?;
 
-  let oneshot = match HkdfSha256::derive_array::<42>(b"salt", b"input key material", b"context") {
-    Ok(out) => out,
-    Err(err) => panic!("HKDF derive_array must succeed: {err}"),
-  };
+  let oneshot = HkdfSha256::derive_array::<42>(b"salt", b"input key material", b"context")?;
   assert_eq!(okm, oneshot);
 
   println!("HMAC-SHA256 tag size = {} bytes", tag.len());
   println!("HKDF-SHA256 output   = {} bytes\n", okm.len());
+
+  Ok(())
 }
 
 /// AEAD: encrypt, authenticate, and decrypt with typed keys and nonces.
-fn aead_api() {
+fn aead_api() -> Result<(), Box<dyn core::error::Error>> {
   println!("AEAD\n");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
@@ -117,22 +114,20 @@ fn aead_api() {
   let aead = ChaCha20Poly1305::new(&key);
 
   let mut buf = *b"hello";
-  let tag = aead
-    .encrypt_in_place(&nonce, b"", &mut buf)
-    .expect("encrypt must succeed");
+  let tag = aead.encrypt_in_place(&nonce, b"", &mut buf)?;
   assert_ne!(&buf, b"hello");
-  aead
-    .decrypt_in_place(&nonce, b"", &mut buf, &tag)
-    .expect("decrypt must succeed");
+  aead.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
   assert_eq!(&buf, b"hello");
 
   println!("ChaCha20-Poly1305 round-trip succeeded");
   println!("  tag = {tag}");
   println!("  nonce = {nonce}\n");
+
+  Ok(())
 }
 
 /// Hex Display, FromStr, and secret key masking.
-fn hex_api() {
+fn hex_api() -> Result<(), Box<dyn core::error::Error>> {
   println!("Hex formatting\n");
 
   let nonce = Nonce96::from_bytes([0xab; 12]);
@@ -141,7 +136,7 @@ fn hex_api() {
   println!("UpperHex: {nonce:X}");
   println!("Debug:    {nonce:?}");
 
-  let parsed: Nonce96 = "abababababababababababab".parse().unwrap();
+  let parsed: Nonce96 = "abababababababababababab".parse()?;
   assert_eq!(parsed, nonce);
   println!("FromStr:  round-trip succeeded");
 
@@ -156,6 +151,8 @@ fn hex_api() {
   let sig = kp.sign(b"hello");
   println!("Ed25519 signature:  {sig}");
   println!();
+
+  Ok(())
 }
 
 /// Serialization via from_bytes / to_bytes / as_bytes.

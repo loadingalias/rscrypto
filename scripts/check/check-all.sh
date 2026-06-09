@@ -202,18 +202,18 @@ run_constrained_checks() {
   local targets=()
   for i in "${!constrained_targets[@]}"; do
     target="${constrained_targets[$i]}"
-    targets[$i]="$target"
+    targets[i]="$target"
     (
       run_constrained_target "$target" "$log_dir"
     ) &
-    pids[$i]=$!
+    pids[i]=$!
   done
 
   local failures=0
   for i in "${!targets[@]}"; do
     target="${targets[$i]}"
     step "$target group"
-    if wait "${pids[$i]}"; then
+    if wait "${pids[i]}"; then
       ok
     else
       fail
@@ -244,29 +244,24 @@ echo "Cross targets ${DIM}(parallel)${RESET}"
 log_dir=$(mktemp -d)
 trap 'rm -rf "$log_dir"' EXIT
 
-(
-  "$SCRIPT_DIR/check-win.sh" "$@"
-) >"$log_dir/windows.log" 2>&1 &
-pid_windows=$!
+jobs=(windows linux ibm constrained)
+pids=()
 
-(
-  "$SCRIPT_DIR/check-linux.sh" "$@"
-) >"$log_dir/linux.log" 2>&1 &
-pid_linux=$!
+("$SCRIPT_DIR/check-win.sh" "$@") >"$log_dir/windows.log" 2>&1 &
+pids+=( "$!" )
 
-(
-  "$SCRIPT_DIR/check-ibm.sh" "$@"
-) >"$log_dir/ibm.log" 2>&1 &
-pid_ibm=$!
+("$SCRIPT_DIR/check-linux.sh" "$@") >"$log_dir/linux.log" 2>&1 &
+pids+=( "$!" )
 
-(
-  run_constrained_checks
-) >"$log_dir/constrained.log" 2>&1 &
-pid_constrained=$!
+("$SCRIPT_DIR/check-ibm.sh" "$@") >"$log_dir/ibm.log" 2>&1 &
+pids+=( "$!" )
+
+(run_constrained_checks) >"$log_dir/constrained.log" 2>&1 &
+pids+=( "$!" )
 
 failures=0
-for job in windows linux ibm constrained; do
-  pid_var="pid_${job}"
+for i in "${!jobs[@]}"; do
+  job="${jobs[i]}"
   log_file="$log_dir/$job.log"
   case "$job" in
     windows) display="Windows group" ;;
@@ -275,7 +270,7 @@ for job in windows linux ibm constrained; do
     constrained) display="Constrained group" ;;
   esac
   step "$display"
-  if wait "${!pid_var}"; then
+  if wait "${pids[i]}"; then
     ok
   else
     fail

@@ -78,8 +78,8 @@ These are intentional exclusions, not omissions.
   force a fresh keygen-and-discard path instead of matching rscrypto, dalek,
   `aws-lc-rs`, and `dryoc`.
 - `dryoc` XChaCha20-Poly1305 is excluded from one-shot AEAD benches because
-  dryoc 0.7 exposes the libsodium secretstream shape, not the IETF one-shot
-  detached AEAD shape.
+  the bench dependency exposes the libsodium secretstream shape, not the IETF
+  one-shot detached AEAD shape used by the other rows.
 
 ## Publication Gate
 

@@ -176,20 +176,25 @@ run_target_in_package() {
 
   mkdir -p "$package_dir/artifacts/$target"
 
-  local fuzz_args="-max_total_time=$duration -timeout=$TIMEOUT -rss_limit_mb=$RSS_LIMIT -max_len=$MAX_LEN"
-  fuzz_args="$fuzz_args -artifact_prefix=$package_dir/artifacts/$target/"
+  local fuzz_args=(
+    "-max_total_time=$duration"
+    "-timeout=$TIMEOUT"
+    "-rss_limit_mb=$RSS_LIMIT"
+    "-max_len=$MAX_LEN"
+    "-artifact_prefix=$package_dir/artifacts/$target/"
+  )
 
   local dict
   dict="$(fuzz_dictionary_for_target "$target")"
   if [ -n "$dict" ]; then
-    fuzz_args="$fuzz_args -dict=$dict"
+    fuzz_args+=( "-dict=$dict" )
   fi
 
   local fuzz_exit=0
   fuzz_in_package "$package_dir" run "$target" \
       --jobs="$JOBS" \
       --target "$(fuzz_host_target)" \
-      -- $fuzz_args 2>&1 | { grep -v "^INFO:" || true; } || fuzz_exit=$?
+      -- "${fuzz_args[@]}" 2>&1 | { grep -v "^INFO:" || true; } || fuzz_exit=$?
 
   if [ "$fuzz_exit" -eq 0 ]; then
     echo "    Completed: ${label}/${target}"

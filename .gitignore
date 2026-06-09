@@ -9,13 +9,13 @@ __pycache__/
 Thumbs.db
 .DS_Store
 
-# Claude/Codex
+# LLM/AI Harness/Agents
 .claude
 .agents
 .codex
 AGENTS.md
 
-# Zed
+# Zed/IDE
 .zed
 
 # Keys/Creds
@@ -23,11 +23,13 @@ AGENTS.md
 *.key
 
 # Junk
-docs/tasks/*
-docs/distribution
-docs/notes
-benchmark_results/*
+docs/tasks/
 docs/llvm-ppc64le-readvolatile-issue.md
+
+# Benchmark artifacts: publish only the curated overview.
+/benchmark_results/**
+!/benchmark_results/
+!/benchmark_results/OVERVIEW.md
 
 # Fuzzing
 corpus
@@ -54,7 +56,7 @@ fuzz-packages/**/Cargo.lock
 # Testing
 proptest-regressions
 *.proptest-regressions
-.playwright-mcp/
+.playwright-mcp/.cargo
 assets/distribution/
 rscrypto-visual-asset-system-desktop.png
 rscrypto-visual-asset-system-mobile.png

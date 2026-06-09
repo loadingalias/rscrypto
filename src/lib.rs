@@ -115,9 +115,11 @@ assert!(
 //! `rscrypto` is a primitives crate, not a FIPS 140-3 validated module. It
 //! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,
 //! KMAC, HKDF, PBKDF2) alongside non-FIPS ones. The `portable-only` feature
-//! flag forces dispatch to the constant-time portable backend for FIPS /
-//! DO-178C / ISO 26262 / IEC 62443 deployments. See the security guidance
-//! for nonce lifecycle, PHC verification limits, and platform fallback notes.
+//! makes runtime capability detection report no SIMD/ASM capabilities, so
+//! dispatchers that consult runtime caps fall through to portable backends.
+//! It is a deployment control, not a substitute for release constant-time
+//! evidence. See the security guidance for nonce lifecycle, PHC verification
+//! limits, and platform fallback notes.
 
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]

@@ -2,9 +2,9 @@
 
 Runnable demonstrations of the public `rscrypto` API. Each example is small enough to read end-to-end and feature-gated to the smallest set that compiles.
 
-## Where to start
+## Getting Started
 
-If you've never used `rscrypto`, run `basic` first — it tours every primitive family the crate exposes. After that, pick the example that matches what you're trying to do.
+If you've never used `rscrypto`, run `basic` first. It tours the main API patterns across the primitive families. After that, pick the example that matches what you're trying to do.
 
 If you are replacing an existing crate, start with the matching guide in
 [`docs/migration/`](../docs/migration/) and then use these examples to confirm
@@ -34,7 +34,7 @@ Hashes a password with both Argon2id and scrypt, encodes the result as a PHC str
 cargo run --example parallel --features checksums
 ```
 
-Demonstrates that `rscrypto`'s CRC implementations are mathematically combinable: given `crc(A)` and `crc(B)`, you can compute `crc(A || B)` without ever holding both chunks together. The example computes a 4 MiB CRC four ways — sequentially, two-way split via `combine`, multi-threaded with `std::thread::scope`, and a sequential multi-part loop — and asserts every result matches. Uses `Crc32` and `Crc64` (XZ polynomial). The pattern applies to any `Checksum` type that implements `ChecksumCombine`.
+Demonstrates that `rscrypto`'s CRC implementations are mathematically combinable: given `crc(A)` and `crc(B)`, you can compute `crc(A || B)` without ever holding both chunks together. The example checks a two-way split, a multi-part loop, and scoped-thread chunk processing against sequential references. Uses `Crc32` and `Crc64` (XZ polynomial). The pattern applies to any `Checksum` type that implements `ChecksumCombine`.
 
 ### `introspect` — Runtime dispatch inspection
 
@@ -42,7 +42,7 @@ Demonstrates that `rscrypto`'s CRC implementations are mathematically combinable
 cargo run --example introspect --features checksums,hashes,aead,diag
 ```
 
-Prints the platform's detected CPU capabilities and reports which kernel the dispatcher selected for each algorithm at representative buffer sizes (64 B, 256 B, 1 KiB, 4 KiB, 64 KiB, 1 MiB). Use this when you want to confirm hardware acceleration kicked in on a new platform, or when you're investigating a performance surprise. Covers every CRC, every cryptographic and fast hash, and every AEAD backend. Requires the `diag` feature — introspection is opt-in to keep the default binary small.
+Prints the platform's detected CPU capabilities and reports which kernel the dispatcher selected for representative checksums, hashes, fast hashes, and AEAD backends at useful buffer sizes. Use this when you want to confirm hardware acceleration kicked in on a new platform, or when you're investigating a performance surprise. Requires the `diag` feature; introspection is opt-in to keep the default binary small.
 
 ## Pattern reference
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Shared utilities for repository scripts.
+# shellcheck disable=SC2034
+# CRATE_FLAGS and SCOPE_DESC are caller-visible outputs.
 
 COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=rail-plan.sh
@@ -21,11 +23,11 @@ step() {
 }
 
 ok() {
-  printf " ${GREEN}✓${RESET}\n"
+  printf " %b✓%b\n" "$GREEN" "$RESET"
 }
 
 fail() {
-  printf " ${RED}✗${RESET}\n"
+  printf " %b✗%b\n" "$RED" "$RESET"
 }
 
 skip() {

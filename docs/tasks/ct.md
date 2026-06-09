@@ -26,12 +26,11 @@ machine-readable source of truth is [`ct.toml`](../../ct.toml).
 The current hard gate is:
 
 ```bash
-just ct-check
+just ct-full
 ```
 
-`just ct-check` and `just ct-full` are intentionally the same command path.
-They build artifacts, validate manifest coverage, run DudeCT, run BINSEC where
-the target requires it, and emit release-style reports.
+`just ct-full` builds artifacts, validates manifest coverage, runs DudeCT, runs
+BINSEC where the target requires it, and emits release-style reports.
 
 Current platform scope:
 
@@ -112,7 +111,7 @@ Gate behavior:
 - Made every manifest-declared DudeCT case run from
   [`scripts/ct/full.py`](../../scripts/ct/full.py).
 - Made missing required DudeCT coverage, timeout, crash, or threshold failure a
-  blocker in `ct-check`.
+  blocker in `ct-full`.
 
 Local status:
 
@@ -128,7 +127,7 @@ Local status:
 - Chose direct integration over `cargo-checkct` so the rscrypto manifest owns
   kernels, targets, assumptions, required status, and evidence artifacts.
 - Added repo-local BINSEC harness entrypoints for small CT-critical kernels.
-- Made required Linux BINSEC kernels fail `ct-check` unless the result is
+- Made required Linux BINSEC kernels fail `ct-full` unless the result is
   `secure`.
 - Emit per-kernel BINSEC artifacts under
   `target/ct/<target>/<profile>/binsec/<kernel>/`.
@@ -270,7 +269,6 @@ just ct
 Local full gate for the native host:
 
 ```bash
-just ct-check
 just ct-full
 ```
 

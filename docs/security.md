@@ -7,12 +7,11 @@ not to every function in the crate. The rulebook for release claims, allowed
 leakage, target scope, and invalidation lives in
 [`docs/constant-time.md`](constant-time.md).
 
-The local release evidence gate is `just ct-check`, which runs the same hard
-pipeline as `just ct-full` for the selected native target. Hosted release
-evidence is collected by [`ct.yaml`](../.github/workflows/ct.yaml) and packaged
-per physical runner:
+The local release evidence gate is `just ct-full` for the selected native
+target. Hosted release evidence is collected by
+[`ct.yaml`](../.github/workflows/ct.yaml) and packaged per physical runner:
 
-| Platform class | CT evidence currently claimed |
+| Platform class | Current CT release-evidence scope |
 |---|---|
 | Linux `x86_64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC for manifest-declared CT kernels on AMD Zen4, AMD Zen5, Intel Ice Lake, and Intel Sapphire Rapids lanes. |
 | Linux `aarch64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC for manifest-declared CT kernels on AWS Graviton3 and Graviton4 lanes. |
@@ -20,21 +19,21 @@ per physical runner:
 | Linux `s390x-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Z lane. BINSEC is not claimed for s390x today. |
 | Linux `powerpc64le-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Power10 lane. BINSEC is not claimed for little-endian POWER today. |
 | macOS `aarch64-apple-darwin` | Local artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. |
-| Linux MUSL, macOS `x86_64`, Windows MSVC, `no_std`, and WASM | Intended or artifact-only coverage as classified in [`ct.toml`](../ct.toml), but not part of the current published physical CT release claim. They need separate hardware, bytecode, object-format, or engine-specific evidence before being claimed. |
+| Linux MUSL, macOS `x86_64`, Windows MSVC, `no_std`, and WASM | Intended or artifact-only coverage as classified in [`ct.toml`](../ct.toml), but not part of the current native release-evidence set. They need separate hardware, bytecode, object-format, or engine-specific evidence before being claimed. |
 
-For claimed native targets, the CT manifest must cover the hot paths that
+For native targets in the release-evidence scope, the CT manifest must cover the hot paths that
 actually execute: accelerated ASM, SIMD, hardware-instruction backends, and
 portable fallbacks used by CT-critical primitives. A backend being fast or
 selected at runtime does not exempt it from the manifest or evidence gates.
 
 | Surface | Claim boundary | Evidence |
 |---|---|---|
-| MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | CT manifest coverage, `just ct-check`, HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | CT manifest coverage, `just ct-check`, AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| Ed25519 signing and secret-key public derivation | Secret scalar paths must avoid secret-dependent branches, table indices, memory addresses, and failure shape. | CT manifest coverage, `just ct-check`, RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | CT manifest coverage, `just ct-full`, HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | CT manifest coverage, `just ct-full`, AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| Ed25519 signing and secret-key public derivation | Secret scalar paths must avoid secret-dependent branches, table indices, memory addresses, and failure shape. | CT manifest coverage, `just ct-full`, RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
 | Ed25519 verification | Signature acceptance/rejection uses a single opaque verification error at the public API boundary. Public verification is not a private-key CT claim unless promoted by the manifest. | RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| X25519 scalar multiplication | Scalar multiplication must avoid secret-dependent field behavior and rejects all-zero shared secrets. | CT manifest coverage, `just ct-check`, RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| RSA private sign/decrypt | Private-operation paths require same-width opaque failures and CT evidence for manifest-declared hot paths. | CT manifest coverage, `just ct-check`, and the RSA evidence boundary below. |
+| X25519 scalar multiplication | Scalar multiplication must avoid secret-dependent field behavior and rejects all-zero shared secrets. | CT manifest coverage, `just ct-full`, RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| RSA private sign/decrypt | Private-operation paths require same-width opaque failures and CT evidence for manifest-declared hot paths. | CT manifest coverage, `just ct-full`, and the RSA evidence boundary below. |
 
 These are not global constant-time claims: parsers, DER/PHC decoding, algorithm
 or profile negotiation, key generation, OS randomness paths, public RSA
@@ -103,7 +102,7 @@ Mandatory RSA release evidence:
   HMAC_DRBG for key generation; this is not a CMVP/FIPS 140-3 validation claim.
 - Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
   RSASSA-PKCS1-v1_5.
-- `just ct-check` passes on every claimed native target. The CT gate covers
+- `just ct-full` passes on every native target in the release-evidence scope. The CT gate covers
   manifest-declared RSA private-operation variants through artifacts,
   heuristics, DudeCT, and BINSEC where supported: RSASSA-PKCS1-v1_5 signing,
   RSASSA-PSS signing, RSAES-OAEP decryption, RSAES-PKCS1-v1_5 decryption, and

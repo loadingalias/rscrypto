@@ -182,7 +182,7 @@ FAILURES=()
 echo "BLAKE3 gap gate ($GATE_LABEL):"
 
 # Sort thresholds by numeric key
-SORTED_CASES=($(for k in "${!THRESHOLDS[@]}"; do echo "$k"; done | sort -n))
+mapfile -t SORTED_CASES < <(printf '%s\n' "${!THRESHOLDS[@]}" | sort -n)
 
 for case_size in "${SORTED_CASES[@]}"; do
   max_gap="${THRESHOLDS[$case_size]}"
