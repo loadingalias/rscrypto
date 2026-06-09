@@ -147,24 +147,64 @@ def parse_symbol_addresses(artifact_dir: Path) -> dict[str, int]:
   return symbols
 
 
-def parse_disassembly(path: Path) -> tuple[dict[str, list[tuple[int, str]]], dict[int, list[tuple[int, str]]]]:
+def parse_asm_aliases(artifact_dir: Path) -> list[tuple[str, str]]:
+  aliases: list[tuple[str, str]] = []
+  alias_re = re.compile(r"^\s*(_?ct_entry_[A-Za-z0-9_]+)\s*=\s*(_?ct_entry_[A-Za-z0-9_]+)\s*$")
+  for path in sorted(artifact_dir.glob("*.s")):
+    for line in path.read_text(errors="replace").splitlines():
+      if match := alias_re.match(line):
+        aliases.append((normalize_symbol(match.group(1)), normalize_symbol(match.group(2))))
+  return aliases
+
+
+def apply_alias_bodies(functions: dict[str, list[tuple[int, str]]], aliases: list[tuple[str, str]]) -> None:
+  parent: dict[str, str] = {}
+
+  def find(symbol: str) -> str:
+    parent.setdefault(symbol, symbol)
+    while parent[symbol] != symbol:
+      parent[symbol] = parent[parent[symbol]]
+      symbol = parent[symbol]
+    return symbol
+
+  def union(left: str, right: str) -> None:
+    left_root = find(left)
+    right_root = find(right)
+    if left_root != right_root:
+      parent[right_root] = left_root
+
+  for alias, target in aliases:
+    union(alias, target)
+
+  components: dict[str, list[str]] = {}
+  for symbol in parent:
+    components.setdefault(find(symbol), []).append(symbol)
+
+  for symbols in components.values():
+    body = next((functions[symbol] for symbol in symbols if symbol in functions), None)
+    if body is None:
+      continue
+    for symbol in symbols:
+      functions.setdefault(symbol, body)
+
+
+def parse_disassembly(path: Path) -> tuple[dict[str, list[tuple[int, str]]], dict[int, list[list[tuple[int, str]]]]]:
   functions_by_label: dict[str, list[tuple[int, str]]] = {}
-  functions_by_address: dict[int, list[tuple[int, str]]] = {}
-  current_symbol: str | None = None
-  current_address: int | None = None
+  functions_by_address: dict[int, list[list[tuple[int, str]]]] = {}
+  current_lines: list[tuple[int, str]] | None = None
   label_re = re.compile(r"^[0-9a-fA-F]+ <([^>]+)>:$")
   for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
     if match := label_re.match(line.strip()):
       address_text = line.strip().split(maxsplit=1)[0]
       symbol = normalize_symbol(match.group(1))
-      current_address = int(address_text, 16)
-      current_symbol = symbol if symbol.startswith("ct_entry_") else None
-      functions_by_address.setdefault(current_address, [])
-      if current_symbol is not None:
-        functions_by_label.setdefault(current_symbol, functions_by_address[current_address])
+      address = int(address_text, 16)
+      current_lines = []
+      functions_by_address.setdefault(address, []).append(current_lines)
+      if symbol.startswith("ct_entry_"):
+        functions_by_label.setdefault(symbol, current_lines)
       continue
-    if current_address is not None:
-      functions_by_address[current_address].append((line_number, line))
+    if current_lines is not None:
+      current_lines.append((line_number, line))
   return functions_by_label, functions_by_address
 
 
@@ -366,6 +406,7 @@ def main() -> int:
   findings: list[dict[str, Any]] = []
   disassembly_files = sorted([*args.artifact_dir.glob("*.o.disasm.txt"), *args.artifact_dir.glob("*.obj.disasm.txt")])
   symbol_addresses = parse_symbol_addresses(args.artifact_dir)
+  aliases = parse_asm_aliases(args.artifact_dir)
 
   for path in disassembly_files:
     by_label, by_address = parse_disassembly(path)
@@ -374,8 +415,10 @@ def main() -> int:
       if symbol in functions:
         continue
       address = symbol_addresses.get(symbol)
-      if address is not None and address in by_address:
-        functions[symbol] = by_address[address]
+      bodies = by_address.get(address, []) if address is not None else []
+      if len(bodies) == 1:
+        functions[symbol] = bodies[0]
+    apply_alias_bodies(functions, aliases)
 
   for path in disassembly_files:
     for symbol in sorted(symbols):

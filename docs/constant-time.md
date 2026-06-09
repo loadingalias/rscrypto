@@ -79,7 +79,7 @@ Current release evidence is scoped as follows:
 |---|---|
 | Linux `x86_64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the AMD Zen4, AMD Zen5, Intel Ice Lake, and Intel Sapphire Rapids release lanes. |
 | Linux `aarch64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the AWS Graviton3 and Graviton4 release lanes. |
-| Linux `riscv64gc-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC on the RISE RISC-V release lane. |
+| Linux `riscv64gc-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the RISE RISC-V release lane. BINSEC is not claimed for RISC-V in the current workflow because the shipped BINSEC/RISC-V path does not complete the release-sized HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. |
 | Linux `s390x-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Z release lane. BINSEC is not claimed for this ISA in the current workflow. |
 | Linux `powerpc64le-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Power10 release lane. BINSEC is not claimed for little-endian POWER in the current workflow. |
 | macOS `aarch64-apple-darwin` | Local artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O in the current workflow. |

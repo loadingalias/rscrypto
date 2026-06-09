@@ -96,6 +96,7 @@ pub(super) unsafe fn encrypt_block_raw(raw_key: &[u8; 32], block: &mut [u8; 16])
 /// # Safety
 /// Caller must ensure the MSA (CPACF) facility is available.
 /// `blocks` must contain exactly `count * 16` bytes.
+#[cfg(feature = "aes-gcm-siv")]
 pub(super) unsafe fn encrypt_blocks_raw(raw_key: &[u8; 32], blocks: &mut [u8], count: usize) {
   debug_assert_eq!(blocks.len(), count.strict_mul(16));
 
@@ -305,7 +306,7 @@ pub(super) unsafe fn encrypt_block_128(key: &Km128Key, block: &mut [u8; 16]) {
 /// # Safety
 /// Caller must ensure the MSA (CPACF) facility is available.
 /// `blocks` must contain exactly `count * 16` bytes.
-#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv"))]
+#[cfg(any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256"))]
 pub(super) unsafe fn encrypt_blocks_128(key: &Km128Key, blocks: &mut [u8], count: usize) {
   debug_assert_eq!(blocks.len(), count.strict_mul(16));
 

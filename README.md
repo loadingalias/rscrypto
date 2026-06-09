@@ -213,7 +213,7 @@ that mirror the public benchmark matrix:
 |---|---|---|
 | AMD Zen4, AMD Zen5, Intel Ice Lake, Intel Sapphire Rapids | Linux `x86_64` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-amd-zen4`, `ct-amd-zen5`, `ct-intel-icl`, `ct-intel-spr` |
 | AWS Graviton3 and Graviton4 | Linux `aarch64` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-graviton3`, `ct-graviton4` |
-| RISE RISC-V | Linux `riscv64gc` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-rise-riscv` |
+| RISE RISC-V | Linux `riscv64gc` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for RISC-V today because the current BINSEC/RISC-V workflow does not complete the release-sized HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. | `ct-rise-riscv` |
 | IBM z16 / s390x | Linux `s390x` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for s390x today. | `ct-ibm-s390x` |
 | IBM Power10 / ppc64le | Linux `powerpc64le` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for little-endian POWER today. | `ct-ibm-power10` |
 | Apple Silicon | Local macOS `aarch64` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. | local `ct-evidence/` package |
