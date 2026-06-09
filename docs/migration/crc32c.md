@@ -6,9 +6,9 @@ Output is covered by the CRC-32C oracle/property tests in `tests/crc32_propertie
 
 ## TL;DR
 
-| | Before (`crc32c` 0.6.x) | After (`rscrypto` 0.3.1) |
+| | Before (`crc32c` 0.6.x) | After (`rscrypto` 0.4.0) |
 |---|---|---|
-| Cargo dep | `crc32c = "0.6"` | `rscrypto = { version = "0.3.1", features = ["crc32"] }` |
+| Cargo dep | `crc32c = "0.6"` | `rscrypto = { version = "0.4.0", features = ["crc32"] }` |
 | Import | `use crc32c::{crc32c, crc32c_append, crc32c_combine};` | `use rscrypto::checksum::{Checksum, ChecksumCombine, Crc32C};` |
 | Call | `crc32c(data)` | `Crc32C::checksum(data)` |
 
@@ -23,7 +23,7 @@ crc32c = "0.6"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.3.1", features = ["crc32"] }
+rscrypto = { version = "0.4.0", features = ["crc32"] }
 ```
 
 The `crc32` feature enables both `Crc32` (IEEE) and `Crc32C` (Castagnoli) at no extra binary cost.

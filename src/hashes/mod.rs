@@ -45,16 +45,16 @@
 //! ```toml
 //! [dependencies]
 //! # Smallest SHA-2-only build
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["sha2"] }
 //!
 //! # All cryptographic hashes
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["crypto-hashes"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["crypto-hashes"] }
 //!
 //! # Fast non-cryptographic hashes only
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["fast-hashes"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["fast-hashes"] }
 //!
 //! # Everything hash-related
-//! rscrypto = { version = "0.3.1", default-features = false, features = ["hashes"] }
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["hashes"] }
 //! ```
 //!
 //! # API Conventions

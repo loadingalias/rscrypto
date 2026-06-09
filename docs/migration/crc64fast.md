@@ -2,14 +2,14 @@
 
 > Same CRC-64/XZ output with method renames from `Digest` / `write` / `sum64` to `Crc64` / `update` / `finalize`. The aside below also covers `crc64fast-nvme` → `Crc64Nvme`.
 
-Verified against `crc64fast = "1.1.0"`, `crc64fast-nvme = "1.2.1"`, and the `rscrypto` 0.3.1 line.
+Verified against `crc64fast = "1.1.0"`, `crc64fast-nvme = "1.2.1"`, and the `rscrypto` 0.4.0 line.
 Evidence: `tests/crc64_properties.rs` compares one-shot and streaming output against both crates.
 
 ## TL;DR
 
-| | Before (`crc64fast` 1.x) | After (`rscrypto` 0.3.1) |
+| | Before (`crc64fast` 1.x) | After (`rscrypto` 0.4.0) |
 |---|---|---|
-| Cargo dep | `crc64fast = "1.1"` | `rscrypto = { version = "0.3.1", features = ["crc64"] }` |
+| Cargo dep | `crc64fast = "1.1"` | `rscrypto = { version = "0.4.0", features = ["crc64"] }` |
 | Import | `use crc64fast::Digest;` | `use rscrypto::checksum::{Checksum, Crc64};` |
 | Call | `Digest::new(); .write(data); .sum64()` | `Crc64::new(); .update(data); .finalize()` |
 
@@ -24,7 +24,7 @@ crc64fast = "1.1"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.3.1", features = ["crc64"] }
+rscrypto = { version = "0.4.0", features = ["crc64"] }
 ```
 
 `features = ["crc64"]` enables both `Crc64` (XZ / ECMA-182) and `Crc64Nvme`.
