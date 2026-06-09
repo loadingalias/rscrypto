@@ -1039,7 +1039,10 @@ pub(super) unsafe fn ppc_encrypt_block_inline(keys: &ppc::PpcRoundKeys, block: &
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "powerpc64",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 unsafe fn ppc_encrypt_blocks_inline(keys: &ppc::PpcRoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
@@ -1104,7 +1107,10 @@ pub(super) unsafe fn ppc_encrypt_block_128_inline(keys: &ppc::Ppc128RoundKeys, b
 ///
 /// # Safety
 /// Caller must ensure POWER8 crypto is available.
-#[cfg(all(target_arch = "powerpc64", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "powerpc64",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+))]
 #[target_feature(enable = "altivec,vsx,power8-vector,power8-crypto")]
 #[inline]
 unsafe fn ppc_encrypt_blocks_128_inline(keys: &ppc::Ppc128RoundKeys, blocks: &mut [[u8; BLOCK_SIZE]]) {
@@ -1662,7 +1668,10 @@ pub(super) unsafe fn s390x_encrypt_blocks_raw_128_inline(
 ///
 /// # Safety
 /// Caller must ensure MSA is available.
-#[cfg(all(target_arch = "s390x", any(feature = "aes-gcm", feature = "aes-gcm-siv")))]
+#[cfg(all(
+  target_arch = "s390x",
+  any(feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+))]
 #[inline(always)]
 pub(super) unsafe fn s390x_encrypt_blocks_128_inline(key: &km::Km128Key, blocks: &mut [u8], count: usize) {
   // SAFETY: s390x KM AES-128 block batch because:

@@ -2075,7 +2075,8 @@ backend = "llvm"
 linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
-binsec = "required"
+binsec = "unsupported"
+binsec_reason = "BINSEC/Rel 0.11.1 can load RISC-V ELF binaries, but the current workflow does not complete the release-sized RISC-V HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. RISC-V evidence is artifact/heuristic plus native DudeCT until the proof kernels are reduced or BINSEC RISC-V solver support improves."
 ci = "ubuntu-24.04-riscv"
 
 [[target]]
