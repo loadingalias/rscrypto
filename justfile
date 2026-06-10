@@ -3,14 +3,29 @@
 ssh-linux target="linux":
     @"$HOME/dev-machines/connect.sh" "{{ target }}" rscrypto
 
+ssh-linux-arch arch:
+    @"$HOME/dev-machines/connect.sh" "{{ arch }}" rscrypto
+
+ssh-create-linux-arch arch *args="":
+    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-30}" "$HOME/dev-machines/create.sh" {{ args }} "{{ arch }}"
+
+ssh-join-linux-arch arch:
+    @"$HOME/dev-machines/join-tailscale.sh" "{{ arch }}"
+
 ssh-kill-linux target="linux":
     @"$HOME/dev-machines/kill.sh" "{{ target }}" rscrypto
+
+ssh-kill-linux-arch arch:
+    @"$HOME/dev-machines/kill.sh" "{{ arch }}" rscrypto
 
 ssh-status:
     @"$HOME/dev-machines/status.sh"
 
 ssh-bootstrap-linux target="linux":
     @"$HOME/dev-machines/bootstrap.sh" "{{ target }}" rscrypto
+
+ssh-bootstrap-linux-arch arch:
+    @"$HOME/dev-machines/bootstrap.sh" "{{ arch }}" rscrypto
 
 # Builds
 build:
