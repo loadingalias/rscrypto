@@ -357,15 +357,18 @@ impl Default for ScryptVerifyPolicy {
   }
 }
 
-// ─── Kernel dispatch (Phase 2: Portable only) ──────────────────────────────
+// ─── Kernel dispatch ───────────────────────────────────────────────────────
 
 /// Salsa20/8 kernel identifier.
 ///
-/// Phase 2 ships only the portable kernel. Phase 4 SIMD kernels
-/// (SSE2 / AVX2 / NEON / VSX / simd128 / RVV) plug into this enum.
+/// SIMD kernels plug into this enum while the portable kernel remains the
+/// reference backend and `portable-only` escape hatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum KernelId {
+  /// x86_64 SSE2 Salsa20/8 BlockMix implementation.
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  X86Sse2,
   /// Pure-Rust portable implementation (always available).
   Portable,
 }
@@ -375,29 +378,203 @@ impl KernelId {
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
+      #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+      Self::X86Sse2 => "x86-sse2",
       Self::Portable => "portable",
     }
   }
 }
 
 /// All compiled-in kernels, in preference order.
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+pub const ALL_KERNELS: &[KernelId] = &[KernelId::X86Sse2, KernelId::Portable];
+
+/// All compiled-in kernels, in preference order.
+#[cfg(not(all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))))]
 pub const ALL_KERNELS: &[KernelId] = &[KernelId::Portable];
 
-/// Capabilities required for `kernel`. Phase 2 returns empty caps; Phase 4
-/// kernels will return the architecture-specific feature set they need.
+/// Capabilities required for `kernel`.
 #[must_use]
 pub const fn required_caps(kernel: KernelId) -> crate::platform::Caps {
   match kernel {
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    KernelId::X86Sse2 => crate::platform::Caps::from_words([0; 4]),
     KernelId::Portable => crate::platform::Caps::from_words([0; 4]),
   }
 }
 
-/// Runtime dispatch. Phase 2 has only a portable kernel; Phase 4 SIMD
-/// kernels slot in here without any other API changes.
+/// Runtime dispatch for the active scrypt BlockMix backend.
 #[inline]
 #[allow(dead_code)] // Reserved for Phase 4 dispatch; referenced by tests to pin the contract.
 fn active_kernel() -> KernelId {
-  KernelId::Portable
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  {
+    KernelId::X86Sse2
+  }
+  #[cfg(not(all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))))]
+  {
+    KernelId::Portable
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+mod x86_sse2 {
+  use core::arch::x86_64::*;
+
+  const PIVOT_ABCD: [usize; 16] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
+  const INVERSE_PIVOT_ABCD: [usize; 16] = {
+    let mut index = [0usize; 16];
+    let mut i = 0usize;
+    while i < 16 {
+      let mut inverse = 0usize;
+      while inverse < 16 {
+        if PIVOT_ABCD[inverse] == i {
+          index[i] = inverse;
+          break;
+        }
+        inverse += 1;
+      }
+      i += 1;
+    }
+    index
+  };
+
+  #[inline]
+  fn shuffle_words(blocks: &mut [u8], pivot: &[usize; 16]) {
+    debug_assert_eq!(blocks.len() % super::BLOCK_SIZE, 0);
+    for chunk in blocks.chunks_exact_mut(super::BLOCK_SIZE) {
+      let mut words = [0u32; super::BLOCK_WORDS];
+      for (src, word) in chunk.chunks_exact(4).zip(words.iter_mut()) {
+        let arr: [u8; 4] = src.try_into().unwrap();
+        *word = u32::from_le_bytes(arr);
+      }
+      for (i, dst) in chunk.chunks_exact_mut(4).enumerate() {
+        dst.copy_from_slice(&words[pivot[i]].to_le_bytes());
+      }
+    }
+  }
+
+  #[inline]
+  fn shuffle_in(blocks: &mut [u8]) {
+    shuffle_words(blocks, &PIVOT_ABCD);
+  }
+
+  #[inline]
+  fn shuffle_out(blocks: &mut [u8]) {
+    shuffle_words(blocks, &INVERSE_PIVOT_ABCD);
+  }
+
+  #[inline]
+  fn block_mix(input: &[u8], output: &mut [u8]) {
+    debug_assert_eq!(input.len() % 128, 0);
+    debug_assert_eq!(input.len(), output.len());
+    let last = &input[input.len().strict_sub(super::BLOCK_SIZE)..];
+
+    // SAFETY: Load/store and SSE2 Salsa20/8 rounds because:
+    // 1. x86_64 guarantees SSE2 availability for all supported CPUs.
+    // 2. `last` is exactly the final 64-byte block, so offsets 0, 16, 32, and 48 are in-bounds.
+    // 3. Each loop `chunk` is exactly 64 bytes, so the same four 16-byte loads are in-bounds.
+    // 4. `output` length equals `input` length, and `pos` is either an even or odd 64-byte slot inside
+    //    it.
+    // 5. Unaligned SSE2 loads/stores accept arbitrary byte alignment and `__m128i` has no invalid bit
+    //    patterns.
+    unsafe {
+      macro_rules! rol32x {
+        ($v:expr, $amt:literal) => {{
+          let v = $v;
+          _mm_or_si128(_mm_slli_epi32(v, $amt), _mm_srli_epi32(v, 32 - $amt))
+        }};
+      }
+
+      let mut a = _mm_loadu_si128(last.as_ptr().cast());
+      let mut b = _mm_loadu_si128(last.as_ptr().add(16).cast());
+      let mut c = _mm_loadu_si128(last.as_ptr().add(32).cast());
+      let mut d = _mm_loadu_si128(last.as_ptr().add(48).cast());
+
+      for (i, chunk) in input.chunks_exact(super::BLOCK_SIZE).enumerate() {
+        let pos = if i & 1 == 0 {
+          (i >> 1).strict_mul(super::BLOCK_SIZE)
+        } else {
+          (i >> 1).strict_mul(super::BLOCK_SIZE).strict_add(input.len() >> 1)
+        };
+
+        a = _mm_xor_si128(a, _mm_loadu_si128(chunk.as_ptr().cast()));
+        b = _mm_xor_si128(b, _mm_loadu_si128(chunk.as_ptr().add(16).cast()));
+        c = _mm_xor_si128(c, _mm_loadu_si128(chunk.as_ptr().add(32).cast()));
+        d = _mm_xor_si128(d, _mm_loadu_si128(chunk.as_ptr().add(48).cast()));
+
+        let saved_a = a;
+        let saved_b = b;
+        let saved_c = c;
+        let saved_d = d;
+
+        let mut round = 0usize;
+        while round < 8 {
+          b = _mm_xor_si128(b, rol32x!(_mm_add_epi32(a, d), 7));
+          c = _mm_xor_si128(c, rol32x!(_mm_add_epi32(b, a), 9));
+          d = _mm_xor_si128(d, rol32x!(_mm_add_epi32(c, b), 13));
+          a = _mm_xor_si128(a, rol32x!(_mm_add_epi32(d, c), 18));
+
+          d = _mm_shuffle_epi32(d, 0b00_11_10_01);
+          c = _mm_shuffle_epi32(c, 0b01_00_11_10);
+          b = _mm_shuffle_epi32(b, 0b10_01_00_11);
+          core::mem::swap(&mut b, &mut d);
+
+          round = round.strict_add(1);
+        }
+
+        a = _mm_add_epi32(a, saved_a);
+        b = _mm_add_epi32(b, saved_b);
+        c = _mm_add_epi32(c, saved_c);
+        d = _mm_add_epi32(d, saved_d);
+
+        _mm_storeu_si128(output.as_mut_ptr().add(pos).cast(), a);
+        _mm_storeu_si128(output.as_mut_ptr().add(pos.strict_add(16)).cast(), b);
+        _mm_storeu_si128(output.as_mut_ptr().add(pos.strict_add(32)).cast(), c);
+        _mm_storeu_si128(output.as_mut_ptr().add(pos.strict_add(48)).cast(), d);
+      }
+    }
+  }
+
+  #[inline(always)]
+  fn integerify_pivot_low64(chunk: &[u8]) -> u64 {
+    debug_assert_eq!(chunk.len() % super::BLOCK_SIZE, 0);
+    let last = &chunk[chunk.len().strict_sub(super::BLOCK_SIZE)..];
+    let lo = u32::from_le_bytes(last[0..4].try_into().unwrap()) as u64;
+    let hi = u32::from_le_bytes(last[52..56].try_into().unwrap()) as u64;
+    lo | (hi << 32)
+  }
+
+  #[inline]
+  fn xor_into(x: &[u8], y: &[u8], out: &mut [u8]) {
+    for ((o, a), b) in out.iter_mut().zip(x.iter()).zip(y.iter()) {
+      *o = *a ^ *b;
+    }
+  }
+
+  pub(super) fn ro_mix(chunk: &mut [u8], v: &mut [u8], scratch: &mut [u8], n: usize) {
+    debug_assert_eq!(chunk.len(), scratch.len());
+    debug_assert_eq!(v.len(), n.strict_mul(chunk.len()));
+    debug_assert_eq!(n & 1, 0);
+
+    let len = chunk.len();
+    shuffle_in(chunk);
+
+    for v_chunk in v.chunks_exact_mut(len) {
+      v_chunk.copy_from_slice(chunk);
+      block_mix(v_chunk, chunk);
+    }
+
+    let n_mask = (n as u64).wrapping_sub(1);
+    for _ in 0..n {
+      let j = (integerify_pivot_low64(chunk) & n_mask) as usize;
+      let v_start = j.strict_mul(len);
+      xor_into(chunk, &v[v_start..v_start.strict_add(len)], scratch);
+      block_mix(scratch, chunk);
+    }
+
+    shuffle_out(chunk);
+  }
 }
 
 // ─── Salsa20/8 core ─────────────────────────────────────────────────────────
@@ -656,6 +833,34 @@ impl Drop for ScryptState {
   }
 }
 
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+struct ScryptByteState {
+  b: Vec<u8>,
+  v: Vec<u8>,
+  scratch: Vec<u8>,
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+impl ScryptByteState {
+  fn new(b_len: usize, v_len: usize, scratch_len: usize) -> Result<Self, ScryptError> {
+    Ok(Self {
+      b: alloc_u8_vec(b_len)?,
+      v: alloc_u8_vec(v_len)?,
+      scratch: alloc_u8_vec(scratch_len)?,
+    })
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+impl Drop for ScryptByteState {
+  fn drop(&mut self) {
+    ct::zeroize_no_fence(&mut self.b);
+    ct::zeroize_no_fence(&mut self.v);
+    ct::zeroize_no_fence(&mut self.scratch);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
 fn alloc_u8_vec(len: usize) -> Result<Vec<u8>, ScryptError> {
   let mut v: Vec<u8> = Vec::new();
   v.try_reserve_exact(len).map_err(|_| ScryptError::AllocationFailed)?;
@@ -672,7 +877,8 @@ fn alloc_block_vec(len: usize) -> Result<Vec<SalsaBlock>, ScryptError> {
 
 // ─── Full scrypt ────────────────────────────────────────────────────────────
 
-fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u8]) -> Result<(), ScryptError> {
+#[inline]
+fn scrypt_shape(params: &ScryptParams, out: &[u8]) -> Result<(usize, usize, usize, usize, usize, usize), ScryptError> {
   params.validate()?;
   if out.len() != params.output_len as usize {
     return Err(ScryptError::InvalidOutputLen);
@@ -691,6 +897,16 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
   let total_b_blocks = p.checked_mul(two_r).ok_or(ScryptError::ResourceOverflow)?;
   let v_blocks = n.checked_mul(two_r).ok_or(ScryptError::ResourceOverflow)?;
 
+  Ok((n, r, p, two_r, total_b_blocks, v_blocks))
+}
+
+fn scrypt_hash_portable(
+  params: &ScryptParams,
+  password: &[u8],
+  salt: &[u8],
+  out: &mut [u8],
+) -> Result<(), ScryptError> {
+  let (n, r, p, two_r, total_b_blocks, v_blocks) = scrypt_shape(params, out)?;
   let mut state = ScryptState::new(total_b_blocks, v_blocks, two_r)?;
 
   // Pre-compute the HMAC prefix state from `password` once; both PBKDF2
@@ -736,6 +952,44 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
   // `state` wipes every working buffer on drop; `prf` zeroises its HMAC
   // prefix state on drop per `Pbkdf2Sha256::Drop`.
   Ok(())
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+fn scrypt_hash_x86_sse2(
+  params: &ScryptParams,
+  password: &[u8],
+  salt: &[u8],
+  out: &mut [u8],
+) -> Result<(), ScryptError> {
+  let (n, r, p, _, _, _) = scrypt_shape(params, out)?;
+  let r128 = r.checked_mul(128).ok_or(ScryptError::ResourceOverflow)?;
+  let b_len = p.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
+  let v_len = n.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
+  let mut state = ScryptByteState::new(b_len, v_len, r128)?;
+
+  let prf = Pbkdf2Sha256::new(password);
+
+  prf
+    .derive(salt, 1, &mut state.b)
+    .map_err(|_| ScryptError::InvalidOutputLen)?;
+
+  for chunk in state.b.chunks_exact_mut(r128) {
+    x86_sse2::ro_mix(chunk, &mut state.v, &mut state.scratch, n);
+  }
+
+  prf
+    .derive(&state.b, 1, out)
+    .map_err(|_| ScryptError::InvalidOutputLen)?;
+
+  Ok(())
+}
+
+fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u8]) -> Result<(), ScryptError> {
+  match active_kernel() {
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    KernelId::X86Sse2 => scrypt_hash_x86_sse2(params, password, salt, out),
+    KernelId::Portable => scrypt_hash_portable(params, password, salt, out),
+  }
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -1122,6 +1376,31 @@ mod tests {
     assert_eq!(actual, expected);
   }
 
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn x86_sse2_backend_matches_portable() {
+    let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 32), (5, 2, 1, 48), (6, 2, 2, 32), (7, 8, 1, 64)];
+    let password = b"backend-equivalence-password";
+    let salt = b"backend-equivalence-salt";
+
+    for &(log_n, r, p, out_len) in cases {
+      let params = ScryptParams::new()
+        .log_n(log_n)
+        .r(r)
+        .p(p)
+        .output_len(out_len as u32)
+        .build()
+        .unwrap();
+      let mut portable = vec![0u8; out_len];
+      let mut sse2 = vec![0u8; out_len];
+
+      scrypt_hash_portable(&params, password, salt, &mut portable).unwrap();
+      scrypt_hash_x86_sse2(&params, password, salt, &mut sse2).unwrap();
+
+      assert_eq!(sse2, portable, "mismatch log_n={log_n} r={r} p={p} T={out_len}");
+    }
+  }
+
   // ── Verify ────────────────────────────────────────────────────────────
 
   #[test]
@@ -1296,16 +1575,24 @@ mod tests {
 
   #[test]
   fn kernel_id_stringifies() {
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    assert_eq!(KernelId::X86Sse2.as_str(), "x86-sse2");
     assert_eq!(KernelId::Portable.as_str(), "portable");
   }
 
   #[test]
-  fn portable_kernel_has_no_required_caps() {
-    assert!(required_caps(KernelId::Portable).is_empty());
+  fn compiled_kernels_have_no_required_caps() {
+    for kernel in ALL_KERNELS {
+      assert!(required_caps(*kernel).is_empty());
+    }
   }
 
   #[test]
-  fn active_kernel_is_portable() {
+  fn active_kernel_matches_compiled_target() {
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    assert_eq!(active_kernel(), KernelId::X86Sse2);
+
+    #[cfg(not(all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))))]
     assert_eq!(active_kernel(), KernelId::Portable);
   }
 
