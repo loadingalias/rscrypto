@@ -70,6 +70,8 @@ symbols = [
   "ct_entry_ascon_aead128_open",
   "ct_entry_x25519",
   "ct_entry_ed25519_sign",
+  "ct_entry_ecdsa_p256_sign",
+  "ct_entry_ecdsa_p384_sign",
   "ct_entry_ed25519_verify",
   "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
   "ct_entry_rsa_pss_sign_fixed_blinding",
@@ -109,6 +111,8 @@ covers = [
   "aead.open_authentication",
   "kx.x25519",
   "signature.ed25519_sign",
+  "signature.ecdsa_p256_sign",
+  "signature.ecdsa_p384_sign",
   "signature.ed25519_verify_failure_shape",
   "rsa.private_ops",
   "rsa.private_key_material",
@@ -447,6 +451,42 @@ primitive = "signature.ed25519_sign"
 filter = "ed25519_sha512_secret_expand_fixed_vs_random_secret"
 left_class = "fixed signing secret SHA-512 expansion"
 right_class = "random signing secret SHA-512 expansion"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ecdsa_p256_sign_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_sign_fixed_vs_random_secret"
+left_class = "fixed P-256 signing secret with projective blinding"
+right_class = "random P-256 signing secret with projective blinding"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ecdsa_p256_keypair_sign_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_keypair_sign_fixed_vs_random_secret"
+left_class = "fixed P-256 keypair signing secret with projective blinding"
+right_class = "random P-256 keypair signing secret with projective blinding"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ecdsa_p384_sign_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_sign_fixed_vs_random_secret"
+left_class = "fixed P-384 signing secret with projective blinding"
+right_class = "random P-384 signing secret with projective blinding"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "ecdsa_p384_keypair_sign_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_keypair_sign_fixed_vs_random_secret"
+left_class = "fixed P-384 keypair signing secret with projective blinding"
+right_class = "random P-384 keypair signing secret with projective blinding"
 samples = 20000
 smoke_samples = 2000
 
@@ -1576,6 +1616,36 @@ notes = "All-target portable Ed25519 fixed-base selector kernel. ISA-specific ac
 claim = "ct-intended"
 
 [[binsec_kernel]]
+id = "signature.ecdsa_p256_sign.signing_generator_select.portable.all"
+primitive = "signature.ecdsa_p256_sign"
+symbol = "ct_binsec_ecdsa_p256_select_signing_generator_affine"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "All-target bounded proof for the ECDSA/P-256 fixed-window signing generator selector. Full signing evidence remains DudeCT plus artifact/disassembly heuristics; on x86_64 Linux the P-256 scalar-mulbase fast path is handwritten assembly outside BINSEC's practical proof scope."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "signature.ecdsa_p384_sign.signing_generator_select.portable.all"
+primitive = "signature.ecdsa_p384_sign"
+symbol = "ct_binsec_ecdsa_p384_select_signing_generator_affine"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 20000
+secrets = [{ name = "CT_BINSEC_ECDSA_DIGIT", kind = "global", bytes = 1 }]
+public = []
+assumptions = []
+notes = "All-target bounded proof for the ECDSA/P-384 fixed-window signing generator selector. The optimized P-384 paths still use this selector before architecture-specific field arithmetic."
+claim = "ct-intended"
+
+[[binsec_kernel]]
 id = "rsa.private_ops.window_select.portable.all"
 primitive = "rsa.private_ops"
 symbol = "ct_binsec_rsa_private_select_window_power_4"
@@ -2246,6 +2316,44 @@ required = ["tier_a"]
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ed25519_sign"]
+
+[[primitive]]
+id = "signature.ecdsa_p256_sign"
+tier = "A"
+claim = "ct-intended"
+features = ["ecdsa-p256"]
+entrypoints = [
+  "EcdsaP256SecretKey::try_sign_blinded",
+  "EcdsaP256Keypair::try_sign_blinded",
+]
+secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
+public = ["message", "message_length", "signature"]
+may_leak = ["message_length", "signature"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while the blinded APIs randomize the projective fixed-base point before affine conversion."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_ecdsa_p256_sign"]
+
+[[primitive]]
+id = "signature.ecdsa_p384_sign"
+tier = "A"
+claim = "ct-intended"
+features = ["ecdsa-p384"]
+entrypoints = [
+  "EcdsaP384SecretKey::try_sign_blinded",
+  "EcdsaP384Keypair::try_sign_blinded",
+]
+secrets = ["secret_key", "nonce_material", "nonce_scalar", "private_scalar", "coordinate_blinding"]
+public = ["message", "message_length", "signature"]
+may_leak = ["message_length", "signature"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while the blinded APIs randomize the projective fixed-base point before affine conversion."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_ecdsa_p384_sign"]
 
 [[primitive]]
 id = "signature.ed25519_verify_failure_shape"

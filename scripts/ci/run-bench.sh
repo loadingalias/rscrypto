@@ -148,6 +148,8 @@ DEFAULT_AUTH_ALGOS=(
   "hkdf-sha384"
   "pbkdf2-sha256"
   "pbkdf2-sha512"
+  "ecdsa-p256"
+  "ecdsa-p384"
   "ed25519"
   "x25519"
 )
@@ -268,6 +270,8 @@ auth_filter_token() {
     hkdf-sha384) echo "hkdf-sha384" ;;
     pbkdf2-sha256) echo "^pbkdf2-sha256/" ;;
     pbkdf2-sha512) echo "^pbkdf2-sha512/" ;;
+    ecdsa-p256) echo "^ecdsa-p256/" ;;
+    ecdsa-p384) echo "^ecdsa-p384/" ;;
     ed25519) echo "ed25519" ;;
     x25519) echo "x25519" ;;
     *) echo "$algo" ;;
@@ -345,7 +349,7 @@ bench_features_for_target() {
     aead_kernels) echo "parallel,sha2,chacha20poly1305,diag" ;;
     blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
-    auth) echo "parallel,hmac,hkdf,pbkdf2,ed25519,x25519,diag" ;;
+    auth) echo "parallel,hmac,hkdf,pbkdf2,ecdsa,ed25519,x25519,diag" ;;
     password_hashing) echo "parallel,argon2,scrypt,phc-strings" ;;
     rsa) echo "parallel,rsa,diag" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead" ;;

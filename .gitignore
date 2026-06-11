@@ -45,6 +45,10 @@ fuzz/corpus/*
 !fuzz/corpus/auth_rsa_import/**
 !fuzz/corpus/auth_rsa_private_ops/
 !fuzz/corpus/auth_rsa_private_ops/**
+!fuzz/corpus/auth_ecdsa_sign/
+!fuzz/corpus/auth_ecdsa_sign/**
+!fuzz/corpus/auth_ecdsa_verify/
+!fuzz/corpus/auth_ecdsa_verify/**
 artifacts
 coverage
 dictionary

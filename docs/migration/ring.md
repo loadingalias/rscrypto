@@ -1,8 +1,8 @@
 # Migration: `ring` -> `rscrypto`
 
 `ring` mixes primitive APIs with protocol-shaped helpers. Migrate the primitive
-surfaces directly; keep `ring` where you need ECDSA, ECDH P-256/P-384, random,
-or TLS-oriented wrappers.
+surfaces directly; keep `ring` where you need ECDH P-256/P-384, random, or
+TLS-oriented wrappers.
 
 The direct examples below are covered by `tests/migration_ring.rs`.
 
@@ -13,7 +13,7 @@ The direct examples below are covered by `tests/migration_ring.rs`.
 ring = "0.17"
 
 # After: choose only the primitive features you use
-rscrypto = { version = "0.4.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ed25519", "rsa"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ecdsa", "ed25519", "rsa"] }
 ```
 
 ## Map
@@ -26,9 +26,10 @@ rscrypto = { version = "0.4.0", default-features = false, features = ["sha2", "h
 | `pbkdf2::{PBKDF2_HMAC_SHA256, PBKDF2_HMAC_SHA512}` | `Pbkdf2Sha256`, `Pbkdf2Sha512` | Supported |
 | `aead::{AES_128_GCM, AES_256_GCM, CHACHA20_POLY1305}` | `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305` | Supported |
 | `signature::Ed25519KeyPair` | `Ed25519SecretKey`, `Ed25519PublicKey` | Supported |
+| ECDSA P-256/P-384 SHA-2 signing and verification | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey` | Supported for raw and DER signatures |
 | RSA-PSS / RSASSA-PKCS1-v1_5 public verification | `RsaPublicKey` profiles | Supported |
 | X25519 agreement | `X25519SecretKey` | Not a direct call-site migration; `ring` is ephemeral-agreement shaped |
-| ECDSA, ECDH P-256/P-384, random, TLS wrappers | none | Keep `ring` or another protocol crate |
+| ECDH P-256/P-384, random, TLS wrappers | none | Keep `ring` or another protocol crate |
 
 ## Digest
 
@@ -203,7 +204,7 @@ acceptable for your protocol.
 
 Keep `ring` or another protocol crate for:
 
-- ECDSA and ECDH P-256/P-384.
+- ECDH P-256/P-384.
 - Random generation APIs.
 - TLS-oriented wrappers.
 - `ring` verifier constants outside the SHA-2 RSA profiles listed above.

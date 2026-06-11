@@ -206,6 +206,10 @@ pub static mut CT_BINSEC_ED25519_DIGIT: i8 = 0;
 
 #[unsafe(no_mangle)]
 #[used]
+pub static mut CT_BINSEC_ECDSA_DIGIT: u8 = 0;
+
+#[unsafe(no_mangle)]
+#[used]
 pub static mut CT_BINSEC_RSA_WINDOW_TABLE: [u64; RSA_WINDOW_TABLE_LIMBS] = [0u64; RSA_WINDOW_TABLE_LIMBS];
 
 #[unsafe(no_mangle)]
@@ -724,6 +728,34 @@ pub extern "C" fn ct_binsec_ed25519_select_basepoint_cached() -> ! {
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+pub extern "C" fn ct_binsec_ecdsa_p256_select_signing_generator_affine() -> ! {
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
+  let limbs = rscrypto::diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit);
+
+  let mut acc = 0u64;
+  for limb in limbs {
+    acc ^= limb;
+  }
+  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn ct_binsec_ecdsa_p384_select_signing_generator_affine() -> ! {
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ECDSA_DIGIT)) };
+  let limbs = rscrypto::diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit);
+
+  let mut acc = 0u64;
+  for limb in limbs {
+    acc ^= limb;
+  }
+  ct_binsec_done((acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8)
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn ct_binsec_rsa_private_select_window_power_4() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let table = unsafe { limbs_from_global(ptr::addr_of!(CT_BINSEC_RSA_WINDOW_TABLE)) };
@@ -789,7 +821,7 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 42] = [
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 44] = [
   ct_binsec_constant_time_eq_64,
   ct_binsec_constant_time_eq_32,
   ct_binsec_constant_time_eq_16,
@@ -830,6 +862,8 @@ pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 42] = [
   ct_binsec_poly1305_block_portable,
   ct_binsec_curve25519_conditional_swap,
   ct_binsec_ed25519_select_basepoint_cached,
+  ct_binsec_ecdsa_p256_select_signing_generator_affine,
+  ct_binsec_ecdsa_p384_select_signing_generator_affine,
   ct_binsec_rsa_private_select_window_power_4,
   ct_binsec_rsa_private_component_validation_32,
 ];

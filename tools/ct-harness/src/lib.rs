@@ -10,10 +10,11 @@ use std::format;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, Ed25519PublicKey,
-  Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256,
-  Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, Scrypt,
-  ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey,
+  EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256,
+  HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPssProfile, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
   traits::ct,
@@ -261,6 +262,82 @@ pub extern "C" fn ct_entry_ed25519_sign(
   let signature = secret_key.sign(message);
   // SAFETY: The output pointer must reference exactly 64 writable bytes.
   if unsafe { write_array(out, signature.as_bytes()) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// ECDSA/P-256 signing harness with caller-supplied projective blinding.
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_ecdsa_p256_sign(
+  out: *mut u8,
+  secret_key: *const u8,
+  blind: *const u8,
+  message: *const u8,
+  message_len: usize,
+) -> u8 {
+  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  let Some(blind) = (unsafe { read_array::<64>(blind) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input pointer is validated by `input_slice`.
+  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
+    return STATUS_ERR;
+  };
+
+  let Ok(secret_key) = EcdsaP256SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let Ok(signature) = secret_key.try_sign_blinded(message, |out| out.copy_from_slice(&blind)) else {
+    return STATUS_ERR;
+  };
+  let signature = signature.to_bytes();
+
+  // SAFETY: The output pointer must reference exactly 64 writable bytes.
+  if unsafe { write_array(out, &signature) } {
+    STATUS_OK
+  } else {
+    STATUS_ERR
+  }
+}
+
+/// ECDSA/P-384 signing harness with caller-supplied projective blinding.
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_ecdsa_p384_sign(
+  out: *mut u8,
+  secret_key: *const u8,
+  blind: *const u8,
+  message: *const u8,
+  message_len: usize,
+) -> u8 {
+  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  let Some(blind) = (unsafe { read_array::<96>(blind) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input pointer is validated by `input_slice`.
+  let Some(message) = (unsafe { input_slice(message, message_len) }) else {
+    return STATUS_ERR;
+  };
+
+  let Ok(secret_key) = EcdsaP384SecretKey::from_bytes(secret_key) else {
+    return STATUS_ERR;
+  };
+  let Ok(signature) = secret_key.try_sign_blinded(message, |out| out.copy_from_slice(&blind)) else {
+    return STATUS_ERR;
+  };
+  let signature = signature.to_bytes();
+
+  // SAFETY: The output pointer must reference exactly 96 writable bytes.
+  if unsafe { write_array(out, &signature) } {
     STATUS_OK
   } else {
     STATUS_ERR

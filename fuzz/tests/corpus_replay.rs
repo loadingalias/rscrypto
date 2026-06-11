@@ -42,6 +42,12 @@ mod auth_ed25519;
 #[path = "../target_impls/auth_ed25519_verify.rs"]
 mod auth_ed25519_verify;
 
+#[path = "../target_impls/auth_ecdsa_verify.rs"]
+mod auth_ecdsa_verify;
+
+#[path = "../target_impls/auth_ecdsa_sign.rs"]
+mod auth_ecdsa_sign;
+
 #[path = "../target_impls/auth_hkdf_sha256.rs"]
 mod auth_hkdf_sha256;
 
@@ -202,6 +208,18 @@ fn replay_auth_ed25519_corpus() {
 fn replay_auth_ed25519_verify_corpus() {
     let replayed = replay_corpus_dir("auth_ed25519_verify", corpus_dir("auth_ed25519_verify"), auth_ed25519_verify::run);
     assert_ne!(replayed, 0, "auth_ed25519_verify corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_ecdsa_verify_corpus() {
+    let replayed = replay_corpus_dir("auth_ecdsa_verify", corpus_dir("auth_ecdsa_verify"), auth_ecdsa_verify::run);
+    assert_ne!(replayed, 0, "auth_ecdsa_verify corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_ecdsa_sign_corpus() {
+    let replayed = replay_corpus_dir("auth_ecdsa_sign", corpus_dir("auth_ecdsa_sign"), auth_ecdsa_sign::run);
+    assert_ne!(replayed, 0, "auth_ecdsa_sign corpus should not be empty");
 }
 
 #[test]

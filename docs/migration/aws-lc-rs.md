@@ -12,7 +12,7 @@ The direct examples below are covered by `tests/migration_aws_lc_rs.rs`.
 aws-lc-rs = "1.17"
 
 # After: enable only the primitives you use
-rscrypto = { version = "0.4.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ed25519", "x25519", "rsa"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ecdsa", "ed25519", "x25519", "rsa"] }
 ```
 
 ## Map
@@ -27,7 +27,8 @@ rscrypto = { version = "0.4.0", default-features = false, features = ["sha2", "h
 | Ed25519 signing / verification | `Ed25519SecretKey`, `Ed25519PublicKey` | Supported |
 | X25519 agreement | `X25519SecretKey`, `X25519PublicKey` | Supported |
 | RSA-PSS / RSASSA-PKCS1-v1_5 verification | `RsaPublicKey`, `RsaPssProfile`, `RsaPkcs1v15Profile` | Supported |
-| ECDSA, ML-DSA, TLS helpers, provider configuration, FIPS mode | none | Keep `aws-lc-rs` |
+| ECDSA P-256/P-384 SHA-2 signing and verification | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey` | Supported for raw and DER signatures |
+| ML-DSA, TLS helpers, provider configuration, FIPS mode | none | Keep `aws-lc-rs` |
 
 ## Digest
 
@@ -230,7 +231,7 @@ Keep `aws-lc-rs` when you depend on:
 
 - TLS provider integration or certificate/path validation.
 - AWS-LC provider configuration, FIPS mode, or C library lifecycle behavior.
-- ECDSA, ML-DSA, or other primitives that rscrypto does not expose.
+- ML-DSA or other primitives that rscrypto does not expose.
 - Direct access to AWS-LC internals through `aws-lc-sys`.
 
 rscrypto is pure Rust cryptographic primitives with explicit feature flags. It

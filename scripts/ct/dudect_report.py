@@ -189,6 +189,26 @@ CASE_METADATA = {
     "left_class": "fixed signing secret SHA-512 expansion",
     "right_class": "random signing secret SHA-512 expansion",
   },
+  "ecdsa_p256_sign_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p256_sign",
+    "left_class": "P-256 signing with fixed secret and projective blinding",
+    "right_class": "P-256 signing with random secret and projective blinding",
+  },
+  "ecdsa_p256_keypair_sign_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p256_sign",
+    "left_class": "P-256 keypair signing with fixed secret and projective blinding",
+    "right_class": "P-256 keypair signing with random secret and projective blinding",
+  },
+  "ecdsa_p384_sign_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p384_sign",
+    "left_class": "P-384 signing with fixed secret and projective blinding",
+    "right_class": "P-384 signing with random secret and projective blinding",
+  },
+  "ecdsa_p384_keypair_sign_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p384_sign",
+    "left_class": "P-384 keypair signing with fixed secret and projective blinding",
+    "right_class": "P-384 keypair signing with random secret and projective blinding",
+  },
   "rsa_pkcs1v15_fixed_vs_random_message": {
     "primitive": "rsa.private_ops",
     "left_class": "fixed message",

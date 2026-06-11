@@ -51,7 +51,7 @@ rscrypto = { version = "0.4.0", features = ["full", "portable-only"] }
 | `macs` | `hmac`, `kmac` |
 | `kdfs` | `hkdf`, `pbkdf2` |
 | `password-hashing` | `argon2`, `scrypt`, `phc-strings` |
-| `signatures` | `ed25519`, `rsa` |
+| `signatures` | `ecdsa`, `ed25519`, `rsa` |
 | `key-exchange` | `x25519` |
 | `aead` | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
@@ -78,6 +78,9 @@ rscrypto = { version = "0.4.0", features = ["full", "portable-only"] }
 | `phc-strings` | `alloc` | PHC string encode/decode support |
 | `argon2` | `blake2b`, `alloc` | Argon2i, Argon2d, Argon2id |
 | `scrypt` | `pbkdf2`, `alloc` | scrypt |
+| `ecdsa-p256` | `hmac` | ECDSA P-256/SHA-256 signing and verification |
+| `ecdsa-p384` | `hmac` | ECDSA P-384/SHA-384 signing and verification |
+| `ecdsa` | `ecdsa-p256`, `ecdsa-p384` | ECDSA P-256/P-384 signing and verification |
 | `ed25519` | `sha2` | Ed25519 signatures |
 | `rsa` | `alloc`, `sha2` | RSA public/private keys, RSA signatures, OAEP, PKCS#1 v1.5, key generation |
 | `x25519` | -- | X25519 key exchange |
