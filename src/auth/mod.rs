@@ -140,14 +140,24 @@ pub use curve25519_edwards::{
 };
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub use ecdsa::EcdsaError;
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
-pub use ecdsa::diag_ecdsa_p256_select_signing_generator_affine_limb_digest;
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
-pub use ecdsa::diag_ecdsa_p384_select_signing_generator_affine_limb_digest;
 #[cfg(feature = "ecdsa-p256")]
 pub use ecdsa::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
 pub use ecdsa::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub use ecdsa::{
+  diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
+  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
+  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+  diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
+};
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub use ecdsa::{
+  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
+  diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
+  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+};
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]

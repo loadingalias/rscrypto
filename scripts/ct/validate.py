@@ -146,12 +146,24 @@ def ct_required_primitives(ct: dict) -> list[dict]:
   return rows
 
 
+def primitive_supports_physical_timing(primitive: dict, target: str | None) -> bool:
+  if target is None:
+    return True
+  return target not in set(primitive.get("physical_timing_unsupported_targets", []))
+
+
 def is_diagnostic_dudect_case(case: dict) -> bool:
   return case.get("gate") == "diagnostic"
 
 
-def required_dudect_cases(ct: dict) -> list[dict]:
-  return [case for case in ct.get("dudect_case", []) if not is_diagnostic_dudect_case(case)]
+def required_dudect_cases(ct: dict, target: str | None = None) -> list[dict]:
+  primitives = {primitive.get("id", ""): primitive for primitive in ct.get("primitive", [])}
+  return [
+    case
+    for case in ct.get("dudect_case", [])
+    if not is_diagnostic_dudect_case(case)
+    and primitive_supports_physical_timing(primitives.get(case.get("primitive"), {}), target)
+  ]
 
 
 def generated_symbols(artifact_dir: Path) -> set[str]:
@@ -248,6 +260,19 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       fail(errors, f"primitive {primitive_id} has invalid claim {claim!r}")
     if claim == "ct-claimed":
       fail(errors, f"primitive {primitive_id} is ct-claimed before release evidence gates exist")
+
+    unsupported_timing_targets = primitive.get("physical_timing_unsupported_targets", [])
+    if unsupported_timing_targets and (
+      not isinstance(unsupported_timing_targets, list)
+      or any(not isinstance(target, str) or not target for target in unsupported_timing_targets)
+    ):
+      fail(errors, f"primitive {primitive_id} physical_timing_unsupported_targets must be a list of target triples")
+      unsupported_timing_targets = []
+    if unsupported_timing_targets and not primitive.get("physical_timing_unsupported_reason"):
+      fail(errors, f"primitive {primitive_id} physical_timing_unsupported_targets requires physical_timing_unsupported_reason")
+    for unsupported_target in unsupported_timing_targets:
+      if unsupported_target not in actual_targets:
+        fail(errors, f"primitive {primitive_id} references unknown physical timing unsupported target {unsupported_target!r}")
 
     harness = primitive.get("harness")
     if not isinstance(harness, dict):
@@ -424,10 +449,10 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
   return ct
 
 
-def validate_strict_coverage(ct: dict, errors: list[str]) -> None:
+def validate_strict_coverage(ct: dict, errors: list[str], target: str | None = None) -> None:
   targets = binsec_required_targets(ct)
-  dudect_primitives = {case.get("primitive") for case in required_dudect_cases(ct)}
-  dudect_case_names = {case.get("name") for case in required_dudect_cases(ct)}
+  dudect_primitives = {case.get("primitive") for case in required_dudect_cases(ct, target)}
+  dudect_case_names = {case.get("name") for case in required_dudect_cases(ct, target)}
   evidence_units_by_primitive: dict[str, list[dict]] = {}
   for unit in ct.get("evidence_unit", []):
     primitive = unit.get("primitive")
@@ -445,6 +470,8 @@ def validate_strict_coverage(ct: dict, errors: list[str]) -> None:
 
   for primitive in ct_required_primitives(ct):
     primitive_id = primitive.get("id", "<unnamed>")
+    if not primitive_supports_physical_timing(primitive, target):
+      continue
     if primitive_requires_evidence(ct, primitive, "dudect") and primitive_id not in dudect_primitives:
       fail(errors, f"primitive {primitive_id} requires at least one non-diagnostic DudeCT case")
     variants = primitive.get("variants", [])
@@ -757,7 +784,7 @@ def main() -> int:
 
   ct = validate_manifest(root, errors, warnings)
   if args.strict_coverage:
-    validate_strict_coverage(ct, errors)
+    validate_strict_coverage(ct, errors, args.target)
   if not args.manifest_only:
     target = args.target
     if target is None:

@@ -15,7 +15,7 @@ use crate::{
   traits::{Mac, VerificationError, ct},
 };
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 #[path = "ecdsa_aarch64_asm.rs"]
 mod ecdsa_aarch64_asm;
 #[path = "ecdsa_generator_tables.rs"]
@@ -31,7 +31,7 @@ use ecdsa_generator_tables::{
   P384_SIGNING_GENERATOR_COMB_X, P384_SIGNING_GENERATOR_COMB_Y,
 };
 
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 use self::ecdsa_aarch64_asm as ecdsa_platform_asm;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 use self::ecdsa_x86_64_asm as ecdsa_platform_asm;
@@ -42,6 +42,8 @@ const TAG_BIT_STRING: u8 = 0x03;
 const TAG_OBJECT_IDENTIFIER: u8 = 0x06;
 const COMB_WIDTH: usize = 4;
 const COMB_TABLE_SIZE: usize = 1 << COMB_WIDTH;
+const P256_SIGNING_COMB_ROWS: usize = 37;
+const P384_SIGNING_COMB_ROWS: usize = 48;
 
 const ID_EC_PUBLIC_KEY_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const SECP256R1_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
@@ -678,6 +680,7 @@ static P256: Curve<4> = Curve {
   generator_comb_x: P256_GENERATOR_COMB_X,
   generator_comb_y: P256_GENERATOR_COMB_Y,
   signing_comb_width: P256_SIGNING_COMB_WIDTH,
+  signing_comb_rows: P256_SIGNING_COMB_ROWS,
   signing_generator_comb_x: &P256_SIGNING_GENERATOR_COMB_X,
   signing_generator_comb_y: &P256_SIGNING_GENERATOR_COMB_Y,
 };
@@ -691,6 +694,7 @@ static P384: Curve<6> = Curve {
   generator_comb_x: P384_GENERATOR_COMB_X,
   generator_comb_y: P384_GENERATOR_COMB_Y,
   signing_comb_width: P384_SIGNING_COMB_WIDTH,
+  signing_comb_rows: P384_SIGNING_COMB_ROWS,
   signing_generator_comb_x: &P384_SIGNING_GENERATOR_COMB_X,
   signing_generator_comb_y: &P384_SIGNING_GENERATOR_COMB_Y,
 };
@@ -1566,7 +1570,7 @@ impl<const L: usize> Uint<L> {
 
   fn inv_mod_ct_montgomery(&self, modulus: &'static Modulus<L>, exponent: Self) -> Self {
     #[cfg(any(
-      all(target_arch = "aarch64", target_os = "macos"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
       all(target_arch = "x86_64", target_os = "linux")
     ))]
     {
@@ -1725,7 +1729,7 @@ impl<const L: usize> FieldElement<L> {
 
   fn inv_ct(self, exponent: Uint<L>) -> Self {
     #[cfg(any(
-      all(target_arch = "aarch64", target_os = "macos"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
       all(target_arch = "x86_64", target_os = "linux")
     ))]
     {
@@ -1950,6 +1954,7 @@ struct Curve<const L: usize> {
   generator_comb_x: [Uint<L>; COMB_TABLE_SIZE],
   generator_comb_y: [Uint<L>; COMB_TABLE_SIZE],
   signing_comb_width: usize,
+  signing_comb_rows: usize,
   signing_generator_comb_x: &'static [Uint<L>],
   signing_generator_comb_y: &'static [Uint<L>],
 }
@@ -2148,7 +2153,7 @@ fn sign_digest_with_nonce<const L: usize>(
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 fn sign_digest_with_nonce_backend<const L: usize>(
@@ -2181,7 +2186,7 @@ fn sign_digest_with_nonce_backend<const L: usize>(
 }
 
 #[cfg(not(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 )))]
 fn sign_digest_with_nonce_backend<const L: usize>(
@@ -2258,10 +2263,6 @@ fn sign_digest_with_r<const L: usize>(
   half_order: Uint<L>,
   r: Uint<L>,
 ) -> Result<(Uint<L>, Uint<L>), EcdsaError> {
-  if r.ct_is_zero_mask() != 0 {
-    return Err(EcdsaError::SigningFailure);
-  }
-
   let z = reduce_digest_for_scalar(digest, curve.scalar_modulus.value);
   let rd = mul_mod_montgomery_ct(r, secret_scalar, curve.scalar_modulus);
   let sum = z.add_mod_ct(&rd, curve.scalar_modulus.value);
@@ -2269,7 +2270,8 @@ fn sign_digest_with_r<const L: usize>(
   let sum = montgomery_mul(sum, curve.scalar_modulus.r2, curve.scalar_modulus);
   let s = montgomery_mul(nonce_inverse, sum, curve.scalar_modulus);
   let s = montgomery_mul(s, Uint::ONE, curve.scalar_modulus);
-  if s.ct_is_zero_mask() != 0 {
+  let failure_mask = r.ct_is_zero_mask() | s.ct_is_zero_mask();
+  if failure_mask != 0 {
     return Err(EcdsaError::SigningFailure);
   }
 
@@ -2315,7 +2317,7 @@ fn reduce_digest_for_scalar<const L: usize>(digest: &[u8], modulus: Uint<L>) -> 
 
 fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], modulus: &'static Modulus<L>) -> Uint<L> {
   #[cfg(any(
-    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
     all(target_arch = "x86_64", target_os = "linux")
   ))]
   {
@@ -2404,23 +2406,37 @@ fn scalar_mul_basepoint_blinded<const L: usize>(
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Option<Jacobian<L>> {
   if is_p384_curve(curve) {
-    let mut scalar_words = [0u64; 6];
-    scalar_words.copy_from_slice(&scalar.0[..6]);
-    let point = p384_scalar_mul_basepoint_comb_backend(Uint(scalar_words));
-    let words = p384_jacobian_to_words(point);
-    return Some(jacobian_from_p384_words(curve.field_modulus, &words));
+    return Some(p384_scalar_mul_basepoint_platform(curve, scalar));
   }
 
   scalar_mul_basepoint_affine_backend(curve, scalar).map(Jacobian::from_affine)
 }
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
+  let mut scalar_words = [0u64; 6];
+  scalar_words.copy_from_slice(&scalar.0[..6]);
+  let generator_words = p384_jacobian_to_words(Jacobian::from_affine(P384.generator()));
+  let words = ecdsa_platform_asm::p384_point_scalarmul(&scalar_words, &generator_words);
+  jacobian_from_p384_words(curve.field_modulus, &words)
+}
+
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
+  let mut scalar_words = [0u64; 6];
+  scalar_words.copy_from_slice(&scalar.0[..6]);
+  let point = p384_scalar_mul_basepoint_comb_backend(Uint(scalar_words));
+  let words = p384_jacobian_to_words(point);
+  jacobian_from_p384_words(curve.field_modulus, &words)
+}
+
 #[cfg(not(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 )))]
 fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: Uint<L>) -> Option<Jacobian<L>> {
@@ -2428,7 +2444,7 @@ fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: Uint
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Option<Affine<L>> {
@@ -2443,7 +2459,7 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(curve: &Curve<L>, scalar:
 }
 
 #[cfg(not(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 )))]
 fn scalar_mul_basepoint_affine_backend<const L: usize>(_curve: &Curve<L>, _scalar: Uint<L>) -> Option<Affine<L>> {
@@ -2451,7 +2467,7 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(_curve: &Curve<L>, _scala
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 fn is_p256_curve<const L: usize>(curve: &Curve<L>) -> bool {
@@ -2460,7 +2476,7 @@ fn is_p256_curve<const L: usize>(curve: &Curve<L>) -> bool {
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
@@ -2469,7 +2485,7 @@ fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 #[allow(clippy::indexing_slicing)]
@@ -2486,13 +2502,10 @@ fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]
   }
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
-  all(target_arch = "x86_64", target_os = "linux")
-))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 fn p384_scalar_mul_basepoint_comb_backend(scalar: Uint<6>) -> Jacobian<6> {
   let curve = &P384;
-  let rows = signing_comb_rows::<6>(curve.signing_comb_width);
+  let rows = curve.signing_comb_rows;
   let mut acc = Jacobian::infinity(curve.field_modulus);
 
   for row in (0..rows).rev() {
@@ -2517,7 +2530,7 @@ fn p384_scalar_mul_basepoint_comb_backend(scalar: Uint<6>) -> Jacobian<6> {
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 fn p384_jacobian_to_words(point: Jacobian<6>) -> [u64; 18] {
@@ -2528,10 +2541,7 @@ fn p384_jacobian_to_words(point: Jacobian<6>) -> [u64; 18] {
   out
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
-  all(target_arch = "x86_64", target_os = "linux")
-))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 fn p384_affine_to_words(point: Affine<6>) -> [u64; 12] {
   let mut out = [0u64; 12];
   out[..6].copy_from_slice(&point.x.value.0);
@@ -2539,10 +2549,7 @@ fn p384_affine_to_words(point: Affine<6>) -> [u64; 12] {
   out
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
-  all(target_arch = "x86_64", target_os = "linux")
-))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 fn p384_jacobian_from_words(words: &[u64; 18]) -> Jacobian<6> {
   Jacobian {
     x: FieldElement::from_montgomery(
@@ -2562,7 +2569,7 @@ fn p384_jacobian_from_words(words: &[u64; 18]) -> Jacobian<6> {
 }
 
 #[cfg(any(
-  all(target_arch = "aarch64", target_os = "macos"),
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
 #[allow(clippy::indexing_slicing)]
@@ -2583,7 +2590,7 @@ fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words:
 
 #[allow(clippy::indexing_slicing)]
 fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
-  let rows = signing_comb_rows::<L>(curve.signing_comb_width);
+  let rows = curve.signing_comb_rows;
   let mut acc = Jacobian::infinity(curve.field_modulus);
 
   for row in (0..rows).rev() {
@@ -2594,10 +2601,6 @@ fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L
   }
 
   acc
-}
-
-fn signing_comb_rows<const L: usize>(width: usize) -> usize {
-  (L * 64).div_ceil(width)
 }
 
 fn signing_comb_digit_ct<const L: usize>(scalar: Uint<L>, row: usize, rows: usize, width: usize) -> usize {
@@ -2638,6 +2641,88 @@ pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) ->
   out
 }
 
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
+  let digest = Sha256::digest(message);
+  let mut wide = [0u8; 64];
+  hmac_expand_p256(&secret, &digest, &mut wide);
+  reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4] {
+  reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u8; 64], message: &[u8]) -> [u64; 8] {
+  let digest = Sha256::digest(message);
+  let mut wide = [0u8; 64];
+  hmac_expand_p256(&secret, &digest, &mut wide);
+  let nonce = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
+  let nonce_blind = reduce_wide_order_nonzero(&blind, &P256_ORDER_MODULUS);
+  let point = scalar_mul_basepoint_blinded(&P256, nonce, nonce_blind, P256_FIELD_MINUS_TWO);
+  let mut out = [0u64; 8];
+  out[..4].copy_from_slice(&point.x.value.0);
+  out[4..].copy_from_slice(&point.y.value.0);
+  out
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 8] {
+  let digest = Sha256::digest(message);
+  let secret_scalar = Uint::from_be_array(secret);
+  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P256_ORDER_MODULUS);
+  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
+  let (r, s) = sign_digest_with_r(
+    &P256,
+    secret_scalar,
+    nonce,
+    &digest,
+    P256_ORDER_MINUS_TWO,
+    P256_ORDER_HALF,
+    r,
+  )
+  .unwrap_or((Uint::ZERO, Uint::ZERO));
+  let mut out = [0u64; 8];
+  out[..4].copy_from_slice(&r.0);
+  out[4..].copy_from_slice(&s.0);
+  out
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 4] {
+  let secret_scalar = Uint::from_be_array(secret);
+  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
+  mul_mod_montgomery_ct(r, secret_scalar, &P256_ORDER_MODULUS).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
+  let digest = Sha256::digest(message);
+  let mut wide = [0u8; 64];
+  hmac_expand_p256(&secret, &digest, &mut wide);
+  let nonce = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
+  nonce.inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 4] {
+  let digest = Sha256::digest(message);
+  let secret_scalar = Uint::from_be_array(secret);
+  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P256_ORDER_MODULUS);
+  let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
+  let z = reduce_digest_for_scalar(&digest, P256_ORDER_MODULUS.value);
+  let rd = mul_mod_montgomery_ct(r, secret_scalar, &P256_ORDER_MODULUS);
+  let sum = montgomery_mul(
+    z.add_mod_ct(&rd, P256_ORDER_MODULUS.value),
+    P256_ORDER_MODULUS.r2,
+    &P256_ORDER_MODULUS,
+  );
+  let nonce_inverse = nonce.inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO);
+  montgomery_mul(nonce_inverse, sum, &P256_ORDER_MODULUS).0
+}
+
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 12] {
   let selected = select_signing_generator_affine_ct(&P384, usize::from(digit));
@@ -2645,6 +2730,88 @@ pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) ->
   out[..6].copy_from_slice(&selected.x.value.0);
   out[6..].copy_from_slice(&selected.y.value.0);
   out
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
+  let digest = Sha384::digest(message);
+  let mut wide = [0u8; 96];
+  hmac_expand_p384(&secret, &digest, &mut wide);
+  reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6] {
+  reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u8; 96], message: &[u8]) -> [u64; 12] {
+  let digest = Sha384::digest(message);
+  let mut wide = [0u8; 96];
+  hmac_expand_p384(&secret, &digest, &mut wide);
+  let nonce = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
+  let nonce_blind = reduce_wide_order_nonzero(&blind, &P384_ORDER_MODULUS);
+  let point = scalar_mul_basepoint_blinded(&P384, nonce, nonce_blind, P384_FIELD_MINUS_TWO);
+  let mut out = [0u64; 12];
+  out[..6].copy_from_slice(&point.x.value.0);
+  out[6..].copy_from_slice(&point.y.value.0);
+  out
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 12] {
+  let digest = Sha384::digest(message);
+  let secret_scalar = Uint::from_be_array(secret);
+  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P384_ORDER_MODULUS);
+  let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
+  let (r, s) = sign_digest_with_r(
+    &P384,
+    secret_scalar,
+    nonce,
+    &digest,
+    P384_ORDER_MINUS_TWO,
+    P384_ORDER_HALF,
+    r,
+  )
+  .unwrap_or((Uint::ZERO, Uint::ZERO));
+  let mut out = [0u64; 12];
+  out[..6].copy_from_slice(&r.0);
+  out[6..].copy_from_slice(&s.0);
+  out
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 6] {
+  let secret_scalar = Uint::from_be_array(secret);
+  let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
+  mul_mod_montgomery_ct(r, secret_scalar, &P384_ORDER_MODULUS).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
+  let digest = Sha384::digest(message);
+  let mut wide = [0u8; 96];
+  hmac_expand_p384(&secret, &digest, &mut wide);
+  let nonce = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
+  nonce.inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO).0
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_final_multiply_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 6] {
+  let digest = Sha384::digest(message);
+  let secret_scalar = Uint::from_be_array(secret);
+  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P384_ORDER_MODULUS);
+  let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
+  let z = reduce_digest_for_scalar(&digest, P384_ORDER_MODULUS.value);
+  let rd = mul_mod_montgomery_ct(r, secret_scalar, &P384_ORDER_MODULUS);
+  let sum = montgomery_mul(
+    z.add_mod_ct(&rd, P384_ORDER_MODULUS.value),
+    P384_ORDER_MODULUS.r2,
+    &P384_ORDER_MODULUS,
+  );
+  let nonce_inverse = nonce.inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO);
+  montgomery_mul(nonce_inverse, sum, &P384_ORDER_MODULUS).0
 }
 
 fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<L>, curve: &Curve<L>) -> bool {
@@ -2924,12 +3091,12 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
     let lhs = [lhs.0[0], lhs.0[1], lhs.0[2], lhs.0[3], lhs.0[4], lhs.0[5]];
     let rhs = [rhs.0[0], rhs.0[1], rhs.0[2], rhs.0[3], rhs.0[4], rhs.0[5]];
     #[cfg(any(
-      all(target_arch = "aarch64", target_os = "macos"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
       all(target_arch = "x86_64", target_os = "linux")
     ))]
     let reduced = ecdsa_platform_asm::p384_field_mul(&lhs, &rhs);
     #[cfg(not(any(
-      all(target_arch = "aarch64", target_os = "macos"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
       all(target_arch = "x86_64", target_os = "linux")
     )))]
     let reduced = ecdsa_p384_field::mul(lhs, rhs);
@@ -2993,12 +3160,12 @@ fn montgomery_square<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L
   if is_p384_field_modulus(modulus) {
     let value = [value.0[0], value.0[1], value.0[2], value.0[3], value.0[4], value.0[5]];
     #[cfg(any(
-      all(target_arch = "aarch64", target_os = "macos"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
       all(target_arch = "x86_64", target_os = "linux")
     ))]
     let reduced = ecdsa_platform_asm::p384_field_square(&value);
     #[cfg(not(any(
-      all(target_arch = "aarch64", target_os = "macos"),
+      all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
       all(target_arch = "x86_64", target_os = "linux")
     )))]
     let reduced = ecdsa_p384_field::square(value);
@@ -3575,7 +3742,7 @@ mod tests {
   }
 
   #[cfg(any(
-    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
     all(target_arch = "x86_64", target_os = "linux")
   ))]
   #[test]
@@ -3599,7 +3766,7 @@ mod tests {
   }
 
   #[cfg(any(
-    all(target_arch = "aarch64", target_os = "macos"),
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
     all(target_arch = "x86_64", target_os = "linux")
   ))]
   #[test]

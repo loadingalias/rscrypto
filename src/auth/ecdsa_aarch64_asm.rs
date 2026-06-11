@@ -32,6 +32,30 @@ global_asm!(include_str!("asm/rscrypto_bignum_modinv_aarch64_apple_darwin.s"));
 global_asm!(include_str!("asm/rscrypto_p384_montjdouble_alt_aarch64_apple_darwin.s"));
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("asm/rscrypto_p384_montjmixadd_alt_aarch64_apple_darwin.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!(
+  "asm/rscrypto_p256_scalarmulbase_alt_aarch64_unknown_linux.s"
+));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_bignum_mod_n256_aarch64_unknown_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_bignum_mod_n384_aarch64_unknown_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_bignum_montmul_p384_aarch64_unknown_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_bignum_montsqr_p384_aarch64_unknown_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_bignum_montinv_p384_aarch64_unknown_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("asm/rscrypto_bignum_modinv_aarch64_unknown_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!(
+  "asm/rscrypto_p384_montjdouble_alt_aarch64_unknown_linux.s"
+));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!(
+  "asm/rscrypto_p384_montjmixadd_alt_aarch64_unknown_linux.s"
+));
 
 unsafe extern "C" {
   fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
@@ -49,7 +73,7 @@ unsafe extern "C" {
 pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
   let mut out = [0u64; 8];
   // SAFETY: P-256 fixed-base scalar multiplication call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
   // 3. The assembly routine is constant-time with respect to the scalar; ECDSA signing uses secret
   //    nonce material.
@@ -71,7 +95,7 @@ pub(super) fn p256_reduce_order_64(bytes: &[u8; 64]) -> [u64; 4] {
   let input = words_from_be_bytes_reversed::<8, 64>(bytes);
   let mut out = [0u64; 4];
   // SAFETY: P-256 order reduction call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` has four `u64` limbs, which is the exact P-256 group-order output size.
   // 3. `input` has eight `u64` limbs and `len` is 8, so the assembly reads exactly the provided
   //    input.
@@ -85,7 +109,7 @@ pub(super) fn p384_reduce_order_96(bytes: &[u8; 96]) -> [u64; 6] {
   let input = words_from_be_bytes_reversed::<12, 96>(bytes);
   let mut out = [0u64; 6];
   // SAFETY: P-384 order reduction call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` has six `u64` limbs, which is the exact P-384 group-order output size.
   // 3. `input` has twelve `u64` limbs and `len` is 12, so the assembly reads exactly the provided
   //    input.
@@ -98,7 +122,7 @@ pub(super) fn p384_reduce_order_96(bytes: &[u8; 96]) -> [u64; 6] {
 pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
   let mut out = [0u64; 6];
   // SAFETY: P-384 field Montgomery multiplication call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out`, `lhs`, and `rhs` are six-limb arrays, which is the exact P-384 field size.
   // 3. Callers route only P-384 field elements in Montgomery form through this wrapper.
   // 4. The routine is constant-time with respect to the field-element values.
@@ -110,7 +134,7 @@ pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
 pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
   let mut out = [0u64; 6];
   // SAFETY: P-384 field Montgomery square call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
   // 3. Callers route only P-384 field elements in Montgomery form through this wrapper.
   // 4. The routine is constant-time with respect to the field-element value.
@@ -122,7 +146,7 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
 pub(super) fn p384_field_inverse(value: &[u64; 6]) -> [u64; 6] {
   let mut out = [0u64; 6];
   // SAFETY: P-384 field Montgomery inverse call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
   // 3. Callers route only P-384 field elements in Montgomery form through this wrapper.
   // 4. The routine has fixed public iteration structure and returns zero for zero input.
@@ -136,7 +160,7 @@ pub(super) fn scalar_inverse<const L: usize>(value: &[u64; L], modulus: &[u64; L
   let mut tmp = [0u64; 18];
   debug_assert!(L == 4 || L == 6);
   // SAFETY: scalar-order inverse call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. The wrapper is called only with L = 4 or L = 6, and `tmp` has 3 * 6 limbs, enough for both
   //    sizes.
   // 3. `value`, `modulus`, and `out` have the same fixed limb count passed as `k`.
@@ -157,7 +181,7 @@ pub(super) fn scalar_inverse<const L: usize>(value: &[u64; L], modulus: &[u64; L
 pub(super) fn p384_point_double(point: &[u64; 18]) -> [u64; 18] {
   let mut out = [0u64; 18];
   // SAFETY: P-384 Jacobian doubling call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `point` are 18-limb arrays laid out as x/y/z P-384 Montgomery coordinates.
   // 3. Callers preserve the Rust-level infinity flag and select the infinity result when required.
   // 4. The routine is constant-time with respect to the point coordinate values.
@@ -169,7 +193,7 @@ pub(super) fn p384_point_double(point: &[u64; 18]) -> [u64; 18] {
 pub(super) fn p384_point_mixadd(lhs: &[u64; 18], rhs: &[u64; 12]) -> [u64; 18] {
   let mut out = [0u64; 18];
   // SAFETY: P-384 mixed-addition call because:
-  // 1. This module is compiled only for supported macOS AArch64, matching the embedded assembly ABI.
+  // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `lhs` are 18-limb Jacobian arrays; `rhs` is a 12-limb affine x/y array.
   // 3. Callers preserve the Rust-level infinity and zero-digit handling around this raw point
   //    operation.
