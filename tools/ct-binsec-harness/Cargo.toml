@@ -21,6 +21,7 @@ rscrypto = { path = "../..", default-features = false, features = [
   "blake2s",
   "blake3",
   "diag",
+  "ecdsa",
   "ed25519",
   "hkdf",
   "hmac",

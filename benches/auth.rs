@@ -8,9 +8,12 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ed25519_dalek::{Signer as _, SigningKey};
 use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
+use p256::ecdsa::{Signature as P256OracleSignature, SigningKey as P256OracleSigningKey, signature::Verifier as _};
+use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSigningKey};
 use rscrypto::{
-  Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512,
-  Mac as _, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
+  EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384Keypair, EcdsaP384PublicKey,
+  EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384,
+  HmacSha256, HmacSha384, HmacSha512, Mac as _, Pbkdf2Sha256, Pbkdf2Sha512, X25519SecretKey,
 };
 use x25519_dalek::{PublicKey as DalekX25519PublicKey, StaticSecret as DalekX25519Secret};
 
@@ -19,6 +22,12 @@ type RustCryptoHmacSha384 = Hmac<sha2::Sha384>;
 type RustCryptoHmacSha512 = Hmac<sha2::Sha512>;
 type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
 type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
+
+fn array_from_slice<const N: usize>(slice: &[u8]) -> [u8; N] {
+  let mut out = [0u8; N];
+  out.copy_from_slice(slice);
+  out
+}
 
 #[cfg(all(
   any(unix, windows),
@@ -705,6 +714,262 @@ fn ed25519_public_key(c: &mut Criterion) {
   g.finish();
 }
 
+fn ecdsa_p256_verify(c: &mut Criterion) {
+  let secret_bytes = [0x11u8; 32];
+  let signing_key = P256OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let verifying_key = signing_key.verifying_key();
+  let sec1 = verifying_key.to_encoded_point(false);
+  let public = EcdsaP256PublicKey::from_sec1_bytes(sec1.as_bytes()).unwrap();
+  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, sec1.as_bytes());
+  aws_lc_bench! {
+    let aws_upk =
+      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, sec1.as_bytes());
+  }
+
+  let inputs = [0usize, 32, 1024, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let mut g = c.benchmark_group("ecdsa-p256/verify");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let oracle_signature: P256OracleSignature = signing_key.sign(data);
+    let signature = EcdsaP256Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref())).unwrap();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        black_box(&public).verify(black_box(d), black_box(&signature)).unwrap();
+        black_box(())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
+      b.iter(|| {
+        black_box(verifying_key)
+          .verify(black_box(d), black_box(&oracle_signature))
+          .unwrap();
+        black_box(())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| {
+        ring_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+        black_box(())
+      })
+    });
+
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| {
+          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+          black_box(())
+        })
+      });
+    }
+  }
+
+  g.finish();
+}
+
+fn ecdsa_p256_sign(c: &mut Criterion) {
+  let secret_bytes = [0x11u8; 32];
+  let secret = EcdsaP256SecretKey::from_bytes(secret_bytes).unwrap();
+  let keypair = EcdsaP256Keypair::from_secret_key(secret);
+  let blind = [0x5cu8; 64];
+  let signing_key = P256OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let sec1 = keypair.public_key().to_sec1_bytes();
+  let ring_rng = ring::rand::SystemRandom::new();
+  let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
+    &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+    &secret_bytes,
+    &sec1,
+    &ring_rng,
+  )
+  .unwrap();
+  aws_lc_bench! {
+    let aws_rng = aws_lc_rs::rand::SystemRandom::new();
+    let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
+      &aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+      &secret_bytes,
+      &sec1,
+    )
+    .unwrap();
+  }
+
+  let inputs = [0usize, 32, 1024, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let mut g = c.benchmark_group("ecdsa-p256/sign");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-deterministic", len), data, |b, d| {
+      b.iter(|| black_box(black_box(&keypair).try_sign(black_box(d)).unwrap()))
+    });
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-blinded", len), data, |b, d| {
+      b.iter(|| {
+        black_box(
+          black_box(&keypair)
+            .try_sign_blinded(black_box(d), |out| out.copy_from_slice(black_box(&blind)))
+            .unwrap(),
+        )
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
+      b.iter(|| {
+        let signature: P256OracleSignature = black_box(&signing_key).sign(black_box(d));
+        black_box(signature)
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| black_box(ring_key.sign(&ring_rng, black_box(d)).unwrap()))
+    });
+
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).unwrap()))
+      });
+    }
+  }
+
+  g.finish();
+}
+
+fn ecdsa_p384_verify(c: &mut Criterion) {
+  let secret_bytes = [0x31u8; 48];
+  let signing_key = P384OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let verifying_key = signing_key.verifying_key();
+  let sec1 = verifying_key.to_encoded_point(false);
+  let public = EcdsaP384PublicKey::from_sec1_bytes(sec1.as_bytes()).unwrap();
+  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, sec1.as_bytes());
+  aws_lc_bench! {
+    let aws_upk =
+      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, sec1.as_bytes());
+  }
+
+  let inputs = [0usize, 32, 1024, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let mut g = c.benchmark_group("ecdsa-p384/verify");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let oracle_signature: P384OracleSignature = signing_key.sign(data);
+    let signature = EcdsaP384Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref())).unwrap();
+
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| {
+        black_box(&public).verify(black_box(d), black_box(&signature)).unwrap();
+        black_box(())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
+      b.iter(|| {
+        black_box(verifying_key)
+          .verify(black_box(d), black_box(&oracle_signature))
+          .unwrap();
+        black_box(())
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| {
+        ring_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+        black_box(())
+      })
+    });
+
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| {
+          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+          black_box(())
+        })
+      });
+    }
+  }
+
+  g.finish();
+}
+
+fn ecdsa_p384_sign(c: &mut Criterion) {
+  let secret_bytes = [0x31u8; 48];
+  let secret = EcdsaP384SecretKey::from_bytes(secret_bytes).unwrap();
+  let keypair = EcdsaP384Keypair::from_secret_key(secret);
+  let blind = [0xa3u8; 96];
+  let signing_key = P384OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let sec1 = keypair.public_key().to_sec1_bytes();
+  let ring_rng = ring::rand::SystemRandom::new();
+  let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
+    &ring::signature::ECDSA_P384_SHA384_FIXED_SIGNING,
+    &secret_bytes,
+    &sec1,
+    &ring_rng,
+  )
+  .unwrap();
+  aws_lc_bench! {
+    let aws_rng = aws_lc_rs::rand::SystemRandom::new();
+    let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
+      &aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED_SIGNING,
+      &secret_bytes,
+      &sec1,
+    )
+    .unwrap();
+  }
+
+  let inputs = [0usize, 32, 1024, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let mut g = c.benchmark_group("ecdsa-p384/sign");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-deterministic", len), data, |b, d| {
+      b.iter(|| black_box(black_box(&keypair).try_sign(black_box(d)).unwrap()))
+    });
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-blinded", len), data, |b, d| {
+      b.iter(|| {
+        black_box(
+          black_box(&keypair)
+            .try_sign_blinded(black_box(d), |out| out.copy_from_slice(black_box(&blind)))
+            .unwrap(),
+        )
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
+      b.iter(|| {
+        let signature: P384OracleSignature = black_box(&signing_key).sign(black_box(d));
+        black_box(signature)
+      })
+    });
+
+    g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
+      b.iter(|| black_box(ring_key.sign(&ring_rng, black_box(d)).unwrap()))
+    });
+
+    aws_lc_bench! {
+      g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
+        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).unwrap()))
+      });
+    }
+  }
+
+  g.finish();
+}
+
 fn ed25519_keypair_from_secret(c: &mut Criterion) {
   let secret_bytes = [8u8; 32];
   let mut g = c.benchmark_group("ed25519/keypair-from-secret");
@@ -976,6 +1241,10 @@ criterion_group!(
   pbkdf2_sha256_derive,
   pbkdf2_sha256_internal,
   pbkdf2_sha512_derive,
+  ecdsa_p256_sign,
+  ecdsa_p256_verify,
+  ecdsa_p384_sign,
+  ecdsa_p384_verify,
   ed25519_public_key,
   ed25519_keypair_from_secret,
   ed25519_sign,

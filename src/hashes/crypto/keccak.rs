@@ -525,7 +525,7 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
 //   * AVX2: worse than AVX-512 (no VPTERNLOG, 3 ops for χ vs 1)
 //   * BMI2: LLVM already emits RORX; ANDN saves <5 ops/round after lane-complementing chi
 //   * Full SIMD: 25 u64 lanes need 13+ YMM registers; θ/ρ/π have no efficient SIMD mapping
-//   See private/tasks/acceleration.md KECCAK-4 for full rationale.
+//   See docs/architecture.md for the closed KECCAK-4 evaluation.
 // - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3 CE kernel is ~1.9×
 //   slower on Neoverse V1/V2). SHA3 CE is used only for the 2-state interleaved path
 //   (`digest_pair`).

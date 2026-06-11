@@ -30,6 +30,7 @@ selected at runtime does not exempt it from the manifest or evidence gates.
 |---|---|---|
 | MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | CT manifest coverage, `just ct-full`, HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
 | AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | CT manifest coverage, `just ct-full`, AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
+| ECDSA P-256/P-384 signing and verification | Blinded signing is CT-manifested for private-key scalar work. Signature acceptance/rejection uses one opaque verification error at the public API boundary. Public verification is not a private-key CT claim unless promoted by the manifest. | CT manifest coverage for blinded signing, RustCrypto oracle tests, parser rejection tests, and fuzz coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
 | Ed25519 signing and secret-key public derivation | Secret scalar paths must avoid secret-dependent branches, table indices, memory addresses, and failure shape. | CT manifest coverage, `just ct-full`, RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
 | Ed25519 verification | Signature acceptance/rejection uses a single opaque verification error at the public API boundary. Public verification is not a private-key CT claim unless promoted by the manifest. | RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
 | X25519 scalar multiplication | Scalar multiplication must avoid secret-dependent field behavior and rejects all-zero shared secrets. | CT manifest coverage, `just ct-full`, RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
@@ -40,6 +41,9 @@ or profile negotiation, key generation, OS randomness paths, public RSA
 verify/encrypt paths, raw hashes, checksums, and fast non-cryptographic hashes.
 Test vectors, differential tests, Miri, fuzzing, and leakage tests are evidence,
 not formal proofs.
+
+No third-party security audit or formal verification is claimed today. Treat the
+published evidence as project evidence, not certification.
 
 ## Verification Failures
 

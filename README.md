@@ -7,7 +7,7 @@
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-**Pure Rust cryptography: RSA, Ed25519, X25519, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
+**Pure Rust cryptography: RSA, ECDSA, Ed25519, X25519, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
 
 `rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed without dragging in mandatory C, OpenSSL, or system library coupling.
 
@@ -36,7 +36,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **Audit knobs are explicit.** `portable-only` collapses runtime capability detection to the portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
-`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module.
+`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. No third-party security audit is claimed today.
 
 ## Install
 
@@ -181,7 +181,7 @@ assert!(
 | Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
 | MACs and KDFs | HMAC-SHA-2, KMAC256, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
 | Password Hashing | Argon2d/i/id, scrypt, PHC string encode/verify | `auth`, `argon2`, `scrypt`, `phc-strings` |
-| Public-key Primitives | Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange | `auth`, `signatures`, `ed25519`, `rsa`, `x25519` |
+| Public-key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange | `auth`, `signatures`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519` |
 | AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
 | Fast Non-crypto Hashes | XXH3-64/128, RapidHash 64/128 | `xxh3`, `rapidhash` |
@@ -233,7 +233,7 @@ Secret-bearing primitive coverage is deliberately explicit:
 |---|---|
 | Equality and verification leaves | Constant-time equality, secret-byte equality, HMAC-SHA-2 verification, KMAC256 verification, keyed BLAKE2/BLAKE3 leaves, HKDF output derivation, and PBKDF2 verification leaves. |
 | AEAD authentication and symmetric transforms | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, and Ascon-AEAD128 required leaves, including AES rounds, GHASH, POLYVAL, Poly1305, tag generation, and open/authentication failure shape. |
-| Public-key secret operations | X25519 scalar multiplication, Ed25519 signing and secret public-key derivation, RSA private signing/decryption leaves, RSA private-operation window selection, and bounded private-component validation leaves. |
+| Public-key secret operations | X25519 scalar multiplication, Ed25519 signing and secret public-key derivation, ECDSA blinded signing, RSA private signing/decryption leaves, RSA private-operation window selection, and bounded private-component validation leaves. |
 | Password hashing | Argon2i secret-bearing hash leaves and final verification comparisons are CT-gated. Argon2d, Argon2id, and scrypt are classified as best-effort for local side-channel CT because their algorithms use data-dependent memory access; their final comparisons and parser/failure boundaries still run through the security test/fuzz evidence. |
 | Public-only work | Raw hashes, checksums, non-cryptographic hashes, public-key verification math, DER/PHC parsing, serialization, key generation, OS randomness, and benchmark-only paths are not blanket constant-time claims unless `ct.toml` promotes a specific leaf. |
 
@@ -304,6 +304,8 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture not
 - Portable and accelerated backends are differentially tested for byte-identical output.
 - Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
 - RSA private-operation release claims require the dedicated RSA Miri and first-order leakage gates.
+- No third-party audit is claimed; treat project evidence as engineering
+  evidence, not certification.
 
 Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
 

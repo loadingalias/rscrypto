@@ -95,7 +95,8 @@ assert!(
 //!
 //! - `checksums`: CRC families.
 //! - `hashes`: SHA-2, SHA-3, BLAKE2, BLAKE3, Ascon, XXH3, RapidHash.
-//! - `auth`: MACs, KDFs, password hashing, Ed25519, RSA signing/verification/OAEP, X25519.
+//! - `auth`: MACs, KDFs, password hashing, ECDSA signing/verification, Ed25519, RSA
+//!   signing/verification/OAEP, X25519.
 //! - `aead`: AES-GCM, AES-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128.
 //! - `full`: all public primitive families.
 //!
@@ -217,6 +218,8 @@ mod macros;
   feature = "xchacha20poly1305",
   feature = "aegis256",
   feature = "ascon-aead",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "x25519",
   feature = "blake3"
@@ -237,6 +240,8 @@ pub mod aead;
   feature = "hmac",
   feature = "hkdf",
   feature = "kmac",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "rsa",
   feature = "x25519",
@@ -319,16 +324,26 @@ pub use aead::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(feature = "xchacha20poly1305")]
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub use auth::EcdsaError;
 #[cfg(feature = "hkdf")]
 pub use auth::HkdfOutputLengthError;
 #[cfg(feature = "kmac")]
 pub use auth::Kmac256;
 #[cfg(feature = "phc-strings")]
 pub use auth::PhcError;
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub use auth::diag_ecdsa_p256_select_signing_generator_affine_limb_digest;
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub use auth::diag_ecdsa_p384_select_signing_generator_affine_limb_digest;
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(feature = "argon2")]
 pub use auth::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
+#[cfg(feature = "ecdsa-p256")]
+pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
+#[cfg(feature = "ecdsa-p384")]
+pub use auth::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
 #[cfg(feature = "ed25519")]
 pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
@@ -407,6 +422,8 @@ pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
   feature = "xchacha20poly1305",
   feature = "aegis256",
   feature = "ascon-aead",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "x25519"
 ))]

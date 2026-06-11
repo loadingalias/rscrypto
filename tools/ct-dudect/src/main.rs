@@ -2,10 +2,11 @@ use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::R
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
   Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519Keypair,
-  Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512,
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes, Sha512, X25519SecretKey,
-  XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256Keypair,
+  EcdsaP256SecretKey, EcdsaP384Keypair, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
+  HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash,
     diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys,
@@ -703,6 +704,116 @@ fn ed25519_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut 
   }
 }
 
+fn valid_p256_secret(rng: &mut BenchRng) -> [u8; EcdsaP256SecretKey::LENGTH] {
+  let mut secret = rand_array::<{ EcdsaP256SecretKey::LENGTH }>(rng);
+  secret[0] &= 0x7f;
+  secret[EcdsaP256SecretKey::LENGTH - 1] |= 1;
+  secret
+}
+
+fn valid_p384_secret(rng: &mut BenchRng) -> [u8; EcdsaP384SecretKey::LENGTH] {
+  let mut secret = rand_array::<{ EcdsaP384SecretKey::LENGTH }>(rng);
+  secret[0] &= 0x7f;
+  secret[EcdsaP384SecretKey::LENGTH - 1] |= 1;
+  secret
+}
+
+fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP256SecretKey::LENGTH]
+    } else {
+      valid_p256_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<64>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    let key = EcdsaP256SecretKey::from_bytes(secret).unwrap();
+    runner.run_one(class, || {
+      std::hint::black_box(key.try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind)).unwrap().to_bytes());
+    });
+  }
+}
+
+fn ecdsa_p256_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP256SecretKey::LENGTH]
+    } else {
+      valid_p256_secret(rng)
+    };
+    inputs.push((
+      class,
+      EcdsaP256Keypair::from_secret_key(EcdsaP256SecretKey::from_bytes(secret).unwrap()),
+      rand_array::<64>(rng),
+    ));
+  }
+
+  for (class, keypair, blind) in inputs {
+    runner.run_one(class, || {
+      std::hint::black_box(
+        keypair
+          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
+          .unwrap()
+          .to_bytes(),
+      );
+    });
+  }
+}
+
+fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP384SecretKey::LENGTH]
+    } else {
+      valid_p384_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<96>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    let key = EcdsaP384SecretKey::from_bytes(secret).unwrap();
+    runner.run_one(class, || {
+      std::hint::black_box(key.try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind)).unwrap().to_bytes());
+    });
+  }
+}
+
+fn ecdsa_p384_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP384SecretKey::LENGTH]
+    } else {
+      valid_p384_secret(rng)
+    };
+    inputs.push((
+      class,
+      EcdsaP384Keypair::from_secret_key(EcdsaP384SecretKey::from_bytes(secret).unwrap()),
+      rand_array::<96>(rng),
+    ));
+  }
+
+  for (class, keypair, blind) in inputs {
+    runner.run_one(class, || {
+      std::hint::black_box(
+        keypair
+          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
+          .unwrap()
+          .to_bytes(),
+      );
+    });
+  }
+}
+
 fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
   let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
@@ -1303,6 +1414,10 @@ ctbench_main_with_seeds!(
   (ed25519_public_key_fixed_vs_random_secret, Some(0x6564323535313950)),
   (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
+  (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
+  (ecdsa_p256_keypair_sign_fixed_vs_random_secret, Some(0x703235365f6b6579)),
+  (ecdsa_p384_sign_fixed_vs_random_secret, Some(0x703338345f736967)),
+  (ecdsa_p384_keypair_sign_fixed_vs_random_secret, Some(0x703338345f6b6579)),
   (rsa_pkcs1v15_fixed_vs_random_message, Some(0x7273615f7369676e)),
   (rsa_pss_fixed_vs_random_message, Some(0x7273615f70737373)),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),

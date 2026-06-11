@@ -107,10 +107,12 @@ PHC string-format encode/decode shared by both families: `auth::phc` (feature `p
 
 ## Signatures & Key Exchange
 
-Features: `signatures` / `key-exchange` or `ed25519` / `rsa` / `x25519`.
+Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519`.
 
 | Type | Size | Standard |
 |------|------|----------|
+| `EcdsaP256PublicKey` / `EcdsaP256Signature` | SEC1 65B / raw 64B | FIPS 186-5 / SEC 1 |
+| `EcdsaP384PublicKey` / `EcdsaP384Signature` | SEC1 97B / raw 96B | FIPS 186-5 / SEC 1 |
 | `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
 | `Ed25519Keypair` | -- | RFC 8032 |
 | `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
@@ -118,6 +120,7 @@ Features: `signatures` / `key-exchange` or `ed25519` / `rsa` / `x25519`.
 | `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
 
+ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signatures, SEC1/SPKI public keys, and blinded signing APIs for CT-claimed private-key scalar work.
 RSA public-key verification and import require `rsa` (`alloc`, `sha2`).
 OS-backed private operations and RSA key generation require `getrandom`. Key
 generation seeds an internal HMAC_DRBG from OS entropy; deterministic

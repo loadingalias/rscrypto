@@ -56,6 +56,9 @@
 //! # Ed25519 only
 //! rscrypto = { version = "0.4.0", default-features = false, features = ["ed25519"] }
 //!
+//! # ECDSA P-256/P-384 signing and verification
+//! rscrypto = { version = "0.4.0", default-features = false, features = ["ecdsa"] }
+//!
 //! # RSA
 //! rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
 //!
@@ -91,6 +94,7 @@
 //! # Modules
 //!
 //! - `argon2` - Argon2d/Argon2i/Argon2id password hashing (RFC 9106).
+//! - `ecdsa` - ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
 //! - `ed25519` - Ed25519 key and signature types.
 //! - `hmac` - HMAC-based authentication.
 //! - `hkdf` - HKDF extract-then-expand key derivation.
@@ -105,6 +109,8 @@
 pub mod argon2;
 #[cfg(any(feature = "ed25519", feature = "x25519"))]
 pub(crate) mod curve25519_edwards;
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub mod ecdsa;
 #[cfg(feature = "ed25519")]
 pub mod ed25519;
 #[cfg(feature = "hkdf")]
@@ -132,6 +138,16 @@ pub use curve25519_edwards::diag_ed25519_select_basepoint_cached_limb_digest;
 pub use curve25519_edwards::{
   diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
 };
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub use ecdsa::EcdsaError;
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub use ecdsa::diag_ecdsa_p256_select_signing_generator_affine_limb_digest;
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub use ecdsa::diag_ecdsa_p384_select_signing_generator_affine_limb_digest;
+#[cfg(feature = "ecdsa-p256")]
+pub use ecdsa::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
+#[cfg(feature = "ecdsa-p384")]
+pub use ecdsa::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP384Signature};
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
