@@ -116,7 +116,7 @@ jobs:
       tools_mode: ${{ matrix.tools_mode }}
       toolchain_components: ${{ matrix.toolchain_components }}
       enable_magic_cache: ${{ matrix.enable_magic_cache }}
-      enable_rust_cache: true
+      enable_rust_cache: ${{ matrix.enable_rust_cache }}
       pre_script: |
         set -euo pipefail
         mkdir -p ct-evidence

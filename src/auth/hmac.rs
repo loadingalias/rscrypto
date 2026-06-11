@@ -16,6 +16,9 @@ const SHA256_TAG_SIZE: usize = 32;
 const SHA512_FAMILY_BLOCK_SIZE: usize = 128;
 const SHA384_TAG_SIZE: usize = 48;
 const SHA512_TAG_SIZE: usize = 64;
+const HMAC_IPAD_WORD: u64 = 0x3636_3636_3636_3636;
+const HMAC_OPAD_WORD: u64 = 0x5c5c_5c5c_5c5c_5c5c;
+const HMAC_PAD_DELTA_WORD: u64 = HMAC_IPAD_WORD ^ HMAC_OPAD_WORD;
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
@@ -39,9 +42,13 @@ pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
 ) -> T {
   let mut ipad = [0x36u8; BLOCK_SIZE];
   let mut opad = [0x5Cu8; BLOCK_SIZE];
-  for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
-    *ipad_byte ^= key_byte;
-    *opad_byte ^= key_byte;
+  if BLOCK_SIZE == SHA256_BLOCK_SIZE || BLOCK_SIZE == SHA512_FAMILY_BLOCK_SIZE {
+    hmac_prefix_pad_words(key_block, &mut ipad, &mut opad);
+  } else {
+    for ((ipad_byte, opad_byte), key_byte) in ipad.iter_mut().zip(opad.iter_mut()).zip(key_block.iter().copied()) {
+      *ipad_byte ^= key_byte;
+      *opad_byte ^= key_byte;
+    }
   }
 
   let result = build(&ipad, &opad);
@@ -52,6 +59,97 @@ pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
   result
+}
+
+#[inline(always)]
+fn read_u64_unaligned<const N: usize>(bytes: &[u8; N], offset: usize) -> u64 {
+  assert!(offset.strict_add(8) <= N);
+  // SAFETY: `offset + 8 <= N` above keeps the 8-byte read in bounds. The source is a byte array, so
+  // it may be unaligned and `read_unaligned` is required.
+  unsafe { core::ptr::read_unaligned(bytes.as_ptr().add(offset).cast::<u64>()) }
+}
+
+#[inline(always)]
+fn write_u64_unaligned<const N: usize>(bytes: &mut [u8; N], offset: usize, word: u64) {
+  assert!(offset.strict_add(8) <= N);
+  // SAFETY: `offset + 8 <= N` above keeps the 8-byte write in bounds. The destination is a byte
+  // array, so it may be unaligned and `write_unaligned` is required.
+  unsafe { core::ptr::write_unaligned(bytes.as_mut_ptr().add(offset).cast::<u64>(), word) };
+}
+
+#[inline(always)]
+fn hmac_prefix_pad_word<const BLOCK_SIZE: usize>(
+  key_block: &[u8; BLOCK_SIZE],
+  ipad: &mut [u8; BLOCK_SIZE],
+  opad: &mut [u8; BLOCK_SIZE],
+  offset: usize,
+) {
+  let key = read_u64_unaligned(key_block, offset);
+  write_u64_unaligned(ipad, offset, HMAC_IPAD_WORD ^ key);
+  write_u64_unaligned(opad, offset, HMAC_OPAD_WORD ^ key);
+}
+
+#[inline(always)]
+fn hmac_prefix_pad_words<const BLOCK_SIZE: usize>(
+  key_block: &[u8; BLOCK_SIZE],
+  ipad: &mut [u8; BLOCK_SIZE],
+  opad: &mut [u8; BLOCK_SIZE],
+) {
+  hmac_prefix_pad_word(key_block, ipad, opad, 0);
+  hmac_prefix_pad_word(key_block, ipad, opad, 8);
+  hmac_prefix_pad_word(key_block, ipad, opad, 16);
+  hmac_prefix_pad_word(key_block, ipad, opad, 24);
+  hmac_prefix_pad_word(key_block, ipad, opad, 32);
+  hmac_prefix_pad_word(key_block, ipad, opad, 40);
+  hmac_prefix_pad_word(key_block, ipad, opad, 48);
+  hmac_prefix_pad_word(key_block, ipad, opad, 56);
+
+  if BLOCK_SIZE == SHA512_FAMILY_BLOCK_SIZE {
+    hmac_prefix_pad_word(key_block, ipad, opad, 64);
+    hmac_prefix_pad_word(key_block, ipad, opad, 72);
+    hmac_prefix_pad_word(key_block, ipad, opad, 80);
+    hmac_prefix_pad_word(key_block, ipad, opad, 88);
+    hmac_prefix_pad_word(key_block, ipad, opad, 96);
+    hmac_prefix_pad_word(key_block, ipad, opad, 104);
+    hmac_prefix_pad_word(key_block, ipad, opad, 112);
+    hmac_prefix_pad_word(key_block, ipad, opad, 120);
+  }
+}
+
+#[inline(always)]
+fn hmac_outer_pad_word<const OUT_SIZE: usize, const BLOCK_SIZE: usize>(
+  outer: &mut [u8; OUT_SIZE],
+  ipad: &[u8; BLOCK_SIZE],
+  offset: usize,
+) {
+  let word = read_u64_unaligned(ipad, offset) ^ HMAC_PAD_DELTA_WORD;
+  write_u64_unaligned(outer, offset, word);
+}
+
+#[inline(always)]
+fn hmac_outer_pad_words<const OUT_SIZE: usize, const BLOCK_SIZE: usize>(
+  outer: &mut [u8; OUT_SIZE],
+  ipad: &[u8; BLOCK_SIZE],
+) {
+  hmac_outer_pad_word(outer, ipad, 0);
+  hmac_outer_pad_word(outer, ipad, 8);
+  hmac_outer_pad_word(outer, ipad, 16);
+  hmac_outer_pad_word(outer, ipad, 24);
+  hmac_outer_pad_word(outer, ipad, 32);
+  hmac_outer_pad_word(outer, ipad, 40);
+  hmac_outer_pad_word(outer, ipad, 48);
+  hmac_outer_pad_word(outer, ipad, 56);
+
+  if BLOCK_SIZE == SHA512_FAMILY_BLOCK_SIZE {
+    hmac_outer_pad_word(outer, ipad, 64);
+    hmac_outer_pad_word(outer, ipad, 72);
+    hmac_outer_pad_word(outer, ipad, 80);
+    hmac_outer_pad_word(outer, ipad, 88);
+    hmac_outer_pad_word(outer, ipad, 96);
+    hmac_outer_pad_word(outer, ipad, 104);
+    hmac_outer_pad_word(outer, ipad, 112);
+    hmac_outer_pad_word(outer, ipad, 120);
+  }
 }
 
 /// HMAC-SHA256 authentication state.
@@ -301,9 +399,7 @@ impl Mac for HmacSha256 {
     }
 
     let mut outer = [0u8; 128];
-    for (o, &ip) in outer[..SHA256_BLOCK_SIZE].iter_mut().zip(ipad.iter()) {
-      *o = ip ^ 0x6a;
-    }
+    hmac_outer_pad_words(&mut outer, &ipad);
     for (i, &word) in state.iter().enumerate() {
       let off = SHA256_BLOCK_SIZE.strict_add(i.strict_mul(4));
       outer[off..off.strict_add(4)].copy_from_slice(&word.to_be_bytes());
@@ -575,9 +671,7 @@ impl Mac for HmacSha384 {
     }
 
     let mut outer = [0u8; 256];
-    for (o, &ip) in outer[..SHA512_FAMILY_BLOCK_SIZE].iter_mut().zip(ipad.iter()) {
-      *o = ip ^ 0x6a;
-    }
+    hmac_outer_pad_words(&mut outer, &ipad);
     for (i, &word) in state.iter().take(6).enumerate() {
       let off = SHA512_FAMILY_BLOCK_SIZE.strict_add(i.strict_mul(8));
       outer[off..off.strict_add(8)].copy_from_slice(&word.to_be_bytes());
@@ -849,9 +943,7 @@ impl Mac for HmacSha512 {
     }
 
     let mut outer = [0u8; 256];
-    for (o, &ip) in outer[..SHA512_FAMILY_BLOCK_SIZE].iter_mut().zip(ipad.iter()) {
-      *o = ip ^ 0x6a;
-    }
+    hmac_outer_pad_words(&mut outer, &ipad);
     for (i, &word) in state.iter().enumerate() {
       let off = SHA512_FAMILY_BLOCK_SIZE.strict_add(i.strict_mul(8));
       outer[off..off.strict_add(8)].copy_from_slice(&word.to_be_bytes());

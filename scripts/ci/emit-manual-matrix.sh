@@ -101,31 +101,31 @@ append_ct_row_for_platform() {
   local runner_uarch="runs-on=${GH_RUN_ID_VAL}/runner="
   case "$platform" in
     amd-zen4)
-      ROWS+=("{\"platform\":\"amd-zen4\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true}")
+      ROWS+=("{\"platform\":\"amd-zen4\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen4\",\"artifact_suffix\":\"amd-zen4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen4\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true,\"enable_rust_cache\":true}")
       ;;
     intel-spr)
-      ROWS+=("{\"platform\":\"intel-spr\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true}")
+      ROWS+=("{\"platform\":\"intel-spr\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Sapphire Rapids\",\"artifact_suffix\":\"intel-spr\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-spr\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true,\"enable_rust_cache\":true}")
       ;;
     intel-icl)
-      ROWS+=("{\"platform\":\"intel-icl\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true}")
+      ROWS+=("{\"platform\":\"intel-icl\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"Intel Ice Lake\",\"artifact_suffix\":\"intel-icl\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}intel-icl\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true,\"enable_rust_cache\":true}")
       ;;
     amd-zen5)
-      ROWS+=("{\"platform\":\"amd-zen5\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true}")
+      ROWS+=("{\"platform\":\"amd-zen5\",\"target\":\"x86_64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AMD Zen5\",\"artifact_suffix\":\"amd-zen5\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}amd-zen5\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true,\"enable_rust_cache\":true}")
       ;;
     graviton3)
-      ROWS+=("{\"platform\":\"graviton3\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true}")
+      ROWS+=("{\"platform\":\"graviton3\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton3\",\"artifact_suffix\":\"graviton3\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton3\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true,\"enable_rust_cache\":true}")
       ;;
     graviton4)
-      ROWS+=("{\"platform\":\"graviton4\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true}")
+      ROWS+=("{\"platform\":\"graviton4\",\"target\":\"aarch64-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"AWS Graviton4\",\"artifact_suffix\":\"graviton4\",\"timeout_minutes\":${CT_RUNSON_TIMEOUT_MINUTES},\"runner\":\"${runner_uarch}graviton4\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":true,\"enable_rust_cache\":true}")
       ;;
     ibm-s390x)
-      ROWS+=("{\"platform\":\"ibm-s390x\",\"target\":\"s390x-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false}")
+      ROWS+=("{\"platform\":\"ibm-s390x\",\"target\":\"s390x-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM Z s390x\",\"artifact_suffix\":\"ibm-s390x\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-s390x\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false,\"enable_rust_cache\":true}")
       ;;
     ibm-power10)
-      ROWS+=("{\"platform\":\"ibm-power10\",\"target\":\"powerpc64le-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false}")
+      ROWS+=("{\"platform\":\"ibm-power10\",\"target\":\"powerpc64le-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false,\"enable_rust_cache\":true}")
       ;;
     rise-riscv)
-      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false}")
+      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false,\"enable_rust_cache\":false}")
       ;;
     *)
       echo "error: unsupported CT platform '$platform'" >&2
