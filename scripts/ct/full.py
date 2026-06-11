@@ -165,18 +165,45 @@ def python_script(root: Path, relative: str, *args: str) -> list[str]:
   return [sys.executable, str(root / relative), *args]
 
 
-def primitive_ids_requiring_dudect(ct: dict[str, Any]) -> set[str]:
+def primitives_by_id(ct: dict[str, Any]) -> dict[str, dict[str, Any]]:
+  return {primitive.get("id", ""): primitive for primitive in ct.get("primitive", []) if primitive.get("id")}
+
+
+def primitive_supports_physical_timing(ct: dict[str, Any], primitive_id: str, target: str | None) -> bool:
+  if target is None:
+    return True
+  primitive = primitives_by_id(ct).get(primitive_id)
+  if primitive is None:
+    return True
+  return target not in set(primitive.get("physical_timing_unsupported_targets", []))
+
+
+def dudect_case_supported_on_target(ct: dict[str, Any], case: dict[str, Any], target: str | None) -> bool:
+  return primitive_supports_physical_timing(ct, str(case.get("primitive", "")), target)
+
+
+def filter_dudect_cases_by_target(
+  ct: dict[str, Any],
+  cases: list[dict[str, Any]],
+  target: str | None,
+) -> list[dict[str, Any]]:
+  return [case for case in cases if dudect_case_supported_on_target(ct, case, target)]
+
+
+def primitive_ids_requiring_dudect(ct: dict[str, Any], target: str | None = None) -> set[str]:
   ids = set()
   for primitive in ct.get("primitive", []):
     if primitive.get("claim") != "ct-intended":
+      continue
+    primitive_id = primitive.get("id", "")
+    if not primitive_id or not primitive_supports_physical_timing(ct, primitive_id, target):
       continue
     required = set()
     for profile_name in primitive.get("required", []):
       profile = ct.get("evidence", {}).get("profile", {}).get(profile_name, {})
       required.update(profile.get("required", []))
     if "dudect" in required:
-      ids.add(primitive.get("id", ""))
-  ids.discard("")
+      ids.add(primitive_id)
   return ids
 
 
@@ -184,13 +211,17 @@ def is_diagnostic_dudect_case(case: dict[str, Any]) -> bool:
   return case.get("gate") == "diagnostic"
 
 
-def required_dudect_cases(ct: dict[str, Any]) -> list[dict[str, Any]]:
-  return [case for case in manifest_dudect_cases(ct) if not is_diagnostic_dudect_case(case)]
+def required_dudect_cases(ct: dict[str, Any], target: str | None = None) -> list[dict[str, Any]]:
+  return [
+    case
+    for case in manifest_dudect_cases(ct)
+    if not is_diagnostic_dudect_case(case) and dudect_case_supported_on_target(ct, case, target)
+  ]
 
 
-def required_dudect_primitives(ct: dict[str, Any]) -> set[str]:
-  required_primitives = primitive_ids_requiring_dudect(ct)
-  return {case["primitive"] for case in required_dudect_cases(ct) if case["primitive"] in required_primitives}
+def required_dudect_primitives(ct: dict[str, Any], target: str | None = None) -> set[str]:
+  required_primitives = primitive_ids_requiring_dudect(ct, target)
+  return {case["primitive"] for case in required_dudect_cases(ct, target) if case["primitive"] in required_primitives}
 
 
 def target_record(ct: dict[str, Any], target: str) -> dict[str, Any] | None:
@@ -511,6 +542,9 @@ def markdown_report(report: dict[str, Any]) -> str:
   lines.append(f"- Selected cases: `{selected}` / `{gate_total}` gate cases (`{manifest_total}` total manifest cases)")
   if report["dudect"].get("filter"):
     lines.append(f"- Filter: `{report['dudect']['filter']}`")
+  skipped_cases = report["dudect"].get("target_skipped_cases", [])
+  if skipped_cases:
+    lines.append(f"- Target-unsupported cases skipped: `{len(skipped_cases)}`")
   coverage = report.get("coverage", {})
   if coverage:
     required = len(coverage.get("required_dudect_primitives", []))
@@ -688,12 +722,20 @@ def main() -> int:
 
   ct = load_toml(root / "ct.toml")
   all_manifest_cases = manifest_dudect_cases(ct)
-  gate_manifest_cases = filter_dudect_cases_by_gate(all_manifest_cases, args.dudect_gate)
-  manifest_cases, dudect_filter = filter_dudect_cases(gate_manifest_cases, args.dudect_filter)
+  all_gate_manifest_cases = filter_dudect_cases_by_gate(all_manifest_cases, args.dudect_gate)
+  filtered_gate_manifest_cases, dudect_filter = filter_dudect_cases(all_gate_manifest_cases, args.dudect_filter)
+  target_skipped_cases = [
+    case for case in filtered_gate_manifest_cases if not dudect_case_supported_on_target(ct, case, target)
+  ]
+  gate_manifest_cases = filter_dudect_cases_by_target(ct, all_gate_manifest_cases, target)
+  manifest_cases = filter_dudect_cases_by_target(ct, filtered_gate_manifest_cases, target)
   filtered_dudect = bool(dudect_filter)
   if filtered_dudect and not manifest_cases:
+    skipped = ", ".join(case["name"] for case in target_skipped_cases)
+    target_note = f"; target-unsupported match(es): {skipped}" if skipped else ""
     print(
-      f"ct-full: --dudect-filter {args.dudect_filter!r} matched no {args.dudect_gate} DudeCT cases",
+      f"ct-full: --dudect-filter {args.dudect_filter!r} matched no supported {args.dudect_gate} DudeCT cases"
+      f" for {target}{target_note}",
       file=sys.stderr,
     )
     return 2
@@ -746,6 +788,17 @@ def main() -> int:
         "manifest_case_count": len(all_manifest_cases),
         "gate_case_count": len(gate_manifest_cases),
         "selected_case_count": len(manifest_cases),
+        "target_skipped_case_count": len(target_skipped_cases),
+        "target_skipped_cases": [
+          {
+            "name": case["name"],
+            "primitive": case["primitive"],
+            "reason": primitives_by_id(ct)
+            .get(case["primitive"], {})
+            .get("physical_timing_unsupported_reason", "physical timing evidence unsupported on this target"),
+          }
+          for case in target_skipped_cases
+        ],
         "filter": args.dudect_filter or None,
         "filter_tokens": dudect_filter,
         "gate": args.dudect_gate,
@@ -766,8 +819,8 @@ def main() -> int:
         "status_counts": {},
       },
       "coverage": {
-        "required_dudect_primitives": sorted(primitive_ids_requiring_dudect(ct)),
-        "manifest_required_dudect_primitives": sorted(required_dudect_primitives(ct)),
+        "required_dudect_primitives": sorted(primitive_ids_requiring_dudect(ct, target)),
+        "manifest_required_dudect_primitives": sorted(required_dudect_primitives(ct, target)),
         "executed_dudect_primitives": [],
         "executed_required_dudect_primitives": [],
         "passing_dudect_primitives": [],
@@ -866,8 +919,8 @@ def main() -> int:
   passing_required_dudect = {
     case["primitive"] for case in dudect_cases if case["status"] == "pass" and case.get("gate") != "diagnostic"
   }
-  required_dudect = primitive_ids_requiring_dudect(ct)
-  manifest_required_dudect = required_dudect_primitives(ct)
+  required_dudect = primitive_ids_requiring_dudect(ct, target)
+  manifest_required_dudect = required_dudect_primitives(ct, target)
   missing_dudect = (
     []
     if filtered_dudect or args.dudect_gate != "required"
@@ -907,6 +960,17 @@ def main() -> int:
       "manifest_case_count": len(all_manifest_cases),
       "gate_case_count": len(gate_manifest_cases),
       "selected_case_count": len(manifest_cases),
+      "target_skipped_case_count": len(target_skipped_cases),
+      "target_skipped_cases": [
+        {
+          "name": case["name"],
+          "primitive": case["primitive"],
+          "reason": primitives_by_id(ct)
+          .get(case["primitive"], {})
+          .get("physical_timing_unsupported_reason", "physical timing evidence unsupported on this target"),
+        }
+        for case in target_skipped_cases
+      ],
       "filter": args.dudect_filter or None,
       "filter_tokens": dudect_filter,
       "gate": args.dudect_gate,

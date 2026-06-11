@@ -491,6 +491,160 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
+name = "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret"
+left_class = "P-256 diagnostic nonce derivation from fixed secret"
+right_class = "P-256 diagnostic nonce derivation from random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_reduce_wide_fixed_vs_random_input"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_reduce_wide_fixed_vs_random_input"
+left_class = "P-256 diagnostic order reduction of fixed wide input"
+right_class = "P-256 diagnostic order reduction of random wide input"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret"
+left_class = "P-256 diagnostic blinded basepoint multiplication from fixed secret"
+right_class = "P-256 diagnostic blinded basepoint multiplication from random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret"
+left_class = "P-256 diagnostic scalar finishing with fixed secret"
+right_class = "P-256 diagnostic scalar finishing with random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret"
+left_class = "P-256 diagnostic fixed-r order multiply with fixed secret"
+right_class = "P-256 diagnostic fixed-r order multiply with random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret"
+left_class = "P-256 diagnostic nonce inverse from fixed secret"
+right_class = "P-256 diagnostic nonce inverse from random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p256_diag_final_multiply_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p256_sign"
+filter = "ecdsa_p256_diag_final_multiply_fixed_vs_random_secret"
+left_class = "P-256 diagnostic final scalar multiply with fixed secret"
+right_class = "P-256 diagnostic final scalar multiply with random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret"
+left_class = "P-384 diagnostic nonce derivation from fixed secret"
+right_class = "P-384 diagnostic nonce derivation from random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_reduce_wide_fixed_vs_random_input"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_reduce_wide_fixed_vs_random_input"
+left_class = "P-384 diagnostic order reduction of fixed wide input"
+right_class = "P-384 diagnostic order reduction of random wide input"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret"
+left_class = "P-384 diagnostic blinded basepoint multiplication from fixed secret"
+right_class = "P-384 diagnostic blinded basepoint multiplication from random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret"
+left_class = "P-384 diagnostic scalar finishing with fixed secret"
+right_class = "P-384 diagnostic scalar finishing with random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret"
+left_class = "P-384 diagnostic fixed-r order multiply with fixed secret"
+right_class = "P-384 diagnostic fixed-r order multiply with random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret"
+left_class = "P-384 diagnostic nonce inverse from fixed secret"
+right_class = "P-384 diagnostic nonce inverse from random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
+name = "ecdsa_p384_diag_final_multiply_fixed_vs_random_secret"
+primitive = "signature.ecdsa_p384_sign"
+filter = "ecdsa_p384_diag_final_multiply_fixed_vs_random_secret"
+left_class = "P-384 diagnostic final scalar multiply with fixed secret"
+right_class = "P-384 diagnostic final scalar multiply with random secret"
+samples = 20000
+smoke_samples = 2000
+gate = "diagnostic"
+reason = "ECDSA signing CT root-cause isolation."
+
+[[dudect_case]]
 name = "rsa_pkcs1v15_fixed_vs_random_message"
 primitive = "rsa.private_ops"
 filter = "rsa_pkcs1v15"
@@ -2331,6 +2485,8 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
+physical_timing_unsupported_targets = ["s390x-unknown-linux-gnu", "riscv64gc-unknown-linux-gnu"]
+physical_timing_unsupported_reason = "Native DudeCT on s390x and RISC-V shows the portable-only ECDSA signing backend leaks through target integer arithmetic. These targets need architecture-specific scalar, field, and order backends before rscrypto can make a release CT signing claim there."
 notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while the blinded APIs randomize the projective fixed-base point before affine conversion."
 [primitive.harness]
 status = "covered"
@@ -2350,6 +2506,8 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
+physical_timing_unsupported_targets = ["s390x-unknown-linux-gnu", "riscv64gc-unknown-linux-gnu"]
+physical_timing_unsupported_reason = "Native DudeCT on s390x and RISC-V shows the portable-only ECDSA signing backend leaks through target integer arithmetic. These targets need architecture-specific scalar, field, and order backends before rscrypto can make a release CT signing claim there."
 notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while the blinded APIs randomize the projective fixed-base point before affine conversion."
 [primitive.harness]
 status = "covered"

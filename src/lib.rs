@@ -332,10 +332,6 @@ pub use auth::HkdfOutputLengthError;
 pub use auth::Kmac256;
 #[cfg(feature = "phc-strings")]
 pub use auth::PhcError;
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
-pub use auth::diag_ecdsa_p256_select_signing_generator_affine_limb_digest;
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
-pub use auth::diag_ecdsa_p384_select_signing_generator_affine_limb_digest;
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(feature = "argon2")]
@@ -363,6 +359,20 @@ pub use auth::{
 pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
+pub use auth::{
+  diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
+  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
+  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+  diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
+};
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub use auth::{
+  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
+  diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
+  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+};
 #[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
 pub use auth::{
   diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
