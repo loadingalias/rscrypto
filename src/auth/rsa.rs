@@ -2119,7 +2119,11 @@ impl RsaPrivateScratch {
   /// Allocate scratch space for `key`.
   #[must_use]
   pub fn new(key: &RsaPrivateKey) -> Self {
-    let len = key.signature_len();
+    Self::new_components(&key.components)
+  }
+
+  fn new_components(components: &RsaPrivateKeyComponents) -> Self {
+    let len = components.public.modulus().len();
     let mut one = SecretBigEndianBuffer::zeroed(len);
     if let Some(last) = one.as_mut_slice().last_mut() {
       *last = 1;
@@ -2134,10 +2138,10 @@ impl RsaPrivateScratch {
       blinded_private_result: SecretBigEndianBuffer::zeroed(len),
       checked: SecretBigEndianBuffer::zeroed(len),
       one,
-      public_scratch: key.public_key().public_scratch(),
-      mul_scratch: RsaPrivateMulScratch::new(key.components.public.modulus.limbs.len()),
-      exponent_p_scratch: RsaPrivateExponentScratch::new(key.components.prime_p_modulus.limbs.len()),
-      exponent_q_scratch: RsaPrivateExponentScratch::new(key.components.prime_q_modulus.limbs.len()),
+      public_scratch: components.public.public_scratch(),
+      mul_scratch: RsaPrivateMulScratch::new(components.public.modulus.limbs.len()),
+      exponent_p_scratch: RsaPrivateExponentScratch::new(components.prime_p_modulus.limbs.len()),
+      exponent_q_scratch: RsaPrivateExponentScratch::new(components.prime_q_modulus.limbs.len()),
     }
   }
 
@@ -2338,67 +2342,13 @@ impl RsaPrivateKeyComponents {
       return Err(RsaPrivateOpError::InvalidLength);
     }
 
-    let prime_p = self.prime_p.as_bytes();
-    let prime_q = self.prime_q.as_bytes();
-    let modulus_p = &self.prime_p_modulus;
-    let modulus_q = &self.prime_q_modulus;
-
-    let factor_p = private_import_unsigned_be_mod(factor, prime_p);
-    let factor_q = private_import_unsigned_be_mod(factor, prime_q);
-    if is_zero_unsigned_be(factor_p.as_slice()) || is_zero_unsigned_be(factor_q.as_slice()) {
-      return Err(RsaPrivateOpError::InvalidBlindingFactor);
-    }
-
-    let p_minus_one =
-      private_import_decrement_unsigned_be(prime_p).map_err(|_| RsaPrivateOpError::InvalidBlindingFactor)?;
-    let p_minus_two = private_import_decrement_unsigned_be(p_minus_one.as_slice())
-      .map_err(|_| RsaPrivateOpError::InvalidBlindingFactor)?;
-    let q_minus_one =
-      private_import_decrement_unsigned_be(prime_q).map_err(|_| RsaPrivateOpError::InvalidBlindingFactor)?;
-    let q_minus_two = private_import_decrement_unsigned_be(q_minus_one.as_slice())
-      .map_err(|_| RsaPrivateOpError::InvalidBlindingFactor)?;
-
-    let mut factor_p_fixed = SecretBigEndianBuffer::zeroed(prime_p.len());
-    let mut factor_q_fixed = SecretBigEndianBuffer::zeroed(prime_q.len());
-    left_pad_be(factor_p.as_slice(), factor_p_fixed.as_mut_slice())?;
-    left_pad_be(factor_q.as_slice(), factor_q_fixed.as_mut_slice())?;
-
-    let mut inverse_p = SecretBigEndianBuffer::zeroed(prime_p.len());
-    let mut inverse_q = SecretBigEndianBuffer::zeroed(prime_q.len());
-    private_exponentiate_representative(
-      modulus_p,
-      p_minus_two.as_slice(),
-      factor_p_fixed.as_slice(),
-      inverse_p.as_mut_slice(),
-    )?;
-    private_exponentiate_representative(
-      modulus_q,
-      q_minus_two.as_slice(),
-      factor_q_fixed.as_slice(),
-      inverse_q.as_mut_slice(),
-    )?;
-
-    let inverse_q_mod_p = private_import_unsigned_be_mod(inverse_q.as_slice(), prime_p);
-    let mut inverse_q_mod_p_fixed = SecretBigEndianBuffer::zeroed(prime_p.len());
-    left_pad_be(inverse_q_mod_p.as_slice(), inverse_q_mod_p_fixed.as_mut_slice())?;
-    let difference = private_sub_mod_unsigned_be(inverse_p.as_slice(), inverse_q_mod_p_fixed.as_slice(), prime_p)?;
-    let mut difference_fixed = SecretBigEndianBuffer::zeroed(prime_p.len());
-    left_pad_be(difference.as_slice(), difference_fixed.as_mut_slice())?;
-
-    let mut coefficient = SecretBigEndianBuffer::zeroed(prime_p.len());
-    left_pad_be(self.coefficient.as_bytes(), coefficient.as_mut_slice())?;
-    let mut h = SecretBigEndianBuffer::zeroed(prime_p.len());
-    mod_mul_representatives(
-      modulus_p,
-      coefficient.as_slice(),
-      difference_fixed.as_slice(),
-      h.as_mut_slice(),
-    )?;
-
-    let q_times_h =
-      private_import_product_unsigned_be(prime_q, h.as_slice()).ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-    let recombined = private_add_unsigned_be_to_len(q_times_h.as_slice(), inverse_q.as_slice(), n_len)?;
-    left_pad_be(recombined.as_slice(), out)
+    let mut scratch = RsaPrivateScratch::new_components(self);
+    scratch.blinding_factor.as_mut_slice().copy_from_slice(factor);
+    let result = self.blinding_factor_inverse_into_scratch(&mut scratch).map(|()| {
+      out.copy_from_slice(scratch.blinding_inverse.as_slice());
+    });
+    scratch.clear();
+    result
   }
 
   #[cfg(feature = "getrandom")]
