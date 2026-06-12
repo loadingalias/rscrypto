@@ -46,5 +46,5 @@ Other `no_std` targets in the same families (e.g. `thumbv7em-*`, larger RISC-V p
 
 Current geomean speedups by platform live in
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
-The current public set includes the 2026-06-08 nine-runner Linux CI matrix and
-a 2026-06-09 local Apple Silicon macOS/aarch64 full run.
+The current public set includes the 2026-06-12 nine-runner Linux CI matrix and
+a 2026-06-11 local Apple Silicon macOS/aarch64 full run.

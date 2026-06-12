@@ -308,6 +308,138 @@ pub(crate) fn keccakf_aarch64_sha3_absorb_single<const RATE: usize>(state: &mut 
   unsafe { keccakf_sha3_absorb_single_impl::<RATE>(state, block) }
 }
 
+/// Absorb complete rate blocks and permute after each block.
+///
+/// This keeps the Keccak state resident in NEON registers across the block
+/// loop, avoiding the per-block load/store boundary in the single-block entry
+/// point. It is intended for Apple single-state SHA3/SHAKE absorb workloads.
+///
+/// # Safety
+///
+/// Caller must ensure `sha3` target feature is available and `blocks.len()` is
+/// a multiple of `RATE`.
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "sha3")]
+unsafe fn keccakf_sha3_absorb_blocks_impl<const RATE: usize>(state: &mut [u64; 25], blocks: &[u8]) {
+  debug_assert_eq!(RATE % 8, 0);
+  debug_assert_eq!(blocks.len() % RATE, 0);
+  let lanes = RATE / 8;
+  let z = vcreate_u64(0);
+
+  let mut a0 = vcombine_u64(vcreate_u64(state[0]), z);
+  let mut a1 = vcombine_u64(vcreate_u64(state[1]), z);
+  let mut a2 = vcombine_u64(vcreate_u64(state[2]), z);
+  let mut a3 = vcombine_u64(vcreate_u64(state[3]), z);
+  let mut a4 = vcombine_u64(vcreate_u64(state[4]), z);
+  let mut a5 = vcombine_u64(vcreate_u64(state[5]), z);
+  let mut a6 = vcombine_u64(vcreate_u64(state[6]), z);
+  let mut a7 = vcombine_u64(vcreate_u64(state[7]), z);
+  let mut a8 = vcombine_u64(vcreate_u64(state[8]), z);
+  let mut a9 = vcombine_u64(vcreate_u64(state[9]), z);
+  let mut a10 = vcombine_u64(vcreate_u64(state[10]), z);
+  let mut a11 = vcombine_u64(vcreate_u64(state[11]), z);
+  let mut a12 = vcombine_u64(vcreate_u64(state[12]), z);
+  let mut a13 = vcombine_u64(vcreate_u64(state[13]), z);
+  let mut a14 = vcombine_u64(vcreate_u64(state[14]), z);
+  let mut a15 = vcombine_u64(vcreate_u64(state[15]), z);
+  let mut a16 = vcombine_u64(vcreate_u64(state[16]), z);
+  let mut a17 = vcombine_u64(vcreate_u64(state[17]), z);
+  let mut a18 = vcombine_u64(vcreate_u64(state[18]), z);
+  let mut a19 = vcombine_u64(vcreate_u64(state[19]), z);
+  let mut a20 = vcombine_u64(vcreate_u64(state[20]), z);
+  let mut a21 = vcombine_u64(vcreate_u64(state[21]), z);
+  let mut a22 = vcombine_u64(vcreate_u64(state[22]), z);
+  let mut a23 = vcombine_u64(vcreate_u64(state[23]), z);
+  let mut a24 = vcombine_u64(vcreate_u64(state[24]), z);
+
+  let mut offset = 0usize;
+  while offset < blocks.len() {
+    let ptr = blocks.as_ptr().wrapping_add(offset);
+
+    macro_rules! absorb_lane {
+      ($a:ident, $i:expr) => {{
+        if $i < lanes {
+          // SAFETY: `blocks.len()` is a multiple of `RATE`, `offset` advances
+          // by `RATE`, and `$i < RATE / 8`; the unaligned 8-byte read stays
+          // inside the current complete block.
+          let word = u64::from_le(unsafe { core::ptr::read_unaligned(ptr.add($i * 8).cast::<u64>()) });
+          $a = veorq_u64($a, vcombine_u64(vcreate_u64(word), z));
+        }
+      }};
+    }
+
+    absorb_lane!(a0, 0);
+    absorb_lane!(a1, 1);
+    absorb_lane!(a2, 2);
+    absorb_lane!(a3, 3);
+    absorb_lane!(a4, 4);
+    absorb_lane!(a5, 5);
+    absorb_lane!(a6, 6);
+    absorb_lane!(a7, 7);
+    absorb_lane!(a8, 8);
+    absorb_lane!(a9, 9);
+    absorb_lane!(a10, 10);
+    absorb_lane!(a11, 11);
+    absorb_lane!(a12, 12);
+    absorb_lane!(a13, 13);
+    absorb_lane!(a14, 14);
+    absorb_lane!(a15, 15);
+    absorb_lane!(a16, 16);
+    absorb_lane!(a17, 17);
+    absorb_lane!(a18, 18);
+    absorb_lane!(a19, 19);
+    absorb_lane!(a20, 20);
+    absorb_lane!(a21, 21);
+    absorb_lane!(a22, 22);
+    absorb_lane!(a23, 23);
+    absorb_lane!(a24, 24);
+
+    for &rc in &super::RC {
+      keccakf_sha3_neon_round!(
+        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
+        a24, rc
+      );
+    }
+
+    offset = offset.strict_add(RATE);
+  }
+
+  state[0] = vgetq_lane_u64(a0, 0);
+  state[1] = vgetq_lane_u64(a1, 0);
+  state[2] = vgetq_lane_u64(a2, 0);
+  state[3] = vgetq_lane_u64(a3, 0);
+  state[4] = vgetq_lane_u64(a4, 0);
+  state[5] = vgetq_lane_u64(a5, 0);
+  state[6] = vgetq_lane_u64(a6, 0);
+  state[7] = vgetq_lane_u64(a7, 0);
+  state[8] = vgetq_lane_u64(a8, 0);
+  state[9] = vgetq_lane_u64(a9, 0);
+  state[10] = vgetq_lane_u64(a10, 0);
+  state[11] = vgetq_lane_u64(a11, 0);
+  state[12] = vgetq_lane_u64(a12, 0);
+  state[13] = vgetq_lane_u64(a13, 0);
+  state[14] = vgetq_lane_u64(a14, 0);
+  state[15] = vgetq_lane_u64(a15, 0);
+  state[16] = vgetq_lane_u64(a16, 0);
+  state[17] = vgetq_lane_u64(a17, 0);
+  state[18] = vgetq_lane_u64(a18, 0);
+  state[19] = vgetq_lane_u64(a19, 0);
+  state[20] = vgetq_lane_u64(a20, 0);
+  state[21] = vgetq_lane_u64(a21, 0);
+  state[22] = vgetq_lane_u64(a22, 0);
+  state[23] = vgetq_lane_u64(a23, 0);
+  state[24] = vgetq_lane_u64(a24, 0);
+}
+
+/// Absorb complete rate blocks and permute after each block using SHA3 Crypto
+/// Extensions.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) fn keccakf_aarch64_sha3_absorb_blocks<const RATE: usize>(state: &mut [u64; 25], blocks: &[u8]) {
+  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
+  unsafe { keccakf_sha3_absorb_blocks_impl::<RATE>(state, blocks) }
+}
+
 // 2-state interleaved kernel (lane 0 = state A, lane 1 = state B)
 
 /// Combine lane 0 from `state_a[i]` and lane 1 from `state_b[i]` into one

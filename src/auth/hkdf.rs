@@ -44,6 +44,28 @@ fn write_u64x6_be(dst: &mut [u8], words: &[u64; 8]) {
   dst[40..48].copy_from_slice(&words[5].to_be_bytes());
 }
 
+#[cfg(all(target_arch = "aarch64", target_os = "macos", not(miri)))]
+#[inline(always)]
+fn compress_hkdf_sha256_block(
+  _compress: Sha256CompressBlocksFn,
+  state: &mut [u32; 8],
+  block: &[u8; SHA256_BLOCK_SIZE],
+) {
+  // SAFETY: Direct Apple SHA2 single-block compression because:
+  // 1. macOS/aarch64 is treated as compile-time SHA2-capable by the SHA-256 dispatch layer.
+  // 2. HKDF passes exactly one initialized 64-byte SHA-256 block at each call site.
+  // 3. `state` is the initialized HKDF-owned SHA-256 chaining state.
+  unsafe {
+    crate::hashes::crypto::sha256::aarch64::compress_single_block_aarch64_sha2(state, block);
+  }
+}
+
+#[cfg(not(all(target_arch = "aarch64", target_os = "macos", not(miri))))]
+#[inline(always)]
+fn compress_hkdf_sha256_block(compress: Sha256CompressBlocksFn, state: &mut [u32; 8], block: &[u8; SHA256_BLOCK_SIZE]) {
+  compress(state, block);
+}
+
 define_unit_error! {
   /// HKDF requested more output than RFC 5869 allows for a single expansion.
   pub struct HkdfOutputLengthError;
@@ -558,7 +580,7 @@ fn expand_hmac_sha256_inner(
     pos = pos.strict_add(take);
     info_off = info_off.strict_add(take);
     if pos == SHA256_BLOCK_SIZE {
-      compress(state, &block);
+      compress_hkdf_sha256_block(compress, state, &block);
       block = [0u8; SHA256_BLOCK_SIZE];
       pos = 0;
     }
@@ -567,18 +589,18 @@ fn expand_hmac_sha256_inner(
   block[pos] = counter;
   pos = pos.strict_add(1);
   if pos == SHA256_BLOCK_SIZE {
-    compress(state, &block);
+    compress_hkdf_sha256_block(compress, state, &block);
     block = [0u8; SHA256_BLOCK_SIZE];
     pos = 0;
   }
 
   block[pos] = 0x80;
   if pos.strict_add(1) > 56 {
-    compress(state, &block);
+    compress_hkdf_sha256_block(compress, state, &block);
     block = [0u8; SHA256_BLOCK_SIZE];
   }
   block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
-  compress(state, &block);
+  compress_hkdf_sha256_block(compress, state, &block);
 
   write_u32x8_be(out, state);
 }
@@ -595,7 +617,7 @@ fn expand_hmac_sha256_outer(
 ) {
   *state = *outer_init;
   outer_block[..SHA256_OUTPUT_SIZE].copy_from_slice(inner_hash);
-  compress(state, outer_block);
+  compress_hkdf_sha256_block(compress, state, outer_block);
 
   write_u32x8_be(out, state);
 }

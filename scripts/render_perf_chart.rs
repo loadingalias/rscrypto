@@ -109,11 +109,15 @@ fn run() -> Result<(), String> {
     total = format_thousands(total),
   );
 
-  let svg = render_svg(&bars, &subtitle, 3.0_f64);
+  let svg = render_svg(&bars, &subtitle, chart_max_x(&bars));
   write_file(OUT_PATH, &svg)?;
 
   eprintln!("wrote {OUT_PATH} ({} bytes)", svg.len());
   Ok(())
+}
+
+fn chart_max_x(bars: &[(String, f64)]) -> f64 {
+  bars.iter().map(|(_, value)| *value).fold(3.0_f64, f64::max).ceil()
 }
 
 fn write_file(path: &str, contents: &str) -> Result<(), String> {

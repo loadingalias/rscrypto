@@ -636,6 +636,23 @@ impl Permuter for Aarch64Permuter {
   fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], _len_hint: usize) {
     aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
   }
+
+  #[inline(always)]
+  fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
+    if !cfg!(target_vendor = "apple") {
+      return false;
+    }
+
+    match rate {
+      72 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<72>(state, blocks),
+      104 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<104>(state, blocks),
+      136 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<136>(state, blocks),
+      144 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<144>(state, blocks),
+      168 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<168>(state, blocks),
+      _ => return false,
+    }
+    true
+  }
 }
 
 #[cfg(all(target_arch = "aarch64", not(target_feature = "sha3"), not(miri)))]
@@ -673,6 +690,23 @@ impl Permuter for Aarch64Permuter {
       self.permute(state_a, len_hint);
       self.permute(state_b, len_hint);
     }
+  }
+
+  #[inline(always)]
+  fn try_absorb_blocks(self, state: &mut [u64; 25], blocks: &[u8], rate: usize) -> bool {
+    if !cfg!(target_vendor = "apple") || !self.has_sha3 {
+      return false;
+    }
+
+    match rate {
+      72 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<72>(state, blocks),
+      104 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<104>(state, blocks),
+      136 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<136>(state, blocks),
+      144 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<144>(state, blocks),
+      168 => aarch64::keccakf_aarch64_sha3_absorb_blocks::<168>(state, blocks),
+      _ => return false,
+    }
+    true
   }
 }
 
@@ -963,10 +997,12 @@ fn xor_bytes_into_state<const RATE: usize>(state: &mut [u64; 25], mut offset: us
     data = &data[1..];
   }
 
+  let mut lane = offset / 8;
   while data.len() >= 8 {
     // SAFETY: `data.len() >= 8`, so this unaligned 8-byte read is in-bounds.
     let word = unsafe { core::ptr::read_unaligned(data.as_ptr().cast::<u64>()) };
-    state[offset / 8] ^= u64::from_le(word);
+    state[lane] ^= u64::from_le(word);
+    lane = lane.strict_add(1);
     offset = offset.strict_add(8);
     data = &data[8..];
   }
