@@ -177,4 +177,41 @@ mod tests {
     assert_eq!(state_a, ref_a, "x2 state_a mismatch vs single-state");
     assert_eq!(state_b, ref_b, "x2 state_b mismatch vs single-state");
   }
+
+  /// Verify batched full-block absorb matches repeated single-block absorb.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  fn keccakf1600_absorb_blocks_matches_single_absorb() {
+    let caps = crate::platform::caps();
+    if !caps.has(crate::platform::caps::aarch64::SHA3) {
+      return; // SHA3 CE not available on this hardware
+    }
+
+    fn assert_rate<const RATE: usize>() {
+      let len = RATE.strict_mul(4);
+      let mut blocks = Vec::with_capacity(len);
+      for i in 0..len {
+        blocks.push(((i.strict_mul(37).strict_add(11)) & 0xff) as u8);
+      }
+
+      let mut expected = state_from_bytes(b"batch-absorb-reference-state");
+      let mut actual = expected;
+      let (chunks, rem) = blocks.as_chunks::<RATE>();
+      debug_assert!(rem.is_empty());
+      for block in chunks {
+        super::super::xor_block_into::<RATE>(&mut expected, block);
+        super::super::aarch64::keccakf_aarch64_sha3_single(&mut expected);
+      }
+
+      super::super::aarch64::keccakf_aarch64_sha3_absorb_blocks::<RATE>(&mut actual, &blocks);
+
+      assert_eq!(actual, expected, "batched absorb mismatch for RATE={RATE}");
+    }
+
+    assert_rate::<72>();
+    assert_rate::<104>();
+    assert_rate::<136>();
+    assert_rate::<144>();
+    assert_rate::<168>();
+  }
 }
