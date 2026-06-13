@@ -1,25 +1,14 @@
 # Migration Guides
 
-Switch crate-by-crate without hunting through the full API docs.
+Switch crate-by-crate without hunting through the full API docs. This index
+covers 35 migration guides.
 
-Each guide shows the smallest useful diff: dependency change, import change,
-and call-site change. Accuracy belongs in the guides themselves: when a guide
-claims equivalence, it must name the supported surface and show the replacement
-shape directly.
+Each guide shows the smallest useful diff: dep change, import change,
+and call site change.
 
 If you are just evaluating `rscrypto`, start with the crate you already use.
 The guide will tell you whether the migration is a one-line replacement, a small
 API shape change, or not a good fit.
-
-## Conventions
-
-- One file per source crate, lowercase, matching the crates.io name.
-- Multi-crate organisations live in a directory (e.g. `RustCrypto/sha2.md`).
-- A guide may be "partial" when the source crate is a full cryptographic stack,
-  FFI binding, or protocol-shaped API. Those guides name the supported
-  primitive surfaces instead of pretending whole-crate replacement is possible.
-- Verification evidence is named in each guide. The cross-primitive vector and
-  negative-test ledger lives in [`../test-vector-coverage.md`](../test-vector-coverage.md).
 
 ## Checksums
 
@@ -68,7 +57,7 @@ API shape change, or not a good fit.
 
 | From | To | Status |
 |---|---|---|
-| RustCrypto `p256` / `p384` | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey`, raw/DER signatures | Signing and verification tested against RustCrypto `p256 0.13.2` / `p384 0.13.1` |
+| [`p256`](RustCrypto/p256.md) / [`p384`](RustCrypto/p384.md) (RustCrypto) | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey`, raw/DER signatures | Signing and verification tested against RustCrypto `p256 0.13.2` / `p384 0.13.1` |
 | [`ed25519-dalek`](RustCrypto/ed25519-dalek.md) | `Ed25519SecretKey`, `Ed25519PublicKey`, `Ed25519Signature`, `Ed25519Keypair` | Verified against `ed25519-dalek 2.2.0` |
 | [`rsa`](RustCrypto/rsa.md) (RustCrypto) | `RsaPublicKey`, `RsaPrivateKey`, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP | Partial; verified through CAVP, Wycheproof, and RustCrypto/ring/OpenSSL oracles |
 | [`x25519-dalek`](RustCrypto/x25519-dalek.md) | `X25519SecretKey`, `X25519PublicKey`, `X25519SharedSecret` | Verified against `x25519-dalek 2.0.1` |
@@ -89,10 +78,3 @@ API shape change, or not a good fit.
 | [`dryoc`](dryoc.md) | Ed25519, X25519, BLAKE2, Argon2id/Argon2i-adjacent surfaces | Partial; libsodium-style APIs are not one-to-one |
 | [`ring`](ring.md) | AEAD, SHA-2, HMAC, HKDF, PBKDF2, ECDSA, Ed25519, RSA verify | Partial; `ring` is protocol-shaped in several areas |
 | [`openssl`](openssl.md) | selected hash, MAC, AEAD, RSA operations | Partial; rscrypto does not replace TLS, PKI, engines, or providers |
-
-## Status
-
-33 migration guides cover the primitive crates plus the major external stacks
-that appear in benchmarks and oracle tests. Coverage is intentionally explicit:
-unsupported stack features stay unsupported instead of being hidden behind a
-generic "replace this crate" claim.

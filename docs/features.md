@@ -18,6 +18,9 @@ rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
 # RSA key generation, signing, encryption, and private-operation blinding.
 rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "getrandom"] }
 
+# ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
+rscrypto = { version = "0.4.0", default-features = false, features = ["ecdsa"] }
+
 # Everything.
 rscrypto = { version = "0.4.0", features = ["full", "getrandom"] }
 
@@ -95,7 +98,7 @@ rscrypto = { version = "0.4.0", features = ["full", "portable-only"] }
 
 | Feature | Effect |
 |---|---|
-| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. RSA key generation uses OS entropy to seed its internal HMAC_DRBG; no separate DRBG feature is required. |
+| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, OAEP encryption randomness, and private-operation blinding. ECDSA key generation and caller-blinded signing use caller-supplied byte-filling closures; deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |

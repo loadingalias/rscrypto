@@ -1,8 +1,7 @@
 # Test Vector Coverage Ledger
 
-This ledger is built from the repository's actual `tests/` and `testdata/`
-files. It exists to make negative-vector coverage visible per primitive instead
-of relying on broad claims like "covered by oracles".
+This exists to make negative-vector coverage visible per primitive instead
+of relying on broad claims like "covered by oracles". I've built this from the actual `tests/` and `testdata/` files.
 
 Wycheproof suites are vendored from `C2SP/wycheproof` `testvectors_v1/`. The
 upstream project describes the JSON suites as implementation-agnostic test
@@ -61,7 +60,7 @@ the concrete inputs and outputs of each cryptography API.
 | XChaCha20-Poly1305 | `tests/xchacha20poly1305.rs` | `tests/aead_wycheproof.rs` covers Wycheproof 192-bit nonce open failure; unit/integration tests cover wrong nonce/tag/AAD | Current suite maps directly after nonce-size filtering |
 | AEGIS-256 | `tests/aegis256_oracle.rs` | `tests/aead_wycheproof.rs` covers Wycheproof AEGIS-256 open failure; unit/integration tests cover wrong nonce/tag/AAD | Current suite maps directly |
 | Ascon-AEAD128 | `tests/ascon_aead_oracle.rs` | Unit/integration tests cover wrong nonce/tag/AAD and oracle decrypt failure | Current Wycheproof `ASCON128` vectors do not match this crate's NIST Ascon-AEAD128 variant, so they are not vendored |
-| ECDSA P-256/P-384 signing and verification | `tests/ecdsa_oracle.rs`; RustCrypto `p256`/`p384` oracles; `fuzz/target_impls/auth_ecdsa_verify.rs`; `fuzz/target_impls/auth_ecdsa_sign.rs` | Invalid SEC1 public keys, malformed SPKI, malformed DER signatures, zero/out-of-range scalars, tampered signatures, wrong messages, deterministic signing, blinded signing, public-key derivation, and fuzz parser/differential coverage | CT evidence covers blinded signing. Public verification remains public-input work unless promoted by the CT manifest. |
+| ECDSA P-256/P-384 signing and verification | `tests/ecdsa_oracle.rs`; `src/auth/ecdsa.rs` unit tests; RustCrypto `p256 0.13.2` / `p384 0.13.1` oracles; `fuzz/target_impls/auth_ecdsa_verify.rs`; `fuzz/target_impls/auth_ecdsa_sign.rs` | Invalid SEC1 public keys, malformed SPKI, malformed DER signatures, zero/out-of-range scalars, tampered signatures, wrong messages, deterministic signing, blinded signing, low-S normalization, public-key derivation, and fuzz parser/differential coverage | CT evidence covers blinded signing. Public verification remains public-input work unless promoted by the CT manifest. Wycheproof ECDSA vectors are not mapped yet. |
 | Ed25519 | `tests/ed25519_rfc8032_vectors.rs`, `tests/ed25519_oracle.rs` | `tests/ed25519_wycheproof.rs` covers Wycheproof valid/invalid signatures and invalid public/signature encodings; unit tests cover small-order and non-canonical signatures | Current suite maps directly |
 | X25519 | `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs` | `tests/x25519_wycheproof.rs` covers Wycheproof valid/acceptable XDH vectors and rejects all-zero shared secrets; RFC low-order and non-canonical public cases remain in `tests/x25519_vectors.rs` | ASN/JWK/PEM suites do not apply to byte-array API |
 | RSA signatures | `tests/rsa_wycheproof.rs`, `tests/rsa_nist_cavp.rs`, `tests/rsa_public_key.rs` | Wycheproof invalid PKCS#1 v1.5/PSS signatures; `tests/rsa_profile_confusion.rs` rejects PKCS#1/PSS and protocol-scheme confusion | RSA-PSS parameter Wycheproof suites are partly not mapped because the public profile intentionally supports SHA-2 fixed profiles |

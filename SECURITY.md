@@ -1,112 +1,96 @@
 # Security Policy
 
-## Public Security Evidence
+## Reporting A Vulnerability
 
-`rscrypto` is a pure Rust primitive crate with no mandatory production C/FFI
-dependency. The repository uses external crates such as `aws-lc-rs`, `ring`,
-RustCrypto crates, and other implementations as dev, oracle, migration, fuzz,
-or benchmark comparators; they are not required production dependencies.
+Please do not report real-world vulnerabilities through public GitHub issues.
 
-Release security claims are evidence-bound:
+Use GitHub's
+[Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new).
 
-| Evidence class | Public source | What to inspect |
-|---|---|---|
-| Constant-time release gate | [`ct.toml`](ct.toml), [`docs/constant-time.md`](docs/constant-time.md), [`ct.yaml`](.github/workflows/ct.yaml) | A green `Complete (CT)` job for the release commit plus `ct-*` artifacts: `ct-report-<lane>.md`, `ct-report-<lane>.json`, host provenance, full logs, and failed/inconclusive reports if present. |
-| Constant-time tooling | [`tools/`](tools/), [`scripts/ct/`](scripts/ct/) | Stable CT harness entrypoints, DudeCT runner, BINSEC harness generator, manifest validation, full-run orchestration, and evidence packaging. |
-| RSA private-key gate | [`rsa.yaml`](.github/workflows/rsa.yaml), [`docs/security.md`](docs/security.md#rsa-evidence-boundary) | `rsa-miri-linux-x64`, `rsa-leakage-linux-x64`, and `rsa-leakage-linux-arm64` artifacts for the release commit. |
-| Fuzzing | [`fuzz/`](fuzz/), [`fuzz-packages/`](fuzz-packages/), weekly CI | Per-primitive fuzz targets, corpus replay, parser targets, private-operation targets, and uploaded fuzz corpus artifacts. |
-| Memory safety | Miri lanes in CI and RSA workflow | Normal Miri, Tree Borrows where enabled, and RSA-specific Miri output. |
-| Correctness vectors | [`tests/`](tests/), [`testdata/`](testdata/), [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md) | Wycheproof, NIST/RFC/vector fixtures, oracle/differential tests, malformed-input tests, and backend equivalence tests. |
-| Coverage reporting | [`codecov.yml`](codecov.yml), weekly CI | Source coverage from normal tests plus fuzz corpus replay, with tests/fuzz/scripts excluded from coverage denominator. |
+Include:
 
-Do not cite a constant-time claim for a commit unless the CT workflow's final
-`Complete (CT)` job is green and the expected artifacts are present for the
-claimed target set. A statistical timing pass should be described as "no
-leakage detected for this configuration", not as a formal proof.
+- Affected version and commit, if known.
+- Minimal reproduction steps or proof of concept.
+- Expected and actual behavior.
+- Relevant platform and CPU details.
+- Whether exploitability depends on features such as `std`, `alloc`,
+  `getrandom`, `serde-secrets`, or hardware acceleration.
 
-## Reporting a Vulnerability
-
-I take the security of `rscrypto` seriously. If you believe you have found a security vulnerability, please report it as described below.
-
-**Please DO NOT report security vulnerabilities through public GitHub issues.**
-
-### How to Report
-
-Use GitHub's [Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new).
-
-Include as much detail as possible:
-- Affected version(s) and commit hash
-- Minimal repro steps and/or proof-of-concept (POC)
-- Expected vs. actual behavior
-- Any relevant platform/CPU details (x86_64, aarch64, etc.)
-
-You should receive an acknowledgment within **72 hours** at the latest. I will follow up with a more detailed response indicating next steps and an expected resolution timeline. If you do not receive an acknowledgment within 72 hours, please follow up directly.
+You should receive an acknowledgment within 72 hours. If you do not, follow up
+on the private advisory thread.
 
 ## Scope
 
-### In Scope
+In scope:
 
-- Cryptographic correctness/soundness (incorrect outputs, weak primitives)
-- Timing side-channels in constant-time code paths
-- Memory safety issues in `unsafe` blocks
-- Nonce/key misuse that the API fails to prevent
-- Supply chain or build system vulnerabilities
-- Resource exhaustion caused by untrusted inputs, encoded password-hash params, or parser behavior
-- CI or release automation vulnerabilities that can affect published artifacts
+- Cryptographic correctness failures.
+- Timing side channels in claimed constant-time code paths.
+- Memory-safety issues in `unsafe` code.
+- Nonce, key, signature, or verification behavior that the API makes easy to
+  misuse in a security-relevant way.
+- Parser or resource-exhaustion behavior triggered by untrusted input.
+- Build, release, or supply-chain issues that can affect published artifacts.
 
-### Out of Scope
+Out of scope:
 
-- Benchmark regressions or performance issues
-- Pure availability reports against caller-chosen expensive params with no untrusted-input or crash/UB component
-- Issues in local-only dev tooling that cannot affect builds, releases, users, or generated artifacts
-- Vulnerabilities in downstream crates that use `rscrypto` incorrectly
-
-## AI-Generated Reports
-
-I welcome vulnerability reports regardless of how they were discovered, including those found using AI (LLMs, automated analysis tools, fuzzing agents, etc.). This is not an issue here; it's welcomed.
-
-**If your report was generated or assisted by AI, please disclose:**
-- The AI system(s) used (model name, version, provider)
-- The prompts or instructions given to the AI
-- Any context, code snippets, or specifications you provided as input
-- Whether the AI produced the report autonomously or assisted your own analysis
-- Any intermediate outputs, reasoning traces, or tool calls the AI generated
-
-This information helps me:
-- Reproduce and validate the finding efficiently
-- Understand which attack surfaces or code paths the AI focused on
-- Improve our own automated analysis and fuzzing pipelines
-- Contribute to the broader security research community
-
-I will almost never penalize or deprioritize AI-assisted or generated reports. Full transparency benefits everyone and AI is an outstanding tool to that end.
-
-## Response Process
-
-1. **Triage** (0-72 hours): I, or someone I trust, will confirm receipt and assess severity.
-2. **Investigation** (0-7 days): I will reproduce the issue and determine root cause.
-3. **Remediation** (0-14 days): I will develop and test a fix.
-4. **Disclosure**: I will coordinate a public advisory, credit the reporter (if desired), and publish a patched release.
-
-I follow a **30-day disclosure deadline**. If a fix is not available within 30 days of the initial report, I will publish the vulnerability details publicly, regardless of fix status.
+- Benchmark regressions without a security impact.
+- Expensive caller-chosen parameters with no crash, undefined behavior, or
+  untrusted-input component.
+- Local-only development tooling issues that cannot affect users, releases, or
+  generated artifacts.
+- Bugs caused by downstream crates using `rscrypto` outside its documented
+  contract.
 
 ## Supported Versions
 
 | Version | Supported |
 | ------- | --------- |
-| `0.3.x` | Yes |
+| `0.4.x` | Yes |
 
-Only the latest published minor release receives security patches. I strongly recommend staying current.
+Only the latest published minor release receives security patches. Users should
+stay current.
+
+## Security Posture
+
+`rscrypto` is a pure Rust primitive crate with no mandatory production C/FFI
+dependency. External crypto crates used for testing, fuzzing, migration checks,
+or benchmarks are not production dependencies.
+
+Constant-time claims are scoped. They apply only to named secret-bearing
+operations and target configurations, not to every API or every build. See
+[`docs/security.md`](docs/security.md) for application guidance and
+[`docs/constant-time.md`](docs/constant-time.md) for the exact claim model.
+
+No third-party security audit, FIPS 140-3 validation, or formal proof is claimed
+today.
+
+## AI-Assisted Reports
+
+AI-assisted reports are welcome when they are reproducible. If AI or automated
+analysis helped produce the report, disclose the tool or model used and include
+the concrete inputs, outputs, traces, or reproduction steps that support the
+finding.
+
+## Response Process
+
+1. Triage within 72 hours.
+2. Reproduce the issue and assess severity.
+3. Prepare, test, and release a fix when the finding is valid.
+4. Publish an advisory and credit the reporter if requested.
+
+The default disclosure window is 30 days from the initial report unless a
+different timeline is agreed on in the private advisory.
 
 ## Safe Harbor
 
-I support safe harbor for security researchers who:
-- Make a good-faith effort to avoid privacy violations, data destruction, and service interruption
-- Do not exploit a vulnerability beyond what is necessary to demonstrate it
-- Do not modify user data or access third-party systems
-- Report the vulnerability to me promptly and allow reasonable time for remediation
+Good-faith research is welcome when it avoids privacy violations, data
+destruction, service interruption, and access to third-party systems. Do not
+exploit a vulnerability beyond what is necessary to demonstrate impact.
 
-I will not pursue legal action against researchers who follow these guidelines under any circumstances.
+Researchers who follow this policy will not face legal action from this project
+for the reported activity.
 
 ## Acknowledgments
 
-I appreciate the security research community and will publicly credit reporters in release notes and advisories unless anonymity is requested. If you wish to remain anonymous, please let me know... I will fight for your privacy as if it were my own.
+Reporters are credited in release notes and advisories unless they request
+anonymity.

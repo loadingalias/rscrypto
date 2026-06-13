@@ -13,16 +13,16 @@
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current benchmark evidence:** Linux CI is currently `1.71x` fastest-external geomean with `3,287 / 5,292` wins and `4,677 / 5,292` wins-or-ties. Apple Silicon local macOS/aarch64 is `1.49x` fastest-external geomean with `346 / 588` wins and `560 / 588` wins-or-ties.
+**Current benchmark evidence:** Linux CI is currently `1.59x` fastest-external geomean with `4,078 / 6,669` wins and `6,009 / 6,669` wins-or-ties. Apple Silicon local macOS/aarch64 is `1.41x` fastest-external geomean with `376 / 741` wins and `716 / 741` wins-or-ties.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.71x fastest-external geomean across Linux CI with 3,287 wins and 4,677 wins-or-ties out of 5,292 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.59x fastest-external geomean across Linux CI with 4,078 wins and 6,009 wins-or-ties out of 6,669 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Chart: 2026-06-12 Linux CI benchmark pass. Apple Silicon numbers from the 2026-06-11 local macOS/aarch64 full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Chart: 06/12/2026 Linux CI bench pass. Apple Silicon numbers from the 06/12/2026 local macOS/aarch64 full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
@@ -36,7 +36,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **Audit knobs are explicit.** `portable-only` collapses runtime capability detection to the portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
-`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. No third-party security audit is claimed today.
+`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. This has not been audited by a third-party yet.
 
 ## Install
 
@@ -115,12 +115,44 @@ fn verify_batch(public_key_der: &[u8], signed_messages: &[(&[u8], &[u8])]) -> bo
 }
 ```
 
-Enable `getrandom` for RSA key gen, signing salt/blinding, OAEP encryption randomness, and private-op blinding. RSA key generation uses `getrandom` to seed an internal HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
+Enable `getrandom` for RSA key gen, signing salt/blinding, OAEP encryption randomness, and private-op blinding. RSA key generation uses `getrandom` to seed its key-generation HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
 
 ```toml
 [dependencies]
 rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "getrandom"] }
 ```
+
+## Sign ECDSA Messages
+
+```toml
+[dependencies]
+rscrypto = { version = "0.4.0", default-features = false, features = ["ecdsa-p256"] }
+```
+
+```rust
+use rscrypto::{EcdsaP256PublicKey, EcdsaP256SecretKey};
+
+fn sign_and_verify(secret_bytes: [u8; 32], public_sec1: &[u8], message: &[u8]) -> bool {
+  let Ok(secret) = EcdsaP256SecretKey::from_bytes(secret_bytes) else {
+    return false;
+  };
+  let Ok(public) = EcdsaP256PublicKey::from_sec1_bytes(public_sec1) else {
+    return false;
+  };
+
+  let Ok(signature) = secret.try_sign(message) else {
+    return false;
+  };
+
+  public.verify(message, &signature).is_ok()
+}
+```
+
+For P-384, enable `ecdsa-p384` and use `EcdsaP384SecretKey`,
+`EcdsaP384PublicKey`, and `EcdsaP384Signature`. ECDSA supports fixed
+P-256/SHA-256 and P-384/SHA-384 profiles, raw `r || s` signatures, DER
+signature import, SEC1/SPKI public-key import, deterministic signing, and
+caller-blinded signing APIs.
 
 ## Encrypt Data
 
@@ -197,86 +229,57 @@ Flags are layered deliberately:
 Full Feature Inventory: [`docs/features.md`](docs/features.md).
 Public Type Inventory: [`docs/types.md`](docs/types.md).
 
-## Constant-Time Verification
+## Constant-Time Boundaries
 
-`rscrypto` treats constant-time as a release evidence claim, not a style claim.
-For a release commit, [`ct.yaml`](.github/workflows/ct.yaml) must finish green
-with the complete artifact set below, and [`ct.toml`](ct.toml) is the
-machine-readable source of truth for which primitives, kernels, targets, and
-gates are required. The policy and invalidation rules live in
-[`docs/constant-time.md`](docs/constant-time.md).
+`rscrypto` makes scoped constant-time claims for secret-bearing operations, not
+for every function in the crate.
 
-A green CT release run uploads compact evidence for the physical runner lanes
-that mirror the public benchmark matrix:
+Current claimed or intended CT surfaces include MAC/tag verification, AEAD
+authentication failure shape, X25519 scalar multiplication, Ed25519 signing and
+secret public-key derivation, ECDSA P-256/P-384 blinded signing, RSA private
+sign/decrypt leaves, and selected password-verification comparisons.
 
-| Physical lane | Target evidence | Artifact |
-|---|---|---|
-| AMD Zen4, AMD Zen5, Intel Ice Lake, Intel Sapphire Rapids | Linux `x86_64` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-amd-zen4`, `ct-amd-zen5`, `ct-intel-icl`, `ct-intel-spr` |
-| AWS Graviton3 and Graviton4 | Linux `aarch64` artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC | `ct-graviton3`, `ct-graviton4` |
-| RISE RISC-V | Linux `riscv64gc` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for RISC-V today because the current BINSEC/RISC-V workflow does not complete the release-sized HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. | `ct-rise-riscv` |
-| IBM z16 / s390x | Linux `s390x` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for s390x today. | `ct-ibm-s390x` |
-| IBM Power10 / ppc64le | Linux `powerpc64le` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT. BINSEC is not claimed for little-endian POWER today. | `ct-ibm-power10` |
-| Apple Silicon | Local macOS `aarch64` artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. | local `ct-evidence/` package |
+Public parsing, key generation, OS randomness, raw hashes, checksums,
+non-cryptographic hashes, benchmark paths, and public-key verification math are
+not blanket constant-time claims. See [`docs/security.md`](docs/security.md)
+for application guidance and [`docs/constant-time.md`](docs/constant-time.md)
+for the exact claim model.
 
-Each CT artifact contains a short `README.md`, `ct-report-<lane>.md`,
-`ct-report-<lane>.json`, host provenance, the full CT log, and any failed or
-inconclusive component reports. For public release notes, pin the exact green
-run URL and commit next to these artifact names.
-
-The CT tooling is checked in under [`tools/`](tools/) and [`scripts/ct/`](scripts/ct/):
-stable harness entrypoints, the DudeCT runner, the BINSEC harness generator,
-manifest validation, full-run orchestration, and artifact packaging.
-
-Secret-bearing primitive coverage is deliberately explicit:
-
-| Surface | Required CT evidence |
-|---|---|
-| Equality and verification leaves | Constant-time equality, secret-byte equality, HMAC-SHA-2 verification, KMAC256 verification, keyed BLAKE2/BLAKE3 leaves, HKDF output derivation, and PBKDF2 verification leaves. |
-| AEAD authentication and symmetric transforms | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, and Ascon-AEAD128 required leaves, including AES rounds, GHASH, POLYVAL, Poly1305, tag generation, and open/authentication failure shape. |
-| Public-key secret operations | X25519 scalar multiplication, Ed25519 signing and secret public-key derivation, ECDSA blinded signing, RSA private signing/decryption leaves, RSA private-operation window selection, and bounded private-component validation leaves. |
-| Password hashing | Argon2i secret-bearing hash leaves and final verification comparisons are CT-gated. Argon2d, Argon2id, and scrypt are classified as best-effort for local side-channel CT because their algorithms use data-dependent memory access; their final comparisons and parser/failure boundaries still run through the security test/fuzz evidence. |
-| Public-only work | Raw hashes, checksums, non-cryptographic hashes, public-key verification math, DER/PHC parsing, serialization, key generation, OS randomness, and benchmark-only paths are not blanket constant-time claims unless `ct.toml` promotes a specific leaf. |
-
-RSA has a second dedicated gate because private-key code deserves extra scrutiny:
-[`rsa.yaml`](.github/workflows/rsa.yaml) uploads `rsa-miri-linux-x64`,
-`rsa-leakage-linux-x64`, and `rsa-leakage-linux-arm64` artifacts for release
-review.
+Again, I'm not claiming this has been audited by a third-party at this point.
 
 ## Performance
 
-Current public benchmark evidence comes from two full passes that are both updated regularly and programmatically:
+Current public bench evidence comes from two full passes that are both updated regularly and programmatically:
 
 - Linux (CI): Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V.
 - Apple Silicon: local macOS/aarch64 full run.
-
-Current source: Linux CI run [#27387537624](https://github.com/loadingalias/rscrypto/actions/runs/27387537624), created 2026-06-12 01:00:42 UTC, and local Apple Silicon run `benchmark_results/2026-06-11/macos/aarch64/results.txt`; both are for commit `62be628d1ceb3d347ffcbb7ef3af67f046bc22ac`.
 
 Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster.
 
 | Area | Compared Against | Result |
 |---|---|---:|
-| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.71x geomean** |
-| Linux CI scorecard | fastest external | **3,287 wins / 5,292 pairs** |
-| Linux CI wins or ties | fastest external | **4,677 / 5,292 pairs** |
-| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.49x geomean** |
-| Apple Silicon scorecard | fastest external | **346 wins / 588 pairs** |
-| Apple Silicon wins or ties | fastest external | **560 / 588 pairs** |
-| Linux CI all matched pairs | every external comparison row | **1.88x geomean; 8,076 / 8,873 wins-or-ties** |
-| Checksums | Linux CI / Apple Silicon | **6.05x / 6.91x geomean** |
-| Hashes, MACs, XOFs | Linux CI / Apple Silicon | **1.45x / 1.11x geomean** |
+| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.59x geomean** |
+| Linux CI scorecard | fastest external | **4,078 wins / 6,669 pairs** |
+| Linux CI wins or ties | fastest external | **6,009 / 6,669 pairs** |
+| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.41x geomean** |
+| Apple Silicon scorecard | fastest external | **376 wins / 741 pairs** |
+| Apple Silicon wins or ties | fastest external | **716 / 741 pairs** |
+| Linux CI all matched pairs | every external comparison row | **1.78x geomean; 9,728 / 10,574 wins-or-ties** |
+| Checksums | Linux CI / Apple Silicon | **5.00x / 5.38x geomean** |
+| Hashes, MACs, XOFs | Linux CI / Apple Silicon | **1.36x / 1.11x geomean** |
 | Auth/KDF | Linux CI / Apple Silicon | **1.23x / 1.01x geomean** |
-| Password hashing | Linux CI / Apple Silicon | **1.09x / 1.07x geomean** |
+| Password hashing | Linux CI / Apple Silicon | **1.10x / 1.07x geomean** |
 | Public-key | Linux CI / Apple Silicon | **1.26x / 1.15x geomean** |
-| ECDSA P-256/P-384 | Linux CI / Apple Silicon | **1.41x / 1.26x geomean** |
-| RSA import + verify | Linux CI / Apple Silicon | **1.54x / 1.46x geomean** |
+| ECDSA P-256/P-384 | Linux CI / Apple Silicon | **1.41x / 1.25x geomean** |
+| RSA import + verify | Linux CI / Apple Silicon | **1.54x / 1.44x geomean** |
 | AEAD | Linux CI / Apple Silicon | **1.56x / 1.48x geomean** |
 
-The honest weak spots right now: Linux ECDSA P-384 signing against `aws-lc-rs`,
-Argon2id OWASP rows against `rustcrypto`, Ed25519 verification, and
-ChaCha20-Poly1305 rows against `ring` and `aws-lc-rs`; Apple Silicon still has
-localized SHA3, XXH3, and HKDF-SHA256 pressure. See
+The honest weak spots right now: Linux Argon2id OWASP rows against
+`rustcrypto`, ECDSA P-384 signing against `aws-lc-rs`, Ed25519 verification,
+ChaCha20-Poly1305 encryption, and Argon2i-small rows; Apple Silicon still has
+localized XXH3-64, SHA3, HKDF-SHA256, and BLAKE3 streaming pressure. See
 [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
-methodology, platform scorecards, and loss tables.
+methodology, platform scorecards, and loss tables. This will improve over time.
 
 ## Portability And Acceleration
 
@@ -293,26 +296,26 @@ methodology, platform scorecards, and loss tables.
 
 Use `portable-only` when you need deterministic dispatch, audit-constrained builds, or a portable backend only.
 
-Full platform matrix: [`docs/platforms.md`](docs/platforms.md). Architecture notes: [`docs/architecture.md`](docs/architecture.md).
+Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 
 ## Security
 
-- Scoped constant-time verification and secret-bearing operations; [`docs/security.md`](docs/security.md) names the boundary.
+- Scoped constant-time claims for secret-bearing operations; [`docs/security.md`](docs/security.md) names the boundary.
 - Opaque verification errors that avoid leaking failure details.
 - Secret-bearing types zeroize on drop and mask `Debug`.
 - Strict arithmetic for counters, lengths, offsets, and indices.
 - AEAD failed-open paths wipe output buffers.
 - Portable and accelerated backends are differentially tested for byte-identical output.
 - Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
-- RSA private-operation release claims require the dedicated RSA Miri and first-order leakage gates.
-- No third-party audit is claimed; treat project evidence as engineering
-  evidence, not certification.
+- RSA private operations have extra regression coverage for memory safety and
+  first-order timing leakage.
+- No third-party audit or FIPS cert at this point.
 
 Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
 
 Vulnerabilities should be reported through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new) or the process in [`SECURITY.md`](SECURITY.md).
 
-Do not report real-world vulnerabilities through public GitHub issues.
+Do not report real-world vulnerabilities through public GitHub issues, please.
 
 ## Docs
 

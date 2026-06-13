@@ -14,11 +14,12 @@ Inside a typical boundary, these are the NIST-aligned items:
 | Hash / XOF | `Sha*`, `Shake*` (`FIPS 180-4`, `FIPS 202`) |
 | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
 | Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
-| RSA key generation | `RsaPrivateKey::generate` follows FIPS 186-5 Appendix A.1.3 probable-prime generation in code and seeds an internal HMAC_DRBG from `getrandom` |
+| Digital signatures | ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification (`FIPS 186-5` / SEC 1 profile shape) |
+| RSA key generation | `RsaPrivateKey::generate` follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime contract and uses `getrandom`-seeded HMAC_DRBG machinery for key generation |
 
 This table is a standards-alignment inventory only; it is not a validation
-claim. In particular, the RSA key-generation DRBG is internal implementation
-machinery, not a crate-wide validated random bit generator service.
+claim. In particular, RSA key-generation entropy handling is not a crate-wide
+validated random bit generator service.
 
 ## Non-Approved In This Release
 
@@ -32,12 +33,12 @@ machinery, not a crate-wide validated random bit generator service.
 
 This table classifies APIs only; it is not a validation claim.
 
-## Roadmap
+## How To Describe This Crate
 
 FIPS validation would require a defined module boundary, selected operational
 environments, algorithm validation, self-tests, documentation, and review by an
-accredited lab. That work is tracked as a pre-1.0 roadmap item; until then,
-describe `rscrypto` as FIPS-oriented building blocks, not a validated module.
+accredited lab. Until that exists, describe `rscrypto` as FIPS-oriented building
+blocks, not a validated module.
 
 Migration guides for replacing existing crypto crates live in
 [`docs/migration/`](migration/). They are migration aids, not compliance

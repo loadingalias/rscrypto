@@ -29,6 +29,12 @@ Availability of any specific backend depends on what the target CPU advertises a
 | riscv64 | V / RVV; Zbc; Zvbc; Zbkc; Zkne / Zknd; Zvkned; Zkt / Zvkt |
 | wasm32 | SIMD128 where enabled |
 
+ECDSA P-256/P-384 always has a portable Rust path. x86_64 and aarch64 targets
+also use assembly helpers for selected scalar, field, and basepoint operations
+when those helpers are compiled for the target. Other target families fall back
+to the portable implementation unless a future measured backend justifies
+additional code.
+
 ## `no_std` Targets
 
 The following `no_std` targets are built in CI:
@@ -47,4 +53,4 @@ Other `no_std` targets in the same families (e.g. `thumbv7em-*`, larger RISC-V p
 Current geomean speedups by platform live in
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
 The current public set includes the 2026-06-12 nine-runner Linux CI matrix and
-a 2026-06-11 local Apple Silicon macOS/aarch64 full run.
+a 2026-06-12 local Apple Silicon macOS/aarch64 full run.

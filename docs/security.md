@@ -1,146 +1,111 @@
 # Security Guidance
 
-## Constant-Time Claim Boundary
+This page explains what `rscrypto` tries to protect, what it does not claim,
+and what callers still need to get right.
 
-Constant-time claims are scoped to secret-bearing comparisons and operations,
-not to every function in the crate. The rulebook for release claims, allowed
-leakage, target scope, and invalidation lives in
-[`docs/constant-time.md`](constant-time.md).
+## Constant-Time Boundary
 
-The local release evidence gate is `just ct-full` for the selected native
-target. Hosted release evidence is collected by
-[`ct.yaml`](../.github/workflows/ct.yaml) and packaged per physical runner:
+Constant-time claims are scoped to named secret-bearing operations. They are not
+whole-crate claims and they are not portable to unmeasured build
+configurations.
 
-| Platform class | Current CT release-evidence scope |
+Current claimed or intended CT surfaces include:
+
+| Surface | User-facing boundary |
 |---|---|
-| Linux `x86_64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC for manifest-declared CT kernels on AMD Zen4, AMD Zen5, Intel Ice Lake, and Intel Sapphire Rapids lanes. |
-| Linux `aarch64-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, DudeCT, and BINSEC for manifest-declared CT kernels on AWS Graviton3 and Graviton4 lanes. |
-| Linux `riscv64gc-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the RISE RISC-V lane. BINSEC is not claimed for RISC-V today because the current BINSEC/RISC-V workflow does not complete the release-sized HMAC/HKDF/KMAC/PBKDF2/RSA leaf proofs within the CI proof budget. |
-| Linux `s390x-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Z lane. BINSEC is not claimed for s390x today. |
-| Linux `powerpc64le-unknown-linux-gnu` | Artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT on the IBM Power10 lane. BINSEC is not claimed for little-endian POWER today. |
-| macOS `aarch64-apple-darwin` | Local artifact/provenance review, LLVM IR/ASM/object heuristics, and DudeCT through `just ct-full`. BINSEC is not claimed for Mach-O today. |
-| Linux MUSL, macOS `x86_64`, Windows MSVC, `no_std`, and WASM | Intended or artifact-only coverage as classified in [`ct.toml`](../ct.toml), but not part of the current native release-evidence set. They need separate hardware, bytecode, object-format, or engine-specific evidence before being claimed. |
+| MAC and keyed verification | Full-length HMAC and KMAC tag verification uses opaque success/failure. |
+| AEAD open | Authentication failure is opaque, and failed-open paths wipe output buffers. |
+| ECDSA P-256/P-384 | Caller-blinded signing is the private-key CT surface. Public verification is public-input work, with an opaque verification error. |
+| Ed25519 | Signing and secret-key public derivation are private-key CT surfaces. Public verification is public-input work, with an opaque verification error. |
+| X25519 | Scalar multiplication is a private-scalar CT surface; all-zero shared secrets are rejected. |
+| RSA | Private sign/decrypt leaves are CT-critical. Public verify/encrypt, parsing, and key import are public-input work unless promoted by the CT manifest. |
+| Password verification | Final secret comparisons are CT-critical. Argon2d, Argon2id, and scrypt still have algorithm-level data-dependent memory access, so do not describe them as globally constant-time. |
 
-For native targets in the release-evidence scope, the CT manifest must cover the hot paths that
-actually execute: accelerated ASM, SIMD, hardware-instruction backends, and
-portable fallbacks used by CT-critical primitives. A backend being fast or
-selected at runtime does not exempt it from the manifest or evidence gates.
+These are not blanket constant-time claims: DER/PHC parsing, public-key
+verification math, key generation, OS randomness, serialization, raw hashes,
+checksums, non-cryptographic hashes, benchmarks, and feature dispatch.
 
-| Surface | Claim boundary | Evidence |
-|---|---|---|
-| MAC tag verification | Full-length HMAC and KMAC tag comparison avoids secret-dependent equality behavior. | CT manifest coverage, `just ct-full`, HMAC/KMAC vectors, Wycheproof where mapped, and mismatch tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| AEAD open failure | Authentication checks avoid richer failure detail, and failed-open paths wipe output buffers. | CT manifest coverage, `just ct-full`, AEAD oracle tests, Wycheproof where mapped, and tamper tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| ECDSA P-256/P-384 signing and verification | Blinded signing is CT-manifested for private-key scalar work. Signature acceptance/rejection uses one opaque verification error at the public API boundary. Public verification is not a private-key CT claim unless promoted by the manifest. | CT manifest coverage for blinded signing, RustCrypto oracle tests, parser rejection tests, and fuzz coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| Ed25519 signing and secret-key public derivation | Secret scalar paths must avoid secret-dependent branches, table indices, memory addresses, and failure shape. | CT manifest coverage, `just ct-full`, RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| Ed25519 verification | Signature acceptance/rejection uses a single opaque verification error at the public API boundary. Public verification is not a private-key CT claim unless promoted by the manifest. | RFC 8032, oracle, Wycheproof, and malformed-encoding tests in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| X25519 scalar multiplication | Scalar multiplication must avoid secret-dependent field behavior and rejects all-zero shared secrets. | CT manifest coverage, `just ct-full`, RFC/vector, oracle, and Wycheproof coverage in [`docs/test-vector-coverage.md`](test-vector-coverage.md). |
-| RSA private sign/decrypt | Private-operation paths require same-width opaque failures and CT evidence for manifest-declared hot paths. | CT manifest coverage, `just ct-full`, and the RSA evidence boundary below. |
-
-These are not global constant-time claims: parsers, DER/PHC decoding, algorithm
-or profile negotiation, key generation, OS randomness paths, public RSA
-verify/encrypt paths, raw hashes, checksums, and fast non-cryptographic hashes.
-Test vectors, differential tests, Miri, fuzzing, and leakage tests are evidence,
-not formal proofs.
-
-No third-party security audit or formal verification is claimed today. Treat the
-published evidence as project evidence, not certification.
+The exact evidence model is in [`constant-time.md`](constant-time.md). No
+third-party audit, FIPS 140-3 validation, or formal proof is claimed today.
 
 ## Verification Failures
 
-- `VerificationError` and `OpenError::Verification` are intentionally opaque.
-- Treat verification failure as a generic authentication failure.
-- Do not map verification failures to richer protocol responses that recreate an oracle.
-- Buffer-length failures are caller-public shape errors, not secret-bearing authentication outcomes.
+`VerificationError` and `OpenError::Verification` are intentionally opaque.
+Treat them as generic authentication failures.
 
-## Password Hash Verification
+Do not translate verification failures into richer protocol responses such as
+"wrong tag", "bad padding", "unknown key", or "malformed signature" when the
+peer can observe the distinction. That recreates an oracle at the application
+layer.
 
-- PHC strings encode their own cost parameters.
-- Use `Argon2id::verify_string_with_policy`, `Argon2d::verify_string_with_policy`, `Argon2i::verify_string_with_policy`, or `Scrypt::verify_string_with_policy` when encoded hashes can come from untrusted storage, tenant-controlled rows, network peers, or migration input.
-- `Argon2VerifyPolicy::default()` and `ScryptVerifyPolicy::default()` admit hashes produced by the default parameter constructors. Services with stronger configured parameters should set explicit policy ceilings that match their deployment budget.
-- The unbounded `verify_string` helpers remain for compatibility with trusted local hash stores.
-- Migration guides for Argon2 and scrypt live in [`docs/migration/RustCrypto/argon2.md`](migration/RustCrypto/argon2.md) and [`docs/migration/RustCrypto/scrypt.md`](migration/RustCrypto/scrypt.md).
+Buffer-size and format errors are caller-public shape errors. They are separate
+from secret-bearing authentication failures.
 
 ## Nonces
 
-- `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, and `Aegis256` require nonce uniqueness per key.
-- `Aes128GcmSiv` and `Aes256GcmSiv` are misuse-resistant, but nonce reuse is still not the normal operating model.
+- `Aes128Gcm`, `Aes256Gcm`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, and
+  `Aegis256` require nonce uniqueness per key.
+- `Aes128GcmSiv` and `Aes256GcmSiv` are misuse-resistant, but nonce reuse should
+  still not be the normal operating model.
 - Typed nonce wrappers prevent length mistakes, not lifecycle mistakes.
-- Nonce wrappers intentionally do not implement `Default`; all-zero nonces must be constructed explicitly.
-- For `Aes128Gcm` and `Aes256Gcm`, prefer monotonic counters or protocol sequence numbers over ad hoc random nonces.
+- Nonce wrappers do not implement `Default`; all-zero nonces must be constructed
+  explicitly.
+- For AES-GCM, prefer monotonic counters or protocol sequence numbers over ad
+  hoc random nonces.
 
 ## Random Constructors
 
-- Prefer `try_random()` in services and long-running processes.
-- `random()` is a convenience wrapper that panics if the platform entropy source fails.
+Prefer `try_random()` in services and long-running processes. It returns an
+error if platform entropy fails.
 
-## RSA Evidence Boundary
+`random()` is a convenience wrapper that panics on entropy failure. It is best
+for tests, examples, and applications where panic-on-entropy-failure is an
+acceptable policy.
 
-RSA release claims require explicit evidence. Treat local tests, hosted CI, and
-benchmark results as separate evidence classes; do not substitute one for
-another.
+ECDSA deterministic signing does not use OS randomness. ECDSA key generation and
+caller-blinded signing use caller-supplied byte-filling closures. RSA key
+generation and OS-backed RSA private-operation blinding require the `getrandom`
+feature.
 
-Mandatory local macOS evidence before RSA performance work:
+## Password Hash Verification
 
-- `just check-all && just test` passes on the current worktree.
-- `just test --all` covers RSA API, parser, padding, private-operation, CAVP,
-  Wycheproof, allocation, and protocol tests through the normal test lane.
-- `just test-fuzz` covers RSA parser, protocol-mapping, import, and
-  private-operation fuzz targets through the normal fuzz lane.
+PHC strings encode their own cost parameters. If encoded password hashes can
+come from untrusted storage, tenant-controlled rows, network peers, or migration
+input, use the policy-aware verification APIs:
 
-Mandatory hosted CI evidence before a release claim:
+- `Argon2id::verify_string_with_policy`
+- `Argon2d::verify_string_with_policy`
+- `Argon2i::verify_string_with_policy`
+- `Scrypt::verify_string_with_policy`
 
-- The normal check and test jobs pass for the release commit.
-- Any skipped external helper is reported as skipped support evidence, not as a
-  passed release requirement.
+The default policies admit hashes produced by the default parameter
+constructors. Services with stronger local parameters should set explicit policy
+ceilings that match their CPU and memory budget.
 
-Mandatory RSA release evidence:
-
-- Public verify/encrypt and private sign/decrypt/keygen/import pass the
-  normal check, test, fuzz, and benchmark lanes.
-- Canonical PKCS#1/PKCS#8 private-key export is correctness-tested, but it is
-  not a required constant-time claim. DER INTEGER encoding is value-shaped by
-  standard; use a future fixed-shape export format if serialization itself must
-  be constant-time.
-- RSA key generation follows the crate's FIPS 186-5 Appendix A.1.3
-  probable-prime contract in code. It uses `getrandom` only to seed an internal
-  HMAC_DRBG for key generation; this is not a CMVP/FIPS 140-3 validation claim.
-- Same-width failure opacity is covered for OAEP, RSAES-PKCS1-v1_5, PSS, and
-  RSASSA-PKCS1-v1_5.
-- `just ct-full` passes on every native target in the release-evidence scope. The CT gate covers
-  manifest-declared RSA private-operation variants through artifacts,
-  heuristics, DudeCT, and BINSEC where supported: RSASSA-PKCS1-v1_5 signing,
-  RSASSA-PSS signing, RSAES-OAEP decryption, RSAES-PKCS1-v1_5 decryption, and
-  the bounded private-component validation leaf. Broad DER import/export cases
-  remain diagnostic unless a future fixed-shape API is promoted in `ct.toml`.
-- `just test-rsa-leakage` remains a targeted RSA regression check on Linux
-  x86_64 and Linux aarch64. It supports the CT gate; it does not replace it.
-- Miri covers every feasible safe private-key parser, signing, decryption,
-  scratch-width, padding-reject, and key-generation helper path through
-  `just test-miri --rsa`.
-- Optional OpenSSL CLI and AWS-LC checks may support review; skipped optional
-  helpers never count as completed release evidence.
-
-The RSA leakage gate is regression evidence, not a proof of constant time.
-Parsing, public operations, DRBG-backed key generation, and OS-backed
-blinding-factor rejection may branch on public data or fresh randomness. Online
-private sign/decrypt paths must keep secret-dependent padding, exponentiation,
-CRT, and failure-output behavior covered by tests, fuzzing, Miri, and the RSA
-leakage workflow before a release claim.
+The unbounded `verify_string` helpers remain available for trusted local hash
+stores.
 
 ## Secret Serialization
 
-- Secret key and shared-secret types mask `Debug`, but raw bytes remain extractable by explicit API.
-- The optional `serde` feature covers non-secret byte wrappers such as nonces, tags, public keys, and signatures.
-- The optional `serde-secrets` feature serializes raw secret-key and shared-secret bytes. Enable it only for controlled key-material storage or protocol formats, not for logs, telemetry, or broad application DTOs.
+Secret key and shared-secret types mask `Debug`, but raw bytes remain
+extractable through explicit APIs.
 
-## RISC-V AES And AEGIS
+The optional `serde` feature covers non-secret byte wrappers such as nonces,
+tags, public keys, and signatures.
 
-- Bare-scalar `riscv64` targets without `Zkne`, `Zvkned`, or `V` use the constant-time portable AES and AES-round fallback.
-- Expect a large throughput drop on that path relative to hardware or vector backends.
-- Secret-indexed AES lookup tables are not used on the fallback path.
+The optional `serde-secrets` feature serializes raw secret-key and shared-secret
+bytes. Enable it only for controlled key-material storage or protocol formats,
+not logs, telemetry, or broad application DTOs.
 
-## Post-Quantum Planning
+## Platform Notes
 
-- Ed25519 and X25519 are classical primitives.
-- For systems with a long-lived trust horizon, plan a hybrid migration path instead of treating them as the final state.
-- The repository roadmap tracks ML-DSA, ML-KEM, and other post-quantum primitives via [GitHub issues](https://github.com/loadingalias/rscrypto/issues).
+The portable implementation is always present and is the correctness reference
+for accelerated backends.
+
+Bare-scalar `riscv64` targets without `Zkne`, `Zvkned`, or `V` use the portable
+AES and AES-round fallback. That path is designed to avoid secret-indexed AES
+lookup tables, but it is much slower than hardware or vector backends.
+
+Use [`platforms.md`](platforms.md) for target support and acceleration details.
+Use [`test-vector-coverage.md`](test-vector-coverage.md) to inspect vector,
+oracle, fuzz, and negative-input coverage.
