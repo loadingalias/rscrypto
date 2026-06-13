@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.1](https://github.com/loadingalias/rscrypto/compare/v0.4.0...v0.4.1) - 2026-06-13
+
+### 📝 Documentation
+
+- make public docs user-facing and add ECDSA migration guides benchmarks: refresh 2026-06-12 benchmark evidence ([4a3f4e8](https://github.com/loadingalias/rscrypto/commit/4a3f4e88ba04c324f215785b26b934b7f6133e22))
+
+### 📦 Other Changes
+
+- auth: route RSA blinding inverse through fixed scratch ([a33fc67](https://github.com/loadingalias/rscrypto/commit/a33fc67613dde3640139863b3668d808ad53d71f))
+- auth: route macOS aarch64 HKDF-SHA256 through SHA2 compression hashes: batch Apple SHA3 Keccak absorb blocks bench: scale README perf chart axis from benchmark data benchmarks: refresh 2026-06-12 benchmark evidence ([f9ab35f](https://github.com/loadingalias/rscrypto/commit/f9ab35f19f3601b8f32b64efec4dd0d738975284))
+- auth: harden HMAC pads against AArch64 SVE division ci: disable native RISC-V Rust cache restore ([62be628](https://github.com/loadingalias/rscrypto/commit/62be628d1ceb3d347ffcbb7ef3af67f046bc22ac))
+- auth: harden ECDSA P-256/P-384 CT backends ci: add ECDSA DudeCT diagnostics and target-scoped CT policy ([82db892](https://github.com/loadingalias/rscrypto/commit/82db8924e88136ac3070e892602cb38f4a25d620))
+- auth: add ECDSA P-256/P-384 signing and CT coverage ([f24375d](https://github.com/loadingalias/rscrypto/commit/f24375d31784527ee0964b9dd871d64d5c0a6991))
+
+
+
 ## [0.4.0](https://github.com/loadingalias/rscrypto/compare/v0.3.1...v0.4.0) - 2026-06-09
 
 ### 🏗️ Build
