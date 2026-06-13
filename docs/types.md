@@ -1,12 +1,12 @@
 # Public Type Inventory
 
-Human index of the public `rscrypto` types most users need to choose imports,
+Index of the public `rscrypto` types most of you will need to choose imports,
 features, and migration targets. The README keeps only the top-level API map;
 this file carries the root re-exports and documented module helper types.
 
 This is not a substitute for rustdoc. It intentionally excludes `diag_*`
-functions, doc-hidden benchmark hooks, architecture feature constants, and
-private implementation types.
+functions, doc-hidden bench hooks, architecture feature constants, and
+private impl types.
 
 ## Traits
 
@@ -111,8 +111,9 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 
 | Type | Size | Standard |
 |------|------|----------|
-| `EcdsaP256PublicKey` / `EcdsaP256Signature` | SEC1 65B / raw 64B | FIPS 186-5 / SEC 1 |
-| `EcdsaP384PublicKey` / `EcdsaP384Signature` | SEC1 97B / raw 96B | FIPS 186-5 / SEC 1 |
+| `EcdsaP256SecretKey` / `EcdsaP256PublicKey` / `EcdsaP256Signature` | secret 32B / SEC1 65B / raw 64B | FIPS 186-5 / SEC 1 |
+| `EcdsaP384SecretKey` / `EcdsaP384PublicKey` / `EcdsaP384Signature` | secret 48B / SEC1 97B / raw 96B | FIPS 186-5 / SEC 1 |
+| `EcdsaP256Keypair` / `EcdsaP384Keypair` | secret + public | FIPS 186-5 / SEC 1 |
 | `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
 | `Ed25519Keypair` | -- | RFC 8032 |
 | `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
@@ -120,10 +121,10 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
 
-ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signatures, SEC1/SPKI public keys, and blinded signing APIs for CT-claimed private-key scalar work.
+ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signature import, SEC1/SPKI public keys, deterministic signing, keypair wrappers, and caller-blinded signing APIs for CT-claimed private-key scalar work.
 RSA public-key verification and import require `rsa` (`alloc`, `sha2`).
 OS-backed private operations and RSA key generation require `getrandom`. Key
-generation seeds an internal HMAC_DRBG from OS entropy; deterministic
+generation seeds a key-generation HMAC_DRBG from OS entropy; deterministic
 caller-supplied salt/blinding APIs remain available for constrained integrations
 that own their entropy boundary.
 

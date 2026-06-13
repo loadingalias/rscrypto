@@ -9,6 +9,8 @@ const AWS_LC_SYS: &str = include_str!("../docs/migration/aws-lc-sys.md");
 const DRYOC: &str = include_str!("../docs/migration/dryoc.md");
 const OPENSSL: &str = include_str!("../docs/migration/openssl.md");
 const RING: &str = include_str!("../docs/migration/ring.md");
+const RUSTCRYPTO_P256: &str = include_str!("../docs/migration/RustCrypto/p256.md");
+const RUSTCRYPTO_P384: &str = include_str!("../docs/migration/RustCrypto/p384.md");
 const RUSTCRYPTO_RSA: &str = include_str!("../docs/migration/RustCrypto/rsa.md");
 
 #[test]
@@ -29,7 +31,7 @@ fn migration_docs_do_not_delegate_accuracy_to_a_validation_index() {
   let root = migration_root();
   let guide_count = migration_guides(&root).len();
   assert_eq!(
-    guide_count, 33,
+    guide_count, 35,
     "migration guide count drifted; update docs/migration/README.md"
   );
   assert!(
@@ -43,6 +45,8 @@ fn migration_docs_do_not_delegate_accuracy_to_a_validation_index() {
     "dryoc.md",
     "ring.md",
     "openssl.md",
+    "RustCrypto/p256.md",
+    "RustCrypto/p384.md",
     "RustCrypto/rsa.md",
   ] {
     assert!(
@@ -218,6 +222,57 @@ fn stack_guides_have_concrete_paths_and_boundaries() {
       RUSTCRYPTO_RSA.contains(required),
       "RustCrypto rsa guide is missing required material: {required}"
     );
+  }
+}
+
+#[test]
+fn rustcrypto_ecdsa_guides_have_concrete_paths_and_boundaries() {
+  for (name, guide, curve, secret, public, signature, feature) in [
+    (
+      "p256",
+      RUSTCRYPTO_P256,
+      "P-256/SHA-256",
+      "EcdsaP256SecretKey",
+      "EcdsaP256PublicKey",
+      "EcdsaP256Signature",
+      "ecdsa-p256",
+    ),
+    (
+      "p384",
+      RUSTCRYPTO_P384,
+      "P-384/SHA-384",
+      "EcdsaP384SecretKey",
+      "EcdsaP384PublicKey",
+      "EcdsaP384Signature",
+      "ecdsa-p384",
+    ),
+  ] {
+    for required in [
+      "## TL;DR",
+      "## Type Map",
+      "## Sign",
+      "## Verify Raw Signatures",
+      "## Verify DER Signatures",
+      "## Notes",
+      "tests/ecdsa_oracle.rs",
+      curve,
+      secret,
+      public,
+      signature,
+      feature,
+      "try_sign",
+      "try_sign_blinded",
+      "from_sec1_bytes",
+      "from_spki_der",
+      "from_der",
+      "raw `r || s`",
+      "ECDH is not part of this migration",
+    ] {
+      assert!(
+        guide.contains(required),
+        "RustCrypto {name} guide is missing required material: {required}"
+      );
+    }
   }
 }
 
