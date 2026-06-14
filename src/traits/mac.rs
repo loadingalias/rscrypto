@@ -39,7 +39,7 @@ use crate::traits::{VerificationError, ct};
 /// let mut mac = MyMac::new(key);
 /// mac.update(b"hello ");
 /// mac.update(b"world");
-/// assert_eq!(mac.finalize(), tag);
+/// assert!(mac.verify(&tag).is_ok());
 ///
 /// // Verify.
 /// assert!(MyMac::verify_tag(key, b"hello world", &tag).is_ok());

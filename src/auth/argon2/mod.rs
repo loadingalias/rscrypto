@@ -480,9 +480,9 @@ impl Argon2Params {
 /// Operational limits for verifying Argon2 PHC strings from untrusted storage.
 ///
 /// PHC strings encode their own memory, iteration, parallelism, and output
-/// lengths. Use `Argon2id::verify_string_with_policy` (or the matching
-/// variant method) when those encoded parameters can be controlled by another
-/// tenant, database row, network peer, or migration input.
+/// lengths. `Argon2id::verify_string` and the matching variant helpers apply
+/// the default policy. Use `verify_string_with_policy` when a service needs
+/// tighter or looser deployment ceilings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Argon2VerifyPolicy {
   /// Maximum encoded memory cost in KiB.
@@ -2061,16 +2061,16 @@ macro_rules! define_argon2_variant {
       /// # Errors
       ///
       /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, or parameter error. Errors are intentionally
-      /// opaque — callers needing to distinguish parse failures should use
-      /// the lower-level `decode_string` helper.
+      /// variant mismatch, parameter error, or default-policy violation. Errors
+      /// are intentionally opaque — callers needing to distinguish parse
+      /// failures should use the lower-level `decode_string` helper.
       #[cfg(feature = "phc-strings")]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_string(
         password: &[u8],
         encoded: &str,
       ) -> Result<(), VerificationError> {
-        Self::verify_string_with_context(password, encoded, &[], &[])
+        Self::verify_string_with_policy(password, encoded, &Argon2VerifyPolicy::default())
       }
 
       /// Verify `password` against a PHC string after enforcing operational
@@ -2101,10 +2101,61 @@ macro_rules! define_argon2_variant {
       /// # Errors
       ///
       /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, or parameter error.
+      /// variant mismatch, parameter error, or default-policy violation.
       #[cfg(feature = "phc-strings")]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_string_with_context(
+        password: &[u8],
+        encoded: &str,
+        secret: &[u8],
+        associated_data: &[u8],
+      ) -> Result<(), VerificationError> {
+        Self::verify_string_with_context_and_policy(
+          password,
+          encoded,
+          secret,
+          associated_data,
+          &Argon2VerifyPolicy::default(),
+        )
+      }
+
+      /// Verify `password` against a PHC-encoded hash without cost bounds.
+      ///
+      /// This compatibility helper accepts the encoded memory, iteration,
+      /// parallelism, and output length as long as the PHC string itself is
+      /// structurally valid. Use it only for trusted local migration inputs or
+      /// test-vector harnesses. For stored password verification, prefer
+      /// [`verify_string`](Self::verify_string) or
+      /// [`verify_string_with_policy`](Self::verify_string_with_policy).
+      ///
+      /// # Errors
+      ///
+      /// Returns [`VerificationError`] on any mismatch, malformed string,
+      /// variant mismatch, or parameter error.
+      #[cfg(feature = "phc-strings")]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_string_unbounded(
+        password: &[u8],
+        encoded: &str,
+      ) -> Result<(), VerificationError> {
+        Self::verify_string_with_context_unbounded(password, encoded, &[], &[])
+      }
+
+      /// Verify `password` against a PHC string with external context and no
+      /// cost bounds.
+      ///
+      /// This is the compatibility counterpart to
+      /// [`verify_string_with_context`](Self::verify_string_with_context). Use
+      /// it only when the PHC string source is trusted and the caller has
+      /// already accepted the encoded cost parameters.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`VerificationError`] on any mismatch, malformed string,
+      /// variant mismatch, or parameter error.
+      #[cfg(feature = "phc-strings")]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_string_with_context_unbounded(
         password: &[u8],
         encoded: &str,
         secret: &[u8],
@@ -2603,7 +2654,7 @@ mod tests {
 
   #[cfg(all(feature = "phc-strings", not(miri)))]
   mod phc_tests {
-    use alloc::{string::String, vec};
+    use alloc::{format, string::String, vec};
 
     use super::*;
     use crate::auth::phc::PhcError;
@@ -2625,7 +2676,21 @@ mod tests {
       let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
       assert!(encoded.starts_with("$argon2id$v=19$m=32,t=2,p=1$"));
       assert!(Argon2id::verify_string(b"password", &encoded).is_ok());
+      assert!(Argon2id::verify_string_unbounded(b"password", &encoded).is_ok());
       assert!(Argon2id::verify_string(b"wrongpassword", &encoded).is_err());
+    }
+
+    #[test]
+    fn verify_string_default_policy_rejects_oversized_argon2_costs() {
+      let params = small_params();
+      let salt = [0xA0u8; 16];
+      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
+      let too_much_memory = Argon2VerifyPolicy::default().max_memory_cost_kib.strict_add(1);
+      let expensive = encoded.replace("m=32", &format!("m={too_much_memory}"));
+
+      assert!(Argon2id::decode_string(&expensive).is_ok());
+      assert!(Argon2id::verify_string(b"password", &expensive).is_err());
+      assert!(Argon2id::verify_string_with_context(b"password", &expensive, &[], &[]).is_err());
     }
 
     #[test]
@@ -2779,6 +2844,7 @@ mod tests {
 
       assert!(Argon2id::verify_string(b"pw", &encoded).is_err());
       assert!(Argon2id::verify_string_with_context(b"pw", &encoded, b"pepper", b"context").is_ok());
+      assert!(Argon2id::verify_string_with_context_unbounded(b"pw", &encoded, b"pepper", b"context").is_ok());
       assert!(Argon2id::verify_string_with_context(b"pw", &encoded, b"wrong", b"context").is_err());
       assert!(Argon2id::verify_string_with_context(b"pw", &encoded, b"pepper", b"wrong").is_err());
     }

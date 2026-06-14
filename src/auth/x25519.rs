@@ -57,7 +57,7 @@ use crate::auth::curve25519_edwards;
   test
 ))]
 use crate::backend::curve25519::FieldElement;
-use crate::{SecretBytes, backend::curve25519::clamp_secret_scalar, traits::ct};
+use crate::{SecretBytes, traits::ct};
 
 const POINT_LENGTH: usize = 32;
 #[cfg(any(
@@ -235,7 +235,7 @@ impl X25519SecretKey {
       )
     )))]
     {
-      public_key_from_scalar(&self.clamped_scalar_bytes())
+      self.with_clamped_scalar(public_key_from_scalar)
     }
   }
 
@@ -249,13 +249,55 @@ impl X25519SecretKey {
     X25519SharedSecret::diffie_hellman(self, public)
   }
 
-  #[inline]
-  #[must_use]
   #[allow(dead_code)]
-  fn clamped_scalar_bytes(&self) -> [u8; Self::LENGTH] {
-    let mut scalar = self.0;
-    clamp_secret_scalar(&mut scalar);
-    scalar
+  #[cfg(any(
+    not(any(
+      all(
+        target_arch = "aarch64",
+        any(target_os = "macos", target_os = "linux"),
+        not(feature = "portable-only")
+      ),
+      all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+    )),
+    miri,
+    test
+  ))]
+  fn with_clamped_scalar<R>(&self, f: impl FnOnce(&[u8; Self::LENGTH]) -> R) -> R {
+    let mut scalar = ClampedScalar(self.0);
+    crate::backend::curve25519::clamp_secret_scalar(&mut scalar.0);
+    f(&scalar.0)
+  }
+}
+
+#[cfg(any(
+  not(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  miri,
+  test
+))]
+struct ClampedScalar([u8; POINT_LENGTH]);
+
+#[cfg(any(
+  not(any(
+    all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only")
+    ),
+    all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+  )),
+  miri,
+  test
+))]
+impl Drop for ClampedScalar {
+  fn drop(&mut self) {
+    ct::zeroize(&mut self.0);
   }
 }
 
@@ -479,7 +521,7 @@ impl X25519SharedSecret {
         not(miri)
       )
     ))]
-    let shared = platform_asm::x25519(&secret.0, &public.bytes);
+    let mut shared = platform_asm::x25519(&secret.0, &public.bytes);
 
     #[cfg(not(any(
       all(
@@ -495,13 +537,15 @@ impl X25519SharedSecret {
         not(miri)
       )
     )))]
-    let shared = montgomery_ladder(&secret.clamped_scalar_bytes(), &public.u).to_bytes();
+    let mut shared = secret.with_clamped_scalar(|scalar| montgomery_ladder(scalar, &public.u).to_bytes());
 
-    if is_all_zero(&shared) {
+    let result = if is_all_zero(&shared) {
       Err(X25519Error::new())
     } else {
       Ok(Self(shared))
-    }
+    };
+    ct::zeroize(&mut shared);
+    result
   }
 }
 
@@ -657,12 +701,12 @@ mod tests {
     use super::{X25519PublicKey, X25519SecretKey, decode_u_coordinate, montgomery_ladder, public_key_from_scalar};
 
     let secret = X25519SecretKey::from_bytes([7u8; X25519SecretKey::LENGTH]);
-    let expected_public = public_key_from_scalar(&secret.clamped_scalar_bytes()).to_bytes();
+    let expected_public = secret.with_clamped_scalar(|scalar| public_key_from_scalar(scalar).to_bytes());
     assert_eq!(secret.public_key().to_bytes(), expected_public);
 
     let public = X25519PublicKey::basepoint();
-    let expected_shared =
-      montgomery_ladder(&secret.clamped_scalar_bytes(), &decode_u_coordinate(public.as_bytes())).to_bytes();
+    let expected_shared = secret
+      .with_clamped_scalar(|scalar| montgomery_ladder(scalar, &decode_u_coordinate(public.as_bytes())).to_bytes());
     let shared = secret.diffie_hellman(&public).unwrap();
     assert_eq!(shared.as_bytes(), &expected_shared);
   }
@@ -708,7 +752,7 @@ mod tests {
     fn fixed_base_asm_matches_portable_path() {
       for seed in 0u8..32 {
         let secret = X25519SecretKey::from_bytes(scalar(seed));
-        let expected = public_key_from_scalar(&secret.clamped_scalar_bytes()).to_bytes();
+        let expected = secret.with_clamped_scalar(|scalar| public_key_from_scalar(scalar).to_bytes());
         let actual = platform_asm::x25519_base(secret.as_bytes());
 
         assert_eq!(actual, expected, "fixed-base mismatch for seed {seed}");
@@ -720,8 +764,8 @@ mod tests {
       for seed in 0u8..32 {
         let secret = X25519SecretKey::from_bytes(scalar(seed));
         let public = X25519PublicKey::from_bytes(peer(seed));
-        let expected =
-          montgomery_ladder(&secret.clamped_scalar_bytes(), &decode_u_coordinate(public.as_bytes())).to_bytes();
+        let expected = secret
+          .with_clamped_scalar(|scalar| montgomery_ladder(scalar, &decode_u_coordinate(public.as_bytes())).to_bytes());
         let actual = platform_asm::x25519(secret.as_bytes(), public.as_bytes());
 
         assert_eq!(actual, expected, "ladder mismatch for seed {seed}");

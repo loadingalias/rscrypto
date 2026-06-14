@@ -36,33 +36,33 @@ define_aead_tag_type!(
 /// # Examples
 ///
 /// ```
-/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
 ///
 /// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-/// let nonce = Nonce96::from_bytes([0x24; 12]);
 /// let cipher = ChaCha20Poly1305::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf)?;
+/// let (nonce, tag) = cipher.seal_random_in_place(b"", &mut buf)?;
 /// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Tampering is reported as an opaque verification failure.
 ///
 /// ```
-/// use rscrypto::{
-///   Aead, ChaCha20Poly1305, ChaCha20Poly1305Key,
-///   aead::{Nonce96, OpenError},
-/// };
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::OpenError};
 ///
 /// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-/// let nonce = Nonce96::from_bytes([0x24; 12]);
 /// let cipher = ChaCha20Poly1305::new(&key);
 ///
 /// let mut sealed = [0u8; 5 + ChaCha20Poly1305::TAG_SIZE];
-/// cipher.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// let nonce = cipher.seal_random(b"", b"hello", &mut sealed)?;
 /// sealed[0] ^= 1;
 ///
 /// let mut opened = [0u8; 5];
@@ -70,6 +70,7 @@ define_aead_tag_type!(
 ///   cipher.decrypt(&nonce, b"", &sealed, &mut opened),
 ///   Err(OpenError::verification())
 /// );
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]

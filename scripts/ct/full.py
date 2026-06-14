@@ -480,6 +480,203 @@ def summarize_findings(findings: list[dict[str, Any]], diagnostics: list[dict[st
   }
 
 
+def primitive_manifest_dudect_cases(ct: dict[str, Any], primitive_id: str, target: str | None) -> list[dict[str, Any]]:
+  return [case for case in manifest_dudect_cases(ct) if case["primitive"] == primitive_id and dudect_case_supported_on_target(ct, case, target)]
+
+
+def primitive_binsec_kernels(ct: dict[str, Any], primitive_id: str) -> list[dict[str, Any]]:
+  return [kernel for kernel in ct.get("binsec_kernel", []) if kernel.get("primitive") == primitive_id]
+
+
+def evidence_status(failures: int, warnings: int, present: bool = True) -> str:
+  if not present:
+    return "missing"
+  if failures:
+    return "fail"
+  if warnings:
+    return "review"
+  return "pass"
+
+
+def build_primitive_evidence(
+  ct: dict[str, Any],
+  target: str,
+  dudect_cases: list[dict[str, Any]],
+  binsec_kernels: list[dict[str, Any]],
+  asm_report: dict[str, Any] | None,
+  *,
+  binsec_enabled: bool,
+  coverage_limited: bool,
+) -> list[dict[str, Any]]:
+  asm_by_primitive = (
+    (asm_report or {})
+    .get("ct_intended_call_closure", {})
+    .get("primitive_summary", {})
+  )
+  executed_dudect_by_primitive: dict[str, list[dict[str, Any]]] = {}
+  for case in dudect_cases:
+    executed_dudect_by_primitive.setdefault(case["primitive"], []).append(case)
+
+  binsec_by_primitive: dict[str, list[dict[str, Any]]] = {}
+  for kernel in binsec_kernels:
+    primitive = kernel.get("primitive")
+    if isinstance(primitive, str):
+      binsec_by_primitive.setdefault(primitive, []).append(kernel)
+
+  rows = []
+  for primitive in ct.get("primitive", []):
+    primitive_id = primitive.get("id")
+    if not isinstance(primitive_id, str):
+      continue
+
+    claim = primitive.get("claim", "not-claimed")
+    physical_supported = primitive_supports_physical_timing(ct, primitive_id, target)
+    manifest_cases = primitive_manifest_dudect_cases(ct, primitive_id, target)
+    required_cases = [case for case in manifest_cases if not is_diagnostic_dudect_case(case)]
+    executed_cases = executed_dudect_by_primitive.get(primitive_id, [])
+    executed_required = [case for case in executed_cases if case.get("gate") != "diagnostic"]
+    failing_required = [case for case in executed_required if case.get("status") != "pass"]
+    required_case_names = {case["name"] for case in required_cases}
+    executed_required_names = {case["name"] for case in executed_required}
+    missing_required_names = sorted(required_case_names - executed_required_names)
+
+    if not physical_supported:
+      dudect_status = "unsupported"
+    elif failing_required:
+      dudect_status = "fail"
+    elif required_cases and not missing_required_names:
+      dudect_status = "pass"
+    elif required_cases and executed_required:
+      dudect_status = "partial"
+    elif required_cases and coverage_limited:
+      dudect_status = "not_selected"
+    elif required_cases:
+      dudect_status = "missing"
+    else:
+      dudect_status = "not_required"
+
+    asm_summary = asm_by_primitive.get(primitive_id)
+    if claim == "ct-intended":
+      asm_status = evidence_status(
+        int((asm_summary or {}).get("unwaived_fail_count", 0)),
+        int((asm_summary or {}).get("unwaived_warn_count", 0)),
+        asm_summary is not None,
+      )
+    else:
+      asm_status = "entry_only"
+
+    manifest_binsec = primitive_binsec_kernels(ct, primitive_id)
+    required_binsec = [kernel for kernel in manifest_binsec if kernel.get("required", False)]
+    executed_binsec = binsec_by_primitive.get(primitive_id, [])
+    failing_binsec = [kernel for kernel in executed_binsec if kernel.get("required", False) and kernel.get("status") != "secure"]
+    if failing_binsec:
+      binsec_status = "fail"
+    elif required_binsec and executed_binsec and all(
+      kernel.get("status") == "secure" for kernel in executed_binsec if kernel.get("required", False)
+    ):
+      binsec_status = "pass"
+    elif required_binsec and not binsec_enabled:
+      binsec_status = "unsupported"
+    elif required_binsec:
+      binsec_status = "not_run"
+    else:
+      binsec_status = "not_required"
+
+    blockers = []
+    if claim == "ct-intended" and physical_supported:
+      if asm_status in {"fail", "missing"}:
+        blockers.append("asm")
+      if dudect_status == "fail" or (dudect_status == "missing" and not coverage_limited):
+        blockers.append("dudect")
+      if binsec_status == "fail":
+        blockers.append("binsec")
+
+    if claim != "ct-intended":
+      status = "classified"
+    elif not physical_supported:
+      status = "unsupported_on_target"
+    elif coverage_limited and dudect_status == "not_selected":
+      status = "not_evaluated"
+    elif coverage_limited and dudect_status == "partial":
+      status = "partial"
+    else:
+      status = "fail" if blockers else "pass"
+
+    rows.append(
+      {
+        "id": primitive_id,
+        "tier": primitive.get("tier"),
+        "claim": claim,
+        "status": status,
+        "blockers": blockers,
+        "physical_timing_supported": physical_supported,
+        "physical_timing_unsupported_reason": primitive.get("physical_timing_unsupported_reason"),
+        "entrypoints": primitive.get("entrypoints", []),
+        "secrets": primitive.get("secrets", []),
+        "public": primitive.get("public", []),
+        "may_leak": primitive.get("may_leak", []),
+        "harness": {
+          "status": primitive.get("harness", {}).get("status"),
+          "symbols": primitive.get("harness", {}).get("symbols", []),
+          "coverage": primitive.get("harness", {}).get("coverage"),
+        },
+        "asm": {
+          "status": asm_status,
+          "reachable_symbol_count": (asm_summary or {}).get("reachable_symbol_count"),
+          "finding_count": (asm_summary or {}).get("finding_count", 0),
+          "unwaived_fail_count": (asm_summary or {}).get("unwaived_fail_count", 0),
+          "unwaived_warn_count": (asm_summary or {}).get("unwaived_warn_count", 0),
+        },
+        "dudect": {
+          "status": dudect_status,
+          "required_case_count": len(required_cases),
+          "executed_required_case_count": len(executed_required),
+          "passing_required_case_count": sum(1 for case in executed_required if case.get("status") == "pass"),
+          "missing_required_cases": missing_required_names,
+          "executed_cases": [case["name"] for case in executed_cases],
+          "status_counts": summarize_status(executed_cases),
+        },
+        "binsec": {
+          "status": binsec_status,
+          "required_kernel_count": len(required_binsec),
+          "executed_kernel_count": len(executed_binsec),
+          "secure_kernel_count": sum(1 for kernel in executed_binsec if kernel.get("status") == "secure"),
+          "status_counts": summarize_status(executed_binsec),
+        },
+        "notes": primitive.get("notes"),
+      }
+    )
+  return rows
+
+
+def format_primitive_evidence_cell(row: dict[str, Any], key: str) -> str:
+  evidence = row.get(key, {})
+  status = evidence.get("status", "unknown")
+  if key == "asm":
+    fails = evidence.get("unwaived_fail_count", 0)
+    warns = evidence.get("unwaived_warn_count", 0)
+    reachable = evidence.get("reachable_symbol_count")
+    suffix = f", reachable={reachable}" if reachable is not None else ""
+    return f"`{status}` (fail={fails}, warn={warns}{suffix})"
+  if key == "dudect":
+    return (
+      f"`{status}` "
+      f"({evidence.get('passing_required_case_count', 0)}/"
+      f"{evidence.get('required_case_count', 0)} required)"
+    )
+  if key == "binsec":
+    return (
+      f"`{status}` "
+      f"({evidence.get('secure_kernel_count', 0)}/"
+      f"{evidence.get('required_kernel_count', 0)} required)"
+    )
+  return f"`{status}`"
+
+
+def markdown_escape_cell(value: Any) -> str:
+  return str(value).replace("|", "\\|")
+
+
 def markdown_report(report: dict[str, Any]) -> str:
   summary = report.get("summary", {})
   lines = [
@@ -513,6 +710,29 @@ def markdown_report(report: dict[str, Any]) -> str:
   for step in report["steps"]:
     reason = f" - {step['reason']}" if step.get("reason") else ""
     lines.append(f"- `{step['name']}`: `{step['status']}`{reason}")
+
+  primitive_evidence = report.get("primitive_evidence", [])
+  if primitive_evidence:
+    lines.extend(["", "## Primitive Evidence", ""])
+    lines.append("| Primitive | Claim | Status | ASM | DudeCT | BINSEC |")
+    lines.append("| --- | --- | --- | --- | --- | --- |")
+    for row in primitive_evidence:
+      if row.get("claim") not in {"ct-intended", "best-effort"}:
+        continue
+      lines.append(
+        "| "
+        + " | ".join(
+          [
+            f"`{markdown_escape_cell(row['id'])}`",
+            f"`{markdown_escape_cell(row.get('claim', 'unknown'))}`",
+            f"`{markdown_escape_cell(row.get('status', 'unknown'))}`",
+            format_primitive_evidence_cell(row, "asm"),
+            format_primitive_evidence_cell(row, "dudect"),
+            format_primitive_evidence_cell(row, "binsec"),
+          ]
+        )
+        + " |"
+      )
 
   lines.extend(["", "## BINSEC Summary", ""])
   if report["binsec"]["enabled"]:
@@ -765,6 +985,7 @@ def main() -> int:
       if step["status"] != "pass":
         print(f"ct-full: stopping after failed gate-one step {step['name']}", file=sys.stderr)
     findings, diagnostics = build_findings(steps, [], [], [])
+    asm_report = load_json_if_exists(out_dir / "asm-heuristics.json")
     report = {
       "schema_version": 1,
       "kind": "rscrypto.ct.full-report",
@@ -829,6 +1050,15 @@ def main() -> int:
       },
       "findings": findings,
       "diagnostics": diagnostics,
+      "primitive_evidence": build_primitive_evidence(
+        ct,
+        target,
+        [],
+        [],
+        asm_report,
+        binsec_enabled=binsec_enabled,
+        coverage_limited=False,
+      ),
       "known_findings": known_findings(target),
       "artifacts": collect_artifact_records(out_dir),
       "notes": [
@@ -933,6 +1163,7 @@ def main() -> int:
 
   artifact_records = collect_artifact_records(out_dir)
   findings, diagnostics = build_findings(steps, dudect_cases, binsec_kernels, missing_dudect)
+  asm_report = load_json_if_exists(out_dir / "asm-heuristics.json")
 
   known = known_findings(target)
   failure_count = len(findings)
@@ -1001,6 +1232,15 @@ def main() -> int:
     },
     "findings": findings,
     "diagnostics": diagnostics,
+    "primitive_evidence": build_primitive_evidence(
+      ct,
+      target,
+      dudect_cases,
+      binsec_kernels,
+      asm_report,
+      binsec_enabled=binsec_enabled,
+      coverage_limited=filtered_dudect or args.dudect_gate != "required",
+    ),
     "known_findings": known,
     "artifacts": artifact_records,
     "notes": [

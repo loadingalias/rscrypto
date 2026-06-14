@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import tomllib
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,7 @@ BRANCH_CONDS_X86 = {
   "loopne",
 }
 DIV_MNEMONICS = {"div", "idiv", "udiv", "sdiv"}
+DIRECT_CALL_MNEMONICS = {"bl", "call", "callq"}
 INDIRECT_JUMP_MNEMONICS = {"br"}
 INDIRECT_CALL_MNEMONICS = {"blr"}
 SUSPICIOUS_CALL_TARGETS = (
@@ -85,6 +87,14 @@ SUSPICIOUS_CALL_TARGETS = (
   "bcmp",
   "strcmp",
 )
+
+
+@dataclass
+class FunctionBody:
+  symbol: str
+  path: Path
+  address: int
+  lines: list[tuple[int, str]]
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -107,6 +117,33 @@ def normalize_symbol(symbol: str) -> str:
 def expected_symbols(root: Path) -> set[str]:
   ct = load_toml(root / "ct.toml")
   return {symbol for harness in ct.get("harness", []) for symbol in harness.get("symbols", [])}
+
+
+def primitive_symbols(root: Path) -> dict[str, list[str]]:
+  ct = load_toml(root / "ct.toml")
+  symbols: dict[str, set[str]] = {}
+  for primitive in ct.get("primitive", []):
+    primitive_id = primitive.get("id")
+    if not isinstance(primitive_id, str):
+      continue
+    for symbol in primitive.get("harness", {}).get("symbols", []):
+      symbols.setdefault(symbol, set()).add(primitive_id)
+  return {symbol: sorted(ids) for symbol, ids in symbols.items()}
+
+
+def ct_intended_roots_by_primitive(root: Path) -> dict[str, set[str]]:
+  ct = load_toml(root / "ct.toml")
+  roots: dict[str, set[str]] = {}
+  for primitive in ct.get("primitive", []):
+    if primitive.get("claim") != "ct-intended":
+      continue
+    primitive_id = primitive.get("id")
+    if not isinstance(primitive_id, str):
+      continue
+    symbols = set(primitive.get("harness", {}).get("symbols", []))
+    if symbols:
+      roots[primitive_id] = symbols
+  return roots
 
 
 def waivers(root: Path) -> list[dict[str, Any]]:
@@ -157,7 +194,7 @@ def parse_asm_aliases(artifact_dir: Path) -> list[tuple[str, str]]:
   return aliases
 
 
-def apply_alias_bodies(functions: dict[str, list[tuple[int, str]]], aliases: list[tuple[str, str]]) -> None:
+def apply_alias_bodies(functions: dict[str, FunctionBody], aliases: list[tuple[str, str]]) -> None:
   parent: dict[str, str] = {}
 
   def find(symbol: str) -> str:
@@ -188,23 +225,22 @@ def apply_alias_bodies(functions: dict[str, list[tuple[int, str]]], aliases: lis
       functions.setdefault(symbol, body)
 
 
-def parse_disassembly(path: Path) -> tuple[dict[str, list[tuple[int, str]]], dict[int, list[list[tuple[int, str]]]]]:
-  functions_by_label: dict[str, list[tuple[int, str]]] = {}
-  functions_by_address: dict[int, list[list[tuple[int, str]]]] = {}
-  current_lines: list[tuple[int, str]] | None = None
+def parse_disassembly(path: Path) -> tuple[dict[str, FunctionBody], dict[int, list[FunctionBody]]]:
+  functions_by_label: dict[str, FunctionBody] = {}
+  functions_by_address: dict[int, list[FunctionBody]] = {}
+  current: FunctionBody | None = None
   label_re = re.compile(r"^[0-9a-fA-F]+ <([^>]+)>:$")
   for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
     if match := label_re.match(line.strip()):
       address_text = line.strip().split(maxsplit=1)[0]
       symbol = normalize_symbol(match.group(1))
       address = int(address_text, 16)
-      current_lines = []
-      functions_by_address.setdefault(address, []).append(current_lines)
-      if symbol.startswith("ct_entry_"):
-        functions_by_label.setdefault(symbol, current_lines)
+      current = FunctionBody(symbol=symbol, path=path, address=address, lines=[])
+      functions_by_address.setdefault(address, []).append(current)
+      functions_by_label.setdefault(symbol, current)
       continue
-    if current_lines is not None:
-      current_lines.append((line_number, line))
+    if current is not None:
+      current.lines.append((line_number, line))
   return functions_by_label, functions_by_address
 
 
@@ -218,6 +254,57 @@ def mnemonic(line: str) -> str | None:
   if match:
     return match.group(1).lower()
   return None
+
+
+def symbol_target_base(symbol: str) -> str:
+  symbol = symbol.strip()
+  symbol = symbol.split("+", 1)[0]
+  symbol = symbol.split("@", 1)[0]
+  return normalize_symbol(symbol)
+
+
+def direct_call_targets(line: str) -> set[str]:
+  return {
+    target
+    for target in (symbol_target_base(match.group(1)) for match in re.finditer(r"<([^>]+)>", line))
+    if target and not target.startswith((".", "Ltmp", "LBB"))
+  }
+
+
+def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> set[str]:
+  callees: set[str] = set()
+  for _, line in body.lines:
+    if mnemonic(line) not in DIRECT_CALL_MNEMONICS:
+      continue
+    callees.update(target for target in direct_call_targets(line) if target in functions)
+  callees.discard(body.symbol)
+  return callees
+
+
+def build_call_graph(functions: dict[str, FunctionBody]) -> dict[str, set[str]]:
+  return {symbol: direct_callees(body, functions) for symbol, body in functions.items()}
+
+
+def reachable_closure(root_symbol: str, call_graph: dict[str, set[str]]) -> set[str]:
+  seen: set[str] = set()
+  stack = [root_symbol]
+  while stack:
+    symbol = stack.pop()
+    if symbol in seen:
+      continue
+    seen.add(symbol)
+    stack.extend(sorted(call_graph.get(symbol, set()) - seen, reverse=True))
+  return seen
+
+
+def closure_roots(
+  roots_by_primitive: dict[str, set[str]],
+  call_graph: dict[str, set[str]],
+) -> dict[str, dict[str, set[str]]]:
+  by_primitive: dict[str, dict[str, set[str]]] = {}
+  for primitive_id, roots in roots_by_primitive.items():
+    by_primitive[primitive_id] = {root: reachable_closure(root, call_graph) for root in sorted(roots)}
+  return by_primitive
 
 
 def is_s390x_return(target: str, inst: str, line: str) -> bool:
@@ -244,9 +331,16 @@ def finding(
   kind: str,
   severity: str,
   rationale: str,
+  *,
+  scope: str,
+  primitive_ids: list[str],
+  roots: list[str],
 ) -> dict[str, Any]:
   return {
     "symbol": symbol,
+    "scope": scope,
+    "primitive_ids": primitive_ids,
+    "roots": roots,
     "file": f"artifacts/{path.name}",
     "line": line_number,
     "kind": kind,
@@ -258,9 +352,18 @@ def finding(
   }
 
 
-def scan_symbol(target: str, symbol: str, path: Path, lines: list[tuple[int, str]]) -> list[dict[str, Any]]:
+def scan_symbol(
+  target: str,
+  symbol: str,
+  body: FunctionBody,
+  local_symbols: set[str],
+  *,
+  scope: str,
+  primitive_ids: list[str],
+  roots: list[str],
+) -> list[dict[str, Any]]:
   findings: list[dict[str, Any]] = []
-  for line_number, line in lines:
+  for line_number, line in body.lines:
     inst = mnemonic(line)
     if not inst:
       lowered = line.lower()
@@ -268,12 +371,15 @@ def scan_symbol(target: str, symbol: str, path: Path, lines: list[tuple[int, str
         findings.append(
           finding(
             symbol,
-            path,
+            body.path,
             line_number,
             line,
             "suspicious_relocation_target",
             "warn",
             "Relocation or symbol text references a panic, allocation, or C comparison routine.",
+            scope=scope,
+            primitive_ids=primitive_ids,
+            roots=roots,
           )
         )
       continue
@@ -282,12 +388,15 @@ def scan_symbol(target: str, symbol: str, path: Path, lines: list[tuple[int, str
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "variable_latency_division",
           "fail",
           "Division/remainder-family instructions are variable-latency on common targets and require explicit review.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
     elif is_s390x_return(target, inst, line):
@@ -296,73 +405,94 @@ def scan_symbol(target: str, symbol: str, path: Path, lines: list[tuple[int, str
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "register_branch",
           "warn",
           "s390x register branch found inside a CT harness symbol. "
           "It may be public jump-table control flow, but needs review.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
     elif is_indirect_jump(target, inst):
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "indirect_jump",
           "fail",
           "Indirect jump inside a CT harness symbol can hide secret-dependent control flow.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
     elif inst in BRANCH_CONDS_AARCH64 or inst in BRANCH_CONDS_X86:
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "conditional_branch",
           "warn",
           "Conditional branch found inside CT harness symbol. It may be public-shape control flow, but needs review.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
-    elif inst in {"bl", "call", "callq"}:
+    elif inst in DIRECT_CALL_MNEMONICS:
+      callees = direct_call_targets(line)
+      if callees and callees <= local_symbols:
+        continue
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "call",
           "warn",
-          "Call found inside CT harness symbol. Leaf extraction or callee review may be needed.",
+          "Unresolved direct call found inside CT evidence scope. Callee review may be needed.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
     elif inst in INDIRECT_CALL_MNEMONICS:
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "indirect_call",
           "warn",
           "Indirect call found inside CT harness symbol. Usually backend dispatch, but dispatch source must be public.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
     elif re.search(r"\[[xrw][0-9]+,\s*[xrw][0-9]+", line) or re.search(r"\([^)]*,\s*%[a-z0-9]+", line):
       findings.append(
         finding(
           symbol,
-          path,
+          body.path,
           line_number,
           line,
           "register_indexed_memory",
           "warn",
           "Register-indexed memory access may be table lookup or public indexing; review operand provenance.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
         )
       )
   return findings
@@ -370,7 +500,7 @@ def scan_symbol(target: str, symbol: str, path: Path, lines: list[tuple[int, str
 
 def summarize(
   symbols: set[str],
-  functions: dict[str, list[tuple[int, str]]],
+  functions: dict[str, FunctionBody],
   findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
   findings_by_symbol: dict[str, list[dict[str, Any]]] = {}
@@ -383,12 +513,35 @@ def summarize(
     unwaived = [item for item in symbol_findings if not item.get("waived")]
     rows[symbol] = {
       "present": symbol in functions,
-      "instruction_lines": len(functions.get(symbol, [])),
+      "instruction_lines": len(functions[symbol].lines) if symbol in functions else 0,
       "finding_count": len(symbol_findings),
       "unwaived_fail_count": sum(1 for item in unwaived if item["severity"] == "fail"),
       "unwaived_warn_count": sum(1 for item in unwaived if item["severity"] == "warn"),
     }
   return rows
+
+
+def summarize_closure(
+  closures: dict[str, dict[str, set[str]]],
+  functions: dict[str, FunctionBody],
+  findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+  unwaived = [item for item in findings if not item.get("waived")]
+  by_primitive: dict[str, dict[str, Any]] = {}
+  for primitive_id, roots in sorted(closures.items()):
+    reachable = sorted({symbol for symbols in roots.values() for symbol in symbols})
+    primitive_findings = [item for item in findings if primitive_id in item.get("primitive_ids", [])]
+    primitive_unwaived = [item for item in unwaived if primitive_id in item.get("primitive_ids", [])]
+    by_primitive[primitive_id] = {
+      "root_symbols": sorted(roots),
+      "reachable_symbol_count": len(reachable),
+      "reachable_symbols": reachable,
+      "missing_root_symbols": sorted(root for root in roots if root not in functions),
+      "finding_count": len(primitive_findings),
+      "unwaived_fail_count": sum(1 for item in primitive_unwaived if item["severity"] == "fail"),
+      "unwaived_warn_count": sum(1 for item in primitive_unwaived if item["severity"] == "warn"),
+    }
+  return by_primitive
 
 
 def main() -> int:
@@ -401,8 +554,10 @@ def main() -> int:
 
   root = Path(__file__).resolve().parents[2]
   symbols = expected_symbols(root)
+  symbol_primitives = primitive_symbols(root)
+  ct_roots_by_primitive = ct_intended_roots_by_primitive(root)
   configured_waivers = waivers(root)
-  functions: dict[str, list[tuple[int, str]]] = {}
+  functions: dict[str, FunctionBody] = {}
   findings: list[dict[str, Any]] = []
   disassembly_files = sorted([*args.artifact_dir.glob("*.o.disasm.txt"), *args.artifact_dir.glob("*.obj.disasm.txt")])
   symbol_addresses = parse_symbol_addresses(args.artifact_dir)
@@ -420,12 +575,34 @@ def main() -> int:
         functions[symbol] = bodies[0]
     apply_alias_bodies(functions, aliases)
 
-  for path in disassembly_files:
-    for symbol in sorted(symbols):
-      lines = functions.get(symbol)
-      if lines:
-        findings.extend(scan_symbol(args.target, symbol, path, lines))
-    break
+  call_graph = build_call_graph(functions)
+  closures = closure_roots(ct_roots_by_primitive, call_graph)
+  closure_symbols = {symbol for roots in closures.values() for symbols_for_root in roots.values() for symbol in symbols_for_root}
+  root_symbols_by_symbol: dict[str, set[str]] = {}
+  primitive_ids_by_symbol: dict[str, set[str]] = {symbol: set(ids) for symbol, ids in symbol_primitives.items()}
+  for primitive_id, roots in closures.items():
+    for root_symbol, reachable in roots.items():
+      for symbol in reachable:
+        root_symbols_by_symbol.setdefault(symbol, set()).add(root_symbol)
+        primitive_ids_by_symbol.setdefault(symbol, set()).add(primitive_id)
+
+  local_symbols = set(functions)
+  for symbol in sorted(symbols | closure_symbols):
+    body = functions.get(symbol)
+    if body is None:
+      continue
+    scope = "entry" if symbol in symbols else "ct_intended_call_closure"
+    findings.extend(
+      scan_symbol(
+        args.target,
+        symbol,
+        body,
+        local_symbols,
+        scope=scope,
+        primitive_ids=sorted(primitive_ids_by_symbol.get(symbol, [])),
+        roots=sorted(root_symbols_by_symbol.get(symbol, [])),
+      )
+    )
 
   apply_waivers(findings, configured_waivers, args.target)
   missing_symbols = sorted(symbol for symbol in symbols if symbol not in functions)
@@ -438,6 +615,11 @@ def main() -> int:
     "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
     "target": args.target,
     "profile": args.profile,
+    "scan_scope": {
+      "entry_symbols": "all manifest ct_entry_* symbols",
+      "call_closure": "direct local call closure for ct-intended primitive harness roots",
+      "non_ct_intended_primitives": "entry-symbol scan only",
+    },
     "policy": {
       "fail": ["variable_latency_division", "indirect_jump"],
       "warn": [
@@ -457,6 +639,11 @@ def main() -> int:
       for path in disassembly_files
     ],
     "symbol_summary": summarize(symbols, functions, findings),
+    "ct_intended_call_closure": {
+      "primitive_summary": summarize_closure(closures, functions, findings),
+      "root_symbol_count": sum(len(roots) for roots in ct_roots_by_primitive.values()),
+      "reachable_symbol_count": len(closure_symbols),
+    },
     "missing_symbols": missing_symbols,
     "finding_count": len(findings),
     "unwaived_fail_count": len(unwaived_failures),

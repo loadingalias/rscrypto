@@ -229,7 +229,7 @@ fn fixed_and_random_oaep_ciphertexts(key: &RsaPrivateKey, count: usize) -> (Vec<
   let fixed_seed = vec![0x11; RsaOaepProfile::Sha256.digest_len()];
   key
     .public_key()
-    .encrypt_oaep_with_seed(
+    .diag_encrypt_oaep_with_seed(
       RsaOaepProfile::Sha256,
       b"leakage-label",
       b"fixed oaep leakage text",
@@ -248,7 +248,7 @@ fn fixed_and_random_oaep_ciphertexts(key: &RsaPrivateKey, count: usize) -> (Vec<
     let mut ciphertext = vec![0u8; len];
     key
       .public_key()
-      .encrypt_oaep_with_seed(
+      .diag_encrypt_oaep_with_seed(
         RsaOaepProfile::Sha256,
         b"leakage-label",
         &plaintext,
@@ -269,7 +269,7 @@ fn fixed_and_random_pkcs1v15_ciphertexts(key: &RsaPrivateKey, count: usize) -> (
   let mut fixed = vec![0u8; len];
   key
     .public_key()
-    .encrypt_pkcs1v15_with_seed(b"fixed pkcs1v15 leakage text", &fixed_seed, &mut fixed)
+    .diag_encrypt_pkcs1v15_with_seed(b"fixed pkcs1v15 leakage text", &fixed_seed, &mut fixed)
     .expect("fixed PKCS1v1.5 ciphertext must encrypt");
 
   let mut rng = XorShift64::new(0x706b_6373_6374_7874);
@@ -286,7 +286,7 @@ fn fixed_and_random_pkcs1v15_ciphertexts(key: &RsaPrivateKey, count: usize) -> (
     let mut ciphertext = vec![0u8; len];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(&plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(&plaintext, &seed, &mut ciphertext)
       .expect("random PKCS1v1.5 ciphertext must encrypt");
     random.push(ciphertext);
   }

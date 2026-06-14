@@ -1,7 +1,7 @@
 use core::arch::x86_64::*;
 
 /// AES-256 round keys stored as 15 × 128-bit values for AES-NI.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[repr(C, align(16))]
 pub(super) struct NiRoundKeys {
   rk: [__m128i; 15],
@@ -20,6 +20,12 @@ impl NiRoundKeys {
     // Reinterpreting as a byte slice for volatile zeroization is sound.
     let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
     crate::traits::ct::zeroize(bytes);
+  }
+}
+
+impl Drop for NiRoundKeys {
+  fn drop(&mut self) {
+    self.zeroize();
   }
 }
 
@@ -303,7 +309,7 @@ pub(super) unsafe fn encrypt_block(keys: &NiRoundKeys, block: &mut [u8; 16]) {
 // AES-128 (11 round keys, 10 rounds)
 
 /// AES-128 round keys stored as 11 × 128-bit values for AES-NI.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[repr(C, align(16))]
 pub(super) struct Ni128RoundKeys {
   rk: [__m128i; 11],
@@ -321,6 +327,12 @@ impl Ni128RoundKeys {
     // SAFETY: `self.rk` is a valid, aligned, fully-initialized [__m128i; 11].
     let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 11usize.strict_mul(16)) };
     crate::traits::ct::zeroize(bytes);
+  }
+}
+
+impl Drop for Ni128RoundKeys {
+  fn drop(&mut self) {
+    self.zeroize();
   }
 }
 

@@ -6,7 +6,7 @@
 //! keeps the representation fixed at four little-endian `u64` limbs and uses
 //! simple modular double/add reduction rather than trying to be clever early.
 
-use core::cmp::Ordering;
+use core::{cmp::Ordering, sync::atomic};
 
 use super::constants::{SCALAR_LIMBS, SECRET_KEY_LENGTH};
 
@@ -61,7 +61,21 @@ impl Scalar52 {
   #[must_use]
   fn from_bytes(bytes: &[u8; 32]) -> Self {
     let words = read_words_le_32(bytes);
+    Self::from_words(&words)
+  }
 
+  #[rustfmt::skip]
+  #[must_use]
+  fn from_bytes_secret(bytes: &[u8; 32]) -> Self {
+    let mut words = read_words_le_32(bytes);
+    let out = Self::from_words(&words);
+    crate::traits::ct::zeroize_words_no_fence(&mut words);
+    out
+  }
+
+  #[rustfmt::skip]
+  #[must_use]
+  fn from_words(words: &[u64; 4]) -> Self {
     Self([
         words[0] & RADIX52_MASK,
       ((words[0] >> 52) | (words[1] << 12)) & RADIX52_MASK,
@@ -75,7 +89,45 @@ impl Scalar52 {
   #[must_use]
   fn from_bytes_wide(bytes: &[u8; 64]) -> Self {
     let words = read_words_le_64(bytes);
+    Self::from_wide_words(&words)
+  }
 
+  #[rustfmt::skip]
+  #[must_use]
+  fn from_bytes_wide_secret(bytes: &[u8; 64]) -> Self {
+    let mut words = read_words_le_64(bytes);
+
+    let mut lo = Self([
+        words[0] & RADIX52_MASK,
+      ((words[0] >> 52) | (words[1] << 12)) & RADIX52_MASK,
+      ((words[1] >> 40) | (words[2] << 24)) & RADIX52_MASK,
+      ((words[2] >> 28) | (words[3] << 36)) & RADIX52_MASK,
+      ((words[3] >> 16) | (words[4] << 48)) & RADIX52_MASK,
+    ]);
+    let mut hi = Self([
+       (words[4] >>  4) & RADIX52_MASK,
+      ((words[4] >> 56) | (words[5] <<  8)) & RADIX52_MASK,
+      ((words[5] >> 44) | (words[6] << 20)) & RADIX52_MASK,
+      ((words[6] >> 32) | (words[7] << 32)) & RADIX52_MASK,
+       (words[7] >> 20),
+    ]);
+
+    let mut lo_mont = Self::montgomery_mul_secret(&lo, &R52);
+    let mut hi_mont = Self::montgomery_mul_secret(&hi, &RR52);
+    let out = Self::add_secret(&hi_mont, &lo_mont);
+
+    crate::traits::ct::zeroize_words_no_fence(&mut words);
+    lo.zeroize_no_fence();
+    hi.zeroize_no_fence();
+    lo_mont.zeroize_no_fence();
+    hi_mont.zeroize_no_fence();
+
+    out
+  }
+
+  #[rustfmt::skip]
+  #[must_use]
+  fn from_wide_words(words: &[u64; 8]) -> Self {
     let lo = Self([
         words[0] & RADIX52_MASK,
       ((words[0] >> 52) | (words[1] << 12)) & RADIX52_MASK,
@@ -98,8 +150,8 @@ impl Scalar52 {
 
   #[rustfmt::skip]
   #[must_use]
-  fn as_bytes(self) -> [u8; 32] {
-    let limbs = self.0;
+  fn as_bytes(&self) -> [u8; 32] {
+    let limbs = &self.0;
     [
       ( limbs[0] >>  0) as u8,
       ( limbs[0] >>  8) as u8,
@@ -178,6 +230,37 @@ impl Scalar52 {
     Self(out)
   }
 
+  #[must_use]
+  fn sub_secret(lhs: &Self, rhs: &Self) -> Self {
+    #[inline]
+    fn barrier(value: u64) -> u64 {
+      // SAFETY: `value` is a local `u64`; reading it through a volatile pointer
+      // preserves the arithmetic shape without violating aliasing or lifetime rules.
+      unsafe { core::ptr::read_volatile(&value) }
+    }
+
+    let mut out = [0u64; 5];
+    let mut borrow = 0u64;
+
+    for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
+      borrow = left.wrapping_sub(right.strict_add(borrow >> 63));
+      *dst = borrow & RADIX52_MASK;
+    }
+
+    let underflow_mask = ((borrow >> 63) ^ 1).wrapping_sub(1);
+    let mut carry = 0u64;
+    for (i, limb) in out.iter_mut().enumerate() {
+      carry = (carry >> 52)
+        .strict_add(*limb)
+        .strict_add(ORDER52.0[i] & barrier(underflow_mask));
+      *limb = carry & RADIX52_MASK;
+    }
+
+    let result = Self(out);
+    crate::traits::ct::zeroize_words_no_fence(&mut out);
+    result
+  }
+
   #[rustfmt::skip]
   #[must_use]
   fn mul_internal(lhs: &Self, rhs: &Self) -> [u128; 9] {
@@ -197,6 +280,22 @@ impl Scalar52 {
   #[inline(always)]
   #[must_use]
   fn montgomery_reduce(limbs: &[u128; 9]) -> Self {
+    Self::sub(&Self::montgomery_reduce_unreduced(limbs), &ORDER52)
+  }
+
+  #[inline(always)]
+  #[must_use]
+  fn montgomery_reduce_secret(limbs: &mut [u128; 9]) -> Self {
+    let mut unreduced = Self::montgomery_reduce_unreduced(limbs);
+    let out = Self::sub_secret(&unreduced, &ORDER52);
+    crate::traits::ct::zeroize_words_no_fence(limbs);
+    unreduced.zeroize_no_fence();
+    out
+  }
+
+  #[inline(always)]
+  #[must_use]
+  fn montgomery_reduce_unreduced(limbs: &[u128; 9]) -> Self {
     #[inline(always)]
     fn part1(sum: u128) -> (u128, u64) {
       let p = (sum as u64).wrapping_mul(LFACTOR52) & RADIX52_MASK;
@@ -248,7 +347,7 @@ impl Scalar52 {
     let (carry, r3) = part2(carry.strict_add(limbs[8]).strict_add(wide_mul(n4, ORDER52.0[4])));
     let r4 = carry as u64;
 
-    Self::sub(&Self([r0, r1, r2, r3, r4]), &ORDER52)
+    Self([r0, r1, r2, r3, r4])
   }
 
   #[must_use]
@@ -257,9 +356,49 @@ impl Scalar52 {
   }
 
   #[must_use]
+  fn montgomery_mul_secret(lhs: &Self, rhs: &Self) -> Self {
+    let mut product = Self::mul_internal(lhs, rhs);
+    Self::montgomery_reduce_secret(&mut product)
+  }
+
+  #[must_use]
   fn mul(lhs: &Self, rhs: &Self) -> Self {
     let product = Self::montgomery_reduce(&Self::mul_internal(lhs, rhs));
     Self::montgomery_reduce(&Self::mul_internal(&product, &RR52))
+  }
+
+  #[must_use]
+  fn add_secret(lhs: &Self, rhs: &Self) -> Self {
+    let mut out = [0u64; 5];
+    let mut carry = 0u64;
+
+    for (dst, (&left, &right)) in out.iter_mut().zip(lhs.0.iter().zip(rhs.0.iter())) {
+      carry = left.strict_add(right).strict_add(carry >> 52);
+      *dst = carry & RADIX52_MASK;
+    }
+
+    let mut unreduced = Self(out);
+    let result = Self::sub_secret(&unreduced, &ORDER52);
+    crate::traits::ct::zeroize_words_no_fence(&mut out);
+    unreduced.zeroize_no_fence();
+    result
+  }
+
+  #[must_use]
+  fn mul_secret(lhs: &Self, rhs: &Self) -> Self {
+    let mut product_wide = Self::mul_internal(lhs, rhs);
+    let mut product = Self::montgomery_reduce_secret(&mut product_wide);
+
+    let mut reduction_wide = Self::mul_internal(&product, &RR52);
+    let out = Self::montgomery_reduce_secret(&mut reduction_wide);
+    product.zeroize_no_fence();
+
+    out
+  }
+
+  #[inline(always)]
+  fn zeroize_no_fence(&mut self) {
+    crate::traits::ct::zeroize_words_no_fence(&mut self.0);
   }
 }
 
@@ -296,10 +435,14 @@ pub(crate) fn from_canonical_bytes(bytes: &[u8; SECRET_KEY_LENGTH]) -> Option<Sc
 pub(crate) fn to_bytes(words: &Scalar) -> [u8; SECRET_KEY_LENGTH] {
   let mut out = [0u8; SECRET_KEY_LENGTH];
   for (chunk, limb) in out.as_mut_slice().chunks_exact_mut(8).zip(words.iter().copied()) {
-    let limb_bytes = limb.to_le_bytes();
-    for (dst, src) in chunk.iter_mut().zip(limb_bytes.iter().copied()) {
-      *dst = src;
-    }
+    chunk[0] = limb as u8;
+    chunk[1] = (limb >> 8) as u8;
+    chunk[2] = (limb >> 16) as u8;
+    chunk[3] = (limb >> 24) as u8;
+    chunk[4] = (limb >> 32) as u8;
+    chunk[5] = (limb >> 40) as u8;
+    chunk[6] = (limb >> 48) as u8;
+    chunk[7] = (limb >> 56) as u8;
   }
   out
 }
@@ -314,6 +457,16 @@ pub(crate) fn reduce_bytes_mod_order(bytes: &[u8]) -> Scalar {
   }
 
   reduce_bytes_mod_order_fallback(bytes)
+}
+
+/// Reduce a 64-byte secret digest modulo the Ed25519 group order and wipe
+/// reduction-only temporaries before returning the scalar copy to the caller.
+#[must_use]
+pub(crate) fn reduce_64_bytes_mod_order_secret(bytes: &[u8; 64]) -> Scalar {
+  let mut reduced = Scalar52::from_bytes_wide_secret(bytes);
+  let out = scalar52_to_words_secret(&mut reduced);
+  atomic::compiler_fence(atomic::Ordering::SeqCst);
+  out
 }
 
 /// Add two scalars modulo `L`.
@@ -335,6 +488,26 @@ pub(crate) fn mul_add_mod(lhs: &Scalar, rhs: &Scalar, acc: &Scalar) -> Scalar {
   let product = Scalar52::mul(&scalar52_from_words(lhs), &scalar52_from_words(rhs));
   let sum = Scalar52::add(&product, &scalar52_from_words(acc));
   scalar52_to_words(sum)
+}
+
+/// Compute `lhs * rhs + acc (mod L)` for signing secrets, wiping the scalar
+/// encoding and Montgomery temporaries created along the way.
+#[must_use]
+pub(crate) fn mul_add_mod_secret(lhs: &Scalar, rhs: &Scalar, acc: &Scalar) -> Scalar {
+  let mut lhs52 = scalar52_from_words_secret(lhs);
+  let mut rhs52 = scalar52_from_words_secret(rhs);
+  let mut acc52 = scalar52_from_words_secret(acc);
+  let mut product = Scalar52::mul_secret(&lhs52, &rhs52);
+  let mut sum = Scalar52::add_secret(&product, &acc52);
+  let out = scalar52_to_words_secret(&mut sum);
+
+  lhs52.zeroize_no_fence();
+  rhs52.zeroize_no_fence();
+  acc52.zeroize_no_fence();
+  product.zeroize_no_fence();
+  atomic::compiler_fence(atomic::Ordering::SeqCst);
+
+  out
 }
 
 /// Negate a scalar modulo `L`: returns `L - s` when `s != 0`, else `0`.
@@ -441,11 +614,14 @@ pub(crate) fn non_adjacent_form(bytes: &[u8; 32], w: usize) -> [i8; 256] {
 #[inline]
 #[must_use]
 fn read_u64_le(chunk: &[u8]) -> u64 {
-  let mut bytes = [0u8; core::mem::size_of::<u64>()];
-  for (dst, src) in bytes.iter_mut().zip(chunk.iter().copied()) {
-    *dst = src;
-  }
-  u64::from_le_bytes(bytes)
+  u64::from(chunk[0])
+    | (u64::from(chunk[1]) << 8)
+    | (u64::from(chunk[2]) << 16)
+    | (u64::from(chunk[3]) << 24)
+    | (u64::from(chunk[4]) << 32)
+    | (u64::from(chunk[5]) << 40)
+    | (u64::from(chunk[6]) << 48)
+    | (u64::from(chunk[7]) << 56)
 }
 
 #[inline]
@@ -493,8 +669,27 @@ fn scalar52_from_words(words: &Scalar) -> Scalar52 {
 
 #[inline]
 #[must_use]
+fn scalar52_from_words_secret(words: &Scalar) -> Scalar52 {
+  let mut bytes = to_bytes(words);
+  let out = Scalar52::from_bytes_secret(&bytes);
+  crate::traits::ct::zeroize_no_fence(&mut bytes);
+  out
+}
+
+#[inline]
+#[must_use]
 fn scalar52_to_words(value: Scalar52) -> Scalar {
   decode_words_le(&value.as_bytes())
+}
+
+#[inline]
+#[must_use]
+fn scalar52_to_words_secret(value: &mut Scalar52) -> Scalar {
+  let mut bytes = value.as_bytes();
+  let out = decode_words_le(&bytes);
+  crate::traits::ct::zeroize_no_fence(&mut bytes);
+  value.zeroize_no_fence();
+  out
 }
 
 #[inline]
@@ -557,7 +752,8 @@ fn maybe_sub_order(words: Scalar) -> Scalar {
 mod tests {
   use super::{
     ORDER, Scalar, add_mod, as_radix_16, clamp_secret_scalar, decode_words_le, from_canonical_bytes, mul_add_mod,
-    non_adjacent_form, reduce_bytes_mod_order, reduce_bytes_mod_order_fallback, to_bytes,
+    mul_add_mod_secret, non_adjacent_form, reduce_64_bytes_mod_order_secret, reduce_bytes_mod_order,
+    reduce_bytes_mod_order_fallback, to_bytes,
   };
 
   fn from_u64(value: u64) -> Scalar {
@@ -626,6 +822,13 @@ mod tests {
   }
 
   #[test]
+  fn secret_wide_reduction_matches_public_reduction() {
+    let bytes = core::array::from_fn::<_, 64, _>(|i| (i as u8).wrapping_mul(29).wrapping_add(13));
+
+    assert_eq!(reduce_64_bytes_mod_order_secret(&bytes), reduce_bytes_mod_order(&bytes));
+  }
+
+  #[test]
   fn radix16_recenters_nibbles_into_signed_digits() {
     let mut bytes = [0u8; 32];
     bytes[0] = 0x19;
@@ -653,6 +856,15 @@ mod tests {
     let acc = from_u64(23);
 
     assert_eq!(mul_add_mod(&lhs, &rhs, &acc), from_u64(346));
+  }
+
+  #[test]
+  fn secret_multiply_add_matches_public_multiply_add() {
+    let lhs = reduce_bytes_mod_order(&[0x33; 64]);
+    let rhs = reduce_bytes_mod_order(&[0x55; 64]);
+    let acc = reduce_bytes_mod_order(&[0x77; 64]);
+
+    assert_eq!(mul_add_mod_secret(&lhs, &rhs, &acc), mul_add_mod(&lhs, &rhs, &acc));
   }
 
   #[test]

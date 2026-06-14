@@ -535,6 +535,11 @@ impl RsaSignatureProfile {
   /// Only the explicit RSA SHA-2 algorithms from JOSE are accepted. `none`,
   /// HMAC, ECDSA, EdDSA, SHA-1, and unknown values fail closed.
   ///
+  /// This is a parser for locally configured or already trusted policy values.
+  /// When `alg` comes from a JOSE header, use
+  /// [`RsaPublicKey::verify_expected_jwt_alg`] so the header is checked against
+  /// a locally pinned profile before verification.
+  ///
   /// # Errors
   ///
   /// Returns [`RsaProtocolAlgorithmError::UnsupportedAlgorithm`] for any value
@@ -558,6 +563,11 @@ impl RsaSignatureProfile {
   /// and `-259`, plus the RSASSA-PSS SHA-2 IDs `-37`, `-38`, and `-39`.
   /// SHA-1 and non-RSA IDs fail closed.
   ///
+  /// This is a parser for locally configured or already trusted policy values.
+  /// When the ID comes from a protected COSE header, use
+  /// [`RsaPublicKey::verify_expected_cose_algorithm_id`] so protocol metadata
+  /// cannot choose the verification profile.
+  ///
   /// # Errors
   ///
   /// Returns [`RsaProtocolAlgorithmError::UnsupportedAlgorithm`] for unknown,
@@ -572,6 +582,118 @@ impl RsaSignatureProfile {
       -38 => Ok(Self::pss(RsaPssProfile::Sha384)),
       -39 => Ok(Self::pss(RsaPssProfile::Sha512)),
       _ => Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm),
+    }
+  }
+
+  /// Return `true` if this profile is exactly the profile named by a JOSE
+  /// `alg` value.
+  #[inline]
+  #[must_use]
+  pub fn matches_jwt_alg(self, alg: &str) -> bool {
+    match (self, alg) {
+      (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha256), "RS256")
+      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha384), "RS384")
+      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha512), "RS512") => true,
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha256,
+          salt_len,
+        },
+        "PS256",
+      ) => salt_len == RsaPssProfile::Sha256.digest_len(),
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha384,
+          salt_len,
+        },
+        "PS384",
+      ) => salt_len == RsaPssProfile::Sha384.digest_len(),
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha512,
+          salt_len,
+        },
+        "PS512",
+      ) => salt_len == RsaPssProfile::Sha512.digest_len(),
+      _ => false,
+    }
+  }
+
+  /// Return `true` if this profile is exactly the profile named by a COSE
+  /// algorithm ID.
+  #[inline]
+  #[must_use]
+  pub const fn matches_cose_algorithm_id(self, algorithm: i64) -> bool {
+    match (self, algorithm) {
+      (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha256), -257)
+      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha384), -258)
+      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha512), -259) => true,
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha256,
+          salt_len,
+        },
+        -37,
+      ) => salt_len == RsaPssProfile::Sha256.digest_len(),
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha384,
+          salt_len,
+        },
+        -38,
+      ) => salt_len == RsaPssProfile::Sha384.digest_len(),
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha512,
+          salt_len,
+        },
+        -39,
+      ) => salt_len == RsaPssProfile::Sha512.digest_len(),
+      _ => false,
+    }
+  }
+
+  /// Return `true` if this profile is exactly the profile named by a TLS 1.3
+  /// `CertificateVerify` RSA `SignatureScheme`.
+  #[inline]
+  #[must_use]
+  pub const fn matches_tls13_signature_scheme(self, scheme: u16) -> bool {
+    match (self, scheme) {
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha256,
+          salt_len,
+        },
+        0x0804 | 0x0809,
+      ) => salt_len == RsaPssProfile::Sha256.digest_len(),
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha384,
+          salt_len,
+        },
+        0x0805 | 0x080a,
+      ) => salt_len == RsaPssProfile::Sha384.digest_len(),
+      (
+        Self::Pss {
+          profile: RsaPssProfile::Sha512,
+          salt_len,
+        },
+        0x0806 | 0x080b,
+      ) => salt_len == RsaPssProfile::Sha512.digest_len(),
+      _ => false,
+    }
+  }
+
+  /// Return `true` if this profile is exactly the profile named by a TLS
+  /// certificate RSA `SignatureScheme`.
+  #[inline]
+  #[must_use]
+  pub const fn matches_tls_certificate_signature_scheme(self, scheme: u16) -> bool {
+    match (self, scheme) {
+      (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha256), 0x0401)
+      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha384), 0x0501)
+      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha512), 0x0601) => true,
+      _ => self.matches_tls13_signature_scheme(scheme),
     }
   }
 
@@ -918,7 +1040,7 @@ pub struct RsaPublicKeyPolicy {
 impl Default for RsaPublicKeyPolicy {
   #[inline]
   fn default() -> Self {
-    Self::legacy_verification()
+    Self::modern_verification()
   }
 }
 
@@ -937,14 +1059,20 @@ impl RsaPublicKeyPolicy {
     exponent_policy: RsaPublicExponentPolicy::Common65537,
   };
 
-  /// Return the default legacy verification policy.
+  /// Return the legacy RSA-2048 verification/import policy.
+  ///
+  /// Use this only for compatibility with deployed RSA-2048 material. The
+  /// default parser policy is [`Self::modern_verification`].
   #[inline]
   #[must_use]
   pub const fn legacy_verification() -> Self {
     Self::LEGACY_VERIFICATION
   }
 
-  /// Return a modern RSA verification policy for newly minted material.
+  /// Return the modern RSA verification/import policy.
+  ///
+  /// This is the default policy for parsers and accepts RSA-3072 through
+  /// RSA-8192 with exponent `65537`.
   #[inline]
   #[must_use]
   pub const fn modern_verification() -> Self {
@@ -1130,7 +1258,12 @@ impl RsaPrivateKey {
     generate_rsa_private_key(modulus_bits, policy).map(|components| Self { components })
   }
 
-  /// Parse a PKCS #1 `RSAPrivateKey` DER object with the default policy.
+  /// Parse a PKCS #1 `RSAPrivateKey` DER object with the modern default policy.
+  ///
+  /// The default policy accepts RSA-3072 through RSA-8192 with exponent
+  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// [`Self::from_pkcs1_der_with_policy`] only for deployed RSA-2048
+  /// compatibility material.
   ///
   /// # Errors
   ///
@@ -1149,7 +1282,12 @@ impl RsaPrivateKey {
     parse_pkcs1_private_key_der_with_policy(der, policy).map(|components| Self { components })
   }
 
-  /// Parse a PKCS #8 `PrivateKeyInfo` DER object with the default policy.
+  /// Parse a PKCS #8 `PrivateKeyInfo` DER object with the modern default policy.
+  ///
+  /// The default policy accepts RSA-3072 through RSA-8192 with exponent
+  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// [`Self::from_pkcs8_der_with_policy`] only for deployed RSA-2048
+  /// compatibility material.
   ///
   /// # Errors
   ///
@@ -3870,7 +4008,12 @@ pub struct RsaX509PublicKey {
 }
 
 impl RsaX509PublicKey {
-  /// Parse an X.509 RSA `SubjectPublicKeyInfo` DER object with the default policy.
+  /// Parse an X.509 RSA `SubjectPublicKeyInfo` DER object with the modern default policy.
+  ///
+  /// The default policy accepts RSA-3072 through RSA-8192 with exponent
+  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// [`Self::from_spki_der_with_policy`] only for deployed RSA-2048
+  /// compatibility material.
   ///
   /// Unlike [`RsaPublicKey::from_spki_der`], this accepts both `rsaEncryption`
   /// and `id-RSASSA-PSS` SPKI algorithms while preserving PSS key constraints.
@@ -4079,10 +4222,84 @@ impl RsaX509PublicKey {
     )
   }
 
-  /// Verify a TLS 1.3 `CertificateVerify` RSA signature.
+  /// Verify a TLS 1.3 `CertificateVerify` RSA signature only if the parsed
+  /// scheme matches the locally configured expected scheme and profile.
   ///
-  /// Primitive helper only: this is not a TLS provider integration. The caller
-  /// must construct the exact TLS `CertificateVerify` signed message and
+  /// Use this for TLS adapters that already know the negotiated or locally
+  /// allowed `SignatureScheme` and [`RsaSignatureProfile`]. `presented_scheme`
+  /// is the peer-controlled value parsed from the signed protocol message. A
+  /// scheme or profile mismatch is rejected before signature verification.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] if the schemes differ, the expected scheme
+  /// is unsupported or conflicts with this key's X.509 public-key algorithm,
+  /// or the signature is invalid.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_tls13_signature_scheme(
+    &self,
+    expected_scheme: u16,
+    presented_scheme: u16,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+  ) -> Result<(), VerificationError> {
+    if presented_scheme != expected_scheme {
+      return Err(VerificationError::new());
+    }
+    let mapped_profile = self
+      .signature_profile_from_tls13_signature_scheme(expected_scheme)
+      .map_err(|_| VerificationError::new())?;
+    if mapped_profile != profile {
+      return Err(VerificationError::new());
+    }
+    let mut scratch = self.key.public_scratch();
+    self
+      .key
+      .verify_signature_with_scratch(profile, message, signature, &mut scratch)
+  }
+
+  /// Verify a TLS 1.3 `CertificateVerify` RSA signature with caller-owned
+  /// scratch only if the parsed scheme matches the locally configured expected
+  /// scheme and profile.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] for scheme mismatch, unsupported/conflicting
+  /// expected schemes, or invalid signatures.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_tls13_signature_scheme_with_scratch(
+    &self,
+    expected_scheme: u16,
+    presented_scheme: u16,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+    scratch: &mut RsaPublicScratch,
+  ) -> Result<(), VerificationError> {
+    if presented_scheme != expected_scheme {
+      return Err(VerificationError::new());
+    }
+    let mapped_profile = self
+      .signature_profile_from_tls13_signature_scheme(expected_scheme)
+      .map_err(|_| VerificationError::new())?;
+    if mapped_profile != profile {
+      return Err(VerificationError::new());
+    }
+    self
+      .key
+      .verify_signature_with_scratch(profile, message, signature, scratch)
+  }
+
+  /// Verify a TLS 1.3 `CertificateVerify` RSA signature by mapping the
+  /// supplied scheme directly.
+  ///
+  /// Compatibility helper only: prefer
+  /// [`verify_expected_tls13_signature_scheme`](Self::verify_expected_tls13_signature_scheme)
+  /// when the scheme was parsed from peer-controlled protocol metadata. The
+  /// caller must construct the exact TLS `CertificateVerify` signed message and
   /// enforce handshake, certificate-chain, and policy state.
   ///
   /// Scheme mismatch and unsupported algorithm choices collapse to the same
@@ -4139,10 +4356,77 @@ impl RsaX509PublicKey {
       .verify_signature_with_scratch(profile, message, signature, scratch)
   }
 
-  /// Verify a TLS certificate RSA signature scheme.
+  /// Verify a TLS certificate RSA signature only if the parsed scheme matches
+  /// the locally configured expected scheme and profile.
   ///
-  /// Primitive helper only: this is not a TLS or WebPKI provider integration.
-  /// The caller must construct the signed message and enforce handshake,
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] for scheme mismatch, unsupported/conflicting
+  /// expected schemes, or invalid signatures.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_tls_certificate_signature_scheme(
+    &self,
+    expected_scheme: u16,
+    presented_scheme: u16,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+  ) -> Result<(), VerificationError> {
+    if presented_scheme != expected_scheme {
+      return Err(VerificationError::new());
+    }
+    let mapped_profile = self
+      .signature_profile_from_tls_certificate_signature_scheme(expected_scheme)
+      .map_err(|_| VerificationError::new())?;
+    if mapped_profile != profile {
+      return Err(VerificationError::new());
+    }
+    let mut scratch = self.key.public_scratch();
+    self
+      .key
+      .verify_signature_with_scratch(profile, message, signature, &mut scratch)
+  }
+
+  /// Verify a TLS certificate RSA signature with caller-owned scratch only if
+  /// the parsed scheme matches the locally configured expected scheme and
+  /// profile.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] for scheme mismatch, unsupported/conflicting
+  /// expected schemes, or invalid signatures.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_tls_certificate_signature_scheme_with_scratch(
+    &self,
+    expected_scheme: u16,
+    presented_scheme: u16,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+    scratch: &mut RsaPublicScratch,
+  ) -> Result<(), VerificationError> {
+    if presented_scheme != expected_scheme {
+      return Err(VerificationError::new());
+    }
+    let mapped_profile = self
+      .signature_profile_from_tls_certificate_signature_scheme(expected_scheme)
+      .map_err(|_| VerificationError::new())?;
+    if mapped_profile != profile {
+      return Err(VerificationError::new());
+    }
+    self
+      .key
+      .verify_signature_with_scratch(profile, message, signature, scratch)
+  }
+
+  /// Verify a TLS certificate RSA signature by mapping the supplied scheme directly.
+  ///
+  /// Compatibility helper only: prefer
+  /// [`verify_expected_tls_certificate_signature_scheme`](Self::verify_expected_tls_certificate_signature_scheme)
+  /// when the scheme was parsed from peer-controlled protocol metadata. The
+  /// caller must construct the signed message and enforce handshake,
   /// certificate-chain, and policy state.
   ///
   /// This helper is for protocol surfaces that already mapped a certificate
@@ -4202,12 +4486,13 @@ impl RsaX509PublicKey {
 }
 
 impl RsaPublicKey {
-  /// Build an RSA public key from canonical unsigned big-endian components.
+  /// Build an RSA public key from canonical unsigned big-endian components
+  /// with the modern default policy.
   ///
   /// # Errors
   ///
-  /// Returns [`RsaKeyError`] if the modulus or exponent violates the default
-  /// public-key policy.
+  /// Returns [`RsaKeyError`] if the modulus or exponent violates the modern
+  /// default public-key policy.
   pub fn from_modulus_exponent(modulus: &[u8], public_exponent: u64) -> Result<Self, RsaKeyError> {
     Self::from_modulus_exponent_with_policy(modulus, public_exponent, &RsaPublicKeyPolicy::default())
   }
@@ -4234,7 +4519,12 @@ impl RsaPublicKey {
     })
   }
 
-  /// Parse an RSA `SubjectPublicKeyInfo` DER object with the default policy.
+  /// Parse an RSA `SubjectPublicKeyInfo` DER object with the modern default policy.
+  ///
+  /// The default policy accepts RSA-3072 through RSA-8192 with exponent
+  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// [`Self::from_spki_der_with_policy`] only for deployed RSA-2048
+  /// compatibility material.
   ///
   /// # Errors
   ///
@@ -4256,7 +4546,12 @@ impl RsaPublicKey {
     Self::from_pkcs1_der_with_policy(public_key_der, policy)
   }
 
-  /// Parse a PKCS #1 `RSAPublicKey` DER object with the default policy.
+  /// Parse a PKCS #1 `RSAPublicKey` DER object with the modern default policy.
+  ///
+  /// The default policy accepts RSA-3072 through RSA-8192 with exponent
+  /// `65537`. Use [`RsaPublicKeyPolicy::legacy_verification`] with
+  /// [`Self::from_pkcs1_der_with_policy`] only for deployed RSA-2048
+  /// compatibility material.
   ///
   /// # Errors
   ///
@@ -4375,8 +4670,9 @@ impl RsaPublicKey {
   #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
   pub fn encrypt_pkcs1v15(&self, message: &[u8], out: &mut [u8]) -> Result<(), RsaEncryptionError> {
-    let mut scratch = self.public_scratch();
-    self.encrypt_pkcs1v15_with_scratch(message, out, &mut scratch)
+    self.encrypt_pkcs1v15_with_random_fill(message, out, |random| {
+      getrandom::fill(random).map_err(|_| RsaEncryptionError::EntropyUnavailable)
+    })
   }
 
   /// Encrypt using legacy RSAES-PKCS1-v1_5, OS-backed randomness, and scratch.
@@ -4397,6 +4693,51 @@ impl RsaPublicKey {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaEncryptionError> {
+    self.encrypt_pkcs1v15_with_random_fill_and_scratch(message, out, scratch, |random| {
+      getrandom::fill(random).map_err(|_| RsaEncryptionError::EntropyUnavailable)
+    })
+  }
+
+  /// Encrypt using legacy RSAES-PKCS1-v1_5 and caller-supplied randomness.
+  ///
+  /// Prefer OAEP for new protocols. `fill_random` must write fresh,
+  /// unpredictable bytes on every call; deterministic or repeated output makes
+  /// RSA encryption deterministic. The closure may be called more than once
+  /// when zero bytes are sampled for the PKCS #1 v1.5 padding string.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaEncryptionError`] if the random fill closure fails, lengths
+  /// are invalid, the message is too long, or the RSA public operation fails.
+  #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
+  pub fn encrypt_pkcs1v15_with_random_fill(
+    &self,
+    message: &[u8],
+    out: &mut [u8],
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
+  ) -> Result<(), RsaEncryptionError> {
+    let mut scratch = self.public_scratch();
+    self.encrypt_pkcs1v15_with_random_fill_and_scratch(message, out, &mut scratch, fill_random)
+  }
+
+  /// Encrypt using legacy RSAES-PKCS1-v1_5, caller-supplied randomness, and scratch.
+  ///
+  /// Reusing scratch avoids heap allocation after setup. `fill_random` must
+  /// write fresh, unpredictable bytes on every call; deterministic or repeated
+  /// output makes RSA encryption deterministic.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaEncryptionError`] if the random fill closure fails, lengths
+  /// are invalid, the message is too long, or the RSA public operation fails.
+  #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
+  pub fn encrypt_pkcs1v15_with_random_fill_and_scratch(
+    &self,
+    message: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPublicScratch,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
+  ) -> Result<(), RsaEncryptionError> {
     if out.len() != self.modulus().len()
       || scratch.limb_count != self.modulus.limbs.len()
       || scratch.byte_count != self.modulus().len()
@@ -4409,7 +4750,7 @@ impl RsaPublicKey {
     };
     let (arithmetic_scratch, encoded, seed, _) = scratch.split_all();
     let result = match seed.get_mut(..ps_len) {
-      Some(padding_seed) => fill_pkcs1v15_nonzero_padding(padding_seed)
+      Some(padding_seed) => fill_pkcs1v15_nonzero_padding_with(padding_seed, &mut fill_random)
         .and_then(|()| encode_pkcs1v15_encryption_with_seed(message, padding_seed, encoded))
         .and_then(|()| {
           self
@@ -4434,15 +4775,17 @@ impl RsaPublicKey {
   ///
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long, any seed byte is zero, or the RSA public operation fails.
+  #[cfg(any(test, feature = "diag"))]
+  #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
-  pub fn encrypt_pkcs1v15_with_seed(
+  pub fn diag_encrypt_pkcs1v15_with_seed(
     &self,
     message: &[u8],
     seed: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaEncryptionError> {
     let mut scratch = self.public_scratch();
-    self.encrypt_pkcs1v15_with_seed_and_scratch(message, seed, out, &mut scratch)
+    self.diag_encrypt_pkcs1v15_with_seed_and_scratch(message, seed, out, &mut scratch)
   }
 
   /// Encrypt using legacy RSAES-PKCS1-v1_5, caller-supplied padding, and scratch.
@@ -4455,8 +4798,10 @@ impl RsaPublicKey {
   ///
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long, any seed byte is zero, or the RSA public operation fails.
+  #[cfg(any(test, feature = "diag"))]
+  #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
-  pub fn encrypt_pkcs1v15_with_seed_and_scratch(
+  pub fn diag_encrypt_pkcs1v15_with_seed_and_scratch(
     &self,
     message: &[u8],
     seed: &[u8],
@@ -4501,8 +4846,9 @@ impl RsaPublicKey {
     message: &[u8],
     out: &mut [u8],
   ) -> Result<(), RsaEncryptionError> {
-    let mut scratch = self.public_scratch();
-    self.encrypt_oaep_with_scratch(profile, label, message, out, &mut scratch)
+    self.encrypt_oaep_with_random_fill(profile, label, message, out, |random| {
+      getrandom::fill(random).map_err(|_| RsaEncryptionError::EntropyUnavailable)
+    })
   }
 
   /// Encrypt a message using RSAES-OAEP, OS-backed randomness, and caller-owned scratch.
@@ -4526,15 +4872,94 @@ impl RsaPublicKey {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaEncryptionError> {
+    self.encrypt_oaep_with_random_fill_and_scratch(profile, label, message, out, scratch, |random| {
+      getrandom::fill(random).map_err(|_| RsaEncryptionError::EntropyUnavailable)
+    })
+  }
+
+  /// Encrypt a message using RSAES-OAEP and caller-supplied randomness.
+  ///
+  /// `fill_random` must write fresh, unpredictable bytes on every call;
+  /// deterministic or repeated output makes RSA encryption deterministic. The
+  /// label must match the label supplied to OAEP decryption.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaEncryptionError`] if the random fill closure fails, the
+  /// message is too long for this key/profile, `out` has the wrong length, or
+  /// the RSA public operation fails.
+  #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
+  pub fn encrypt_oaep_with_random_fill(
+    &self,
+    profile: RsaOaepProfile,
+    label: &[u8],
+    message: &[u8],
+    out: &mut [u8],
+    fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
+  ) -> Result<(), RsaEncryptionError> {
+    let mut scratch = self.public_scratch();
+    self.encrypt_oaep_with_random_fill_and_scratch(profile, label, message, out, &mut scratch, fill_random)
+  }
+
+  /// Encrypt a message using RSAES-OAEP, caller-supplied randomness, and scratch.
+  ///
+  /// Reusing scratch avoids heap allocation after setup. `fill_random` must
+  /// write fresh, unpredictable bytes on every call; deterministic or repeated
+  /// output makes RSA encryption deterministic. The label must match the label
+  /// supplied to OAEP decryption.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaEncryptionError`] if the random fill closure fails, the
+  /// message is too long for this key/profile, `out` has the wrong length,
+  /// `scratch` was allocated for a different modulus width, or the RSA public
+  /// operation fails.
+  #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
+  pub fn encrypt_oaep_with_random_fill_and_scratch(
+    &self,
+    profile: RsaOaepProfile,
+    label: &[u8],
+    message: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPublicScratch,
+    mut fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
+  ) -> Result<(), RsaEncryptionError> {
+    if out.len() != self.modulus().len()
+      || scratch.limb_count != self.modulus.limbs.len()
+      || scratch.byte_count != self.modulus().len()
+    {
+      return clear_output_on_error(Err(RsaEncryptionError::InvalidLength), out);
+    }
+
     let mut seed = [0u8; Sha512::OUTPUT_SIZE];
     let seed_len = profile.digest_len();
     let Some(seed_bytes) = seed.get_mut(..seed_len) else {
       return clear_output_on_error(Err(RsaEncryptionError::InvalidLength), out);
     };
-    let result = match getrandom::fill(seed_bytes) {
-      Ok(()) => self.encrypt_oaep_with_seed_and_scratch(profile, label, message, seed_bytes, out, scratch),
-      Err(_) => Err(RsaEncryptionError::EntropyUnavailable),
-    };
+    let result = fill_random(seed_bytes).and_then(|()| {
+      let (arithmetic_scratch, encoded, seed_mask, db_mask) = scratch.split_all();
+      let result = match profile {
+        RsaOaepProfile::Sha256 => {
+          encode_oaep_with_masks::<Sha256>(label, message, seed_bytes, encoded, db_mask, seed_mask)
+        }
+        RsaOaepProfile::Sha384 => {
+          encode_oaep_with_masks::<Sha384>(label, message, seed_bytes, encoded, db_mask, seed_mask)
+        }
+        RsaOaepProfile::Sha512 => {
+          encode_oaep_with_masks::<Sha512>(label, message, seed_bytes, encoded, db_mask, seed_mask)
+        }
+      }
+      .and_then(|()| {
+        self
+          .modulus
+          .public_operation_with_arithmetic_scratch(self.exponent, encoded, out, arithmetic_scratch)
+          .map_err(|_| RsaEncryptionError::PublicOperationFailed)
+      });
+      ct::zeroize(encoded);
+      ct::zeroize(seed_mask);
+      ct::zeroize(db_mask);
+      result
+    });
     ct::zeroize(&mut seed);
     clear_output_on_error(result, out)
   }
@@ -4548,8 +4973,10 @@ impl RsaPublicKey {
   ///
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long for this key/profile, or the RSA public operation fails.
+  #[cfg(any(test, feature = "diag"))]
+  #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
-  pub fn encrypt_oaep_with_seed(
+  pub fn diag_encrypt_oaep_with_seed(
     &self,
     profile: RsaOaepProfile,
     label: &[u8],
@@ -4558,7 +4985,7 @@ impl RsaPublicKey {
     out: &mut [u8],
   ) -> Result<(), RsaEncryptionError> {
     let mut scratch = self.public_scratch();
-    self.encrypt_oaep_with_seed_and_scratch(profile, label, message, seed, out, &mut scratch)
+    self.diag_encrypt_oaep_with_seed_and_scratch(profile, label, message, seed, out, &mut scratch)
   }
 
   /// Encrypt a message using RSAES-OAEP, caller-supplied seed bytes, and scratch.
@@ -4571,8 +4998,10 @@ impl RsaPublicKey {
   /// Returns [`RsaEncryptionError`] if lengths are invalid, the message is too
   /// long for this key/profile, `scratch` was allocated for a different modulus
   /// width, or the RSA public operation fails.
+  #[cfg(any(test, feature = "diag"))]
+  #[doc(hidden)]
   #[must_use = "RSA encryption failure must be checked; a dropped Result silently discards ciphertext"]
-  pub fn encrypt_oaep_with_seed_and_scratch(
+  pub fn diag_encrypt_oaep_with_seed_and_scratch(
     &self,
     profile: RsaOaepProfile,
     label: &[u8],
@@ -4764,10 +5193,62 @@ impl RsaPublicKey {
     }
   }
 
-  /// Verify an RSA JWT/JWS signature using an already-parsed JOSE `alg`.
+  /// Verify an RSA JWT/JWS signature only if the parsed JOSE `alg` matches the
+  /// locally configured expected `alg` and profile.
   ///
-  /// Primitive helper only: this is not a JWT, JWS, JOSE, or JSON provider
-  /// integration.
+  /// `expected_alg` and `profile` must come from local verifier configuration.
+  /// `header_alg` is the value parsed from the peer-controlled JOSE header. A
+  /// header or profile mismatch is rejected before signature verification.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] if the algorithms differ, `profile` does
+  /// not match `expected_alg`, or the signature is invalid.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_jwt_alg(
+    &self,
+    expected_alg: &str,
+    header_alg: &str,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+  ) -> Result<(), VerificationError> {
+    if header_alg != expected_alg || !profile.matches_jwt_alg(expected_alg) {
+      return Err(VerificationError::new());
+    }
+    self.verify_signature(profile, message, signature)
+  }
+
+  /// Verify an RSA JWT/JWS signature with caller-owned scratch only if the
+  /// parsed JOSE `alg` matches the locally configured expected `alg` and
+  /// profile.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] for algorithm mismatch, unsupported expected
+  /// algorithms, or invalid signatures.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_jwt_alg_with_scratch(
+    &self,
+    expected_alg: &str,
+    header_alg: &str,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+    scratch: &mut RsaPublicScratch,
+  ) -> Result<(), VerificationError> {
+    if header_alg != expected_alg || !profile.matches_jwt_alg(expected_alg) {
+      return Err(VerificationError::new());
+    }
+    self.verify_signature_with_scratch(profile, message, signature, scratch)
+  }
+
+  /// Verify an RSA JWT/JWS signature by mapping the supplied JOSE `alg` directly.
+  ///
+  /// Compatibility helper only: prefer
+  /// [`verify_expected_jwt_alg`](Self::verify_expected_jwt_alg) when `alg` was
+  /// parsed from peer-controlled JOSE metadata. This is not a JWT, JWS, JOSE,
+  /// or JSON provider integration.
   ///
   /// `message` is the caller-constructed JWS Signing Input. This helper does
   /// not parse JWT claims, JWS compact serialization, or JSON; it only enforces
@@ -4787,10 +5268,12 @@ impl RsaPublicKey {
     self.verify_signature_with_scratch(profile, message, signature, &mut scratch)
   }
 
-  /// Verify an RSA JWT/JWS signature using caller-owned RSA scratch space.
+  /// Verify an RSA JWT/JWS signature using caller-owned RSA scratch space by
+  /// mapping the supplied JOSE `alg` directly.
   ///
-  /// Primitive helper only: this is not a JWT, JWS, JOSE, or JSON provider
-  /// integration.
+  /// Compatibility helper only: prefer
+  /// [`verify_expected_jwt_alg_with_scratch`](Self::verify_expected_jwt_alg_with_scratch)
+  /// when `alg` was parsed from peer-controlled JOSE metadata.
   ///
   /// # Errors
   ///
@@ -4808,10 +5291,63 @@ impl RsaPublicKey {
     self.verify_signature_with_scratch(profile, message, signature, scratch)
   }
 
-  /// Verify an RSA COSE signature using an already-parsed COSE algorithm ID.
+  /// Verify an RSA COSE signature only if the parsed algorithm ID matches the
+  /// locally configured expected algorithm ID and profile.
   ///
-  /// Primitive helper only: this is not a COSE, CBOR, or CWT provider
-  /// integration.
+  /// `expected_algorithm` and `profile` must come from local verifier
+  /// configuration. `protected_algorithm` is the value parsed from the
+  /// peer-controlled COSE protected header. A mismatch is rejected before
+  /// signature verification.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] if the algorithms differ, `profile` does
+  /// not match `expected_algorithm`, or the signature is invalid.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_cose_algorithm_id(
+    &self,
+    expected_algorithm: i64,
+    protected_algorithm: i64,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+  ) -> Result<(), VerificationError> {
+    if protected_algorithm != expected_algorithm || !profile.matches_cose_algorithm_id(expected_algorithm) {
+      return Err(VerificationError::new());
+    }
+    self.verify_signature(profile, message, signature)
+  }
+
+  /// Verify an RSA COSE signature with caller-owned scratch only if the parsed
+  /// algorithm ID matches the locally configured expected algorithm ID and
+  /// profile.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] for algorithm mismatch, unsupported expected
+  /// algorithms, or invalid signatures.
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_expected_cose_algorithm_id_with_scratch(
+    &self,
+    expected_algorithm: i64,
+    protected_algorithm: i64,
+    profile: RsaSignatureProfile,
+    message: &[u8],
+    signature: &[u8],
+    scratch: &mut RsaPublicScratch,
+  ) -> Result<(), VerificationError> {
+    if protected_algorithm != expected_algorithm || !profile.matches_cose_algorithm_id(expected_algorithm) {
+      return Err(VerificationError::new());
+    }
+    self.verify_signature_with_scratch(profile, message, signature, scratch)
+  }
+
+  /// Verify an RSA COSE signature by mapping the supplied algorithm ID directly.
+  ///
+  /// Compatibility helper only: prefer
+  /// [`verify_expected_cose_algorithm_id`](Self::verify_expected_cose_algorithm_id)
+  /// when the algorithm ID was parsed from peer-controlled COSE metadata. This
+  /// is not a COSE, CBOR, or CWT provider integration.
   ///
   /// `message` is the caller-constructed COSE Sig_structure bytes. This helper
   /// does not parse CBOR or COSE objects; it only enforces the explicit RSA
@@ -4836,10 +5372,12 @@ impl RsaPublicKey {
     self.verify_signature_with_scratch(profile, message, signature, &mut scratch)
   }
 
-  /// Verify an RSA COSE signature using caller-owned RSA scratch space.
+  /// Verify an RSA COSE signature using caller-owned RSA scratch space by
+  /// mapping the supplied algorithm ID directly.
   ///
-  /// Primitive helper only: this is not a COSE, CBOR, or CWT provider
-  /// integration.
+  /// Compatibility helper only: prefer
+  /// [`verify_expected_cose_algorithm_id_with_scratch`](Self::verify_expected_cose_algorithm_id_with_scratch)
+  /// when the algorithm ID was parsed from peer-controlled COSE metadata.
   ///
   /// # Errors
   ///
@@ -7215,12 +7753,21 @@ fn pkcs1v15_encryption_padding_len(key_len: usize, message_len: usize) -> Result
     .ok_or(RsaEncryptionError::MessageTooLong)
 }
 
-#[cfg(feature = "getrandom")]
-fn fill_pkcs1v15_nonzero_padding(out: &mut [u8]) -> Result<(), RsaEncryptionError> {
-  getrandom::fill(out).map_err(|_| RsaEncryptionError::EntropyUnavailable)?;
+const PKCS1V15_NONZERO_PADDING_MAX_RETRIES: usize = 128;
+
+fn fill_pkcs1v15_nonzero_padding_with(
+  out: &mut [u8],
+  mut fill_random: impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError>,
+) -> Result<(), RsaEncryptionError> {
+  fill_random(out)?;
   for byte in out.iter_mut() {
+    let mut retries = 0usize;
     while *byte == 0 {
-      getrandom::fill(core::slice::from_mut(byte)).map_err(|_| RsaEncryptionError::EntropyUnavailable)?;
+      if retries == PKCS1V15_NONZERO_PADDING_MAX_RETRIES {
+        return Err(RsaEncryptionError::EntropyUnavailable);
+      }
+      fill_random(core::slice::from_mut(byte))?;
+      retries = retries.strict_add(1);
     }
   }
   Ok(())
@@ -10198,20 +10745,24 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let seed = [0x53; Sha256::OUTPUT_SIZE];
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
       .unwrap();
     let short_seed = [0x53; Sha256::OUTPUT_SIZE - 1];
     ciphertext.fill(0xa5);
     assert_eq!(
-      key
-        .public_key()
-        .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &short_seed, &mut ciphertext),
+      key.public_key().diag_encrypt_oaep_with_seed(
+        RsaOaepProfile::Sha256,
+        label,
+        plaintext,
+        &short_seed,
+        &mut ciphertext
+      ),
       Err(RsaEncryptionError::InvalidLength)
     );
     assert!(is_zero_unsigned_be(&ciphertext));
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
       .unwrap();
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
@@ -10241,7 +10792,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut pkcs1v15_ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_padding, &mut pkcs1v15_ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_padding, &mut pkcs1v15_ciphertext)
       .unwrap();
     let mut pkcs1v15_decrypted = vec![0u8; key.signature_len()];
     let pkcs1v15_decrypted_len = key
@@ -10264,6 +10815,40 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       )
       .unwrap();
     assert_eq!(&pkcs1v15_decrypted[..pkcs1v15_decrypted_len], pkcs1v15_plaintext);
+  }
+
+  #[test]
+  fn public_encryption_random_fill_failures_clear_output() {
+    let der = test_pkcs1_private_key();
+    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let public_key = key.public_key();
+    let label = b"rsa random-fill failure label";
+    let plaintext = b"rsa random-fill failure plaintext";
+    let mut ciphertext = vec![0xa5; key.signature_len()];
+
+    assert_eq!(
+      public_key.encrypt_oaep_with_random_fill(RsaOaepProfile::Sha256, label, plaintext, &mut ciphertext, |_| {
+        Err(RsaEncryptionError::EntropyUnavailable)
+      }),
+      Err(RsaEncryptionError::EntropyUnavailable)
+    );
+    assert!(is_zero_unsigned_be(&ciphertext));
+
+    let mut public_scratch = public_key.public_scratch();
+    ciphertext.fill(0xa5);
+    assert_eq!(
+      public_key.encrypt_pkcs1v15_with_random_fill_and_scratch(
+        plaintext,
+        &mut ciphertext,
+        &mut public_scratch,
+        |out| {
+          out.fill(0);
+          Ok(())
+        },
+      ),
+      Err(RsaEncryptionError::EntropyUnavailable)
+    );
+    assert!(is_zero_unsigned_be(&ciphertext));
   }
 
   #[test]
@@ -10339,7 +10924,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
       .unwrap();
 
     let mut decrypted = vec![0xa5; key.signature_len()];
@@ -10376,7 +10961,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut pkcs1v15_ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut pkcs1v15_ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut pkcs1v15_ciphertext)
       .unwrap();
 
     let mut pkcs1v15_decrypted = vec![0xa5; key.signature_len()];
@@ -10510,7 +11095,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         let mut ciphertext = vec![0u8; key.signature_len()];
         key
           .public_key()
-          .encrypt_oaep_with_seed($profile, label, plaintext, &$seed, &mut ciphertext)
+          .diag_encrypt_oaep_with_seed($profile, label, plaintext, &$seed, &mut ciphertext)
           .unwrap();
 
         let mut out = vec![0u8; key.signature_len()];
@@ -10704,7 +11289,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(plaintext, &seed, &mut ciphertext)
       .unwrap();
     let mut out = vec![0u8; key.signature_len()];
     let decrypted_len = key
@@ -10740,7 +11325,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       key
         .public_key()
-        .encrypt_pkcs1v15_with_seed(plaintext, &zero_seed, &mut ciphertext),
+        .diag_encrypt_pkcs1v15_with_seed(plaintext, &zero_seed, &mut ciphertext),
       Err(RsaEncryptionError::InvalidLength)
     );
     assert!(is_zero_unsigned_be(&ciphertext));
@@ -11455,7 +12040,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
       .unwrap();
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
@@ -11475,7 +12060,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1v15_seed = vec![0x5a; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
       .unwrap();
     let decrypted_len = key
       .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
@@ -11704,7 +12289,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
       .unwrap();
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
@@ -11723,7 +12308,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1v15_seed = vec![0x3c; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
       .unwrap();
     let decrypted_len = key
       .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_factor_inverse, &mut decrypted)
@@ -11803,7 +12388,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let mut ciphertext = vec![0u8; key.signature_len()];
       key
         .public_key()
-        .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+        .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
         .unwrap();
       let mut decrypted = vec![0u8; key.signature_len()];
       let decrypted_len = key
@@ -11822,7 +12407,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       let pkcs1v15_seed = vec![0x69; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
       key
         .public_key()
-        .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+        .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
         .unwrap();
       let decrypted_len = key
         .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_factor_inverse, &mut decrypted)
@@ -11874,7 +12459,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         let mut ciphertext = vec![0u8; key.signature_len()];
         key
           .public_key()
-          .encrypt_oaep_with_seed($oaep_profile, label, $plaintext, &$seed, &mut ciphertext)
+          .diag_encrypt_oaep_with_seed($oaep_profile, label, $plaintext, &$seed, &mut ciphertext)
           .unwrap();
         let mut decrypted = vec![0u8; key.signature_len()];
         let decrypted_len = key
@@ -11886,7 +12471,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         let pkcs1v15_seed = vec![0x63; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
         key
           .public_key()
-          .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+          .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
           .unwrap();
         let decrypted_len = key.decrypt_pkcs1v15(&ciphertext, &mut decrypted).unwrap();
         assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
@@ -11962,7 +12547,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut ciphertext = vec![0u8; key.signature_len()];
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+      .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
       .unwrap();
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
@@ -11974,7 +12559,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1v15_seed = vec![0x64; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+      .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
       .unwrap();
     let decrypted_len = key
       .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut scratch)
@@ -13027,7 +13612,11 @@ bdb322e180a6ab522ee40a02a0daf41094a2938d39698ab16381ed4d3ddd01bd05a8aa9113d8\
 ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
 3e94bf239ee74517b71ec2464551f8174dbd0f3952ffb41070c754",
     );
-    let key = RsaPublicKey::from_pkcs1_der(&test_pkcs1_public_key(&modulus, &[0x01, 0x00, 0x01])).unwrap();
+    let key = RsaPublicKey::from_pkcs1_der_with_policy(
+      &test_pkcs1_public_key(&modulus, &[0x01, 0x00, 0x01]),
+      &RsaPublicKeyPolicy::legacy_verification(),
+    )
+    .unwrap();
     let mut out = vec![0u8; key.modulus().len()];
     let mut scratch = key.public_scratch();
 
@@ -13117,7 +13706,11 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
 
   #[test]
   fn x509_certificate_signature_helper_accepts_real_certificate_and_rejects_tamper() {
-    let issuer = RsaX509PublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
+    let issuer = RsaX509PublicKey::from_spki_der_with_policy(
+      &x509_certificate_fixture_public_key(),
+      &RsaPublicKeyPolicy::legacy_verification(),
+    )
+    .unwrap();
     let certificate = x509_pkcs1v15_certificate_fixture();
 
     assert!(issuer.verify_x509_certificate_signature_der(&certificate).is_ok());

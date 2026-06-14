@@ -86,6 +86,22 @@ fn field<'a>(value: &'a Value, name: &str) -> &'a str {
     .unwrap_or_else(|| panic!("missing string field `{name}`"))
 }
 
+fn public_key_from_wycheproof_spki(der: &[u8], key_size: u64, context: &str) -> RsaPublicKey {
+  if key_size < RsaPublicKeyPolicy::modern_verification().min_modulus_bits() as u64 {
+    RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).expect(context)
+  } else {
+    RsaPublicKey::from_spki_der(der).expect(context)
+  }
+}
+
+fn private_key_from_wycheproof_pkcs8(der: &[u8], key_size: u64, context: &str) -> RsaPrivateKey {
+  if key_size < RsaPublicKeyPolicy::modern_verification().min_modulus_bits() as u64 {
+    RsaPrivateKey::from_pkcs8_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).expect(context)
+  } else {
+    RsaPrivateKey::from_pkcs8_der(der).expect(context)
+  }
+}
+
 fn assert_pkcs1v15_wycheproof_vectors(
   json: &str,
   profile: RsaPkcs1v15Profile,
@@ -169,7 +185,7 @@ fn assert_pss_wycheproof_vectors(
     assert_eq!(group["mgfSha"].as_str(), Some(expected_sha));
     assert_eq!(group["sLen"].as_u64(), Some(expected_salt_len as u64));
     let public_key = hex_to_vec(field(group, "publicKeyDer"));
-    let key = RsaPublicKey::from_spki_der(&public_key).expect("Wycheproof RSA-PSS key must parse");
+    let key = public_key_from_wycheproof_spki(&public_key, expected_key_size, "Wycheproof RSA-PSS key must parse");
     let mut scratch = key.public_scratch();
 
     for test in test_cases(group) {
@@ -254,7 +270,11 @@ fn assert_oaep_wycheproof_vectors(
     assert_eq!(group["mgf"].as_str(), Some("MGF1"));
     assert_eq!(group["mgfSha"].as_str(), Some(expected_sha));
     let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
-    let key = RsaPrivateKey::from_pkcs8_der(&private_key_der).expect("Wycheproof OAEP private key must parse");
+    let key = private_key_from_wycheproof_pkcs8(
+      &private_key_der,
+      expected_key_size,
+      "Wycheproof OAEP private key must parse",
+    );
     let blinding_factor = fixed_width_one(key.public_key().modulus().len());
     let blinding_factor_inverse = fixed_width_one(key.public_key().modulus().len());
     let mut scratch = key.private_scratch();
@@ -406,7 +426,11 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
     assert_eq!(group["mgf"].as_str(), Some("MGF1"));
     assert_eq!(group["mgfSha"].as_str(), Some("SHA-1"));
     let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
-    let key = RsaPrivateKey::from_pkcs8_der(&private_key_der).expect("Wycheproof OAEP private key must parse");
+    let key = private_key_from_wycheproof_pkcs8(
+      &private_key_der,
+      expected_key_size,
+      "Wycheproof OAEP private key must parse",
+    );
     let blinding_factor = fixed_width_one(key.public_key().modulus().len());
     let blinding_factor_inverse = fixed_width_one(key.public_key().modulus().len());
     let mut scratch = key.private_scratch();
@@ -516,7 +540,11 @@ fn assert_rsaes_pkcs1v15_wycheproof_vectors(json: &str, expected_key_size: u64, 
     assert_eq!(group["type"].as_str(), Some("RsaesPkcs1Decrypt"));
     assert_eq!(group["keySize"].as_u64(), Some(expected_key_size));
     let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
-    let key = RsaPrivateKey::from_pkcs8_der(&private_key_der).expect("Wycheproof RSAES-PKCS1-v1_5 key must parse");
+    let key = private_key_from_wycheproof_pkcs8(
+      &private_key_der,
+      expected_key_size,
+      "Wycheproof RSAES-PKCS1-v1_5 key must parse",
+    );
     let blinding_factor = fixed_width_one(key.public_key().modulus().len());
     let blinding_factor_inverse = fixed_width_one(key.public_key().modulus().len());
     let mut scratch = key.private_scratch();

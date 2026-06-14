@@ -99,19 +99,24 @@ use rscrypto::Scrypt;
 Scrypt::verify_string(password, stored_phc)?;
 ```
 
-### PHC verify with policy bounds
+`verify_string` applies `ScryptVerifyPolicy::default()` before hashing, so PHC
+strings with excessive encoded CPU/memory cost or output length reject before
+allocating the requested work buffer.
 
-When the stored PHC string came from an untrusted source, an attacker-supplied huge `ln=` (memory cost) would DoS your server. rscrypto exposes a runtime-policy check:
+### Custom PHC verify policy
+
+Services with stricter local CPU or memory budgets can set explicit ceilings:
 
 ```rust
 // After
 use rscrypto::{Scrypt, ScryptVerifyPolicy};
-let policy = ScryptVerifyPolicy::default();         // OWASP Password Storage Cheat Sheet defaults
-// or: ScryptVerifyPolicy::new(max_log_n, max_r, max_p, max_output_len)
+let policy = ScryptVerifyPolicy::new(max_log_n, max_r, max_p, max_output_len);
 Scrypt::verify_string_with_policy(password, stored_phc, &policy)?;
 ```
 
-RustCrypto's `scrypt` has no equivalent policy gate — adding one externally requires parsing the PHC string with `password-hash`, rejecting high-cost cases, then re-validating. The built-in policy is a free hardening upgrade.
+RustCrypto's `scrypt` has no equivalent policy gate — adding one externally
+requires parsing the PHC string with `password-hash`, rejecting high-cost cases,
+then re-validating. The built-in default policy is a hardening upgrade.
 
 ## Notes
 
@@ -119,7 +124,7 @@ RustCrypto's `scrypt` has no equivalent policy gate — adding one externally re
 - **OWASP Password Storage Cheat Sheet defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32` — matches the sheet as checked on 2026-06-09. RustCrypto's `Params::default()` matches.
 - **`MIN_SALT_LEN` is policy, not enforcement.** rscrypto exposes `Scrypt::MIN_SALT_LEN = 16` as a guidance constant. Neither crate rejects shorter salts at hash time (RFC 7914 §12 test vectors include empty salts) — assert against the constant in your wrapper if you want enforcement.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings.
-- **Memory cost.** `Scrypt::hash` allocates `128 * r * N` bytes (default: ~128 MB at `log_n=17, r=8`). Use `ScryptVerifyPolicy::default()` to cap incoming PHC strings to OWASP-compliant bounds; otherwise an attacker submitting a `ln=24` PHC could request 16 GiB of allocation in your verify path.
+- **Memory cost.** `Scrypt::hash` allocates `128 * r * N` bytes (default: ~128 MB at `log_n=17, r=8`). `Scrypt::verify_string` caps incoming PHC strings with `ScryptVerifyPolicy::default()`; use `verify_string_unbounded` only for trusted migration/test-vector inputs.
 - **No streaming API.** Scrypt is fundamentally one-shot — both crates expose only stateless functions.
 - **`no_std` requires `alloc`.** Both crates need a heap for the working buffers (B, V, scratch). The deepest-embedded targets cannot run Scrypt — use `pbkdf2-hmac-sha256` with a high iteration count instead.
 - **Algorithm is identical.** Bit-equivalent at every parameter set tested in the harness, including the RFC 7914 §12 first test vector (empty password, empty salt, N=16, r=1, p=1, output=64).

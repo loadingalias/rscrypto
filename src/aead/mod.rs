@@ -12,17 +12,20 @@
 //! # Quick Start
 //!
 //! ```rust
-//! use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+//! # #[cfg(feature = "aes-gcm")]
+//! # {
+//! use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::NonceCounter};
 //!
-//! let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; 32]));
-//! let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+//! let cipher = Aes256Gcm::new(&Aes256GcmKey::from_bytes([0x11; 32]));
+//! let mut nonces = NonceCounter::<Aes256Gcm>::new(*b"sess");
 //!
-//! let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
-//! cipher.encrypt(&nonce, b"hdr", b"data", &mut sealed)?;
+//! let mut sealed = [0u8; 4 + Aes256Gcm::TAG_SIZE];
+//! let nonce = nonces.encrypt(&cipher, b"hdr", b"data", &mut sealed)?;
 //!
 //! let mut opened = [0u8; 4];
 //! cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened)?;
 //! assert_eq!(&opened, b"data");
+//! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -193,6 +196,31 @@ pub use polyval::diag_polyval_reduce_portable;
 #[cfg(feature = "xchacha20poly1305")]
 pub use xchacha20poly1305::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 
+/// AEAD nonce wrapper behavior shared by the typed nonce sizes.
+///
+/// Production encryption should issue a fresh nonce per message. Use
+/// `Aead::seal_random` when the `getrandom` feature is available, or
+/// `NonceCounter` for deterministic AES-GCM streams. Constructing nonces
+/// from fixed bytes is for protocols that already define nonce derivation and
+/// for test vectors.
+pub trait AeadNonce: Copy + Eq + fmt::Debug + AsRef<[u8]> {
+  /// Nonce length in bytes.
+  const LENGTH: usize;
+
+  /// Construct a nonce by filling its bytes with `fill`.
+  #[must_use]
+  fn generate(fill: impl FnOnce(&mut [u8])) -> Self;
+
+  /// Try to generate a random nonce from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns a getrandom error if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  fn try_random() -> Result<Self, getrandom::Error>;
+}
+
 macro_rules! define_nonce_type {
   ($name:ident, $len:expr, $doc:literal) => {
     #[doc = $doc]
@@ -299,6 +327,24 @@ macro_rules! define_nonce_type {
         getrandom::fill(&mut bytes).map(|()| Self(bytes))
       }
     }
+
+    impl AeadNonce for $name {
+      const LENGTH: usize = $len;
+
+      #[inline]
+      fn generate(fill: impl FnOnce(&mut [u8])) -> Self {
+        let mut bytes = [0u8; $len];
+        fill(&mut bytes);
+        Self(bytes)
+      }
+
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      #[inline]
+      fn try_random() -> Result<Self, getrandom::Error> {
+        $name::try_random()
+      }
+    }
   };
 }
 
@@ -401,6 +447,72 @@ impl From<AeadBufferError> for SealError {
   #[inline]
   fn from(value: AeadBufferError) -> Self {
     Self::Buffer(value)
+  }
+}
+
+/// AEAD sealing failure from OS random nonce generation or encryption.
+#[cfg(feature = "getrandom")]
+#[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RandomSealError {
+  /// Random nonce generation failed.
+  Random(getrandom::Error),
+  /// AEAD sealing itself failed.
+  Seal(SealError),
+}
+
+#[cfg(feature = "getrandom")]
+#[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+impl RandomSealError {
+  /// Construct a random-source error.
+  #[inline]
+  #[must_use]
+  pub const fn random(err: getrandom::Error) -> Self {
+    Self::Random(err)
+  }
+
+  /// Construct a sealing error.
+  #[inline]
+  #[must_use]
+  pub const fn seal(err: SealError) -> Self {
+    Self::Seal(err)
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl fmt::Display for RandomSealError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Random(err) => err.fmt(f),
+      Self::Seal(err) => err.fmt(f),
+    }
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl core::error::Error for RandomSealError {
+  fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+    match self {
+      Self::Random(err) => Some(err),
+      Self::Seal(err) => Some(err),
+    }
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl From<getrandom::Error> for RandomSealError {
+  #[inline]
+  fn from(value: getrandom::Error) -> Self {
+    Self::Random(value)
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl From<SealError> for RandomSealError {
+  #[inline]
+  fn from(value: SealError) -> Self {
+    Self::Seal(value)
   }
 }
 

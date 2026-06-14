@@ -38,33 +38,33 @@ define_aead_tag_type!(
 /// # Examples
 ///
 /// ```
-/// use rscrypto::{Aead, Aes128GcmSiv, Aes128GcmSivKey, aead::Nonce96};
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, Aes128GcmSiv, Aes128GcmSivKey};
 ///
 /// let key = Aes128GcmSivKey::from_bytes([0x42; 16]);
-/// let nonce = Nonce96::from_bytes([0x24; 12]);
 /// let cipher = Aes128GcmSiv::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"", &mut buf)?;
+/// let (nonce, tag) = cipher.seal_random_in_place(b"", &mut buf)?;
 /// cipher.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Tampering is reported as an opaque verification failure.
 ///
 /// ```
-/// use rscrypto::{
-///   Aead, Aes128GcmSiv, Aes128GcmSivKey,
-///   aead::{Nonce96, OpenError},
-/// };
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, Aes128GcmSiv, Aes128GcmSivKey, aead::OpenError};
 ///
 /// let key = Aes128GcmSivKey::from_bytes([0x42; 16]);
-/// let nonce = Nonce96::from_bytes([0x24; 12]);
 /// let cipher = Aes128GcmSiv::new(&key);
 ///
 /// let mut sealed = [0u8; 5 + Aes128GcmSiv::TAG_SIZE];
-/// cipher.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// let nonce = cipher.seal_random(b"", b"hello", &mut sealed)?;
 /// sealed[0] ^= 1;
 ///
 /// let mut opened = [0u8; 5];
@@ -72,6 +72,7 @@ define_aead_tag_type!(
 ///   cipher.decrypt(&nonce, b"", &sealed, &mut opened),
 ///   Err(OpenError::verification())
 /// );
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///

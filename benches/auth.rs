@@ -481,7 +481,8 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
       g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          Pbkdf2Sha256::derive_key(black_box(&password), black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          Pbkdf2Sha256::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
+            .unwrap();
           black_box(out[0])
         })
       });
@@ -559,7 +560,8 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
       g.bench_with_input(BenchmarkId::new("rscrypto-oneshot", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          Pbkdf2Sha256::derive_key(black_box(&password), black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          Pbkdf2Sha256::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
+            .unwrap();
           black_box(out[0])
         })
       });
@@ -632,7 +634,8 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
       g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          Pbkdf2Sha512::derive_key(black_box(&password), black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          Pbkdf2Sha512::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
+            .unwrap();
           black_box(out[0])
         })
       });

@@ -8,8 +8,8 @@ use std::alloc::System;
 
 use rsa::{BigUint, RsaPrivateKey as RustCryptoRsaPrivateKey, pkcs1::EncodeRsaPrivateKey};
 use rscrypto::{
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy,
-  RsaSignatureProfile, RsaX509PublicKey,
+  RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey,
+  RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
 };
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -117,6 +117,26 @@ fn sequence(value: &[u8]) -> Vec<u8> {
   tlv(0x30, value)
 }
 
+fn fill_rsa_random_with(byte: u8) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> {
+  move |out| {
+    out.fill(byte);
+    Ok(())
+  }
+}
+
+fn fill_rsa_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> + '_ {
+  let mut offset = 0usize;
+  move |out| {
+    let end = offset.checked_add(out.len()).ok_or(RsaEncryptionError::InvalidLength)?;
+    let Some(random) = bytes.get(offset..end) else {
+      return Err(RsaEncryptionError::InvalidLength);
+    };
+    out.copy_from_slice(random);
+    offset = end;
+    Ok(())
+  }
+}
+
 fn oid(value: &[u8]) -> Vec<u8> {
   tlv(0x06, value)
 }
@@ -170,9 +190,17 @@ fn spki_for_pkcs1_with_algorithm(pkcs1: &[u8], algorithm: &[u8]) -> Vec<u8> {
 }
 
 fn pss_algorithm_spki_from_rsa_encryption_spki(spki: &[u8]) -> Vec<u8> {
-  let public_key = RsaPublicKey::from_spki_der(spki).unwrap();
+  let public_key = legacy_public_key_from_spki(spki);
   let pkcs1 = pkcs1_from_public_key(&public_key);
   spki_for_pkcs1_with_algorithm(&pkcs1, &algorithm_identifier(ID_RSASSA_PSS_OID, None))
+}
+
+fn legacy_public_key_from_spki(spki: &[u8]) -> RsaPublicKey {
+  RsaPublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+}
+
+fn legacy_x509_public_key_from_spki(spki: &[u8]) -> RsaX509PublicKey {
+  RsaX509PublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
 }
 
 fn minimal_tbs_certificate(signature_algorithm_der: &[u8]) -> Vec<u8> {
@@ -343,7 +371,7 @@ fn allocation_count() -> usize {
 
 #[test]
 fn reused_scratch_rsa_operations_do_not_allocate() {
-  let key = RsaPublicKey::from_spki_der(&pss_spki()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_spki());
   let input = public_operation_input();
   let mut out = vec![0u8; key.modulus().len()];
 
@@ -360,6 +388,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   assert_eq!(allocation_count(), 0);
 
   let sig = pss_signature_sha256();
+  let pss_sha256 = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
   reset_allocations();
   key
     .verify_pss_with_scratch(RsaPssProfile::Sha256, MESSAGE_PSS, &sig, &mut scratch)
@@ -379,31 +408,31 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   key
-    .verify_jwt_alg_with_scratch("PS256", MESSAGE_PSS, &sig, &mut scratch)
+    .verify_expected_jwt_alg_with_scratch("PS256", "PS256", pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   key
-    .verify_cose_algorithm_id_with_scratch(-37, MESSAGE_PSS, &sig, &mut scratch)
+    .verify_expected_cose_algorithm_id_with_scratch(-37, -37, pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
   let seed = [0x42; 32];
   reset_allocations();
   key
-    .encrypt_oaep_with_seed_and_scratch(
+    .encrypt_oaep_with_random_fill_and_scratch(
       RsaOaepProfile::Sha256,
       b"allocation-oracle",
       b"scratch-backed OAEP encryption",
-      &seed,
       &mut out,
       &mut scratch,
+      fill_rsa_random_from(&seed),
     )
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
-  let x509_key = RsaX509PublicKey::from_spki_der(&pss_spki()).unwrap();
+  let x509_key = legacy_x509_public_key_from_spki(&pss_spki());
   let mut scratch = x509_key.public_key().public_scratch();
   reset_allocations();
   x509_key
@@ -413,12 +442,13 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   x509_key
-    .verify_tls13_signature_scheme_with_scratch(0x0804, MESSAGE_PSS, &sig, &mut scratch)
+    .verify_expected_tls13_signature_scheme_with_scratch(0x0804, 0x0804, pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
-  let key = RsaPublicKey::from_spki_der(&pkcs1v15_spki()).unwrap();
+  let key = legacy_public_key_from_spki(&pkcs1v15_spki());
   let sig = pkcs1v15_signature_sha256();
+  let pkcs1v15_sha256 = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
   let mut scratch = key.public_scratch();
   reset_allocations();
   key
@@ -439,26 +469,25 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   key
-    .verify_jwt_alg_with_scratch("RS256", MESSAGE_PKCS1V15, &sig, &mut scratch)
+    .verify_expected_jwt_alg_with_scratch("RS256", "RS256", pkcs1v15_sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   key
-    .verify_cose_algorithm_id_with_scratch(-257, MESSAGE_PKCS1V15, &sig, &mut scratch)
+    .verify_expected_cose_algorithm_id_with_scratch(-257, -257, pkcs1v15_sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
   let message = b"scratch-backed RSAES-PKCS1-v1_5 encryption";
-  let seed = vec![0x5d; key.modulus().len().strict_sub(message.len()).strict_sub(3)];
   let mut ciphertext = vec![0u8; key.modulus().len()];
   reset_allocations();
   key
-    .encrypt_pkcs1v15_with_seed_and_scratch(message, &seed, &mut ciphertext, &mut scratch)
+    .encrypt_pkcs1v15_with_random_fill_and_scratch(message, &mut ciphertext, &mut scratch, fill_rsa_random_with(0x5d))
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
-  let x509_key = RsaX509PublicKey::from_spki_der(&pkcs1v15_spki()).unwrap();
+  let x509_key = legacy_x509_public_key_from_spki(&pkcs1v15_spki());
   let mut scratch = x509_key.public_key().public_scratch();
   reset_allocations();
   x509_key
@@ -473,7 +502,14 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   x509_key
-    .verify_tls_certificate_signature_scheme_with_scratch(0x0401, MESSAGE_PKCS1V15, &sig, &mut scratch)
+    .verify_expected_tls_certificate_signature_scheme_with_scratch(
+      0x0401,
+      0x0401,
+      pkcs1v15_sha256,
+      MESSAGE_PKCS1V15,
+      &sig,
+      &mut scratch,
+    )
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
@@ -659,7 +695,13 @@ fn assert_private_scratch_operations_do_not_allocate() {
   let mut ciphertext = vec![0u8; key.signature_len()];
   key
     .public_key()
-    .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+    .encrypt_oaep_with_random_fill(
+      RsaOaepProfile::Sha256,
+      label,
+      plaintext,
+      &mut ciphertext,
+      fill_rsa_random_from(&seed),
+    )
     .unwrap();
 
   reset_allocations();
@@ -678,10 +720,9 @@ fn assert_private_scratch_operations_do_not_allocate() {
   assert_eq!(allocation_count(), 0);
 
   let pkcs1v15_plaintext = b"private scratch allocation RSAES-PKCS1-v1_5";
-  let pkcs1v15_seed = vec![0x5d; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
   key
     .public_key()
-    .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+    .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut ciphertext, fill_rsa_random_with(0x5d))
     .unwrap();
 
   reset_allocations();
@@ -745,7 +786,13 @@ fn assert_rng_private_scratch_operations_do_not_allocate() {
   let mut ciphertext = vec![0u8; key.signature_len()];
   key
     .public_key()
-    .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
+    .encrypt_oaep_with_random_fill(
+      RsaOaepProfile::Sha256,
+      label,
+      plaintext,
+      &mut ciphertext,
+      fill_rsa_random_from(&seed),
+    )
     .unwrap();
 
   reset_allocations();
@@ -756,10 +803,9 @@ fn assert_rng_private_scratch_operations_do_not_allocate() {
   assert_eq!(allocation_count(), 0);
 
   let pkcs1v15_plaintext = b"rng private scratch allocation RSAES-PKCS1-v1_5";
-  let pkcs1v15_seed = vec![0x5d; key.signature_len().strict_sub(pkcs1v15_plaintext.len()).strict_sub(3)];
   key
     .public_key()
-    .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
+    .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut ciphertext, fill_rsa_random_with(0x5d))
     .unwrap();
 
   reset_allocations();
@@ -771,12 +817,12 @@ fn assert_rng_private_scratch_operations_do_not_allocate() {
 }
 
 fn assert_one_shot_protocol_rejects_fail_before_scratch_allocation() {
-  let key = RsaPublicKey::from_spki_der(&pss_spki()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_spki());
   let sig = pss_signature_sha256();
   let pkcs1_sig = pkcs1v15_signature_sha256();
-  let x509_key = RsaX509PublicKey::from_spki_der(&pss_spki()).unwrap();
+  let x509_key = legacy_x509_public_key_from_spki(&pss_spki());
   let pss_algorithm_x509_key =
-    RsaX509PublicKey::from_spki_der(&pss_algorithm_spki_from_rsa_encryption_spki(&pss_spki())).unwrap();
+    legacy_x509_public_key_from_spki(&pss_algorithm_spki_from_rsa_encryption_spki(&pss_spki()));
 
   reset_allocations();
   assert!(key.verify_jwt_alg("none", MESSAGE_PSS, &sig).is_err());

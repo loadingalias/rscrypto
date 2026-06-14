@@ -31,7 +31,7 @@ rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "ge
 | `RsaPrivateKey` | `RsaPrivateKey` |
 | PKCS#1 / PKCS#8 / SPKI import-export traits | inherent DER import-export methods |
 | `Pss`, `Pkcs1v15Sign`, `Oaep` | `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile` |
-| caller-managed RNG | `getrandom`-seeded internal randomness for generated values, or explicit deterministic test hooks |
+| caller-managed RNG | `getrandom` wrappers, or encryption `*_with_random_fill` methods for no-std callers |
 
 ## Import Keys
 
@@ -52,7 +52,10 @@ let public = private.public_key();
 ```
 
 For public keys, use `RsaPublicKey::from_spki_der()` for SPKI DER and
-`RsaPublicKey::from_pkcs1_der()` for PKCS#1 DER.
+`RsaPublicKey::from_pkcs1_der()` for PKCS#1 DER. Default imports enforce the
+modern policy: RSA-3072 through RSA-8192 with exponent `65537`. For deployed
+RSA-2048 compatibility keys, import with
+`RsaPublicKeyPolicy::legacy_verification()` and the `*_with_policy` parser.
 
 ## Generate Keys
 
@@ -148,6 +151,12 @@ let mut plaintext_out = vec![0u8; ciphertext.len()];
 let len = private_key.decrypt_oaep(RsaOaepProfile::Sha256, b"label", &ciphertext, &mut plaintext_out)?;
 plaintext_out.truncate(len);
 ```
+
+Without `getrandom`, use `RsaPublicKey::encrypt_oaep_with_random_fill` or
+`encrypt_pkcs1v15_with_random_fill` and pass a closure backed by your platform
+RNG. The closure must write fresh unpredictable bytes on every call. Raw
+encryption seed hooks are hidden diagnostics for tests and protocol harnesses,
+not normal application API.
 
 ## Notes
 

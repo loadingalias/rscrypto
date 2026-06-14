@@ -12,9 +12,9 @@ use rscrypto::{
   Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey,
   EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256,
-  HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
-  RsaPssProfile, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
+  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512,
+  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams,
+  SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
   traits::ct,
@@ -101,6 +101,10 @@ unsafe fn write_array<const N: usize>(ptr: *mut u8, value: &[u8; N]) -> bool {
   true
 }
 
+fn rsa_ct_fixture_key(pkcs8_der: &[u8]) -> Option<RsaPrivateKey> {
+  RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8_der, &RsaPublicKeyPolicy::legacy_verification()).ok()
+}
+
 /// Constant-time equality harness.
 #[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_constant_time_eq(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> u8 {
@@ -139,6 +143,7 @@ pub extern "C" fn ct_entry_hmac_sha256_verify(
     return STATUS_ERR;
   };
 
+  let expected_tag = HmacSha256Tag::from_bytes(expected_tag);
   HmacSha256::verify_tag(key, data, &expected_tag)
     .map(|()| STATUS_OK)
     .unwrap_or(STATUS_ERR)
@@ -374,7 +379,7 @@ pub extern "C" fn ct_entry_pbkdf2_sha256_verify(
 }
 
 macro_rules! fixed_tag_verify_entry {
-  ($name:ident, $ty:ty, $tag_len:literal) => {
+  ($name:ident, $ty:ty, $tag_ty:ty, $tag_len:literal) => {
     #[unsafe(no_mangle)]
     pub extern "C" fn $name(
       key: *const u8,
@@ -396,6 +401,7 @@ macro_rules! fixed_tag_verify_entry {
         return STATUS_ERR;
       };
 
+      let expected_tag = <$tag_ty>::from_bytes(expected_tag);
       <$ty>::verify_tag(key, data, &expected_tag)
         .map(|()| STATUS_OK)
         .unwrap_or(STATUS_ERR)
@@ -403,8 +409,8 @@ macro_rules! fixed_tag_verify_entry {
   };
 }
 
-fixed_tag_verify_entry!(ct_entry_hmac_sha384_verify, HmacSha384, 48);
-fixed_tag_verify_entry!(ct_entry_hmac_sha512_verify, HmacSha512, 64);
+fixed_tag_verify_entry!(ct_entry_hmac_sha384_verify, HmacSha384, HmacSha384Tag, 48);
+fixed_tag_verify_entry!(ct_entry_hmac_sha512_verify, HmacSha512, HmacSha512Tag, 64);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_secret_bytes32_eq(a: *const u8, b: *const u8) -> u8 {
@@ -868,7 +874,7 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
     return STATUS_ERR;
   };
 
-  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
     return STATUS_ERR;
   };
   let mut scratch = key.private_scratch();
@@ -925,7 +931,7 @@ pub extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
     return STATUS_ERR;
   };
 
-  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
     return STATUS_ERR;
   };
   let mut scratch = key.private_scratch();
@@ -983,7 +989,7 @@ pub extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
     return usize::MAX;
   };
 
-  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
     return usize::MAX;
   };
   let mut scratch = key.private_scratch();
@@ -1034,7 +1040,7 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
     return usize::MAX;
   };
 
-  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
     return usize::MAX;
   };
   let mut scratch = key.private_scratch();
@@ -1065,7 +1071,7 @@ pub extern "C" fn ct_entry_rsa_private_key_pkcs8_roundtrip(
     return usize::MAX;
   };
 
-  let Ok(key) = RsaPrivateKey::from_pkcs8_der(pkcs8_der) else {
+  let Some(key) = rsa_ct_fixture_key(pkcs8_der) else {
     return usize::MAX;
   };
   let der = key.to_pkcs8_der();

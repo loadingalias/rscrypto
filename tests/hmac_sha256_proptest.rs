@@ -18,7 +18,7 @@ proptest! {
     oracle.update(&data);
     let expected = oracle.finalize().into_bytes();
 
-    prop_assert_eq!(&ours[..], expected.as_slice());
+    prop_assert_eq!(ours.as_slice(), expected.as_slice());
   }
 
   #[test]

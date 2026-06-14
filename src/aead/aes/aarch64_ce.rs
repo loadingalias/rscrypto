@@ -5,7 +5,7 @@ use core::arch::aarch64::*;
 mod asm;
 
 /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[repr(C, align(64))]
 pub(in crate::aead) struct CeRoundKeys {
   rk: [uint8x16_t; 15],
@@ -18,6 +18,12 @@ impl CeRoundKeys {
     // Reinterpreting as a byte slice for volatile zeroization is sound.
     let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 15usize.strict_mul(16)) };
     crate::traits::ct::zeroize(bytes);
+  }
+}
+
+impl Drop for CeRoundKeys {
+  fn drop(&mut self) {
+    self.zeroize();
   }
 }
 
@@ -1394,7 +1400,7 @@ pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
 /// AES-128-GCM-SIV path in `aes128gcmsiv.rs` can hold these round keys
 /// across the `#[target_feature(enable = "aes,neon")]` scope via
 /// `aes::aarch64_expand_key_128_inline` / `aes::aarch64_encrypt_block_128_inline`.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[repr(C, align(64))]
 pub(in crate::aead) struct Ce128RoundKeys {
   rk: [uint8x16_t; 11],
@@ -1406,6 +1412,12 @@ impl Ce128RoundKeys {
     // SAFETY: `self.rk` is a valid, aligned, fully-initialized [uint8x16_t; 11].
     let bytes = unsafe { core::slice::from_raw_parts_mut(self.rk.as_mut_ptr().cast::<u8>(), 11usize.strict_mul(16)) };
     crate::traits::ct::zeroize(bytes);
+  }
+}
+
+impl Drop for Ce128RoundKeys {
+  fn drop(&mut self) {
+    self.zeroize();
   }
 }
 

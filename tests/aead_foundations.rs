@@ -1,3 +1,5 @@
+#[cfg(all(feature = "aead", feature = "getrandom"))]
+use rscrypto::aead::{RandomSealError, SealError};
 #[cfg(feature = "aead")]
 use rscrypto::{
   Aead, Aegis256, Aegis256Key, Aegis256Tag, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag,
@@ -36,6 +38,54 @@ fn aead_encrypt_and_decrypt_helpers_round_trip() {
   aead.decrypt(&nonce, aad, &sealed, &mut opened).unwrap();
 
   assert_eq!(opened, plaintext);
+}
+
+#[test]
+#[cfg(all(feature = "aead", feature = "getrandom"))]
+fn aead_seal_random_issues_fresh_nonces_and_round_trips() {
+  let aad = b"header";
+  let aead = fixture_cipher();
+
+  let mut sealed_a = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
+  let nonce_a = aead.seal_random(aad, b"hello world!", &mut sealed_a).unwrap();
+
+  let mut sealed_b = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
+  let nonce_b = aead.seal_random(aad, b"hello world!", &mut sealed_b).unwrap();
+
+  assert_ne!(nonce_a, nonce_b, "successive random seals must not reuse a nonce");
+
+  let mut opened = [0u8; 12];
+  aead.decrypt(&nonce_a, aad, &sealed_a, &mut opened).unwrap();
+  assert_eq!(&opened, b"hello world!");
+}
+
+#[test]
+#[cfg(all(feature = "aead", feature = "getrandom"))]
+fn aead_seal_random_in_place_returns_nonce_and_tag_for_open() {
+  let aad = b"header";
+  let aead = fixture_cipher();
+  let mut buffer = *b"detached";
+
+  let (nonce, tag) = aead.seal_random_in_place(aad, &mut buffer).unwrap();
+  assert_ne!(&buffer, b"detached");
+
+  aead.decrypt_in_place(&nonce, aad, &mut buffer, &tag).unwrap();
+  assert_eq!(&buffer, b"detached");
+}
+
+#[test]
+#[cfg(all(feature = "aead", feature = "getrandom"))]
+fn aead_seal_random_maps_buffer_errors_without_mutating_output() {
+  let aead = fixture_cipher();
+  let mut out = [0xA5; 3];
+
+  let err = aead.seal_random(b"", b"data", &mut out).unwrap_err();
+
+  assert_eq!(err, RandomSealError::seal(SealError::buffer()));
+  assert_eq!(
+    out, [0xA5; 3],
+    "combined random seal must preserve encrypt() buffer-shape failure behavior"
+  );
 }
 
 #[test]

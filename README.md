@@ -91,6 +91,10 @@ fn verify_release_signature(public_key_der: &[u8], message: &[u8], signature: &[
 }
 ```
 
+Default RSA imports accept modern verification keys (RSA-3072 through RSA-8192,
+exponent `65537`). RSA-2048 compatibility imports must opt in with
+`RsaPublicKeyPolicy::legacy_verification()` and the `*_with_policy` parser.
+
 For repeated verification with the same key, allocate scratch once:
 
 ```rust
@@ -115,7 +119,7 @@ fn verify_batch(public_key_der: &[u8], signed_messages: &[(&[u8], &[u8])]) -> bo
 }
 ```
 
-Enable `getrandom` for RSA key gen, signing salt/blinding, OAEP encryption randomness, and private-op blinding. RSA key generation uses `getrandom` to seed its key-generation HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
+Enable `getrandom` for RSA key gen, signing salt/blinding, encryption randomness, and private-op blinding. no-std RSA encryption callers can use the `*_with_random_fill` methods with a platform RNG. RSA key generation uses `getrandom` to seed its key-generation HMAC_DRBG, then follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
 
 ```toml
 [dependencies]
@@ -158,29 +162,32 @@ caller-blinded signing APIs.
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["chacha20poly1305"] }
+rscrypto = { version = "0.4.0", default-features = false, features = ["chacha20poly1305", "getrandom"] }
 ```
 
 ```rust
-use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
 
 let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
-let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
 let cipher = ChaCha20Poly1305::new(&key);
 
 let aad = b"transfer:v1";
-let mut message = *b"pay bob 10";
-
-let tag = cipher
-  .encrypt_in_place(&nonce, aad, &mut message)
+let mut sealed = [0u8; 10 + ChaCha20Poly1305::TAG_SIZE];
+let nonce = cipher
+  .seal_random(aad, b"pay bob 10", &mut sealed)
   .expect("encryption succeeds");
 
+let mut message = [0u8; 10];
 cipher
-  .decrypt_in_place(&nonce, aad, &mut message, &tag)
+  .decrypt(&nonce, aad, &sealed, &mut message)
   .expect("authentication succeeds");
 
 assert_eq!(&message, b"pay bob 10");
 ```
+
+For high-volume AES-GCM streams, use `aead::NonceCounter` instead of random
+96-bit nonces. It issues a monotonic nonce per seal and refuses to run past the
+deterministic invocation budget.
 
 ## Hash Passwords
 
@@ -190,19 +197,14 @@ rscrypto = { version = "0.4.0", default-features = false, features = ["argon2", 
 ```
 
 ```rust
-use rscrypto::{Argon2Params, Argon2VerifyPolicy, Argon2id};
+use rscrypto::{Argon2Params, Argon2id};
 
 let password = b"correct horse battery staple";
 let params = Argon2Params::new().build().expect("valid Argon2 params");
 let encoded = Argon2id::hash_string(&params, password).expect("password hash created");
 
 assert!(
-  Argon2id::verify_string_with_policy(
-    password,
-    &encoded,
-    &Argon2VerifyPolicy::default(),
-  )
-  .is_ok()
+  Argon2id::verify_string(password, &encoded).is_ok()
 );
 ```
 

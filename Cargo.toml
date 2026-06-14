@@ -148,11 +148,10 @@ proptest = "^1.11.0"
 
 # Oracles
 crc = "3.4.0"
-crc-fast = "1.10.0"
+crc-fast = { version = "1.10.0", default-features = false, features = ["std"] }
 crc32c = "0.6.8"
 crc32fast = "1.5.0"
 crc64fast = "1.1.0"
-crc64fast-nvme = "1.2.1"
 ascon-hash = "0.4.0"
 argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }
 blake3 = { version = "1.8.5", default-features = false, features = ["std", "rayon"] }
@@ -192,7 +191,7 @@ bench = false
 
 [[example]]
 name = "basic"
-required-features = ["full"]
+required-features = ["full", "getrandom"]
 
 [[example]]
 name = "introspect"

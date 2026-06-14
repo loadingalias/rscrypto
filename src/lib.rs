@@ -54,16 +54,20 @@ assert_eq!(h.finalize(), digest);
 # AEAD
 
 ```rust
-use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+# #[cfg(feature = "getrandom")]
+# {
+use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
 
 let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
-let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
 let cipher = ChaCha20Poly1305::new(&key);
 
-let mut buffer = *b"data";
-let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer)?;
-cipher.decrypt_in_place(&nonce, b"aad", &mut buffer, &tag)?;
-assert_eq!(&buffer, b"data");
+let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
+let nonce = cipher.seal_random(b"aad", b"data", &mut sealed)?;
+
+let mut opened = [0u8; 4];
+cipher.decrypt(&nonce, b"aad", &sealed, &mut opened)?;
+assert_eq!(&opened, b"data");
+# }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 "#
@@ -345,9 +349,9 @@ pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signat
 #[cfg(feature = "hkdf")]
 pub use auth::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
-pub use auth::{HmacSha256, HmacSha384, HmacSha512};
+pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(feature = "pbkdf2")]
-pub use auth::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
+pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(feature = "rsa")]
 pub use auth::{
   RsaEncryptionError, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile,

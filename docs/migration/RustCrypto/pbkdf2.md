@@ -1,6 +1,6 @@
 # Migration: `pbkdf2` (RustCrypto) → `rscrypto`
 
-> Replace the free function `pbkdf2_hmac::<Sha256>(password, salt, iters, &mut out)` with `Pbkdf2Sha256::derive_key_array::<N>(password, salt, iters)?`. Adds a fallible result (rejects 0 iterations and over-long output), a stateful precompute when you derive multiple keys from the same password, and a constant-time `verify_password` helper.
+> Replace the free function `pbkdf2_hmac::<Sha256>(password, salt, iters, &mut out)` with `Pbkdf2Sha256::derive_key_array::<N>(password, salt, iters)?`. The password helpers enforce the current PBKDF2 iteration and salt floors by default, while `*_primitive` APIs remain available for RFC vectors and legacy compatibility.
 
 Verified against `pbkdf2 = "0.13.0"` and the `rscrypto` 0.4.0 line.
 Evidence: `tests/pbkdf2_kat_vectors.rs`, `tests/pbkdf2_differential.rs`, and `tests/pbkdf2_wycheproof.rs`.
@@ -56,7 +56,7 @@ pbkdf2_hmac::<Sha256>(b"password", b"salt-16-bytes!!!", 600_000, &mut okm);
 use rscrypto::Pbkdf2Sha256;
 let mut okm = [0u8; 32];
 Pbkdf2Sha256::derive_key(b"password", b"salt-16-bytes!!!", 600_000, &mut okm)?;
-// rejects 0 iterations and outputs > (2^32 - 1) * hLen
+// rejects weak iteration counts, short salts, and outputs > (2^32 - 1) * hLen
 ```
 
 Fixed-size convenience:
@@ -64,7 +64,7 @@ Fixed-size convenience:
 ```rust
 // After
 use rscrypto::Pbkdf2Sha256;
-let key: [u8; 32] = Pbkdf2Sha256::derive_key_array(b"password", b"salt", 600_000)?;
+let key: [u8; 32] = Pbkdf2Sha256::derive_key_array(b"password", b"salt-16-bytes!!!", 600_000)?;
 ```
 
 ### Stateful: derive multiple keys from one password
@@ -75,8 +75,10 @@ When you derive several keys from the same password (e.g., encryption key + MAC 
 // After
 use rscrypto::Pbkdf2Sha256;
 let state = Pbkdf2Sha256::new(b"password");
-let k_enc: [u8; 32] = state.derive_array(b"salt-enc", 600_000)?;
-let k_mac: [u8; 32] = state.derive_array(b"salt-mac", 600_000)?;
+let enc_params = Pbkdf2Sha256::params(b"salt-enc-16-byte", 600_000)?;
+let mac_params = Pbkdf2Sha256::params(b"salt-mac-16-byte", 600_000)?;
+let k_enc: [u8; 32] = state.derive_array_with_params(enc_params)?;
+let k_mac: [u8; 32] = state.derive_array_with_params(mac_params)?;
 ```
 
 `pbkdf2 = "0.13"` does not expose the precompute as a public type — every `pbkdf2_hmac` call rebuilds the schedule. Migrating to `Pbkdf2Sha256::new(...)` is a free perf win for multi-key derivations.
@@ -100,13 +102,14 @@ Pbkdf2Sha256::verify_password(submitted_password, &stored_salt, stored_iters, &s
 // Ok(()) on match, Err(VerificationError) on mismatch — both via constant-time compare
 ```
 
-Drop the `subtle` dependency for the verify path. The stateful form is `state.verify(salt, iters, &expected)`.
+Drop the `subtle` dependency for the verify path. The stateful form is `state.verify(salt, iters, &expected)`, which applies the same default policy.
 
 ## Notes
 
 - **No PHC string format.** Both crates compute raw bytes. If you store `$pbkdf2-sha256$i=600000$salt$hash`-style PHC strings, use `pbkdf2::password_hash` (RustCrypto) or rscrypto's `phc-strings` feature with `Pbkdf2*` (forthcoming integration). For now, the raw-bytes path is byte-equivalent and storing the parts separately works.
+- **Password helpers reject weak parameters.** `derive_key`, `derive_key_array`, `verify_password`, and stateful `verify` enforce the type-specific minimum iteration count and a 16-byte salt by default. `Pbkdf2Sha256::derive_key_primitive` / `verify_password_primitive` preserve raw PBKDF2 behavior for test vectors and explicit migrations.
 - **Rejects zero iterations.** `pbkdf2 = "0.13"` will silently run zero rounds and return the salt-derived initial state. rscrypto returns `Err(Pbkdf2Error::InvalidIterations)`. If you have legacy callers that pass 0 (presumably as a typo), this is a hard catch — exactly what you want.
 - **Output length cap (RFC 8018 §5.2 step 1).** PBKDF2 limits output to `(2^32 - 1) * hLen`. `pbkdf2` does not check; rscrypto returns `Err(Pbkdf2Error::OutputTooLong)`. The cap is in the gigabytes — only relevant for adversarial inputs.
-- **Minimum salt length.** rscrypto exposes `Pbkdf2Sha256::MIN_SALT_LEN = 16` as a guidance constant; not enforced at runtime (RFC 8018 §4 recommends at least 8 bytes; the OWASP Password Storage Cheat Sheet recommends 16). Use it as a `const` check in your wrapper.
+- **Policy override.** Use `Pbkdf2VerifyPolicy` and `params_with_policy` only when you have a deliberate migration policy. This keeps legacy acceptance explicit instead of making low-cost password verification the default.
 - **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-06-09. Bump these as the OWASP cheat sheet bumps; rscrypto will track.
 - **`no_std`.** Both crates work in `no_std`.

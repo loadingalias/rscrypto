@@ -1,7 +1,7 @@
 //! CRC-64 property tests: cross-library validation.
 //!
 //! These tests validate our CRC-64 implementations against:
-//! 1. The `crc64fast` and `crc64fast-nvme` crates as external references
+//! 1. The `crc64fast` crate as an external CRC-64/XZ reference
 //! 2. The `crc-fast` crate as another external reference
 
 // Proptest uses getcwd() which fails under Miri isolation.
@@ -10,7 +10,6 @@
 
 use crc_fast::CrcAlgorithm;
 use crc64fast as ref_crc64fast;
-use crc64fast_nvme as ref_crc64fast_nvme;
 use proptest::prelude::*;
 use rscrypto::{Checksum, ChecksumCombine, Crc64, Crc64Nvme};
 
@@ -25,31 +24,9 @@ proptest! {
   }
 
   #[test]
-  fn crc64_nvme_matches_crc64fast_nvme(data in proptest::collection::vec(any::<u8>(), 0..=4096)) {
-    let ours = Crc64Nvme::checksum(&data);
-    let mut digest = ref_crc64fast_nvme::Digest::new();
-    digest.write(&data);
-    let reference = digest.sum64();
-    prop_assert_eq!(ours, reference);
-  }
-
-  #[test]
   fn crc64_xz_streaming_matches_crc64fast(data in proptest::collection::vec(any::<u8>(), 0..=4096), chunk in 1usize..=257) {
     let mut ours = Crc64::new();
     let mut reference = ref_crc64fast::Digest::new();
-
-    for part in data.chunks(chunk) {
-      ours.update(part);
-      reference.write(part);
-    }
-
-    prop_assert_eq!(ours.finalize(), reference.sum64());
-  }
-
-  #[test]
-  fn crc64_nvme_streaming_matches_crc64fast_nvme(data in proptest::collection::vec(any::<u8>(), 0..=4096), chunk in 1usize..=257) {
-    let mut ours = Crc64Nvme::new();
-    let mut reference = ref_crc64fast_nvme::Digest::new();
 
     for part in data.chunks(chunk) {
       ours.update(part);

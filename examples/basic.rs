@@ -1,13 +1,13 @@
 //! Basic `rscrypto` usage across checksums, digests, MACs, KDFs, XOFs, fast hashes, AEAD,
 //! hex formatting, and I/O adapters.
 //!
-//! Run with: `cargo run --example basic --features full`
+//! Run with: `cargo run --example basic --features full,getrandom`
 
 use std::io::{Cursor, Read, Write};
 
 use rscrypto::{
-  Blake3, ChaCha20Poly1305, ChaCha20Poly1305Key, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey, FastHash,
-  HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3, aead::Nonce96,
+  Aead, Blake3, ChaCha20Poly1305, ChaCha20Poly1305Key, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey,
+  FastHash, HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3, aead::Nonce96,
 };
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
@@ -86,11 +86,10 @@ fn auth_api() -> Result<(), Box<dyn core::error::Error>> {
   let mut mac = HmacSha256::new(key);
   mac.update(b"hello ");
   mac.update(b"world");
-  assert_eq!(mac.finalize(), tag);
   assert!(mac.verify(&tag).is_ok());
   mac.reset();
   mac.update(data);
-  assert_eq!(mac.finalize(), tag);
+  assert!(mac.verify(&tag).is_ok());
 
   let hkdf = HkdfSha256::new(b"salt", b"input key material");
   let mut okm = [0u8; 42];
@@ -99,7 +98,7 @@ fn auth_api() -> Result<(), Box<dyn core::error::Error>> {
   let oneshot = HkdfSha256::derive_array::<42>(b"salt", b"input key material", b"context")?;
   assert_eq!(okm, oneshot);
 
-  println!("HMAC-SHA256 tag size = {} bytes", tag.len());
+  println!("HMAC-SHA256 tag size = {} bytes", tag.as_slice().len());
   println!("HKDF-SHA256 output   = {} bytes\n", okm.len());
 
   Ok(())
@@ -110,17 +109,16 @@ fn aead_api() -> Result<(), Box<dyn core::error::Error>> {
   println!("AEAD\n");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
-  let nonce = Nonce96::from_bytes([0x22; 12]);
   let aead = ChaCha20Poly1305::new(&key);
 
-  let mut buf = *b"hello";
-  let tag = aead.encrypt_in_place(&nonce, b"", &mut buf)?;
-  assert_ne!(&buf, b"hello");
-  aead.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
-  assert_eq!(&buf, b"hello");
+  let mut sealed = [0u8; 5 + ChaCha20Poly1305::TAG_SIZE];
+  let nonce = aead.seal_random(b"", b"hello", &mut sealed)?;
+
+  let mut opened = [0u8; 5];
+  aead.decrypt(&nonce, b"", &sealed, &mut opened)?;
+  assert_eq!(&opened, b"hello");
 
   println!("ChaCha20-Poly1305 round-trip succeeded");
-  println!("  tag = {tag}");
   println!("  nonce = {nonce}\n");
 
   Ok(())

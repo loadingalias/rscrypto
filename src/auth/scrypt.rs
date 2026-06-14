@@ -313,10 +313,10 @@ impl ScryptParams {
 
 /// Operational limits for verifying scrypt PHC strings from untrusted storage.
 ///
-/// PHC strings encode their own CPU/memory parameters and output length. Use
-/// `Scrypt::verify_string_with_policy` when those encoded parameters can be
-/// controlled by another tenant, database row, network peer, or migration
-/// input.
+/// PHC strings encode their own CPU/memory parameters and output length.
+/// `Scrypt::verify_string` applies the default policy. Use
+/// `Scrypt::verify_string_with_policy` when a service needs tighter or looser
+/// deployment ceilings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScryptVerifyPolicy {
   /// Maximum encoded `log_n` value.
@@ -1131,13 +1131,31 @@ impl Scrypt {
   ///
   /// # Errors
   ///
-  /// Returns [`VerificationError`] on any mismatch, malformed string, or
-  /// parameter error. Errors are intentionally opaque — callers needing
-  /// to distinguish parse failures should use
+  /// Returns [`VerificationError`] on any mismatch, malformed string,
+  /// parameter error, or default-policy violation. Errors are intentionally
+  /// opaque — callers needing to distinguish parse failures should use
   /// [`Scrypt::decode_string`].
   #[cfg(feature = "phc-strings")]
   #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
   pub fn verify_string(password: &[u8], encoded: &str) -> Result<(), VerificationError> {
+    Self::verify_string_with_policy(password, encoded, &ScryptVerifyPolicy::default())
+  }
+
+  /// Verify `password` against a PHC-encoded hash without cost bounds.
+  ///
+  /// This compatibility helper accepts the encoded CPU/memory parameters and
+  /// output length as long as the PHC string itself is structurally valid. Use
+  /// it only for trusted local migration inputs or test-vector harnesses. For
+  /// stored password verification, prefer [`verify_string`](Self::verify_string)
+  /// or [`verify_string_with_policy`](Self::verify_string_with_policy).
+  ///
+  /// # Errors
+  ///
+  /// Returns [`VerificationError`] on any mismatch, malformed string, or
+  /// parameter error.
+  #[cfg(feature = "phc-strings")]
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_string_unbounded(password: &[u8], encoded: &str) -> Result<(), VerificationError> {
     Self::verify_string_with_policy(
       password,
       encoded,
@@ -1613,7 +1631,7 @@ mod tests {
 
   #[cfg(feature = "phc-strings")]
   mod phc_tests {
-    use alloc::vec;
+    use alloc::{format, vec};
 
     use super::*;
     use crate::auth::phc::PhcError;
@@ -1629,7 +1647,20 @@ mod tests {
       let encoded = Scrypt::hash_string_with_salt(&params, b"password", &salt).unwrap();
       assert!(encoded.starts_with("$scrypt$ln=4,r=1,p=1$"));
       assert!(Scrypt::verify_string(b"password", &encoded).is_ok());
+      assert!(Scrypt::verify_string_unbounded(b"password", &encoded).is_ok());
       assert!(Scrypt::verify_string(b"wrongpassword", &encoded).is_err());
+    }
+
+    #[test]
+    fn verify_string_default_policy_rejects_oversized_scrypt_costs() {
+      let params = small_params();
+      let salt = [0xA0u8; 16];
+      let encoded = Scrypt::hash_string_with_salt(&params, b"password", &salt).unwrap();
+      let too_much_log_n = ScryptVerifyPolicy::default().max_log_n.strict_add(1);
+      let expensive = encoded.replace("ln=4", &format!("ln={too_much_log_n}"));
+
+      assert!(Scrypt::decode_string(&expensive).is_ok());
+      assert!(Scrypt::verify_string(b"password", &expensive).is_err());
     }
 
     #[test]

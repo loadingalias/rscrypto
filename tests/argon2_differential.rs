@@ -278,7 +278,8 @@ mod phc_roundtrip {
         .build()
         .unwrap();
       let encoded = Argon2id::hash_string_with_salt(&params, &password, &salt).unwrap();
-      prop_assert!(Argon2id::verify_string(&password, &encoded).is_ok());
+      // This property intentionally varies policy-controlled PHC costs.
+      prop_assert!(Argon2id::verify_string_unbounded(&password, &encoded).is_ok());
     }
   }
 }

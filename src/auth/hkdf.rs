@@ -124,7 +124,7 @@ impl HkdfSha256 {
   pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
     let zero_salt = [0u8; SHA256_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha256::mac(salt, input_key_material);
+    let prk = HmacSha256::mac(salt, input_key_material).to_bytes();
 
     let compress = sha256_dispatch::compress_dispatch().select(0);
 
@@ -369,7 +369,7 @@ impl HkdfSha384 {
   pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
     let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
-    let prk = HmacSha384::mac(salt, input_key_material);
+    let prk = HmacSha384::mac(salt, input_key_material).to_bytes();
 
     let compress = sha384_dispatch::compress_dispatch().select(0);
 

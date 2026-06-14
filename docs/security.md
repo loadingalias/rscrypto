@@ -62,28 +62,37 @@ error if platform entropy fails.
 for tests, examples, and applications where panic-on-entropy-failure is an
 acceptable policy.
 
-ECDSA deterministic signing does not use OS randomness. ECDSA key generation and
-caller-blinded signing use caller-supplied byte-filling closures. RSA key
-generation and OS-backed RSA private-operation blinding require the `getrandom`
-feature.
+ECDSA deterministic signing does not use OS randomness. ECDSA key generation,
+caller-blinded signing, and no-std RSA encryption can use caller-supplied
+byte-filling closures. RSA key generation and OS-backed RSA private-operation
+blinding require the `getrandom` feature. RSA encryption seed hooks are hidden
+diagnostic/test-vector APIs; production encryption should use `getrandom` or a
+fresh random-fill closure.
 
 ## Password Hash Verification
 
 PHC strings encode their own cost parameters. If encoded password hashes can
 come from untrusted storage, tenant-controlled rows, network peers, or migration
-input, use the policy-aware verification APIs:
+input, use the bounded verification APIs:
 
+- `Argon2id::verify_string`
+- `Argon2id::verify_string_with_context`
 - `Argon2id::verify_string_with_policy`
+- `Argon2d::verify_string`
+- `Argon2d::verify_string_with_context`
 - `Argon2d::verify_string_with_policy`
+- `Argon2i::verify_string`
+- `Argon2i::verify_string_with_context`
 - `Argon2i::verify_string_with_policy`
+- `Scrypt::verify_string`
 - `Scrypt::verify_string_with_policy`
 
 The default policies admit hashes produced by the default parameter
 constructors. Services with stronger local parameters should set explicit policy
 ceilings that match their CPU and memory budget.
 
-The unbounded `verify_string` helpers remain available for trusted local hash
-stores.
+The `verify_string_unbounded` and `verify_string_with_context_unbounded` helpers
+remain available for trusted local migration inputs and test-vector harnesses.
 
 ## Secret Serialization
 

@@ -32,6 +32,8 @@ use rsa::{
   signature::{SignatureEncoding as _, Signer as _, Verifier as _},
   traits::{PrivateKeyParts as _, PublicKeyParts as _},
 };
+#[cfg(feature = "getrandom")]
+use rscrypto::RsaEncryptionError;
 #[cfg(feature = "diag")]
 use rscrypto::auth::rsa::{
   diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_comba_product,
@@ -104,6 +106,28 @@ fn tlv_with_leading_zero_long_len(der: &[u8]) -> Vec<u8> {
 
 fn sequence(value: &[u8]) -> Vec<u8> {
   tlv(0x30, value)
+}
+
+#[cfg(feature = "getrandom")]
+fn fill_rsa_random_with(byte: u8) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> {
+  move |out| {
+    out.fill(byte);
+    Ok(())
+  }
+}
+
+#[cfg(feature = "getrandom")]
+fn fill_rsa_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> + '_ {
+  let mut offset = 0usize;
+  move |out| {
+    let end = offset.checked_add(out.len()).ok_or(RsaEncryptionError::InvalidLength)?;
+    let Some(random) = bytes.get(offset..end) else {
+      return Err(RsaEncryptionError::InvalidLength);
+    };
+    out.copy_from_slice(random);
+    offset = end;
+    Ok(())
+  }
 }
 
 fn oid(value: &[u8]) -> Vec<u8> {
@@ -218,6 +242,18 @@ fn valid_pkcs1() -> Vec<u8> {
 
 fn valid_pkcs1_with_modulus_and_exponent(modulus: &[u8], exponent: &[u8]) -> Vec<u8> {
   pkcs1_with_parts(integer_unsigned(modulus), integer_unsigned(exponent))
+}
+
+fn legacy_public_key_from_pkcs1(der: &[u8]) -> RsaPublicKey {
+  RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+}
+
+fn legacy_public_key_from_spki(der: &[u8]) -> RsaPublicKey {
+  RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+}
+
+fn legacy_x509_public_key_from_spki(der: &[u8]) -> RsaX509PublicKey {
+  RsaX509PublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
 }
 
 fn exponent_bytes(exponent: u64) -> Vec<u8> {
@@ -1158,11 +1194,10 @@ fn assert_generated_pkcs1v15_encryption_external_oracles(
   use rsa::{pkcs1v15::DecryptingKey as RustCryptoPkcs1v15DecryptingKey, traits::Decryptor as _};
 
   let plaintext = b"generated key RSAES-PKCS1-v1_5 external oracle";
-  let seed = vec![0x37; key.signature_len().strict_sub(plaintext.len()).strict_sub(3)];
   let mut ciphertext = vec![0u8; key.signature_len()];
   key
     .public_key()
-    .encrypt_pkcs1v15_with_seed(plaintext, &seed, &mut ciphertext)
+    .encrypt_pkcs1v15_with_random_fill(plaintext, &mut ciphertext, fill_rsa_random_with(0x37))
     .unwrap();
 
   let rustcrypto_decrypting_key = RustCryptoPkcs1v15DecryptingKey::new(rustcrypto_private_key.clone());
@@ -1288,7 +1323,7 @@ fn rsa_public_operation_reference(key: &RsaPublicKey, input: &[u8]) -> Vec<u8> {
 
 fn arbitrary_verify_key() -> &'static RsaPublicKey {
   static KEY: OnceLock<RsaPublicKey> = OnceLock::new();
-  KEY.get_or_init(|| RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap())
+  KEY.get_or_init(|| legacy_public_key_from_spki(&pss_fixture_public_key()))
 }
 
 fn fixed_width_signature_candidate(material: &[u8], len: usize) -> Vec<u8> {
@@ -1327,8 +1362,11 @@ fn advertised_schemes(schemes: RsaTlsSignatureSchemes) -> Vec<u16> {
 }
 
 #[test]
-fn pkcs1_public_key_accepts_canonical_rsa2048_65537() {
-  let key = RsaPublicKey::from_pkcs1_der(&valid_pkcs1()).unwrap();
+fn pkcs1_public_key_accepts_canonical_rsa2048_65537_with_legacy_policy() {
+  let der = valid_pkcs1();
+  assert_eq!(RsaPublicKey::from_pkcs1_der(&der), Err(RsaKeyError::InvalidModulus));
+
+  let key = legacy_public_key_from_pkcs1(&der);
 
   assert_eq!(key.modulus_bits(), 2048);
   assert_eq!(key.modulus().len(), 256);
@@ -1336,11 +1374,12 @@ fn pkcs1_public_key_accepts_canonical_rsa2048_65537() {
 }
 
 #[test]
-fn spki_public_key_accepts_rsa_encryption_with_null_parameters() {
+fn spki_public_key_accepts_rsa2048_with_legacy_policy() {
   let pkcs1 = valid_pkcs1();
   let spki = spki_for_pkcs1(&pkcs1);
+  assert_eq!(RsaPublicKey::from_spki_der(&spki), Err(RsaKeyError::InvalidModulus));
 
-  let key = RsaPublicKey::from_spki_der(&spki).unwrap();
+  let key = legacy_public_key_from_spki(&spki);
 
   assert_eq!(key.modulus(), &rsa2048_modulus());
   assert_eq!(key.public_exponent().as_u64(), 65_537);
@@ -1597,17 +1636,10 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   assert_oaep_roundtrip_with_openssl!(rscrypto::RsaOaepProfile::Sha512, "sha512");
 
   let pkcs1v15_plaintext = b"rscrypto PKCS1v15 encryption interop with OpenSSL";
-  let pkcs1v15_seed = vec![
-    0x6du8;
-    rscrypto_key
-      .signature_len()
-      .strict_sub(pkcs1v15_plaintext.len())
-      .strict_sub(3)
-  ];
   let mut pkcs1v15_ciphertext = vec![0u8; rscrypto_key.signature_len()];
   rscrypto_key
     .public_key()
-    .encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut pkcs1v15_ciphertext)
+    .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut pkcs1v15_ciphertext, fill_rsa_random_with(0x6d))
     .unwrap();
   if let Some(decrypted) = openssl_pkcs1v15_decrypt(rustcrypto_pkcs1.as_bytes(), &pkcs1v15_ciphertext) {
     assert_eq!(decrypted, pkcs1v15_plaintext);
@@ -1713,7 +1745,13 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
       let mut ciphertext = vec![0u8; key.signature_len()];
       key
         .public_key()
-        .encrypt_oaep_with_seed($oaep_profile, label.as_bytes(), plaintext, &$seed, &mut ciphertext)
+        .encrypt_oaep_with_random_fill(
+          $oaep_profile,
+          label.as_bytes(),
+          plaintext,
+          &mut ciphertext,
+          fill_rsa_random_from(&$seed),
+        )
         .unwrap();
       let rustcrypto_decrypting_key =
         RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label);
@@ -1879,7 +1917,13 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
         let mut ciphertext = vec![0u8; key.signature_len()];
         key
           .public_key()
-          .encrypt_oaep_with_seed($oaep_profile, label.as_bytes(), plaintext, &$seed, &mut ciphertext)
+          .encrypt_oaep_with_random_fill(
+            $oaep_profile,
+            label.as_bytes(),
+            plaintext,
+            &mut ciphertext,
+            fill_rsa_random_from(&$seed),
+          )
           .unwrap();
         let rustcrypto_decrypting_key =
           RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label);
@@ -1951,7 +1995,7 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
   let pkcs1 = valid_pkcs1();
 
   let rsa_spki = spki_for_pkcs1(&pkcs1);
-  let rsa_key = RsaX509PublicKey::from_spki_der(&rsa_spki).unwrap();
+  let rsa_key = legacy_x509_public_key_from_spki(&rsa_spki);
   assert_eq!(rsa_key.key_algorithm(), RsaX509PublicKeyAlgorithm::RsaEncryption);
   assert_eq!(rsa_key.public_key().modulus(), &rsa2048_modulus());
 
@@ -1960,7 +2004,7 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
     RsaPublicKey::from_spki_der(&pss_only_spki),
     Err(RsaKeyError::UnsupportedAlgorithm)
   );
-  let pss_only_key = RsaX509PublicKey::from_spki_der(&pss_only_spki).unwrap();
+  let pss_only_key = legacy_x509_public_key_from_spki(&pss_only_spki);
   assert_eq!(pss_only_key.key_algorithm(), RsaX509PublicKeyAlgorithm::RsaPss);
   assert!(
     pss_only_key
@@ -1976,7 +2020,7 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
   );
 
   let restricted_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm(RsaPssProfile::Sha256, 32, None));
-  let restricted_key = RsaX509PublicKey::from_spki_der(&restricted_spki).unwrap();
+  let restricted_key = legacy_x509_public_key_from_spki(&restricted_spki);
   assert_eq!(
     restricted_key.key_algorithm(),
     RsaX509PublicKeyAlgorithm::RsaPssRestricted {
@@ -2005,7 +2049,7 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
 
   let restricted_trailer_spki =
     spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm(RsaPssProfile::Sha256, 32, Some(1)));
-  let restricted_trailer_key = RsaX509PublicKey::from_spki_der(&restricted_trailer_spki).unwrap();
+  let restricted_trailer_key = legacy_x509_public_key_from_spki(&restricted_trailer_spki);
   assert_eq!(
     restricted_trailer_key.key_algorithm(),
     RsaX509PublicKeyAlgorithm::RsaPssRestricted {
@@ -2016,7 +2060,7 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
 
   let absent_hash_params_spki =
     spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_sha256_algorithm_with_absent_hash_params(32));
-  let absent_hash_params_key = RsaX509PublicKey::from_spki_der(&absent_hash_params_spki).unwrap();
+  let absent_hash_params_key = legacy_x509_public_key_from_spki(&absent_hash_params_spki);
   assert_eq!(
     absent_hash_params_key.key_algorithm(),
     RsaX509PublicKeyAlgorithm::RsaPssRestricted {
@@ -2090,7 +2134,7 @@ fn x509_restricted_pss_spki_enforces_rfc4055_parameter_matrix() {
 
   let omitted_salt_len_spki =
     spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm_without_salt_len(RsaPssProfile::Sha256));
-  let omitted_salt_len_key = RsaX509PublicKey::from_spki_der(&omitted_salt_len_spki).unwrap();
+  let omitted_salt_len_key = legacy_x509_public_key_from_spki(&omitted_salt_len_spki);
   assert_eq!(
     omitted_salt_len_key.key_algorithm(),
     RsaX509PublicKeyAlgorithm::RsaPssRestricted {
@@ -2129,13 +2173,13 @@ fn x509_restricted_pss_spki_enforces_rfc4055_parameter_matrix() {
 
 #[test]
 fn x509_spki_constraints_are_enforced_during_signature_verification() {
-  let unconstrained_key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let unconstrained_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
     unconstrained_key.modulus(),
     &exponent_bytes(unconstrained_key.public_exponent().as_u64()),
   );
   let pss32_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm(RsaPssProfile::Sha256, 32, None));
-  let pss32_key = RsaX509PublicKey::from_spki_der(&pss32_spki).unwrap();
+  let pss32_key = legacy_x509_public_key_from_spki(&pss32_spki);
   let pss_algorithm = x509_pss_algorithm(RsaPssProfile::Sha256, 32, None);
   let pss_sig = pss_fixture_signature_sha256();
 
@@ -2154,7 +2198,7 @@ fn x509_spki_constraints_are_enforced_during_signature_verification() {
   );
 
   let pss64_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm(RsaPssProfile::Sha256, 64, None));
-  let pss64_key = RsaX509PublicKey::from_spki_der(&pss64_spki).unwrap();
+  let pss64_key = legacy_x509_public_key_from_spki(&pss64_spki);
   assert_eq!(
     pss64_key.verify_signature_from_x509_algorithm_der(&pss_algorithm, pss_fixture_message(), &pss_sig),
     Err(VerificationError::new())
@@ -2163,15 +2207,15 @@ fn x509_spki_constraints_are_enforced_during_signature_verification() {
 
 #[test]
 fn x509_signature_verification_adapter_failures_are_opaque() {
-  let unconstrained_key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let unconstrained_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
     unconstrained_key.modulus(),
     &exponent_bytes(unconstrained_key.public_exponent().as_u64()),
   );
   let pss32_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm(RsaPssProfile::Sha256, 32, None));
-  let pss32_key = RsaX509PublicKey::from_spki_der(&pss32_spki).unwrap();
+  let pss32_key = legacy_x509_public_key_from_spki(&pss32_spki);
   let pss64_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &x509_pss_algorithm(RsaPssProfile::Sha256, 64, None));
-  let pss64_key = RsaX509PublicKey::from_spki_der(&pss64_spki).unwrap();
+  let pss64_key = legacy_x509_public_key_from_spki(&pss64_spki);
   let pss_algorithm = x509_pss_algorithm(RsaPssProfile::Sha256, 32, None);
   let pkcs1_algorithm = algorithm_identifier(SHA256_WITH_RSA_ENCRYPTION_OID, Some(&null()));
   let sha1_algorithm = algorithm_identifier(SHA1_WITH_RSA_ENCRYPTION_OID, Some(&null()));
@@ -2192,7 +2236,7 @@ fn x509_signature_verification_adapter_failures_are_opaque() {
 
 #[test]
 fn x509_certificate_signature_verification_accepts_real_rsa_certificates() {
-  let issuer = RsaX509PublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
+  let issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
 
   assert!(
     issuer
@@ -2205,16 +2249,15 @@ fn x509_certificate_signature_verification_accepts_real_rsa_certificates() {
       .is_ok()
   );
 
-  let public_key = RsaPublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
+  let public_key = legacy_public_key_from_spki(&x509_certificate_fixture_public_key());
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
     public_key.modulus(),
     &exponent_bytes(public_key.public_exponent().as_u64()),
   );
-  let pss_issuer = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  let pss_issuer = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &algorithm_identifier(ID_RSASSA_PSS_OID, None),
-  ))
-  .unwrap();
+  ));
 
   assert!(
     pss_issuer
@@ -2230,7 +2273,7 @@ fn x509_certificate_signature_verification_accepts_real_rsa_certificates() {
 #[test]
 fn x509_certificate_signature_algorithms_accept_absent_and_null_sha2_rsa_params() {
   let (null_params_spki, null_params_certificate) = x509_sha256_rsa_self_signed_certificate(Some(&null()));
-  let null_params_issuer = RsaX509PublicKey::from_spki_der(&null_params_spki).unwrap();
+  let null_params_issuer = legacy_x509_public_key_from_spki(&null_params_spki);
   assert!(
     null_params_issuer
       .verify_x509_certificate_signature_der(&null_params_certificate)
@@ -2238,7 +2281,7 @@ fn x509_certificate_signature_algorithms_accept_absent_and_null_sha2_rsa_params(
   );
 
   let (absent_params_spki, absent_params_certificate) = x509_sha256_rsa_self_signed_certificate(None);
-  let absent_params_issuer = RsaX509PublicKey::from_spki_der(&absent_params_spki).unwrap();
+  let absent_params_issuer = legacy_x509_public_key_from_spki(&absent_params_spki);
   assert!(
     absent_params_issuer
       .verify_x509_certificate_signature_der(&absent_params_certificate)
@@ -2255,22 +2298,20 @@ fn x509_certificate_signature_algorithms_accept_absent_and_null_sha2_rsa_params(
 
 #[test]
 fn x509_certificate_chain_signature_fixtures_cover_rsa_pss_and_pkcs1v15() {
-  let rsae_issuer = RsaX509PublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
-  let public_key = RsaPublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
+  let rsae_issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
+  let public_key = legacy_public_key_from_spki(&x509_certificate_fixture_public_key());
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
     public_key.modulus(),
     &exponent_bytes(public_key.public_exponent().as_u64()),
   );
-  let pss_issuer = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  let pss_issuer = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &algorithm_identifier(ID_RSASSA_PSS_OID, None),
-  ))
-  .unwrap();
-  let restricted_pss_issuer = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  ));
+  let restricted_pss_issuer = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &x509_pss_algorithm(RsaPssProfile::Sha256, 32, None),
-  ))
-  .unwrap();
+  ));
 
   let pkcs1_certificate = x509_pkcs1v15_certificate_fixture();
   let pss_certificate = x509_pss_certificate_fixture();
@@ -2332,7 +2373,7 @@ fn x509_certificate_chain_signature_fixtures_cover_rsa_pss_and_pkcs1v15() {
 
 #[test]
 fn x509_certificate_signature_verification_rejects_malformed_and_confused_certificates() {
-  let issuer = RsaX509PublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
+  let issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
 
   let mut tampered = x509_pkcs1v15_certificate_fixture();
   *tampered.last_mut().unwrap() ^= 0x01;
@@ -2370,17 +2411,15 @@ fn x509_certificate_signature_verification_rejects_malformed_and_confused_certif
 #[test]
 fn tls_signature_scheme_mapping_enforces_rsae_vs_pss_key_algorithms() {
   let pkcs1 = valid_pkcs1();
-  let rsae_key = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1(&pkcs1)).unwrap();
-  let pss_key = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  let rsae_key = legacy_x509_public_key_from_spki(&spki_for_pkcs1(&pkcs1));
+  let pss_key = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &algorithm_identifier(ID_RSASSA_PSS_OID, None),
-  ))
-  .unwrap();
-  let restricted_key = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  ));
+  let restricted_key = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &x509_pss_algorithm(RsaPssProfile::Sha256, 64, None),
-  ))
-  .unwrap();
+  ));
 
   assert_eq!(
     rsae_key.signature_profile_from_tls13_signature_scheme(0x0804),
@@ -2448,17 +2487,15 @@ fn tls_signature_scheme_advertisement_matches_executable_key_constraints() {
   let pkcs1 = valid_pkcs1();
   let rsae = RsaX509PublicKeyAlgorithm::RsaEncryption;
   let pss = RsaX509PublicKeyAlgorithm::RsaPss;
-  let pss_sha256_32 = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  let pss_sha256_32 = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &x509_pss_algorithm(RsaPssProfile::Sha256, 32, None),
   ))
-  .unwrap()
   .key_algorithm();
-  let pss_sha256_64 = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
+  let pss_sha256_64 = legacy_x509_public_key_from_spki(&spki_for_pkcs1_with_algorithm(
     &pkcs1,
     &x509_pss_algorithm(RsaPssProfile::Sha256, 64, None),
   ))
-  .unwrap()
   .key_algorithm();
 
   assert_eq!(
@@ -2548,24 +2585,45 @@ fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
   );
   assert!(
     rsae_key
-      .verify_tls13_signature_scheme(0x0804, pss_fixture_message(), RSA3072_PSS_SHA256)
+      .verify_expected_tls13_signature_scheme(
+        0x0804,
+        0x0804,
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        pss_fixture_message(),
+        RSA3072_PSS_SHA256,
+      )
       .is_ok()
   );
   let mut rsae_scratch = rsae_key.public_key().public_scratch();
   assert!(
     rsae_key
-      .verify_tls13_signature_scheme_with_scratch(0x0804, pss_fixture_message(), RSA3072_PSS_SHA256, &mut rsae_scratch)
+      .verify_expected_tls13_signature_scheme_with_scratch(
+        0x0804,
+        0x0804,
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        pss_fixture_message(),
+        RSA3072_PSS_SHA256,
+        &mut rsae_scratch,
+      )
       .is_ok()
   );
   assert!(
     rsae_key
-      .verify_tls_certificate_signature_scheme(0x0401, pkcs1v15_fixture_message(), RSA3072_PKCS1V15_SHA256)
-      .is_ok()
-  );
-  assert!(
-    rsae_key
-      .verify_tls_certificate_signature_scheme_with_scratch(
+      .verify_expected_tls_certificate_signature_scheme(
         0x0401,
+        0x0401,
+        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+        pkcs1v15_fixture_message(),
+        RSA3072_PKCS1V15_SHA256,
+      )
+      .is_ok()
+  );
+  assert!(
+    rsae_key
+      .verify_expected_tls_certificate_signature_scheme_with_scratch(
+        0x0401,
+        0x0401,
+        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
         pkcs1v15_fixture_message(),
         RSA3072_PKCS1V15_SHA256,
         &mut rsae_scratch,
@@ -2588,24 +2646,45 @@ fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
     );
     assert!(
       key
-        .verify_tls13_signature_scheme(0x0809, pss_fixture_message(), RSA3072_PSS_SHA256)
+        .verify_expected_tls13_signature_scheme(
+          0x0809,
+          0x0809,
+          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+          pss_fixture_message(),
+          RSA3072_PSS_SHA256,
+        )
         .is_ok()
     );
     let mut scratch = key.public_key().public_scratch();
     assert!(
       key
-        .verify_tls13_signature_scheme_with_scratch(0x0809, pss_fixture_message(), RSA3072_PSS_SHA256, &mut scratch)
-        .is_ok()
-    );
-    assert!(
-      key
-        .verify_tls_certificate_signature_scheme(0x0809, pss_fixture_message(), RSA3072_PSS_SHA256)
-        .is_ok()
-    );
-    assert!(
-      key
-        .verify_tls_certificate_signature_scheme_with_scratch(
+        .verify_expected_tls13_signature_scheme_with_scratch(
           0x0809,
+          0x0809,
+          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+          pss_fixture_message(),
+          RSA3072_PSS_SHA256,
+          &mut scratch,
+        )
+        .is_ok()
+    );
+    assert!(
+      key
+        .verify_expected_tls_certificate_signature_scheme(
+          0x0809,
+          0x0809,
+          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+          pss_fixture_message(),
+          RSA3072_PSS_SHA256,
+        )
+        .is_ok()
+    );
+    assert!(
+      key
+        .verify_expected_tls_certificate_signature_scheme_with_scratch(
+          0x0809,
+          0x0809,
+          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
           pss_fixture_message(),
           RSA3072_PSS_SHA256,
           &mut scratch,
@@ -2617,15 +2696,16 @@ fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
 
 #[test]
 fn tls_signature_scheme_verification_rejects_key_algorithm_confusion() {
-  let rsae_key = RsaX509PublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let rsae_key = legacy_x509_public_key_from_spki(&pss_fixture_public_key());
   assert_eq!(rsae_key.key_algorithm(), RsaX509PublicKeyAlgorithm::RsaEncryption);
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
     rsae_key.public_key().modulus(),
     &exponent_bytes(rsae_key.public_key().public_exponent().as_u64()),
   );
   let pss_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &algorithm_identifier(ID_RSASSA_PSS_OID, None));
-  let pss_key = RsaX509PublicKey::from_spki_der(&pss_spki).unwrap();
+  let pss_key = legacy_x509_public_key_from_spki(&pss_spki);
   let pss_signature = pss_fixture_signature_sha256();
+  let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
 
   assert!(
     rsae_key
@@ -2633,9 +2713,33 @@ fn tls_signature_scheme_verification_rejects_key_algorithm_confusion() {
       .is_ok()
   );
   assert!(
+    rsae_key
+      .verify_expected_tls13_signature_scheme(0x0804, 0x0804, pss_profile, pss_fixture_message(), &pss_signature)
+      .is_ok()
+  );
+  assert!(
     pss_key
       .verify_tls13_signature_scheme(0x0809, pss_fixture_message(), &pss_signature)
       .is_ok()
+  );
+  assert!(
+    pss_key
+      .verify_expected_tls13_signature_scheme(0x0809, 0x0809, pss_profile, pss_fixture_message(), &pss_signature)
+      .is_ok()
+  );
+  assert_eq!(
+    rsae_key.verify_expected_tls13_signature_scheme(0x0804, 0x0809, pss_profile, pss_fixture_message(), &pss_signature),
+    Err(VerificationError::new())
+  );
+  assert_eq!(
+    rsae_key.verify_expected_tls13_signature_scheme(
+      0x0804,
+      0x0804,
+      RsaSignatureProfile::pss(RsaPssProfile::Sha384),
+      pss_fixture_message(),
+      &pss_signature,
+    ),
+    Err(VerificationError::new())
   );
   assert_eq!(
     rsae_key.verify_tls13_signature_scheme(0x0809, pss_fixture_message(), &pss_signature),
@@ -2657,12 +2761,44 @@ fn tls_signature_scheme_verification_rejects_key_algorithm_confusion() {
     );
   }
 
-  let rsae_pkcs1_key = RsaX509PublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let rsae_pkcs1_key = legacy_x509_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_signature = pkcs1v15_fixture_signature_sha256();
+  let pkcs1_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
   assert!(
     rsae_pkcs1_key
       .verify_tls_certificate_signature_scheme(0x0401, pkcs1v15_fixture_message(), &pkcs1_signature)
       .is_ok()
+  );
+  assert!(
+    rsae_pkcs1_key
+      .verify_expected_tls_certificate_signature_scheme(
+        0x0401,
+        0x0401,
+        pkcs1_profile,
+        pkcs1v15_fixture_message(),
+        &pkcs1_signature,
+      )
+      .is_ok()
+  );
+  assert_eq!(
+    rsae_pkcs1_key.verify_expected_tls_certificate_signature_scheme(
+      0x0401,
+      0x0804,
+      pkcs1_profile,
+      pkcs1v15_fixture_message(),
+      &pkcs1_signature,
+    ),
+    Err(VerificationError::new())
+  );
+  assert_eq!(
+    rsae_pkcs1_key.verify_expected_tls_certificate_signature_scheme(
+      0x0401,
+      0x0401,
+      pss_profile,
+      pkcs1v15_fixture_message(),
+      &pkcs1_signature,
+    ),
+    Err(VerificationError::new())
   );
   assert_eq!(
     pss_key.verify_tls_certificate_signature_scheme(0x0401, pkcs1v15_fixture_message(), &pkcs1_signature),
@@ -2672,7 +2808,7 @@ fn tls_signature_scheme_verification_rejects_key_algorithm_confusion() {
 
 #[test]
 fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
-  let rsae_pss_key = RsaX509PublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let rsae_pss_key = legacy_x509_public_key_from_spki(&pss_fixture_public_key());
   let pss_signature = pss_fixture_signature_sha256();
   let mut tampered_pss_signature = pss_signature.clone();
   tampered_pss_signature[0] ^= 0x01;
@@ -2818,7 +2954,7 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
     &exponent_bytes(public_key.public_exponent().as_u64()),
   );
   let pss_spki = spki_for_pkcs1_with_algorithm(&pkcs1, &algorithm_identifier(ID_RSASSA_PSS_OID, None));
-  let pss_key = RsaX509PublicKey::from_spki_der(&pss_spki).unwrap();
+  let pss_key = legacy_x509_public_key_from_spki(&pss_spki);
   let mut tls_scratch = public_key.public_scratch();
   assert_opaque_verification_failure(rsae_pss_key.verify_tls13_signature_scheme(
     0x0809,
@@ -2857,7 +2993,7 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
     &mut tls_scratch,
   ));
 
-  let pkcs1_key = RsaX509PublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let pkcs1_key = legacy_x509_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_signature = pkcs1v15_fixture_signature_sha256();
   let mut tampered_pkcs1_signature = pkcs1_signature.clone();
   tampered_pkcs1_signature[0] ^= 0x01;
@@ -2919,7 +3055,7 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
     &mut tls_certificate_scratch,
   ));
 
-  let issuer = RsaX509PublicKey::from_spki_der(&x509_certificate_fixture_public_key()).unwrap();
+  let issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
   let mut certificate_scratch = issuer.public_key().public_scratch();
   let mut tampered_certificate = x509_pkcs1v15_certificate_fixture();
   *tampered_certificate.last_mut().unwrap() ^= 0x01;
@@ -3031,12 +3167,12 @@ fn rsa_policy_boundary_separates_legacy_rsa2048_from_modern_rsa3072_verification
 
 #[test]
 fn public_key_der_round_trips_through_canonical_test_encoder() {
-  let key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(key.modulus(), &exponent_bytes(key.public_exponent().as_u64()));
   let spki = spki_for_pkcs1(&pkcs1);
 
-  let pkcs1_key = RsaPublicKey::from_pkcs1_der(&pkcs1).unwrap();
-  let spki_key = RsaPublicKey::from_spki_der(&spki).unwrap();
+  let pkcs1_key = legacy_public_key_from_pkcs1(&pkcs1);
+  let spki_key = legacy_public_key_from_spki(&spki);
 
   assert_eq!(pkcs1_key, key);
   assert_eq!(spki_key, key);
@@ -3264,7 +3400,7 @@ fn pkcs1_public_key_can_accept_legacy_small_fermat_exponents_by_policy() {
 
 #[test]
 fn public_operation_rejects_wrong_length_and_out_of_range_representatives() {
-  let key = RsaPublicKey::from_pkcs1_der(&valid_pkcs1()).unwrap();
+  let key = legacy_public_key_from_pkcs1(&valid_pkcs1());
   let mut out = vec![0u8; key.modulus().len()];
 
   out.fill(0xa5);
@@ -3292,7 +3428,11 @@ fn public_operation_boundary_representatives_match_independent_reference_across_
     ("rsa4096", RSA4096_SPKI),
     ("rsa8192", RSA8192_SPKI),
   ] {
-    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let key = if name == "rsa2048" {
+      legacy_public_key_from_spki(spki)
+    } else {
+      RsaPublicKey::from_spki_der(spki).unwrap()
+    };
     let len = key.modulus().len();
     let mut out = vec![0u8; len];
     let mut scratch = key.public_scratch();
@@ -3382,8 +3522,7 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
 3e94bf239ee74517b71ec2464551f8174dbd0f3952ffb41070c754",
   );
 
-  let key =
-    RsaPublicKey::from_pkcs1_der(&valid_pkcs1_with_modulus_and_exponent(&modulus, &[0x01, 0x00, 0x01])).unwrap();
+  let key = legacy_public_key_from_pkcs1(&valid_pkcs1_with_modulus_and_exponent(&modulus, &[0x01, 0x00, 0x01]));
   let mut out = vec![0u8; key.modulus().len()];
   let mut scratch = key.public_scratch();
 
@@ -3456,7 +3595,7 @@ fc87eb5a2ea7a141091f3d2fa37a581ef39e6e496e5e476d43b6",
 
 #[test]
 fn public_scratch_reuses_after_modulus_minus_one_operation() {
-  let key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let representative = modulus_minus_one(&key);
   let mut out = vec![0u8; key.modulus().len()];
   let mut scratch = key.public_scratch();
@@ -3555,13 +3694,21 @@ d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
 #[cfg(feature = "diag")]
 #[test]
 fn public_operation_montgomery_candidates_match_current_path() {
-  for (spki, signature) in [
-    (&pss_fixture_public_key()[..], &pss_fixture_signature_sha256()[..]),
-    (RSA3072_SPKI, RSA3072_PSS_SHA256),
-    (RSA4096_SPKI, RSA4096_PSS_SHA256),
-    (RSA8192_SPKI, RSA8192_PSS_SHA256),
+  for (name, spki, signature) in [
+    (
+      "rsa2048",
+      &pss_fixture_public_key()[..],
+      &pss_fixture_signature_sha256()[..],
+    ),
+    ("rsa3072", RSA3072_SPKI, RSA3072_PSS_SHA256),
+    ("rsa4096", RSA4096_SPKI, RSA4096_PSS_SHA256),
+    ("rsa8192", RSA8192_SPKI, RSA8192_PSS_SHA256),
   ] {
-    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let key = if name == "rsa2048" {
+      legacy_public_key_from_spki(spki)
+    } else {
+      RsaPublicKey::from_spki_der(spki).unwrap()
+    };
     let representative = modulus_minus_one(&key);
     let mut current = vec![0u8; key.modulus().len()];
     let mut cios = vec![0u8; key.modulus().len()];
@@ -3608,7 +3755,7 @@ fn public_operation_montgomery_candidates_match_current_path() {
 
 #[test]
 fn pss_verify_accepts_openssl_sha256_sha384_and_sha512_vectors() {
-  let key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let message = pss_fixture_message();
 
   let sig256 = hex_to_vec(
@@ -3649,7 +3796,7 @@ c2b691954f9bd86140e31acf6a8a2b9d28cba358e509dfc234c1e33e223c",
 
 #[test]
 fn pss_verify_rejects_tampered_signature_message_and_profile() {
-  let key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let message = pss_fixture_message();
   let mut sig = hex_to_vec(
     "\
@@ -3671,7 +3818,7 @@ b6fcf2590d0706da27017429d91fe9f521f9fbb2ae2044f2eecfe87c7d",
 
 #[test]
 fn typed_signature_profile_dispatches_and_rejects_algorithm_confusion() {
-  let pss_key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
   let mut pss_scratch = pss_key.public_scratch();
   assert!(
@@ -3710,7 +3857,7 @@ fn typed_signature_profile_dispatches_and_rejects_algorithm_confusion() {
     Err(VerificationError::new())
   );
 
-  let pkcs1_key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
   let mut pkcs1_scratch = pkcs1_key.public_scratch();
   assert!(
@@ -3744,7 +3891,7 @@ fn typed_signature_profile_dispatches_and_rejects_algorithm_confusion() {
 
 #[test]
 fn signature_profile_feasibility_is_exposed_for_provider_preflight() {
-  let key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_fixture_public_key());
 
   assert!(key.signature_profile_is_possible(RsaSignatureProfile::pss(RsaPssProfile::Sha256)));
   assert!(key.signature_profile_is_possible(RsaSignatureProfile::pss(RsaPssProfile::Sha512)));
@@ -3877,7 +4024,7 @@ fn provider_facing_legacy_algorithm_rejections_are_typed() {
 
 #[test]
 fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
-  let pss_key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
   assert!(
     pss_key
@@ -3906,7 +4053,7 @@ fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
     Err(VerificationError::new())
   );
 
-  let pkcs1_key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
   assert!(
     pkcs1_key
@@ -3938,65 +4085,107 @@ fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
 
 #[test]
 fn jwt_and_cose_verification_helpers_reject_algorithm_confusion() {
-  let pss_key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
+  let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
+  let pkcs1_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
   let mut scratch = pss_key.public_scratch();
 
-  assert!(pss_key.verify_jwt_alg("PS256", pss_fixture_message(), &pss_sig).is_ok());
   assert!(
     pss_key
-      .verify_jwt_alg_with_scratch("PS256", pss_fixture_message(), &pss_sig, &mut scratch)
+      .verify_expected_jwt_alg("PS256", "PS256", pss_profile, pss_fixture_message(), &pss_sig)
       .is_ok()
   );
   assert!(
     pss_key
-      .verify_cose_algorithm_id(-37, pss_fixture_message(), &pss_sig)
+      .verify_expected_jwt_alg_with_scratch(
+        "PS256",
+        "PS256",
+        pss_profile,
+        pss_fixture_message(),
+        &pss_sig,
+        &mut scratch,
+      )
       .is_ok()
   );
   assert!(
     pss_key
-      .verify_cose_algorithm_id_with_scratch(-37, pss_fixture_message(), &pss_sig, &mut scratch)
+      .verify_expected_cose_algorithm_id(-37, -37, pss_profile, pss_fixture_message(), &pss_sig)
+      .is_ok()
+  );
+  assert!(
+    pss_key
+      .verify_expected_cose_algorithm_id_with_scratch(
+        -37,
+        -37,
+        pss_profile,
+        pss_fixture_message(),
+        &pss_sig,
+        &mut scratch,
+      )
       .is_ok()
   );
   for result in [
+    pss_key.verify_expected_jwt_alg("PS256", "RS256", pss_profile, pss_fixture_message(), &pss_sig),
+    pss_key.verify_expected_jwt_alg("PS256", "PS256", pkcs1_profile, pss_fixture_message(), &pss_sig),
     pss_key.verify_jwt_alg("RS256", pss_fixture_message(), &pss_sig),
     pss_key.verify_jwt_alg("none", pss_fixture_message(), &pss_sig),
     pss_key.verify_jwt_alg("HS256", pss_fixture_message(), &pss_sig),
     pss_key.verify_jwt_alg("rs256", pss_fixture_message(), &pss_sig),
+    pss_key.verify_expected_cose_algorithm_id(-37, -257, pss_profile, pss_fixture_message(), &pss_sig),
+    pss_key.verify_expected_cose_algorithm_id(-37, -37, pkcs1_profile, pss_fixture_message(), &pss_sig),
     pss_key.verify_cose_algorithm_id(-257, pss_fixture_message(), &pss_sig),
     pss_key.verify_cose_algorithm_id(1, pss_fixture_message(), &pss_sig),
   ] {
     assert_eq!(result, Err(VerificationError::new()));
   }
 
-  let pkcs1_key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
   let mut scratch = pkcs1_key.public_scratch();
 
   assert!(
     pkcs1_key
-      .verify_jwt_alg("RS256", pkcs1v15_fixture_message(), &pkcs1_sig)
+      .verify_expected_jwt_alg("RS256", "RS256", pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
       .is_ok()
   );
   assert!(
     pkcs1_key
-      .verify_jwt_alg_with_scratch("RS256", pkcs1v15_fixture_message(), &pkcs1_sig, &mut scratch)
+      .verify_expected_jwt_alg_with_scratch(
+        "RS256",
+        "RS256",
+        pkcs1_profile,
+        pkcs1v15_fixture_message(),
+        &pkcs1_sig,
+        &mut scratch,
+      )
       .is_ok()
   );
   assert!(
     pkcs1_key
-      .verify_cose_algorithm_id(-257, pkcs1v15_fixture_message(), &pkcs1_sig)
+      .verify_expected_cose_algorithm_id(-257, -257, pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
       .is_ok()
   );
   assert!(
     pkcs1_key
-      .verify_cose_algorithm_id_with_scratch(-257, pkcs1v15_fixture_message(), &pkcs1_sig, &mut scratch)
+      .verify_expected_cose_algorithm_id_with_scratch(
+        -257,
+        -257,
+        pkcs1_profile,
+        pkcs1v15_fixture_message(),
+        &pkcs1_sig,
+        &mut scratch,
+      )
       .is_ok()
   );
   for result in [
+    pkcs1_key.verify_expected_jwt_alg("RS256", "PS256", pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
+    pkcs1_key.verify_expected_jwt_alg("RS256", "RS256", pss_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_jwt_alg("PS256", pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_jwt_alg("RS1", pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_jwt_alg("ES256", pkcs1v15_fixture_message(), &pkcs1_sig),
+    pkcs1_key.verify_expected_cose_algorithm_id(-257, -37, pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
+    pkcs1_key.verify_expected_cose_algorithm_id(-257, -257, pss_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_cose_algorithm_id(-37, pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_cose_algorithm_id(-65535, pkcs1v15_fixture_message(), &pkcs1_sig),
   ] {
@@ -4133,7 +4322,7 @@ fn x509_signature_algorithm_mapping_is_strict_and_rejects_sha1_defaults() {
 
 #[test]
 fn x509_mapped_profiles_verify_real_fixtures_and_reject_padding_mismatch() {
-  let pss_key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
   assert!(
     pss_key
@@ -4146,7 +4335,7 @@ fn x509_mapped_profiles_verify_real_fixtures_and_reject_padding_mismatch() {
       .is_ok()
   );
 
-  let pkcs1_key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
   let pkcs1_profile = RsaSignatureProfile::from_x509_signature_algorithm_der(&algorithm_identifier(
     SHA256_WITH_RSA_ENCRYPTION_OID,
@@ -4158,7 +4347,7 @@ fn x509_mapped_profiles_verify_real_fixtures_and_reject_padding_mismatch() {
       .verify_signature(pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
       .is_ok()
   );
-  let pkcs1_x509_key = RsaX509PublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let pkcs1_x509_key = legacy_x509_public_key_from_spki(&pkcs1v15_fixture_public_key());
   assert!(
     pkcs1_x509_key
       .verify_signature_from_x509_algorithm_der(
@@ -4176,7 +4365,7 @@ fn x509_mapped_profiles_verify_real_fixtures_and_reject_padding_mismatch() {
 
 #[test]
 fn pkcs1v15_verify_accepts_openssl_sha256_sha384_and_sha512_vectors() {
-  let key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let message = pkcs1v15_fixture_message();
 
   let sig256 = hex_to_vec(
@@ -4229,7 +4418,7 @@ addc98f3b49437df55aad5e96a6b7db196f9d30de7173dda79944f51fc7a339655cd2727d47\
 
 #[test]
 fn pkcs1v15_verify_rejects_tampered_signature_message_and_profile() {
-  let key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let message = pkcs1v15_fixture_message();
   let mut sig = hex_to_vec(
     "\
@@ -4256,7 +4445,7 @@ dd4fcc492a891d8536ef91cc228a3dbf66f0c70596f9cd101fe95d127550e7a4a9864430bd3\
 #[cfg(feature = "diag")]
 #[test]
 fn pss_encoded_message_oracle_failures_are_opaque() {
-  let key = RsaPublicKey::from_spki_der(&pss_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let mut encoded = vec![0u8; key.modulus().len()];
   key
     .public_operation(&pss_fixture_signature_sha256(), &mut encoded)
@@ -4333,7 +4522,7 @@ fn pss_encoded_message_oracle_failures_are_opaque() {
 #[cfg(feature = "diag")]
 #[test]
 fn pkcs1v15_encoded_message_oracle_failures_are_opaque() {
-  let key = RsaPublicKey::from_spki_der(&pkcs1v15_fixture_public_key()).unwrap();
+  let key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let mut encoded = vec![0u8; key.modulus().len()];
   key
     .public_operation(&pkcs1v15_fixture_signature_sha256(), &mut encoded)
@@ -4407,7 +4596,7 @@ fn pkcs1v15_encoded_message_oracle_failures_are_opaque() {
 fn sha256_signature_verification_matches_external_oracles_for_valid_and_tampered_vectors() {
   let pss_spki = pss_fixture_public_key();
   let pss_sig = pss_fixture_signature_sha256();
-  let pss_key = RsaPublicKey::from_spki_der(&pss_spki).unwrap();
+  let pss_key = legacy_public_key_from_spki(&pss_spki);
   let pss_pkcs1 =
     valid_pkcs1_with_modulus_and_exponent(pss_key.modulus(), &exponent_bytes(pss_key.public_exponent().as_u64()));
 
@@ -4447,7 +4636,7 @@ fn sha256_signature_verification_matches_external_oracles_for_valid_and_tampered
 
   let pkcs1_spki = pkcs1v15_fixture_public_key();
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
-  let pkcs1_key = RsaPublicKey::from_spki_der(&pkcs1_spki).unwrap();
+  let pkcs1_key = legacy_public_key_from_spki(&pkcs1_spki);
   let pkcs1_der = valid_pkcs1_with_modulus_and_exponent(
     pkcs1_key.modulus(),
     &exponent_bytes(pkcs1_key.public_exponent().as_u64()),

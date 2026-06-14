@@ -492,22 +492,32 @@ fn sign_with_secret(secret: &Ed25519SecretKey, public: &Ed25519PublicKey, messag
 
 #[must_use]
 fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey, message: &[u8]) -> Ed25519Signature {
-  let secret_scalar = expanded.scalar_words();
+  let mut secret_scalar = expanded.scalar_words();
 
   let mut nonce_hasher = Sha512::new();
   nonce_hasher.update(expanded.nonce_prefix());
   nonce_hasher.update(message);
-  let nonce_digest = nonce_hasher.finalize();
-  let nonce_scalar = scalar::reduce_bytes_mod_order(&nonce_digest);
-  let nonce_bytes = scalar::to_bytes(&nonce_scalar);
+  let mut nonce_digest = nonce_hasher.finalize();
+  let mut nonce_scalar = scalar::reduce_64_bytes_mod_order_secret(&nonce_digest);
+  let mut nonce_bytes = scalar::to_bytes(&nonce_scalar);
   let r_encoded = basepoint_mul_encoded_dispatch(&nonce_bytes);
 
   let challenge_digest = hash_challenge(&r_encoded, public.as_bytes(), message);
   let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
-  let s = scalar::mul_add_mod(&challenge, &secret_scalar, &nonce_scalar);
-  let s_bytes = scalar::to_bytes(&s);
+  let mut s = scalar::mul_add_mod_secret(&challenge, &secret_scalar, &nonce_scalar);
+  let mut s_bytes = scalar::to_bytes(&s);
 
-  assemble_signature(&r_encoded, &s_bytes)
+  let signature = assemble_signature(&r_encoded, &s_bytes);
+
+  ct::zeroize_words_no_fence(&mut secret_scalar);
+  ct::zeroize_no_fence(&mut nonce_digest);
+  ct::zeroize_words_no_fence(&mut nonce_scalar);
+  ct::zeroize_no_fence(&mut nonce_bytes);
+  ct::zeroize_words_no_fence(&mut s);
+  ct::zeroize_no_fence(&mut s_bytes);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+  signature
 }
 
 #[inline]

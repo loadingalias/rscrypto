@@ -1,6 +1,6 @@
 #![cfg(feature = "hmac")]
 
-use rscrypto::HmacSha256;
+use rscrypto::{HmacSha256, HmacSha256Tag};
 
 mod common;
 use common::decode_hex_array as decode_hex;
@@ -31,7 +31,7 @@ fn hmac_sha256_rfc4231_vectors() {
   ];
 
   for (i, (key, data, expected_hex)) in cases.iter().enumerate() {
-    let expected = decode_hex::<32>(&expected_hex.replace('\n', ""));
+    let expected = HmacSha256Tag::from_bytes(decode_hex::<32>(&expected_hex.replace('\n', "")));
     let actual = HmacSha256::mac(key, data);
     assert_eq!(actual, expected, "HMAC-SHA256 RFC 4231 vector {i} mismatch");
     assert!(HmacSha256::verify_tag(key, data, &expected).is_ok());
@@ -44,9 +44,10 @@ fn hmac_sha256_verify_rejects_corrupted_tag() {
   let data = b"auth message";
   let tag = HmacSha256::mac(key, data);
 
-  for index in [0, tag.len() / 2, tag.len() - 1] {
-    let mut corrupted = tag;
+  for index in [0, tag.as_bytes().len() / 2, tag.as_bytes().len() - 1] {
+    let mut corrupted = tag.to_bytes();
     corrupted[index] ^= 0x80;
+    let corrupted = HmacSha256Tag::from_bytes(corrupted);
     assert!(
       HmacSha256::verify_tag(key, data, &corrupted).is_err(),
       "HMAC-SHA256 accepted a tag corrupted at byte {index}"
