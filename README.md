@@ -13,7 +13,7 @@
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current benchmark evidence:** Linux CI is currently `1.59x` fastest-external geomean with `4,078 / 6,669` wins and `6,009 / 6,669` wins-or-ties. Apple Silicon local macOS/aarch64 is `1.41x` fastest-external geomean with `376 / 741` wins and `716 / 741` wins-or-ties.
+**Latest published benchmark evidence:** Linux CI reports `1.59x` fastest-external geomean with `4,078 / 6,669` wins and `6,009 / 6,669` wins-or-ties. Apple Silicon local macOS/aarch64 reports `1.41x` fastest-external geomean with `376 / 741` wins and `716 / 741` wins-or-ties.
 
 <p align="center">
   <img alt="rscrypto benchmark scorecard: 1.59x fastest-external geomean across Linux CI with 4,078 wins and 6,009 wins-or-ties out of 6,669 matched benchmark comparisons."
@@ -36,7 +36,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **Audit knobs are explicit.** `portable-only` collapses runtime capability detection to the portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
 
-`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. This has not been audited by a third-party yet.
+`rscrypto` is a primitives crate. It is **not** a TLS stack, PKI toolkit, protocol implementation, or FIPS 140-3 validated module. No third-party security audit, FIPS 140-3 validation, or formal proof is claimed today.
 
 ## Install
 
@@ -44,14 +44,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.5.0", default-features = false, features = ["sha2"] }
 ```
 
 Full primitive stack w/ OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.5.0", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for constrained `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-gen entropy from the operating system.
@@ -76,7 +76,7 @@ The common API shape is deliberately simple: one-shot when convenient, streaming
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.5.0", default-features = false, features = ["rsa"] }
 ```
 
 ```rust
@@ -123,14 +123,14 @@ Enable `getrandom` for RSA key gen, signing salt/blinding, encryption randomness
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.5.0", default-features = false, features = ["rsa", "getrandom"] }
 ```
 
 ## Sign ECDSA Messages
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["ecdsa-p256"] }
+rscrypto = { version = "0.5.0", default-features = false, features = ["ecdsa-p256"] }
 ```
 
 ```rust
@@ -162,7 +162,7 @@ caller-blinded signing APIs.
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["chacha20poly1305", "getrandom"] }
+rscrypto = { version = "0.5.0", default-features = false, features = ["chacha20poly1305", "getrandom"] }
 ```
 
 ```rust
@@ -193,7 +193,7 @@ deterministic invocation budget.
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.4.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
+rscrypto = { version = "0.5.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
 ```
 
 ```rust
@@ -247,11 +247,9 @@ not blanket constant-time claims. See [`docs/security.md`](docs/security.md)
 for application guidance and [`docs/constant-time.md`](docs/constant-time.md)
 for the exact claim model.
 
-Again, I'm not claiming this has been audited by a third-party at this point.
-
 ## Performance
 
-Current public bench evidence comes from two full passes that are both updated regularly and programmatically:
+Latest public bench evidence comes from two full passes that are both updated regularly and programmatically:
 
 - Linux (CI): Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V.
 - Apple Silicon: local macOS/aarch64 full run.
@@ -276,7 +274,7 @@ Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rsc
 | RSA import + verify | Linux CI / Apple Silicon | **1.54x / 1.44x geomean** |
 | AEAD | Linux CI / Apple Silicon | **1.56x / 1.48x geomean** |
 
-The honest weak spots right now: Linux Argon2id OWASP rows against
+The measured weak spots in the latest published benchmark set: Linux Argon2id OWASP rows against
 `rustcrypto`, ECDSA P-384 signing against `aws-lc-rs`, Ed25519 verification,
 ChaCha20-Poly1305 encryption, and Argon2i-small rows; Apple Silicon still has
 localized XXH3-64, SHA3, HKDF-SHA256, and BLAKE3 streaming pressure. See

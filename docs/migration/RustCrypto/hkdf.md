@@ -2,14 +2,14 @@
 
 > Replace `Hkdf::<Sha256>::new(Some(salt), ikm)` with `HkdfSha256::new(salt, ikm)`. The `Option<&[u8]>` salt becomes a plain `&[u8]` (empty slice == "no salt"); fused one-shot `HkdfSha256::derive_array::<N>(...)` collapses extract+expand.
 
-Verified against `hkdf = "0.13.0"` and the `rscrypto` 0.4.0 line.
+Verified against `hkdf = "0.13.0"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/hkdf_sha256_vectors.rs`, `tests/hkdf_sha384_vectors.rs`, the HKDF proptests, and `tests/hkdf_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`hkdf` 0.13.x) | After (`rscrypto` 0.4.0) |
+| | Before (`hkdf` 0.13.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `hkdf = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.4.0", features = ["hkdf"] }` |
+| Cargo dep | `hkdf = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.5.0", features = ["hkdf"] }` |
 | Import | `use hkdf::Hkdf; use sha2::Sha256;` | `use rscrypto::HkdfSha256;` |
 | Call | `Hkdf::<Sha256>::new(Some(salt), ikm).expand(info, &mut okm)?` | `HkdfSha256::new(salt, ikm).expand(info, &mut okm)?` |
 
@@ -25,7 +25,7 @@ sha2 = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["hkdf"] }
+rscrypto = { version = "0.5.0", features = ["hkdf"] }
 ```
 
 The `hkdf` feature implies `hmac` which implies `sha2`.

@@ -27,7 +27,7 @@ the concrete inputs and outputs of each cryptography API.
 | CRC-16 family | `tests/crc16_properties.rs`; oracle crates in dev-deps | Property tests cover combine/reset/streaming boundaries | No Wycheproof suite applies |
 | CRC-24 family | `tests/crc24_properties.rs` | Property tests cover combine/reset/streaming boundaries | No Wycheproof suite applies |
 | CRC-32 family | `tests/crc32_properties.rs`; `crc`, `crc32fast`, `crc32c` oracles | Property tests cover combine/reset/streaming boundaries | No Wycheproof suite applies |
-| CRC-64 family | `tests/crc64_properties.rs`; `crc64fast`, `crc64fast-nvme` oracles | Property tests cover combine/reset/streaming boundaries | No Wycheproof suite applies |
+| CRC-64 family | `tests/crc64_properties.rs`; `crc64fast` and `crc-fast` oracles | Property tests cover combine/reset/streaming boundaries | No Wycheproof suite applies |
 | SHA-224 | `tests/sha2_official_vectors.rs`, `tests/sha256_official_vectors.rs`, `testdata/sha2/sha224.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |
 | SHA-256 | `tests/sha2_official_vectors.rs`, `tests/sha256_official_vectors.rs`, `tests/sha256_differential.rs`, `testdata/sha2/sha256.blb` | Streaming/oneshot and dispatch equivalence | Wycheproof has HMAC/HKDF/PBKDF2 SHA-256 suites, not raw SHA-256 |
 | SHA-384 | `tests/sha2_official_vectors.rs`, `testdata/sha2/sha384.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |

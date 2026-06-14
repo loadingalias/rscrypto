@@ -2,7 +2,7 @@
 
 > Replace the runtime-variant `Argon2::new(Algorithm::*, Version, Params)` with type-level `Argon2id` / `Argon2i` / `Argon2d`. Same RFC 9106 spec, byte-identical output, PHC string round-trip built in (no `password-hash` crate dependency).
 
-Verified against `argon2 = "0.6.0-rc.8"` and the `rscrypto` 0.4.0 line.
+Verified against `argon2 = "0.6.0-rc.8"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/argon2_vectors.rs`, `tests/argon2_differential.rs`, `tests/argon2_kernels.rs`, `tests/argon2_parallel.rs`, and `tests/phc_roundtrip.rs`.
 The examples use the 0.5-style call shape because that is still common in
 existing projects; the current oracle coverage in this repository is the 0.6
@@ -10,9 +10,9 @@ RC dev-dependency.
 
 ## TL;DR
 
-| | Before (`argon2` 0.5.x) | After (`rscrypto` 0.4.0) |
+| | Before (`argon2` 0.5.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `argon2 = "0.5"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.4.0", features = ["argon2", "phc-strings"] }` |
+| Cargo dep | `argon2 = "0.5"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.5.0", features = ["argon2", "phc-strings"] }` |
 | Import | `use argon2::{Argon2, Algorithm, Version, Params};` | `use rscrypto::{Argon2id, Argon2Params, Argon2Version};` |
 | Raw KDF | `Argon2::new(Argon2id, V0x13, Params::new(m, t, p, Some(N))?).hash_password_into(pw, salt, &mut out)?` | `Argon2id::hash(&Argon2Params::new()...build()?, pw, salt, &mut out)?` |
 
@@ -28,7 +28,7 @@ password-hash = "0.5"            # only if you need PHC strings
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["argon2", "phc-strings"] }
+rscrypto = { version = "0.5.0", features = ["argon2", "phc-strings"] }
 ```
 
 Drop `phc-strings` if you only need the raw KDF and not PHC `$argon2id$...$...` storage strings. Drop `getrandom` from the feature list if you supply your own salt.
@@ -154,7 +154,7 @@ The secret (pepper) and associated data are not embedded in the PHC string — t
 - **Variant as type, not enum value.** `Argon2id::hash(...)` instead of `argon2.algorithm(Algorithm::Argon2id).hash_password_into(...)`. Enum-driven dispatch becomes type-driven; in tests this catches accidental variant swaps at compile time.
 - **`Argon2VerifyPolicy` is the migration win.** RustCrypto requires hand-rolling the cost-cap check before calling `verify_password`. rscrypto bakes it into `verify_string`; use `verify_string_with_policy` only when your deployment needs explicit ceilings, and `verify_string_unbounded` only for trusted migration/test-vector inputs.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings — your existing stored hashes still verify.
-- **`Argon2Params::default()` matches OWASP Password Storage Cheat Sheet guidance.** `m=19456 KiB, t=2, p=1, output_len=32 bytes` per the sheet as checked on 2026-06-09. RustCrypto's `Params::default()` matches; both crates will track the cheat sheet over time.
+- **`Argon2Params::default()` matches OWASP Password Storage Cheat Sheet guidance.** `m=19456 KiB, t=2, p=1, output_len=32 bytes` per the sheet as checked on 2026-06-14. RustCrypto's `Params::default()` matches; both crates will track the cheat sheet over time.
 - **`v=0x10` decode-only support.** Both crates can decode legacy `v=16` (Argon2 v1.0) PHC strings for compatibility; both produce `v=19` (v1.3) on encode.
 - **Memory cost is real.** `Argon2id::hash` allocates `memory_cost_kib * 1024` bytes for the lane state. `params.build()?` enforces `m >= 8 * p`; allocate failures (out-of-memory) surface as `Argon2Error::AllocationFailed` at hash time.
 - **Parallel lanes (`parallel` feature).** rscrypto's `parallel` umbrella feature enables Rayon-based lane parallelism for `p > 1`. RustCrypto's `argon2` is single-threaded only.

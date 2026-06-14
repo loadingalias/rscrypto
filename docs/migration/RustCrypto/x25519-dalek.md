@@ -2,14 +2,14 @@
 
 > Replace `StaticSecret` / `EphemeralSecret` / `PublicKey` / `SharedSecret` with rscrypto's unified `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret`. Same RFC 7748 algorithm, byte-identical shared secrets, plus an explicit error on low-order peer input.
 
-Verified against `x25519-dalek = "2.0.1"` and the `rscrypto` 0.4.0 line.
+Verified against `x25519-dalek = "2.0.1"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs`, and `tests/x25519_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`x25519-dalek` 2.x) | After (`rscrypto` 0.4.0) |
+| | Before (`x25519-dalek` 2.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `x25519-dalek = { version = "2.0", features = ["static_secrets"] }` | `rscrypto = { version = "0.4.0", features = ["x25519"] }` |
+| Cargo dep | `x25519-dalek = { version = "2.0", features = ["static_secrets"] }` | `rscrypto = { version = "0.5.0", features = ["x25519"] }` |
 | Import | `use x25519_dalek::{StaticSecret, PublicKey};` | `use rscrypto::{X25519SecretKey, X25519PublicKey};` |
 | DH | `secret.diffie_hellman(&peer_pub)` (returns `SharedSecret`) | `secret.diffie_hellman(&peer_pub)?` (returns `Result<X25519SharedSecret, _>`) |
 
@@ -24,7 +24,7 @@ x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["x25519"] }
+rscrypto = { version = "0.5.0", features = ["x25519"] }
 ```
 
 The `x25519` feature has no transitive dependencies — X25519 needs nothing beyond Curve25519 arithmetic.

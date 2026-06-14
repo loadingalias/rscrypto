@@ -2,14 +2,14 @@
 
 > Replace the free function `pbkdf2_hmac::<Sha256>(password, salt, iters, &mut out)` with `Pbkdf2Sha256::derive_key_array::<N>(password, salt, iters)?`. The password helpers enforce the current PBKDF2 iteration and salt floors by default, while `*_primitive` APIs remain available for RFC vectors and legacy compatibility.
 
-Verified against `pbkdf2 = "0.13.0"` and the `rscrypto` 0.4.0 line.
+Verified against `pbkdf2 = "0.13.0"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/pbkdf2_kat_vectors.rs`, `tests/pbkdf2_differential.rs`, and `tests/pbkdf2_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`pbkdf2` 0.13.x) | After (`rscrypto` 0.4.0) |
+| | Before (`pbkdf2` 0.13.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `pbkdf2 = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.4.0", features = ["pbkdf2"] }` |
+| Cargo dep | `pbkdf2 = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.5.0", features = ["pbkdf2"] }` |
 | Import | `use pbkdf2::pbkdf2_hmac; use sha2::Sha256;` | `use rscrypto::Pbkdf2Sha256;` |
 | Call | `pbkdf2_hmac::<Sha256>(pw, salt, iters, &mut okm)` | `Pbkdf2Sha256::derive_key(pw, salt, iters, &mut okm)?` |
 
@@ -25,14 +25,14 @@ sha2 = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["pbkdf2"] }
+rscrypto = { version = "0.5.0", features = ["pbkdf2"] }
 ```
 
 The `pbkdf2` feature implies `hmac` which implies `sha2`.
 
 ## Algorithm map
 
-| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-06-09 |
+| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-06-14 |
 |---|---|---|
 | `pbkdf2_hmac::<Sha256>` | `Pbkdf2Sha256` | `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` (600,000) |
 | `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512` | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (220,000) |
@@ -111,5 +111,5 @@ Drop the `subtle` dependency for the verify path. The stateful form is `state.ve
 - **Rejects zero iterations.** `pbkdf2 = "0.13"` will silently run zero rounds and return the salt-derived initial state. rscrypto returns `Err(Pbkdf2Error::InvalidIterations)`. If you have legacy callers that pass 0 (presumably as a typo), this is a hard catch — exactly what you want.
 - **Output length cap (RFC 8018 §5.2 step 1).** PBKDF2 limits output to `(2^32 - 1) * hLen`. `pbkdf2` does not check; rscrypto returns `Err(Pbkdf2Error::OutputTooLong)`. The cap is in the gigabytes — only relevant for adversarial inputs.
 - **Policy override.** Use `Pbkdf2VerifyPolicy` and `params_with_policy` only when you have a deliberate migration policy. This keeps legacy acceptance explicit instead of making low-cost password verification the default.
-- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-06-09. Bump these as the OWASP cheat sheet bumps; rscrypto will track.
+- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-06-14. Bump these as the OWASP cheat sheet bumps; rscrypto will track.
 - **`no_std`.** Both crates work in `no_std`.
