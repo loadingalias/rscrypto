@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/loadingalias/rscrypto/compare/v0.4.1...v0.5.0) - 2026-06-14
+
+### 📝 Documentation
+
+- prepare public docs for v0.5.0 release ([1ba0795](https://github.com/loadingalias/rscrypto/commit/1ba0795447f755ab820d3514cfcd0e06debef5e2))
+
+### 📦 Other Changes
+
+- auth: fix RSA-2048 leakage fixture policy ([c8f6886](https://github.com/loadingalias/rscrypto/commit/c8f6886f343c3771d7bdab14261b703b7277b8a4))
+- crypto: harden secret handling and CT validation paths ci: scope CT evidence to required primitives and repair macOS RSA fixtures docs: align migration guidance with hardened verification defaults bench: refresh crypto benches for typed APIs checksum: clarify CRC64 reference constants workspace: align feature metadata and lockfiles for CT tooling ([30ddfb6](https://github.com/loadingalias/rscrypto/commit/30ddfb6632d2d364574e9c4379775cb669219f53))
+
+
+
 ## [0.4.1](https://github.com/loadingalias/rscrypto/compare/v0.4.0...v0.4.1) - 2026-06-13
 
 ### 📝 Documentation
