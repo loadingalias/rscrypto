@@ -2,14 +2,14 @@
 
 > Replace the bare `scrypt(password, salt, &Params, &mut out)` function with `Scrypt::hash(&ScryptParams, password, salt, &mut out)`. Same RFC 7914 algorithm, byte-identical output, PHC string round-trip built in (no `password-hash` crate dependency).
 
-Verified against `scrypt = "0.12.0"` and the `rscrypto` 0.4.0 line.
+Verified against `scrypt = "0.12.0"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/scrypt_vectors.rs`, `tests/scrypt_differential.rs`, and `tests/phc_roundtrip.rs`.
 
 ## TL;DR
 
-| | Before (`scrypt` 0.12.x) | After (`rscrypto` 0.4.0) |
+| | Before (`scrypt` 0.12.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `scrypt = "0.12"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.4.0", features = ["scrypt", "phc-strings"] }` |
+| Cargo dep | `scrypt = "0.12"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.5.0", features = ["scrypt", "phc-strings"] }` |
 | Import | `use scrypt::{scrypt, Params};` | `use rscrypto::{Scrypt, ScryptParams};` |
 | Raw KDF | `scrypt(pw, salt, &Params::new(log_n, r, p)?, &mut out)?` | `Scrypt::hash(&ScryptParams::new()...build()?, pw, salt, &mut out)?` |
 
@@ -25,7 +25,7 @@ password-hash = "0.5"            # only if you need PHC strings
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["scrypt", "phc-strings"] }
+rscrypto = { version = "0.5.0", features = ["scrypt", "phc-strings"] }
 ```
 
 Drop `phc-strings` if you only need the raw KDF and not PHC `$scrypt$...$...` storage strings. Drop `getrandom` from the feature list if you supply your own salt.
@@ -121,7 +121,7 @@ then re-validating. The built-in default policy is a hardening upgrade.
 ## Notes
 
 - **`Params::new` is 3 args, not 4.** RustCrypto `scrypt = "0.12"` removed the explicit output-length parameter — output size is whatever buffer you pass to `scrypt(...)`. rscrypto restores it on the builder for cross-call safety (`output_len` is part of the `ScryptParams`, not the call site).
-- **OWASP Password Storage Cheat Sheet defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32` — matches the sheet as checked on 2026-06-09. RustCrypto's `Params::default()` matches.
+- **OWASP Password Storage Cheat Sheet defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32` — matches the sheet as checked on 2026-06-14. RustCrypto's `Params::default()` matches.
 - **`MIN_SALT_LEN` is policy, not enforcement.** rscrypto exposes `Scrypt::MIN_SALT_LEN = 16` as a guidance constant. Neither crate rejects shorter salts at hash time (RFC 7914 §12 test vectors include empty salts) — assert against the constant in your wrapper if you want enforcement.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings.
 - **Memory cost.** `Scrypt::hash` allocates `128 * r * N` bytes (default: ~128 MB at `log_n=17, r=8`). `Scrypt::verify_string` caps incoming PHC strings with `ScryptVerifyPolicy::default()`; use `verify_string_unbounded` only for trusted migration/test-vector inputs.

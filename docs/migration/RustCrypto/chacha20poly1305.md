@@ -2,14 +2,14 @@
 
 > Covers both `ChaCha20Poly1305` (96-bit nonce, RFC 8439) and `XChaCha20Poly1305` (192-bit nonce). Same algorithm, byte-identical ciphertext+tag; replace `Key<T>` / `Nonce` / `XNonce` / `Payload { msg, aad }` with `ChaCha20Poly1305Key` + `Nonce96` / `Nonce192` and a buffer-style API.
 
-Verified against `chacha20poly1305 = "0.10.1"` and the `rscrypto` 0.4.0 line.
+Verified against `chacha20poly1305 = "0.10.1"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/chacha20poly1305.rs`, `tests/xchacha20poly1305.rs`, and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`chacha20poly1305` 0.10.x) | After (`rscrypto` 0.4.0) |
+| | Before (`chacha20poly1305` 0.10.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `chacha20poly1305 = "0.10"` | `rscrypto = { version = "0.4.0", features = ["chacha20poly1305", "xchacha20poly1305"] }` |
+| Cargo dep | `chacha20poly1305 = "0.10"` | `rscrypto = { version = "0.5.0", features = ["chacha20poly1305", "xchacha20poly1305"] }` |
 | Import | `use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -26,7 +26,7 @@ chacha20poly1305 = "0.10"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["chacha20poly1305", "xchacha20poly1305"] }
+rscrypto = { version = "0.5.0", features = ["chacha20poly1305", "xchacha20poly1305"] }
 ```
 
 ## Algorithm map

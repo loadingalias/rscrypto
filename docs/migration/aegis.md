@@ -2,14 +2,14 @@
 
 > Covers AEGIS-256 from the `aegis` crate. Replace `Aegis256::<TAG>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; TAG])` with rscrypto's `Aead`-trait-style `encrypt(&nonce, aad, msg, &mut out)`. Same algorithm (draft-irtf-cfrg-aegis-aead), byte-identical ciphertext+tag.
 
-Verified against `aegis = "0.9.12"` and the `rscrypto` 0.4.0 line.
+Verified against `aegis = "0.9.12"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/aegis256_oracle.rs` and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`aegis` 0.9.x) | After (`rscrypto` 0.4.0) |
+| | Before (`aegis` 0.9.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
-| Cargo dep | `aegis = "0.9"` | `rscrypto = { version = "0.4.0", features = ["aegis256"] }` |
+| Cargo dep | `aegis = "0.9"` | `rscrypto = { version = "0.5.0", features = ["aegis256"] }` |
 | Import | `use aegis::aegis256::Aegis256;` | `use rscrypto::{Aead, Aegis256, Aegis256Key, aead::Nonce256};` |
 | Encrypt | `Aegis256::<16>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; 16])` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -24,7 +24,7 @@ aegis = "0.9"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.4.0", features = ["aegis256"] }
+rscrypto = { version = "0.5.0", features = ["aegis256"] }
 ```
 
 ## Algorithm map

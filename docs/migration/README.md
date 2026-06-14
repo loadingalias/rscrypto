@@ -18,7 +18,7 @@ API shape change, or not a good fit.
 | [`crc-fast`](crc-fast.md) | `Crc32`, `Crc32C`, `Crc64`, `Crc64Nvme` (catalogue subset) | Verified against `crc-fast 1.10.0` |
 | [`crc32fast`](crc32fast.md) | `Crc32` | Output covered by CRC-32 oracle/property tests |
 | [`crc32c`](crc32c.md) | `Crc32C` | Output covered by CRC-32C oracle/property tests |
-| [`crc64fast`](crc64fast.md) | `Crc64`, `Crc64Nvme` (covers `crc64fast-nvme` aside) | Verified against `crc64fast 1.1.0` and `crc64fast-nvme 1.2.1` |
+| [`crc64fast`](crc64fast.md) | `Crc64`, `Crc64Nvme` (covers `crc64fast-nvme` aside) | Verified against `crc64fast 1.1.0`; NVMe oracle coverage uses `crc-fast 1.10.0` |
 
 ## Hashes
 

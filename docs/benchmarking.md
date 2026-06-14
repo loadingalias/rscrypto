@@ -54,7 +54,7 @@ shape-compatible:
 | RSA import / verification | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs` |
 | Password hashing | RustCrypto, `dryoc` where API-compatible |
 | XXH3 / RapidHash | upstream crates |
-| CRC | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast`, `crc64fast-nvme` |
+| CRC | `crc`, `crc-fast`, `crc32fast`, `crc32c`, `crc64fast` |
 
 Some common libraries are not primary benchmark baselines:
 

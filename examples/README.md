@@ -62,4 +62,3 @@ Prints the platform's detected CPU capabilities and reports which kernel the dis
 - Algorithm inventory and feature flags: [`README.md`](../README.md)
 - Migration guides from RustCrypto, `blake3`, CRC crates, AEADs, signatures, and password hashing: [`docs/migration/`](../docs/migration/)
 - Security guidance (nonce lifecycle, PHC verification limits, fallback notes): [`docs/security.md`](../docs/security.md)
-- Architecture (modules, dispatch model, internals): [`docs/architecture.md`](../docs/architecture.md)
