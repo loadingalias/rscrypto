@@ -4,7 +4,8 @@ use core::hint::black_box;
 use std::time::Instant;
 
 use rscrypto::{
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, auth::rsa::diag_rsa_blinding_factor_inverse,
+  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy,
+  auth::rsa::diag_rsa_blinding_factor_inverse,
 };
 use serde_json::Value;
 
@@ -163,14 +164,23 @@ fn hex_value(byte: u8) -> u8 {
   }
 }
 
-fn fixture_key() -> RsaPrivateKey {
+fn legacy_rsa2048_fixture_key() -> RsaPrivateKey {
   let suite: Value = serde_json::from_str(OAEP_SHA256).expect("Wycheproof OAEP JSON must parse");
   let group = suite["testGroups"]
     .as_array()
     .and_then(|groups| groups.first())
     .expect("Wycheproof OAEP group must exist");
   let der = hex_to_vec(group["privateKeyPkcs8"].as_str().expect("privateKeyPkcs8 must exist"));
-  RsaPrivateKey::from_pkcs8_der(&der).expect("Wycheproof RSA private key must parse")
+  let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("Wycheproof RSA-2048 private key must parse with explicit legacy policy");
+  assert_eq!(key.public_key().modulus_bits(), 2048);
+  key
+}
+
+#[test]
+fn rsa_leakage_fixture_uses_explicit_legacy_rsa2048_policy() {
+  let key = legacy_rsa2048_fixture_key();
+  assert_eq!(key.public_key().public_exponent().as_u64(), 65_537);
 }
 
 fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -324,7 +334,7 @@ fn rsa_private_operations_do_not_show_first_order_timing_leakage() {
   assert!(samples >= 4, "leakage gate needs at least four samples per class");
   let input_pool = samples.max(warmup).min(256);
 
-  let key = fixture_key();
+  let key = legacy_rsa2048_fixture_key();
   let len = key.public_key().modulus().len();
   let (blinding_factor, blinding_inverse) = factor_two_and_inverse(key.public_key().modulus());
   let (fixed_message, random_messages) = fixed_and_random_messages(64, input_pool);
