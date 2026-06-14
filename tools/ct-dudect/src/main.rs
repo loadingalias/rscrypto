@@ -4,9 +4,9 @@ use rscrypto::{
   Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256Keypair,
   EcdsaP256SecretKey, EcdsaP384Keypair, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
-  HkdfSha384, HmacSha256, HmacSha384, HmacSha512, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile,
-  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
+  HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256,
+  Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes,
+  Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash,
     diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys,
@@ -25,7 +25,7 @@ use rscrypto::{
   diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
   diag_rsa_validate_pkcs8_private_key_der_stage,
   traits::ct,
-  RsaPublicKeyPolicy,
+  RsaEncryptionError, RsaPublicKeyPolicy,
 };
 
 const DEFAULT_SAMPLES: usize = 20_000;
@@ -94,6 +94,11 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
 
 fn rsa_pkcs8_der(index: usize) -> Vec<u8> {
   hex_to_vec(json_string_value_n(RSA_PKCS1_2048, "privateKeyPkcs8", index))
+}
+
+fn rsa_ct_fixture_key(index: usize) -> RsaPrivateKey {
+  let der = rsa_pkcs8_der(index);
+  RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
 }
 
 fn rsa_blinding_pair(key: &RsaPrivateKey) -> (Vec<u8>, Vec<u8>) {
@@ -190,17 +195,17 @@ fn secret_wrappers_eq_and_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut
 }
 
 macro_rules! hmac_valid_vs_invalid_tag {
-  ($name:ident, $ty:ty, $tag_len:expr) => {
+  ($name:ident, $ty:ty, $tag_ty:ty, $tag_len:expr) => {
     fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
       let mut inputs = Vec::with_capacity(samples());
       for _ in 0..samples() {
         let class = random_class(rng);
         let key = rand_array::<32>(rng);
-        let mut expected = <$ty>::mac(&key, MESSAGE);
+        let mut expected = <$ty>::mac(&key, MESSAGE).to_bytes();
         if matches!(class, Class::Right) {
           expected[0] ^= 1;
         }
-        inputs.push((class, key, expected));
+        inputs.push((class, key, <$tag_ty>::from_bytes(expected)));
       }
 
       for (class, key, expected) in inputs {
@@ -211,9 +216,9 @@ macro_rules! hmac_valid_vs_invalid_tag {
   };
 }
 
-hmac_valid_vs_invalid_tag!(hmac_sha256_valid_vs_invalid_tag, HmacSha256, 32);
-hmac_valid_vs_invalid_tag!(hmac_sha384_valid_vs_invalid_tag, HmacSha384, 48);
-hmac_valid_vs_invalid_tag!(hmac_sha512_valid_vs_invalid_tag, HmacSha512, 64);
+hmac_valid_vs_invalid_tag!(hmac_sha256_valid_vs_invalid_tag, HmacSha256, HmacSha256Tag, 32);
+hmac_valid_vs_invalid_tag!(hmac_sha384_valid_vs_invalid_tag, HmacSha384, HmacSha384Tag, 48);
+hmac_valid_vs_invalid_tag!(hmac_sha512_valid_vs_invalid_tag, HmacSha512, HmacSha512Tag, 64);
 
 fn kmac256_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
@@ -1088,8 +1093,7 @@ fn ecdsa_p384_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, 
 }
 
 fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
-  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
 
@@ -1121,8 +1125,7 @@ fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRn
 }
 
 fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
-  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
   let salt = [0x7a; 32];
@@ -1156,8 +1159,7 @@ fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
 }
 
 fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
-  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
   let label = b"rscrypto-ct-oaep";
@@ -1174,7 +1176,13 @@ fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut B
     let mut ciphertext = vec![0u8; sig_len];
     key
       .public_key()
-      .encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, &plaintext, &seed, &mut ciphertext)
+      .encrypt_oaep_with_random_fill(RsaOaepProfile::Sha256, label, &plaintext, &mut ciphertext, |out| {
+        if out.len() != seed.len() {
+          return Err(RsaEncryptionError::InvalidLength);
+        }
+        out.copy_from_slice(&seed);
+        Ok(())
+      })
       .unwrap();
     inputs.push((class, ciphertext));
   }
@@ -1197,12 +1205,9 @@ fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut B
 }
 
 fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let der = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
-  let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+  let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
   let (blinding_factor, blinding_inverse) = rsa_blinding_pair(&key);
-  let seed_len = sig_len.strict_sub(32).strict_sub(3);
-  let seed = vec![0x5d; seed_len];
 
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -1215,7 +1220,10 @@ fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &m
     let mut ciphertext = vec![0u8; sig_len];
     key
       .public_key()
-      .encrypt_pkcs1v15_with_seed(&plaintext, &seed, &mut ciphertext)
+      .encrypt_pkcs1v15_with_random_fill(&plaintext, &mut ciphertext, |out| {
+        out.fill(0x5d);
+        Ok(())
+      })
       .unwrap();
     inputs.push((class, ciphertext));
   }
@@ -1272,7 +1280,7 @@ fn rsa_private_key_pkcs8_import_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut 
     let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
     der.copy_from_slice(selected);
     runner.run_one(class, || {
-      let key = RsaPrivateKey::from_pkcs8_der(&der).unwrap();
+      let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
       key.signature_len()
     });
   }
@@ -1387,8 +1395,8 @@ fn rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner: &mut CtRunner, rn
 }
 
 fn rsa_private_key_pkcs8_export_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let key_a = RsaPrivateKey::from_pkcs8_der(&rsa_pkcs8_der(RSA_CT_KEY_A_INDEX)).unwrap();
-  let key_b = RsaPrivateKey::from_pkcs8_der(&rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX)).unwrap();
+  let key_a = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let key_b = rsa_ct_fixture_key(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     inputs.push(random_class(rng));

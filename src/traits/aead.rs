@@ -6,7 +6,9 @@
 
 use core::fmt::Debug;
 
-use crate::aead::{AeadBufferError, OpenError, SealError};
+#[cfg(feature = "getrandom")]
+use crate::aead::RandomSealError;
+use crate::aead::{AeadBufferError, AeadNonce, OpenError, SealError};
 
 /// Authenticated encryption with associated data.
 ///
@@ -18,19 +20,21 @@ use crate::aead::{AeadBufferError, OpenError, SealError};
 /// # Examples
 ///
 /// ```
-/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
 ///
 /// let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
-/// let nonce = Nonce96::from_bytes([0x24; 12]);
 /// let cipher = ChaCha20Poly1305::new(&key);
 ///
-/// // In-place encrypt with detached tag.
+/// // In-place encrypt with a fresh nonce and detached tag.
 /// let mut buf = *b"hello";
-/// let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf)?;
+/// let (nonce, tag) = cipher.seal_random_in_place(b"aad", &mut buf)?;
 ///
 /// // In-place decrypt.
 /// cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait Aead: Clone {
@@ -47,7 +51,7 @@ pub trait Aead: Clone {
   type Key: Clone + Eq;
 
   /// Algorithm-specific nonce wrapper.
-  type Nonce: Copy + Eq + Debug + AsRef<[u8]>;
+  type Nonce: AeadNonce;
 
   /// Algorithm-specific tag wrapper.
   type Tag: Copy + Eq + Debug + AsRef<[u8]>;
@@ -62,7 +66,52 @@ pub trait Aead: Clone {
   /// [`TAG_SIZE`](Self::TAG_SIZE).
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError>;
 
-  /// Encrypt `buffer` in place and return the detached authentication tag.
+  /// Encrypt `plaintext` into `out` as `ciphertext || tag` with a fresh random nonce.
+  ///
+  /// This is the default one-shot sealing API when the `getrandom` feature is
+  /// available. The returned nonce must be stored or transmitted alongside the
+  /// ciphertext and must be supplied to [`decrypt`](Self::decrypt).
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RandomSealError`] if the operating-system entropy source fails,
+  /// `out.len()` does not match `plaintext.len() + TAG_SIZE`, that addition
+  /// overflows, or the input exceeds the algorithm's supported length bound.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  fn seal_random(&self, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<Self::Nonce, RandomSealError> {
+    let nonce = Self::Nonce::try_random()?;
+    self.encrypt(&nonce, aad, plaintext, out)?;
+    Ok(nonce)
+  }
+
+  /// Encrypt `buffer` in place with a fresh random nonce and return the nonce and detached tag.
+  ///
+  /// The returned nonce must be stored or transmitted alongside the ciphertext
+  /// and supplied to [`decrypt_in_place`](Self::decrypt_in_place).
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RandomSealError`] if the operating-system entropy source fails
+  /// or the input exceeds the algorithm's supported length bound.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  fn seal_random_in_place(&self, aad: &[u8], buffer: &mut [u8]) -> Result<(Self::Nonce, Self::Tag), RandomSealError> {
+    let nonce = Self::Nonce::try_random()?;
+    let tag = self.encrypt_in_place(&nonce, aad, buffer)?;
+    Ok((nonce, tag))
+  }
+
+  /// Encrypt `buffer` in place with a caller-supplied nonce and return the detached authentication
+  /// tag.
+  ///
+  /// Prefer `seal_random_in_place` when OS
+  /// randomness is available, or a dedicated nonce stream such as
+  /// `NonceCounter` for high-volume AES-GCM.
+  /// Supplying a nonce directly is for protocols that already define nonce
+  /// derivation and for test vectors.
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError>;
 
   /// Decrypt `buffer` in place and verify the detached authentication tag.
@@ -129,7 +178,13 @@ pub trait Aead: Clone {
     Ok(ciphertext_and_tag_len.strict_sub(Self::TAG_SIZE))
   }
 
-  /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
+  /// Encrypt `plaintext` into `out` as `ciphertext || tag` with a caller-supplied nonce.
+  ///
+  /// Prefer `seal_random` when OS randomness is
+  /// available, or a dedicated nonce stream such as
+  /// `NonceCounter` for high-volume AES-GCM.
+  /// Supplying a nonce directly is for protocols that already define nonce
+  /// derivation and for test vectors.
   ///
   /// # Errors
   ///

@@ -237,10 +237,11 @@ fn rsa_components_for_size(
   pss_sig: &[u8],
   pkcs1_spki: &[u8],
   pkcs1_sig: &[u8],
+  import_policy: &RsaPublicKeyPolicy,
 ) {
-  let pss_key = RsaPublicKey::from_spki_der(pss_spki).unwrap();
+  let pss_key = RsaPublicKey::from_spki_der_with_policy(pss_spki, import_policy).unwrap();
   let mut pss_scratch = pss_key.public_scratch();
-  let pkcs1_key = RsaPublicKey::from_spki_der(pkcs1_spki).unwrap();
+  let pkcs1_key = RsaPublicKey::from_spki_der_with_policy(pkcs1_spki, import_policy).unwrap();
   let mut pkcs1_scratch = pkcs1_key.public_scratch();
   let pss_pkcs1 = pkcs1_der_from_key(&pss_key);
   let pkcs1_pkcs1 = pkcs1_der_from_key(&pkcs1_key);
@@ -293,7 +294,7 @@ fn rsa_components_for_size(
   let mut group = c.benchmark_group(name);
 
   group.bench_function("parse-spki-rscrypto", |b| {
-    b.iter(|| black_box(RsaPublicKey::from_spki_der(black_box(pss_spki)).unwrap()))
+    b.iter(|| black_box(RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy).unwrap()))
   });
   if rustcrypto_pss_key.is_some() {
     group.bench_function("parse-spki-rustcrypto-rsa", |b| {
@@ -387,7 +388,7 @@ fn rsa_components_for_size(
   });
   group.bench_function("verify-pss-sha256-rscrypto-cold", |b| {
     b.iter(|| {
-      RsaPublicKey::from_spki_der(black_box(pss_spki))
+      RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
         .unwrap()
         .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
         .unwrap()
@@ -435,7 +436,7 @@ fn rsa_components_for_size(
   });
   group.bench_function("verify-pkcs1v15-sha256-rscrypto-cold", |b| {
     b.iter(|| {
-      RsaPublicKey::from_spki_der(black_box(pkcs1_spki))
+      RsaPublicKey::from_spki_der_with_policy(black_box(pkcs1_spki), import_policy)
         .unwrap()
         .verify_pkcs1v15(
           RsaPkcs1v15Profile::Sha256,
@@ -484,7 +485,8 @@ fn rsa_public_exponents(c: &mut Criterion) {
   let key_e17 =
     RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x11]), &policy).unwrap();
   let key_e65537 =
-    RsaPublicKey::from_pkcs1_der(&pkcs1_der_from_modulus_exponent(&modulus, &[0x01, 0x00, 0x01])).unwrap();
+    RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x01, 0x00, 0x01]), &policy)
+      .unwrap();
   let key_generic = RsaPublicKey::from_pkcs1_der_with_policy(
     &pkcs1_der_from_modulus_exponent(&modulus, &[0x49, 0xd2, 0xa1]),
     &policy.allow_legacy_odd_exponents(),
@@ -789,6 +791,8 @@ fn rsa_components(c: &mut Criterion) {
   let pss2048_sig = pss_signature_sha256();
   let pkcs1v15_2048_spki = pkcs1v15_spki();
   let pkcs1v15_2048_sig = pkcs1v15_signature_sha256();
+  let legacy_policy = RsaPublicKeyPolicy::legacy_verification();
+  let modern_policy = RsaPublicKeyPolicy::modern_verification();
 
   rsa_components_for_size(
     c,
@@ -797,6 +801,7 @@ fn rsa_components(c: &mut Criterion) {
     &pss2048_sig,
     &pkcs1v15_2048_spki,
     &pkcs1v15_2048_sig,
+    &legacy_policy,
   );
   rsa_components_for_size(
     c,
@@ -805,6 +810,7 @@ fn rsa_components(c: &mut Criterion) {
     RSA3072_PSS_SHA256,
     RSA3072_SPKI,
     RSA3072_PKCS1V15_SHA256,
+    &modern_policy,
   );
   rsa_components_for_size(
     c,
@@ -813,6 +819,7 @@ fn rsa_components(c: &mut Criterion) {
     RSA4096_PSS_SHA256,
     RSA4096_SPKI,
     RSA4096_PKCS1V15_SHA256,
+    &modern_policy,
   );
   rsa_components_for_size(
     c,
@@ -821,6 +828,7 @@ fn rsa_components(c: &mut Criterion) {
     RSA8192_PSS_SHA256,
     RSA8192_SPKI,
     RSA8192_PKCS1V15_SHA256,
+    &modern_policy,
   );
 }
 

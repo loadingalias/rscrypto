@@ -38,7 +38,8 @@ fn run_hmac_suite<M, const TAG_SIZE: usize>(
   full_tag_size_bits: u64,
   expected: Counts,
 ) where
-  M: Mac<Tag = [u8; TAG_SIZE]>,
+  M: Mac,
+  M::Tag: From<[u8; TAG_SIZE]>,
 {
   let suite: Value = serde_json::from_str(suite_json).expect("Wycheproof JSON must parse");
   let mut counts = Counts { valid: 0, invalid: 0 };
@@ -54,16 +55,21 @@ fn run_hmac_suite<M, const TAG_SIZE: usize>(
       let key = decode_hex_vec(field(test, "key"));
       let msg = decode_hex_vec(field(test, "msg"));
       let tag = decode_hex_vec(field(test, "tag"));
-      let tag: [u8; TAG_SIZE] = match tag.try_into() {
+      let tag_bytes: [u8; TAG_SIZE] = match tag.try_into() {
         Ok(tag) => tag,
         Err(tag) => panic!("{algorithm} tcId {tc_id} tag has wrong length: {}", tag.len()),
       };
+      let tag = M::Tag::from(tag_bytes);
 
       match field(test, "result") {
         "valid" => {
           counts.valid += 1;
           let actual = M::mac(&key, &msg);
-          assert_eq!(actual.as_ref(), tag.as_slice(), "{algorithm} tcId {tc_id} MAC mismatch");
+          assert_eq!(
+            <M::Tag as AsRef<[u8]>>::as_ref(&actual),
+            <M::Tag as AsRef<[u8]>>::as_ref(&tag),
+            "{algorithm} tcId {tc_id} MAC mismatch"
+          );
           assert!(
             M::verify_tag(&key, &msg, &tag).is_ok(),
             "{algorithm} tcId {tc_id} verify failed"

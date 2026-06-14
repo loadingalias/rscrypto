@@ -90,14 +90,6 @@ fn crc64_nvme(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("crc-fast", len), data, |b, d| {
       b.iter(|| black_box(crc_fast::crc64_nvme(black_box(d))))
     });
-
-    g.bench_with_input(BenchmarkId::new("crc64fast-nvme", len), data, |b, d| {
-      b.iter(|| {
-        let mut h = crc64fast_nvme::Digest::new();
-        h.write(black_box(d));
-        black_box(h.sum64())
-      })
-    });
   }
 
   g.finish();

@@ -58,7 +58,7 @@ let bytes = tag.as_ref();
 // After
 use rscrypto::HmacSha256;
 
-let bytes = HmacSha256::mac(key_bytes, data);
+let bytes = HmacSha256::mac(key_bytes, data).to_bytes();
 ```
 
 ## HKDF

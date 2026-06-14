@@ -1,6 +1,7 @@
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto::{
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, RsaSignatureProfile,
+  RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy,
+  RsaSignatureProfile,
 };
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
@@ -68,7 +69,7 @@ pub fn run(data: &[u8]) {
       let mut ciphertext = vec![0u8; key.signature_len()];
       key
         .public_key()
-        .encrypt_oaep_with_seed(profile, label, message, &seed, &mut ciphertext)
+        .encrypt_oaep_with_random_fill(profile, label, message, &mut ciphertext, fill_random_from(&seed))
         .expect("fixture RSA-OAEP encryption must succeed for bounded message");
       let mut plaintext = vec![0u8; key.signature_len()];
       let plaintext_len = key
@@ -114,9 +115,13 @@ pub fn run(data: &[u8]) {
     }
     7 => {
       let profile = OAEP_PROFILES[usize::from(selector) % OAEP_PROFILES.len()];
-      let seed = bounded_slice(right, profile.digest_len().saturating_sub(1));
       let mut ciphertext = vec![0u8; key.signature_len()];
-      assert!(key.public_key().encrypt_oaep_with_seed(profile, left, right, seed, &mut ciphertext).is_err());
+      assert!(key
+        .public_key()
+        .encrypt_oaep_with_random_fill(profile, left, right, &mut ciphertext, |_| {
+          Err(RsaEncryptionError::EntropyUnavailable)
+        })
+        .is_err());
     }
     8 => {
       let message = bounded_slice(right, pkcs1v15_message_limit(&key));
@@ -124,7 +129,7 @@ pub fn run(data: &[u8]) {
       let mut ciphertext = vec![0u8; key.signature_len()];
       key
         .public_key()
-        .encrypt_pkcs1v15_with_seed(message, &seed, &mut ciphertext)
+        .encrypt_pkcs1v15_with_random_fill(message, &mut ciphertext, fill_random_from(&seed))
         .expect("fixture RSAES-PKCS1-v1_5 encryption must succeed for bounded message");
       let mut plaintext = vec![0u8; key.signature_len()];
       let plaintext_len = key
@@ -168,6 +173,20 @@ fn full_width_candidate(input: &[u8], len: usize) -> Vec<u8> {
     *byte = input[index % input.len()];
   }
   out
+}
+
+#[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
+fn fill_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> + '_ {
+  let mut offset = 0usize;
+  move |out| {
+    let end = offset.strict_add(out.len());
+    if end > bytes.len() {
+      return Err(RsaEncryptionError::EntropyUnavailable);
+    }
+    out.copy_from_slice(&bytes[offset..end]);
+    offset = end;
+    Ok(())
+  }
 }
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]

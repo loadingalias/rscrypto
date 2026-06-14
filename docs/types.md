@@ -88,7 +88,7 @@ Features: `macs` / `kdfs` or `hmac` / `hkdf` / `pbkdf2` / `kmac`.
 
 | Type | Tag/Output | Standard |
 |------|------------|----------|
-| `HmacSha256` / `HmacSha384` / `HmacSha512` | 32-64B | RFC 2104 |
+| `HmacSha256` / `HmacSha384` / `HmacSha512`; `HmacSha256Tag` / `HmacSha384Tag` / `HmacSha512Tag` | 32-64B | RFC 2104 |
 | `Kmac256` | variable | SP 800-185 |
 | `HkdfSha256` / `HkdfSha384` | 32-48B PRK | RFC 5869 |
 | `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
@@ -122,11 +122,12 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
 
 ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signature import, SEC1/SPKI public keys, deterministic signing, keypair wrappers, and caller-blinded signing APIs for CT-claimed private-key scalar work.
-RSA public-key verification and import require `rsa` (`alloc`, `sha2`).
-OS-backed private operations and RSA key generation require `getrandom`. Key
-generation seeds a key-generation HMAC_DRBG from OS entropy; deterministic
-caller-supplied salt/blinding APIs remain available for constrained integrations
-that own their entropy boundary.
+RSA public-key verification, import, and caller-filled public encryption require
+`rsa` (`alloc`, `sha2`). OS-backed private operations, key generation, and
+randomized encryption wrappers require `getrandom`. Key generation seeds a
+key-generation HMAC_DRBG from OS entropy; deterministic caller-supplied
+salt/blinding APIs remain available for constrained private-operation
+integrations that own their entropy boundary.
 
 ## AEAD
 

@@ -92,8 +92,8 @@ fn pbkdf2_hmac_sha256_wycheproof_vectors() {
   run_pbkdf2_suite(
     PBKDF2_HMAC_SHA256,
     "PBKDF2-HMAC-SHA256",
-    Pbkdf2Sha256::derive_key,
-    Pbkdf2Sha256::verify_password,
+    Pbkdf2Sha256::derive_key_primitive,
+    Pbkdf2Sha256::verify_password_primitive,
     60,
   );
 }
@@ -103,8 +103,8 @@ fn pbkdf2_hmac_sha512_wycheproof_vectors() {
   run_pbkdf2_suite(
     PBKDF2_HMAC_SHA512,
     "PBKDF2-HMAC-SHA512",
-    Pbkdf2Sha512::derive_key,
-    Pbkdf2Sha512::verify_password,
+    Pbkdf2Sha512::derive_key_primitive,
+    Pbkdf2Sha512::verify_password_primitive,
     58,
   );
 }

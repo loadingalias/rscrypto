@@ -248,8 +248,6 @@ CASE_METADATA = {
     "primitive": "signature.ecdsa_p256_sign",
     "left_class": "P-256 diagnostic nonce inverse from fixed secret",
     "right_class": "P-256 diagnostic nonce inverse from random secret",
-    "gate": "diagnostic",
-    "reason": "ECDSA signing CT root-cause isolation.",
   },
   "ecdsa_p256_diag_final_multiply_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",
@@ -297,8 +295,6 @@ CASE_METADATA = {
     "primitive": "signature.ecdsa_p384_sign",
     "left_class": "P-384 diagnostic nonce inverse from fixed secret",
     "right_class": "P-384 diagnostic nonce inverse from random secret",
-    "gate": "diagnostic",
-    "reason": "ECDSA signing CT root-cause isolation.",
   },
   "ecdsa_p384_diag_final_multiply_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p384_sign",

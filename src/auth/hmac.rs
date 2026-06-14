@@ -20,6 +20,190 @@ const HMAC_IPAD_WORD: u64 = 0x3636_3636_3636_3636;
 const HMAC_OPAD_WORD: u64 = 0x5c5c_5c5c_5c5c_5c5c;
 const HMAC_PAD_DELTA_WORD: u64 = HMAC_IPAD_WORD ^ HMAC_OPAD_WORD;
 
+macro_rules! define_hmac_tag_type {
+  ($name:ident, $len:expr, $doc:literal) => {
+    #[doc = $doc]
+    #[derive(Clone, Copy)]
+    pub struct $name([u8; Self::LENGTH]);
+
+    impl PartialEq for $name {
+      #[inline]
+      fn eq(&self, other: &Self) -> bool {
+        ct::constant_time_eq(&self.0, &other.0)
+      }
+    }
+
+    impl PartialEq<[u8; $len]> for $name {
+      #[inline]
+      fn eq(&self, other: &[u8; $len]) -> bool {
+        ct::constant_time_eq(&self.0, other)
+      }
+    }
+
+    impl PartialEq<$name> for [u8; $len] {
+      #[inline]
+      fn eq(&self, other: &$name) -> bool {
+        ct::constant_time_eq(self, &other.0)
+      }
+    }
+
+    impl Eq for $name {}
+
+    impl core::hash::Hash for $name {
+      #[inline]
+      fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::hash::Hash::hash(&self.0, state);
+      }
+    }
+
+    impl $name {
+      /// Tag length in bytes.
+      pub const LENGTH: usize = $len;
+
+      /// Construct a typed tag from raw bytes.
+      #[inline]
+      #[must_use]
+      pub const fn from_bytes(bytes: [u8; Self::LENGTH]) -> Self {
+        Self(bytes)
+      }
+
+      /// Return the tag bytes.
+      #[inline]
+      #[must_use]
+      pub const fn to_bytes(self) -> [u8; Self::LENGTH] {
+        self.0
+      }
+
+      /// Return the tag bytes.
+      #[inline]
+      #[must_use]
+      pub const fn into_bytes(self) -> [u8; Self::LENGTH] {
+        self.0
+      }
+
+      /// Borrow the tag bytes as a fixed-size array.
+      #[inline]
+      #[must_use]
+      pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
+        &self.0
+      }
+
+      /// Borrow the tag bytes as a slice.
+      #[inline]
+      #[must_use]
+      pub fn as_slice(&self) -> &[u8] {
+        &self.0
+      }
+    }
+
+    impl Default for $name {
+      #[inline]
+      fn default() -> Self {
+        Self([0u8; Self::LENGTH])
+      }
+    }
+
+    impl From<[u8; $len]> for $name {
+      #[inline]
+      fn from(bytes: [u8; $len]) -> Self {
+        Self::from_bytes(bytes)
+      }
+    }
+
+    impl From<$name> for [u8; $len] {
+      #[inline]
+      fn from(tag: $name) -> Self {
+        tag.to_bytes()
+      }
+    }
+
+    impl TryFrom<&[u8]> for $name {
+      type Error = core::array::TryFromSliceError;
+
+      #[inline]
+      fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        Ok(Self::from_bytes(bytes.try_into()?))
+      }
+    }
+
+    impl AsRef<[u8]> for $name {
+      #[inline]
+      fn as_ref(&self) -> &[u8] {
+        &self.0
+      }
+    }
+
+    impl AsRef<[u8; $len]> for $name {
+      #[inline]
+      fn as_ref(&self) -> &[u8; $len] {
+        &self.0
+      }
+    }
+
+    impl crate::traits::ConstantTimeEq for $name {
+      #[inline]
+      fn ct_eq(&self, other: &Self) -> bool {
+        ct::constant_time_eq(&self.0, &other.0)
+      }
+    }
+
+    impl core::fmt::Debug for $name {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}(", stringify!($name))?;
+        for byte in self.0 {
+          write!(f, "{byte:02x}")?;
+        }
+        write!(f, ")")
+      }
+    }
+
+    #[cfg(feature = "serde")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl serde::Serialize for $name {
+      fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+      }
+    }
+
+    #[cfg(feature = "serde")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
+    impl<'de> serde::Deserialize<'de> for $name {
+      fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ByteVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for ByteVisitor {
+          type Value = $name;
+
+          fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} bytes", <$name>::LENGTH)
+          }
+
+          fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+            let arr: [u8; <$name>::LENGTH] = v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
+            Ok(<$name>::from_bytes(arr))
+          }
+
+          fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut arr = [0u8; <$name>::LENGTH];
+            for (i, byte) in arr.iter_mut().enumerate() {
+              *byte = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+            }
+            Ok(<$name>::from_bytes(arr))
+          }
+        }
+
+        deserializer.deserialize_bytes(ByteVisitor)
+      }
+    }
+  };
+}
+
+define_hmac_tag_type!(HmacSha256Tag, SHA256_TAG_SIZE, "HMAC-SHA256 authentication tag.");
+define_hmac_tag_type!(HmacSha384Tag, SHA384_TAG_SIZE, "HMAC-SHA384 authentication tag.");
+define_hmac_tag_type!(HmacSha512Tag, SHA512_TAG_SIZE, "HMAC-SHA512 authentication tag.");
+
 #[cfg(target_arch = "x86_64")]
 #[inline]
 fn hmac_sha256_oneshot_prefers_streaming(caps: crate::platform::Caps) -> bool {
@@ -167,7 +351,6 @@ fn hmac_outer_pad_words<const OUT_SIZE: usize, const BLOCK_SIZE: usize>(
 /// let mut mac = HmacSha256::new(key);
 /// mac.update(b"auth ");
 /// mac.update(b"message");
-/// assert_eq!(mac.finalize(), tag);
 /// assert!(mac.verify(&tag).is_ok());
 /// ```
 #[derive(Clone)]
@@ -193,14 +376,14 @@ impl HmacSha256 {
   /// Compute the HMAC tag of `data` in one shot.
   #[inline]
   #[must_use]
-  pub fn mac(key: &[u8], data: &[u8]) -> [u8; SHA256_TAG_SIZE] {
+  pub fn mac(key: &[u8], data: &[u8]) -> HmacSha256Tag {
     <Self as Mac>::mac(key, data)
   }
 
   /// Verify `expected` against the HMAC tag of `data` in constant time.
   #[inline]
   #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
-  pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA256_TAG_SIZE]) -> Result<(), VerificationError> {
+  pub fn verify_tag(key: &[u8], data: &[u8], expected: &HmacSha256Tag) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
@@ -246,7 +429,7 @@ impl HmacSha256 {
   ) -> [u8; SHA256_TAG_SIZE] {
     let mut mac = Self::new_with_compress_for_test(key, compress);
     mac.update(data);
-    mac.finalize()
+    mac.finalize().to_bytes()
   }
 }
 
@@ -262,7 +445,7 @@ pub fn diag_hmac_sha256_verify_portable(key: &[u8; SHA256_TAG_SIZE], expected: &
 
 impl Mac for HmacSha256 {
   const TAG_SIZE: usize = SHA256_TAG_SIZE;
-  type Tag = [u8; SHA256_TAG_SIZE];
+  type Tag = HmacSha256Tag;
 
   fn new(key: &[u8]) -> Self {
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
@@ -307,7 +490,7 @@ impl Mac for HmacSha256 {
     let inner_hash = self.inner.finalize();
     let mut outer = Sha256::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
-    outer.finalize()
+    HmacSha256Tag::from_bytes(outer.finalize())
   }
 
   #[inline]
@@ -423,12 +606,12 @@ impl Mac for HmacSha256 {
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-    tag
+    HmacSha256Tag::from_bytes(tag)
   }
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(&self.finalize(), expected) {
+    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -458,7 +641,7 @@ impl Drop for HmacSha256 {
 /// let mut mac = HmacSha384::new(key);
 /// mac.update(b"auth ");
 /// mac.update(b"message");
-/// assert_eq!(mac.finalize(), tag);
+/// assert!(mac.verify(&tag).is_ok());
 /// assert!(HmacSha384::verify_tag(key, data, &tag).is_ok());
 /// ```
 #[derive(Clone)]
@@ -484,14 +667,14 @@ impl HmacSha384 {
   /// Compute the HMAC tag of `data` in one shot.
   #[inline]
   #[must_use]
-  pub fn mac(key: &[u8], data: &[u8]) -> [u8; SHA384_TAG_SIZE] {
+  pub fn mac(key: &[u8], data: &[u8]) -> HmacSha384Tag {
     <Self as Mac>::mac(key, data)
   }
 
   /// Verify `expected` against the HMAC tag of `data` in constant time.
   #[inline]
   #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
-  pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA384_TAG_SIZE]) -> Result<(), VerificationError> {
+  pub fn verify_tag(key: &[u8], data: &[u8], expected: &HmacSha384Tag) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
@@ -535,7 +718,7 @@ impl HmacSha384 {
   ) -> [u8; SHA384_TAG_SIZE] {
     let mut mac = Self::new_with_compress_for_test(key, compress);
     mac.update(data);
-    mac.finalize()
+    mac.finalize().to_bytes()
   }
 }
 
@@ -551,7 +734,7 @@ pub fn diag_hmac_sha384_verify_portable(key: &[u8; SHA384_TAG_SIZE], expected: &
 
 impl Mac for HmacSha384 {
   const TAG_SIZE: usize = SHA384_TAG_SIZE;
-  type Tag = [u8; SHA384_TAG_SIZE];
+  type Tag = HmacSha384Tag;
 
   fn new(key: &[u8]) -> Self {
     let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
@@ -596,7 +779,7 @@ impl Mac for HmacSha384 {
     let inner_hash = self.inner.finalize();
     let mut outer = Sha384::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
-    outer.finalize()
+    HmacSha384Tag::from_bytes(outer.finalize())
   }
 
   #[inline]
@@ -695,12 +878,12 @@ impl Mac for HmacSha384 {
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-    tag
+    HmacSha384Tag::from_bytes(tag)
   }
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_ref(), expected.as_ref()) {
+    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -730,7 +913,7 @@ impl Drop for HmacSha384 {
 /// let mut mac = HmacSha512::new(key);
 /// mac.update(b"auth ");
 /// mac.update(b"message");
-/// assert_eq!(mac.finalize(), tag);
+/// assert!(mac.verify(&tag).is_ok());
 /// assert!(HmacSha512::verify_tag(key, data, &tag).is_ok());
 /// ```
 #[derive(Clone)]
@@ -756,14 +939,14 @@ impl HmacSha512 {
   /// Compute the HMAC tag of `data` in one shot.
   #[inline]
   #[must_use]
-  pub fn mac(key: &[u8], data: &[u8]) -> [u8; SHA512_TAG_SIZE] {
+  pub fn mac(key: &[u8], data: &[u8]) -> HmacSha512Tag {
     <Self as Mac>::mac(key, data)
   }
 
   /// Verify `expected` against the HMAC tag of `data` in constant time.
   #[inline]
   #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
-  pub fn verify_tag(key: &[u8], data: &[u8], expected: &[u8; SHA512_TAG_SIZE]) -> Result<(), VerificationError> {
+  pub fn verify_tag(key: &[u8], data: &[u8], expected: &HmacSha512Tag) -> Result<(), VerificationError> {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
@@ -807,7 +990,7 @@ impl HmacSha512 {
   ) -> [u8; SHA512_TAG_SIZE] {
     let mut mac = Self::new_with_compress_for_test(key, compress);
     mac.update(data);
-    mac.finalize()
+    mac.finalize().to_bytes()
   }
 }
 
@@ -823,7 +1006,7 @@ pub fn diag_hmac_sha512_verify_portable(key: &[u8; SHA512_TAG_SIZE], expected: &
 
 impl Mac for HmacSha512 {
   const TAG_SIZE: usize = SHA512_TAG_SIZE;
-  type Tag = [u8; SHA512_TAG_SIZE];
+  type Tag = HmacSha512Tag;
 
   fn new(key: &[u8]) -> Self {
     let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
@@ -868,7 +1051,7 @@ impl Mac for HmacSha512 {
     let inner_hash = self.inner.finalize();
     let mut outer = Sha512::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
-    outer.finalize()
+    HmacSha512Tag::from_bytes(outer.finalize())
   }
 
   #[inline]
@@ -967,12 +1150,12 @@ impl Mac for HmacSha512 {
     }
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-    tag
+    HmacSha512Tag::from_bytes(tag)
   }
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_ref(), expected.as_ref()) {
+    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
       Ok(())
     } else {
       Err(VerificationError::new())

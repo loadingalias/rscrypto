@@ -150,13 +150,9 @@ impl Drop for Aes256EncKey {
         });
       }
       #[cfg(target_arch = "x86_64")]
-      KeyInner::X86AesNi(ni_rk) => {
-        ni_rk.zeroize();
-      }
+      KeyInner::X86AesNi(_) => {}
       #[cfg(target_arch = "aarch64")]
-      KeyInner::Aarch64Aes(ce_rk) => {
-        ce_rk.zeroize();
-      }
+      KeyInner::Aarch64Aes(_) => {}
       #[cfg(target_arch = "s390x")]
       KeyInner::S390xMsa(km_key) => {
         km_key.zeroize();
@@ -238,13 +234,9 @@ impl Drop for Aes128EncKey {
         });
       }
       #[cfg(target_arch = "x86_64")]
-      Key128Inner::X86AesNi(ni_rk) => {
-        ni_rk.zeroize();
-      }
+      Key128Inner::X86AesNi(_) => {}
       #[cfg(target_arch = "aarch64")]
-      Key128Inner::Aarch64Aes(ce_rk) => {
-        ce_rk.zeroize();
-      }
+      Key128Inner::Aarch64Aes(_) => {}
       #[cfg(target_arch = "s390x")]
       Key128Inner::S390xMsa(km_key) => {
         km_key.zeroize();

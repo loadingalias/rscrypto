@@ -543,8 +543,24 @@ macro_rules! define_aead_key_type {
 macro_rules! define_aead_tag_type {
   ($name:ident, $len:expr, $doc:literal) => {
     #[doc = $doc]
-    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Clone, Copy)]
     pub struct $name([u8; Self::LENGTH]);
+
+    impl PartialEq for $name {
+      #[inline]
+      fn eq(&self, other: &Self) -> bool {
+        crate::traits::ct::constant_time_eq(&self.0, &other.0)
+      }
+    }
+
+    impl Eq for $name {}
+
+    impl core::hash::Hash for $name {
+      #[inline]
+      fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        core::hash::Hash::hash(&self.0, state);
+      }
+    }
 
     impl $name {
       /// Tag length in bytes.

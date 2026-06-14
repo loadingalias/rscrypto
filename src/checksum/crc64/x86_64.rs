@@ -1,7 +1,7 @@
 //! x86_64 hardware-accelerated CRC-64 kernels (XZ + NVME).
 //!
 //! This is a PCLMULQDQ implementation derived from the Intel/TiKV folding
-//! algorithm (also used by `crc64fast` / `crc64fast-nvme`).
+//! algorithm for CRC-64/XZ and CRC-64/NVME.
 //!
 //! # Safety
 //!

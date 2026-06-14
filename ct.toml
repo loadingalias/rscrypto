@@ -553,8 +553,7 @@ left_class = "P-256 diagnostic nonce inverse from fixed secret"
 right_class = "P-256 diagnostic nonce inverse from random secret"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "ECDSA signing CT root-cause isolation."
+notes = "Required leaf evidence for the ECDSA signing nonce inverse path."
 
 [[dudect_case]]
 name = "ecdsa_p256_diag_final_multiply_fixed_vs_random_secret"
@@ -630,8 +629,7 @@ left_class = "P-384 diagnostic nonce inverse from fixed secret"
 right_class = "P-384 diagnostic nonce inverse from random secret"
 samples = 20000
 smoke_samples = 2000
-gate = "diagnostic"
-reason = "ECDSA signing CT root-cause isolation."
+notes = "Required leaf evidence for the ECDSA signing nonce inverse path."
 
 [[dudect_case]]
 name = "ecdsa_p384_diag_final_multiply_fixed_vs_random_secret"

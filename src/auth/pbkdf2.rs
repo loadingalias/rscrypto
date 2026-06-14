@@ -30,10 +30,11 @@
 //! - `Pbkdf2Sha512`: at least `220_000` iterations
 //! - salt length: at least `16` bytes (128 bits) for both types
 //!
-//! These are policy minima for production password-hashing deployments.
-//! This module is algorithmic PBKDF2; enforcement depends on caller-side policy.
+//! The one-shot password helpers enforce these minima by default. Use the
+//! explicit primitive APIs only for RFC test vectors, protocol compatibility,
+//! or migration code that has its own policy boundary.
 
-use core::fmt;
+use core::{fmt, num::NonZeroU32};
 
 use super::hmac::{HmacSha256, hmac_prefix_state};
 use crate::{
@@ -106,7 +107,7 @@ fn zeroize_u64x8_no_fence(words: &mut [u64; 8]) {
 /// ```rust
 /// use rscrypto::{Pbkdf2Sha256, auth::Pbkdf2Error};
 ///
-/// let err = Pbkdf2Sha256::derive_key(b"pw", b"salt", 0, &mut [0u8; 32]);
+/// let err = Pbkdf2Sha256::derive_key_primitive(b"pw", b"salt", 0, &mut [0u8; 32]);
 /// assert_eq!(err, Err(Pbkdf2Error::InvalidIterations));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,6 +117,10 @@ pub enum Pbkdf2Error {
   /// `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` and
   /// `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS`.
   InvalidIterations,
+  /// The iteration count is below the selected password-hashing policy.
+  WeakIterations,
+  /// The salt is shorter than the selected password-hashing policy allows.
+  SaltTooShort,
   /// The requested output length exceeds `(2^32 − 1) × hLen`.
   OutputTooLong,
 }
@@ -124,12 +129,96 @@ impl fmt::Display for Pbkdf2Error {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Self::InvalidIterations => f.write_str("PBKDF2 iteration count must be at least 1"),
+      Self::WeakIterations => f.write_str("PBKDF2 iteration count is below the password policy minimum"),
+      Self::SaltTooShort => f.write_str("PBKDF2 salt is below the password policy minimum"),
       Self::OutputTooLong => f.write_str("PBKDF2 output length exceeds algorithm maximum"),
     }
   }
 }
 
 impl core::error::Error for Pbkdf2Error {}
+
+/// PBKDF2 password-hashing parameters.
+///
+/// `Pbkdf2Params` carries the salt and a nonzero iteration count. Use the
+/// algorithm-specific `params` constructors for password storage so the
+/// default policy is enforced. Use [`new_primitive`](Self::new_primitive) only
+/// for RFC test vectors, protocol compatibility, or migration code that has
+/// its own policy boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pbkdf2Params<'a> {
+  salt: &'a [u8],
+  iterations: NonZeroU32,
+}
+
+impl<'a> Pbkdf2Params<'a> {
+  /// Build raw PBKDF2 parameters after only the RFC-level nonzero iteration
+  /// check.
+  ///
+  /// This is the primitive/test-vector constructor. Application password
+  /// storage should prefer `Pbkdf2Sha256::params` or `Pbkdf2Sha512::params`.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Pbkdf2Error::InvalidIterations`] when `iterations == 0`.
+  pub fn new_primitive(salt: &'a [u8], iterations: u32) -> Result<Self, Pbkdf2Error> {
+    let iterations = NonZeroU32::new(iterations).ok_or(Pbkdf2Error::InvalidIterations)?;
+    Ok(Self { salt, iterations })
+  }
+
+  /// Borrow the salt.
+  #[must_use]
+  pub const fn salt(&self) -> &'a [u8] {
+    self.salt
+  }
+
+  /// Return the iteration count.
+  #[must_use]
+  pub const fn iterations(&self) -> u32 {
+    self.iterations.get()
+  }
+}
+
+/// Policy minimums for PBKDF2 password verification and storage.
+///
+/// PBKDF2 has legitimate low-iteration test vectors, but password storage
+/// should reject those values. The default one-shot password APIs use the
+/// type-specific policy constants; use explicit policies only for migrations
+/// or deployments with stricter local requirements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pbkdf2VerifyPolicy {
+  /// Minimum accepted iteration count.
+  pub min_iterations: u32,
+  /// Minimum accepted salt length in bytes.
+  pub min_salt_len: usize,
+}
+
+impl Pbkdf2VerifyPolicy {
+  /// Build a policy from explicit lower bounds.
+  #[must_use]
+  pub const fn new(min_iterations: u32, min_salt_len: usize) -> Self {
+    Self {
+      min_iterations,
+      min_salt_len,
+    }
+  }
+
+  /// Return `true` when `params` satisfies this policy.
+  #[must_use]
+  pub const fn allows(&self, params: &Pbkdf2Params<'_>) -> bool {
+    params.iterations() >= self.min_iterations && params.salt().len() >= self.min_salt_len
+  }
+
+  fn check(&self, params: &Pbkdf2Params<'_>) -> Result<(), Pbkdf2Error> {
+    if params.iterations() < self.min_iterations {
+      return Err(Pbkdf2Error::WeakIterations);
+    }
+    if params.salt().len() < self.min_salt_len {
+      return Err(Pbkdf2Error::SaltTooShort);
+    }
+    Ok(())
+  }
+}
 
 macro_rules! define_pbkdf2_sha2 {
   (
@@ -171,6 +260,35 @@ macro_rules! define_pbkdf2_sha2 {
       pub const MIN_RECOMMENDED_ITERATIONS: u32 = $recommended_iterations;
       /// Minimum salt length (bytes) recommended for compliance-sensitive deployments.
       pub const MIN_SALT_LEN: usize = 16;
+      /// Default password-hashing verification policy for this PBKDF2 variant.
+      pub const DEFAULT_VERIFY_POLICY: Pbkdf2VerifyPolicy =
+        Pbkdf2VerifyPolicy::new(Self::MIN_RECOMMENDED_ITERATIONS, Self::MIN_SALT_LEN);
+
+      /// Build default-policy PBKDF2 password parameters.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`Pbkdf2Error`] when the iteration count is zero, below the
+      /// default policy minimum, or the salt is too short.
+      pub fn params(salt: &[u8], iterations: u32) -> Result<Pbkdf2Params<'_>, Pbkdf2Error> {
+        Self::params_with_policy(salt, iterations, &Self::DEFAULT_VERIFY_POLICY)
+      }
+
+      /// Build PBKDF2 password parameters under an explicit policy.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`Pbkdf2Error`] when the iteration count is zero or the
+      /// supplied policy rejects the parameters.
+      pub fn params_with_policy<'a>(
+        salt: &'a [u8],
+        iterations: u32,
+        policy: &Pbkdf2VerifyPolicy,
+      ) -> Result<Pbkdf2Params<'a>, Pbkdf2Error> {
+        let params = Pbkdf2Params::new_primitive(salt, iterations)?;
+        policy.check(&params)?;
+        Ok(params)
+      }
 
       /// Pre-compute HMAC prefix states from `password`.
       #[must_use]
@@ -212,6 +330,13 @@ macro_rules! define_pbkdf2_sha2 {
       #[allow(clippy::indexing_slicing)]
       pub fn derive(&self, salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
         Self::derive_with_prefixes(self.compress, &self.inner_init, &self.outer_init, salt, iterations, okm)
+      }
+
+      /// Derive a key into `okm` using validated password parameters.
+      #[inline]
+      #[allow(clippy::indexing_slicing)]
+      pub fn derive_with_params(&self, params: Pbkdf2Params<'_>, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        self.derive(params.salt(), params.iterations(), okm)
       }
 
       #[inline]
@@ -284,10 +409,48 @@ macro_rules! define_pbkdf2_sha2 {
         Ok(out)
       }
 
-      /// Verify `expected` against the derived key in constant time.
+      /// Derive a key into a fixed-size array using validated password
+      /// parameters.
+      pub fn derive_array_with_params<const N: usize>(&self, params: Pbkdf2Params<'_>) -> Result<[u8; N], Pbkdf2Error> {
+        let mut out = [0u8; N];
+        self.derive_with_params(params, &mut out)?;
+        Ok(out)
+      }
+
+      /// Verify `expected` against the derived key in constant time using the
+      /// default password policy.
       #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
+        self.verify_with_policy(salt, iterations, expected, &Self::DEFAULT_VERIFY_POLICY)
+      }
+
+      /// Verify `expected` against the derived key in constant time using an
+      /// explicit password policy.
+      #[allow(clippy::indexing_slicing)]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_with_policy(
+        &self,
+        salt: &[u8],
+        iterations: u32,
+        expected: &[u8],
+        policy: &Pbkdf2VerifyPolicy,
+      ) -> Result<(), VerificationError> {
+        let Ok(params) = Self::params_with_policy(salt, iterations, policy) else {
+          return Err(VerificationError::new());
+        };
+        self.verify_primitive(params.salt(), params.iterations(), expected)
+      }
+
+      /// Verify `expected` against the derived key without password policy checks.
+      ///
+      /// This is the primitive/test-vector verification path. Stored password
+      /// verification should use [`verify`](Self::verify),
+      /// [`verify_with_policy`](Self::verify_with_policy), or
+      /// [`verify_password`](Self::verify_password).
+      #[allow(clippy::indexing_slicing)]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_primitive(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
         if iterations == 0 || expected.is_empty() {
           return Err(VerificationError::new());
         }
@@ -326,18 +489,66 @@ macro_rules! define_pbkdf2_sha2 {
         }
       }
 
-      /// Derive a key in one shot.
+      /// Derive a password key in one shot using the default password policy.
+      ///
+      /// Use [`derive_key_primitive`](Self::derive_key_primitive) for RFC test
+      /// vectors, low-iteration protocol compatibility, or non-password PBKDF2
+      /// primitive use.
       #[inline]
       pub fn derive_key(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
+        let params = Self::params(salt, iterations)?;
+        Self::derive_key_with_params(password, params, okm)
+      }
+
+      /// Derive a password key in one shot using validated parameters.
+      #[inline]
+      pub fn derive_key_with_params(
+        password: &[u8],
+        params: Pbkdf2Params<'_>,
+        okm: &mut [u8],
+      ) -> Result<(), Pbkdf2Error> {
+        Self::derive_key_primitive(password, params.salt(), params.iterations(), okm)
+      }
+
+      /// Derive a key in one shot without password policy checks.
+      ///
+      /// This is the PBKDF2 primitive/test-vector path. Application password
+      /// storage should use [`derive_key`](Self::derive_key) or
+      /// [`derive_key_with_params`](Self::derive_key_with_params).
+      #[inline]
+      pub fn derive_key_primitive(password: &[u8], salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
         if $derive_key_fast_path(password, salt, iterations, okm)? {
           return Ok(());
         }
         Self::new(password).derive(salt, iterations, okm)
       }
 
-      /// Derive a key into a fixed-size array in one shot.
+      /// Derive a password key into a fixed-size array in one shot using the
+      /// default password policy.
       #[inline]
       pub fn derive_key_array<const N: usize>(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+      ) -> Result<[u8; N], Pbkdf2Error> {
+        let params = Self::params(salt, iterations)?;
+        Self::derive_key_array_with_params(password, params)
+      }
+
+      /// Derive a password key into a fixed-size array using validated
+      /// parameters.
+      #[inline]
+      pub fn derive_key_array_with_params<const N: usize>(
+        password: &[u8],
+        params: Pbkdf2Params<'_>,
+      ) -> Result<[u8; N], Pbkdf2Error> {
+        Self::derive_key_array_primitive(password, params.salt(), params.iterations())
+      }
+
+      /// Derive a key into a fixed-size array in one shot without password
+      /// policy checks.
+      #[inline]
+      pub fn derive_key_array_primitive<const N: usize>(
         password: &[u8],
         salt: &[u8],
         iterations: u32,
@@ -345,7 +556,7 @@ macro_rules! define_pbkdf2_sha2 {
         Self::new(password).derive_array(salt, iterations)
       }
 
-      /// Verify a password in one shot.
+      /// Verify a password in one shot using the default password policy.
       #[inline]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_password(
@@ -354,7 +565,36 @@ macro_rules! define_pbkdf2_sha2 {
         iterations: u32,
         expected: &[u8],
       ) -> Result<(), VerificationError> {
-        Self::new(password).verify(salt, iterations, expected)
+        Self::verify_password_with_policy(password, salt, iterations, expected, &Self::DEFAULT_VERIFY_POLICY)
+      }
+
+      /// Verify a password in one shot using an explicit password policy.
+      #[inline]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_password_with_policy(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        expected: &[u8],
+        policy: &Pbkdf2VerifyPolicy,
+      ) -> Result<(), VerificationError> {
+        Self::new(password).verify_with_policy(salt, iterations, expected, policy)
+      }
+
+      /// Verify a password in one shot without password policy checks.
+      ///
+      /// This is the primitive/test-vector verification path. Stored password
+      /// verification should use [`verify_password`](Self::verify_password) or
+      /// [`verify_password_with_policy`](Self::verify_password_with_policy).
+      #[inline]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_password_primitive(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        expected: &[u8],
+      ) -> Result<(), VerificationError> {
+        Self::new(password).verify_primitive(salt, iterations, expected)
       }
 
       /// Test-only: build with a specific digest compress function.
@@ -414,15 +654,16 @@ define_pbkdf2_sha2! {
   /// use rscrypto::Pbkdf2Sha256;
   ///
   /// // Derive a 32-byte key
-  /// let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 600_000)?;
+  /// let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt-16-bytes!!!", 600_000)?;
   ///
   /// // Re-use pre-computed state for multiple operations
   /// let state = Pbkdf2Sha256::new(b"password");
-  /// let dk2 = state.derive_array::<32>(b"salt", 600_000)?;
+  /// let params = Pbkdf2Sha256::params(b"salt-16-bytes!!!", 600_000)?;
+  /// let dk2 = state.derive_array_with_params::<32>(params)?;
   /// assert_eq!(dk, dk2);
   ///
   /// // Verify
-  /// assert!(state.verify(b"salt", 600_000, &dk).is_ok());
+  /// assert!(state.verify(params.salt(), params.iterations(), &dk).is_ok());
   /// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
   /// ```
   Pbkdf2Sha256 {
@@ -561,7 +802,7 @@ fn pbkdf2_sha256_hmac_iter1_small(password: &[u8], salt: &[u8], okm: &mut [u8]) 
     let block_index = (i as u32).strict_add(1);
     msg[salt.len()..msg_len].copy_from_slice(&block_index.to_be_bytes());
     let tag = HmacSha256::mac(password, &msg[..msg_len]);
-    chunk.copy_from_slice(&tag[..chunk.len()]);
+    chunk.copy_from_slice(&tag.as_bytes()[..chunk.len()]);
   }
 }
 
@@ -835,8 +1076,8 @@ define_pbkdf2_sha2! {
   /// ```rust
   /// use rscrypto::Pbkdf2Sha512;
   ///
-  /// let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 220_000)?;
-  /// assert!(Pbkdf2Sha512::verify_password(b"password", b"salt", 220_000, &dk).is_ok());
+  /// let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt-16-bytes!!!", 220_000)?;
+  /// assert!(Pbkdf2Sha512::verify_password(b"password", b"salt-16-bytes!!!", 220_000, &dk).is_ok());
   /// # Ok::<(), rscrypto::auth::Pbkdf2Error>(())
   /// ```
   Pbkdf2Sha512 {
@@ -1108,7 +1349,7 @@ mod tests {
   #[test]
   fn rfc7914_sha256_vector_1() {
     let mut dk = [0u8; 64];
-    Pbkdf2Sha256::derive_key(b"passwd", b"salt", 1, &mut dk).unwrap();
+    Pbkdf2Sha256::derive_key_primitive(b"passwd", b"salt", 1, &mut dk).unwrap();
     assert_eq!(
       dk,
       [
@@ -1156,7 +1397,7 @@ mod tests {
   #[test]
   fn rfc7914_sha256_vector_2() {
     let mut dk = [0u8; 64];
-    Pbkdf2Sha256::derive_key(b"Password", b"NaCl", 80000, &mut dk).unwrap();
+    Pbkdf2Sha256::derive_key_primitive(b"Password", b"NaCl", 80000, &mut dk).unwrap();
     assert_eq!(
       dk,
       [
@@ -1220,7 +1461,7 @@ mod tests {
       oracle_sha256(password, salt, iterations, &mut expected);
 
       let mut actual = vec![0u8; dk_len];
-      Pbkdf2Sha256::derive_key(password, salt, iterations, &mut actual).unwrap();
+      Pbkdf2Sha256::derive_key_primitive(password, salt, iterations, &mut actual).unwrap();
 
       assert_eq!(
         actual,
@@ -1273,7 +1514,7 @@ mod tests {
       oracle_sha512(password, salt, iterations, &mut expected);
 
       let mut actual = vec![0u8; dk_len];
-      Pbkdf2Sha512::derive_key(password, salt, iterations, &mut actual).unwrap();
+      Pbkdf2Sha512::derive_key_primitive(password, salt, iterations, &mut actual).unwrap();
 
       assert_eq!(
         actual,
@@ -1291,38 +1532,38 @@ mod tests {
 
   #[test]
   fn sha256_verify_correct_password() {
-    let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha256::verify_password(b"password", b"salt", 100, &dk).is_ok());
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    assert!(Pbkdf2Sha256::verify_password_primitive(b"password", b"salt", 100, &dk).is_ok());
   }
 
   #[test]
   fn sha256_verify_wrong_password() {
-    let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha256::verify_password(b"wrong", b"salt", 100, &dk).is_err());
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    assert!(Pbkdf2Sha256::verify_password_primitive(b"wrong", b"salt", 100, &dk).is_err());
   }
 
   #[test]
   fn sha256_verify_wrong_salt() {
-    let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha256::verify_password(b"password", b"wrong", 100, &dk).is_err());
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    assert!(Pbkdf2Sha256::verify_password_primitive(b"password", b"wrong", 100, &dk).is_err());
   }
 
   #[test]
   fn sha256_verify_wrong_iterations() {
-    let dk = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha256::verify_password(b"password", b"salt", 101, &dk).is_err());
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    assert!(Pbkdf2Sha256::verify_password_primitive(b"password", b"salt", 101, &dk).is_err());
   }
 
   #[test]
   fn sha512_verify_correct_password() {
-    let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha512::verify_password(b"password", b"salt", 100, &dk).is_ok());
+    let dk = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"password", b"salt", 100).unwrap();
+    assert!(Pbkdf2Sha512::verify_password_primitive(b"password", b"salt", 100, &dk).is_ok());
   }
 
   #[test]
   fn sha512_verify_wrong_password() {
-    let dk = Pbkdf2Sha512::derive_key_array::<64>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha512::verify_password(b"wrong", b"salt", 100, &dk).is_err());
+    let dk = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"password", b"salt", 100).unwrap();
+    assert!(Pbkdf2Sha512::verify_password_primitive(b"wrong", b"salt", 100, &dk).is_err());
   }
 
   // ── Error paths ───────────────────────────────────────────────────────
@@ -1331,38 +1572,92 @@ mod tests {
   fn sha256_zero_iterations_error() {
     let mut dk = [0u8; 32];
     assert_eq!(
-      Pbkdf2Sha256::derive_key(b"pw", b"salt", 0, &mut dk),
+      Pbkdf2Sha256::derive_key_primitive(b"pw", b"salt", 0, &mut dk),
       Err(Pbkdf2Error::InvalidIterations)
     );
+  }
+
+  #[test]
+  fn sha256_default_password_policy_rejects_weak_params() {
+    let strong_salt = [0xA5; Pbkdf2Sha256::MIN_SALT_LEN];
+    let mut empty = [];
+
+    assert_eq!(
+      Pbkdf2Sha256::derive_key(
+        b"pw",
+        &strong_salt,
+        Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS.strict_sub(1),
+        &mut empty,
+      ),
+      Err(Pbkdf2Error::WeakIterations)
+    );
+    assert_eq!(
+      Pbkdf2Sha256::derive_key(
+        b"pw",
+        &strong_salt[..Pbkdf2Sha256::MIN_SALT_LEN.strict_sub(1)],
+        Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS,
+        &mut empty,
+      ),
+      Err(Pbkdf2Error::SaltTooShort)
+    );
+    assert!(
+      Pbkdf2Sha256::derive_key(
+        b"pw",
+        &strong_salt,
+        Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS,
+        &mut empty
+      )
+      .is_ok()
+    );
+    assert!(
+      Pbkdf2Sha256::verify_password(
+        b"pw",
+        &strong_salt,
+        Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS.strict_sub(1),
+        &[0u8; 32],
+      )
+      .is_err()
+    );
+  }
+
+  #[test]
+  fn pbkdf2_params_can_use_explicit_policy_for_migrations() {
+    let policy = Pbkdf2VerifyPolicy::new(1, 0);
+    let params = Pbkdf2Sha256::params_with_policy(b"", 1, &policy).unwrap();
+    assert_eq!(params.salt(), b"");
+    assert_eq!(params.iterations(), 1);
+
+    let mut empty = [];
+    assert!(Pbkdf2Sha256::derive_key_with_params(b"pw", params, &mut empty).is_ok());
   }
 
   #[test]
   fn sha512_zero_iterations_error() {
     let mut dk = [0u8; 64];
     assert_eq!(
-      Pbkdf2Sha512::derive_key(b"pw", b"salt", 0, &mut dk),
+      Pbkdf2Sha512::derive_key_primitive(b"pw", b"salt", 0, &mut dk),
       Err(Pbkdf2Error::InvalidIterations)
     );
   }
 
   #[test]
   fn sha256_empty_output_ok() {
-    assert!(Pbkdf2Sha256::derive_key(b"pw", b"salt", 1, &mut []).is_ok());
+    assert!(Pbkdf2Sha256::derive_key_primitive(b"pw", b"salt", 1, &mut []).is_ok());
   }
 
   #[test]
   fn sha512_empty_output_ok() {
-    assert!(Pbkdf2Sha512::derive_key(b"pw", b"salt", 1, &mut []).is_ok());
+    assert!(Pbkdf2Sha512::derive_key_primitive(b"pw", b"salt", 1, &mut []).is_ok());
   }
 
   #[test]
   fn sha256_verify_zero_iterations() {
-    assert!(Pbkdf2Sha256::verify_password(b"pw", b"salt", 0, &[0u8; 32]).is_err());
+    assert!(Pbkdf2Sha256::verify_password_primitive(b"pw", b"salt", 0, &[0u8; 32]).is_err());
   }
 
   #[test]
   fn sha256_verify_empty_expected() {
-    assert!(Pbkdf2Sha256::verify_password(b"pw", b"salt", 1, &[]).is_err());
+    assert!(Pbkdf2Sha256::verify_password_primitive(b"pw", b"salt", 1, &[]).is_err());
   }
 
   #[test]
@@ -1376,17 +1671,17 @@ mod tests {
 
     for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
-      Pbkdf2Sha256::derive_key(&password, &salt, 2, &mut expected).unwrap();
-      assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &expected).is_ok());
+      Pbkdf2Sha256::derive_key_primitive(&password, &salt, 2, &mut expected).unwrap();
+      assert!(Pbkdf2Sha256::verify_password_primitive(&password, &salt, 2, &expected).is_ok());
 
       let mut wrong_first = expected.clone();
       wrong_first[0] ^= 1;
-      assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &wrong_first).is_err());
+      assert!(Pbkdf2Sha256::verify_password_primitive(&password, &salt, 2, &wrong_first).is_err());
 
       let mut wrong_last = expected.clone();
       let last = wrong_last.len().strict_sub(1);
       wrong_last[last] ^= 1;
-      assert!(Pbkdf2Sha256::verify_password(&password, &salt, 2, &wrong_last).is_err());
+      assert!(Pbkdf2Sha256::verify_password_primitive(&password, &salt, 2, &wrong_last).is_err());
     }
   }
 
@@ -1401,17 +1696,17 @@ mod tests {
 
     for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
-      Pbkdf2Sha512::derive_key(&password, &salt, 2, &mut expected).unwrap();
-      assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &expected).is_ok());
+      Pbkdf2Sha512::derive_key_primitive(&password, &salt, 2, &mut expected).unwrap();
+      assert!(Pbkdf2Sha512::verify_password_primitive(&password, &salt, 2, &expected).is_ok());
 
       let mut wrong_first = expected.clone();
       wrong_first[0] ^= 1;
-      assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &wrong_first).is_err());
+      assert!(Pbkdf2Sha512::verify_password_primitive(&password, &salt, 2, &wrong_first).is_err());
 
       let mut wrong_last = expected.clone();
       let last = wrong_last.len().strict_sub(1);
       wrong_last[last] ^= 1;
-      assert!(Pbkdf2Sha512::verify_password(&password, &salt, 2, &wrong_last).is_err());
+      assert!(Pbkdf2Sha512::verify_password_primitive(&password, &salt, 2, &wrong_last).is_err());
     }
   }
 
@@ -1423,8 +1718,8 @@ mod tests {
     let dk1 = state.derive_array::<32>(b"salt1", 100).unwrap();
     let dk2 = state.derive_array::<32>(b"salt2", 100).unwrap();
 
-    let oneshot1 = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt1", 100).unwrap();
-    let oneshot2 = Pbkdf2Sha256::derive_key_array::<32>(b"password", b"salt2", 100).unwrap();
+    let oneshot1 = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt1", 100).unwrap();
+    let oneshot2 = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt2", 100).unwrap();
 
     assert_eq!(dk1, oneshot1);
     assert_eq!(dk2, oneshot2);
@@ -1437,7 +1732,7 @@ mod tests {
   fn sha256_single_iteration() {
     let mut expected = [0u8; 32];
     oracle_sha256(b"pw", b"salt", 1, &mut expected);
-    let actual = Pbkdf2Sha256::derive_key_array::<32>(b"pw", b"salt", 1).unwrap();
+    let actual = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"pw", b"salt", 1).unwrap();
     assert_eq!(actual, expected);
   }
 
@@ -1445,7 +1740,7 @@ mod tests {
   fn sha512_single_iteration() {
     let mut expected = [0u8; 64];
     oracle_sha512(b"pw", b"salt", 1, &mut expected);
-    let actual = Pbkdf2Sha512::derive_key_array::<64>(b"pw", b"salt", 1).unwrap();
+    let actual = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"pw", b"salt", 1).unwrap();
     assert_eq!(actual, expected);
   }
 
@@ -1523,7 +1818,7 @@ mod tests {
     expected: &[u8],
   ) -> (Result<(), VerificationError>, usize) {
     SHA256_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
-    let result = state.verify(salt, iterations, expected);
+    let result = state.verify_primitive(salt, iterations, expected);
     let blocks = SHA256_VERIFY_BLOCKS.swap(0, Ordering::Relaxed);
     (result, blocks)
   }
@@ -1535,7 +1830,7 @@ mod tests {
     expected: &[u8],
   ) -> (Result<(), VerificationError>, usize) {
     SHA512_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
-    let result = state.verify(salt, iterations, expected);
+    let result = state.verify_primitive(salt, iterations, expected);
     let blocks = SHA512_VERIFY_BLOCKS.swap(0, Ordering::Relaxed);
     (result, blocks)
   }

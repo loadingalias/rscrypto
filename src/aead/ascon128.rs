@@ -77,33 +77,33 @@ define_aead_tag_type!(AsconAead128Tag, TAG_SIZE, "Ascon-AEAD128 128-bit authenti
 /// # Examples
 ///
 /// ```
-/// use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::Nonce128};
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, AsconAead128, AsconAead128Key};
 ///
 /// let key = AsconAead128Key::from_bytes([0u8; 16]);
-/// let nonce = Nonce128::from_bytes([0u8; 16]);
 /// let aead = AsconAead128::new(&key);
 ///
 /// let mut buf = *b"hello";
-/// let tag = aead.encrypt_in_place(&nonce, b"", &mut buf)?;
+/// let (nonce, tag) = aead.seal_random_in_place(b"", &mut buf)?;
 /// aead.decrypt_in_place(&nonce, b"", &mut buf, &tag)?;
 /// assert_eq!(&buf, b"hello");
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Tampering is reported as an opaque verification failure.
 ///
 /// ```
-/// use rscrypto::{
-///   Aead, AsconAead128, AsconAead128Key,
-///   aead::{Nonce128, OpenError},
-/// };
+/// # #[cfg(feature = "getrandom")]
+/// # {
+/// use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::OpenError};
 ///
 /// let key = AsconAead128Key::from_bytes([0u8; 16]);
-/// let nonce = Nonce128::from_bytes([0u8; 16]);
 /// let aead = AsconAead128::new(&key);
 ///
 /// let mut sealed = [0u8; 5 + AsconAead128::TAG_SIZE];
-/// aead.encrypt(&nonce, b"", b"hello", &mut sealed)?;
+/// let nonce = aead.seal_random(b"", b"hello", &mut sealed)?;
 /// sealed[0] ^= 1;
 ///
 /// let mut opened = [0u8; 5];
@@ -111,6 +111,7 @@ define_aead_tag_type!(AsconAead128Tag, TAG_SIZE, "Ascon-AEAD128 128-bit authenti
 ///   aead.decrypt(&nonce, b"", &sealed, &mut opened),
 ///   Err(OpenError::verification())
 /// );
+/// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]

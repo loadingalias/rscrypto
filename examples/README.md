@@ -15,10 +15,10 @@ the new API shape.
 ### `basic` — API tour across every family
 
 ```bash
-cargo run --example basic --features full
+cargo run --example basic --features full,getrandom
 ```
 
-Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes (`Xxh3`, `RapidHash`), AEAD (`ChaCha20Poly1305`), hex formatting, secret-key Debug masking, byte-array round-trips through `from_bytes` / `to_bytes` / `as_bytes`, and the `std::io::{Read, Write}` adapters for streaming digests and checksums. Every section asserts that one-shot equals streaming — that's the API contract every primitive in `rscrypto` follows.
+Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes (`Xxh3`, `RapidHash`), AEAD (`ChaCha20Poly1305` with a fresh random nonce), hex formatting, secret-key Debug masking, byte-array round-trips through `from_bytes` / `to_bytes` / `as_bytes`, and the `std::io::{Read, Write}` adapters for streaming digests and checksums. Every section asserts that one-shot equals streaming — that's the API contract every primitive in `rscrypto` follows.
 
 ### `password_hashing` — Argon2id and scrypt with bounded-policy verify
 
@@ -26,7 +26,7 @@ Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha
 cargo run --example password_hashing --features password-hashing,getrandom
 ```
 
-Hashes a password with both Argon2id and scrypt, encodes the result as a PHC string, then verifies it through `verify_string_with_policy`. Bounded-policy verification is the safe default whenever the encoded hash can come from untrusted storage — the policy caps the cost parameters the verifier will accept, blocking maliciously expensive PHC strings. Prints both PHC encodings to stdout so you can inspect the format.
+Hashes a password with both Argon2id and scrypt, encodes the result as a PHC string, then verifies it through bounded `verify_string`. The default verify policy caps the cost parameters the verifier will accept, blocking maliciously expensive PHC strings. Prints both PHC encodings to stdout so you can inspect the format.
 
 ### `parallel` — CRC chunk combining for large inputs
 

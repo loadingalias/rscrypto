@@ -120,19 +120,24 @@ use rscrypto::Argon2id;
 Argon2id::verify_string(password, stored_phc)?;
 ```
 
-### PHC verify with policy bounds
+`verify_string` applies `Argon2VerifyPolicy::default()` before hashing, so PHC
+strings with excessive encoded memory, time, parallelism, or output length
+reject without allocating the requested work buffer.
 
-When the stored PHC string came from an untrusted source (user input, distributed cache, federated identity), an attacker-supplied huge `m=` would let them DoS your server with one verify call. rscrypto exposes a runtime-policy check:
+### Custom PHC verify policy
+
+Services with stricter local CPU or memory budgets can set explicit ceilings:
 
 ```rust
 // After
 use rscrypto::{Argon2id, Argon2VerifyPolicy};
-let policy = Argon2VerifyPolicy::default();          // OWASP Password Storage Cheat Sheet defaults
-// or: Argon2VerifyPolicy::new(max_m_kib, max_t, max_p, max_output_len)
+let policy = Argon2VerifyPolicy::new(max_m_kib, max_t, max_p, max_output_len);
 Argon2id::verify_string_with_policy(password, stored_phc, &policy)?;
 ```
 
-`x25519-dalek`'s `argon2` crate has no equivalent policy gate — you'd have to parse the PHC string, reject high-cost cases, then re-encode. The built-in policy is a free hardening upgrade.
+RustCrypto's `argon2` crate has no equivalent policy gate — you'd have to parse
+the PHC string, reject high-cost cases, then re-encode. The built-in default
+policy is a hardening upgrade.
 
 ### Verify with secret / associated data (pepper)
 
@@ -147,7 +152,7 @@ The secret (pepper) and associated data are not embedded in the PHC string — t
 ## Notes
 
 - **Variant as type, not enum value.** `Argon2id::hash(...)` instead of `argon2.algorithm(Algorithm::Argon2id).hash_password_into(...)`. Enum-driven dispatch becomes type-driven; in tests this catches accidental variant swaps at compile time.
-- **`Argon2VerifyPolicy` is the migration win.** RustCrypto requires hand-rolling the cost-cap check before calling `verify_password`. rscrypto bakes it in. Use `Argon2VerifyPolicy::default()` (OWASP Password Storage Cheat Sheet caps, checked 2026-06-09) unless you have a specific reason to relax.
+- **`Argon2VerifyPolicy` is the migration win.** RustCrypto requires hand-rolling the cost-cap check before calling `verify_password`. rscrypto bakes it into `verify_string`; use `verify_string_with_policy` only when your deployment needs explicit ceilings, and `verify_string_unbounded` only for trusted migration/test-vector inputs.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings — your existing stored hashes still verify.
 - **`Argon2Params::default()` matches OWASP Password Storage Cheat Sheet guidance.** `m=19456 KiB, t=2, p=1, output_len=32 bytes` per the sheet as checked on 2026-06-09. RustCrypto's `Params::default()` matches; both crates will track the cheat sheet over time.
 - **`v=0x10` decode-only support.** Both crates can decode legacy `v=16` (Argon2 v1.0) PHC strings for compatibility; both produce `v=19` (v1.3) on encode.

@@ -156,7 +156,8 @@ mod phc_roundtrip {
         .build()
         .unwrap();
       let encoded = Scrypt::hash_string_with_salt(&params, &password, &salt).unwrap();
-      prop_assert!(Scrypt::verify_string(&password, &encoded).is_ok());
+      // This property intentionally varies policy-controlled PHC costs.
+      prop_assert!(Scrypt::verify_string_unbounded(&password, &encoded).is_ok());
     }
   }
 }

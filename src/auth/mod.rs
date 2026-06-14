@@ -15,7 +15,6 @@
 //! let mut mac = HmacSha256::new(key);
 //! mac.update(b"hello ");
 //! mac.update(b"world");
-//! assert_eq!(mac.finalize(), tag);
 //! assert!(mac.verify(&tag).is_ok());
 //!
 //! let mut okm = [0u8; 32];
@@ -165,13 +164,13 @@ pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
 #[cfg(all(feature = "diag", feature = "hkdf"))]
 pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
 #[cfg(feature = "hmac")]
-pub use hmac::{HmacSha256, HmacSha384, HmacSha512};
+pub use hmac::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(all(feature = "diag", feature = "hmac"))]
 pub use hmac::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
 #[cfg(feature = "kmac")]
 pub use kmac::Kmac256;
 #[cfg(feature = "pbkdf2")]
-pub use pbkdf2::{Pbkdf2Error, Pbkdf2Sha256, Pbkdf2Sha512};
+pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(all(feature = "diag", feature = "pbkdf2"))]
 pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
 #[cfg(feature = "phc-strings")]

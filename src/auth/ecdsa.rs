@@ -743,15 +743,22 @@ impl EcdsaP256SecretKey {
 
   /// Parse a P-256 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
-    let _ = parse_secret_scalar::<4, { Self::LENGTH }>(&bytes, P256_ORDER)?;
-    Ok(Self(bytes))
+    Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
   }
 
   /// Construct a P-256 secret key by filling bytes from the provided closure.
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Result<Self, EcdsaError> {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self::from_bytes(bytes)
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array());
+    Self::from_zeroizing_bytes(bytes)
+  }
+
+  fn from_zeroizing_bytes(bytes: ZeroizingBytes<{ Self::LENGTH }>) -> Result<Self, EcdsaError> {
+    if !secret_scalar_is_valid::<4, { Self::LENGTH }>(bytes.as_array(), P256_ORDER) {
+      return Err(EcdsaError::InvalidSecretKey);
+    }
+
+    Ok(Self(*bytes.as_array()))
   }
 
   /// Explicitly extract the secret key bytes into a zeroizing wrapper.
@@ -771,7 +778,7 @@ impl EcdsaP256SecretKey {
   /// Derive the matching P-256 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP256PublicKey {
-    EcdsaP256PublicKey::from_affine(public_key_from_secret_p256(self.0))
+    EcdsaP256PublicKey::from_affine(public_key_from_secret_p256(&self.0))
   }
 
   /// Derive the matching P-256 public key with caller-supplied blinding.
@@ -781,9 +788,9 @@ impl EcdsaP256SecretKey {
   /// representation used during derivation.
   #[must_use]
   pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 64])) -> EcdsaP256PublicKey {
-    let mut blind = [0u8; 64];
-    fill(&mut blind);
-    EcdsaP256PublicKey::from_affine(public_key_from_secret_p256_blinded(self.0, blind))
+    let mut blind = ZeroizingBytes::zeroed();
+    fill(blind.as_mut_array());
+    EcdsaP256PublicKey::from_affine(public_key_from_secret_p256_blinded(&self.0, blind.as_array()))
   }
 
   /// Sign a message with P-256/SHA-256.
@@ -795,7 +802,7 @@ impl EcdsaP256SecretKey {
   /// but the API reports it instead of panicking.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP256Signature, EcdsaError> {
     let digest = Sha256::digest(message);
-    sign_digest_p256(self.0, &digest)
+    sign_digest_p256(&self.0, &digest)
   }
 
   /// Sign a message with P-256/SHA-256 and caller-supplied blinding.
@@ -813,9 +820,9 @@ impl EcdsaP256SecretKey {
     fill: impl FnOnce(&mut [u8; 64]),
   ) -> Result<EcdsaP256Signature, EcdsaError> {
     let digest = Sha256::digest(message);
-    let mut blind = [0u8; 64];
-    fill(&mut blind);
-    sign_digest_p256_blinded(self.0, &digest, blind)
+    let mut blind = ZeroizingBytes::zeroed();
+    fill(blind.as_mut_array());
+    sign_digest_p256_blinded(&self.0, &digest, blind.as_array())
   }
 
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
@@ -857,15 +864,22 @@ impl EcdsaP384SecretKey {
 
   /// Parse a P-384 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
-    let _ = parse_secret_scalar::<6, { Self::LENGTH }>(&bytes, P384_ORDER)?;
-    Ok(Self(bytes))
+    Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
   }
 
   /// Construct a P-384 secret key by filling bytes from the provided closure.
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Result<Self, EcdsaError> {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self::from_bytes(bytes)
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array());
+    Self::from_zeroizing_bytes(bytes)
+  }
+
+  fn from_zeroizing_bytes(bytes: ZeroizingBytes<{ Self::LENGTH }>) -> Result<Self, EcdsaError> {
+    if !secret_scalar_is_valid::<6, { Self::LENGTH }>(bytes.as_array(), P384_ORDER) {
+      return Err(EcdsaError::InvalidSecretKey);
+    }
+
+    Ok(Self(*bytes.as_array()))
   }
 
   /// Explicitly extract the secret key bytes into a zeroizing wrapper.
@@ -885,7 +899,7 @@ impl EcdsaP384SecretKey {
   /// Derive the matching P-384 public key.
   #[must_use]
   pub fn public_key(&self) -> EcdsaP384PublicKey {
-    EcdsaP384PublicKey::from_affine(public_key_from_secret_p384(self.0))
+    EcdsaP384PublicKey::from_affine(public_key_from_secret_p384(&self.0))
   }
 
   /// Derive the matching P-384 public key with caller-supplied blinding.
@@ -895,9 +909,9 @@ impl EcdsaP384SecretKey {
   /// representation used during derivation.
   #[must_use]
   pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 96])) -> EcdsaP384PublicKey {
-    let mut blind = [0u8; 96];
-    fill(&mut blind);
-    EcdsaP384PublicKey::from_affine(public_key_from_secret_p384_blinded(self.0, blind))
+    let mut blind = ZeroizingBytes::zeroed();
+    fill(blind.as_mut_array());
+    EcdsaP384PublicKey::from_affine(public_key_from_secret_p384_blinded(&self.0, blind.as_array()))
   }
 
   /// Sign a message with P-384/SHA-384.
@@ -909,7 +923,7 @@ impl EcdsaP384SecretKey {
   /// but the API reports it instead of panicking.
   pub fn try_sign(&self, message: &[u8]) -> Result<EcdsaP384Signature, EcdsaError> {
     let digest = Sha384::digest(message);
-    sign_digest_p384(self.0, &digest)
+    sign_digest_p384(&self.0, &digest)
   }
 
   /// Sign a message with P-384/SHA-384 and caller-supplied blinding.
@@ -927,9 +941,9 @@ impl EcdsaP384SecretKey {
     fill: impl FnOnce(&mut [u8; 96]),
   ) -> Result<EcdsaP384Signature, EcdsaError> {
     let digest = Sha384::digest(message);
-    let mut blind = [0u8; 96];
-    fill(&mut blind);
-    sign_digest_p384_blinded(self.0, &digest, blind)
+    let mut blind = ZeroizingBytes::zeroed();
+    fill(blind.as_mut_array());
+    sign_digest_p384_blinded(&self.0, &digest, blind.as_array())
   }
 
   /// Returns a wrapper that displays the secret key bytes as lowercase hex.
@@ -1331,6 +1345,74 @@ fn mask_not(mask: u64) -> u64 {
   !mask
 }
 
+struct ZeroizingBytes<const N: usize> {
+  value: [u8; N],
+}
+
+impl<const N: usize> ZeroizingBytes<N> {
+  const fn new(value: [u8; N]) -> Self {
+    Self { value }
+  }
+
+  const fn zeroed() -> Self {
+    Self { value: [0u8; N] }
+  }
+
+  const fn as_array(&self) -> &[u8; N] {
+    &self.value
+  }
+
+  fn as_mut_array(&mut self) -> &mut [u8; N] {
+    &mut self.value
+  }
+}
+
+impl<const N: usize> Drop for ZeroizingBytes<N> {
+  fn drop(&mut self) {
+    ct::zeroize(&mut self.value);
+  }
+}
+
+#[cfg(any(
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+  all(target_arch = "x86_64", target_os = "linux")
+))]
+struct ZeroizingWords<const N: usize> {
+  value: [u64; N],
+}
+
+#[cfg(any(
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+  all(target_arch = "x86_64", target_os = "linux")
+))]
+impl<const N: usize> ZeroizingWords<N> {
+  const fn new(value: [u64; N]) -> Self {
+    Self { value }
+  }
+
+  const fn zeroed() -> Self {
+    Self { value: [0u64; N] }
+  }
+
+  const fn as_array(&self) -> &[u64; N] {
+    &self.value
+  }
+
+  fn as_mut_array(&mut self) -> &mut [u64; N] {
+    &mut self.value
+  }
+}
+
+#[cfg(any(
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+  all(target_arch = "x86_64", target_os = "linux")
+))]
+impl<const N: usize> Drop for ZeroizingWords<N> {
+  fn drop(&mut self) {
+    ct::zeroize_words(&mut self.value);
+  }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Uint<const L: usize>([u64; L]);
 
@@ -1362,10 +1444,6 @@ impl<const L: usize> Uint<L> {
     Ok(out)
   }
 
-  fn from_be_array<const N: usize>(bytes: [u8; N]) -> Self {
-    Self::from_be_slice(&bytes).unwrap_or(Self::ZERO)
-  }
-
   fn from_be_slice_mod(bytes: &[u8], modulus: Self) -> Self {
     let mut out = Self::from_be_slice(bytes).unwrap_or(Self::ZERO);
     while out.cmp(&modulus).is_ge() {
@@ -1383,6 +1461,10 @@ impl<const L: usize> Uint<L> {
         *byte = (*limb_value >> shift) as u8;
       }
     }
+  }
+
+  fn zeroize_no_fence(&mut self) {
+    ct::zeroize_words_no_fence(&mut self.0);
   }
 
   fn is_zero(&self) -> bool {
@@ -1575,15 +1657,15 @@ impl<const L: usize> Uint<L> {
     ))]
     {
       if is_p256_order_modulus(modulus) || is_p384_order_modulus(modulus) {
-        let inverse = ecdsa_platform_asm::scalar_inverse(&self.0, &modulus.value.0);
-        return montgomery_mul(Uint(inverse), modulus.r2, modulus);
+        let inverse = ZeroizingWords::new(ecdsa_platform_asm::scalar_inverse(&self.0, &modulus.value.0));
+        return montgomery_mul(Uint(*inverse.as_array()), modulus.r2, modulus);
       }
     }
 
     const WINDOW_BITS: usize = 4;
     const WINDOW_SIZE: usize = 1 << WINDOW_BITS;
 
-    let base = montgomery_mul(*self, modulus.r2, modulus);
+    let mut base = montgomery_mul(*self, modulus.r2, modulus);
     let mut acc = montgomery_mul(Self::ONE, modulus.r2, modulus);
     let mut powers = [acc; WINDOW_SIZE];
     let mut next_power = base;
@@ -1610,7 +1692,57 @@ impl<const L: usize> Uint<L> {
       }
     }
 
-    acc
+    let result = acc;
+    base.zeroize_no_fence();
+    acc.zeroize_no_fence();
+    next_power.zeroize_no_fence();
+    for power in powers.iter_mut() {
+      power.zeroize_no_fence();
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    result
+  }
+}
+
+struct SecretScalar<const L: usize> {
+  value: Uint<L>,
+}
+
+impl<const L: usize> SecretScalar<L> {
+  const fn new(value: Uint<L>) -> Self {
+    Self { value }
+  }
+
+  fn from_be_bytes<const N: usize>(bytes: &[u8; N]) -> Self {
+    debug_assert!(N <= L * 8);
+
+    let mut out = Uint::ZERO;
+    for (index, byte) in bytes.iter().rev().copied().enumerate() {
+      let limb = index / 8;
+      let shift = (index % 8) * 8;
+      if let Some(out_limb) = out.0.get_mut(limb) {
+        *out_limb |= u64::from(byte) << shift;
+      }
+    }
+    Self::new(out)
+  }
+
+  const fn value(&self) -> Uint<L> {
+    self.value
+  }
+
+  #[cfg(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ))]
+  const fn words(&self) -> &[u64; L] {
+    &self.value.0
+  }
+}
+
+impl<const L: usize> Drop for SecretScalar<L> {
+  fn drop(&mut self) {
+    ct::zeroize_words(&mut self.value.0);
   }
 }
 
@@ -2007,84 +2139,96 @@ fn verify_digest<const L: usize>(
   }
 }
 
-fn sign_digest_p256(secret: [u8; 32], digest: &[u8; 32]) -> Result<EcdsaP256Signature, EcdsaError> {
-  let secret_scalar = Uint::from_be_array(secret);
-  let mut wide = [0u8; 64];
-  hmac_expand_p256(&secret, digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
-  let (r, s) = sign_digest_with_nonce(
+fn sign_digest_p256(secret: &[u8; 32], digest: &[u8; 32]) -> Result<EcdsaP256Signature, EcdsaError> {
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256(secret, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let result = sign_digest_with_nonce(
     &P256,
-    secret_scalar,
-    nonce,
+    &secret_scalar,
+    &nonce,
     digest,
     P256_ORDER_MINUS_TWO,
     P256_FIELD_MINUS_TWO,
     P256_ORDER_HALF,
-  )?;
-  assemble_p256_signature(r, s)
+  );
+  match result {
+    Ok((r, s)) => assemble_p256_signature(r, s),
+    Err(error) => Err(error),
+  }
 }
 
 fn sign_digest_p256_blinded(
-  secret: [u8; 32],
+  secret: &[u8; 32],
   digest: &[u8; 32],
-  blind: [u8; 64],
+  blind: &[u8; 64],
 ) -> Result<EcdsaP256Signature, EcdsaError> {
-  let secret_scalar = Uint::from_be_array(secret);
-  let mut wide = [0u8; 64];
-  hmac_expand_p256(&secret, digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
-  let nonce_blind = reduce_wide_order_nonzero(&blind, &P256_ORDER_MODULUS);
-  let (r, s) = sign_digest_with_nonce_blinded(
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256(secret, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let nonce_blind = SecretScalar::new(reduce_wide_order_nonzero(blind, &P256_ORDER_MODULUS));
+  let result = sign_digest_with_nonce_blinded(
     &P256,
-    secret_scalar,
-    nonce,
-    nonce_blind,
+    &secret_scalar,
+    &nonce,
+    &nonce_blind,
     digest,
     P256_ORDER_MINUS_TWO,
     P256_FIELD_MINUS_TWO,
     P256_ORDER_HALF,
-  )?;
-  assemble_p256_signature(r, s)
+  );
+  match result {
+    Ok((r, s)) => assemble_p256_signature(r, s),
+    Err(error) => Err(error),
+  }
 }
 
-fn sign_digest_p384(secret: [u8; 48], digest: &[u8; 48]) -> Result<EcdsaP384Signature, EcdsaError> {
-  let secret_scalar = Uint::from_be_array(secret);
-  let mut wide = [0u8; 96];
-  hmac_expand_p384(&secret, digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
-  let (r, s) = sign_digest_with_nonce(
+fn sign_digest_p384(secret: &[u8; 48], digest: &[u8; 48]) -> Result<EcdsaP384Signature, EcdsaError> {
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let result = sign_digest_with_nonce(
     &P384,
-    secret_scalar,
-    nonce,
+    &secret_scalar,
+    &nonce,
     digest,
     P384_ORDER_MINUS_TWO,
     P384_FIELD_MINUS_TWO,
     P384_ORDER_HALF,
-  )?;
-  assemble_p384_signature(r, s)
+  );
+  match result {
+    Ok((r, s)) => assemble_p384_signature(r, s),
+    Err(error) => Err(error),
+  }
 }
 
 fn sign_digest_p384_blinded(
-  secret: [u8; 48],
+  secret: &[u8; 48],
   digest: &[u8; 48],
-  blind: [u8; 96],
+  blind: &[u8; 96],
 ) -> Result<EcdsaP384Signature, EcdsaError> {
-  let secret_scalar = Uint::from_be_array(secret);
-  let mut wide = [0u8; 96];
-  hmac_expand_p384(&secret, digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
-  let nonce_blind = reduce_wide_order_nonzero(&blind, &P384_ORDER_MODULUS);
-  let (r, s) = sign_digest_with_nonce_blinded(
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret, digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let nonce_blind = SecretScalar::new(reduce_wide_order_nonzero(blind, &P384_ORDER_MODULUS));
+  let result = sign_digest_with_nonce_blinded(
     &P384,
-    secret_scalar,
-    nonce,
-    nonce_blind,
+    &secret_scalar,
+    &nonce,
+    &nonce_blind,
     digest,
     P384_ORDER_MINUS_TWO,
     P384_FIELD_MINUS_TWO,
     P384_ORDER_HALF,
-  )?;
-  assemble_p384_signature(r, s)
+  );
+  match result {
+    Ok((r, s)) => assemble_p384_signature(r, s),
+    Err(error) => Err(error),
+  }
 }
 
 fn hmac_expand_p256(secret: &[u8; 32], digest: &[u8; 32], out: &mut [u8; 64]) {
@@ -2093,7 +2237,7 @@ fn hmac_expand_p256(secret: &[u8; 32], digest: &[u8; 32], out: &mut [u8; 64]) {
     mac.update(P256_NONCE_DOMAIN);
     mac.update(&[block_index as u8]);
     mac.update(digest);
-    block.copy_from_slice(&mac.finalize());
+    block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
@@ -2102,7 +2246,7 @@ fn hmac_expand_p256_public_blind(secret: &[u8; 32], out: &mut [u8; 64]) {
     let mut mac = HmacSha256::new(secret);
     mac.update(P256_PUBKEY_BLIND_DOMAIN);
     mac.update(&[block_index as u8]);
-    block.copy_from_slice(&mac.finalize());
+    block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
@@ -2112,7 +2256,7 @@ fn hmac_expand_p384(secret: &[u8; 48], digest: &[u8; 48], out: &mut [u8; 96]) {
     mac.update(P384_NONCE_DOMAIN);
     mac.update(&[block_index as u8]);
     mac.update(digest);
-    block.copy_from_slice(&mac.finalize());
+    block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
@@ -2121,14 +2265,14 @@ fn hmac_expand_p384_public_blind(secret: &[u8; 48], out: &mut [u8; 96]) {
     let mut mac = HmacSha384::new(secret);
     mac.update(P384_PUBKEY_BLIND_DOMAIN);
     mac.update(&[block_index as u8]);
-    block.copy_from_slice(&mac.finalize());
+    block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
 fn sign_digest_with_nonce<const L: usize>(
   curve: &Curve<L>,
-  secret_scalar: Uint<L>,
-  nonce: Uint<L>,
+  secret_scalar: &SecretScalar<L>,
+  nonce: &SecretScalar<L>,
   digest: &[u8],
   scalar_inverse_exponent: Uint<L>,
   field_inverse_exponent: Uint<L>,
@@ -2158,16 +2302,16 @@ fn sign_digest_with_nonce<const L: usize>(
 ))]
 fn sign_digest_with_nonce_backend<const L: usize>(
   curve: &Curve<L>,
-  secret_scalar: Uint<L>,
-  nonce: Uint<L>,
+  secret_scalar: &SecretScalar<L>,
+  nonce: &SecretScalar<L>,
   digest: &[u8],
   scalar_inverse_exponent: Uint<L>,
   half_order: Uint<L>,
 ) -> Option<Result<(Uint<L>, Uint<L>), EcdsaError>> {
   if is_p256_curve(curve) {
-    let mut scalar_words = [0u64; 4];
-    scalar_words.copy_from_slice(&nonce.0[..4]);
-    let out = ecdsa_platform_asm::p256_scalarmulbase_generator(&scalar_words);
+    let mut scalar_words = ZeroizingWords::zeroed();
+    scalar_words.as_mut_array().copy_from_slice(&nonce.words()[..4]);
+    let out = ecdsa_platform_asm::p256_scalarmulbase_generator(scalar_words.as_array());
     let mut r_words = [0u64; L];
     r_words.copy_from_slice(&out[..4]);
     let r = Uint(r_words).reduce_once_ct(curve.scalar_modulus.value);
@@ -2191,8 +2335,8 @@ fn sign_digest_with_nonce_backend<const L: usize>(
 )))]
 fn sign_digest_with_nonce_backend<const L: usize>(
   _curve: &Curve<L>,
-  _secret_scalar: Uint<L>,
-  _nonce: Uint<L>,
+  _secret_scalar: &SecretScalar<L>,
+  _nonce: &SecretScalar<L>,
   _digest: &[u8],
   _scalar_inverse_exponent: Uint<L>,
   _half_order: Uint<L>,
@@ -2202,20 +2346,20 @@ fn sign_digest_with_nonce_backend<const L: usize>(
 
 fn scalar_mul_basepoint_affine<const L: usize>(
   curve: &Curve<L>,
-  scalar: Uint<L>,
+  scalar: &SecretScalar<L>,
   field_inverse_exponent: Uint<L>,
 ) -> Affine<L> {
   scalar_mul_basepoint_affine_backend(curve, scalar)
     .or_else(|| scalar_mul_basepoint_backend(curve, scalar).map(|point| point.to_affine_ct(field_inverse_exponent)))
-    .unwrap_or_else(|| scalar_mul_basepoint_comb_ct(curve, scalar).to_affine_ct(field_inverse_exponent))
+    .unwrap_or_else(|| scalar_mul_basepoint_comb_ct_secret(curve, scalar).to_affine_ct(field_inverse_exponent))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn sign_digest_with_nonce_blinded<const L: usize>(
   curve: &Curve<L>,
-  secret_scalar: Uint<L>,
-  nonce: Uint<L>,
-  nonce_blind: Uint<L>,
+  secret_scalar: &SecretScalar<L>,
+  nonce: &SecretScalar<L>,
+  nonce_blind: &SecretScalar<L>,
   digest: &[u8],
   scalar_inverse_exponent: Uint<L>,
   field_inverse_exponent: Uint<L>,
@@ -2235,8 +2379,8 @@ fn sign_digest_with_nonce_blinded<const L: usize>(
 
 fn sign_digest_with_r_point<const L: usize>(
   curve: &Curve<L>,
-  secret_scalar: Uint<L>,
-  nonce: Uint<L>,
+  secret_scalar: &SecretScalar<L>,
+  nonce: &SecretScalar<L>,
   digest: &[u8],
   scalar_inverse_exponent: Uint<L>,
   half_order: Uint<L>,
@@ -2256,56 +2400,68 @@ fn sign_digest_with_r_point<const L: usize>(
 
 fn sign_digest_with_r<const L: usize>(
   curve: &Curve<L>,
-  secret_scalar: Uint<L>,
-  nonce: Uint<L>,
+  secret_scalar: &SecretScalar<L>,
+  nonce: &SecretScalar<L>,
   digest: &[u8],
   scalar_inverse_exponent: Uint<L>,
   half_order: Uint<L>,
   r: Uint<L>,
 ) -> Result<(Uint<L>, Uint<L>), EcdsaError> {
   let z = reduce_digest_for_scalar(digest, curve.scalar_modulus.value);
-  let rd = mul_mod_montgomery_ct(r, secret_scalar, curve.scalar_modulus);
-  let sum = z.add_mod_ct(&rd, curve.scalar_modulus.value);
-  let nonce_inverse = nonce.inv_mod_ct_montgomery(curve.scalar_modulus, scalar_inverse_exponent);
-  let sum = montgomery_mul(sum, curve.scalar_modulus.r2, curve.scalar_modulus);
-  let s = montgomery_mul(nonce_inverse, sum, curve.scalar_modulus);
-  let s = montgomery_mul(s, Uint::ONE, curve.scalar_modulus);
-  let failure_mask = r.ct_is_zero_mask() | s.ct_is_zero_mask();
+  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), curve.scalar_modulus));
+  let sum = SecretScalar::new(z.add_mod_ct(&rd.value(), curve.scalar_modulus.value));
+  let nonce_inverse = SecretScalar::new(
+    nonce
+      .value()
+      .inv_mod_ct_montgomery(curve.scalar_modulus, scalar_inverse_exponent),
+  );
+  let sum = SecretScalar::new(montgomery_mul(
+    sum.value(),
+    curve.scalar_modulus.r2,
+    curve.scalar_modulus,
+  ));
+  let s = SecretScalar::new(montgomery_mul(nonce_inverse.value(), sum.value(), curve.scalar_modulus));
+  let s = SecretScalar::new(montgomery_mul(s.value(), Uint::ONE, curve.scalar_modulus));
+  let failure_mask = r.ct_is_zero_mask() | s.value().ct_is_zero_mask();
   if failure_mask != 0 {
     return Err(EcdsaError::SigningFailure);
   }
 
-  Ok((r, normalize_low_s(s, curve.scalar_modulus.value, half_order)))
+  Ok((r, normalize_low_s(s.value(), curve.scalar_modulus.value, half_order)))
 }
 
-fn public_key_from_secret_p256(secret: [u8; 32]) -> Affine<4> {
-  let mut wide = [0u8; 64];
-  hmac_expand_p256_public_blind(&secret, &mut wide);
-  let mask = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
-  public_key_from_secret_blinded(&P256, Uint::from_be_array(secret), mask, P256_FIELD_MINUS_TWO)
+fn public_key_from_secret_p256(secret: &[u8; 32]) -> Affine<4> {
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256_public_blind(secret, wide.as_mut_array());
+  let mask = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  public_key_from_secret_blinded(&P256, &secret_scalar, &mask, P256_FIELD_MINUS_TWO)
 }
 
-fn public_key_from_secret_p256_blinded(secret: [u8; 32], blind: [u8; 64]) -> Affine<4> {
-  let mask = reduce_wide_order_nonzero(&blind, &P256_ORDER_MODULUS);
-  public_key_from_secret_blinded(&P256, Uint::from_be_array(secret), mask, P256_FIELD_MINUS_TWO)
+fn public_key_from_secret_p256_blinded(secret: &[u8; 32], blind: &[u8; 64]) -> Affine<4> {
+  let mask = SecretScalar::new(reduce_wide_order_nonzero(blind, &P256_ORDER_MODULUS));
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  public_key_from_secret_blinded(&P256, &secret_scalar, &mask, P256_FIELD_MINUS_TWO)
 }
 
-fn public_key_from_secret_p384(secret: [u8; 48]) -> Affine<6> {
-  let mut wide = [0u8; 96];
-  hmac_expand_p384_public_blind(&secret, &mut wide);
-  let mask = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
-  public_key_from_secret_blinded(&P384, Uint::from_be_array(secret), mask, P384_FIELD_MINUS_TWO)
+fn public_key_from_secret_p384(secret: &[u8; 48]) -> Affine<6> {
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384_public_blind(secret, wide.as_mut_array());
+  let mask = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  public_key_from_secret_blinded(&P384, &secret_scalar, &mask, P384_FIELD_MINUS_TWO)
 }
 
-fn public_key_from_secret_p384_blinded(secret: [u8; 48], blind: [u8; 96]) -> Affine<6> {
-  let mask = reduce_wide_order_nonzero(&blind, &P384_ORDER_MODULUS);
-  public_key_from_secret_blinded(&P384, Uint::from_be_array(secret), mask, P384_FIELD_MINUS_TWO)
+fn public_key_from_secret_p384_blinded(secret: &[u8; 48], blind: &[u8; 96]) -> Affine<6> {
+  let mask = SecretScalar::new(reduce_wide_order_nonzero(blind, &P384_ORDER_MODULUS));
+  let secret_scalar = SecretScalar::from_be_bytes(secret);
+  public_key_from_secret_blinded(&P384, &secret_scalar, &mask, P384_FIELD_MINUS_TWO)
 }
 
 fn public_key_from_secret_blinded<const L: usize>(
   curve: &Curve<L>,
-  secret_scalar: Uint<L>,
-  mask: Uint<L>,
+  secret_scalar: &SecretScalar<L>,
+  mask: &SecretScalar<L>,
   field_inverse_exponent: Uint<L>,
 ) -> Affine<L> {
   scalar_mul_basepoint_blinded(curve, secret_scalar, mask, field_inverse_exponent)
@@ -2322,21 +2478,21 @@ fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], mo
   ))]
   {
     if N == 64 && is_p256_order_modulus(modulus) {
-      let mut fixed = [0u8; 64];
-      fixed.copy_from_slice(bytes);
-      let reduced_words = ecdsa_platform_asm::p256_reduce_order_64(&fixed);
+      let mut fixed = ZeroizingBytes::zeroed();
+      fixed.as_mut_array().copy_from_slice(bytes);
+      let reduced_words = ZeroizingWords::new(ecdsa_platform_asm::p256_reduce_order_64(fixed.as_array()));
       let mut out = [0u64; L];
-      out.copy_from_slice(&reduced_words);
+      out.copy_from_slice(reduced_words.as_array());
       let reduced = Uint(out);
       return Uint::select(reduced, Uint::ONE, reduced.ct_is_zero_mask());
     }
 
     if N == 96 && is_p384_order_modulus(modulus) {
-      let mut fixed = [0u8; 96];
-      fixed.copy_from_slice(bytes);
-      let reduced_words = ecdsa_platform_asm::p384_reduce_order_96(&fixed);
+      let mut fixed = ZeroizingBytes::zeroed();
+      fixed.as_mut_array().copy_from_slice(bytes);
+      let reduced_words = ZeroizingWords::new(ecdsa_platform_asm::p384_reduce_order_96(fixed.as_array()));
       let mut out = [0u64; L];
-      out.copy_from_slice(&reduced_words);
+      out.copy_from_slice(reduced_words.as_array());
       let reduced = Uint(out);
       return Uint::select(reduced, Uint::ONE, reduced.ct_is_zero_mask());
     }
@@ -2380,27 +2536,23 @@ fn assemble_p384_signature(r: Uint<6>, s: Uint<6>) -> Result<EcdsaP384Signature,
   Ok(EcdsaP384Signature::from_scalars(r, s))
 }
 
-fn parse_secret_scalar<const LIMBS: usize, const BYTES: usize>(
+fn secret_scalar_is_valid<const LIMBS: usize, const BYTES: usize>(
   bytes: &[u8; BYTES],
   scalar_modulus: Uint<LIMBS>,
-) -> Result<Uint<LIMBS>, EcdsaError> {
-  let scalar = Uint::from_be_slice(bytes).map_err(|_| EcdsaError::InvalidSecretKey)?;
-  if scalar.is_in_range_ct(&scalar_modulus) {
-    Ok(scalar)
-  } else {
-    Err(EcdsaError::InvalidSecretKey)
-  }
+) -> bool {
+  let scalar = SecretScalar::from_be_bytes(bytes);
+  scalar.value().is_in_range_ct(&scalar_modulus)
 }
 
 fn scalar_mul_basepoint_blinded<const L: usize>(
   curve: &Curve<L>,
-  scalar: Uint<L>,
-  blind: Uint<L>,
+  scalar: &SecretScalar<L>,
+  blind: &SecretScalar<L>,
   field_inverse_exponent: Uint<L>,
 ) -> Affine<L> {
-  let z = FieldElement::from_uint(blind, curve.field_modulus);
+  let z = FieldElement::from_uint(blind.value(), curve.field_modulus);
   scalar_mul_basepoint_backend(curve, scalar)
-    .unwrap_or_else(|| scalar_mul_basepoint_comb_ct(curve, scalar))
+    .unwrap_or_else(|| scalar_mul_basepoint_comb_ct_secret(curve, scalar))
     .randomize_z(z)
     .to_affine_ct(field_inverse_exponent)
 }
@@ -2409,7 +2561,7 @@ fn scalar_mul_basepoint_blinded<const L: usize>(
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
-fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Option<Jacobian<L>> {
+fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Option<Jacobian<L>> {
   if is_p384_curve(curve) {
     return Some(p384_scalar_mul_basepoint_platform(curve, scalar));
   }
@@ -2418,19 +2570,20 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: Uint<L
 }
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
-  let mut scalar_words = [0u64; 6];
-  scalar_words.copy_from_slice(&scalar.0[..6]);
+fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
+  let mut scalar_words = ZeroizingWords::zeroed();
+  scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
   let generator_words = p384_jacobian_to_words(Jacobian::from_affine(P384.generator()));
-  let words = ecdsa_platform_asm::p384_point_scalarmul(&scalar_words, &generator_words);
+  let words = ecdsa_platform_asm::p384_point_scalarmul(scalar_words.as_array(), &generator_words);
   jacobian_from_p384_words(curve.field_modulus, &words)
 }
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
-fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
-  let mut scalar_words = [0u64; 6];
-  scalar_words.copy_from_slice(&scalar.0[..6]);
-  let point = p384_scalar_mul_basepoint_comb_backend(Uint(scalar_words));
+fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
+  let mut scalar_words = ZeroizingWords::zeroed();
+  scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
+  let scalar = SecretScalar::new(Uint(*scalar_words.as_array()));
+  let point = p384_scalar_mul_basepoint_comb_backend(&scalar);
   let words = p384_jacobian_to_words(point);
   jacobian_from_p384_words(curve.field_modulus, &words)
 }
@@ -2439,7 +2592,7 @@ fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: 
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 )))]
-fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: Uint<L>) -> Option<Jacobian<L>> {
+fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: &SecretScalar<L>) -> Option<Jacobian<L>> {
   None
 }
 
@@ -2447,11 +2600,14 @@ fn scalar_mul_basepoint_backend<const L: usize>(_curve: &Curve<L>, _scalar: Uint
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
-fn scalar_mul_basepoint_affine_backend<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Option<Affine<L>> {
+fn scalar_mul_basepoint_affine_backend<const L: usize>(
+  curve: &Curve<L>,
+  scalar: &SecretScalar<L>,
+) -> Option<Affine<L>> {
   if is_p256_curve(curve) {
-    let mut scalar_words = [0u64; 4];
-    scalar_words.copy_from_slice(&scalar.0[..4]);
-    let out = ecdsa_platform_asm::p256_scalarmulbase_generator(&scalar_words);
+    let mut scalar_words = ZeroizingWords::zeroed();
+    scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..4]);
+    let out = ecdsa_platform_asm::p256_scalarmulbase_generator(scalar_words.as_array());
     return Some(affine_from_words(curve.field_modulus, &out));
   }
 
@@ -2462,7 +2618,10 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(curve: &Curve<L>, scalar:
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 )))]
-fn scalar_mul_basepoint_affine_backend<const L: usize>(_curve: &Curve<L>, _scalar: Uint<L>) -> Option<Affine<L>> {
+fn scalar_mul_basepoint_affine_backend<const L: usize>(
+  _curve: &Curve<L>,
+  _scalar: &SecretScalar<L>,
+) -> Option<Affine<L>> {
   None
 }
 
@@ -2503,7 +2662,7 @@ fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]
 }
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
-fn p384_scalar_mul_basepoint_comb_backend(scalar: Uint<6>) -> Jacobian<6> {
+fn p384_scalar_mul_basepoint_comb_backend(scalar: &SecretScalar<6>) -> Jacobian<6> {
   let curve = &P384;
   let rows = curve.signing_comb_rows;
   let mut acc = Jacobian::infinity(curve.field_modulus);
@@ -2517,7 +2676,7 @@ fn p384_scalar_mul_basepoint_comb_backend(scalar: Uint<6>) -> Jacobian<6> {
       acc.infinity_mask() | acc.y.value.ct_is_zero_mask(),
     );
 
-    let digit = signing_comb_digit_ct(scalar, row, rows, curve.signing_comb_width);
+    let digit = signing_comb_digit_ct(scalar.value(), row, rows, curve.signing_comb_width);
     let selected = select_signing_generator_affine_ct(curve, digit);
     let added_words =
       ecdsa_platform_asm::p384_point_mixadd(&p384_jacobian_to_words(acc), &p384_affine_to_words(selected));
@@ -2588,6 +2747,7 @@ fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words:
   }
 }
 
+#[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
   let rows = curve.signing_comb_rows;
@@ -2596,6 +2756,22 @@ fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L
   for row in (0..rows).rev() {
     acc = acc.double_ct();
     let digit = signing_comb_digit_ct(scalar, row, rows, curve.signing_comb_width);
+    let selected = select_signing_generator_affine_ct(curve, digit);
+    acc = acc.add_mixed_ct(selected, mask_eq_usize(digit, 0));
+  }
+
+  acc
+}
+
+#[allow(clippy::indexing_slicing)]
+fn scalar_mul_basepoint_comb_ct_secret<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
+  let scalar = SecretScalar::new(scalar.value());
+  let rows = curve.signing_comb_rows;
+  let mut acc = Jacobian::infinity(curve.field_modulus);
+
+  for row in (0..rows).rev() {
+    acc = acc.double_ct();
+    let digit = signing_comb_digit_ct(scalar.value(), row, rows, curve.signing_comb_width);
     let selected = select_signing_generator_affine_ct(curve, digit);
     acc = acc.add_mixed_ct(selected, mask_eq_usize(digit, 0));
   }
@@ -2643,25 +2819,31 @@ pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) ->
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
+  let secret = ZeroizingBytes::new(secret);
   let digest = Sha256::digest(message);
-  let mut wide = [0u8; 64];
-  hmac_expand_p256(&secret, &digest, &mut wide);
-  reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS).0
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  nonce.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4] {
-  reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS).0
+  let wide = ZeroizingBytes::new(wide);
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  nonce.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u8; 64], message: &[u8]) -> [u64; 8] {
+  let secret = ZeroizingBytes::new(secret);
+  let blind = ZeroizingBytes::new(blind);
   let digest = Sha256::digest(message);
-  let mut wide = [0u8; 64];
-  hmac_expand_p256(&secret, &digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
-  let nonce_blind = reduce_wide_order_nonzero(&blind, &P256_ORDER_MODULUS);
-  let point = scalar_mul_basepoint_blinded(&P256, nonce, nonce_blind, P256_FIELD_MINUS_TWO);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let nonce_blind = SecretScalar::new(reduce_wide_order_nonzero(blind.as_array(), &P256_ORDER_MODULUS));
+  let point = scalar_mul_basepoint_blinded(&P256, &nonce, &nonce_blind, P256_FIELD_MINUS_TWO);
   let mut out = [0u64; 8];
   out[..4].copy_from_slice(&point.x.value.0);
   out[4..].copy_from_slice(&point.y.value.0);
@@ -2670,14 +2852,16 @@ pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 8] {
+  let secret = ZeroizingBytes::new(secret);
+  let nonce_wide = ZeroizingBytes::new(nonce_wide);
   let digest = Sha256::digest(message);
-  let secret_scalar = Uint::from_be_array(secret);
-  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P256_ORDER_MODULUS);
+  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P256_ORDER_MODULUS));
   let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
   let (r, s) = sign_digest_with_r(
     &P256,
-    secret_scalar,
-    nonce,
+    &secret_scalar,
+    &nonce,
     &digest,
     P256_ORDER_MINUS_TWO,
     P256_ORDER_HALF,
@@ -2692,35 +2876,50 @@ pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 4] {
-  let secret_scalar = Uint::from_be_array(secret);
+  let secret = ZeroizingBytes::new(secret);
+  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
   let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
-  mul_mod_montgomery_ct(r, secret_scalar, &P256_ORDER_MODULUS).0
+  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P256_ORDER_MODULUS));
+  rd.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
+  let secret = ZeroizingBytes::new(secret);
   let digest = Sha256::digest(message);
-  let mut wide = [0u8; 64];
-  hmac_expand_p256(&secret, &digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P256_ORDER_MODULUS);
-  nonce.inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO).0
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p256(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let inverse = SecretScalar::new(
+    nonce
+      .value()
+      .inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO),
+  );
+  inverse.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 4] {
+  let secret = ZeroizingBytes::new(secret);
+  let nonce_wide = ZeroizingBytes::new(nonce_wide);
   let digest = Sha256::digest(message);
-  let secret_scalar = Uint::from_be_array(secret);
-  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P256_ORDER_MODULUS);
+  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P256_ORDER_MODULUS));
   let r = P256_GX.reduce_once_ct(P256_ORDER_MODULUS.value);
   let z = reduce_digest_for_scalar(&digest, P256_ORDER_MODULUS.value);
-  let rd = mul_mod_montgomery_ct(r, secret_scalar, &P256_ORDER_MODULUS);
-  let sum = montgomery_mul(
-    z.add_mod_ct(&rd, P256_ORDER_MODULUS.value),
+  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P256_ORDER_MODULUS));
+  let sum = SecretScalar::new(montgomery_mul(
+    z.add_mod_ct(&rd.value(), P256_ORDER_MODULUS.value),
     P256_ORDER_MODULUS.r2,
     &P256_ORDER_MODULUS,
+  ));
+  let nonce_inverse = SecretScalar::new(
+    nonce
+      .value()
+      .inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO),
   );
-  let nonce_inverse = nonce.inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO);
-  montgomery_mul(nonce_inverse, sum, &P256_ORDER_MODULUS).0
+  let product = SecretScalar::new(montgomery_mul(nonce_inverse.value(), sum.value(), &P256_ORDER_MODULUS));
+  product.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
@@ -2734,25 +2933,31 @@ pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) ->
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
+  let secret = ZeroizingBytes::new(secret);
   let digest = Sha384::digest(message);
-  let mut wide = [0u8; 96];
-  hmac_expand_p384(&secret, &digest, &mut wide);
-  reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS).0
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  nonce.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6] {
-  reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS).0
+  let wide = ZeroizingBytes::new(wide);
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  nonce.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u8; 96], message: &[u8]) -> [u64; 12] {
+  let secret = ZeroizingBytes::new(secret);
+  let blind = ZeroizingBytes::new(blind);
   let digest = Sha384::digest(message);
-  let mut wide = [0u8; 96];
-  hmac_expand_p384(&secret, &digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
-  let nonce_blind = reduce_wide_order_nonzero(&blind, &P384_ORDER_MODULUS);
-  let point = scalar_mul_basepoint_blinded(&P384, nonce, nonce_blind, P384_FIELD_MINUS_TWO);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let nonce_blind = SecretScalar::new(reduce_wide_order_nonzero(blind.as_array(), &P384_ORDER_MODULUS));
+  let point = scalar_mul_basepoint_blinded(&P384, &nonce, &nonce_blind, P384_FIELD_MINUS_TWO);
   let mut out = [0u64; 12];
   out[..6].copy_from_slice(&point.x.value.0);
   out[6..].copy_from_slice(&point.y.value.0);
@@ -2761,14 +2966,16 @@ pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 12] {
+  let secret = ZeroizingBytes::new(secret);
+  let nonce_wide = ZeroizingBytes::new(nonce_wide);
   let digest = Sha384::digest(message);
-  let secret_scalar = Uint::from_be_array(secret);
-  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P384_ORDER_MODULUS);
+  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P384_ORDER_MODULUS));
   let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
   let (r, s) = sign_digest_with_r(
     &P384,
-    secret_scalar,
-    nonce,
+    &secret_scalar,
+    &nonce,
     &digest,
     P384_ORDER_MINUS_TWO,
     P384_ORDER_HALF,
@@ -2783,35 +2990,50 @@ pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 6] {
-  let secret_scalar = Uint::from_be_array(secret);
+  let secret = ZeroizingBytes::new(secret);
+  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
   let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
-  mul_mod_montgomery_ct(r, secret_scalar, &P384_ORDER_MODULUS).0
+  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P384_ORDER_MODULUS));
+  rd.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
+  let secret = ZeroizingBytes::new(secret);
   let digest = Sha384::digest(message);
-  let mut wide = [0u8; 96];
-  hmac_expand_p384(&secret, &digest, &mut wide);
-  let nonce = reduce_wide_order_nonzero(&wide, &P384_ORDER_MODULUS);
-  nonce.inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO).0
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let inverse = SecretScalar::new(
+    nonce
+      .value()
+      .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
+  );
+  inverse.value().0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_final_multiply_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 6] {
+  let secret = ZeroizingBytes::new(secret);
+  let nonce_wide = ZeroizingBytes::new(nonce_wide);
   let digest = Sha384::digest(message);
-  let secret_scalar = Uint::from_be_array(secret);
-  let nonce = reduce_wide_order_nonzero(&nonce_wide, &P384_ORDER_MODULUS);
+  let secret_scalar = SecretScalar::from_be_bytes(secret.as_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(nonce_wide.as_array(), &P384_ORDER_MODULUS));
   let r = P384_GX.reduce_once_ct(P384_ORDER_MODULUS.value);
   let z = reduce_digest_for_scalar(&digest, P384_ORDER_MODULUS.value);
-  let rd = mul_mod_montgomery_ct(r, secret_scalar, &P384_ORDER_MODULUS);
-  let sum = montgomery_mul(
-    z.add_mod_ct(&rd, P384_ORDER_MODULUS.value),
+  let rd = SecretScalar::new(mul_mod_montgomery_ct(r, secret_scalar.value(), &P384_ORDER_MODULUS));
+  let sum = SecretScalar::new(montgomery_mul(
+    z.add_mod_ct(&rd.value(), P384_ORDER_MODULUS.value),
     P384_ORDER_MODULUS.r2,
     &P384_ORDER_MODULUS,
+  ));
+  let nonce_inverse = SecretScalar::new(
+    nonce
+      .value()
+      .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
   );
-  let nonce_inverse = nonce.inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO);
-  montgomery_mul(nonce_inverse, sum, &P384_ORDER_MODULUS).0
+  let product = SecretScalar::new(montgomery_mul(nonce_inverse.value(), sum.value(), &P384_ORDER_MODULUS));
+  product.value().0
 }
 
 fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<L>, curve: &Curve<L>) -> bool {
@@ -3069,8 +3291,19 @@ fn mul_mod_montgomery<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'sta
   montgomery_mul(product, Uint::ONE, modulus)
 }
 
-fn mul_mod_montgomery_ct<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static Modulus<L>) -> Uint<L> {
-  mul_mod_montgomery(lhs, rhs, modulus)
+fn mul_mod_montgomery_ct<const L: usize>(mut lhs: Uint<L>, mut rhs: Uint<L>, modulus: &'static Modulus<L>) -> Uint<L> {
+  let mut lhs_mont = montgomery_mul(lhs, modulus.r2, modulus);
+  let mut rhs_mont = montgomery_mul(rhs, modulus.r2, modulus);
+  let mut product = montgomery_mul(lhs_mont, rhs_mont, modulus);
+  let result = montgomery_mul(product, Uint::ONE, modulus);
+
+  lhs.zeroize_no_fence();
+  rhs.zeroize_no_fence();
+  lhs_mont.zeroize_no_fence();
+  rhs_mont.zeroize_no_fence();
+  product.zeroize_no_fence();
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  result
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -3756,7 +3989,9 @@ mod tests {
 
     for scalar in scalars {
       let portable = scalar_mul_basepoint_comb_ct(&P256, scalar).to_affine_ct(P256_FIELD_MINUS_TWO);
-      let backend = scalar_mul_basepoint_affine_backend(&P256, scalar).expect("P-256 platform backend must be present");
+      let secret_scalar = SecretScalar::new(scalar);
+      let backend =
+        scalar_mul_basepoint_affine_backend(&P256, &secret_scalar).expect("P-256 platform backend must be present");
 
       assert!(
         backend == portable,
@@ -3780,7 +4015,8 @@ mod tests {
 
     for scalar in scalars {
       let portable = scalar_mul_basepoint_comb_ct(&P384, scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
-      let backend = scalar_mul_basepoint_backend(&P384, scalar)
+      let secret_scalar = SecretScalar::new(scalar);
+      let backend = scalar_mul_basepoint_backend(&P384, &secret_scalar)
         .expect("P-384 platform backend must be present")
         .to_affine_ct(P384_FIELD_MINUS_TWO);
 

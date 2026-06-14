@@ -16,7 +16,7 @@
 //!
 //! References:
 //! - Intel: "Fast CRC Computation for Generic Polynomials Using PCLMULQDQ"
-//! - TiKV: `crc64fast` + `crc64fast-nvme`
+//! - TiKV CRC-64/XZ and CRC-64/NVME reference constants
 
 use crate::checksum::common::tables::{CRC64_NVME_POLY, CRC64_XZ_POLY};
 
@@ -465,7 +465,7 @@ mod tests {
 
   #[test]
   fn test_nvme_constants_match_tikv() {
-    // TiKV `crc64fast-nvme` constants (v1.2.1).
+    // TiKV CRC-64/NVME reference constants.
     assert_eq!(CRC64_NVME_CLMUL.poly, 0x34d9_2653_5897_936b);
     assert_eq!(CRC64_NVME_CLMUL.mu, 0x27ec_fa32_9aef_9f77);
     assert_eq!(

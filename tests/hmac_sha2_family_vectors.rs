@@ -1,6 +1,6 @@
 #![cfg(feature = "hmac")]
 
-use rscrypto::{HmacSha384, HmacSha512, Mac};
+use rscrypto::{HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Mac};
 
 mod common;
 use common::decode_hex_array as decode_hex;
@@ -44,14 +44,17 @@ fn hmac_sha384_rfc4231_vectors() {
   ];
 
   for (i, (key, data, expected_hex)) in cases.iter().enumerate() {
-    let expected = decode_hex::<48>(expected_hex);
+    let expected = HmacSha384Tag::from_bytes(decode_hex::<48>(expected_hex));
     let actual = HmacSha384::mac(key, data);
     assert_eq!(actual, expected, "HMAC-SHA384 RFC 4231 vector {i} mismatch");
     assert!(HmacSha384::verify_tag(key, data, &expected).is_ok());
   }
 
   let truncated = HmacSha384::mac(&[0x0c; 20], b"Test With Truncation");
-  assert_eq!(&truncated[..16], &decode_hex::<16>("3abf34c3503b2a23a46efc619baef897"));
+  assert_eq!(
+    &truncated.as_bytes()[..16],
+    &decode_hex::<16>("3abf34c3503b2a23a46efc619baef897")
+  );
 }
 
 #[test]
@@ -93,14 +96,17 @@ fn hmac_sha512_rfc4231_vectors() {
   ];
 
   for (i, (key, data, expected_hex)) in cases.iter().enumerate() {
-    let expected = decode_hex::<64>(expected_hex);
+    let expected = HmacSha512Tag::from_bytes(decode_hex::<64>(expected_hex));
     let actual = HmacSha512::mac(key, data);
     assert_eq!(actual, expected, "HMAC-SHA512 RFC 4231 vector {i} mismatch");
     assert!(HmacSha512::verify_tag(key, data, &expected).is_ok());
   }
 
   let truncated = HmacSha512::mac(&[0x0c; 20], b"Test With Truncation");
-  assert_eq!(&truncated[..16], &decode_hex::<16>("415fad6271580a531d4179bc891d87a6"));
+  assert_eq!(
+    &truncated.as_bytes()[..16],
+    &decode_hex::<16>("415fad6271580a531d4179bc891d87a6")
+  );
 }
 
 #[test]
@@ -109,9 +115,10 @@ fn hmac_sha384_verify_rejects_corrupted_tag_positions() {
   let data = b"auth message";
   let tag = HmacSha384::mac(key, data);
 
-  for index in [0, tag.len() / 2, tag.len() - 1] {
-    let mut corrupted = tag;
+  for index in [0, tag.as_bytes().len() / 2, tag.as_bytes().len() - 1] {
+    let mut corrupted = tag.to_bytes();
     corrupted[index] ^= 0x80;
+    let corrupted = HmacSha384Tag::from_bytes(corrupted);
     assert!(
       HmacSha384::verify_tag(key, data, &corrupted).is_err(),
       "HMAC-SHA384 accepted a tag corrupted at byte {index}"
@@ -125,9 +132,10 @@ fn hmac_sha512_verify_rejects_corrupted_tag_positions() {
   let data = b"auth message";
   let tag = HmacSha512::mac(key, data);
 
-  for index in [0, tag.len() / 2, tag.len() - 1] {
-    let mut corrupted = tag;
+  for index in [0, tag.as_bytes().len() / 2, tag.as_bytes().len() - 1] {
+    let mut corrupted = tag.to_bytes();
     corrupted[index] ^= 0x80;
+    let corrupted = HmacSha512Tag::from_bytes(corrupted);
     assert!(
       HmacSha512::verify_tag(key, data, &corrupted).is_err(),
       "HMAC-SHA512 accepted a tag corrupted at byte {index}"

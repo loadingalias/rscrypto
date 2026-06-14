@@ -55,7 +55,7 @@ fn test_aws_lc_rs_digest_hmac_hkdf_and_pbkdf2_migration_examples_are_byte_equiva
   let aws_hmac = aws_hmac::sign(&aws_hmac_key, DATA);
   assert_eq!(HmacSha256::mac(&KEY_32, DATA).as_slice(), aws_hmac.as_ref());
 
-  let salt = b"migration salt";
+  let salt = b"migration salt!!";
   let ikm = b"migration input key material";
   let info = b"migration context";
   let mut aws_okm = [0u8; 42];
