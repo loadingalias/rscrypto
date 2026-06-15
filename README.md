@@ -31,7 +31,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 - **One coherent primitive stack.** Avoid composing a dozen crates with different APIs, feature models, and security conventions.
 - **Small builds stay small.** Enable `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, `argon2`, or any other leaf without pulling in the world.
 - **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference impl.
-- **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM all have portable fallbacks, w/ optimized kernels where they pay.
+- **Hardware dispatch is built in.** x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM all have portable fallbacks, with optimized kernels where they pay.
 - **`no_std` is a first-class target.** Server, CLI, embedded, bare-metal, and WASM builds use the same crate and feature model.
 - **Audit knobs are explicit.** `portable-only` collapses runtime capability detection to the portable backend; `getrandom`, `serde`, and `rayon` are opt-in.
 - **Security hygiene is part of the API.** Opaque verification errors, constant-time equality, zeroized secret types, strict arithmetic, official vectors, fuzzing, Miri, and cross-CPU CI are built into the project discipline.
@@ -47,7 +47,7 @@ Minimal `no_std` SHA-2 build:
 rscrypto = { version = "0.5.0", default-features = false, features = ["sha2"] }
 ```
 
-Full primitive stack w/ OS randomness enabled:
+Full primitive stack with OS randomness enabled:
 
 ```toml
 [dependencies]
@@ -70,7 +70,7 @@ h.update(b"world");
 assert_eq!(h.finalize(), one_shot);
 ```
 
-The common API shape is deliberately simple: one-shot when convenient, streaming when it's needed.
+The common API shape is one-shot when convenient and streaming when needed.
 
 ## Verify RSA Signatures
 
@@ -222,7 +222,7 @@ assert!(
 
 Fast non-cryptographic hashes and CRCs are for indexing, checksumming, dedup, and integrity plumbing. Do not use them for passwords, signatures, MACs, key derivation, or authentication.
 
-Flags are layered deliberately:
+Flags are layered by use:
 
 - **Leaf Primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `crc32`, etc.
 - **Families/Groups:** `hashes`, `checksums`, `macs`, `kdfs`, `password-hashing`, `aead`, `signatures`, `key-exchange`.
@@ -236,10 +236,12 @@ Public Type Inventory: [`docs/types.md`](docs/types.md).
 `rscrypto` makes scoped constant-time claims for secret-bearing operations, not
 for every function in the crate.
 
-Current claimed or intended CT surfaces include MAC/tag verification, AEAD
-authentication failure shape, X25519 scalar multiplication, Ed25519 signing and
-secret public-key derivation, ECDSA P-256/P-384 blinded signing, RSA private
-sign/decrypt leaves, and selected password-verification comparisons.
+The exact release claim is the set of primitive/configuration pairs marked
+`ct_claimed` in [`ct.toml`](ct.toml). The main secret-bearing surfaces are
+MAC/tag verification, AEAD authentication failure shape, X25519 scalar
+multiplication, Ed25519 signing and secret public-key derivation, ECDSA
+P-256/P-384 blinded signing, RSA private sign/decrypt leaves, and selected
+password-verification comparisons.
 
 Public parsing, key generation, OS randomness, raw hashes, checksums,
 non-cryptographic hashes, benchmark paths, and public-key verification math are
@@ -249,7 +251,7 @@ for the exact claim model.
 
 ## Performance
 
-Latest public bench evidence comes from two full passes that are both updated regularly and programmatically:
+Latest public bench evidence comes from two generated full passes:
 
 - Linux (CI): Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V.
 - Apple Silicon: local macOS/aarch64 full run.
@@ -279,7 +281,7 @@ The measured weak spots in the latest published benchmark set: Linux Argon2id OW
 ChaCha20-Poly1305 encryption, and Argon2i-small rows; Apple Silicon still has
 localized XXH3-64, SHA3, HKDF-SHA256, and BLAKE3 streaming pressure. See
 [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
-methodology, platform scorecards, and loss tables. This will improve over time.
+methodology, platform scorecards, and loss tables.
 
 ## Portability And Acceleration
 
@@ -309,13 +311,15 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 - Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
 - RSA private operations have extra regression coverage for memory safety and
   first-order timing leakage.
-- No third-party audit or FIPS cert at this point.
+- No third-party audit or FIPS certificate is claimed today.
 
-Read [`docs/security.md`](docs/security.md) before shipping cryptographic code. For compliance posture, see [`docs/compliance.md`](docs/compliance.md).
+Start with [`docs/trust.md`](docs/trust.md) for the evidence map. Read
+[`docs/security.md`](docs/security.md) before shipping cryptographic code. For
+compliance posture, see [`docs/compliance.md`](docs/compliance.md).
 
 Vulnerabilities should be reported through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new) or the process in [`SECURITY.md`](SECURITY.md).
 
-Do not report real-world vulnerabilities through public GitHub issues, please.
+Do not report real-world vulnerabilities through public GitHub issues.
 
 ## Docs
 
@@ -323,6 +327,7 @@ Do not report real-world vulnerabilities through public GitHub issues, please.
 - Examples: [`examples/`](examples/)
 - Feature flags: [`docs/features.md`](docs/features.md)
 - Public type inventory: [`docs/types.md`](docs/types.md)
+- Trust profile: [`docs/trust.md`](docs/trust.md)
 - Platform matrix: [`docs/platforms.md`](docs/platforms.md)
 - Security guidance: [`docs/security.md`](docs/security.md)
 - Test vector coverage: [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md)

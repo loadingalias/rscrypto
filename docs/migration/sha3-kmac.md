@@ -35,8 +35,8 @@ The `kmac` feature implies `sha3`.
 | `sha3-kmac` type | rscrypto type | Security |
 |---|---|---|
 | `Kmac256` | `Kmac256` | 256-bit |
-| `KmacXof256` | `Kmac256` (variable-output is the same call — see below) | 256-bit XOF |
-| `Kmac128` | not currently mapped — file an issue |  |
+| `KmacXof256` | `Kmac256` (variable-output is the same call: see below) | 256-bit XOF |
+| `Kmac128` | not currently mapped: file an issue |  |
 | `KmacXof128` | not currently mapped |  |
 
 ## API patterns
@@ -93,7 +93,7 @@ Same shape; rscrypto borrows `&mut self` instead of consuming `self`. Call `k.re
 
 ### Variable-length output
 
-KMAC's output length is part of the tag derivation — different lengths give different tags. Both crates encode the length identically (verified at 32 and 64 bytes in the harness):
+KMAC's output length is part of the tag derivation: different lengths give different tags. Both crates encode the length identically (verified at 32 and 64 bytes in the harness):
 
 ```rust
 // After
@@ -125,9 +125,9 @@ Streaming form: `let mut k = Kmac256::new(key, custom); k.update(data); k.verify
 
 ## Notes
 
-- **Infallible `new` vs. fallible `new`.** `sha3-kmac` enforces SP 800-185's 32-byte key minimum at construction; rscrypto leaves the policy at the call site. If you want both — port the explicit check shown above.
+- **Infallible `new` vs. fallible `new`.** `sha3-kmac` enforces SP 800-185's 32-byte key minimum at construction; rscrypto leaves the policy at the call site. If you want both: port the explicit check shown above.
 - **Customization string is mandatory** in both crates. Pass `b""` if you want the unkeyed-customization form (which is rare; KMAC is almost always used with a domain-separation string).
 - **`no_std`.** Both crates work in `no_std`. rscrypto's `mac_to_vec` style helpers are gated on `alloc`; the fixed-array and user-supplied-buffer paths are pure `no_std`.
-- **`KmacXof*` (XOF mode)** in `sha3-kmac` is the variable-output form where the consumer streams arbitrary length out of the tag. rscrypto's `Kmac256` already handles variable output via the buffer length passed to `finalize_into` / `mac_into`. There is no separate `KmacXof256` type — pass a longer buffer.
+- **`KmacXof*` (XOF mode)** in `sha3-kmac` is the variable-output form where the consumer streams arbitrary length out of the tag. rscrypto's `Kmac256` already handles variable output via the buffer length passed to `finalize_into` / `mac_into`. There is no separate `KmacXof256` type: pass a longer buffer.
 - **NIST SP 800-185 conformance.** Both implementations track the spec including the `right_encode` length suffix and `bytepad` block alignment. Outputs are bit-identical at every length tested in the harness (32 and 64 bytes); for assurance, run the harness yourself with your specific lengths.
-- **Aside: hand-rolled cSHAKE-based KMAC.** Many existing codebases implement KMAC by hand on top of `sha3::CShake256`. The migration target is the same — `rscrypto::Kmac256` — but you'll need to verify your hand-rolled padding matches the SP 800-185 spec (specifically the `bytepad(encode_string(K))` step and the trailing `right_encode(L)`). If your output diverges from rscrypto's, your hand-rolled implementation has a spec bug — fix it via the migration.
+- **Aside: hand-rolled cSHAKE-based KMAC.** Many existing codebases implement KMAC by hand on top of `sha3::CShake256`. The migration target is the same: `rscrypto::Kmac256`. Verify that your hand-rolled padding matches the SP 800-185 spec, specifically the `bytepad(encode_string(K))` step and the trailing `right_encode(L)`. If your output diverges from rscrypto's, your hand-rolled implementation has a spec bug; fix it before migrating.

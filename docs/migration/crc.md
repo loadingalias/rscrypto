@@ -117,4 +117,4 @@ let final_crc = hasher.finalize();
 - **No SIMD in `crc`.** rscrypto dispatches to PCLMULQDQ / VPCLMULQDQ on x86_64, PMULL / SVE2 on aarch64, VPMSUMD on Power, VGFM on s390x, Zbc/Zvbc on RISC-V, with a portable fallback. Force the portable kernel via `RSCRYPTO_CRC32_FORCE=portable` (std only) or the `portable-only` feature for FIPS / DO-178C / IEC 62443 lanes.
 - **Long tail not yet covered.** rscrypto does not (yet) ship every constant in the `crc` catalogue (`CRC_8_*`, `CRC_82_DARC`, alternate CRC-32 polynomials, etc.). If you depend on one of those, keep `crc` as a dependency for that variant or open a feature request.
 - **`no_std`.** Both crates are `no_std`-capable. rscrypto's `Buffered*` wrappers require `alloc`; `ChecksumReader` / `ChecksumWriter` require `std`.
-- **Output widths match.** CRC-16 → `u16`, CRC-32 → `u32`, CRC-64 → `u64`. CRC-24 returns `u32` masked to 24 bits (`0x00FFFFFF`) — same as `crc::Crc<u32>::new(&CRC_24_OPENPGP)`.
+- **Output widths match.** CRC-16 → `u16`, CRC-32 → `u32`, CRC-64 → `u64`. CRC-24 returns `u32` masked to 24 bits (`0x00FFFFFF`): same as `crc::Crc<u32>::new(&CRC_24_OPENPGP)`.

@@ -1,12 +1,12 @@
 # Public Type Inventory
 
-Index of the public `rscrypto` types most of you will need to choose imports,
-features, and migration targets. The README keeps only the top-level API map;
-this file carries the root re-exports and documented module helper types.
+Index of the public `rscrypto` types needed to choose imports, features, and
+migration targets. The README keeps the top-level API map; this file carries
+the root re-exports and documented module helper types.
 
-This is not a substitute for rustdoc. It intentionally excludes `diag_*`
-functions, doc-hidden bench hooks, architecture feature constants, and
-private impl types.
+Use rustdoc for exhaustive API details. This inventory excludes `diag_*`
+functions, doc-hidden bench hooks, architecture feature constants, and private
+impl types.
 
 ## Traits
 
@@ -153,7 +153,7 @@ AEAD support types: `SealError`, `OpenError`, `AeadBufferError`,
 
 | Error | When | Recovery |
 |-------|------|----------|
-| `VerificationError` | MAC/AEAD/signature check fails | Reject input (intentionally opaque) |
+| `VerificationError` | MAC/AEAD/signature check fails | Reject input without revealing failure detail |
 | `AeadBufferError` | Output buffer wrong size | Fix buffer length |
 | `SealError` | AEAD combined encrypt failure | Buffer / nonce / counter |
 | `OpenError` | AEAD combined decrypt failure | Buffer or verification |

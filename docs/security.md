@@ -1,7 +1,8 @@
 # Security Guidance
 
-This page explains what `rscrypto` tries to protect, what it does not claim,
-and what callers still need to get right.
+`rscrypto` protects specific primitive surfaces. Callers still own protocol
+composition, key lifecycle, nonce lifecycle, deployment policy, and error
+translation.
 
 ## Constant-Time Boundary
 
@@ -9,7 +10,8 @@ Constant-time claims are scoped to named secret-bearing operations. They are not
 whole-crate claims and they are not portable to unmeasured build
 configurations.
 
-Current claimed or intended CT surfaces include:
+The exact release claim is the set of primitive/configuration pairs marked
+`ct_claimed` in [`../ct.toml`](../ct.toml). The main user-facing surfaces are:
 
 | Surface | User-facing boundary |
 |---|---|
@@ -30,7 +32,7 @@ third-party audit, FIPS 140-3 validation, or formal proof is claimed today.
 
 ## Verification Failures
 
-`VerificationError` and `OpenError::Verification` are intentionally opaque.
+`VerificationError` and `OpenError::Verification` do not reveal failure detail.
 Treat them as generic authentication failures.
 
 Do not translate verification failures into richer protocol responses such as

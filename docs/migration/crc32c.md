@@ -79,7 +79,7 @@ let crc_full = Crc32C::combine(crc_a, crc_b, right.len());
 
 ### Streaming (rscrypto-only)
 
-`crc32c` has no streaming type — every call is a function. rscrypto adds it through the `Checksum` trait:
+`crc32c` has no streaming type: every call is a function. rscrypto adds it through the `Checksum` trait:
 
 ```rust
 // After
@@ -92,7 +92,7 @@ let crc = h.finalize();
 
 ## Notes
 
-- **Single algorithm.** `crc32c` is CRC-32C (Castagnoli) only. If you also need CRC-32 IEEE, both crates would normally require separate dependencies — rscrypto's `crc32` feature covers both with one dep.
+- **Single algorithm.** `crc32c` is CRC-32C (Castagnoli) only. If you also need CRC-32 IEEE, both crates would normally require separate dependencies: rscrypto's `crc32` feature covers both with one dep.
 - **Hardware acceleration parity.** Both crates dispatch to the SSE4.2 `crc32` instruction on x86_64 and the ARMv8 CRC extension on aarch64. rscrypto adds VPCLMULQDQ folding (large buffers on x86_64), SVE2-PMULL (aarch64), VPMSUMD (Power), VGFM (s390x), and Zbc/Zvbc (RISC-V).
 - **Force a backend.** rscrypto honors `RSCRYPTO_CRC32C_FORCE=portable` (std only) and the crate's `portable-only` feature for FIPS / DO-178C / IEC 62443 lanes. `crc32c` has no equivalent.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `Buffered*` wrappers and IO adapters require `alloc` / `std`; the core `Checksum` trait API is pure `no_std`.

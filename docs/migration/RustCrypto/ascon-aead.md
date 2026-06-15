@@ -1,6 +1,6 @@
 # Migration: `ascon-aead` (RustCrypto) → `rscrypto`
 
-> NIST SP 800-232 lightweight AEAD. Replace `AsconAead128` / `Key<T>` / `Nonce<T>` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API. 128-bit key, 128-bit nonce, 128-bit tag — all the bytes are 16.
+> NIST SP 800-232 lightweight AEAD. Replace `AsconAead128` / `Key<T>` / `Nonce<T>` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API. 128-bit key, 128-bit nonce, 128-bit tag: all the bytes are 16.
 
 Verified against `ascon-aead = "0.5.2"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/ascon_aead_oracle.rs`.
@@ -32,7 +32,7 @@ rscrypto = { version = "0.5.0", features = ["ascon-aead"] }
 | `ascon-aead` type | rscrypto type | Key | Nonce | Tag |
 |---|---|---|---|---|
 | `AsconAead128` | `AsconAead128` | 16 bytes | 16 bytes | 16 bytes |
-| `AsconAead128a` (legacy) | not mapped — superseded by NIST SP 800-232 |  |  |  |
+| `AsconAead128a` (legacy) | not mapped: superseded by NIST SP 800-232 |  |  |  |
 | `AsconAead80pq` (post-quantum-flavored) | not mapped |  |  |  |
 
 ## API patterns
@@ -85,5 +85,5 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 - **128-bit key is the only key length.** Ascon-AEAD does not have a 256-bit variant; the 128-bit spec is what NIST standardised.
 - **Nonce reuse semantics.** Ascon-AEAD-128 is *not* nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Use a counter or a fresh random 128-bit nonce per message; the larger nonce space (128 bits vs. AES-GCM's 96) makes random nonces safer at high volume.
 - **No `Payload`, no `KeyInit` import.** Same simplification as the rest of the AEAD lane.
-- **Performance.** Pure Rust, no SIMD path expected. rscrypto's portable kernel is the only kernel — `portable-only` feature is a no-op for Ascon but does not break the build.
+- **Performance.** Pure Rust, no SIMD path expected. rscrypto's portable kernel is the only kernel: `portable-only` feature is a no-op for Ascon but does not break the build.
 - **`no_std`.** Both crates support `no_std`. Ascon's tiny state (320 bits) plus the buffer-style rscrypto API works on the deepest-embedded targets without `alloc`.

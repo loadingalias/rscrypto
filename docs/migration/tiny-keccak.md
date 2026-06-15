@@ -31,24 +31,24 @@ rscrypto = { version = "0.5.0", features = ["kmac"] }
 
 The `kmac` feature implies `sha3` (which provides the underlying `Cshake256` sponge for both `Kmac256` and the standalone cSHAKE primitive).
 
-If you only use cSHAKE and not KMAC, swap the feature for `sha3` alone — that exposes `Cshake256` without pulling in KMAC.
+If you only use cSHAKE and not KMAC, swap the feature for `sha3` alone. That exposes `Cshake256` without pulling in KMAC.
 
 ## Algorithm map
 
 | `tiny-keccak` type | rscrypto type | Spec |
 |---|---|---|
 | `Kmac::v256(key, custom)` | `Kmac256` | NIST SP 800-185 §4.3 |
-| `Kmac::v128(key, custom)` | not currently mapped — open an issue | NIST SP 800-185 §4.3 |
+| `Kmac::v128(key, custom)` | not currently mapped: open an issue | NIST SP 800-185 §4.3 |
 | `KmacXof::v256` (XOF mode) | `Kmac256` (variable-output via `mac_into` buffer length) | SP 800-185 §4.3 |
 | `CShake::v256(name, custom)` | `Cshake256` | NIST SP 800-185 §3 |
 | `CShake::v128(name, custom)` | not currently mapped | NIST SP 800-185 §3 |
 | `Sha3*`, `Keccak*`, `Shake*`, `ParallelHash*`, `TupleHash*` | covered by `RustCrypto/sha3.md` (Sha3/Shake) or not yet mapped (ParallelHash, TupleHash) | FIPS 202 / SP 800-185 |
 
-If you migrate from `tiny-keccak` for SHA-3 / SHAKE specifically (not KMAC / cSHAKE), follow `RustCrypto/sha3.md` instead — same destination types, slightly different upstream API.
+If you migrate from `tiny-keccak` for SHA-3 / SHAKE specifically (not KMAC / cSHAKE), follow `RustCrypto/sha3.md` instead: same destination types, slightly different upstream API.
 
 ## API patterns
 
-### KMAC256 — one-shot tag
+### KMAC256: one-shot tag
 
 ```rust
 // Before
@@ -72,7 +72,7 @@ Two changes:
 | `Hasher` trait import required | inherent methods on `Kmac256` |
 | `finalize(&mut tag)` consumes `self` | `mac_into` / `mac_array` are static; streaming `finalize_into` borrows `&mut self` |
 
-### KMAC256 — streaming
+### KMAC256: streaming
 
 ```rust
 // Before
@@ -96,9 +96,9 @@ k.finalize_into(&mut tag);               // borrows &mut self
 
 `k.reset()` is available in rscrypto to start over without rebuilding the absorbed `(key, custom)` state.
 
-### KMAC256 — variable-length output
+### KMAC256: variable-length output
 
-The output length is part of the KMAC tag derivation per SP 800-185 — a 32-byte tag is *not* the prefix of a 64-byte tag. Both crates encode the length identically (verified at 32 and 64 bytes in the harness):
+The output length is part of the KMAC tag derivation per SP 800-185: a 32-byte tag is *not* the prefix of a 64-byte tag. Both crates encode the length identically (verified at 32 and 64 bytes in the harness):
 
 ```rust
 // After
@@ -107,7 +107,7 @@ let mut tag = [0u8; 64];
 Kmac256::mac_into(key, custom, data, &mut tag);
 ```
 
-### KMAC256 — constant-time verification
+### KMAC256: constant-time verification
 
 ```rust
 // Before
@@ -130,7 +130,7 @@ Kmac256::verify_tag(key, custom, data, &expected)?;   // Result<(), Verification
 
 Drop the `subtle` dependency for the verify path. Streaming form: `let mut k = Kmac256::new(key, custom); k.update(data); k.verify(&expected)?;`.
 
-### cSHAKE256 — XOF streaming
+### cSHAKE256: XOF streaming
 
 ```rust
 // Before
@@ -167,7 +167,7 @@ Three changes from `tiny-keccak`:
 | `tiny-keccak` | rscrypto |
 |---|---|
 | `Hasher::finalize` consumes the sponge and writes to a fixed buffer | `Cshake256` has a fused one-shot `xof(name, custom, data)` that returns a reader; streaming `finalize_xof()` returns the same reader |
-| Cannot squeeze more bytes after `finalize` | Reader is a dedicated XOF type — call `squeeze` repeatedly for additional bytes |
+| Cannot squeeze more bytes after `finalize` | Reader is a dedicated XOF type: call `squeeze` repeatedly for additional bytes |
 | `Hasher::update` adds chunks | `Digest::update` plays the same role |
 
 ## Notes
@@ -176,6 +176,6 @@ Three changes from `tiny-keccak`:
 - **`CShake::v128` not yet mapped.** Same situation. rscrypto ships `Cshake256` only.
 - **`ParallelHash` and `TupleHash` (SP 800-185 §6 / §5) not yet mapped.** `tiny-keccak` ships these behind feature flags. rscrypto does not. If you depend on them, keep `tiny-keccak` for those primitives.
 - **Spec conformance verified.** Outputs are byte-identical at every parameter set tested in the harness (KMAC at 32 and 64 bytes; cSHAKE at 64-byte squeeze). For your specific lengths, run the harness yourself.
-- **Hand-rolled cSHAKE-based KMAC.** Some codebases implement KMAC by hand on top of `tiny_keccak::CShake`. The migration target is the same — `rscrypto::Kmac256` — but you'll need to verify your hand-rolled padding matches the SP 800-185 spec (specifically the `bytepad(encode_string(K))` step and the trailing `right_encode(L)`). If your output diverges from rscrypto's, your hand-rolled implementation has a spec bug — fix it via the migration.
+- **Hand-rolled cSHAKE-based KMAC.** Some codebases implement KMAC by hand on top of `tiny_keccak::CShake`. The migration target is the same: `rscrypto::Kmac256`. Verify that your hand-rolled padding matches the SP 800-185 spec, specifically the `bytepad(encode_string(K))` step and the trailing `right_encode(L)`. If your output diverges from rscrypto's, your hand-rolled implementation has a spec bug; fix it before migrating.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `mac_to_vec` style helpers are gated on `alloc`; the fixed-array and user-supplied-buffer paths are pure `no_std`.
 - **Performance.** Both crates use scalar Rust; SHA-3 / Keccak doesn't benefit from typical SIMD without dedicated SHA3-NI hardware (rare in 2026). rscrypto's portable kernel is the only kernel for this lane.

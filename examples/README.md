@@ -12,31 +12,31 @@ the new API shape.
 
 ## All examples
 
-### `basic` — API tour across every family
+### `basic`: API tour across every family
 
 ```bash
 cargo run --example basic --features full,getrandom
 ```
 
-Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes (`Xxh3`, `RapidHash`), AEAD (`ChaCha20Poly1305` with a fresh random nonce), hex formatting, secret-key Debug masking, byte-array round-trips through `from_bytes` / `to_bytes` / `as_bytes`, and the `std::io::{Read, Write}` adapters for streaming digests and checksums. Every section asserts that one-shot equals streaming — that's the API contract every primitive in `rscrypto` follows.
+Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes (`Xxh3`, `RapidHash`), AEAD (`ChaCha20Poly1305` with a fresh random nonce), hex formatting, secret-key Debug masking, byte-array round-trips through `from_bytes` / `to_bytes` / `as_bytes`, and the `std::io::{Read, Write}` adapters for streaming digests and checksums. Every section asserts that one-shot equals streaming. That is the API contract every primitive in `rscrypto` follows.
 
-### `password_hashing` — Argon2id and scrypt with bounded-policy verify
+### `password_hashing`: Argon2id and scrypt with bounded-policy verify
 
 ```bash
 cargo run --example password_hashing --features password-hashing,getrandom
 ```
 
-Hashes a password with both Argon2id and scrypt, encodes the result as a PHC string, then verifies it through bounded `verify_string`. The default verify policy caps the cost parameters the verifier will accept, blocking maliciously expensive PHC strings. Prints both PHC encodings to stdout so you can inspect the format.
+Hashes a password with both Argon2id and scrypt, encodes the result as a PHC string, then verifies it through bounded `verify_string`. The default verify policy caps the cost parameters the verifier will accept, blocking attacker-supplied high-cost PHC strings. Prints both PHC encodings to stdout so you can inspect the format.
 
-### `parallel` — CRC chunk combining for large inputs
+### `parallel`: CRC chunk combining for large inputs
 
 ```bash
 cargo run --example parallel --features checksums
 ```
 
-Demonstrates that `rscrypto`'s CRC implementations are mathematically combinable: given `crc(A)` and `crc(B)`, you can compute `crc(A || B)` without ever holding both chunks together. The example checks a two-way split, a multi-part loop, and scoped-thread chunk processing against sequential references. Uses `Crc32` and `Crc64` (XZ polynomial). The pattern applies to any `Checksum` type that implements `ChecksumCombine`.
+Shows how `rscrypto` combines CRC states: given `crc(A)` and `crc(B)`, you can compute `crc(A || B)` without ever holding both chunks together. The example checks a two-way split, a multi-part loop, and scoped-thread chunk processing against sequential references. Uses `Crc32` and `Crc64` (XZ polynomial). The pattern applies to any `Checksum` type that implements `ChecksumCombine`.
 
-### `introspect` — Runtime dispatch inspection
+### `introspect`: Runtime dispatch inspection
 
 ```bash
 cargo run --example introspect --features checksums,hashes,aead,diag

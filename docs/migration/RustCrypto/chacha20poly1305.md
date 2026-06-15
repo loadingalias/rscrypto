@@ -35,7 +35,7 @@ rscrypto = { version = "0.5.0", features = ["chacha20poly1305", "xchacha20poly13
 |---|---|---|
 | `ChaCha20Poly1305` (RFC 8439, 96-bit nonce) | `ChaCha20Poly1305` | `Nonce96` |
 | `XChaCha20Poly1305` (extended, 192-bit nonce) | `XChaCha20Poly1305` | `Nonce192` |
-| `ChaCha8Poly1305`, `ChaCha12Poly1305` (reduced rounds) | not currently mapped — file an issue if you need them |  |
+| `ChaCha8Poly1305`, `ChaCha12Poly1305` (reduced rounds) | not currently mapped: file an issue if you need them |  |
 
 ## API patterns
 
@@ -87,7 +87,7 @@ let mut ct = vec![0u8; plaintext.len() + 16];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
-The XChaCha variant uses `Nonce192` (24 bytes) — the only structural change from the IETF-nonce variant.
+The XChaCha variant uses `Nonce192` (24 bytes). That is the only structural change from the IETF-nonce variant.
 
 ### Decrypt + tamper-detection
 
@@ -110,10 +110,10 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 ## Notes
 
-- **`Key` is non-generic in `chacha20poly1305`.** `chacha20poly1305::Key` is `pub type Key = GenericArray<u8, U32>;` — no `Key::<ChaCha20Poly1305>::from_slice` turbofish needed (or accepted). The same applies to `Nonce` and `XNonce`. rscrypto's per-algorithm key types collapse the choice.
+- **`Key` is non-generic in `chacha20poly1305`.** `chacha20poly1305::Key` is `pub type Key = GenericArray<u8, U32>;`: no `Key::<ChaCha20Poly1305>::from_slice` turbofish needed (or accepted). The same applies to `Nonce` and `XNonce`. rscrypto's per-algorithm key types collapse the choice.
 - **XChaCha = ChaCha + HChaCha key derivation.** `XChaCha20Poly1305` derives a sub-key from the key + first-16-bytes-of-nonce via HChaCha20, then runs IETF ChaCha20-Poly1305 on the remaining 8 bytes of nonce. Outputs are bit-identical between the two crates (verified at random nonces in the harness).
 - **96-bit nonce risk: nonce reuse is catastrophic.** With ChaCha20-Poly1305 (96-bit nonce), random-nonce selection gives a `2^-32` collision after `2^32` messages. Use a deterministic counter, or migrate to XChaCha20-Poly1305 (192-bit nonce) where random nonces are safe to ~2^96 messages.
-- **No `Payload`.** Same simplification as `aes-gcm.md` — positional `aad` and `msg`/`buffer` args.
+- **No `Payload`.** Same simplification as `aes-gcm.md`: positional `aad` and `msg`/`buffer` args.
 - **`AeadInPlace` import not needed.** rscrypto exposes both combined and in-place shapes through the single `Aead` trait.
 - **Software-only acceleration.** ChaCha20 has no hardware AES; both crates use SIMD ChaCha20 implementations. rscrypto runtime-dispatches between SSE2/AVX2/AVX-512 on x86_64 and NEON on aarch64; portable scalar fallback is constant-time and always available. Force portable via `RSCRYPTO_CHACHA20_POLY1305_FORCE=portable` (std only).
 - **`no_std`.** Both crates support `no_std`.
