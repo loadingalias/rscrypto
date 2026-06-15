@@ -27,14 +27,14 @@ x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 rscrypto = { version = "0.5.0", features = ["x25519"] }
 ```
 
-The `x25519` feature has no transitive dependencies — X25519 needs nothing beyond Curve25519 arithmetic.
+The `x25519` feature has no transitive dependencies: X25519 needs nothing beyond Curve25519 arithmetic.
 
 ## Type map
 
 | `x25519-dalek` type | rscrypto type | Notes |
 |---|---|---|
 | `StaticSecret` | `X25519SecretKey` | reusable scalar; zeroizes on drop |
-| `EphemeralSecret` | `X25519SecretKey` | rscrypto unifies the two — see "Ephemeral vs static" below |
+| `EphemeralSecret` | `X25519SecretKey` | rscrypto unifies the two: see "Ephemeral vs static" below |
 | `PublicKey` | `X25519PublicKey` | 32-byte little-endian Montgomery u-coordinate |
 | `SharedSecret` | `X25519SharedSecret` | zeroizes on drop |
 
@@ -84,7 +84,7 @@ let shared = secret.diffie_hellman(&peer_public)?;           // Result<X25519Sha
 let bytes: &[u8; 32] = shared.as_bytes();
 ```
 
-rscrypto returns `Err(X25519Error)` if the computed shared secret is the all-zero point (RFC 7748 §6.1 — indicates a low-order peer public key, often an attempted contributory-behaviour attack). `x25519-dalek` returns the all-zero `SharedSecret` and leaves the check to the caller — re-audit your code for unchecked all-zero outputs and replace them with the `?`.
+rscrypto returns `Err(X25519Error)` if the computed shared secret is the all-zero point (RFC 7748 §6.1: indicates a low-order peer public key, often an attempted contributory-behaviour attack). `x25519-dalek` returns the all-zero `SharedSecret` and leaves the check to the caller. Re-audit your code for unchecked all-zero outputs and replace them with the `?`.
 
 ### Random key generation
 
@@ -110,15 +110,15 @@ let secret = X25519SecretKey::generate(|buf| {
 
 `x25519-dalek` distinguishes `EphemeralSecret` (consumed by `diffie_hellman`, only one DH per secret) from `StaticSecret` (reusable, gated behind the `static_secrets` feature). The distinction is a type-level safety hint that ephemeral secrets should not be reused across handshakes.
 
-rscrypto unifies both into `X25519SecretKey`. `diffie_hellman` borrows `&self`, so you can call it many times — but `X25519SecretKey: Drop` zeroizes on drop, and you can model "one DH per secret" by wrapping in an `Option<X25519SecretKey>` and `.take()`-ing it in the handshake step.
+rscrypto unifies both into `X25519SecretKey`. `diffie_hellman` borrows `&self`, so you can call it many times. `X25519SecretKey: Drop` zeroizes on drop, and you can model "one DH per secret" by wrapping in an `Option<X25519SecretKey>` and `.take()`-ing it in the handshake step.
 
 If your protocol requires the ephemeral-only guarantee at the type level, file an issue requesting an `X25519EphemeralSecret` newtype.
 
 ## Notes
 
 - **Clamping semantics match.** Both crates apply RFC 7748 §5 clamping (clear bits 0/1/2 of byte 0; clear bit 7 of byte 31; set bit 6 of byte 31) before each scalar multiplication. Outputs are bit-identical for any 32-byte input.
-- **Low-order rejection: explicit vs implicit.** rscrypto's `Err(X25519Error)` on all-zero shared secret is the safer default — many protocols assume the shared secret is non-zero and skip the check, opening contributory-behaviour attacks. If you migrated *because* of an all-zero-shared-secret incident, the `?` propagation is exactly what you want.
+- **Low-order rejection: explicit vs implicit.** rscrypto's `Err(X25519Error)` on all-zero shared secret is the safer default because many protocols assume the shared secret is non-zero and skip the check, opening contributory-behaviour attacks. If you migrated *because* of an all-zero-shared-secret incident, the `?` propagation is exactly what you want.
 - **`SharedSecret` zeroizes on drop.** Both crates do this. rscrypto exposes `expose_secret() -> SecretBytes<32>` if you need to feed the raw bytes into a KDF (and want the zeroization-on-drop guarantee preserved).
-- **No HKDF integration.** Some protocols KDF the X25519 shared secret immediately (e.g., Noise, Signal). rscrypto's `HkdfSha256` (from `features = ["hkdf"]`) is the natural pairing — see `RustCrypto/hkdf.md`.
+- **No HKDF integration.** Some protocols KDF the X25519 shared secret immediately (e.g., Noise, Signal). rscrypto's `HkdfSha256` (from `features = ["hkdf"]`) is the natural pairing; see `RustCrypto/hkdf.md`.
 - **Constant-time scalar mult.** Both crates use constant-time field arithmetic. rscrypto's portable backend is constant-time on every target; SIMD acceleration (when available) is differential-tested against the portable path.
 - **`no_std`.** Both crates support `no_std` with no `alloc` requirement. The `getrandom`-backed `generate_random()` requires `getrandom`; the closure form `generate(|buf| ...)` does not.

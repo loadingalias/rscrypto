@@ -6,7 +6,7 @@ covers 35 migration guides.
 Each guide shows the smallest useful diff: dep change, import change,
 and call site change.
 
-If you are just evaluating `rscrypto`, start with the crate you already use.
+If you are evaluating `rscrypto`, start with the crate you already use.
 The guide will tell you whether the migration is a one-line replacement, a small
 API shape change, or not a good fit.
 

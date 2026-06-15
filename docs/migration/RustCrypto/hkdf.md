@@ -36,7 +36,7 @@ The `hkdf` feature implies `hmac` which implies `sha2`.
 |---|---|---|
 | `Hkdf<Sha256>` | `HkdfSha256` | 32 bytes |
 | `Hkdf<Sha384>` | `HkdfSha384` | 48 bytes |
-| `Hkdf<Sha512>` | not currently mapped — file an issue | 64 bytes |
+| `Hkdf<Sha512>` | not currently mapped: file an issue | 64 bytes |
 
 ## API patterns
 
@@ -59,7 +59,7 @@ let mut okm = [0u8; 42];
 hk.expand(b"context", &mut okm)?;     // HkdfOutputLengthError on too-long output
 ```
 
-The salt argument is `&[u8]` directly (not `Option<&[u8]>`). Pass `b""` for "no salt" — internally treated as a zero-byte salt of the hash's output length, matching `hkdf::Hkdf::new(None, ikm)`.
+The salt argument is `&[u8]` directly (not `Option<&[u8]>`). Pass `b""` for "no salt": internally treated as a zero-byte salt of the hash's output length, matching `hkdf::Hkdf::new(None, ikm)`.
 
 ### Fused one-shot (extract + expand in one call)
 
@@ -103,7 +103,7 @@ hk.expand(b"encryption", &mut k_enc)?;
 hk.expand(b"mac", &mut k_mac)?;
 ```
 
-Both crates let you reuse the extracted PRK for multiple expansions with different `info` strings — no rebuild needed.
+Both crates let you reuse the extracted PRK for multiple expansions with different `info` strings: no rebuild needed.
 
 ## Notes
 
@@ -111,5 +111,5 @@ Both crates let you reuse the extracted PRK for multiple expansions with differe
 - **No `Hkdf::from_prk(prk)` constructor (yet).** RustCrypto exposes a way to skip the extract step when you already have a PRK from another source (e.g., a TLS exporter). rscrypto currently always extracts. If you need the "skip extract" path, file an issue.
 - **No `verify` method.** HKDF's output is intended to be used as key material, not compared. Both crates omit a `verify` helper; if you need to check that two parties derived the same key, route the comparison through HMAC over the derived key.
 - **No reset.** Both crates require constructing a fresh `Hkdf` for each `(salt, ikm)` pair. The `expand` step is stateless once the PRK is computed.
-- **Output length cap.** RFC 5869 limits OKM length to `255 × HashLen` (8160 bytes for SHA-256). Both crates return an error on overflow — `hkdf::InvalidLength` upstream, `rscrypto::HkdfOutputLengthError` here. Same `Result` shape; rename the type.
-- **`no_std`.** Both crates work in `no_std`. rscrypto adds no `alloc`-only helpers for HKDF — every variant is fixed-array or user-supplied buffer.
+- **Output length cap.** RFC 5869 limits OKM length to `255 × HashLen` (8160 bytes for SHA-256). Both crates return an error on overflow: `hkdf::InvalidLength` upstream, `rscrypto::HkdfOutputLengthError` here. Same `Result` shape; rename the type.
+- **`no_std`.** Both crates work in `no_std`. rscrypto adds no `alloc`-only helpers for HKDF: every variant is fixed-array or user-supplied buffer.

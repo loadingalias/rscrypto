@@ -108,7 +108,7 @@ Three changes:
 | `XofReader::read(&mut out)` | `Xof::squeeze(&mut out)` |
 | imports `ExtendableOutput`, `Update`, `XofReader` separately | one trait `Xof` |
 
-The one-shot form is `Shake128::xof(data)` — returns the reader directly, no `new`/`update`/`finalize_xof` chain.
+The one-shot form is `Shake128::xof(data)`: returns the reader directly, no `new`/`update`/`finalize_xof` chain.
 
 ### cSHAKE (customizable)
 
@@ -127,7 +127,7 @@ If you depend on `CShake128`, file an issue.
 ## Notes
 
 - **Trait consolidation.** RustCrypto SHAKE requires three trait imports (`ExtendableOutput`, `Update`, `XofReader`). rscrypto's `Xof` trait carries all the methods you need; combine with `Digest` if you also call `update()` on the sponge type.
-- **`finalize` consumes vs. borrows.** Same as `sha2` — RustCrypto consumes, rscrypto borrows. Drop `.clone()` calls.
-- **`Output<D>` → `[u8; N]`.** Same as `sha2` — drop `.as_slice()` / `.as_ref()` and use the array directly.
+- **`finalize` consumes vs. borrows.** Same as `sha2`: RustCrypto consumes, rscrypto borrows. Drop `.clone()` calls.
+- **`Output<D>` → `[u8; N]`.** Same as `sha2`: drop `.as_slice()` / `.as_ref()` and use the array directly.
 - **`Mac` trait via KMAC.** RustCrypto ships a separate `kmac` crate. rscrypto's KMAC lives under `rscrypto::auth` behind `features = ["kmac"]` (which implies `sha3`). See the [`sha3-kmac` migration guide](../sha3-kmac.md).
 - **`no_std`.** Both crates support `no_std`. rscrypto adds runtime SIMD detection when `std` is enabled, plus a portable kernel always available.

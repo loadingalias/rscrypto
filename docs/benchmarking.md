@@ -1,8 +1,8 @@
 # Benchmarking
 
 `rscrypto` publishes benchmarks so users can understand the shape of the crate:
-where it is fast, where it is merely competitive, and where another library may
-still be the better choice.
+where it is fast, where it is competitive, and where another library may still
+be the better choice.
 
 Benchmark numbers are only meaningful with their platform, commit, feature set,
 and comparison shape. Treat every headline number as a pointer to the raw
@@ -41,8 +41,7 @@ result does not imply the same result on aarch64, Power, s390x, RISC-V, WASM, or
 
 ## Competitor Set
 
-The current public comparison set is intentionally Rust-focused and
-shape-compatible:
+The current public comparison set is Rust-focused and shape-compatible:
 
 | Area | Compared against |
 |---|---|

@@ -52,7 +52,7 @@ For variants outside this list, keep `crc-fast` as a sibling dependency or open 
 // Before
 use crc_fast::{checksum, CrcAlgorithm};
 let value = checksum(CrcAlgorithm::Crc32IsoHdlc, b"123456789");
-// `value: u64` — even for CRC-32. Cast to u32 at boundaries.
+// `value: u64`: even for CRC-32. Cast to u32 at boundaries.
 ```
 
 ```rust
@@ -83,7 +83,7 @@ hasher.update(b"bar");
 let value = hasher.finalize();        // borrows &self, returns u32
 ```
 
-`Digest::finalize` consumes `self` in `crc-fast`; `Checksum::finalize` borrows in rscrypto. Drop the rebuild if you were rebuilding a `Digest` per chunk just to keep ownership.
+`Digest::finalize` consumes `self` in `crc-fast`; `Checksum::finalize` borrows in rscrypto. Drop the rebuild if you were rebuilding a `Digest` per chunk only to keep ownership.
 
 ### Combine (parallel chunks)
 
@@ -129,4 +129,4 @@ let value = reader.checksum();
 - **Custom CRCs (`CrcParams`).** `crc-fast` accepts user-supplied polynomials; rscrypto's named types are a fixed set. Stay on `crc-fast` if you compute non-catalogue CRCs.
 - **`digest::DynDigest`.** `crc-fast`'s `Digest` implements `digest::DynDigest` behind the `digest` feature. rscrypto does not currently expose a `digest` crate impl. If you rely on dyn-dispatch through `digest::DynDigest`, file an issue before migrating.
 - **`std::io::Write`.** `crc-fast::Digest: Write`. rscrypto exposes the same shape via `Crc32::writer(sink)` returning a `ChecksumWriter` that wraps an inner writer; the rscrypto hasher itself does not implement `Write` directly.
-- **Force a backend.** rscrypto honors `RSCRYPTO_CRC32_FORCE=portable` (std only) and the `portable-only` feature for audit / FIPS lanes — `crc-fast` has no equivalent.
+- **Force a backend.** rscrypto honors `RSCRYPTO_CRC32_FORCE=portable` (std only) and the `portable-only` feature for audit / FIPS lanes: `crc-fast` has no equivalent.

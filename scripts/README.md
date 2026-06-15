@@ -1,7 +1,7 @@
 # Scripts Map
 
 Caller map for `scripts/`. Every `.sh` under `scripts/` must appear here with
-its caller. This is the 'dev' engine, so to speak.
+its caller.
 
 ## Entry Points (called from `justfile` or CI)
 
@@ -58,8 +58,8 @@ its caller. This is the 'dev' engine, so to speak.
 
 ## Results layout
 
-Bench results — both local (`just bench*`) and CI (`/extract-bench` skill pulls
-GitHub Actions artifacts) — land under:
+Bench results from local runs (`just bench*`) and CI (`/extract-bench` skill
+pulls GitHub Actions artifacts) land under:
 
 ```
 benchmark_results/<YYYY-MM-DD>/<os>/<arch>/results.txt

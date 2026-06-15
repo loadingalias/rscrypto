@@ -77,7 +77,7 @@ use rscrypto::{Blake2b256, Digest};
 let out: [u8; 32] = Blake2b256::digest(b"123456789");
 ```
 
-For runtime-variable output, use `Blake2b::digest_into(out_len, data, &mut buf)` — see the `Blake2b` rustdoc.
+For runtime-variable output, use `Blake2b::digest_into(out_len, data, &mut buf)`: see the `Blake2b` rustdoc.
 
 ### Streaming
 
@@ -118,13 +118,13 @@ let key = [0x42u8; 32];
 let tag: [u8; 64] = Blake2b512::keyed_digest(&key, b"message");
 ```
 
-For streaming keyed mode, use `Blake2b512::new_keyed(&key)`. The MAC type and the hash type are unified — no separate `Blake2bMac` import.
+For streaming keyed mode, use `Blake2b512::new_keyed(&key)`. The MAC type and the hash type are unified: no separate `Blake2bMac` import.
 
 ## Notes
 
 - **Generic constants gone.** `Blake2b<U32>` and `Blake2s<U16>` style generics are replaced with named convenience types per output length. `generic-array` is no longer in your dependency tree if rscrypto is your only consumer.
 - **MAC unification.** RustCrypto separates `Blake2bMac` from `Blake2b` because the MAC and the hash use different parameter blocks. rscrypto exposes both modes from the same type via `keyed_digest` / `new_keyed`. Personalisation, salt, and tree-hashing parameters are reachable through `Blake2bParams` / `Blake2sParams`.
-- **`finalize` consumes vs. borrows.** Same as `sha2` / `sha3` — drop `.clone()`.
+- **`finalize` consumes vs. borrows.** Same as `sha2` / `sha3`: drop `.clone()`.
 - **`Output<D>` → `[u8; N]`.** Same as `sha2` / `sha3`.
-- **Constant-time tag comparison.** RustCrypto's `Mac::verify(&tag)` does the constant-time check for you. rscrypto leaves Blake2 keyed-output verification at the call site — import `rscrypto::ConstantTimeEq` and call `tag.ct_eq(&expected)` instead of `==`.
+- **Constant-time tag comparison.** RustCrypto's `Mac::verify(&tag)` does the constant-time check for you. rscrypto leaves Blake2 keyed-output verification at the call site: import `rscrypto::ConstantTimeEq` and call `tag.ct_eq(&expected)` instead of `==`.
 - **`no_std`.** Both crates support `no_std`. rscrypto runtime-detects SIMD when `std` is enabled and falls back to compile-time `target_feature` selection in `no_std` builds.

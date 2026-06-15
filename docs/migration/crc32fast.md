@@ -107,7 +107,7 @@ let crc_b = Crc32::checksum(right);
 let value = Crc32::combine(crc_a, crc_b, right.len());
 ```
 
-rscrypto's combine works on the finalized `u32` outputs and the right-hand length, not on hasher state. Cheaper to pass around (just two `u32`s) and trivial to checkpoint to disk between phases.
+rscrypto's combine works on the finalized `u32` outputs and the right-hand length, not on hasher state. Two `u32` values are cheap to pass around and trivial to checkpoint to disk between phases.
 
 ## Notes
 

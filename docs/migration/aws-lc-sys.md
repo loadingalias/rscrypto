@@ -6,7 +6,7 @@ FFI surface for AWS-LC; rscrypto exposes safe Rust primitive APIs.
 ## What To Do Instead
 
 If your code uses `aws-lc-sys` directly, first identify the safe operation you
-actually need:
+need:
 
 | `aws-lc-sys` use | Better migration target |
 |---|---|

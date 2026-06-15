@@ -32,15 +32,15 @@ rscrypto = { version = "0.5.0", features = ["aegis256"] }
 | `aegis` type | rscrypto type | Key | Nonce | Tag |
 |---|---|---|---|---|
 | `aegis::aegis256::Aegis256` | `Aegis256` | 32 bytes | 32 bytes | 16 bytes (or 32 in upstream) |
-| `aegis::aegis128l::Aegis128L` | not currently mapped — open an issue | 16 bytes | 16 bytes | 16/32 bytes |
+| `aegis::aegis128l::Aegis128L` | not currently mapped: open an issue | 16 bytes | 16 bytes | 16/32 bytes |
 | `aegis::aegis128x2::Aegis128X2` | not currently mapped | 16 bytes | 16 bytes | 16/32 bytes |
 | `aegis::aegis128x4::Aegis128X4` | not currently mapped | 16 bytes | 16 bytes | 16/32 bytes |
 
-rscrypto ships only AEGIS-256 with a 16-byte tag. The `aegis` crate is parameterised over tag size (`Aegis256<16>` or `Aegis256<32>`) — fix the upstream tag at 16 to match.
+rscrypto ships only AEGIS-256 with a 16-byte tag. The `aegis` crate is parameterised over tag size (`Aegis256<16>` or `Aegis256<32>`): fix the upstream tag at 16 to match.
 
 ## API patterns
 
-### Combined encrypt — note the shape change
+### Combined encrypt: note the shape change
 
 ```rust
 // Before
@@ -102,14 +102,14 @@ cipher.decrypt(&nonce, aad, &ct, &mut plaintext)?;
 cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 ```
 
-`Err(OpenError::Verification(_))` on tag mismatch — same shape as `aegis::Error::InvalidTag`.
+`Err(OpenError::Verification(_))` on tag mismatch: same shape as `aegis::Error::InvalidTag`.
 
 ## Notes
 
 - **One cipher, many messages.** `aegis::Aegis256::new(&key, &nonce)` baked the nonce into the cipher and required reconstruction per message. rscrypto's `Aegis256::new(&key)` returns a reusable cipher; pass a fresh `Nonce256` per call. This is a small clarity win and aligns AEGIS with the rest of the rscrypto AEAD family.
 - **Tag size fixed at 16 bytes.** `aegis` lets you pick `Aegis256<16>` or `Aegis256<32>`; rscrypto ships only the 16-byte-tag variant (the cfrg draft default). If you depend on 32-byte tags for a specific protocol, file an issue.
 - **`(ct, tag)` vs. `[ct || tag]` layout.** Both layouts are trivially convertible; the harness verifies they produce the same bytes. Pick whichever shape your downstream protocol expects.
-- **Hardware acceleration.** AEGIS uses AES round functions (not full AES). Both crates dispatch to AES-NI on x86_64 and AES-CE on aarch64. AEGIS is typically 2–3× faster than AES-GCM on hardware-accelerated targets — keep the win after migrating.
+- **Hardware acceleration.** AEGIS uses AES round functions (not full AES). Both crates dispatch to AES-NI on x86_64 and AES-CE on aarch64. AEGIS is typically 2–3× faster than AES-GCM on hardware-accelerated targets. Keep the win after migrating.
 - **Random nonces are safe.** AEGIS-256 has a 256-bit nonce; random selection across `2^96` messages is safe.
 - **Not nonce-misuse-resistant.** `(key, nonce)` reuse leaks plaintext XORs. If you need misuse resistance, use AES-GCM-SIV instead.
 - **`no_std`.** Both crates support `no_std`.

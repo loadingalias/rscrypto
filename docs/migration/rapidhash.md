@@ -36,7 +36,7 @@ rscrypto = { version = "0.5.0", features = ["rapidhash"] }
 | `v3::rapidhash_v3_inline::<true, _, _>` | `RapidHash::hash` (compile-time inlined where the optimiser can prove it) | `u64` | |
 | `v3::rapidhash_v3_inline::<false, _, _>` (no avalanche) | `RapidHashFast` (alias for `RapidHashFast64`) | `u64` | not C++-compatible |
 | 128-bit `rapidhash_v3` variant | `RapidHash128` | `u128` | |
-| `v1::*`, `v2::*` (legacy) | not mapped — keep `rapidhash` for V1/V2 | | |
+| `v1::*`, `v2::*` (legacy) | not mapped: keep `rapidhash` for V1/V2 | | |
 
 ## API patterns
 
@@ -69,7 +69,7 @@ use rscrypto::{FastHash, RapidHash};
 let h = RapidHash::hash_with_seed(0xDEADBEEF, b"123456789");
 ```
 
-`RapidSecrets` is collapsed into the seed — rscrypto derives the secret schedule internally. Pass the seed directly.
+`RapidSecrets` is collapsed into the seed: rscrypto derives the secret schedule internally. Pass the seed directly.
 
 ### One-shot, no avalanche (faster)
 
@@ -85,7 +85,7 @@ use rscrypto::{FastHash, RapidHashFast};
 let h = RapidHashFast::hash(b"123456789");
 ```
 
-`RapidHashFast` skips the avalanche finisher — same speed/quality trade-off, no const generics to spell out.
+`RapidHashFast` skips the avalanche finisher: same speed/quality trade-off, no const generics to spell out.
 
 ### Streaming (via `core::hash::Hasher`)
 

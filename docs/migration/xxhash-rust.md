@@ -121,6 +121,6 @@ Renames at the streaming layer:
 - **Streaming = `Hasher` trait.** `xxhash-rust`'s streaming type rolls its own `update` / `digest` method names; rscrypto routes streaming through the standard `core::hash::Hasher` so it slots into `BuildHasher`-based collections without an adapter.
 - **Argument order swap** for `hash_with_seed`. Re-read every call site that previously used `xxh3_64_with_seed`.
 - **Streaming requires `alloc`.** `Xxh3Hasher` and `Xxh3BuildHasher` are gated on `alloc`. The one-shot `Xxh3::hash` / `Xxh3::hash_with_seed` is fully `no_std`.
-- **128-bit streaming.** rscrypto exposes `Xxh3_128` for one-shot 128-bit; for 128-bit streaming you currently need to feed your data into the 128-bit one-shot rather than incrementally — file an issue if 128-bit streaming is a hard requirement.
+- **128-bit streaming.** rscrypto exposes `Xxh3_128` for one-shot 128-bit; for 128-bit streaming you currently need to feed your data into the 128-bit one-shot rather than incrementally: file an issue if 128-bit streaming is a hard requirement.
 - **`xxh32` / `xxh64` legacy.** rscrypto ships only XXH3 (the modern variant). If you depend on the legacy XXH32 or XXH64 algorithms, keep `xxhash-rust` for those.
 - **No SIMD-acceleration trade-off.** Both crates ship SIMD backends; rscrypto runtime-dispatches with the same three-tier model used elsewhere (`std` enables runtime detection; the portable kernel is always present).

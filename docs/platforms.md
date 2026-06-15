@@ -4,9 +4,9 @@
 
 ## Dispatch Model
 
-1. **Compile-time** — `#[cfg(target_feature = "...")]` selects the strongest backend permitted by `RUSTFLAGS` / `target-feature`.
-2. **Runtime detection** (`std` only) — cached `platform::caps()` probes CPU features once at startup via `is_x86_feature_detected!` and the aarch64 / s390x / ppc64le / riscv64 equivalents, then dispatches to the strongest available kernel.
-3. **Portable Rust fallback** — always present. The portable implementation is the source of truth; SIMD and ASM kernels are differentially tested against it.
+1. **Compile-time**: `#[cfg(target_feature = "...")]` selects the strongest backend permitted by `RUSTFLAGS` / `target-feature`.
+2. **Runtime detection** (`std` only): cached `platform::caps()` probes CPU features once at startup via `is_x86_feature_detected!` and the aarch64 / s390x / ppc64le / riscv64 equivalents, then dispatches to the strongest available kernel.
+3. **Portable Rust fallback**: always present. The portable implementation is the source of truth; SIMD and ASM kernels are differentially tested against it.
 
 In `no_std` builds, only the compile-time tier runs.
 

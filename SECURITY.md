@@ -26,8 +26,8 @@ In scope:
 - Cryptographic correctness failures.
 - Timing side channels in claimed constant-time code paths.
 - Memory-safety issues in `unsafe` code.
-- Nonce, key, signature, or verification behavior that the API makes easy to
-  misuse in a security-relevant way.
+- Nonce, key, signature, or verification behavior that creates
+  security-relevant API misuse.
 - Parser or resource-exhaustion behavior triggered by untrusted input.
 - Build, release, or supply-chain issues that can affect published artifacts.
 
@@ -45,7 +45,7 @@ Out of scope:
 
 | Version | Supported |
 | ------- | --------- |
-| `0.4.x` | Yes |
+| `0.5.x` | Yes |
 
 Only the latest published minor release receives security patches. Users should
 stay current.

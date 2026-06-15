@@ -91,12 +91,12 @@ let mut out = [0u8; 64];
 reader.squeeze(&mut out);
 ```
 
-The `customization-string` is bounded at 256 bytes by the spec — passing longer returns an `AsconCxofCustomizationError` (use `try_xof` if you need fallible construction).
+The `customization-string` is bounded at 256 bytes by the spec: passing longer returns an `AsconCxofCustomizationError` (use `try_xof` if you need fallible construction).
 
 ## Notes
 
-- **`Output<D>` → `[u8; N]`.** Same as the rest of the RustCrypto migrations — drop `.as_slice()` / `.as_ref()`.
-- **`finalize` consumes vs. borrows.** Same as the rest — drop any `.clone()`.
+- **`Output<D>` → `[u8; N]`.** Same as the rest of the RustCrypto migrations: drop `.as_slice()` / `.as_ref()`.
+- **`finalize` consumes vs. borrows.** Same as the rest: drop any `.clone()`.
 - **NIST LWC standard.** Ascon-Hash256 is the lightweight cryptography winner and standardised by NIST in SP 800-232. Both implementations track the final spec.
 - **No SIMD.** Ascon's permutation is small enough that SIMD is not the dominant cost. rscrypto ships a portable-only implementation; the `portable-only` feature is a no-op for this algorithm but does not break the build.
 - **`no_std`.** Both crates support `no_std`.

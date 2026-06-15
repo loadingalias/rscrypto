@@ -130,7 +130,7 @@ features, dependency implementation, secret/public annotation, generated
 artifact, or waiver changes.
 
 That rule is strict because constant-time behavior is a property of the executed
-binary, not just the Rust source.
+binary, not only the Rust source.
 
 ## Recommended Wording
 

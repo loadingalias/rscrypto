@@ -37,7 +37,7 @@ Drop `phc-strings` if you only need the raw KDF and not PHC `$scrypt$...$...` st
 ```rust
 // Before
 use scrypt::{scrypt, Params};
-let params = Params::new(15, 8, 1).unwrap();              // (log_n, r, p) — output len is the buffer's len
+let params = Params::new(15, 8, 1).unwrap();              // (log_n, r, p): output len is the buffer's len
 let mut out = [0u8; 32];
 scrypt(password, salt, &params, &mut out).unwrap();
 ```
@@ -60,7 +60,7 @@ Fixed-size convenience: `let out: [u8; 32] = Scrypt::hash_array(&params, passwor
 ### PHC encode (auto-generate salt)
 
 ```rust
-// Before — requires the `password-hash` crate
+// Before: requires the `password-hash` crate
 use scrypt::{Scrypt, password_hash::{PasswordHasher, SaltString}};
 use rand_core::OsRng;
 let salt = SaltString::generate(&mut OsRng);
@@ -87,7 +87,7 @@ let phc = Scrypt::hash_string_with_salt(&ScryptParams::default(), password, salt
 ### PHC verify (constant-time)
 
 ```rust
-// Before — requires the `password-hash` crate
+// Before: requires the `password-hash` crate
 use scrypt::{Scrypt, password_hash::{PasswordHash, PasswordVerifier}};
 let parsed = PasswordHash::new(stored_phc)?;
 Scrypt.verify_password(password, &parsed)?;
@@ -114,17 +114,17 @@ let policy = ScryptVerifyPolicy::new(max_log_n, max_r, max_p, max_output_len);
 Scrypt::verify_string_with_policy(password, stored_phc, &policy)?;
 ```
 
-RustCrypto's `scrypt` has no equivalent policy gate — adding one externally
+RustCrypto's `scrypt` has no equivalent policy gate; adding one externally
 requires parsing the PHC string with `password-hash`, rejecting high-cost cases,
 then re-validating. The built-in default policy is a hardening upgrade.
 
 ## Notes
 
-- **`Params::new` is 3 args, not 4.** RustCrypto `scrypt = "0.12"` removed the explicit output-length parameter — output size is whatever buffer you pass to `scrypt(...)`. rscrypto restores it on the builder for cross-call safety (`output_len` is part of the `ScryptParams`, not the call site).
-- **OWASP Password Storage Cheat Sheet defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32` — matches the sheet as checked on 2026-06-14. RustCrypto's `Params::default()` matches.
-- **`MIN_SALT_LEN` is policy, not enforcement.** rscrypto exposes `Scrypt::MIN_SALT_LEN = 16` as a guidance constant. Neither crate rejects shorter salts at hash time (RFC 7914 §12 test vectors include empty salts) — assert against the constant in your wrapper if you want enforcement.
+- **`Params::new` is 3 args, not 4.** RustCrypto `scrypt = "0.12"` removed the explicit output-length parameter; output size is whatever buffer you pass to `scrypt(...)`. rscrypto restores it on the builder for cross-call safety (`output_len` is part of the `ScryptParams`, not the call site).
+- **OWASP Password Storage Cheat Sheet defaults.** `ScryptParams::default()` is `log_n=17 (N=131,072), r=8, p=1, output_len=32`; it matches the sheet as checked on 2026-06-14. RustCrypto's `Params::default()` matches.
+- **`MIN_SALT_LEN` is policy, not enforcement.** rscrypto exposes `Scrypt::MIN_SALT_LEN = 16` as a guidance constant. Neither crate rejects shorter salts at hash time (RFC 7914 §12 test vectors include empty salts). Assert against the constant in your wrapper if you want enforcement.
 - **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings.
 - **Memory cost.** `Scrypt::hash` allocates `128 * r * N` bytes (default: ~128 MB at `log_n=17, r=8`). `Scrypt::verify_string` caps incoming PHC strings with `ScryptVerifyPolicy::default()`; use `verify_string_unbounded` only for trusted migration/test-vector inputs.
-- **No streaming API.** Scrypt is fundamentally one-shot — both crates expose only stateless functions.
-- **`no_std` requires `alloc`.** Both crates need a heap for the working buffers (B, V, scratch). The deepest-embedded targets cannot run Scrypt — use `pbkdf2-hmac-sha256` with a high iteration count instead.
+- **No streaming API.** Scrypt is fundamentally one-shot; both crates expose only stateless functions.
+- **`no_std` requires `alloc`.** Both crates need a heap for the working buffers (B, V, scratch). The deepest-embedded targets cannot run Scrypt. Use `pbkdf2-hmac-sha256` with a high iteration count instead.
 - **Algorithm is identical.** Bit-equivalent at every parameter set tested in the harness, including the RFC 7914 §12 first test vector (empty password, empty salt, N=16, r=1, p=1, output=64).

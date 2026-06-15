@@ -45,7 +45,7 @@ use rscrypto::{Blake3, prelude::*};
 let bytes: [u8; 32] = Blake3::digest(b"123456789");
 ```
 
-`blake3::hash` returns a `blake3::Hash` newtype (you call `.as_bytes()` to peek inside). `Blake3::digest` returns the `[u8; 32]` directly — the `Digest` trait must be in scope.
+`blake3::hash` returns a `blake3::Hash` newtype (you call `.as_bytes()` to peek inside). `Blake3::digest` returns the `[u8; 32]` directly; the `Digest` trait must be in scope.
 
 ### Streaming
 
@@ -135,10 +135,10 @@ Renames: `reader.fill(&mut out)` → `reader.squeeze(&mut out)`. The one-shot fo
   fingerprints; ordinary array equality is fine there. For authenticator use,
   `Blake3::keyed_digest` returns `Blake3KeyedHash` and `Blake3::verify_keyed`
   verifies it in constant time.
-- **`finalize` borrows in both crates.** `blake3::Hasher::finalize(&self)` and `Blake3::finalize(&self)` are both idempotent — call repeatedly without rebuilding.
+- **`finalize` borrows in both crates.** `blake3::Hasher::finalize(&self)` and `Blake3::finalize(&self)` are both idempotent: call repeatedly without rebuilding.
 - **Parallel hashing.** `blake3` ships a `rayon` feature for multi-threaded chunk hashing. rscrypto exposes the same via the `parallel` umbrella feature (`features = ["blake3", "parallel"]`); the public API is unchanged.
 - **`std::io::Write`.** `blake3::Hasher: io::Write`. `rscrypto::Blake3`
   implements `io::Write` when `std` is enabled, and still exposes
   `Blake3::writer(W)` for transparent pass-through writes to an inner writer.
-- **`mmap` helpers.** `blake3` ships `Hasher::update_mmap(path)` etc. rscrypto leaves memory-mapping to the caller — wrap with `Blake3::reader(File::open(path)?)` and `io::copy` if you need the same shape.
+- **`mmap` helpers.** `blake3` ships `Hasher::update_mmap(path)` etc. rscrypto leaves memory-mapping to the caller: wrap with `Blake3::reader(File::open(path)?)` and `io::copy` if you need the same shape.
 - **`no_std`.** Both crates support `no_std` with portable fallbacks. rscrypto runtime-detects SIMD when `std` is enabled; force the portable kernel via the `portable-only` feature for FIPS / DO-178C / IEC 62443 lanes.
