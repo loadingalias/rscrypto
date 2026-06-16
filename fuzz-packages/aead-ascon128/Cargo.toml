@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "ascon-aead"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
-ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
+ascon-aead = { version = "0.6", default-features = false, features = ["alloc"] }
 
 [workspace]
 members = ["."]
