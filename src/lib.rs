@@ -226,6 +226,7 @@ mod macros;
   feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "x25519",
+  feature = "ml-kem",
   feature = "blake3"
 ))]
 #[macro_use]
@@ -247,6 +248,7 @@ pub mod aead;
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
+  feature = "ml-kem",
   feature = "rsa",
   feature = "x25519",
   feature = "phc-strings",
@@ -350,6 +352,12 @@ pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signat
 pub use auth::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
 pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
+#[cfg(feature = "ml-kem")]
+pub use auth::{
+  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512SharedSecret, MlKem768,
+  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768SharedSecret, MlKem1024,
+  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024SharedSecret, MlKemError,
+};
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(feature = "rsa")]
@@ -439,6 +447,7 @@ pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
+  feature = "ml-kem",
   feature = "x25519"
 ))]
 pub use hex::{DisplaySecret, InvalidHexError};
@@ -453,7 +462,7 @@ pub use secret::SecretBytes;
   feature = "ascon-aead"
 ))]
 pub use traits::Aead;
-pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Mac, VerificationError, ct};
+pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Kem, Mac, VerificationError, ct};
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
@@ -490,7 +499,9 @@ pub mod prelude {
     feature = "ascon-aead"
   ))]
   pub use crate::traits::Aead;
-  pub use crate::traits::{Checksum, ChecksumCombine, ConstantTimeEq, Digest, FastHash, Mac, VerificationError, Xof};
+  pub use crate::traits::{
+    Checksum, ChecksumCombine, ConstantTimeEq, Digest, FastHash, Kem, Mac, VerificationError, Xof,
+  };
 }
 
 #[cfg(all(doctest, feature = "full", feature = "getrandom"))]

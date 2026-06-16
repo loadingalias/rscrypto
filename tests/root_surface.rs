@@ -51,6 +51,12 @@ use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signat
 use rscrypto::{HkdfSha256, HkdfSha384};
 #[cfg(feature = "hmac")]
 use rscrypto::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
+#[cfg(feature = "ml-kem")]
+use rscrypto::{
+  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512SharedSecret, MlKem768,
+  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768SharedSecret, MlKem1024,
+  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024SharedSecret,
+};
 #[cfg(feature = "rsa")]
 use rscrypto::{
   RsaEncryptionError, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
@@ -242,6 +248,37 @@ fn root_surface_kmac_exports_compile() {
   kmac.update(data);
   kmac.finalize_into(&mut out);
   assert!(Kmac256::verify_tag(key, b"svc=v1", data, &out).is_ok());
+}
+
+#[test]
+#[cfg(feature = "ml-kem")]
+fn root_surface_mlkem_exports_compile() {
+  let ek512 = MlKem512EncapsulationKey::from_bytes([0x11; MlKem512EncapsulationKey::LENGTH]);
+  let dk512 = MlKem512DecapsulationKey::from_bytes([0x12; MlKem512DecapsulationKey::LENGTH]);
+  let ct512 = MlKem512Ciphertext::from_bytes([0x13; MlKem512Ciphertext::LENGTH]);
+  let ss512 = MlKem512SharedSecret::from_bytes([0x14; MlKem512SharedSecret::LENGTH]);
+  assert_eq!(ek512.as_bytes().len(), MlKem512::ENCAPSULATION_KEY_SIZE);
+  assert_eq!(dk512.as_bytes().len(), MlKem512::DECAPSULATION_KEY_SIZE);
+  assert_eq!(ct512.as_bytes().len(), MlKem512::CIPHERTEXT_SIZE);
+  assert_eq!(ss512.as_bytes().len(), MlKem512::SHARED_SECRET_SIZE);
+
+  let ek768 = MlKem768EncapsulationKey::from_bytes([0x21; MlKem768EncapsulationKey::LENGTH]);
+  let dk768 = MlKem768DecapsulationKey::from_bytes([0x22; MlKem768DecapsulationKey::LENGTH]);
+  let ct768 = MlKem768Ciphertext::from_bytes([0x23; MlKem768Ciphertext::LENGTH]);
+  let ss768 = MlKem768SharedSecret::from_bytes([0x24; MlKem768SharedSecret::LENGTH]);
+  assert_eq!(ek768.as_bytes().len(), MlKem768::ENCAPSULATION_KEY_SIZE);
+  assert_eq!(dk768.as_bytes().len(), MlKem768::DECAPSULATION_KEY_SIZE);
+  assert_eq!(ct768.as_bytes().len(), MlKem768::CIPHERTEXT_SIZE);
+  assert_eq!(ss768.as_bytes().len(), MlKem768::SHARED_SECRET_SIZE);
+
+  let ek1024 = MlKem1024EncapsulationKey::from_bytes([0x31; MlKem1024EncapsulationKey::LENGTH]);
+  let dk1024 = MlKem1024DecapsulationKey::from_bytes([0x32; MlKem1024DecapsulationKey::LENGTH]);
+  let ct1024 = MlKem1024Ciphertext::from_bytes([0x33; MlKem1024Ciphertext::LENGTH]);
+  let ss1024 = MlKem1024SharedSecret::from_bytes([0x34; MlKem1024SharedSecret::LENGTH]);
+  assert_eq!(ek1024.as_bytes().len(), MlKem1024::ENCAPSULATION_KEY_SIZE);
+  assert_eq!(dk1024.as_bytes().len(), MlKem1024::DECAPSULATION_KEY_SIZE);
+  assert_eq!(ct1024.as_bytes().len(), MlKem1024::CIPHERTEXT_SIZE);
+  assert_eq!(ss1024.as_bytes().len(), MlKem1024::SHARED_SECRET_SIZE);
 }
 
 #[test]

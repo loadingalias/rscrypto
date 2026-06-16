@@ -152,6 +152,7 @@ DEFAULT_AUTH_ALGOS=(
   "ecdsa-p384"
   "ed25519"
   "x25519"
+  "mlkem768"
 )
 
 DEFAULT_SP800185_ALGOS=(
@@ -274,6 +275,7 @@ auth_filter_token() {
     ecdsa-p384) echo "^ecdsa-p384/" ;;
     ed25519) echo "ed25519" ;;
     x25519) echo "x25519" ;;
+    ml-kem|ml-kem-768|mlkem|mlkem768) echo "^mlkem768/" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -349,7 +351,7 @@ bench_features_for_target() {
     aead_kernels) echo "parallel,sha2,chacha20poly1305,diag" ;;
     blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
-    auth) echo "parallel,hmac,hkdf,pbkdf2,ecdsa,ed25519,x25519,diag" ;;
+    auth) echo "parallel,hmac,hkdf,pbkdf2,ecdsa,ed25519,x25519,ml-kem,diag" ;;
     password_hashing) echo "parallel,argon2,scrypt,phc-strings" ;;
     rsa) echo "parallel,rsa,diag" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead" ;;
@@ -690,6 +692,9 @@ if [[ -n "$ONLY_INPUT" ]]; then
         ;;
       blake3)
         append_unique "blake3" SELECTED_ALGOS
+        ;;
+      mlkem|mlkem768)
+        append_unique "mlkem768" SELECTED_ALGOS
         ;;
       crc64|crc64nvme|crc64xz)
         append_unique "crc64-xz" SELECTED_ALGOS

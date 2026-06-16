@@ -11,6 +11,7 @@
 //! | [`Checksum`] | Non-cryptographic checksums | CRC32, CRC64 |
 //! | [`ChecksumCombine`] | Parallel checksum combination | CRC with O(log n) combine |
 //! | [`Digest`] | Cryptographic digests | BLAKE3, SHA-2 |
+//! | [`Kem`] | Key encapsulation mechanisms | ML-KEM |
 //! | [`Mac`] | Message authentication codes | HMAC-SHA256 |
 //! | [`Xof`] | Extendable-output functions | BLAKE3 XOF |
 //! | [`FastHash`] | Fast non-cryptographic hashes (**NOT CRYPTO**) | XXH3, rapidhash |
@@ -43,6 +44,7 @@ pub mod error;
 mod fast_hash;
 #[cfg(feature = "std")]
 pub mod io;
+mod kem;
 mod mac;
 mod xof;
 
@@ -60,5 +62,6 @@ pub use ct::ConstantTimeEq;
 pub use digest::Digest;
 pub use error::VerificationError;
 pub use fast_hash::FastHash;
+pub use kem::Kem;
 pub use mac::Mac;
 pub use xof::Xof;

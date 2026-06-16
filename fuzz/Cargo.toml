@@ -190,6 +190,11 @@ path = "fuzz_targets/auth_x25519.rs"
 doc = false
 
 [[bin]]
+name = "auth_mlkem768"
+path = "fuzz_targets/auth_mlkem768.rs"
+doc = false
+
+[[bin]]
 name = "auth_rsa_public_key"
 path = "fuzz_targets/auth_rsa_public_key.rs"
 doc = false
