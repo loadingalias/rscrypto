@@ -78,6 +78,7 @@
 //! - KMAC is variable-output, so the streaming path uses `finalize_into`.
 //! - HKDF uses `new(salt, ikm)` for extract state, then `expand` / `expand_array`; one-shot helpers
 //!   are `derive` / `derive_array`.
+//! - ML-KEM uses FIPS 203 names: encapsulation keys are public, decapsulation keys are secret.
 //! - Public values use typed `from_bytes` / `to_bytes` / `as_bytes` wrappers.
 //! - Secret values use typed `from_bytes` / `as_bytes` wrappers and require explicit
 //!   `expose_secret()` opt-in for owned extraction.
@@ -98,6 +99,7 @@
 //! - `hmac` - HMAC-based authentication.
 //! - `hkdf` - HKDF extract-then-expand key derivation.
 //! - `kmac` - KMAC256 variable-output MAC.
+//! - `mlkem` - ML-KEM typed key, ciphertext, and shared-secret foundations.
 //! - `phc` - PHC string-format codec shared by password hashers.
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
 //!   RSAES-PKCS1-v1_5.
@@ -118,6 +120,8 @@ pub mod hkdf;
 pub mod hmac;
 #[cfg(feature = "kmac")]
 pub mod kmac;
+#[cfg(feature = "ml-kem")]
+pub mod mlkem;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
 #[cfg(feature = "phc-strings")]
@@ -169,6 +173,12 @@ pub use hmac::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512,
 pub use hmac::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
 #[cfg(feature = "kmac")]
 pub use kmac::Kmac256;
+#[cfg(feature = "ml-kem")]
+pub use mlkem::{
+  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512SharedSecret, MlKem768,
+  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768SharedSecret, MlKem1024,
+  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024SharedSecret, MlKemError,
+};
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(all(feature = "diag", feature = "pbkdf2"))]

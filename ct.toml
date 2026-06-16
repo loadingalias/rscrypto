@@ -2450,6 +2450,29 @@ status = "covered"
 symbols = ["ct_entry_x25519"]
 
 [[primitive]]
+id = "kem.mlkem768"
+tier = "A"
+claim = "best-effort"
+features = ["ml-kem"]
+variants = ["MlKem768"]
+entrypoints = ["MlKem768::generate_keypair", "MlKem768::encapsulate", "MlKem768::decapsulate"]
+secrets = [
+  "decapsulation_key",
+  "shared_secret",
+  "key_generation_random",
+  "encapsulation_random",
+  "implicit_rejection_seed",
+]
+public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_error", "rng_failure"]
+may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+notes = "Portable ML-KEM-768 is implemented with fixed-work arithmetic, implicit rejection, and local optimized assembly review for variable-latency division. This is not a release constant-time claim until CT harness and DudeCT coverage land."
+[primitive.harness]
+status = "missing"
+gap = "ML-KEM entrypoints are not yet represented in tools/ct-harness or tools/ct-dudect; add explicit keygen, encapsulation, and decapsulation harnesses before promoting this primitive to ct-intended."
+
+[[primitive]]
 id = "signature.ed25519_sign"
 tier = "A"
 claim = "ct-intended"
