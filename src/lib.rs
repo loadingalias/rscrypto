@@ -132,9 +132,45 @@ assert!(
 // Exotic-architecture backends require nightly-only features (inline asm +
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
 // aarch64, wasm) compile on stable Rust 1.91.0.
-#![cfg_attr(target_arch = "powerpc64", feature(portable_simd, powerpc_target_feature))]
-// s390x VGFM/hash backends use vector asm and portable SIMD.
-#![cfg_attr(target_arch = "s390x", feature(asm_experimental_reg, portable_simd))]
+#![cfg_attr(
+  all(
+    target_arch = "powerpc64",
+    any(
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "blake2b",
+      feature = "blake2s",
+      feature = "blake3",
+      feature = "xxh3",
+      feature = "chacha20poly1305",
+      feature = "xchacha20poly1305",
+      feature = "argon2"
+    )
+  ),
+  feature(portable_simd, powerpc_target_feature)
+)]
+// s390x VGFM/hash backends use vector asm; selected hash/AEAD/password kernels
+// also use portable SIMD.
+#![cfg_attr(target_arch = "s390x", feature(asm_experimental_reg))]
+#![cfg_attr(
+  all(
+    target_arch = "s390x",
+    any(
+      feature = "blake2b",
+      feature = "blake2s",
+      feature = "blake3",
+      feature = "xxh3",
+      feature = "chacha20poly1305",
+      feature = "xchacha20poly1305",
+      feature = "argon2"
+    )
+  ),
+  feature(portable_simd)
+)]
 // RISC-V CRC/vector/AES-style backends still need nightly target-feature names.
 // SHA-2's Zknh intrinsics are gated separately by `riscv_ext_intrinsics`.
 #![cfg_attr(
@@ -189,7 +225,13 @@ assert!(
   ),
   feature(portable_simd)
 )]
-#![cfg_attr(target_arch = "riscv32", feature(riscv_ext_intrinsics))]
+#![cfg_attr(
+  all(
+    target_arch = "riscv32",
+    any(feature = "sha2", feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
+  ),
+  feature(riscv_ext_intrinsics)
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -354,9 +396,11 @@ pub use auth::{HkdfSha256, HkdfSha384};
 pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(feature = "ml-kem")]
 pub use auth::{
-  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512SharedSecret, MlKem768,
-  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768SharedSecret, MlKem1024,
-  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024SharedSecret, MlKemError,
+  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,
+  MlKem512PreparedEncapsulationKey, MlKem512SharedSecret, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
+  MlKem768EncapsulationKey, MlKem768PreparedDecapsulationKey, MlKem768PreparedEncapsulationKey, MlKem768SharedSecret,
+  MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
+  MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret, MlKemError,
 };
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
@@ -393,6 +437,11 @@ pub use auth::{
 pub use auth::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
 #[cfg(all(feature = "diag", feature = "hmac"))]
 pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
+#[cfg(all(feature = "diag", feature = "ml-kem"))]
+pub use auth::{
+  diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
+  diag_mlkem1024_keygen_secret_noise_digest,
+};
 #[cfg(all(feature = "diag", feature = "pbkdf2"))]
 pub use auth::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
 #[cfg(all(feature = "rsa", feature = "diag"))]

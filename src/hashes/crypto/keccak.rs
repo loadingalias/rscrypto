@@ -19,6 +19,8 @@ pub(crate) mod kernel_test;
 pub(crate) mod kernels;
 #[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) mod s390x;
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+pub(crate) mod x86_64;
 
 const KECCAKF_ROUNDS: usize = 24;
 
@@ -519,12 +521,16 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
 // allowing LLVM to inline the permutation into the absorb loop. This is the
 // single most impactful change for SHA-3 throughput.
 //
-// - x86_64 / generic: `InlinePermuter` → `keccakf_portable`. Verified optimal — SIMD evaluation
-//   (KECCAK-4) concluded no viable optimization path exists:
+// - x86_64: `X86Permuter` → `keccakf_portable` for single-state, AVX-512VL two-state `permute_x2`
+//   when available. SIMD evaluation for single-state Keccak remains negative:
 //   * AVX-512 χ-only: 9-38% SLOWER on Zen4/5, ICL, SPR (GPR↔SIMD crossing > VPTERNLOG savings)
 //   * AVX2: worse than AVX-512 (no VPTERNLOG, 3 ops for χ vs 1)
 //   * BMI2: LLVM already emits RORX; ANDN saves <5 ops/round after lane-complementing chi
 //   * Full SIMD: 25 u64 lanes need 13+ YMM registers; θ/ρ/π have no efficient SIMD mapping
+//   The two-state path has different economics: each vector lane carries an
+//   independent public XOF stream, so VPROLQ/VPTERNLOGQ reduce the paired
+//   permutation work instead of duplicating one state.
+// - generic: `InlinePermuter` → `keccakf_portable`.
 // - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3 CE kernel is ~1.9×
 //   slower on Neoverse V1/V2). SHA3 CE is used only for the 2-state interleaved path
 //   (`digest_pair`).
@@ -548,6 +554,21 @@ pub(crate) trait Permuter: Copy {
     self.permute(state_b, len_hint);
   }
 
+  /// Permute four independent states in parallel.
+  /// Default: two paired permutations.
+  #[inline(always)]
+  fn permute_x4(
+    self,
+    state_a: &mut [u64; 25],
+    state_b: &mut [u64; 25],
+    state_c: &mut [u64; 25],
+    state_d: &mut [u64; 25],
+    len_hint: usize,
+  ) {
+    self.permute_x2(state_a, state_b, len_hint);
+    self.permute_x2(state_c, state_d, len_hint);
+  }
+
   /// Try to batch-absorb complete rate-sized blocks via hardware instruction
   /// (e.g., s390x KIMD). Returns `true` if the hardware path was taken, in
   /// which case the caller must NOT perform the per-block XOR + permute loop.
@@ -569,6 +590,68 @@ impl Permuter for InlinePermuter {
   #[inline(always)]
   fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
     keccakf_portable(state);
+  }
+}
+
+/// x86_64 permuter: portable single-state Keccak, AVX-512VL two-state Keccak
+/// when available.
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+#[derive(Clone, Copy)]
+pub(crate) struct X86Permuter {
+  has_avx512_x2: bool,
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+impl Default for X86Permuter {
+  #[inline]
+  fn default() -> Self {
+    Self {
+      has_avx512_x2: {
+        use crate::platform::caps::x86;
+        crate::platform::caps().has(x86::AVX512F.union(x86::AVX512VL).union(x86::SSE41))
+      },
+    }
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+impl Permuter for X86Permuter {
+  #[inline(always)]
+  fn permute(self, state: &mut [u64; 25], _len_hint: usize) {
+    keccakf_portable(state);
+  }
+
+  #[inline(always)]
+  fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], len_hint: usize) {
+    if self.has_avx512_x2 {
+      // SAFETY: AVX-512 x2 dispatch because:
+      // 1. `has_avx512_x2` is constructed only when runtime caps contain AVX512F, AVX512VL, and SSE4.1.
+      // 2. `state_a` and `state_b` are distinct mutable references to initialized 25-lane Keccak states.
+      unsafe { x86_64::keccakf_x86_avx512_x2(state_a, state_b) };
+    } else {
+      self.permute(state_a, len_hint);
+      self.permute(state_b, len_hint);
+    }
+  }
+
+  #[inline(always)]
+  fn permute_x4(
+    self,
+    state_a: &mut [u64; 25],
+    state_b: &mut [u64; 25],
+    state_c: &mut [u64; 25],
+    state_d: &mut [u64; 25],
+    len_hint: usize,
+  ) {
+    if self.has_avx512_x2 {
+      // SAFETY: AVX-512 x4 dispatch because:
+      // 1. `has_avx512_x2` is constructed only when runtime caps contain AVX512F, AVX512VL, and SSE4.1.
+      // 2. All four mutable references point to initialized, distinct 25-lane Keccak states.
+      unsafe { x86_64::keccakf_x86_avx512_x4(state_a, state_b, state_c, state_d) };
+    } else {
+      self.permute_x2(state_a, state_b, len_hint);
+      self.permute_x2(state_c, state_d, len_hint);
+    }
   }
 }
 
@@ -756,10 +839,16 @@ impl Permuter for S390xPermuter {
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 pub(crate) type PlatformPermuter = Aarch64Permuter;
 
+#[cfg(all(target_arch = "x86_64", not(miri)))]
+pub(crate) type PlatformPermuter = X86Permuter;
+
 #[cfg(all(target_arch = "s390x", not(miri)))]
 pub(crate) type PlatformPermuter = S390xPermuter;
 
-#[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "s390x"))))]
+#[cfg(any(
+  miri,
+  not(any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x"))
+))]
 pub(crate) type PlatformPermuter = InlinePermuter;
 
 pub(crate) type KeccakCore<const RATE: usize> = KeccakCoreImpl<RATE, PlatformPermuter, true>;
@@ -794,7 +883,7 @@ impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, Pl
 #[cfg(all(
   any(test, feature = "std"),
   not(miri),
-  any(target_arch = "aarch64", target_arch = "s390x")
+  any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "s390x")
 ))]
 impl<const RATE: usize, const ZEROIZE: bool> Default for KeccakCoreImpl<RATE, InlinePermuter, ZEROIZE> {
   #[inline]
@@ -1122,6 +1211,289 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   (out_a, out_b)
 }
 
+#[cfg(feature = "ml-kem")]
+#[inline(always)]
+fn xof_seeded_32_2_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8, y: u8) -> [u64; 25] {
+  debug_assert!(RATE > 34);
+  debug_assert_eq!(RATE % 8, 0);
+
+  let mut state = [0u64; 25];
+  let (seed_words, _) = seed.as_chunks::<8>();
+  state[0] = u64::from_le_bytes(seed_words[0]);
+  state[1] = u64::from_le_bytes(seed_words[1]);
+  state[2] = u64::from_le_bytes(seed_words[2]);
+  state[3] = u64::from_le_bytes(seed_words[3]);
+  state[4] = u64::from(x) | (u64::from(y) << 8) | (u64::from(ds) << 16);
+
+  let last = RATE - 1;
+  state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
+  state
+}
+
+#[cfg(feature = "ml-kem")]
+#[inline(always)]
+fn xof_seeded_32_1_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> [u64; 25] {
+  debug_assert!(RATE > 33);
+  debug_assert_eq!(RATE % 8, 0);
+
+  let mut state = [0u64; 25];
+  let (seed_words, _) = seed.as_chunks::<8>();
+  state[0] = u64::from_le_bytes(seed_words[0]);
+  state[1] = u64::from_le_bytes(seed_words[1]);
+  state[2] = u64::from_le_bytes(seed_words[2]);
+  state[3] = u64::from_le_bytes(seed_words[3]);
+  state[4] = u64::from(x) | (u64::from(ds) << 8);
+
+  let last = RATE - 1;
+  state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
+  state
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_1<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> PublicKeccakXof<RATE> {
+  let permuter = PlatformPermuter::default();
+  let mut state = xof_seeded_32_1_state::<RATE>(ds, seed, x);
+  permuter.permute(&mut state, 0);
+  KeccakXofImpl {
+    state,
+    pos: 0,
+    permuter,
+  }
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_1_pair<const RATE: usize>(
+  ds: u8,
+  seed: &[u8; 32],
+  a: u8,
+  b: u8,
+) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
+  let permuter = PlatformPermuter::default();
+  let mut state_a = xof_seeded_32_1_state::<RATE>(ds, seed, a);
+  let mut state_b = xof_seeded_32_1_state::<RATE>(ds, seed, b);
+  permuter.permute_x2(&mut state_a, &mut state_b, 0);
+
+  (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+  )
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_1_quad<const RATE: usize>(
+  ds: u8,
+  seed: &[u8; 32],
+  a: u8,
+  b: u8,
+  c: u8,
+  d: u8,
+) -> (
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+) {
+  let permuter = PlatformPermuter::default();
+  let mut state_a = xof_seeded_32_1_state::<RATE>(ds, seed, a);
+  let mut state_b = xof_seeded_32_1_state::<RATE>(ds, seed, b);
+  let mut state_c = xof_seeded_32_1_state::<RATE>(ds, seed, c);
+  let mut state_d = xof_seeded_32_1_state::<RATE>(ds, seed, d);
+  permuter.permute_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d, 0);
+
+  (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_c,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_d,
+      pos: 0,
+      permuter,
+    },
+  )
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_2<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8, y: u8) -> PublicKeccakXof<RATE> {
+  let permuter = PlatformPermuter::default();
+  let mut state = xof_seeded_32_2_state::<RATE>(ds, seed, x, y);
+  permuter.permute(&mut state, 0);
+  KeccakXofImpl {
+    state,
+    pos: 0,
+    permuter,
+  }
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
+  ds: u8,
+  seed: &[u8; 32],
+  a: (u8, u8),
+  b: (u8, u8),
+) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
+  let permuter = PlatformPermuter::default();
+  let mut state_a = xof_seeded_32_2_state::<RATE>(ds, seed, a.0, a.1);
+  let mut state_b = xof_seeded_32_2_state::<RATE>(ds, seed, b.0, b.1);
+  permuter.permute_x2(&mut state_a, &mut state_b, 0);
+
+  (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+  )
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_2_quad<const RATE: usize>(
+  ds: u8,
+  seed: &[u8; 32],
+  a: (u8, u8),
+  b: (u8, u8),
+  c: (u8, u8),
+  d: (u8, u8),
+) -> (
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+) {
+  let permuter = PlatformPermuter::default();
+  let mut state_a = xof_seeded_32_2_state::<RATE>(ds, seed, a.0, a.1);
+  let mut state_b = xof_seeded_32_2_state::<RATE>(ds, seed, b.0, b.1);
+  let mut state_c = xof_seeded_32_2_state::<RATE>(ds, seed, c.0, c.1);
+  let mut state_d = xof_seeded_32_2_state::<RATE>(ds, seed, d.0, d.1);
+  permuter.permute_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d, 0);
+
+  (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_c,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_d,
+      pos: 0,
+      permuter,
+    },
+  )
+}
+
+#[cfg(all(test, feature = "ml-kem"))]
+pub(crate) fn xof_quad<const RATE: usize>(
+  ds: u8,
+  data_a: &[u8],
+  data_b: &[u8],
+  data_c: &[u8],
+  data_d: &[u8],
+) -> (
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+  PublicKeccakXof<RATE>,
+) {
+  let permuter = PlatformPermuter::default();
+  let mut state_a = [0u64; 25];
+  let mut state_b = [0u64; 25];
+  let mut state_c = [0u64; 25];
+  let mut state_d = [0u64; 25];
+
+  let (blocks_a, rest_a) = data_a.as_chunks::<RATE>();
+  let (blocks_b, rest_b) = data_b.as_chunks::<RATE>();
+  let (blocks_c, rest_c) = data_c.as_chunks::<RATE>();
+  let (blocks_d, rest_d) = data_d.as_chunks::<RATE>();
+  let min_blocks = core::cmp::min(
+    core::cmp::min(blocks_a.len(), blocks_b.len()),
+    core::cmp::min(blocks_c.len(), blocks_d.len()),
+  );
+
+  for i in 0..min_blocks {
+    xor_block_into::<RATE>(&mut state_a, &blocks_a[i]);
+    xor_block_into::<RATE>(&mut state_b, &blocks_b[i]);
+    xor_block_into::<RATE>(&mut state_c, &blocks_c[i]);
+    xor_block_into::<RATE>(&mut state_d, &blocks_d[i]);
+    permuter.permute_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d, 0);
+  }
+
+  for block in &blocks_a[min_blocks..] {
+    permuter.absorb_block(&mut state_a, block);
+  }
+  for block in &blocks_b[min_blocks..] {
+    permuter.absorb_block(&mut state_b, block);
+  }
+  for block in &blocks_c[min_blocks..] {
+    permuter.absorb_block(&mut state_c, block);
+  }
+  for block in &blocks_d[min_blocks..] {
+    permuter.absorb_block(&mut state_d, block);
+  }
+
+  pad_into_state::<RATE>(&mut state_a, rest_a, ds);
+  pad_into_state::<RATE>(&mut state_b, rest_b, ds);
+  pad_into_state::<RATE>(&mut state_c, rest_c, ds);
+  pad_into_state::<RATE>(&mut state_d, rest_d, ds);
+  permuter.permute_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d, 0);
+
+  (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_c,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_d,
+      pos: 0,
+      permuter,
+    },
+  )
+}
+
 #[derive(Clone)]
 pub(crate) struct KeccakXofImpl<const RATE: usize, P: Permuter, const ZEROIZE: bool> {
   state: [u64; 25],
@@ -1204,6 +1576,114 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
       Self::copy_state_bytes(&self.state, self.pos, &mut out[..take]);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];
+    }
+  }
+
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn squeeze_pair_into(a: &mut Self, b: &mut Self, mut out_a: &mut [u8], mut out_b: &mut [u8]) {
+    debug_assert_eq!(out_a.len(), out_b.len());
+    debug_assert_eq!(a.pos, b.pos);
+
+    if a.pos == 0 && out_a.len() <= RATE {
+      Self::copy_state_prefix(&a.state, out_a);
+      Self::copy_state_prefix(&b.state, out_b);
+      a.pos = out_a.len();
+      b.pos = out_b.len();
+      return;
+    }
+
+    while !out_a.is_empty() {
+      if a.pos == RATE {
+        let permuter = a.permuter;
+        permuter.permute_x2(&mut a.state, &mut b.state, 0);
+        a.pos = 0;
+        b.pos = 0;
+      }
+
+      if a.pos == 0 && out_a.len() <= RATE {
+        Self::copy_state_prefix(&a.state, out_a);
+        Self::copy_state_prefix(&b.state, out_b);
+        a.pos = out_a.len();
+        b.pos = out_b.len();
+        return;
+      }
+
+      let take = core::cmp::min(RATE - a.pos, out_a.len());
+      Self::copy_state_bytes(&a.state, a.pos, &mut out_a[..take]);
+      Self::copy_state_bytes(&b.state, b.pos, &mut out_b[..take]);
+      a.pos = a.pos.strict_add(take);
+      b.pos = b.pos.strict_add(take);
+      out_a = &mut out_a[take..];
+      out_b = &mut out_b[take..];
+    }
+  }
+
+  #[cfg(feature = "ml-kem")]
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn squeeze_quad_into(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    d: &mut Self,
+    mut out_a: &mut [u8],
+    mut out_b: &mut [u8],
+    mut out_c: &mut [u8],
+    mut out_d: &mut [u8],
+  ) {
+    debug_assert_eq!(out_a.len(), out_b.len());
+    debug_assert_eq!(out_a.len(), out_c.len());
+    debug_assert_eq!(out_a.len(), out_d.len());
+    debug_assert_eq!(a.pos, b.pos);
+    debug_assert_eq!(a.pos, c.pos);
+    debug_assert_eq!(a.pos, d.pos);
+
+    if a.pos == 0 && out_a.len() <= RATE {
+      Self::copy_state_prefix(&a.state, out_a);
+      Self::copy_state_prefix(&b.state, out_b);
+      Self::copy_state_prefix(&c.state, out_c);
+      Self::copy_state_prefix(&d.state, out_d);
+      a.pos = out_a.len();
+      b.pos = out_b.len();
+      c.pos = out_c.len();
+      d.pos = out_d.len();
+      return;
+    }
+
+    while !out_a.is_empty() {
+      if a.pos == RATE {
+        let permuter = a.permuter;
+        permuter.permute_x4(&mut a.state, &mut b.state, &mut c.state, &mut d.state, 0);
+        a.pos = 0;
+        b.pos = 0;
+        c.pos = 0;
+        d.pos = 0;
+      }
+
+      if a.pos == 0 && out_a.len() <= RATE {
+        Self::copy_state_prefix(&a.state, out_a);
+        Self::copy_state_prefix(&b.state, out_b);
+        Self::copy_state_prefix(&c.state, out_c);
+        Self::copy_state_prefix(&d.state, out_d);
+        a.pos = out_a.len();
+        b.pos = out_b.len();
+        c.pos = out_c.len();
+        d.pos = out_d.len();
+        return;
+      }
+
+      let take = core::cmp::min(RATE - a.pos, out_a.len());
+      Self::copy_state_bytes(&a.state, a.pos, &mut out_a[..take]);
+      Self::copy_state_bytes(&b.state, b.pos, &mut out_b[..take]);
+      Self::copy_state_bytes(&c.state, c.pos, &mut out_c[..take]);
+      Self::copy_state_bytes(&d.state, d.pos, &mut out_d[..take]);
+      a.pos = a.pos.strict_add(take);
+      b.pos = b.pos.strict_add(take);
+      c.pos = c.pos.strict_add(take);
+      d.pos = d.pos.strict_add(take);
+      out_a = &mut out_a[take..];
+      out_b = &mut out_b[take..];
+      out_c = &mut out_c[take..];
+      out_d = &mut out_d[take..];
     }
   }
 }

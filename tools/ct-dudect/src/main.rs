@@ -4,9 +4,11 @@ use rscrypto::{
   Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256Keypair,
   EcdsaP256SecretKey, EcdsaP384Keypair, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
-  HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256,
-  Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes,
-  Sha512, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512,
+  MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024,
+  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{
     Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash,
     diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys,
@@ -22,9 +24,10 @@ use rscrypto::{
   diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
   diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
   diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
-  diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
-  diag_rsa_validate_pkcs8_private_key_der_stage,
-  traits::ct,
+  diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
+  diag_mlkem1024_keygen_secret_noise_digest, diag_rsa_import_pkcs8_private_key_der_stage,
+  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+  traits::{Kem as _, ct},
   RsaEncryptionError, RsaPublicKeyPolicy,
 };
 
@@ -645,6 +648,172 @@ fn x25519_fixed_vs_random_scalar(runner: &mut CtRunner, rng: &mut BenchRng) {
     runner.run_one(class, || secret.diffie_hellman(&peer).is_ok());
   }
 }
+
+macro_rules! mlkem_dudect_profile {
+  (
+    $keygen_secret_noise:ident,
+    $encapsulate_coins:ident,
+    $decapsulate_secret_key:ident,
+    $decapsulate_rejection_seed:ident,
+    $profile:ty,
+    $ciphertext:ty,
+    $decapsulation_key:ty,
+    $diag:ident
+  ) => {
+    fn $keygen_secret_noise(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let rho = [0x41; <$profile>::ENCAPSULATION_RANDOM_SIZE];
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let sigma = if matches!(class, Class::Left) {
+          [0x42; <$profile>::ENCAPSULATION_RANDOM_SIZE]
+        } else {
+          rand_array::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(rng)
+        };
+        inputs.push((class, sigma));
+      }
+
+      for (class, sigma) in inputs {
+        runner.run_one(class, || std::hint::black_box($diag(rho, sigma))[0]);
+      }
+    }
+
+    fn $encapsulate_coins(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let (encapsulation_key, _) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&[0x51; <$profile>::KEY_GENERATION_RANDOM_SIZE]);
+        Ok::<(), MlKemError>(())
+      })
+      .unwrap();
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let random = if matches!(class, Class::Left) {
+          [0x52; <$profile>::ENCAPSULATION_RANDOM_SIZE]
+        } else {
+          rand_array::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(rng)
+        };
+        inputs.push((class, random));
+      }
+
+      for (class, random) in inputs {
+        runner.run_one(class, || {
+          let (ciphertext, shared_secret) = <$profile>::encapsulate(&encapsulation_key, |out| {
+            out.copy_from_slice(&random);
+            Ok::<(), MlKemError>(())
+          })
+          .unwrap();
+          std::hint::black_box(ciphertext.as_bytes()[0] ^ shared_secret.as_bytes()[0])
+        });
+      }
+    }
+
+    fn $decapsulate_secret_key(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let (fixed_encapsulation_key, fixed_decapsulation_key) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&[0x61; <$profile>::KEY_GENERATION_RANDOM_SIZE]);
+        Ok::<(), MlKemError>(())
+      })
+      .unwrap();
+      let (ciphertext, _) = <$profile>::encapsulate(&fixed_encapsulation_key, |out| {
+        out.copy_from_slice(&[0x62; <$profile>::ENCAPSULATION_RANDOM_SIZE]);
+        Ok::<(), MlKemError>(())
+      })
+      .unwrap();
+      let secret_key_len = <$profile>::DECAPSULATION_KEY_SIZE - <$profile>::ENCAPSULATION_KEY_SIZE - 64;
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let mut decapsulation_key_bytes = *fixed_decapsulation_key.as_bytes();
+        if matches!(class, Class::Right) {
+          let random_decapsulation_key = <$profile>::generate_keypair(|out| {
+            let random = rand_array::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(rng);
+            out.copy_from_slice(&random);
+            Ok::<(), MlKemError>(())
+          })
+          .unwrap()
+          .1;
+          decapsulation_key_bytes[..secret_key_len]
+            .copy_from_slice(&random_decapsulation_key.as_bytes()[..secret_key_len]);
+        }
+        inputs.push((class, <$decapsulation_key>::from_bytes(decapsulation_key_bytes)));
+      }
+
+      for (class, decapsulation_key) in inputs {
+        runner.run_one(class, || {
+          let shared_secret = <$profile>::decapsulate(&decapsulation_key, &ciphertext).unwrap();
+          std::hint::black_box(shared_secret.as_bytes()[0])
+        });
+      }
+    }
+
+    fn $decapsulate_rejection_seed(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let (encapsulation_key, decapsulation_key) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&[0x71; <$profile>::KEY_GENERATION_RANDOM_SIZE]);
+        Ok::<(), MlKemError>(())
+      })
+      .unwrap();
+      let (ciphertext, _) = <$profile>::encapsulate(&encapsulation_key, |out| {
+        out.copy_from_slice(&[0x72; <$profile>::ENCAPSULATION_RANDOM_SIZE]);
+        Ok::<(), MlKemError>(())
+      })
+      .unwrap();
+      let mut rejected_ciphertext = ciphertext.to_bytes();
+      rejected_ciphertext[0] ^= 1;
+      let rejected_ciphertext = <$ciphertext>::from_bytes(rejected_ciphertext);
+      let z_start = <$profile>::DECAPSULATION_KEY_SIZE - <$profile>::SHARED_SECRET_SIZE;
+
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let mut decapsulation_key_bytes = *decapsulation_key.as_bytes();
+        if matches!(class, Class::Left) {
+          decapsulation_key_bytes[z_start..].copy_from_slice(&[0x73; <$profile>::SHARED_SECRET_SIZE]);
+        } else {
+          let rejection_seed = rand_array::<{ <$profile>::SHARED_SECRET_SIZE }>(rng);
+          decapsulation_key_bytes[z_start..].copy_from_slice(&rejection_seed);
+        }
+        inputs.push((class, <$decapsulation_key>::from_bytes(decapsulation_key_bytes)));
+      }
+
+      for (class, decapsulation_key) in inputs {
+        runner.run_one(class, || {
+          let shared_secret = <$profile>::decapsulate(&decapsulation_key, &rejected_ciphertext).unwrap();
+          std::hint::black_box(shared_secret.as_bytes()[0])
+        });
+      }
+    }
+  };
+}
+
+mlkem_dudect_profile!(
+  mlkem512_keygen_secret_noise_fixed_vs_random,
+  mlkem512_encapsulate_fixed_vs_random_coins,
+  mlkem512_decapsulate_fixed_vs_random_secret_key,
+  mlkem512_decapsulate_rejection_seed_fixed_vs_random,
+  MlKem512,
+  MlKem512Ciphertext,
+  MlKem512DecapsulationKey,
+  diag_mlkem512_keygen_secret_noise_digest
+);
+mlkem_dudect_profile!(
+  mlkem768_keygen_secret_noise_fixed_vs_random,
+  mlkem768_encapsulate_fixed_vs_random_coins,
+  mlkem768_decapsulate_fixed_vs_random_secret_key,
+  mlkem768_decapsulate_rejection_seed_fixed_vs_random,
+  MlKem768,
+  MlKem768Ciphertext,
+  MlKem768DecapsulationKey,
+  diag_mlkem768_keygen_secret_noise_digest
+);
+mlkem_dudect_profile!(
+  mlkem1024_keygen_secret_noise_fixed_vs_random,
+  mlkem1024_encapsulate_fixed_vs_random_coins,
+  mlkem1024_decapsulate_fixed_vs_random_secret_key,
+  mlkem1024_decapsulate_rejection_seed_fixed_vs_random,
+  MlKem1024,
+  MlKem1024Ciphertext,
+  MlKem1024DecapsulationKey,
+  diag_mlkem1024_keygen_secret_noise_digest
+);
 
 fn ed25519_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
@@ -1691,6 +1860,18 @@ ctbench_main_with_seeds!(
   (aegis256_fixed_vs_random_key_open, Some(0x61656769736f706e)),
   (ascon_aead128_fixed_vs_random_key_open, Some(0x6173636f6e6f706e)),
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
+  (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
+  (mlkem512_encapsulate_fixed_vs_random_coins, Some(0x6d6b353132656e63)),
+  (mlkem512_decapsulate_fixed_vs_random_secret_key, Some(0x6d6b353132646563)),
+  (mlkem512_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6b35313272656a)),
+  (mlkem768_keygen_secret_noise_fixed_vs_random, Some(0x6d6c6b656d6b676e)),
+  (mlkem768_encapsulate_fixed_vs_random_coins, Some(0x6d6c6b656d656e63)),
+  (mlkem768_decapsulate_fixed_vs_random_secret_key, Some(0x6d6c6b656d646563)),
+  (mlkem768_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6c6b656d72656a)),
+  (mlkem1024_keygen_secret_noise_fixed_vs_random, Some(0x6d6b313032346b67)),
+  (mlkem1024_encapsulate_fixed_vs_random_coins, Some(0x6d6b31303234656e)),
+  (mlkem1024_decapsulate_fixed_vs_random_secret_key, Some(0x6d6b313032346465)),
+  (mlkem1024_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6b31303234726a)),
   (ed25519_sign_fixed_vs_random_secret, Some(0x656432353531395f)),
   (ed25519_public_key_fixed_vs_random_secret, Some(0x6564323535313950)),
   (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),

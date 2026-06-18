@@ -49,6 +49,12 @@ fuzz/corpus/*
 !fuzz/corpus/auth_ecdsa_sign/**
 !fuzz/corpus/auth_ecdsa_verify/
 !fuzz/corpus/auth_ecdsa_verify/**
+!fuzz/corpus/auth_mlkem512/
+!fuzz/corpus/auth_mlkem512/**
+!fuzz/corpus/auth_mlkem768/
+!fuzz/corpus/auth_mlkem768/**
+!fuzz/corpus/auth_mlkem1024/
+!fuzz/corpus/auth_mlkem1024/**
 artifacts
 coverage
 dictionary

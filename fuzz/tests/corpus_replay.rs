@@ -66,8 +66,14 @@ mod auth_hmac_sha512;
 #[path = "../target_impls/auth_kmac256.rs"]
 mod auth_kmac256;
 
+#[path = "../target_impls/auth_mlkem512.rs"]
+mod auth_mlkem512;
+
 #[path = "../target_impls/auth_mlkem768.rs"]
 mod auth_mlkem768;
+
+#[path = "../target_impls/auth_mlkem1024.rs"]
+mod auth_mlkem1024;
 
 #[path = "../target_impls/auth_pbkdf2.rs"]
 mod auth_pbkdf2;
@@ -262,9 +268,21 @@ fn replay_auth_kmac256_corpus() {
 }
 
 #[test]
+fn replay_auth_mlkem512_corpus() {
+    let replayed = replay_corpus_dir("auth_mlkem512", corpus_dir("auth_mlkem512"), auth_mlkem512::run);
+    assert_ne!(replayed, 0, "auth_mlkem512 corpus should not be empty");
+}
+
+#[test]
 fn replay_auth_mlkem768_corpus() {
     let replayed = replay_corpus_dir("auth_mlkem768", corpus_dir("auth_mlkem768"), auth_mlkem768::run);
     assert_ne!(replayed, 0, "auth_mlkem768 corpus should not be empty");
+}
+
+#[test]
+fn replay_auth_mlkem1024_corpus() {
+    let replayed = replay_corpus_dir("auth_mlkem1024", corpus_dir("auth_mlkem1024"), auth_mlkem1024::run);
+    assert_ne!(replayed, 0, "auth_mlkem1024 corpus should not be empty");
 }
 
 #[test]

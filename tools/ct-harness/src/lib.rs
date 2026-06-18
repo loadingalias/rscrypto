@@ -12,12 +12,15 @@ use rscrypto::{
   Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey,
   EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256,
-  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, Pbkdf2Sha256, Pbkdf2Sha512,
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams,
-  SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
+  MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
+  MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
+  MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
+  RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey,
+  XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
-  traits::ct,
+  traits::{Kem as _, ct},
 };
 
 const STATUS_ERR: u8 = 0;
@@ -245,6 +248,176 @@ pub extern "C" fn ct_entry_x25519(out: *mut u8, scalar: *const u8, point: *const
     STATUS_ERR
   }
 }
+
+macro_rules! mlkem_ct_harness {
+  (
+    $keygen:ident,
+    $encapsulate:ident,
+    $decapsulate:ident,
+    $profile:ty,
+    $encapsulation_key:ty,
+    $decapsulation_key:ty,
+    $ciphertext:ty
+  ) => {
+    #[unsafe(no_mangle)]
+    pub extern "C" fn $keygen(
+      encapsulation_key_out: *mut u8,
+      decapsulation_key_out: *mut u8,
+      random: *const u8,
+    ) -> u8 {
+      // SAFETY: Copies ML-KEM key-generation randomness from FFI memory because:
+      // 1. `read_array` rejects a null pointer before reading.
+      // 2. The required length is exactly `<$profile>::KEY_GENERATION_RANDOM_SIZE`.
+      // 3. The returned array is owned by this harness function before use.
+      let Some(random) = (unsafe { read_array::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(random) }) else {
+        return STATUS_ERR;
+      };
+
+      let Ok((encapsulation_key, decapsulation_key)) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&random);
+        Ok::<(), MlKemError>(())
+      }) else {
+        return STATUS_ERR;
+      };
+
+      // SAFETY: Writes the ML-KEM encapsulation key to FFI memory because:
+      // 1. The caller contract requires exactly `<$profile>::ENCAPSULATION_KEY_SIZE` writable bytes.
+      // 2. `write_array` rejects a null pointer before writing.
+      // 3. The source bytes are initialized and live for this call.
+      if !unsafe { write_array(encapsulation_key_out, encapsulation_key.as_bytes()) } {
+        return STATUS_ERR;
+      }
+      // SAFETY: Writes the ML-KEM decapsulation key to FFI memory because:
+      // 1. The caller contract requires exactly `<$profile>::DECAPSULATION_KEY_SIZE` writable bytes.
+      // 2. `write_array` rejects a null pointer before writing.
+      // 3. The source bytes are initialized and live for this call.
+      if !unsafe { write_array(decapsulation_key_out, decapsulation_key.as_bytes()) } {
+        return STATUS_ERR;
+      }
+
+      STATUS_OK
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn $encapsulate(
+      ciphertext_out: *mut u8,
+      shared_secret_out: *mut u8,
+      encapsulation_key: *const u8,
+      random: *const u8,
+    ) -> u8 {
+      // SAFETY: Copies the ML-KEM encapsulation key from FFI memory because:
+      // 1. `read_array` rejects a null pointer before reading.
+      // 2. The required length is exactly `<$profile>::ENCAPSULATION_KEY_SIZE`.
+      // 3. The returned array is owned by this harness function before validation.
+      let Some(encapsulation_key) =
+        (unsafe { read_array::<{ <$profile>::ENCAPSULATION_KEY_SIZE }>(encapsulation_key) })
+      else {
+        return STATUS_ERR;
+      };
+      // SAFETY: Copies ML-KEM encapsulation randomness from FFI memory because:
+      // 1. `read_array` rejects a null pointer before reading.
+      // 2. The required length is exactly `<$profile>::ENCAPSULATION_RANDOM_SIZE`.
+      // 3. The returned array is owned by this harness function before use.
+      let Some(random) = (unsafe { read_array::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(random) }) else {
+        return STATUS_ERR;
+      };
+      let Ok(encapsulation_key) = <$encapsulation_key>::try_from_slice(&encapsulation_key) else {
+        return STATUS_ERR;
+      };
+
+      let Ok((ciphertext, shared_secret)) = <$profile>::encapsulate(&encapsulation_key, |out| {
+        out.copy_from_slice(&random);
+        Ok::<(), MlKemError>(())
+      }) else {
+        return STATUS_ERR;
+      };
+
+      // SAFETY: Writes the ML-KEM ciphertext to FFI memory because:
+      // 1. The caller contract requires exactly `<$profile>::CIPHERTEXT_SIZE` writable bytes.
+      // 2. `write_array` rejects a null pointer before writing.
+      // 3. The source bytes are initialized and live for this call.
+      if !unsafe { write_array(ciphertext_out, ciphertext.as_bytes()) } {
+        return STATUS_ERR;
+      }
+      // SAFETY: Writes the ML-KEM shared secret to FFI memory because:
+      // 1. The caller contract requires exactly `<$profile>::SHARED_SECRET_SIZE` writable bytes.
+      // 2. `write_array` rejects a null pointer before writing.
+      // 3. The source bytes are initialized and live for this call.
+      if !unsafe { write_array(shared_secret_out, shared_secret.as_bytes()) } {
+        return STATUS_ERR;
+      }
+
+      STATUS_OK
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn $decapsulate(
+      shared_secret_out: *mut u8,
+      decapsulation_key: *const u8,
+      ciphertext: *const u8,
+    ) -> u8 {
+      // SAFETY: Copies the ML-KEM decapsulation key from FFI memory because:
+      // 1. `read_array` rejects a null pointer before reading.
+      // 2. The required length is exactly `<$profile>::DECAPSULATION_KEY_SIZE`.
+      // 3. The returned array is owned by this harness function before use.
+      let Some(decapsulation_key) =
+        (unsafe { read_array::<{ <$profile>::DECAPSULATION_KEY_SIZE }>(decapsulation_key) })
+      else {
+        return STATUS_ERR;
+      };
+      // SAFETY: Copies the ML-KEM ciphertext from FFI memory because:
+      // 1. `read_array` rejects a null pointer before reading.
+      // 2. The required length is exactly `<$profile>::CIPHERTEXT_SIZE`.
+      // 3. The returned array is owned by this harness function before use.
+      let Some(ciphertext) = (unsafe { read_array::<{ <$profile>::CIPHERTEXT_SIZE }>(ciphertext) }) else {
+        return STATUS_ERR;
+      };
+      let decapsulation_key = <$decapsulation_key>::from_bytes(decapsulation_key);
+      let ciphertext = <$ciphertext>::from_bytes(ciphertext);
+      let Ok(shared_secret) = <$profile>::decapsulate(&decapsulation_key, &ciphertext) else {
+        return STATUS_ERR;
+      };
+
+      // SAFETY: Writes the ML-KEM shared secret to FFI memory because:
+      // 1. The caller contract requires exactly `<$profile>::SHARED_SECRET_SIZE` writable bytes.
+      // 2. `write_array` rejects a null pointer before writing.
+      // 3. The source bytes are initialized and live for this call.
+      if unsafe { write_array(shared_secret_out, shared_secret.as_bytes()) } {
+        STATUS_OK
+      } else {
+        STATUS_ERR
+      }
+    }
+  };
+}
+
+mlkem_ct_harness!(
+  ct_entry_mlkem512_keygen,
+  ct_entry_mlkem512_encapsulate,
+  ct_entry_mlkem512_decapsulate,
+  MlKem512,
+  MlKem512EncapsulationKey,
+  MlKem512DecapsulationKey,
+  MlKem512Ciphertext
+);
+mlkem_ct_harness!(
+  ct_entry_mlkem768_keygen,
+  ct_entry_mlkem768_encapsulate,
+  ct_entry_mlkem768_decapsulate,
+  MlKem768,
+  MlKem768EncapsulationKey,
+  MlKem768DecapsulationKey,
+  MlKem768Ciphertext
+);
+mlkem_ct_harness!(
+  ct_entry_mlkem1024_keygen,
+  ct_entry_mlkem1024_encapsulate,
+  ct_entry_mlkem1024_decapsulate,
+  MlKem1024,
+  MlKem1024EncapsulationKey,
+  MlKem1024DecapsulationKey,
+  MlKem1024Ciphertext
+);
 
 /// Ed25519 signing harness.
 #[unsafe(no_mangle)]

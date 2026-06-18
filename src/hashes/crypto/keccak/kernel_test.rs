@@ -152,6 +152,45 @@ mod tests {
     }
   }
 
+  /// Verify the x86_64 AVX-512 two-state kernel matches two scalar permutations.
+  #[test]
+  #[cfg(all(target_arch = "x86_64", not(miri)))]
+  fn keccakf1600_x86_avx512_x2_matches_single_state() {
+    let caps = crate::platform::caps();
+    let required = crate::platform::caps::x86::AVX512F
+      .union(crate::platform::caps::x86::AVX512VL)
+      .union(crate::platform::caps::x86::SSE41);
+    if !caps.has(required) {
+      return;
+    }
+
+    for seed in 0u8..16 {
+      let mut input_a = [0u8; 200];
+      let mut input_b = [0u8; 200];
+      for (i, byte) in input_a.iter_mut().enumerate() {
+        *byte = seed.wrapping_add((i as u8).wrapping_mul(17));
+      }
+      for (i, byte) in input_b.iter_mut().enumerate() {
+        *byte = seed.wrapping_mul(3).wrapping_add((i as u8).wrapping_mul(29));
+      }
+
+      let mut state_a = state_from_bytes(&input_a);
+      let mut state_b = state_from_bytes(&input_b);
+      let mut expected_a = state_a;
+      let mut expected_b = state_b;
+
+      super::super::keccakf_portable(&mut expected_a);
+      super::super::keccakf_portable(&mut expected_b);
+      // SAFETY: AVX-512 x2 test call because:
+      // 1. Runtime caps are checked above for AVX512F, AVX512VL, and SSE4.1.
+      // 2. `state_a` and `state_b` are distinct initialized Keccak states.
+      unsafe { super::super::x86_64::keccakf_x86_avx512_x2(&mut state_a, &mut state_b) };
+
+      assert_eq!(state_a, expected_a, "state_a mismatch for seed={seed}");
+      assert_eq!(state_b, expected_b, "state_b mismatch for seed={seed}");
+    }
+  }
+
   /// Verify 2-state interleaved kernel matches two independent single-state runs.
   #[test]
   #[cfg(all(target_arch = "aarch64", not(miri)))]
