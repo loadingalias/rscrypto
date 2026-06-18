@@ -24,6 +24,50 @@ fn key_random<const N: usize>(d: &[u8; 32], z: &[u8; 32]) -> [u8; N] {
   random
 }
 
+#[test]
+fn mlkem512_matches_fips203_for_reduced_feature_ci_seed() {
+  let d = [
+    249, 206, 215, 37, 228, 105, 120, 238, 82, 21, 50, 99, 184, 68, 205, 166, 255, 59, 174, 206, 253, 125, 87, 13, 254,
+    16, 123, 248, 146, 130, 47, 191,
+  ];
+  let z = [
+    105, 76, 117, 153, 16, 21, 249, 206, 157, 192, 254, 141, 117, 121, 220, 189, 227, 149, 254, 63, 23, 252, 51, 113,
+    212, 103, 7, 205, 195, 26, 35, 106,
+  ];
+  let m = [
+    140, 117, 20, 218, 228, 30, 170, 42, 115, 49, 83, 151, 0, 35, 162, 240, 143, 132, 166, 48, 23, 183, 210, 64, 65,
+    202, 86, 235, 26, 5, 223, 188,
+  ];
+
+  let random = key_random::<{ MlKem512::KEY_GENERATION_RANDOM_SIZE }>(&d, &z);
+  let (ek, dk) = MlKem512::generate_keypair(|out| {
+    out.copy_from_slice(&random);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let (fips_ek, fips_dk) = fips_mlkem512::KG::keygen_from_seed(d, z);
+
+  assert_eq!(*ek.as_bytes(), fips_ek.clone().into_bytes());
+  assert_eq!(*dk.expose_secret().as_bytes(), fips_dk.clone().into_bytes());
+
+  let (ciphertext, shared_secret) = MlKem512::encapsulate(&ek, |out| {
+    out.copy_from_slice(&m);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let (fips_shared_secret, fips_ciphertext) = fips_ek.encaps_from_seed(&m);
+
+  assert_eq!(*ciphertext.as_bytes(), fips_ciphertext.clone().into_bytes());
+  assert_eq!(
+    *shared_secret.expose_secret().as_bytes(),
+    fips_shared_secret.into_bytes()
+  );
+
+  let decapsulated = MlKem512::decapsulate(&dk, &ciphertext).unwrap();
+  let fips_decapsulated = fips_dk.try_decaps(&fips_ciphertext).unwrap();
+  assert_eq!(*decapsulated.expose_secret().as_bytes(), fips_decapsulated.into_bytes());
+}
+
 macro_rules! mlkem_profile_properties {
   (
     $matches_fips203:ident,

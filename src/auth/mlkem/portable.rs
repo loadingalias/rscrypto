@@ -1,6 +1,6 @@
 #![allow(clippy::indexing_slicing)] // Fixed-size FIPS buffers and public loop indices bound every access.
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(test, target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 mod aarch64;
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 mod x86_64;
@@ -2466,14 +2466,16 @@ fn sample_poly_cbd_eta3(input: &[u8], out: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn ntt(poly: &mut Poly) {
+  // The external aarch64 NTT assembly is intentionally excluded from production dispatch until it
+  // matches the scalar/FIPS path on Linux.
   // SAFETY: aarch64 NEON NTT dispatch because:
   // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
   // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-  // 3. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+  // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
   // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
   //    values.
   unsafe {
-    aarch64::ntt_asm(poly);
+    ntt_neon(poly);
   }
 }
 
@@ -2850,7 +2852,7 @@ fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
   }
 }
 
-#[cfg(all(test, target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_neon(poly: &mut Poly) {
   let mut zeta_index = 1usize;
@@ -2893,7 +2895,7 @@ fn ntt_neon(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(test, target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -2928,7 +2930,7 @@ fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(test, target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -4449,18 +4451,6 @@ mod tests {
     inverse_ntt(&mut poly);
 
     assert_eq!(poly, original);
-  }
-
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  #[test]
-  fn ntt_asm_bounded_reduction_matches_mod_q() {
-    for value in (-4 * Q_I32)..(4 * Q_I32) {
-      let value = value as i16;
-      let mut expected = i32::from(value) % Q_I32;
-      expected += (expected >> 31) & Q_I32;
-
-      assert_eq!(aarch64::test_normalize_ntt_asm_coeff(value), expected as u16, "{value}");
-    }
   }
 
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]

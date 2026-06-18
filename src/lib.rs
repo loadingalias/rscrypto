@@ -142,6 +142,7 @@ assert!(
       feature = "crc64",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
+      feature = "aegis256",
       feature = "blake2b",
       feature = "blake2s",
       feature = "blake3",
@@ -153,13 +154,20 @@ assert!(
   ),
   feature(portable_simd, powerpc_target_feature)
 )]
-// s390x VGFM/hash backends use vector asm; selected hash/AEAD/password kernels
-// also use portable SIMD.
+// s390x VGFM/hash backends use vector asm; selected checksum/hash/AEAD/password
+// kernels also use portable SIMD.
 #![cfg_attr(target_arch = "s390x", feature(asm_experimental_reg))]
 #![cfg_attr(
   all(
     target_arch = "s390x",
     any(
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "aegis256",
       feature = "blake2b",
       feature = "blake2s",
       feature = "blake3",
