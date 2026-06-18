@@ -20,6 +20,7 @@ The exact release claim is the set of primitive/configuration pairs marked
 | ECDSA P-256/P-384 | Caller-blinded signing is the private-key CT surface. Public verification is public-input work, with an opaque verification error. |
 | Ed25519 | Signing and secret-key public derivation are private-key CT surfaces. Public verification is public-input work, with an opaque verification error. |
 | X25519 | Scalar multiplication is a private-scalar CT surface; all-zero shared secrets are rejected. |
+| ML-KEM | Key generation secret noise, encapsulation coins, decapsulation secret-key material, and implicit rejection seed are CT surfaces under the ML-KEM entries in `ct.toml`. Matrix seeds, encapsulation keys, ciphertexts, lengths, parse errors, and profile selection are public-input work. |
 | RSA | Private sign/decrypt leaves are CT-critical. Public verify/encrypt, parsing, and key import are public-input work unless promoted by the CT manifest. |
 | Password verification | Final secret comparisons are CT-critical. Argon2d, Argon2id, and scrypt still have algorithm-level data-dependent memory access, so do not describe them as globally constant-time. |
 

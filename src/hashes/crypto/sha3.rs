@@ -2,7 +2,15 @@
 //!
 //! Portable, `no_std`, pure Rust Keccak-f\[1600\] sponge.
 
+#[cfg(all(test, feature = "ml-kem"))]
+use super::keccak::xof_quad;
 use super::keccak::{PublicKeccakCore, PublicKeccakXof};
+#[cfg(feature = "ml-kem")]
+use super::keccak::{
+  xof_seeded_32_1 as keccak_xof_seeded_32_1, xof_seeded_32_1_pair as keccak_xof_seeded_32_1_pair,
+  xof_seeded_32_1_quad as keccak_xof_seeded_32_1_quad, xof_seeded_32_2 as keccak_xof_seeded_32_2,
+  xof_seeded_32_2_pair as keccak_xof_seeded_32_2_pair, xof_seeded_32_2_quad as keccak_xof_seeded_32_2_quad,
+};
 use crate::traits::{Digest, Xof};
 
 /// SHA3-256 digest state.
@@ -383,6 +391,70 @@ impl Shake128 {
   pub fn hash_into(data: &[u8], out: &mut [u8]) {
     Self::xof(data).squeeze(out);
   }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_2(seed: &[u8; 32], x: u8, y: u8) -> Shake128XofReader {
+    Shake128XofReader {
+      inner: keccak_xof_seeded_32_2::<168>(0x1F, seed, x, y),
+    }
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_2_pair(
+    seed: &[u8; 32],
+    a: (u8, u8),
+    b: (u8, u8),
+  ) -> (Shake128XofReader, Shake128XofReader) {
+    let (a, b) = keccak_xof_seeded_32_2_pair::<168>(0x1F, seed, a, b);
+    (Shake128XofReader { inner: a }, Shake128XofReader { inner: b })
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_2_quad(
+    seed: &[u8; 32],
+    a: (u8, u8),
+    b: (u8, u8),
+    c: (u8, u8),
+    d: (u8, u8),
+  ) -> (
+    Shake128XofReader,
+    Shake128XofReader,
+    Shake128XofReader,
+    Shake128XofReader,
+  ) {
+    let (a, b, c, d) = keccak_xof_seeded_32_2_quad::<168>(0x1F, seed, a, b, c, d);
+    (
+      Shake128XofReader { inner: a },
+      Shake128XofReader { inner: b },
+      Shake128XofReader { inner: c },
+      Shake128XofReader { inner: d },
+    )
+  }
+
+  #[inline]
+  #[cfg(all(test, feature = "ml-kem"))]
+  pub(crate) fn xof_quad(
+    data_a: &[u8],
+    data_b: &[u8],
+    data_c: &[u8],
+    data_d: &[u8],
+  ) -> (
+    Shake128XofReader,
+    Shake128XofReader,
+    Shake128XofReader,
+    Shake128XofReader,
+  ) {
+    let (a, b, c, d) = xof_quad::<168>(0x1F, data_a, data_b, data_c, data_d);
+    (
+      Shake128XofReader { inner: a },
+      Shake128XofReader { inner: b },
+      Shake128XofReader { inner: c },
+      Shake128XofReader { inner: d },
+    )
+  }
 }
 
 #[derive(Clone)]
@@ -400,6 +472,39 @@ impl Xof for Shake128XofReader {
   #[inline]
   fn squeeze(&mut self, out: &mut [u8]) {
     self.inner.squeeze_into(out);
+  }
+}
+
+impl Shake128XofReader {
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn squeeze_pair(a: &mut Self, b: &mut Self, out_a: &mut [u8], out_b: &mut [u8]) {
+    PublicKeccakXof::<168>::squeeze_pair_into(&mut a.inner, &mut b.inner, out_a, out_b);
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn squeeze_quad(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    d: &mut Self,
+    out_a: &mut [u8],
+    out_b: &mut [u8],
+    out_c: &mut [u8],
+    out_d: &mut [u8],
+  ) {
+    PublicKeccakXof::<168>::squeeze_quad_into(
+      &mut a.inner,
+      &mut b.inner,
+      &mut c.inner,
+      &mut d.inner,
+      out_a,
+      out_b,
+      out_c,
+      out_d,
+    );
   }
 }
 
@@ -439,6 +544,44 @@ impl Shake256 {
   }
 
   #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_1(seed: &[u8; 32], x: u8) -> Shake256XofReader {
+    Shake256XofReader {
+      inner: keccak_xof_seeded_32_1::<136>(0x1F, seed, x),
+    }
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_1_pair(seed: &[u8; 32], a: u8, b: u8) -> (Shake256XofReader, Shake256XofReader) {
+    let (a, b) = keccak_xof_seeded_32_1_pair::<136>(0x1F, seed, a, b);
+    (Shake256XofReader { inner: a }, Shake256XofReader { inner: b })
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_1_quad(
+    seed: &[u8; 32],
+    a: u8,
+    b: u8,
+    c: u8,
+    d: u8,
+  ) -> (
+    Shake256XofReader,
+    Shake256XofReader,
+    Shake256XofReader,
+    Shake256XofReader,
+  ) {
+    let (a, b, c, d) = keccak_xof_seeded_32_1_quad::<136>(0x1F, seed, a, b, c, d);
+    (
+      Shake256XofReader { inner: a },
+      Shake256XofReader { inner: b },
+      Shake256XofReader { inner: c },
+      Shake256XofReader { inner: d },
+    )
+  }
+
+  #[inline]
   /// Convenience one-shot XOF output for callers that only need bytes.
   ///
   /// The canonical one-shot API is [`Self::xof`]. Use [`Self::new`],
@@ -466,11 +609,44 @@ impl Xof for Shake256XofReader {
   }
 }
 
+impl Shake256XofReader {
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  pub(crate) fn squeeze_pair(a: &mut Self, b: &mut Self, out_a: &mut [u8], out_b: &mut [u8]) {
+    PublicKeccakXof::<136>::squeeze_pair_into(&mut a.inner, &mut b.inner, out_a, out_b);
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn squeeze_quad(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    d: &mut Self,
+    out_a: &mut [u8],
+    out_b: &mut [u8],
+    out_c: &mut [u8],
+    out_d: &mut [u8],
+  ) {
+    PublicKeccakXof::<136>::squeeze_quad_into(
+      &mut a.inner,
+      &mut b.inner,
+      &mut c.inner,
+      &mut d.inner,
+      out_a,
+      out_b,
+      out_c,
+      out_d,
+    );
+  }
+}
+
 impl_xof_read!(Shake256XofReader);
 
 #[cfg(test)]
 mod tests {
-  use super::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
+  use super::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256};
   use crate::traits::{Digest, Xof};
 
   fn hex(bytes: &[u8]) -> alloc::string::String {
@@ -534,6 +710,55 @@ mod tests {
     via_oneshot.squeeze(&mut oneshot_out);
 
     assert_eq!(finalize_out, oneshot_out);
+  }
+
+  #[cfg(feature = "ml-kem")]
+  #[test]
+  fn shake128_xof_quad_matches_sequential() {
+    let msg_a = b"ml-kem matrix lane 0";
+    let msg_b = &[0x42u8; 34];
+    let msg_c = &[0x77u8; 255];
+    let msg_d = &[0xa5u8; 409];
+
+    let (mut quad_a, mut quad_b, mut quad_c, mut quad_d) = Shake128::xof_quad(msg_a, msg_b, msg_c, msg_d);
+    let mut actual_a = [0u8; 320];
+    let mut actual_b = [0u8; 320];
+    let mut actual_c = [0u8; 320];
+    let mut actual_d = [0u8; 320];
+    Shake128XofReader::squeeze_quad(
+      &mut quad_a,
+      &mut quad_b,
+      &mut quad_c,
+      &mut quad_d,
+      &mut actual_a[..168],
+      &mut actual_b[..168],
+      &mut actual_c[..168],
+      &mut actual_d[..168],
+    );
+    Shake128XofReader::squeeze_quad(
+      &mut quad_a,
+      &mut quad_b,
+      &mut quad_c,
+      &mut quad_d,
+      &mut actual_a[168..],
+      &mut actual_b[168..],
+      &mut actual_c[168..],
+      &mut actual_d[168..],
+    );
+
+    let mut expected_a = [0u8; 320];
+    let mut expected_b = [0u8; 320];
+    let mut expected_c = [0u8; 320];
+    let mut expected_d = [0u8; 320];
+    Shake128::xof(msg_a).squeeze(&mut expected_a);
+    Shake128::xof(msg_b).squeeze(&mut expected_b);
+    Shake128::xof(msg_c).squeeze(&mut expected_c);
+    Shake128::xof(msg_d).squeeze(&mut expected_d);
+
+    assert_eq!(actual_a, expected_a, "lane 0");
+    assert_eq!(actual_b, expected_b, "lane 1");
+    assert_eq!(actual_c, expected_c, "lane 2");
+    assert_eq!(actual_d, expected_d, "lane 3");
   }
 
   /// Test inputs of length `RATE - 1` for each SHA-3 variant.

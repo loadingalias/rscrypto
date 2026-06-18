@@ -125,6 +125,9 @@ case "$MIRI_SCOPE" in
     run_miri_lib_filter "portable dispatch and checksum shadow invariants" "miri_shadow_tests"
     run_miri_lib_filter "platform detection under Miri" "platform::detect::tests::test_miri_returns_portable"
     run_miri_lib_filter "X25519 portable path under Miri" "auth::x25519::tests::miri_uses_portable_x25519_path"
+    run_miri_lib_filter_features "ML-KEM portable round trip and rejection under Miri" \
+      "auth::mlkem::portable::tests::miri_mlkem512_portable_round_trip_and_rejection" \
+      "ml-kem,diag"
     run_miri_test_target "Argon2 MatrixView/portable kernel under Miri" "argon2_miri" "argon2"
     ;;
   rsa)

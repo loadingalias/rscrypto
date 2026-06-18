@@ -7,23 +7,24 @@ use core::hint::black_box;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use ed25519_dalek::{Signer as _, SigningKey};
 use fips203::{
-  ml_kem_768 as FipsMlKem768,
+  ml_kem_512 as FipsMlKem512, ml_kem_768 as FipsMlKem768, ml_kem_1024 as FipsMlKem1024,
   traits::{Decaps as _, Encaps as _, KeyGen as _},
 };
 use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
-use libcrux_ml_kem::mlkem768 as LibcruxMlKem768;
+use libcrux_ml_kem::{mlkem512 as LibcruxMlKem512, mlkem768 as LibcruxMlKem768, mlkem1024 as LibcruxMlKem1024};
 use p256::ecdsa::{Signature as P256OracleSignature, SigningKey as P256OracleSigningKey, signature::Verifier as _};
 use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSigningKey};
 use rscrypto::{
   EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384Keypair, EcdsaP384PublicKey,
   EcdsaP384SecretKey, EcdsaP384Signature, Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, HkdfSha256, HkdfSha384,
-  HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem768, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512,
-  X25519SecretKey,
+  HmacSha256, HmacSha384, HmacSha512, Kem as _, Mac as _, MlKem512, MlKem768, MlKem1024, MlKemError, Pbkdf2Sha256,
+  Pbkdf2Sha512, X25519SecretKey,
 };
 use rustcrypto_ml_kem::{
   B32 as RustCryptoMlKemB32, DecapsulationKey as RustCryptoMlKemDecapsulationKey, KeyExport as _,
-  MlKem768 as RustCryptoMlKem768, Seed as RustCryptoMlKemSeed, kem::Decapsulate as _,
+  MlKem512 as RustCryptoMlKem512, MlKem768 as RustCryptoMlKem768, MlKem1024 as RustCryptoMlKem1024,
+  Seed as RustCryptoMlKemSeed, kem::Decapsulate as _,
 };
 use x25519_dalek::{PublicKey as DalekX25519PublicKey, StaticSecret as DalekX25519Secret};
 
@@ -71,7 +72,8 @@ macro_rules! aws_lc_bench {
 // variable-length OKM matching the bench's `out_len`.
 aws_lc_bench! {
   use aws_lc_rs::kem::{
-    Ciphertext as AwsMlKemCiphertext, DecapsulationKey as AwsMlKemDecapsulationKey, ML_KEM_768 as AWS_ML_KEM_768,
+    Ciphertext as AwsMlKemCiphertext, DecapsulationKey as AwsMlKemDecapsulationKey, ML_KEM_512 as AWS_ML_KEM_512,
+    ML_KEM_768 as AWS_ML_KEM_768, ML_KEM_1024 as AWS_ML_KEM_1024,
   };
 
   struct AwsHkdfLen(usize);
@@ -1254,175 +1256,409 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   g.finish();
 }
 
-fn mlkem768_keygen(c: &mut Criterion) {
-  let key_random = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x10);
-  let d = array_from_slice::<32>(&key_random[..32]);
-  let z = array_from_slice::<32>(&key_random[32..]);
-  let mut g = c.benchmark_group("mlkem768/keygen");
+macro_rules! mlkem_profile_benches {
+  (
+    $keygen_fn:ident,
+    $encapsulate_fn:ident,
+    $decapsulate_fn:ident,
+    $group:literal,
+    $profile:ty,
+    $fips:ident,
+    $libcrux:ident,
+    $rustcrypto:ty,
+    $aws_algorithm:ident
+  ) => {
+    fn $keygen_fn(c: &mut Criterion) {
+      let key_random = deterministic_bytes::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(0x10);
+      let d = array_from_slice::<32>(&key_random[..32]);
+      let z = array_from_slice::<32>(&key_random[32..]);
+      let mut g = c.benchmark_group(concat!($group, "/keygen"));
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      MlKem768::generate_keypair(|out| {
-        out.copy_from_slice(black_box(&key_random));
+      g.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          <$profile>::generate_keypair(|out| {
+            out.copy_from_slice(black_box(&key_random));
+            Ok::<(), MlKemError>(())
+          })
+          .unwrap()
+        })
+      });
+
+      g.bench_function("libcrux", |b| {
+        b.iter(|| $libcrux::generate_key_pair(black_box(key_random)))
+      });
+
+      aws_lc_bench! {
+        g.bench_function("aws-lc-rs", |b| {
+          b.iter(|| black_box(AwsMlKemDecapsulationKey::generate(&$aws_algorithm).unwrap()))
+        });
+      }
+
+      g.bench_function("fips203", |b| {
+        b.iter(|| $fips::KG::keygen_from_seed(black_box(d), black_box(z)))
+      });
+
+      g.bench_function("rustcrypto", |b| {
+        b.iter(|| {
+          let dk = RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
+          black_box(dk.encapsulation_key().to_bytes());
+          black_box(dk)
+        })
+      });
+
+      g.finish();
+    }
+
+    fn $encapsulate_fn(c: &mut Criterion) {
+      let key_random = deterministic_bytes::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(0x20);
+      let encaps_random = deterministic_bytes::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(0x80);
+      let (ek, _) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&key_random);
         Ok::<(), MlKemError>(())
       })
-      .unwrap()
-    })
-  });
+      .unwrap();
+      let prepared_ek = ek.prepare().unwrap();
+      let (fips_ek, _) = $fips::KG::keygen_from_seed(
+        array_from_slice::<32>(&key_random[..32]),
+        array_from_slice::<32>(&key_random[32..]),
+      );
+      let rustcrypto_dk =
+        RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
+      let rustcrypto_ek = rustcrypto_dk.encapsulation_key().clone();
+      let libcrux_keypair = $libcrux::generate_key_pair(key_random);
+      let libcrux_ek = libcrux_keypair.public_key().clone();
+      aws_lc_bench! {
+        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).unwrap();
+        let aws_ek = aws_dk.encapsulation_key().unwrap();
+      }
+      let mut g = c.benchmark_group(concat!($group, "/encapsulate"));
 
-  g.bench_function("libcrux", |b| {
-    b.iter(|| LibcruxMlKem768::generate_key_pair(black_box(key_random)))
-  });
+      g.bench_function("rscrypto", |b| {
+        b.iter(|| {
+          black_box(&prepared_ek)
+            .encapsulate(|out| {
+              out.copy_from_slice(black_box(&encaps_random));
+              Ok::<(), MlKemError>(())
+            })
+            .unwrap()
+        })
+      });
 
-  aws_lc_bench! {
-    g.bench_function("aws-lc-rs", |b| {
-      b.iter(|| black_box(AwsMlKemDecapsulationKey::generate(&AWS_ML_KEM_768).unwrap()))
-    });
-  }
+      g.bench_function("libcrux", |b| {
+        b.iter(|| black_box($libcrux::encapsulate(black_box(&libcrux_ek), black_box(encaps_random))))
+      });
 
-  g.bench_function("fips203", |b| {
-    b.iter(|| FipsMlKem768::KG::keygen_from_seed(black_box(d), black_box(z)))
-  });
+      aws_lc_bench! {
+        g.bench_function("aws-lc-rs", |b| {
+          b.iter(|| black_box(aws_ek.encapsulate().unwrap()))
+        });
+      }
 
-  g.bench_function("rustcrypto", |b| {
-    b.iter(|| {
-      let dk = RustCryptoMlKemDecapsulationKey::<RustCryptoMlKem768>::from_seed(RustCryptoMlKemSeed::from(key_random));
-      black_box(dk.encapsulation_key().to_bytes());
-      black_box(dk)
-    })
-  });
+      g.bench_function("fips203", |b| {
+        b.iter(|| black_box(fips_ek.encaps_from_seed(black_box(&encaps_random))))
+      });
 
-  g.finish();
-}
+      g.bench_function("rustcrypto", |b| {
+        b.iter(|| {
+          black_box(rustcrypto_ek.encapsulate_deterministic(black_box(&RustCryptoMlKemB32::from(encaps_random))))
+        })
+      });
 
-fn mlkem768_encapsulate(c: &mut Criterion) {
-  let key_random = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x20);
-  let encaps_random = deterministic_bytes::<{ MlKem768::ENCAPSULATION_RANDOM_SIZE }>(0x80);
-  let (ek, _) = MlKem768::generate_keypair(|out| {
-    out.copy_from_slice(&key_random);
-    Ok::<(), MlKemError>(())
-  })
-  .unwrap();
-  let (fips_ek, _) = FipsMlKem768::KG::keygen_from_seed(
-    array_from_slice::<32>(&key_random[..32]),
-    array_from_slice::<32>(&key_random[32..]),
-  );
-  let rustcrypto_dk =
-    RustCryptoMlKemDecapsulationKey::<RustCryptoMlKem768>::from_seed(RustCryptoMlKemSeed::from(key_random));
-  let rustcrypto_ek = rustcrypto_dk.encapsulation_key().clone();
-  let libcrux_keypair = LibcruxMlKem768::generate_key_pair(key_random);
-  let libcrux_ek = libcrux_keypair.public_key().clone();
-  aws_lc_bench! {
-    let aws_dk = AwsMlKemDecapsulationKey::generate(&AWS_ML_KEM_768).unwrap();
-    let aws_ek = aws_dk.encapsulation_key().unwrap();
-  }
-  let mut g = c.benchmark_group("mlkem768/encapsulate");
+      g.finish();
+    }
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| {
-      MlKem768::encapsulate(black_box(&ek), |out| {
-        out.copy_from_slice(black_box(&encaps_random));
+    fn $decapsulate_fn(c: &mut Criterion) {
+      let key_random = deterministic_bytes::<{ <$profile>::KEY_GENERATION_RANDOM_SIZE }>(0x30);
+      let encaps_random = deterministic_bytes::<{ <$profile>::ENCAPSULATION_RANDOM_SIZE }>(0x90);
+      let (ek, dk) = <$profile>::generate_keypair(|out| {
+        out.copy_from_slice(&key_random);
         Ok::<(), MlKemError>(())
       })
-      .unwrap()
-    })
+      .unwrap();
+      let prepared_ek = ek.prepare().unwrap();
+      let prepared_dk = dk.prepare().unwrap();
+      let (ciphertext, _) = prepared_ek
+        .encapsulate(|out| {
+          out.copy_from_slice(&encaps_random);
+          Ok::<(), MlKemError>(())
+        })
+        .unwrap();
+      let (fips_ek, fips_dk) = $fips::KG::keygen_from_seed(
+        array_from_slice::<32>(&key_random[..32]),
+        array_from_slice::<32>(&key_random[32..]),
+      );
+      let (_, fips_ciphertext) = fips_ek.encaps_from_seed(&encaps_random);
+      let rustcrypto_dk =
+        RustCryptoMlKemDecapsulationKey::<$rustcrypto>::from_seed(RustCryptoMlKemSeed::from(key_random));
+      let (rustcrypto_ciphertext, _) = rustcrypto_dk
+        .encapsulation_key()
+        .encapsulate_deterministic(&RustCryptoMlKemB32::from(encaps_random));
+      let libcrux_keypair = $libcrux::generate_key_pair(key_random);
+      let libcrux_ek = libcrux_keypair.public_key().clone();
+      let libcrux_dk = libcrux_keypair.private_key().clone();
+      let (libcrux_ciphertext, _) = $libcrux::encapsulate(&libcrux_ek, encaps_random);
+      aws_lc_bench! {
+        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).unwrap();
+        let aws_ek = aws_dk.encapsulation_key().unwrap();
+        let (aws_ciphertext, _) = aws_ek.encapsulate().unwrap();
+      }
+      let mut g = c.benchmark_group(concat!($group, "/decapsulate"));
+
+      g.bench_function("rscrypto", |b| {
+        b.iter(|| black_box(&prepared_dk).decapsulate(black_box(&ciphertext)).unwrap())
+      });
+
+      g.bench_function("libcrux", |b| {
+        b.iter(|| {
+          black_box($libcrux::decapsulate(
+            black_box(&libcrux_dk),
+            black_box(&libcrux_ciphertext),
+          ))
+        })
+      });
+
+      aws_lc_bench! {
+        g.bench_function("aws-lc-rs", |b| {
+          b.iter(|| {
+            black_box(
+              aws_dk
+                .decapsulate(AwsMlKemCiphertext::from(black_box(aws_ciphertext.as_ref())))
+                .unwrap(),
+            )
+          })
+        });
+      }
+
+      g.bench_function("fips203", |b| {
+        b.iter(|| black_box(fips_dk.try_decaps(black_box(&fips_ciphertext)).unwrap()))
+      });
+
+      g.bench_function("rustcrypto", |b| {
+        b.iter(|| black_box(rustcrypto_dk.decapsulate(black_box(&rustcrypto_ciphertext))))
+      });
+
+      g.finish();
+    }
+  };
+}
+
+mlkem_profile_benches!(
+  mlkem512_keygen,
+  mlkem512_encapsulate,
+  mlkem512_decapsulate,
+  "mlkem512",
+  MlKem512,
+  FipsMlKem512,
+  LibcruxMlKem512,
+  RustCryptoMlKem512,
+  AWS_ML_KEM_512
+);
+mlkem_profile_benches!(
+  mlkem768_keygen,
+  mlkem768_encapsulate,
+  mlkem768_decapsulate,
+  "mlkem768",
+  MlKem768,
+  FipsMlKem768,
+  LibcruxMlKem768,
+  RustCryptoMlKem768,
+  AWS_ML_KEM_768
+);
+mlkem_profile_benches!(
+  mlkem1024_keygen,
+  mlkem1024_encapsulate,
+  mlkem1024_decapsulate,
+  "mlkem1024",
+  MlKem1024,
+  FipsMlKem1024,
+  LibcruxMlKem1024,
+  RustCryptoMlKem1024,
+  AWS_ML_KEM_1024
+);
+
+#[cfg(feature = "diag")]
+fn mlkem_matrix_sample(c: &mut Criterion) {
+  use rscrypto::auth::mlkem::{
+    diag_mlkem768_matrix_sample_pair_digest, diag_mlkem768_matrix_sample_quad_digest,
+    diag_mlkem768_matrix_sample_scalar_digest, diag_mlkem1024_matrix_sample_pair_digest,
+    diag_mlkem1024_matrix_sample_quad_digest, diag_mlkem1024_matrix_sample_scalar_digest,
+  };
+
+  let rho = deterministic_bytes::<32>(0x42);
+  let mut g = c.benchmark_group("mlkem-matrix-sample");
+
+  g.bench_function("k=3/scalar", |b| {
+    b.iter(|| black_box(diag_mlkem768_matrix_sample_scalar_digest(black_box(&rho))))
   });
-
-  g.bench_function("libcrux", |b| {
-    b.iter(|| {
-      black_box(LibcruxMlKem768::encapsulate(
-        black_box(&libcrux_ek),
-        black_box(encaps_random),
-      ))
-    })
+  g.bench_function("k=3/pair", |b| {
+    b.iter(|| black_box(diag_mlkem768_matrix_sample_pair_digest(black_box(&rho))))
   });
-
-  aws_lc_bench! {
-    g.bench_function("aws-lc-rs", |b| {
-      b.iter(|| black_box(aws_ek.encapsulate().unwrap()))
-    });
-  }
-
-  g.bench_function("fips203", |b| {
-    b.iter(|| black_box(fips_ek.encaps_from_seed(black_box(&encaps_random))))
+  g.bench_function("k=3/quad", |b| {
+    b.iter(|| black_box(diag_mlkem768_matrix_sample_quad_digest(black_box(&rho))))
   });
-
-  g.bench_function("rustcrypto", |b| {
-    b.iter(|| black_box(rustcrypto_ek.encapsulate_deterministic(black_box(&RustCryptoMlKemB32::from(encaps_random)))))
+  g.bench_function("k=4/scalar", |b| {
+    b.iter(|| black_box(diag_mlkem1024_matrix_sample_scalar_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/pair", |b| {
+    b.iter(|| black_box(diag_mlkem1024_matrix_sample_pair_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/quad", |b| {
+    b.iter(|| black_box(diag_mlkem1024_matrix_sample_quad_digest(black_box(&rho))))
   });
 
   g.finish();
 }
 
-fn mlkem768_decapsulate(c: &mut Criterion) {
-  let key_random = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x30);
-  let encaps_random = deterministic_bytes::<{ MlKem768::ENCAPSULATION_RANDOM_SIZE }>(0x90);
-  let (ek, dk) = MlKem768::generate_keypair(|out| {
-    out.copy_from_slice(&key_random);
-    Ok::<(), MlKemError>(())
-  })
-  .unwrap();
-  let (ciphertext, _) = MlKem768::encapsulate(&ek, |out| {
-    out.copy_from_slice(&encaps_random);
-    Ok::<(), MlKemError>(())
-  })
-  .unwrap();
-  let (fips_ek, fips_dk) = FipsMlKem768::KG::keygen_from_seed(
-    array_from_slice::<32>(&key_random[..32]),
-    array_from_slice::<32>(&key_random[32..]),
-  );
-  let (_, fips_ciphertext) = fips_ek.encaps_from_seed(&encaps_random);
-  let rustcrypto_dk =
-    RustCryptoMlKemDecapsulationKey::<RustCryptoMlKem768>::from_seed(RustCryptoMlKemSeed::from(key_random));
-  let (rustcrypto_ciphertext, _) = rustcrypto_dk
-    .encapsulation_key()
-    .encapsulate_deterministic(&RustCryptoMlKemB32::from(encaps_random));
-  let libcrux_keypair = LibcruxMlKem768::generate_key_pair(key_random);
-  let libcrux_ek = libcrux_keypair.public_key().clone();
-  let libcrux_dk = libcrux_keypair.private_key().clone();
-  let (libcrux_ciphertext, _) = LibcruxMlKem768::encapsulate(&libcrux_ek, encaps_random);
-  aws_lc_bench! {
-    let aws_dk = AwsMlKemDecapsulationKey::generate(&AWS_ML_KEM_768).unwrap();
-    let aws_ek = aws_dk.encapsulation_key().unwrap();
-    let (aws_ciphertext, _) = aws_ek.encapsulate().unwrap();
-  }
-  let mut g = c.benchmark_group("mlkem768/decapsulate");
+#[cfg(not(feature = "diag"))]
+fn mlkem_matrix_sample(_: &mut Criterion) {}
 
-  g.bench_function("rscrypto", |b| {
-    b.iter(|| MlKem768::decapsulate(black_box(&dk), black_box(&ciphertext)).unwrap())
+#[cfg(feature = "diag")]
+fn mlkem_arithmetic(c: &mut Criterion) {
+  use rscrypto::auth::mlkem::{
+    diag_mlkem_inverse_ntt_montgomery_product_digest, diag_mlkem_multiply_ntts_add_assign_digest, diag_mlkem_ntt_digest,
+  };
+
+  let mut g = c.benchmark_group("mlkem-arithmetic");
+
+  g.bench_function("ntt", |b| {
+    b.iter(|| black_box(diag_mlkem_ntt_digest(black_box(0x1234))))
   });
-
-  g.bench_function("libcrux", |b| {
-    b.iter(|| {
-      black_box(LibcruxMlKem768::decapsulate(
-        black_box(&libcrux_dk),
-        black_box(&libcrux_ciphertext),
-      ))
-    })
+  g.bench_function("inverse-ntt-montgomery-product", |b| {
+    b.iter(|| black_box(diag_mlkem_inverse_ntt_montgomery_product_digest(black_box(0x2345))))
   });
-
-  aws_lc_bench! {
-    g.bench_function("aws-lc-rs", |b| {
-      b.iter(|| {
-        black_box(
-          aws_dk
-            .decapsulate(AwsMlKemCiphertext::from(black_box(aws_ciphertext.as_ref())))
-            .unwrap(),
-        )
-      })
-    });
-  }
-
-  g.bench_function("fips203", |b| {
-    b.iter(|| black_box(fips_dk.try_decaps(black_box(&fips_ciphertext)).unwrap()))
-  });
-
-  g.bench_function("rustcrypto", |b| {
-    b.iter(|| black_box(rustcrypto_dk.decapsulate(black_box(&rustcrypto_ciphertext))))
+  g.bench_function("multiply-ntts-add-assign", |b| {
+    b.iter(|| black_box(diag_mlkem_multiply_ntts_add_assign_digest(black_box(0x3456))))
   });
 
   g.finish();
 }
+
+#[cfg(not(feature = "diag"))]
+fn mlkem_arithmetic(_: &mut Criterion) {}
+
+#[cfg(feature = "diag")]
+fn mlkem_decap_phases(c: &mut Criterion) {
+  let key_random_768 = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x51);
+  let encaps_random_768 = deterministic_bytes::<{ MlKem768::ENCAPSULATION_RANDOM_SIZE }>(0x91);
+  let (ek768, dk768) = MlKem768::generate_keypair(|out| {
+    out.copy_from_slice(&key_random_768);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let prepared_ek768 = ek768.prepare().unwrap();
+  let prepared_dk768 = dk768.prepare().unwrap();
+  let (ct768, _) = prepared_ek768
+    .encapsulate(|out| {
+      out.copy_from_slice(&encaps_random_768);
+      Ok::<(), MlKemError>(())
+    })
+    .unwrap();
+
+  let key_random_1024 = deterministic_bytes::<{ MlKem1024::KEY_GENERATION_RANDOM_SIZE }>(0x61);
+  let encaps_random_1024 = deterministic_bytes::<{ MlKem1024::ENCAPSULATION_RANDOM_SIZE }>(0xA1);
+  let (ek1024, dk1024) = MlKem1024::generate_keypair(|out| {
+    out.copy_from_slice(&key_random_1024);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let prepared_ek1024 = ek1024.prepare().unwrap();
+  let prepared_dk1024 = dk1024.prepare().unwrap();
+  let (ct1024, _) = prepared_ek1024
+    .encapsulate(|out| {
+      out.copy_from_slice(&encaps_random_1024);
+      Ok::<(), MlKemError>(())
+    })
+    .unwrap();
+
+  let mut g = c.benchmark_group("mlkem-decap-phases");
+
+  g.bench_function("k=3/decrypt", |b| {
+    b.iter(|| black_box(prepared_dk768.diag_decap_decrypt_digest(black_box(&ct768))))
+  });
+  g.bench_function("k=3/reencrypt", |b| {
+    b.iter(|| black_box(prepared_dk768.diag_decap_reencrypt_digest(black_box(0x42))))
+  });
+  g.bench_function("k=3/hash-select", |b| {
+    b.iter(|| black_box(prepared_dk768.diag_decap_hash_select_digest(black_box(&ct768), black_box(0x42))))
+  });
+  g.bench_function("k=4/decrypt", |b| {
+    b.iter(|| black_box(prepared_dk1024.diag_decap_decrypt_digest(black_box(&ct1024))))
+  });
+  g.bench_function("k=4/reencrypt", |b| {
+    b.iter(|| black_box(prepared_dk1024.diag_decap_reencrypt_digest(black_box(0x52))))
+  });
+  g.bench_function("k=4/hash-select", |b| {
+    b.iter(|| black_box(prepared_dk1024.diag_decap_hash_select_digest(black_box(&ct1024), black_box(0x52))))
+  });
+
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
+fn mlkem_decap_phases(_: &mut Criterion) {}
+
+#[cfg(feature = "diag")]
+fn mlkem_pke_phases(c: &mut Criterion) {
+  let key_random_768 = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x71);
+  let (ek768, _) = MlKem768::generate_keypair(|out| {
+    out.copy_from_slice(&key_random_768);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let prepared_ek768 = ek768.prepare().unwrap();
+
+  let key_random_1024 = deterministic_bytes::<{ MlKem1024::KEY_GENERATION_RANDOM_SIZE }>(0x81);
+  let (ek1024, _) = MlKem1024::generate_keypair(|out| {
+    out.copy_from_slice(&key_random_1024);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let prepared_ek1024 = ek1024.prepare().unwrap();
+
+  let mut g = c.benchmark_group("mlkem-pke-phases");
+
+  g.bench_function("k=3/noise-ntt", |b| {
+    b.iter(|| black_box(prepared_ek768.diag_pke_noise_ntt_digest(black_box(0x42))))
+  });
+  g.bench_function("k=3/matrix-u-materialized", |b| {
+    b.iter(|| black_box(prepared_ek768.diag_pke_matrix_u_digest(black_box(0x4200))))
+  });
+  g.bench_function("k=3/matrix-u-fused", |b| {
+    b.iter(|| black_box(prepared_ek768.diag_pke_matrix_u_fused_digest(black_box(0x4200))))
+  });
+  g.bench_function("k=3/inverse-u-add", |b| {
+    b.iter(|| black_box(prepared_ek768.diag_pke_inverse_u_add_digest(black_box(0x4300))))
+  });
+  g.bench_function("k=3/v", |b| {
+    b.iter(|| black_box(prepared_ek768.diag_pke_v_digest(black_box(0x4400))))
+  });
+  g.bench_function("k=3/encode", |b| {
+    b.iter(|| black_box(prepared_ek768.diag_pke_encode_digest(black_box(0x4500))))
+  });
+  g.bench_function("k=4/noise-ntt", |b| {
+    b.iter(|| black_box(prepared_ek1024.diag_pke_noise_ntt_digest(black_box(0x52))))
+  });
+  g.bench_function("k=4/matrix-u-materialized", |b| {
+    b.iter(|| black_box(prepared_ek1024.diag_pke_matrix_u_digest(black_box(0x5200))))
+  });
+  g.bench_function("k=4/matrix-u-fused", |b| {
+    b.iter(|| black_box(prepared_ek1024.diag_pke_matrix_u_fused_digest(black_box(0x5200))))
+  });
+  g.bench_function("k=4/inverse-u-add", |b| {
+    b.iter(|| black_box(prepared_ek1024.diag_pke_inverse_u_add_digest(black_box(0x5300))))
+  });
+  g.bench_function("k=4/v", |b| {
+    b.iter(|| black_box(prepared_ek1024.diag_pke_v_digest(black_box(0x5400))))
+  });
+  g.bench_function("k=4/encode", |b| {
+    b.iter(|| black_box(prepared_ek1024.diag_pke_encode_digest(black_box(0x5500))))
+  });
+
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
+fn mlkem_pke_phases(_: &mut Criterion) {}
 
 criterion_group!(
   benches,
@@ -1446,8 +1682,18 @@ criterion_group!(
   ed25519_verify,
   x25519_public_key,
   x25519_diffie_hellman,
+  mlkem512_keygen,
+  mlkem512_encapsulate,
+  mlkem512_decapsulate,
   mlkem768_keygen,
   mlkem768_encapsulate,
-  mlkem768_decapsulate
+  mlkem768_decapsulate,
+  mlkem1024_keygen,
+  mlkem1024_encapsulate,
+  mlkem1024_decapsulate,
+  mlkem_matrix_sample,
+  mlkem_arithmetic,
+  mlkem_decap_phases,
+  mlkem_pke_phases
 );
 criterion_main!(benches);

@@ -190,8 +190,18 @@ path = "fuzz_targets/auth_x25519.rs"
 doc = false
 
 [[bin]]
+name = "auth_mlkem512"
+path = "fuzz_targets/auth_mlkem512.rs"
+doc = false
+
+[[bin]]
 name = "auth_mlkem768"
 path = "fuzz_targets/auth_mlkem768.rs"
+doc = false
+
+[[bin]]
+name = "auth_mlkem1024"
+path = "fuzz_targets/auth_mlkem1024.rs"
 doc = false
 
 [[bin]]

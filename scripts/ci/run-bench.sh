@@ -152,7 +152,9 @@ DEFAULT_AUTH_ALGOS=(
   "ecdsa-p384"
   "ed25519"
   "x25519"
+  "mlkem512"
   "mlkem768"
+  "mlkem1024"
 )
 
 DEFAULT_SP800185_ALGOS=(
@@ -275,7 +277,10 @@ auth_filter_token() {
     ecdsa-p384) echo "^ecdsa-p384/" ;;
     ed25519) echo "ed25519" ;;
     x25519) echo "x25519" ;;
-    ml-kem|ml-kem-768|mlkem|mlkem768) echo "^mlkem768/" ;;
+    ml-kem|mlkem) echo "^mlkem(512|768|1024)/" ;;
+    ml-kem-512|mlkem512) echo "^mlkem512/" ;;
+    ml-kem-768|mlkem768) echo "^mlkem768/" ;;
+    ml-kem-1024|mlkem1024) echo "^mlkem1024/" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -693,8 +698,19 @@ if [[ -n "$ONLY_INPUT" ]]; then
       blake3)
         append_unique "blake3" SELECTED_ALGOS
         ;;
-      mlkem|mlkem768)
+      mlkem)
+        append_unique "mlkem512" SELECTED_ALGOS
         append_unique "mlkem768" SELECTED_ALGOS
+        append_unique "mlkem1024" SELECTED_ALGOS
+        ;;
+      mlkem512)
+        append_unique "mlkem512" SELECTED_ALGOS
+        ;;
+      mlkem768)
+        append_unique "mlkem768" SELECTED_ALGOS
+        ;;
+      mlkem1024)
+        append_unique "mlkem1024" SELECTED_ALGOS
         ;;
       crc64|crc64nvme|crc64xz)
         append_unique "crc64-xz" SELECTED_ALGOS

@@ -69,6 +69,15 @@ symbols = [
   "ct_entry_aegis256_open",
   "ct_entry_ascon_aead128_open",
   "ct_entry_x25519",
+  "ct_entry_mlkem512_keygen",
+  "ct_entry_mlkem512_encapsulate",
+  "ct_entry_mlkem512_decapsulate",
+  "ct_entry_mlkem768_keygen",
+  "ct_entry_mlkem768_encapsulate",
+  "ct_entry_mlkem768_decapsulate",
+  "ct_entry_mlkem1024_keygen",
+  "ct_entry_mlkem1024_encapsulate",
+  "ct_entry_mlkem1024_decapsulate",
   "ct_entry_ed25519_sign",
   "ct_entry_ecdsa_p256_sign",
   "ct_entry_ecdsa_p384_sign",
@@ -110,6 +119,9 @@ covers = [
   "keyed_hash.blake3_verify",
   "aead.open_authentication",
   "kx.x25519",
+  "kem.mlkem512",
+  "kem.mlkem768",
+  "kem.mlkem1024",
   "signature.ed25519_sign",
   "signature.ecdsa_p256_sign",
   "signature.ecdsa_p384_sign",
@@ -417,6 +429,114 @@ left_class = "fixed scalar"
 right_class = "random scalar"
 samples = 20000
 smoke_samples = 2000
+
+[[dudect_case]]
+name = "mlkem512_keygen_secret_noise_fixed_vs_random"
+primitive = "kem.mlkem512"
+filter = "mlkem512_keygen_secret_noise_fixed_vs_random"
+left_class = "ML-KEM-512 key generation with fixed secret noise seed and fixed public matrix seed"
+right_class = "ML-KEM-512 key generation with random secret noise seed and fixed public matrix seed"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "mlkem512_encapsulate_fixed_vs_random_coins"
+primitive = "kem.mlkem512"
+filter = "mlkem512_encapsulate_fixed_vs_random_coins"
+left_class = "ML-KEM-512 encapsulation with fixed FIPS encapsulation coins"
+right_class = "ML-KEM-512 encapsulation with random FIPS encapsulation coins"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem512_decapsulate_fixed_vs_random_secret_key"
+primitive = "kem.mlkem512"
+filter = "mlkem512_decapsulate_fixed_vs_random_secret_key"
+left_class = "ML-KEM-512 decapsulation with fixed secret PKE key and fixed embedded public key"
+right_class = "ML-KEM-512 decapsulation with random secret PKE key and fixed embedded public key"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem512_decapsulate_rejection_seed_fixed_vs_random"
+primitive = "kem.mlkem512"
+filter = "mlkem512_decapsulate_rejection_seed_fixed_vs_random"
+left_class = "ML-KEM-512 implicit rejection with fixed secret rejection seed"
+right_class = "ML-KEM-512 implicit rejection with random secret rejection seed"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem768_keygen_secret_noise_fixed_vs_random"
+primitive = "kem.mlkem768"
+filter = "mlkem768_keygen_secret_noise_fixed_vs_random"
+left_class = "ML-KEM-768 key generation with fixed secret noise seed and fixed public matrix seed"
+right_class = "ML-KEM-768 key generation with random secret noise seed and fixed public matrix seed"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "mlkem768_encapsulate_fixed_vs_random_coins"
+primitive = "kem.mlkem768"
+filter = "mlkem768_encapsulate_fixed_vs_random_coins"
+left_class = "ML-KEM-768 encapsulation with fixed FIPS encapsulation coins"
+right_class = "ML-KEM-768 encapsulation with random FIPS encapsulation coins"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem768_decapsulate_fixed_vs_random_secret_key"
+primitive = "kem.mlkem768"
+filter = "mlkem768_decapsulate_fixed_vs_random_secret_key"
+left_class = "ML-KEM-768 decapsulation with fixed secret PKE key and fixed embedded public key"
+right_class = "ML-KEM-768 decapsulation with random secret PKE key and fixed embedded public key"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem768_decapsulate_rejection_seed_fixed_vs_random"
+primitive = "kem.mlkem768"
+filter = "mlkem768_decapsulate_rejection_seed_fixed_vs_random"
+left_class = "ML-KEM-768 implicit rejection with fixed secret rejection seed"
+right_class = "ML-KEM-768 implicit rejection with random secret rejection seed"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem1024_keygen_secret_noise_fixed_vs_random"
+primitive = "kem.mlkem1024"
+filter = "mlkem1024_keygen_secret_noise_fixed_vs_random"
+left_class = "ML-KEM-1024 key generation with fixed secret noise seed and fixed public matrix seed"
+right_class = "ML-KEM-1024 key generation with random secret noise seed and fixed public matrix seed"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "mlkem1024_encapsulate_fixed_vs_random_coins"
+primitive = "kem.mlkem1024"
+filter = "mlkem1024_encapsulate_fixed_vs_random_coins"
+left_class = "ML-KEM-1024 encapsulation with fixed FIPS encapsulation coins"
+right_class = "ML-KEM-1024 encapsulation with random FIPS encapsulation coins"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem1024_decapsulate_fixed_vs_random_secret_key"
+primitive = "kem.mlkem1024"
+filter = "mlkem1024_decapsulate_fixed_vs_random_secret_key"
+left_class = "ML-KEM-1024 decapsulation with fixed secret PKE key and fixed embedded public key"
+right_class = "ML-KEM-1024 decapsulation with random secret PKE key and fixed embedded public key"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem1024_decapsulate_rejection_seed_fixed_vs_random"
+primitive = "kem.mlkem1024"
+filter = "mlkem1024_decapsulate_rejection_seed_fixed_vs_random"
+left_class = "ML-KEM-1024 implicit rejection with fixed secret rejection seed"
+right_class = "ML-KEM-1024 implicit rejection with random secret rejection seed"
+samples = 20000
+smoke_samples = 512
 
 [[dudect_case]]
 name = "ed25519_sign_fixed_vs_random_secret"
@@ -1086,6 +1206,78 @@ primitive = "mac.hmac_verify"
 variant = "HmacSha512"
 dudect = ["hmac_sha512_valid_vs_invalid_tag"]
 binsec = ["mac.hmac_verify.sha512.portable.all"]
+
+[[evidence_unit]]
+id = "kem.mlkem512.keygen"
+primitive = "kem.mlkem512"
+variant = "KeyGen"
+dudect = ["mlkem512_keygen_secret_noise_fixed_vs_random"]
+notes = "KeyGen evidence fixes the public matrix seed rho and varies only the secret noise seed sigma. Full FIPS key generation is still covered by the C harness symbol; all-seed DudeCT splits are intentionally not used because rho is published in the encapsulation key and drives FIPS rejection sampling work."
+
+[[evidence_unit]]
+id = "kem.mlkem512.encapsulate"
+primitive = "kem.mlkem512"
+variant = "Encapsulate"
+dudect = ["mlkem512_encapsulate_fixed_vs_random_coins"]
+notes = "Encapsulation evidence holds the public encapsulation key fixed and varies only the FIPS encapsulation coins."
+
+[[evidence_unit]]
+id = "kem.mlkem512.decapsulate"
+primitive = "kem.mlkem512"
+variant = "Decapsulate"
+dudect = [
+  "mlkem512_decapsulate_fixed_vs_random_secret_key",
+  "mlkem512_decapsulate_rejection_seed_fixed_vs_random",
+]
+notes = "Decapsulation evidence varies the secret PKE key with the embedded public key fixed, and separately covers the implicit-rejection seed path."
+
+[[evidence_unit]]
+id = "kem.mlkem768.keygen"
+primitive = "kem.mlkem768"
+variant = "KeyGen"
+dudect = ["mlkem768_keygen_secret_noise_fixed_vs_random"]
+notes = "KeyGen evidence fixes the public matrix seed rho and varies only the secret noise seed sigma. Full FIPS key generation is still covered by the C harness symbol; all-seed DudeCT splits are intentionally not used because rho is published in the encapsulation key and drives FIPS rejection sampling work."
+
+[[evidence_unit]]
+id = "kem.mlkem768.encapsulate"
+primitive = "kem.mlkem768"
+variant = "Encapsulate"
+dudect = ["mlkem768_encapsulate_fixed_vs_random_coins"]
+notes = "Encapsulation evidence holds the public encapsulation key fixed and varies only the FIPS encapsulation coins."
+
+[[evidence_unit]]
+id = "kem.mlkem768.decapsulate"
+primitive = "kem.mlkem768"
+variant = "Decapsulate"
+dudect = [
+  "mlkem768_decapsulate_fixed_vs_random_secret_key",
+  "mlkem768_decapsulate_rejection_seed_fixed_vs_random",
+]
+notes = "Decapsulation evidence varies the secret PKE key with the embedded public key fixed, and separately covers the implicit-rejection seed path."
+
+[[evidence_unit]]
+id = "kem.mlkem1024.keygen"
+primitive = "kem.mlkem1024"
+variant = "KeyGen"
+dudect = ["mlkem1024_keygen_secret_noise_fixed_vs_random"]
+notes = "KeyGen evidence fixes the public matrix seed rho and varies only the secret noise seed sigma. Full FIPS key generation is still covered by the C harness symbol; all-seed DudeCT splits are intentionally not used because rho is published in the encapsulation key and drives FIPS rejection sampling work."
+
+[[evidence_unit]]
+id = "kem.mlkem1024.encapsulate"
+primitive = "kem.mlkem1024"
+variant = "Encapsulate"
+dudect = ["mlkem1024_encapsulate_fixed_vs_random_coins"]
+notes = "Encapsulation evidence holds the public encapsulation key fixed and varies only the FIPS encapsulation coins."
+
+[[evidence_unit]]
+id = "kem.mlkem1024.decapsulate"
+primitive = "kem.mlkem1024"
+variant = "Decapsulate"
+dudect = [
+  "mlkem1024_decapsulate_fixed_vs_random_secret_key",
+  "mlkem1024_decapsulate_rejection_seed_fixed_vs_random",
+]
+notes = "Decapsulation evidence varies the secret PKE key with the embedded public key fixed, and separately covers the implicit-rejection seed path."
 
 [[evidence_unit]]
 id = "aead.open_authentication.aes128gcm"
@@ -2450,11 +2642,39 @@ status = "covered"
 symbols = ["ct_entry_x25519"]
 
 [[primitive]]
+id = "kem.mlkem512"
+tier = "A"
+claim = "ct-intended"
+features = ["ml-kem"]
+variants = ["KeyGen", "Encapsulate", "Decapsulate"]
+entrypoints = ["MlKem512::generate_keypair", "MlKem512::encapsulate", "MlKem512::decapsulate"]
+secrets = [
+  "decapsulation_key",
+  "shared_secret",
+  "key_generation_random",
+  "encapsulation_random",
+  "implicit_rejection_seed",
+]
+public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_error", "rng_failure"]
+may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+binsec = "deferred"
+notes = "ML-KEM-512 is implemented with fixed-work secret arithmetic and implicit rejection across portable and accelerated arithmetic backends. The public matrix seed rho is published in the encapsulation key and drives FIPS rejection sampling, so KeyGen DudeCT evidence fixes rho and varies the secret noise seed sigma. BINSEC proof is deferred because ML-KEM needs smaller leaf proof kernels; release evidence is carried by harness artifacts, backend-equivalence tests, assembly heuristics, object disassembly, and DudeCT."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_mlkem512_keygen",
+  "ct_entry_mlkem512_encapsulate",
+  "ct_entry_mlkem512_decapsulate",
+]
+
+[[primitive]]
 id = "kem.mlkem768"
 tier = "A"
-claim = "best-effort"
+claim = "ct-intended"
 features = ["ml-kem"]
-variants = ["MlKem768"]
+variants = ["KeyGen", "Encapsulate", "Decapsulate"]
 entrypoints = ["MlKem768::generate_keypair", "MlKem768::encapsulate", "MlKem768::decapsulate"]
 secrets = [
   "decapsulation_key",
@@ -2467,10 +2687,43 @@ public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_
 may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Portable ML-KEM-768 is implemented with fixed-work arithmetic, implicit rejection, and local optimized assembly review for variable-latency division. This is not a release constant-time claim until CT harness and DudeCT coverage land."
+binsec = "deferred"
+notes = "ML-KEM-768 is implemented with fixed-work secret arithmetic and implicit rejection across portable and accelerated arithmetic backends. The public matrix seed rho is published in the encapsulation key and drives FIPS rejection sampling, so KeyGen DudeCT evidence fixes rho and varies the secret noise seed sigma. BINSEC proof is deferred because ML-KEM needs smaller leaf proof kernels; release evidence is carried by harness artifacts, backend-equivalence tests, assembly heuristics, object disassembly, and DudeCT."
 [primitive.harness]
-status = "missing"
-gap = "ML-KEM entrypoints are not yet represented in tools/ct-harness or tools/ct-dudect; add explicit keygen, encapsulation, and decapsulation harnesses before promoting this primitive to ct-intended."
+status = "covered"
+symbols = [
+  "ct_entry_mlkem768_keygen",
+  "ct_entry_mlkem768_encapsulate",
+  "ct_entry_mlkem768_decapsulate",
+]
+
+[[primitive]]
+id = "kem.mlkem1024"
+tier = "A"
+claim = "ct-intended"
+features = ["ml-kem"]
+variants = ["KeyGen", "Encapsulate", "Decapsulate"]
+entrypoints = ["MlKem1024::generate_keypair", "MlKem1024::encapsulate", "MlKem1024::decapsulate"]
+secrets = [
+  "decapsulation_key",
+  "shared_secret",
+  "key_generation_random",
+  "encapsulation_random",
+  "implicit_rejection_seed",
+]
+public = ["encapsulation_key", "ciphertext", "ciphertext_length", "public_shape_error", "rng_failure"]
+may_leak = ["input_length", "public_shape_error", "public_rng_failure", "opaque_success_or_failure"]
+must_not_leak_ref = "common_secret_data"
+required = ["tier_a"]
+binsec = "deferred"
+notes = "ML-KEM-1024 is implemented with fixed-work secret arithmetic and implicit rejection across portable and accelerated arithmetic backends. The public matrix seed rho is published in the encapsulation key and drives FIPS rejection sampling, so KeyGen DudeCT evidence fixes rho and varies the secret noise seed sigma. BINSEC proof is deferred because ML-KEM needs smaller leaf proof kernels; release evidence is carried by harness artifacts, backend-equivalence tests, assembly heuristics, object disassembly, and DudeCT."
+[primitive.harness]
+status = "covered"
+symbols = [
+  "ct_entry_mlkem1024_keygen",
+  "ct_entry_mlkem1024_encapsulate",
+  "ct_entry_mlkem1024_decapsulate",
+]
 
 [[primitive]]
 id = "signature.ed25519_sign"
