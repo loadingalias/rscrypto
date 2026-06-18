@@ -1,16 +1,9 @@
 #![allow(clippy::indexing_slicing)] // Fixed-size ML-KEM native tables and assembly ABI.
 #![allow(unsafe_code)]
 
-use core::arch::{
-  aarch64::{
-    int16x8_t, vaddq_s16, vandq_s16, vdupq_n_s16, vld1q_s16, vreinterpretq_u16_s16, vshrq_n_s16, vst1q_u16, vsubq_s16,
-  },
-  global_asm,
-};
+use core::arch::global_asm;
 
-use super::{N, Poly, Q_I16, Q_I32};
-
-const Q_TIMES_4_I32: i32 = Q_I32 * 4;
+use super::Poly;
 
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
@@ -63,25 +56,6 @@ unsafe extern "C" {
 }
 
 #[inline]
-pub(super) unsafe fn ntt_asm(poly: &mut Poly) {
-  // SAFETY: forwarded from this function's caller; the raw assembly ABI invariants are documented in
-  // `ntt_asm_raw`.
-  unsafe {
-    ntt_asm_raw(poly);
-  }
-
-  // SAFETY: post-assembly NEON normalization because:
-  // 1. This module compiles only for aarch64 targets, where Advanced SIMD is baseline.
-  // 2. `poly` is a fixed 256-coefficient polynomial; the loop in `normalize_ntt_asm` touches only
-  //    in-bounds 8-coefficient chunks.
-  // 3. The assembly emits signed representatives bounded by [-4Q, 4Q), so the fixed three-step
-  //    reduction canonicalizes every lane without data-dependent branches or division.
-  unsafe {
-    normalize_ntt_asm(poly);
-  }
-}
-
-#[inline]
 unsafe fn ntt_asm_raw(poly: &mut Poly) {
   #[cfg(target_os = "macos")]
   {
@@ -122,62 +96,8 @@ unsafe fn ntt_asm_raw(poly: &mut Poly) {
 
 #[cfg(test)]
 pub(super) unsafe fn test_ntt_asm_raw(poly: &mut Poly) {
-  // SAFETY: test-only direct access to the same raw assembly entry point used by `ntt_asm`.
+  // SAFETY: test-only direct access to the raw assembly entry point.
   unsafe {
     ntt_asm_raw(poly);
   }
-}
-
-#[target_feature(enable = "neon")]
-unsafe fn normalize_ntt_asm(poly: &mut Poly) {
-  let q = vdupq_n_s16(Q_I16);
-  let q4 = vdupq_n_s16(Q_TIMES_4_I32 as i16);
-
-  for i in (0..N).step_by(8) {
-    // SAFETY: fixed-size aarch64 normalization because:
-    // 1. `i` advances by 8 while `i < N == 256`, so each load/store touches `i..i + 8`.
-    // 2. The raw assembly output is an i16 polynomial in the same memory as `poly`.
-    // 3. The reduction schedule is fixed and independent of coefficient values.
-    unsafe {
-      let value = vld1q_s16(poly.as_ptr().add(i).cast::<i16>());
-      let negative = vshrq_n_s16::<15>(value);
-      let mut value = vaddq_s16(value, vandq_s16(negative, q4));
-      value = sub_q_if_ge_i16x8(value, q);
-      value = sub_q_if_ge_i16x8(value, q);
-      value = sub_q_if_ge_i16x8(value, q);
-      vst1q_u16(poly.as_mut_ptr().add(i), vreinterpretq_u16_s16(value));
-    }
-  }
-}
-
-#[target_feature(enable = "neon")]
-fn sub_q_if_ge_i16x8(value: int16x8_t, q: int16x8_t) -> int16x8_t {
-  let reduced = vsubq_s16(value, q);
-  let negative = vshrq_n_s16::<15>(reduced);
-  vaddq_s16(reduced, vandq_s16(negative, q))
-}
-
-#[cfg(test)]
-#[inline(always)]
-fn normalize_ntt_asm_coeff(coeff: u16) -> u16 {
-  let signed = i32::from(coeff as i16);
-  debug_assert!((-Q_TIMES_4_I32..Q_TIMES_4_I32).contains(&signed));
-
-  let mut value = signed + ((signed >> 31) & Q_TIMES_4_I32);
-  value = sub_q_if_ge_i32(value);
-  value = sub_q_if_ge_i32(value);
-  value = sub_q_if_ge_i32(value);
-  value as u16
-}
-
-#[cfg(test)]
-#[inline(always)]
-fn sub_q_if_ge_i32(value: i32) -> i32 {
-  let reduced = value - Q_I32;
-  reduced + ((reduced >> 31) & Q_I32)
-}
-
-#[cfg(test)]
-pub(super) fn test_normalize_ntt_asm_coeff(value: i16) -> u16 {
-  normalize_ntt_asm_coeff(value as u16)
 }
