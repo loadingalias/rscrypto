@@ -1,5 +1,5 @@
 use core::simd::{
-  i32x4,
+  i32x4, i64x2,
   num::{SimdInt, SimdUint},
   u32x4,
 };
@@ -24,74 +24,105 @@ pub(super) unsafe fn decompress_values_4<const D: usize>(values: [u16; 4]) -> [u
 
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn ntt_vector(poly: &mut Poly) {
+  let poly_ptr = poly.as_mut_ptr();
   let mut zeta_index = 1usize;
   let mut len = 128usize;
   while len >= 4 {
     let mut start = 0usize;
     while start < N {
-      let zeta = ZETAS_MONT[zeta_index];
-      zeta_index = zeta_index.strict_add(1);
-      let end = start.strict_add(len);
+      // SAFETY: `zeta_index` follows the fixed ML-KEM NTT schedule and stays inside
+      // `ZETAS_MONT`.
+      let zeta = unsafe { load_zeta(zeta_index) };
+      zeta_index = zeta_index.wrapping_add(1);
+      let end = start.wrapping_add(len);
       let mut j = start;
       while j < end {
-        let u = load_u32x4(poly, j);
-        let t = mul_mont_const_mod_u32x4(load_u32x4(poly, j.strict_add(len)), zeta);
-        store_u32x4(poly, j.strict_add(len), sub_mod_u32x4(u, t));
-        store_u32x4(poly, j, add_mod_u32x4(u, t));
-        j = j.strict_add(4);
+        // SAFETY: `j..j + 4` and `j + len..j + len + 4` are inside the lower and upper halves of
+        // the current public NTT butterfly block.
+        unsafe {
+          let u = load_u32x4(poly_ptr.cast_const(), j);
+          let upper = j.wrapping_add(len);
+          let t = mul_mont_const_mod_u32x4(load_u32x4(poly_ptr.cast_const(), upper), zeta);
+          store_u32x4(poly_ptr, upper, sub_mod_u32x4(u, t));
+          store_u32x4(poly_ptr, j, add_mod_u32x4(u, t));
+        }
+        j = j.wrapping_add(4);
       }
-      start = start.strict_add(len << 1);
+      start = start.wrapping_add(len << 1);
     }
     len >>= 1;
   }
 
-  ntt_len2_vector(poly, &mut zeta_index);
+  // SAFETY: the first NTT stages leave `zeta_index` positioned at the fixed len-2 tail schedule,
+  // and `poly_ptr` points to the full 256-coefficient polynomial.
+  unsafe {
+    ntt_len2_vector(poly_ptr, &mut zeta_index);
+  }
 }
 
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn inverse_ntt_vector(poly: &mut Poly, final_scale_mont: i16) {
+  let poly_ptr = poly.as_mut_ptr();
   let mut zeta_index = 127usize;
-  inverse_ntt_len2_vector(poly, &mut zeta_index);
+  // SAFETY: `zeta_index` starts at the fixed inverse len-2 tail schedule, and `poly_ptr` points to
+  // the full 256-coefficient polynomial.
+  unsafe {
+    inverse_ntt_len2_vector(poly_ptr, &mut zeta_index);
+  }
 
   let mut len = 4usize;
   while len <= 128 {
     let mut start = 0usize;
     while start < N {
-      let zeta = ZETAS_MONT[zeta_index];
-      zeta_index = zeta_index.strict_sub(1);
-      let end = start.strict_add(len);
+      // SAFETY: `zeta_index` follows the fixed ML-KEM inverse NTT schedule and stays inside
+      // `ZETAS_MONT`.
+      let zeta = unsafe { load_zeta(zeta_index) };
+      zeta_index = zeta_index.wrapping_sub(1);
+      let end = start.wrapping_add(len);
       let mut j = start;
       while j < end {
-        let t = load_u32x4(poly, j);
-        let u = load_u32x4(poly, j.strict_add(len));
-        store_u32x4(poly, j, add_mod_u32x4(t, u));
-        store_u32x4(
-          poly,
-          j.strict_add(len),
-          mul_mont_const_mod_u32x4(sub_mod_u32x4(u, t), zeta),
-        );
-        j = j.strict_add(4);
+        // SAFETY: `j..j + 4` and `j + len..j + len + 4` are inside the lower and upper halves of
+        // the current public inverse-NTT butterfly block.
+        unsafe {
+          let t = load_u32x4(poly_ptr.cast_const(), j);
+          let upper = j.wrapping_add(len);
+          let u = load_u32x4(poly_ptr.cast_const(), upper);
+          store_u32x4(poly_ptr, j, add_mod_u32x4(t, u));
+          store_u32x4(poly_ptr, upper, mul_mont_const_mod_u32x4(sub_mod_u32x4(u, t), zeta));
+        }
+        j = j.wrapping_add(4);
       }
-      start = start.strict_add(len << 1);
+      start = start.wrapping_add(len << 1);
     }
     len <<= 1;
   }
 
   let mut i = 0usize;
   while i < N {
-    let coeffs = load_u32x4(poly, i);
+    // SAFETY: `i` advances in 4-coefficient chunks across the fixed 256-coefficient polynomial.
+    let coeffs = unsafe { load_u32x4(poly_ptr.cast_const(), i) };
     let scaled = mul_mont_const_mod_u32x4(coeffs, final_scale_mont);
-    store_u32x4(poly, i, scaled);
-    i = i.strict_add(4);
+    // SAFETY: same fixed 4-coefficient chunk proven above.
+    unsafe {
+      store_u32x4(poly_ptr, i, scaled);
+    }
+    i = i.wrapping_add(4);
   }
 }
 
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn multiply_ntts_add_assign_vector(acc: &mut Poly, a: &Poly, b: &Poly) {
+  let acc_ptr = acc.as_mut_ptr();
+  let a_ptr = a.as_ptr();
+  let b_ptr = b.as_ptr();
   let mut coeff_offset = 0usize;
   while coeff_offset < N {
-    multiply_ntts_add_assign_4(acc, a, coeff_offset, b, coeff_offset, coeff_offset / 2);
-    coeff_offset = coeff_offset.strict_add(8);
+    // SAFETY: `coeff_offset` advances by one public 8-coefficient base-multiply group over the full
+    // 256-coefficient polynomials.
+    unsafe {
+      multiply_ntts_add_assign_4(acc_ptr, a_ptr, coeff_offset, b_ptr, coeff_offset, coeff_offset / 2);
+    }
+    coeff_offset = coeff_offset.wrapping_add(8);
   }
 }
 
@@ -105,39 +136,41 @@ pub(super) unsafe fn multiply_ntts_add_assign_chunk_vector(
   debug_assert_eq!(coeff_offset % SAMPLE_NTT_ACC_CHUNK_COEFFS, 0);
   debug_assert!(coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS) <= N);
 
+  let acc_ptr = acc.as_mut_ptr();
+  let a_ptr = a.as_ptr();
+  let b_ptr = b.as_ptr();
   let mut local = 0usize;
   while local < SAMPLE_NTT_ACC_CHUNK_COEFFS {
-    multiply_ntts_add_assign_4(
-      acc,
-      a,
-      local,
-      b,
-      coeff_offset.strict_add(local),
-      coeff_offset.strict_add(local) / 2,
-    );
-    local = local.strict_add(8);
+    let global = coeff_offset.wrapping_add(local);
+    // SAFETY: `local` covers exactly one public 16-coefficient sample chunk in two 8-coefficient
+    // groups, and `global` is the corresponding fixed chunk boundary inside `b` and `acc`.
+    unsafe {
+      multiply_ntts_add_assign_4(acc_ptr, a_ptr, local, b_ptr, global, global / 2);
+    }
+    local = local.wrapping_add(8);
   }
 }
 
 #[inline(always)]
-fn multiply_ntts_add_assign_4(
-  acc: &mut Poly,
-  a: &[u16],
+unsafe fn multiply_ntts_add_assign_4(
+  acc: *mut u16,
+  a: *const u16,
   a_offset: usize,
-  b: &Poly,
+  b: *const u16,
   b_offset: usize,
   gamma_offset: usize,
 ) {
-  let a0 = load_even_u32x4(a, a_offset).cast::<i32>();
-  let a1 = load_odd_u32x4(a, a_offset).cast::<i32>();
-  let b0 = load_even_u32x4(b, b_offset).cast::<i32>();
-  let b1 = load_odd_u32x4(b, b_offset).cast::<i32>();
-  let gamma = i32x4::from_array([
-    i32::from(GAMMAS_MONT[gamma_offset]),
-    i32::from(GAMMAS_MONT[gamma_offset.strict_add(1)]),
-    i32::from(GAMMAS_MONT[gamma_offset.strict_add(2)]),
-    i32::from(GAMMAS_MONT[gamma_offset.strict_add(3)]),
-  ]);
+  // SAFETY: caller guarantees that `a_offset..a_offset + 8`, `b_offset..b_offset + 8`, and
+  // `gamma_offset..gamma_offset + 4` are inside their fixed ML-KEM buffers.
+  let (a0, a1, b0, b1, gamma) = unsafe {
+    (
+      load_even_u32x4(a, a_offset).cast::<i32>(),
+      load_odd_u32x4(a, a_offset).cast::<i32>(),
+      load_even_u32x4(b, b_offset).cast::<i32>(),
+      load_odd_u32x4(b, b_offset).cast::<i32>(),
+      load_gamma_i32x4(gamma_offset),
+    )
+  };
 
   let a1b1 = montgomery_reduce_i32x4(mul_i32x4_16_ct(a1, b1));
   let a0b0 = mul_i32x4_16_ct(a0, b0);
@@ -148,60 +181,90 @@ fn multiply_ntts_add_assign_4(
   let a1b0 = mul_i32x4_16_ct(a1, b0);
   let c1 = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(a0b1 + a1b0));
 
-  add_interleaved_4(acc, b_offset, c0, c1);
-}
-
-#[inline(always)]
-fn ntt_len2_vector(poly: &mut Poly, zeta_index: &mut usize) {
-  let mut start = 0usize;
-  while start < N {
-    let zeta0 = i32::from(ZETAS_MONT[*zeta_index]);
-    let zeta1 = i32::from(ZETAS_MONT[(*zeta_index).strict_add(1)]);
-    *zeta_index = (*zeta_index).strict_add(2);
-
-    let lower = load_len2_lower_u32x4(poly, start);
-    let upper = load_len2_upper_u32x4(poly, start);
-    let twiddles = duplicate_i32_pair_lanes(zeta0, zeta1);
-    let t = mul_mont_mod_u32x4(upper, twiddles);
-    store_len2_interleaved_4(poly, start, add_mod_u32x4(lower, t), sub_mod_u32x4(lower, t));
-
-    start = start.strict_add(8);
+  // SAFETY: caller guarantees `b_offset..b_offset + 8` is inside `acc`.
+  unsafe {
+    add_interleaved_4(acc, b_offset, c0, c1);
   }
 }
 
 #[inline(always)]
-fn inverse_ntt_len2_vector(poly: &mut Poly, zeta_index: &mut usize) {
+unsafe fn ntt_len2_vector(poly: *mut u16, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
-    let zeta0 = i32::from(ZETAS_MONT[*zeta_index]);
-    *zeta_index = (*zeta_index).strict_sub(1);
-    let zeta1 = i32::from(ZETAS_MONT[*zeta_index]);
-    *zeta_index = (*zeta_index).strict_sub(1);
+    // SAFETY: the len-2 tail consumes two public zeta entries per 8-coefficient block.
+    let (zeta0, zeta1) = unsafe { load_zeta_pair(*zeta_index) };
+    *zeta_index = (*zeta_index).wrapping_add(2);
 
-    let lower = load_len2_lower_u32x4(poly, start);
-    let upper = load_len2_upper_u32x4(poly, start);
+    // SAFETY: `start` advances in fixed 8-coefficient blocks across the full polynomial.
+    let (lower, upper) = unsafe {
+      (
+        load_len2_lower_u32x4(poly.cast_const(), start),
+        load_len2_upper_u32x4(poly.cast_const(), start),
+      )
+    };
+    let twiddles = duplicate_i32_pair_lanes(zeta0, zeta1);
+    let t = mul_mont_mod_u32x4(upper, twiddles);
+    // SAFETY: same fixed 8-coefficient block proven above.
+    unsafe {
+      store_len2_interleaved_4(poly, start, add_mod_u32x4(lower, t), sub_mod_u32x4(lower, t));
+    }
+
+    start = start.wrapping_add(8);
+  }
+}
+
+#[inline(always)]
+unsafe fn inverse_ntt_len2_vector(poly: *mut u16, zeta_index: &mut usize) {
+  let mut start = 0usize;
+  while start < N {
+    // SAFETY: the inverse len-2 tail consumes two public zeta entries per 8-coefficient block.
+    let zeta0 = unsafe { i32::from(load_zeta(*zeta_index)) };
+    *zeta_index = (*zeta_index).wrapping_sub(1);
+    // SAFETY: `zeta_index` remains inside the fixed inverse NTT schedule after the decrement above.
+    let zeta1 = unsafe { i32::from(load_zeta(*zeta_index)) };
+    *zeta_index = (*zeta_index).wrapping_sub(1);
+
+    // SAFETY: `start` advances in fixed 8-coefficient blocks across the full polynomial.
+    let (lower, upper) = unsafe {
+      (
+        load_len2_lower_u32x4(poly.cast_const(), start),
+        load_len2_upper_u32x4(poly.cast_const(), start),
+      )
+    };
     let twiddles = duplicate_i32_pair_lanes(zeta0, zeta1);
     let lower_out = add_mod_u32x4(lower, upper);
     let upper_out = mul_mont_mod_u32x4(sub_mod_u32x4(upper, lower), twiddles);
-    store_len2_interleaved_4(poly, start, lower_out, upper_out);
+    // SAFETY: same fixed 8-coefficient block proven above.
+    unsafe {
+      store_len2_interleaved_4(poly, start, lower_out, upper_out);
+    }
 
-    start = start.strict_add(8);
+    start = start.wrapping_add(8);
   }
 }
 
 #[inline(always)]
-fn add_interleaved_4(acc: &mut Poly, offset: usize, c0: u32x4, c1: u32x4) {
-  let out0 = add_mod_u32x4(load_even_u32x4(acc, offset), c0).to_array();
-  let out1 = add_mod_u32x4(load_odd_u32x4(acc, offset), c1).to_array();
+unsafe fn add_interleaved_4(acc: *mut u16, offset: usize, c0: u32x4, c1: u32x4) {
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `acc`.
+  let (out0, out1) = unsafe {
+    (
+      add_mod_u32x4(load_even_u32x4(acc.cast_const(), offset), c0).to_array(),
+      add_mod_u32x4(load_odd_u32x4(acc.cast_const(), offset), c1).to_array(),
+    )
+  };
 
-  acc[offset] = out0[0] as u16;
-  acc[offset.strict_add(1)] = out1[0] as u16;
-  acc[offset.strict_add(2)] = out0[1] as u16;
-  acc[offset.strict_add(3)] = out1[1] as u16;
-  acc[offset.strict_add(4)] = out0[2] as u16;
-  acc[offset.strict_add(5)] = out1[2] as u16;
-  acc[offset.strict_add(6)] = out0[3] as u16;
-  acc[offset.strict_add(7)] = out1[3] as u16;
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `acc`.
+  unsafe {
+    let acc = acc.add(offset);
+    *acc = out0[0] as u16;
+    *acc.add(1) = out1[0] as u16;
+    *acc.add(2) = out0[1] as u16;
+    *acc.add(3) = out1[1] as u16;
+    *acc.add(4) = out0[2] as u16;
+    *acc.add(5) = out1[2] as u16;
+    *acc.add(6) = out0[3] as u16;
+    *acc.add(7) = out1[3] as u16;
+  }
 }
 
 #[inline(always)]
@@ -229,7 +292,10 @@ fn sub_mod_u32x4(a: u32x4, b: u32x4) -> u32x4 {
 #[inline(always)]
 fn add_q_if_borrowed_u32x4(value: u32x4) -> u32x4 {
   let borrow = value >> 31;
-  value + (opaque_bit_u32x4(borrow).wrapping_neg() & u32x4::splat(Q_U32))
+  // SAFETY: every caller of this helper is reached only from z/Vector-gated ML-KEM entry points in
+  // this module. `borrow` is a 0/1 lane value derived from fixed-width modular arithmetic.
+  let mask = unsafe { bitmask_u32x4(borrow) };
+  value + (mask & u32x4::splat(Q_U32))
 }
 
 #[inline(always)]
@@ -263,9 +329,11 @@ fn mul_u32x4_16_ct(a: u32x4, b: u32x4) -> u32x4 {
   let mut acc = u32x4::splat(0);
   let mut bit = 0u32;
   while bit < 16 {
-    let mask = opaque_bit_u32x4((b >> bit) & u32x4::splat(1)).wrapping_neg();
-    acc = acc + ((a << bit) & mask);
-    bit = bit.strict_add(1);
+    // SAFETY: every caller of this helper is reached only from z/Vector-gated ML-KEM entry points in
+    // this module. The shifted lane is masked to 0/1 before the vector mask operation.
+    let mask = unsafe { bitmask_u32x4((b >> bit) & u32x4::splat(1)) };
+    acc += (a << bit) & mask;
+    bit = bit.wrapping_add(1);
   }
   acc
 }
@@ -276,109 +344,169 @@ fn div_q_compress_u32x4_ct(value: u32x4) -> u32x4 {
   let mut remainder = u32x4::splat(0);
   let mut bit = 23u32;
   while bit > 0 {
-    bit = bit.strict_sub(1);
+    bit = bit.wrapping_sub(1);
     remainder = (remainder << 1) | ((value >> bit) & u32x4::splat(1));
     let reduced = remainder - u32x4::splat(Q_U32);
     let borrow = reduced >> 31;
-    let ge = opaque_bit_u32x4(borrow ^ u32x4::splat(1));
+    let ge = borrow ^ u32x4::splat(1);
     remainder = add_q_if_borrowed_u32x4(reduced);
-    quotient = quotient | (ge << bit);
+    quotient |= ge << bit;
   }
   quotient
 }
 
-#[inline(always)]
-fn opaque_bit_u32x4(value: u32x4) -> u32x4 {
-  let [mut a, mut b, mut c, mut d] = (value & u32x4::splat(1)).to_array();
-  // SAFETY: this empty asm block is intentionally a compiler barrier through ordinary general
-  // registers. It emits no timing-bearing instruction; it only prevents LLVM from folding the
-  // fixed-work shift/add product back into native scalar or vector multiply. Do not use `vreg`
-  // here: this helper is compiled without global `+vector` even though its callers are reached
-  // through z/Vector-gated entry points.
+#[target_feature(enable = "vector")]
+#[inline]
+unsafe fn bitmask_u32x4(value: u32x4) -> u32x4 {
+  // SAFETY: `u32x4` and `i64x2` are both one 128-bit z/Vector register. The bit pattern is preserved
+  // and interpreted only by vector integer instructions.
+  let input: i64x2 = unsafe { core::mem::transmute(value & u32x4::splat(1)) };
+  let out: i64x2;
+  // SAFETY: z/Vector `vlcf` computes two's-complement negation lane-wise. The input lanes are
+  // constrained to 0 or 1 immediately above, so the output lanes are exactly 0 or all-ones masks.
+  // This is the fixed-work mask operation used by ML-KEM arithmetic to avoid native
+  // secret-fed multiply/divide while also avoiding scalar lane extraction.
   unsafe {
     core::arch::asm!(
-      "/* {a} {b} {c} {d} */",
-      a = inout(reg) a,
-      b = inout(reg) b,
-      c = inout(reg) c,
-      d = inout(reg) d,
-      options(nomem, nostack)
+      "vlcf {out}, {input}",
+      out = lateout(vreg) out,
+      input = in(vreg) input,
+      options(nomem, nostack, pure)
     );
   }
-  u32x4::from_array([a, b, c, d])
+  // SAFETY: `out` is the same 128-bit z/Vector register reinterpreted back to four u32 lanes.
+  unsafe { core::mem::transmute(out) }
 }
 
 #[inline(always)]
-fn load_u32x4(values: &[u16], offset: usize) -> u32x4 {
-  u32x4::from_array([
-    u32::from(values[offset]),
-    u32::from(values[offset.strict_add(1)]),
-    u32::from(values[offset.strict_add(2)]),
-    u32::from(values[offset.strict_add(3)]),
-  ])
+unsafe fn load_zeta(offset: usize) -> i16 {
+  // SAFETY: caller guarantees `offset` is inside the fixed public ML-KEM zeta table.
+  unsafe { *ZETAS_MONT.as_ptr().add(offset) }
 }
 
 #[inline(always)]
-fn load_even_u32x4(values: &[u16], offset: usize) -> u32x4 {
-  u32x4::from_array([
-    u32::from(values[offset]),
-    u32::from(values[offset.strict_add(2)]),
-    u32::from(values[offset.strict_add(4)]),
-    u32::from(values[offset.strict_add(6)]),
-  ])
+unsafe fn load_zeta_pair(offset: usize) -> (i32, i32) {
+  // SAFETY: caller guarantees `offset..offset + 2` is inside the fixed public ML-KEM zeta table.
+  unsafe {
+    let zeta = ZETAS_MONT.as_ptr().add(offset);
+    (i32::from(*zeta), i32::from(*zeta.add(1)))
+  }
 }
 
 #[inline(always)]
-fn load_odd_u32x4(values: &[u16], offset: usize) -> u32x4 {
-  u32x4::from_array([
-    u32::from(values[offset.strict_add(1)]),
-    u32::from(values[offset.strict_add(3)]),
-    u32::from(values[offset.strict_add(5)]),
-    u32::from(values[offset.strict_add(7)]),
-  ])
+unsafe fn load_gamma_i32x4(offset: usize) -> i32x4 {
+  let gamma = GAMMAS_MONT.as_ptr();
+  // SAFETY: caller guarantees `offset..offset + 4` is inside the fixed public ML-KEM gamma table.
+  unsafe {
+    let gamma = gamma.add(offset);
+    i32x4::from_array([
+      i32::from(*gamma),
+      i32::from(*gamma.add(1)),
+      i32::from(*gamma.add(2)),
+      i32::from(*gamma.add(3)),
+    ])
+  }
 }
 
 #[inline(always)]
-fn load_len2_lower_u32x4(values: &[u16], offset: usize) -> u32x4 {
-  u32x4::from_array([
-    u32::from(values[offset]),
-    u32::from(values[offset.strict_add(1)]),
-    u32::from(values[offset.strict_add(4)]),
-    u32::from(values[offset.strict_add(5)]),
-  ])
+unsafe fn load_u32x4(values: *const u16, offset: usize) -> u32x4 {
+  // SAFETY: caller guarantees `offset..offset + 4` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    u32x4::from_array([
+      u32::from(*values),
+      u32::from(*values.add(1)),
+      u32::from(*values.add(2)),
+      u32::from(*values.add(3)),
+    ])
+  }
 }
 
 #[inline(always)]
-fn load_len2_upper_u32x4(values: &[u16], offset: usize) -> u32x4 {
-  u32x4::from_array([
-    u32::from(values[offset.strict_add(2)]),
-    u32::from(values[offset.strict_add(3)]),
-    u32::from(values[offset.strict_add(6)]),
-    u32::from(values[offset.strict_add(7)]),
-  ])
+unsafe fn load_even_u32x4(values: *const u16, offset: usize) -> u32x4 {
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    u32x4::from_array([
+      u32::from(*values),
+      u32::from(*values.add(2)),
+      u32::from(*values.add(4)),
+      u32::from(*values.add(6)),
+    ])
+  }
 }
 
 #[inline(always)]
-fn store_u32x4(values: &mut [u16], offset: usize, lanes: u32x4) {
+unsafe fn load_odd_u32x4(values: *const u16, offset: usize) -> u32x4 {
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    u32x4::from_array([
+      u32::from(*values.add(1)),
+      u32::from(*values.add(3)),
+      u32::from(*values.add(5)),
+      u32::from(*values.add(7)),
+    ])
+  }
+}
+
+#[inline(always)]
+unsafe fn load_len2_lower_u32x4(values: *const u16, offset: usize) -> u32x4 {
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    u32x4::from_array([
+      u32::from(*values),
+      u32::from(*values.add(1)),
+      u32::from(*values.add(4)),
+      u32::from(*values.add(5)),
+    ])
+  }
+}
+
+#[inline(always)]
+unsafe fn load_len2_upper_u32x4(values: *const u16, offset: usize) -> u32x4 {
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    u32x4::from_array([
+      u32::from(*values.add(2)),
+      u32::from(*values.add(3)),
+      u32::from(*values.add(6)),
+      u32::from(*values.add(7)),
+    ])
+  }
+}
+
+#[inline(always)]
+unsafe fn store_u32x4(values: *mut u16, offset: usize, lanes: u32x4) {
   let lanes = lanes.to_array();
-  values[offset] = lanes[0] as u16;
-  values[offset.strict_add(1)] = lanes[1] as u16;
-  values[offset.strict_add(2)] = lanes[2] as u16;
-  values[offset.strict_add(3)] = lanes[3] as u16;
+  // SAFETY: caller guarantees `offset..offset + 4` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    *values = lanes[0] as u16;
+    *values.add(1) = lanes[1] as u16;
+    *values.add(2) = lanes[2] as u16;
+    *values.add(3) = lanes[3] as u16;
+  }
 }
 
 #[inline(always)]
-fn store_len2_interleaved_4(values: &mut [u16], offset: usize, lower: u32x4, upper: u32x4) {
+unsafe fn store_len2_interleaved_4(values: *mut u16, offset: usize, lower: u32x4, upper: u32x4) {
   let lower = lower.to_array();
   let upper = upper.to_array();
-  values[offset] = lower[0] as u16;
-  values[offset.strict_add(1)] = lower[1] as u16;
-  values[offset.strict_add(2)] = upper[0] as u16;
-  values[offset.strict_add(3)] = upper[1] as u16;
-  values[offset.strict_add(4)] = lower[2] as u16;
-  values[offset.strict_add(5)] = lower[3] as u16;
-  values[offset.strict_add(6)] = upper[2] as u16;
-  values[offset.strict_add(7)] = upper[3] as u16;
+  // SAFETY: caller guarantees `offset..offset + 8` is inside `values`.
+  unsafe {
+    let values = values.add(offset);
+    *values = lower[0] as u16;
+    *values.add(1) = lower[1] as u16;
+    *values.add(2) = upper[0] as u16;
+    *values.add(3) = upper[1] as u16;
+    *values.add(4) = lower[2] as u16;
+    *values.add(5) = lower[3] as u16;
+    *values.add(6) = upper[2] as u16;
+    *values.add(7) = upper[3] as u16;
+  }
 }
 
 #[inline(always)]

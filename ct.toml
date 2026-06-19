@@ -78,6 +78,10 @@ symbols = [
   "ct_entry_mlkem1024_keygen",
   "ct_entry_mlkem1024_encapsulate",
   "ct_entry_mlkem1024_decapsulate",
+  "ct_entry_mlkem_diag_ntt",
+  "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_compress_decompress",
   "ct_entry_ed25519_sign",
   "ct_entry_ecdsa_p256_sign",
   "ct_entry_ecdsa_p384_sign",
@@ -2667,6 +2671,10 @@ symbols = [
   "ct_entry_mlkem512_keygen",
   "ct_entry_mlkem512_encapsulate",
   "ct_entry_mlkem512_decapsulate",
+  "ct_entry_mlkem_diag_ntt",
+  "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_compress_decompress",
 ]
 
 [[primitive]]
@@ -2695,6 +2703,10 @@ symbols = [
   "ct_entry_mlkem768_keygen",
   "ct_entry_mlkem768_encapsulate",
   "ct_entry_mlkem768_decapsulate",
+  "ct_entry_mlkem_diag_ntt",
+  "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_compress_decompress",
 ]
 
 [[primitive]]
@@ -2723,6 +2735,10 @@ symbols = [
   "ct_entry_mlkem1024_keygen",
   "ct_entry_mlkem1024_encapsulate",
   "ct_entry_mlkem1024_decapsulate",
+  "ct_entry_mlkem_diag_ntt",
+  "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_compress_decompress",
 ]
 
 [[primitive]]
