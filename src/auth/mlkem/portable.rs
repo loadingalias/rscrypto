@@ -48,7 +48,9 @@ const Q_HALF: u32 = Q_U32 / 2;
 const Q_DIV_SHIFT: u32 = 36;
 #[cfg(test)]
 const Q_DIV_RECIP: u64 = 20_642_679;
+#[cfg(any(test, not(target_arch = "s390x")))]
 const Q_COMPRESS_DIV_SHIFT: u32 = 33;
+#[cfg(any(test, not(target_arch = "s390x")))]
 const Q_COMPRESS_DIV_RECIP: u64 = 2_580_335;
 const Q_MONT_INV_U16: u16 = 62_209;
 const MONT_R_SQUARED_MOD_Q: i16 = 1353;
@@ -3633,11 +3635,13 @@ fn add_mod_u32x8_avx2(a: __m256i, b: __m256i) -> __m256i {
   not(any(target_arch = "aarch64", target_arch = "x86_64"))
 ))]
 fn base_case_multiply(a0: u16, a1: u16, b0: u16, b1: u16, gamma_mont: i16) -> (u16, u16) {
-  let a0b0 = i32::from(a0) * i32::from(b0);
-  let a1b1 = montgomery_reduce_i32(i32::from(a1) * i32::from(b1));
-  let c0 = signed_to_mod_q(montgomery_reduce_i32(a0b0 + i32::from(a1b1) * i32::from(gamma_mont)));
+  let a0b0 = mul_i32_secret(i32::from(a0), i32::from(b0));
+  let a1b1 = montgomery_reduce_i32(mul_i32_secret(i32::from(a1), i32::from(b1)));
+  let c0 = signed_to_mod_q(montgomery_reduce_i32(
+    a0b0 + mul_i32_secret(i32::from(a1b1), i32::from(gamma_mont)),
+  ));
   let c1 = signed_to_mod_q(montgomery_reduce_i32(
-    i32::from(a0) * i32::from(b1) + i32::from(a1) * i32::from(b0),
+    mul_i32_secret(i32::from(a0), i32::from(b1)) + mul_i32_secret(i32::from(a1), i32::from(b0)),
   ));
   (c0, c1)
 }
@@ -3699,7 +3703,7 @@ fn compress_value<const D: usize>(value: u16) -> u16 {
 
 #[inline]
 fn decompress_value<const D: usize>(value: u16) -> u16 {
-  (((Q_U32 * u32::from(value)) + (1u32 << (D - 1))) >> D) as u16
+  ((mul_u32_secret(Q_U32, u32::from(value)) + (1u32 << (D - 1))) >> D) as u16
 }
 
 fn decompress_message_add_assign(input: &[u8; SEED_BYTES], out: &mut Poly) {
@@ -4268,22 +4272,19 @@ fn byte_decode_12(input: &[u8], out: &mut Poly) {
 fn add_mod(a: u16, b: u16) -> u16 {
   let sum = u32::from(a) + u32::from(b);
   let reduced = sum.wrapping_sub(Q_U32);
-  let borrow = reduced >> 31;
-  reduced.wrapping_add(borrow * Q_U32) as u16
+  add_q_if_borrowed(reduced) as u16
 }
 
 #[inline]
 fn sub_mod(a: u16, b: u16) -> u16 {
   let diff = u32::from(a).wrapping_sub(u32::from(b));
-  let borrow = diff >> 31;
-  diff.wrapping_add(borrow * Q_U32) as u16
+  add_q_if_borrowed(diff) as u16
 }
 
 #[inline]
 fn sub_if_ge_q(value: u16) -> u16 {
   let reduced = u32::from(value).wrapping_sub(Q_U32);
-  let borrow = reduced >> 31;
-  reduced.wrapping_add(borrow * Q_U32) as u16
+  add_q_if_borrowed(reduced) as u16
 }
 
 #[inline]
@@ -4294,7 +4295,7 @@ fn mul_mod(a: u16, b: u16) -> u16 {
 
 #[inline]
 fn mul_mont_const_mod(a: u16, b_mont: i16) -> u16 {
-  signed_to_mod_q(montgomery_reduce_i32(i32::from(a) * i32::from(b_mont)))
+  signed_to_mod_q(montgomery_reduce_i32(mul_i32_secret(i32::from(a), i32::from(b_mont))))
 }
 
 #[inline]
@@ -4309,8 +4310,8 @@ fn from_montgomery_product_domain(value: u16) -> u16 {
 
 #[inline]
 fn montgomery_reduce_i32(value: i32) -> i16 {
-  let k = i32::from(value as i16).wrapping_mul(i32::from(Q_MONT_INV_U16 as i16));
-  let c = (i32::from(k as i16).wrapping_mul(Q_I32) >> 16) as i16;
+  let k = mul_i32_secret(i32::from(value as i16), i32::from(Q_MONT_INV_U16 as i16));
+  let c = (mul_i32_secret(i32::from(k as i16), Q_I32) >> 16) as i16;
   ((value >> 16) as i16).wrapping_sub(c)
 }
 
@@ -4335,6 +4336,119 @@ fn div_q_u32(value: u32) -> u32 {
 
 #[inline]
 fn div_q_compress_u32(value: u32) -> u32 {
+  #[cfg(target_arch = "s390x")]
+  {
+    div_q_compress_u32_ct(value)
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    ((u64::from(value) * Q_COMPRESS_DIV_RECIP) >> Q_COMPRESS_DIV_SHIFT) as u32
+  }
+}
+
+#[inline]
+fn mul_u32_secret(a: u32, b: u32) -> u32 {
+  #[cfg(target_arch = "s390x")]
+  {
+    // IBM Z integer multiply latency is operand-dependent; keep secret-fed products on a fixed
+    // shift/add path and verify the generated CT artifact.
+    mul_u32_16_ct(a, b)
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    a * b
+  }
+}
+
+#[inline]
+fn mul_i32_secret(a: i32, b: i32) -> i32 {
+  #[cfg(target_arch = "s390x")]
+  {
+    mul_i32_16_ct(a, b)
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    a * b
+  }
+}
+
+#[cfg_attr(target_arch = "s390x", inline(never))]
+#[cfg_attr(not(target_arch = "s390x"), inline)]
+#[cfg(any(test, target_arch = "s390x"))]
+fn mul_u32_16_ct(a: u32, b: u32) -> u32 {
+  debug_assert!(a <= u32::from(u16::MAX));
+  debug_assert!(b <= u32::from(u16::MAX));
+
+  let mut acc = 0u32;
+  let mut bit = 0u32;
+  while bit < 16 {
+    let mask = 0u32.wrapping_sub((b >> bit) & 1);
+    acc = acc.wrapping_add((a << bit) & mask);
+    bit += 1;
+  }
+  acc
+}
+
+#[cfg_attr(target_arch = "s390x", inline(never))]
+#[cfg_attr(not(target_arch = "s390x"), inline)]
+#[cfg(any(test, target_arch = "s390x"))]
+fn mul_i32_16_ct(a: i32, b: i32) -> i32 {
+  debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&a));
+  debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&b));
+
+  let a_sign = (a >> 31) as u32;
+  let b_sign = (b >> 31) as u32;
+  let abs_a = ((a as u32) ^ a_sign).wrapping_sub(a_sign);
+  let abs_b = ((b as u32) ^ b_sign).wrapping_sub(b_sign);
+  let magnitude = mul_u32_16_ct(abs_a, abs_b);
+  let sign = a_sign ^ b_sign;
+  ((magnitude ^ sign).wrapping_sub(sign)) as i32
+}
+
+#[cfg_attr(target_arch = "s390x", inline(never))]
+#[cfg_attr(not(target_arch = "s390x"), inline)]
+#[cfg(any(test, target_arch = "s390x"))]
+fn div_q_compress_u32_ct(value: u32) -> u32 {
+  debug_assert!(value < (1u32 << 23));
+
+  let mut quotient = 0u32;
+  let mut remainder = 0u32;
+  let mut bit = 23u32;
+  while bit > 0 {
+    bit -= 1;
+    remainder = (remainder << 1) | ((value >> bit) & 1);
+    let reduced = remainder.wrapping_sub(Q_U32);
+    let borrow = reduced >> 31;
+    let ge = opaque_s390x_bit(borrow ^ 1);
+    remainder = add_q_if_borrowed(reduced);
+    quotient |= ge << bit;
+  }
+  quotient
+}
+
+#[inline]
+fn add_q_if_borrowed(value: u32) -> u32 {
+  let borrow = value >> 31;
+  value.wrapping_add(0u32.wrapping_sub(opaque_s390x_bit(borrow)) & Q_U32)
+}
+
+#[inline]
+fn opaque_s390x_bit(value: u32) -> u32 {
+  let value = value & 1;
+  #[cfg(target_arch = "s390x")]
+  {
+    // Prevent LLVM from recovering secret-dependent branches from mask arithmetic on IBM Z.
+    core::hint::black_box(value)
+  }
+  #[cfg(not(target_arch = "s390x"))]
+  {
+    value
+  }
+}
+
+#[inline]
+#[cfg(test)]
+fn div_q_compress_u32_recip(value: u32) -> u32 {
   ((u64::from(value) * Q_COMPRESS_DIV_RECIP) >> Q_COMPRESS_DIV_SHIFT) as u32
 }
 
@@ -4769,6 +4883,42 @@ mod tests {
       *coeff = ((seed.strict_mul(37).strict_add(i.strict_mul(19)).strict_add(11)) % usize::from(Q)) as u16;
     }
     poly
+  }
+
+  #[test]
+  fn s390x_ct_multiply_helpers_match_scalar_products() {
+    const U16_SAMPLES: [u32; 14] = [0, 1, 2, 3, 7, 31, 127, 255, 256, 1024, 3328, 32767, 32768, 65535];
+    for &a in &U16_SAMPLES {
+      for &b in &U16_SAMPLES {
+        assert_eq!(mul_u32_16_ct(a, b), a * b, "u32 {a} * {b}");
+      }
+    }
+
+    const I16_SAMPLES: [i32; 13] = [
+      -32768, -32767, -3329, -3328, -17, -1, 0, 1, 17, 3328, 3329, 32766, 32767,
+    ];
+    for &a in &I16_SAMPLES {
+      for &b in &I16_SAMPLES {
+        assert_eq!(mul_i32_16_ct(a, b), a * b, "i32 {a} * {b}");
+      }
+    }
+  }
+
+  #[test]
+  fn s390x_ct_compression_division_matches_reciprocal() {
+    for quotient in 0u32..=2048 {
+      let base = quotient * Q_U32;
+      for offset in [0, 1, Q_HALF, Q_U32 - 1, Q_U32] {
+        let value = base + offset;
+        if value < (1u32 << 23) {
+          assert_eq!(
+            div_q_compress_u32_ct(value),
+            div_q_compress_u32_recip(value),
+            "value {value}"
+          );
+        }
+      }
+    }
   }
 
   #[test]
