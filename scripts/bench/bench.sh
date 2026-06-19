@@ -15,6 +15,12 @@ Selectors:
   crc32c
   checksum
   hashes
+  mlkem
+  mlkem-phases
+  mlkem-matrix-sample
+  mlkem-arithmetic
+  mlkem-pke-phases
+  mlkem-decap-phases
 
 Key=Value Overrides:
   crates=<csv> | crate=<csv>

@@ -157,6 +157,13 @@ DEFAULT_AUTH_ALGOS=(
   "mlkem1024"
 )
 
+DEFAULT_MLKEM_PHASE_ALGOS=(
+  "mlkem-matrix-sample"
+  "mlkem-arithmetic"
+  "mlkem-pke-phases"
+  "mlkem-decap-phases"
+)
+
 DEFAULT_SP800185_ALGOS=(
   "kmac256"
 )
@@ -187,6 +194,7 @@ ALL_KNOWN_ALGOS=(
   "${DEFAULT_CHECKSUM_ALGOS[@]}"
   "${DEFAULT_HASH_ALGOS[@]}"
   "${DEFAULT_AUTH_ALGOS[@]}"
+  "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"
   "${DEFAULT_SP800185_ALGOS[@]}"
   "${DEFAULT_PASSWORD_HASHING_ALGOS[@]}"
   "${DEFAULT_RSA_ALGOS[@]}"
@@ -281,6 +289,10 @@ auth_filter_token() {
     ml-kem-512|mlkem512) echo "^mlkem512/" ;;
     ml-kem-768|mlkem768) echo "^mlkem768/" ;;
     ml-kem-1024|mlkem1024) echo "^mlkem1024/" ;;
+    mlkem-matrix|mlkem-matrix-sample) echo "^mlkem-matrix-sample/" ;;
+    mlkem-arith|mlkem-arithmetic) echo "^mlkem-arithmetic/" ;;
+    mlkem-pke|mlkem-pke-phases) echo "^mlkem-pke-phases/" ;;
+    mlkem-decap|mlkem-decap-phases) echo "^mlkem-decap-phases/" ;;
     *) echo "$algo" ;;
   esac
 }
@@ -428,6 +440,14 @@ append_algo_plan_row() {
   fi
 
   if array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
+    crate="auth"
+    bench="auth"
+    token="${raw_filter:-$(auth_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
+  if array_contains "$algo" "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"; then
     crate="auth"
     bench="auth"
     token="${raw_filter:-$(auth_filter_token "$algo")}"
@@ -679,6 +699,7 @@ if [[ -n "$ONLY_INPUT" ]]; then
         ;;
       auth)
         for algo in "${DEFAULT_AUTH_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        for algo in "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         for algo in "${DEFAULT_SP800185_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         for algo in "${DEFAULT_PASSWORD_HASHING_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         for algo in "${DEFAULT_RSA_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
@@ -702,6 +723,7 @@ if [[ -n "$ONLY_INPUT" ]]; then
         append_unique "mlkem512" SELECTED_ALGOS
         append_unique "mlkem768" SELECTED_ALGOS
         append_unique "mlkem1024" SELECTED_ALGOS
+        for algo in "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
       mlkem512)
         append_unique "mlkem512" SELECTED_ALGOS
@@ -711,6 +733,21 @@ if [[ -n "$ONLY_INPUT" ]]; then
         ;;
       mlkem1024)
         append_unique "mlkem1024" SELECTED_ALGOS
+        ;;
+      mlkemphases)
+        for algo in "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        ;;
+      mlkemmatrix|mlkemmatrixsample)
+        append_unique "mlkem-matrix-sample" SELECTED_ALGOS
+        ;;
+      mlkemarith|mlkemarithmetic)
+        append_unique "mlkem-arithmetic" SELECTED_ALGOS
+        ;;
+      mlkempke|mlkempkephases)
+        append_unique "mlkem-pke-phases" SELECTED_ALGOS
+        ;;
+      mlkemdecap|mlkemdecapphases)
+        append_unique "mlkem-decap-phases" SELECTED_ALGOS
         ;;
       crc64|crc64nvme|crc64xz)
         append_unique "crc64-xz" SELECTED_ALGOS
@@ -786,6 +823,8 @@ if [[ "${#RAW_FILTERS[@]}" -gt 0 ]]; then
         elif array_contains "$algo" "${DEFAULT_HASH_ALGOS[@]}"; then
           append_unique "hashes" raw_crates
         elif array_contains "$algo" "${DEFAULT_AUTH_ALGOS[@]}"; then
+          append_unique "auth" raw_crates
+        elif array_contains "$algo" "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"; then
           append_unique "auth" raw_crates
         elif array_contains "$algo" "${DEFAULT_SP800185_ALGOS[@]}"; then
           append_unique "auth" raw_crates

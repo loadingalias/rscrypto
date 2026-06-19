@@ -2,6 +2,8 @@
 
 #[cfg(all(test, target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 mod aarch64;
+#[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+mod s390x;
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 mod x86_64;
 
@@ -1849,6 +1851,12 @@ fn use_fused_matrix_accumulate() -> bool {
   }
 }
 
+#[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[inline]
+fn use_s390x_vector_arithmetic() -> bool {
+  crate::platform::caps().has(crate::platform::caps::s390x::VECTOR)
+}
+
 fn sample_ntt_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) {
   sample_ntt_from_xof_into(Shake128::xof_seeded_32_2(rho, j, i), out);
 }
@@ -2653,7 +2661,7 @@ fn multiply_ntts_add_assign_chunk(
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
 ))]
 #[inline(always)]
 fn multiply_ntts_add_assign_chunk(
@@ -2662,6 +2670,31 @@ fn multiply_ntts_add_assign_chunk(
   b: &Poly,
   coeff_offset: usize,
 ) {
+  multiply_ntts_add_assign_chunk_scalar(acc, a, b, coeff_offset);
+}
+
+#[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[inline(always)]
+fn multiply_ntts_add_assign_chunk(
+  acc: &mut Poly,
+  a: &[u16; SAMPLE_NTT_ACC_CHUNK_COEFFS],
+  b: &Poly,
+  coeff_offset: usize,
+) {
+  if use_s390x_vector_arithmetic() {
+    // SAFETY: s390x z/Vector chunk multiply-accumulate dispatch because:
+    // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+    //    target-feature function.
+    // 2. `a` is exactly one 16-coefficient SampleNTT chunk, and `coeff_offset` is emitted only at fixed
+    //    chunk boundaries inside 256-coefficient polynomials.
+    // 3. The borrow checker guarantees `acc` is not aliased by read-only `a` or `b`.
+    // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+    //    fixed-work shift/add multiplication rather than native scalar multiply.
+    unsafe {
+      return s390x::multiply_ntts_add_assign_chunk_vector(acc, a, b, coeff_offset);
+    }
+  }
+
   multiply_ntts_add_assign_chunk_scalar(acc, a, b, coeff_offset);
 }
 
@@ -2750,9 +2783,27 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
 ))]
 fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
+  multiply_ntts_add_assign_scalar(acc, a, b);
+}
+
+#[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
+  if use_s390x_vector_arithmetic() {
+    // SAFETY: s390x z/Vector multiply-accumulate dispatch because:
+    // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+    //    target-feature function.
+    // 2. `acc`, `a`, and `b` are fixed 256-coefficient arrays matching the kernel contract.
+    // 3. The borrow checker guarantees `acc` is not aliased by read-only inputs.
+    // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+    //    fixed-work shift/add multiplication rather than native scalar multiply.
+    unsafe {
+      return s390x::multiply_ntts_add_assign_vector(acc, a, b);
+    }
+  }
+
   multiply_ntts_add_assign_scalar(acc, a, b);
 }
 
@@ -3676,22 +3727,49 @@ fn poly_add_assign(lhs: &mut Poly, rhs: &Poly) {
 
 #[cfg(test)]
 fn compress_poly<const D: usize>(input: &Poly, out: &mut Poly) {
-  for i in 0..N {
-    out[i] = compress_value::<D>(input[i]);
+  for i in (0..N).step_by(4) {
+    let values = compress_values_4::<D>([
+      input[i],
+      input[i.strict_add(1)],
+      input[i.strict_add(2)],
+      input[i.strict_add(3)],
+    ]);
+    out[i] = values[0];
+    out[i.strict_add(1)] = values[1];
+    out[i.strict_add(2)] = values[2];
+    out[i.strict_add(3)] = values[3];
   }
 }
 
 #[cfg(test)]
 fn decompress_poly<const D: usize>(input: &Poly, out: &mut Poly) {
-  for i in 0..N {
-    out[i] = decompress_value::<D>(input[i]);
+  for i in (0..N).step_by(4) {
+    let values = decompress_values_4::<D>([
+      input[i],
+      input[i.strict_add(1)],
+      input[i.strict_add(2)],
+      input[i.strict_add(3)],
+    ]);
+    out[i] = values[0];
+    out[i.strict_add(1)] = values[1];
+    out[i.strict_add(2)] = values[2];
+    out[i.strict_add(3)] = values[3];
   }
 }
 
 #[cfg(test)]
 fn decompress_poly_add_assign<const D: usize>(input: &Poly, out: &mut Poly) {
-  for i in 0..N {
-    out[i] = add_mod(out[i], decompress_value::<D>(input[i]));
+  for i in (0..N).step_by(4) {
+    let values = decompress_values_4::<D>([
+      input[i],
+      input[i.strict_add(1)],
+      input[i.strict_add(2)],
+      input[i.strict_add(3)],
+    ]);
+    out[i] = add_mod(out[i], values[0]);
+    out[i.strict_add(1)] = add_mod(out[i.strict_add(1)], values[1]);
+    out[i.strict_add(2)] = add_mod(out[i.strict_add(2)], values[2]);
+    out[i.strict_add(3)] = add_mod(out[i.strict_add(3)], values[3]);
   }
 }
 
@@ -3701,18 +3779,77 @@ fn compress_value<const D: usize>(value: u16) -> u16 {
   (div_q_compress_u32(numerator) & ((1u32 << D) - 1)) as u16
 }
 
+#[inline(always)]
+fn compress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
+  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+  {
+    if use_s390x_vector_arithmetic() {
+      // SAFETY: runtime capability detection confirmed z/Vector before entering the target-feature
+      // helper. Inputs are four coefficients and the helper has no secret-dependent control flow.
+      unsafe {
+        return s390x::compress_values_4::<D>(values);
+      }
+    }
+  }
+
+  [
+    compress_value::<D>(values[0]),
+    compress_value::<D>(values[1]),
+    compress_value::<D>(values[2]),
+    compress_value::<D>(values[3]),
+  ]
+}
+
 #[inline]
 fn decompress_value<const D: usize>(value: u16) -> u16 {
   ((mul_u32_secret(Q_U32, u32::from(value)) + (1u32 << (D - 1))) >> D) as u16
 }
 
+#[inline(always)]
+fn decompress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
+  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+  {
+    if use_s390x_vector_arithmetic() {
+      // SAFETY: runtime capability detection confirmed z/Vector before entering the target-feature
+      // helper. Inputs are four decoded coefficients and the helper uses fixed-work multiplication.
+      unsafe {
+        return s390x::decompress_values_4::<D>(values);
+      }
+    }
+  }
+
+  [
+    decompress_value::<D>(values[0]),
+    decompress_value::<D>(values[1]),
+    decompress_value::<D>(values[2]),
+    decompress_value::<D>(values[3]),
+  ]
+}
+
 fn decompress_message_add_assign(input: &[u8; SEED_BYTES], out: &mut Poly) {
   for (i, byte) in input.iter().copied().enumerate() {
     let start = i.strict_mul(8);
-    for bit in 0..8 {
-      let value = u16::from((byte >> bit) & 1);
-      out[start.strict_add(bit)] = add_mod(out[start.strict_add(bit)], decompress_value::<1>(value));
-    }
+    let lo = decompress_values_4::<1>([
+      u16::from(byte & 1),
+      u16::from((byte >> 1) & 1),
+      u16::from((byte >> 2) & 1),
+      u16::from((byte >> 3) & 1),
+    ]);
+    let hi = decompress_values_4::<1>([
+      u16::from((byte >> 4) & 1),
+      u16::from((byte >> 5) & 1),
+      u16::from((byte >> 6) & 1),
+      u16::from(byte >> 7),
+    ]);
+
+    out[start] = add_mod(out[start], lo[0]);
+    out[start.strict_add(1)] = add_mod(out[start.strict_add(1)], lo[1]);
+    out[start.strict_add(2)] = add_mod(out[start.strict_add(2)], lo[2]);
+    out[start.strict_add(3)] = add_mod(out[start.strict_add(3)], lo[3]);
+    out[start.strict_add(4)] = add_mod(out[start.strict_add(4)], hi[0]);
+    out[start.strict_add(5)] = add_mod(out[start.strict_add(5)], hi[1]);
+    out[start.strict_add(6)] = add_mod(out[start.strict_add(6)], hi[2]);
+    out[start.strict_add(7)] = add_mod(out[start.strict_add(7)], hi[3]);
   }
 }
 
@@ -3757,11 +3894,17 @@ fn ct_zero_mask_u64(value: u64) -> u8 {
 fn compress_encode_compare_4(input: &Poly, expected: &[u8]) -> u8 {
   debug_assert_eq!(expected.len(), 128);
   let mut diff = 0u8;
-  for (i, &expected_byte) in expected.iter().enumerate() {
-    let j = i.strict_mul(2);
-    let t0 = compress_value::<4>(input[j]);
-    let t1 = compress_value::<4>(input[j.strict_add(1)]);
-    diff |= ((t0 | (t1 << 4)) as u8) ^ expected_byte;
+  for i in 0usize..64 {
+    let j = i.strict_mul(4);
+    let k = i.strict_mul(2);
+    let t = compress_values_4::<4>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
+    diff |= ((t[0] | (t[1] << 4)) as u8) ^ expected[k];
+    diff |= ((t[2] | (t[3] << 4)) as u8) ^ expected[k.strict_add(1)];
   }
   ct_zero_mask_u8(diff)
 }
@@ -3772,14 +3915,20 @@ fn compress_encode_compare_5(input: &Poly, expected: &[u8]) -> u8 {
   for i in 0usize..32 {
     let j = i.strict_mul(8);
     let k = i.strict_mul(5);
-    let t0 = compress_value::<5>(input[j]);
-    let t1 = compress_value::<5>(input[j.strict_add(1)]);
-    let t2 = compress_value::<5>(input[j.strict_add(2)]);
-    let t3 = compress_value::<5>(input[j.strict_add(3)]);
-    let t4 = compress_value::<5>(input[j.strict_add(4)]);
-    let t5 = compress_value::<5>(input[j.strict_add(5)]);
-    let t6 = compress_value::<5>(input[j.strict_add(6)]);
-    let t7 = compress_value::<5>(input[j.strict_add(7)]);
+    let lo = compress_values_4::<5>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
+    let hi = compress_values_4::<5>([
+      input[j.strict_add(4)],
+      input[j.strict_add(5)],
+      input[j.strict_add(6)],
+      input[j.strict_add(7)],
+    ]);
+    let [t0, t1, t2, t3] = lo;
+    let [t4, t5, t6, t7] = hi;
 
     diff |= ((t0 | (t1 << 5)) as u8) ^ expected[k];
     diff |= (((t1 >> 3) | (t2 << 2) | (t3 << 7)) as u8) ^ expected[k.strict_add(1)];
@@ -3796,10 +3945,12 @@ fn compress_encode_compare_10(input: &Poly, expected: &[u8]) -> u8 {
   for i in 0usize..64 {
     let j = i.strict_mul(4);
     let k = i.strict_mul(5);
-    let t0 = compress_value::<10>(input[j]);
-    let t1 = compress_value::<10>(input[j.strict_add(1)]);
-    let t2 = compress_value::<10>(input[j.strict_add(2)]);
-    let t3 = compress_value::<10>(input[j.strict_add(3)]);
+    let [t0, t1, t2, t3] = compress_values_4::<10>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
 
     diff |= (t0 as u8) ^ expected[k];
     diff |= (((t0 >> 8) | (t1 << 2)) as u8) ^ expected[k.strict_add(1)];
@@ -3816,14 +3967,20 @@ fn compress_encode_compare_11(input: &Poly, expected: &[u8]) -> u8 {
   for i in 0usize..32 {
     let j = i.strict_mul(8);
     let k = i.strict_mul(11);
-    let t0 = compress_value::<11>(input[j]);
-    let t1 = compress_value::<11>(input[j.strict_add(1)]);
-    let t2 = compress_value::<11>(input[j.strict_add(2)]);
-    let t3 = compress_value::<11>(input[j.strict_add(3)]);
-    let t4 = compress_value::<11>(input[j.strict_add(4)]);
-    let t5 = compress_value::<11>(input[j.strict_add(5)]);
-    let t6 = compress_value::<11>(input[j.strict_add(6)]);
-    let t7 = compress_value::<11>(input[j.strict_add(7)]);
+    let lo = compress_values_4::<11>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
+    let hi = compress_values_4::<11>([
+      input[j.strict_add(4)],
+      input[j.strict_add(5)],
+      input[j.strict_add(6)],
+      input[j.strict_add(7)],
+    ]);
+    let [t0, t1, t2, t3] = lo;
+    let [t4, t5, t6, t7] = hi;
 
     let encoded_lo = u64::from(t0 as u8)
       | (u64::from(((t0 >> 8) | (t1 << 3)) as u8) << 8)
@@ -3901,32 +4058,78 @@ fn byte_decode<const D: usize>(input: &[u8], out: &mut Poly) {
 fn compress_encode_1(input: &Poly, out: &mut [u8]) {
   for (i, byte) in out.iter_mut().enumerate() {
     let start = i.strict_mul(8);
-    let mut packed = 0u8;
-    for bit in 0..8 {
-      packed |= (compress_value::<1>(input[start.strict_add(bit)]) as u8 & 1) << bit;
-    }
-    *byte = packed;
+    let lo = compress_values_4::<1>([
+      input[start],
+      input[start.strict_add(1)],
+      input[start.strict_add(2)],
+      input[start.strict_add(3)],
+    ]);
+    let hi = compress_values_4::<1>([
+      input[start.strict_add(4)],
+      input[start.strict_add(5)],
+      input[start.strict_add(6)],
+      input[start.strict_add(7)],
+    ]);
+    *byte = (lo[0] as u8 & 1)
+      | ((lo[1] as u8 & 1) << 1)
+      | ((lo[2] as u8 & 1) << 2)
+      | ((lo[3] as u8 & 1) << 3)
+      | ((hi[0] as u8 & 1) << 4)
+      | ((hi[1] as u8 & 1) << 5)
+      | ((hi[2] as u8 & 1) << 6)
+      | ((hi[3] as u8 & 1) << 7);
   }
 }
 
 fn subtract_compress_encode_message(lhs: &Poly, rhs: &Poly, out: &mut [u8; SEED_BYTES]) {
   for (i, byte) in out.iter_mut().enumerate() {
     let start = i.strict_mul(8);
-    let mut packed = 0u8;
-    for bit in 0..8 {
-      let index = start.strict_add(bit);
-      packed |= (compress_value::<1>(sub_mod(lhs[index], rhs[index])) as u8 & 1) << bit;
-    }
-    *byte = packed;
+    let lo = compress_values_4::<1>([
+      sub_mod(lhs[start], rhs[start]),
+      sub_mod(lhs[start.strict_add(1)], rhs[start.strict_add(1)]),
+      sub_mod(lhs[start.strict_add(2)], rhs[start.strict_add(2)]),
+      sub_mod(lhs[start.strict_add(3)], rhs[start.strict_add(3)]),
+    ]);
+    let hi = compress_values_4::<1>([
+      sub_mod(lhs[start.strict_add(4)], rhs[start.strict_add(4)]),
+      sub_mod(lhs[start.strict_add(5)], rhs[start.strict_add(5)]),
+      sub_mod(lhs[start.strict_add(6)], rhs[start.strict_add(6)]),
+      sub_mod(lhs[start.strict_add(7)], rhs[start.strict_add(7)]),
+    ]);
+    *byte = (lo[0] as u8 & 1)
+      | ((lo[1] as u8 & 1) << 1)
+      | ((lo[2] as u8 & 1) << 2)
+      | ((lo[3] as u8 & 1) << 3)
+      | ((hi[0] as u8 & 1) << 4)
+      | ((hi[1] as u8 & 1) << 5)
+      | ((hi[2] as u8 & 1) << 6)
+      | ((hi[3] as u8 & 1) << 7);
   }
 }
 
 fn decode_decompress_1(input: &[u8], out: &mut Poly) {
   for (i, byte) in input.iter().copied().enumerate() {
     let start = i.strict_mul(8);
-    for bit in 0..8 {
-      out[start.strict_add(bit)] = decompress_value::<1>(u16::from((byte >> bit) & 1));
-    }
+    let lo = decompress_values_4::<1>([
+      u16::from(byte & 1),
+      u16::from((byte >> 1) & 1),
+      u16::from((byte >> 2) & 1),
+      u16::from((byte >> 3) & 1),
+    ]);
+    let hi = decompress_values_4::<1>([
+      u16::from((byte >> 4) & 1),
+      u16::from((byte >> 5) & 1),
+      u16::from((byte >> 6) & 1),
+      u16::from(byte >> 7),
+    ]);
+    out[start] = lo[0];
+    out[start.strict_add(1)] = lo[1];
+    out[start.strict_add(2)] = lo[2];
+    out[start.strict_add(3)] = lo[3];
+    out[start.strict_add(4)] = hi[0];
+    out[start.strict_add(5)] = hi[1];
+    out[start.strict_add(6)] = hi[2];
+    out[start.strict_add(7)] = hi[3];
   }
 }
 
@@ -3951,19 +4154,36 @@ fn byte_decode_1(input: &[u8], out: &mut Poly) {
 }
 
 fn compress_encode_4(input: &Poly, out: &mut [u8]) {
-  for (i, byte) in out.iter_mut().enumerate() {
-    let j = i.strict_mul(2);
-    let t0 = compress_value::<4>(input[j]);
-    let t1 = compress_value::<4>(input[j.strict_add(1)]);
-    *byte = (t0 | (t1 << 4)) as u8;
+  for i in 0usize..64 {
+    let j = i.strict_mul(4);
+    let k = i.strict_mul(2);
+    let t = compress_values_4::<4>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
+    out[k] = (t[0] | (t[1] << 4)) as u8;
+    out[k.strict_add(1)] = (t[2] | (t[3] << 4)) as u8;
   }
 }
 
 fn decode_decompress_4(input: &[u8], out: &mut Poly) {
-  for (i, byte) in input.iter().copied().enumerate() {
-    let j = i.strict_mul(2);
-    out[j] = decompress_value::<4>(u16::from(byte & 0x0f));
-    out[j.strict_add(1)] = decompress_value::<4>(u16::from(byte >> 4));
+  for i in 0usize..64 {
+    let j = i.strict_mul(4);
+    let k = i.strict_mul(2);
+    let b0 = input[k];
+    let b1 = input[k.strict_add(1)];
+    let t = decompress_values_4::<4>([
+      u16::from(b0 & 0x0f),
+      u16::from(b0 >> 4),
+      u16::from(b1 & 0x0f),
+      u16::from(b1 >> 4),
+    ]);
+    out[j] = t[0];
+    out[j.strict_add(1)] = t[1];
+    out[j.strict_add(2)] = t[2];
+    out[j.strict_add(3)] = t[3];
   }
 }
 
@@ -3986,14 +4206,20 @@ fn compress_encode_5(input: &Poly, out: &mut [u8]) {
   for i in 0usize..32 {
     let j = i.strict_mul(8);
     let k = i.strict_mul(5);
-    let t0 = compress_value::<5>(input[j]);
-    let t1 = compress_value::<5>(input[j.strict_add(1)]);
-    let t2 = compress_value::<5>(input[j.strict_add(2)]);
-    let t3 = compress_value::<5>(input[j.strict_add(3)]);
-    let t4 = compress_value::<5>(input[j.strict_add(4)]);
-    let t5 = compress_value::<5>(input[j.strict_add(5)]);
-    let t6 = compress_value::<5>(input[j.strict_add(6)]);
-    let t7 = compress_value::<5>(input[j.strict_add(7)]);
+    let lo = compress_values_4::<5>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
+    let hi = compress_values_4::<5>([
+      input[j.strict_add(4)],
+      input[j.strict_add(5)],
+      input[j.strict_add(6)],
+      input[j.strict_add(7)],
+    ]);
+    let [t0, t1, t2, t3] = lo;
+    let [t4, t5, t6, t7] = hi;
 
     out[k] = (t0 | (t1 << 5)) as u8;
     out[k.strict_add(1)] = ((t1 >> 3) | (t2 << 2) | (t3 << 7)) as u8;
@@ -4013,14 +4239,26 @@ fn decode_decompress_5(input: &[u8], out: &mut Poly) {
     let b3 = u16::from(input[k.strict_add(3)]);
     let b4 = u16::from(input[k.strict_add(4)]);
 
-    out[j] = decompress_value::<5>(b0 & 0x001f);
-    out[j.strict_add(1)] = decompress_value::<5>(((b0 >> 5) | (b1 << 3)) & 0x001f);
-    out[j.strict_add(2)] = decompress_value::<5>((b1 >> 2) & 0x001f);
-    out[j.strict_add(3)] = decompress_value::<5>(((b1 >> 7) | (b2 << 1)) & 0x001f);
-    out[j.strict_add(4)] = decompress_value::<5>(((b2 >> 4) | (b3 << 4)) & 0x001f);
-    out[j.strict_add(5)] = decompress_value::<5>((b3 >> 1) & 0x001f);
-    out[j.strict_add(6)] = decompress_value::<5>(((b3 >> 6) | (b4 << 2)) & 0x001f);
-    out[j.strict_add(7)] = decompress_value::<5>(b4 >> 3);
+    let lo = decompress_values_4::<5>([
+      b0 & 0x001f,
+      ((b0 >> 5) | (b1 << 3)) & 0x001f,
+      (b1 >> 2) & 0x001f,
+      ((b1 >> 7) | (b2 << 1)) & 0x001f,
+    ]);
+    let hi = decompress_values_4::<5>([
+      ((b2 >> 4) | (b3 << 4)) & 0x001f,
+      (b3 >> 1) & 0x001f,
+      ((b3 >> 6) | (b4 << 2)) & 0x001f,
+      b4 >> 3,
+    ]);
+    out[j] = lo[0];
+    out[j.strict_add(1)] = lo[1];
+    out[j.strict_add(2)] = lo[2];
+    out[j.strict_add(3)] = lo[3];
+    out[j.strict_add(4)] = hi[0];
+    out[j.strict_add(5)] = hi[1];
+    out[j.strict_add(6)] = hi[2];
+    out[j.strict_add(7)] = hi[3];
   }
 }
 
@@ -4070,10 +4308,12 @@ fn compress_encode_10(input: &Poly, out: &mut [u8]) {
   for i in 0usize..64 {
     let j = i.strict_mul(4);
     let k = i.strict_mul(5);
-    let t0 = compress_value::<10>(input[j]);
-    let t1 = compress_value::<10>(input[j.strict_add(1)]);
-    let t2 = compress_value::<10>(input[j.strict_add(2)]);
-    let t3 = compress_value::<10>(input[j.strict_add(3)]);
+    let [t0, t1, t2, t3] = compress_values_4::<10>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
 
     out[k] = t0 as u8;
     out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 2)) as u8;
@@ -4093,10 +4333,16 @@ fn decode_decompress_10(input: &[u8], out: &mut Poly) {
     let b3 = u16::from(input[k.strict_add(3)]);
     let b4 = u16::from(input[k.strict_add(4)]);
 
-    out[j] = decompress_value::<10>(b0 | ((b1 & 0x03) << 8));
-    out[j.strict_add(1)] = decompress_value::<10>((b1 >> 2) | ((b2 & 0x0f) << 6));
-    out[j.strict_add(2)] = decompress_value::<10>((b2 >> 4) | ((b3 & 0x3f) << 4));
-    out[j.strict_add(3)] = decompress_value::<10>((b3 >> 6) | (b4 << 2));
+    let t = decompress_values_4::<10>([
+      b0 | ((b1 & 0x03) << 8),
+      (b1 >> 2) | ((b2 & 0x0f) << 6),
+      (b2 >> 4) | ((b3 & 0x3f) << 4),
+      (b3 >> 6) | (b4 << 2),
+    ]);
+    out[j] = t[0];
+    out[j.strict_add(1)] = t[1];
+    out[j.strict_add(2)] = t[2];
+    out[j.strict_add(3)] = t[3];
   }
 }
 
@@ -4138,14 +4384,20 @@ fn compress_encode_11(input: &Poly, out: &mut [u8]) {
   for i in 0usize..32 {
     let j = i.strict_mul(8);
     let k = i.strict_mul(11);
-    let t0 = compress_value::<11>(input[j]);
-    let t1 = compress_value::<11>(input[j.strict_add(1)]);
-    let t2 = compress_value::<11>(input[j.strict_add(2)]);
-    let t3 = compress_value::<11>(input[j.strict_add(3)]);
-    let t4 = compress_value::<11>(input[j.strict_add(4)]);
-    let t5 = compress_value::<11>(input[j.strict_add(5)]);
-    let t6 = compress_value::<11>(input[j.strict_add(6)]);
-    let t7 = compress_value::<11>(input[j.strict_add(7)]);
+    let lo = compress_values_4::<11>([
+      input[j],
+      input[j.strict_add(1)],
+      input[j.strict_add(2)],
+      input[j.strict_add(3)],
+    ]);
+    let hi = compress_values_4::<11>([
+      input[j.strict_add(4)],
+      input[j.strict_add(5)],
+      input[j.strict_add(6)],
+      input[j.strict_add(7)],
+    ]);
+    let [t0, t1, t2, t3] = lo;
+    let [t4, t5, t6, t7] = hi;
 
     out[k] = t0 as u8;
     out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 3)) as u8;
@@ -4177,14 +4429,26 @@ fn decode_decompress_11(input: &[u8], out: &mut Poly) {
     let b9 = u16::from(input[k.strict_add(9)]);
     let b10 = u16::from(input[k.strict_add(10)]);
 
-    out[j] = decompress_value::<11>(b0 | ((b1 & 0x07) << 8));
-    out[j.strict_add(1)] = decompress_value::<11>((b1 >> 3) | ((b2 & 0x3f) << 5));
-    out[j.strict_add(2)] = decompress_value::<11>((b2 >> 6) | (b3 << 2) | ((b4 & 0x01) << 10));
-    out[j.strict_add(3)] = decompress_value::<11>((b4 >> 1) | ((b5 & 0x0f) << 7));
-    out[j.strict_add(4)] = decompress_value::<11>((b5 >> 4) | ((b6 & 0x7f) << 4));
-    out[j.strict_add(5)] = decompress_value::<11>((b6 >> 7) | (b7 << 1) | ((b8 & 0x03) << 9));
-    out[j.strict_add(6)] = decompress_value::<11>((b8 >> 2) | ((b9 & 0x1f) << 6));
-    out[j.strict_add(7)] = decompress_value::<11>((b9 >> 5) | (b10 << 3));
+    let lo = decompress_values_4::<11>([
+      b0 | ((b1 & 0x07) << 8),
+      (b1 >> 3) | ((b2 & 0x3f) << 5),
+      (b2 >> 6) | (b3 << 2) | ((b4 & 0x01) << 10),
+      (b4 >> 1) | ((b5 & 0x0f) << 7),
+    ]);
+    let hi = decompress_values_4::<11>([
+      (b5 >> 4) | ((b6 & 0x7f) << 4),
+      (b6 >> 7) | (b7 << 1) | ((b8 & 0x03) << 9),
+      (b8 >> 2) | ((b9 & 0x1f) << 6),
+      (b9 >> 5) | (b10 << 3),
+    ]);
+    out[j] = lo[0];
+    out[j.strict_add(1)] = lo[1];
+    out[j.strict_add(2)] = lo[2];
+    out[j.strict_add(3)] = lo[3];
+    out[j.strict_add(4)] = hi[0];
+    out[j.strict_add(5)] = hi[1];
+    out[j.strict_add(6)] = hi[2];
+    out[j.strict_add(7)] = hi[3];
   }
 }
 

@@ -72,7 +72,85 @@ BRANCH_CONDS_X86 = {
   "loopne",
 }
 DIV_MNEMONICS = {"div", "idiv", "udiv", "sdiv"}
-DIRECT_CALL_MNEMONICS = {"bl", "call", "callq"}
+S390X_DIV_MNEMONICS = {
+  "d",
+  "dd",
+  "ddb",
+  "ddbr",
+  "ddr",
+  "de",
+  "der",
+  "dl",
+  "dlg",
+  "dlgr",
+  "dlr",
+  "dr",
+  "dsg",
+  "dsgf",
+  "dsgfr",
+  "dsgr",
+  "dxbr",
+  "dxr",
+}
+S390X_MUL_MNEMONICS = {
+  "m",
+  "mfy",
+  "mh",
+  "mhi",
+  "mhy",
+  "ml",
+  "mlg",
+  "mlgf",
+  "mlgfr",
+  "mlgr",
+  "mlr",
+  "mr",
+  "ms",
+  "msc",
+  "msfi",
+  "msg",
+  "msgf",
+  "msgfi",
+  "msgfr",
+  "msgr",
+  "msr",
+  "msy",
+}
+S390X_VECTOR_MUL_PREFIXES = ("vma", "vme", "vmh", "vml", "vmo")
+BRANCH_CONDS_S390X = {
+  "ber",
+  "bher",
+  "bhr",
+  "bler",
+  "blr",
+  "bner",
+  "bnher",
+  "bnhr",
+  "bnler",
+  "bnlr",
+  "bnor",
+  "bor",
+  "brc",
+  "brcl",
+  "brct",
+  "brctg",
+  "brxh",
+  "brxhg",
+  "brxle",
+  "brxlg",
+  "je",
+  "jge",
+  "jh",
+  "jhe",
+  "jl",
+  "jle",
+  "jne",
+  "jno",
+  "jnp",
+  "jo",
+  "jp",
+}
+DIRECT_CALL_MNEMONICS = {"bl", "brasl", "call", "callq"}
 INDIRECT_JUMP_MNEMONICS = {"br"}
 INDIRECT_CALL_MNEMONICS = {"blr"}
 SUSPICIOUS_CALL_TARGETS = (
@@ -86,6 +164,23 @@ SUSPICIOUS_CALL_TARGETS = (
   "memcmp",
   "bcmp",
   "strcmp",
+)
+MLKEM_ARITHMETIC_SYMBOL_FRAGMENTS = (
+  "rscrypto::auth::mlkem::portable::s390x::",
+  "rscrypto::auth::mlkem::portable::base_case",
+  "rscrypto::auth::mlkem::portable::barrett",
+  "rscrypto::auth::mlkem::portable::compress",
+  "rscrypto::auth::mlkem::portable::decode_decompress",
+  "rscrypto::auth::mlkem::portable::decompress",
+  "rscrypto::auth::mlkem::portable::div_q_compress",
+  "rscrypto::auth::mlkem::portable::inverse_ntt",
+  "rscrypto::auth::mlkem::portable::matrix_accumulate",
+  "rscrypto::auth::mlkem::portable::montgomery",
+  "rscrypto::auth::mlkem::portable::mul_",
+  "rscrypto::auth::mlkem::portable::multiply_ntts",
+  "rscrypto::auth::mlkem::portable::ntt",
+  "rscrypto::auth::mlkem::portable::poly_",
+  "rscrypto::auth::mlkem::portable::subtract_compress",
 )
 
 
@@ -229,12 +324,11 @@ def parse_disassembly(path: Path) -> tuple[dict[str, FunctionBody], dict[int, li
   functions_by_label: dict[str, FunctionBody] = {}
   functions_by_address: dict[int, list[FunctionBody]] = {}
   current: FunctionBody | None = None
-  label_re = re.compile(r"^[0-9a-fA-F]+ <([^>]+)>:$")
+  label_re = re.compile(r"^([0-9a-fA-F]+) <(.+)>:$")
   for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
     if match := label_re.match(line.strip()):
-      address_text = line.strip().split(maxsplit=1)[0]
-      symbol = normalize_symbol(match.group(1))
-      address = int(address_text, 16)
+      symbol = normalize_symbol(match.group(2))
+      address = int(match.group(1), 16)
       current = FunctionBody(symbol=symbol, path=path, address=address, lines=[])
       functions_by_address.setdefault(address, []).append(current)
       functions_by_label.setdefault(symbol, current)
@@ -264,19 +358,25 @@ def symbol_target_base(symbol: str) -> str:
 
 
 def direct_call_targets(line: str) -> set[str]:
-  return {
-    target
-    for target in (symbol_target_base(match.group(1)) for match in re.finditer(r"<([^>]+)>", line))
-    if target and not target.startswith((".", "Ltmp", "LBB"))
-  }
+  targets = set()
+  if match := re.search(r"<(.+)>", line):
+    targets.add(symbol_target_base(match.group(1)))
+  targets.update(
+    symbol_target_base(match.group(1))
+    for match in re.finditer(r"\bR_[A-Z0-9_]+\s+(.+?)(?:\+0x[0-9a-fA-F]+)?\s*$", line)
+  )
+  return {target for target in targets if target and not target.startswith((".", "Ltmp", "LBB"))}
 
 
 def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> set[str]:
   callees: set[str] = set()
-  for _, line in body.lines:
+  for index, (_, line) in enumerate(body.lines):
     if mnemonic(line) not in DIRECT_CALL_MNEMONICS:
       continue
-    callees.update(target for target in direct_call_targets(line) if target in functions)
+    targets = direct_call_targets(line)
+    if index + 1 < len(body.lines):
+      targets.update(direct_call_targets(body.lines[index + 1][1]))
+    callees.update(target for target in targets if target in functions)
   callees.discard(body.symbol)
   return callees
 
@@ -321,6 +421,28 @@ def is_indirect_jump(target: str, inst: str) -> bool:
   if target.startswith("s390x-"):
     return False
   return True
+
+
+def is_mlkem_scope(primitive_ids: list[str]) -> bool:
+  return any("mlkem" in primitive_id for primitive_id in primitive_ids)
+
+
+def is_mlkem_arithmetic_symbol(symbol: str) -> bool:
+  return symbol.startswith("ct_entry_mlkem") or any(fragment in symbol for fragment in MLKEM_ARITHMETIC_SYMBOL_FRAGMENTS)
+
+
+def is_s390x_division(target: str, inst: str) -> bool:
+  return target.startswith("s390x-") and inst in S390X_DIV_MNEMONICS
+
+
+def is_s390x_multiply(target: str, inst: str) -> bool:
+  return target.startswith("s390x-") and (
+    inst in S390X_MUL_MNEMONICS or any(inst.startswith(prefix) for prefix in S390X_VECTOR_MUL_PREFIXES)
+  )
+
+
+def is_s390x_conditional_branch(target: str, inst: str) -> bool:
+  return target.startswith("s390x-") and inst in BRANCH_CONDS_S390X
 
 
 def finding(
@@ -384,7 +506,9 @@ def scan_symbol(
         )
       continue
 
-    if inst in DIV_MNEMONICS:
+    if inst in DIV_MNEMONICS or (
+      is_s390x_division(target, inst) and is_mlkem_scope(primitive_ids) and is_mlkem_arithmetic_symbol(symbol)
+    ):
       findings.append(
         finding(
           symbol,
@@ -394,6 +518,38 @@ def scan_symbol(
           "variable_latency_division",
           "fail",
           "Division/remainder-family instructions are variable-latency on common targets and require explicit review.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
+    elif is_s390x_division(target, inst):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "s390x_division_review",
+          "warn",
+          "s390x division-family instruction found in a CT evidence closure outside ML-KEM arithmetic. "
+          "Review operand provenance before treating it as release evidence.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
+    elif is_mlkem_scope(primitive_ids) and is_mlkem_arithmetic_symbol(symbol) and is_s390x_multiply(target, inst):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "variable_latency_multiply",
+          "fail",
+          "s390x multiply-family instruction found in an ML-KEM CT evidence scope. "
+          "Secret-fed products must use fixed-work arithmetic unless this is proven public.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,
@@ -432,7 +588,7 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif inst in BRANCH_CONDS_AARCH64 or inst in BRANCH_CONDS_X86:
+    elif inst in BRANCH_CONDS_AARCH64 or inst in BRANCH_CONDS_X86 or is_s390x_conditional_branch(target, inst):
       findings.append(
         finding(
           symbol,
@@ -621,13 +777,14 @@ def main() -> int:
       "non_ct_intended_primitives": "entry-symbol scan only",
     },
     "policy": {
-      "fail": ["variable_latency_division", "indirect_jump"],
+      "fail": ["variable_latency_division", "variable_latency_multiply", "indirect_jump"],
       "warn": [
         "conditional_branch",
         "call",
         "indirect_call",
         "register_branch",
         "register_indexed_memory",
+        "s390x_division_review",
         "suspicious_relocation_target",
       ],
     },

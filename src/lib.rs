@@ -174,6 +174,7 @@ assert!(
       feature = "xxh3",
       feature = "chacha20poly1305",
       feature = "xchacha20poly1305",
+      feature = "ml-kem",
       feature = "argon2"
     )
   ),
