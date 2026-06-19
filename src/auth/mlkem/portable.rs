@@ -1845,7 +1845,12 @@ fn use_fused_matrix_accumulate() -> bool {
     false
   }
 
-  #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+  #[cfg(target_arch = "s390x")]
+  {
+    false
+  }
+
+  #[cfg(not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64")))]
   {
     true
   }
