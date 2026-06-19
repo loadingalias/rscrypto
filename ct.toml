@@ -80,6 +80,8 @@ symbols = [
   "ct_entry_mlkem1024_decapsulate",
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_to_product_domain",
+  "ct_entry_mlkem_diag_from_product_domain",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
@@ -559,6 +561,24 @@ primitive = "kem.mlkem1024"
 filter = "mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly"
 left_class = "ML-KEM inverse NTT with fixed secret polynomial"
 right_class = "ML-KEM inverse NTT with random secret polynomial"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem_arithmetic_to_product_domain_fixed_vs_random_poly"
+primitive = "kem.mlkem1024"
+filter = "mlkem_arithmetic_to_product_domain_fixed_vs_random_poly"
+left_class = "ML-KEM product-domain conversion with fixed secret polynomial"
+right_class = "ML-KEM product-domain conversion with random secret polynomial"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem_arithmetic_from_product_domain_fixed_vs_random_poly"
+primitive = "kem.mlkem1024"
+filter = "mlkem_arithmetic_from_product_domain_fixed_vs_random_poly"
+left_class = "ML-KEM product-domain exit with fixed secret polynomial"
+right_class = "ML-KEM product-domain exit with random secret polynomial"
 samples = 20000
 smoke_samples = 512
 
@@ -2711,6 +2731,8 @@ symbols = [
   "ct_entry_mlkem512_decapsulate",
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_to_product_domain",
+  "ct_entry_mlkem_diag_from_product_domain",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
@@ -2745,6 +2767,8 @@ symbols = [
   "ct_entry_mlkem768_decapsulate",
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_to_product_domain",
+  "ct_entry_mlkem_diag_from_product_domain",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
@@ -2779,6 +2803,8 @@ symbols = [
   "ct_entry_mlkem1024_decapsulate",
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
+  "ct_entry_mlkem_diag_to_product_domain",
+  "ct_entry_mlkem_diag_from_product_domain",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
   "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",

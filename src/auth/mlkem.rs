@@ -1158,6 +1158,68 @@ pub fn diag_mlkem1024_multiply_ntts_accumulate_input_digest(
   portable::diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_to_montgomery_product_domain_digest(seed: u16) -> u16 {
+  portable::diag_to_montgomery_product_domain_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_to_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
+  portable::diag_to_montgomery_product_domain_input_digest(poly)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_from_montgomery_product_domain_digest(seed: u16) -> u16 {
+  portable::diag_from_montgomery_product_domain_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_from_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
+  portable::diag_from_montgomery_product_domain_input_digest(poly)
+}
+
+/// Diagnostic digest for the s390x z/Vector product-domain conversion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_to_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_to_montgomery_product_domain_input_digest(poly) }
+}
+
+/// Diagnostic digest for the s390x z/Vector product-domain exit kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_from_montgomery_product_domain_input_digest(poly: [u16; 256]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_from_montgomery_product_domain_input_digest(poly) }
+}
+
 /// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
 ///
 /// # Safety

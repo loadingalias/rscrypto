@@ -965,6 +965,83 @@ pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
   digest
 }
 
+#[cfg(feature = "diag")]
+pub(super) fn diag_to_montgomery_product_domain_digest(seed: u16) -> u16 {
+  let mut poly = diag_poly(seed);
+  poly_to_montgomery_product_domain(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_to_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
+  poly_to_montgomery_product_domain(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_from_montgomery_product_domain_digest(seed: u16) -> u16 {
+  let mut poly = diag_poly(seed);
+  poly_from_montgomery_product_domain(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_from_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
+  poly_from_montgomery_product_domain(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector product-domain conversion kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_to_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+  // 3. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x product-domain conversion kernel itself.
+  unsafe {
+    s390x::to_montgomery_product_domain_vector(&mut poly);
+  }
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector product-domain exit kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_from_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+  // 3. `MONT_R_SQUARED_MOD_Q` is the public ML-KEM conversion constant.
+  // 4. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x product-domain exit kernel itself.
+  unsafe {
+    s390x::from_montgomery_product_domain_vector(&mut poly);
+  }
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
 /// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
 ///
 /// # Safety
@@ -4103,12 +4180,32 @@ fn base_case_multiply_normal_reference(a0: u16, a1: u16, b0: u16, b1: u16, gamma
 }
 
 fn poly_to_montgomery_product_domain(poly: &mut Poly) {
+  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+  if use_s390x_vector_arithmetic() {
+    // SAFETY: runtime dispatch verified the s390x z/Vector facility, and `poly` is a full
+    // fixed-size ML-KEM polynomial.
+    unsafe {
+      s390x::to_montgomery_product_domain_vector(poly);
+    }
+    return;
+  }
+
   for coeff in poly {
     *coeff = to_montgomery_product_domain(*coeff);
   }
 }
 
 fn poly_from_montgomery_product_domain(poly: &mut Poly) {
+  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+  if use_s390x_vector_arithmetic() {
+    // SAFETY: runtime dispatch verified the s390x z/Vector facility, and `poly` is a full
+    // fixed-size ML-KEM polynomial.
+    unsafe {
+      s390x::from_montgomery_product_domain_vector(poly);
+    }
+    return;
+  }
+
   for coeff in poly {
     *coeff = from_montgomery_product_domain(*coeff);
   }

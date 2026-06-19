@@ -448,8 +448,9 @@ pub use auth::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portabl
 pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
 #[cfg(all(feature = "diag", feature = "ml-kem"))]
 pub use auth::{
-  diag_mlkem_compress_decompress_values_digest, diag_mlkem_inverse_ntt_montgomery_product_input_digest,
-  diag_mlkem_multiply_ntts_add_assign_input_digest, diag_mlkem_ntt_input_digest,
+  diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
+  diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
+  diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
   diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
   diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
 };

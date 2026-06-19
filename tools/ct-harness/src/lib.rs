@@ -501,6 +501,44 @@ pub extern "C" fn ct_entry_mlkem_diag_inverse_ntt(poly: *const u16) -> u16 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_to_product_domain(poly: *const u16) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
+    // low-level ML-KEM z/Vector product-domain conversion kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_to_montgomery_product_domain_input_digest(poly) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem_to_montgomery_product_domain_input_digest(poly)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_from_product_domain(poly: *const u16) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
+    // low-level ML-KEM z/Vector product-domain exit kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_from_montgomery_product_domain_input_digest(poly) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem_from_montgomery_product_domain_input_digest(poly)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
   a: *const u16,
   b: *const u16,
