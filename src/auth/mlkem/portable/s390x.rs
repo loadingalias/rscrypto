@@ -4,7 +4,7 @@ use core::simd::{
   u32x4,
 };
 
-use super::{GAMMAS_MONT, N, Poly, Q_HALF, Q_I32, Q_MONT_INV_U16, Q_U32, SAMPLE_NTT_ACC_CHUNK_COEFFS};
+use super::{GAMMAS_MONT, N, Poly, Q_HALF, Q_I32, Q_MONT_INV_U16, Q_U32, SAMPLE_NTT_ACC_CHUNK_COEFFS, ZETAS_MONT};
 
 const Q_MONT_INV_I32: i32 = Q_MONT_INV_U16 as i16 as i32;
 
@@ -20,6 +20,70 @@ pub(super) unsafe fn decompress_values_4<const D: usize>(values: [u16; 4]) -> [u
   let value = u32x4_from_u16(values);
   let scaled = mul_u32x4_16_ct(u32x4::splat(Q_U32), value) + u32x4::splat(1u32 << (D - 1));
   u32x4_to_u16(scaled >> (D as u32))
+}
+
+#[target_feature(enable = "vector")]
+pub(super) unsafe fn ntt_vector(poly: &mut Poly) {
+  let mut zeta_index = 1usize;
+  let mut len = 128usize;
+  while len >= 4 {
+    let mut start = 0usize;
+    while start < N {
+      let zeta = ZETAS_MONT[zeta_index];
+      zeta_index = zeta_index.strict_add(1);
+      let end = start.strict_add(len);
+      let mut j = start;
+      while j < end {
+        let u = load_u32x4(poly, j);
+        let t = mul_mont_const_mod_u32x4(load_u32x4(poly, j.strict_add(len)), zeta);
+        store_u32x4(poly, j.strict_add(len), sub_mod_u32x4(u, t));
+        store_u32x4(poly, j, add_mod_u32x4(u, t));
+        j = j.strict_add(4);
+      }
+      start = start.strict_add(len << 1);
+    }
+    len >>= 1;
+  }
+
+  ntt_len2_vector(poly, &mut zeta_index);
+}
+
+#[target_feature(enable = "vector")]
+pub(super) unsafe fn inverse_ntt_vector(poly: &mut Poly, final_scale_mont: i16) {
+  let mut zeta_index = 127usize;
+  inverse_ntt_len2_vector(poly, &mut zeta_index);
+
+  let mut len = 4usize;
+  while len <= 128 {
+    let mut start = 0usize;
+    while start < N {
+      let zeta = ZETAS_MONT[zeta_index];
+      zeta_index = zeta_index.strict_sub(1);
+      let end = start.strict_add(len);
+      let mut j = start;
+      while j < end {
+        let t = load_u32x4(poly, j);
+        let u = load_u32x4(poly, j.strict_add(len));
+        store_u32x4(poly, j, add_mod_u32x4(t, u));
+        store_u32x4(
+          poly,
+          j.strict_add(len),
+          mul_mont_const_mod_u32x4(sub_mod_u32x4(u, t), zeta),
+        );
+        j = j.strict_add(4);
+      }
+      start = start.strict_add(len << 1);
+    }
+    len <<= 1;
+  }
+
+  let mut i = 0usize;
+  while i < N {
+    let coeffs = load_u32x4(poly, i);
+    let scaled = mul_mont_const_mod_u32x4(coeffs, final_scale_mont);
+    store_u32x4(poly, i, scaled);
+    i = i.strict_add(4);
+  }
 }
 
 #[target_feature(enable = "vector")]
@@ -88,6 +152,44 @@ fn multiply_ntts_add_assign_4(
 }
 
 #[inline(always)]
+fn ntt_len2_vector(poly: &mut Poly, zeta_index: &mut usize) {
+  let mut start = 0usize;
+  while start < N {
+    let zeta0 = i32::from(ZETAS_MONT[*zeta_index]);
+    let zeta1 = i32::from(ZETAS_MONT[(*zeta_index).strict_add(1)]);
+    *zeta_index = (*zeta_index).strict_add(2);
+
+    let lower = load_len2_lower_u32x4(poly, start);
+    let upper = load_len2_upper_u32x4(poly, start);
+    let twiddles = duplicate_i32_pair_lanes(zeta0, zeta1);
+    let t = mul_mont_mod_u32x4(upper, twiddles);
+    store_len2_interleaved_4(poly, start, add_mod_u32x4(lower, t), sub_mod_u32x4(lower, t));
+
+    start = start.strict_add(8);
+  }
+}
+
+#[inline(always)]
+fn inverse_ntt_len2_vector(poly: &mut Poly, zeta_index: &mut usize) {
+  let mut start = 0usize;
+  while start < N {
+    let zeta0 = i32::from(ZETAS_MONT[*zeta_index]);
+    *zeta_index = (*zeta_index).strict_sub(1);
+    let zeta1 = i32::from(ZETAS_MONT[*zeta_index]);
+    *zeta_index = (*zeta_index).strict_sub(1);
+
+    let lower = load_len2_lower_u32x4(poly, start);
+    let upper = load_len2_upper_u32x4(poly, start);
+    let twiddles = duplicate_i32_pair_lanes(zeta0, zeta1);
+    let lower_out = add_mod_u32x4(lower, upper);
+    let upper_out = mul_mont_mod_u32x4(sub_mod_u32x4(upper, lower), twiddles);
+    store_len2_interleaved_4(poly, start, lower_out, upper_out);
+
+    start = start.strict_add(8);
+  }
+}
+
+#[inline(always)]
 fn add_interleaved_4(acc: &mut Poly, offset: usize, c0: u32x4, c1: u32x4) {
   let out0 = add_mod_u32x4(load_even_u32x4(acc, offset), c0).to_array();
   let out1 = add_mod_u32x4(load_odd_u32x4(acc, offset), c1).to_array();
@@ -120,6 +222,11 @@ fn add_mod_u32x4(a: u32x4, b: u32x4) -> u32x4 {
 }
 
 #[inline(always)]
+fn sub_mod_u32x4(a: u32x4, b: u32x4) -> u32x4 {
+  add_q_if_borrowed_u32x4(a - b)
+}
+
+#[inline(always)]
 fn add_q_if_borrowed_u32x4(value: u32x4) -> u32x4 {
   let borrow = value >> 31;
   value + (opaque_bit_u32x4(borrow).wrapping_neg() & u32x4::splat(Q_U32))
@@ -128,6 +235,16 @@ fn add_q_if_borrowed_u32x4(value: u32x4) -> u32x4 {
 #[inline(always)]
 fn sign_extend_i16_i32x4(value: i32x4) -> i32x4 {
   (value << 16) >> 16
+}
+
+#[inline(always)]
+fn mul_mont_const_mod_u32x4(a: u32x4, b_mont: i16) -> u32x4 {
+  mul_mont_mod_u32x4(a, i32x4::splat(i32::from(b_mont)))
+}
+
+#[inline(always)]
+fn mul_mont_mod_u32x4(a: u32x4, b_mont: i32x4) -> u32x4 {
+  signed_to_mod_q_i32x4(montgomery_reduce_i32x4(mul_i32x4_16_ct(a.cast::<i32>(), b_mont)))
 }
 
 #[inline(always)]
@@ -192,6 +309,16 @@ fn opaque_bit_u32x4(value: u32x4) -> u32x4 {
 }
 
 #[inline(always)]
+fn load_u32x4(values: &[u16], offset: usize) -> u32x4 {
+  u32x4::from_array([
+    u32::from(values[offset]),
+    u32::from(values[offset.strict_add(1)]),
+    u32::from(values[offset.strict_add(2)]),
+    u32::from(values[offset.strict_add(3)]),
+  ])
+}
+
+#[inline(always)]
 fn load_even_u32x4(values: &[u16], offset: usize) -> u32x4 {
   u32x4::from_array([
     u32::from(values[offset]),
@@ -209,6 +336,54 @@ fn load_odd_u32x4(values: &[u16], offset: usize) -> u32x4 {
     u32::from(values[offset.strict_add(5)]),
     u32::from(values[offset.strict_add(7)]),
   ])
+}
+
+#[inline(always)]
+fn load_len2_lower_u32x4(values: &[u16], offset: usize) -> u32x4 {
+  u32x4::from_array([
+    u32::from(values[offset]),
+    u32::from(values[offset.strict_add(1)]),
+    u32::from(values[offset.strict_add(4)]),
+    u32::from(values[offset.strict_add(5)]),
+  ])
+}
+
+#[inline(always)]
+fn load_len2_upper_u32x4(values: &[u16], offset: usize) -> u32x4 {
+  u32x4::from_array([
+    u32::from(values[offset.strict_add(2)]),
+    u32::from(values[offset.strict_add(3)]),
+    u32::from(values[offset.strict_add(6)]),
+    u32::from(values[offset.strict_add(7)]),
+  ])
+}
+
+#[inline(always)]
+fn store_u32x4(values: &mut [u16], offset: usize, lanes: u32x4) {
+  let lanes = lanes.to_array();
+  values[offset] = lanes[0] as u16;
+  values[offset.strict_add(1)] = lanes[1] as u16;
+  values[offset.strict_add(2)] = lanes[2] as u16;
+  values[offset.strict_add(3)] = lanes[3] as u16;
+}
+
+#[inline(always)]
+fn store_len2_interleaved_4(values: &mut [u16], offset: usize, lower: u32x4, upper: u32x4) {
+  let lower = lower.to_array();
+  let upper = upper.to_array();
+  values[offset] = lower[0] as u16;
+  values[offset.strict_add(1)] = lower[1] as u16;
+  values[offset.strict_add(2)] = upper[0] as u16;
+  values[offset.strict_add(3)] = upper[1] as u16;
+  values[offset.strict_add(4)] = lower[2] as u16;
+  values[offset.strict_add(5)] = lower[3] as u16;
+  values[offset.strict_add(6)] = upper[2] as u16;
+  values[offset.strict_add(7)] = upper[3] as u16;
+}
+
+#[inline(always)]
+fn duplicate_i32_pair_lanes(a: i32, b: i32) -> i32x4 {
+  i32x4::from_array([a, a, b, b])
 }
 
 #[inline(always)]
@@ -294,6 +469,42 @@ mod tests {
       }
 
       assert_eq!(vector, scalar, "seed {seed}");
+    }
+  }
+
+  #[test]
+  fn vector_ntt_matches_scalar_reference() {
+    if !std::arch::is_s390x_feature_detected!("vector") {
+      return;
+    }
+
+    for seed in 0usize..16 {
+      let mut scalar = test_poly(seed);
+      let mut vector = scalar;
+
+      super::super::ntt_scalar(&mut scalar);
+      // SAFETY: direct s390x vector NTT test call because:
+      // 1. Runtime feature detection confirmed z/Vector availability above.
+      // 2. `vector` is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+      //    fixed-work shift/add multiplication for secret-fed coefficient products.
+      unsafe {
+        ntt_vector(&mut vector);
+      }
+
+      assert_eq!(vector, scalar, "forward seed {seed}");
+
+      super::super::inverse_ntt_scalar(&mut scalar);
+      // SAFETY: direct s390x vector inverse-NTT test call because:
+      // 1. Runtime feature detection confirmed z/Vector availability above.
+      // 2. `vector` is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+      //    fixed-work shift/add multiplication for secret-fed coefficient products.
+      unsafe {
+        inverse_ntt_vector(&mut vector, super::super::INV_NTT_SCALE_MONT);
+      }
+
+      assert_eq!(vector, scalar, "inverse seed {seed}");
     }
   }
 

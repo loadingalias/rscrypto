@@ -2512,10 +2512,28 @@ fn ntt(poly: &mut Poly) {
   ntt_scalar(poly);
 }
 
+#[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+fn ntt(poly: &mut Poly) {
+  if use_s390x_vector_arithmetic() {
+    // SAFETY: s390x z/Vector NTT dispatch because:
+    // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+    //    target-feature function.
+    // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+    // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions.
+    // 4. Secret-fed coefficient products use fixed-work shift/add multiplication rather than native
+    //    scalar or vector multiply.
+    unsafe {
+      return s390x::ntt_vector(poly);
+    }
+  }
+
+  ntt_scalar(poly);
+}
+
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
 ))]
 fn ntt(poly: &mut Poly) {
   ntt_scalar(poly);
@@ -2580,10 +2598,30 @@ fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
   inverse_ntt_scalar_with_scale(poly, final_scale_mont);
 }
 
+#[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
+  if use_s390x_vector_arithmetic() {
+    // SAFETY: s390x z/Vector inverse-NTT dispatch because:
+    // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+    //    target-feature function.
+    // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+    // 3. `final_scale_mont` is one of the public ML-KEM Montgomery scale constants selected by the
+    //    caller.
+    // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions.
+    // 5. Secret-fed coefficient products use fixed-work shift/add multiplication rather than native
+    //    scalar or vector multiply.
+    unsafe {
+      return s390x::inverse_ntt_vector(poly, final_scale_mont);
+    }
+  }
+
+  inverse_ntt_scalar_with_scale(poly, final_scale_mont);
+}
+
 #[cfg(any(
   miri,
   feature = "portable-only",
-  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+  not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64"))
 ))]
 fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
   inverse_ntt_scalar_with_scale(poly, final_scale_mont);
