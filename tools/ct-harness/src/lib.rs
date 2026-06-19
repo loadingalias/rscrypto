@@ -109,6 +109,28 @@ unsafe fn read_u16_array<const N: usize>(ptr: *const u16) -> Option<[u16; N]> {
   Some(out)
 }
 
+/// Read a fixed-size ML-KEM polynomial vector by value from a C pointer.
+///
+/// # Safety
+///
+/// `ptr` must be valid for reads of `K * 256` initialized `u16` values and
+/// aligned for `u16`.
+unsafe fn read_mlkem_polyvec<const K: usize>(ptr: *const u16) -> Option<[[u16; 256]; K]> {
+  if ptr.is_null() {
+    return None;
+  }
+
+  let mut out = [[0u16; 256]; K];
+  // SAFETY: Copies a fixed-size ML-KEM polyvec from FFI memory because:
+  // 1. The caller contract requires `ptr` to be valid for reads of `K * 256` initialized `u16`
+  //    values.
+  // 2. The caller contract requires `ptr` to be aligned for `u16`.
+  // 3. `out` is stack-owned storage valid for writes of `K * 256` `u16` values.
+  // 4. Source and destination cannot overlap because `out` is newly allocated stack storage.
+  unsafe { ptr::copy_nonoverlapping(ptr, out.as_mut_ptr().cast::<u16>(), K * 256) };
+  Some(out)
+}
+
 /// Write a fixed-size output array to a C pointer.
 ///
 /// # Safety
@@ -507,6 +529,66 @@ pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
 
   #[cfg(not(target_arch = "s390x"))]
   rscrypto::auth::mlkem::diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k3(
+  a: *const u16,
+  b: *const u16,
+  acc: *const u16,
+) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly three readable ML-KEM polynomials.
+  let Some(a) = (unsafe { read_mlkem_polyvec::<3>(a) }) else {
+    return 0;
+  };
+  // SAFETY: The diagnostic pointer must reference exactly three readable ML-KEM polynomials.
+  let Some(b) = (unsafe { read_mlkem_polyvec::<3>(b) }) else {
+    return 0;
+  };
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(acc) = (unsafe { read_u16_array::<256>(acc) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners, and this root intentionally scans the direct k=3 dot-product kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_multiply_ntts_accumulate_k3_input_digest(a, b, acc) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem768_multiply_ntts_accumulate_input_digest(a, b, acc)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k4(
+  a: *const u16,
+  b: *const u16,
+  acc: *const u16,
+) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly four readable ML-KEM polynomials.
+  let Some(a) = (unsafe { read_mlkem_polyvec::<4>(a) }) else {
+    return 0;
+  };
+  // SAFETY: The diagnostic pointer must reference exactly four readable ML-KEM polynomials.
+  let Some(b) = (unsafe { read_mlkem_polyvec::<4>(b) }) else {
+    return 0;
+  };
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(acc) = (unsafe { read_u16_array::<256>(acc) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners, and this root intentionally scans the direct k=4 dot-product kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(a, b, acc) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc)
 }
 
 #[unsafe(no_mangle)]

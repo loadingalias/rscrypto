@@ -1134,6 +1134,30 @@ pub fn diag_mlkem_multiply_ntts_add_assign_input_digest(a: [u16; 256], b: [u16; 
   portable::diag_multiply_ntts_add_assign_input_digest(a, b, acc)
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem768_multiply_ntts_accumulate_input_digest(
+  a: [[u16; 256]; 3],
+  b: [[u16; 256]; 3],
+  acc: [u16; 256],
+) -> u16 {
+  portable::diag_multiply_ntts_accumulate_k3_input_digest(a, b, acc)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_multiply_ntts_accumulate_input_digest(
+  a: [[u16; 256]; 4],
+  b: [[u16; 256]; 4],
+  acc: [u16; 256],
+) -> u16 {
+  portable::diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
+}
+
 /// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
 ///
 /// # Safety
@@ -1151,6 +1175,44 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_add_assign_input_digest(
 ) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
   unsafe { portable::diag_s390x_multiply_ntts_add_assign_input_digest(a, b, acc) }
+}
+
+/// Diagnostic digest for the s390x z/Vector k=3 NTT dot-product kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k3_input_digest(
+  a: [[u16; 256]; 3],
+  b: [[u16; 256]; 3],
+  acc: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_multiply_ntts_accumulate_k3_input_digest(a, b, acc) }
+}
+
+/// Diagnostic digest for the s390x z/Vector k=4 NTT dot-product kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(
+  a: [[u16; 256]; 4],
+  b: [[u16; 256]; 4],
+  acc: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_multiply_ntts_accumulate_k4_input_digest(a, b, acc) }
 }
 
 #[cfg(feature = "diag")]

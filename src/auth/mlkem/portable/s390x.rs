@@ -151,6 +151,58 @@ pub(super) unsafe fn multiply_ntts_add_assign_chunk_vector(
   }
 }
 
+#[target_feature(enable = "vector")]
+pub(super) unsafe fn multiply_ntts_accumulate_k3_vector(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
+  let acc_ptr = acc.as_mut_ptr();
+  let a0 = a[0].as_ptr();
+  let a1 = a[1].as_ptr();
+  let a2 = a[2].as_ptr();
+  let b0 = b[0].as_ptr();
+  let b1 = b[1].as_ptr();
+  let b2 = b[2].as_ptr();
+
+  let mut coeff_offset = 0usize;
+  while coeff_offset < N {
+    // SAFETY: `coeff_offset` advances by one public 8-coefficient base-multiply group over the full
+    // 256-coefficient polynomials, and all six multiplicand pointers refer to fixed-size `Poly`
+    // values supplied by the caller.
+    unsafe {
+      multiply_ntts_accumulate_k3_4(acc_ptr, [a0, a1, a2], [b0, b1, b2], coeff_offset, coeff_offset / 2);
+    }
+    coeff_offset = coeff_offset.wrapping_add(8);
+  }
+}
+
+#[target_feature(enable = "vector")]
+pub(super) unsafe fn multiply_ntts_accumulate_k4_vector(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
+  let acc_ptr = acc.as_mut_ptr();
+  let a0 = a[0].as_ptr();
+  let a1 = a[1].as_ptr();
+  let a2 = a[2].as_ptr();
+  let a3 = a[3].as_ptr();
+  let b0 = b[0].as_ptr();
+  let b1 = b[1].as_ptr();
+  let b2 = b[2].as_ptr();
+  let b3 = b[3].as_ptr();
+
+  let mut coeff_offset = 0usize;
+  while coeff_offset < N {
+    // SAFETY: `coeff_offset` advances by one public 8-coefficient base-multiply group over the full
+    // 256-coefficient polynomials, and all eight multiplicand pointers refer to fixed-size `Poly`
+    // values supplied by the caller.
+    unsafe {
+      multiply_ntts_accumulate_k4_4(
+        acc_ptr,
+        [a0, a1, a2, a3],
+        [b0, b1, b2, b3],
+        coeff_offset,
+        coeff_offset / 2,
+      );
+    }
+    coeff_offset = coeff_offset.wrapping_add(8);
+  }
+}
+
 #[inline(always)]
 unsafe fn multiply_ntts_add_assign_4(
   acc: *mut u16,
@@ -160,6 +212,77 @@ unsafe fn multiply_ntts_add_assign_4(
   b_offset: usize,
   gamma_offset: usize,
 ) {
+  // SAFETY: caller guarantees that `a_offset..a_offset + 8`, `b_offset..b_offset + 8`, and
+  // `gamma_offset..gamma_offset + 4` are inside their fixed ML-KEM buffers.
+  let (c0, c1) = unsafe { base_multiply_4(a, a_offset, b, b_offset, gamma_offset) };
+
+  // SAFETY: caller guarantees `b_offset..b_offset + 8` is inside `acc`.
+  unsafe {
+    add_interleaved_4(acc, b_offset, c0, c1);
+  }
+}
+
+#[inline(always)]
+unsafe fn multiply_ntts_accumulate_k3_4(
+  acc: *mut u16,
+  a: [*const u16; 3],
+  b: [*const u16; 3],
+  coeff_offset: usize,
+  gamma_offset: usize,
+) {
+  // SAFETY: caller guarantees `coeff_offset..coeff_offset + 8` for every multiplicand and
+  // `gamma_offset..gamma_offset + 4` are inside fixed ML-KEM buffers.
+  let ((a0b0, a0b1), (a1b0, a1b1), (a2b0, a2b1)) = unsafe {
+    (
+      base_multiply_4(a[0], coeff_offset, b[0], coeff_offset, gamma_offset),
+      base_multiply_4(a[1], coeff_offset, b[1], coeff_offset, gamma_offset),
+      base_multiply_4(a[2], coeff_offset, b[2], coeff_offset, gamma_offset),
+    )
+  };
+  let c0 = add_mod_u32x4(add_mod_u32x4(a0b0, a1b0), a2b0);
+  let c1 = add_mod_u32x4(add_mod_u32x4(a0b1, a1b1), a2b1);
+
+  // SAFETY: caller guarantees `coeff_offset..coeff_offset + 8` is inside `acc`.
+  unsafe {
+    add_interleaved_4(acc, coeff_offset, c0, c1);
+  }
+}
+
+#[inline(always)]
+unsafe fn multiply_ntts_accumulate_k4_4(
+  acc: *mut u16,
+  a: [*const u16; 4],
+  b: [*const u16; 4],
+  coeff_offset: usize,
+  gamma_offset: usize,
+) {
+  // SAFETY: caller guarantees `coeff_offset..coeff_offset + 8` for every multiplicand and
+  // `gamma_offset..gamma_offset + 4` are inside fixed ML-KEM buffers.
+  let ((a0b0, a0b1), (a1b0, a1b1), (a2b0, a2b1), (a3b0, a3b1)) = unsafe {
+    (
+      base_multiply_4(a[0], coeff_offset, b[0], coeff_offset, gamma_offset),
+      base_multiply_4(a[1], coeff_offset, b[1], coeff_offset, gamma_offset),
+      base_multiply_4(a[2], coeff_offset, b[2], coeff_offset, gamma_offset),
+      base_multiply_4(a[3], coeff_offset, b[3], coeff_offset, gamma_offset),
+    )
+  };
+  let c0 = add_mod_u32x4(add_mod_u32x4(add_mod_u32x4(a0b0, a1b0), a2b0), a3b0);
+  let c1 = add_mod_u32x4(add_mod_u32x4(add_mod_u32x4(a0b1, a1b1), a2b1), a3b1);
+
+  // SAFETY: caller guarantees `coeff_offset..coeff_offset + 8` is inside `acc`.
+  unsafe {
+    add_interleaved_4(acc, coeff_offset, c0, c1);
+  }
+}
+
+#[inline(always)]
+unsafe fn base_multiply_4(
+  a: *const u16,
+  a_offset: usize,
+  b: *const u16,
+  b_offset: usize,
+  gamma_offset: usize,
+) -> (u32x4, u32x4) {
   // SAFETY: caller guarantees that `a_offset..a_offset + 8`, `b_offset..b_offset + 8`, and
   // `gamma_offset..gamma_offset + 4` are inside their fixed ML-KEM buffers.
   let (a0, a1, b0, b1, gamma) = unsafe {
@@ -181,10 +304,7 @@ unsafe fn multiply_ntts_add_assign_4(
   let a1b0 = mul_i32x4_16_ct(a1, b0);
   let c1 = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(a0b1 + a1b0));
 
-  // SAFETY: caller guarantees `b_offset..b_offset + 8` is inside `acc`.
-  unsafe {
-    add_interleaved_4(acc, b_offset, c0, c1);
-  }
+  (c0, c1)
 }
 
 #[inline(always)]
@@ -597,6 +717,47 @@ mod tests {
       }
 
       assert_eq!(vector, scalar, "seed {seed}");
+    }
+  }
+
+  #[test]
+  fn vector_multiply_ntts_accumulate_matches_scalar_dot_product() {
+    if !std::arch::is_s390x_feature_detected!("vector") {
+      return;
+    }
+
+    for seed in 0usize..16 {
+      let acc = test_poly(seed);
+      let a0 = test_poly(seed.strict_add(100));
+      let a1 = test_poly(seed.strict_add(101));
+      let a2 = test_poly(seed.strict_add(102));
+      let a3 = test_poly(seed.strict_add(103));
+      let b0 = test_poly(seed.strict_add(200));
+      let b1 = test_poly(seed.strict_add(201));
+      let b2 = test_poly(seed.strict_add(202));
+      let b3 = test_poly(seed.strict_add(203));
+
+      let mut scalar_k3 = acc;
+      super::super::multiply_ntts_add_assign_scalar(&mut scalar_k3, &a0, &b0);
+      super::super::multiply_ntts_add_assign_scalar(&mut scalar_k3, &a1, &b1);
+      super::super::multiply_ntts_add_assign_scalar(&mut scalar_k3, &a2, &b2);
+
+      let mut vector_k3 = acc;
+      // SAFETY: test is runtime-gated on z/Vector availability.
+      unsafe {
+        multiply_ntts_accumulate_k3_vector(&mut vector_k3, [&a0, &a1, &a2], [&b0, &b1, &b2]);
+      }
+      assert_eq!(vector_k3, scalar_k3, "k3 seed {seed}");
+
+      let mut scalar_k4 = scalar_k3;
+      super::super::multiply_ntts_add_assign_scalar(&mut scalar_k4, &a3, &b3);
+
+      let mut vector_k4 = acc;
+      // SAFETY: test is runtime-gated on z/Vector availability.
+      unsafe {
+        multiply_ntts_accumulate_k4_vector(&mut vector_k4, [&a0, &a1, &a2, &a3], [&b0, &b1, &b2, &b3]);
+      }
+      assert_eq!(vector_k4, scalar_k4, "k4 seed {seed}");
     }
   }
 
