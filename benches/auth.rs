@@ -1515,7 +1515,8 @@ fn mlkem_matrix_sample(_: &mut Criterion) {}
 #[cfg(feature = "diag")]
 fn mlkem_arithmetic(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
-    diag_mlkem_inverse_ntt_montgomery_product_digest, diag_mlkem_multiply_ntts_add_assign_digest, diag_mlkem_ntt_digest,
+    diag_mlkem_from_montgomery_product_domain_digest, diag_mlkem_inverse_ntt_montgomery_product_digest,
+    diag_mlkem_multiply_ntts_add_assign_digest, diag_mlkem_ntt_digest, diag_mlkem_to_montgomery_product_domain_digest,
   };
 
   let mut g = c.benchmark_group("mlkem-arithmetic");
@@ -1528,6 +1529,12 @@ fn mlkem_arithmetic(c: &mut Criterion) {
   });
   g.bench_function("multiply-ntts-add-assign", |b| {
     b.iter(|| black_box(diag_mlkem_multiply_ntts_add_assign_digest(black_box(0x3456))))
+  });
+  g.bench_function("to-montgomery-product-domain", |b| {
+    b.iter(|| black_box(diag_mlkem_to_montgomery_product_domain_digest(black_box(0x4567))))
+  });
+  g.bench_function("from-montgomery-product-domain", |b| {
+    b.iter(|| black_box(diag_mlkem_from_montgomery_product_domain_digest(black_box(0x5678))))
   });
 
   g.finish();

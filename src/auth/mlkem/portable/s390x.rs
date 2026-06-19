@@ -4,7 +4,10 @@ use core::simd::{
   u32x4, u64x2,
 };
 
-use super::{GAMMAS_MONT, N, Poly, Q_HALF, Q_I32, Q_MONT_INV_U16, Q_U32, SAMPLE_NTT_ACC_CHUNK_COEFFS, ZETAS_MONT};
+use super::{
+  GAMMAS_MONT, MONT_R_SQUARED_MOD_Q, N, Poly, Q_HALF, Q_I32, Q_MONT_INV_U16, Q_U32, SAMPLE_NTT_ACC_CHUNK_COEFFS,
+  ZETAS_MONT,
+};
 
 const Q_MONT_INV_I32: i32 = Q_MONT_INV_U16 as i16 as i32;
 const Q_COMPRESS_DIV_SHIFT: u32 = 33;
@@ -23,6 +26,38 @@ pub(super) unsafe fn decompress_values_4<const D: usize>(values: [u16; 4]) -> [u
   let value = u32x4_from_u16(values);
   let scaled = mul_u32x4_16_ct(u32x4::splat(Q_U32), value) + u32x4::splat(1u32 << (D - 1));
   u32x4_to_u16(scaled >> (D as u32))
+}
+
+#[target_feature(enable = "vector")]
+pub(super) unsafe fn to_montgomery_product_domain_vector(poly: &mut Poly) {
+  let poly_ptr = poly.as_mut_ptr();
+  let mut i = 0usize;
+  while i < N {
+    // SAFETY: `i` advances in fixed 4-coefficient chunks across the 256-coefficient polynomial.
+    let coeffs = unsafe { load_u32x4(poly_ptr.cast_const(), i) };
+    let converted = signed_to_mod_q_i32x4(montgomery_reduce_i32x4(coeffs.cast::<i32>()));
+    // SAFETY: same fixed chunk proven above.
+    unsafe {
+      store_u32x4(poly_ptr, i, converted);
+    }
+    i = i.wrapping_add(4);
+  }
+}
+
+#[target_feature(enable = "vector")]
+pub(super) unsafe fn from_montgomery_product_domain_vector(poly: &mut Poly) {
+  let poly_ptr = poly.as_mut_ptr();
+  let mut i = 0usize;
+  while i < N {
+    // SAFETY: `i` advances in fixed 4-coefficient chunks across the 256-coefficient polynomial.
+    let coeffs = unsafe { load_u32x4(poly_ptr.cast_const(), i) };
+    let converted = mul_mont_const_mod_u32x4(coeffs, MONT_R_SQUARED_MOD_Q);
+    // SAFETY: same fixed chunk proven above.
+    unsafe {
+      store_u32x4(poly_ptr, i, converted);
+    }
+    i = i.wrapping_add(4);
+  }
 }
 
 #[target_feature(enable = "vector")]

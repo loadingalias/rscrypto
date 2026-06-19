@@ -26,9 +26,10 @@ use rscrypto::{
   diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
   diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
   diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
-  diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
-  diag_mlkem_ntt_input_digest, diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
-  diag_rsa_validate_pkcs8_private_key_der_stage,
+  diag_mlkem_from_montgomery_product_domain_input_digest, diag_mlkem_inverse_ntt_montgomery_product_input_digest,
+  diag_mlkem_multiply_ntts_add_assign_input_digest, diag_mlkem_ntt_input_digest,
+  diag_mlkem_to_montgomery_product_domain_input_digest, diag_rsa_import_pkcs8_private_key_der_stage,
+  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
   traits::{Kem as _, ct},
   RsaEncryptionError, RsaPublicKeyPolicy,
 };
@@ -883,6 +884,40 @@ fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng:
 
   for (class, poly) in inputs {
     runner.run_one(class, || std::hint::black_box(diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly)));
+  }
+}
+
+fn mlkem_arithmetic_to_product_domain_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let poly = if matches!(class, Class::Left) {
+      mlkem_poly_from_seed(0x451)
+    } else {
+      random_mlkem_poly(rng)
+    };
+    inputs.push((class, poly));
+  }
+
+  for (class, poly) in inputs {
+    runner.run_one(class, || std::hint::black_box(diag_mlkem_to_montgomery_product_domain_input_digest(poly)));
+  }
+}
+
+fn mlkem_arithmetic_from_product_domain_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let poly = if matches!(class, Class::Left) {
+      mlkem_poly_from_seed(0x471)
+    } else {
+      random_mlkem_poly(rng)
+    };
+    inputs.push((class, poly));
+  }
+
+  for (class, poly) in inputs {
+    runner.run_one(class, || std::hint::black_box(diag_mlkem_from_montgomery_product_domain_input_digest(poly)));
   }
 }
 
@@ -1987,6 +2022,8 @@ ctbench_main_with_seeds!(
   (mlkem1024_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6b31303234726a)),
   (mlkem_arithmetic_ntt_fixed_vs_random_poly, Some(0x6d6c6b6e7474706f)),
   (mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly, Some(0x6d6c6b696e747470)),
+  (mlkem_arithmetic_to_product_domain_fixed_vs_random_poly, Some(0x6d6c6b746f70726f)),
+  (mlkem_arithmetic_from_product_domain_fixed_vs_random_poly, Some(0x6d6c6b667270726f)),
   (mlkem_arithmetic_basemul_fixed_vs_random_operands, Some(0x6d6c6b626173656d)),
   (mlkem1024_arithmetic_dot_fixed_vs_random_operands, Some(0x6d6c6b313032646f)),
   (ed25519_sign_fixed_vs_random_secret, Some(0x656432353531395f)),
