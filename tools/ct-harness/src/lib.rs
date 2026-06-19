@@ -4,6 +4,10 @@
 //! through narrow pointer/length boundaries so IR, assembly, object, and timing
 //! tools can target stable symbols without analyzing ergonomic public APIs.
 
+// C ABI harness functions must remain plain `extern "C"` symbols. Pointer validity is documented
+// on the shared helpers and each entrypoint rejects null shapes before copying fixed-size inputs.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use core::{ptr, slice};
 use std::format;
 
@@ -16,8 +20,8 @@ use rscrypto::{
   MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
   MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
-  RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey,
-  XChaCha20Poly1305, XChaCha20Poly1305Key,
+  RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
   traits::{Kem as _, ct},
@@ -79,6 +83,27 @@ unsafe fn read_array<const N: usize>(ptr: *const u8) -> Option<[u8; N]> {
   // 1. The caller contract requires `ptr` to be valid for reads of `N` bytes.
   // 2. `out` is a stack-owned `[u8; N]` valid for writes of `N` bytes.
   // 3. `copy_nonoverlapping` is correct even for unaligned byte pointers.
+  // 4. Source and destination cannot overlap because `out` is newly allocated stack storage.
+  unsafe { ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N) };
+  Some(out)
+}
+
+/// Read a fixed-size `u16` input array by value from a C pointer.
+///
+/// # Safety
+///
+/// `ptr` must be valid for reads of `N` initialized `u16` values and aligned
+/// for `u16`.
+unsafe fn read_u16_array<const N: usize>(ptr: *const u16) -> Option<[u16; N]> {
+  if ptr.is_null() {
+    return None;
+  }
+
+  let mut out = [0u16; N];
+  // SAFETY: Copies a fixed-size `u16` input array from FFI memory because:
+  // 1. The caller contract requires `ptr` to be valid for reads of `N` initialized `u16` values.
+  // 2. The caller contract requires `ptr` to be aligned for `u16`.
+  // 3. `out` is stack-owned storage valid for writes of `N` `u16` values.
   // 4. Source and destination cannot overlap because `out` is newly allocated stack storage.
   unsafe { ptr::copy_nonoverlapping(ptr, out.as_mut_ptr(), N) };
   Some(out)
@@ -260,11 +285,7 @@ macro_rules! mlkem_ct_harness {
     $ciphertext:ty
   ) => {
     #[unsafe(no_mangle)]
-    pub extern "C" fn $keygen(
-      encapsulation_key_out: *mut u8,
-      decapsulation_key_out: *mut u8,
-      random: *const u8,
-    ) -> u8 {
+    pub extern "C" fn $keygen(encapsulation_key_out: *mut u8, decapsulation_key_out: *mut u8, random: *const u8) -> u8 {
       // SAFETY: Copies ML-KEM key-generation randomness from FFI memory because:
       // 1. `read_array` rejects a null pointer before reading.
       // 2. The required length is exactly `<$profile>::KEY_GENERATION_RANDOM_SIZE`.
@@ -418,6 +439,94 @@ mlkem_ct_harness!(
   MlKem1024DecapsulationKey,
   MlKem1024Ciphertext
 );
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_ntt(poly: *const u16) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
+    // low-level ML-KEM z/Vector NTT kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_ntt_input_digest(poly) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem_ntt_input_digest(poly)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_inverse_ntt(poly: *const u16) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
+    // low-level ML-KEM z/Vector inverse-NTT kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
+  a: *const u16,
+  b: *const u16,
+  acc: *const u16,
+) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(a) = (unsafe { read_u16_array::<256>(a) }) else {
+    return 0;
+  };
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(b) = (unsafe { read_u16_array::<256>(b) }) else {
+    return 0;
+  };
+  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  let Some(acc) = (unsafe { read_u16_array::<256>(acc) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
+    // low-level ML-KEM z/Vector base-multiply accumulator kernel.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_multiply_ntts_add_assign_input_digest(a, b, acc) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_mlkem_diag_compress_decompress(values: *const u16) -> u16 {
+  // SAFETY: The diagnostic pointer must reference exactly four readable ML-KEM coefficient values.
+  let Some(values) = (unsafe { read_u16_array::<4>(values) }) else {
+    return 0;
+  };
+
+  #[cfg(target_arch = "s390x")]
+  {
+    // SAFETY: s390x CT artifact and IBM Z diagnostic runs are selected only for z/Vector-capable
+    // runners. This root intentionally bypasses runtime dispatch so the artifact scans the
+    // low-level ML-KEM z/Vector compress/decompress kernels.
+    unsafe { rscrypto::auth::mlkem::diag_mlkem_s390x_compress_decompress_values_digest(values) }
+  }
+
+  #[cfg(not(target_arch = "s390x"))]
+  rscrypto::auth::mlkem::diag_mlkem_compress_decompress_values_digest(values)
+}
 
 /// Ed25519 signing harness.
 #[unsafe(no_mangle)]
@@ -1218,13 +1327,7 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
   };
   let mut scratch = key.private_scratch();
   key
-    .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
-      ciphertext,
-      blinding_factor,
-      blinding_inverse,
-      out,
-      &mut scratch,
-    )
+    .decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding_factor, blinding_inverse, out, &mut scratch)
     .unwrap_or(usize::MAX)
 }
 

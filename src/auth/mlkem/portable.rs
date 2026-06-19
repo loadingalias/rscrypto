@@ -851,9 +851,68 @@ pub(super) fn diag_ntt_digest(seed: u16) -> u16 {
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_ntt_input_digest(mut poly: Poly) -> u16 {
+  ntt(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector NTT kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_ntt_input_digest(mut poly: Poly) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+  // 3. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x kernel itself.
+  unsafe {
+    s390x::ntt_vector(&mut poly);
+  }
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_inverse_ntt_montgomery_product_digest(seed: u16) -> u16 {
   let mut poly = diag_poly(seed);
   inverse_ntt_montgomery_product(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -> u16 {
+  inverse_ntt_montgomery_product(&mut poly);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector inverse-NTT kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+  // 3. `INV_NTT_PRODUCT_SCALE_MONT` is the public ML-KEM product-domain scale constant.
+  // 4. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x kernel itself.
+  unsafe {
+    s390x::inverse_ntt_vector(&mut poly, INV_NTT_PRODUCT_SCALE_MONT);
+  }
   let digest = diag_fold_poly(&poly);
   zeroize_poly(&mut poly);
   digest
@@ -867,6 +926,99 @@ pub(super) fn diag_multiply_ntts_add_assign_digest(seed: u16) -> u16 {
   multiply_ntts_add_assign(&mut acc, &a, &b);
   let digest = diag_fold_poly(&acc);
   zeroize_poly(&mut acc);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
+  multiply_ntts_add_assign(&mut acc, &a, &b);
+  let digest = diag_fold_poly(&acc);
+  zeroize_poly(&mut acc);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the kernel contract.
+  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
+  // 4. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x kernel itself.
+  unsafe {
+    s390x::multiply_ntts_add_assign_vector(&mut acc, &a, &b);
+  }
+  let digest = diag_fold_poly(&acc);
+  zeroize_poly(&mut acc);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_compress_decompress_digest(seed: u16) -> u16 {
+  let values = [
+    seed % Q,
+    seed.wrapping_mul(17).wrapping_add(3) % Q,
+    seed.wrapping_mul(29).wrapping_add(11) % Q,
+    seed.wrapping_mul(43).wrapping_add(19) % Q,
+  ];
+  let compressed = compress_values_4::<10>(values);
+  let decompressed = decompress_values_4::<10>(compressed);
+
+  let mut digest = 0u16;
+  for value in compressed {
+    digest = digest.rotate_left(3) ^ value;
+  }
+  for value in decompressed {
+    digest = digest.rotate_left(5) ^ value;
+  }
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
+  let compressed = compress_values_4::<10>(values);
+  let decompressed = decompress_values_4::<10>(compressed);
+
+  let mut digest = 0u16;
+  for value in compressed {
+    digest = digest.rotate_left(3) ^ value;
+  }
+  for value in decompressed {
+    digest = digest.rotate_left(5) ^ value;
+  }
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector compress/decompress kernels.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic calls because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `values` is exactly the four-coefficient shape required by the vector helpers.
+  // 3. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x compression kernels themselves.
+  let compressed = unsafe { s390x::compress_values_4::<10>(values) };
+  // SAFETY: Same z/Vector facility and fixed four-coefficient shape as above.
+  let decompressed = unsafe { s390x::decompress_values_4::<10>(compressed) };
+
+  let mut digest = 0u16;
+  for value in compressed {
+    digest = digest.rotate_left(3) ^ value;
+  }
+  for value in decompressed {
+    digest = digest.rotate_left(5) ^ value;
+  }
   digest
 }
 

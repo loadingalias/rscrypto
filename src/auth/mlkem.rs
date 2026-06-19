@@ -1068,6 +1068,29 @@ pub fn diag_mlkem_ntt_digest(seed: u16) -> u16 {
 #[doc(hidden)]
 #[inline]
 #[must_use]
+pub fn diag_mlkem_ntt_input_digest(poly: [u16; 256]) -> u16 {
+  portable::diag_ntt_input_digest(poly)
+}
+
+/// Diagnostic digest for the s390x z/Vector NTT kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_ntt_input_digest(poly: [u16; 256]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_ntt_input_digest(poly) }
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
 pub fn diag_mlkem_inverse_ntt_montgomery_product_digest(seed: u16) -> u16 {
   portable::diag_inverse_ntt_montgomery_product_digest(seed)
 }
@@ -1076,6 +1099,87 @@ pub fn diag_mlkem_inverse_ntt_montgomery_product_digest(seed: u16) -> u16 {
 #[doc(hidden)]
 #[inline]
 #[must_use]
+pub fn diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) -> u16 {
+  portable::diag_inverse_ntt_montgomery_product_input_digest(poly)
+}
+
+/// Diagnostic digest for the s390x z/Vector inverse-NTT kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
 pub fn diag_mlkem_multiply_ntts_add_assign_digest(seed: u16) -> u16 {
   portable::diag_multiply_ntts_add_assign_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_multiply_ntts_add_assign_input_digest(a: [u16; 256], b: [u16; 256], acc: [u16; 256]) -> u16 {
+  portable::diag_multiply_ntts_add_assign_input_digest(a, b, acc)
+}
+
+/// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_multiply_ntts_add_assign_input_digest(
+  a: [u16; 256],
+  b: [u16; 256],
+  acc: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_multiply_ntts_add_assign_input_digest(a, b, acc) }
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_compress_decompress_digest(seed: u16) -> u16 {
+  portable::diag_compress_decompress_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
+  portable::diag_compress_decompress_values_digest(values)
+}
+
+/// Diagnostic digest for the s390x z/Vector compress/decompress kernels.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_s390x_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_s390x_compress_decompress_values_digest(values) }
 }
