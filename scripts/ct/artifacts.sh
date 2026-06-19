@@ -166,7 +166,11 @@ fi
 
 for obj in "${OBJECTS[@]}"; do
   base="$(basename "$obj")"
-  "$LLVM_OBJDUMP" --disassemble --reloc --demangle "$obj" > "$ARTIFACT_DIR/$base.disasm.txt"
+  objdump_args=(--disassemble --reloc --demangle)
+  if [[ "$TARGET" == "s390x-unknown-linux-gnu" ]]; then
+    objdump_args+=(--mattr=+vector)
+  fi
+  "$LLVM_OBJDUMP" "${objdump_args[@]}" "$obj" > "$ARTIFACT_DIR/$base.disasm.txt"
   "$LLVM_NM" --defined-only --demangle "$obj" > "$ARTIFACT_DIR/$base.symbols.txt"
   "$LLVM_SIZE" "$obj" > "$ARTIFACT_DIR/$base.size.txt"
 done
