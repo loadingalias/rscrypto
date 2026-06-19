@@ -545,6 +545,42 @@ samples = 20000
 smoke_samples = 512
 
 [[dudect_case]]
+name = "mlkem_arithmetic_ntt_fixed_vs_random_poly"
+primitive = "kem.mlkem1024"
+filter = "mlkem_arithmetic_ntt_fixed_vs_random_poly"
+left_class = "ML-KEM NTT with fixed secret polynomial"
+right_class = "ML-KEM NTT with random secret polynomial"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly"
+primitive = "kem.mlkem1024"
+filter = "mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly"
+left_class = "ML-KEM inverse NTT with fixed secret polynomial"
+right_class = "ML-KEM inverse NTT with random secret polynomial"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem_arithmetic_basemul_fixed_vs_random_operands"
+primitive = "kem.mlkem1024"
+filter = "mlkem_arithmetic_basemul_fixed_vs_random_operands"
+left_class = "ML-KEM basemul-add with fixed secret operands"
+right_class = "ML-KEM basemul-add with random secret operands"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
+name = "mlkem1024_arithmetic_dot_fixed_vs_random_operands"
+primitive = "kem.mlkem1024"
+filter = "mlkem1024_arithmetic_dot_fixed_vs_random_operands"
+left_class = "ML-KEM-1024 NTT dot product with fixed secret operands"
+right_class = "ML-KEM-1024 NTT dot product with random secret operands"
+samples = 20000
+smoke_samples = 512
+
+[[dudect_case]]
 name = "ed25519_sign_fixed_vs_random_secret"
 primitive = "signature.ed25519_sign"
 filter = "ed25519_sign_fixed_vs_random_secret"
