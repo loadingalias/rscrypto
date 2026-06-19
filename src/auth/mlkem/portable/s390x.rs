@@ -1,18 +1,21 @@
 use core::simd::{
   i32x4, i64x2,
   num::{SimdInt, SimdUint},
-  u32x4,
+  u32x4, u64x2,
 };
 
 use super::{GAMMAS_MONT, N, Poly, Q_HALF, Q_I32, Q_MONT_INV_U16, Q_U32, SAMPLE_NTT_ACC_CHUNK_COEFFS, ZETAS_MONT};
 
 const Q_MONT_INV_I32: i32 = Q_MONT_INV_U16 as i16 as i32;
+const Q_COMPRESS_DIV_SHIFT: u32 = 33;
 
 #[target_feature(enable = "vector")]
 pub(super) unsafe fn compress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
   let value = u32x4_from_u16(values);
   let numerator = (value << (D as u32)) + u32x4::splat(Q_HALF);
-  u32x4_to_u16(div_q_compress_u32x4_ct(numerator) & u32x4::splat((1u32 << D) - 1))
+  // SAFETY: this function is already gated by z/Vector and the helper has no additional contract.
+  let quotient = unsafe { div_q_compress_u32x4_ct(numerator) };
+  u32x4_to_u16(quotient & u32x4::splat((1u32 << D) - 1))
 }
 
 #[target_feature(enable = "vector")]
@@ -458,21 +461,56 @@ fn mul_u32x4_16_ct(a: u32x4, b: u32x4) -> u32x4 {
   acc
 }
 
-#[inline(always)]
-fn div_q_compress_u32x4_ct(value: u32x4) -> u32x4 {
-  let mut quotient = u32x4::splat(0);
-  let mut remainder = u32x4::splat(0);
-  let mut bit = 23u32;
-  while bit > 0 {
-    bit = bit.wrapping_sub(1);
-    remainder = (remainder << 1) | ((value >> bit) & u32x4::splat(1));
-    let reduced = remainder - u32x4::splat(Q_U32);
-    let borrow = reduced >> 31;
-    let ge = borrow ^ u32x4::splat(1);
-    remainder = add_q_if_borrowed_u32x4(reduced);
-    quotient |= ge << bit;
+#[target_feature(enable = "vector")]
+#[inline]
+unsafe fn div_q_compress_u32x4_ct(value: u32x4) -> u32x4 {
+  let [x0, x1, x2, x3] = value.to_array();
+  // SAFETY: this helper is gated by z/Vector and widens the lower two public-width lanes.
+  let lo = unsafe { div_q_compress_u64x2_ct(u64x2::from_array([u64::from(x0), u64::from(x1)])) }.to_array();
+  // SAFETY: same z/Vector contract and fixed lane widening as above.
+  let hi = unsafe { div_q_compress_u64x2_ct(u64x2::from_array([u64::from(x2), u64::from(x3)])) }.to_array();
+  u32x4::from_array([lo[0] as u32, lo[1] as u32, hi[0] as u32, hi[1] as u32])
+}
+
+#[target_feature(enable = "vector")]
+#[inline]
+unsafe fn div_q_compress_u64x2_ct(value: u64x2) -> u64x2 {
+  // Exact reciprocal division for ML-KEM compression:
+  // floor(value / 3329) == (value * 2_580_335) >> 33 for value < 2^23.
+  // The multiplier is expanded as a fixed shift/add schedule so this path does
+  // not reintroduce secret-fed multiply on IBM Z.
+  // SAFETY: callers reach this helper only from z/Vector-gated ML-KEM compression entry points.
+  let acc = unsafe {
+    opaque_u64x2(value)
+      + opaque_u64x2(value << 1u64)
+      + opaque_u64x2(value << 2u64)
+      + opaque_u64x2(value << 3u64)
+      + opaque_u64x2(value << 5u64)
+      + opaque_u64x2(value << 6u64)
+      + opaque_u64x2(value << 8u64)
+      + opaque_u64x2(value << 9u64)
+      + opaque_u64x2(value << 10u64)
+      + opaque_u64x2(value << 11u64)
+      + opaque_u64x2(value << 12u64)
+      + opaque_u64x2(value << 14u64)
+      + opaque_u64x2(value << 16u64)
+      + opaque_u64x2(value << 17u64)
+      + opaque_u64x2(value << 18u64)
+      + opaque_u64x2(value << 21u64)
+  };
+  acc >> u64::from(Q_COMPRESS_DIV_SHIFT)
+}
+
+#[target_feature(enable = "vector")]
+#[inline]
+unsafe fn opaque_u64x2(value: u64x2) -> u64x2 {
+  let mut out = value;
+  // SAFETY: this is an empty z/Vector register barrier. It emits no operation, but prevents LLVM
+  // from rewriting the fixed shift/add reciprocal schedule into native multiply instructions.
+  unsafe {
+    core::arch::asm!("/* {0} */", inout(vreg) out, options(nomem, nostack, preserves_flags));
   }
-  quotient
+  out
 }
 
 #[target_feature(enable = "vector")]
