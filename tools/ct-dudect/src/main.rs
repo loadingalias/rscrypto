@@ -25,8 +25,10 @@ use rscrypto::{
   diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
   diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
   diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
-  diag_mlkem1024_keygen_secret_noise_digest, diag_rsa_import_pkcs8_private_key_der_stage,
-  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+  diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
+  diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
+  diag_mlkem_ntt_input_digest, diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_validate_pkcs8_private_key_der,
+  diag_rsa_validate_pkcs8_private_key_der_stage,
   traits::{Kem as _, ct},
   RsaEncryptionError, RsaPublicKeyPolicy,
 };
@@ -34,6 +36,7 @@ use rscrypto::{
 const DEFAULT_SAMPLES: usize = 20_000;
 const MESSAGE: &[u8] = b"rscrypto constant-time dudect timing lane input";
 const BLAKE3_PARALLEL_MESSAGE_LEN: usize = 1024 * 1024;
+const MLKEM_Q: u16 = 3329;
 const AAD: &[u8] = b"rscrypto-ct";
 const AEAD_PLAINTEXT: [u8; 44] = *b"constant-time seal buffer for key validation";
 const RSA_PKCS1_2048: &str = include_str!("../../../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
@@ -60,6 +63,40 @@ fn random_class(rng: &mut BenchRng) -> Class {
   } else {
     Class::Right
   }
+}
+
+fn mlkem_poly_from_seed(seed: u16) -> [u16; 256] {
+  let mut out = [0u16; 256];
+  for (i, coeff) in out.iter_mut().enumerate() {
+    *coeff = seed.wrapping_add((i as u16).wrapping_mul(73)) % MLKEM_Q;
+  }
+  out
+}
+
+fn random_mlkem_poly(rng: &mut BenchRng) -> [u16; 256] {
+  let mut out = [0u16; 256];
+  for coeff in &mut out {
+    *coeff = rng.random::<u16>() % MLKEM_Q;
+  }
+  out
+}
+
+fn mlkem_polyvec4_from_seed(seed: u16) -> [[u16; 256]; 4] {
+  [
+    mlkem_poly_from_seed(seed),
+    mlkem_poly_from_seed(seed.wrapping_add(0x101)),
+    mlkem_poly_from_seed(seed.wrapping_add(0x202)),
+    mlkem_poly_from_seed(seed.wrapping_add(0x303)),
+  ]
+}
+
+fn random_mlkem_polyvec4(rng: &mut BenchRng) -> [[u16; 256]; 4] {
+  [
+    random_mlkem_poly(rng),
+    random_mlkem_poly(rng),
+    random_mlkem_poly(rng),
+    random_mlkem_poly(rng),
+  ]
 }
 
 fn json_string_value_n<'a>(json: &'a str, key: &str, n: usize) -> &'a str {
@@ -814,6 +851,82 @@ mlkem_dudect_profile!(
   MlKem1024DecapsulationKey,
   diag_mlkem1024_keygen_secret_noise_digest
 );
+
+fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let poly = if matches!(class, Class::Left) {
+      mlkem_poly_from_seed(0x301)
+    } else {
+      random_mlkem_poly(rng)
+    };
+    inputs.push((class, poly));
+  }
+
+  for (class, poly) in inputs {
+    runner.run_one(class, || std::hint::black_box(diag_mlkem_ntt_input_digest(poly)));
+  }
+}
+
+fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let poly = if matches!(class, Class::Left) {
+      mlkem_poly_from_seed(0x401)
+    } else {
+      random_mlkem_poly(rng)
+    };
+    inputs.push((class, poly));
+  }
+
+  for (class, poly) in inputs {
+    runner.run_one(class, || std::hint::black_box(diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly)));
+  }
+}
+
+fn mlkem_arithmetic_basemul_fixed_vs_random_operands(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let (a, b, acc) = if matches!(class, Class::Left) {
+      (
+        mlkem_poly_from_seed(0x501),
+        mlkem_poly_from_seed(0x601),
+        mlkem_poly_from_seed(0x701),
+      )
+    } else {
+      (random_mlkem_poly(rng), random_mlkem_poly(rng), random_mlkem_poly(rng))
+    };
+    inputs.push((class, a, b, acc));
+  }
+
+  for (class, a, b, acc) in inputs {
+    runner.run_one(class, || std::hint::black_box(diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc)));
+  }
+}
+
+fn mlkem1024_arithmetic_dot_fixed_vs_random_operands(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let (a, b, acc) = if matches!(class, Class::Left) {
+      (
+        mlkem_polyvec4_from_seed(0x801),
+        mlkem_polyvec4_from_seed(0x901),
+        mlkem_poly_from_seed(0xA01),
+      )
+    } else {
+      (random_mlkem_polyvec4(rng), random_mlkem_polyvec4(rng), random_mlkem_poly(rng))
+    };
+    inputs.push((class, a, b, acc));
+  }
+
+  for (class, a, b, acc) in inputs {
+    runner.run_one(class, || std::hint::black_box(diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc)));
+  }
+}
 
 fn ed25519_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
@@ -1872,6 +1985,10 @@ ctbench_main_with_seeds!(
   (mlkem1024_encapsulate_fixed_vs_random_coins, Some(0x6d6b31303234656e)),
   (mlkem1024_decapsulate_fixed_vs_random_secret_key, Some(0x6d6b313032346465)),
   (mlkem1024_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6b31303234726a)),
+  (mlkem_arithmetic_ntt_fixed_vs_random_poly, Some(0x6d6c6b6e7474706f)),
+  (mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly, Some(0x6d6c6b696e747470)),
+  (mlkem_arithmetic_basemul_fixed_vs_random_operands, Some(0x6d6c6b626173656d)),
+  (mlkem1024_arithmetic_dot_fixed_vs_random_operands, Some(0x6d6c6b313032646f)),
   (ed25519_sign_fixed_vs_random_secret, Some(0x656432353531395f)),
   (ed25519_public_key_fixed_vs_random_secret, Some(0x6564323535313950)),
   (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),

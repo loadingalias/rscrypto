@@ -183,8 +183,10 @@ pub use mlkem::{
 };
 #[cfg(all(feature = "diag", feature = "ml-kem"))]
 pub use mlkem::{
+  diag_mlkem_compress_decompress_values_digest, diag_mlkem_inverse_ntt_montgomery_product_input_digest,
+  diag_mlkem_multiply_ntts_add_assign_input_digest, diag_mlkem_ntt_input_digest,
   diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
-  diag_mlkem1024_keygen_secret_noise_digest,
+  diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
 };
 #[cfg(feature = "pbkdf2")]
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};

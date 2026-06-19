@@ -435,10 +435,12 @@ def is_s390x_division(target: str, inst: str) -> bool:
   return target.startswith("s390x-") and inst in S390X_DIV_MNEMONICS
 
 
-def is_s390x_multiply(target: str, inst: str) -> bool:
-  return target.startswith("s390x-") and (
-    inst in S390X_MUL_MNEMONICS or any(inst.startswith(prefix) for prefix in S390X_VECTOR_MUL_PREFIXES)
-  )
+def is_s390x_scalar_multiply(target: str, inst: str) -> bool:
+  return target.startswith("s390x-") and inst in S390X_MUL_MNEMONICS
+
+
+def is_s390x_vector_multiply(target: str, inst: str) -> bool:
+  return target.startswith("s390x-") and any(inst.startswith(prefix) for prefix in S390X_VECTOR_MUL_PREFIXES)
 
 
 def is_s390x_conditional_branch(target: str, inst: str) -> bool:
@@ -539,7 +541,7 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif is_mlkem_scope(primitive_ids) and is_mlkem_arithmetic_symbol(symbol) and is_s390x_multiply(target, inst):
+    elif is_mlkem_scope(primitive_ids) and is_mlkem_arithmetic_symbol(symbol) and is_s390x_scalar_multiply(target, inst):
       findings.append(
         finding(
           symbol,
@@ -550,6 +552,22 @@ def scan_symbol(
           "fail",
           "s390x multiply-family instruction found in an ML-KEM CT evidence scope. "
           "Secret-fed products must use fixed-work arithmetic unless this is proven public.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
+    elif is_mlkem_scope(primitive_ids) and is_mlkem_arithmetic_symbol(symbol) and is_s390x_vector_multiply(target, inst):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "s390x_vector_multiply_review",
+          "warn",
+          "s390x vector multiply found in an ML-KEM CT evidence scope. This is allowed only for "
+          "z/Vector-gated arithmetic with native IBM Z DudeCT coverage and no scalar multiply fallback.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,

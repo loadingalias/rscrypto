@@ -449,16 +449,9 @@ fn mul_i32x4_16_ct(a: i32x4, b: i32x4) -> i32x4 {
 
 #[inline(always)]
 fn mul_u32x4_16_ct(a: u32x4, b: u32x4) -> u32x4 {
-  let mut acc = u32x4::splat(0);
-  let mut bit = 0u32;
-  while bit < 16 {
-    // SAFETY: every caller of this helper is reached only from z/Vector-gated ML-KEM entry points in
-    // this module. The shifted lane is masked to 0/1 before the vector mask operation.
-    let mask = unsafe { bitmask_u32x4((b >> bit) & u32x4::splat(1)) };
-    acc += (a << bit) & mask;
-    bit = bit.wrapping_add(1);
-  }
-  acc
+  // z/Vector `vmlf` stays in vector registers and avoids the operand-dependent scalar multiply
+  // hardening issue that motivates the fixed-work scalar fallback on IBM Z.
+  a * b
 }
 
 #[target_feature(enable = "vector")]
