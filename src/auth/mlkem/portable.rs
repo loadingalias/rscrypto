@@ -937,6 +937,34 @@ pub(super) fn diag_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut a
   digest
 }
 
+#[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_accumulate_k3_input_digest(
+  mut a: PolyVec<3>,
+  mut b: PolyVec<3>,
+  mut acc: Poly,
+) -> u16 {
+  multiply_ntts_accumulate(&mut acc, &a, &b);
+  let digest = diag_fold_poly(&acc);
+  zeroize_polyvec(&mut a);
+  zeroize_polyvec(&mut b);
+  zeroize_poly(&mut acc);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
+  mut a: PolyVec<4>,
+  mut b: PolyVec<4>,
+  mut acc: Poly,
+) -> u16 {
+  multiply_ntts_accumulate(&mut acc, &a, &b);
+  let digest = diag_fold_poly(&acc);
+  zeroize_polyvec(&mut a);
+  zeroize_polyvec(&mut b);
+  zeroize_poly(&mut acc);
+  digest
+}
+
 /// Diagnostic digest for the s390x z/Vector base-multiply accumulator kernel.
 ///
 /// # Safety
@@ -955,6 +983,62 @@ pub(super) unsafe fn diag_s390x_multiply_ntts_add_assign_input_digest(a: Poly, b
     s390x::multiply_ntts_add_assign_vector(&mut acc, &a, &b);
   }
   let digest = diag_fold_poly(&acc);
+  zeroize_poly(&mut acc);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector k=3 NTT dot-product kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k3_input_digest(
+  mut a: PolyVec<3>,
+  mut b: PolyVec<3>,
+  mut acc: Poly,
+) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `acc`, `a`, and `b` contain fixed 256-coefficient polynomials matching the kernel contract.
+  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
+  // 4. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x kernel itself.
+  unsafe {
+    s390x::multiply_ntts_accumulate_k3_vector(&mut acc, [&a[0], &a[1], &a[2]], [&b[0], &b[1], &b[2]]);
+  }
+  let digest = diag_fold_poly(&acc);
+  zeroize_polyvec(&mut a);
+  zeroize_polyvec(&mut b);
+  zeroize_poly(&mut acc);
+  digest
+}
+
+/// Diagnostic digest for the s390x z/Vector k=4 NTT dot-product kernel.
+///
+/// # Safety
+///
+/// The caller must ensure the CPU supports the s390x z/Vector facility before
+/// executing this function.
+#[cfg(all(feature = "diag", target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k4_input_digest(
+  mut a: PolyVec<4>,
+  mut b: PolyVec<4>,
+  mut acc: Poly,
+) -> u16 {
+  // SAFETY: Direct z/Vector diagnostic call because:
+  // 1. The caller guarantees the s390x z/Vector facility is available.
+  // 2. `acc`, `a`, and `b` contain fixed 256-coefficient polynomials matching the kernel contract.
+  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
+  // 4. This diagnostic root intentionally bypasses runtime dispatch so CT artifact generation scans
+  //    the low-level s390x kernel itself.
+  unsafe {
+    s390x::multiply_ntts_accumulate_k4_vector(&mut acc, [&a[0], &a[1], &a[2], &a[3]], [&b[0], &b[1], &b[2], &b[3]]);
+  }
+  let digest = diag_fold_poly(&acc);
+  zeroize_polyvec(&mut a);
+  zeroize_polyvec(&mut b);
   zeroize_poly(&mut acc);
   digest
 }
@@ -1928,10 +2012,11 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4<const K: usize>(
       let mut a2 = [0u16; N];
       let mut a3 = [0u16; N];
       sample_ntt_four_materialized_into(rho, $coords, [&mut a0, &mut a1, &mut a2, &mut a3]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a0, &rhs[0]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a1, &rhs[1]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a2, &rhs[2]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a3, &rhs[3]);
+      multiply_ntts_accumulate_k4_refs(
+        &mut acc[$dst],
+        [&a0, &a1, &a2, &a3],
+        [&rhs[0], &rhs[1], &rhs[2], &rhs[3]],
+      );
     }};
   }
 
@@ -1956,10 +2041,11 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4_transpose<const K: usize>(
       let mut a2 = [0u16; N];
       let mut a3 = [0u16; N];
       sample_ntt_four_materialized_into(rho, $coords, [&mut a0, &mut a1, &mut a2, &mut a3]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a0, &rhs[0]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a1, &rhs[1]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a2, &rhs[2]);
-      multiply_ntts_add_assign(&mut acc[$dst], &a3, &rhs[3]);
+      multiply_ntts_accumulate_k4_refs(
+        &mut acc[$dst],
+        [&a0, &a1, &a2, &a3],
+        [&rhs[0], &rhs[1], &rhs[2], &rhs[3]],
+      );
     }};
   }
 
@@ -3002,6 +3088,30 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   multiply_ntts_add_assign_scalar(acc, a, b);
 }
 
+#[inline(always)]
+fn multiply_ntts_accumulate_k4_refs(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
+  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+  {
+    if use_s390x_vector_arithmetic() {
+      // SAFETY: s390x z/Vector k=4 dot-product dispatch because:
+      // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+      //    target-feature function.
+      // 2. Each input reference is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+      // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+      //    fixed-work shift/add multiplication rather than native scalar multiply.
+      unsafe {
+        return s390x::multiply_ntts_accumulate_k4_vector(acc, a, b);
+      }
+    }
+  }
+
+  multiply_ntts_add_assign(acc, a[0], b[0]);
+  multiply_ntts_add_assign(acc, a[1], b[1]);
+  multiply_ntts_add_assign(acc, a[2], b[2]);
+  multiply_ntts_add_assign(acc, a[3], b[3]);
+}
+
 #[inline]
 fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &PolyVec<K>) {
   #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
@@ -3070,6 +3180,45 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
         // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
         unsafe {
           return x86_64::multiply_ntts_accumulate_k4_avx2(
+            acc,
+            [&a[0], &a[1], &a[2], &a[3]],
+            [&b[0], &b[1], &b[2], &b[3]],
+          );
+        }
+      }
+    }
+  }
+
+  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+  {
+    if use_s390x_vector_arithmetic() {
+      if K == 3 {
+        // SAFETY: s390x z/Vector k=3 dot-product dispatch because:
+        // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+        //    target-feature function.
+        // 2. `K == 3` proves the fixed references below are in bounds for both polynomial vectors.
+        // 3. `acc` and every input polynomial are fixed 256-coefficient arrays matching the kernel
+        //    contract.
+        // 4. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+        // 5. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+        //    fixed-work shift/add multiplication rather than native scalar multiply.
+        unsafe {
+          return s390x::multiply_ntts_accumulate_k3_vector(acc, [&a[0], &a[1], &a[2]], [&b[0], &b[1], &b[2]]);
+        }
+      }
+
+      if K == 4 {
+        // SAFETY: s390x z/Vector k=4 dot-product dispatch because:
+        // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+        //    target-feature function.
+        // 2. `K == 4` proves the fixed references below are in bounds for both polynomial vectors.
+        // 3. `acc` and every input polynomial are fixed 256-coefficient arrays matching the kernel
+        //    contract.
+        // 4. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+        // 5. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+        //    fixed-work shift/add multiplication rather than native scalar multiply.
+        unsafe {
+          return s390x::multiply_ntts_accumulate_k4_vector(
             acc,
             [&a[0], &a[1], &a[2], &a[3]],
             [&b[0], &b[1], &b[2], &b[3]],

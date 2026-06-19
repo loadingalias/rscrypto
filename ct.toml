@@ -81,6 +81,8 @@ symbols = [
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
   "ct_entry_ed25519_sign",
   "ct_entry_ecdsa_p256_sign",
@@ -2674,6 +2676,8 @@ symbols = [
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
 ]
 
@@ -2706,6 +2710,8 @@ symbols = [
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
 ]
 
@@ -2738,6 +2744,8 @@ symbols = [
   "ct_entry_mlkem_diag_ntt",
   "ct_entry_mlkem_diag_inverse_ntt",
   "ct_entry_mlkem_diag_multiply_ntts_add_assign",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k3",
+  "ct_entry_mlkem_diag_multiply_ntts_accumulate_k4",
   "ct_entry_mlkem_diag_compress_decompress",
 ]
 
