@@ -172,15 +172,23 @@ fn div_q_compress_u32x4_ct(value: u32x4) -> u32x4 {
 
 #[inline(always)]
 fn opaque_bit_u32x4(value: u32x4) -> u32x4 {
-  let mut out = value & u32x4::splat(1);
-  // SAFETY: this empty z/Vector asm block is intentionally a register-only compiler barrier.
-  // The enclosing public helpers are `#[target_feature(enable = "vector")]`, and this module is
-  // only dispatched after runtime z/Vector detection. It emits no instructions with timing behavior;
-  // it only prevents LLVM from folding the fixed-work shift/add product back into native multiply.
+  let [mut a, mut b, mut c, mut d] = (value & u32x4::splat(1)).to_array();
+  // SAFETY: this empty asm block is intentionally a compiler barrier through ordinary general
+  // registers. It emits no timing-bearing instruction; it only prevents LLVM from folding the
+  // fixed-work shift/add product back into native scalar or vector multiply. Do not use `vreg`
+  // here: this helper is compiled without global `+vector` even though its callers are reached
+  // through z/Vector-gated entry points.
   unsafe {
-    core::arch::asm!("/* {out} */", out = inout(vreg) out, options(nomem, nostack));
+    core::arch::asm!(
+      "/* {a} {b} {c} {d} */",
+      a = inout(reg) a,
+      b = inout(reg) b,
+      c = inout(reg) c,
+      d = inout(reg) d,
+      options(nomem, nostack)
+    );
   }
-  out
+  u32x4::from_array([a, b, c, d])
 }
 
 #[inline(always)]
