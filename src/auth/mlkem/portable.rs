@@ -2270,23 +2270,20 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3<const K: usize>(
     [(0, 0), (1, 0), (2, 0), (0, 1)],
     [&mut a0, &mut a1, &mut a2, &mut a3],
   );
-  multiply_ntts_add_assign(&mut acc[0], &a0, &rhs[0]);
-  multiply_ntts_add_assign(&mut acc[0], &a1, &rhs[1]);
-  multiply_ntts_add_assign(&mut acc[0], &a2, &rhs[2]);
-  multiply_ntts_add_assign(&mut acc[1], &a3, &rhs[0]);
+  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row1_a0 = a3;
 
   sample_ntt_four_materialized_into(
     rho,
     [(1, 1), (2, 1), (0, 2), (1, 2)],
     [&mut a0, &mut a1, &mut a2, &mut a3],
   );
-  multiply_ntts_add_assign(&mut acc[1], &a0, &rhs[1]);
-  multiply_ntts_add_assign(&mut acc[1], &a1, &rhs[2]);
-  multiply_ntts_add_assign(&mut acc[2], &a2, &rhs[0]);
-  multiply_ntts_add_assign(&mut acc[2], &a3, &rhs[1]);
+  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row2_a0 = a2;
+  let row2_a1 = a3;
 
   sample_ntt_into(rho, 2, 2, &mut a0);
-  multiply_ntts_add_assign(&mut acc[2], &a0, &rhs[2]);
+  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
 }
 
 #[inline(always)]
@@ -2306,23 +2303,20 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
     [(0, 0), (0, 1), (0, 2), (1, 0)],
     [&mut a0, &mut a1, &mut a2, &mut a3],
   );
-  multiply_ntts_add_assign(&mut acc[0], &a0, &rhs[0]);
-  multiply_ntts_add_assign(&mut acc[0], &a1, &rhs[1]);
-  multiply_ntts_add_assign(&mut acc[0], &a2, &rhs[2]);
-  multiply_ntts_add_assign(&mut acc[1], &a3, &rhs[0]);
+  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row1_a0 = a3;
 
   sample_ntt_four_materialized_into(
     rho,
     [(1, 1), (1, 2), (2, 0), (2, 1)],
     [&mut a0, &mut a1, &mut a2, &mut a3],
   );
-  multiply_ntts_add_assign(&mut acc[1], &a0, &rhs[1]);
-  multiply_ntts_add_assign(&mut acc[1], &a1, &rhs[2]);
-  multiply_ntts_add_assign(&mut acc[2], &a2, &rhs[0]);
-  multiply_ntts_add_assign(&mut acc[2], &a3, &rhs[1]);
+  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row2_a0 = a2;
+  let row2_a1 = a3;
 
   sample_ntt_into(rho, 2, 2, &mut a0);
-  multiply_ntts_add_assign(&mut acc[2], &a0, &rhs[2]);
+  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
 }
 
 #[inline(always)]
@@ -3433,27 +3427,84 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
 }
 
 #[inline(always)]
-fn multiply_ntts_accumulate_k4_refs(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
-  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+fn multiply_ntts_accumulate_k3_refs(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   {
-    if use_s390x_vector_arithmetic() {
-      // SAFETY: s390x z/Vector k=4 dot-product dispatch because:
-      // 1. Runtime capability detection confirmed the z/Vector facility before entering the
-      //    target-feature function.
-      // 2. Each input reference is a fixed 256-coefficient polynomial matching the kernel contract.
-      // 3. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-      // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
-      //    fixed-work shift/add multiplication rather than native scalar multiply.
-      unsafe {
-        return s390x::multiply_ntts_accumulate_k4_vector(acc, a, b);
-      }
+    // SAFETY: aarch64 NEON K=3 dot-product dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
+    //    contract.
+    // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+    unsafe {
+      multiply_ntts_accumulate_k3_neon(acc, a, b);
     }
   }
 
-  multiply_ntts_add_assign(acc, a[0], b[0]);
-  multiply_ntts_add_assign(acc, a[1], b[1]);
-  multiply_ntts_add_assign(acc, a[2], b[2]);
-  multiply_ntts_add_assign(acc, a[3], b[3]);
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+    {
+      if use_s390x_vector_arithmetic() {
+        // SAFETY: s390x z/Vector k=3 dot-product dispatch because:
+        // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+        //    target-feature function.
+        // 2. Each input reference is a fixed 256-coefficient polynomial matching the kernel contract.
+        // 3. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+        // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+        //    fixed-work shift/add multiplication rather than native scalar multiply.
+        unsafe {
+          return s390x::multiply_ntts_accumulate_k3_vector(acc, a, b);
+        }
+      }
+    }
+
+    multiply_ntts_add_assign(acc, a[0], b[0]);
+    multiply_ntts_add_assign(acc, a[1], b[1]);
+    multiply_ntts_add_assign(acc, a[2], b[2]);
+  }
+}
+
+#[inline(always)]
+fn multiply_ntts_accumulate_k4_refs(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    // SAFETY: aarch64 NEON K=4 dot-product dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
+    //    contract.
+    // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+    unsafe {
+      multiply_ntts_accumulate_k4_neon(acc, a, b);
+    }
+  }
+
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+    {
+      if use_s390x_vector_arithmetic() {
+        // SAFETY: s390x z/Vector k=4 dot-product dispatch because:
+        // 1. Runtime capability detection confirmed the z/Vector facility before entering the
+        //    target-feature function.
+        // 2. Each input reference is a fixed 256-coefficient polynomial matching the kernel contract.
+        // 3. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+        // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
+        //    fixed-work shift/add multiplication rather than native scalar multiply.
+        unsafe {
+          return s390x::multiply_ntts_accumulate_k4_vector(acc, a, b);
+        }
+      }
+    }
+
+    multiply_ntts_add_assign(acc, a[0], b[0]);
+    multiply_ntts_add_assign(acc, a[1], b[1]);
+    multiply_ntts_add_assign(acc, a[2], b[2]);
+    multiply_ntts_add_assign(acc, a[3], b[3]);
+  }
 }
 
 #[inline]
@@ -3568,6 +3619,35 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
             [&b[0], &b[1], &b[2], &b[3]],
           );
         }
+      }
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    if K == 3 {
+      // SAFETY: aarch64 NEON K=3 dot-product dispatch because:
+      // 1. `K == 3` proves the fixed references below are in bounds for both polynomial vectors.
+      // 2. `acc` and every input polynomial are fixed 256-coefficient arrays matching the kernel
+      //    contract.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+      // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return multiply_ntts_accumulate_k3_neon(acc, [&a[0], &a[1], &a[2]], [&b[0], &b[1], &b[2]]);
+      }
+    }
+
+    if K == 4 {
+      // SAFETY: aarch64 NEON K=4 dot-product dispatch because:
+      // 1. `K == 4` proves the fixed references below are in bounds for both polynomial vectors.
+      // 2. `acc` and every input polynomial are fixed 256-coefficient arrays matching the kernel
+      //    contract.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+      // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return multiply_ntts_accumulate_k4_neon(acc, [&a[0], &a[1], &a[2], &a[3]], [&b[0], &b[1], &b[2], &b[3]]);
       }
     }
   }
@@ -3854,46 +3934,133 @@ fn zip_u16x4_pair_lanes_neon(lower: uint16x4_t, upper: uint16x4_t) -> uint16x8_t
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+fn base_multiply_8_neon(a: &Poly, b: &Poly, gamma: int16x8_t, coeff_offset: usize) -> (uint16x8_t, uint16x8_t) {
+  debug_assert_eq!(coeff_offset % 16, 0);
+  debug_assert!(coeff_offset.strict_add(16) <= N);
+
+  // SAFETY: fixed-size deinterleaved NEON loads because:
+  // 1. `coeff_offset + 16 <= N` is checked above for both fixed 256-coefficient polynomials.
+  // 2. Each `vld2q_u16` touches exactly 16 contiguous u16 coefficients from that public chunk.
+  // 3. `gamma` was loaded by the caller from the matching public gamma chunk.
+  // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+  //    availability.
+  unsafe {
+    let a_pair = vld2q_u16(a.as_ptr().add(coeff_offset));
+    let b_pair = vld2q_u16(b.as_ptr().add(coeff_offset));
+
+    let a0 = vreinterpretq_s16_u16(a_pair.0);
+    let a1 = vreinterpretq_s16_u16(a_pair.1);
+    let b0 = vreinterpretq_s16_u16(b_pair.0);
+    let b1 = vreinterpretq_s16_u16(b_pair.1);
+
+    let a1b1 = mul_i16x8_to_i32x4_neon(a1, b1);
+    let a1b1 = montgomery_reduce_i32x8_neon(a1b1.0, a1b1.1);
+    let a0b0 = mul_i16x8_to_i32x4_neon(a0, b0);
+    let a1b1_gamma = mul_i16x8_to_i32x4_neon(a1b1, gamma);
+    let c0 = signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(
+      vaddq_s32(a0b0.0, a1b1_gamma.0),
+      vaddq_s32(a0b0.1, a1b1_gamma.1),
+    ));
+
+    let a0b1 = mul_i16x8_to_i32x4_neon(a0, b1);
+    let a1b0 = mul_i16x8_to_i32x4_neon(a1, b0);
+    let c1 = signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(
+      vaddq_s32(a0b1.0, a1b0.0),
+      vaddq_s32(a0b1.1, a1b0.1),
+    ));
+
+    (c0, c1)
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn store_accumulated_8_neon(acc: &mut Poly, coeff_offset: usize, c0: uint16x8_t, c1: uint16x8_t) {
+  debug_assert_eq!(coeff_offset % 16, 0);
+  debug_assert!(coeff_offset.strict_add(16) <= N);
+
+  // SAFETY: fixed-size deinterleaved NEON accumulator load and store because:
+  // 1. `coeff_offset + 16 <= N` is checked above for the fixed 256-coefficient accumulator.
+  // 2. Each `vld2q_u16` / `vst2q_u16` touches exactly 16 contiguous u16 coefficients from that public
+  //    chunk.
+  // 3. `c0` and `c1` are canonical modulo-Q product-domain coefficients.
+  // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+  //    availability.
+  unsafe {
+    let acc_pair = vld2q_u16(acc.as_ptr().add(coeff_offset));
+    let out = uint16x8x2_t(add_mod_u16x8(acc_pair.0, c0), add_mod_u16x8(acc_pair.1, c1));
+    vst2q_u16(acc.as_mut_ptr().add(coeff_offset), out);
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
 fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
     let coeff_offset = i.strict_mul(2);
 
-    // SAFETY: fixed-size deinterleaved NEON loads and store because:
-    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`; `coeff_offset` is at most 240.
-    // 2. Each `vld2q_u16` / `vst2q_u16` touches 16 u16 coefficients from `coeff_offset..coeff_offset +
-    //    16`, which is within each 256-coefficient polynomial.
-    // 3. `vld1q_s16` touches 8 gamma entries from `i..i + 8`, which is within `GAMMAS_MONT`.
-    // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    // SAFETY: fixed-size gamma load because:
+    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
+    // 2. `i..i + 8` stays inside the public gamma table.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
     //    availability.
     unsafe {
-      let a_pair = vld2q_u16(a.as_ptr().add(coeff_offset));
-      let b_pair = vld2q_u16(b.as_ptr().add(coeff_offset));
       let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
+      let (c0, c1) = base_multiply_8_neon(a, b, gamma, coeff_offset);
+      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
+    }
+  }
+}
 
-      let a0 = vreinterpretq_s16_u16(a_pair.0);
-      let a1 = vreinterpretq_s16_u16(a_pair.1);
-      let b0 = vreinterpretq_s16_u16(b_pair.0);
-      let b1 = vreinterpretq_s16_u16(b_pair.1);
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn multiply_ntts_accumulate_k3_neon(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
+  for i in (0..GAMMAS_MONT.len()).step_by(8) {
+    let coeff_offset = i.strict_mul(2);
 
-      let a1b1 = mul_i16x8_to_i32x4_neon(a1, b1);
-      let a1b1 = montgomery_reduce_i32x8_neon(a1b1.0, a1b1.1);
-      let a0b0 = mul_i16x8_to_i32x4_neon(a0, b0);
-      let a1b1_gamma = mul_i16x8_to_i32x4_neon(a1b1, gamma);
-      let c0 = signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(
-        vaddq_s32(a0b0.0, a1b1_gamma.0),
-        vaddq_s32(a0b0.1, a1b1_gamma.1),
-      ));
+    // SAFETY: fixed-size gamma load because:
+    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
+    // 2. `i..i + 8` stays inside the public gamma table.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
+      let (mut c0, mut c1) = base_multiply_8_neon(a[0], b[0], gamma, coeff_offset);
+      let (p0, p1) = base_multiply_8_neon(a[1], b[1], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
+      let (p0, p1) = base_multiply_8_neon(a[2], b[2], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
+      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
+    }
+  }
+}
 
-      let a0b1 = mul_i16x8_to_i32x4_neon(a0, b1);
-      let a1b0 = mul_i16x8_to_i32x4_neon(a1, b0);
-      let c1 = signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(
-        vaddq_s32(a0b1.0, a1b0.0),
-        vaddq_s32(a0b1.1, a1b0.1),
-      ));
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn multiply_ntts_accumulate_k4_neon(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
+  for i in (0..GAMMAS_MONT.len()).step_by(8) {
+    let coeff_offset = i.strict_mul(2);
 
-      let acc_pair = vld2q_u16(acc.as_ptr().add(coeff_offset));
-      let out = uint16x8x2_t(add_mod_u16x8(acc_pair.0, c0), add_mod_u16x8(acc_pair.1, c1));
-      vst2q_u16(acc.as_mut_ptr().add(coeff_offset), out);
+    // SAFETY: fixed-size gamma load because:
+    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
+    // 2. `i..i + 8` stays inside the public gamma table.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
+      let (mut c0, mut c1) = base_multiply_8_neon(a[0], b[0], gamma, coeff_offset);
+      let (p0, p1) = base_multiply_8_neon(a[1], b[1], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
+      let (p0, p1) = base_multiply_8_neon(a[2], b[2], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
+      let (p0, p1) = base_multiply_8_neon(a[3], b[3], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
+      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
     }
   }
 }
@@ -6559,6 +6726,58 @@ mod tests {
       }
 
       assert_eq!(neon, scalar, "seed {seed}");
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn multiply_ntts_accumulate_neon_matches_scalar_dot_product() {
+    for seed in 0usize..16 {
+      let acc = test_poly(seed);
+      let a3: PolyVec<3> = core::array::from_fn(|i| test_poly(seed.strict_add(100).strict_add(i.strict_mul(17))));
+      let b3: PolyVec<3> = core::array::from_fn(|i| test_poly(seed.strict_add(200).strict_add(i.strict_mul(23))));
+
+      let mut scalar = acc;
+      for i in 0..3 {
+        multiply_ntts_add_assign_scalar(&mut scalar, &a3[i], &b3[i]);
+      }
+
+      let mut neon = acc;
+      // SAFETY: direct aarch64 NEON K=3 dot-product test call because:
+      // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 2. `neon`, `a3`, and `b3` are fixed-size ML-KEM polynomial arrays matching the kernel contract.
+      // 3. The test keeps `neon` distinct from the read-only inputs, so the mutable output cannot alias
+      //    them.
+      // 4. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        multiply_ntts_accumulate_k3_neon(&mut neon, [&a3[0], &a3[1], &a3[2]], [&b3[0], &b3[1], &b3[2]]);
+      }
+      assert_eq!(neon, scalar, "K=3 seed {seed}");
+
+      let acc = test_poly(seed.strict_add(300));
+      let a4: PolyVec<4> = core::array::from_fn(|i| test_poly(seed.strict_add(400).strict_add(i.strict_mul(29))));
+      let b4: PolyVec<4> = core::array::from_fn(|i| test_poly(seed.strict_add(500).strict_add(i.strict_mul(31))));
+
+      let mut scalar = acc;
+      for i in 0..4 {
+        multiply_ntts_add_assign_scalar(&mut scalar, &a4[i], &b4[i]);
+      }
+
+      let mut neon = acc;
+      // SAFETY: direct aarch64 NEON K=4 dot-product test call because:
+      // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 2. `neon`, `a4`, and `b4` are fixed-size ML-KEM polynomial arrays matching the kernel contract.
+      // 3. The test keeps `neon` distinct from the read-only inputs, so the mutable output cannot alias
+      //    them.
+      // 4. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        multiply_ntts_accumulate_k4_neon(
+          &mut neon,
+          [&a4[0], &a4[1], &a4[2], &a4[3]],
+          [&b4[0], &b4[1], &b4[2], &b4[3]],
+        );
+      }
+      assert_eq!(neon, scalar, "K=4 seed {seed}");
     }
   }
 
