@@ -217,6 +217,39 @@ mod tests {
     assert_eq!(state_b, ref_b, "x2 state_b mismatch vs single-state");
   }
 
+  /// Verify SVE2-SHA3 4-state kernel matches four independent portable runs.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+  fn keccakf1600_sve2_sha3_x4_matches_portable() {
+    let caps = crate::platform::caps();
+    if !caps.has(crate::platform::caps::aarch64::SVE2_SHA3) {
+      return; // SVE2-SHA3 not available on this hardware
+    }
+
+    let mut state_a = state_from_bytes(b"sve2_sha3_state_a");
+    let mut state_b = state_from_bytes(b"sve2_sha3_state_b_different");
+    let mut state_c = state_from_bytes(b"sve2_sha3_state_c_third");
+    let mut state_d = state_from_bytes(b"sve2_sha3_state_d_fourth");
+
+    let mut expected_a = state_a;
+    let mut expected_b = state_b;
+    let mut expected_c = state_c;
+    let mut expected_d = state_d;
+    super::super::keccakf_portable(&mut expected_a);
+    super::super::keccakf_portable(&mut expected_b);
+    super::super::keccakf_portable(&mut expected_c);
+    super::super::keccakf_portable(&mut expected_d);
+
+    if !super::super::aarch64::keccakf_aarch64_sve2_sha3_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d) {
+      return; // Runtime SVE VL is below four u64 lanes; dispatch must fall back.
+    }
+
+    assert_eq!(state_a, expected_a, "SVE2-SHA3 x4 state_a mismatch");
+    assert_eq!(state_b, expected_b, "SVE2-SHA3 x4 state_b mismatch");
+    assert_eq!(state_c, expected_c, "SVE2-SHA3 x4 state_c mismatch");
+    assert_eq!(state_d, expected_d, "SVE2-SHA3 x4 state_d mismatch");
+  }
+
   /// Verify batched full-block absorb matches repeated single-block absorb.
   #[test]
   #[cfg(all(target_arch = "aarch64", not(miri)))]

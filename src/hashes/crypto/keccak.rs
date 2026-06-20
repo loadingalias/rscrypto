@@ -674,17 +674,18 @@ pub(crate) struct Aarch64Permuter;
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
   has_sha3: bool,
+  has_sve2_sha3: bool,
 }
 
 #[cfg(all(target_arch = "aarch64", not(target_feature = "sha3"), not(miri)))]
 impl Default for Aarch64Permuter {
   #[inline]
   fn default() -> Self {
+    use crate::platform::caps::aarch64 as aarch64_caps;
+    let caps = crate::platform::caps();
     Self {
-      has_sha3: {
-        use crate::platform::caps::aarch64 as aarch64_caps;
-        crate::platform::caps().has(aarch64_caps::SHA3)
-      },
+      has_sha3: caps.has(aarch64_caps::SHA3),
+      has_sve2_sha3: caps.has(aarch64_caps::SVE2_SHA3),
     }
   }
 }
@@ -717,6 +718,29 @@ impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], _len_hint: usize) {
     aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
+  }
+
+  #[inline(always)]
+  fn permute_x4(
+    self,
+    state_a: &mut [u64; 25],
+    state_b: &mut [u64; 25],
+    state_c: &mut [u64; 25],
+    state_d: &mut [u64; 25],
+    len_hint: usize,
+  ) {
+    #[cfg(target_os = "linux")]
+    {
+      use crate::platform::caps::aarch64 as aarch64_caps;
+      if crate::platform::caps().has(aarch64_caps::SVE2_SHA3)
+        && aarch64::keccakf_aarch64_sve2_sha3_x4(state_a, state_b, state_c, state_d)
+      {
+        return;
+      }
+    }
+
+    self.permute_x2(state_a, state_b, len_hint);
+    self.permute_x2(state_c, state_d, len_hint);
   }
 
   #[inline(always)]
@@ -772,6 +796,24 @@ impl Permuter for Aarch64Permuter {
       self.permute(state_a, len_hint);
       self.permute(state_b, len_hint);
     }
+  }
+
+  #[inline(always)]
+  fn permute_x4(
+    self,
+    state_a: &mut [u64; 25],
+    state_b: &mut [u64; 25],
+    state_c: &mut [u64; 25],
+    state_d: &mut [u64; 25],
+    len_hint: usize,
+  ) {
+    #[cfg(target_os = "linux")]
+    if self.has_sve2_sha3 && aarch64::keccakf_aarch64_sve2_sha3_x4(state_a, state_b, state_c, state_d) {
+      return;
+    }
+
+    self.permute_x2(state_a, state_b, len_hint);
+    self.permute_x2(state_c, state_d, len_hint);
   }
 
   #[inline(always)]
