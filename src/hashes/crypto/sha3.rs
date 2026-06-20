@@ -506,6 +506,24 @@ impl Shake128XofReader {
       out_d,
     );
   }
+
+  #[inline]
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  pub(crate) fn with_quad_rate_block(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    d: &mut Self,
+    f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25], &[u64; 25]),
+  ) {
+    PublicKeccakXof::<168>::with_quad_rate_block(&mut a.inner, &mut b.inner, &mut c.inner, &mut d.inner, f);
+  }
 }
 
 impl_xof_read!(Shake128XofReader);

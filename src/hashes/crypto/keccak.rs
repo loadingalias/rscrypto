@@ -1686,4 +1686,40 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
       out_d = &mut out_d[take..];
     }
   }
+
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  pub(crate) fn with_quad_rate_block(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    d: &mut Self,
+    f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25], &[u64; 25]),
+  ) {
+    debug_assert_eq!(a.pos, b.pos);
+    debug_assert_eq!(a.pos, c.pos);
+    debug_assert_eq!(a.pos, d.pos);
+    debug_assert!(a.pos == 0 || a.pos == RATE);
+
+    if a.pos == RATE {
+      let permuter = a.permuter;
+      permuter.permute_x4(&mut a.state, &mut b.state, &mut c.state, &mut d.state, 0);
+      a.pos = 0;
+      b.pos = 0;
+      c.pos = 0;
+      d.pos = 0;
+    }
+
+    f(&a.state, &b.state, &c.state, &d.state);
+
+    a.pos = RATE;
+    b.pos = RATE;
+    c.pos = RATE;
+    d.pos = RATE;
+  }
 }
