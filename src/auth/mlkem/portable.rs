@@ -2908,6 +2908,27 @@ fn sample_ntt_product_absorb_block_neon(
   buf: &[u8; SHAKE128_RATE_BYTES],
   acc: &mut Poly,
 ) {
+  // SAFETY: Pointer-backed product parsing over one byte buffer because:
+  // 1. `buf.as_ptr()` comes from a fixed `[u8; SHAKE128_RATE_BYTES]` rate block.
+  // 2. The helper reads only offsets `< SHAKE128_RATE_BYTES`.
+  // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`, and callers prove
+  //    NEON availability before selecting the aarch64 backend.
+  unsafe {
+    sample_ntt_product_absorb_rate_ptr_neon(product, buf.as_ptr(), acc);
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+/// # Safety
+///
+/// `rate_ptr` must point to one readable SHAKE128 rate block containing at least
+/// `SHAKE128_RATE_BYTES` bytes. The caller must guarantee that the active CPU supports NEON.
+unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
+  product: &mut SampleNttProduct<'_>,
+  rate_ptr: *const u8,
+  acc: &mut Poly,
+) {
   const NEON_TRIPLES: usize = 16;
   const NEON_BYTES: usize = NEON_TRIPLES * 3;
   const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
@@ -2919,7 +2940,7 @@ fn sample_ntt_product_absorb_block_neon(
     // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so the helper reads exactly one
     // complete 48-byte chunk from the fixed rate block and writes 32 initialized candidates.
     unsafe {
-      sample_ntt_extract_16_candidates_neon(buf.as_ptr().add(offset), &mut candidates);
+      sample_ntt_extract_16_candidates_neon(rate_ptr.add(offset), &mut candidates);
     }
 
     for &candidate in &candidates {
@@ -2936,8 +2957,17 @@ fn sample_ntt_product_absorb_block_neon(
   }
 
   while offset.strict_add(2) < SHAKE128_RATE_BYTES {
-    let d1 = u16::from(buf[offset]) | (u16::from(buf[offset.strict_add(1)] & 0x0f) << 8);
-    let d2 = (u16::from(buf[offset.strict_add(1)]) >> 4) | (u16::from(buf[offset.strict_add(2)]) << 4);
+    // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and the caller guarantees `rate_ptr` names one
+    // full readable SHAKE128 rate block.
+    let (b0, b1, b2) = unsafe {
+      (
+        *rate_ptr.add(offset),
+        *rate_ptr.add(offset.strict_add(1)),
+        *rate_ptr.add(offset.strict_add(2)),
+      )
+    };
+    let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+    let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
 
     sample_ntt_product_absorb_candidate_neon!(product, d1, acc);
     sample_ntt_product_absorb_candidate_neon!(product, d2, acc);
@@ -3024,16 +3054,58 @@ fn sample_ntt_quad_mul_accumulate_from_xof(mut readers: [Shake128XofReader; 4], 
     SampleNttProduct::new(rhs[2]),
     SampleNttProduct::new(rhs[3]),
   ];
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    while !products[0].is_done() && !products[1].is_done() && !products[2].is_done() && !products[3].is_done() {
+      let [reader0, reader1, reader2, reader3] = &mut readers;
+      Shake128XofReader::with_quad_rate_block(reader0, reader1, reader2, reader3, |state0, state1, state2, state3| {
+        let rate_ptrs = [
+          state0.as_ptr().cast::<u8>(),
+          state1.as_ptr().cast::<u8>(),
+          state2.as_ptr().cast::<u8>(),
+          state3.as_ptr().cast::<u8>(),
+        ];
+        // SAFETY: Pointer-backed fused product parsing over Keccak state memory because:
+        // 1. This path is little-endian aarch64 only, so each `u64` state has XOF byte order in memory.
+        // 2. Each Keccak state has 25 u64 lanes (200 bytes), covering the first 168-byte SHAKE128 rate
+        //    block.
+        // 3. The helper reads only offsets `< SHAKE128_RATE_BYTES`, and its rejection branches depend only
+        //    on public matrix-A samples.
+        // 4. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+        unsafe {
+          sample_ntt_product_absorb_rate_ptr_neon(&mut products[0], rate_ptrs[0], acc);
+          sample_ntt_product_absorb_rate_ptr_neon(&mut products[1], rate_ptrs[1], acc);
+          sample_ntt_product_absorb_rate_ptr_neon(&mut products[2], rate_ptrs[2], acc);
+          sample_ntt_product_absorb_rate_ptr_neon(&mut products[3], rate_ptrs[3], acc);
+        }
+      });
+    }
+  }
+
   let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 4];
 
-  while !products[0].is_done() && !products[1].is_done() && !products[2].is_done() && !products[3].is_done() {
-    let [reader0, reader1, reader2, reader3] = &mut readers;
-    let [buf0, buf1, buf2, buf3] = &mut bufs;
-    Shake128XofReader::squeeze_quad(reader0, reader1, reader2, reader3, buf0, buf1, buf2, buf3);
-    products[0].absorb_block(&bufs[0], acc);
-    products[1].absorb_block(&bufs[1], acc);
-    products[2].absorb_block(&bufs[2], acc);
-    products[3].absorb_block(&bufs[3], acc);
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    while !products[0].is_done() && !products[1].is_done() && !products[2].is_done() && !products[3].is_done() {
+      let [reader0, reader1, reader2, reader3] = &mut readers;
+      let [buf0, buf1, buf2, buf3] = &mut bufs;
+      Shake128XofReader::squeeze_quad(reader0, reader1, reader2, reader3, buf0, buf1, buf2, buf3);
+      products[0].absorb_block(&bufs[0], acc);
+      products[1].absorb_block(&bufs[1], acc);
+      products[2].absorb_block(&bufs[2], acc);
+      products[3].absorb_block(&bufs[3], acc);
+    }
   }
 
   for lane in 0..4 {
