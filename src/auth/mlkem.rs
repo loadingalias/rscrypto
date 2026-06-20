@@ -1134,6 +1134,52 @@ pub fn diag_mlkem_multiply_ntts_add_assign_input_digest(a: [u16; 256], b: [u16; 
   portable::diag_multiply_ntts_add_assign_input_digest(a, b, acc)
 }
 
+/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_multiply_ntts_add_assign_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest(
+  a: [u16; 256],
+  b: [u16; 256],
+  acc: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_multiply_ntts_add_assign_asm_input_digest(a, b, acc) }
+}
+
 #[cfg(feature = "diag")]
 #[doc(hidden)]
 #[inline]
