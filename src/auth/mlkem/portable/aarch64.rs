@@ -15,6 +15,8 @@ global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_apple_darwin.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("../asm/rscrypto_mlkem_rej_uniform_aarch64_linux.s"));
 #[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 
@@ -93,6 +95,7 @@ unsafe extern "C" {
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
   fn rscrypto_mlkem_ntt_aarch64_linux(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
+  fn rscrypto_mlkem_rej_uniform_block_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
   #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
@@ -121,6 +124,17 @@ unsafe extern "C" {
     b: *const u16,
     gammas_mont: *const i16,
   );
+}
+
+#[cfg(target_os = "linux")]
+#[inline]
+pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *const u8) -> usize {
+  // SAFETY: Linux aarch64 SampleNTT rejection parser call because:
+  // 1. `input` points to one readable 168-byte SHAKE128 rate block.
+  // 2. `out` points to writable capacity for all 112 possible accepted candidates.
+  // 3. Advanced SIMD is baseline for supported aarch64 Linux targets.
+  // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  unsafe { rscrypto_mlkem_rej_uniform_block_aarch64_linux(out, input) }
 }
 
 #[cfg(any(test, feature = "diag", target_os = "linux"))]
