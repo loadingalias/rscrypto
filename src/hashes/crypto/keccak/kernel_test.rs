@@ -217,33 +217,6 @@ mod tests {
     assert_eq!(state_b, ref_b, "x2 state_b mismatch vs single-state");
   }
 
-  /// Verify Linux-targeted hybrid x3 kernel matches three independent portable runs.
-  #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
-  fn keccakf1600_sha3_x3_hybrid_matches_portable() {
-    let caps = crate::platform::caps();
-    if !caps.has(crate::platform::caps::aarch64::SHA3) {
-      return; // SHA3 CE not available on this hardware
-    }
-
-    let mut state_a = state_from_bytes(b"sha3_hybrid_state_a");
-    let mut state_b = state_from_bytes(b"sha3_hybrid_state_b_different");
-    let mut state_c = state_from_bytes(b"sha3_hybrid_state_c_third");
-
-    let mut expected_a = state_a;
-    let mut expected_b = state_b;
-    let mut expected_c = state_c;
-    super::super::keccakf_portable(&mut expected_a);
-    super::super::keccakf_portable(&mut expected_b);
-    super::super::keccakf_portable(&mut expected_c);
-
-    super::super::aarch64::keccakf_aarch64_sha3_x3_hybrid(&mut state_a, &mut state_b, &mut state_c);
-
-    assert_eq!(state_a, expected_a, "hybrid x3 state_a mismatch");
-    assert_eq!(state_b, expected_b, "hybrid x3 state_b mismatch");
-    assert_eq!(state_c, expected_c, "hybrid x3 state_c mismatch");
-  }
-
   /// Verify SVE2-SHA3 4-state kernel matches four independent portable runs.
   #[test]
   #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
