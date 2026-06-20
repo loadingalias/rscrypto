@@ -13,16 +13,16 @@
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Latest published benchmark evidence:** Linux CI reports `1.59x` fastest-external geomean with `4,078 / 6,669` wins and `6,009 / 6,669` wins-or-ties. Apple Silicon local macOS/aarch64 reports `1.41x` fastest-external geomean with `376 / 741` wins and `716 / 741` wins-or-ties.
+**Latest published benchmark evidence:** Linux CI reports `1.58x` fastest-external geomean with `4,102 / 6,750` wins and `6,056 / 6,750` wins-or-ties, including ML-KEM-512/768/1024 keygen, encapsulation, and decapsulation rows.
 
 <p align="center">
-  <img alt="rscrypto benchmark scorecard: 1.59x fastest-external geomean across Linux CI with 4,078 wins and 6,009 wins-or-ties out of 6,669 matched benchmark comparisons."
+  <img alt="rscrypto benchmark scorecard: 1.58x fastest-external geomean across Linux CI with 4,102 wins and 6,056 wins-or-ties out of 6,750 matched benchmark comparisons."
        src="assets/readme/perf.svg"
        width="640">
 </p>
 
 <p align="center">
-  <i>Chart: 06/12/2026 Linux CI bench pass. Apple Silicon numbers from the 06/12/2026 local macOS/aarch64 full run are listed below. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
+  <i>Chart: 06/19/2026 Linux CI bench pass. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched Rust baseline.</i>
 </p>
 
 ## Why rscrypto?
@@ -251,35 +251,31 @@ for the exact claim model.
 
 ## Performance
 
-Latest public bench evidence comes from two generated full passes:
+Latest public bench evidence comes from a generated full Linux CI pass:
 
 - Linux (CI): Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V.
-- Apple Silicon: local macOS/aarch64 full run.
 
 Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster.
 
 | Area | Compared Against | Result |
 |---|---|---:|
-| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.59x geomean** |
-| Linux CI scorecard | fastest external | **4,078 wins / 6,669 pairs** |
-| Linux CI wins or ties | fastest external | **6,009 / 6,669 pairs** |
-| **Apple Silicon fastest external** | strongest matched Rust baseline per case | **1.41x geomean** |
-| Apple Silicon scorecard | fastest external | **376 wins / 741 pairs** |
-| Apple Silicon wins or ties | fastest external | **716 / 741 pairs** |
-| Linux CI all matched pairs | every external comparison row | **1.78x geomean; 9,728 / 10,574 wins-or-ties** |
-| Checksums | Linux CI / Apple Silicon | **5.00x / 5.38x geomean** |
-| Hashes, MACs, XOFs | Linux CI / Apple Silicon | **1.36x / 1.11x geomean** |
-| Auth/KDF | Linux CI / Apple Silicon | **1.23x / 1.01x geomean** |
-| Password hashing | Linux CI / Apple Silicon | **1.10x / 1.07x geomean** |
-| Public-key | Linux CI / Apple Silicon | **1.26x / 1.15x geomean** |
-| ECDSA P-256/P-384 | Linux CI / Apple Silicon | **1.41x / 1.25x geomean** |
-| RSA import + verify | Linux CI / Apple Silicon | **1.54x / 1.44x geomean** |
-| AEAD | Linux CI / Apple Silicon | **1.56x / 1.48x geomean** |
+| **Linux CI fastest external** | strongest matched Rust baseline per case | **1.58x geomean** |
+| Linux CI scorecard | fastest external | **4,102 wins / 6,750 pairs** |
+| Linux CI wins or ties | fastest external | **6,056 / 6,750 pairs** |
+| Linux CI all matched pairs | every external comparison row | **1.78x geomean; 9,887 / 10,781 wins-or-ties** |
+| Checksums | Linux CI | **5.20x geomean** |
+| Hashes, MACs, XOFs | Linux CI | **1.35x geomean** |
+| Auth/KDF | Linux CI | **1.23x geomean** |
+| Password hashing | Linux CI | **1.11x geomean** |
+| Public-key | Linux CI, including ML-KEM | **1.12x geomean** |
+| ML-KEM-512/768/1024 | Linux CI keygen/encapsulate/decapsulate | **0.78x geomean** |
+| ECDSA P-256/P-384 | Linux CI | **1.40x geomean** |
+| RSA import + verify | Linux CI | **1.54x geomean** |
+| AEAD | Linux CI | **1.56x geomean** |
 
-The measured weak spots in the latest published benchmark set: Linux Argon2id OWASP rows against
-`rustcrypto`, ECDSA P-384 signing against `aws-lc-rs`, Ed25519 verification,
-ChaCha20-Poly1305 encryption, and Argon2i-small rows; Apple Silicon still has
-localized XXH3-64, SHA3, HKDF-SHA256, and BLAKE3 streaming pressure. See
+The measured weak spots in the latest published benchmark set are ML-KEM keygen,
+encapsulation, and decapsulation rows, especially on IBM Z/s390x, Graviton, and
+RISC-V, followed by ECDSA P-384 signing and Argon2id OWASP pressure. See
 [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
 methodology, platform scorecards, and loss tables.
 
