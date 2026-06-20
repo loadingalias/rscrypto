@@ -1184,6 +1184,14 @@ pub unsafe fn diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest(
 #[doc(hidden)]
 #[inline]
 #[must_use]
+pub fn diag_mlkem768_multiply_ntts_accumulate_digest(seed: u16) -> u16 {
+  portable::diag_multiply_ntts_accumulate_k3_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
 pub fn diag_mlkem768_multiply_ntts_accumulate_input_digest(
   a: [[u16; 256]; 3],
   b: [[u16; 256]; 3],
@@ -1196,12 +1204,112 @@ pub fn diag_mlkem768_multiply_ntts_accumulate_input_digest(
 #[doc(hidden)]
 #[inline]
 #[must_use]
+pub fn diag_mlkem1024_multiply_ntts_accumulate_digest(seed: u16) -> u16 {
+  portable::diag_multiply_ntts_accumulate_k4_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
 pub fn diag_mlkem1024_multiply_ntts_accumulate_input_digest(
   a: [[u16; 256]; 4],
   b: [[u16; 256]; 4],
   acc: [u16; 256],
 ) -> u16 {
   portable::diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_multiply_ntts_accumulate_k3_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_multiply_ntts_accumulate_k4_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_input_digest(
+  a: [[u16; 256]; 3],
+  b: [[u16; 256]; 3],
+  acc: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_multiply_ntts_accumulate_k3_asm_input_digest(a, b, acc) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_input_digest(
+  a: [[u16; 256]; 4],
+  b: [[u16; 256]; 4],
+  acc: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_multiply_ntts_accumulate_k4_asm_input_digest(a, b, acc) }
 }
 
 #[cfg(feature = "diag")]

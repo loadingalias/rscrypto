@@ -994,6 +994,22 @@ pub(super) fn diag_multiply_ntts_accumulate_k3_input_digest(
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_accumulate_k3_digest(seed: u16) -> u16 {
+  let a = [
+    diag_poly(seed),
+    diag_poly(seed.wrapping_add(1)),
+    diag_poly(seed.wrapping_add(2)),
+  ];
+  let b = [
+    diag_poly(seed.wrapping_add(3)),
+    diag_poly(seed.wrapping_add(4)),
+    diag_poly(seed.wrapping_add(5)),
+  ];
+  let acc = diag_poly(seed.wrapping_add(6));
+  diag_multiply_ntts_accumulate_k3_input_digest(a, b, acc)
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
   mut a: PolyVec<4>,
   mut b: PolyVec<4>,
@@ -1005,6 +1021,104 @@ pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
   zeroize_polyvec(&mut b);
   zeroize_poly(&mut acc);
   digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_accumulate_k4_digest(seed: u16) -> u16 {
+  let a = [
+    diag_poly(seed),
+    diag_poly(seed.wrapping_add(1)),
+    diag_poly(seed.wrapping_add(2)),
+    diag_poly(seed.wrapping_add(3)),
+  ];
+  let b = [
+    diag_poly(seed.wrapping_add(4)),
+    diag_poly(seed.wrapping_add(5)),
+    diag_poly(seed.wrapping_add(6)),
+    diag_poly(seed.wrapping_add(7)),
+  ];
+  let acc = diag_poly(seed.wrapping_add(8));
+  diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k3_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_basemul_accumulate_k3_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k4_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_basemul_accumulate_k4_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k3_asm_input_digest(
+  a: PolyVec<3>,
+  b: PolyVec<3>,
+  acc: Poly,
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_basemul_accumulate_k3_asm_input_digest(a, b, acc) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k4_asm_input_digest(
+  a: PolyVec<4>,
+  b: PolyVec<4>,
+  acc: Poly,
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_basemul_accumulate_k4_asm_input_digest(a, b, acc) }
 }
 
 #[cfg(feature = "diag")]
@@ -5481,6 +5595,48 @@ mod tests {
     }
   }
 
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn basemul_accumulate_k3_asm_matches_scalar_reference() {
+    assert_basemul_accumulate_k3_asm_matches_scalar_reference([0u16; N], [[0u16; N]; 3], [[0u16; N]; 3], "all zero");
+    assert_basemul_accumulate_k3_asm_matches_scalar_reference([Q - 1; N], [[Q - 1; N]; 3], [[Q - 1; N]; 3], "all q-1");
+
+    for seed in 0usize..256 {
+      assert_basemul_accumulate_k3_asm_matches_scalar_reference(
+        test_poly(seed),
+        core::array::from_fn(|i| test_poly(seed.strict_add(0x5000).strict_add(i.strict_mul(0x100)))),
+        core::array::from_fn(|i| test_poly(seed.strict_add(0x6000).strict_add(i.strict_mul(0x100)))),
+        "seeded",
+      );
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn basemul_accumulate_k4_asm_matches_scalar_reference() {
+    assert_basemul_accumulate_k4_asm_matches_scalar_reference([0u16; N], [[0u16; N]; 4], [[0u16; N]; 4], "all zero");
+    assert_basemul_accumulate_k4_asm_matches_scalar_reference([Q - 1; N], [[Q - 1; N]; 4], [[Q - 1; N]; 4], "all q-1");
+
+    for seed in 0usize..256 {
+      assert_basemul_accumulate_k4_asm_matches_scalar_reference(
+        test_poly(seed),
+        core::array::from_fn(|i| test_poly(seed.strict_add(0x7000).strict_add(i.strict_mul(0x100)))),
+        core::array::from_fn(|i| test_poly(seed.strict_add(0x8000).strict_add(i.strict_mul(0x100)))),
+        "seeded",
+      );
+    }
+  }
+
   #[test]
   fn sample_ntt_pair_matches_scalar_samplers() {
     let mut rho = [0u8; SEED_BYTES];
@@ -5817,6 +5973,56 @@ mod tests {
     // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
     unsafe {
       aarch64::test_basemul_accumulate_asm(&mut asm, &a, &b);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn assert_basemul_accumulate_k3_asm_matches_scalar_reference(acc: Poly, a: PolyVec<3>, b: PolyVec<3>, label: &str) {
+    let mut scalar = acc;
+    for i in 0..3 {
+      multiply_ntts_add_assign_scalar(&mut scalar, &a[i], &b[i]);
+    }
+
+    let mut asm = acc;
+    // SAFETY: direct aarch64 assembly K=3 dot-product test call because:
+    // 1. This test only compiles on aarch64 Linux/macOS targets that include the assembly backend.
+    // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
+    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_basemul_accumulate_k3_asm(&mut asm, &a, &b);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn assert_basemul_accumulate_k4_asm_matches_scalar_reference(acc: Poly, a: PolyVec<4>, b: PolyVec<4>, label: &str) {
+    let mut scalar = acc;
+    for i in 0..4 {
+      multiply_ntts_add_assign_scalar(&mut scalar, &a[i], &b[i]);
+    }
+
+    let mut asm = acc;
+    // SAFETY: direct aarch64 assembly K=4 dot-product test call because:
+    // 1. This test only compiles on aarch64 Linux/macOS targets that include the assembly backend.
+    // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
+    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_basemul_accumulate_k4_asm(&mut asm, &a, &b);
     }
 
     assert_eq!(asm, scalar, "{label}");

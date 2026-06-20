@@ -1520,10 +1520,14 @@ fn mlkem_arithmetic(c: &mut Criterion) {
     not(miri),
     not(feature = "portable-only")
   ))]
-  use rscrypto::auth::mlkem::diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest;
+  use rscrypto::auth::mlkem::{
+    diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest, diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_digest,
+    diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_digest,
+  };
   use rscrypto::auth::mlkem::{
     diag_mlkem_from_montgomery_product_domain_digest, diag_mlkem_inverse_ntt_montgomery_product_digest,
     diag_mlkem_multiply_ntts_add_assign_digest, diag_mlkem_ntt_digest, diag_mlkem_to_montgomery_product_domain_digest,
+    diag_mlkem768_multiply_ntts_accumulate_digest, diag_mlkem1024_multiply_ntts_accumulate_digest,
   };
 
   let mut g = c.benchmark_group("mlkem-arithmetic");
@@ -1551,6 +1555,48 @@ fn mlkem_arithmetic(c: &mut Criterion) {
       unsafe {
         black_box(diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest(black_box(
           0x3456,
+        )))
+      }
+    })
+  });
+  g.bench_function("multiply-ntts-accumulate-k3", |b| {
+    b.iter(|| black_box(diag_mlkem768_multiply_ntts_accumulate_digest(black_box(0x6789))))
+  });
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  g.bench_function("multiply-ntts-accumulate-k3-aarch64-asm-owned", |b| {
+    b.iter(|| {
+      // SAFETY: this bench row only compiles on supported aarch64 Linux/macOS targets, where
+      // Advanced SIMD is baseline. The diagnostic function intentionally bypasses production
+      // dispatch to measure the owned assembly candidate directly.
+      unsafe {
+        black_box(diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_digest(black_box(
+          0x6789,
+        )))
+      }
+    })
+  });
+  g.bench_function("multiply-ntts-accumulate-k4", |b| {
+    b.iter(|| black_box(diag_mlkem1024_multiply_ntts_accumulate_digest(black_box(0x789A))))
+  });
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  g.bench_function("multiply-ntts-accumulate-k4-aarch64-asm-owned", |b| {
+    b.iter(|| {
+      // SAFETY: this bench row only compiles on supported aarch64 Linux/macOS targets, where
+      // Advanced SIMD is baseline. The diagnostic function intentionally bypasses production
+      // dispatch to measure the owned assembly candidate directly.
+      unsafe {
+        black_box(diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_digest(black_box(
+          0x789A,
         )))
       }
     })

@@ -3,7 +3,7 @@
 
 use core::arch::global_asm;
 
-use super::{GAMMAS_MONT, Poly};
+use super::{GAMMAS_MONT, Poly, PolyVec};
 #[cfg(test)]
 use super::{Q, SAMPLE_NTT_ACC_CHUNK_COEFFS};
 
@@ -71,6 +71,18 @@ unsafe extern "C" {
     b: *const u16,
     gammas_mont: *const i16,
   );
+  fn rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
+  fn rscrypto_mlkem_basemul_accumulate_k4_aarch64_apple_darwin(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
 }
 
 #[cfg(target_os = "linux")]
@@ -85,6 +97,18 @@ unsafe extern "C" {
   );
   #[cfg(test)]
   fn rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
+  fn rscrypto_mlkem_basemul_accumulate_k3_aarch64_linux(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
+  fn rscrypto_mlkem_basemul_accumulate_k4_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
     b: *const u16,
@@ -249,6 +273,88 @@ pub(super) unsafe fn diag_basemul_accumulate_asm_digest(seed: u16) -> u16 {
   unsafe { diag_basemul_accumulate_asm_input_digest(a, b, acc) }
 }
 
+#[inline]
+unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 K=3 dot-product assembly call because:
+    // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 2. `a` and `b` are contiguous `[[u16; 256]; 3]` values, so the assembly's fixed 512-byte
+    //    polynomial strides stay in bounds.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin(
+        acc.as_mut_ptr(),
+        a.as_ptr().cast::<u16>(),
+        b.as_ptr().cast::<u16>(),
+        GAMMAS_MONT.as_ptr(),
+      );
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 K=3 dot-product assembly call because:
+    // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 2. `a` and `b` are contiguous `[[u16; 256]; 3]` values, so the assembly's fixed 512-byte
+    //    polynomial strides stay in bounds.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k3_aarch64_linux(
+        acc.as_mut_ptr(),
+        a.as_ptr().cast::<u16>(),
+        b.as_ptr().cast::<u16>(),
+        GAMMAS_MONT.as_ptr(),
+      );
+    }
+  }
+}
+
+#[inline]
+unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 K=4 dot-product assembly call because:
+    // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 2. `a` and `b` are contiguous `[[u16; 256]; 4]` values, so the assembly's fixed 512-byte
+    //    polynomial strides stay in bounds.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k4_aarch64_apple_darwin(
+        acc.as_mut_ptr(),
+        a.as_ptr().cast::<u16>(),
+        b.as_ptr().cast::<u16>(),
+        GAMMAS_MONT.as_ptr(),
+      );
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 K=4 dot-product assembly call because:
+    // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 2. `a` and `b` are contiguous `[[u16; 256]; 4]` values, so the assembly's fixed 512-byte
+    //    polynomial strides stay in bounds.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k4_aarch64_linux(
+        acc.as_mut_ptr(),
+        a.as_ptr().cast::<u16>(),
+        b.as_ptr().cast::<u16>(),
+        GAMMAS_MONT.as_ptr(),
+      );
+    }
+  }
+}
+
 /// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
 ///
 /// # Safety
@@ -267,6 +373,120 @@ pub(super) unsafe fn diag_basemul_accumulate_asm_input_digest(a: Poly, b: Poly, 
     basemul_accumulate_asm(&mut acc, &a, &b);
   }
   let digest = super::diag_fold_poly(&acc);
+  super::zeroize_poly(&mut acc);
+  digest
+}
+
+#[cfg(test)]
+pub(super) unsafe fn test_basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
+  // SAFETY: test-only direct access to the K=3 dot-product assembly entry point because:
+  // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
+  // 2. This module is compiled only on aarch64 Linux/macOS targets with the assembly backend.
+  // 3. Tests compare the output against the scalar/FIPS accumulator before production dispatch.
+  unsafe {
+    basemul_accumulate_k3_asm(acc, a, b);
+  }
+}
+
+#[cfg(test)]
+pub(super) unsafe fn test_basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
+  // SAFETY: test-only direct access to the K=4 dot-product assembly entry point because:
+  // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
+  // 2. This module is compiled only on aarch64 Linux/macOS targets with the assembly backend.
+  // 3. Tests compare the output against the scalar/FIPS accumulator before production dispatch.
+  unsafe {
+    basemul_accumulate_k4_asm(acc, a, b);
+  }
+}
+
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_basemul_accumulate_k3_asm_digest(seed: u16) -> u16 {
+  let a = [
+    super::diag_poly(seed),
+    super::diag_poly(seed.wrapping_add(1)),
+    super::diag_poly(seed.wrapping_add(2)),
+  ];
+  let b = [
+    super::diag_poly(seed.wrapping_add(3)),
+    super::diag_poly(seed.wrapping_add(4)),
+    super::diag_poly(seed.wrapping_add(5)),
+  ];
+  let acc = super::diag_poly(seed.wrapping_add(6));
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { diag_basemul_accumulate_k3_asm_input_digest(a, b, acc) }
+}
+
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_basemul_accumulate_k4_asm_digest(seed: u16) -> u16 {
+  let a = [
+    super::diag_poly(seed),
+    super::diag_poly(seed.wrapping_add(1)),
+    super::diag_poly(seed.wrapping_add(2)),
+    super::diag_poly(seed.wrapping_add(3)),
+  ];
+  let b = [
+    super::diag_poly(seed.wrapping_add(4)),
+    super::diag_poly(seed.wrapping_add(5)),
+    super::diag_poly(seed.wrapping_add(6)),
+    super::diag_poly(seed.wrapping_add(7)),
+  ];
+  let acc = super::diag_poly(seed.wrapping_add(8));
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { diag_basemul_accumulate_k4_asm_input_digest(a, b, acc) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available. The module cfg enforces the target/OS half of that contract.
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_basemul_accumulate_k3_asm_input_digest(
+  mut a: PolyVec<3>,
+  mut b: PolyVec<3>,
+  mut acc: Poly,
+) -> u16 {
+  // SAFETY: Direct owned-assembly diagnostic call because:
+  // 1. The caller guarantees the function runs only on an aarch64 CPU with Advanced SIMD.
+  // 2. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
+  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the owned aarch64 assembly kernel itself.
+  unsafe {
+    basemul_accumulate_k3_asm(&mut acc, &a, &b);
+  }
+  let digest = super::diag_fold_poly(&acc);
+  super::zeroize_polyvec(&mut a);
+  super::zeroize_polyvec(&mut b);
+  super::zeroize_poly(&mut acc);
+  digest
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available. The module cfg enforces the target/OS half of that contract.
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_basemul_accumulate_k4_asm_input_digest(
+  mut a: PolyVec<4>,
+  mut b: PolyVec<4>,
+  mut acc: Poly,
+) -> u16 {
+  // SAFETY: Direct owned-assembly diagnostic call because:
+  // 1. The caller guarantees the function runs only on an aarch64 CPU with Advanced SIMD.
+  // 2. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
+  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the owned aarch64 assembly kernel itself.
+  unsafe {
+    basemul_accumulate_k4_asm(&mut acc, &a, &b);
+  }
+  let digest = super::diag_fold_poly(&acc);
+  super::zeroize_polyvec(&mut a);
+  super::zeroize_polyvec(&mut b);
   super::zeroize_poly(&mut acc);
   digest
 }
