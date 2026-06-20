@@ -17,12 +17,12 @@ mod x86_64;
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
   vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
-  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_low_s16,
-  vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16,
-  vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16,
-  vreinterpretq_u16_s16, vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32,
-  vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
-  vzip1_u32, vzip2_u32,
+  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_high_u8,
+  vget_low_s16, vget_low_u8, vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vld3q_u8, vmovl_u8, vmovn_s32,
+  vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16, vmulq_n_u16, vorrq_u16, vqdmulhq_n_s16, vreinterpret_s16_u16,
+  vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vreinterpretq_u16_u32,
+  vreinterpretq_u32_u16, vset_lane_s16, vshlq_n_u16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u16, vst1_u16,
+  vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
 };
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
@@ -2530,6 +2530,37 @@ fn sample_ntt_pair_block(
   out1: &mut Poly,
   filled1: &mut usize,
 ) {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    // SAFETY: aarch64 NEON SampleNTT candidate extraction because:
+    // 1. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 2. `buf0` and `buf1` are fixed SHAKE128 rate blocks, and the NEON helper only reads complete
+    //    48-byte chunks within those blocks.
+    // 3. `out0`/`out1` writes stay in-bounds: the NEON path falls back to the scalar bounded parser
+    //    whenever a full block could overflow either output polynomial.
+    // 4. Rejection branches and write positions depend only on public matrix-A samples, not secret key,
+    //    noise, message, or shared-secret material.
+    unsafe {
+      sample_ntt_pair_block_neon(buf0, out0, filled0, buf1, out1, filled1);
+    }
+  }
+
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    sample_ntt_pair_block_scalar(buf0, out0, filled0, buf1, out1, filled1);
+  }
+}
+
+#[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+#[inline(always)]
+fn sample_ntt_pair_block_scalar(
+  buf0: &[u8; SHAKE128_RATE_BYTES],
+  out0: &mut Poly,
+  filled0: &mut usize,
+  buf1: &[u8; SHAKE128_RATE_BYTES],
+  out1: &mut Poly,
+  filled1: &mut usize,
+) {
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
   if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
@@ -2576,6 +2607,122 @@ fn sample_ntt_pair_block(
 
   *filled0 = n0;
   *filled1 = n1;
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn sample_ntt_pair_block_neon(
+  buf0: &[u8; SHAKE128_RATE_BYTES],
+  out0: &mut Poly,
+  filled0: &mut usize,
+  buf1: &[u8; SHAKE128_RATE_BYTES],
+  out1: &mut Poly,
+  filled1: &mut usize,
+) {
+  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+  const NEON_TRIPLES: usize = 16;
+  const NEON_BYTES: usize = NEON_TRIPLES * 3;
+  const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
+
+  if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
+    sample_ntt_block(buf0, out0, filled0);
+    sample_ntt_block(buf1, out1, filled1);
+    return;
+  }
+
+  let mut n0 = *filled0;
+  let mut n1 = *filled1;
+  let mut candidates0 = [0u16; NEON_CANDIDATES];
+  let mut candidates1 = [0u16; NEON_CANDIDATES];
+  let mut offset = 0usize;
+
+  while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
+    // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so both helpers read exactly one
+    // complete 48-byte chunk from their fixed rate blocks and write 32 initialized candidates.
+    unsafe {
+      sample_ntt_extract_16_candidates_neon(buf0.as_ptr().add(offset), &mut candidates0);
+      sample_ntt_extract_16_candidates_neon(buf1.as_ptr().add(offset), &mut candidates1);
+    }
+
+    for &candidate in &candidates0 {
+      if candidate < Q {
+        out0[n0] = candidate;
+        n0 = n0.strict_add(1);
+      }
+    }
+    for &candidate in &candidates1 {
+      if candidate < Q {
+        out1[n1] = candidate;
+        n1 = n1.strict_add(1);
+      }
+    }
+
+    offset = offset.strict_add(NEON_BYTES);
+  }
+
+  while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+    let a0 = buf0[offset];
+    let a1 = buf0[offset.strict_add(1)];
+    let a2 = buf0[offset.strict_add(2)];
+    let b0 = buf1[offset];
+    let b1 = buf1[offset.strict_add(1)];
+    let b2 = buf1[offset.strict_add(2)];
+
+    let d0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
+    let d1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
+    let e0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+    let e1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+    if d0 < Q {
+      out0[n0] = d0;
+      n0 = n0.strict_add(1);
+    }
+    if d1 < Q {
+      out0[n0] = d1;
+      n0 = n0.strict_add(1);
+    }
+    if e0 < Q {
+      out1[n1] = e0;
+      n1 = n1.strict_add(1);
+    }
+    if e1 < Q {
+      out1[n1] = e1;
+      n1 = n1.strict_add(1);
+    }
+
+    offset = offset.strict_add(3);
+  }
+
+  *filled0 = n0;
+  *filled1 = n1;
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+unsafe fn sample_ntt_extract_16_candidates_neon(input: *const u8, out: &mut [u16; 32]) {
+  let mask = vdupq_n_u16(0x0f);
+  // SAFETY: caller guarantees `input..input+48` is readable.
+  let triples = unsafe { vld3q_u8(input) };
+
+  let a0 = vmovl_u8(vget_low_u8(triples.0));
+  let a1 = vmovl_u8(vget_low_u8(triples.1));
+  let a2 = vmovl_u8(vget_low_u8(triples.2));
+  let d0 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
+  let d1 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
+  // SAFETY: `out` has space for 32 u16 candidates; this stores the first 16 interleaved values.
+  unsafe {
+    vst2q_u16(out.as_mut_ptr(), uint16x8x2_t(d0, d1));
+  }
+
+  let a0 = vmovl_u8(vget_high_u8(triples.0));
+  let a1 = vmovl_u8(vget_high_u8(triples.1));
+  let a2 = vmovl_u8(vget_high_u8(triples.2));
+  let d0 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
+  let d1 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
+  // SAFETY: `out.add(16)..out.add(32)` is inside the 32-candidate output array.
+  unsafe {
+    vst2q_u16(out.as_mut_ptr().add(16), uint16x8x2_t(d0, d1));
+  }
 }
 
 #[cfg(any(
