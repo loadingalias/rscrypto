@@ -3210,18 +3210,17 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
     || N.strict_sub(filled[2]) < MAX_CANDIDATES
     || N.strict_sub(filled[3]) < MAX_CANDIDATES
   {
-    let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 4];
-    for lane in 0..4 {
-      // SAFETY: The caller guarantees each pointer names at least one full SHAKE128 rate block,
-      // and `bufs[lane]` is a distinct fixed-size destination.
-      unsafe {
-        core::ptr::copy_nonoverlapping(rate_ptrs[lane], bufs[lane].as_mut_ptr(), SHAKE128_RATE_BYTES);
-      }
+    // SAFETY: Bounded pointer-backed scalar parsing because:
+    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+    // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
+    // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+    // 4. Rejection branches depend only on public matrix-A samples, not secret material.
+    unsafe {
+      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
+      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
+      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
+      sample_ntt_block_ptr(rate_ptrs[3], out3, &mut filled[3]);
     }
-    sample_ntt_block(&bufs[0], out0, &mut filled[0]);
-    sample_ntt_block(&bufs[1], out1, &mut filled[1]);
-    sample_ntt_block(&bufs[2], out2, &mut filled[2]);
-    sample_ntt_block(&bufs[3], out3, &mut filled[3]);
     return;
   }
 
@@ -3342,6 +3341,43 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
   }
 
   *filled = [n0, n1, n2, n3];
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+/// # Safety
+///
+/// `rate_ptr` must point to one readable SHAKE128 rate block containing at least
+/// `SHAKE128_RATE_BYTES` bytes.
+unsafe fn sample_ntt_block_ptr(rate_ptr: *const u8, out: &mut Poly, filled: &mut usize) {
+  let mut n = *filled;
+  let mut offset = 0usize;
+  while n < N && offset.strict_add(2) < SHAKE128_RATE_BYTES {
+    // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and the caller guarantees `rate_ptr` names one
+    // full readable SHAKE128 rate block.
+    let (b0, b1, b2) = unsafe {
+      (
+        *rate_ptr.add(offset),
+        *rate_ptr.add(offset.strict_add(1)),
+        *rate_ptr.add(offset.strict_add(2)),
+      )
+    };
+    let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+    let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+    if d1 < Q {
+      out[n] = d1;
+      n = n.strict_add(1);
+      if n == N {
+        break;
+      }
+    }
+    if d2 < Q {
+      out[n] = d2;
+      n = n.strict_add(1);
+    }
+    offset = offset.strict_add(3);
+  }
+  *filled = n;
 }
 
 #[inline]

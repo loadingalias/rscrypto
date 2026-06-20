@@ -485,12 +485,15 @@ impl Shake128XofReader {
   #[inline]
   #[cfg(all(
     feature = "ml-kem",
-    not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))
+    any(
+      test,
+      not(all(
+        target_arch = "aarch64",
+        target_endian = "little",
+        not(miri),
+        not(feature = "portable-only")
+      ))
+    )
   ))]
   #[allow(clippy::too_many_arguments)]
   pub(crate) fn squeeze_quad(
