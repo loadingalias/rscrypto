@@ -5348,6 +5348,23 @@ mod tests {
     }
   }
 
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn ntt_asm_matches_scalar_reference() {
+    let zeros = [0u16; N];
+    assert_ntt_asm_matches_scalar_reference(zeros, "zero polynomial");
+
+    let all_max = [Q - 1; N];
+    assert_ntt_asm_matches_scalar_reference(all_max, "all q-1 polynomial");
+
+    let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
+    assert_ntt_asm_matches_scalar_reference(alternating, "alternating 0/q-1 polynomial");
+
+    for seed in 0usize..1024 {
+      assert_ntt_asm_matches_scalar_reference(test_poly(seed), "seeded polynomial");
+    }
+  }
+
   #[test]
   fn sample_ntt_pair_matches_scalar_samplers() {
     let mut rho = [0u8; SEED_BYTES];
@@ -5640,6 +5657,25 @@ mod tests {
       *coeff = ((seed.strict_mul(37).strict_add(i.strict_mul(19)).strict_add(11)) % usize::from(Q)) as u16;
     }
     poly
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  fn assert_ntt_asm_matches_scalar_reference(poly: Poly, label: &str) {
+    let mut scalar = poly;
+    ntt_scalar(&mut scalar);
+
+    let mut asm = poly;
+    // SAFETY: direct canonicalized aarch64 assembly test call because:
+    // 1. This test only compiles on aarch64 targets that include the assembly backend.
+    // 2. `asm` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 3. The wrapper canonicalizes the assembly's signed redundant output before comparing with the
+    //    scalar/FIPS representation.
+    // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_ntt_asm(&mut asm);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
   }
 
   #[test]

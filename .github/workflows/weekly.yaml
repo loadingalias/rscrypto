@@ -132,6 +132,39 @@ jobs:
         fuzz-packages/*/artifacts/
       artifact_always: false
 
+  # --- Native ML-KEM promotion gate on the physical AWS targets. ---
+  mlkem-graviton:
+    name: ML-KEM Graviton Gate (${{ matrix.display_name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: graviton3
+            display_name: AWS Graviton3
+          - platform: graviton4
+            display_name: AWS Graviton4
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=${{ matrix.platform }}
+      timeout_minutes: 180
+      cache_key: ""
+      tools_mode: minimal
+      toolchain_components: "clippy, rustfmt, rust-src"
+      # Benchmark evidence should be a clean native build on the exact host.
+      enable_magic_cache: false
+      enable_rust_cache: false
+      pre_script: |
+        echo "ML-KEM gate host: ${{ matrix.display_name }} (${{ matrix.platform }})"
+        uname -a
+        lscpu
+        sed -n '1,80p' /proc/cpuinfo
+      run_script: |
+        MLKEM_AARCH64_GATE_PLATFORM="${{ matrix.platform }}" \
+        bash scripts/ci/mlkem-aarch64-gate.sh
+      artifact_name: mlkem-aarch64-gate-${{ matrix.platform }}
+      artifact_path: mlkem-aarch64-gate/
+      artifact_always: true
+
   # ─── Constant-time evidence on benchmark-published physical lanes. ──
   ct:
     name: Constant-Time Evidence (weekly)
@@ -208,7 +241,7 @@ jobs:
   # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, ct, coverage]
+    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, mlkem-graviton, ct, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -221,6 +254,7 @@ jobs:
             "miri=${{ needs.miri.result }}" \
             "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \
             "fuzzing=${{ needs.fuzzing.result }}" \
+            "mlkem-graviton=${{ needs.mlkem-graviton.result }}" \
             "ct=${{ needs.ct.result }}" \
             "coverage=${{ needs.coverage.result }}"
           do
