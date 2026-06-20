@@ -741,8 +741,8 @@ impl Permuter for Aarch64Permuter {
 
     #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
     {
-      aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
-      aarch64::keccakf_aarch64_sha3_x2(state_c, state_d);
+      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      keccakf_portable(state_d);
     }
 
     #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"))))]
@@ -823,8 +823,8 @@ impl Permuter for Aarch64Permuter {
 
     #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
     if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
-      aarch64::keccakf_aarch64_sha3_x2(state_c, state_d);
+      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      keccakf_portable(state_d);
       return;
     }
 
