@@ -5601,6 +5601,36 @@ mod tests {
     not(feature = "portable-only")
   ))]
   #[test]
+  fn ntt_asm_matches_scalar_for_fips_keygen_noise() {
+    let d = [
+      249, 206, 215, 37, 228, 105, 120, 238, 82, 21, 50, 99, 184, 68, 205, 166, 255, 59, 174, 206, 253, 125, 87, 13,
+      254, 16, 123, 248, 146, 130, 47, 191,
+    ];
+    let mut seed = [0u8; 33];
+    seed[..SEED_BYTES].copy_from_slice(&d);
+    seed[SEED_BYTES] = 2;
+
+    let expanded = g(&seed);
+    let mut sigma = [0u8; SEED_BYTES];
+    sigma.copy_from_slice(&expanded[SEED_BYTES..]);
+
+    for nonce in 0u8..4 {
+      let mut poly = [0u16; N];
+      sample_noise::<ETA3_RANDOM_BYTES>(&sigma, nonce, &mut poly);
+      assert_ntt_asm_matches_scalar_reference(poly, "ML-KEM-512 fixed keygen noise");
+    }
+
+    ct::zeroize(&mut sigma);
+    ct::zeroize(&mut seed);
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
   fn basemul_accumulate_asm_matches_scalar_reference() {
     assert_basemul_accumulate_asm_matches_scalar_reference([0u16; N], [0u16; N], [0u16; N], "all zero");
     assert_basemul_accumulate_asm_matches_scalar_reference([Q - 1; N], [Q - 1; N], [Q - 1; N], "all q-1");

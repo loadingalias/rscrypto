@@ -562,12 +562,18 @@ Lntt_canonicalize_start:
         cmge v19.8h, v0.8h, v18.8h
         and v19.16b, v19.16b, v18.16b
         sub v0.8h, v0.8h, v19.8h
+        cmge v19.8h, v0.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
+        sub v0.8h, v0.8h, v19.8h
         add v1.8h, v1.8h, v16.8h
         cmge v19.8h, v1.8h, v16.8h
         and v19.16b, v19.16b, v16.16b
         sub v1.8h, v1.8h, v19.8h
         cmge v19.8h, v1.8h, v17.8h
         and v19.16b, v19.16b, v17.16b
+        sub v1.8h, v1.8h, v19.8h
+        cmge v19.8h, v1.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
         sub v1.8h, v1.8h, v19.8h
         cmge v19.8h, v1.8h, v18.8h
         and v19.16b, v19.16b, v18.16b
@@ -582,12 +588,18 @@ Lntt_canonicalize_start:
         cmge v19.8h, v2.8h, v18.8h
         and v19.16b, v19.16b, v18.16b
         sub v2.8h, v2.8h, v19.8h
+        cmge v19.8h, v2.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
+        sub v2.8h, v2.8h, v19.8h
         add v3.8h, v3.8h, v16.8h
         cmge v19.8h, v3.8h, v16.8h
         and v19.16b, v19.16b, v16.16b
         sub v3.8h, v3.8h, v19.8h
         cmge v19.8h, v3.8h, v17.8h
         and v19.16b, v19.16b, v17.16b
+        sub v3.8h, v3.8h, v19.8h
+        cmge v19.8h, v3.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
         sub v3.8h, v3.8h, v19.8h
         cmge v19.8h, v3.8h, v18.8h
         and v19.16b, v19.16b, v18.16b
