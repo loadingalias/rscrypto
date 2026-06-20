@@ -45,32 +45,65 @@
 .endm
 
 .macro BASEMUL_PRODUCT_16 a_ptr, b_ptr
-        ld2     {{ v0.8h, v1.8h }}, [\a_ptr], #32
-        ld2     {{ v2.8h, v3.8h }}, [\b_ptr], #32
+        ld2     {{ v2.8h, v3.8h }}, [\a_ptr], #32
+        ld2     {{ v4.8h, v5.8h }}, [\b_ptr], #32
+        mov     v6.16b, v21.16b
 
-        smull   v16.4s, v1.4h, v3.4h
-        smull2  v17.4s, v1.8h, v3.8h
-        MONT_REDUCE v5, v16, v17
+        smull   v7.4s, v3.4h, v5.4h
+        smull2  v16.4s, v3.8h, v5.8h
+        xtn     v17.4h, v7.4s
+        mul     v17.4h, v17.4h, v31.4h
+        smull   v17.4s, v17.4h, v30.4h
+        shrn    v17.4h, v17.4s, #16
+        shrn    v7.4h, v7.4s, #16
+        sub     v7.4h, v7.4h, v17.4h
+        xtn     v17.4h, v16.4s
+        mul     v17.4h, v17.4h, v31.4h
+        smull   v17.4s, v17.4h, v30.4h
+        shrn    v17.4h, v17.4s, #16
+        shrn    v16.4h, v16.4s, #16
+        sub     v16.4h, v16.4h, v17.4h
 
-        smull   v16.4s, v0.4h, v2.4h
-        smull2  v17.4s, v0.8h, v2.8h
-        smull   v18.4s, v5.4h, v4.4h
-        smull2  v19.4s, v5.8h, v4.8h
-        add     v16.4s, v16.4s, v18.4s
-        add     v17.4s, v17.4s, v19.4s
-        MONT_REDUCE v6, v16, v17
+        smull   v17.4s, v2.4h, v4.4h
+        smull2  v18.4s, v2.8h, v4.8h
+        smull   v7.4s, v7.4h, v6.4h
+        ext     v6.16b, v6.16b, v6.16b, #8
+        smull   v6.4s, v16.4h, v6.4h
+        addhn   v16.4h, v7.4s, v17.4s
+        smlal   v7.4s, v2.4h, v4.4h
+        addhn2  v16.8h, v6.4s, v18.4s
+        smlal2  v6.4s, v2.8h, v4.8h
+        xtn     v17.4h, v7.4s
+        mul     v17.4h, v17.4h, v31.4h
+        smull   v17.4s, v17.4h, v30.4h
+        xtn     v18.4h, v6.4s
+        mul     v18.4h, v18.4h, v31.4h
+        smull   v18.4s, v18.4h, v30.4h
+        uzp2    v17.8h, v17.8h, v18.8h
+        sub     v6.8h, v16.8h, v17.8h
         SIGNED_TO_MOD_Q v6
 
-        smull   v16.4s, v0.4h, v3.4h
-        smull2  v17.4s, v0.8h, v3.8h
-        smlal   v16.4s, v1.4h, v2.4h
-        smlal2  v17.4s, v1.8h, v2.8h
-        MONT_REDUCE v7, v16, v17
+        smull   v16.4s, v2.4h, v5.4h
+        smull2  v17.4s, v2.8h, v5.8h
+        smull   v18.4s, v3.4h, v4.4h
+        smull2  v19.4s, v3.8h, v4.8h
+        addhn   v20.4h, v16.4s, v18.4s
+        smlal   v16.4s, v3.4h, v4.4h
+        addhn2  v20.8h, v17.4s, v19.4s
+        smlal2  v17.4s, v3.8h, v4.8h
+        xtn     v18.4h, v16.4s
+        mul     v18.4h, v18.4h, v31.4h
+        smull   v18.4s, v18.4h, v30.4h
+        xtn     v19.4h, v17.4s
+        mul     v19.4h, v19.4h, v31.4h
+        smull   v19.4s, v19.4h, v30.4h
+        uzp2    v18.8h, v18.8h, v19.8h
+        sub     v7.8h, v20.8h, v18.8h
         SIGNED_TO_MOD_Q v7
 .endm
 
 .macro BASEMUL_ACCUMULATE_16
-        ldr     q4, [x3], #16
+        ldr     q21, [x3], #16
         BASEMUL_PRODUCT_16 x1, x2
         ld2     {{ v18.8h, v19.8h }}, [x0]
         ADD_MOD_Q v18, v6
@@ -79,7 +112,7 @@
 .endm
 
 .macro BASEMUL_ACCUMULATE_K3_16
-        ldr     q4, [x3], #16
+        ldr     q21, [x3], #16
         ld2     {{ v23.8h, v24.8h }}, [x0]
 
         BASEMUL_PRODUCT_16 x1, x2
@@ -98,7 +131,7 @@
 .endm
 
 .macro BASEMUL_ACCUMULATE_K4_16
-        ldr     q4, [x3], #16
+        ldr     q21, [x3], #16
         ld2     {{ v23.8h, v24.8h }}, [x0]
 
         BASEMUL_PRODUCT_16 x1, x2
