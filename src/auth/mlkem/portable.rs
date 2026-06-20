@@ -2175,17 +2175,7 @@ fn sample_ntt_pair(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8) -> (P
 
 #[inline(always)]
 fn sample_ntt_four_materialized_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  {
-    let [out0, out1, out2, out3] = out;
-    sample_ntt_pair_into(rho, lanes[0].0, lanes[0].1, lanes[1].0, lanes[1].1, out0, out1);
-    sample_ntt_pair_into(rho, lanes[2].0, lanes[2].1, lanes[3].0, lanes[3].1, out2, out3);
-  }
-
-  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-  {
-    sample_ntt_quad_into(rho, lanes, out);
-  }
+  sample_ntt_quad_into(rho, lanes, out);
 }
 
 fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
@@ -2431,11 +2421,6 @@ fn sample_ntt_pair_into(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8, 
   sample_ntt_pair_from_xof_into(reader0, reader1, out0, out1);
 }
 
-#[cfg(any(
-  test,
-  feature = "diag",
-  not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))
-))]
 fn sample_ntt_quad_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
   let (reader0, reader1, reader2, reader3) =
     Shake128::xof_seeded_32_2_quad(rho, lanes[0], lanes[1], lanes[2], lanes[3]);
@@ -2725,11 +2710,6 @@ unsafe fn sample_ntt_extract_16_candidates_neon(input: *const u8, out: &mut [u16
   }
 }
 
-#[cfg(any(
-  test,
-  feature = "diag",
-  not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))
-))]
 fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut Poly; 4]) {
   let mut filled = [0usize; 4];
   let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 4];
@@ -2737,12 +2717,30 @@ fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut
 
   while filled[0] < N && filled[1] < N && filled[2] < N && filled[3] < N {
     let [reader0, reader1, reader2, reader3] = &mut readers;
-    let [buf0, buf1, buf2, buf3] = &mut bufs;
-    Shake128XofReader::squeeze_quad(reader0, reader1, reader2, reader3, buf0, buf1, buf2, buf3);
-    sample_ntt_block(buf0, out0, &mut filled[0]);
-    sample_ntt_block(buf1, out1, &mut filled[1]);
-    sample_ntt_block(buf2, out2, &mut filled[2]);
-    sample_ntt_block(buf3, out3, &mut filled[3]);
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    {
+      Shake128XofReader::with_quad_rate_block(reader0, reader1, reader2, reader3, |state0, state1, state2, state3| {
+        sample_ntt_quad_state_block([state0, state1, state2, state3], [out0, out1, out2, out3], &mut filled);
+      });
+    }
+
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    )))]
+    {
+      let [buf0, buf1, buf2, buf3] = &mut bufs;
+      Shake128XofReader::squeeze_quad(reader0, reader1, reader2, reader3, buf0, buf1, buf2, buf3);
+      sample_ntt_quad_block(&bufs, [out0, out1, out2, out3], &mut filled);
+    }
   }
 
   while filled[0] < N {
@@ -3042,6 +3040,233 @@ fn sample_ntt_quad_mul_accumulate_from_xof(mut readers: [Shake128XofReader; 4], 
     }
     products[lane].finish();
   }
+}
+
+#[inline(always)]
+#[cfg(not(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+)))]
+fn sample_ntt_quad_block(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    let [out0, out1, out2, out3] = out;
+    // SAFETY: aarch64 NEON SampleNTT quad extraction because:
+    // 1. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 2. `bufs` contains four fixed SHAKE128 rate blocks, and the helper only reads complete 48-byte
+    //    chunks within those blocks.
+    // 3. Each output write stays in-bounds: the NEON path falls back to the scalar bounded parser
+    //    whenever a full block could overflow any output polynomial.
+    // 4. Rejection branches and write positions depend only on public matrix-A samples, not secret key,
+    //    noise, message, or shared-secret material.
+    unsafe {
+      sample_ntt_quad_block_neon(bufs, [out0, out1, out2, out3], filled);
+    }
+  }
+
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    let [out0, out1, out2, out3] = out;
+    sample_ntt_block(&bufs[0], out0, &mut filled[0]);
+    sample_ntt_block(&bufs[1], out1, &mut filled[1]);
+    sample_ntt_block(&bufs[2], out2, &mut filled[2]);
+    sample_ntt_block(&bufs[3], out3, &mut filled[3]);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_endian = "little"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "neon")]
+fn sample_ntt_quad_block_neon(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
+  let rate_ptrs = [bufs[0].as_ptr(), bufs[1].as_ptr(), bufs[2].as_ptr(), bufs[3].as_ptr()];
+  // SAFETY: Pointer-backed quad parsing over byte buffers because:
+  // 1. Each pointer comes from a fixed `[u8; SHAKE128_RATE_BYTES]` rate block.
+  // 2. The helper reads only offsets `< SHAKE128_RATE_BYTES`.
+  // 3. The helper preserves the same bounded output fallback as the scalar parser.
+  unsafe {
+    sample_ntt_quad_block_neon_ptrs(rate_ptrs, out, filled);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
+fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
+  let [out0, out1, out2, out3] = out;
+  let rate_ptrs = [
+    states[0].as_ptr().cast::<u8>(),
+    states[1].as_ptr().cast::<u8>(),
+    states[2].as_ptr().cast::<u8>(),
+    states[3].as_ptr().cast::<u8>(),
+  ];
+  // SAFETY: Pointer-backed quad parsing over Keccak state memory because:
+  // 1. This path is little-endian aarch64 only, so the in-memory `u64` state layout is the XOF byte
+  //    order.
+  // 2. Each Keccak state has 25 u64 lanes (200 bytes), which covers the first 168-byte SHAKE128 rate
+  //    block.
+  // 3. The helper reads only offsets `< SHAKE128_RATE_BYTES` and keeps bounded output fallback
+  //    semantics.
+  unsafe {
+    sample_ntt_quad_block_neon_ptrs(rate_ptrs, [out0, out1, out2, out3], filled);
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
+  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+  const NEON_TRIPLES: usize = 16;
+  const NEON_BYTES: usize = NEON_TRIPLES * 3;
+  const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
+
+  let [out0, out1, out2, out3] = out;
+  if N.strict_sub(filled[0]) < MAX_CANDIDATES
+    || N.strict_sub(filled[1]) < MAX_CANDIDATES
+    || N.strict_sub(filled[2]) < MAX_CANDIDATES
+    || N.strict_sub(filled[3]) < MAX_CANDIDATES
+  {
+    let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 4];
+    for lane in 0..4 {
+      // SAFETY: The caller guarantees each pointer names at least one full SHAKE128 rate block,
+      // and `bufs[lane]` is a distinct fixed-size destination.
+      unsafe {
+        core::ptr::copy_nonoverlapping(rate_ptrs[lane], bufs[lane].as_mut_ptr(), SHAKE128_RATE_BYTES);
+      }
+    }
+    sample_ntt_block(&bufs[0], out0, &mut filled[0]);
+    sample_ntt_block(&bufs[1], out1, &mut filled[1]);
+    sample_ntt_block(&bufs[2], out2, &mut filled[2]);
+    sample_ntt_block(&bufs[3], out3, &mut filled[3]);
+    return;
+  }
+
+  let mut n0 = filled[0];
+  let mut n1 = filled[1];
+  let mut n2 = filled[2];
+  let mut n3 = filled[3];
+  let mut candidates0 = [0u16; NEON_CANDIDATES];
+  let mut candidates1 = [0u16; NEON_CANDIDATES];
+  let mut candidates2 = [0u16; NEON_CANDIDATES];
+  let mut candidates3 = [0u16; NEON_CANDIDATES];
+  let mut offset = 0usize;
+
+  while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
+    // SAFETY: Four fixed-block NEON candidate extractions because:
+    // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so each pointer names one complete 48-byte chunk
+    //    inside its lane's full SHAKE128 rate block.
+    // 2. Each destination is a distinct stack array with exactly `NEON_CANDIDATES` slots.
+    // 3. `sample_ntt_extract_16_candidates_neon` writes 32 initialized u16 candidates per call.
+    unsafe {
+      sample_ntt_extract_16_candidates_neon(rate_ptrs[0].add(offset), &mut candidates0);
+      sample_ntt_extract_16_candidates_neon(rate_ptrs[1].add(offset), &mut candidates1);
+      sample_ntt_extract_16_candidates_neon(rate_ptrs[2].add(offset), &mut candidates2);
+      sample_ntt_extract_16_candidates_neon(rate_ptrs[3].add(offset), &mut candidates3);
+    }
+
+    for &candidate in &candidates0 {
+      if candidate < Q {
+        out0[n0] = candidate;
+        n0 = n0.strict_add(1);
+      }
+    }
+    for &candidate in &candidates1 {
+      if candidate < Q {
+        out1[n1] = candidate;
+        n1 = n1.strict_add(1);
+      }
+    }
+    for &candidate in &candidates2 {
+      if candidate < Q {
+        out2[n2] = candidate;
+        n2 = n2.strict_add(1);
+      }
+    }
+    for &candidate in &candidates3 {
+      if candidate < Q {
+        out3[n3] = candidate;
+        n3 = n3.strict_add(1);
+      }
+    }
+
+    offset = offset.strict_add(NEON_BYTES);
+  }
+
+  while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+    // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and each caller-provided
+    // pointer names one full rate block.
+    let (a0, a1, a2, b0, b1, b2, c0, c1, c2, d0, d1, d2) = unsafe {
+      (
+        *rate_ptrs[0].add(offset),
+        *rate_ptrs[0].add(offset.strict_add(1)),
+        *rate_ptrs[0].add(offset.strict_add(2)),
+        *rate_ptrs[1].add(offset),
+        *rate_ptrs[1].add(offset.strict_add(1)),
+        *rate_ptrs[1].add(offset.strict_add(2)),
+        *rate_ptrs[2].add(offset),
+        *rate_ptrs[2].add(offset.strict_add(1)),
+        *rate_ptrs[2].add(offset.strict_add(2)),
+        *rate_ptrs[3].add(offset),
+        *rate_ptrs[3].add(offset.strict_add(1)),
+        *rate_ptrs[3].add(offset.strict_add(2)),
+      )
+    };
+
+    let x0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
+    let x1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
+    let y0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+    let y1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+    let z0 = u16::from(c0) | (u16::from(c1 & 0x0f) << 8);
+    let z1 = (u16::from(c1) >> 4) | (u16::from(c2) << 4);
+    let w0 = u16::from(d0) | (u16::from(d1 & 0x0f) << 8);
+    let w1 = (u16::from(d1) >> 4) | (u16::from(d2) << 4);
+
+    if x0 < Q {
+      out0[n0] = x0;
+      n0 = n0.strict_add(1);
+    }
+    if x1 < Q {
+      out0[n0] = x1;
+      n0 = n0.strict_add(1);
+    }
+    if y0 < Q {
+      out1[n1] = y0;
+      n1 = n1.strict_add(1);
+    }
+    if y1 < Q {
+      out1[n1] = y1;
+      n1 = n1.strict_add(1);
+    }
+    if z0 < Q {
+      out2[n2] = z0;
+      n2 = n2.strict_add(1);
+    }
+    if z1 < Q {
+      out2[n2] = z1;
+      n2 = n2.strict_add(1);
+    }
+    if w0 < Q {
+      out3[n3] = w0;
+      n3 = n3.strict_add(1);
+    }
+    if w1 < Q {
+      out3[n3] = w1;
+      n3 = n3.strict_add(1);
+    }
+
+    offset = offset.strict_add(3);
+  }
+
+  *filled = [n0, n1, n2, n3];
 }
 
 #[inline]
