@@ -50,8 +50,11 @@
 // Namespaced for rscrypto and embedded with Rust global_asm!.
 
 /*
- * WARNING: This file is auto-derived from the mlkem-native source file
- *   dev/aarch64_opt/src/ntt.S using scripts/simpasm. Do not modify it directly.
+ * The butterfly schedule is auto-derived from the mlkem-native source file
+ *   dev/aarch64_opt/src/ntt.S using scripts/simpasm.
+ *
+ * The final canonicalization epilogue is rscrypto-owned: it turns the redundant
+ * signed output into the exact scalar/FIPS [0, q) representation before return.
  */
 
 
@@ -537,6 +540,63 @@ Lntt_layer4567_start:
         str q13, [x0, #0x10]
         str q3, [x0], #0x40
         stur q21, [x0, #-0x20]
+        mov x4, x3
+        mov w5, #0x3404             // =4*q
+        dup v16.8h, w5
+        mov w5, #0x1a02             // =2*q
+        dup v17.8h, w5
+        mov w5, #0xd01              // =q
+        dup v18.8h, w5
+        mov x5, #0x8                // =512 bytes / 64 bytes
+
+Lntt_canonicalize_start:
+        ldp q0, q1, [x4]
+        ldp q2, q3, [x4, #0x20]
+        add v0.8h, v0.8h, v16.8h
+        cmge v19.8h, v0.8h, v16.8h
+        and v19.16b, v19.16b, v16.16b
+        sub v0.8h, v0.8h, v19.8h
+        cmge v19.8h, v0.8h, v17.8h
+        and v19.16b, v19.16b, v17.16b
+        sub v0.8h, v0.8h, v19.8h
+        cmge v19.8h, v0.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
+        sub v0.8h, v0.8h, v19.8h
+        add v1.8h, v1.8h, v16.8h
+        cmge v19.8h, v1.8h, v16.8h
+        and v19.16b, v19.16b, v16.16b
+        sub v1.8h, v1.8h, v19.8h
+        cmge v19.8h, v1.8h, v17.8h
+        and v19.16b, v19.16b, v17.16b
+        sub v1.8h, v1.8h, v19.8h
+        cmge v19.8h, v1.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
+        sub v1.8h, v1.8h, v19.8h
+        add v2.8h, v2.8h, v16.8h
+        cmge v19.8h, v2.8h, v16.8h
+        and v19.16b, v19.16b, v16.16b
+        sub v2.8h, v2.8h, v19.8h
+        cmge v19.8h, v2.8h, v17.8h
+        and v19.16b, v19.16b, v17.16b
+        sub v2.8h, v2.8h, v19.8h
+        cmge v19.8h, v2.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
+        sub v2.8h, v2.8h, v19.8h
+        add v3.8h, v3.8h, v16.8h
+        cmge v19.8h, v3.8h, v16.8h
+        and v19.16b, v19.16b, v16.16b
+        sub v3.8h, v3.8h, v19.8h
+        cmge v19.8h, v3.8h, v17.8h
+        and v19.16b, v19.16b, v17.16b
+        sub v3.8h, v3.8h, v19.8h
+        cmge v19.8h, v3.8h, v18.8h
+        and v19.16b, v19.16b, v18.16b
+        sub v3.8h, v3.8h, v19.8h
+        stp q0, q1, [x4]
+        stp q2, q3, [x4, #0x20]
+        add x4, x4, #0x40
+        subs x5, x5, #0x1
+        cbnz x5, Lntt_canonicalize_start
         ldp d8, d9, [sp]
         .cfi_restore d8
         .cfi_restore d9

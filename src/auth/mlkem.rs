@@ -1087,6 +1087,48 @@ pub unsafe fn diag_mlkem_s390x_ntt_input_digest(poly: [u16; 256]) -> u16 {
   unsafe { portable::diag_s390x_ntt_input_digest(poly) }
 }
 
+/// Diagnostic digest for the aarch64 NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_ntt_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_ntt_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the aarch64 NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_ntt_asm_input_digest(poly: [u16; 256]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_ntt_asm_input_digest(poly) }
+}
+
 #[cfg(feature = "diag")]
 #[doc(hidden)]
 #[inline]

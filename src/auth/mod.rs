@@ -191,6 +191,7 @@ pub use mlkem::{
 ))]
 pub use mlkem::{
   diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest, diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest,
+  diag_mlkem_aarch64_ntt_asm_digest, diag_mlkem_aarch64_ntt_asm_input_digest,
   diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_digest,
   diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_input_digest,
   diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_digest,
