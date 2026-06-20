@@ -3,7 +3,7 @@
 
 use core::arch::global_asm;
 
-use super::Poly;
+use super::{Poly, Q};
 
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
@@ -94,10 +94,60 @@ unsafe fn ntt_asm_raw(poly: &mut Poly) {
   }
 }
 
-#[cfg(test)]
-pub(super) unsafe fn test_ntt_asm_raw(poly: &mut Poly) {
-  // SAFETY: test-only direct access to the raw assembly entry point.
+#[inline]
+unsafe fn ntt_asm(poly: &mut Poly) {
+  // SAFETY: canonicalized ML-KEM aarch64 NTT assembly call because:
+  // 1. `poly` is a fixed 256-coefficient polynomial matching the raw assembly ABI.
+  // 2. The raw assembly wrapper supplies the fixed, aligned twiddle tables required by that ABI.
+  // 3. The post-call canonicalization is fixed-work and uses no division or coefficient-dependent
+  //    loop bounds.
   unsafe {
     ntt_asm_raw(poly);
+  }
+  canonicalize_ntt_asm_output(poly);
+}
+
+fn canonicalize_ntt_asm_output(poly: &mut Poly) {
+  for coeff in poly {
+    *coeff = canonicalize_ntt_asm_coeff(*coeff as i16);
+  }
+}
+
+#[inline]
+fn canonicalize_ntt_asm_coeff(value: i16) -> u16 {
+  let mut value = (i32::from(value) + (i32::from(Q) * 4)) as u32;
+  for _ in 0..7 {
+    value = subtract_q_if_ge(value);
+  }
+  value as u16
+}
+
+#[inline]
+fn subtract_q_if_ge(value: u32) -> u32 {
+  let reduced = value.wrapping_sub(u32::from(Q));
+  let borrow_mask = 0u32.wrapping_sub(reduced >> 31);
+  (reduced & !borrow_mask) | (value & borrow_mask)
+}
+
+#[cfg(test)]
+pub(super) unsafe fn test_ntt_asm_raw(poly: &mut Poly) {
+  // SAFETY: test-only direct access to the raw assembly entry point because:
+  // 1. The caller supplies a fixed 256-coefficient ML-KEM polynomial.
+  // 2. This module is compiled only on aarch64 targets with the assembly backend available.
+  // 3. Tests inspect the raw signed redundant output instead of using it as a canonical ML-KEM
+  //    result.
+  unsafe {
+    ntt_asm_raw(poly);
+  }
+}
+
+#[cfg(test)]
+pub(super) unsafe fn test_ntt_asm(poly: &mut Poly) {
+  // SAFETY: test-only direct access to the canonicalized assembly wrapper because:
+  // 1. The caller supplies a fixed 256-coefficient ML-KEM polynomial.
+  // 2. This module is compiled only on aarch64 targets with the assembly backend available.
+  // 3. The wrapper canonicalizes the raw signed redundant output before returning.
+  unsafe {
+    ntt_asm(poly);
   }
 }
