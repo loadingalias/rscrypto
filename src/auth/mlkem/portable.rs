@@ -17,12 +17,12 @@ mod x86_64;
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
   vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
-  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_low_s16,
-  vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16,
-  vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16,
-  vreinterpretq_u16_s16, vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32,
-  vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
-  vzip1_u32, vzip2_u32,
+  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_high_u16,
+  vget_low_s16, vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovl_u16, vmovn_s32, vmul_n_s16, vmull_n_s16,
+  vmull_s16, vmulq_n_s16, vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16,
+  vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_s32_u32, vreinterpretq_u16_s16, vreinterpretq_u16_u32,
+  vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16,
+  vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
 };
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
@@ -50,6 +50,13 @@ const Q_U32: u32 = Q as u32;
   all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))
 ))]
 const Q_I16: i16 = Q as i16;
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 const Q_I32: i32 = Q as i32;
 const Q_HALF: u32 = Q_U32 / 2;
 #[cfg(test)]
@@ -3051,7 +3058,7 @@ fn ntt(poly: &mut Poly) {
     // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
     //    values.
     unsafe {
-      return aarch64::ntt_asm(poly);
+      aarch64::ntt_asm(poly);
     }
   }
 
@@ -3996,6 +4003,51 @@ fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
   vreinterpret_u16_s16(vadd_s16(value, vand_s16(negative, vdup_n_s16(Q_I16))))
 }
 
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn to_montgomery_product_domain_neon(poly: &mut Poly) {
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size NEON product-domain conversion because:
+    // 1. `i` advances by 8 while `i < N`, so `i..i + 8` is in-bounds for the 256-coefficient
+    //    polynomial.
+    // 2. Each load and store touches exactly those 8 contiguous `u16` coefficients.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    // 4. The memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      let coeffs = vld1q_u16(poly.as_ptr().add(i));
+      let low = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(coeffs)));
+      let high = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(coeffs)));
+      vst1q_u16(
+        poly.as_mut_ptr().add(i),
+        signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(low, high)),
+      );
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn from_montgomery_product_domain_neon(poly: &mut Poly) {
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size NEON product-domain exit because:
+    // 1. `i` advances by 8 while `i < N`, so `i..i + 8` is in-bounds for the 256-coefficient
+    //    polynomial.
+    // 2. Each load and store touches exactly those 8 contiguous `u16` coefficients.
+    // 3. `MONT_R_SQUARED_MOD_Q` is the public ML-KEM conversion constant.
+    // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    // 5. The memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      let coeffs = vld1q_u16(poly.as_ptr().add(i));
+      vst1q_u16(
+        poly.as_mut_ptr().add(i),
+        mul_mont_const_mod_u16x8(coeffs, MONT_R_SQUARED_MOD_Q),
+      );
+    }
+  }
+}
+
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
 fn ntt_avx2(poly: &mut Poly) {
@@ -4403,32 +4455,75 @@ fn base_case_multiply_normal_reference(a0: u16, a1: u16, b0: u16, b1: u16, gamma
 }
 
 fn poly_to_montgomery_product_domain(poly: &mut Poly) {
-  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
-  if use_s390x_vector_arithmetic() {
-    // SAFETY: runtime dispatch verified the s390x z/Vector facility, and `poly` is a full
-    // fixed-size ML-KEM polynomial.
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    // SAFETY: aarch64 NEON product-domain conversion dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+    // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
     unsafe {
-      s390x::to_montgomery_product_domain_vector(poly);
+      to_montgomery_product_domain_neon(poly);
     }
-    return;
   }
 
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+    if use_s390x_vector_arithmetic() {
+      // SAFETY: runtime dispatch verified the s390x z/Vector facility, and `poly` is a full
+      // fixed-size ML-KEM polynomial.
+      unsafe {
+        s390x::to_montgomery_product_domain_vector(poly);
+      }
+      return;
+    }
+
+    poly_to_montgomery_product_domain_scalar(poly);
+  }
+}
+
+#[cfg(any(test, not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))))]
+fn poly_to_montgomery_product_domain_scalar(poly: &mut Poly) {
   for coeff in poly {
     *coeff = to_montgomery_product_domain(*coeff);
   }
 }
 
 fn poly_from_montgomery_product_domain(poly: &mut Poly) {
-  #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
-  if use_s390x_vector_arithmetic() {
-    // SAFETY: runtime dispatch verified the s390x z/Vector facility, and `poly` is a full
-    // fixed-size ML-KEM polynomial.
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    // SAFETY: aarch64 NEON product-domain exit dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+    // 4. `MONT_R_SQUARED_MOD_Q` is the public ML-KEM conversion constant.
+    // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
     unsafe {
-      s390x::from_montgomery_product_domain_vector(poly);
+      from_montgomery_product_domain_neon(poly);
     }
-    return;
   }
 
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
+    if use_s390x_vector_arithmetic() {
+      // SAFETY: runtime dispatch verified the s390x z/Vector facility, and `poly` is a full
+      // fixed-size ML-KEM polynomial.
+      unsafe {
+        s390x::from_montgomery_product_domain_vector(poly);
+      }
+      return;
+    }
+
+    poly_from_montgomery_product_domain_scalar(poly);
+  }
+}
+
+#[cfg(any(test, not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))))]
+fn poly_from_montgomery_product_domain_scalar(poly: &mut Poly) {
   for coeff in poly {
     *coeff = from_montgomery_product_domain(*coeff);
   }
@@ -5274,21 +5369,49 @@ fn mul_mod(a: u16, b: u16) -> u16 {
 }
 
 #[inline]
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 fn mul_mont_const_mod(a: u16, b_mont: i16) -> u16 {
   signed_to_mod_q(montgomery_reduce_i32(mul_i32_secret(i32::from(a), i32::from(b_mont))))
 }
 
 #[inline]
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 fn to_montgomery_product_domain(value: u16) -> u16 {
   signed_to_mod_q(montgomery_reduce_i32(i32::from(value)))
 }
 
 #[inline]
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 fn from_montgomery_product_domain(value: u16) -> u16 {
   mul_mont_const_mod(value, MONT_R_SQUARED_MOD_Q)
 }
 
 #[inline]
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 fn montgomery_reduce_i32(value: i32) -> i16 {
   let k = mul_i32_secret(i32::from(value as i16), i32::from(Q_MONT_INV_U16 as i16));
   let c = (mul_i32_secret(i32::from(k as i16), Q_I32) >> 16) as i16;
@@ -5296,6 +5419,13 @@ fn montgomery_reduce_i32(value: i32) -> i16 {
 }
 
 #[inline]
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 fn signed_to_mod_q(value: i16) -> u16 {
   let value = i32::from(value);
   (value + ((value >> 31) & Q_I32)) as u16
@@ -5341,6 +5471,13 @@ fn mul_u32_secret(a: u32, b: u32) -> u32 {
 }
 
 #[inline]
+#[cfg(any(
+  test,
+  miri,
+  feature = "portable-only",
+  target_arch = "x86_64",
+  not(any(target_arch = "aarch64", target_arch = "x86_64"))
+))]
 fn mul_i32_secret(a: i32, b: i32) -> i32 {
   #[cfg(target_arch = "s390x")]
   {
@@ -6272,6 +6409,39 @@ mod tests {
       poly_from_montgomery_product_domain(&mut poly);
 
       assert_eq!(poly, normal, "seed {seed}");
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn product_domain_neon_matches_scalar_reference() {
+    for seed in 0usize..32 {
+      let mut scalar = test_poly(seed);
+      let mut accelerated = scalar;
+
+      poly_to_montgomery_product_domain_scalar(&mut scalar);
+      // SAFETY: direct NEON product-domain conversion test call because:
+      // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 2. `accelerated` is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions.
+      unsafe {
+        to_montgomery_product_domain_neon(&mut accelerated);
+      }
+      assert_eq!(accelerated, scalar, "to product-domain seed {seed}");
+
+      let mut scalar = test_poly(seed.strict_add(100));
+      let mut accelerated = scalar;
+
+      poly_from_montgomery_product_domain_scalar(&mut scalar);
+      // SAFETY: direct NEON product-domain exit test call because:
+      // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 2. `accelerated` is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. `MONT_R_SQUARED_MOD_Q` is the public ML-KEM conversion constant.
+      // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions.
+      unsafe {
+        from_montgomery_product_domain_neon(&mut accelerated);
+      }
+      assert_eq!(accelerated, scalar, "from product-domain seed {seed}");
     }
   }
 
