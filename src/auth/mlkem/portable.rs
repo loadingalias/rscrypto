@@ -18,11 +18,12 @@ use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
   vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
   vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_high_u8,
-  vget_low_s16, vget_low_u8, vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vld3q_u8, vmovl_u8, vmovn_s32,
-  vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16, vmulq_n_u16, vorrq_u16, vqdmulhq_n_s16, vreinterpret_s16_u16,
-  vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vreinterpretq_u16_u32,
-  vreinterpretq_u32_u16, vset_lane_s16, vshlq_n_u16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u16, vst1_u16,
-  vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
+  vget_low_s16, vget_low_u8, vget_low_u16, vgetq_lane_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vld3q_u8,
+  vmovl_u8, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16, vmulq_n_u16, vorrq_u16, vqdmulhq_n_s16,
+  vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_u16_s16,
+  vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshlq_n_u16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16,
+  vshrq_n_u16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
+  vzip1_u32, vzip2_u32,
 };
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
@@ -2574,6 +2575,105 @@ fn sample_ntt_pair_block_scalar(
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+macro_rules! sample_ntt_extract_16_candidate_vectors_neon {
+  ($input:expr) => {{
+    let mask = vdupq_n_u16(0x0f);
+    // SAFETY: 48-byte deinterleaved load because:
+    // 1. The caller guarantees `$input..$input+48` is readable.
+    // 2. `vld3q_u8` reads exactly three 16-byte vectors from that public SampleNTT byte block.
+    // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
+    let triples = unsafe { vld3q_u8($input) };
+
+    let a0 = vmovl_u8(vget_low_u8(triples.0));
+    let a1 = vmovl_u8(vget_low_u8(triples.1));
+    let a2 = vmovl_u8(vget_low_u8(triples.2));
+    let d0 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
+    let d1 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
+
+    let a0 = vmovl_u8(vget_high_u8(triples.0));
+    let a1 = vmovl_u8(vget_high_u8(triples.1));
+    let a2 = vmovl_u8(vget_high_u8(triples.2));
+    let d2 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
+    let d3 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
+
+    (d0, d1, d2, d3)
+  }};
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+macro_rules! sample_ntt_store_public_candidate_unchecked {
+  ($out:expr, $n:ident, $candidate:expr) => {{
+    let candidate = $candidate;
+    if candidate < Q {
+      // SAFETY: unchecked public-sample store because:
+      // 1. The caller reserved enough output capacity for every possible accepted candidate in this
+      //    block, so the current accepted candidate is in bounds.
+      // 2. `$out` comes from a unique mutable polynomial borrow for the duration of parsing.
+      // 3. The branch depends only on public matrix-A sample bytes.
+      unsafe {
+        *$out.add($n) = candidate;
+      }
+      $n = $n.strict_add(1);
+    }
+  }};
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+macro_rules! sample_ntt_store_candidate_vectors_neon {
+  ($out:expr, $n:ident, $candidates:expr) => {{
+    let (d0_lo, d1_lo, d0_hi, d1_hi) = $candidates;
+    macro_rules! store_pair_lane {
+      ($lane:literal, $d0:expr, $d1:expr) => {{
+        sample_ntt_store_public_candidate_unchecked!($out, $n, vgetq_lane_u16::<$lane>($d0));
+        sample_ntt_store_public_candidate_unchecked!($out, $n, vgetq_lane_u16::<$lane>($d1));
+      }};
+    }
+
+    store_pair_lane!(0, d0_lo, d1_lo);
+    store_pair_lane!(1, d0_lo, d1_lo);
+    store_pair_lane!(2, d0_lo, d1_lo);
+    store_pair_lane!(3, d0_lo, d1_lo);
+    store_pair_lane!(4, d0_lo, d1_lo);
+    store_pair_lane!(5, d0_lo, d1_lo);
+    store_pair_lane!(6, d0_lo, d1_lo);
+    store_pair_lane!(7, d0_lo, d1_lo);
+    store_pair_lane!(0, d0_hi, d1_hi);
+    store_pair_lane!(1, d0_hi, d1_hi);
+    store_pair_lane!(2, d0_hi, d1_hi);
+    store_pair_lane!(3, d0_hi, d1_hi);
+    store_pair_lane!(4, d0_hi, d1_hi);
+    store_pair_lane!(5, d0_hi, d1_hi);
+    store_pair_lane!(6, d0_hi, d1_hi);
+    store_pair_lane!(7, d0_hi, d1_hi);
+  }};
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+/// # Safety
+///
+/// `input` must point to 48 readable bytes. The caller must guarantee that the active CPU supports
+/// NEON. `out` must be a unique 32-candidate destination.
+unsafe fn sample_ntt_extract_16_candidates_neon(input: *const u8, out: &mut [u16; 32]) {
+  let (d0_lo, d1_lo, d0_hi, d1_hi) = sample_ntt_extract_16_candidate_vectors_neon!(input);
+
+  // SAFETY: store the first 16 interleaved candidates because:
+  // 1. `out` is a unique `[u16; 32]` destination.
+  // 2. `vst2q_u16` writes exactly 16 u16 values from two eight-lane vectors.
+  // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
+  unsafe {
+    vst2q_u16(out.as_mut_ptr(), uint16x8x2_t(d0_lo, d1_lo));
+  }
+  // SAFETY: store the last 16 interleaved candidates because:
+  // 1. `out.as_mut_ptr().add(16)..add(32)` is inside the 32-candidate destination.
+  // 2. `vst2q_u16` writes exactly 16 u16 values from two eight-lane vectors.
+  // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
+  unsafe {
+    vst2q_u16(out.as_mut_ptr().add(16), uint16x8x2_t(d0_hi, d1_hi));
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn sample_ntt_pair_block_neon(
   buf0: &[u8; SHAKE128_RATE_BYTES],
@@ -2586,7 +2686,6 @@ fn sample_ntt_pair_block_neon(
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
   const NEON_TRIPLES: usize = 16;
   const NEON_BYTES: usize = NEON_TRIPLES * 3;
-  const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
 
   if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
     sample_ntt_block(buf0, out0, filled0);
@@ -2596,30 +2695,19 @@ fn sample_ntt_pair_block_neon(
 
   let mut n0 = *filled0;
   let mut n1 = *filled1;
-  let mut candidates0 = [0u16; NEON_CANDIDATES];
-  let mut candidates1 = [0u16; NEON_CANDIDATES];
+  let out0_ptr = out0.as_mut_ptr();
+  let out1_ptr = out1.as_mut_ptr();
   let mut offset = 0usize;
 
   while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-    // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so both helpers read exactly one
-    // complete 48-byte chunk from their fixed rate blocks and write 32 initialized candidates.
-    unsafe {
-      sample_ntt_extract_16_candidates_neon(buf0.as_ptr().add(offset), &mut candidates0);
-      sample_ntt_extract_16_candidates_neon(buf1.as_ptr().add(offset), &mut candidates1);
-    }
-
-    for &candidate in &candidates0 {
-      if candidate < Q {
-        out0[n0] = candidate;
-        n0 = n0.strict_add(1);
-      }
-    }
-    for &candidate in &candidates1 {
-      if candidate < Q {
-        out1[n1] = candidate;
-        n1 = n1.strict_add(1);
-      }
-    }
+    // SAFETY: fixed 48-byte NEON extraction plus unchecked public-sample stores because:
+    // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so both inputs name complete chunks.
+    // 2. The preflight above ensures each output has room for all candidates from the whole rate block.
+    // 3. Rejection branches and write counts depend only on public matrix-A samples.
+    let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(buf0.as_ptr().add(offset));
+    let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(buf1.as_ptr().add(offset));
+    sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
+    sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
 
     offset = offset.strict_add(NEON_BYTES);
   }
@@ -2659,34 +2747,6 @@ fn sample_ntt_pair_block_neon(
 
   *filled0 = n0;
   *filled1 = n1;
-}
-
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-#[target_feature(enable = "neon")]
-unsafe fn sample_ntt_extract_16_candidates_neon(input: *const u8, out: &mut [u16; 32]) {
-  let mask = vdupq_n_u16(0x0f);
-  // SAFETY: caller guarantees `input..input+48` is readable.
-  let triples = unsafe { vld3q_u8(input) };
-
-  let a0 = vmovl_u8(vget_low_u8(triples.0));
-  let a1 = vmovl_u8(vget_low_u8(triples.1));
-  let a2 = vmovl_u8(vget_low_u8(triples.2));
-  let d0 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
-  let d1 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
-  // SAFETY: `out` has space for 32 u16 candidates; this stores the first 16 interleaved values.
-  unsafe {
-    vst2q_u16(out.as_mut_ptr(), uint16x8x2_t(d0, d1));
-  }
-
-  let a0 = vmovl_u8(vget_high_u8(triples.0));
-  let a1 = vmovl_u8(vget_high_u8(triples.1));
-  let a2 = vmovl_u8(vget_high_u8(triples.2));
-  let d0 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
-  let d1 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
-  // SAFETY: `out.add(16)..out.add(32)` is inside the 32-candidate output array.
-  unsafe {
-    vst2q_u16(out.as_mut_ptr().add(16), uint16x8x2_t(d0, d1));
-  }
 }
 
 fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut Poly; 4]) {
@@ -2937,8 +2997,8 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
   let mut offset = 0usize;
 
   while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-    // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so the helper reads exactly one
-    // complete 48-byte chunk from the fixed rate block and writes 32 initialized candidates.
+    // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so the helper reads exactly one complete
+    // 48-byte chunk from the fixed rate block and writes 32 initialized candidates.
     unsafe {
       sample_ntt_extract_16_candidates_neon(rate_ptr.add(offset), &mut candidates);
     }
@@ -2948,9 +3008,6 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
       if product.is_done() {
         return;
       }
-    }
-    if product.is_done() {
-      return;
     }
 
     offset = offset.strict_add(NEON_BYTES);
@@ -3202,7 +3259,6 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
   const NEON_TRIPLES: usize = 16;
   const NEON_BYTES: usize = NEON_TRIPLES * 3;
-  const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
 
   let [out0, out1, out2, out3] = out;
   if N.strict_sub(filled[0]) < MAX_CANDIDATES
@@ -3228,49 +3284,27 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
   let mut n1 = filled[1];
   let mut n2 = filled[2];
   let mut n3 = filled[3];
-  let mut candidates0 = [0u16; NEON_CANDIDATES];
-  let mut candidates1 = [0u16; NEON_CANDIDATES];
-  let mut candidates2 = [0u16; NEON_CANDIDATES];
-  let mut candidates3 = [0u16; NEON_CANDIDATES];
+  let out0_ptr = out0.as_mut_ptr();
+  let out1_ptr = out1.as_mut_ptr();
+  let out2_ptr = out2.as_mut_ptr();
+  let out3_ptr = out3.as_mut_ptr();
   let mut offset = 0usize;
 
   while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-    // SAFETY: Four fixed-block NEON candidate extractions because:
+    // SAFETY: Four fixed-block NEON candidate extractions plus unchecked public-sample stores because:
     // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so each pointer names one complete 48-byte chunk
     //    inside its lane's full SHAKE128 rate block.
-    // 2. Each destination is a distinct stack array with exactly `NEON_CANDIDATES` slots.
-    // 3. `sample_ntt_extract_16_candidates_neon` writes 32 initialized u16 candidates per call.
-    unsafe {
-      sample_ntt_extract_16_candidates_neon(rate_ptrs[0].add(offset), &mut candidates0);
-      sample_ntt_extract_16_candidates_neon(rate_ptrs[1].add(offset), &mut candidates1);
-      sample_ntt_extract_16_candidates_neon(rate_ptrs[2].add(offset), &mut candidates2);
-      sample_ntt_extract_16_candidates_neon(rate_ptrs[3].add(offset), &mut candidates3);
-    }
-
-    for &candidate in &candidates0 {
-      if candidate < Q {
-        out0[n0] = candidate;
-        n0 = n0.strict_add(1);
-      }
-    }
-    for &candidate in &candidates1 {
-      if candidate < Q {
-        out1[n1] = candidate;
-        n1 = n1.strict_add(1);
-      }
-    }
-    for &candidate in &candidates2 {
-      if candidate < Q {
-        out2[n2] = candidate;
-        n2 = n2.strict_add(1);
-      }
-    }
-    for &candidate in &candidates3 {
-      if candidate < Q {
-        out3[n3] = candidate;
-        n3 = n3.strict_add(1);
-      }
-    }
+    // 2. The preflight above ensures each output polynomial has room for all candidates from the whole
+    //    rate block, so each accepted candidate write stays inside its fixed 256-coefficient output.
+    // 3. Rejection branches and write counts depend only on public matrix-A samples.
+    let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[0].add(offset));
+    let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[1].add(offset));
+    let candidates2 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[2].add(offset));
+    let candidates3 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[3].add(offset));
+    sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
+    sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
+    sample_ntt_store_candidate_vectors_neon!(out2_ptr, n2, candidates2);
+    sample_ntt_store_candidate_vectors_neon!(out3_ptr, n3, candidates3);
 
     offset = offset.strict_add(NEON_BYTES);
   }
