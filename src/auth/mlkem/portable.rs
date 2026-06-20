@@ -17,12 +17,12 @@ mod x86_64;
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
   vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
-  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_high_u16,
-  vget_low_s16, vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovl_u16, vmovn_s32, vmul_n_s16, vmull_n_s16,
-  vmull_s16, vmulq_n_s16, vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16,
-  vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_s32_u32, vreinterpretq_u16_s16, vreinterpretq_u16_u32,
-  vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16,
-  vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
+  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_low_s16,
+  vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16,
+  vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16,
+  vreinterpretq_u16_s16, vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32,
+  vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
+  vzip1_u32, vzip2_u32,
 };
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
@@ -4006,6 +4006,7 @@ fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn to_montgomery_product_domain_neon(poly: &mut Poly) {
+  let high = vdupq_n_s16(0);
   for i in (0..N).step_by(8) {
     // SAFETY: fixed-size NEON product-domain conversion because:
     // 1. `i` advances by 8 while `i < N`, so `i..i + 8` is in-bounds for the 256-coefficient
@@ -4016,11 +4017,9 @@ fn to_montgomery_product_domain_neon(poly: &mut Poly) {
     // 4. The memory access schedule depends only on public ML-KEM dimensions.
     unsafe {
       let coeffs = vld1q_u16(poly.as_ptr().add(i));
-      let low = vreinterpretq_s32_u32(vmovl_u16(vget_low_u16(coeffs)));
-      let high = vreinterpretq_s32_u32(vmovl_u16(vget_high_u16(coeffs)));
       vst1q_u16(
         poly.as_mut_ptr().add(i),
-        signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(low, high)),
+        signed_to_mod_q_s16x8(montgomery_reduce_s16x8(vreinterpretq_s16_u16(coeffs), high)),
       );
     }
   }
