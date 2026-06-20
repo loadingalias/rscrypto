@@ -3,24 +3,26 @@
 
 use core::arch::global_asm;
 
+use super::Poly;
 #[cfg(test)]
 use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
-use super::{GAMMAS_MONT, Poly, PolyVec};
+#[cfg(any(test, feature = "diag"))]
+use super::{GAMMAS_MONT, PolyVec};
 
 #[cfg(all(any(test, feature = "diag"), target_os = "macos"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
-#[cfg(target_os = "macos")]
+#[cfg(all(any(test, feature = "diag"), target_os = "macos"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_apple_darwin.s"));
-#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
-global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
 #[cfg(target_os = "linux")]
+global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(any(test, feature = "diag", target_os = "linux"))]
 #[repr(align(16))]
 struct AlignedI16<const N: usize>([i16; N]);
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(any(test, feature = "diag", target_os = "linux"))]
 static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -1600, -15749, -749, -7373, -40, -394, -687, -6762, 630, 6201, -1432, -14095, 848, 8347, 0, 0, 1062, 10453, 296,
   2914, -882, -8682, 0, 0, -1410, -13879, 1339, 13180, 1476, 14529, 0, 0, 193, 1900, -283, -2786, 56, 551, 0, 0, 797,
@@ -28,7 +30,7 @@ static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -4400, 0, 0, 569, 5601, -936, -9213, -450, -4429, 0, 0, -1583, -15582, -1355, -13338, 821, 8081, 0, 0,
 ]);
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(any(test, feature = "diag", target_os = "linux"))]
 static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
   289, 289, 331, 331, -76, -76, -1573, -1573, 2845, 2845, 3258, 3258, -748, -748, -15483, -15483, 17, 17, 583, 583,
   1637, 1637, -1041, -1041, 167, 167, 5739, 5739, 16113, 16113, -10247, -10247, -568, -568, -680, -680, 723, 723, 1100,
@@ -58,6 +60,7 @@ static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
 unsafe extern "C" {
   #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_ntt_aarch64_apple_darwin(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
@@ -71,12 +74,14 @@ unsafe extern "C" {
     b: *const u16,
     gammas_mont: *const i16,
   );
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
     b: *const u16,
     gammas_mont: *const i16,
   );
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_k4_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
@@ -87,8 +92,8 @@ unsafe extern "C" {
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
-  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_ntt_aarch64_linux(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
@@ -102,12 +107,14 @@ unsafe extern "C" {
     b: *const u16,
     gammas_mont: *const i16,
   );
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_k3_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
     b: *const u16,
     gammas_mont: *const i16,
   );
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_k4_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
@@ -116,7 +123,7 @@ unsafe extern "C" {
   );
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(any(test, feature = "diag", target_os = "linux"))]
 #[inline]
 unsafe fn ntt_asm_raw(poly: &mut Poly) {
   #[cfg(target_os = "macos")]
@@ -156,9 +163,9 @@ unsafe fn ntt_asm_raw(poly: &mut Poly) {
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(any(test, feature = "diag", target_os = "linux"))]
 #[inline]
-unsafe fn ntt_asm(poly: &mut Poly) {
+pub(super) unsafe fn ntt_asm(poly: &mut Poly) {
   // SAFETY: exact ML-KEM aarch64 NTT assembly call because:
   // 1. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
   // 2. The raw wrapper supplies the fixed, aligned twiddle tables required by that ABI.
@@ -215,6 +222,7 @@ pub(super) unsafe fn diag_ntt_asm_input_digest(mut poly: Poly) -> u16 {
 }
 
 #[inline]
+#[cfg(any(test, feature = "diag"))]
 unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
   #[cfg(target_os = "macos")]
   {
@@ -270,6 +278,7 @@ pub(super) unsafe fn diag_basemul_accumulate_asm_digest(seed: u16) -> u16 {
 }
 
 #[inline]
+#[cfg(any(test, feature = "diag"))]
 unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
   #[cfg(target_os = "macos")]
   {
@@ -311,6 +320,7 @@ unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<
 }
 
 #[inline]
+#[cfg(any(test, feature = "diag"))]
 unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
   #[cfg(target_os = "macos")]
   {

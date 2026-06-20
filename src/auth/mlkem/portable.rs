@@ -1,7 +1,7 @@
 #![allow(clippy::indexing_slicing)] // Fixed-size FIPS buffers and public loop indices bound every access.
 
 #[cfg(all(
-  any(test, feature = "diag"),
+  any(test, feature = "diag", target_os = "linux"),
   target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
   not(miri),
@@ -3040,16 +3040,32 @@ fn sample_poly_cbd_eta3(input: &[u8], out: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn ntt(poly: &mut Poly) {
-  // The external aarch64 NTT assembly is intentionally excluded from production dispatch until it
-  // matches the scalar/FIPS path on Linux.
-  // SAFETY: aarch64 NEON NTT dispatch because:
-  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-  // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
-  // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-  //    values.
-  unsafe {
-    ntt_neon(poly);
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: aarch64 Linux NTT assembly dispatch because:
+    // 1. This function only compiles on aarch64 Linux with the portable-only escape hatch disabled.
+    // 2. Advanced SIMD is baseline for supported aarch64 Linux targets.
+    // 3. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 4. The assembly returns the same canonical representation as the scalar/FIPS path, validated by
+    //    scalar-oracle tests before production dispatch.
+    // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
+    unsafe {
+      return aarch64::ntt_asm(poly);
+    }
+  }
+
+  #[cfg(not(target_os = "linux"))]
+  {
+    // SAFETY: aarch64 NEON NTT dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+    // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
+    unsafe {
+      ntt_neon(poly);
+    }
   }
 }
 
@@ -3570,7 +3586,12 @@ fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "linux")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn ntt_neon(poly: &mut Poly) {
   let mut zeta_index = 1usize;
@@ -3613,7 +3634,12 @@ fn ntt_neon(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "linux")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -3648,7 +3674,12 @@ fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "linux")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
