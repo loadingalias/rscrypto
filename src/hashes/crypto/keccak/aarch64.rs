@@ -23,6 +23,9 @@
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+core::arch::global_asm!(include_str!("aarch64_sve2_sha3.S"), options(raw));
+
 // Shared NEON round macro (used by both 1-state and 2-state kernels)
 
 /// One round of Keccak-f[1600] using full-width SHA3 CE on uint64x2_t.
@@ -567,4 +570,42 @@ unsafe fn keccakf_sha3_x2_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25])
 pub(crate) fn keccakf_aarch64_sha3_x2(state_a: &mut [u64; 25], state_b: &mut [u64; 25]) {
   // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
   unsafe { keccakf_sha3_x2_impl(state_a, state_b) }
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+unsafe extern "C" {
+  fn rscrypto_keccakf1600_aarch64_sve2_sha3_x4(
+    state_a: *mut u64,
+    state_b: *mut u64,
+    state_c: *mut u64,
+    state_d: *mut u64,
+  ) -> u32;
+}
+
+/// Try to permute four Keccak-f[1600] states using SVE2-SHA3.
+///
+/// Returns `false` when the runtime SVE vector length is too small for four
+/// 64-bit lanes. Callers must still gate this on `aarch64::SVE2_SHA3`.
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+#[inline]
+pub(crate) fn keccakf_aarch64_sve2_sha3_x4(
+  state_a: &mut [u64; 25],
+  state_b: &mut [u64; 25],
+  state_c: &mut [u64; 25],
+  state_d: &mut [u64; 25],
+) -> bool {
+  // SAFETY: SVE2-SHA3 x4 assembly call because:
+  // 1. Callers gate this wrapper on the runtime `aarch64::SVE2_SHA3` capability.
+  // 2. Each state is a distinct initialized `[u64; 25]` mutable reference.
+  // 3. The kernel checks `cntd >= 4` before activating four 64-bit lanes; it returns `0` without
+  //    touching memory when the vector length is too small.
+  // 4. The kernel reads and writes exactly 25 u64 lanes per state.
+  unsafe {
+    rscrypto_keccakf1600_aarch64_sve2_sha3_x4(
+      state_a.as_mut_ptr(),
+      state_b.as_mut_ptr(),
+      state_c.as_mut_ptr(),
+      state_d.as_mut_ptr(),
+    ) != 0
+  }
 }
