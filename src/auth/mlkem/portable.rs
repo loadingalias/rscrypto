@@ -1661,8 +1661,7 @@ pub(super) fn diag_pke_inverse_u_add_digest<const K: usize>(seed: u16) -> u16 {
   }
 
   for i in 0..K {
-    inverse_ntt_montgomery_product(&mut u[i]);
-    poly_add_assign(&mut u[i], &e1[i]);
+    inverse_ntt_montgomery_product_add_assign(&mut u[i], &e1[i]);
   }
 
   let mut digest = 0u16;
@@ -1808,17 +1807,13 @@ fn pke_encrypt_prepared_768(
   let mut u = [[0u16; N]; 3];
   sample_matrix_ntt_mul_accumulate_materialized::<3>(&ek.rho, &y_hat, &mut u, true);
 
-  inverse_ntt_montgomery_product(&mut u[0]);
-  poly_add_assign(&mut u[0], &e1[0]);
-  inverse_ntt_montgomery_product(&mut u[1]);
-  poly_add_assign(&mut u[1], &e1[1]);
-  inverse_ntt_montgomery_product(&mut u[2]);
-  poly_add_assign(&mut u[2], &e1[2]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[2], &e1[2]);
 
   let mut v = [0u16; N];
   multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
-  inverse_ntt_montgomery_product(&mut v);
-  poly_add_assign(&mut v, &e2);
+  inverse_ntt_montgomery_product_add_assign(&mut v, &e2);
   decompress_message_add_assign(m, &mut v);
 
   let mut ciphertext = [0u8; 1088];
@@ -1861,19 +1856,14 @@ fn pke_encrypt_prepared_1024(
   let mut u = [[0u16; N]; 4];
   sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
 
-  inverse_ntt_montgomery_product(&mut u[0]);
-  poly_add_assign(&mut u[0], &e1[0]);
-  inverse_ntt_montgomery_product(&mut u[1]);
-  poly_add_assign(&mut u[1], &e1[1]);
-  inverse_ntt_montgomery_product(&mut u[2]);
-  poly_add_assign(&mut u[2], &e1[2]);
-  inverse_ntt_montgomery_product(&mut u[3]);
-  poly_add_assign(&mut u[3], &e1[3]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[2], &e1[2]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[3], &e1[3]);
 
   let mut v = [0u16; N];
   multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
-  inverse_ntt_montgomery_product(&mut v);
-  poly_add_assign(&mut v, &e2);
+  inverse_ntt_montgomery_product_add_assign(&mut v, &e2);
   decompress_message_add_assign(m, &mut v);
 
   let mut ciphertext = [0u8; 1568];
@@ -1920,17 +1910,13 @@ fn pke_encrypt_prepared_768_compare(
   let mut u = [[0u16; N]; 3];
   sample_matrix_ntt_mul_accumulate_materialized::<3>(&ek.rho, &y_hat, &mut u, true);
 
-  inverse_ntt_montgomery_product(&mut u[0]);
-  poly_add_assign(&mut u[0], &e1[0]);
-  inverse_ntt_montgomery_product(&mut u[1]);
-  poly_add_assign(&mut u[1], &e1[1]);
-  inverse_ntt_montgomery_product(&mut u[2]);
-  poly_add_assign(&mut u[2], &e1[2]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[2], &e1[2]);
 
   let mut v = [0u16; N];
   multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
-  inverse_ntt_montgomery_product(&mut v);
-  poly_add_assign(&mut v, &e2);
+  inverse_ntt_montgomery_product_add_assign(&mut v, &e2);
   decompress_message_add_assign(m, &mut v);
 
   let mut mask = 0xffu8;
@@ -1977,19 +1963,14 @@ fn pke_encrypt_prepared_1024_compare(
   let mut u = [[0u16; N]; 4];
   sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
 
-  inverse_ntt_montgomery_product(&mut u[0]);
-  poly_add_assign(&mut u[0], &e1[0]);
-  inverse_ntt_montgomery_product(&mut u[1]);
-  poly_add_assign(&mut u[1], &e1[1]);
-  inverse_ntt_montgomery_product(&mut u[2]);
-  poly_add_assign(&mut u[2], &e1[2]);
-  inverse_ntt_montgomery_product(&mut u[3]);
-  poly_add_assign(&mut u[3], &e1[3]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[2], &e1[2]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[3], &e1[3]);
 
   let mut v = [0u16; N];
   multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
-  inverse_ntt_montgomery_product(&mut v);
-  poly_add_assign(&mut v, &e2);
+  inverse_ntt_montgomery_product_add_assign(&mut v, &e2);
   decompress_message_add_assign(m, &mut v);
 
   let mut mask = 0xffu8;
@@ -2077,14 +2058,12 @@ fn pke_encrypt_prepared<
   }
 
   for i in 0..K {
-    inverse_ntt_montgomery_product(&mut u[i]);
-    poly_add_assign(&mut u[i], &e1[i]);
+    inverse_ntt_montgomery_product_add_assign(&mut u[i], &e1[i]);
   }
 
   let mut v = [0u16; N];
   multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
-  inverse_ntt_montgomery_product(&mut v);
-  poly_add_assign(&mut v, &e2);
+  inverse_ntt_montgomery_product_add_assign(&mut v, &e2);
 
   decompress_message_add_assign(m, &mut v);
 
@@ -3610,6 +3589,33 @@ fn inverse_ntt_montgomery_product(poly: &mut Poly) {
   inverse_ntt_scaled(poly, INV_NTT_PRODUCT_SCALE_MONT);
 }
 
+#[inline]
+fn inverse_ntt_montgomery_product_add_assign(poly: &mut Poly, addend: &Poly) {
+  inverse_ntt_scaled_add_assign(poly, addend, INV_NTT_PRODUCT_SCALE_MONT);
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  // SAFETY: aarch64 NEON inverse-NTT + add dispatch because:
+  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 3. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
+  //    offsets.
+  // 4. `addend` is already in canonical modulo-Q representation, so the final add uses the same
+  //    constant-time modular addition as `poly_add_assign`.
+  // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+  //    values.
+  unsafe {
+    inverse_ntt_neon_add_assign(poly, addend, final_scale_mont);
+  }
+}
+
+#[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  inverse_ntt_scaled(poly, final_scale_mont);
+  poly_add_assign(poly, addend);
+}
+
 #[cfg(any(
   test,
   miri,
@@ -4188,6 +4194,48 @@ fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
+  inverse_ntt_neon_butterflies(poly);
+
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size NEON final inverse-NTT scale because:
+    // 1. `i` advances by 8 while `i < N == 256`.
+    // 2. Each load/store touches `i..i + 8`, which is in bounds.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let coeffs = vld1q_u16(poly.as_ptr().add(i));
+      vst1q_u16(
+        poly.as_mut_ptr().add(i),
+        mul_mont_const_mod_u16x8(coeffs, final_scale_mont),
+      );
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  inverse_ntt_neon_butterflies(poly);
+
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size NEON final inverse-NTT scale plus add because:
+    // 1. `i` advances by 8 while `i < N == 256`.
+    // 2. Each load/store touches `i..i + 8`, which is in bounds for both polynomials.
+    // 3. `addend` contains canonical modulo-Q coefficients, matching the `poly_add_assign` contract.
+    // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let coeffs = vld1q_u16(poly.as_ptr().add(i));
+      let scaled = mul_mont_const_mod_u16x8(coeffs, final_scale_mont);
+      let addend = vld1q_u16(addend.as_ptr().add(i));
+      vst1q_u16(poly.as_mut_ptr().add(i), add_mod_u16x8(scaled, addend));
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
   let mut zeta_index = 127usize;
   let mut len = 2usize;
 
@@ -4230,21 +4278,6 @@ fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
       start = start.strict_add(len.strict_mul(2));
     }
     len <<= 1;
-  }
-
-  for i in (0..N).step_by(8) {
-    // SAFETY: fixed-size NEON final inverse-NTT scale because:
-    // 1. `i` advances by 8 while `i < N == 256`.
-    // 2. Each load/store touches `i..i + 8`, which is in bounds.
-    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
-    //    availability.
-    unsafe {
-      let coeffs = vld1q_u16(poly.as_ptr().add(i));
-      vst1q_u16(
-        poly.as_mut_ptr().add(i),
-        mul_mont_const_mod_u16x8(coeffs, final_scale_mont),
-      );
-    }
   }
 }
 
@@ -5091,6 +5124,7 @@ fn poly_from_montgomery_product_domain_scalar(poly: &mut Poly) {
   }
 }
 
+#[cfg(any(test, miri, feature = "portable-only", not(target_arch = "aarch64")))]
 #[inline]
 fn poly_add_assign(lhs: &mut Poly, rhs: &Poly) {
   for i in 0..N {
@@ -6971,6 +7005,23 @@ mod tests {
       poly_from_montgomery_product_domain(&mut poly);
 
       assert_eq!(poly, normal, "seed {seed}");
+    }
+  }
+
+  #[test]
+  fn inverse_ntt_product_add_assign_matches_two_pass() {
+    for seed in 0usize..32 {
+      let input = test_poly(seed);
+      let addend = test_poly(seed.strict_add(100));
+
+      let mut expected = input;
+      inverse_ntt_montgomery_product(&mut expected);
+      poly_add_assign(&mut expected, &addend);
+
+      let mut actual = input;
+      inverse_ntt_montgomery_product_add_assign(&mut actual, &addend);
+
+      assert_eq!(actual, expected, "seed {seed}");
     }
   }
 
