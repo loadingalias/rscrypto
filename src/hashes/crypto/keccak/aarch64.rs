@@ -130,6 +130,112 @@ macro_rules! keccakf_sha3_neon_round {
   }};
 }
 
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+macro_rules! keccakf_scalar_round {
+  ($a0:ident, $a1:ident, $a2:ident, $a3:ident, $a4:ident,
+   $a5:ident, $a6:ident, $a7:ident, $a8:ident, $a9:ident,
+   $a10:ident, $a11:ident, $a12:ident, $a13:ident, $a14:ident,
+   $a15:ident, $a16:ident, $a17:ident, $a18:ident, $a19:ident,
+   $a20:ident, $a21:ident, $a22:ident, $a23:ident, $a24:ident,
+   $rc:expr) => {{
+    let c0 = $a0 ^ $a5 ^ $a10 ^ $a15 ^ $a20;
+    let c1 = $a1 ^ $a6 ^ $a11 ^ $a16 ^ $a21;
+    let c2 = $a2 ^ $a7 ^ $a12 ^ $a17 ^ $a22;
+    let c3 = $a3 ^ $a8 ^ $a13 ^ $a18 ^ $a23;
+    let c4 = $a4 ^ $a9 ^ $a14 ^ $a19 ^ $a24;
+
+    let d0 = c4 ^ c1.rotate_left(1);
+    let d1 = c0 ^ c2.rotate_left(1);
+    let d2 = c1 ^ c3.rotate_left(1);
+    let d3 = c2 ^ c4.rotate_left(1);
+    let d4 = c3 ^ c0.rotate_left(1);
+
+    $a0 ^= d0;
+    $a5 ^= d0;
+    $a10 ^= d0;
+    $a15 ^= d0;
+    $a20 ^= d0;
+    $a1 ^= d1;
+    $a6 ^= d1;
+    $a11 ^= d1;
+    $a16 ^= d1;
+    $a21 ^= d1;
+    $a2 ^= d2;
+    $a7 ^= d2;
+    $a12 ^= d2;
+    $a17 ^= d2;
+    $a22 ^= d2;
+    $a3 ^= d3;
+    $a8 ^= d3;
+    $a13 ^= d3;
+    $a18 ^= d3;
+    $a23 ^= d3;
+    $a4 ^= d4;
+    $a9 ^= d4;
+    $a14 ^= d4;
+    $a19 ^= d4;
+    $a24 ^= d4;
+
+    let b0 = $a0;
+    let b10 = $a1.rotate_left(1);
+    let b20 = $a2.rotate_left(62);
+    let b5 = $a3.rotate_left(28);
+    let b15 = $a4.rotate_left(27);
+    let b16 = $a5.rotate_left(36);
+    let b1 = $a6.rotate_left(44);
+    let b11 = $a7.rotate_left(6);
+    let b21 = $a8.rotate_left(55);
+    let b6 = $a9.rotate_left(20);
+    let b7 = $a10.rotate_left(3);
+    let b17 = $a11.rotate_left(10);
+    let b2 = $a12.rotate_left(43);
+    let b12 = $a13.rotate_left(25);
+    let b22 = $a14.rotate_left(39);
+    let b23 = $a15.rotate_left(41);
+    let b8 = $a16.rotate_left(45);
+    let b18 = $a17.rotate_left(15);
+    let b3 = $a18.rotate_left(21);
+    let b13 = $a19.rotate_left(8);
+    let b14 = $a20.rotate_left(18);
+    let b24 = $a21.rotate_left(2);
+    let b9 = $a22.rotate_left(61);
+    let b19 = $a23.rotate_left(56);
+    let b4 = $a24.rotate_left(14);
+
+    $a0 = b0 ^ ((!b1) & b2);
+    $a1 = b1 ^ ((!b2) & b3);
+    $a2 = b2 ^ ((!b3) & b4);
+    $a3 = b3 ^ ((!b4) & b0);
+    $a4 = b4 ^ ((!b0) & b1);
+
+    $a5 = b5 ^ ((!b6) & b7);
+    $a6 = b6 ^ ((!b7) & b8);
+    $a7 = b7 ^ ((!b8) & b9);
+    $a8 = b8 ^ ((!b9) & b5);
+    $a9 = b9 ^ ((!b5) & b6);
+
+    $a10 = b10 ^ ((!b11) & b12);
+    $a11 = b11 ^ ((!b12) & b13);
+    $a12 = b12 ^ ((!b13) & b14);
+    $a13 = b13 ^ ((!b14) & b10);
+    $a14 = b14 ^ ((!b10) & b11);
+
+    $a15 = b15 ^ ((!b16) & b17);
+    $a16 = b16 ^ ((!b17) & b18);
+    $a17 = b17 ^ ((!b18) & b19);
+    $a18 = b18 ^ ((!b19) & b15);
+    $a19 = b19 ^ ((!b15) & b16);
+
+    $a20 = b20 ^ ((!b21) & b22);
+    $a21 = b21 ^ ((!b22) & b23);
+    $a22 = b22 ^ ((!b23) & b24);
+    $a23 = b23 ^ ((!b24) & b20);
+    $a24 = b24 ^ ((!b20) & b21);
+
+    $a0 ^= $rc;
+  }};
+}
+
 // 1-state full NEON kernel
 
 /// Single-state Keccak-f[1600] using full-width SHA3 CE NEON instructions.
@@ -570,6 +676,176 @@ unsafe fn keccakf_sha3_x2_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25])
 pub(crate) fn keccakf_aarch64_sha3_x2(state_a: &mut [u64; 25], state_b: &mut [u64; 25]) {
   // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
   unsafe { keccakf_sha3_x2_impl(state_a, state_b) }
+}
+
+/// Keccak-f[1600] hybrid batch: two states on SHA3 CE NEON lanes and one state
+/// on scalar aarch64 integer lanes inside the same round loop.
+///
+/// This is Graviton-targeted scheduling for 4-way SHAKE batches. It keeps the
+/// third state resident in GPRs while the first two states use NEON SHA3
+/// instructions, avoiding a second complete x2 NEON permutation before the
+/// fourth state falls through the tuned scalar path.
+///
+/// # Safety
+///
+/// Caller must ensure `sha3` target feature is available.
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[target_feature(enable = "sha3")]
+unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25]) {
+  // SAFETY: NEON + SHA3 CE intrinsics are available via this function's
+  // #[target_feature(enable = "sha3")] attribute.
+  unsafe {
+    let mut a0 = combine_lanes(state_a[0], state_b[0]);
+    let mut a1 = combine_lanes(state_a[1], state_b[1]);
+    let mut a2 = combine_lanes(state_a[2], state_b[2]);
+    let mut a3 = combine_lanes(state_a[3], state_b[3]);
+    let mut a4 = combine_lanes(state_a[4], state_b[4]);
+    let mut a5 = combine_lanes(state_a[5], state_b[5]);
+    let mut a6 = combine_lanes(state_a[6], state_b[6]);
+    let mut a7 = combine_lanes(state_a[7], state_b[7]);
+    let mut a8 = combine_lanes(state_a[8], state_b[8]);
+    let mut a9 = combine_lanes(state_a[9], state_b[9]);
+    let mut a10 = combine_lanes(state_a[10], state_b[10]);
+    let mut a11 = combine_lanes(state_a[11], state_b[11]);
+    let mut a12 = combine_lanes(state_a[12], state_b[12]);
+    let mut a13 = combine_lanes(state_a[13], state_b[13]);
+    let mut a14 = combine_lanes(state_a[14], state_b[14]);
+    let mut a15 = combine_lanes(state_a[15], state_b[15]);
+    let mut a16 = combine_lanes(state_a[16], state_b[16]);
+    let mut a17 = combine_lanes(state_a[17], state_b[17]);
+    let mut a18 = combine_lanes(state_a[18], state_b[18]);
+    let mut a19 = combine_lanes(state_a[19], state_b[19]);
+    let mut a20 = combine_lanes(state_a[20], state_b[20]);
+    let mut a21 = combine_lanes(state_a[21], state_b[21]);
+    let mut a22 = combine_lanes(state_a[22], state_b[22]);
+    let mut a23 = combine_lanes(state_a[23], state_b[23]);
+    let mut a24 = combine_lanes(state_a[24], state_b[24]);
+
+    let mut c0 = state_c[0];
+    let mut c1 = state_c[1];
+    let mut c2 = state_c[2];
+    let mut c3 = state_c[3];
+    let mut c4 = state_c[4];
+    let mut c5 = state_c[5];
+    let mut c6 = state_c[6];
+    let mut c7 = state_c[7];
+    let mut c8 = state_c[8];
+    let mut c9 = state_c[9];
+    let mut c10 = state_c[10];
+    let mut c11 = state_c[11];
+    let mut c12 = state_c[12];
+    let mut c13 = state_c[13];
+    let mut c14 = state_c[14];
+    let mut c15 = state_c[15];
+    let mut c16 = state_c[16];
+    let mut c17 = state_c[17];
+    let mut c18 = state_c[18];
+    let mut c19 = state_c[19];
+    let mut c20 = state_c[20];
+    let mut c21 = state_c[21];
+    let mut c22 = state_c[22];
+    let mut c23 = state_c[23];
+    let mut c24 = state_c[24];
+
+    for &rc in &super::RC {
+      keccakf_sha3_neon_round!(
+        a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22, a23,
+        a24, rc
+      );
+      keccakf_scalar_round!(
+        c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17, c18, c19, c20, c21, c22, c23,
+        c24, rc
+      );
+    }
+
+    state_a[0] = vgetq_lane_u64(a0, 0);
+    state_b[0] = vgetq_lane_u64(a0, 1);
+    state_a[1] = vgetq_lane_u64(a1, 0);
+    state_b[1] = vgetq_lane_u64(a1, 1);
+    state_a[2] = vgetq_lane_u64(a2, 0);
+    state_b[2] = vgetq_lane_u64(a2, 1);
+    state_a[3] = vgetq_lane_u64(a3, 0);
+    state_b[3] = vgetq_lane_u64(a3, 1);
+    state_a[4] = vgetq_lane_u64(a4, 0);
+    state_b[4] = vgetq_lane_u64(a4, 1);
+    state_a[5] = vgetq_lane_u64(a5, 0);
+    state_b[5] = vgetq_lane_u64(a5, 1);
+    state_a[6] = vgetq_lane_u64(a6, 0);
+    state_b[6] = vgetq_lane_u64(a6, 1);
+    state_a[7] = vgetq_lane_u64(a7, 0);
+    state_b[7] = vgetq_lane_u64(a7, 1);
+    state_a[8] = vgetq_lane_u64(a8, 0);
+    state_b[8] = vgetq_lane_u64(a8, 1);
+    state_a[9] = vgetq_lane_u64(a9, 0);
+    state_b[9] = vgetq_lane_u64(a9, 1);
+    state_a[10] = vgetq_lane_u64(a10, 0);
+    state_b[10] = vgetq_lane_u64(a10, 1);
+    state_a[11] = vgetq_lane_u64(a11, 0);
+    state_b[11] = vgetq_lane_u64(a11, 1);
+    state_a[12] = vgetq_lane_u64(a12, 0);
+    state_b[12] = vgetq_lane_u64(a12, 1);
+    state_a[13] = vgetq_lane_u64(a13, 0);
+    state_b[13] = vgetq_lane_u64(a13, 1);
+    state_a[14] = vgetq_lane_u64(a14, 0);
+    state_b[14] = vgetq_lane_u64(a14, 1);
+    state_a[15] = vgetq_lane_u64(a15, 0);
+    state_b[15] = vgetq_lane_u64(a15, 1);
+    state_a[16] = vgetq_lane_u64(a16, 0);
+    state_b[16] = vgetq_lane_u64(a16, 1);
+    state_a[17] = vgetq_lane_u64(a17, 0);
+    state_b[17] = vgetq_lane_u64(a17, 1);
+    state_a[18] = vgetq_lane_u64(a18, 0);
+    state_b[18] = vgetq_lane_u64(a18, 1);
+    state_a[19] = vgetq_lane_u64(a19, 0);
+    state_b[19] = vgetq_lane_u64(a19, 1);
+    state_a[20] = vgetq_lane_u64(a20, 0);
+    state_b[20] = vgetq_lane_u64(a20, 1);
+    state_a[21] = vgetq_lane_u64(a21, 0);
+    state_b[21] = vgetq_lane_u64(a21, 1);
+    state_a[22] = vgetq_lane_u64(a22, 0);
+    state_b[22] = vgetq_lane_u64(a22, 1);
+    state_a[23] = vgetq_lane_u64(a23, 0);
+    state_b[23] = vgetq_lane_u64(a23, 1);
+    state_a[24] = vgetq_lane_u64(a24, 0);
+    state_b[24] = vgetq_lane_u64(a24, 1);
+
+    state_c[0] = c0;
+    state_c[1] = c1;
+    state_c[2] = c2;
+    state_c[3] = c3;
+    state_c[4] = c4;
+    state_c[5] = c5;
+    state_c[6] = c6;
+    state_c[7] = c7;
+    state_c[8] = c8;
+    state_c[9] = c9;
+    state_c[10] = c10;
+    state_c[11] = c11;
+    state_c[12] = c12;
+    state_c[13] = c13;
+    state_c[14] = c14;
+    state_c[15] = c15;
+    state_c[16] = c16;
+    state_c[17] = c17;
+    state_c[18] = c18;
+    state_c[19] = c19;
+    state_c[20] = c20;
+    state_c[21] = c21;
+    state_c[22] = c22;
+    state_c[23] = c23;
+    state_c[24] = c24;
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[inline]
+pub(crate) fn keccakf_aarch64_sha3_x3_hybrid(
+  state_a: &mut [u64; 25],
+  state_b: &mut [u64; 25],
+  state_c: &mut [u64; 25],
+) {
+  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
+  unsafe { keccakf_sha3_x3_hybrid_impl(state_a, state_b, state_c) }
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
