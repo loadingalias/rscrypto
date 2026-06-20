@@ -885,6 +885,42 @@ pub(super) unsafe fn diag_s390x_ntt_input_digest(mut poly: Poly) -> u16 {
   digest
 }
 
+/// Diagnostic digest for the aarch64 NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_ntt_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_ntt_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the aarch64 NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_ntt_asm_input_digest(poly: Poly) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_ntt_asm_input_digest(poly) }
+}
+
 #[cfg(feature = "diag")]
 pub(super) fn diag_inverse_ntt_montgomery_product_digest(seed: u16) -> u16 {
   let mut poly = diag_poly(seed);
@@ -5487,24 +5523,20 @@ mod tests {
     not(feature = "portable-only")
   ))]
   #[test]
-  fn ntt_asm_raw_output_stays_within_reduction_bound() {
+  fn ntt_asm_raw_output_is_canonical() {
     for seed in 0usize..1024 {
       let mut poly = test_poly(seed);
-      // SAFETY: raw assembly range probe because:
+      // SAFETY: raw assembly canonical-domain probe because:
       // 1. This test only compiles on aarch64 targets that include the assembly backend.
       // 2. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
-      // 3. The raw output is not used as an ML-KEM result; it is inspected only to validate the
-      //    post-assembly reduction bound.
+      // 3. The raw symbol is required to return canonical scalar/FIPS coefficients before it can be
+      //    considered for production dispatch.
       unsafe {
         aarch64::test_ntt_asm_raw(&mut poly);
       }
 
       for coeff in poly {
-        let value = coeff as i16;
-        assert!(
-          i32::from(value) >= -4 * Q_I32 && i32::from(value) < 4 * Q_I32,
-          "seed {seed} produced raw value {value}"
-        );
+        assert!(coeff < Q, "seed {seed} produced non-canonical raw coefficient {coeff}");
       }
     }
   }
@@ -5942,11 +5974,10 @@ mod tests {
     ntt_scalar(&mut scalar);
 
     let mut asm = poly;
-    // SAFETY: direct canonicalized aarch64 assembly test call because:
+    // SAFETY: direct exact aarch64 assembly test call because:
     // 1. This test only compiles on aarch64 targets that include the assembly backend.
     // 2. `asm` is a fixed 256-coefficient polynomial matching the assembly ABI.
-    // 3. The wrapper canonicalizes the assembly's signed redundant output before comparing with the
-    //    scalar/FIPS representation.
+    // 3. The assembly returns the scalar/FIPS representation directly.
     // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
     unsafe {
       aarch64::test_ntt_asm(&mut asm);

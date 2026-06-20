@@ -3,24 +3,24 @@
 
 use core::arch::global_asm;
 
-use super::{GAMMAS_MONT, Poly, PolyVec};
 #[cfg(test)]
-use super::{Q, SAMPLE_NTT_ACC_CHUNK_COEFFS};
+use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
+use super::{GAMMAS_MONT, Poly, PolyVec};
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "diag"), target_os = "macos"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
 #[cfg(target_os = "macos")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_apple_darwin.s"));
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
 #[repr(align(16))]
 struct AlignedI16<const N: usize>([i16; N]);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
 static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -1600, -15749, -749, -7373, -40, -394, -687, -6762, 630, 6201, -1432, -14095, 848, 8347, 0, 0, 1062, 10453, 296,
   2914, -882, -8682, 0, 0, -1410, -13879, 1339, 13180, 1476, 14529, 0, 0, 193, 1900, -283, -2786, 56, 551, 0, 0, 797,
@@ -28,7 +28,7 @@ static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -4400, 0, 0, 569, 5601, -936, -9213, -450, -4429, 0, 0, -1583, -15582, -1355, -13338, 821, 8081, 0, 0,
 ]);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
 static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
   289, 289, 331, 331, -76, -76, -1573, -1573, 2845, 2845, 3258, 3258, -748, -748, -15483, -15483, 17, 17, 583, 583,
   1637, 1637, -1041, -1041, 167, 167, 5739, 5739, 16113, 16113, -10247, -10247, -568, -568, -680, -680, 723, 723, 1100,
@@ -56,7 +56,7 @@ static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_ntt_aarch64_apple_darwin(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
   fn rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
     acc: *mut u16,
@@ -87,7 +87,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_ntt_aarch64_linux(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
@@ -116,7 +116,7 @@ unsafe extern "C" {
   );
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 unsafe fn ntt_asm_raw(poly: &mut Poly) {
   #[cfg(target_os = "macos")]
@@ -156,43 +156,17 @@ unsafe fn ntt_asm_raw(poly: &mut Poly) {
   }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "diag"))]
 #[inline]
 unsafe fn ntt_asm(poly: &mut Poly) {
-  // SAFETY: canonicalized ML-KEM aarch64 NTT assembly call because:
-  // 1. `poly` is a fixed 256-coefficient polynomial matching the raw assembly ABI.
-  // 2. The raw assembly wrapper supplies the fixed, aligned twiddle tables required by that ABI.
-  // 3. The post-call canonicalization is fixed-work and uses no division or coefficient-dependent
-  //    loop bounds.
+  // SAFETY: exact ML-KEM aarch64 NTT assembly call because:
+  // 1. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+  // 2. The raw wrapper supplies the fixed, aligned twiddle tables required by that ABI.
+  // 3. The assembly canonicalizes its redundant signed output to the scalar/FIPS representation
+  //    before returning.
   unsafe {
     ntt_asm_raw(poly);
   }
-  canonicalize_ntt_asm_output(poly);
-}
-
-#[cfg(test)]
-fn canonicalize_ntt_asm_output(poly: &mut Poly) {
-  for coeff in poly {
-    *coeff = canonicalize_ntt_asm_coeff(*coeff as i16);
-  }
-}
-
-#[cfg(test)]
-#[inline]
-fn canonicalize_ntt_asm_coeff(value: i16) -> u16 {
-  let mut value = (i32::from(value) + (i32::from(Q) * 4)) as u32;
-  for _ in 0..7 {
-    value = subtract_q_if_ge(value);
-  }
-  value as u16
-}
-
-#[cfg(test)]
-#[inline]
-fn subtract_q_if_ge(value: u32) -> u32 {
-  let reduced = value.wrapping_sub(u32::from(Q));
-  let borrow_mask = 0u32.wrapping_sub(reduced >> 31);
-  (reduced & !borrow_mask) | (value & borrow_mask)
 }
 
 #[cfg(test)]
@@ -200,8 +174,8 @@ pub(super) unsafe fn test_ntt_asm_raw(poly: &mut Poly) {
   // SAFETY: test-only direct access to the raw assembly entry point because:
   // 1. The caller supplies a fixed 256-coefficient ML-KEM polynomial.
   // 2. This module is compiled only on aarch64 targets with the assembly backend available.
-  // 3. Tests inspect the raw signed redundant output instead of using it as a canonical ML-KEM
-  //    result.
+  // 3. The raw assembly symbol returns the scalar/FIPS canonical representation before tests compare
+  //    it with the scalar oracle.
   unsafe {
     ntt_asm_raw(poly);
   }
@@ -209,13 +183,35 @@ pub(super) unsafe fn test_ntt_asm_raw(poly: &mut Poly) {
 
 #[cfg(test)]
 pub(super) unsafe fn test_ntt_asm(poly: &mut Poly) {
-  // SAFETY: test-only direct access to the canonicalized assembly wrapper because:
+  // SAFETY: test-only direct access to the exact assembly wrapper because:
   // 1. The caller supplies a fixed 256-coefficient ML-KEM polynomial.
   // 2. This module is compiled only on aarch64 targets with the assembly backend available.
-  // 3. The wrapper canonicalizes the raw signed redundant output before returning.
+  // 3. The assembly returns the same canonical representation as the scalar/FIPS path.
   unsafe {
     ntt_asm(poly);
   }
+}
+
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_ntt_asm_digest(seed: u16) -> u16 {
+  let poly = super::diag_poly(seed);
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { diag_ntt_asm_input_digest(poly) }
+}
+
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_ntt_asm_input_digest(mut poly: Poly) -> u16 {
+  // SAFETY: Direct NTT assembly diagnostic call because:
+  // 1. The caller guarantees this runs only on an aarch64 CPU with Advanced SIMD.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+  // 3. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the aarch64 assembly candidate itself.
+  unsafe {
+    ntt_asm(&mut poly);
+  }
+  let digest = super::diag_fold_poly(&poly);
+  super::zeroize_poly(&mut poly);
+  digest
 }
 
 #[inline]
