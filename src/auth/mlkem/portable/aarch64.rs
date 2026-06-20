@@ -3,16 +3,24 @@
 
 use core::arch::global_asm;
 
-use super::{Poly, Q};
+use super::{GAMMAS_MONT, Poly};
+#[cfg(test)]
+use super::{Q, SAMPLE_NTT_ACC_CHUNK_COEFFS};
 
-#[cfg(target_os = "macos")]
+#[cfg(all(test, target_os = "macos"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
-#[cfg(target_os = "linux")]
+#[cfg(target_os = "macos")]
+global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_apple_darwin.s"));
+#[cfg(all(test, target_os = "linux"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
+#[cfg(target_os = "linux")]
+global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 
+#[cfg(test)]
 #[repr(align(16))]
 struct AlignedI16<const N: usize>([i16; N]);
 
+#[cfg(test)]
 static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -1600, -15749, -749, -7373, -40, -394, -687, -6762, 630, 6201, -1432, -14095, 848, 8347, 0, 0, 1062, 10453, 296,
   2914, -882, -8682, 0, 0, -1410, -13879, 1339, 13180, 1476, 14529, 0, 0, 193, 1900, -283, -2786, 56, 551, 0, 0, 797,
@@ -20,6 +28,7 @@ static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -4400, 0, 0, 569, 5601, -936, -9213, -450, -4429, 0, 0, -1583, -15582, -1355, -13338, 821, 8081, 0, 0,
 ]);
 
+#[cfg(test)]
 static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
   289, 289, 331, 331, -76, -76, -1573, -1573, 2845, 2845, 3258, 3258, -748, -748, -15483, -15483, 17, 17, 583, 583,
   1637, 1637, -1041, -1041, 167, 167, 5739, 5739, 16113, 16113, -10247, -10247, -568, -568, -680, -680, 723, 723, 1100,
@@ -47,14 +56,43 @@ static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
+  #[cfg(test)]
   fn rscrypto_mlkem_ntt_aarch64_apple_darwin(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
+  fn rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
+  #[cfg(test)]
+  fn rscrypto_mlkem_basemul_accumulate_chunk_aarch64_apple_darwin(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
 }
 
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
+  #[cfg(test)]
   fn rscrypto_mlkem_ntt_aarch64_linux(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
+  fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
+  #[cfg(test)]
+  fn rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
 }
 
+#[cfg(test)]
 #[inline]
 unsafe fn ntt_asm_raw(poly: &mut Poly) {
   #[cfg(target_os = "macos")]
@@ -94,6 +132,7 @@ unsafe fn ntt_asm_raw(poly: &mut Poly) {
   }
 }
 
+#[cfg(test)]
 #[inline]
 unsafe fn ntt_asm(poly: &mut Poly) {
   // SAFETY: canonicalized ML-KEM aarch64 NTT assembly call because:
@@ -107,12 +146,14 @@ unsafe fn ntt_asm(poly: &mut Poly) {
   canonicalize_ntt_asm_output(poly);
 }
 
+#[cfg(test)]
 fn canonicalize_ntt_asm_output(poly: &mut Poly) {
   for coeff in poly {
     *coeff = canonicalize_ntt_asm_coeff(*coeff as i16);
   }
 }
 
+#[cfg(test)]
 #[inline]
 fn canonicalize_ntt_asm_coeff(value: i16) -> u16 {
   let mut value = (i32::from(value) + (i32::from(Q) * 4)) as u32;
@@ -122,6 +163,7 @@ fn canonicalize_ntt_asm_coeff(value: i16) -> u16 {
   value as u16
 }
 
+#[cfg(test)]
 #[inline]
 fn subtract_q_if_ge(value: u32) -> u32 {
   let reduced = value.wrapping_sub(u32::from(Q));
@@ -149,5 +191,130 @@ pub(super) unsafe fn test_ntt_asm(poly: &mut Poly) {
   // 3. The wrapper canonicalizes the raw signed redundant output before returning.
   unsafe {
     ntt_asm(poly);
+  }
+}
+
+#[inline]
+unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 base-multiply assembly call because:
+    // 1. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 2. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 3. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 4. The assembly performs 16 fixed chunks with memory addresses determined only by public ML-KEM
+    //    dimensions.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
+        acc.as_mut_ptr(),
+        a.as_ptr(),
+        b.as_ptr(),
+        GAMMAS_MONT.as_ptr(),
+      );
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 base-multiply assembly call because:
+    // 1. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 2. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 3. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 4. The assembly performs 16 fixed chunks with memory addresses determined only by public ML-KEM
+    //    dimensions.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_aarch64_linux(acc.as_mut_ptr(), a.as_ptr(), b.as_ptr(), GAMMAS_MONT.as_ptr());
+    }
+  }
+}
+
+#[cfg(test)]
+pub(super) unsafe fn test_basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
+  // SAFETY: test-only direct access to the full base-multiply assembly entry point because:
+  // 1. `acc`, `a`, and `b` are fixed 256-coefficient ML-KEM polynomials.
+  // 2. This module is compiled only on aarch64 targets with the assembly backend available.
+  // 3. Tests compare the output against the scalar/FIPS accumulator before the symbol is considered
+  //    for production dispatch.
+  unsafe {
+    basemul_accumulate_asm(acc, a, b);
+  }
+}
+
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_basemul_accumulate_asm_digest(seed: u16) -> u16 {
+  let a = super::diag_poly(seed);
+  let b = super::diag_poly(seed.wrapping_add(1));
+  let acc = super::diag_poly(seed.wrapping_add(2));
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { diag_basemul_accumulate_asm_input_digest(a, b, acc) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available. The module cfg enforces the target/OS half of that contract.
+#[cfg(feature = "diag")]
+pub(super) unsafe fn diag_basemul_accumulate_asm_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
+  // SAFETY: Direct owned-assembly diagnostic call because:
+  // 1. The caller guarantees the function runs only on an aarch64 CPU with Advanced SIMD.
+  // 2. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
+  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
+  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the owned aarch64 assembly kernel itself.
+  unsafe {
+    basemul_accumulate_asm(&mut acc, &a, &b);
+  }
+  let digest = super::diag_fold_poly(&acc);
+  super::zeroize_poly(&mut acc);
+  digest
+}
+
+#[cfg(test)]
+pub(super) unsafe fn test_basemul_accumulate_chunk_asm(
+  acc: &mut Poly,
+  a: &[u16; SAMPLE_NTT_ACC_CHUNK_COEFFS],
+  b: &Poly,
+  coeff_offset: usize,
+) {
+  debug_assert_eq!(coeff_offset % SAMPLE_NTT_ACC_CHUNK_COEFFS, 0);
+  debug_assert!(coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS) <= acc.len());
+  let gamma_offset = coeff_offset / 2;
+
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: test-only direct access to the chunk base-multiply assembly entry point because:
+    // 1. `a` contains exactly one 16-coefficient SampleNTT chunk.
+    // 2. `coeff_offset` is checked to keep all `acc`, `b`, and `GAMMAS_MONT` accesses in bounds.
+    // 3. Tests compare the output against the scalar/FIPS chunk accumulator before the symbol is
+    //    considered for production dispatch.
+    // 4. The assembly memory schedule is fixed for one public 16-coefficient chunk.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_chunk_aarch64_apple_darwin(
+        acc.as_mut_ptr().add(coeff_offset),
+        a.as_ptr(),
+        b.as_ptr().add(coeff_offset),
+        GAMMAS_MONT.as_ptr().add(gamma_offset),
+      );
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: test-only direct access to the chunk base-multiply assembly entry point because:
+    // 1. `a` contains exactly one 16-coefficient SampleNTT chunk.
+    // 2. `coeff_offset` is checked to keep all `acc`, `b`, and `GAMMAS_MONT` accesses in bounds.
+    // 3. Tests compare the output against the scalar/FIPS chunk accumulator before the symbol is
+    //    considered for production dispatch.
+    // 4. The assembly memory schedule is fixed for one public 16-coefficient chunk.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
+        acc.as_mut_ptr().add(coeff_offset),
+        a.as_ptr(),
+        b.as_ptr().add(coeff_offset),
+        GAMMAS_MONT.as_ptr().add(gamma_offset),
+      );
+    }
   }
 }

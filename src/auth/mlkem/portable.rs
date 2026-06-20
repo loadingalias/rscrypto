@@ -1,6 +1,12 @@
 #![allow(clippy::indexing_slicing)] // Fixed-size FIPS buffers and public loop indices bound every access.
 
-#[cfg(all(test, target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  any(test, feature = "diag"),
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 mod aarch64;
 #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
 mod s390x;
@@ -935,6 +941,42 @@ pub(super) fn diag_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut a
   let digest = diag_fold_poly(&acc);
   zeroize_poly(&mut acc);
   digest
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_multiply_ntts_add_assign_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_basemul_accumulate_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
+/// Advanced SIMD available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_multiply_ntts_add_assign_asm_input_digest(a: Poly, b: Poly, acc: Poly) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_basemul_accumulate_asm_input_digest(a, b, acc) }
 }
 
 #[cfg(feature = "diag")]
@@ -5324,7 +5366,12 @@ mod tests {
     assert_eq!(poly, original);
   }
 
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn ntt_asm_raw_output_stays_within_reduction_bound() {
     for seed in 0usize..1024 {
@@ -5348,7 +5395,12 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn ntt_asm_matches_scalar_reference() {
     let zeros = [0u16; N];
@@ -5362,6 +5414,70 @@ mod tests {
 
     for seed in 0usize..1024 {
       assert_ntt_asm_matches_scalar_reference(test_poly(seed), "seeded polynomial");
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn basemul_accumulate_asm_matches_scalar_reference() {
+    assert_basemul_accumulate_asm_matches_scalar_reference([0u16; N], [0u16; N], [0u16; N], "all zero");
+    assert_basemul_accumulate_asm_matches_scalar_reference([Q - 1; N], [Q - 1; N], [Q - 1; N], "all q-1");
+
+    let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
+    assert_basemul_accumulate_asm_matches_scalar_reference(
+      alternating,
+      test_poly(0x31),
+      test_poly(0x57),
+      "alternating",
+    );
+
+    for seed in 0usize..1024 {
+      assert_basemul_accumulate_asm_matches_scalar_reference(
+        test_poly(seed),
+        test_poly(seed.strict_add(0x1000)),
+        test_poly(seed.strict_add(0x2000)),
+        "seeded",
+      );
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn basemul_accumulate_chunk_asm_matches_scalar_reference() {
+    for seed in 0usize..128 {
+      let acc = test_poly(seed);
+      let a = test_poly(seed.strict_add(0x3000));
+      let b = test_poly(seed.strict_add(0x4000));
+
+      for coeff_offset in (0..N).step_by(SAMPLE_NTT_ACC_CHUNK_COEFFS) {
+        let mut chunk = [0u16; SAMPLE_NTT_ACC_CHUNK_COEFFS];
+        chunk.copy_from_slice(&a[coeff_offset..coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS)]);
+
+        let mut scalar = acc;
+        multiply_ntts_add_assign_chunk_scalar(&mut scalar, &chunk, &b, coeff_offset);
+
+        let mut asm = acc;
+        // SAFETY: direct aarch64 assembly chunk test call because:
+        // 1. This test only compiles on aarch64 Linux/macOS targets that include the assembly backend.
+        // 2. `chunk` contains exactly one 16-coefficient SampleNTT chunk.
+        // 3. `coeff_offset` is emitted from fixed 16-coefficient public chunk boundaries.
+        // 4. The test compares against the scalar/FIPS chunk accumulator before production dispatch.
+        unsafe {
+          aarch64::test_basemul_accumulate_chunk_asm(&mut asm, &chunk, &b, coeff_offset);
+        }
+
+        assert_eq!(asm, scalar, "seed {seed}, coeff_offset {coeff_offset}");
+      }
     }
   }
 
@@ -5659,7 +5775,12 @@ mod tests {
     poly
   }
 
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   fn assert_ntt_asm_matches_scalar_reference(poly: Poly, label: &str) {
     let mut scalar = poly;
     ntt_scalar(&mut scalar);
@@ -5673,6 +5794,29 @@ mod tests {
     // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
     unsafe {
       aarch64::test_ntt_asm(&mut asm);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn assert_basemul_accumulate_asm_matches_scalar_reference(acc: Poly, a: Poly, b: Poly, label: &str) {
+    let mut scalar = acc;
+    multiply_ntts_add_assign_scalar(&mut scalar, &a, &b);
+
+    let mut asm = acc;
+    // SAFETY: direct aarch64 assembly full-polynomial test call because:
+    // 1. This test only compiles on aarch64 Linux/macOS targets that include the assembly backend.
+    // 2. `asm`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
+    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_basemul_accumulate_asm(&mut asm, &a, &b);
     }
 
     assert_eq!(asm, scalar, "{label}");

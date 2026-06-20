@@ -181,6 +181,17 @@ pub use mlkem::{
   MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret, MlKemError,
 };
+#[cfg(all(
+  feature = "diag",
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub use mlkem::{
+  diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest, diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest,
+};
 #[cfg(all(feature = "diag", feature = "ml-kem"))]
 pub use mlkem::{
   diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,

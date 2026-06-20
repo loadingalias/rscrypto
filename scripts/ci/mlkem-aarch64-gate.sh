@@ -62,6 +62,9 @@ fi
 run_step "raw aarch64 NTT scalar oracle" \
   cargo test --lib --features ml-kem ntt_asm -- --nocapture
 
+run_step "owned aarch64 basemul scalar oracle" \
+  cargo test --lib --features ml-kem basemul_accumulate -- --nocapture
+
 run_step "ML-KEM ACVP FIPS 203 vectors" \
   cargo test --test mlkem_acvp --features ml-kem -- --nocapture
 
