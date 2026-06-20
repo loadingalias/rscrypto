@@ -2904,45 +2904,69 @@ macro_rules! multiply_ntts_add_assign_chunk_neon_body {
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+macro_rules! sample_ntt_product_absorb_candidate_neon {
+  ($product:expr, $candidate:expr, $acc:expr) => {{
+    if let Some(coeff_offset) = $product.push_candidate($candidate) {
+      // SAFETY: inlined NEON chunk multiply-accumulate from SampleNTT staging because:
+      // 1. `product.chunk` has exactly 16 coefficients filled by `push_candidate` before returning
+      //    `Some(coeff_offset)`.
+      // 2. `coeff_offset` is emitted only at 16-coefficient boundaries and `product.filled <= N`, so
+      //    `coeff_offset..coeff_offset + 16` stays inside `acc` and `product.rhs`.
+      // 3. The borrow checker guarantees `acc` is not aliased by the read-only staging chunk or RHS.
+      // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`, and the caller
+      //    proves NEON availability.
+      unsafe {
+        multiply_ntts_add_assign_chunk_neon_body!($acc, &$product.chunk, $product.rhs, coeff_offset);
+      }
+    }
+  }};
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn sample_ntt_product_absorb_block_neon(
   product: &mut SampleNttProduct<'_>,
   buf: &[u8; SHAKE128_RATE_BYTES],
   acc: &mut Poly,
 ) {
-  for chunk in buf.chunks_exact(3) {
-    let d1 = u16::from(chunk[0]) | (u16::from(chunk[1] & 0x0f) << 8);
-    let d2 = (u16::from(chunk[1]) >> 4) | (u16::from(chunk[2]) << 4);
+  const NEON_TRIPLES: usize = 16;
+  const NEON_BYTES: usize = NEON_TRIPLES * 3;
+  const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
 
-    if let Some(coeff_offset) = product.push_candidate(d1) {
-      // SAFETY: inlined NEON chunk multiply-accumulate from SampleNTT staging because:
-      // 1. `product.chunk` has exactly 16 coefficients filled by `push_candidate` before returning
-      //    `Some(coeff_offset)`.
-      // 2. `coeff_offset` is emitted only at 16-coefficient boundaries and `product.filled <= N`, so
-      //    `coeff_offset..coeff_offset + 16` stays inside `acc` and `product.rhs`.
-      // 3. The borrow checker guarantees `acc` is not aliased by the read-only staging chunk or RHS.
-      // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
-      //    availability.
-      unsafe {
-        multiply_ntts_add_assign_chunk_neon_body!(acc, &product.chunk, product.rhs, coeff_offset);
-      }
+  let mut candidates = [0u16; NEON_CANDIDATES];
+  let mut offset = 0usize;
+
+  while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
+    // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so the helper reads exactly one
+    // complete 48-byte chunk from the fixed rate block and writes 32 initialized candidates.
+    unsafe {
+      sample_ntt_extract_16_candidates_neon(buf.as_ptr().add(offset), &mut candidates);
     }
-    if let Some(coeff_offset) = product.push_candidate(d2) {
-      // SAFETY: inlined NEON chunk multiply-accumulate from SampleNTT staging because:
-      // 1. `product.chunk` has exactly 16 coefficients filled by `push_candidate` before returning
-      //    `Some(coeff_offset)`.
-      // 2. `coeff_offset` is emitted only at 16-coefficient boundaries and `product.filled <= N`, so
-      //    `coeff_offset..coeff_offset + 16` stays inside `acc` and `product.rhs`.
-      // 3. The borrow checker guarantees `acc` is not aliased by the read-only staging chunk or RHS.
-      // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
-      //    availability.
-      unsafe {
-        multiply_ntts_add_assign_chunk_neon_body!(acc, &product.chunk, product.rhs, coeff_offset);
+
+    for &candidate in &candidates {
+      sample_ntt_product_absorb_candidate_neon!(product, candidate, acc);
+      if product.is_done() {
+        return;
       }
     }
     if product.is_done() {
+      return;
+    }
+
+    offset = offset.strict_add(NEON_BYTES);
+  }
+
+  while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+    let d1 = u16::from(buf[offset]) | (u16::from(buf[offset.strict_add(1)] & 0x0f) << 8);
+    let d2 = (u16::from(buf[offset.strict_add(1)]) >> 4) | (u16::from(buf[offset.strict_add(2)]) << 4);
+
+    sample_ntt_product_absorb_candidate_neon!(product, d1, acc);
+    sample_ntt_product_absorb_candidate_neon!(product, d2, acc);
+    if product.is_done() {
       break;
     }
+
+    offset = offset.strict_add(3);
   }
 }
 
