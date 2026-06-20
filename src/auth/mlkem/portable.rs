@@ -13,17 +13,23 @@ mod s390x;
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 mod x86_64;
 
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+use core::arch::aarch64::vgetq_lane_u16;
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
   vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
   vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_high_u8,
-  vget_low_s16, vget_low_u8, vget_low_u16, vgetq_lane_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vld3q_u8,
-  vmovl_u8, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16, vmulq_n_u16, vorrq_u16, vqdmulhq_n_s16,
-  vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_u16_s16,
-  vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshlq_n_u16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16,
-  vshrq_n_u16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
-  vzip1_u32, vzip2_u32,
+  vget_low_s16, vget_low_u8, vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vld3q_u8, vmovl_u8, vmovn_s32,
+  vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16, vmulq_n_u16, vorrq_u16, vqdmulhq_n_s16, vreinterpret_s16_u16,
+  vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vreinterpretq_u16_u32,
+  vreinterpretq_u32_u16, vset_lane_s16, vshlq_n_u16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u16, vst1_u16,
+  vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
 };
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
@@ -2600,7 +2606,12 @@ macro_rules! sample_ntt_extract_16_candidate_vectors_neon {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 macro_rules! sample_ntt_store_public_candidate_unchecked {
   ($out:expr, $n:ident, $candidate:expr) => {{
     let candidate = $candidate;
@@ -2618,7 +2629,12 @@ macro_rules! sample_ntt_store_public_candidate_unchecked {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 macro_rules! sample_ntt_store_candidate_vectors_neon {
   ($out:expr, $n:ident, $candidates:expr) => {{
     let (d0_lo, d1_lo, d0_hi, d1_hi) = $candidates;
@@ -2684,8 +2700,6 @@ fn sample_ntt_pair_block_neon(
   filled1: &mut usize,
 ) {
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
-  const NEON_TRIPLES: usize = 16;
-  const NEON_BYTES: usize = NEON_TRIPLES * 3;
 
   if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
     sample_ntt_block(buf0, out0, filled0);
@@ -2693,60 +2707,85 @@ fn sample_ntt_pair_block_neon(
     return;
   }
 
-  let mut n0 = *filled0;
-  let mut n1 = *filled1;
-  let out0_ptr = out0.as_mut_ptr();
-  let out1_ptr = out1.as_mut_ptr();
-  let mut offset = 0usize;
-
-  while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-    // SAFETY: fixed 48-byte NEON extraction plus unchecked public-sample stores because:
-    // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so both inputs name complete chunks.
-    // 2. The preflight above ensures each output has room for all candidates from the whole rate block.
-    // 3. Rejection branches and write counts depend only on public matrix-A samples.
-    let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(buf0.as_ptr().add(offset));
-    let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(buf1.as_ptr().add(offset));
-    sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
-    sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
-
-    offset = offset.strict_add(NEON_BYTES);
+  #[cfg(target_os = "linux")]
+  {
+    let n0 = *filled0;
+    let n1 = *filled1;
+    // SAFETY: Linux aarch64 assembly SampleNTT block parsing because:
+    // 1. `buf0` and `buf1` are full 168-byte SHAKE128 rate blocks.
+    // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
+    // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    let (count0, count1) = unsafe {
+      (
+        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), buf0.as_ptr()),
+        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), buf1.as_ptr()),
+      )
+    };
+    *filled0 = n0.strict_add(count0);
+    *filled1 = n1.strict_add(count1);
   }
 
-  while offset.strict_add(2) < SHAKE128_RATE_BYTES {
-    let a0 = buf0[offset];
-    let a1 = buf0[offset.strict_add(1)];
-    let a2 = buf0[offset.strict_add(2)];
-    let b0 = buf1[offset];
-    let b1 = buf1[offset.strict_add(1)];
-    let b2 = buf1[offset.strict_add(2)];
+  #[cfg(not(target_os = "linux"))]
+  {
+    const NEON_TRIPLES: usize = 16;
+    const NEON_BYTES: usize = NEON_TRIPLES * 3;
 
-    let d0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
-    let d1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
-    let e0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-    let e1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+    let mut n0 = *filled0;
+    let mut n1 = *filled1;
+    let out0_ptr = out0.as_mut_ptr();
+    let out1_ptr = out1.as_mut_ptr();
+    let mut offset = 0usize;
 
-    if d0 < Q {
-      out0[n0] = d0;
-      n0 = n0.strict_add(1);
-    }
-    if d1 < Q {
-      out0[n0] = d1;
-      n0 = n0.strict_add(1);
-    }
-    if e0 < Q {
-      out1[n1] = e0;
-      n1 = n1.strict_add(1);
-    }
-    if e1 < Q {
-      out1[n1] = e1;
-      n1 = n1.strict_add(1);
+    while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
+      // SAFETY: fixed 48-byte NEON extraction plus unchecked public-sample stores because:
+      // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so both inputs name complete chunks.
+      // 2. The preflight above ensures each output has room for all candidates from the whole rate block.
+      // 3. Rejection branches and write counts depend only on public matrix-A samples.
+      let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(buf0.as_ptr().add(offset));
+      let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(buf1.as_ptr().add(offset));
+      sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
+      sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
+
+      offset = offset.strict_add(NEON_BYTES);
     }
 
-    offset = offset.strict_add(3);
+    while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+      let a0 = buf0[offset];
+      let a1 = buf0[offset.strict_add(1)];
+      let a2 = buf0[offset.strict_add(2)];
+      let b0 = buf1[offset];
+      let b1 = buf1[offset.strict_add(1)];
+      let b2 = buf1[offset.strict_add(2)];
+
+      let d0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
+      let d1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
+      let e0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+      let e1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+      if d0 < Q {
+        out0[n0] = d0;
+        n0 = n0.strict_add(1);
+      }
+      if d1 < Q {
+        out0[n0] = d1;
+        n0 = n0.strict_add(1);
+      }
+      if e0 < Q {
+        out1[n1] = e0;
+        n1 = n1.strict_add(1);
+      }
+      if e1 < Q {
+        out1[n1] = e1;
+        n1 = n1.strict_add(1);
+      }
+
+      offset = offset.strict_add(3);
+    }
+
+    *filled0 = n0;
+    *filled1 = n1;
   }
-
-  *filled0 = n0;
-  *filled1 = n1;
 }
 
 fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut Poly; 4]) {
@@ -3257,8 +3296,6 @@ fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], fil
 #[target_feature(enable = "neon")]
 unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
-  const NEON_TRIPLES: usize = 16;
-  const NEON_BYTES: usize = NEON_TRIPLES * 3;
 
   let [out0, out1, out2, out3] = out;
   if N.strict_sub(filled[0]) < MAX_CANDIDATES
@@ -3280,101 +3317,134 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
     return;
   }
 
-  let mut n0 = filled[0];
-  let mut n1 = filled[1];
-  let mut n2 = filled[2];
-  let mut n3 = filled[3];
-  let out0_ptr = out0.as_mut_ptr();
-  let out1_ptr = out1.as_mut_ptr();
-  let out2_ptr = out2.as_mut_ptr();
-  let out3_ptr = out3.as_mut_ptr();
-  let mut offset = 0usize;
-
-  while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-    // SAFETY: Four fixed-block NEON candidate extractions plus unchecked public-sample stores because:
-    // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so each pointer names one complete 48-byte chunk
-    //    inside its lane's full SHAKE128 rate block.
-    // 2. The preflight above ensures each output polynomial has room for all candidates from the whole
-    //    rate block, so each accepted candidate write stays inside its fixed 256-coefficient output.
-    // 3. Rejection branches and write counts depend only on public matrix-A samples.
-    let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[0].add(offset));
-    let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[1].add(offset));
-    let candidates2 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[2].add(offset));
-    let candidates3 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[3].add(offset));
-    sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
-    sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
-    sample_ntt_store_candidate_vectors_neon!(out2_ptr, n2, candidates2);
-    sample_ntt_store_candidate_vectors_neon!(out3_ptr, n3, candidates3);
-
-    offset = offset.strict_add(NEON_BYTES);
-  }
-
-  while offset.strict_add(2) < SHAKE128_RATE_BYTES {
-    // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and each caller-provided
-    // pointer names one full rate block.
-    let (a0, a1, a2, b0, b1, b2, c0, c1, c2, d0, d1, d2) = unsafe {
+  #[cfg(target_os = "linux")]
+  {
+    let n0 = filled[0];
+    let n1 = filled[1];
+    let n2 = filled[2];
+    let n3 = filled[3];
+    // SAFETY: Linux aarch64 assembly SampleNTT block parsing because:
+    // 1. Each pointer names one full 168-byte SHAKE128 rate block.
+    // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
+    // 3. Each destination polynomial is a distinct mutable borrow.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    let (count0, count1, count2, count3) = unsafe {
       (
-        *rate_ptrs[0].add(offset),
-        *rate_ptrs[0].add(offset.strict_add(1)),
-        *rate_ptrs[0].add(offset.strict_add(2)),
-        *rate_ptrs[1].add(offset),
-        *rate_ptrs[1].add(offset.strict_add(1)),
-        *rate_ptrs[1].add(offset.strict_add(2)),
-        *rate_ptrs[2].add(offset),
-        *rate_ptrs[2].add(offset.strict_add(1)),
-        *rate_ptrs[2].add(offset.strict_add(2)),
-        *rate_ptrs[3].add(offset),
-        *rate_ptrs[3].add(offset.strict_add(1)),
-        *rate_ptrs[3].add(offset.strict_add(2)),
+        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), rate_ptrs[0]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), rate_ptrs[1]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out2.as_mut_ptr().add(n2), rate_ptrs[2]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out3.as_mut_ptr().add(n3), rate_ptrs[3]),
       )
     };
-
-    let x0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
-    let x1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
-    let y0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-    let y1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
-    let z0 = u16::from(c0) | (u16::from(c1 & 0x0f) << 8);
-    let z1 = (u16::from(c1) >> 4) | (u16::from(c2) << 4);
-    let w0 = u16::from(d0) | (u16::from(d1 & 0x0f) << 8);
-    let w1 = (u16::from(d1) >> 4) | (u16::from(d2) << 4);
-
-    if x0 < Q {
-      out0[n0] = x0;
-      n0 = n0.strict_add(1);
-    }
-    if x1 < Q {
-      out0[n0] = x1;
-      n0 = n0.strict_add(1);
-    }
-    if y0 < Q {
-      out1[n1] = y0;
-      n1 = n1.strict_add(1);
-    }
-    if y1 < Q {
-      out1[n1] = y1;
-      n1 = n1.strict_add(1);
-    }
-    if z0 < Q {
-      out2[n2] = z0;
-      n2 = n2.strict_add(1);
-    }
-    if z1 < Q {
-      out2[n2] = z1;
-      n2 = n2.strict_add(1);
-    }
-    if w0 < Q {
-      out3[n3] = w0;
-      n3 = n3.strict_add(1);
-    }
-    if w1 < Q {
-      out3[n3] = w1;
-      n3 = n3.strict_add(1);
-    }
-
-    offset = offset.strict_add(3);
+    *filled = [
+      n0.strict_add(count0),
+      n1.strict_add(count1),
+      n2.strict_add(count2),
+      n3.strict_add(count3),
+    ];
   }
 
-  *filled = [n0, n1, n2, n3];
+  #[cfg(not(target_os = "linux"))]
+  {
+    const NEON_TRIPLES: usize = 16;
+    const NEON_BYTES: usize = NEON_TRIPLES * 3;
+
+    let mut n0 = filled[0];
+    let mut n1 = filled[1];
+    let mut n2 = filled[2];
+    let mut n3 = filled[3];
+    let out0_ptr = out0.as_mut_ptr();
+    let out1_ptr = out1.as_mut_ptr();
+    let out2_ptr = out2.as_mut_ptr();
+    let out3_ptr = out3.as_mut_ptr();
+    let mut offset = 0usize;
+
+    while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
+      // SAFETY: Four fixed-block NEON candidate extractions plus unchecked public-sample stores because:
+      // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so each pointer names one complete 48-byte chunk
+      //    inside its lane's full SHAKE128 rate block.
+      // 2. The preflight above ensures each output polynomial has room for all candidates from the whole
+      //    rate block, so each accepted candidate write stays inside its fixed 256-coefficient output.
+      // 3. Rejection branches and write counts depend only on public matrix-A samples.
+      let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[0].add(offset));
+      let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[1].add(offset));
+      let candidates2 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[2].add(offset));
+      let candidates3 = sample_ntt_extract_16_candidate_vectors_neon!(rate_ptrs[3].add(offset));
+      sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
+      sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
+      sample_ntt_store_candidate_vectors_neon!(out2_ptr, n2, candidates2);
+      sample_ntt_store_candidate_vectors_neon!(out3_ptr, n3, candidates3);
+
+      offset = offset.strict_add(NEON_BYTES);
+    }
+
+    while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+      // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and each caller-provided
+      // pointer names one full rate block.
+      let (a0, a1, a2, b0, b1, b2, c0, c1, c2, d0, d1, d2) = unsafe {
+        (
+          *rate_ptrs[0].add(offset),
+          *rate_ptrs[0].add(offset.strict_add(1)),
+          *rate_ptrs[0].add(offset.strict_add(2)),
+          *rate_ptrs[1].add(offset),
+          *rate_ptrs[1].add(offset.strict_add(1)),
+          *rate_ptrs[1].add(offset.strict_add(2)),
+          *rate_ptrs[2].add(offset),
+          *rate_ptrs[2].add(offset.strict_add(1)),
+          *rate_ptrs[2].add(offset.strict_add(2)),
+          *rate_ptrs[3].add(offset),
+          *rate_ptrs[3].add(offset.strict_add(1)),
+          *rate_ptrs[3].add(offset.strict_add(2)),
+        )
+      };
+
+      let x0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
+      let x1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
+      let y0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+      let y1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+      let z0 = u16::from(c0) | (u16::from(c1 & 0x0f) << 8);
+      let z1 = (u16::from(c1) >> 4) | (u16::from(c2) << 4);
+      let w0 = u16::from(d0) | (u16::from(d1 & 0x0f) << 8);
+      let w1 = (u16::from(d1) >> 4) | (u16::from(d2) << 4);
+
+      if x0 < Q {
+        out0[n0] = x0;
+        n0 = n0.strict_add(1);
+      }
+      if x1 < Q {
+        out0[n0] = x1;
+        n0 = n0.strict_add(1);
+      }
+      if y0 < Q {
+        out1[n1] = y0;
+        n1 = n1.strict_add(1);
+      }
+      if y1 < Q {
+        out1[n1] = y1;
+        n1 = n1.strict_add(1);
+      }
+      if z0 < Q {
+        out2[n2] = z0;
+        n2 = n2.strict_add(1);
+      }
+      if z1 < Q {
+        out2[n2] = z1;
+        n2 = n2.strict_add(1);
+      }
+      if w0 < Q {
+        out3[n3] = w0;
+        n3 = n3.strict_add(1);
+      }
+      if w1 < Q {
+        out3[n3] = w1;
+        n3 = n3.strict_add(1);
+      }
+
+      offset = offset.strict_add(3);
+    }
+
+    *filled = [n0, n1, n2, n3];
+  }
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -6616,6 +6686,58 @@ mod tests {
 
     assert_eq!(left, sample_ntt(&rho, 0, 1));
     assert_eq!(right, sample_ntt(&rho, 2, 1));
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn sample_ntt_rej_uniform_block_asm_matches_scalar_reference() {
+    const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
+    for seed in 0usize..512 {
+      let mut buf = [0u8; SHAKE128_RATE_BYTES];
+      for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = (seed
+          .strict_mul(73)
+          .strict_add(i.strict_mul(29))
+          .strict_add((seed >> 1).strict_mul(17))
+          & 0xff) as u8;
+      }
+
+      let mut expected = [0u16; MAX_CANDIDATES];
+      let mut expected_len = 0usize;
+      let mut offset = 0usize;
+      while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+        let b0 = buf[offset];
+        let b1 = buf[offset.strict_add(1)];
+        let b2 = buf[offset.strict_add(2)];
+        let d0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+        let d1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+        if d0 < Q {
+          expected[expected_len] = d0;
+          expected_len = expected_len.strict_add(1);
+        }
+        if d1 < Q {
+          expected[expected_len] = d1;
+          expected_len = expected_len.strict_add(1);
+        }
+        offset = offset.strict_add(3);
+      }
+
+      let mut actual = [0u16; MAX_CANDIDATES];
+      // SAFETY: direct Linux aarch64 block parser test because:
+      // 1. `buf` is one full 168-byte SHAKE128 rate block.
+      // 2. `actual` has capacity for all 112 candidates in that block.
+      // 3. The test compares every accepted public candidate against the scalar parser above.
+      let actual_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(actual.as_mut_ptr(), buf.as_ptr()) };
+
+      assert_eq!(actual_len, expected_len, "seed {seed}");
+      assert_eq!(&actual[..actual_len], &expected[..expected_len], "seed {seed}");
+    }
   }
 
   #[test]
