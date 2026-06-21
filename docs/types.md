@@ -17,12 +17,13 @@ impl types.
 | `Digest` | Fixed-output cryptographic hash |
 | `Xof` | Variable-output extendable function |
 | `Mac` | Keyed streaming MAC |
+| `Kem` | Key encapsulation mechanism profile |
 | `FastHash` | One-shot seeded non-crypto hash |
 | `Aead` | Authenticated encryption |
 | `ConstantTimeEq` | Constant-time byte equality |
 
 Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
-`ChecksumCombine`, `ConstantTimeEq`, `Digest`, `FastHash`, `Mac`,
+`ChecksumCombine`, `ConstantTimeEq`, `Digest`, `FastHash`, `Kem`, `Mac`,
 `VerificationError`, and `Xof`.
 
 ## Checksums
@@ -107,7 +108,7 @@ PHC string-format encode/decode shared by both families: `auth::phc` (feature `p
 
 ## Signatures & Key Exchange
 
-Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519`.
+Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519` / `ml-kem`.
 
 | Type | Size | Standard |
 |------|------|----------|
@@ -120,6 +121,11 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`, `RsaPublicKeyPolicy`, `RsaKeyGenerationContract` | -- | RFC 8017 / RFC 4055 / FIPS 186-5 / protocol-specific profiles |
 | `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
+| `MlKem512` / `MlKem768` / `MlKem1024` | profile types | FIPS 203 |
+| `MlKem512EncapsulationKey` / `MlKem512DecapsulationKey` / `MlKem512Ciphertext` / `MlKem512SharedSecret` | 800B / 1632B / 768B / 32B | FIPS 203 ML-KEM-512 |
+| `MlKem768EncapsulationKey` / `MlKem768DecapsulationKey` / `MlKem768Ciphertext` / `MlKem768SharedSecret` | 1184B / 2400B / 1088B / 32B | FIPS 203 ML-KEM-768 |
+| `MlKem1024EncapsulationKey` / `MlKem1024DecapsulationKey` / `MlKem1024Ciphertext` / `MlKem1024SharedSecret` | 1568B / 3168B / 1568B / 32B | FIPS 203 ML-KEM-1024 |
+| `MlKem512PreparedEncapsulationKey` / `MlKem512PreparedDecapsulationKey` and matching `MlKem768*` / `MlKem1024*` prepared types | -- | Validated reusable ML-KEM arithmetic state |
 
 ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signature import, SEC1/SPKI public keys, deterministic signing, keypair wrappers, and caller-blinded signing APIs for CT-claimed private-key scalar work.
 RSA public-key verification, import, and caller-filled public encryption require
@@ -128,6 +134,11 @@ randomized encryption wrappers require `getrandom`. Key generation seeds a
 key-generation HMAC_DRBG from OS entropy; deterministic caller-supplied
 salt/blinding APIs remain available for constrained private-operation
 integrations that own their entropy boundary.
+
+ML-KEM supports key generation, encapsulation, decapsulation, validated prepared
+encapsulation keys, and validated prepared decapsulation keys. The API takes
+caller-supplied random-fill closures for key generation and encapsulation, so
+`ml-kem` does not require `getrandom`.
 
 ## AEAD
 
@@ -164,6 +175,7 @@ AEAD support types: `SealError`, `OpenError`, `AeadBufferError`,
 | `ScryptError` | scrypt parameter validation | Adjust N / r / p per RFC 7914 |
 | `PhcError` | PHC string parse / encode | Fix encoded form |
 | `X25519Error` | Low-order DH point | Reject peer key |
+| `MlKemError` | ML-KEM random source, key, or ciphertext validation failure | Reject input or fix entropy source |
 | `RsaKeyError` | RSA DER or component validation failure | Reject key / tighten import policy |
 | `RsaPublicOpError` | RSA public operation input shape/range failure | Fix representative length or reject input |
 | `RsaPrivateOpError` | RSA private operation, padding, entropy, or fault-check failure | Reject input; do not expose reason to peer |

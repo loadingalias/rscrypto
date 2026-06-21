@@ -25,6 +25,8 @@ In scope:
 
 - Cryptographic correctness failures.
 - Timing side channels in claimed constant-time code paths.
+- ML-KEM key generation, encapsulation, decapsulation, or implicit-rejection
+  behavior that disagrees with FIPS 203 or the documented CT boundary.
 - Memory-safety issues in `unsafe` code.
 - Nonce, key, signature, or verification behavior that creates
   security-relevant API misuse.
@@ -60,6 +62,12 @@ Constant-time claims are scoped. They apply only to named secret-bearing
 operations and target configurations, not to every API or every build. See
 [`docs/security.md`](docs/security.md) for application guidance and
 [`docs/constant-time.md`](docs/constant-time.md) for the exact claim model.
+
+ML-KEM-512/768/1024 are in scope for the documented FIPS 203 correctness and
+constant-time evidence model. The ML-KEM claim covers declared secret inputs in
+key generation, encapsulation, decapsulation, and implicit rejection; public
+keys, ciphertext lengths, parse errors, profile selection, and matrix seeds
+remain public-input work.
 
 No third-party security audit, FIPS 140-3 validation, or formal proof is claimed
 today.

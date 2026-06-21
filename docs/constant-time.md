@@ -47,6 +47,9 @@ The highest-sensitivity surfaces are private-key and authentication operations:
 - MAC/tag verification and constant-time byte equality.
 - AEAD authentication and failed-open cleanup.
 - X25519 scalar multiplication.
+- ML-KEM-512/768/1024 key generation secret noise, encapsulation coins,
+  decapsulation secret-key material, implicit-rejection seed, and listed
+  arithmetic diagnostics.
 - Ed25519 signing and secret-key public derivation.
 - ECDSA P-256/P-384 caller-blinded signing.
 - RSA private sign/decrypt leaves.
@@ -91,6 +94,11 @@ Current native release evidence is centered on LLVM-generated binaries for:
 | Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
 | macOS `aarch64-apple-darwin` | Local artifact review, generated-code heuristics, and empirical timing tests. |
 
+For ML-KEM, the s390x claim covers the fixed-work z/Vector arithmetic kernels
+present in the release evidence. It does not cover native scalar multiply or
+divide substitutions for secret-fed ML-KEM arithmetic, and it does not cover
+unreviewed hand-written assembly.
+
 Linux MUSL, macOS `x86_64`, Windows MSVC, bare-metal `no_std`, and WASM builds
 may compile and may be intended to follow the same coding rules, but they need
 separate target-appropriate evidence before they should be described as covered
@@ -109,6 +117,10 @@ evidence set includes:
 - LLVM IR, assembly, object, and symbol artifacts.
 - Automated checks for suspicious generated-code patterns.
 - Empirical timing tests on native executable targets.
+- ML-KEM DudeCT cases for key generation secret noise, encapsulation coins,
+  decapsulation secret keys, implicit rejection, NTT, inverse NTT,
+  product-domain conversion, basemul/dot products, and compress/decompress
+  arithmetic.
 - Binary-level checks for small high-risk kernels on supported Linux ELF/ISA
   paths.
 - Miri and unsafe-code validation where the CT path uses unsafe Rust.
