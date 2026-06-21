@@ -113,11 +113,10 @@
 
 .macro BASEMUL_ACCUMULATE_K3_16
         ldr     q21, [x3], #16
-        ld2     {{ v23.8h, v24.8h }}, [x0]
 
         BASEMUL_PRODUCT_16 x1, x2
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
+        mov     v23.16b, v6.16b
+        mov     v24.16b, v7.16b
 
         BASEMUL_PRODUCT_16 x4, x5
         ADD_MOD_Q v23, v6
@@ -127,16 +126,18 @@
         ADD_MOD_Q v23, v6
         ADD_MOD_Q v24, v7
 
-        st2     {{ v23.8h, v24.8h }}, [x0], #32
+        ld2     {{ v18.8h, v19.8h }}, [x0]
+        ADD_MOD_Q v18, v23
+        ADD_MOD_Q v19, v24
+        st2     {{ v18.8h, v19.8h }}, [x0], #32
 .endm
 
 .macro BASEMUL_ACCUMULATE_K4_16
         ldr     q21, [x3], #16
-        ld2     {{ v23.8h, v24.8h }}, [x0]
 
         BASEMUL_PRODUCT_16 x1, x2
-        ADD_MOD_Q v23, v6
-        ADD_MOD_Q v24, v7
+        mov     v23.16b, v6.16b
+        mov     v24.16b, v7.16b
 
         BASEMUL_PRODUCT_16 x4, x7
         ADD_MOD_Q v23, v6
@@ -150,7 +151,10 @@
         ADD_MOD_Q v23, v6
         ADD_MOD_Q v24, v7
 
-        st2     {{ v23.8h, v24.8h }}, [x0], #32
+        ld2     {{ v18.8h, v19.8h }}, [x0]
+        ADD_MOD_Q v18, v23
+        ADD_MOD_Q v19, v24
+        st2     {{ v18.8h, v19.8h }}, [x0], #32
 .endm
 
 .globl rscrypto_mlkem_basemul_accumulate_aarch64_linux
