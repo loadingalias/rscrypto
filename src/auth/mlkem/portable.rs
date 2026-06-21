@@ -4726,7 +4726,56 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
     }
   }
 
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    if K == 2 {
+      // SAFETY: aarch64 Linux assembly K=2 dot-product dispatch because:
+      // 1. `K == 2` proves `a` and `b` are contiguous `[[u16; 256]; 2]` polynomial vectors.
+      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return aarch64::basemul_accumulate_k2_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
+      }
+    }
+
+    if K == 3 {
+      // SAFETY: aarch64 Linux assembly K=3 dot-product dispatch because:
+      // 1. `K == 3` proves `a` and `b` are contiguous `[[u16; 256]; 3]` polynomial vectors.
+      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return aarch64::basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
+      }
+    }
+
+    if K == 4 {
+      // SAFETY: aarch64 Linux assembly K=4 dot-product dispatch because:
+      // 1. `K == 4` proves `a` and `b` are contiguous `[[u16; 256]; 4]` polynomial vectors.
+      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return aarch64::basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
+      }
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    not(target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   {
     if K == 3 {
       // SAFETY: aarch64 NEON K=3 dot-product dispatch because:
@@ -6979,6 +7028,52 @@ mod tests {
     inverse_ntt(&mut poly);
 
     assert_eq!(poly, original);
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn basemul_accumulate_k2_asm_matches_scalar_reference() {
+    assert_basemul_accumulate_k2_asm_matches_scalar_reference([0u16; N], [[0u16; N]; 2], [[0u16; N]; 2], "all zero");
+    assert_basemul_accumulate_k2_asm_matches_scalar_reference([Q - 1; N], [[Q - 1; N]; 2], [[Q - 1; N]; 2], "all q-1");
+
+    for seed in 0usize..256 {
+      assert_basemul_accumulate_k2_asm_matches_scalar_reference(
+        test_poly(seed),
+        core::array::from_fn(|i| test_poly(seed.strict_add(0x4500).strict_add(i.strict_mul(0x100)))),
+        core::array::from_fn(|i| test_poly(seed.strict_add(0x4a00).strict_add(i.strict_mul(0x100)))),
+        "seeded",
+      );
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn assert_basemul_accumulate_k2_asm_matches_scalar_reference(acc: Poly, a: PolyVec<2>, b: PolyVec<2>, label: &str) {
+    let mut scalar = acc;
+    for i in 0..2 {
+      multiply_ntts_add_assign_scalar(&mut scalar, &a[i], &b[i]);
+    }
+
+    let mut asm = acc;
+    // SAFETY: direct aarch64 Linux assembly K=2 dot-product test call because:
+    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
+    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_basemul_accumulate_k2_asm(&mut asm, &a, &b);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
   }
 
   #[cfg(all(
