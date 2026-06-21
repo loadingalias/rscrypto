@@ -100,16 +100,6 @@ unsafe extern "C" {
 unsafe extern "C" {
   fn rscrypto_mlkem_ntt_aarch64_linux(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
   fn rscrypto_mlkem_rej_uniform_block_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
-  fn rscrypto_mlkem_rej_uniform_block4_aarch64_linux(
-    out0: *mut u16,
-    input0: *const u8,
-    out1: *mut u16,
-    input1: *const u8,
-    out2: *mut u16,
-    input2: *const u8,
-    out3: *mut u16,
-    input3: *const u8,
-  ) -> u64;
   #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_inv_ntt_aarch64_linux(poly: *mut u16, zetas_mont: *const i16, final_scale_mont: i16);
   #[cfg(any(test, feature = "diag"))]
@@ -158,27 +148,6 @@ pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *con
   // 3. Advanced SIMD is baseline for supported aarch64 Linux targets.
   // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
   unsafe { rscrypto_mlkem_rej_uniform_block_aarch64_linux(out, input) }
-}
-
-#[cfg(target_os = "linux")]
-#[inline]
-pub(super) unsafe fn sample_ntt_rej_uniform_block4_asm(out: [*mut u16; 4], input: [*const u8; 4]) -> [usize; 4] {
-  // SAFETY: Linux aarch64 four-lane SampleNTT rejection parser call because:
-  // 1. Each input pointer names one readable 168-byte SHAKE128 rate block.
-  // 2. Each output pointer has writable capacity for all 112 possible accepted candidates.
-  // 3. Advanced SIMD is baseline for supported aarch64 Linux targets.
-  // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-  let packed = unsafe {
-    rscrypto_mlkem_rej_uniform_block4_aarch64_linux(
-      out[0], input[0], out[1], input[1], out[2], input[2], out[3], input[3],
-    )
-  };
-  [
-    (packed & 0xffff) as usize,
-    ((packed >> 16) & 0xffff) as usize,
-    ((packed >> 32) & 0xffff) as usize,
-    ((packed >> 48) & 0xffff) as usize,
-  ]
 }
 
 #[cfg(any(test, feature = "diag", target_os = "linux"))]
