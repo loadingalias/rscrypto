@@ -1145,6 +1145,22 @@ pub fn diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) 
   portable::diag_inverse_ntt_montgomery_product_input_digest(poly)
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_inverse_ntt_montgomery_product_add_assign_digest(seed: u16) -> u16 {
+  portable::diag_inverse_ntt_montgomery_product_add_assign_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem_inverse_ntt_montgomery_product_add_assign_input_digest(poly: [u16; 256], addend: [u16; 256]) -> u16 {
+  portable::diag_inverse_ntt_montgomery_product_add_assign_input_digest(poly, addend)
+}
+
 /// Diagnostic digest for the s390x z/Vector inverse-NTT kernel.
 ///
 /// # Safety
@@ -1158,6 +1174,93 @@ pub fn diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) 
 pub unsafe fn diag_mlkem_s390x_inverse_ntt_montgomery_product_input_digest(poly: [u16; 256]) -> u16 {
   // SAFETY: forwarded from this function's caller contract.
   unsafe { portable::diag_s390x_inverse_ntt_montgomery_product_input_digest(poly) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_inverse_ntt_montgomery_product_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_input_digest(poly: [u16; 256]) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_inverse_ntt_montgomery_product_asm_input_digest(poly) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT plus add assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest(seed) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT plus add assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub unsafe fn diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest(
+  poly: [u16; 256],
+  addend: [u16; 256],
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { portable::diag_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest(poly, addend) }
 }
 
 #[cfg(feature = "diag")]

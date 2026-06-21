@@ -959,6 +959,24 @@ pub(super) fn diag_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -
   digest
 }
 
+#[cfg(feature = "diag")]
+pub(super) fn diag_inverse_ntt_montgomery_product_add_assign_digest(seed: u16) -> u16 {
+  let mut poly = diag_poly(seed);
+  let addend = diag_poly(seed.wrapping_add(1));
+  inverse_ntt_montgomery_product_add_assign(&mut poly, &addend);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_inverse_ntt_montgomery_product_add_assign_input_digest(mut poly: Poly, addend: Poly) -> u16 {
+  inverse_ntt_montgomery_product_add_assign(&mut poly, &addend);
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
+}
+
 /// Diagnostic digest for the s390x z/Vector inverse-NTT kernel.
 ///
 /// # Safety
@@ -979,6 +997,81 @@ pub(super) unsafe fn diag_s390x_inverse_ntt_montgomery_product_input_digest(mut 
   let digest = diag_fold_poly(&poly);
   zeroize_poly(&mut poly);
   digest
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_inverse_ntt_asm_digest(seed, INV_NTT_PRODUCT_SCALE_MONT) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_asm_input_digest(poly: Poly) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_inverse_ntt_asm_input_digest(poly, INV_NTT_PRODUCT_SCALE_MONT) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT plus add assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest(seed: u16) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_inverse_ntt_add_assign_asm_digest(seed, INV_NTT_PRODUCT_SCALE_MONT) }
+}
+
+/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT plus add assembly kernel.
+///
+/// # Safety
+///
+/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest(
+  poly: Poly,
+  addend: Poly,
+) -> u16 {
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { aarch64::diag_inverse_ntt_add_assign_asm_input_digest(poly, addend, INV_NTT_PRODUCT_SCALE_MONT) }
 }
 
 #[cfg(feature = "diag")]
@@ -6966,6 +7059,64 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn inverse_ntt_asm_matches_scalar_reference() {
+    let zeros = [0u16; N];
+    assert_inverse_ntt_asm_matches_scalar_reference(zeros, INV_NTT_SCALE_MONT, "zero normal-scale polynomial");
+    assert_inverse_ntt_asm_matches_scalar_reference(zeros, INV_NTT_PRODUCT_SCALE_MONT, "zero product-scale polynomial");
+
+    let all_max = [Q - 1; N];
+    assert_inverse_ntt_asm_matches_scalar_reference(all_max, INV_NTT_SCALE_MONT, "all q-1 normal-scale polynomial");
+    assert_inverse_ntt_asm_matches_scalar_reference(
+      all_max,
+      INV_NTT_PRODUCT_SCALE_MONT,
+      "all q-1 product-scale polynomial",
+    );
+
+    let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
+    assert_inverse_ntt_asm_matches_scalar_reference(alternating, INV_NTT_SCALE_MONT, "alternating normal-scale");
+    assert_inverse_ntt_asm_matches_scalar_reference(
+      alternating,
+      INV_NTT_PRODUCT_SCALE_MONT,
+      "alternating product-scale",
+    );
+
+    for seed in 0usize..1024 {
+      let poly = test_poly(seed);
+      assert_inverse_ntt_asm_matches_scalar_reference(poly, INV_NTT_SCALE_MONT, "seeded normal-scale");
+      assert_inverse_ntt_asm_matches_scalar_reference(poly, INV_NTT_PRODUCT_SCALE_MONT, "seeded product-scale");
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn inverse_ntt_add_assign_asm_matches_scalar_reference() {
+    assert_inverse_ntt_add_assign_asm_matches_scalar_reference([0u16; N], [0u16; N], "all zero");
+    assert_inverse_ntt_add_assign_asm_matches_scalar_reference([Q - 1; N], [Q - 1; N], "all q-1");
+
+    let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
+    assert_inverse_ntt_add_assign_asm_matches_scalar_reference(alternating, test_poly(0x37), "alternating");
+
+    for seed in 0usize..1024 {
+      assert_inverse_ntt_add_assign_asm_matches_scalar_reference(
+        test_poly(seed),
+        test_poly(seed.strict_add(0x3000)),
+        "seeded",
+      );
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
     any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
@@ -7487,6 +7638,59 @@ mod tests {
     }
 
     assert_eq!(asm, scalar, "{label}");
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn assert_inverse_ntt_asm_matches_scalar_reference(poly: Poly, final_scale_mont: i16, label: &str) {
+    let mut scalar = poly;
+    inverse_ntt_scalar_with_scale(&mut scalar, final_scale_mont);
+
+    let mut asm = poly;
+    // SAFETY: direct Linux aarch64 inverse-NTT assembly test call because:
+    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // 2. `asm` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 3. The assembly returns the scalar/FIPS representation directly.
+    // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_inverse_ntt_asm(&mut asm, final_scale_mont);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
+    for coeff in asm {
+      assert!(coeff < Q, "{label} produced non-canonical coefficient {coeff}");
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn assert_inverse_ntt_add_assign_asm_matches_scalar_reference(poly: Poly, addend: Poly, label: &str) {
+    let mut scalar = poly;
+    inverse_ntt_scalar_with_scale(&mut scalar, INV_NTT_PRODUCT_SCALE_MONT);
+    poly_add_assign(&mut scalar, &addend);
+
+    let mut asm = poly;
+    // SAFETY: direct Linux aarch64 inverse-NTT plus add assembly test call because:
+    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // 2. `asm` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 3. The assembly returns the scalar/FIPS representation directly.
+    // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_inverse_ntt_add_assign_asm(&mut asm, &addend, INV_NTT_PRODUCT_SCALE_MONT);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
+    for coeff in asm {
+      assert!(coeff < Q, "{label} produced non-canonical coefficient {coeff}");
+    }
   }
 
   #[cfg(all(
