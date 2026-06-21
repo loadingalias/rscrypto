@@ -24,13 +24,20 @@ use core::arch::aarch64::vgetq_lane_u16;
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
   vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
-  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_high_u8,
-  vget_low_s16, vget_low_u8, vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vld3q_u8, vmovl_u8, vmovn_s32,
-  vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16, vmulq_n_u16, vorrq_u16, vqdmulhq_n_s16, vreinterpret_s16_u16,
-  vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vreinterpretq_u16_u32,
-  vreinterpretq_u32_u16, vset_lane_s16, vshlq_n_u16, vshr_n_s16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u16, vst1_u16,
-  vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
+  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_low_s16,
+  vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16,
+  vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16,
+  vreinterpretq_u16_s16, vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32,
+  vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
+  vzip1_u32, vzip2_u32,
 };
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
+use core::arch::aarch64::{vget_high_u8, vget_low_u8, vld3q_u8, vmovl_u8, vorrq_u16, vshlq_n_u16, vshrq_n_u16};
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
   __m128i, __m256i, _mm_add_epi16, _mm_and_si128, _mm_cmpgt_epi16, _mm_loadl_epi64, _mm_loadu_si128, _mm_mulhi_epi16,
@@ -2580,7 +2587,12 @@ fn sample_ntt_pair_block_scalar(
   *filled1 = n1;
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 macro_rules! sample_ntt_extract_16_candidate_vectors_neon {
   ($input:expr) => {{
     let mask = vdupq_n_u16(0x0f);
@@ -2664,7 +2676,12 @@ macro_rules! sample_ntt_store_candidate_vectors_neon {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 /// # Safety
 ///
@@ -2863,8 +2880,24 @@ impl<'a> SampleNttProduct<'a> {
   }
 
   #[inline(always)]
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
   fn push_candidate(&mut self, value: u16) -> Option<usize> {
-    if value >= Q || self.is_done() {
+    if value >= Q {
+      return None;
+    }
+
+    self.push_accepted_candidate(value)
+  }
+
+  #[inline(always)]
+  fn push_accepted_candidate(&mut self, value: u16) -> Option<usize> {
+    debug_assert!(value < Q);
+    if self.is_done() {
       return None;
     }
 
@@ -2981,7 +3014,12 @@ macro_rules! multiply_ntts_add_assign_chunk_neon_body {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 macro_rules! sample_ntt_product_absorb_candidate_neon {
   ($product:expr, $candidate:expr, $acc:expr) => {{
     if let Some(coeff_offset) = $product.push_candidate($candidate) {
@@ -2990,6 +3028,29 @@ macro_rules! sample_ntt_product_absorb_candidate_neon {
       //    `Some(coeff_offset)`.
       // 2. `coeff_offset` is emitted only at 16-coefficient boundaries and `product.filled <= N`, so
       //    `coeff_offset..coeff_offset + 16` stays inside `acc` and `product.rhs`.
+      // 3. The borrow checker guarantees `acc` is not aliased by the read-only staging chunk or RHS.
+      // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`, and the caller
+      //    proves NEON availability.
+      unsafe {
+        multiply_ntts_add_assign_chunk_neon_body!($acc, &$product.chunk, $product.rhs, coeff_offset);
+      }
+    }
+  }};
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+macro_rules! sample_ntt_product_absorb_accepted_candidate_neon {
+  ($product:expr, $candidate:expr, $acc:expr) => {{
+    if let Some(coeff_offset) = $product.push_accepted_candidate($candidate) {
+      // SAFETY: inlined NEON chunk multiply-accumulate from accepted SampleNTT staging because:
+      // 1. The caller only feeds coefficients accepted by the public rejection parser.
+      // 2. `push_accepted_candidate` returns `Some` only after exactly 16 coefficients fill the staging
+      //    chunk, and the emitted `coeff_offset` is a checked 16-coefficient boundary.
       // 3. The borrow checker guarantees `acc` is not aliased by the read-only staging chunk or RHS.
       // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`, and the caller
       //    proves NEON availability.
@@ -3028,50 +3089,73 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
   rate_ptr: *const u8,
   acc: &mut Poly,
 ) {
-  const NEON_TRIPLES: usize = 16;
-  const NEON_BYTES: usize = NEON_TRIPLES * 3;
-  const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
+  #[cfg(target_os = "linux")]
+  {
+    const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+    let mut accepted = [0u16; MAX_CANDIDATES];
+    // SAFETY: Linux aarch64 compact rejection parser because:
+    // 1. `rate_ptr` names a readable SHAKE128 rate block. Callers pass either a `[u8; 168]` buffer or
+    //    the first 168 bytes of an initialized Keccak state on little-endian aarch64.
+    // 2. `accepted` has room for every candidate the block can produce.
+    // 3. Rejection and write positions depend only on public matrix-A samples.
+    let accepted_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(accepted.as_mut_ptr(), rate_ptr) };
+    debug_assert!(accepted_len <= accepted.len());
 
-  let mut candidates = [0u16; NEON_CANDIDATES];
-  let mut offset = 0usize;
-
-  while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-    // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so the helper reads exactly one complete
-    // 48-byte chunk from the fixed rate block and writes 32 initialized candidates.
-    unsafe {
-      sample_ntt_extract_16_candidates_neon(rate_ptr.add(offset), &mut candidates);
-    }
-
-    for &candidate in &candidates {
-      sample_ntt_product_absorb_candidate_neon!(product, candidate, acc);
+    for &candidate in &accepted[..accepted_len] {
+      sample_ntt_product_absorb_accepted_candidate_neon!(product, candidate, acc);
       if product.is_done() {
         return;
       }
     }
-
-    offset = offset.strict_add(NEON_BYTES);
   }
 
-  while offset.strict_add(2) < SHAKE128_RATE_BYTES {
-    // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and the caller guarantees `rate_ptr` names one
-    // full readable SHAKE128 rate block.
-    let (b0, b1, b2) = unsafe {
-      (
-        *rate_ptr.add(offset),
-        *rate_ptr.add(offset.strict_add(1)),
-        *rate_ptr.add(offset.strict_add(2)),
-      )
-    };
-    let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-    let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+  #[cfg(not(target_os = "linux"))]
+  {
+    const NEON_TRIPLES: usize = 16;
+    const NEON_BYTES: usize = NEON_TRIPLES * 3;
+    const NEON_CANDIDATES: usize = NEON_TRIPLES * 2;
 
-    sample_ntt_product_absorb_candidate_neon!(product, d1, acc);
-    sample_ntt_product_absorb_candidate_neon!(product, d2, acc);
-    if product.is_done() {
-      break;
+    let mut candidates = [0u16; NEON_CANDIDATES];
+    let mut offset = 0usize;
+
+    while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
+      // SAFETY: `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so the helper reads exactly one complete
+      // 48-byte chunk from the fixed rate block and writes 32 initialized candidates.
+      unsafe {
+        sample_ntt_extract_16_candidates_neon(rate_ptr.add(offset), &mut candidates);
+      }
+
+      for &candidate in &candidates {
+        sample_ntt_product_absorb_candidate_neon!(product, candidate, acc);
+        if product.is_done() {
+          return;
+        }
+      }
+
+      offset = offset.strict_add(NEON_BYTES);
     }
 
-    offset = offset.strict_add(3);
+    while offset.strict_add(2) < SHAKE128_RATE_BYTES {
+      // SAFETY: `offset + 2 < SHAKE128_RATE_BYTES`, and the caller guarantees `rate_ptr` names one
+      // full readable SHAKE128 rate block.
+      let (b0, b1, b2) = unsafe {
+        (
+          *rate_ptr.add(offset),
+          *rate_ptr.add(offset.strict_add(1)),
+          *rate_ptr.add(offset.strict_add(2)),
+        )
+      };
+      let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+      let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+      sample_ntt_product_absorb_candidate_neon!(product, d1, acc);
+      sample_ntt_product_absorb_candidate_neon!(product, d2, acc);
+      if product.is_done() {
+        break;
+      }
+
+      offset = offset.strict_add(3);
+    }
   }
 }
 
