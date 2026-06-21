@@ -768,17 +768,8 @@ impl Permuter for Aarch64Permuter {
       }
     }
 
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
-    {
-      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
-      keccakf_portable(state_d);
-    }
-
-    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"))))]
-    {
-      self.permute_x2(state_a, state_b, _len_hint);
-      self.permute_x2(state_c, state_d, _len_hint);
-    }
+    self.permute_x2(state_a, state_b, _len_hint);
+    self.permute_x2(state_c, state_d, _len_hint);
   }
 
   #[inline(always)]
@@ -860,13 +851,6 @@ impl Permuter for Aarch64Permuter {
   ) {
     #[cfg(target_os = "linux")]
     if self.has_sve2_sha3 && aarch64::keccakf_aarch64_sve2_sha3_x4(state_a, state_b, state_c, state_d) {
-      return;
-    }
-
-    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
-    if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
-      keccakf_portable(state_d);
       return;
     }
 
