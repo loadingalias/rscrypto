@@ -4801,48 +4801,88 @@ fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
-  inverse_ntt_neon_butterflies(poly);
-
-  for i in (0..N).step_by(8) {
-    // SAFETY: fixed-size NEON final inverse-NTT scale because:
-    // 1. `i` advances by 8 while `i < N == 256`.
-    // 2. Each load/store touches `i..i + 8`, which is in bounds.
-    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
-    //    availability.
-    unsafe {
-      let coeffs = vld1q_u16(poly.as_ptr().add(i));
-      vst1q_u16(
-        poly.as_mut_ptr().add(i),
-        mul_mont_const_mod_u16x8(coeffs, final_scale_mont),
-      );
-    }
-  }
+  let zeta_index = inverse_ntt_neon_butterflies_before_final_layer(poly);
+  inverse_ntt_neon_final_layer_scale(poly, zeta_index, final_scale_mont);
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
-  inverse_ntt_neon_butterflies(poly);
+  let zeta_index = inverse_ntt_neon_butterflies_before_final_layer(poly);
+  inverse_ntt_neon_final_layer_scale_add_assign(poly, addend, zeta_index, final_scale_mont);
+}
 
-  for i in (0..N).step_by(8) {
-    // SAFETY: fixed-size NEON final inverse-NTT scale plus add because:
-    // 1. `i` advances by 8 while `i < N == 256`.
-    // 2. Each load/store touches `i..i + 8`, which is in bounds for both polynomials.
-    // 3. `addend` contains canonical modulo-Q coefficients, matching the `poly_add_assign` contract.
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn inverse_ntt_neon_final_layer_scale(poly: &mut Poly, zeta_index: usize, final_scale_mont: i16) {
+  debug_assert_eq!(zeta_index, 1);
+  let zeta = ZETAS_MONT[zeta_index];
+  let mut j = 0usize;
+  while j < 128 {
+    // SAFETY: fixed-size final inverse-NTT layer plus scale because:
+    // 1. `j` advances by 8 while `j < 128`, so `j..j + 8` and `j + 128..j + 136` are in bounds.
+    // 2. The final inverse layer is public and always uses the single remaining zeta at index 1.
+    // 3. Scaling before the store is byte-for-byte equivalent to the old separate final scale pass.
     // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
     //    availability.
     unsafe {
-      let coeffs = vld1q_u16(poly.as_ptr().add(i));
-      let scaled = mul_mont_const_mod_u16x8(coeffs, final_scale_mont);
-      let addend = vld1q_u16(addend.as_ptr().add(i));
-      vst1q_u16(poly.as_mut_ptr().add(i), add_mod_u16x8(scaled, addend));
+      let t = vld1q_u16(poly.as_ptr().add(j));
+      let u = vld1q_u16(poly.as_ptr().add(j.strict_add(128)));
+      let lower = add_mod_u16x8(t, u);
+      let upper = mul_mont_const_mod_u16x8(sub_mod_u16x8(u, t), zeta);
+      vst1q_u16(
+        poly.as_mut_ptr().add(j),
+        mul_mont_const_mod_u16x8(lower, final_scale_mont),
+      );
+      vst1q_u16(
+        poly.as_mut_ptr().add(j.strict_add(128)),
+        mul_mont_const_mod_u16x8(upper, final_scale_mont),
+      );
     }
+    j = j.strict_add(8);
   }
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
-fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
+fn inverse_ntt_neon_final_layer_scale_add_assign(
+  poly: &mut Poly,
+  addend: &Poly,
+  zeta_index: usize,
+  final_scale_mont: i16,
+) {
+  debug_assert_eq!(zeta_index, 1);
+  let zeta = ZETAS_MONT[zeta_index];
+  let mut j = 0usize;
+  while j < 128 {
+    // SAFETY: fixed-size final inverse-NTT layer plus scale/add because:
+    // 1. `j` advances by 8 while `j < 128`, so all polynomial and addend loads/stores are in bounds.
+    // 2. The final inverse layer is public and always uses the single remaining zeta at index 1.
+    // 3. Scaling and add-before-store is equivalent to the old separate scale pass followed by
+    //    canonical `poly_add_assign`.
+    // 4. `addend` contains canonical modulo-Q coefficients, matching the `poly_add_assign` contract.
+    // 5. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let t = vld1q_u16(poly.as_ptr().add(j));
+      let u = vld1q_u16(poly.as_ptr().add(j.strict_add(128)));
+      let lower = mul_mont_const_mod_u16x8(add_mod_u16x8(t, u), final_scale_mont);
+      let upper = mul_mont_const_mod_u16x8(mul_mont_const_mod_u16x8(sub_mod_u16x8(u, t), zeta), final_scale_mont);
+      let lower_addend = vld1q_u16(addend.as_ptr().add(j));
+      let upper_addend = vld1q_u16(addend.as_ptr().add(j.strict_add(128)));
+      vst1q_u16(poly.as_mut_ptr().add(j), add_mod_u16x8(lower, lower_addend));
+      vst1q_u16(
+        poly.as_mut_ptr().add(j.strict_add(128)),
+        add_mod_u16x8(upper, upper_addend),
+      );
+    }
+    j = j.strict_add(8);
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn inverse_ntt_neon_butterflies_before_final_layer(poly: &mut Poly) -> usize {
   let mut zeta_index = 127usize;
   let mut len = 2usize;
 
@@ -4856,7 +4896,7 @@ fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
     len <<= 1;
   }
 
-  while len <= 128 {
+  while len < 128 {
     let mut start = 0usize;
     while start < N {
       let zeta = ZETAS_MONT[zeta_index];
@@ -4886,6 +4926,8 @@ fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
     }
     len <<= 1;
   }
+
+  zeta_index
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
