@@ -3816,15 +3816,12 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
     // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
     // 3. Each destination polynomial is a distinct mutable borrow.
     // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-    let [count0, count1, count2, count3] = unsafe {
-      aarch64::sample_ntt_rej_uniform_block4_asm(
-        [
-          out0.as_mut_ptr().add(n0),
-          out1.as_mut_ptr().add(n1),
-          out2.as_mut_ptr().add(n2),
-          out3.as_mut_ptr().add(n3),
-        ],
-        rate_ptrs,
+    let (count0, count1, count2, count3) = unsafe {
+      (
+        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), rate_ptrs[0]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), rate_ptrs[1]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out2.as_mut_ptr().add(n2), rate_ptrs[2]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out3.as_mut_ptr().add(n3), rate_ptrs[3]),
       )
     };
     *filled = [
