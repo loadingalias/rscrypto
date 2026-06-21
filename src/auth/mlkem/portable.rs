@@ -1823,7 +1823,7 @@ fn pke_encrypt_prepared_768(
   m: &[u8; SEED_BYTES],
   r: &[u8; SEED_BYTES],
 ) -> [u8; 1088] {
-  if use_fused_matrix_accumulate() {
+  if use_fused_pke_matrix_accumulate::<3>() {
     return pke_encrypt_prepared::<3, 128, 1088, 10, 4, 320, 128>(ek, m, r);
   }
 
@@ -1871,10 +1871,6 @@ fn pke_encrypt_prepared_1024(
   m: &[u8; SEED_BYTES],
   r: &[u8; SEED_BYTES],
 ) -> [u8; 1568] {
-  if use_fused_matrix_accumulate() {
-    return pke_encrypt_prepared::<4, 128, 1568, 11, 5, 352, 160>(ek, m, r);
-  }
-
   let mut y_hat = [[0u16; N]; 4];
   let mut e1 = [[0u16; N]; 4];
   let [y0, y1, y2, y3] = &mut y_hat;
@@ -1890,7 +1886,11 @@ fn pke_encrypt_prepared_1024(
   ntt(&mut y_hat[3]);
 
   let mut u = [[0u16; N]; 4];
-  sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
+  if use_fused_pke_matrix_accumulate::<4>() {
+    sample_matrix_ntt_mul_accumulate_fused_transpose_k4(&ek.rho, &y_hat, &mut u);
+  } else {
+    sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
+  }
 
   inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
   inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
@@ -1923,7 +1923,7 @@ fn pke_encrypt_prepared_768_compare(
   r: &[u8; SEED_BYTES],
   expected: &[u8; 1088],
 ) -> u8 {
-  if use_fused_matrix_accumulate() {
+  if use_fused_pke_matrix_accumulate::<3>() {
     let mut ciphertext = pke_encrypt_prepared::<3, 128, 1088, 10, 4, 320, 128>(ek, m, r);
     let mask = ct_eq_mask(expected, &ciphertext);
     ct::zeroize(&mut ciphertext);
@@ -1975,13 +1975,6 @@ fn pke_encrypt_prepared_1024_compare(
   r: &[u8; SEED_BYTES],
   expected: &[u8; 1568],
 ) -> u8 {
-  if use_fused_matrix_accumulate() {
-    let mut ciphertext = pke_encrypt_prepared::<4, 128, 1568, 11, 5, 352, 160>(ek, m, r);
-    let mask = ct_eq_mask(expected, &ciphertext);
-    ct::zeroize(&mut ciphertext);
-    return mask;
-  }
-
   let mut y_hat = [[0u16; N]; 4];
   let mut e1 = [[0u16; N]; 4];
   let [y0, y1, y2, y3] = &mut y_hat;
@@ -1997,7 +1990,11 @@ fn pke_encrypt_prepared_1024_compare(
   ntt(&mut y_hat[3]);
 
   let mut u = [[0u16; N]; 4];
-  sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
+  if use_fused_pke_matrix_accumulate::<4>() {
+    sample_matrix_ntt_mul_accumulate_fused_transpose_k4(&ek.rho, &y_hat, &mut u);
+  } else {
+    sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
+  }
 
   inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
   inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
@@ -2056,7 +2053,7 @@ fn pke_encrypt_prepared<
   }
 
   let mut u = [[0u16; N]; K];
-  if use_fused_matrix_accumulate() {
+  if use_fused_pke_matrix_accumulate::<K>() {
     for (i, u_i) in u.iter_mut().enumerate() {
       let mut acc = [0u16; N];
       if K == 4 {
@@ -2452,6 +2449,22 @@ fn matrix_accumulate_coord<const K: usize>(entry: usize, transpose: bool) -> ((u
   (sample, dst, rhs)
 }
 
+#[inline(always)]
+fn sample_matrix_ntt_mul_accumulate_fused_transpose_k4(rho: &[u8; SEED_BYTES], rhs: &[Poly; 4], out: &mut [Poly; 4]) {
+  for (i, out_i) in out.iter_mut().enumerate() {
+    sample_ntt_quad_mul_accumulate(
+      rho,
+      [
+        (i as u8, 0, &rhs[0]),
+        (i as u8, 1, &rhs[1]),
+        (i as u8, 2, &rhs[2]),
+        (i as u8, 3, &rhs[3]),
+      ],
+      out_i,
+    );
+  }
+}
+
 #[inline]
 fn use_fused_matrix_accumulate() -> bool {
   if cfg!(any(miri, feature = "portable-only")) {
@@ -2476,6 +2489,28 @@ fn use_fused_matrix_accumulate() -> bool {
   #[cfg(not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64")))]
   {
     true
+  }
+}
+
+#[inline]
+fn use_fused_pke_matrix_accumulate<const K: usize>() -> bool {
+  if cfg!(any(miri, feature = "portable-only")) {
+    return true;
+  }
+
+  #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+  {
+    K == 4
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(target_endian = "little")))]
+  {
+    false
+  }
+
+  #[cfg(not(target_arch = "aarch64"))]
+  {
+    use_fused_matrix_accumulate()
   }
 }
 
