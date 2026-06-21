@@ -7099,7 +7099,7 @@ mod tests {
     not(feature = "portable-only")
   ))]
   #[test]
-  fn inverse_ntt_add_assign_asm_matches_scalar_reference() {
+  fn inverse_ntt_asm_add_assign_matches_scalar_reference() {
     assert_inverse_ntt_add_assign_asm_matches_scalar_reference([0u16; N], [0u16; N], "all zero");
     assert_inverse_ntt_add_assign_asm_matches_scalar_reference([Q - 1; N], [Q - 1; N], "all q-1");
 
