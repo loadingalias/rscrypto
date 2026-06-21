@@ -3302,6 +3302,7 @@ macro_rules! sample_ntt_product_absorb_candidate_neon {
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+#[inline]
 /// # Safety
 ///
 /// `a_ptr` must point to 16 readable accepted SampleNTT coefficients. `coeff_offset` must be a
