@@ -6,6 +6,8 @@ use core::arch::global_asm;
 use super::Poly;
 #[cfg(test)]
 use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+use super::ZETAS_MONT;
 #[cfg(any(test, feature = "diag"))]
 use super::{GAMMAS_MONT, PolyVec};
 
@@ -17,6 +19,8 @@ global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_apple_darwin.s")
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_rej_uniform_aarch64_linux.s"));
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+global_asm!(include_str!("../asm/rscrypto_mlkem_inv_ntt_aarch64_linux.s"));
 #[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 
@@ -96,6 +100,15 @@ unsafe extern "C" {
 unsafe extern "C" {
   fn rscrypto_mlkem_ntt_aarch64_linux(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
   fn rscrypto_mlkem_rej_uniform_block_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
+  #[cfg(any(test, feature = "diag"))]
+  fn rscrypto_mlkem_inv_ntt_aarch64_linux(poly: *mut u16, zetas_mont: *const i16, final_scale_mont: i16);
+  #[cfg(any(test, feature = "diag"))]
+  fn rscrypto_mlkem_inv_ntt_add_aarch64_linux(
+    poly: *mut u16,
+    addend: *const u16,
+    zetas_mont: *const i16,
+    final_scale_mont: i16,
+  );
   #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
@@ -232,6 +245,115 @@ pub(super) unsafe fn diag_ntt_asm_input_digest(mut poly: Poly) -> u16 {
   }
   let digest = super::diag_fold_poly(&poly);
   super::zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[inline]
+unsafe fn inverse_ntt_asm(poly: &mut Poly, final_scale_mont: i16) {
+  // SAFETY: ML-KEM aarch64 inverse-NTT assembly call because:
+  // 1. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+  // 2. `ZETAS_MONT` is the scalar/FIPS Montgomery zeta table; the assembly consumes only the public
+  //    fixed index schedule `127..=1`.
+  // 3. `final_scale_mont` is one of the public inverse-NTT Montgomery scale constants supplied by the
+  //    caller.
+  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+  // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+  unsafe {
+    rscrypto_mlkem_inv_ntt_aarch64_linux(poly.as_mut_ptr(), ZETAS_MONT.as_ptr(), final_scale_mont);
+  }
+}
+
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[inline]
+unsafe fn inverse_ntt_add_assign_asm(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  // SAFETY: ML-KEM aarch64 inverse-NTT plus add assembly call because:
+  // 1. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
+  // 2. `addend` contains canonical modulo-Q coefficients, matching the scalar `poly_add_assign`
+  //    contract.
+  // 3. `ZETAS_MONT` and `final_scale_mont` are public fixed ML-KEM constants.
+  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+  // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+  unsafe {
+    rscrypto_mlkem_inv_ntt_add_aarch64_linux(
+      poly.as_mut_ptr(),
+      addend.as_ptr(),
+      ZETAS_MONT.as_ptr(),
+      final_scale_mont,
+    );
+  }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub(super) unsafe fn test_inverse_ntt_asm(poly: &mut Poly, final_scale_mont: i16) {
+  // SAFETY: test-only direct access to the inverse-NTT assembly entry point because:
+  // 1. The caller supplies a fixed 256-coefficient ML-KEM polynomial.
+  // 2. This module is compiled only on aarch64 Linux with the assembly backend available.
+  // 3. Tests compare the output against the scalar/FIPS inverse before production dispatch.
+  unsafe {
+    inverse_ntt_asm(poly, final_scale_mont);
+  }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub(super) unsafe fn test_inverse_ntt_add_assign_asm(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  // SAFETY: test-only direct access to the inverse-NTT plus add assembly entry point because:
+  // 1. The caller supplies fixed 256-coefficient ML-KEM polynomials.
+  // 2. This module is compiled only on aarch64 Linux with the assembly backend available.
+  // 3. Tests compare the output against scalar inverse plus scalar add before production dispatch.
+  unsafe {
+    inverse_ntt_add_assign_asm(poly, addend, final_scale_mont);
+  }
+}
+
+#[cfg(all(feature = "diag", target_os = "linux"))]
+pub(super) unsafe fn diag_inverse_ntt_asm_digest(seed: u16, final_scale_mont: i16) -> u16 {
+  let poly = super::diag_poly(seed);
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { diag_inverse_ntt_asm_input_digest(poly, final_scale_mont) }
+}
+
+#[cfg(all(feature = "diag", target_os = "linux"))]
+pub(super) unsafe fn diag_inverse_ntt_asm_input_digest(mut poly: Poly, final_scale_mont: i16) -> u16 {
+  // SAFETY: Direct inverse-NTT assembly diagnostic call because:
+  // 1. The caller guarantees this runs only on an aarch64 Linux CPU with Advanced SIMD.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+  // 3. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the aarch64 assembly candidate itself.
+  unsafe {
+    inverse_ntt_asm(&mut poly, final_scale_mont);
+  }
+  let digest = super::diag_fold_poly(&poly);
+  super::zeroize_poly(&mut poly);
+  digest
+}
+
+#[cfg(all(feature = "diag", target_os = "linux"))]
+pub(super) unsafe fn diag_inverse_ntt_add_assign_asm_digest(seed: u16, final_scale_mont: i16) -> u16 {
+  let poly = super::diag_poly(seed);
+  let addend = super::diag_poly(seed.wrapping_add(1));
+  // SAFETY: forwarded from this function's caller contract.
+  unsafe { diag_inverse_ntt_add_assign_asm_input_digest(poly, addend, final_scale_mont) }
+}
+
+#[cfg(all(feature = "diag", target_os = "linux"))]
+pub(super) unsafe fn diag_inverse_ntt_add_assign_asm_input_digest(
+  mut poly: Poly,
+  mut addend: Poly,
+  final_scale_mont: i16,
+) -> u16 {
+  // SAFETY: Direct inverse-NTT plus add assembly diagnostic call because:
+  // 1. The caller guarantees this runs only on an aarch64 Linux CPU with Advanced SIMD.
+  // 2. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
+  // 3. The borrowed addend is stack-owned in this function and cannot alias `poly`.
+  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the aarch64 assembly candidate itself.
+  unsafe {
+    inverse_ntt_add_assign_asm(&mut poly, &addend, final_scale_mont);
+  }
+  let digest = super::diag_fold_poly(&poly);
+  super::zeroize_poly(&mut poly);
+  super::zeroize_poly(&mut addend);
   digest
 }
 

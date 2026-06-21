@@ -450,6 +450,20 @@ pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portabl
   feature = "diag",
   feature = "ml-kem",
   target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub use auth::{
+  diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest,
+  diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest,
+  diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_digest,
+  diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_input_digest,
+};
+#[cfg(all(
+  feature = "diag",
+  feature = "ml-kem",
+  target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
   not(miri),
   not(feature = "portable-only")
@@ -464,6 +478,7 @@ pub use auth::{
 #[cfg(all(feature = "diag", feature = "ml-kem"))]
 pub use auth::{
   diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
+  diag_mlkem_inverse_ntt_montgomery_product_add_assign_input_digest,
   diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
   diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
   diag_mlkem512_keygen_secret_noise_digest, diag_mlkem512_multiply_ntts_accumulate_digest,
