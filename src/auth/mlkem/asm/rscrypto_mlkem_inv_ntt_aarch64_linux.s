@@ -26,8 +26,8 @@
 .macro ADD_MOD_Q_8 out, a, b
         add     \out\().8h, \a\().8h, \b\().8h
         cmhs    v28.8h, \out\().8h, v30.8h
-        and     v28.16b, v28.16b, v30.16b
-        sub     \out\().8h, \out\().8h, v28.8h
+        bic     v28.8h, #13, lsl #8
+        add     \out\().8h, \out\().8h, v28.8h
 .endm
 
 .macro SUB_MOD_Q_8 out, a, b
@@ -43,26 +43,21 @@
         add     \value\().8h, \value\().8h, v28.8h
 .endm
 
-.macro MONT_REDUCE_S16X8 out, low, high
-        mul     v20.8h, \low\().8h, v31.8h
-        sqdmulh v21.8h, v20.8h, v30.8h
-        sshr    v21.8h, v21.8h, #1
-        sub     \out\().8h, \high\().8h, v21.8h
-        SIGNED_TO_MOD_Q_8 \out
-.endm
-
-.macro MUL_MONT_Q_8 out, a, zeta
-        mul     v22.8h, \a\().8h, \zeta\().8h
+.macro MUL_MONT_Q_8_PRE out, a, zeta, zeta_qinv
         sqdmulh v23.8h, \a\().8h, \zeta\().8h
         sshr    v23.8h, v23.8h, #1
-        MONT_REDUCE_S16X8 \out, v22, v23
+        mul     v20.8h, \a\().8h, \zeta_qinv\().8h
+        sqdmulh v21.8h, v20.8h, v30.8h
+        sshr    v21.8h, v21.8h, #1
+        sub     \out\().8h, v23.8h, v21.8h
+        SIGNED_TO_MOD_Q_8 \out
 .endm
 
 .macro ADD_MOD_Q_4 out, a, b
         add     \out\().4h, \a\().4h, \b\().4h
         cmhs    v28.4h, \out\().4h, v30.4h
-        and     v28.8b, v28.8b, v30.8b
-        sub     \out\().4h, \out\().4h, v28.4h
+        bic     v28.4h, #13, lsl #8
+        add     \out\().4h, \out\().4h, v28.4h
 .endm
 
 .macro SUB_MOD_Q_4 out, a, b
@@ -78,19 +73,14 @@
         add     \value\().4h, \value\().4h, v28.4h
 .endm
 
-.macro MONT_REDUCE_S32X4 out, value
-        xtn     v20.4h, \value\().4s
-        mul     v20.4h, v20.4h, v31.4h
+.macro MUL_MONT_Q_4_PRE out, a, zeta, zeta_qinv
+        smull   v22.4s, \a\().4h, \zeta\().4h
+        mul     v20.4h, \a\().4h, \zeta_qinv\().4h
         smull   v21.4s, v20.4h, v30.4h
         shrn    v21.4h, v21.4s, #16
-        shrn    v22.4h, \value\().4s, #16
+        shrn    v22.4h, v22.4s, #16
         sub     \out\().4h, v22.4h, v21.4h
         SIGNED_TO_MOD_Q_4 \out
-.endm
-
-.macro MUL_MONT_Q_4 out, a, zeta
-        smull   v22.4s, \a\().4h, \zeta\().4h
-        MONT_REDUCE_S32X4 \out, v22
 .endm
 
 .macro INIT_CONSTANTS scale_reg
@@ -99,6 +89,7 @@
         mov     w8, #62209
         dup     v31.8h, w8
         dup     v29.8h, \scale_reg
+        mul     v27.8h, v29.8h, v31.8h
 .endm
 
 .macro INV_NTT_BUTTERFLIES zetas_ptr
@@ -115,9 +106,10 @@
         dup     v3.4h, w12
         ins     v3.h[2], w13
         ins     v3.h[3], w13
+        mul     v24.4h, v3.4h, v31.4h
         ADD_MOD_Q_4 v4, v1, v2
         SUB_MOD_Q_4 v5, v2, v1
-        MUL_MONT_Q_4 v5, v5, v3
+        MUL_MONT_Q_4_PRE v5, v5, v3, v24
         zip1    v6.2s, v4.2s, v5.2s
         zip2    v7.2s, v4.2s, v5.2s
         mov     v6.d[1], v7.d[0]
@@ -133,9 +125,10 @@
         ldrh    w12, [x10]
         sub     x10, x10, #2
         dup     v3.4h, w12
+        mul     v24.4h, v3.4h, v31.4h
         ADD_MOD_Q_4 v2, v0, v1
         SUB_MOD_Q_4 v4, v1, v0
-        MUL_MONT_Q_4 v5, v4, v3
+        MUL_MONT_Q_4_PRE v5, v4, v3, v24
         str     d2, [x9]
         str     d5, [x9, #8]
         add     x9, x9, #16
@@ -149,6 +142,7 @@
         ldrh    w13, [x10]
         sub     x10, x10, #2
         dup     v3.8h, w13
+        mul     v24.8h, v3.8h, v31.8h
         add     x14, x0, x12
         add     x15, x14, x11
         add     x16, x14, x11
@@ -157,7 +151,7 @@
         ldr     q1, [x15]
         ADD_MOD_Q_8 v2, v0, v1
         SUB_MOD_Q_8 v4, v1, v0
-        MUL_MONT_Q_8 v5, v4, v3
+        MUL_MONT_Q_8_PRE v5, v4, v3, v24
         str     q2, [x14], #16
         str     q5, [x15], #16
         cmp     x14, x16
@@ -175,7 +169,7 @@
         mov     w8, #32
 .Linv_final_scale_loop\@:
         ldr     q0, [x9]
-        MUL_MONT_Q_8 v0, v0, v29
+        MUL_MONT_Q_8_PRE v0, v0, v29, v27
         str     q0, [x9], #16
         subs    w8, w8, #1
         b.ne    .Linv_final_scale_loop\@
@@ -188,7 +182,7 @@
 .Linv_final_scale_add_loop\@:
         ldr     q0, [x9]
         ldr     q1, [x10], #16
-        MUL_MONT_Q_8 v0, v0, v29
+        MUL_MONT_Q_8_PRE v0, v0, v29, v27
         ADD_MOD_Q_8 v0, v0, v1
         str     q0, [x9], #16
         subs    w8, w8, #1
