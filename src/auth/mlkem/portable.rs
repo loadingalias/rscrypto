@@ -2244,29 +2244,58 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3<const K: usize>(
 ) {
   debug_assert_eq!(K, 3);
 
-  let mut a0 = [0u16; N];
-  let mut a1 = [0u16; N];
-  let mut a2 = [0u16; N];
-  let mut a3 = [0u16; N];
-  sample_ntt_four_materialized_into(
-    rho,
-    [(0, 0), (1, 0), (2, 0), (0, 1)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row1_a0 = a3;
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    let mut a0 = [0u16; N];
+    let mut a1 = [0u16; N];
+    let mut a2 = [0u16; N];
 
-  sample_ntt_four_materialized_into(
-    rho,
-    [(1, 1), (2, 1), (0, 2), (1, 2)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row2_a0 = a2;
-  let row2_a1 = a3;
+    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [&mut a0, &mut a1, &mut a2]);
+    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
 
-  sample_ntt_into(rho, 2, 2, &mut a0);
-  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
+    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [&mut a0, &mut a1, &mut a2]);
+    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+
+    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [&mut a0, &mut a1, &mut a2]);
+    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    let mut a0 = [0u16; N];
+    let mut a1 = [0u16; N];
+    let mut a2 = [0u16; N];
+    let mut a3 = [0u16; N];
+    sample_ntt_four_materialized_into(
+      rho,
+      [(0, 0), (1, 0), (2, 0), (0, 1)],
+      [&mut a0, &mut a1, &mut a2, &mut a3],
+    );
+    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+    let row1_a0 = a3;
+
+    sample_ntt_four_materialized_into(
+      rho,
+      [(1, 1), (2, 1), (0, 2), (1, 2)],
+      [&mut a0, &mut a1, &mut a2, &mut a3],
+    );
+    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
+    let row2_a0 = a2;
+    let row2_a1 = a3;
+
+    sample_ntt_into(rho, 2, 2, &mut a0);
+    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
+  }
 }
 
 #[inline(always)]
@@ -2277,29 +2306,58 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
 ) {
   debug_assert_eq!(K, 3);
 
-  let mut a0 = [0u16; N];
-  let mut a1 = [0u16; N];
-  let mut a2 = [0u16; N];
-  let mut a3 = [0u16; N];
-  sample_ntt_four_materialized_into(
-    rho,
-    [(0, 0), (0, 1), (0, 2), (1, 0)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row1_a0 = a3;
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    let mut a0 = [0u16; N];
+    let mut a1 = [0u16; N];
+    let mut a2 = [0u16; N];
 
-  sample_ntt_four_materialized_into(
-    rho,
-    [(1, 1), (1, 2), (2, 0), (2, 1)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row2_a0 = a2;
-  let row2_a1 = a3;
+    sample_ntt_triple_into(rho, [(0, 0), (0, 1), (0, 2)], [&mut a0, &mut a1, &mut a2]);
+    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
 
-  sample_ntt_into(rho, 2, 2, &mut a0);
-  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
+    sample_ntt_triple_into(rho, [(1, 0), (1, 1), (1, 2)], [&mut a0, &mut a1, &mut a2]);
+    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+
+    sample_ntt_triple_into(rho, [(2, 0), (2, 1), (2, 2)], [&mut a0, &mut a1, &mut a2]);
+    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    let mut a0 = [0u16; N];
+    let mut a1 = [0u16; N];
+    let mut a2 = [0u16; N];
+    let mut a3 = [0u16; N];
+    sample_ntt_four_materialized_into(
+      rho,
+      [(0, 0), (0, 1), (0, 2), (1, 0)],
+      [&mut a0, &mut a1, &mut a2, &mut a3],
+    );
+    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+    let row1_a0 = a3;
+
+    sample_ntt_four_materialized_into(
+      rho,
+      [(1, 1), (1, 2), (2, 0), (2, 1)],
+      [&mut a0, &mut a1, &mut a2, &mut a3],
+    );
+    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
+    let row2_a0 = a2;
+    let row2_a1 = a3;
+
+    sample_ntt_into(rho, 2, 2, &mut a0);
+    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
+  }
 }
 
 #[inline(always)]
@@ -2412,6 +2470,17 @@ fn sample_ntt_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) {
 fn sample_ntt_pair_into(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8, out0: &mut Poly, out1: &mut Poly) {
   let (reader0, reader1) = Shake128::xof_seeded_32_2_pair(rho, (j0, i0), (j1, i1));
   sample_ntt_pair_from_xof_into(reader0, reader1, out0, out1);
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+fn sample_ntt_triple_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
+  let (reader0, reader1, reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  sample_ntt_triple_from_xof_into([reader0, reader1, reader2], out);
 }
 
 fn sample_ntt_quad_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
@@ -2802,6 +2871,38 @@ fn sample_ntt_pair_block_neon(
 
     *filled0 = n0;
     *filled1 = n1;
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+fn sample_ntt_triple_from_xof_into(mut readers: [Shake128XofReader; 3], out: [&mut Poly; 3]) {
+  let mut filled = [0usize; 3];
+  let [out0, out1, out2] = out;
+
+  while filled[0] < N && filled[1] < N && filled[2] < N {
+    let [reader0, reader1, reader2] = &mut readers;
+    Shake128XofReader::with_triple_rate_block(reader0, reader1, reader2, |state0, state1, state2| {
+      sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
+    });
+  }
+
+  let mut buf = [0u8; SHAKE128_RATE_BYTES];
+  while filled[0] < N {
+    readers[0].squeeze(&mut buf);
+    sample_ntt_block(&buf, out0, &mut filled[0]);
+  }
+  while filled[1] < N {
+    readers[1].squeeze(&mut buf);
+    sample_ntt_block(&buf, out1, &mut filled[1]);
+  }
+  while filled[2] < N {
+    readers[2].squeeze(&mut buf);
+    sample_ntt_block(&buf, out2, &mut filled[2]);
   }
 }
 
@@ -3356,6 +3457,32 @@ fn sample_ntt_quad_block_neon(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut 
   not(feature = "portable-only")
 ))]
 #[inline(always)]
+fn sample_ntt_triple_state_block(states: [&[u64; 25]; 3], out: [&mut Poly; 3], filled: &mut [usize; 3]) {
+  let [out0, out1, out2] = out;
+  let rate_ptrs = [
+    states[0].as_ptr().cast::<u8>(),
+    states[1].as_ptr().cast::<u8>(),
+    states[2].as_ptr().cast::<u8>(),
+  ];
+  // SAFETY: Pointer-backed triple parsing over Keccak state memory because:
+  // 1. This path is little-endian aarch64 only, so the in-memory `u64` state layout is the XOF byte
+  //    order.
+  // 2. Each Keccak state has 25 u64 lanes (200 bytes), which covers the first 168-byte SHAKE128 rate
+  //    block.
+  // 3. The helper reads only offsets `< SHAKE128_RATE_BYTES` and keeps bounded output fallback
+  //    semantics.
+  unsafe {
+    sample_ntt_triple_block_neon_ptrs(rate_ptrs, [out0, out1, out2], filled);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
 fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
   let [out0, out1, out2, out3] = out;
   let rate_ptrs = [
@@ -3373,6 +3500,73 @@ fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], fil
   //    semantics.
   unsafe {
     sample_ntt_quad_block_neon_ptrs(rate_ptrs, [out0, out1, out2, out3], filled);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "neon")]
+/// # Safety
+///
+/// Each pointer in `rate_ptrs` must name one readable SHAKE128 rate block. The output polynomials
+/// must be distinct mutable destinations, and `filled` must contain their current initialized
+/// coefficient counts. The caller must guarantee that the active CPU supports NEON.
+unsafe fn sample_ntt_triple_block_neon_ptrs(rate_ptrs: [*const u8; 3], out: [&mut Poly; 3], filled: &mut [usize; 3]) {
+  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
+  let [out0, out1, out2] = out;
+  if N.strict_sub(filled[0]) < MAX_CANDIDATES
+    || N.strict_sub(filled[1]) < MAX_CANDIDATES
+    || N.strict_sub(filled[2]) < MAX_CANDIDATES
+  {
+    // SAFETY: Bounded pointer-backed scalar parsing because:
+    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+    // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
+    // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+    // 4. Rejection branches depend only on public matrix-A samples, not secret material.
+    unsafe {
+      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
+      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
+      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
+    }
+    return;
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    let n0 = filled[0];
+    let n1 = filled[1];
+    let n2 = filled[2];
+    // SAFETY: Linux aarch64 assembly SampleNTT block parsing because:
+    // 1. Each pointer names one full 168-byte SHAKE128 rate block.
+    // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
+    // 3. Each destination polynomial is a distinct mutable borrow.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    let (count0, count1, count2) = unsafe {
+      (
+        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), rate_ptrs[0]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), rate_ptrs[1]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out2.as_mut_ptr().add(n2), rate_ptrs[2]),
+      )
+    };
+    *filled = [n0.strict_add(count0), n1.strict_add(count1), n2.strict_add(count2)];
+  }
+
+  #[cfg(not(target_os = "linux"))]
+  {
+    // SAFETY: Fallback to bounded scalar pointer parsing on non-Linux aarch64 because:
+    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+    // 2. Each destination polynomial has enough remaining capacity for all block candidates.
+    // 3. Rejection branches depend only on public matrix-A samples.
+    unsafe {
+      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
+      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
+      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
+    }
   }
 }
 
@@ -6770,6 +6964,31 @@ mod tests {
 
     assert_eq!(left, sample_ntt(&rho, 0, 1));
     assert_eq!(right, sample_ntt(&rho, 2, 1));
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn sample_ntt_triple_matches_scalar_samplers() {
+    let mut rho = [0u8; SEED_BYTES];
+    for (i, byte) in rho.iter_mut().enumerate() {
+      *byte = (i.strict_mul(39).strict_add(17)) as u8;
+    }
+
+    let lanes = [(0, 2), (1, 0), (2, 3)];
+    let mut actual = [[0u16; N]; 3];
+    {
+      let [out0, out1, out2] = &mut actual;
+      sample_ntt_triple_into(&rho, lanes, [out0, out1, out2]);
+    }
+
+    for (lane, &(j, i)) in lanes.iter().enumerate() {
+      assert_eq!(actual[lane], sample_ntt(&rho, j, i), "lane {lane}");
+    }
   }
 
   #[cfg(all(
