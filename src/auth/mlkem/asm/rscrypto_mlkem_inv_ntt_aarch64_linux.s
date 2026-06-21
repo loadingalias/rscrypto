@@ -23,38 +23,6 @@
 .text
 .balign 4
 
-.macro ADD_MOD_Q_8 out, a, b
-        add     \out\().8h, \a\().8h, \b\().8h
-        cmhs    v28.8h, \out\().8h, v30.8h
-        bic     v28.8h, #13, lsl #8
-        add     \out\().8h, \out\().8h, v28.8h
-.endm
-
-.macro SIGNED_TO_MOD_Q_8 value
-        sshr    v28.8h, \value\().8h, #15
-        and     v28.16b, v28.16b, v30.16b
-        add     \value\().8h, \value\().8h, v28.8h
-.endm
-
-.macro MUL_MONT_Q_8_PRE out, a, zeta, zeta_qinv
-        sqdmulh v23.8h, \a\().8h, \zeta\().8h
-        sshr    v23.8h, v23.8h, #1
-        mul     v20.8h, \a\().8h, \zeta_qinv\().8h
-        sqdmulh v21.8h, v20.8h, v30.8h
-        sshr    v21.8h, v21.8h, #1
-        sub     \out\().8h, v23.8h, v21.8h
-        SIGNED_TO_MOD_Q_8 \out
-.endm
-
-.macro INIT_CONSTANTS scale_reg
-        mov     w8, #3329
-        dup     v30.8h, w8
-        mov     w8, #62209
-        dup     v31.8h, w8
-        dup     v29.8h, \scale_reg
-        mul     v27.8h, v29.8h, v31.8h
-.endm
-
 // Unrolled inverse-NTT butterfly schedule matching the existing Rust NEON
 // scalar-oracle path. Loop bounds, zeta loads, and polynomial addresses are
 // fixed by public ML-KEM dimensions.
@@ -518,28 +486,58 @@ rscrypto_mlkem_inv_ntt_butterflies_aarch64_linux:
 	ret
 .size rscrypto_mlkem_inv_ntt_butterflies_aarch64_linux, .-rscrypto_mlkem_inv_ntt_butterflies_aarch64_linux
 
-.macro FINAL_SCALE
-        mov     x9, x0
-        mov     w8, #32
+.macro FINAL_SCALE scale_reg
+        mov     x9, #0
+        dup     v0.8h, \scale_reg
+        mov     w8, #62209
+        dup     v1.8h, w8
+        mul     v1.8h, v0.8h, v1.8h
+        mov     w8, #3329
+        dup     v2.8h, w8
 .Linv_final_scale_loop\@:
-        ldr     q0, [x9]
-        MUL_MONT_Q_8_PRE v0, v0, v29, v27
-        str     q0, [x9], #16
-        subs    w8, w8, #1
+        ldr     q3, [x0, x9]
+        sqdmulh v4.8h, v3.8h, v0.h[0]
+        sshr    v4.8h, v4.8h, #1
+        mul     v3.8h, v1.8h, v3.8h
+        sqdmulh v3.8h, v3.8h, v2.8h
+        sshr    v3.8h, v3.8h, #1
+        sub     v3.8h, v4.8h, v3.8h
+        cmlt    v4.8h, v3.8h, #0
+        and     v4.16b, v4.16b, v2.16b
+        add     v3.8h, v4.8h, v3.8h
+        str     q3, [x0, x9]
+        add     x9, x9, #16
+        cmp     x9, #512
         b.ne    .Linv_final_scale_loop\@
 .endm
 
-.macro FINAL_SCALE_ADD add_ptr
-        mov     x9, x0
-        mov     x10, \add_ptr
-        mov     w8, #32
+.macro FINAL_SCALE_ADD add_ptr, scale_reg
+        mov     x9, #0
+        dup     v0.8h, \scale_reg
+        mov     w8, #62209
+        dup     v1.8h, w8
+        mul     v1.8h, v0.8h, v1.8h
+        mov     w8, #3329
+        dup     v2.8h, w8
 .Linv_final_scale_add_loop\@:
-        ldr     q0, [x9]
-        ldr     q1, [x10], #16
-        MUL_MONT_Q_8_PRE v0, v0, v29, v27
-        ADD_MOD_Q_8 v0, v0, v1
-        str     q0, [x9], #16
-        subs    w8, w8, #1
+        ldr     q3, [x0, x9]
+        sqdmulh v4.8h, v3.8h, v0.h[0]
+        sshr    v4.8h, v4.8h, #1
+        mul     v3.8h, v1.8h, v3.8h
+        sqdmulh v3.8h, v3.8h, v2.8h
+        sshr    v3.8h, v3.8h, #1
+        sub     v3.8h, v4.8h, v3.8h
+        cmlt    v4.8h, v3.8h, #0
+        and     v4.16b, v4.16b, v2.16b
+        ldr     q5, [\add_ptr, x9]
+        add     v3.8h, v3.8h, v5.8h
+        add     v3.8h, v3.8h, v4.8h
+        cmhs    v4.8h, v3.8h, v2.8h
+        bic     v4.8h, #13, lsl #8
+        add     v3.8h, v4.8h, v3.8h
+        str     q3, [x0, x9]
+        add     x9, x9, #16
+        cmp     x9, #512
         b.ne    .Linv_final_scale_add_loop\@
 .endm
 
@@ -550,8 +548,7 @@ rscrypto_mlkem_inv_ntt_aarch64_linux:
         stp     x19, x30, [sp, #-16]!
         mov     w19, w2
         bl      rscrypto_mlkem_inv_ntt_butterflies_aarch64_linux
-        INIT_CONSTANTS w19
-        FINAL_SCALE
+        FINAL_SCALE w19
         ldp     x19, x30, [sp], #16
         ret
 .size rscrypto_mlkem_inv_ntt_aarch64_linux, .-rscrypto_mlkem_inv_ntt_aarch64_linux
@@ -567,8 +564,7 @@ rscrypto_mlkem_inv_ntt_add_aarch64_linux:
         mov     x1, x2
         mov     w20, w3
         bl      rscrypto_mlkem_inv_ntt_butterflies_aarch64_linux
-        INIT_CONSTANTS w20
-        FINAL_SCALE_ADD x19
+        FINAL_SCALE_ADD x19, w20
         ldp     x19, x20, [sp, #16]
         ldp     x29, x30, [sp], #32
         ret
