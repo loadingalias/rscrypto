@@ -1226,6 +1226,26 @@ pub unsafe fn diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest(
 #[doc(hidden)]
 #[inline]
 #[must_use]
+pub fn diag_mlkem512_multiply_ntts_accumulate_digest(seed: u16) -> u16 {
+  portable::diag_multiply_ntts_accumulate_k2_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem512_multiply_ntts_accumulate_input_digest(
+  a: [[u16; 256]; 2],
+  b: [[u16; 256]; 2],
+  acc: [u16; 256],
+) -> u16 {
+  portable::diag_multiply_ntts_accumulate_k2_input_digest(a, b, acc)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[inline]
+#[must_use]
 pub fn diag_mlkem768_multiply_ntts_accumulate_digest(seed: u16) -> u16 {
   portable::diag_multiply_ntts_accumulate_k3_digest(seed)
 }

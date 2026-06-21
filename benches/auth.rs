@@ -1479,14 +1479,25 @@ mlkem_profile_benches!(
 #[cfg(feature = "diag")]
 fn mlkem_matrix_sample(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
-    diag_mlkem768_matrix_sample_pair_digest, diag_mlkem768_matrix_sample_quad_digest,
-    diag_mlkem768_matrix_sample_scalar_digest, diag_mlkem1024_matrix_sample_pair_digest,
-    diag_mlkem1024_matrix_sample_quad_digest, diag_mlkem1024_matrix_sample_scalar_digest,
+    diag_mlkem512_matrix_sample_pair_digest, diag_mlkem512_matrix_sample_quad_digest,
+    diag_mlkem512_matrix_sample_scalar_digest, diag_mlkem768_matrix_sample_pair_digest,
+    diag_mlkem768_matrix_sample_quad_digest, diag_mlkem768_matrix_sample_scalar_digest,
+    diag_mlkem1024_matrix_sample_pair_digest, diag_mlkem1024_matrix_sample_quad_digest,
+    diag_mlkem1024_matrix_sample_scalar_digest,
   };
 
   let rho = deterministic_bytes::<32>(0x42);
   let mut g = c.benchmark_group("mlkem-matrix-sample");
 
+  g.bench_function("k=2/scalar", |b| {
+    b.iter(|| black_box(diag_mlkem512_matrix_sample_scalar_digest(black_box(&rho))))
+  });
+  g.bench_function("k=2/pair", |b| {
+    b.iter(|| black_box(diag_mlkem512_matrix_sample_pair_digest(black_box(&rho))))
+  });
+  g.bench_function("k=2/quad", |b| {
+    b.iter(|| black_box(diag_mlkem512_matrix_sample_quad_digest(black_box(&rho))))
+  });
   g.bench_function("k=3/scalar", |b| {
     b.iter(|| black_box(diag_mlkem768_matrix_sample_scalar_digest(black_box(&rho))))
   });
@@ -1528,7 +1539,8 @@ fn mlkem_arithmetic(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
     diag_mlkem_from_montgomery_product_domain_digest, diag_mlkem_inverse_ntt_montgomery_product_digest,
     diag_mlkem_multiply_ntts_add_assign_digest, diag_mlkem_ntt_digest, diag_mlkem_to_montgomery_product_domain_digest,
-    diag_mlkem768_multiply_ntts_accumulate_digest, diag_mlkem1024_multiply_ntts_accumulate_digest,
+    diag_mlkem512_multiply_ntts_accumulate_digest, diag_mlkem768_multiply_ntts_accumulate_digest,
+    diag_mlkem1024_multiply_ntts_accumulate_digest,
   };
 
   let mut g = c.benchmark_group("mlkem-arithmetic");
@@ -1573,6 +1585,9 @@ fn mlkem_arithmetic(c: &mut Criterion) {
         )))
       }
     })
+  });
+  g.bench_function("multiply-ntts-accumulate-k2", |b| {
+    b.iter(|| black_box(diag_mlkem512_multiply_ntts_accumulate_digest(black_box(0x5678))))
   });
   g.bench_function("multiply-ntts-accumulate-k3", |b| {
     b.iter(|| black_box(diag_mlkem768_multiply_ntts_accumulate_digest(black_box(0x6789))))
@@ -1692,6 +1707,14 @@ fn mlkem_decap_phases(_: &mut Criterion) {}
 
 #[cfg(feature = "diag")]
 fn mlkem_pke_phases(c: &mut Criterion) {
+  let key_random_512 = deterministic_bytes::<{ MlKem512::KEY_GENERATION_RANDOM_SIZE }>(0x61);
+  let (ek512, _) = MlKem512::generate_keypair(|out| {
+    out.copy_from_slice(&key_random_512);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let prepared_ek512 = ek512.prepare().unwrap();
+
   let key_random_768 = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x71);
   let (ek768, _) = MlKem768::generate_keypair(|out| {
     out.copy_from_slice(&key_random_768);
@@ -1710,6 +1733,24 @@ fn mlkem_pke_phases(c: &mut Criterion) {
 
   let mut g = c.benchmark_group("mlkem-pke-phases");
 
+  g.bench_function("k=2/noise-ntt", |b| {
+    b.iter(|| black_box(prepared_ek512.diag_pke_noise_ntt_digest(black_box(0x32))))
+  });
+  g.bench_function("k=2/matrix-u-materialized", |b| {
+    b.iter(|| black_box(prepared_ek512.diag_pke_matrix_u_digest(black_box(0x3200))))
+  });
+  g.bench_function("k=2/matrix-u-fused", |b| {
+    b.iter(|| black_box(prepared_ek512.diag_pke_matrix_u_fused_digest(black_box(0x3200))))
+  });
+  g.bench_function("k=2/inverse-u-add", |b| {
+    b.iter(|| black_box(prepared_ek512.diag_pke_inverse_u_add_digest(black_box(0x3300))))
+  });
+  g.bench_function("k=2/v", |b| {
+    b.iter(|| black_box(prepared_ek512.diag_pke_v_digest(black_box(0x3400))))
+  });
+  g.bench_function("k=2/encode", |b| {
+    b.iter(|| black_box(prepared_ek512.diag_pke_encode_digest(black_box(0x3500))))
+  });
   g.bench_function("k=3/noise-ntt", |b| {
     b.iter(|| black_box(prepared_ek768.diag_pke_noise_ntt_digest(black_box(0x42))))
   });

@@ -1037,6 +1037,28 @@ pub(super) unsafe fn diag_aarch64_multiply_ntts_add_assign_asm_input_digest(a: P
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_accumulate_k2_input_digest(
+  mut a: PolyVec<2>,
+  mut b: PolyVec<2>,
+  mut acc: Poly,
+) -> u16 {
+  multiply_ntts_accumulate(&mut acc, &a, &b);
+  let digest = diag_fold_poly(&acc);
+  zeroize_polyvec(&mut a);
+  zeroize_polyvec(&mut b);
+  zeroize_poly(&mut acc);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_multiply_ntts_accumulate_k2_digest(seed: u16) -> u16 {
+  let a = [diag_poly(seed), diag_poly(seed.wrapping_add(1))];
+  let b = [diag_poly(seed.wrapping_add(2)), diag_poly(seed.wrapping_add(3))];
+  let acc = diag_poly(seed.wrapping_add(4));
+  diag_multiply_ntts_accumulate_k2_input_digest(a, b, acc)
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_multiply_ntts_accumulate_k3_input_digest(
   mut a: PolyVec<3>,
   mut b: PolyVec<3>,
@@ -2195,6 +2217,23 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
     return;
   }
 
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    if K == 2 {
+      if transpose {
+        sample_matrix_ntt_mul_accumulate_materialized_k2_transpose(rho, rhs, acc);
+      } else {
+        sample_matrix_ntt_mul_accumulate_materialized_k2(rho, rhs, acc);
+      }
+      return;
+    }
+  }
+
   let mut entry = 0usize;
   while entry.strict_add(3) < K.strict_mul(K) {
     let ((j0, i0), dst0, rhs0) = matrix_accumulate_coord::<K>(entry, transpose);
@@ -2234,6 +2273,54 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
     sample_ntt_into(rho, j, i, &mut a);
     multiply_ntts_add_assign(&mut acc[dst], &a, &rhs[rhs_index]);
   }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
+fn sample_matrix_ntt_mul_accumulate_materialized_k2<const K: usize>(
+  rho: &[u8; SEED_BYTES],
+  rhs: &PolyVec<K>,
+  acc: &mut PolyVec<K>,
+) {
+  debug_assert_eq!(K, 2);
+
+  let mut a0 = [0u16; N];
+  let mut a1 = [0u16; N];
+
+  sample_ntt_pair_into(rho, 0, 0, 1, 0, &mut a0, &mut a1);
+  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&a0, &a1], [&rhs[0], &rhs[1]]);
+
+  sample_ntt_pair_into(rho, 0, 1, 1, 1, &mut a0, &mut a1);
+  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&a0, &a1], [&rhs[0], &rhs[1]]);
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
+fn sample_matrix_ntt_mul_accumulate_materialized_k2_transpose<const K: usize>(
+  rho: &[u8; SEED_BYTES],
+  rhs: &PolyVec<K>,
+  acc: &mut PolyVec<K>,
+) {
+  debug_assert_eq!(K, 2);
+
+  let mut a0 = [0u16; N];
+  let mut a1 = [0u16; N];
+
+  sample_ntt_pair_into(rho, 0, 0, 0, 1, &mut a0, &mut a1);
+  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&a0, &a1], [&rhs[0], &rhs[1]]);
+
+  sample_ntt_pair_into(rho, 1, 0, 1, 1, &mut a0, &mut a1);
+  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&a0, &a1], [&rhs[0], &rhs[1]]);
 }
 
 #[inline(always)]
@@ -4318,6 +4405,21 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   multiply_ntts_add_assign_scalar(acc, a, b);
 }
 
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[inline(always)]
+fn multiply_ntts_accumulate_k2_refs(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
+  // SAFETY: aarch64 NEON K=2 dot-product dispatch because:
+  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
+  //    contract.
+  // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+  // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+  unsafe {
+    multiply_ntts_accumulate_k2_neon(acc, a, b);
+  }
+}
+
 #[inline(always)]
 fn multiply_ntts_accumulate_k3_refs(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -4517,6 +4619,19 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
 
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   {
+    if K == 2 {
+      // SAFETY: aarch64 NEON K=2 dot-product dispatch because:
+      // 1. `K == 2` proves the fixed references below are in bounds for both polynomial vectors.
+      // 2. `acc` and every input polynomial are fixed 256-coefficient arrays matching the kernel
+      //    contract.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+      // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return multiply_ntts_accumulate_k2_neon(acc, [&a[0], &a[1]], [&b[0], &b[1]]);
+      }
+    }
+
     if K == 3 {
       // SAFETY: aarch64 NEON K=3 dot-product dispatch because:
       // 1. `K == 3` proves the fixed references below are in bounds for both polynomial vectors.
@@ -4926,6 +5041,28 @@ fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
     unsafe {
       let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
       let (c0, c1) = base_multiply_8_neon(a, b, gamma, coeff_offset);
+      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn multiply_ntts_accumulate_k2_neon(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
+  for i in (0..GAMMAS_MONT.len()).step_by(8) {
+    let coeff_offset = i.strict_mul(2);
+
+    // SAFETY: fixed-size gamma load because:
+    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
+    // 2. `i..i + 8` stays inside the public gamma table.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
+      let (mut c0, mut c1) = base_multiply_8_neon(a[0], b[0], gamma, coeff_offset);
+      let (p0, p1) = base_multiply_8_neon(a[1], b[1], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
       store_accumulated_8_neon(acc, coeff_offset, c0, c1);
     }
   }
@@ -7311,6 +7448,31 @@ mod tests {
 
       let mut actual = [[0u16; N]; 3];
       sample_matrix_ntt_mul_accumulate_materialized::<3>(&rho, &rhs, &mut actual, transpose);
+
+      assert_eq!(actual, expected, "transpose={transpose}");
+    }
+  }
+
+  #[test]
+  fn materialized_k2_matrix_accumulate_matches_reference_layouts() {
+    let mut rho = [0u8; SEED_BYTES];
+    for (i, byte) in rho.iter_mut().enumerate() {
+      *byte = (i.strict_mul(43).strict_add(19)) as u8;
+    }
+
+    let rhs = [test_poly(0x10), test_poly(0x20)];
+
+    for transpose in [false, true] {
+      let mut expected = [[0u16; N]; 2];
+      for entry in 0..4 {
+        let ((j, i), dst, rhs_index) = matrix_accumulate_coord::<2>(entry, transpose);
+        let mut sampled = [0u16; N];
+        sample_ntt_into(&rho, j, i, &mut sampled);
+        multiply_ntts_add_assign_scalar(&mut expected[dst], &sampled, &rhs[rhs_index]);
+      }
+
+      let mut actual = [[0u16; N]; 2];
+      sample_matrix_ntt_mul_accumulate_materialized::<2>(&rho, &rhs, &mut actual, transpose);
 
       assert_eq!(actual, expected, "transpose={transpose}");
     }
