@@ -2217,23 +2217,6 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
     return;
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    if K == 2 {
-      if transpose {
-        sample_matrix_ntt_mul_accumulate_materialized_k2_transpose(rho, rhs, acc);
-      } else {
-        sample_matrix_ntt_mul_accumulate_materialized_k2(rho, rhs, acc);
-      }
-      return;
-    }
-  }
-
   let mut entry = 0usize;
   while entry.strict_add(3) < K.strict_mul(K) {
     let ((j0, i0), dst0, rhs0) = matrix_accumulate_coord::<K>(entry, transpose);
@@ -2273,54 +2256,6 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
     sample_ntt_into(rho, j, i, &mut a);
     multiply_ntts_add_assign(&mut acc[dst], &a, &rhs[rhs_index]);
   }
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[inline(always)]
-fn sample_matrix_ntt_mul_accumulate_materialized_k2<const K: usize>(
-  rho: &[u8; SEED_BYTES],
-  rhs: &PolyVec<K>,
-  acc: &mut PolyVec<K>,
-) {
-  debug_assert_eq!(K, 2);
-
-  let mut a0 = [0u16; N];
-  let mut a1 = [0u16; N];
-
-  sample_ntt_pair_into(rho, 0, 0, 1, 0, &mut a0, &mut a1);
-  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&a0, &a1], [&rhs[0], &rhs[1]]);
-
-  sample_ntt_pair_into(rho, 0, 1, 1, 1, &mut a0, &mut a1);
-  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&a0, &a1], [&rhs[0], &rhs[1]]);
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[inline(always)]
-fn sample_matrix_ntt_mul_accumulate_materialized_k2_transpose<const K: usize>(
-  rho: &[u8; SEED_BYTES],
-  rhs: &PolyVec<K>,
-  acc: &mut PolyVec<K>,
-) {
-  debug_assert_eq!(K, 2);
-
-  let mut a0 = [0u16; N];
-  let mut a1 = [0u16; N];
-
-  sample_ntt_pair_into(rho, 0, 0, 0, 1, &mut a0, &mut a1);
-  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&a0, &a1], [&rhs[0], &rhs[1]]);
-
-  sample_ntt_pair_into(rho, 1, 0, 1, 1, &mut a0, &mut a1);
-  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&a0, &a1], [&rhs[0], &rhs[1]]);
 }
 
 #[inline(always)]
@@ -3083,6 +3018,12 @@ impl<'a> SampleNttProduct<'a> {
   }
 
   #[inline(always)]
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
   fn push_accepted_candidate(&mut self, value: u16) -> Option<usize> {
     debug_assert!(value < Q);
     if self.is_done() {
@@ -3169,9 +3110,9 @@ impl<'a> SampleNttProduct<'a> {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 macro_rules! multiply_ntts_add_assign_chunk_neon_body {
-  ($acc:expr, $a:expr, $b:expr, $coeff_offset:expr) => {{
+  ($acc:expr, $a_ptr:expr, $b:expr, $coeff_offset:expr) => {{
     let gamma_offset = $coeff_offset / 2;
-    let a_pair = vld2q_u16($a.as_ptr());
+    let a_pair = vld2q_u16($a_ptr);
     let b_pair = vld2q_u16($b.as_ptr().add($coeff_offset));
     let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(gamma_offset));
 
@@ -3220,7 +3161,7 @@ macro_rules! sample_ntt_product_absorb_candidate_neon {
       // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`, and the caller
       //    proves NEON availability.
       unsafe {
-        multiply_ntts_add_assign_chunk_neon_body!($acc, &$product.chunk, $product.rhs, coeff_offset);
+        multiply_ntts_add_assign_chunk_neon_body!($acc, $product.chunk.as_ptr(), $product.rhs, coeff_offset);
       }
     }
   }};
@@ -3232,21 +3173,26 @@ macro_rules! sample_ntt_product_absorb_candidate_neon {
   not(miri),
   not(feature = "portable-only")
 ))]
-macro_rules! sample_ntt_product_absorb_accepted_candidate_neon {
-  ($product:expr, $candidate:expr, $acc:expr) => {{
-    if let Some(coeff_offset) = $product.push_accepted_candidate($candidate) {
-      // SAFETY: inlined NEON chunk multiply-accumulate from accepted SampleNTT staging because:
-      // 1. The caller only feeds coefficients accepted by the public rejection parser.
-      // 2. `push_accepted_candidate` returns `Some` only after exactly 16 coefficients fill the staging
-      //    chunk, and the emitted `coeff_offset` is a checked 16-coefficient boundary.
-      // 3. The borrow checker guarantees `acc` is not aliased by the read-only staging chunk or RHS.
-      // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`, and the caller
-      //    proves NEON availability.
-      unsafe {
-        multiply_ntts_add_assign_chunk_neon_body!($acc, &$product.chunk, $product.rhs, coeff_offset);
-      }
-    }
-  }};
+#[target_feature(enable = "neon")]
+/// # Safety
+///
+/// `a_ptr` must point to 16 readable accepted SampleNTT coefficients. `coeff_offset` must be a
+/// 16-coefficient boundary inside `acc` and `b`. The caller must guarantee that the active CPU
+/// supports NEON.
+unsafe fn multiply_ntts_add_assign_chunk_neon_ptr(acc: &mut Poly, a_ptr: *const u16, b: &Poly, coeff_offset: usize) {
+  debug_assert_eq!(coeff_offset % SAMPLE_NTT_ACC_CHUNK_COEFFS, 0);
+  debug_assert!(coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS) <= N);
+
+  // SAFETY: pointer-backed NEON chunk multiply-accumulate because:
+  // 1. `a_ptr` points to 16 contiguous accepted SampleNTT coefficients by this function's caller
+  //    contract.
+  // 2. `coeff_offset` is checked to keep the 16-coefficient `acc` and `b` accesses in bounds.
+  // 3. The borrow checker guarantees `acc` is not aliased by read-only `b`; `a_ptr` points to local
+  //    scratch owned by the caller.
+  // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
+  unsafe {
+    multiply_ntts_add_assign_chunk_neon_body!(acc, a_ptr, b, coeff_offset);
+  }
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -3280,21 +3226,70 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
   #[cfg(target_os = "linux")]
   {
     const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
-    let mut accepted = [0u16; MAX_CANDIDATES];
+    const SCRATCH_CANDIDATES: usize = MAX_CANDIDATES.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS);
+
+    if product.is_done() {
+      return;
+    }
+
+    let prefix_len = product.chunk_len;
+    let base_offset = product.filled.strict_sub(prefix_len);
+    let mut accepted = core::mem::MaybeUninit::<[u16; SCRATCH_CANDIDATES]>::uninit();
+    let accepted_ptr = accepted.as_mut_ptr().cast::<u16>();
+
+    if prefix_len != 0 {
+      // SAFETY: carry partial accepted chunk into scratch because:
+      // 1. `prefix_len == product.chunk_len`, and staging chunks are always shorter than the fixed
+      //    16-coefficient chunk width.
+      // 2. `accepted_ptr` points to `SCRATCH_CANDIDATES >= 16` writable u16 slots.
+      // 3. The source and local scratch destination cannot overlap.
+      unsafe {
+        core::ptr::copy_nonoverlapping(product.chunk.as_ptr(), accepted_ptr, prefix_len);
+      }
+    }
+
     // SAFETY: Linux aarch64 compact rejection parser because:
     // 1. `rate_ptr` names a readable SHAKE128 rate block. Callers pass either a `[u8; 168]` buffer or
     //    the first 168 bytes of an initialized Keccak state on little-endian aarch64.
-    // 2. `accepted` has room for every candidate the block can produce.
+    // 2. `accepted_ptr.add(prefix_len)` has room for every candidate the block can produce plus the
+    //    assembly's fixed 8-lane compact stores.
     // 3. Rejection and write positions depend only on public matrix-A samples.
-    let accepted_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(accepted.as_mut_ptr(), rate_ptr) };
-    debug_assert!(accepted_len <= accepted.len());
+    let accepted_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(accepted_ptr.add(prefix_len), rate_ptr) };
+    debug_assert!(accepted_len <= MAX_CANDIDATES);
 
-    for &candidate in &accepted[..accepted_len] {
-      sample_ntt_product_absorb_accepted_candidate_neon!(product, candidate, acc);
-      if product.is_done() {
-        return;
+    let take = accepted_len.min(N.strict_sub(product.filled));
+    let total_len = prefix_len.strict_add(take);
+    let full_len = total_len - (total_len % SAMPLE_NTT_ACC_CHUNK_COEFFS);
+
+    let mut chunk_start = 0usize;
+    while chunk_start < full_len {
+      let coeff_offset = base_offset.strict_add(chunk_start);
+      // SAFETY: compacted accepted-candidate chunk multiply because:
+      // 1. `chunk_start + 16 <= full_len <= total_len`, so the pointer names 16 initialized accepted
+      //    coefficients in `accepted_ptr`.
+      // 2. `coeff_offset` starts at the prior full-chunk boundary and advances in 16-coefficient steps;
+      //    `take` is capped at the remaining polynomial length, keeping every chunk in bounds.
+      // 3. `accepted_ptr` is local scratch and cannot alias `acc` or `product.rhs`.
+      // 4. This function is already gated by `#[target_feature(enable = "neon")]`.
+      unsafe {
+        multiply_ntts_add_assign_chunk_neon_ptr(acc, accepted_ptr.add(chunk_start), product.rhs, coeff_offset);
+      }
+      chunk_start = chunk_start.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS);
+    }
+
+    let remainder_len = total_len.strict_sub(full_len);
+    if remainder_len != 0 {
+      // SAFETY: carry tail accepted coefficients back into staging because:
+      // 1. `remainder_len < 16`, so the destination prefix of `product.chunk` is in bounds.
+      // 2. `full_len..total_len` lies inside the initialized prefix/new-accepted region of
+      //    `accepted_ptr`.
+      // 3. The local scratch source cannot overlap the product staging array.
+      unsafe {
+        core::ptr::copy_nonoverlapping(accepted_ptr.add(full_len), product.chunk.as_mut_ptr(), remainder_len);
       }
     }
+    product.chunk_len = remainder_len;
+    product.filled = product.filled.strict_add(take);
   }
 
   #[cfg(not(target_os = "linux"))]
@@ -4405,21 +4400,6 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   multiply_ntts_add_assign_scalar(acc, a, b);
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-#[inline(always)]
-fn multiply_ntts_accumulate_k2_refs(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
-  // SAFETY: aarch64 NEON K=2 dot-product dispatch because:
-  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-  // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
-  //    contract.
-  // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-  // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
-  unsafe {
-    multiply_ntts_accumulate_k2_neon(acc, a, b);
-  }
-}
-
 #[inline(always)]
 fn multiply_ntts_accumulate_k3_refs(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -4619,19 +4599,6 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
 
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   {
-    if K == 2 {
-      // SAFETY: aarch64 NEON K=2 dot-product dispatch because:
-      // 1. `K == 2` proves the fixed references below are in bounds for both polynomial vectors.
-      // 2. `acc` and every input polynomial are fixed 256-coefficient arrays matching the kernel
-      //    contract.
-      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
-      // 4. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-      // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
-      unsafe {
-        return multiply_ntts_accumulate_k2_neon(acc, [&a[0], &a[1]], [&b[0], &b[1]]);
-      }
-    }
-
     if K == 3 {
       // SAFETY: aarch64 NEON K=3 dot-product dispatch because:
       // 1. `K == 3` proves the fixed references below are in bounds for both polynomial vectors.
@@ -5041,28 +5008,6 @@ fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
     unsafe {
       let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
       let (c0, c1) = base_multiply_8_neon(a, b, gamma, coeff_offset);
-      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
-    }
-  }
-}
-
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-#[target_feature(enable = "neon")]
-fn multiply_ntts_accumulate_k2_neon(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
-  for i in (0..GAMMAS_MONT.len()).step_by(8) {
-    let coeff_offset = i.strict_mul(2);
-
-    // SAFETY: fixed-size gamma load because:
-    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
-    // 2. `i..i + 8` stays inside the public gamma table.
-    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
-    //    availability.
-    unsafe {
-      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
-      let (mut c0, mut c1) = base_multiply_8_neon(a[0], b[0], gamma, coeff_offset);
-      let (p0, p1) = base_multiply_8_neon(a[1], b[1], gamma, coeff_offset);
-      c0 = add_mod_u16x8(c0, p0);
-      c1 = add_mod_u16x8(c1, p1);
       store_accumulated_8_neon(acc, coeff_offset, c0, c1);
     }
   }
