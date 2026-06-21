@@ -13,90 +13,106 @@
 // positions therefore depend only on public bytes, never secret key, noise,
 // message, or shared-secret material.
 
+.section .rodata
+.balign 16
+.Lrscrypto_mlkem_rej_uniform_compact_table:
+        .set .Lmask, 0
+        .rept 256
+        .set .Lpos, 0
+        .set .Llane, 0
+        .rept 8
+        .if ((.Lmask >> .Llane) & 1)
+        .byte 2 * .Llane
+        .byte 2 * .Llane + 1
+        .set .Lpos, .Lpos + 2
+        .endif
+        .set .Llane, .Llane + 1
+        .endr
+        .rept 16 - .Lpos
+        .byte 0
+        .endr
+        .set .Lmask, .Lmask + 1
+        .endr
+
 .text
 .balign 4
 
-.macro SAMPLE_NTT_DECODE_32 in_ptr, scratch
+.macro SAMPLE_NTT_COMPACT_STORE candidates
+        cmhi    v4.8h, v30.8h, \candidates\().8h
+        and     v5.16b, v4.16b, v31.16b
+        uaddlv  s20, v5.8h
+        fmov    w12, s20
+        ldr     q24, [x3, x12, lsl #4]
+        cnt     v5.16b, v5.16b
+        uaddlv  s20, v5.8h
+        fmov    w12, s20
+        tbl     \candidates\().16b, {{ \candidates\().16b }}, v24.16b
+        st1     {{ \candidates\().8h }}, [x0]
+        add     x0, x0, x12, lsl #1
+        add     x9, x9, x12
+.endm
+
+.macro SAMPLE_NTT_DECODE_COMPACT_32 in_ptr
         ld3     {{ v0.16b, v1.16b, v2.16b }}, [\in_ptr], #48
-
-        ushll   v4.8h, v0.8b, #0
-        ushll   v5.8h, v1.8b, #0
-        ushll   v6.8h, v2.8b, #0
-        and     v7.16b, v5.16b, v29.16b
-        shl     v7.8h, v7.8h, #8
-        orr     v16.16b, v4.16b, v7.16b
-        ushr    v17.8h, v5.8h, #4
-        shl     v6.8h, v6.8h, #4
-        orr     v17.16b, v17.16b, v6.16b
-
-        ushll2  v4.8h, v0.16b, #0
-        ushll2  v5.8h, v1.16b, #0
-        ushll2  v6.8h, v2.16b, #0
-        and     v7.16b, v5.16b, v29.16b
-        shl     v7.8h, v7.8h, #8
-        orr     v18.16b, v4.16b, v7.16b
-        ushr    v19.8h, v5.8h, #4
-        shl     v6.8h, v6.8h, #4
-        orr     v19.16b, v19.16b, v6.16b
-
-        st2     {{ v16.8h, v17.8h }}, [\scratch], #32
-        st2     {{ v18.8h, v19.8h }}, [\scratch]
+        zip1    v4.16b, v0.16b, v1.16b
+        zip2    v5.16b, v0.16b, v1.16b
+        zip1    v6.16b, v1.16b, v2.16b
+        zip2    v7.16b, v1.16b, v2.16b
+        bic     v4.8h, #0xf0, lsl #8
+        bic     v5.8h, #0xf0, lsl #8
+        ushr    v6.8h, v6.8h, #4
+        ushr    v7.8h, v7.8h, #4
+        zip1    v16.8h, v4.8h, v6.8h
+        zip2    v17.8h, v4.8h, v6.8h
+        zip1    v18.8h, v5.8h, v7.8h
+        zip2    v19.8h, v5.8h, v7.8h
+        SAMPLE_NTT_COMPACT_STORE v16
+        SAMPLE_NTT_COMPACT_STORE v17
+        SAMPLE_NTT_COMPACT_STORE v18
+        SAMPLE_NTT_COMPACT_STORE v19
 .endm
 
-.macro SAMPLE_NTT_DECODE_16 in_ptr, scratch
+.macro SAMPLE_NTT_DECODE_COMPACT_16 in_ptr
         ld3     {{ v0.8b, v1.8b, v2.8b }}, [\in_ptr], #24
-
-        ushll   v4.8h, v0.8b, #0
-        ushll   v5.8h, v1.8b, #0
-        ushll   v6.8h, v2.8b, #0
-        and     v7.16b, v5.16b, v29.16b
-        shl     v7.8h, v7.8h, #8
-        orr     v16.16b, v4.16b, v7.16b
-        ushr    v17.8h, v5.8h, #4
-        shl     v6.8h, v6.8h, #4
-        orr     v17.16b, v17.16b, v6.16b
-
-        st2     {{ v16.8h, v17.8h }}, [\scratch]
-.endm
-
-.macro SAMPLE_NTT_FILTER count
-        mov     w15, #\count
-.Lsample_ntt_filter_loop\@:
-        ldrh    w12, [x10], #2
-        cmp     w12, w11
-        b.hs    .Lsample_ntt_filter_skip\@
-        strh    w12, [x0], #2
-        add     x9, x9, #1
-.Lsample_ntt_filter_skip\@:
-        subs    w15, w15, #1
-        b.ne    .Lsample_ntt_filter_loop\@
+        zip1    v4.16b, v0.16b, v1.16b
+        zip1    v5.16b, v1.16b, v2.16b
+        bic     v4.8h, #0xf0, lsl #8
+        ushr    v5.8h, v5.8h, #4
+        zip1    v16.8h, v4.8h, v5.8h
+        zip2    v17.8h, v4.8h, v5.8h
+        SAMPLE_NTT_COMPACT_STORE v16
+        SAMPLE_NTT_COMPACT_STORE v17
 .endm
 
 .globl rscrypto_mlkem_rej_uniform_block_aarch64_linux
 .type rscrypto_mlkem_rej_uniform_block_aarch64_linux, %function
 .hidden rscrypto_mlkem_rej_uniform_block_aarch64_linux
 rscrypto_mlkem_rej_uniform_block_aarch64_linux:
-        sub     sp, sp, #64
         mov     x13, x1
         mov     x9, #0
-        mov     w11, #3329
-        movi    v29.16b, #15
+        adrp    x3, .Lrscrypto_mlkem_rej_uniform_compact_table
+        add     x3, x3, :lo12:.Lrscrypto_mlkem_rej_uniform_compact_table
+        mov     x8, #1
+        movk    x8, #2, lsl #16
+        movk    x8, #4, lsl #32
+        movk    x8, #8, lsl #48
+        mov     v31.d[0], x8
+        mov     x8, #16
+        movk    x8, #32, lsl #16
+        movk    x8, #64, lsl #32
+        movk    x8, #128, lsl #48
+        mov     v31.d[1], x8
+        mov     w8, #3329
+        dup     v30.8h, w8
 
         mov     w14, #3
 .Lsample_ntt_block_loop:
-        mov     x10, sp
-        SAMPLE_NTT_DECODE_32 x13, x10
-        mov     x10, sp
-        SAMPLE_NTT_FILTER 32
+        SAMPLE_NTT_DECODE_COMPACT_32 x13
         subs    w14, w14, #1
         b.ne    .Lsample_ntt_block_loop
 
-        mov     x10, sp
-        SAMPLE_NTT_DECODE_16 x13, x10
-        mov     x10, sp
-        SAMPLE_NTT_FILTER 16
+        SAMPLE_NTT_DECODE_COMPACT_16 x13
 
         mov     x0, x9
-        add     sp, sp, #64
         ret
 .size rscrypto_mlkem_rej_uniform_block_aarch64_linux, .-rscrypto_mlkem_rej_uniform_block_aarch64_linux
