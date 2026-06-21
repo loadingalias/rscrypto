@@ -24,7 +24,7 @@ Availability of any specific backend depends on what the target CPU advertises a
 |---|---|
 | x86_64 | SSE4.2 CRC32; SSSE3 / PCLMULQDQ; AVX2; AES-NI; SHA-NI; AVX-512F / VL / BW / DQ; AVX-512IFMA; VPCLMULQDQ; VAES |
 | aarch64 / Apple Silicon | NEON; AES; PMULL; CRC; SHA2; SHA3 / EOR3; SHA512; SVE2-PMULL where available |
-| s390x (IBM Z) | z/Vector; vector enhancements; CPACF / MSA; VGFM |
+| s390x (IBM Z) | z/Vector; vector enhancements; CPACF / MSA; VGFM; fixed-work ML-KEM arithmetic |
 | ppc64le (POWER) | AltiVec; VSX; POWER8 vector / crypto; POWER9 / POWER10 vector; VPMSUMD |
 | riscv64 | V / RVV; Zbc; Zvbc; Zbkc; Zkne / Zknd; Zvkned; Zkt / Zvkt |
 | wasm32 | SIMD128 where enabled |
@@ -34,6 +34,11 @@ also use assembly helpers for selected scalar, field, and basepoint operations
 when those helpers are compiled for the target. Other target families fall back
 to the portable implementation unless a future measured backend justifies
 additional code.
+
+ML-KEM-512/768/1024 always have a portable Rust path. On s390x, secret-fed
+ML-KEM arithmetic uses fixed-work z/Vector kernels where those kernels are
+compiled and selected. The implementation does not replace constant-time
+hardening with native scalar multiply or divide on secret-fed arithmetic.
 
 ## `no_std` Targets
 
@@ -52,5 +57,4 @@ Other `no_std` targets in the same families (e.g. `thumbv7em-*`, larger RISC-V p
 
 Current geomean speedups by platform live in
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
-The current public set includes the 2026-06-12 nine-runner Linux CI matrix and
-a 2026-06-12 local Apple Silicon macOS/aarch64 full run.
+The current public set includes the 2026-06-19 nine-runner Linux CI matrix.

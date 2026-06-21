@@ -25,11 +25,17 @@ The exact release claim is the set of primitive/configuration pairs marked
 | Password verification | Final secret comparisons are CT-critical. Argon2d, Argon2id, and scrypt still have algorithm-level data-dependent memory access, so do not describe them as globally constant-time. |
 
 These are not blanket constant-time claims: DER/PHC parsing, public-key
-verification math, key generation, OS randomness, serialization, raw hashes,
-checksums, non-cryptographic hashes, benchmarks, and feature dispatch.
+verification math, unlisted key generation, OS randomness, serialization, raw
+hashes, checksums, non-cryptographic hashes, benchmarks, and feature dispatch.
 
 The exact evidence model is in [`constant-time.md`](constant-time.md). No
 third-party audit, FIPS 140-3 validation, or formal proof is claimed today.
+
+ML-KEM-512/768/1024 use the FIPS 203 KEM shape. Official ACVP vectors,
+`fips203` differential tests, parser/failure-shape tests, fuzz corpus replay,
+and CT artifacts back the public claim. On s390x, secret-fed ML-KEM arithmetic
+uses fixed-work z/Vector kernels when that backend is selected; scalar native
+multiply/divide shortcuts are not used to bypass constant-time hardening.
 
 ## Verification Failures
 

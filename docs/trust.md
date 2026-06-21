@@ -9,8 +9,8 @@ Start here for the short map. Follow the links for exact boundaries.
 ## What This Crate Is
 
 `rscrypto` provides primitive cryptography: hashes, MACs, KDFs, password
-hashing, AEADs, signatures, key exchange, RSA, and checksums behind one feature
-model.
+hashing, AEADs, signatures, key exchange, ML-KEM, RSA, and checksums behind one
+feature model.
 
 The portable Rust implementation is always present. SIMD and assembly paths are
 accelerators, and they are tested against the portable path.
@@ -20,6 +20,8 @@ accelerators, and they are tested against the portable path.
 - Cryptographic correctness for the supported primitive APIs.
 - Secret-dependent timing behavior for the release-claimed constant-time
   primitive/configuration pairs.
+- ML-KEM key generation, encapsulation, decapsulation, and implicit-rejection
+  behavior for the FIPS 203 parameter sets exposed by the public API.
 - Authentication failure shape for MACs, AEAD open, signatures, password
   checks, and RSA private operations where the API claims an opaque failure.
 - Secret material in public formatting and normal drop paths.
@@ -42,6 +44,8 @@ The coverage ledger is [`docs/test-vector-coverage.md`](test-vector-coverage.md)
 It points to the tests and test data used for:
 
 - Official standards vectors.
+- NIST ACVP FIPS 203 ML-KEM keyGen, encapsulation, decapsulation,
+  decapsulationKeyCheck, and encapsulationKeyCheck vectors.
 - Wycheproof vectors where they map to the public API.
 - Differential or oracle tests against established crates.
 - Invalid input, malformed encoding, tamper, and failure-shape tests.
@@ -65,6 +69,8 @@ workflow for release commits and checked against [`ct.toml`](../ct.toml).
 Current benchmark claims should match
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md). The
 benchmark method is described in [`docs/benchmarking.md`](benchmarking.md).
+ML-KEM has both end-to-end benchmark rows and phase selectors for matrix
+sampling, arithmetic, PKE, and decapsulation attribution.
 
 Performance evidence is not security evidence. It only describes measured speed
 for the listed platform, commit, feature set, and comparison shape.

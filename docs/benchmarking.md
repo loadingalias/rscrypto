@@ -50,6 +50,7 @@ The current public comparison set is Rust-focused and shape-compatible:
 | BLAKE2 / BLAKE3 | RustCrypto, `dryoc`, upstream `blake3` |
 | ECDSA P-256/P-384 | RustCrypto `p256`/`p384`, `aws-lc-rs`, `ring` |
 | Ed25519 / X25519 | dalek, `aws-lc-rs`, `ring` where API-compatible, `dryoc` |
+| ML-KEM-512/768/1024 | `libcrux`, `fips203`, RustCrypto `ml-kem`, and target-available `aws-lc-rs` |
 | RSA import / verification | RustCrypto `rsa`, `ring`, target-available `aws-lc-rs` |
 | Password hashing | RustCrypto, `dryoc` where API-compatible |
 | XXH3 / RapidHash | upstream crates |
@@ -66,6 +67,12 @@ Some common libraries are not primary benchmark baselines:
 
 - ECDSA rows are split by curve and operation. P-256 uses SHA-256; P-384 uses
   SHA-384.
+- ML-KEM end-to-end rows are split by parameter set and operation:
+  key generation, encapsulation, and decapsulation for ML-KEM-512, ML-KEM-768,
+  and ML-KEM-1024. Phase rows use the `mlkem-matrix-sample`,
+  `mlkem-arithmetic`, `mlkem-pke-phases`, and `mlkem-decap-phases` groups to
+  attribute time to matrix sampling, polynomial arithmetic, public-key
+  encryption, and decapsulation subpaths.
 - RSA import rows measure more than raw ASN.1 parsing when the public API also
   validates key material or prepares arithmetic state.
 - `ring` X25519 is excluded from static-key Diffie-Hellman rows because its
@@ -82,6 +89,9 @@ just bench
 just bench rsa
 just bench crate=rscrypto bench=auth filter='^ecdsa-p256/'
 just bench crate=rscrypto bench=auth filter='^ecdsa-p384/'
+just bench mlkem
+just bench mlkem-phases
+just bench mlkem-arithmetic
 ```
 
 Local runs are useful for capacity planning on your hardware. They should not be

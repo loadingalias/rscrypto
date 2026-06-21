@@ -15,11 +15,15 @@ Inside a typical boundary, these are the NIST-aligned items:
 | MAC / KDF | `HmacSha*`, `Kmac256`, `HkdfSha256`, `HkdfSha384` |
 | Password-based KDF | `Pbkdf2Sha256`, `Pbkdf2Sha512` (SP 800-132) |
 | Digital signatures | ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification (`FIPS 186-5` / SEC 1 profile shape) |
+| Post-quantum KEM | `MlKem512`, `MlKem768`, `MlKem1024` (`FIPS 203`) |
 | RSA key generation | `RsaPrivateKey::generate` follows the crate's FIPS 186-5 Appendix A.1.3 probable-prime contract and uses `getrandom`-seeded HMAC_DRBG machinery for key generation |
 
 This table is a standards-alignment inventory only; it is not a validation
 claim. In particular, RSA key-generation entropy handling is not a crate-wide
 validated random bit generator service.
+ML-KEM entries mean the public API exposes FIPS 203 parameter sets with ACVP
+vector coverage and differential tests; they do not imply a CMVP certificate or
+an approved module boundary.
 
 ## Non-Approved In This Release
 

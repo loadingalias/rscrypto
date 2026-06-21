@@ -21,6 +21,9 @@ rscrypto = { version = "0.5.0", default-features = false, features = ["rsa", "ge
 # ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
 rscrypto = { version = "0.5.0", default-features = false, features = ["ecdsa"] }
 
+# FIPS 203 ML-KEM-512/768/1024 KEM APIs with caller-supplied randomness.
+rscrypto = { version = "0.5.0", default-features = false, features = ["ml-kem"] }
+
 # Everything.
 rscrypto = { version = "0.5.0", features = ["full", "getrandom"] }
 
@@ -55,7 +58,7 @@ rscrypto = { version = "0.5.0", features = ["full", "portable-only"] }
 | `kdfs` | `hkdf`, `pbkdf2` |
 | `password-hashing` | `argon2`, `scrypt`, `phc-strings` |
 | `signatures` | `ecdsa`, `ed25519`, `rsa` |
-| `key-exchange` | `x25519` |
+| `key-exchange` | `x25519`, `ml-kem` |
 | `aead` | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
 ### Algorithm Leaf Features
@@ -87,6 +90,7 @@ rscrypto = { version = "0.5.0", features = ["full", "portable-only"] }
 | `ed25519` | `sha2` | Ed25519 signatures |
 | `rsa` | `alloc`, `sha2` | RSA public/private keys, RSA signatures, OAEP, PKCS#1 v1.5, key generation |
 | `x25519` | -- | X25519 key exchange |
+| `ml-kem` | `sha3` | ML-KEM-512, ML-KEM-768, and ML-KEM-1024 key encapsulation |
 | `aes-gcm` | -- | AES-128-GCM and AES-256-GCM |
 | `aes-gcm-siv` | -- | AES-128-GCM-SIV and AES-256-GCM-SIV |
 | `chacha20poly1305` | -- | ChaCha20-Poly1305 |
@@ -98,7 +102,7 @@ rscrypto = { version = "0.5.0", features = ["full", "portable-only"] }
 
 | Feature | Effect |
 |---|---|
-| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. ECDSA key generation, caller-blinded signing, and no-std RSA encryption can use caller-supplied byte-filling closures; deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
+| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. ECDSA key generation, caller-blinded signing, ML-KEM key generation/encapsulation, and no-std RSA encryption can use caller-supplied byte-filling closures; deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |

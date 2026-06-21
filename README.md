@@ -7,7 +7,7 @@
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-**Pure Rust cryptography: RSA, ECDSA, Ed25519, X25519, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
+**Pure Rust cryptography: RSA, ECDSA, Ed25519, X25519, ML-KEM, AEADs, hashes, KDFs, password hashing, CRCs, `no_std`, WASM, and hardware acceleration in one dependency.**
 
 `rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed without dragging in mandatory C, OpenSSL, or system library coupling.
 
@@ -28,6 +28,7 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 ## Why rscrypto?
 
 - **RSA is a first class citizen.** Strict DER import/export, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, FIPS 186-5 A.1.3 probable-prime key generation in code, X.509/JWT/COSE/TLS profile mapping, blinded private operations, and reusable scratch APIs.
+- **ML-KEM is held to a world-class primitive bar.** ML-KEM-512/768/1024 expose typed FIPS 203 key, ciphertext, and shared-secret APIs, prepared-key paths, ACVP vectors, `fips203` differential tests, CT-claimed secret-bearing operations, and architecture-specific kernels where they can be validated.
 - **One coherent primitive stack.** Avoid composing a dozen crates with different APIs, feature models, and security conventions.
 - **Small builds stay small.** Enable `sha2`, `blake3`, `aes-gcm`, `chacha20poly1305`, `ed25519`, `x25519`, `argon2`, or any other leaf without pulling in the world.
 - **Portable Rust is the source of truth.** SIMD and ASM paths are accelerators; the portable backend remains the reference impl.
@@ -158,6 +159,41 @@ P-256/SHA-256 and P-384/SHA-384 profiles, raw `r || s` signatures, DER
 signature import, SEC1/SPKI public-key import, deterministic signing, and
 caller-blinded signing APIs.
 
+## Establish An ML-KEM Shared Secret
+
+```toml
+[dependencies]
+rscrypto = { version = "0.5.0", default-features = false, features = ["ml-kem"] }
+```
+
+```rust
+use rscrypto::{Kem, MlKem768, MlKemError};
+
+fn deterministic_fill(seed: u8) -> impl FnMut(&mut [u8]) -> Result<(), MlKemError> {
+  move |out| {
+    for (i, b) in out.iter_mut().enumerate() {
+      *b = seed.wrapping_add(i as u8);
+    }
+    Ok(())
+  }
+}
+
+fn round_trip_mlkem768() -> Result<(), MlKemError> {
+  let (encapsulation_key, decapsulation_key) = MlKem768::generate_keypair(deterministic_fill(0x40))?;
+  let (ciphertext, sender_secret) = MlKem768::encapsulate(&encapsulation_key, deterministic_fill(0x90))?;
+  let receiver_secret = MlKem768::decapsulate(&decapsulation_key, &ciphertext)?;
+
+  assert_eq!(sender_secret, receiver_secret);
+  Ok(())
+}
+
+assert!(round_trip_mlkem768().is_ok());
+```
+
+Production callers should use a real entropy source for key generation and
+encapsulation randomness. The API accepts caller-supplied random-fill closures,
+so `ml-kem` works in `no_std` deployments that own their entropy boundary.
+
 ## Encrypt Data
 
 ```toml
@@ -215,7 +251,7 @@ assert!(
 | Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
 | MACs and KDFs | HMAC-SHA-2, KMAC256, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
 | Password Hashing | Argon2d/i/id, scrypt, PHC string encode/verify | `auth`, `argon2`, `scrypt`, `phc-strings` |
-| Public-key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange | `auth`, `signatures`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519` |
+| Public-key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `auth`, `signatures`, `key-exchange`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519`, `ml-kem` |
 | AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
 | Fast Non-crypto Hashes | XXH3-64/128, RapidHash 64/128 | `xxh3`, `rapidhash` |
@@ -224,7 +260,7 @@ Fast non-cryptographic hashes and CRCs are for indexing, checksumming, dedup, an
 
 Flags are layered by use:
 
-- **Leaf Primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `crc32`, etc.
+- **Leaf Primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `ml-kem`, `crc32`, etc.
 - **Families/Groups:** `hashes`, `checksums`, `macs`, `kdfs`, `password-hashing`, `aead`, `signatures`, `key-exchange`.
 - **Deployment Controls:** `std`, `alloc`, `getrandom`, `parallel`, `serde`, `serde-secrets`, `portable-only`.
 
@@ -240,10 +276,11 @@ The exact release claim is the set of primitive/configuration pairs marked
 `ct_claimed` in [`ct.toml`](ct.toml). The main secret-bearing surfaces are
 MAC/tag verification, AEAD authentication failure shape, X25519 scalar
 multiplication, Ed25519 signing and secret public-key derivation, ECDSA
-P-256/P-384 blinded signing, RSA private sign/decrypt leaves, and selected
-password-verification comparisons.
+P-256/P-384 blinded signing, ML-KEM-512/768/1024 key generation,
+encapsulation, decapsulation secret surfaces, RSA private sign/decrypt leaves,
+and selected password-verification comparisons.
 
-Public parsing, key generation, OS randomness, raw hashes, checksums,
+Public parsing, unlisted key generation, OS randomness, raw hashes, checksums,
 non-cryptographic hashes, benchmark paths, and public-key verification math are
 not blanket constant-time claims. See [`docs/security.md`](docs/security.md)
 for application guidance and [`docs/constant-time.md`](docs/constant-time.md)
@@ -273,9 +310,13 @@ Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rsc
 | RSA import + verify | Linux CI | **1.54x geomean** |
 | AEAD | Linux CI | **1.56x geomean** |
 
-The measured weak spots in the latest published benchmark set are ML-KEM keygen,
-encapsulation, and decapsulation rows, especially on IBM Z/s390x, Graviton, and
-RISC-V, followed by ECDSA P-384 signing and Argon2id OWASP pressure. See
+The ML-KEM aggregate above comes from the generated 2026-06-19 overview. That
+overview predates the latest IBM Z z/Vector CT arithmetic refresh, so do not
+use the `0.78x` aggregate as the current s390x result. The benchmark tooling
+now exposes `mlkem`, `mlkem-phases`, `mlkem-matrix-sample`,
+`mlkem-arithmetic`, `mlkem-pke-phases`, and `mlkem-decap-phases` selectors so
+the next generated overview can separate end-to-end speed from matrix sampling,
+arithmetic, PKE, and decapsulation phase costs. See
 [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
 methodology, platform scorecards, and loss tables.
 
@@ -287,7 +328,7 @@ methodology, platform scorecards, and loss tables.
 |---|---|
 | x86 / x86_64 | SSE4.2, AVX2, AVX-512, AES-NI, SHA-NI, VAES, VPCLMULQDQ |
 | Arm / AArch64 / Apple Silicon | NEON, AES, PMULL, SHA2, SHA3, SVE2-PMULL |
-| IBM Z | CPACF, MSA, VGFM |
+| IBM Z | CPACF, MSA, VGFM, z/Vector ML-KEM arithmetic |
 | POWER / ppc64le | POWER8/9/10 vector and crypto extensions |
 | RISC-V | RVV, Zbc, Zvkned, Zvbc |
 | WASM | SIMD128 where available, portable fallback everywhere |
@@ -303,6 +344,7 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 - Secret-bearing types zeroize on drop and mask `Debug`.
 - Strict arithmetic for counters, lengths, offsets, and indices.
 - AEAD failed-open paths wipe output buffers.
+- ML-KEM-512/768/1024 have FIPS 203 ACVP vectors, `fips203` differential coverage, and CT evidence for declared secret-bearing operations.
 - Portable and accelerated backends are differentially tested for byte-identical output.
 - Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
 - RSA private operations have extra regression coverage for memory safety and
