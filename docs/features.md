@@ -10,28 +10,28 @@ Every primitive has its own leaf feature so size-conscious builds compile only w
 
 ```toml
 # One algorithm, no_std.
-rscrypto = { version = "0.5.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.6.0", default-features = false, features = ["sha2"] }
 
 # RSA public-key import and verification, no_std + alloc.
-rscrypto = { version = "0.5.0", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.6.0", default-features = false, features = ["rsa"] }
 
 # RSA key generation, signing, encryption, and private-operation blinding.
-rscrypto = { version = "0.5.0", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.6.0", default-features = false, features = ["rsa", "getrandom"] }
 
 # ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
-rscrypto = { version = "0.5.0", default-features = false, features = ["ecdsa"] }
+rscrypto = { version = "0.6.0", default-features = false, features = ["ecdsa"] }
 
 # FIPS 203 ML-KEM-512/768/1024 KEM APIs with caller-supplied randomness.
-rscrypto = { version = "0.5.0", default-features = false, features = ["ml-kem"] }
+rscrypto = { version = "0.6.0", default-features = false, features = ["ml-kem"] }
 
 # Everything.
-rscrypto = { version = "0.5.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.6.0", features = ["full", "getrandom"] }
 
 # Everything, with parallel BLAKE3 / Argon2 lanes via Rayon.
-rscrypto = { version = "0.5.0", features = ["full", "parallel", "getrandom"] }
+rscrypto = { version = "0.6.0", features = ["full", "parallel", "getrandom"] }
 
 # Audit-constrained: makes runtime dispatch ignore host SIMD/ASM capabilities.
-rscrypto = { version = "0.5.0", features = ["full", "portable-only"] }
+rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
 ```
 
 ## Complete Feature Index

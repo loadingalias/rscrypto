@@ -61,4 +61,4 @@ Prints the platform's detected CPU capabilities and reports which kernel the dis
 - Full API reference: [`docs.rs/rscrypto`](https://docs.rs/rscrypto)
 - Algorithm inventory and feature flags: [`README.md`](../README.md)
 - Migration guides from RustCrypto, `blake3`, CRC crates, AEADs, signatures, and password hashing: [`docs/migration/`](../docs/migration/)
-- Security guidance (nonce lifecycle, PHC verification limits, fallback notes): [`docs/security.md`](../docs/security.md)
+- Security posture and constant-time boundaries: [`README.md#security`](../README.md#security), [`docs/constant-time.md`](../docs/constant-time.md)

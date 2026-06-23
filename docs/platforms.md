@@ -1,6 +1,8 @@
 # Platforms
 
-`rscrypto` is built around a three-tier dispatch model so the same source compiles to a portable Rust path on every target and a hardware-accelerated path on every supported CPU.
+`rscrypto` uses a three-tier dispatch model. The same source builds with a
+portable Rust path on every supported target and uses hardware backends only
+when the target and CPU support them.
 
 ## Dispatch Model
 
@@ -18,7 +20,9 @@ override compile-time `target_feature` selection. See
 
 ## Acceleration Matrix
 
-Availability of any specific backend depends on what the target CPU advertises and what `target-feature` permits. The portable Rust fallback is present on every target listed below.
+Backend availability depends on what the target CPU advertises and what
+`target-feature` permits. The portable Rust fallback is present on every target
+listed below.
 
 | Target family | Backends used (when CPU advertises them) |
 |---|---|
@@ -31,9 +35,8 @@ Availability of any specific backend depends on what the target CPU advertises a
 
 ECDSA P-256/P-384 always has a portable Rust path. x86_64 and aarch64 targets
 also use assembly helpers for selected scalar, field, and basepoint operations
-when those helpers are compiled for the target. Other target families fall back
-to the portable implementation unless a future measured backend justifies
-additional code.
+when those helpers are compiled for the target. Other target families use the
+portable implementation.
 
 ML-KEM-512/768/1024 always have a portable Rust path. On s390x, secret-fed
 ML-KEM arithmetic uses fixed-work z/Vector kernels where those kernels are
@@ -51,10 +54,12 @@ The following `no_std` targets are built in CI:
 - `wasm32-unknown-unknown`
 - `wasm32-wasip1`
 
-Other `no_std` targets in the same families (e.g. `thumbv7em-*`, larger RISC-V profiles) generally work; open an issue if a target you care about is missing.
+Other `no_std` targets in the same families, such as `thumbv7em-*` and larger
+RISC-V profiles, generally work. Open an issue if a target you care about is
+missing.
 
 ## Per-Platform Benchmark Scorecard
 
 Current geomean speedups by platform live in
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
-The current public set includes the 2026-06-19 nine-runner Linux CI matrix.
+The current public set includes the 2026-06-22 nine-runner Linux CI matrix.

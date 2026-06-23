@@ -10,7 +10,7 @@ Evidence: `tests/sha2_official_vectors.rs`, `tests/sha256_differential.rs`, and 
 | | Before (`sha2` 0.11.x) | After (`rscrypto` 0.5.0) |
 |---|---|---|
 | Cargo dep | `sha2 = "0.11"` | `rscrypto = { version = "0.5.0", features = ["sha2"] }` |
-| Import | `use sha2::{Sha256, Digest};` | `use rscrypto::{Sha256, Digest};` |
+| Import | `use sha2::{Sha256, Digest};` | `use rscrypto::Sha256;` |
 | Call | `Sha256::digest(data)` | `Sha256::digest(data)` |
 
 ## Cargo.toml
@@ -52,7 +52,7 @@ let bytes: &[u8] = out.as_slice();
 
 ```rust
 // After
-use rscrypto::{Digest, Sha256};
+use rscrypto::Sha256;
 let out: [u8; 32] = Sha256::digest(b"123456789");
 ```
 
@@ -71,7 +71,7 @@ let out = hasher.finalize();                   // consumes hasher
 
 ```rust
 // After
-use rscrypto::{Digest, Sha256};
+use rscrypto::Sha256;
 let mut hasher = Sha256::new();
 hasher.update(b"foo");
 hasher.update(b"bar");
@@ -94,7 +94,7 @@ let out = hasher.finalize();
 
 ```rust
 // After
-use rscrypto::{Digest, Sha256};
+use rscrypto::Sha256;
 let mut hasher = Sha256::new();
 hasher.update(b"throwaway");
 hasher.reset();

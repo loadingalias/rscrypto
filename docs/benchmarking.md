@@ -1,8 +1,7 @@
 # Benchmarking
 
-`rscrypto` publishes benchmarks so users can understand the shape of the crate:
-where it is fast, where it is competitive, and where another library may still
-be the better choice.
+`rscrypto` publishes benchmarks so users can see where it wins, ties, or loses
+in shape-compatible comparisons.
 
 Benchmark numbers are only meaningful with their platform, commit, feature set,
 and comparison shape. Treat every headline number as a pointer to the raw

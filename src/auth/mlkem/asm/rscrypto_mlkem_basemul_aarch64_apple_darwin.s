@@ -130,6 +130,21 @@
         st2     {{ v23.8h, v24.8h }}, [x0], #32
 .endm
 
+.macro BASEMUL_ACCUMULATE_K2_16
+        ldr     q21, [x3], #16
+        ld2     {{ v23.8h, v24.8h }}, [x0]
+
+        BASEMUL_PRODUCT_16 x1, x2
+        ADD_MOD_Q v23, v6
+        ADD_MOD_Q v24, v7
+
+        BASEMUL_PRODUCT_16 x4, x5
+        ADD_MOD_Q v23, v6
+        ADD_MOD_Q v24, v7
+
+        st2     {{ v23.8h, v24.8h }}, [x0], #32
+.endm
+
 .macro BASEMUL_ACCUMULATE_K4_16
         ldr     q21, [x3], #16
         ld2     {{ v23.8h, v24.8h }}, [x0]
@@ -176,6 +191,23 @@ _rscrypto_mlkem_basemul_accumulate_chunk_aarch64_apple_darwin:
         mov     w8, #62209
         dup     v31.8h, w8
         BASEMUL_ACCUMULATE_16
+        ret
+
+.globl _rscrypto_mlkem_basemul_accumulate_k2_aarch64_apple_darwin
+.private_extern _rscrypto_mlkem_basemul_accumulate_k2_aarch64_apple_darwin
+_rscrypto_mlkem_basemul_accumulate_k2_aarch64_apple_darwin:
+        mov     w8, #3329
+        dup     v30.8h, w8
+        mov     w8, #62209
+        dup     v31.8h, w8
+        add     x4, x1, #512
+        add     x5, x2, #512
+        mov     w9, #8
+1:
+        BASEMUL_ACCUMULATE_K2_16
+        BASEMUL_ACCUMULATE_K2_16
+        subs    w9, w9, #1
+        b.ne    1b
         ret
 
 .globl _rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin

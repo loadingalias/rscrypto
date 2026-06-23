@@ -24,8 +24,6 @@ fn hex_to_bytes(s: &str) -> Vec<u8> {
     .collect()
 }
 
-// ─── SHA-256 ────────────────────────────────────────────────────────────────
-
 #[test]
 fn pbkdf2_sha256_kat_c1_dk32() {
   // P="password" S="salt" c=1 dk_len=32
@@ -80,8 +78,6 @@ fn pbkdf2_sha256_kat_embedded_nul_c4096_dk16() {
   assert_eq!(out.as_slice(), expected.as_slice());
 }
 
-// ─── SHA-512 ────────────────────────────────────────────────────────────────
-
 #[test]
 fn pbkdf2_sha512_kat_c1_dk64() {
   // P="password" S="salt" c=1 dk_len=64
@@ -118,8 +114,6 @@ fn pbkdf2_sha512_kat_c4096_dk64() {
   Pbkdf2Sha512::derive_key_primitive(b"password", b"salt", 4096, &mut out).unwrap();
   assert_eq!(out.as_slice(), expected.as_slice());
 }
-
-// ─── Streaming / one-shot equivalence ───────────────────────────────────────
 
 #[test]
 fn pbkdf2_sha256_state_reuse_matches_oneshot() {

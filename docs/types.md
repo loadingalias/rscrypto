@@ -125,7 +125,9 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `MlKem512EncapsulationKey` / `MlKem512DecapsulationKey` / `MlKem512Ciphertext` / `MlKem512SharedSecret` | 800B / 1632B / 768B / 32B | FIPS 203 ML-KEM-512 |
 | `MlKem768EncapsulationKey` / `MlKem768DecapsulationKey` / `MlKem768Ciphertext` / `MlKem768SharedSecret` | 1184B / 2400B / 1088B / 32B | FIPS 203 ML-KEM-768 |
 | `MlKem1024EncapsulationKey` / `MlKem1024DecapsulationKey` / `MlKem1024Ciphertext` / `MlKem1024SharedSecret` | 1568B / 3168B / 1568B / 32B | FIPS 203 ML-KEM-1024 |
-| `MlKem512PreparedEncapsulationKey` / `MlKem512PreparedDecapsulationKey` and matching `MlKem768*` / `MlKem1024*` prepared types | -- | Validated reusable ML-KEM arithmetic state |
+| `MlKem512PreparedEncapsulationKey` / `MlKem512PreparedDecapsulationKey` | 800B / 1632B | Validated reusable ML-KEM-512 state |
+| `MlKem768PreparedEncapsulationKey` / `MlKem768PreparedDecapsulationKey` | 1184B / 2400B | Validated reusable ML-KEM-768 state |
+| `MlKem1024PreparedEncapsulationKey` / `MlKem1024PreparedDecapsulationKey` | 1568B / 3168B | Validated reusable ML-KEM-1024 state |
 
 ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signature import, SEC1/SPKI public keys, deterministic signing, keypair wrappers, and caller-blinded signing APIs for CT-claimed private-key scalar work.
 RSA public-key verification, import, and caller-filled public encryption require
@@ -138,7 +140,8 @@ integrations that own their entropy boundary.
 ML-KEM supports key generation, encapsulation, decapsulation, validated prepared
 encapsulation keys, and validated prepared decapsulation keys. The API takes
 caller-supplied random-fill closures for key generation and encapsulation, so
-`ml-kem` does not require `getrandom`.
+`ml-kem` does not require `getrandom`. Each profile exposes FIPS 203 size,
+randomness, security-category, and required-RBG-strength constants.
 
 ## AEAD
 

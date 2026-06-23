@@ -14,7 +14,7 @@ Include:
 - Expected and actual behavior.
 - Relevant platform and CPU details.
 - Whether exploitability depends on features such as `std`, `alloc`,
-  `getrandom`, `serde-secrets`, or hardware acceleration.
+  `getrandom`, `serde`, `serde-secrets`, or hardware acceleration.
 
 You should receive an acknowledgment within 72 hours. If you do not, follow up
 on the private advisory thread.
@@ -23,10 +23,12 @@ on the private advisory thread.
 
 In scope:
 
-- Cryptographic correctness failures.
+- Cryptographic correctness failures, including behavior that disagrees with
+  documented standards, profiles, official vectors, or crate security
+  boundaries.
 - Timing side channels in claimed constant-time code paths.
-- ML-KEM key generation, encapsulation, decapsulation, or implicit-rejection
-  behavior that disagrees with FIPS 203 or the documented CT boundary.
+- Secret-dependent oracle behavior in authentication, decryption,
+  decapsulation, signature verification, or key-agreement APIs.
 - Memory-safety issues in `unsafe` code.
 - Nonce, key, signature, or verification behavior that creates
   security-relevant API misuse.
@@ -47,7 +49,7 @@ Out of scope:
 
 | Version | Supported |
 | ------- | --------- |
-| `0.5.x` | Yes |
+| `0.6.x` | Yes |
 
 Only the latest published minor release receives security patches. Users should
 stay current.
@@ -59,15 +61,9 @@ dependency. External crypto crates used for testing, fuzzing, migration checks,
 or benchmarks are not production dependencies.
 
 Constant-time claims are scoped. They apply only to named secret-bearing
-operations and target configurations, not to every API or every build. See
-[`docs/security.md`](docs/security.md) for application guidance and
-[`docs/constant-time.md`](docs/constant-time.md) for the exact claim model.
-
-ML-KEM-512/768/1024 are in scope for the documented FIPS 203 correctness and
-constant-time evidence model. The ML-KEM claim covers declared secret inputs in
-key generation, encapsulation, decapsulation, and implicit rejection; public
-keys, ciphertext lengths, parse errors, profile selection, and matrix seeds
-remain public-input work.
+operations and target configurations, not to every API or every build. The
+README carries the public security summary; [`docs/constant-time.md`](docs/constant-time.md)
+is the exact claim model.
 
 No third-party security audit, FIPS 140-3 validation, or formal proof is claimed
 today.

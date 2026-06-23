@@ -36,8 +36,6 @@ fn oracle_ctx(algo: argon2::Algorithm, m_kib: u32, t: u32, p: u32, out_len: usiz
   argon2::Argon2::new(algo, argon2::Version::V0x13, params)
 }
 
-// ─── Small-parameter matrix (CI-friendly) ───────────────────────────────────
-
 /// Tiny / fast parameter matrix used for all three variants. Every tuple
 /// completes in a few milliseconds so the bench run stays CI-friendly.
 const SMALL_MATRIX: &[(u32, u32, u32)] = &[
@@ -135,8 +133,6 @@ fn argon2id_small(c: &mut Criterion) {
   );
 }
 
-// ─── OWASP-scale parameter matrix ───────────────────────────────────────────
-
 /// OWASP 2024 recommended password-hashing parameters (m=19 MiB, t=2, p=1).
 /// These are slow — Criterion runs a reduced sample size so the group
 /// completes in reasonable time for real perf measurement.
@@ -192,8 +188,6 @@ fn argon2id_owasp(c: &mut Criterion) {
 
   g.finish();
 }
-
-// ─── scrypt parameter matrix ───────────────────────────────────────────────
 
 /// Build rscrypto scrypt params.
 fn rs_scrypt_params(log_n: u8, r: u32, p: u32, out_len: u32) -> ScryptParams {
@@ -304,8 +298,6 @@ fn scrypt_phc_roundtrip(_c: &mut Criterion) {
   // Stub when the PHC feature is disabled.
 }
 
-// ─── PHC string round-trip ─────────────────────────────────────────────────
-
 #[cfg(feature = "phc-strings")]
 fn argon2id_phc_roundtrip(c: &mut Criterion) {
   let mut g = c.benchmark_group("argon2id-phc-roundtrip");
@@ -329,12 +321,10 @@ fn argon2id_phc_roundtrip(_c: &mut Criterion) {
   // Stub when the PHC feature is disabled.
 }
 
-// ─── Argon2 lane parallelism scaling (Phase 3) ─────────────────────────────
-
 /// CI-friendly lane parallelism scaling curve. With `parallel` enabled,
 /// `p > 1` triggers the `rayon::scope`-driven slice driver; `p == 1`
 /// takes the fast-path that skips rayon entirely. Same memory cost
-/// across every `p`, so the per-iteration WORK is identical (Argon2's
+/// across every `p`, so the per-iteration work is identical (Argon2's
 /// matrix size depends on `m`, not `p`); only the scheduling differs.
 ///
 /// At 4 MiB the rayon task-dispatch overhead per slice is a measurable

@@ -25,7 +25,6 @@ macro_rules! serde_roundtrip {
   };
 }
 
-// ── AEAD nonces ─────────────────────────────────────────────────────────────
 #[cfg(feature = "aead")]
 mod aead_nonces {
   use rscrypto::aead::{Nonce96, Nonce128, Nonce192, Nonce256};
@@ -36,7 +35,6 @@ mod aead_nonces {
   serde_roundtrip!(nonce256, Nonce256, 32);
 }
 
-// ── AEAD keys and tags ──────────────────────────────────────────────────────
 #[cfg(feature = "chacha20poly1305")]
 mod chacha20poly1305_serde {
   #[cfg(feature = "serde-secrets")]
@@ -125,7 +123,6 @@ mod aegis256_serde {
   serde_roundtrip!(tag, Aegis256Tag, 16);
 }
 
-// ── Auth keys and signatures ────────────────────────────────────────────────
 #[cfg(feature = "ed25519")]
 mod ed25519_serde {
   #[cfg(feature = "serde-secrets")]
@@ -151,7 +148,6 @@ mod x25519_serde {
   serde_roundtrip!(shared_secret, X25519SharedSecret, 32);
 }
 
-// ── Wrong-length deserialization must fail ───────────────────────────────────
 #[cfg(feature = "aead")]
 #[test]
 fn wrong_length_bytes_rejected() {
