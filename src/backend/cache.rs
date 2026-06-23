@@ -15,8 +15,6 @@ use core::cell::UnsafeCell;
 #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
 use core::mem::MaybeUninit;
 
-// OnceCache<T> - Single-value lazy cache
-
 /// A lazy cache for a single `Copy` value.
 ///
 /// Building block for dispatcher caching with proper synchronization.
@@ -37,15 +35,9 @@ pub struct OnceCache<T: Copy> {
   _marker: core::marker::PhantomData<*const T>,
 }
 
-// ─── Send/Sync for OnceCache ─────────────────────────────────────────────────
-//
-// std path: OnceLock<T> auto-derives Send/Sync when T: Send/Sync.
-// Since OnceCache only contains OnceLock<T> on std, we inherit those bounds.
-// No manual unsafe impl needed!
-//
-// no_std+atomics: UnsafeCell<T> is !Sync by design. We need unsafe impl Sync
-// because our atomic state machine makes concurrent access safe.
-// Send is auto-derived since T: Send and AtomicU8 is Send.
+// The std path inherits OnceLock's Send/Sync bounds. The no_std atomic path
+// stores through UnsafeCell, so Sync is implemented with the state-machine
+// invariants below.
 
 #[cfg(all(not(feature = "std"), target_has_atomic = "ptr"))]
 // SAFETY: OnceCache uses an atomic state machine (UNINIT -> INITING -> READY)
@@ -57,9 +49,9 @@ pub struct OnceCache<T: Copy> {
 #[allow(unsafe_code)]
 unsafe impl<T: Copy + Sync> Sync for OnceCache<T> {}
 
-// no_std without atomics: PhantomData<*const T> makes this !Send + !Sync by default.
-// However, these targets (thumbv6m, etc.) are single-threaded, so Sync is trivially safe.
-// We need Sync for static dispatchers to compile.
+// no_std targets without atomics use PhantomData<*const T> to stay !Send +
+// !Sync by default. Static dispatchers still need Sync, and these targets are
+// single-threaded.
 #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
 // SAFETY: Targets without atomics (thumbv6m, etc.) are single-threaded by definition.
 // There is no concurrent access possible, so Sync is trivially satisfied.
@@ -137,7 +129,7 @@ impl<T: Copy> OnceCache<T> {
         return value;
       }
 
-      // Another thread is initializing - spin wait
+      // Wait for the initializing thread to publish READY.
       while self.state.load(Ordering::Acquire) != Self::READY {
         core::hint::spin_loop();
       }
@@ -151,8 +143,7 @@ impl<T: Copy> OnceCache<T> {
 
     #[cfg(all(not(feature = "std"), not(target_has_atomic = "ptr")))]
     {
-      // No caching available - compute every time
-      // This is acceptable for single-threaded embedded targets
+      // No atomics: compute every time on single-threaded embedded targets.
       f()
     }
   }
@@ -164,13 +155,9 @@ impl<T: Copy> Default for OnceCache<T> {
   }
 }
 
-// Tests
-
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  // ─── OnceCache Tests ───────────────────────────────────────────────────────
 
   #[test]
   fn test_once_cache_basic() {
@@ -203,8 +190,6 @@ mod tests {
     let value = cache.get_or_init(|| 123);
     assert_eq!(value, 123);
   }
-
-  // ─── Threading Tests (std only) ────────────────────────────────────────────
 
   #[cfg(feature = "std")]
   #[allow(clippy::std_instead_of_core, clippy::std_instead_of_alloc)]

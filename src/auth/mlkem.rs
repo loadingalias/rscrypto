@@ -580,6 +580,7 @@ macro_rules! impl_mlkem_profile_ops {
     $keygen:path,
     $encapsulate_prepared:path,
     $decapsulate_prepared:path,
+    $diag_decap_reencrypt_compare:path,
     $doc_name:literal
   ) => {
     impl $encapsulation_key {
@@ -810,6 +811,30 @@ macro_rules! impl_mlkem_profile_ops {
       #[doc(hidden)]
       #[inline]
       #[must_use]
+      pub fn diag_decap_reencrypt_ciphertext(&self, seed: u8) -> $ciphertext {
+        $ciphertext::from_bytes(portable::diag_decap_reencrypt_ciphertext::<
+          $k,
+          $eta1_random_bytes,
+          $ct_bytes,
+          $du,
+          $dv,
+          $poly_du_bytes,
+          $poly_dv_bytes,
+        >(&self.arithmetic, seed))
+      }
+
+      #[cfg(feature = "diag")]
+      #[doc(hidden)]
+      #[inline]
+      #[must_use]
+      pub fn diag_decap_reencrypt_compare_digest(&self, expected: &$ciphertext, seed: u8) -> u16 {
+        $diag_decap_reencrypt_compare(&self.arithmetic, expected.as_bytes(), seed)
+      }
+
+      #[cfg(feature = "diag")]
+      #[doc(hidden)]
+      #[inline]
+      #[must_use]
       pub fn diag_decap_hash_select_digest(&self, ciphertext: &$ciphertext, seed: u8) -> u16 {
         portable::diag_decap_hash_select_digest::<$dk_pke_bytes, $ek_bytes, $dk_bytes, $ct_bytes>(
           self.as_bytes(),
@@ -917,6 +942,7 @@ impl_mlkem_profile_ops!(
   portable::keygen::<2, 2, 192, 768, 800, 1632>,
   portable::encapsulate_prepared_512,
   portable::decapsulate_prepared_512,
+  portable::diag_decap_reencrypt_compare_512_digest,
   "ML-KEM-512"
 );
 
@@ -942,6 +968,7 @@ impl_mlkem_profile_ops!(
   portable::keygen::<3, 3, 128, 1152, 1184, 2400>,
   portable::encapsulate_prepared_768,
   portable::decapsulate_prepared_768,
+  portable::diag_decap_reencrypt_compare_768_digest,
   "ML-KEM-768"
 );
 
@@ -967,6 +994,7 @@ impl_mlkem_profile_ops!(
   portable::keygen_1024,
   portable::encapsulate_prepared_1024,
   portable::decapsulate_prepared_1024,
+  portable::diag_decap_reencrypt_compare_1024_digest,
   "ML-KEM-1024"
 );
 

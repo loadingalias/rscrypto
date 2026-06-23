@@ -1,7 +1,6 @@
 #![allow(clippy::indexing_slicing)] // Fixed-size FIPS buffers and public loop indices bound every access.
 
 #[cfg(all(
-  any(test, feature = "diag", target_os = "linux"),
   target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
   not(miri),
@@ -15,25 +14,34 @@ mod x86_64;
 
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
 use core::arch::aarch64::vgetq_lane_u16;
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 use core::arch::aarch64::{
-  int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, uint32x2_t, vadd_s16, vadd_u16, vaddq_s16,
-  vaddq_s32, vaddq_u16, vand_s16, vand_u16, vandq_s16, vandq_u16, vcge_u16, vcgeq_u16, vcgt_u16, vcgtq_u16,
-  vcombine_s16, vcombine_u32, vdup_n_s16, vdup_n_u16, vdupq_n_s16, vdupq_n_u16, vget_high_s16, vget_low_s16,
-  vget_low_u16, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovn_s32, vmul_n_s16, vmull_n_s16, vmull_s16, vmulq_n_s16,
-  vmulq_n_u16, vqdmulhq_n_s16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_s16_u16,
-  vreinterpretq_u16_s16, vreinterpretq_u16_u32, vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vshrn_n_s32,
-  vshrq_n_s16, vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsub_u16, vsubq_s16, vsubq_u16, vuzp1q_u32, vuzp2q_u32,
-  vzip1_u32, vzip2_u32,
+  int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, vaddq_s16, vaddq_s32, vaddq_u16, vaddq_u32,
+  vandq_s16, vandq_u16, vandq_u32, vcgeq_u16, vcombine_s16, vcombine_u32, vdup_n_u32, vdupq_n_s16, vdupq_n_u16,
+  vdupq_n_u32, vget_high_s16, vget_high_u32, vget_lane_u16, vget_low_s16, vget_low_u32, vld1_u16, vld1q_s16, vld1q_u16,
+  vld2q_u16, vmovn_s32, vmovn_u32, vmovn_u64, vmul_n_s16, vmull_n_s16, vmull_s16, vmull_u32, vmulq_n_s16, vmulq_n_u16,
+  vqdmulhq_n_s16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vshll_n_u16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u64,
+  vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsubq_s16, vsubq_u16,
 };
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
+use core::arch::aarch64::{
+  uint32x2_t, vadd_s16, vadd_u16, vand_s16, vand_u16, vcge_u16, vcgt_u16, vcgtq_u16, vdup_n_s16, vdup_n_u16,
+  vget_low_u16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_u16_u32,
+  vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vsub_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
+};
+#[cfg(all(
+  target_arch = "aarch64",
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -78,7 +86,7 @@ const Q_DIV_SHIFT: u32 = 36;
 #[cfg(test)]
 const Q_DIV_RECIP: u64 = 20_642_679;
 #[cfg(any(test, not(target_arch = "s390x")))]
-const Q_COMPRESS_DIV_SHIFT: u32 = 33;
+const Q_COMPRESS_DIV_SHIFT: i32 = 33;
 #[cfg(any(test, not(target_arch = "s390x")))]
 const Q_COMPRESS_DIV_RECIP: u64 = 2_580_335;
 const Q_MONT_INV_U16: u16 = 62_209;
@@ -98,11 +106,14 @@ const SAMPLE_NTT_ACC_CHUNK_COEFFS: usize = 16;
 
 type Poly = [u16; N];
 type PolyVec<const K: usize> = [Poly; K];
+type PolyMatrix<const K: usize> = [PolyVec<K>; K];
 
 #[derive(Clone)]
 pub(super) struct PreparedEncapsulationArithmetic<const K: usize> {
   t_hat: PolyVec<K>,
+  #[cfg(any(test, feature = "diag"))]
   rho: [u8; SEED_BYTES],
+  a_transpose_hat: PolyMatrix<K>,
 }
 
 #[derive(Clone)]
@@ -256,7 +267,24 @@ fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
   let rho_start = K.strict_mul(POLY_BYTES);
   rho.copy_from_slice(&ek[rho_start..rho_start.strict_add(SEED_BYTES)]);
 
-  PreparedEncapsulationArithmetic { t_hat, rho }
+  let a_transpose_hat = prepare_matrix_transpose::<K>(&rho);
+
+  PreparedEncapsulationArithmetic {
+    t_hat,
+    #[cfg(any(test, feature = "diag"))]
+    rho,
+    a_transpose_hat,
+  }
+}
+
+fn prepare_matrix_transpose<const K: usize>(rho: &[u8; SEED_BYTES]) -> PolyMatrix<K> {
+  let mut a_transpose_hat = [[[0u16; N]; K]; K];
+  for (i, row) in a_transpose_hat.iter_mut().enumerate() {
+    for (j, poly) in row.iter_mut().enumerate() {
+      sample_ntt_into(rho, i as u8, j as u8, poly);
+    }
+  }
+  a_transpose_hat
 }
 
 fn prepare_decapsulation_key<const K: usize, const DK_PKE_BYTES: usize, const DK_BYTES: usize>(
@@ -290,7 +318,7 @@ pub(super) fn keygen<
   d.copy_from_slice(&random[..SEED_BYTES]);
   z.copy_from_slice(&random[SEED_BYTES..]);
 
-  let (ek, dk_pke) = pke_keygen::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&d);
+  let (ek, mut dk_pke) = pke_keygen::<K, K_U8, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&d);
   let mut dk = [0u8; DK_BYTES];
   dk[..DK_PKE_BYTES].copy_from_slice(&dk_pke);
   dk[DK_PKE_BYTES..DK_PKE_BYTES.strict_add(EK_BYTES)].copy_from_slice(&ek);
@@ -302,6 +330,7 @@ pub(super) fn keygen<
 
   ct::zeroize(&mut d);
   ct::zeroize(&mut z);
+  ct::zeroize(&mut dk_pke);
   (ek, dk)
 }
 
@@ -341,7 +370,7 @@ pub(super) fn encapsulate_prepared<
   input[..SEED_BYTES].copy_from_slice(m);
   input[SEED_BYTES..].copy_from_slice(ek_hash);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut shared = [0u8; SHARED_SECRET_BYTES];
   let mut r = [0u8; SEED_BYTES];
   shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
@@ -350,6 +379,7 @@ pub(super) fn encapsulate_prepared<
   let ciphertext =
     pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(ek, m, &r);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut r);
   (ciphertext, shared)
 }
@@ -371,7 +401,7 @@ pub(super) fn encapsulate_prepared_768(
   input[..SEED_BYTES].copy_from_slice(m);
   input[SEED_BYTES..].copy_from_slice(ek_hash);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut shared = [0u8; SHARED_SECRET_BYTES];
   let mut r = [0u8; SEED_BYTES];
   shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
@@ -379,6 +409,7 @@ pub(super) fn encapsulate_prepared_768(
 
   let ciphertext = pke_encrypt_prepared_768(ek, m, &r);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut r);
   (ciphertext, shared)
 }
@@ -392,7 +423,7 @@ pub(super) fn encapsulate_prepared_1024(
   input[..SEED_BYTES].copy_from_slice(m);
   input[SEED_BYTES..].copy_from_slice(ek_hash);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut shared = [0u8; SHARED_SECRET_BYTES];
   let mut r = [0u8; SEED_BYTES];
   shared.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
@@ -400,50 +431,33 @@ pub(super) fn encapsulate_prepared_1024(
 
   let ciphertext = pke_encrypt_prepared_1024(ek, m, &r);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut r);
   (ciphertext, shared)
 }
 
-pub(super) fn decapsulate_prepared<
-  const K: usize,
-  const ETA1_RANDOM_BYTES: usize,
-  const DK_PKE_BYTES: usize,
-  const EK_BYTES: usize,
-  const DK_BYTES: usize,
-  const CT_BYTES: usize,
-  const DU: usize,
-  const DV: usize,
-  const POLY_DU_BYTES: usize,
-  const POLY_DV_BYTES: usize,
->(
-  dk: &[u8; DK_BYTES],
-  prepared: &PreparedDecapsulationArithmetic<K>,
-  c: &[u8; CT_BYTES],
+pub(super) fn decapsulate_prepared_512(
+  dk: &[u8; 1632],
+  prepared: &PreparedDecapsulationArithmetic<2>,
+  c: &[u8; 768],
 ) -> [u8; SHARED_SECRET_BYTES] {
-  let ek_start = DK_PKE_BYTES;
-  let ek_end = ek_start.strict_add(EK_BYTES);
-  let h_start = ek_end;
+  let h_start = 768usize.strict_add(800);
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
 
-  let mut m_prime = pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&prepared.s_hat, c);
+  let mut m_prime = pke_decrypt_prepared::<2, 768, 10, 4, 320, 128>(&prepared.s_hat, c);
   let mut input = [0u8; 64];
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut k_prime = [0u8; SHARED_SECRET_BYTES];
   let mut r_prime = [0u8; SEED_BYTES];
   k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
   r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
   let mut k_bar = j(z, c);
-  let c_prime = pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
-    &prepared.encapsulation,
-    &m_prime,
-    &r_prime,
-  );
-  let mut match_mask = ct_eq_mask(c, &c_prime);
+  let mut match_mask = pke_encrypt_prepared_512_compare(&prepared.encapsulation, &m_prime, &r_prime, c);
   let reject_mask = !match_mask;
 
   let mut shared = [0u8; SHARED_SECRET_BYTES];
@@ -453,20 +467,13 @@ pub(super) fn decapsulate_prepared<
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut k_prime);
   ct::zeroize(&mut r_prime);
   ct::zeroize(&mut k_bar);
   ct::zeroize(core::slice::from_mut(&mut match_mask));
 
   shared
-}
-
-pub(super) fn decapsulate_prepared_512(
-  dk: &[u8; 1632],
-  prepared: &PreparedDecapsulationArithmetic<2>,
-  c: &[u8; 768],
-) -> [u8; SHARED_SECRET_BYTES] {
-  decapsulate_prepared::<2, 192, 768, 800, 1632, 768, 10, 4, 320, 128>(dk, prepared, c)
 }
 
 pub(super) fn decapsulate_prepared_768(
@@ -483,7 +490,7 @@ pub(super) fn decapsulate_prepared_768(
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut k_prime = [0u8; SHARED_SECRET_BYTES];
   let mut r_prime = [0u8; SEED_BYTES];
   k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
@@ -500,6 +507,7 @@ pub(super) fn decapsulate_prepared_768(
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut k_prime);
   ct::zeroize(&mut r_prime);
   ct::zeroize(&mut k_bar);
@@ -522,7 +530,7 @@ pub(super) fn decapsulate_prepared_1024(
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut k_prime = [0u8; SHARED_SECRET_BYTES];
   let mut r_prime = [0u8; SEED_BYTES];
   k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
@@ -539,6 +547,7 @@ pub(super) fn decapsulate_prepared_1024(
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut k_prime);
   ct::zeroize(&mut r_prime);
   ct::zeroize(&mut k_bar);
@@ -578,14 +587,14 @@ pub(super) fn decapsulate<
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut k_prime = [0u8; SHARED_SECRET_BYTES];
   let mut r_prime = [0u8; SEED_BYTES];
   k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
   r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
 
   let mut k_bar = j(z, c);
-  let c_prime = pke_encrypt::<K, ETA1_RANDOM_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+  let mut c_prime = pke_encrypt::<K, ETA1_RANDOM_BYTES, EK_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
     ek, &m_prime, &r_prime,
   );
   let mut match_mask = ct_eq_mask(c, &c_prime);
@@ -598,9 +607,11 @@ pub(super) fn decapsulate<
 
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut k_prime);
   ct::zeroize(&mut r_prime);
   ct::zeroize(&mut k_bar);
+  ct::zeroize(&mut c_prime);
   ct::zeroize(core::slice::from_mut(&mut match_mask));
 
   shared
@@ -619,7 +630,7 @@ fn pke_keygen<
   seed[..SEED_BYTES].copy_from_slice(d);
   seed[SEED_BYTES] = K_U8;
 
-  let expanded = g(&seed);
+  let mut expanded = g(&seed);
   let mut rho = [0u8; SEED_BYTES];
   let mut sigma = [0u8; SEED_BYTES];
   rho.copy_from_slice(&expanded[..SEED_BYTES]);
@@ -627,6 +638,7 @@ fn pke_keygen<
 
   let keys = pke_keygen_expanded::<K, ETA1_RANDOM_BYTES, DK_PKE_BYTES, EK_BYTES>(&rho, &sigma);
   ct::zeroize(&mut seed);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut sigma);
   keys
 }
@@ -640,40 +652,44 @@ fn pke_keygen_expanded<
   rho: &[u8; SEED_BYTES],
   sigma: &[u8; SEED_BYTES],
 ) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
-  let mut nonce = 0u8;
-  let mut s = [[0u16; N]; K];
-  let mut e = [[0u16; N]; K];
-  if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 4 {
-    let (s0, s_tail) = s.split_at_mut(1);
+  let mut s_hat = [[0u16; N]; K];
+  let mut e_hat = [[0u16; N]; K];
+  if K == 2 {
+    let (s0, s_tail) = s_hat.split_at_mut(1);
+    let (s1, _) = s_tail.split_at_mut(1);
+    let (e0, e_tail) = e_hat.split_at_mut(1);
+    let (e1, _) = e_tail.split_at_mut(1);
+    sample_noise_quad::<ETA1_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut e0[0], 3, &mut e1[0]);
+  } else if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 4 {
+    let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, s_tail) = s_tail.split_at_mut(1);
     let (s2, s3) = s_tail.split_at_mut(1);
     sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut s2[0], 3, &mut s3[0]);
 
-    let (e0, e_tail) = e.split_at_mut(1);
+    let (e0, e_tail) = e_hat.split_at_mut(1);
     let (e1, e_tail) = e_tail.split_at_mut(1);
     let (e2, e3) = e_tail.split_at_mut(1);
     sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 4, &mut e0[0], 5, &mut e1[0], 6, &mut e2[0], 7, &mut e3[0]);
   } else if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 3 {
-    let (s0, s_tail) = s.split_at_mut(1);
+    let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, s2) = s_tail.split_at_mut(1);
-    let (e0, e_tail) = e.split_at_mut(1);
+    let (e0, e_tail) = e_hat.split_at_mut(1);
     sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut s2[0], 3, &mut e0[0]);
 
     let (e1, e2) = e_tail.split_at_mut(1);
     sample_noise_pair::<ETA2_RANDOM_BYTES>(sigma, 4, &mut e1[0], 5, &mut e2[0]);
   } else {
-    for poly in &mut s {
+    let mut nonce = 0u8;
+    for poly in &mut s_hat {
       sample_noise::<ETA1_RANDOM_BYTES>(sigma, nonce, poly);
       nonce = nonce.wrapping_add(1);
     }
-    for poly in &mut e {
+    for poly in &mut e_hat {
       sample_noise::<ETA1_RANDOM_BYTES>(sigma, nonce, poly);
       nonce = nonce.wrapping_add(1);
     }
   }
 
-  let mut s_hat = s;
-  let mut e_hat = e;
   for poly in &mut s_hat {
     ntt(poly);
   }
@@ -739,8 +755,6 @@ fn pke_keygen_expanded<
     byte_encode::<12>(poly, &mut dk_pke[start..start.strict_add(POLY_BYTES)]);
   }
 
-  zeroize_polyvec(&mut s);
-  zeroize_polyvec(&mut e);
   zeroize_polyvec(&mut s_hat);
   zeroize_polyvec(&mut e_hat);
   (ek, dk_pke)
@@ -1616,6 +1630,88 @@ pub(super) fn diag_decap_reencrypt_digest<
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_decap_reencrypt_ciphertext<
+  const K: usize,
+  const ETA1_RANDOM_BYTES: usize,
+  const CT_BYTES: usize,
+  const DU: usize,
+  const DV: usize,
+  const POLY_DU_BYTES: usize,
+  const POLY_DV_BYTES: usize,
+>(
+  prepared: &PreparedDecapsulationArithmetic<K>,
+  seed: u8,
+) -> [u8; CT_BYTES] {
+  let mut m = [0u8; SEED_BYTES];
+  let mut r = [0u8; SEED_BYTES];
+  fill_diag_seed(&mut m, seed);
+  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
+
+  let ciphertext = pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
+    &prepared.encapsulation,
+    &m,
+    &r,
+  );
+  ct::zeroize(&mut m);
+  ct::zeroize(&mut r);
+  ciphertext
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_decap_reencrypt_compare_512_digest(
+  prepared: &PreparedDecapsulationArithmetic<2>,
+  expected: &[u8; 768],
+  seed: u8,
+) -> u16 {
+  let mut m = [0u8; SEED_BYTES];
+  let mut r = [0u8; SEED_BYTES];
+  fill_diag_seed(&mut m, seed);
+  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
+
+  let mask = pke_encrypt_prepared_512_compare(&prepared.encapsulation, &m, &r, expected);
+  let digest = u16::from(mask) ^ u16::from(expected[0]);
+  ct::zeroize(&mut m);
+  ct::zeroize(&mut r);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_decap_reencrypt_compare_768_digest(
+  prepared: &PreparedDecapsulationArithmetic<3>,
+  expected: &[u8; 1088],
+  seed: u8,
+) -> u16 {
+  let mut m = [0u8; SEED_BYTES];
+  let mut r = [0u8; SEED_BYTES];
+  fill_diag_seed(&mut m, seed);
+  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
+
+  let mask = pke_encrypt_prepared_768_compare(&prepared.encapsulation, &m, &r, expected);
+  let digest = u16::from(mask) ^ u16::from(expected[0]);
+  ct::zeroize(&mut m);
+  ct::zeroize(&mut r);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_decap_reencrypt_compare_1024_digest(
+  prepared: &PreparedDecapsulationArithmetic<4>,
+  expected: &[u8; 1568],
+  seed: u8,
+) -> u16 {
+  let mut m = [0u8; SEED_BYTES];
+  let mut r = [0u8; SEED_BYTES];
+  fill_diag_seed(&mut m, seed);
+  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
+
+  let mask = pke_encrypt_prepared_1024_compare(&prepared.encapsulation, &m, &r, expected);
+  let digest = u16::from(mask) ^ u16::from(expected[0]);
+  ct::zeroize(&mut m);
+  ct::zeroize(&mut r);
+  digest
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_decap_hash_select_digest<
   const DK_PKE_BYTES: usize,
   const EK_BYTES: usize,
@@ -1639,7 +1735,7 @@ pub(super) fn diag_decap_hash_select_digest<
   input[..SEED_BYTES].copy_from_slice(&m_prime);
   input[SEED_BYTES..].copy_from_slice(h_stored);
 
-  let expanded = g(&input);
+  let mut expanded = g(&input);
   let mut k_prime = [0u8; SHARED_SECRET_BYTES];
   let mut r_prime = [0u8; SEED_BYTES];
   k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
@@ -1659,6 +1755,7 @@ pub(super) fn diag_decap_hash_select_digest<
   let digest = diag_fold_bytes(&shared) ^ u16::from(r_prime[0]);
   ct::zeroize(&mut m_prime);
   ct::zeroize(&mut input);
+  ct::zeroize(&mut expanded);
   ct::zeroize(&mut k_prime);
   ct::zeroize(&mut r_prime);
   ct::zeroize(&mut k_bar);
@@ -1916,10 +2013,6 @@ fn pke_encrypt_prepared_768(
   m: &[u8; SEED_BYTES],
   r: &[u8; SEED_BYTES],
 ) -> [u8; 1088] {
-  if use_fused_pke_matrix_accumulate::<3>() {
-    return pke_encrypt_prepared::<3, 128, 1088, 10, 4, 320, 128>(ek, m, r);
-  }
-
   let mut y_hat = [[0u16; N]; 3];
   let mut e1 = [[0u16; N]; 3];
   let [y0, y1, y2] = &mut y_hat;
@@ -1934,7 +2027,7 @@ fn pke_encrypt_prepared_768(
   ntt(&mut y_hat[2]);
 
   let mut u = [[0u16; N]; 3];
-  sample_matrix_ntt_mul_accumulate_materialized::<3>(&ek.rho, &y_hat, &mut u, true);
+  matrix_ntt_mul_accumulate_prepared_transpose(ek, &y_hat, &mut u);
 
   inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
   inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
@@ -1979,11 +2072,7 @@ fn pke_encrypt_prepared_1024(
   ntt(&mut y_hat[3]);
 
   let mut u = [[0u16; N]; 4];
-  if use_fused_pke_matrix_accumulate::<4>() {
-    sample_matrix_ntt_mul_accumulate_fused_transpose_k4(&ek.rho, &y_hat, &mut u);
-  } else {
-    sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
-  }
+  matrix_ntt_mul_accumulate_prepared_transpose(ek, &y_hat, &mut u);
 
   inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
   inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
@@ -2010,19 +2099,54 @@ fn pke_encrypt_prepared_1024(
   ciphertext
 }
 
+fn pke_encrypt_prepared_512_compare(
+  ek: &PreparedEncapsulationArithmetic<2>,
+  m: &[u8; SEED_BYTES],
+  r: &[u8; SEED_BYTES],
+  expected: &[u8; 768],
+) -> u8 {
+  let mut y_hat = [[0u16; N]; 2];
+  let mut e1 = [[0u16; N]; 2];
+  let [y0, y1] = &mut y_hat;
+  sample_noise_pair::<192>(r, 0, y0, 1, y1);
+  let [e10, e11] = &mut e1;
+  sample_noise_pair::<ETA2_RANDOM_BYTES>(r, 2, e10, 3, e11);
+  let mut e2 = [0u16; N];
+  sample_noise::<ETA2_RANDOM_BYTES>(r, 4, &mut e2);
+
+  ntt(&mut y_hat[0]);
+  ntt(&mut y_hat[1]);
+
+  let mut u = [[0u16; N]; 2];
+  matrix_ntt_mul_accumulate_prepared_transpose(ek, &y_hat, &mut u);
+
+  inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
+  inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
+
+  let mut v = [0u16; N];
+  multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
+  inverse_ntt_montgomery_product_add_assign(&mut v, &e2);
+  decompress_message_add_assign(m, &mut v);
+
+  let mut mask = 0xffu8;
+  mask &= compress_encode_compare_poly::<10, 320>(&u[0], &expected[0..320]);
+  mask &= compress_encode_compare_poly::<10, 320>(&u[1], &expected[320..640]);
+  mask &= compress_encode_compare_poly::<4, 128>(&v, &expected[640..]);
+
+  zeroize_polyvec(&mut e1);
+  zeroize_poly(&mut e2);
+  zeroize_polyvec(&mut y_hat);
+  zeroize_polyvec(&mut u);
+  zeroize_poly(&mut v);
+  mask
+}
+
 fn pke_encrypt_prepared_768_compare(
   ek: &PreparedEncapsulationArithmetic<3>,
   m: &[u8; SEED_BYTES],
   r: &[u8; SEED_BYTES],
   expected: &[u8; 1088],
 ) -> u8 {
-  if use_fused_pke_matrix_accumulate::<3>() {
-    let mut ciphertext = pke_encrypt_prepared::<3, 128, 1088, 10, 4, 320, 128>(ek, m, r);
-    let mask = ct_eq_mask(expected, &ciphertext);
-    ct::zeroize(&mut ciphertext);
-    return mask;
-  }
-
   let mut y_hat = [[0u16; N]; 3];
   let mut e1 = [[0u16; N]; 3];
   let [y0, y1, y2] = &mut y_hat;
@@ -2037,7 +2161,7 @@ fn pke_encrypt_prepared_768_compare(
   ntt(&mut y_hat[2]);
 
   let mut u = [[0u16; N]; 3];
-  sample_matrix_ntt_mul_accumulate_materialized::<3>(&ek.rho, &y_hat, &mut u, true);
+  matrix_ntt_mul_accumulate_prepared_transpose(ek, &y_hat, &mut u);
 
   inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
   inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
@@ -2083,11 +2207,7 @@ fn pke_encrypt_prepared_1024_compare(
   ntt(&mut y_hat[3]);
 
   let mut u = [[0u16; N]; 4];
-  if use_fused_pke_matrix_accumulate::<4>() {
-    sample_matrix_ntt_mul_accumulate_fused_transpose_k4(&ek.rho, &y_hat, &mut u);
-  } else {
-    sample_matrix_ntt_mul_accumulate_materialized::<4>(&ek.rho, &y_hat, &mut u, true);
-  }
+  matrix_ntt_mul_accumulate_prepared_transpose(ek, &y_hat, &mut u);
 
   inverse_ntt_montgomery_product_add_assign(&mut u[0], &e1[0]);
   inverse_ntt_montgomery_product_add_assign(&mut u[1], &e1[1]);
@@ -2127,61 +2247,37 @@ fn pke_encrypt_prepared<
   m: &[u8; SEED_BYTES],
   r: &[u8; SEED_BYTES],
 ) -> [u8; CT_BYTES] {
-  let mut nonce = 0u8;
   let mut y_hat = [[0u16; N]; K];
   let mut e1 = [[0u16; N]; K];
-  for poly in &mut y_hat {
-    sample_noise::<ETA1_RANDOM_BYTES>(r, nonce, poly);
-    nonce = nonce.wrapping_add(1);
-  }
-  for poly in &mut e1 {
-    sample_noise::<ETA2_RANDOM_BYTES>(r, nonce, poly);
-    nonce = nonce.wrapping_add(1);
-  }
   let mut e2 = [0u16; N];
-  sample_noise::<ETA2_RANDOM_BYTES>(r, nonce, &mut e2);
+  if K == 2 {
+    let (y0, y_tail) = y_hat.split_at_mut(1);
+    let (y1, _) = y_tail.split_at_mut(1);
+    sample_noise_pair::<ETA1_RANDOM_BYTES>(r, 0, &mut y0[0], 1, &mut y1[0]);
+
+    let (e10, e1_tail) = e1.split_at_mut(1);
+    let (e11, _) = e1_tail.split_at_mut(1);
+    sample_noise_pair::<ETA2_RANDOM_BYTES>(r, 2, &mut e10[0], 3, &mut e11[0]);
+    sample_noise::<ETA2_RANDOM_BYTES>(r, 4, &mut e2);
+  } else {
+    let mut nonce = 0u8;
+    for poly in &mut y_hat {
+      sample_noise::<ETA1_RANDOM_BYTES>(r, nonce, poly);
+      nonce = nonce.wrapping_add(1);
+    }
+    for poly in &mut e1 {
+      sample_noise::<ETA2_RANDOM_BYTES>(r, nonce, poly);
+      nonce = nonce.wrapping_add(1);
+    }
+    sample_noise::<ETA2_RANDOM_BYTES>(r, nonce, &mut e2);
+  }
 
   for poly in &mut y_hat {
     ntt(poly);
   }
 
   let mut u = [[0u16; N]; K];
-  if use_fused_pke_matrix_accumulate::<K>() {
-    for (i, u_i) in u.iter_mut().enumerate() {
-      let mut acc = [0u16; N];
-      if K == 4 {
-        sample_ntt_quad_mul_accumulate(
-          &ek.rho,
-          [
-            (i as u8, 0, &y_hat[0]),
-            (i as u8, 1, &y_hat[1]),
-            (i as u8, 2, &y_hat[2]),
-            (i as u8, 3, &y_hat[3]),
-          ],
-          &mut acc,
-        );
-      } else {
-        let mut j = 0usize;
-        while j.strict_add(1) < K {
-          let next = j.strict_add(1);
-          sample_ntt_pair_mul_accumulate(
-            &ek.rho,
-            (i as u8, j as u8, &y_hat[j]),
-            (i as u8, next as u8, &y_hat[next]),
-            &mut acc,
-          );
-
-          j = j.strict_add(2);
-        }
-        if j < K {
-          sample_ntt_mul_accumulate(&ek.rho, i as u8, j as u8, &y_hat[j], &mut acc);
-        }
-      }
-      *u_i = acc;
-    }
-  } else {
-    sample_matrix_ntt_mul_accumulate_materialized::<K>(&ek.rho, &y_hat, &mut u, true);
-  }
+  matrix_ntt_mul_accumulate_prepared_transpose(ek, &y_hat, &mut u);
 
   for i in 0..K {
     inverse_ntt_montgomery_product_add_assign(&mut u[i], &e1[i]);
@@ -2283,6 +2379,17 @@ fn sample_ntt_four_materialized_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4
   sample_ntt_quad_into(rho, lanes, out);
 }
 
+#[inline(always)]
+fn matrix_ntt_mul_accumulate_prepared_transpose<const K: usize>(
+  ek: &PreparedEncapsulationArithmetic<K>,
+  rhs: &PolyVec<K>,
+  acc: &mut PolyVec<K>,
+) {
+  for (row, acc_i) in ek.a_transpose_hat.iter().zip(acc.iter_mut()) {
+    multiply_ntts_accumulate(acc_i, row, rhs);
+  }
+}
+
 fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
   rho: &[u8; SEED_BYTES],
   rhs: &PolyVec<K>,
@@ -2356,58 +2463,29 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3<const K: usize>(
 ) {
   debug_assert_eq!(K, 3);
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    let mut a0 = [0u16; N];
-    let mut a1 = [0u16; N];
-    let mut a2 = [0u16; N];
+  let mut a0 = [0u16; N];
+  let mut a1 = [0u16; N];
+  let mut a2 = [0u16; N];
+  let mut a3 = [0u16; N];
+  sample_ntt_four_materialized_into(
+    rho,
+    [(0, 0), (1, 0), (2, 0), (0, 1)],
+    [&mut a0, &mut a1, &mut a2, &mut a3],
+  );
+  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row1_a0 = a3;
 
-    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [&mut a0, &mut a1, &mut a2]);
-    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  sample_ntt_four_materialized_into(
+    rho,
+    [(1, 1), (2, 1), (0, 2), (1, 2)],
+    [&mut a0, &mut a1, &mut a2, &mut a3],
+  );
+  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row2_a0 = a2;
+  let row2_a1 = a3;
 
-    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [&mut a0, &mut a1, &mut a2]);
-    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-
-    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [&mut a0, &mut a1, &mut a2]);
-    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-  }
-
-  #[cfg(not(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  )))]
-  {
-    let mut a0 = [0u16; N];
-    let mut a1 = [0u16; N];
-    let mut a2 = [0u16; N];
-    let mut a3 = [0u16; N];
-    sample_ntt_four_materialized_into(
-      rho,
-      [(0, 0), (1, 0), (2, 0), (0, 1)],
-      [&mut a0, &mut a1, &mut a2, &mut a3],
-    );
-    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-    let row1_a0 = a3;
-
-    sample_ntt_four_materialized_into(
-      rho,
-      [(1, 1), (2, 1), (0, 2), (1, 2)],
-      [&mut a0, &mut a1, &mut a2, &mut a3],
-    );
-    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
-    let row2_a0 = a2;
-    let row2_a1 = a3;
-
-    sample_ntt_into(rho, 2, 2, &mut a0);
-    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
-  }
+  sample_ntt_into(rho, 2, 2, &mut a0);
+  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
 }
 
 #[inline(always)]
@@ -2418,58 +2496,29 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
 ) {
   debug_assert_eq!(K, 3);
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    let mut a0 = [0u16; N];
-    let mut a1 = [0u16; N];
-    let mut a2 = [0u16; N];
+  let mut a0 = [0u16; N];
+  let mut a1 = [0u16; N];
+  let mut a2 = [0u16; N];
+  let mut a3 = [0u16; N];
+  sample_ntt_four_materialized_into(
+    rho,
+    [(0, 0), (0, 1), (0, 2), (1, 0)],
+    [&mut a0, &mut a1, &mut a2, &mut a3],
+  );
+  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row1_a0 = a3;
 
-    sample_ntt_triple_into(rho, [(0, 0), (0, 1), (0, 2)], [&mut a0, &mut a1, &mut a2]);
-    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
+  sample_ntt_four_materialized_into(
+    rho,
+    [(1, 1), (1, 2), (2, 0), (2, 1)],
+    [&mut a0, &mut a1, &mut a2, &mut a3],
+  );
+  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
+  let row2_a0 = a2;
+  let row2_a1 = a3;
 
-    sample_ntt_triple_into(rho, [(1, 0), (1, 1), (1, 2)], [&mut a0, &mut a1, &mut a2]);
-    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-
-    sample_ntt_triple_into(rho, [(2, 0), (2, 1), (2, 2)], [&mut a0, &mut a1, &mut a2]);
-    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-  }
-
-  #[cfg(not(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  )))]
-  {
-    let mut a0 = [0u16; N];
-    let mut a1 = [0u16; N];
-    let mut a2 = [0u16; N];
-    let mut a3 = [0u16; N];
-    sample_ntt_four_materialized_into(
-      rho,
-      [(0, 0), (0, 1), (0, 2), (1, 0)],
-      [&mut a0, &mut a1, &mut a2, &mut a3],
-    );
-    multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-    let row1_a0 = a3;
-
-    sample_ntt_four_materialized_into(
-      rho,
-      [(1, 1), (1, 2), (2, 0), (2, 1)],
-      [&mut a0, &mut a1, &mut a2, &mut a3],
-    );
-    multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
-    let row2_a0 = a2;
-    let row2_a1 = a3;
-
-    sample_ntt_into(rho, 2, 2, &mut a0);
-    multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
-  }
+  sample_ntt_into(rho, 2, 2, &mut a0);
+  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
 }
 
 #[inline(always)]
@@ -2542,22 +2591,6 @@ fn matrix_accumulate_coord<const K: usize>(entry: usize, transpose: bool) -> ((u
   (sample, dst, rhs)
 }
 
-#[inline(always)]
-fn sample_matrix_ntt_mul_accumulate_fused_transpose_k4(rho: &[u8; SEED_BYTES], rhs: &[Poly; 4], out: &mut [Poly; 4]) {
-  for (i, out_i) in out.iter_mut().enumerate() {
-    sample_ntt_quad_mul_accumulate(
-      rho,
-      [
-        (i as u8, 0, &rhs[0]),
-        (i as u8, 1, &rhs[1]),
-        (i as u8, 2, &rhs[2]),
-        (i as u8, 3, &rhs[3]),
-      ],
-      out_i,
-    );
-  }
-}
-
 #[inline]
 fn use_fused_matrix_accumulate() -> bool {
   if cfg!(any(miri, feature = "portable-only")) {
@@ -2585,28 +2618,6 @@ fn use_fused_matrix_accumulate() -> bool {
   }
 }
 
-#[inline]
-fn use_fused_pke_matrix_accumulate<const K: usize>() -> bool {
-  if cfg!(any(miri, feature = "portable-only")) {
-    return true;
-  }
-
-  #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
-  {
-    K == 4
-  }
-
-  #[cfg(all(target_arch = "aarch64", not(target_endian = "little")))]
-  {
-    false
-  }
-
-  #[cfg(not(target_arch = "aarch64"))]
-  {
-    use_fused_matrix_accumulate()
-  }
-}
-
 #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
 #[inline]
 fn use_s390x_vector_arithmetic() -> bool {
@@ -2620,17 +2631,6 @@ fn sample_ntt_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) {
 fn sample_ntt_pair_into(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8, out0: &mut Poly, out1: &mut Poly) {
   let (reader0, reader1) = Shake128::xof_seeded_32_2_pair(rho, (j0, i0), (j1, i1));
   sample_ntt_pair_from_xof_into(reader0, reader1, out0, out1);
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-fn sample_ntt_triple_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
-  let (reader0, reader1, reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
-  sample_ntt_triple_from_xof_into([reader0, reader1, reader2], out);
 }
 
 fn sample_ntt_quad_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
@@ -2808,7 +2808,7 @@ fn sample_ntt_pair_block_scalar(
 
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -2839,7 +2839,7 @@ macro_rules! sample_ntt_extract_16_candidate_vectors_neon {
 
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -2862,7 +2862,7 @@ macro_rules! sample_ntt_store_public_candidate_unchecked {
 
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -2897,7 +2897,7 @@ macro_rules! sample_ntt_store_candidate_vectors_neon {
 
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -2943,11 +2943,11 @@ fn sample_ntt_pair_block_neon(
     return;
   }
 
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     let n0 = *filled0;
     let n1 = *filled1;
-    // SAFETY: Linux aarch64 assembly SampleNTT block parsing because:
+    // SAFETY: aarch64 compact assembly SampleNTT block parsing because:
     // 1. `buf0` and `buf1` are full 168-byte SHAKE128 rate blocks.
     // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
     // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
@@ -2962,7 +2962,7 @@ fn sample_ntt_pair_block_neon(
     *filled1 = n1.strict_add(count1);
   }
 
-  #[cfg(not(target_os = "linux"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     const NEON_TRIPLES: usize = 16;
     const NEON_BYTES: usize = NEON_TRIPLES * 3;
@@ -3021,38 +3021,6 @@ fn sample_ntt_pair_block_neon(
 
     *filled0 = n0;
     *filled1 = n1;
-  }
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-fn sample_ntt_triple_from_xof_into(mut readers: [Shake128XofReader; 3], out: [&mut Poly; 3]) {
-  let mut filled = [0usize; 3];
-  let [out0, out1, out2] = out;
-
-  while filled[0] < N && filled[1] < N && filled[2] < N {
-    let [reader0, reader1, reader2] = &mut readers;
-    Shake128XofReader::with_triple_rate_block(reader0, reader1, reader2, |state0, state1, state2| {
-      sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
-    });
-  }
-
-  let mut buf = [0u8; SHAKE128_RATE_BYTES];
-  while filled[0] < N {
-    readers[0].squeeze(&mut buf);
-    sample_ntt_block(&buf, out0, &mut filled[0]);
-  }
-  while filled[1] < N {
-    readers[1].squeeze(&mut buf);
-    sample_ntt_block(&buf, out1, &mut filled[1]);
-  }
-  while filled[2] < N {
-    readers[2].squeeze(&mut buf);
-    sample_ntt_block(&buf, out2, &mut filled[2]);
   }
 }
 
@@ -3133,7 +3101,7 @@ impl<'a> SampleNttProduct<'a> {
   #[inline(always)]
   #[cfg(not(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   )))]
@@ -3148,7 +3116,7 @@ impl<'a> SampleNttProduct<'a> {
   #[inline(always)]
   #[cfg(not(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   )))]
@@ -3273,7 +3241,7 @@ macro_rules! multiply_ntts_add_assign_chunk_neon_body {
 
 #[cfg(all(
   target_arch = "aarch64",
-  not(target_os = "linux"),
+  not(any(target_os = "macos", target_os = "linux")),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -3297,7 +3265,7 @@ macro_rules! sample_ntt_product_absorb_candidate_neon {
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "linux",
+  any(target_os = "macos", target_os = "linux"),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -3352,7 +3320,7 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
   rate_ptr: *const u8,
   acc: &mut Poly,
 ) {
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
     const SCRATCH_CANDIDATES: usize = MAX_CANDIDATES.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS);
@@ -3377,7 +3345,7 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
       }
     }
 
-    // SAFETY: Linux aarch64 compact rejection parser because:
+    // SAFETY: aarch64 compact rejection parser because:
     // 1. `rate_ptr` names a readable SHAKE128 rate block. Callers pass either a `[u8; 168]` buffer or
     //    the first 168 bytes of an initialized Keccak state on little-endian aarch64.
     // 2. `accepted_ptr.add(prefix_len)` has room for every candidate the block can produce plus the
@@ -3421,7 +3389,7 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
     product.filled = product.filled.strict_add(take);
   }
 
-  #[cfg(not(target_os = "linux"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     const NEON_TRIPLES: usize = 16;
     const NEON_BYTES: usize = NEON_TRIPLES * 3;
@@ -3668,32 +3636,6 @@ fn sample_ntt_quad_block_neon(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut 
   not(feature = "portable-only")
 ))]
 #[inline(always)]
-fn sample_ntt_triple_state_block(states: [&[u64; 25]; 3], out: [&mut Poly; 3], filled: &mut [usize; 3]) {
-  let [out0, out1, out2] = out;
-  let rate_ptrs = [
-    states[0].as_ptr().cast::<u8>(),
-    states[1].as_ptr().cast::<u8>(),
-    states[2].as_ptr().cast::<u8>(),
-  ];
-  // SAFETY: Pointer-backed triple parsing over Keccak state memory because:
-  // 1. This path is little-endian aarch64 only, so the in-memory `u64` state layout is the XOF byte
-  //    order.
-  // 2. Each Keccak state has 25 u64 lanes (200 bytes), which covers the first 168-byte SHAKE128 rate
-  //    block.
-  // 3. The helper reads only offsets `< SHAKE128_RATE_BYTES` and keeps bounded output fallback
-  //    semantics.
-  unsafe {
-    sample_ntt_triple_block_neon_ptrs(rate_ptrs, [out0, out1, out2], filled);
-  }
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[inline(always)]
 fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
   let [out0, out1, out2, out3] = out;
   let rate_ptrs = [
@@ -3711,73 +3653,6 @@ fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], fil
   //    semantics.
   unsafe {
     sample_ntt_quad_block_neon_ptrs(rate_ptrs, [out0, out1, out2, out3], filled);
-  }
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[target_feature(enable = "neon")]
-/// # Safety
-///
-/// Each pointer in `rate_ptrs` must name one readable SHAKE128 rate block. The output polynomials
-/// must be distinct mutable destinations, and `filled` must contain their current initialized
-/// coefficient counts. The caller must guarantee that the active CPU supports NEON.
-unsafe fn sample_ntt_triple_block_neon_ptrs(rate_ptrs: [*const u8; 3], out: [&mut Poly; 3], filled: &mut [usize; 3]) {
-  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
-
-  let [out0, out1, out2] = out;
-  if N.strict_sub(filled[0]) < MAX_CANDIDATES
-    || N.strict_sub(filled[1]) < MAX_CANDIDATES
-    || N.strict_sub(filled[2]) < MAX_CANDIDATES
-  {
-    // SAFETY: Bounded pointer-backed scalar parsing because:
-    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
-    // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
-    // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
-    // 4. Rejection branches depend only on public matrix-A samples, not secret material.
-    unsafe {
-      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
-      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
-      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
-    }
-    return;
-  }
-
-  #[cfg(target_os = "linux")]
-  {
-    let n0 = filled[0];
-    let n1 = filled[1];
-    let n2 = filled[2];
-    // SAFETY: Linux aarch64 assembly SampleNTT block parsing because:
-    // 1. Each pointer names one full 168-byte SHAKE128 rate block.
-    // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
-    // 3. Each destination polynomial is a distinct mutable borrow.
-    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-    let (count0, count1, count2) = unsafe {
-      (
-        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), rate_ptrs[0]),
-        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), rate_ptrs[1]),
-        aarch64::sample_ntt_rej_uniform_block_asm(out2.as_mut_ptr().add(n2), rate_ptrs[2]),
-      )
-    };
-    *filled = [n0.strict_add(count0), n1.strict_add(count1), n2.strict_add(count2)];
-  }
-
-  #[cfg(not(target_os = "linux"))]
-  {
-    // SAFETY: Fallback to bounded scalar pointer parsing on non-Linux aarch64 because:
-    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
-    // 2. Each destination polynomial has enough remaining capacity for all block candidates.
-    // 3. Rejection branches depend only on public matrix-A samples.
-    unsafe {
-      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
-      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
-      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
-    }
   }
 }
 
@@ -3806,13 +3681,13 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
     return;
   }
 
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
     let n0 = filled[0];
     let n1 = filled[1];
     let n2 = filled[2];
     let n3 = filled[3];
-    // SAFETY: Linux aarch64 assembly SampleNTT block parsing because:
+    // SAFETY: aarch64 compact assembly SampleNTT block parsing because:
     // 1. Each pointer names one full 168-byte SHAKE128 rate block.
     // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
     // 3. Each destination polynomial is a distinct mutable borrow.
@@ -3833,7 +3708,7 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
     ];
   }
 
-  #[cfg(not(target_os = "linux"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     const NEON_TRIPLES: usize = 16;
     const NEON_BYTES: usize = NEON_TRIPLES * 3;
@@ -4104,12 +3979,13 @@ fn sample_poly_cbd_eta3(input: &[u8], out: &mut Poly) {
 
   for (i, bytes) in input.chunks_exact(3).enumerate() {
     let bits = u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16);
+    let counts = (bits & 0x0024_9249) + ((bits >> 1) & 0x0024_9249) + ((bits >> 2) & 0x0024_9249);
     let start = i.strict_mul(4);
 
     for j in 0usize..4 {
-      let coeff = (bits >> (j.strict_mul(6))) & 0x3f;
-      let x = (coeff & 1) + ((coeff >> 1) & 1) + ((coeff >> 2) & 1);
-      let y = ((coeff >> 3) & 1) + ((coeff >> 4) & 1) + ((coeff >> 5) & 1);
+      let shift = j.strict_mul(6);
+      let x = (counts >> shift) & 0x7;
+      let y = (counts >> shift.strict_add(3)) & 0x7;
       out[start.strict_add(j)] = small_signed_to_mod_q(x as i16 - y as i16);
     }
   }
@@ -4117,11 +3993,12 @@ fn sample_poly_cbd_eta3(input: &[u8], out: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn ntt(poly: &mut Poly) {
-  #[cfg(target_os = "linux")]
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
   {
-    // SAFETY: aarch64 Linux NTT assembly dispatch because:
-    // 1. This function only compiles on aarch64 Linux with the portable-only escape hatch disabled.
-    // 2. Advanced SIMD is baseline for supported aarch64 Linux targets.
+    // SAFETY: aarch64 NTT assembly dispatch because:
+    // 1. This function only compiles on supported aarch64 macOS/Linux targets with the portable-only
+    //    escape hatch disabled.
+    // 2. Advanced SIMD is baseline for those supported aarch64 targets.
     // 3. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
     // 4. The assembly returns the same canonical representation as the scalar/FIPS path, validated by
     //    scalar-oracle tests before production dispatch.
@@ -4132,7 +4009,7 @@ fn ntt(poly: &mut Poly) {
     }
   }
 
-  #[cfg(not(target_os = "linux"))]
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
   {
     // SAFETY: aarch64 NEON NTT dispatch because:
     // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
@@ -4220,15 +4097,32 @@ fn ntt_scalar(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
-  // SAFETY: aarch64 NEON inverse-NTT dispatch because:
-  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-  // 3. `poly` is a fixed 256-coefficient polynomial; the kernel's public loop bounds cover only
-  //    in-bounds contiguous 8-coefficient chunks.
-  // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-  //    values.
-  unsafe {
-    inverse_ntt_neon(poly, final_scale_mont);
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: aarch64 Darwin inverse-NTT assembly dispatch because:
+    // 1. This function only compiles on aarch64 macOS with the portable-only escape hatch disabled.
+    // 2. Advanced SIMD is baseline for supported aarch64 macOS targets.
+    // 3. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 4. `final_scale_mont` is one of the public inverse-NTT Montgomery scale constants selected by the
+    //    caller.
+    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::inverse_ntt_asm(poly, final_scale_mont);
+    }
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  {
+    // SAFETY: aarch64 NEON inverse-NTT dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `poly` is a fixed 256-coefficient polynomial; the kernel's public loop bounds cover only
+    //    in-bounds contiguous 8-coefficient chunks.
+    // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
+    unsafe {
+      inverse_ntt_neon(poly, final_scale_mont);
+    }
   }
 }
 
@@ -4297,17 +4191,33 @@ fn inverse_ntt_montgomery_product_add_assign(poly: &mut Poly, addend: &Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
-  // SAFETY: aarch64 NEON inverse-NTT + add dispatch because:
-  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-  // 3. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
-  //    offsets.
-  // 4. `addend` is already in canonical modulo-Q representation, so the final add uses the same
-  //    constant-time modular addition as `poly_add_assign`.
-  // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-  //    values.
-  unsafe {
-    inverse_ntt_neon_add_assign(poly, addend, final_scale_mont);
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: aarch64 Darwin inverse-NTT plus add assembly dispatch because:
+    // 1. This function only compiles on aarch64 macOS with the portable-only escape hatch disabled.
+    // 2. Advanced SIMD is baseline for supported aarch64 macOS targets.
+    // 3. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 4. `addend` is already in canonical modulo-Q representation, matching the scalar add contract.
+    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::inverse_ntt_add_assign_asm(poly, addend, final_scale_mont);
+    }
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  {
+    // SAFETY: aarch64 NEON inverse-NTT + add dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
+    //    offsets.
+    // 4. `addend` is already in canonical modulo-Q representation, so the final add uses the same
+    //    constant-time modular addition as `poly_add_assign`.
+    // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+    //    values.
+    unsafe {
+      inverse_ntt_neon_add_assign(poly, addend, final_scale_mont);
+    }
   }
 }
 
@@ -4455,15 +4365,31 @@ fn multiply_ntts_add_assign_chunk_scalar(
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
-  // SAFETY: aarch64 NEON multiply-accumulate dispatch because:
-  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-  // 3. `acc`, `a`, and `b` are fixed 256-coefficient arrays, which is the exact shape required by the
-  //    kernel.
-  // 4. The borrow checker guarantees `acc` is not aliased by `a` or `b`; `a` and `b` are read-only.
-  // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
-  unsafe {
-    multiply_ntts_add_assign_neon(acc, a, b);
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: aarch64 Darwin base-multiply assembly dispatch because:
+    // 1. This function only compiles on aarch64 macOS with the portable-only escape hatch disabled.
+    // 2. Advanced SIMD is baseline for supported aarch64 macOS targets.
+    // 3. `acc`, `a`, and `b` are fixed 256-coefficient arrays matching the assembly ABI.
+    // 4. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+    // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+    unsafe {
+      aarch64::basemul_accumulate_asm(acc, a, b);
+    }
+  }
+
+  #[cfg(not(target_os = "macos"))]
+  {
+    // SAFETY: aarch64 NEON multiply-accumulate dispatch because:
+    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `acc`, `a`, and `b` are fixed 256-coefficient arrays, which is the exact shape required by the
+    //    kernel.
+    // 4. The borrow checker guarantees `acc` is not aliased by `a` or `b`; `a` and `b` are read-only.
+    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+    unsafe {
+      multiply_ntts_add_assign_neon(acc, a, b);
+    }
   }
 }
 
@@ -4772,7 +4698,51 @@ fn multiply_ntts_accumulate<const K: usize>(acc: &mut Poly, a: &PolyVec<K>, b: &
 
   #[cfg(all(
     target_arch = "aarch64",
-    not(target_os = "linux"),
+    target_os = "macos",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    if K == 2 {
+      // SAFETY: aarch64 Darwin assembly K=2 dot-product dispatch because:
+      // 1. `K == 2` proves `a` and `b` are contiguous `[[u16; 256]; 2]` polynomial vectors.
+      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
+      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return aarch64::basemul_accumulate_k2_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
+      }
+    }
+
+    if K == 3 {
+      // SAFETY: aarch64 Darwin assembly K=3 dot-product dispatch because:
+      // 1. `K == 3` proves `a` and `b` are contiguous `[[u16; 256]; 3]` polynomial vectors.
+      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
+      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return aarch64::basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
+      }
+    }
+
+    if K == 4 {
+      // SAFETY: aarch64 Darwin assembly K=4 dot-product dispatch because:
+      // 1. `K == 4` proves `a` and `b` are contiguous `[[u16; 256]; 4]` polynomial vectors.
+      // 2. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+      // 3. The borrow checker guarantees `acc` is not aliased by `a` or `b`; inputs are read-only.
+      // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
+      // 5. The assembly memory schedule is fixed and independent of secret coefficient values.
+      unsafe {
+        return aarch64::basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
+      }
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    not(any(target_os = "macos", target_os = "linux")),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -4827,7 +4797,7 @@ fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
 
 #[cfg(all(
   target_arch = "aarch64",
-  any(test, not(target_os = "linux")),
+  any(test, not(any(target_os = "macos", target_os = "linux"))),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -4875,7 +4845,7 @@ fn ntt_neon(poly: &mut Poly) {
 
 #[cfg(all(
   target_arch = "aarch64",
-  any(test, not(target_os = "linux")),
+  any(test, not(any(target_os = "macos", target_os = "linux"))),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -4915,7 +4885,7 @@ fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(
   target_arch = "aarch64",
-  any(test, not(target_os = "linux")),
+  any(test, not(any(target_os = "macos", target_os = "linux"))),
   not(miri),
   not(feature = "portable-only")
 ))]
@@ -4941,7 +4911,12 @@ fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
   inverse_ntt_neon_butterflies(poly);
@@ -4962,7 +4937,12 @@ fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(target_os = "macos"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
   inverse_ntt_neon_butterflies(poly);
@@ -4983,7 +4963,12 @@ fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont:
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
   let mut zeta_index = 127usize;
@@ -5031,7 +5016,12 @@ fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -5066,7 +5056,12 @@ fn inverse_ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -5092,7 +5087,12 @@ fn inverse_ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn duplicate_i16_pair_lanes_neon(a: i16, b: i16) -> int16x4_t {
   let lanes = vdup_n_s16(a);
@@ -5100,7 +5100,12 @@ fn duplicate_i16_pair_lanes_neon(a: i16, b: i16) -> int16x4_t {
   vset_lane_s16::<3>(b, lanes)
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn zip_u16x4_pair_lanes_neon(lower: uint16x4_t, upper: uint16x4_t) -> uint16x8_t {
   let lower_pairs: uint32x2_t = vreinterpret_u32_u16(lower);
@@ -5172,7 +5177,12 @@ fn store_accumulated_8_neon(acc: &mut Poly, coeff_offset: usize, c0: uint16x8_t,
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
@@ -5267,7 +5277,12 @@ fn montgomery_reduce_i32x4_neon(value: int32x4_t) -> int16x4_t {
   vsub_s16(vshrn_n_s32::<16>(value), c)
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn mul_mont_const_mod_u16x4(a: uint16x4_t, b_mont: i16) -> uint16x4_t {
   signed_to_mod_q_s16x4(montgomery_reduce_i32x4_neon(vmull_n_s16(
@@ -5276,13 +5291,23 @@ fn mul_mont_const_mod_u16x4(a: uint16x4_t, b_mont: i16) -> uint16x4_t {
   )))
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn mul_mont_mod_u16x4(a: uint16x4_t, b_mont: int16x4_t) -> uint16x4_t {
   signed_to_mod_q_s16x4(montgomery_reduce_i32x4_neon(vmull_s16(vreinterpret_s16_u16(a), b_mont)))
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn add_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   let sum = vadd_u16(a, b);
@@ -5291,7 +5316,12 @@ fn add_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   vsub_u16(sum, vand_u16(ge_q, q))
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn sub_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   let diff = vsub_u16(a, b);
@@ -5309,7 +5339,12 @@ fn add_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
   vsubq_u16(sum, vandq_u16(ge_q, q))
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn sub_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
   let diff = vsubq_u16(a, b);
@@ -5342,7 +5377,12 @@ fn signed_to_mod_q_s16x8(value: int16x8_t) -> uint16x8_t {
   vreinterpretq_u16_s16(vaddq_s16(value, vandq_s16(negative, vdupq_n_s16(Q_I16))))
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
   let negative = vshr_n_s16::<15>(value);
@@ -5938,6 +5978,33 @@ fn compress_value<const D: usize>(value: u16) -> u16 {
 
 #[inline(always)]
 fn compress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    match D {
+      5 => {
+        // SAFETY: aarch64 four-lane compression dispatch because:
+        // 1. `values` contains exactly four canonical ML-KEM coefficients.
+        // 2. Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+        // 3. The helper uses fixed-lane arithmetic and a fixed local store; there are no
+        //    coefficient-dependent addresses or branches.
+        unsafe {
+          return compress_values_4_neon::<5>(values);
+        }
+      }
+      11 => {
+        // SAFETY: aarch64 four-lane compression dispatch because:
+        // 1. `values` contains exactly four canonical ML-KEM coefficients.
+        // 2. Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+        // 3. The helper uses fixed-lane arithmetic and a fixed local store; there are no
+        //    coefficient-dependent addresses or branches.
+        unsafe {
+          return compress_values_4_neon::<11>(values);
+        }
+      }
+      _ => {}
+    }
+  }
+
   #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
   {
     if use_s390x_vector_arithmetic() {
@@ -5955,6 +6022,53 @@ fn compress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
     compress_value::<D>(values[2]),
     compress_value::<D>(values[3]),
   ]
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn compress_values_4_neon<const D: i32>(values: [u16; 4]) -> [u16; 4] {
+  debug_assert!(matches!(D, 1 | 4 | 5 | 10 | 11));
+
+  // SAFETY: fixed-size NEON load/store around local arrays because:
+  // 1. `values` is a stack-owned `[u16; 4]`, so `vld1_u16` reads exactly four in-bounds lanes.
+  // 2. `out` is a stack-owned `[u16; 4]`, so `vst1_u16` writes exactly four in-bounds lanes.
+  // 3. The widening, multiply, shift, and narrowing operations operate on fixed public lane counts.
+  // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+  //    availability.
+  unsafe {
+    let lanes = vld1_u16(values.as_ptr());
+    let compressed = compress_lanes_4_neon::<D>(lanes);
+
+    let mut out = [0u16; 4];
+    vst1_u16(out.as_mut_ptr(), compressed);
+    out
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn compress_lanes_4_neon<const D: i32>(lanes: uint16x4_t) -> uint16x4_t {
+  debug_assert!(matches!(D, 1 | 4 | 5 | 10 | 11));
+  let numerators = vaddq_u32(vshll_n_u16::<D>(lanes), vdupq_n_u32(Q_HALF));
+  let recip = vdup_n_u32(Q_COMPRESS_DIV_RECIP as u32);
+  let lo = vshrq_n_u64::<Q_COMPRESS_DIV_SHIFT>(vmull_u32(vget_low_u32(numerators), recip));
+  let hi = vshrq_n_u64::<Q_COMPRESS_DIV_SHIFT>(vmull_u32(vget_high_u32(numerators), recip));
+  let quotients = vcombine_u32(vmovn_u64(lo), vmovn_u64(hi));
+  vmovn_u32(vandq_u32(quotients, vdupq_n_u32((1u32 << (D as u32)) - 1)))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn load_compress_lanes_4_neon<const D: i32>(input: &Poly, offset: usize) -> uint16x4_t {
+  debug_assert!(offset.strict_add(4) <= N);
+
+  // SAFETY: fixed-size NEON coefficient load because:
+  // 1. `input` is a fixed 256-coefficient polynomial.
+  // 2. `offset + 4 <= N` is checked above, so `vld1_u16` reads four in-bounds lanes.
+  // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+  //    availability.
+  // 4. The memory access schedule depends only on public ML-KEM dimensions.
+  unsafe { compress_lanes_4_neon::<D>(vld1_u16(input.as_ptr().add(offset))) }
 }
 
 #[inline]
@@ -6098,24 +6212,40 @@ fn compress_encode_compare_5(input: &Poly, expected: &[u8]) -> u8 {
 
 fn compress_encode_compare_10(input: &Poly, expected: &[u8]) -> u8 {
   debug_assert_eq!(expected.len(), 320);
-  let mut diff = 0u8;
-  for i in 0usize..64 {
-    let j = i.strict_mul(4);
-    let k = i.strict_mul(5);
-    let [t0, t1, t2, t3] = compress_values_4::<10>([
-      input[j],
-      input[j.strict_add(1)],
-      input[j.strict_add(2)],
-      input[j.strict_add(3)],
-    ]);
 
-    diff |= (t0 as u8) ^ expected[k];
-    diff |= (((t0 >> 8) | (t1 << 2)) as u8) ^ expected[k.strict_add(1)];
-    diff |= (((t1 >> 6) | (t2 << 4)) as u8) ^ expected[k.strict_add(2)];
-    diff |= (((t2 >> 4) | (t3 << 6)) as u8) ^ expected[k.strict_add(3)];
-    diff |= ((t3 >> 2) as u8) ^ expected[k.strict_add(4)];
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    // SAFETY: aarch64 NEON compare dispatch because:
+    // 1. `input` is a fixed 256-coefficient polynomial and `expected` length is checked above.
+    // 2. Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. The helper uses fixed public loop bounds and fixed-stride loads.
+    // 4. The compare accumulates all byte differences without secret-dependent early exit.
+    unsafe {
+      return compress_encode_compare_10_neon(input, expected);
+    }
   }
-  ct_zero_mask_u8(diff)
+
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    let mut diff = 0u8;
+    for i in 0usize..64 {
+      let j = i.strict_mul(4);
+      let k = i.strict_mul(5);
+      let [t0, t1, t2, t3] = compress_values_4::<10>([
+        input[j],
+        input[j.strict_add(1)],
+        input[j.strict_add(2)],
+        input[j.strict_add(3)],
+      ]);
+
+      diff |= (t0 as u8) ^ expected[k];
+      diff |= (((t0 >> 8) | (t1 << 2)) as u8) ^ expected[k.strict_add(1)];
+      diff |= (((t1 >> 6) | (t2 << 4)) as u8) ^ expected[k.strict_add(2)];
+      diff |= (((t2 >> 4) | (t3 << 6)) as u8) ^ expected[k.strict_add(3)];
+      diff |= ((t3 >> 2) as u8) ^ expected[k.strict_add(4)];
+    }
+    ct_zero_mask_u8(diff)
+  }
 }
 
 fn compress_encode_compare_11(input: &Poly, expected: &[u8]) -> u8 {
@@ -6169,6 +6299,28 @@ fn compress_encode_compare_11(input: &Poly, expected: &[u8]) -> u8 {
     diff |= u64::from(encoded_hi ^ expected_hi);
   }
   ct_zero_mask_u64(diff)
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn compress_encode_compare_10_neon(input: &Poly, expected: &[u8]) -> u8 {
+  let mut diff = 0u8;
+  for i in 0usize..64 {
+    let j = i.strict_mul(4);
+    let k = i.strict_mul(5);
+    let t = load_compress_lanes_4_neon::<10>(input, j);
+    let t0 = vget_lane_u16::<0>(t);
+    let t1 = vget_lane_u16::<1>(t);
+    let t2 = vget_lane_u16::<2>(t);
+    let t3 = vget_lane_u16::<3>(t);
+
+    diff |= (t0 as u8) ^ expected[k];
+    diff |= (((t0 >> 8) | (t1 << 2)) as u8) ^ expected[k.strict_add(1)];
+    diff |= (((t1 >> 6) | (t2 << 4)) as u8) ^ expected[k.strict_add(2)];
+    diff |= (((t2 >> 4) | (t3 << 6)) as u8) ^ expected[k.strict_add(3)];
+    diff |= ((t3 >> 2) as u8) ^ expected[k.strict_add(4)];
+  }
+  ct_zero_mask_u8(diff)
 }
 
 fn decode_decompress_poly<const D: usize>(input: &[u8], out: &mut Poly) {
@@ -7032,7 +7184,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -7053,7 +7205,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -7064,8 +7216,8 @@ mod tests {
     }
 
     let mut asm = acc;
-    // SAFETY: direct aarch64 Linux assembly K=2 dot-product test call because:
-    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // SAFETY: direct aarch64 assembly K=2 dot-product test call because:
+    // 1. This test only compiles on aarch64 Linux/macOS targets that include the assembly backend.
     // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
     // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
     // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
@@ -7155,7 +7307,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -7190,7 +7342,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -7328,31 +7480,6 @@ mod tests {
 
     assert_eq!(left, sample_ntt(&rho, 0, 1));
     assert_eq!(right, sample_ntt(&rho, 2, 1));
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  #[test]
-  fn sample_ntt_triple_matches_scalar_samplers() {
-    let mut rho = [0u8; SEED_BYTES];
-    for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(39).strict_add(17)) as u8;
-    }
-
-    let lanes = [(0, 2), (1, 0), (2, 3)];
-    let mut actual = [[0u16; N]; 3];
-    {
-      let [out0, out1, out2] = &mut actual;
-      sample_ntt_triple_into(&rho, lanes, [out0, out1, out2]);
-    }
-
-    for (lane, &(j, i)) in lanes.iter().enumerate() {
-      assert_eq!(actual[lane], sample_ntt(&rho, j, i), "lane {lane}");
-    }
   }
 
   #[cfg(all(
@@ -7705,6 +7832,39 @@ mod tests {
     }
   }
 
+  #[test]
+  fn prepared_matrix_cache_matches_materialized_transpose() {
+    assert_prepared_matrix_cache_matches_materialized_transpose::<2>();
+    assert_prepared_matrix_cache_matches_materialized_transpose::<3>();
+    assert_prepared_matrix_cache_matches_materialized_transpose::<4>();
+  }
+
+  fn assert_prepared_matrix_cache_matches_materialized_transpose<const K: usize>() {
+    let mut rho = [0u8; SEED_BYTES];
+    for (i, byte) in rho.iter_mut().enumerate() {
+      *byte = (i.strict_mul(67).strict_add(29)) as u8;
+    }
+
+    let mut rhs = [[0u16; N]; K];
+    for (i, poly) in rhs.iter_mut().enumerate() {
+      *poly = test_poly(0x50usize.strict_add(i.strict_mul(0x10)));
+    }
+
+    let ek = PreparedEncapsulationArithmetic {
+      t_hat: [[0u16; N]; K],
+      rho,
+      a_transpose_hat: prepare_matrix_transpose::<K>(&rho),
+    };
+
+    let mut cached = [[0u16; N]; K];
+    matrix_ntt_mul_accumulate_prepared_transpose(&ek, &rhs, &mut cached);
+
+    let mut materialized = [[0u16; N]; K];
+    sample_matrix_ntt_mul_accumulate_materialized::<K>(&ek.rho, &rhs, &mut materialized, true);
+
+    assert_eq!(cached, materialized);
+  }
+
   fn test_poly(seed: usize) -> Poly {
     let mut poly = [0u16; N];
     for (i, coeff) in poly.iter_mut().enumerate() {
@@ -7738,7 +7898,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -7747,8 +7907,8 @@ mod tests {
     inverse_ntt_scalar_with_scale(&mut scalar, final_scale_mont);
 
     let mut asm = poly;
-    // SAFETY: direct Linux aarch64 inverse-NTT assembly test call because:
-    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // SAFETY: direct aarch64 inverse-NTT assembly test call because:
+    // 1. This test only compiles on aarch64 macOS/Linux targets that include the assembly backend.
     // 2. `asm` is a fixed 256-coefficient polynomial matching the assembly ABI.
     // 3. The assembly returns the scalar/FIPS representation directly.
     // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
@@ -7764,7 +7924,7 @@ mod tests {
 
   #[cfg(all(
     target_arch = "aarch64",
-    target_os = "linux",
+    any(target_os = "macos", target_os = "linux"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -7774,8 +7934,8 @@ mod tests {
     poly_add_assign(&mut scalar, &addend);
 
     let mut asm = poly;
-    // SAFETY: direct Linux aarch64 inverse-NTT plus add assembly test call because:
-    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // SAFETY: direct aarch64 inverse-NTT plus add assembly test call because:
+    // 1. This test only compiles on aarch64 macOS/Linux targets that include the assembly backend.
     // 2. `asm` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
     // 3. The assembly returns the scalar/FIPS representation directly.
     // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
@@ -7912,6 +8072,20 @@ mod tests {
     for (i, byte) in r.iter_mut().enumerate() {
       *byte = (i.strict_mul(19).strict_add(29)) as u8;
     }
+
+    let (ek512, _) = keygen::<2, 2, 192, 768, 800, 1632>(&key_random);
+    let prepared512 = prepare_encapsulation_key::<2, 800>(&ek512);
+    let ciphertext512 = pke_encrypt_prepared::<2, 192, 768, 10, 4, 320, 128>(&prepared512, &m, &r);
+    assert_eq!(
+      pke_encrypt_prepared_512_compare(&prepared512, &m, &r, &ciphertext512),
+      0xff
+    );
+    let mut modified512 = ciphertext512;
+    modified512[701] ^= 0x08;
+    assert_eq!(
+      pke_encrypt_prepared_512_compare(&prepared512, &m, &r, &modified512),
+      0x00
+    );
 
     let (ek768, _) = keygen::<3, 3, 128, 1152, 1184, 2400>(&key_random);
     let prepared768 = prepare_encapsulation_key::<3, 1184>(&ek768);

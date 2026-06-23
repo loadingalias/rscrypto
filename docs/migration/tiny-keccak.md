@@ -153,7 +153,7 @@ For the streaming form (data fed in chunks):
 
 ```rust
 // After
-use rscrypto::{Cshake256, Digest, Xof};
+use rscrypto::{Cshake256, Xof};
 let mut x = Cshake256::new(function_name, customization);
 x.update(b"foo");
 x.update(b"bar");

@@ -4,12 +4,12 @@
 style alone is not enough: the claim depends on the crate version, commit,
 compiler, target, CPU features, enabled features, and generated binary.
 
-Unlisted configurations are not covered by a constant-time release claim.
+Unlisted configurations are NOT covered by a constant-time release claim.
 
 The machine-readable source of truth is [`ct.toml`](../ct.toml). The sections
 below explain how to read that boundary.
 
-## What Constant-Time Means Here
+## What Do I Mean By Constant-Time?
 
 For the declared secret inputs of a claimed primitive, the generated binary must
 not let those secrets influence:
@@ -34,7 +34,7 @@ machine code.
 
 It does not claim resistance to physical side channels such as power analysis,
 electromagnetic leakage, acoustic leakage, fault injection, rowhammer, or
-platform compromise. Those need separate hardware and operational evidence.
+platform compromise. Those need separate hardware and operational evidence. This is likely to be expanded in the future, but as of now, the focus is on software-observable timing leakage.
 
 Speculation is handled by avoiding secret-dependent branches and addresses in
 claimed code paths. This is not a blanket Spectre-class guarantee for a whole
@@ -42,7 +42,7 @@ process.
 
 ## Claimed Surfaces
 
-The highest-sensitivity surfaces are private-key and authentication operations:
+The highest-sensitivity surfaces are private-key and auth operations:
 
 - MAC/tag verification and constant-time byte equality.
 - AEAD authentication and failed-open cleanup.
@@ -132,30 +132,3 @@ No leakage detected for this configuration.
 ```
 
 They are evidence, not a formal proof.
-
-## When Claims Need Re-Review
-
-A constant-time claim needs renewed evidence when any CT-critical source,
-unsafe block, assembly wrapper, target-feature wrapper, dispatch table, compiler
-version, codegen backend, linker, target CPU/features, profile, enabled
-features, dependency implementation, secret/public annotation, generated
-artifact, or waiver changes.
-
-That rule is strict because constant-time behavior is a property of the executed
-binary, not only the Rust source.
-
-## Recommended Wording
-
-Use this shape in release notes or downstream reviews:
-
-```text
-This release makes constant-time claims only for the configurations listed in
-the release CT report.
-
-Each claim is relative to declared secret inputs, declared public inputs, crate
-version, compiler, codegen backend, target, CPU features, linker, build profile,
-enabled features, dependency lockfile, and the evidence recorded for that
-primitive.
-
-Unlisted configurations are not covered by this release claim.
-```

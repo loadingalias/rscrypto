@@ -25,7 +25,6 @@ macro_rules! random_smoke {
   };
 }
 
-// ── AEAD keys ───────────────────────────────────────────────────────────────
 #[cfg(feature = "chacha20poly1305")]
 mod chacha20poly1305_rng {
   use rscrypto::aead::ChaCha20Poly1305Key;
@@ -74,7 +73,6 @@ mod aegis256_rng {
   random_smoke!(key, Aegis256Key);
 }
 
-// ── AEAD nonces ─────────────────────────────────────────────────────────────
 #[cfg(feature = "aead")]
 mod nonce_rng {
   use rscrypto::aead::{Nonce96, Nonce128, Nonce192, Nonce256};
@@ -84,7 +82,6 @@ mod nonce_rng {
   random_smoke!(nonce256, Nonce256);
 }
 
-// ── Auth keys ───────────────────────────────────────────────────────────────
 #[cfg(feature = "ed25519")]
 mod ed25519_rng {
   use rscrypto::Ed25519SecretKey;

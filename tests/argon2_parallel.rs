@@ -42,8 +42,6 @@ fn oracle_hash(
 const PASSWORD: &[u8] = b"phase3-parallel-correctness-test";
 const SALT: &[u8] = b"rscrypto-parallel-salt-bytes!!";
 
-// ─── High-lane-count oracle parity ─────────────────────────────────────────
-
 /// At p = 8 the rayon driver fills 8 lane segments per slice. Across
 /// 4 slices × `time_cost` passes that is 8·4·t fill_segment calls per
 /// hash; any data-race or aliasing bug in the parallel path almost
@@ -108,8 +106,6 @@ fn argon2id_p16_matches_oracle() {
   assert_eq!(actual, expected, "argon2id p=16 mismatch vs RustCrypto oracle");
 }
 
-// ─── Determinism under parallel scheduling ─────────────────────────────────
-
 /// Hash the same inputs many times in a row at high parallelism. Rayon's
 /// scheduler may interleave the lane tasks differently across runs; the
 /// fill order must be irrelevant to the output, so every iteration must
@@ -142,8 +138,6 @@ fn argon2d_parallel_is_deterministic() {
   }
 }
 
-// ─── p = 1 fast path under parallel feature ────────────────────────────────
-
 /// With `parallel` on but `p = 1`, the dispatcher must skip rayon and run
 /// the sequential path. This test verifies the fast-path produces the
 /// same output as the oracle (and, by transitivity, the same output as
@@ -162,8 +156,6 @@ fn argon2id_p1_fast_path_matches_oracle() {
   let expected = oracle_hash(argon2::Algorithm::Argon2id, PASSWORD, SALT, m, t, p, out_len);
   assert_eq!(actual, expected, "argon2id p=1 fast-path mismatch vs oracle");
 }
-
-// ─── Verify still works under parallel hashing ─────────────────────────────
 
 #[test]
 fn argon2id_parallel_verify_round_trip() {

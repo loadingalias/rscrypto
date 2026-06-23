@@ -1700,6 +1700,23 @@ fn mlkem_arithmetic(_: &mut Criterion) {}
 
 #[cfg(feature = "diag")]
 fn mlkem_decap_phases(c: &mut Criterion) {
+  let key_random_512 = deterministic_bytes::<{ MlKem512::KEY_GENERATION_RANDOM_SIZE }>(0x41);
+  let encaps_random_512 = deterministic_bytes::<{ MlKem512::ENCAPSULATION_RANDOM_SIZE }>(0x81);
+  let (ek512, dk512) = MlKem512::generate_keypair(|out| {
+    out.copy_from_slice(&key_random_512);
+    Ok::<(), MlKemError>(())
+  })
+  .unwrap();
+  let prepared_ek512 = ek512.prepare().unwrap();
+  let prepared_dk512 = dk512.prepare().unwrap();
+  let (ct512, _) = prepared_ek512
+    .encapsulate(|out| {
+      out.copy_from_slice(&encaps_random_512);
+      Ok::<(), MlKemError>(())
+    })
+    .unwrap();
+  let compare_ct512 = prepared_dk512.diag_decap_reencrypt_ciphertext(0x32);
+
   let key_random_768 = deterministic_bytes::<{ MlKem768::KEY_GENERATION_RANDOM_SIZE }>(0x51);
   let encaps_random_768 = deterministic_bytes::<{ MlKem768::ENCAPSULATION_RANDOM_SIZE }>(0x91);
   let (ek768, dk768) = MlKem768::generate_keypair(|out| {
@@ -1715,6 +1732,7 @@ fn mlkem_decap_phases(c: &mut Criterion) {
       Ok::<(), MlKemError>(())
     })
     .unwrap();
+  let compare_ct768 = prepared_dk768.diag_decap_reencrypt_ciphertext(0x42);
 
   let key_random_1024 = deterministic_bytes::<{ MlKem1024::KEY_GENERATION_RANDOM_SIZE }>(0x61);
   let encaps_random_1024 = deterministic_bytes::<{ MlKem1024::ENCAPSULATION_RANDOM_SIZE }>(0xA1);
@@ -1731,14 +1749,30 @@ fn mlkem_decap_phases(c: &mut Criterion) {
       Ok::<(), MlKemError>(())
     })
     .unwrap();
+  let compare_ct1024 = prepared_dk1024.diag_decap_reencrypt_ciphertext(0x52);
 
   let mut g = c.benchmark_group("mlkem-decap-phases");
 
+  g.bench_function("k=2/decrypt", |b| {
+    b.iter(|| black_box(prepared_dk512.diag_decap_decrypt_digest(black_box(&ct512))))
+  });
+  g.bench_function("k=2/reencrypt", |b| {
+    b.iter(|| black_box(prepared_dk512.diag_decap_reencrypt_digest(black_box(0x32))))
+  });
+  g.bench_function("k=2/reencrypt-compare", |b| {
+    b.iter(|| black_box(prepared_dk512.diag_decap_reencrypt_compare_digest(black_box(&compare_ct512), black_box(0x32))))
+  });
+  g.bench_function("k=2/hash-select", |b| {
+    b.iter(|| black_box(prepared_dk512.diag_decap_hash_select_digest(black_box(&ct512), black_box(0x32))))
+  });
   g.bench_function("k=3/decrypt", |b| {
     b.iter(|| black_box(prepared_dk768.diag_decap_decrypt_digest(black_box(&ct768))))
   });
   g.bench_function("k=3/reencrypt", |b| {
     b.iter(|| black_box(prepared_dk768.diag_decap_reencrypt_digest(black_box(0x42))))
+  });
+  g.bench_function("k=3/reencrypt-compare", |b| {
+    b.iter(|| black_box(prepared_dk768.diag_decap_reencrypt_compare_digest(black_box(&compare_ct768), black_box(0x42))))
   });
   g.bench_function("k=3/hash-select", |b| {
     b.iter(|| black_box(prepared_dk768.diag_decap_hash_select_digest(black_box(&ct768), black_box(0x42))))
@@ -1748,6 +1782,11 @@ fn mlkem_decap_phases(c: &mut Criterion) {
   });
   g.bench_function("k=4/reencrypt", |b| {
     b.iter(|| black_box(prepared_dk1024.diag_decap_reencrypt_digest(black_box(0x52))))
+  });
+  g.bench_function("k=4/reencrypt-compare", |b| {
+    b.iter(|| {
+      black_box(prepared_dk1024.diag_decap_reencrypt_compare_digest(black_box(&compare_ct1024), black_box(0x52)))
+    })
   });
   g.bench_function("k=4/hash-select", |b| {
     b.iter(|| black_box(prepared_dk1024.diag_decap_hash_select_digest(black_box(&ct1024), black_box(0x52))))

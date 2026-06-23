@@ -7,14 +7,18 @@ use core::arch::global_asm;
 use super::PolyVec;
 #[cfg(test)]
 use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
-#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[cfg(any(target_os = "macos", all(any(test, feature = "diag"), target_os = "linux")))]
 use super::ZETAS_MONT;
 use super::{GAMMAS_MONT, Poly};
 
-#[cfg(all(any(test, feature = "diag"), target_os = "macos"))]
+#[cfg(target_os = "macos")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_apple_darwin.s"));
-#[cfg(all(any(test, feature = "diag"), target_os = "macos"))]
+#[cfg(target_os = "macos")]
+global_asm!(include_str!("../asm/rscrypto_mlkem_inv_ntt_aarch64_apple_darwin.s"));
+#[cfg(target_os = "macos")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_apple_darwin.s"));
+#[cfg(target_os = "macos")]
+global_asm!(include_str!("../asm/rscrypto_mlkem_rej_uniform_aarch64_apple_darwin.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_ntt_aarch64_linux.s"));
 #[cfg(target_os = "linux")]
@@ -24,11 +28,11 @@ global_asm!(include_str!("../asm/rscrypto_mlkem_inv_ntt_aarch64_linux.s"));
 #[cfg(target_os = "linux")]
 global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 
-#[cfg(any(test, feature = "diag", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[repr(align(16))]
 struct AlignedI16<const N: usize>([i16; N]);
 
-#[cfg(any(test, feature = "diag", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -1600, -15749, -749, -7373, -40, -394, -687, -6762, 630, 6201, -1432, -14095, 848, 8347, 0, 0, 1062, 10453, 296,
   2914, -882, -8682, 0, 0, -1410, -13879, 1339, 13180, 1476, 14529, 0, 0, 193, 1900, -283, -2786, 56, 551, 0, 0, 797,
@@ -36,7 +40,7 @@ static NTT_ZETAS_LAYER_12345: AlignedI16<80> = AlignedI16([
   -4400, 0, 0, 569, 5601, -936, -9213, -450, -4429, 0, 0, -1583, -15582, -1355, -13338, 821, 8081, 0, 0,
 ]);
 
-#[cfg(any(test, feature = "diag", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
   289, 289, 331, 331, -76, -76, -1573, -1573, 2845, 2845, 3258, 3258, -748, -748, -15483, -15483, 17, 17, 583, 583,
   1637, 1637, -1041, -1041, 167, 167, 5739, 5739, 16113, 16113, -10247, -10247, -568, -568, -680, -680, 723, 723, 1100,
@@ -64,9 +68,15 @@ static NTT_ZETAS_LAYER_67: AlignedI16<384> = AlignedI16([
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_ntt_aarch64_apple_darwin(poly: *mut i16, zetas12345: *const i16, zetas67: *const i16);
-  #[cfg(any(test, feature = "diag"))]
+  fn rscrypto_mlkem_rej_uniform_block_aarch64_apple_darwin(out: *mut u16, input: *const u8) -> usize;
+  fn rscrypto_mlkem_inv_ntt_aarch64_apple_darwin(poly: *mut u16, zetas_mont: *const i16, final_scale_mont: i16);
+  fn rscrypto_mlkem_inv_ntt_add_aarch64_apple_darwin(
+    poly: *mut u16,
+    addend: *const u16,
+    zetas_mont: *const i16,
+    final_scale_mont: i16,
+  );
   fn rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
@@ -80,14 +90,18 @@ unsafe extern "C" {
     b: *const u16,
     gammas_mont: *const i16,
   );
-  #[cfg(any(test, feature = "diag"))]
+  fn rscrypto_mlkem_basemul_accumulate_k2_aarch64_apple_darwin(
+    acc: *mut u16,
+    a: *const u16,
+    b: *const u16,
+    gammas_mont: *const i16,
+  );
   fn rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
     b: *const u16,
     gammas_mont: *const i16,
   );
-  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_k4_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
@@ -143,18 +157,31 @@ unsafe extern "C" {
   );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *const u8) -> usize {
-  // SAFETY: Linux aarch64 SampleNTT rejection parser call because:
-  // 1. `input` points to one readable 168-byte SHAKE128 rate block.
-  // 2. `out` points to writable capacity for all 112 possible accepted candidates.
-  // 3. Advanced SIMD is baseline for supported aarch64 Linux targets.
-  // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-  unsafe { rscrypto_mlkem_rej_uniform_block_aarch64_linux(out, input) }
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: Darwin aarch64 SampleNTT rejection parser call because:
+    // 1. `input` points to one readable 168-byte SHAKE128 rate block.
+    // 2. `out` points to writable capacity for all 112 possible accepted candidates.
+    // 3. Advanced SIMD is baseline for supported aarch64 macOS targets.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe { rscrypto_mlkem_rej_uniform_block_aarch64_apple_darwin(out, input) }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: Linux aarch64 SampleNTT rejection parser call because:
+    // 1. `input` points to one readable 168-byte SHAKE128 rate block.
+    // 2. `out` points to writable capacity for all 112 possible accepted candidates.
+    // 3. Advanced SIMD is baseline for supported aarch64 Linux targets.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe { rscrypto_mlkem_rej_uniform_block_aarch64_linux(out, input) }
+  }
 }
 
-#[cfg(any(test, feature = "diag", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 unsafe fn ntt_asm_raw(poly: &mut Poly) {
   #[cfg(target_os = "macos")]
@@ -194,7 +221,7 @@ unsafe fn ntt_asm_raw(poly: &mut Poly) {
   }
 }
 
-#[cfg(any(test, feature = "diag", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn ntt_asm(poly: &mut Poly) {
   // SAFETY: exact ML-KEM aarch64 NTT assembly call because:
@@ -252,43 +279,83 @@ pub(super) unsafe fn diag_ntt_asm_input_digest(mut poly: Poly) -> u16 {
   digest
 }
 
-#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[cfg(any(target_os = "macos", all(any(test, feature = "diag"), target_os = "linux")))]
 #[inline]
-unsafe fn inverse_ntt_asm(poly: &mut Poly, final_scale_mont: i16) {
-  // SAFETY: ML-KEM aarch64 inverse-NTT assembly call because:
-  // 1. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
-  // 2. `ZETAS_MONT` is the scalar/FIPS Montgomery zeta table; the assembly consumes only the public
-  //    fixed index schedule `127..=1`.
-  // 3. `final_scale_mont` is one of the public inverse-NTT Montgomery scale constants supplied by the
-  //    caller.
-  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
-  // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
-  unsafe {
-    rscrypto_mlkem_inv_ntt_aarch64_linux(poly.as_mut_ptr(), ZETAS_MONT.as_ptr(), final_scale_mont);
+pub(super) unsafe fn inverse_ntt_asm(poly: &mut Poly, final_scale_mont: i16) {
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 inverse-NTT assembly call because:
+    // 1. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `ZETAS_MONT` is the scalar/FIPS Montgomery zeta table; the assembly consumes only the public
+    //    fixed index schedule `127..=1`.
+    // 3. `final_scale_mont` is one of the public inverse-NTT Montgomery scale constants supplied by the
+    //    caller.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      rscrypto_mlkem_inv_ntt_aarch64_apple_darwin(poly.as_mut_ptr(), ZETAS_MONT.as_ptr(), final_scale_mont);
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 inverse-NTT assembly call because:
+    // 1. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `ZETAS_MONT` is the scalar/FIPS Montgomery zeta table; the assembly consumes only the public
+    //    fixed index schedule `127..=1`.
+    // 3. `final_scale_mont` is one of the public inverse-NTT Montgomery scale constants supplied by the
+    //    caller.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      rscrypto_mlkem_inv_ntt_aarch64_linux(poly.as_mut_ptr(), ZETAS_MONT.as_ptr(), final_scale_mont);
+    }
   }
 }
 
-#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[cfg(any(target_os = "macos", all(any(test, feature = "diag"), target_os = "linux")))]
 #[inline]
-unsafe fn inverse_ntt_add_assign_asm(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
-  // SAFETY: ML-KEM aarch64 inverse-NTT plus add assembly call because:
-  // 1. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
-  // 2. `addend` contains canonical modulo-Q coefficients, matching the scalar `poly_add_assign`
-  //    contract.
-  // 3. `ZETAS_MONT` and `final_scale_mont` are public fixed ML-KEM constants.
-  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
-  // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
-  unsafe {
-    rscrypto_mlkem_inv_ntt_add_aarch64_linux(
-      poly.as_mut_ptr(),
-      addend.as_ptr(),
-      ZETAS_MONT.as_ptr(),
-      final_scale_mont,
-    );
+pub(super) unsafe fn inverse_ntt_add_assign_asm(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 inverse-NTT plus add assembly call because:
+    // 1. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 2. `addend` contains canonical modulo-Q coefficients, matching the scalar `poly_add_assign`
+    //    contract.
+    // 3. `ZETAS_MONT` and `final_scale_mont` are public fixed ML-KEM constants.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      rscrypto_mlkem_inv_ntt_add_aarch64_apple_darwin(
+        poly.as_mut_ptr(),
+        addend.as_ptr(),
+        ZETAS_MONT.as_ptr(),
+        final_scale_mont,
+      );
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 inverse-NTT plus add assembly call because:
+    // 1. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
+    // 2. `addend` contains canonical modulo-Q coefficients, matching the scalar `poly_add_assign`
+    //    contract.
+    // 3. `ZETAS_MONT` and `final_scale_mont` are public fixed ML-KEM constants.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      rscrypto_mlkem_inv_ntt_add_aarch64_linux(
+        poly.as_mut_ptr(),
+        addend.as_ptr(),
+        ZETAS_MONT.as_ptr(),
+        final_scale_mont,
+      );
+    }
   }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(super) unsafe fn test_inverse_ntt_asm(poly: &mut Poly, final_scale_mont: i16) {
   // SAFETY: test-only direct access to the inverse-NTT assembly entry point because:
   // 1. The caller supplies a fixed 256-coefficient ML-KEM polynomial.
@@ -299,7 +366,7 @@ pub(super) unsafe fn test_inverse_ntt_asm(poly: &mut Poly, final_scale_mont: i16
   }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(super) unsafe fn test_inverse_ntt_add_assign_asm(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
   // SAFETY: test-only direct access to the inverse-NTT plus add assembly entry point because:
   // 1. The caller supplies fixed 256-coefficient ML-KEM polynomials.
@@ -362,8 +429,8 @@ pub(super) unsafe fn diag_inverse_ntt_add_assign_asm_input_digest(
 }
 
 #[inline]
-#[cfg(any(test, feature = "diag"))]
-unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
+#[cfg(any(test, feature = "diag", target_os = "macos"))]
+pub(super) unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
   #[cfg(target_os = "macos")]
   {
     // SAFETY: ML-KEM aarch64 base-multiply assembly call because:
@@ -417,53 +484,104 @@ pub(super) unsafe fn diag_basemul_accumulate_asm_digest(seed: u16) -> u16 {
   unsafe { diag_basemul_accumulate_asm_input_digest(a, b, acc) }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn basemul_accumulate_k2_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
-  // SAFETY: ML-KEM aarch64 Linux K=2 dot-product assembly call because:
-  // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
-  // 2. `a` and `b` point to contiguous `[[u16; 256]; 2]` polynomial vectors supplied by production
-  //    `PolyVec<2>` storage.
-  // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
-  // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
-  unsafe {
-    rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 Darwin K=2 dot-product assembly call because:
+    // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `a` and `b` point to contiguous `[[u16; 256]; 2]` polynomial vectors supplied by production
+    //    `PolyVec<2>` storage.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k2_aarch64_apple_darwin(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 Linux K=2 dot-product assembly call because:
+    // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `a` and `b` point to contiguous `[[u16; 256]; 2]` polynomial vectors supplied by production
+    //    `PolyVec<2>` storage.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+    }
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn basemul_accumulate_k3_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
-  // SAFETY: ML-KEM aarch64 Linux K=3 dot-product assembly call because:
-  // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
-  // 2. `a` and `b` point to contiguous `[[u16; 256]; 3]` polynomial vectors supplied by production
-  //    `PolyVec<3>` storage.
-  // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
-  // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
-  unsafe {
-    rscrypto_mlkem_basemul_accumulate_k3_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 Darwin K=3 dot-product assembly call because:
+    // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `a` and `b` point to contiguous `[[u16; 256]; 3]` polynomial vectors supplied by production
+    //    `PolyVec<3>` storage.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 Linux K=3 dot-product assembly call because:
+    // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `a` and `b` point to contiguous `[[u16; 256]; 3]` polynomial vectors supplied by production
+    //    `PolyVec<3>` storage.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k3_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+    }
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn basemul_accumulate_k4_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
-  // SAFETY: ML-KEM aarch64 Linux K=4 dot-product assembly call because:
-  // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
-  // 2. `a` and `b` point to contiguous `[[u16; 256]; 4]` polynomial vectors supplied by production
-  //    `PolyVec<4>` storage.
-  // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-  // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
-  // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
-  unsafe {
-    rscrypto_mlkem_basemul_accumulate_k4_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: ML-KEM aarch64 Darwin K=4 dot-product assembly call because:
+    // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `a` and `b` point to contiguous `[[u16; 256]; 4]` polynomial vectors supplied by production
+    //    `PolyVec<4>` storage.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k4_aarch64_apple_darwin(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+    }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: ML-KEM aarch64 Linux K=4 dot-product assembly call because:
+    // 1. `acc` is a fixed 256-coefficient polynomial matching the assembly ABI.
+    // 2. `a` and `b` point to contiguous `[[u16; 256]; 4]` polynomial vectors supplied by production
+    //    `PolyVec<4>` storage.
+    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
+    // 4. This module is compiled only for aarch64 Linux with baseline Advanced SIMD support.
+    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
+    unsafe {
+      rscrypto_mlkem_basemul_accumulate_k4_aarch64_linux(acc.as_mut_ptr(), a, b, GAMMAS_MONT.as_ptr());
+    }
   }
 }
 
 #[inline]
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 unsafe fn basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<2>) {
   // SAFETY: ML-KEM aarch64 K=2 dot-product assembly call because:
   // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
@@ -478,62 +596,18 @@ unsafe fn basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<
 #[inline]
 #[cfg(any(test, feature = "diag"))]
 unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
-  #[cfg(target_os = "macos")]
-  {
-    // SAFETY: ML-KEM aarch64 K=3 dot-product assembly call because:
-    // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-    // 2. `a` and `b` are contiguous `[[u16; 256]; 3]` values, so the assembly's fixed 512-byte
-    //    polynomial strides stay in bounds.
-    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
-    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
-    unsafe {
-      rscrypto_mlkem_basemul_accumulate_k3_aarch64_apple_darwin(
-        acc.as_mut_ptr(),
-        a.as_ptr().cast::<u16>(),
-        b.as_ptr().cast::<u16>(),
-        GAMMAS_MONT.as_ptr(),
-      );
-    }
-  }
-
-  #[cfg(target_os = "linux")]
-  {
-    // SAFETY: forwards contiguous `PolyVec<3>` storage to the Linux K=3 pointer ABI.
-    unsafe {
-      basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-    }
+  // SAFETY: forwards contiguous `PolyVec<3>` storage to the target K=3 pointer ABI.
+  unsafe {
+    basemul_accumulate_k3_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
   }
 }
 
 #[inline]
 #[cfg(any(test, feature = "diag"))]
 unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
-  #[cfg(target_os = "macos")]
-  {
-    // SAFETY: ML-KEM aarch64 K=4 dot-product assembly call because:
-    // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-    // 2. `a` and `b` are contiguous `[[u16; 256]; 4]` values, so the assembly's fixed 512-byte
-    //    polynomial strides stay in bounds.
-    // 3. `GAMMAS_MONT` is a fixed 128-lane i16 table matching the 128 ML-KEM base-case products.
-    // 4. This module is compiled only for aarch64 macOS with baseline Advanced SIMD support.
-    // 5. The assembly performs fixed public loops with no coefficient-dependent memory addresses.
-    unsafe {
-      rscrypto_mlkem_basemul_accumulate_k4_aarch64_apple_darwin(
-        acc.as_mut_ptr(),
-        a.as_ptr().cast::<u16>(),
-        b.as_ptr().cast::<u16>(),
-        GAMMAS_MONT.as_ptr(),
-      );
-    }
-  }
-
-  #[cfg(target_os = "linux")]
-  {
-    // SAFETY: forwards contiguous `PolyVec<4>` storage to the Linux K=4 pointer ABI.
-    unsafe {
-      basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
-    }
+  // SAFETY: forwards contiguous `PolyVec<4>` storage to the target K=4 pointer ABI.
+  unsafe {
+    basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
   }
 }
 
@@ -559,11 +633,11 @@ pub(super) unsafe fn diag_basemul_accumulate_asm_input_digest(a: Poly, b: Poly, 
   digest
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 pub(super) unsafe fn test_basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<2>) {
   // SAFETY: test-only direct access to the K=2 dot-product assembly entry point because:
   // 1. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays.
-  // 2. This module is compiled only on aarch64 Linux with the assembly backend.
+  // 2. This module is compiled only on aarch64 Linux/macOS targets with the assembly backend.
   // 3. Tests compare the output against the scalar/FIPS accumulator before production dispatch.
   unsafe {
     basemul_accumulate_k2_asm(acc, a, b);

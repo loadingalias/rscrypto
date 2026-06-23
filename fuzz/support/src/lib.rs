@@ -215,7 +215,7 @@ pub fn assert_aead_against_oracle<A, EncFn, DecFn>(
   EncFn: FnOnce(&[u8], &[u8]) -> Vec<u8>,
   DecFn: FnOnce(&[u8], &[u8]) -> Vec<u8>,
 {
-  // ── ours encrypt → oracle decrypt ─────────────────────────────────────
+  // rscrypto encrypts; oracle decrypts.
   let mut ct = plaintext.to_vec();
   let tag = cipher
     .encrypt_in_place(nonce, aad, &mut ct)
@@ -225,7 +225,7 @@ pub fn assert_aead_against_oracle<A, EncFn, DecFn>(
   let pt = oracle_decrypt(&combined, aad);
   assert_eq!(pt, plaintext, "differential: oracle failed to decrypt our ciphertext");
 
-  // ── oracle encrypt → ours decrypt ─────────────────────────────────────
+  // Oracle encrypts; rscrypto decrypts.
   let oct = oracle_encrypt(plaintext, aad);
   let split = oct.len().strict_sub(A::TAG_SIZE);
   let (body, otag) = oct.split_at(split);
@@ -417,8 +417,6 @@ pub fn assert_checksum_chunked<C: Checksum>(data: &[u8], split_byte: u8) {
   assert_eq!(expected, got, "checksum: streaming mismatch");
 }
 
-// ── Partial-IO scaffolding (feature: `traits_io`) ───────────────────────────
-//
 // Reusable adversarial `Read` / `Write` adapters for fuzzing rscrypto's
 // streaming traits. They model real-world short reads/writes by capping the
 // per-call byte count and tracking flush events. Used by `traits_io.rs` and
