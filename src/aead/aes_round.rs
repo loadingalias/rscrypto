@@ -3,7 +3,7 @@
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 const BLOCK_SIZE: usize = 16;
 
@@ -114,7 +114,7 @@ pub(crate) const MC_ROT2: [u8; 16] = [
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn gf256_mul(a: u8, b: u8) -> u8 {
@@ -145,7 +145,7 @@ const fn gf256_mul(a: u8, b: u8) -> u8 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn gf256_sq(x: u8) -> u8 {
@@ -155,7 +155,7 @@ const fn gf256_sq(x: u8) -> u8 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn gf256_inv(x: u8) -> u8 {
@@ -177,7 +177,7 @@ const fn gf256_inv(x: u8) -> u8 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn sbox(x: u8) -> u8 {
@@ -189,7 +189,7 @@ const fn sbox(x: u8) -> u8 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn col_byte(col: u32, row: usize) -> u8 {
@@ -199,7 +199,7 @@ const fn col_byte(col: u32, row: usize) -> u8 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn xtime(x: u8) -> u8 {
@@ -210,7 +210,7 @@ const fn xtime(x: u8) -> u8 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn mix_column(col: [u8; 4]) -> u32 {
@@ -227,7 +227,7 @@ const fn mix_column(col: [u8; 4]) -> u32 {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline(always)]
 const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
@@ -262,7 +262,7 @@ const fn aes_round(s0: u32, s1: u32, s2: u32, s3: u32) -> (u32, u32, u32, u32) {
 #[cfg(any(
   all(feature = "diag", feature = "aegis256"),
   all(test, not(target_arch = "s390x")),
-  all(feature = "aegis256", not(any(target_arch = "s390x", target_arch = "riscv64"))),
+  all(feature = "aegis256", not(target_arch = "riscv64")),
 ))]
 #[inline]
 pub(crate) fn aes_enc_round_portable(block: &[u8; BLOCK_SIZE], round_key: &[u8; BLOCK_SIZE]) -> [u8; BLOCK_SIZE] {

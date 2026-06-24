@@ -389,6 +389,14 @@ mod tests {
       select_backend(AeadPrimitive::Aegis256, Arch::Riscv64, riscv::ZKNE),
       AeadBackend::Riscv64ScalarCrypto
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::S390x, s390x::VECTOR),
+      AeadBackend::S390xVperm
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::S390x, Caps::NONE),
+      AeadBackend::Portable
+    );
   }
 
   #[test]

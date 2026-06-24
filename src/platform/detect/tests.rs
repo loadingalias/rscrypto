@@ -507,4 +507,43 @@ mod tests {
     assert!(s.contains("caps"));
     assert!(s.contains("arch"));
   }
+
+  #[test]
+  fn override_validation_accepts_portable_override() {
+    assert_eq!(validate_override(Some(Detected::portable())), Ok(Some(Detected::portable())));
+  }
+
+  #[test]
+  fn override_validation_accepts_current_arch_cap_subset() {
+    let det = Detected {
+      caps: Caps::NONE,
+      arch: Arch::current(),
+    };
+    assert_eq!(validate_override(Some(det)), Ok(Some(det)));
+  }
+
+  #[test]
+  fn override_validation_rejects_wrong_arch() {
+    let wrong_arch = if Arch::current() == Arch::X86_64 {
+      Arch::Aarch64
+    } else {
+      Arch::X86_64
+    };
+    let det = Detected {
+      caps: Caps::NONE,
+      arch: wrong_arch,
+    };
+
+    assert_eq!(validate_override(Some(det)), Err(OverrideError::InvalidCapabilities));
+  }
+
+  #[test]
+  fn override_validation_rejects_impossible_caps() {
+    let det = Detected {
+      caps: Caps::from_words([u64::MAX; 4]),
+      arch: Arch::current(),
+    };
+
+    assert_eq!(validate_override(Some(det)), Err(OverrideError::InvalidCapabilities));
+  }
 }

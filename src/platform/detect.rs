@@ -25,6 +25,9 @@ use crate::platform::caps::{Arch, Caps};
 pub enum OverrideError {
   /// Detection has already been initialized; override updates are no longer allowed.
   AlreadyInitialized,
+  /// The requested override asserts capabilities or an architecture that this target cannot safely
+  /// provide.
+  InvalidCapabilities,
   /// Overrides are unsupported on this target configuration.
   Unsupported,
 }
@@ -33,6 +36,7 @@ impl core::fmt::Display for OverrideError {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     match self {
       Self::AlreadyInitialized => f.write_str("detection cache already initialized"),
+      Self::InvalidCapabilities => f.write_str("invalid platform override capabilities"),
       Self::Unsupported => f.write_str("override unsupported on this target"),
     }
   }
@@ -72,6 +76,41 @@ impl Detected {
       arch: Arch::Other,
     }
   }
+
+  #[inline]
+  #[must_use]
+  const fn is_portable(self) -> bool {
+    self.caps.is_empty() && matches!(self.arch, Arch::Other)
+  }
+}
+
+#[cold]
+fn validate_override(value: Option<Detected>) -> Result<Option<Detected>, OverrideError> {
+  let Some(det) = value else {
+    return Ok(None);
+  };
+
+  if det.is_portable() {
+    return Ok(Some(det));
+  }
+
+  #[cfg(miri)]
+  let host = Detected {
+    caps: caps_static(),
+    arch: Arch::current(),
+  };
+  #[cfg(not(miri))]
+  let host = detect_uncached();
+
+  if det.arch != host.arch {
+    return Err(OverrideError::InvalidCapabilities);
+  }
+
+  if !host.caps.has(det.caps) {
+    return Err(OverrideError::InvalidCapabilities);
+  }
+
+  Ok(Some(det))
 }
 
 /// Get detected CPU capabilities and architecture.
