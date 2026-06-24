@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.6.0](https://github.com/loadingalias/rscrypto/compare/v0.5.0...v0.6.0) - 2026-06-23
+
+### 👷 CI
+
+- bump checkout and tool action pins workspace: refresh getrandom lockfiles benchmarks: refresh Linux benchmark scorecard ([5e34396](https://github.com/loadingalias/rscrypto/commit/5e343967375d40eaac2c49d887f159b9b22e2a6a))
+
+### 📦 Other Changes
+
+- auth: add Darwin aarch64 ML-KEM assembly paths ([7832c94](https://github.com/loadingalias/rscrypto/commit/7832c944cc8b6456654b2d7de338a88c16ca0532))
+- Revert "auth: add aarch64 ML-KEM quad rejection parser" ([133627a](https://github.com/loadingalias/rscrypto/commit/133627a0b1494eec746c2c434affc968f7113f9a))
+- auth: port aarch64 ML-KEM k3 basemul schedule ([2d65c61](https://github.com/loadingalias/rscrypto/commit/2d65c6116a30e468c03c04f49691e7fba55684f2))
+- auth: port aarch64 ML-KEM k4 basemul schedule ([abcf8d8](https://github.com/loadingalias/rscrypto/commit/abcf8d86943167ed98c40c17c5ada1b480d517bb))
+- Revert "auth: reschedule aarch64 ML-KEM basemul accumulation" ([5bd2052](https://github.com/loadingalias/rscrypto/commit/5bd2052457b7f95bfa1f79dbe88f07ba8ed6e7f2))
+- auth: tighten aarch64 ML-KEM inverse final scale ([551f1b6](https://github.com/loadingalias/rscrypto/commit/551f1b6c6fd62ed649b792b4c8067da4a6bd79a4))
+- auth: unroll aarch64 ML-KEM inverse NTT asm ([2d725d0](https://github.com/loadingalias/rscrypto/commit/2d725d0152bd40f4a819575e6ea91b56eaffcbbe))
+- auth: precompute aarch64 ML-KEM inverse reducers ([7271015](https://github.com/loadingalias/rscrypto/commit/72710156bd95b3b47a9315c330e403fa1e8c3b9e))
+- auth: include inverse add asm in aarch64 gate filter ([766132e](https://github.com/loadingalias/rscrypto/commit/766132e858136ba3659c5b825dd4969d09bd6091))
+- auth: add Linux aarch64 ML-KEM inverse NTT asm diagnostics ([133b8b6](https://github.com/loadingalias/rscrypto/commit/133b8b62bfc7f7b740ce0a4ceeee4b6629b22029))
+- Revert "auth: fuse aarch64 ML-KEM inverse NTT final scale" ([5c79304](https://github.com/loadingalias/rscrypto/commit/5c79304898cf740bcdf473682c2e12a077ae0b20))
+- auth: dispatch fused ML-KEM1024 PKE matrix path ([369e422](https://github.com/loadingalias/rscrypto/commit/369e4220553f14730bcad23acde835bb3ab5ba74))
+- auth: compact ML-KEM fused rejection into NEON chunks ([9708c1d](https://github.com/loadingalias/rscrypto/commit/9708c1d51bf5707137c89d750ccea4238b3339a9))
+- auth: add aarch64 K2 ML-KEM row-dot path ([e28eaee](https://github.com/loadingalias/rscrypto/commit/e28eaee8ad1e5ccb7d9ea828706210eab099d1b5))
+- hashes: use paired SHA3 fallback for aarch64 quad Keccak ([d712967](https://github.com/loadingalias/rscrypto/commit/d71296723386e7ce8d7ab5cb53cd46013acdb6ad))
+- crypto: add aarch64 triple SHAKE path for ML-KEM sampling ([2f00fa7](https://github.com/loadingalias/rscrypto/commit/2f00fa79bf24c67d1f44fdbbd75f1b01bec4eb58))
+- auth: feed fused ML-KEM products from compact aarch64 rejection ([a05a23b](https://github.com/loadingalias/rscrypto/commit/a05a23b1917215f46ea65324656f5d2a8681197a))
+- auth: compact aarch64 ML-KEM rejection lanes ([13a50c8](https://github.com/loadingalias/rscrypto/commit/13a50c85bc64de3774cd57b5f31834f67e2fb14c))
+- auth: add aarch64 ML-KEM rejection parser ([951be2c](https://github.com/loadingalias/rscrypto/commit/951be2c86d846afcaee2003453768a6596fd9070))
+- Revert "hashes: route aarch64 Keccak x4 through SHA3 pairs" ([7e81d7f](https://github.com/loadingalias/rscrypto/commit/7e81d7f75df0b86c83d6b4e52133fc36d1985c7d))
+- auth: keep aarch64 ML-KEM sample candidates in registers ([5a94fbe](https://github.com/loadingalias/rscrypto/commit/5a94fbe4e256a923cf0b92ee98e2e5796d3f49ee))
+- auth: parse aarch64 ML-KEM sample tails from XOF state ([75b1551](https://github.com/loadingalias/rscrypto/commit/75b155165683ec34555a7f170b83ead8e6a93005))
+- hashes: schedule Linux aarch64 ML-KEM batching ([9c6ecb9](https://github.com/loadingalias/rscrypto/commit/9c6ecb9b24b949c9f3b501542df6ff1497b177a9))
+- hashes: add Linux aarch64 SVE2-SHA3 Keccak x4 ([315cc93](https://github.com/loadingalias/rscrypto/commit/315cc93f02762662d038e8e904bb954fd369e737))
+- auth: parse aarch64 ML-KEM quad samples from XOF state ([56e234a](https://github.com/loadingalias/rscrypto/commit/56e234ab9fd14497265e21300fae59e292996997))
+- auth: add aarch64 ML-KEM SampleNTT NEON extractor ([c7c2d89](https://github.com/loadingalias/rscrypto/commit/c7c2d89294cd40135c312d1db2ef114346e0b66f))
+- auth: fuse aarch64 ML-KEM K-way accumulate ([95ea2e5](https://github.com/loadingalias/rscrypto/commit/95ea2e5da68a0f4597d6d5dcd505845174449c83))
+- auth: tighten aarch64 ML-KEM product-domain reduction ([bf5bfe5](https://github.com/loadingalias/rscrypto/commit/bf5bfe5b3b1e7c3606c3d80435ce8c77dc9229f0))
+- auth: vectorize aarch64 ML-KEM product-domain conversion ([c665306](https://github.com/loadingalias/rscrypto/commit/c66530630cee3c9e02c6800123ec1896dd158045))
+- auth: fix aarch64 ML-KEM NTT canonicalization ([1e41083](https://github.com/loadingalias/rscrypto/commit/1e41083b9bb0f95177c5e04bde36b674c17c3fbd))
+- auth: dispatch Linux aarch64 ML-KEM NTT asm ([67cee6d](https://github.com/loadingalias/rscrypto/commit/67cee6d5276d7d6fef0e38f9fd94f756eb9034b4))
+- auth: add fused aarch64 ML-KEM basemul diagnostics ([67caab7](https://github.com/loadingalias/rscrypto/commit/67caab7a540ceb96f80612e8d3098b2afa9d5923))
+- auth: vectorize s390x ML-KEM product-domain conversion ([6453f04](https://github.com/loadingalias/rscrypto/commit/6453f042b8fa5a3a4d4bb6bd5f018e533218dcd3))
+- auth: batch s390x ML-KEM dot products under CT roots ([4b8f7f4](https://github.com/loadingalias/rscrypto/commit/4b8f7f4c10a2d5a26cfd11877acd84465de86a32))
+- auth: prove s390x ML-KEM vector kernels in CT artifacts ([26f80ac](https://github.com/loadingalias/rscrypto/commit/26f80ac29ebdf5dbefaa47a7d971882b226e0bc1))
+- auth: add s390x z/Vector ML-KEM NTT kernels ([39cfe62](https://github.com/loadingalias/rscrypto/commit/39cfe62aefef6b8f5df92e7574deb787b2b59a61))
+- auth: use materialized ML-KEM matrix path on s390x ([420517b](https://github.com/loadingalias/rscrypto/commit/420517b69742b176fb7ce27657a21f76460021e9))
+- auth: fix s390x ML-KEM barrier build mode ([75e7d0a](https://github.com/loadingalias/rscrypto/commit/75e7d0a8821a4cdaa89082e1fef3e00f9334fcd5))
+- auth: harden s390x ML-KEM constant-time arithmetic ([446e3d4](https://github.com/loadingalias/rscrypto/commit/446e3d46fc2b3298b79d502904bab4bb0131e1c8))
+
+
+
 ## [0.5.0](https://github.com/loadingalias/rscrypto/compare/v0.4.1...v0.5.0) - 2026-06-14
 
 ### 📝 Documentation
