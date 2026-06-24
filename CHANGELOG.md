@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/loadingalias/rscrypto/compare/v0.6.0...v0.6.1) - 2026-06-24
+
+### 📦 Other Changes
+
+- crypto: validate platform overrides and gate s390x AEGIS ([83bcde8](https://github.com/loadingalias/rscrypto/commit/83bcde865334691387c2d7abb5242f1cfc3479e1))
+
+
+
 ## [0.6.0](https://github.com/loadingalias/rscrypto/compare/v0.5.0...v0.6.0) - 2026-06-23
 
 ### 👷 CI
