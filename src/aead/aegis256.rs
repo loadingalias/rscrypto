@@ -14,12 +14,14 @@ use core::fmt;
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
+  target_arch = "s390x",
 ))]
 use super::targets::AeadBackend;
 #[cfg(any(
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
+  target_arch = "s390x",
 ))]
 use super::targets::{AeadPrimitive, select_backend};
 use super::{AeadBufferError, Nonce256, OpenError, SealError};
@@ -40,7 +42,6 @@ const C1: [u8; 16] = [
   0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd,
 ];
 
-#[cfg(not(target_arch = "s390x"))]
 type Block = [u8; BLOCK_SIZE];
 
 /// Split a 32-byte array into two 16-byte halves.
@@ -53,7 +54,6 @@ fn split_halves(bytes: &[u8; 32]) -> (&[u8; 16], &[u8; 16]) {
   (lo, hi)
 }
 
-#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn xor_block(a: &Block, b: &Block) -> Block {
   let mut out = [0u8; BLOCK_SIZE];
@@ -63,7 +63,6 @@ fn xor_block(a: &Block, b: &Block) -> Block {
   out
 }
 
-#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn and_block(a: &Block, b: &Block) -> Block {
   let mut out = [0u8; BLOCK_SIZE];
@@ -73,21 +72,14 @@ fn and_block(a: &Block, b: &Block) -> Block {
   out
 }
 
-#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn zero_block() -> Block {
   [0u8; BLOCK_SIZE]
 }
 
-// Portable backend
-//
-// On s390x, the `s390x_vperm` module provides a Hamburg vperm backend.
-// Gate this section to suppress dead-code warnings.
-
-#[cfg(not(target_arch = "s390x"))]
 type State = [Block; 6];
 
-#[cfg(not(any(target_arch = "s390x", target_arch = "riscv64")))]
+#[cfg(not(target_arch = "riscv64"))]
 #[inline(always)]
 fn aes_round(block: &Block, round_key: &Block) -> Block {
   super::aes_round::aes_enc_round_portable(block, round_key)
@@ -118,7 +110,7 @@ fn update_riscv_fixslice(s: &mut State, m: &Block) {
 ///
 /// Each step applies a single AES round to rotate the state pipeline.
 /// The message block is XORed into S0 after the round.
-#[cfg(all(not(target_arch = "s390x"), not(target_arch = "riscv64")))]
+#[cfg(not(target_arch = "riscv64"))]
 #[inline]
 fn update(s: &mut State, m: &Block) {
   let tmp = s[5];
@@ -140,7 +132,6 @@ fn update(s: &mut State, m: &Block) {
 ///
 /// Splits key and nonce into 128-bit halves, seeds the 6-block state,
 /// then runs 16 Update calls (4 iterations of 4 Updates).
-#[cfg(not(target_arch = "s390x"))]
 fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
   let (k0_ref, k1_ref) = split_halves(key);
   let (n0_ref, n1_ref) = split_halves(nonce);
@@ -165,7 +156,6 @@ fn init(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> State {
 }
 
 /// Absorb associated data into the state.
-#[cfg(not(target_arch = "s390x"))]
 fn process_aad(s: &mut State, aad: &[u8]) {
   let mut offset = 0usize;
 
@@ -186,7 +176,6 @@ fn process_aad(s: &mut State, aad: &[u8]) {
 }
 
 /// Compute the AEGIS-256 keystream word from the current state.
-#[cfg(not(target_arch = "s390x"))]
 #[inline(always)]
 fn keystream(s: &State) -> Block {
   // z = S1 ^ S4 ^ S5 ^ (S2 & S3)
@@ -201,7 +190,6 @@ fn keystream(s: &State) -> Block {
 ///
 /// XORs the bit-lengths of AAD and message into S3, then runs 7 Update
 /// rounds and XORs all six state blocks together.
-#[cfg(not(target_arch = "s390x"))]
 fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
   // t = S3 ^ (LE64(ad_len_bits) || LE64(msg_len_bits))
   let ad_bits = (ad_len as u64).strict_mul(8);
@@ -262,6 +250,7 @@ mod s390x_vperm;
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
+  target_arch = "s390x",
 ))]
 #[inline]
 fn resolve_backend() -> AeadBackend {
@@ -356,6 +345,7 @@ pub struct Aegis256 {
     target_arch = "aarch64",
     all(target_arch = "powerpc64", target_endian = "little"),
     target_arch = "riscv64",
+    target_arch = "s390x",
   ))]
   backend: AeadBackend,
 }
@@ -428,7 +418,6 @@ impl Aegis256 {
 
 // Portable encrypt/decrypt helpers
 
-#[cfg(not(target_arch = "s390x"))]
 fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -459,7 +448,7 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
   finalize(&mut s, aad.len(), msg_len)
 }
 
-#[cfg(all(feature = "diag", not(target_arch = "s390x")))]
+#[cfg(feature = "diag")]
 #[must_use]
 pub fn diag_aegis256_update_portable(
   key: &[u8; KEY_SIZE],
@@ -471,7 +460,6 @@ pub fn diag_aegis256_update_portable(
   finalize(&mut s, 0, BLOCK_SIZE)
 }
 
-#[cfg(not(target_arch = "s390x"))]
 fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   process_aad(&mut s, aad);
@@ -524,6 +512,7 @@ impl Aead for Aegis256 {
         target_arch = "aarch64",
         all(target_arch = "powerpc64", target_endian = "little"),
         target_arch = "riscv64",
+        target_arch = "s390x",
       ))]
       backend: resolve_backend(),
     }
@@ -595,16 +584,16 @@ impl Aead for Aegis256 {
     }
 
     #[cfg(target_arch = "s390x")]
-    {
-      // Hamburg vperm AES rounds — constant-time via z/Vector VPERM.
-      // SAFETY: z13+ vector facility is available on all supported s390x.
+    if self.backend == AeadBackend::S390xVperm {
+      // SAFETY: s390x vperm backend call because:
+      // 1. `resolve_backend` selected `S390xVperm` through `select_backend`.
+      // 2. `select_backend` returns `S390xVperm` only when caps include `s390x::VECTOR`.
+      // 3. `key`, `nonce`, `aad`, and `buffer` are valid references from the safe AEAD API.
+      let tag = unsafe { s390x_vperm::encrypt_fused(key, nonce, aad, buffer) };
       #[allow(clippy::needless_return)]
-      return Ok(Aegis256Tag::from_bytes(unsafe {
-        s390x_vperm::encrypt_fused(key, nonce, aad, buffer)
-      }));
+      return Ok(Aegis256Tag::from_bytes(tag));
     }
 
-    #[cfg(not(target_arch = "s390x"))]
     Ok(Aegis256Tag::from_bytes(encrypt_portable(key, nonce, aad, buffer)))
   }
 
@@ -660,8 +649,15 @@ impl Aead for Aegis256 {
     };
 
     #[cfg(target_arch = "s390x")]
-    // SAFETY: z13+ vector facility is available on all supported s390x.
-    let computed = unsafe { s390x_vperm::decrypt_fused(key, nonce, aad, buffer) };
+    let computed = if self.backend == AeadBackend::S390xVperm {
+      // SAFETY: s390x vperm backend call because:
+      // 1. `resolve_backend` selected `S390xVperm` through `select_backend`.
+      // 2. `select_backend` returns `S390xVperm` only when caps include `s390x::VECTOR`.
+      // 3. `key`, `nonce`, `aad`, and `buffer` are valid references from the safe AEAD API.
+      unsafe { s390x_vperm::decrypt_fused(key, nonce, aad, buffer) }
+    } else {
+      decrypt_portable(key, nonce, aad, buffer)
+    };
 
     #[cfg(not(any(
       target_arch = "x86_64",

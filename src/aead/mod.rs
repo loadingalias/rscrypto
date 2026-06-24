@@ -106,7 +106,7 @@ mod polyval;
 mod targets;
 #[cfg(feature = "xchacha20poly1305")]
 mod xchacha20poly1305;
-#[cfg(all(feature = "diag", feature = "aegis256", not(target_arch = "s390x")))]
+#[cfg(all(feature = "diag", feature = "aegis256"))]
 pub use aegis256::diag_aegis256_update_portable;
 #[cfg(feature = "aegis256")]
 pub use aegis256::{Aegis256, Aegis256Key, Aegis256Tag};

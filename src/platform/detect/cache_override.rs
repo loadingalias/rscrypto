@@ -29,6 +29,9 @@ pub fn set_override(value: Option<Detected>) {
 /// this returns [`OverrideError::AlreadyInitialized`].
 #[cold]
 pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
+  #[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
+  let value = validate_override(value)?;
+
   #[cfg(feature = "std")]
   {
     #[cfg(not(miri))]
@@ -86,14 +89,14 @@ pub fn has_override() -> bool {
 fn detect_with_override() -> Detected {
   #[cfg(feature = "std")]
   {
-    if let Some(ov) = atomic_cache::get_override() {
+    if let Some(ov) = atomic_cache::seal_and_get_override() {
       return ov;
     }
   }
 
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   {
-    if let Some(ov) = atomic_cache::get_override() {
+    if let Some(ov) = atomic_cache::seal_and_get_override() {
       return ov;
     }
   }
@@ -137,8 +140,28 @@ mod atomic_cache {
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   static CACHED: Slot<Detected> = Slot::new(Detected::portable());
 
+  static OVERRIDE_LOCK: AtomicBool = AtomicBool::new(false);
+  static OVERRIDE_SEALED: AtomicBool = AtomicBool::new(false);
   static OVERRIDE_SET: AtomicBool = AtomicBool::new(false);
   static OVERRIDE_VALUE: Slot<Option<Detected>> = Slot::new(None);
+
+  struct OverrideGuard;
+
+  impl Drop for OverrideGuard {
+    fn drop(&mut self) {
+      OVERRIDE_LOCK.store(false, Ordering::Release);
+    }
+  }
+
+  fn lock_override() -> OverrideGuard {
+    while OVERRIDE_LOCK
+      .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+      .is_err()
+    {
+      core::hint::spin_loop();
+    }
+    OverrideGuard
+  }
 
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
   pub fn get_or_init(f: fn() -> Detected) -> Detected {
@@ -178,8 +201,14 @@ mod atomic_cache {
   }
 
   pub fn try_set_override(value: Option<Detected>, already_initialized: bool) -> Result<(), OverrideError> {
+    let _guard = lock_override();
+
+    if OVERRIDE_SEALED.load(Ordering::Relaxed) {
+      return Err(OverrideError::AlreadyInitialized);
+    }
+
     #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-    if already_initialized || STATE.load(Ordering::Acquire) == STATE_READY {
+    if already_initialized || STATE.load(Ordering::Acquire) != STATE_UNINIT {
       return Err(OverrideError::AlreadyInitialized);
     }
 
@@ -188,7 +217,10 @@ mod atomic_cache {
       return Err(OverrideError::AlreadyInitialized);
     }
 
-    // SAFETY: Override writes are pre-init only; readers gate on OVERRIDE_SET.
+    // SAFETY: Override payload write because:
+    // 1. `OVERRIDE_LOCK` serializes every read and write of `OVERRIDE_VALUE`.
+    // 2. Detection seals override state under the same lock before reading this payload.
+    // 3. The initialization checks above reject writes after detection has started.
     unsafe {
       *OVERRIDE_VALUE.0.get() = value;
     }
@@ -201,11 +233,17 @@ mod atomic_cache {
   }
 
   #[cfg(not(miri))]
-  pub fn get_override() -> Option<Detected> {
+  pub fn seal_and_get_override() -> Option<Detected> {
+    let _guard = lock_override();
+    OVERRIDE_SEALED.store(true, Ordering::Relaxed);
+
     if !OVERRIDE_SET.load(Ordering::Acquire) {
       return None;
     }
-    // SAFETY: OVERRIDE_SET is observed true with Acquire before reading payload.
+    // SAFETY: Override payload read because:
+    // 1. `OVERRIDE_LOCK` serializes every read and write of `OVERRIDE_VALUE`.
+    // 2. `OVERRIDE_SEALED` is set while holding the lock, so future writers are rejected.
+    // 3. `OVERRIDE_SET` is observed before reading, so `None` is not read as a set override.
     unsafe { *OVERRIDE_VALUE.0.get() }
   }
 }
