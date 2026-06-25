@@ -431,6 +431,17 @@ mod x86_avx512;
 #[path = "chacha20/x86_64_ssse3_x4.rs"]
 mod x86_ssse3_x4;
 
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub(crate) fn xor_keystream_aarch64_neon(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
+}
+
 // ─── Forced-kernel diag entrypoints ────────────────────────────────────────
 //
 // Mirrors the `diag_compress_*` pattern in `src/auth/argon2/mod.rs`. Tests in

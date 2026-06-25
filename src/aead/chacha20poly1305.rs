@@ -13,6 +13,10 @@ const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
+#[cfg(target_arch = "aarch64")]
+const AARCH64_INTERLEAVED_MIN: usize = 1024;
+#[cfg(target_arch = "aarch64")]
+const AARCH64_INTERLEAVED_CHUNK: usize = 1024 * 1024;
 
 #[cfg(all(
   target_arch = "aarch64",
@@ -209,9 +213,7 @@ impl ChaCha20Poly1305 {
   ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
     use crate::platform::caps::aarch64;
 
-    const FUSED_CHUNK: usize = 1024;
-
-    if buffer.len() < FUSED_CHUNK {
+    if buffer.len() < AARCH64_INTERLEAVED_MIN {
       return None;
     }
 
@@ -233,24 +235,78 @@ impl ChaCha20Poly1305 {
     let mut authenticator = poly1305::aarch64_neon::AeadPar4::new(&poly_key);
     authenticator.update_padded_segment(aad);
 
-    let xor_keystream = chacha20::xor_keystream_resolved(AeadPrimitive::ChaCha20Poly1305);
     let mut counter = 1u32;
-    let mut chunks = buffer.chunks_exact_mut(FUSED_CHUNK);
+    let mut chunks = buffer.chunks_exact_mut(AARCH64_INTERLEAVED_CHUNK);
     for chunk in &mut chunks {
-      xor_keystream(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
+      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
       authenticator.update_padded_segment(chunk);
-      counter = counter.wrapping_add((FUSED_CHUNK / chacha20::BLOCK_SIZE) as u32);
+      counter = counter.wrapping_add((AARCH64_INTERLEAVED_CHUNK / chacha20::BLOCK_SIZE) as u32);
     }
 
     let remainder = chunks.into_remainder();
     if !remainder.is_empty() {
-      xor_keystream(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
+      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
       authenticator.update_padded_segment(remainder);
     }
 
     let tag = ChaCha20Poly1305Tag::from_bytes(authenticator.finalize(lengths));
     ct::zeroize(&mut poly_key);
     Some(Ok(tag))
+  }
+
+  #[cfg(target_arch = "aarch64")]
+  fn decrypt_in_place_interleaved_aarch64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    use crate::platform::caps::aarch64;
+
+    if buffer.len() < AARCH64_INTERLEAVED_MIN {
+      return None;
+    }
+
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+
+    if !caps.has(aarch64::NEON) {
+      return None;
+    }
+
+    let lengths = match super::AeadByteLengths::try_new(aad.len(), buffer.len()) {
+      Ok(lengths) => lengths,
+      Err(_) => return Some(Err(OpenError::too_large())),
+    };
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let mut authenticator = poly1305::aarch64_neon::AeadPar4::new(&poly_key);
+    authenticator.update_padded_segment(aad);
+
+    let mut counter = 1u32;
+    let mut chunks = buffer.chunks_exact_mut(AARCH64_INTERLEAVED_CHUNK);
+    for chunk in &mut chunks {
+      authenticator.update_padded_segment(chunk);
+      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
+      counter = counter.wrapping_add((AARCH64_INTERLEAVED_CHUNK / chacha20::BLOCK_SIZE) as u32);
+    }
+
+    let remainder = chunks.into_remainder();
+    if !remainder.is_empty() {
+      authenticator.update_padded_segment(remainder);
+      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
+    }
+
+    let expected = authenticator.finalize(lengths);
+    ct::zeroize(&mut poly_key);
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Some(Err(OpenError::verification()));
+    }
+    Some(Ok(()))
   }
 
   fn encrypt_in_place_owned_unchecked(
@@ -289,6 +345,11 @@ impl ChaCha20Poly1305 {
     buffer: &mut [u8],
     tag: &ChaCha20Poly1305Tag,
   ) -> Result<(), OpenError> {
+    #[cfg(target_arch = "aarch64")]
+    if let Some(result) = self.decrypt_in_place_interleaved_aarch64(nonce, aad, buffer, tag) {
+      return result;
+    }
+
     let expected = self
       .compute_tag(nonce, aad, buffer)
       .map_err(|_| OpenError::too_large())?;

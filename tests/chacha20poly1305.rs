@@ -94,6 +94,61 @@ fn chacha20poly1305_rejects_modified_tag() {
   );
 }
 
+#[cfg(feature = "diag")]
+#[test]
+fn chacha20poly1305_diag_owned_decrypt_large_inputs_match_normal_path() {
+  const PLAINTEXT_LENS: &[usize] = &[1024, 1025, 4095, 4096, 4097, 16_384];
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x42; ChaCha20Poly1305::KEY_SIZE]);
+  let nonce = Nonce96::from_bytes([0x24; Nonce96::LENGTH]);
+  let cipher = ChaCha20Poly1305::new(&key);
+
+  for &plaintext_len in PLAINTEXT_LENS {
+    let plaintext = pattern_bytes(plaintext_len, 0x51);
+    let aad = pattern_bytes(257, 0xa7);
+    let mut ciphertext = plaintext.clone();
+    let tag = cipher.encrypt_in_place(&nonce, &aad, &mut ciphertext).unwrap();
+
+    rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_owned(&cipher, &nonce, &aad, &mut ciphertext, &tag).unwrap();
+
+    assert_eq!(
+      ciphertext, plaintext,
+      "owned diagnostic decrypt mismatch at plaintext_len={plaintext_len}"
+    );
+  }
+}
+
+#[cfg(feature = "diag")]
+#[test]
+fn chacha20poly1305_diag_owned_decrypt_zeroes_large_buffer_on_bad_tag() {
+  let key = ChaCha20Poly1305Key::from_bytes([0x11; ChaCha20Poly1305::KEY_SIZE]);
+  let nonce = Nonce96::from_bytes([0x22; Nonce96::LENGTH]);
+  let cipher = ChaCha20Poly1305::new(&key);
+
+  let plaintext = pattern_bytes(4097, 0x6d);
+  let aad = pattern_bytes(33, 0x95);
+  let mut ciphertext = plaintext.clone();
+  let mut tag = cipher
+    .encrypt_in_place(&nonce, &aad, &mut ciphertext)
+    .unwrap()
+    .to_bytes();
+  tag[7] ^= 0x80;
+
+  let result = rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_owned(
+    &cipher,
+    &nonce,
+    &aad,
+    &mut ciphertext,
+    &ChaCha20Poly1305Tag::from_bytes(tag),
+  );
+
+  assert!(result.is_err());
+  assert!(
+    ciphertext.iter().all(|&byte| byte == 0),
+    "owned diagnostic decrypt must zero caller buffer on verification failure"
+  );
+}
+
 #[test]
 fn chacha20poly1305_rejects_wrong_tag_length() {
   assert!(ChaCha20Poly1305::tag_from_slice(&[0u8; 0]).is_err());

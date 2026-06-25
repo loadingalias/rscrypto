@@ -2467,15 +2467,22 @@ impl Blake3DiagKernel {
   #[inline]
   #[must_use]
   pub const fn supports_streaming(self) -> bool {
-    match self {
-      #[cfg(target_arch = "x86_64")]
-      Self::X86Avx2OwnedHashMany
-      | Self::X86Avx2PairChunkTail
-      | Self::X86Avx2PairParentTail
-      | Self::X86Avx512ExactBlockAsm
-      | Self::X86Avx512OwnedHashMany
-      | Self::X86Avx512OwnedCompress => false,
-      _ => true,
+    #[cfg(target_arch = "x86_64")]
+    {
+      !matches!(
+        self,
+        Self::X86Avx2OwnedHashMany
+          | Self::X86Avx2PairChunkTail
+          | Self::X86Avx2PairParentTail
+          | Self::X86Avx512ExactBlockAsm
+          | Self::X86Avx512OwnedHashMany
+          | Self::X86Avx512OwnedCompress
+      )
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+      true
     }
   }
 
@@ -2483,10 +2490,7 @@ impl Blake3DiagKernel {
   #[must_use]
   #[cfg(target_arch = "x86_64")]
   const fn uses_owned_hash_many(self) -> bool {
-    match self {
-      Self::X86Avx2OwnedHashMany | Self::X86Avx512OwnedHashMany => true,
-      _ => false,
-    }
+    matches!(self, Self::X86Avx2OwnedHashMany | Self::X86Avx512OwnedHashMany)
   }
 
   #[inline]
@@ -2521,40 +2525,28 @@ impl Blake3DiagKernel {
   #[must_use]
   #[cfg(target_arch = "x86_64")]
   const fn uses_owned_compress(self) -> bool {
-    match self {
-      Self::X86Avx512OwnedCompress => true,
-      _ => false,
-    }
+    matches!(self, Self::X86Avx512OwnedCompress)
   }
 
   #[inline]
   #[must_use]
   #[cfg(target_arch = "x86_64")]
   const fn uses_avx2_pair_chunk_tail(self) -> bool {
-    match self {
-      Self::X86Avx2PairChunkTail => true,
-      _ => false,
-    }
+    matches!(self, Self::X86Avx2PairChunkTail)
   }
 
   #[inline]
   #[must_use]
   #[cfg(target_arch = "x86_64")]
   const fn uses_avx2_pair_parent_tail(self) -> bool {
-    match self {
-      Self::X86Avx2PairParentTail => true,
-      _ => false,
-    }
+    matches!(self, Self::X86Avx2PairParentTail)
   }
 
   #[inline]
   #[must_use]
   #[cfg(target_arch = "x86_64")]
   const fn forces_exact_block_asm(self) -> bool {
-    match self {
-      Self::X86Avx512ExactBlockAsm => true,
-      _ => false,
-    }
+    matches!(self, Self::X86Avx512ExactBlockAsm)
   }
 }
 
@@ -3945,7 +3937,9 @@ unsafe fn avx512_owned_exact_block_hash_many(
     );
   }
 
-  words8_from_le_bytes_32((&out[..OUT_LEN]).try_into().expect("lane 0 is one BLAKE3 CV"))
+  let mut lane0 = [0u8; OUT_LEN];
+  lane0.copy_from_slice(&out[..OUT_LEN]);
+  words8_from_le_bytes_32(&lane0)
 }
 
 #[cfg(target_arch = "x86_64")]

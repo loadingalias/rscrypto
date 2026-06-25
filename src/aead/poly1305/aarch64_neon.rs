@@ -77,15 +77,42 @@ impl AeadPar4 {
 
   #[target_feature(enable = "neon")]
   unsafe fn update_padded_segment_neon(&mut self, segment: &[u8]) {
-    let mut chunks = segment.chunks_exact(16);
-    for chunk in &mut chunks {
+    let mut offset = 0usize;
+    while self.num_cached != 0 && offset.strict_add(16) <= segment.len() {
       let mut block = [0u8; 16];
-      block.copy_from_slice(chunk);
+      block.copy_from_slice(&segment[offset..offset.strict_add(16)]);
       // SAFETY: this function is NEON-enabled and `block` is a full AEAD block.
       unsafe { self.push(block) };
+      offset = offset.strict_add(16);
     }
 
-    let rem = chunks.remainder();
+    if self.num_cached == 0 {
+      let group_len = segment.len().strict_sub(offset).strict_div(64).strict_mul(64);
+      let group_end = offset.strict_add(group_len);
+      for group in segment[offset..group_end].chunks_exact(64) {
+        let (blocks, remainder) = group.as_chunks::<16>();
+        debug_assert!(remainder.is_empty());
+        let [b0, b1, b2, b3] = blocks else {
+          unreachable!("64-byte Poly1305 group must split into four blocks");
+        };
+        // SAFETY: direct four-block accumulation because:
+        // 1. `group` is a 64-byte exact chunk split into four full Poly1305 blocks.
+        // 2. This function is NEON-enabled.
+        // 3. `num_cached == 0`, so direct accumulation preserves AEAD block order.
+        unsafe { accumulate_4_block_refs([b0, b1, b2, b3], &mut self.state, &self.powers) };
+      }
+      offset = group_end;
+    }
+
+    while offset.strict_add(16) <= segment.len() {
+      let mut block = [0u8; 16];
+      block.copy_from_slice(&segment[offset..offset.strict_add(16)]);
+      // SAFETY: this function is NEON-enabled and `block` is a full AEAD block.
+      unsafe { self.push(block) };
+      offset = offset.strict_add(16);
+    }
+
+    let rem = &segment[offset..];
     if !rem.is_empty() {
       let mut block = [0u8; 16];
       block[..rem.len()].copy_from_slice(rem);
@@ -121,9 +148,15 @@ pub(super) fn authenticate_aead_par4(
 
 #[inline(always)]
 unsafe fn accumulate_4_blocks(blocks: &[[u8; 16]; 4], state: &mut State, powers: &Powers) {
+  // SAFETY: caller is NEON-enabled and `blocks` contains four full 16-byte AEAD blocks.
+  unsafe { accumulate_4_block_refs([&blocks[0], &blocks[1], &blocks[2], &blocks[3]], state, powers) };
+}
+
+#[inline(always)]
+unsafe fn accumulate_4_block_refs(blocks: [&[u8; 16]; 4], state: &mut State, powers: &Powers) {
   let h = mul_unreduced(state.h, powers.r4);
   // SAFETY: caller is NEON-enabled and `blocks` contains four full 16-byte AEAD blocks.
-  let m = unsafe { mul4_spaced_sum(blocks, powers) };
+  let m = unsafe { mul4_spaced_sum_refs(blocks, powers) };
   state.h = reduce_unreduced([
     h[0].wrapping_add(m[0]),
     h[1].wrapping_add(m[1]),
@@ -134,11 +167,11 @@ unsafe fn accumulate_4_blocks(blocks: &[[u8; 16]; 4], state: &mut State, powers:
 }
 
 #[inline(always)]
-unsafe fn mul4_spaced_sum(blocks: &[[u8; 16]; 4], powers: &Powers) -> [u64; 5] {
-  let b0 = block_limbs(&blocks[0]);
-  let b1 = block_limbs(&blocks[1]);
-  let b2 = block_limbs(&blocks[2]);
-  let b3 = block_limbs(&blocks[3]);
+unsafe fn mul4_spaced_sum_refs(blocks: [&[u8; 16]; 4], powers: &Powers) -> [u64; 5] {
+  let b0 = block_limbs(blocks[0]);
+  let b1 = block_limbs(blocks[1]);
+  let b2 = block_limbs(blocks[2]);
+  let b3 = block_limbs(blocks[3]);
 
   // SAFETY: lane construction uses immediate scalar inputs and does not read memory.
   let (x0, x1, x2, x3, x4) = unsafe {
