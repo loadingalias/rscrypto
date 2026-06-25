@@ -425,7 +425,7 @@ pub(crate) unsafe fn hash16_owned(
 
       let block_flags_vec = set1(block_flags);
 
-      let m = transpose_msg_vecs16(&inputs, block * BLOCK_LEN);
+      let m = transpose_msg_vecs16(inputs, block * BLOCK_LEN);
 
       let mut v = [
         h_vecs[0],
