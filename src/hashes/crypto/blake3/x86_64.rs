@@ -110,6 +110,22 @@ pub(crate) unsafe fn compress_cv_avx2_bytes(
   }
 }
 
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+pub(crate) unsafe fn compress_in_place_avx2_bytes(
+  chaining_value: &mut [u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) {
+  // SAFETY: AVX2/SSE4.1/SSSE3 intrinsics are available via this function's #[target_feature]
+  // attribute.
+  unsafe {
+    *chaining_value = compress_cv_avx2_bytes(chaining_value, block, counter, block_len, flags);
+  }
+}
+
 // On ASM-supported platforms, we prefer the handwritten assembly. This intrinsics
 // version is kept as fallback for other x86_64 platforms (e.g., FreeBSD, illumos).
 #[cfg(target_arch = "x86_64")]
@@ -538,26 +554,13 @@ pub(crate) unsafe fn chunk_compress_blocks_sse41(
 
     if blocks.len() == BLOCK_LEN {
       let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      {
-        asm::compress_in_place_sse41_mut(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      {
-        compress_in_place_sse41_bytes(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
+      compress_in_place_sse41_bytes(
+        chaining_value,
+        blocks.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      );
       *blocks_compressed = blocks_compressed.wrapping_add(1);
       return;
     }
@@ -566,26 +569,13 @@ pub(crate) unsafe fn chunk_compress_blocks_sse41(
     debug_assert!(remainder.is_empty());
     for block_bytes in block_slices {
       let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      {
-        asm::compress_in_place_sse41_mut(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      {
-        compress_in_place_sse41_bytes(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
+      compress_in_place_sse41_bytes(
+        chaining_value,
+        block_bytes.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      );
       *blocks_compressed = blocks_compressed.wrapping_add(1);
     }
   }
@@ -642,26 +632,13 @@ pub(crate) unsafe fn chunk_compress_blocks_avx2(
 
     if blocks.len() == BLOCK_LEN {
       let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      {
-        asm::compress_in_place_avx2_mut(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      {
-        *chaining_value = compress_cv_avx2_bytes(
-          chaining_value,
-          blocks.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
+      compress_in_place_avx2_bytes(
+        chaining_value,
+        blocks.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      );
       *blocks_compressed = blocks_compressed.wrapping_add(1);
       return;
     }
@@ -670,26 +647,13 @@ pub(crate) unsafe fn chunk_compress_blocks_avx2(
     debug_assert!(remainder.is_empty());
     for block_bytes in block_slices {
       let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      {
-        asm::compress_in_place_avx2_mut(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      {
-        *chaining_value = compress_cv_avx2_bytes(
-          chaining_value,
-          block_bytes.as_ptr(),
-          chunk_counter,
-          BLOCK_LEN as u32,
-          flags | start,
-        );
-      }
+      compress_in_place_avx2_bytes(
+        chaining_value,
+        block_bytes.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      );
       *blocks_compressed = blocks_compressed.wrapping_add(1);
     }
   }

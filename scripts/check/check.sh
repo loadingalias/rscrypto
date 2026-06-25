@@ -67,6 +67,14 @@ if ! cargo fmt --all >"$LOG_DIR/fmt.log" 2>&1; then
 fi
 ok
 
+step "Checking assembly ledger"
+if ! "$SCRIPT_DIR/asm-ledger.sh" >"$LOG_DIR/asm-ledger.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/asm-ledger.log"
+  exit 1
+fi
+ok
+
 # Check
 step "Checking"
 # shellcheck disable=SC2086

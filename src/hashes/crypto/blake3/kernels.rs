@@ -51,6 +51,15 @@ pub(crate) struct Kernel {
   /// x86-only final-block compressor from bytes.
   #[cfg(target_arch = "x86_64")]
   pub(crate) x86_compress_cv_bytes: X86CompressCvBytesFn,
+  /// Diagnostic-only marker for x86 kernels that intentionally bypass asm CV compression.
+  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+  pub(crate) owned_x86_compress: bool,
+  /// Diagnostic-only marker for x86 kernels that intentionally bypass asm hash_many.
+  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+  pub(crate) owned_x86_hash_many: bool,
+  /// Diagnostic-only marker for measuring AVX-512 exact-block asm without AVX2 retargeting.
+  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+  pub(crate) force_x86_avx512_exact_block_asm: bool,
   /// Kernel name for debugging/tuning.
   #[cfg(any(test, feature = "diag"))]
   #[cfg_attr(test, allow(dead_code))]
@@ -138,6 +147,12 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       hash_many_contiguous: hash_many_contiguous_portable,
       #[cfg(target_arch = "x86_64")]
       x86_compress_cv_bytes: x86_compress_cv_portable_wrapper,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_compress: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_hash_many: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      force_x86_avx512_exact_block_asm: false,
       #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
@@ -151,6 +166,12 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_sse41_wrapper,
       hash_many_contiguous: hash_many_contiguous_sse41_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_sse41_wrapper,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_compress: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_hash_many: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      force_x86_avx512_exact_block_asm: false,
       #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
@@ -164,6 +185,12 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx2_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx2_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx2_wrapper,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_compress: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_hash_many: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      force_x86_avx512_exact_block_asm: false,
       #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
@@ -177,6 +204,12 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       chunk_compress_blocks: chunk_compress_blocks_avx512_wrapper,
       hash_many_contiguous: hash_many_contiguous_avx512_wrapper,
       x86_compress_cv_bytes: x86_compress_cv_avx512_wrapper,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_compress: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      owned_x86_hash_many: false,
+      #[cfg(all(feature = "diag", target_arch = "x86_64"))]
+      force_x86_avx512_exact_block_asm: false,
       #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
@@ -220,6 +253,41 @@ pub(crate) fn kernel(id: Blake3KernelId) -> Kernel {
       #[cfg(any(test, feature = "diag"))]
       name: id.as_str(),
     },
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[must_use]
+pub(crate) fn diag_kernel_owned_hash_many(id: Blake3KernelId) -> Option<Kernel> {
+  match id {
+    Blake3KernelId::X86Avx2 => Some(Kernel {
+      hash_many_contiguous: hash_many_contiguous_avx2_owned_wrapper,
+      owned_x86_hash_many: true,
+      name: "x86_64/avx2-owned-hash-many",
+      ..kernel(id)
+    }),
+    Blake3KernelId::X86Avx512 => Some(Kernel {
+      hash_many_contiguous: hash_many_contiguous_avx512_owned_wrapper,
+      owned_x86_hash_many: true,
+      name: "x86_64/avx512-owned-hash-many",
+      ..kernel(id)
+    }),
+    _ => None,
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[must_use]
+pub(crate) fn diag_kernel_owned_compress(id: Blake3KernelId) -> Option<Kernel> {
+  match id {
+    Blake3KernelId::X86Avx512 => Some(Kernel {
+      chunk_compress_blocks: chunk_compress_blocks_avx512_owned_wrapper,
+      x86_compress_cv_bytes: x86_compress_cv_avx512_owned_wrapper,
+      owned_x86_compress: true,
+      name: "x86_64/avx512-owned-compress",
+      ..kernel(id)
+    }),
+    _ => None,
   }
 }
 
@@ -267,12 +335,13 @@ pub(crate) fn chunk_compress_blocks_inline(
   }
 }
 
-/// Single-block compress that calls assembly directly, bypassing the multi-block
-/// `chunk_compress_blocks_*` wrappers and their `#[target_feature]` boundaries.
+/// Single-block compress that calls the x86 backend directly, bypassing the
+/// multi-block `chunk_compress_blocks_*` wrappers and their `#[target_feature]`
+/// boundaries.
 ///
-/// On x86_64 with assembly support (linux/macos/windows), this inlines down to
-/// a single match + extern "C" assembly call — matching the official blake3
-/// crate's call depth.
+/// On x86_64 with assembly support (linux/macos/windows), AVX2 and AVX-512
+/// inline down to a single match + extern "C" assembly call. SSE4.1 uses the
+/// owned Rust intrinsic backend.
 ///
 /// # Safety
 ///
@@ -306,7 +375,7 @@ pub(crate) unsafe fn compress_block_asm_inline(
     Blake3KernelId::X86Avx2 => {
       // SAFETY: caller ensures AVX2 is available.
       unsafe {
-        super::x86_64::asm::compress_in_place_avx2_mut(
+        super::x86_64::compress_in_place_avx2_bytes(
           chaining_value,
           block.as_ptr(),
           chunk_counter,
@@ -319,7 +388,7 @@ pub(crate) unsafe fn compress_block_asm_inline(
     Blake3KernelId::X86Sse41 => {
       // SAFETY: caller ensures SSE4.1 is available.
       unsafe {
-        super::x86_64::asm::compress_in_place_sse41_mut(
+        super::x86_64::compress_in_place_sse41_bytes(
           chaining_value,
           block.as_ptr(),
           chunk_counter,
@@ -594,7 +663,14 @@ fn root_output_block_bytes_inline(
   #[cfg(target_arch = "x86_64")]
   {
     match id {
-      Blake3KernelId::X86Avx512 | Blake3KernelId::X86Avx2 | Blake3KernelId::X86Sse41 => {
+      Blake3KernelId::X86Avx512 => {
+        // For AVX-512 dispatch, the word-form path is faster than the SSE4.1
+        // byte helper even after decoding this one block.
+        let block_words = super::words16_from_le_bytes_64(block_bytes);
+        root_output_block_words_inline(id, chaining_value, &block_words, counter, block_len, flags, out);
+        return;
+      }
+      Blake3KernelId::X86Avx2 | Blake3KernelId::X86Sse41 => {
         // SAFETY: all supported x86 root-output lanes here imply SSE4.1+SSSE3,
         // and `out` is exactly one 64-byte output block.
         unsafe {
@@ -645,6 +721,27 @@ pub(crate) fn root_output_blocks_bytes_into_inline(
 
     #[cfg(target_arch = "x86_64")]
     {
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+      if id == Blake3KernelId::X86Avx512 {
+        // SAFETY: AVX-512 dispatch proves the assembly feature preconditions because:
+        // 1. `id == X86Avx512` is selected only after `required_caps(X86Avx512)`.
+        // 2. `out` length is a multiple of 64 and has `blocks_remaining` blocks.
+        // 3. `chaining_value` and `block_words` are fixed-size readable arrays.
+        // 4. `root_output_blocks` debug-checks `block_len` and `flags` for the ABI.
+        unsafe {
+          super::x86_64::avx512::root_output_blocks(
+            chaining_value,
+            block_words,
+            output_block_counter,
+            block_len,
+            flags,
+            out.as_mut_ptr(),
+            blocks_remaining,
+          );
+        }
+        return;
+      }
+
       match id {
         Blake3KernelId::X86Avx512 if blocks_remaining >= 16 => {
           // SAFETY: dispatch only selects this kernel when the required CPU
@@ -889,6 +986,21 @@ pub(crate) fn root_output_blocks_from_block_bytes_into_inline(
 ) {
   debug_assert!(out.len().is_multiple_of(2 * OUT_LEN));
 
+  #[cfg(target_arch = "x86_64")]
+  if id == Blake3KernelId::X86Avx512 {
+    let block_words = super::words16_from_le_bytes_64(block_bytes);
+    root_output_blocks_bytes_into_inline(
+      id,
+      chaining_value,
+      &block_words,
+      output_block_counter,
+      block_len,
+      flags,
+      out,
+    );
+    return;
+  }
+
   if out.len() == 2 * OUT_LEN {
     // SAFETY: `out.len() == 64`, so the first 64 bytes can be reinterpreted as
     // exactly one output block.
@@ -965,6 +1077,202 @@ fn reduce_parent_blocks_lanes<const DEGREE: usize, PtrAt, HashMany, Sink>(
     }
     i += rem;
   }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub(crate) fn diag_chunk_cvs_many_avx2_pair_from_bytes(
+  input: &[u8],
+  key_words: [u32; 8],
+  counter: u64,
+  flags: u32,
+  out: &mut [u8],
+) {
+  debug_assert!(!input.is_empty());
+  debug_assert_eq!(input.len() % CHUNK_LEN, 0);
+  let chunks = input.len() / CHUNK_LEN;
+  debug_assert_eq!(out.len(), chunks * OUT_LEN);
+
+  let mut idx = 0usize;
+  while idx + 1 < chunks {
+    // SAFETY: Diagnostic owned AVX2 two-chunk batch because:
+    // 1. Diagnostic availability checks AVX2 support before this helper is called.
+    // 2. `idx + 1 < chunks`, so `input + idx * CHUNK_LEN` is readable for two full chunks.
+    // 3. `out + idx * OUT_LEN` is writable for two OUT_LEN-byte CV outputs.
+    unsafe {
+      super::x86_64::avx2::hash2_chunks_owned(
+        input.as_ptr().add(idx * CHUNK_LEN),
+        &key_words,
+        counter.wrapping_add(idx as u64),
+        flags,
+        out.as_mut_ptr().add(idx * OUT_LEN),
+      );
+    }
+    idx += 2;
+  }
+
+  if idx < chunks {
+    // SAFETY: Diagnostic final odd AVX2 chunk because:
+    // 1. `idx < chunks`, so `input + idx * CHUNK_LEN` is readable for one full chunk.
+    // 2. `out + idx * OUT_LEN` is writable for one OUT_LEN-byte CV.
+    // 3. Diagnostic availability checks AVX2 support before this helper is called.
+    unsafe {
+      hash_one_chunk_avx2_owned_serial(
+        input.as_ptr().add(idx * CHUNK_LEN),
+        &key_words,
+        counter.wrapping_add(idx as u64),
+        flags,
+        out.as_mut_ptr().add(idx * OUT_LEN),
+      );
+    }
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub(crate) fn diag_parent_cvs_many_avx2_owned_from_bytes(
+  children: &[[u8; OUT_LEN]],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [[u8; OUT_LEN]],
+) {
+  debug_assert_eq!(children.len(), out.len() * 2);
+  if out.is_empty() {
+    return;
+  }
+
+  let parent_flags = PARENT | flags;
+  reduce_parent_blocks_lanes::<{ super::x86_64::avx2::DEGREE }, _, _, _>(
+    out.len(),
+    |idx| children[2 * idx].as_ptr(),
+    |ptrs, _rem, tmp| {
+      // SAFETY: Diagnostic owned AVX2 parent batch because:
+      // 1. Diagnostic availability checks AVX2 support before this helper is called.
+      // 2. `parent_block_ptrs` fills every lane with a valid 64-byte parent block pointer.
+      // 3. `tmp` has space for all 8 output CV lanes; callers copy only real lanes.
+      unsafe {
+        super::x86_64::avx2::hash8_owned(
+          ptrs,
+          1,
+          &key_words,
+          0,
+          false,
+          parent_flags,
+          0,
+          0,
+          tmp.as_mut_ptr().cast::<u8>(),
+        );
+      }
+    },
+    |idx, bytes| out[idx] = *bytes,
+  );
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub(crate) fn diag_parent_cvs_many_avx2_pair_from_bytes(
+  children: &[[u8; OUT_LEN]],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [[u8; OUT_LEN]],
+) {
+  debug_assert_eq!(children.len(), out.len() * 2);
+  let mut idx = 0usize;
+  while idx + 1 < out.len() {
+    let parents = [children[2 * idx].as_ptr(), children[2 * (idx + 1)].as_ptr()];
+    // SAFETY: Diagnostic owned AVX2 two-parent batch because:
+    // 1. Diagnostic availability checks AVX2 support before this helper is called.
+    // 2. `parents` points to two adjacent 64-byte parent blocks.
+    // 3. `out[idx..idx + 2]` is contiguous and writable for two OUT_LEN-byte CV outputs.
+    unsafe {
+      super::x86_64::avx2::parent_cv2_owned(&parents, &key_words, flags, out[idx].as_mut_ptr());
+    }
+    idx += 2;
+  }
+
+  if idx < out.len() {
+    // SAFETY: Diagnostic final odd AVX2 parent because:
+    // 1. `children[2 * idx]` starts a packed 64-byte parent block.
+    // 2. `idx < out.len()`, so `out[idx]` is writable for one OUT_LEN-byte CV.
+    // 3. Diagnostic availability checks AVX2 support before this helper is called.
+    unsafe {
+      parent_one_avx2_owned_serial_from_block(children[2 * idx].as_ptr(), key_words, flags, &mut out[idx]);
+    }
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn parent_one_avx2_owned_serial_from_block(
+  parent_block: *const u8,
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [u8; OUT_LEN],
+) {
+  let mut left_bytes = [0u8; OUT_LEN];
+  let mut right_bytes = [0u8; OUT_LEN];
+  // SAFETY: Loading one packed parent block because:
+  // 1. The caller guarantees `parent_block` is readable for one 64-byte parent block.
+  // 2. `left_bytes` and `right_bytes` are distinct local OUT_LEN-byte arrays.
+  // 3. The right child CV begins exactly OUT_LEN bytes after the left child CV.
+  unsafe {
+    core::ptr::copy_nonoverlapping(parent_block, left_bytes.as_mut_ptr(), OUT_LEN);
+    core::ptr::copy_nonoverlapping(parent_block.add(OUT_LEN), right_bytes.as_mut_ptr(), OUT_LEN);
+  }
+  let left = words8_from_le_bytes_32(&left_bytes);
+  let right = words8_from_le_bytes_32(&right_bytes);
+  // SAFETY: Serial AVX2 parent reduction because:
+  // 1. The caller reaches this helper only after AVX2 dispatch.
+  // 2. `left` and `right` are by-value decoded child CV words.
+  // 3. `parent_cv_avx2` writes no caller memory and returns a by-value CV.
+  let parent = unsafe { super::x86_64::parent_cv_avx2(left, right, key_words, flags) };
+  *out = super::words8_to_le_bytes(&parent);
+}
+
+#[cfg(all(
+  target_arch = "x86_64",
+  any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
+#[inline(always)]
+fn parent_block_ptr_from_children(children: &[[u8; OUT_LEN]], parent_idx: usize) -> *const u8 {
+  let child_idx = parent_idx.strict_mul(2);
+  debug_assert!(child_idx.strict_add(1) < children.len());
+  children.as_ptr().wrapping_add(child_idx).cast::<u8>()
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub(crate) fn diag_parent_cvs_many_avx512_owned_from_bytes(
+  children: &[[u8; OUT_LEN]],
+  key_words: [u32; 8],
+  flags: u32,
+  out: &mut [[u8; OUT_LEN]],
+) {
+  debug_assert_eq!(children.len(), out.len() * 2);
+  if out.is_empty() {
+    return;
+  }
+
+  let parent_flags = PARENT | flags;
+  reduce_parent_blocks_lanes::<{ super::x86_64::avx512::DEGREE }, _, _, _>(
+    out.len(),
+    |idx| children[2 * idx].as_ptr(),
+    |ptrs, _rem, tmp| {
+      // SAFETY: Diagnostic owned AVX-512 parent batch because:
+      // 1. Diagnostic availability checks AVX-512F/VL/DQ plus AVX2 support before this helper is called.
+      // 2. `parent_block_ptrs` fills every lane with a valid 64-byte parent block pointer.
+      // 3. `tmp` has space for all 16 output CV lanes; callers copy only real lanes.
+      unsafe {
+        super::x86_64::avx512::hash16_owned(
+          ptrs,
+          1,
+          &key_words,
+          0,
+          false,
+          parent_flags,
+          0,
+          0,
+          tmp.as_mut_ptr().cast::<u8>(),
+        );
+      }
+    },
+    |idx, bytes| out[idx] = *bytes,
+  );
 }
 
 /// Compute many parent CVs from adjacent child CV pairs.
@@ -1095,6 +1403,28 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           out.len(),
           |idx| children[2 * idx].as_ptr(),
           |ptrs, rem, tmp| {
+            if rem == 15 && avx512_owned_hash_many_available() {
+              // SAFETY: Use the owned AVX-512 parent tail because:
+              // 1. Dispatch selected the AVX-512 kernel.
+              // 2. `avx512_owned_hash_many_available()` checked the additional AVX512DQ requirement.
+              // 3. `ptrs` contains 16 valid 64-byte parent block pointers; the final lane may duplicate the last
+              //    real parent block.
+              // 4. `tmp` has space for all 16 OUT_LEN-byte outputs.
+              unsafe {
+                super::x86_64::avx512::hash16_owned(
+                  ptrs,
+                  1,
+                  &key_words,
+                  0,
+                  false,
+                  parent_flags,
+                  0,
+                  0,
+                  tmp.as_mut_ptr().cast::<u8>(),
+                );
+              }
+              return;
+            }
             // SAFETY: AVX-512 is available per dispatch; pointers are valid for
             // one parent block each, `rem <= DEGREE`, and output is large enough.
             unsafe {
@@ -1139,6 +1469,100 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
     #[cfg(target_arch = "x86_64")]
     Blake3KernelId::X86Avx2 => {
       let parent_flags = PARENT | flags;
+      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+      {
+        if out.len() == 2 {
+          let parents = [
+            parent_block_ptr_from_children(children, 0),
+            parent_block_ptr_from_children(children, 1),
+          ];
+          // SAFETY: Use the direct owned AVX2 two-parent tail because:
+          // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
+          // 2. `children` has exactly four OUT_LEN-byte child CVs, so `parents` points to two packed 64-byte
+          //    parent blocks.
+          // 3. `out` has exactly two contiguous OUT_LEN-byte parent CV slots.
+          // 4. The direct two-parent pair route was measured faster than the AVX2 assembly tail on Sapphire
+          //    Rapids. Routing it through the generic reducer was slower, so this path is intentionally
+          //    exact.
+          unsafe {
+            super::x86_64::avx2::parent_cv2_owned(&parents, &key_words, flags, out[0].as_mut_ptr());
+          }
+          return;
+        }
+        if out.len() == 3 {
+          let parents = [
+            parent_block_ptr_from_children(children, 0),
+            parent_block_ptr_from_children(children, 1),
+          ];
+          // SAFETY: Use the direct owned AVX2 three-parent tail because:
+          // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
+          // 2. `children` has exactly six OUT_LEN-byte child CVs: the first four form two packed parent
+          //    blocks for the pair reducer, and `children[4]` starts the final packed parent block.
+          // 3. `out[0..2]` is contiguous for the pair output, and `out[2]` is writable for the final serial
+          //    parent CV.
+          // 4. The direct pair-plus-serial route was measured faster than the AVX2 assembly tail on Sapphire
+          //    Rapids. Larger reductions keep 2/3 remainders on assembly until separately measured.
+          unsafe {
+            super::x86_64::avx2::parent_cv2_owned(&parents, &key_words, flags, out[0].as_mut_ptr());
+            parent_one_avx2_owned_serial_from_block(
+              parent_block_ptr_from_children(children, 2),
+              key_words,
+              flags,
+              &mut out[2],
+            );
+          }
+          return;
+        }
+        if out.len() == 4 {
+          let ptrs = [
+            parent_block_ptr_from_children(children, 0),
+            parent_block_ptr_from_children(children, 1),
+            parent_block_ptr_from_children(children, 2),
+            parent_block_ptr_from_children(children, 3),
+          ];
+          debug_assert!(parent_flags <= u8::MAX as u32);
+          // SAFETY: Keep the four-parent AVX2 assembly tail but write it directly because:
+          // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
+          // 2. `ptrs` points to four readable packed 64-byte parent blocks.
+          // 3. `out` is writable for four contiguous OUT_LEN-byte parent CV outputs.
+          // 4. Direct output avoids the generic reducer's temporary copy and measured faster on Sapphire
+          //    Rapids.
+          unsafe {
+            super::x86_64::asm::hash_many_avx2(
+              ptrs.as_ptr(),
+              4,
+              1,
+              key_words.as_ptr(),
+              0,
+              false,
+              parent_flags as u8,
+              0,
+              0,
+              out[0].as_mut_ptr(),
+            );
+          }
+          return;
+        }
+        if out.len() == super::x86_64::avx2::DEGREE {
+          let mut ptrs = [parent_block_ptr_from_children(children, 0); super::x86_64::avx2::DEGREE];
+          let mut lane = 0usize;
+          while lane < super::x86_64::avx2::DEGREE {
+            ptrs[lane] = parent_block_ptr_from_children(children, lane);
+            lane = lane.strict_add(1);
+          }
+          // SAFETY: Use the direct owned AVX2 full parent batch because:
+          // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
+          // 2. `ptrs` contains 8 readable packed 64-byte parent block pointers.
+          // 3. `out` is writable for 8 contiguous OUT_LEN-byte parent CV outputs.
+          // 4. Direct output avoids the generic reducer's temporary copy and measured faster on Sapphire
+          //    Rapids.
+          unsafe {
+            super::x86_64::avx2::hash8_owned(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, out[0].as_mut_ptr());
+          }
+          return;
+        }
+      }
+
       reduce_parent_blocks_lanes::<{ super::x86_64::avx2::DEGREE }, _, _, _>(
         out.len(),
         |idx| children[2 * idx].as_ptr(),
@@ -1147,6 +1571,41 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           {
             let rem = _rem;
             debug_assert!(parent_flags <= u8::MAX as u32);
+            if rem == 1 {
+              // SAFETY: Use the owned AVX2 one-parent tail because:
+              // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
+              // 2. `ptrs[0]` points to one packed 64-byte parent block.
+              // 3. `tmp[0]` is writable for one OUT_LEN-byte parent CV.
+              // 4. The one-parent serial route was measured faster than the AVX2 assembly tail on Sapphire
+              //    Rapids.
+              unsafe {
+                parent_one_avx2_owned_serial_from_block(ptrs[0], key_words, flags, &mut tmp[0]);
+              }
+              return;
+            }
+            if rem == super::x86_64::avx2::DEGREE || matches!(rem, 5..=7) {
+              // SAFETY: Use the owned AVX2 parent batch because:
+              // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
+              // 2. `ptrs` contains 8 valid 64-byte parent block pointers; sub-degree batches duplicate the final
+              //    real parent block in unused lanes.
+              // 3. `tmp` has space for 8 OUT_LEN-byte outputs.
+              // 4. The `rem` guard keeps 2/3/4 generic-reducer tails on assembly and promotes only 5/6/7, which
+              //    won on Sapphire Rapids. Exact 2/3/8 parent reductions use direct fast paths above.
+              unsafe {
+                super::x86_64::avx2::hash8_owned(
+                  ptrs,
+                  1,
+                  &key_words,
+                  0,
+                  false,
+                  parent_flags,
+                  0,
+                  0,
+                  tmp.as_mut_ptr().cast::<u8>(),
+                );
+              }
+              return;
+            }
             // SAFETY: `id` is AVX2, so required AVX2 features are present per
             // dispatch. Each pointer is valid for one 64-byte parent block.
             // `rem <= DEGREE`, and `tmp` is large enough.
@@ -1244,6 +1703,32 @@ pub const fn required_caps(id: Blake3KernelId) -> Caps {
     Blake3KernelId::PowerVsx => power::VSX,
     #[cfg(target_arch = "riscv64")]
     Blake3KernelId::RiscvV => riscv::V,
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+#[must_use]
+pub const fn required_caps_owned_hash_many(id: Blake3KernelId) -> Caps {
+  match id {
+    Blake3KernelId::X86Avx2 => required_caps(Blake3KernelId::X86Avx2),
+    Blake3KernelId::X86Avx512 => x86::AVX512F
+      .union(x86::AVX512VL)
+      .union(x86::AVX512DQ)
+      .union(x86::AVX2)
+      .union(x86::SSE41)
+      .union(x86::SSSE3),
+    _ => required_caps(id),
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+#[must_use]
+pub const fn required_caps_owned_compress(id: Blake3KernelId) -> Caps {
+  match id {
+    Blake3KernelId::X86Avx512 => required_caps(Blake3KernelId::X86Avx512),
+    _ => required_caps(id),
   }
 }
 
@@ -2554,6 +3039,19 @@ unsafe fn x86_compress_cv_avx512_wrapper(
   }
 }
 
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+unsafe fn x86_compress_cv_avx512_owned_wrapper(
+  cv: &[u32; 8],
+  block: *const u8,
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+) -> [u32; 8] {
+  // SAFETY: diagnostic availability checks AVX-512F/VL + AVX2 + SSE4.1 + SSSE3,
+  // and the caller guarantees `block` is readable for 64 bytes.
+  unsafe { super::x86_64::compress_cv_avx512_bytes(cv, block, counter, block_len, flags) }
+}
+
 // x86_64 AVX2 wrappers (single-block / streaming hot paths)
 
 #[cfg(target_arch = "x86_64")]
@@ -2616,6 +3114,35 @@ fn chunk_compress_blocks_avx512_wrapper(
   // SAFETY: This function is only called when AVX-512 is available (checked by dispatch).
   unsafe {
     super::x86_64::chunk_compress_blocks_avx512(chaining_value, chunk_counter, flags, blocks_compressed, blocks)
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+fn chunk_compress_blocks_avx512_owned_wrapper(
+  chaining_value: &mut [u32; 8],
+  chunk_counter: u64,
+  flags: u32,
+  blocks_compressed: &mut u8,
+  blocks: &[u8],
+) {
+  debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
+  let (block_slices, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+  debug_assert!(remainder.is_empty());
+
+  for block_bytes in block_slices {
+    let start = if *blocks_compressed == 0 { CHUNK_START } else { 0 };
+    // SAFETY: diagnostic availability checks AVX-512F/VL + AVX2 + SSE4.1 + SSSE3,
+    // and each block slice is exactly 64 readable bytes.
+    unsafe {
+      super::x86_64::compress_in_place_avx512_bytes(
+        chaining_value,
+        block_bytes.as_ptr(),
+        chunk_counter,
+        BLOCK_LEN as u32,
+        flags | start,
+      );
+    }
+    *blocks_compressed = blocks_compressed.wrapping_add(1);
   }
 }
 
@@ -2747,7 +3274,106 @@ unsafe fn hash_many_contiguous_sse41_wrapper(
 }
 
 #[cfg(target_arch = "x86_64")]
-unsafe fn hash_many_contiguous_avx2_wrapper(
+/// Hash a sub-degree contiguous AVX2 chunk tail by duplicating the final lane.
+///
+/// # Safety
+///
+/// The caller must ensure:
+/// 1. AVX2 is available on the current CPU.
+/// 2. `num_chunks` is in `1..avx2::DEGREE`.
+/// 3. `input` is readable for `num_chunks * CHUNK_LEN` bytes.
+/// 4. `out` is writable for `num_chunks * OUT_LEN` bytes.
+#[inline(always)]
+unsafe fn hash_many_avx2_owned_duplicate_tail(
+  input: *const u8,
+  num_chunks: usize,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: *mut u8,
+) {
+  debug_assert!((1..super::x86_64::avx2::DEGREE).contains(&num_chunks));
+
+  // SAFETY: Computing the final real chunk pointer because:
+  // 1. The caller guarantees `num_chunks` is non-zero.
+  // 2. The caller guarantees `input` is readable for `num_chunks * CHUNK_LEN` bytes.
+  let last = unsafe { input.add((num_chunks - 1) * CHUNK_LEN) };
+  // SAFETY: Constructing a full 8-lane batch because:
+  // 1. Lanes `< num_chunks` point at distinct real chunks in the caller-provided input.
+  // 2. Extra lanes duplicate `last`, which is valid for one full chunk.
+  // 3. Only the first `num_chunks` outputs are copied back to the caller.
+  let ptrs = unsafe {
+    [
+      input,
+      if num_chunks > 1 { input.add(CHUNK_LEN) } else { last },
+      if num_chunks > 2 { input.add(2 * CHUNK_LEN) } else { last },
+      if num_chunks > 3 { input.add(3 * CHUNK_LEN) } else { last },
+      if num_chunks > 4 { input.add(4 * CHUNK_LEN) } else { last },
+      if num_chunks > 5 { input.add(5 * CHUNK_LEN) } else { last },
+      if num_chunks > 6 { input.add(6 * CHUNK_LEN) } else { last },
+      last,
+    ]
+  };
+
+  let mut tmp = [0u8; super::x86_64::avx2::DEGREE * OUT_LEN];
+  // SAFETY: Running the owned AVX2 duplicate-lane tail because:
+  // 1. The caller only reaches this helper after AVX2 availability is established.
+  // 2. `ptrs` is a valid full 8-lane batch and `tmp` holds all lane outputs.
+  // 3. `out` is writable for the first `num_chunks * OUT_LEN` bytes.
+  unsafe {
+    super::x86_64::avx2::hash8_owned(
+      &ptrs,
+      CHUNK_LEN / BLOCK_LEN,
+      key,
+      counter,
+      true,
+      flags,
+      CHUNK_START,
+      super::CHUNK_END,
+      tmp.as_mut_ptr(),
+    );
+    core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn hash_one_chunk_avx2_owned_serial(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+  let mut cv = *key;
+  for block_idx in 0..(CHUNK_LEN / BLOCK_LEN) {
+    let mut block_flags = flags;
+    if block_idx == 0 {
+      block_flags |= CHUNK_START;
+    }
+    if block_idx + 1 == CHUNK_LEN / BLOCK_LEN {
+      block_flags |= super::CHUNK_END;
+    }
+
+    // SAFETY: Serial AVX2 full-chunk CV compression because:
+    // 1. The caller only reaches this helper after AVX2 dispatch.
+    // 2. `block_idx < CHUNK_LEN / BLOCK_LEN`, so every 64-byte block pointer stays inside the one
+    //    readable chunk.
+    // 3. `compress_cv_avx2_bytes` reads one block and returns a by-value CV.
+    cv = unsafe {
+      super::x86_64::compress_cv_avx2_bytes(
+        &cv,
+        input.add(block_idx * BLOCK_LEN),
+        counter,
+        BLOCK_LEN as u32,
+        block_flags,
+      )
+    };
+  }
+
+  let bytes = super::words8_to_le_bytes(&cv);
+  // SAFETY: Writing one output CV because:
+  // 1. The caller guarantees `out` is writable for OUT_LEN bytes.
+  // 2. `bytes` is exactly OUT_LEN bytes and is a local stack value.
+  unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, OUT_LEN) };
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn hash_many_contiguous_avx2_inner(
   input: *const u8,
   mut num_chunks: usize,
   key: &[u32; 8],
@@ -2773,21 +3399,21 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
       ]
     };
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    // SAFETY: this wrapper is only selected when AVX2 is available (checked by
-    // dispatch), `ptrs` point to `DEGREE` in-bounds chunk inputs, and `out` is
-    // valid for `DEGREE * OUT_LEN` bytes.
+    // SAFETY: Use the owned AVX2 full-batch kernel because:
+    // 1. Dispatch selects this wrapper only after AVX2 support is available.
+    // 2. `ptrs` point to `DEGREE` in-bounds full-chunk inputs.
+    // 3. `out` is valid for `DEGREE * OUT_LEN` bytes.
+    // 4. Sub-degree tails are handled below by measured per-degree routing.
     unsafe {
-      debug_assert!(flags <= u8::MAX as u32);
-      super::x86_64::asm::hash_many_avx2(
-        ptrs.as_ptr(),
-        super::x86_64::avx2::DEGREE,
+      super::x86_64::avx2::hash8_owned(
+        &ptrs,
         CHUNK_LEN / BLOCK_LEN,
-        key.as_ptr(),
+        key,
         counter,
         true,
-        flags as u8,
-        CHUNK_START as u8,
-        super::CHUNK_END as u8,
+        flags,
+        CHUNK_START,
+        super::CHUNK_END,
         out,
       );
       input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
@@ -2823,11 +3449,46 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
     {
       debug_assert!(num_chunks < super::x86_64::avx2::DEGREE);
       debug_assert!(flags <= u8::MAX as u32);
-      // Use the upstream-grade AVX2 asm `hash_many` backend for sub-degree
-      // tails (1–7 chunks). Passing `num_inputs = num_chunks` avoids wasting
-      // lanes (and avoids falling back to SSE4.1 on Intel/Zen5 where that is
-      // measurably slower for mid-size streaming updates like 4KiB).
-      //
+      if num_chunks == 1 {
+        // SAFETY: Use the owned AVX2 one-chunk tail because:
+        // 1. This wrapper is only selected after AVX2 dispatch.
+        // 2. `input` is readable for one full chunk.
+        // 3. `out` is writable for one OUT_LEN-byte CV.
+        // 4. The one-chunk tail was measured faster than the remaining AVX2 assembly tail on Sapphire
+        //    Rapids.
+        unsafe {
+          hash_one_chunk_avx2_owned_serial(input, key, counter, flags, out);
+        }
+        return;
+      }
+      if num_chunks == 2 {
+        // SAFETY: Use the owned AVX2 two-chunk tail because:
+        // 1. This wrapper is only selected after AVX2 dispatch.
+        // 2. `input` is readable for two full chunks.
+        // 3. `out` is writable for two OUT_LEN-byte CVs.
+        // 4. The two-chunk pair route was measured faster than the AVX2 assembly tail on Sapphire Rapids.
+        unsafe {
+          super::x86_64::avx2::hash2_chunks_owned(input, key, counter, flags, out);
+        }
+        return;
+      }
+      if matches!(num_chunks, 3 | 5..=7) {
+        // The owned duplicate-lane tail wins for 3/5/6/7 contiguous chunk tails
+        // on Sapphire Rapids. Keep 4 on assembly; it was measured faster.
+        // SAFETY: Routing this measured AVX2 tail because:
+        // 1. This wrapper is only selected after AVX2 dispatch.
+        // 2. `input` is readable for `num_chunks * CHUNK_LEN`.
+        // 3. `out` is writable for `num_chunks * OUT_LEN`.
+        // 4. The `matches!` guard restricts `num_chunks` to sub-degree values that won in benchmarks.
+        unsafe {
+          hash_many_avx2_owned_duplicate_tail(input, num_chunks, key, counter, flags, out);
+        }
+        return;
+      }
+
+      // Use the upstream-grade AVX2 asm `hash_many` backend for the remaining
+      // sub-degree tails. Passing `num_inputs = num_chunks` avoids wasting lanes
+      // for the 4 case where assembly is still faster.
       // SAFETY: This wrapper is only selected when AVX2 is available (checked
       // by dispatch). `input` is valid for `num_chunks * CHUNK_LEN` bytes, so
       // each `input.add(i * CHUNK_LEN)` stays in-bounds. `out` is valid for
@@ -2895,6 +3556,87 @@ unsafe fn hash_many_contiguous_avx2_wrapper(
         core::ptr::copy_nonoverlapping(tmp.as_ptr(), out, num_chunks * OUT_LEN);
       }
     }
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn hash_many_contiguous_avx2_wrapper(
+  input: *const u8,
+  num_chunks: usize,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: *mut u8,
+) {
+  // SAFETY: Forward to the shared AVX2 wrapper with production tail routing because:
+  // 1. This wrapper is selected only after AVX2 dispatch.
+  // 2. The caller-provided input/output buffers cover `num_chunks` full chunks/CVs.
+  unsafe { hash_many_contiguous_avx2_inner(input, num_chunks, key, counter, flags, out) };
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn avx512_owned_hash_many_available() -> bool {
+  crate::platform::caps().has(
+    x86::AVX512F
+      .union(x86::AVX512VL)
+      .union(x86::AVX512DQ)
+      .union(x86::AVX2)
+      .union(x86::SSE41)
+      .union(x86::SSSE3),
+  )
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn hash_many_avx512_owned_duplicate_tail(
+  input: *const u8,
+  num_chunks: usize,
+  key: &[u32; 8],
+  counter: u64,
+  flags: u32,
+  out: *mut u8,
+) {
+  debug_assert!((1..super::x86_64::avx512::DEGREE).contains(&num_chunks));
+
+  let mut tmp_input = [0u8; super::x86_64::avx512::DEGREE * CHUNK_LEN];
+  let mut tmp_out = [0u8; super::x86_64::avx512::DEGREE * OUT_LEN];
+
+  for i in 0..num_chunks {
+    // SAFETY: Copying real tail chunks into the owned AVX-512 batch because:
+    // 1. `i < num_chunks`, and the caller guarantees the source chunk exists.
+    // 2. `tmp_input` is sized for a full AVX-512 batch.
+    // 3. Source and destination ranges are disjoint allocations.
+    unsafe {
+      core::ptr::copy_nonoverlapping(
+        input.add(i * CHUNK_LEN),
+        tmp_input.as_mut_ptr().add(i * CHUNK_LEN),
+        CHUNK_LEN,
+      );
+    }
+  }
+
+  let last_src_offset = (num_chunks - 1) * CHUNK_LEN;
+  for i in num_chunks..super::x86_64::avx512::DEGREE {
+    // SAFETY: Duplicating the final real tail chunk because:
+    // 1. `num_chunks != 0`, so `last_src_offset` names an initialized lane.
+    // 2. Destination lane `i` is within the fixed-size batch buffer.
+    // 3. Only the first `num_chunks` outputs are copied to the caller.
+    unsafe {
+      core::ptr::copy_nonoverlapping(
+        tmp_input.as_ptr().add(last_src_offset),
+        tmp_input.as_mut_ptr().add(i * CHUNK_LEN),
+        CHUNK_LEN,
+      );
+    }
+  }
+
+  // SAFETY: Running the owned AVX-512 duplicate-lane tail because:
+  // 1. The caller only reaches this helper after `avx512_owned_hash_many_available()`.
+  // 2. `tmp_input` and `tmp_out` satisfy the full 16-lane contiguous contract.
+  // 3. `out` is writable for the first `num_chunks * OUT_LEN` bytes.
+  unsafe {
+    super::x86_64::avx512::hash16_contiguous_owned(tmp_input.as_ptr(), key, counter, flags, tmp_out.as_mut_ptr());
+    core::ptr::copy_nonoverlapping(tmp_out.as_ptr(), out, num_chunks * OUT_LEN);
   }
 }
 
@@ -2971,6 +3713,21 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
       // masking — Rust-side cascades to SSE4.1/AVX2 were benchmarked and
       // regressed 11–36% on all x86_64 platforms.
       //
+      // The exception is the 15-chunk contiguous tail on AVX512DQ CPUs: the
+      // owned duplicate-lane 16-way batch is faster than the assembly cascade
+      // there, while every smaller measured tail remains slower.
+      if num_chunks == 15 && avx512_owned_hash_many_available() {
+        // SAFETY: Routing this measured AVX-512 tail because:
+        // 1. Dispatch selected the AVX-512 kernel.
+        // 2. `avx512_owned_hash_many_available()` checked the additional AVX512DQ requirement.
+        // 3. `input` is readable for `15 * CHUNK_LEN` bytes.
+        // 4. `out` is writable for `15 * OUT_LEN` bytes.
+        unsafe {
+          hash_many_avx512_owned_duplicate_tail(input, num_chunks, key, counter, flags, out);
+        }
+        return;
+      }
+
       // SAFETY: This wrapper is only selected when the AVX-512 kernel is
       // available per dispatch. `input`/`out` cover `num_chunks` full chunks.
       let mut ptrs = [input; super::x86_64::avx512::DEGREE];
@@ -3037,6 +3794,102 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
         super::x86_64::avx512::hash16_contiguous(tmp_input.as_ptr(), key, counter, flags, tmp_out.as_mut_ptr());
         core::ptr::copy_nonoverlapping(tmp_out.as_ptr(), out, num_chunks * OUT_LEN);
       }
+    }
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+unsafe fn hash_many_contiguous_avx2_owned_wrapper(
+  input: *const u8,
+  mut num_chunks: usize,
+  key: &[u32; 8],
+  mut counter: u64,
+  flags: u32,
+  mut out: *mut u8,
+) {
+  let mut input = input;
+  while num_chunks >= super::x86_64::avx2::DEGREE {
+    // SAFETY: Constructing in-bounds lane pointers because:
+    // 1. `num_chunks >= DEGREE`, so all 8 lanes exist in the remaining input.
+    // 2. The caller guarantees `input` is readable for all remaining full chunks.
+    // 3. Each offset is `< DEGREE * CHUNK_LEN`.
+    let ptrs = unsafe {
+      [
+        input,
+        input.add(CHUNK_LEN),
+        input.add(2 * CHUNK_LEN),
+        input.add(3 * CHUNK_LEN),
+        input.add(4 * CHUNK_LEN),
+        input.add(5 * CHUNK_LEN),
+        input.add(6 * CHUNK_LEN),
+        input.add(7 * CHUNK_LEN),
+      ]
+    };
+
+    // SAFETY: Running the owned AVX2 hash-many candidate because:
+    // 1. Diagnostic availability checks `required_caps_owned_hash_many(X86Avx2)`.
+    // 2. `ptrs` cover 8 full chunks and `out` covers 8 output CVs.
+    // 3. Pointer advancement stays within the caller-provided input/output ranges.
+    unsafe {
+      super::x86_64::avx2::hash8_owned(
+        &ptrs,
+        CHUNK_LEN / BLOCK_LEN,
+        key,
+        counter,
+        true,
+        flags,
+        CHUNK_START,
+        super::CHUNK_END,
+        out,
+      );
+      input = input.add(super::x86_64::avx2::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::avx2::DEGREE * OUT_LEN);
+    }
+    counter = counter.wrapping_add(super::x86_64::avx2::DEGREE as u64);
+    num_chunks -= super::x86_64::avx2::DEGREE;
+  }
+
+  if num_chunks != 0 {
+    debug_assert!(num_chunks < super::x86_64::avx2::DEGREE);
+    // SAFETY: Diagnostic availability checks AVX2 support, and this wrapper's
+    // caller guarantees the remaining input/output ranges cover `num_chunks`.
+    unsafe {
+      hash_many_avx2_owned_duplicate_tail(input, num_chunks, key, counter, flags, out);
+    }
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+unsafe fn hash_many_contiguous_avx512_owned_wrapper(
+  input: *const u8,
+  mut num_chunks: usize,
+  key: &[u32; 8],
+  mut counter: u64,
+  flags: u32,
+  mut out: *mut u8,
+) {
+  let mut input = input;
+  while num_chunks >= super::x86_64::avx512::DEGREE {
+    // SAFETY: Running the owned AVX-512 hash-many candidate because:
+    // 1. Diagnostic availability checks AVX-512F/VL/DQ plus AVX2 support.
+    // 2. `input` is readable for a full 16-contiguous-chunk batch.
+    // 3. `out` is writable for `DEGREE * OUT_LEN` bytes.
+    unsafe {
+      super::x86_64::avx512::hash16_contiguous_owned(input, key, counter, flags, out);
+      input = input.add(super::x86_64::avx512::DEGREE * CHUNK_LEN);
+      out = out.add(super::x86_64::avx512::DEGREE * OUT_LEN);
+    }
+    counter = counter.wrapping_add(super::x86_64::avx512::DEGREE as u64);
+    num_chunks -= super::x86_64::avx512::DEGREE;
+  }
+
+  if num_chunks != 0 {
+    debug_assert!(num_chunks < super::x86_64::avx512::DEGREE);
+    // SAFETY: Running the owned AVX-512 tail candidate because:
+    // 1. Diagnostic availability checks AVX-512F/VL/DQ plus AVX2 support.
+    // 2. The caller guarantees the remaining input/output ranges cover `num_chunks`.
+    unsafe {
+      hash_many_avx512_owned_duplicate_tail(input, num_chunks, key, counter, flags, out);
     }
   }
 }

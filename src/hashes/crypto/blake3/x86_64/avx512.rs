@@ -367,17 +367,33 @@ pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter
   }
 }
 
-/// Hash 16 contiguous independent inputs in parallel.
+/// Owned Rust-intrinsic implementation of the 16-way contiguous hash-many kernel.
 ///
-/// This is optimized for the contiguous chunk hashing hot path, where inputs
-/// are arranged as `CHUNK_LEN`-byte blocks back-to-back.
+/// This stays callable on platforms where production dispatch still prefers
+/// assembly, so diagnostic benches can measure the owned candidate directly.
 ///
 /// # Safety
-/// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
-/// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+///
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512DQ + AVX2 are available,
+/// every input pointer is valid for `blocks * BLOCK_LEN` readable bytes, and
+/// `out` is valid for `DEGREE * OUT_LEN` writable bytes.
 #[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
-pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+pub(crate) unsafe fn hash16_owned(
+  inputs: &[*const u8; DEGREE],
+  blocks: usize,
+  key: &[u32; 8],
+  counter: u64,
+  increment_counter: bool,
+  flags: u32,
+  flags_start: u32,
+  flags_end: u32,
+  out: *mut u8,
+) {
+  // SAFETY: 16-way AVX-512 BLAKE3 contiguous hash-many because:
+  // 1. The caller guarantees AVX-512F/VL/DQ plus AVX2 availability.
+  // 2. Each input pointer is readable for `blocks * BLOCK_LEN` bytes.
+  // 3. `out` is writable for `DEGREE * OUT_LEN` bytes.
+  // 4. All lane pointers and stores are bounded by fixed-size local arrays.
   unsafe {
     let block_len_vec = set1(BLOCK_LEN as u32);
     let iv0 = set1(IV[0]);
@@ -396,35 +412,15 @@ pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter
       set1(key[7]),
     ];
 
-    let inputs = [
-      input,
-      input.add(CHUNK_LEN),
-      input.add(2 * CHUNK_LEN),
-      input.add(3 * CHUNK_LEN),
-      input.add(4 * CHUNK_LEN),
-      input.add(5 * CHUNK_LEN),
-      input.add(6 * CHUNK_LEN),
-      input.add(7 * CHUNK_LEN),
-      input.add(8 * CHUNK_LEN),
-      input.add(9 * CHUNK_LEN),
-      input.add(10 * CHUNK_LEN),
-      input.add(11 * CHUNK_LEN),
-      input.add(12 * CHUNK_LEN),
-      input.add(13 * CHUNK_LEN),
-      input.add(14 * CHUNK_LEN),
-      input.add(15 * CHUNK_LEN),
-    ];
+    let (counter_low_vec, counter_high_vec) = counter_vec(counter, increment_counter);
 
-    let (counter_low_vec, counter_high_vec) = counter_vec(counter, true);
-
-    let blocks = CHUNK_LEN / BLOCK_LEN;
     for block in 0..blocks {
       let mut block_flags = flags;
       if block == 0 {
-        block_flags |= super::super::CHUNK_START;
+        block_flags |= flags_start;
       }
       if block + 1 == blocks {
-        block_flags |= super::super::CHUNK_END;
+        block_flags |= flags_end;
       }
 
       let block_flags_vec = set1(block_flags);
@@ -486,6 +482,74 @@ pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter
   }
 }
 
+/// Owned Rust-intrinsic implementation of the 16-way contiguous chunk kernel.
+///
+/// This is optimized for the contiguous chunk hashing hot path, where inputs
+/// are arranged as `CHUNK_LEN`-byte blocks back-to-back.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512F + AVX-512VL + AVX-512DQ + AVX2 are available,
+/// and `input`/`out` are valid for `DEGREE * CHUNK_LEN` and
+/// `DEGREE * OUT_LEN` bytes respectively.
+#[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
+pub(crate) unsafe fn hash16_contiguous_owned(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+  // SAFETY: Forward to the generic owned AVX-512 hash-many implementation because:
+  // 1. The caller guarantees AVX-512F/VL/DQ plus AVX2 availability.
+  // 2. The constructed lane pointers stay within the contiguous 16-chunk input.
+  // 3. `out` is writable for `DEGREE * OUT_LEN` bytes.
+  // 4. `hash16_owned` receives a full 16-lane batch and the chunk start/end flags.
+  unsafe {
+    let inputs = [
+      input,
+      input.add(CHUNK_LEN),
+      input.add(2 * CHUNK_LEN),
+      input.add(3 * CHUNK_LEN),
+      input.add(4 * CHUNK_LEN),
+      input.add(5 * CHUNK_LEN),
+      input.add(6 * CHUNK_LEN),
+      input.add(7 * CHUNK_LEN),
+      input.add(8 * CHUNK_LEN),
+      input.add(9 * CHUNK_LEN),
+      input.add(10 * CHUNK_LEN),
+      input.add(11 * CHUNK_LEN),
+      input.add(12 * CHUNK_LEN),
+      input.add(13 * CHUNK_LEN),
+      input.add(14 * CHUNK_LEN),
+      input.add(15 * CHUNK_LEN),
+    ];
+    hash16_owned(
+      &inputs,
+      CHUNK_LEN / BLOCK_LEN,
+      key,
+      counter,
+      true,
+      flags,
+      super::super::CHUNK_START,
+      super::super::CHUNK_END,
+      out,
+    );
+  }
+}
+
+/// Hash 16 contiguous independent inputs in parallel.
+///
+/// This is optimized for the contiguous chunk hashing hot path, where inputs
+/// are arranged as `CHUNK_LEN`-byte blocks back-to-back.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
+/// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
+pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
+  // SAFETY: Forwarding to the owned AVX-512 implementation because:
+  // 1. This function has the same AVX-512F/VL/DQ + AVX2 target-feature requirement.
+  // 2. The caller's pointer/output contract is identical to `hash16_contiguous_owned`.
+  unsafe { hash16_contiguous_owned(input, key, counter, flags, out) }
+}
+
 /// Generate 16 root output blocks (64 bytes each) in parallel.
 ///
 /// Each lane uses an independent `output_block_counter` (`counter + lane`), but
@@ -507,10 +571,14 @@ pub(crate) unsafe fn root_output_blocks16(
   {
     debug_assert!(flags <= u8::MAX as u32);
     debug_assert!(block_len <= u8::MAX as u32);
-    // SAFETY: AVX-512 is available (checked by dispatch), and `out` is valid
-    // for `16 * 64` writable bytes per this function's contract.
+    // SAFETY: AVX-512 XOF assembly call because:
+    // 1. This target-feature function requires the AVX-512 features used by the wrapper.
+    // 2. `chaining_value` and `block_words` are fixed-size readable arrays.
+    // 3. The caller guarantees `out` is writable for `16 * 64` bytes.
+    // 4. `block_len` and `flags` are debug-checked to fit the assembly ABI.
+    // 5. Counters, block length, flags, and output block count are public values.
     unsafe {
-      super::asm::rscrypto_blake3_xof_many_avx512(
+      super::asm::xof_many_avx512(
         chaining_value.as_ptr(),
         block_words.as_ptr().cast(),
         block_len as u8,
@@ -636,6 +704,43 @@ pub(crate) unsafe fn root_output_blocks16(
       storeu256(hi0[lane], base);
       storeu256(hi1[lane], base.add(32));
     }
+  }
+}
+
+/// Generate one or more root output blocks with consecutive counters.
+///
+/// # Safety
+/// Caller must ensure AVX-512 is available and that `out` is valid for
+/// `blocks * 64` writable bytes.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) unsafe fn root_output_blocks(
+  chaining_value: &[u32; 8],
+  block_words: &[u32; 16],
+  counter: u64,
+  block_len: u32,
+  flags: u32,
+  out: *mut u8,
+  blocks: usize,
+) {
+  debug_assert!(blocks != 0);
+  debug_assert!(flags <= u8::MAX as u32);
+  debug_assert!(block_len <= u8::MAX as u32);
+  // SAFETY: AVX-512 XOF assembly call because:
+  // 1. Dispatch only selects this function for the AVX-512 kernel.
+  // 2. The caller guarantees `out` is writable for `blocks * 64` bytes.
+  // 3. `block_words` is a readable 64-byte block and `chaining_value` has 8 words.
+  // 4. `block_len` and `flags` are debug-checked to fit the assembly ABI.
+  // 5. Counters, block length, flags, and output block count are public values.
+  unsafe {
+    super::asm::xof_many_avx512(
+      chaining_value.as_ptr(),
+      block_words.as_ptr().cast(),
+      block_len as u8,
+      counter,
+      flags as u8,
+      out,
+      blocks,
+    );
   }
 }
 

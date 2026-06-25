@@ -1,4 +1,4 @@
-//! AArch64 external AES-GCM kernels.
+//! AArch64 rscrypto-owned AES-GCM assembly kernels.
 
 #![allow(unsafe_code)]
 

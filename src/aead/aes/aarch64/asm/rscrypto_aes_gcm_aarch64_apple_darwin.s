@@ -1,3 +1,10 @@
+// Copyright (c) 2026 rscrypto contributors
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+// rscrypto-owned AArch64 AES-GCM fused CTR/GHASH kernels.
+// Provenance: introduced in rscrypto local history by commit 11ebc4a for the
+// AES-GCM assembly backend and retargeted by commit 59b2b37 for Linux symbols.
+
     .arch armv8.4-a+crypto+sha3
     .text
 

@@ -1,3 +1,10 @@
+// Copyright (c) 2026 rscrypto contributors
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+// rscrypto-owned Linux x86-64 AES-GCM fused CTR/GHASH kernels.
+// Provenance: introduced in rscrypto local history by commit 11ebc4a and
+// widened in commits 56f75c5, 1818785, and 819da76 for the rscrypto AES-GCM ABI.
+
 .text
 
 .macro GCM_COUNTERS_16_SLOW

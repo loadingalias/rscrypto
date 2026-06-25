@@ -1,3 +1,10 @@
+// Copyright (c) 2026 rscrypto contributors
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+// rscrypto-owned Linux AArch64 SVE2-SHA3 Keccak-f[1600] x4 kernel.
+// Provenance: introduced in rscrypto local history by commit 315cc93 for the
+// Linux AArch64 Keccak dispatch path.
+
 .text
 .arch armv9.2-a+sve2+sve-sha3
 

@@ -1,4 +1,9 @@
-
+// Copyright (c) 2026 rscrypto contributors
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+// rscrypto-owned Linux AArch64 BLAKE3 one-chunk assembly kernels.
+// Provenance: introduced in rscrypto local history by commit 795be60 and
+// retargeted for Linux by commits d7d3abb and 39b6ee1.
 
     .text
     .macro G wa, wb, wc, wd, wmx, wmy

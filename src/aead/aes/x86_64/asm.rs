@@ -1,4 +1,4 @@
-//! Linux x86-64 external AES-GCM kernels.
+//! Linux x86-64 rscrypto-owned AES-GCM assembly kernels.
 
 #![allow(unsafe_code)]
 

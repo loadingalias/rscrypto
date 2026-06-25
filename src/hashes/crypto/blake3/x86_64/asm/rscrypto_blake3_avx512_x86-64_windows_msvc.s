@@ -1,6 +1,12 @@
+// SPDX-License-Identifier: CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception
+//
+// Adapted for rscrypto from upstream BLAKE3 1.8.5:
+//   c/blake3_avx512_x86-64_windows_msvc.asm
+// Symbols are renamed into the rscrypto namespace and retargeted to the
+// Rust global_asm! syntax used by this crate.
+
 .globl rscrypto_blake3_hash_many_avx512
 .globl rscrypto_blake3_compress_in_place_avx512
-.globl rscrypto_blake3_compress_xof_avx512
 .globl rscrypto_blake3_xof_many_avx512
 
 .text
@@ -2439,91 +2445,6 @@ rscrypto_blake3_compress_in_place_avx512:
         vpxor   xmm1, xmm1, xmm3
         vmovdqu xmmword ptr [rdi], xmm0
         vmovdqu xmmword ptr [rdi+0x10], xmm1
-        ret
-
-.p2align 6
-rscrypto_blake3_compress_xof_avx512:
-        vmovdqu xmm0, xmmword ptr [rdi]
-        vmovdqu xmm1, xmmword ptr [rdi+0x10]
-        movzx   eax, r8b
-        movzx   ecx, cl
-        shl     rax, 32
-        add     rcx, rax
-        vmovq   xmm3, rdx
-        vmovq   xmm4, rcx
-        vpunpcklqdq xmm3, xmm3, xmm4
-        vmovaps xmm2, xmmword ptr [RSCRYPTO_AVX512_BLAKE3_IV+rip]
-        vmovups xmm8, xmmword ptr [rsi]
-        vmovups xmm9, xmmword ptr [rsi+0x10]
-        vshufps xmm4, xmm8, xmm9, 136
-        vshufps xmm5, xmm8, xmm9, 221
-        vmovups xmm8, xmmword ptr [rsi+0x20]
-        vmovups xmm9, xmmword ptr [rsi+0x30]
-        vshufps xmm6, xmm8, xmm9, 136
-        vshufps xmm7, xmm8, xmm9, 221
-        vpshufd xmm6, xmm6, 0x93
-        vpshufd xmm7, xmm7, 0x93
-        mov     al, 7
-9:
-        vpaddd  xmm0, xmm0, xmm4
-        vpaddd  xmm0, xmm0, xmm1
-        vpxord  xmm3, xmm3, xmm0
-        vprord  xmm3, xmm3, 16
-        vpaddd  xmm2, xmm2, xmm3
-        vpxord  xmm1, xmm1, xmm2
-        vprord  xmm1, xmm1, 12
-        vpaddd  xmm0, xmm0, xmm5
-        vpaddd  xmm0, xmm0, xmm1
-        vpxord  xmm3, xmm3, xmm0
-        vprord  xmm3, xmm3, 8
-        vpaddd  xmm2, xmm2, xmm3
-        vpxord  xmm1, xmm1, xmm2
-        vprord  xmm1, xmm1, 7
-        vpshufd xmm0, xmm0, 0x93
-        vpshufd xmm3, xmm3, 0x4E
-        vpshufd xmm2, xmm2, 0x39
-        vpaddd  xmm0, xmm0, xmm6
-        vpaddd  xmm0, xmm0, xmm1
-        vpxord  xmm3, xmm3, xmm0
-        vprord  xmm3, xmm3, 16
-        vpaddd  xmm2, xmm2, xmm3
-        vpxord  xmm1, xmm1, xmm2
-        vprord  xmm1, xmm1, 12
-        vpaddd  xmm0, xmm0, xmm7
-        vpaddd  xmm0, xmm0, xmm1
-        vpxord  xmm3, xmm3, xmm0
-        vprord  xmm3, xmm3, 8
-        vpaddd  xmm2, xmm2, xmm3
-        vpxord  xmm1, xmm1, xmm2
-        vprord  xmm1, xmm1, 7
-        vpshufd xmm0, xmm0, 0x39
-        vpshufd xmm3, xmm3, 0x4E
-        vpshufd xmm2, xmm2, 0x93
-        dec     al
-        jz      9f
-        vshufps xmm8, xmm4, xmm5, 214
-        vpshufd xmm9, xmm4, 0x0F
-        vpshufd xmm4, xmm8, 0x39
-        vshufps xmm8, xmm6, xmm7, 250
-        vpblendd xmm9, xmm9, xmm8, 0xAA
-        vpunpcklqdq xmm8, xmm7, xmm5
-        vpblendd xmm8, xmm8, xmm6, 0x88
-        vpshufd xmm8, xmm8, 0x78
-        vpunpckhdq xmm5, xmm5, xmm7
-        vpunpckldq xmm6, xmm6, xmm5
-        vpshufd xmm7, xmm6, 0x1E
-        vmovdqa xmm5, xmm9
-        vmovdqa xmm6, xmm8
-        jmp     9b
-9:
-        vpxor   xmm0, xmm0, xmm2
-        vpxor   xmm1, xmm1, xmm3
-        vpxor   xmm2, xmm2, [rdi]
-        vpxor   xmm3, xmm3, [rdi+0x10]
-        vmovdqu xmmword ptr [r9], xmm0
-        vmovdqu xmmword ptr [r9+0x10], xmm1
-        vmovdqu xmmword ptr [r9+0x20], xmm2
-        vmovdqu xmmword ptr [r9+0x30], xmm3
         ret
 
 .p2align 6

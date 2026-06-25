@@ -2408,6 +2408,327 @@ pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash
   Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, b"binsec"))
 }
 
+#[cfg(feature = "diag")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Blake3DiagKernel {
+  Portable,
+  #[cfg(target_arch = "x86_64")]
+  X86Sse41,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2OwnedHashMany,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2PairChunkTail,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx2PairParentTail,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512ExactBlockAsm,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512OwnedHashMany,
+  #[cfg(target_arch = "x86_64")]
+  X86Avx512OwnedCompress,
+  #[cfg(target_arch = "aarch64")]
+  Aarch64Neon,
+}
+
+#[cfg(feature = "diag")]
+impl Blake3DiagKernel {
+  #[inline]
+  #[must_use]
+  pub const fn label(self) -> &'static str {
+    match self {
+      Self::Portable => "portable",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Sse41 => "x86-sse41",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2 => "x86-avx2",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2OwnedHashMany => "x86-avx2-owned-hash-many",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2PairChunkTail => "x86-avx2-pair-chunk-tail",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2PairParentTail => "x86-avx2-pair-parent-tail",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512 => "x86-avx512",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512ExactBlockAsm => "x86-avx512-exact-block-asm",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512OwnedHashMany => "x86-avx512-owned-hash-many",
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512OwnedCompress => "x86-avx512-owned-compress",
+      #[cfg(target_arch = "aarch64")]
+      Self::Aarch64Neon => "aarch64-neon",
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  pub const fn supports_streaming(self) -> bool {
+    match self {
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2OwnedHashMany
+      | Self::X86Avx2PairChunkTail
+      | Self::X86Avx2PairParentTail
+      | Self::X86Avx512ExactBlockAsm
+      | Self::X86Avx512OwnedHashMany
+      | Self::X86Avx512OwnedCompress => false,
+      _ => true,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  #[cfg(target_arch = "x86_64")]
+  const fn uses_owned_hash_many(self) -> bool {
+    match self {
+      Self::X86Avx2OwnedHashMany | Self::X86Avx512OwnedHashMany => true,
+      _ => false,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  const fn kernel_id(self) -> kernels::Blake3KernelId {
+    match self {
+      Self::Portable => kernels::Blake3KernelId::Portable,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Sse41 => kernels::Blake3KernelId::X86Sse41,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2 => kernels::Blake3KernelId::X86Avx2,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2OwnedHashMany => kernels::Blake3KernelId::X86Avx2,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2PairChunkTail => kernels::Blake3KernelId::X86Avx2,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx2PairParentTail => kernels::Blake3KernelId::X86Avx2,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512 => kernels::Blake3KernelId::X86Avx512,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512ExactBlockAsm => kernels::Blake3KernelId::X86Avx512,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512OwnedHashMany => kernels::Blake3KernelId::X86Avx512,
+      #[cfg(target_arch = "x86_64")]
+      Self::X86Avx512OwnedCompress => kernels::Blake3KernelId::X86Avx512,
+      #[cfg(target_arch = "aarch64")]
+      Self::Aarch64Neon => kernels::Blake3KernelId::Aarch64Neon,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  #[cfg(target_arch = "x86_64")]
+  const fn uses_owned_compress(self) -> bool {
+    match self {
+      Self::X86Avx512OwnedCompress => true,
+      _ => false,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  #[cfg(target_arch = "x86_64")]
+  const fn uses_avx2_pair_chunk_tail(self) -> bool {
+    match self {
+      Self::X86Avx2PairChunkTail => true,
+      _ => false,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  #[cfg(target_arch = "x86_64")]
+  const fn uses_avx2_pair_parent_tail(self) -> bool {
+    match self {
+      Self::X86Avx2PairParentTail => true,
+      _ => false,
+    }
+  }
+
+  #[inline]
+  #[must_use]
+  #[cfg(target_arch = "x86_64")]
+  const fn forces_exact_block_asm(self) -> bool {
+    match self {
+      Self::X86Avx512ExactBlockAsm => true,
+      _ => false,
+    }
+  }
+}
+
+#[cfg(feature = "diag")]
+#[inline]
+#[must_use]
+pub fn diag_blake3_kernel_available(kernel: Blake3DiagKernel) -> bool {
+  #[cfg(target_arch = "x86_64")]
+  if kernel.uses_owned_hash_many() {
+    return crate::platform::caps().has(kernels::required_caps_owned_hash_many(kernel.kernel_id()));
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  if kernel.uses_owned_compress() {
+    return crate::platform::caps().has(kernels::required_caps_owned_compress(kernel.kernel_id()));
+  }
+
+  crate::platform::caps().has(kernels::required_caps(kernel.kernel_id()))
+}
+
+#[cfg(feature = "diag")]
+#[inline]
+#[must_use]
+fn diag_blake3_kernel(kernel: Blake3DiagKernel) -> Option<Kernel> {
+  if !diag_blake3_kernel_available(kernel) {
+    return None;
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  if kernel.uses_owned_hash_many() {
+    return kernels::diag_kernel_owned_hash_many(kernel.kernel_id());
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  if kernel.uses_owned_compress() {
+    return kernels::diag_kernel_owned_compress(kernel.kernel_id());
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  if kernel.forces_exact_block_asm() {
+    let mut forced = kernels::kernel(kernel.kernel_id());
+    forced.force_x86_avx512_exact_block_asm = true;
+    forced.name = "x86_64/avx512-exact-block-asm";
+    return Some(forced);
+  }
+
+  Some(kernels::kernel(kernel.kernel_id()))
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_blake3_digest_with_kernel(kernel: Blake3DiagKernel, data: &[u8]) -> Option<[u8; OUT_LEN]> {
+  let kernel = diag_blake3_kernel(kernel)?;
+  Some(digest_oneshot(kernel, IV, 0, data))
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_blake3_keyed_digest_with_kernel(
+  kernel: Blake3DiagKernel,
+  key: &[u8; KEY_LEN],
+  data: &[u8],
+) -> Option<Blake3KeyedHash> {
+  let kernel = diag_blake3_kernel(kernel)?;
+  let key_words = words8_from_le_bytes_32(key);
+  Some(Blake3KeyedHash::from_bytes(digest_oneshot(
+    kernel, key_words, KEYED_HASH, data,
+  )))
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_blake3_xof_with_kernel(kernel: Blake3DiagKernel, data: &[u8], out: &mut [u8]) -> Option<()> {
+  let kernel = diag_blake3_kernel(kernel)?;
+  let mut reader = if data.len() <= CHUNK_LEN {
+    xof_oneshot_single_chunk(kernel, IV, 0, data)
+  } else {
+    Blake3XofReader::from_output(root_output_oneshot(
+      kernel,
+      IV,
+      0,
+      control::policy_kind_from_flags(0, true),
+      data,
+    ))
+  };
+  reader.squeeze(out);
+  Some(())
+}
+
+#[cfg(feature = "diag")]
+#[must_use]
+pub fn diag_blake3_streaming_digest_with_kernel(
+  kernel: Blake3DiagKernel,
+  data: &[u8],
+  chunk_size: usize,
+) -> Option<[u8; OUT_LEN]> {
+  if chunk_size == 0 {
+    return None;
+  }
+  if !kernel.supports_streaming() {
+    return None;
+  }
+
+  let kernel_id = diag_blake3_kernel(kernel)?.id;
+  let mut hasher = Blake3::new();
+  for chunk in data.chunks(chunk_size) {
+    hasher.update_with(chunk, kernel_id, kernel_id);
+  }
+  Some(hasher.finalize())
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_blake3_chunk_cvs_with_kernel(kernel: Blake3DiagKernel, data: &[u8], out: &mut [u8]) -> Option<()> {
+  #[cfg(target_arch = "x86_64")]
+  let requested_kernel = kernel;
+  if data.is_empty() || !data.len().is_multiple_of(CHUNK_LEN) {
+    return None;
+  }
+  let chunks = data.len() / CHUNK_LEN;
+  if out.len() != chunks * OUT_LEN {
+    return None;
+  }
+
+  let kernel = diag_blake3_kernel(kernel)?;
+  #[cfg(target_arch = "x86_64")]
+  if requested_kernel.uses_avx2_pair_chunk_tail() && kernel.id == kernels::Blake3KernelId::X86Avx2 {
+    kernels::diag_chunk_cvs_many_avx2_pair_from_bytes(data, IV, 0, 0, out);
+    return Some(());
+  }
+  // SAFETY: Direct diagnostic hash-many call because:
+  // 1. `data.len()` is a non-zero multiple of `CHUNK_LEN`, so `chunks` full chunks are readable.
+  // 2. `out.len() == chunks * OUT_LEN`, so every output CV slot is writable.
+  // 3. `diag_blake3_kernel` already checked the runtime CPU capabilities required by this kernel.
+  unsafe {
+    (kernel.hash_many_contiguous)(data.as_ptr(), chunks, &IV, 0, 0, out.as_mut_ptr());
+  }
+  Some(())
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_blake3_parent_cvs_with_kernel(kernel: Blake3DiagKernel, children: &[u8], out: &mut [u8]) -> Option<()> {
+  #[cfg(target_arch = "x86_64")]
+  let requested_kernel = kernel;
+  let (children, children_remainder) = children.as_chunks::<OUT_LEN>();
+  if !children_remainder.is_empty() || children.is_empty() || !children.len().is_multiple_of(2) {
+    return None;
+  }
+
+  let parent_count = children.len() / 2;
+  let (out, out_remainder) = out.as_chunks_mut::<OUT_LEN>();
+  if !out_remainder.is_empty() || out.len() != parent_count {
+    return None;
+  }
+
+  let kernel = diag_blake3_kernel(kernel)?;
+  #[cfg(target_arch = "x86_64")]
+  if requested_kernel.uses_owned_hash_many() && kernel.id == kernels::Blake3KernelId::X86Avx2 {
+    kernels::diag_parent_cvs_many_avx2_owned_from_bytes(children, IV, 0, out);
+    return Some(());
+  }
+  #[cfg(target_arch = "x86_64")]
+  if requested_kernel.uses_avx2_pair_parent_tail() && kernel.id == kernels::Blake3KernelId::X86Avx2 {
+    kernels::diag_parent_cvs_many_avx2_pair_from_bytes(children, IV, 0, out);
+    return Some(());
+  }
+  #[cfg(target_arch = "x86_64")]
+  if requested_kernel.uses_owned_hash_many() && kernel.id == kernels::Blake3KernelId::X86Avx512 {
+    kernels::diag_parent_cvs_many_avx512_owned_from_bytes(children, IV, 0, out);
+    return Some(());
+  }
+
+  kernels::parent_cvs_many_from_bytes_inline(kernel.id, children, IV, 0, out);
+  Some(())
+}
+
 /// BLAKE3 digest state.
 ///
 /// Defined by the BLAKE3 specification.
@@ -3532,6 +3853,11 @@ fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: 
     return false;
   }
 
+  #[cfg(feature = "diag")]
+  if kernel.owned_x86_compress {
+    return false;
+  }
+
   let wide_pipeline_min_len = BLOCK_LEN.strict_mul(4);
   match kernel.id {
     kernels::Blake3KernelId::X86Avx2 => {
@@ -3541,6 +3867,85 @@ fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: 
     kernels::Blake3KernelId::X86Avx512 => !dispatch::hash_many_wide_pipeline() || input_len >= wide_pipeline_min_len,
     _ => false,
   }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+unsafe fn avx2_owned_exact_block_chain(
+  key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+  final_extra_flags: u32,
+) -> [u32; 8] {
+  debug_assert!(!input.is_empty());
+  debug_assert!(input.len() <= CHUNK_LEN);
+  debug_assert!(input.len().is_multiple_of(BLOCK_LEN));
+
+  let blocks = input.len() / BLOCK_LEN;
+  let mut cv = key_words;
+  for block_idx in 0..blocks {
+    let mut block_flags = flags;
+    if block_idx == 0 {
+      block_flags |= CHUNK_START;
+    }
+    if block_idx + 1 == blocks {
+      block_flags |= final_extra_flags;
+    }
+
+    // SAFETY: AVX2 exact-block compression because:
+    // 1. The caller only reaches this helper when AVX2 is detected.
+    // 2. `block_idx < blocks` and `blocks * BLOCK_LEN == input.len()`, so the 64-byte block is
+    //    in-bounds.
+    // 3. `compress_cv_avx2_bytes` only reads the pointed-to 64-byte block and returns a by-value CV.
+    cv = unsafe {
+      x86_64::compress_cv_avx2_bytes(
+        &cv,
+        input.as_ptr().add(block_idx * BLOCK_LEN),
+        0,
+        BLOCK_LEN as u32,
+        block_flags,
+      )
+    };
+  }
+  cv
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+unsafe fn avx512_owned_exact_block_hash_many(
+  key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+  final_extra_flags: u32,
+) -> [u32; 8] {
+  debug_assert!(!input.is_empty());
+  debug_assert!(input.len() <= CHUNK_LEN);
+  debug_assert!(input.len().is_multiple_of(BLOCK_LEN));
+
+  let blocks = input.len() / BLOCK_LEN;
+  let inputs = [input.as_ptr(); x86_64::avx512::DEGREE];
+  let mut out = [0u8; x86_64::avx512::DEGREE * OUT_LEN];
+
+  // SAFETY: Diagnostic owned AVX-512 exact-block hash-many because:
+  // 1. The caller reaches this helper only through an owned-hash-many diagnostic kernel whose
+  //    availability checks AVX-512F/VL/DQ plus AVX2.
+  // 2. Every duplicated lane points at `input`, which is readable for `blocks * BLOCK_LEN` bytes.
+  // 3. `out` is writable for the full 16-lane output contract; only lane 0 is returned.
+  unsafe {
+    x86_64::avx512::hash16_owned(
+      &inputs,
+      blocks,
+      &key_words,
+      0,
+      false,
+      flags,
+      CHUNK_START,
+      final_extra_flags,
+      out.as_mut_ptr(),
+    );
+  }
+
+  words8_from_le_bytes_32((&out[..OUT_LEN]).try_into().expect("lane 0 is one BLAKE3 CV"))
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -3564,50 +3969,68 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
   debug_assert!(flags <= u8::MAX as u32);
   debug_assert!((flags | CHUNK_START) <= u8::MAX as u32);
 
-  let input_ptrs = [input.as_ptr()];
   let mut cv_bytes = [0u8; OUT_LEN];
   match kernel.id {
     kernels::Blake3KernelId::X86Avx2 => {
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      // SAFETY: this branch only runs for the AVX2 kernel on supported OSes,
-      // with one in-bounds exact-block input lane and a valid 32-byte output buffer.
-      unsafe {
-        x86_64::asm::hash_many_avx2(
-          input_ptrs.as_ptr(),
-          1,
-          prefix_blocks,
-          key_words.as_ptr(),
-          0,
-          false,
-          flags as u8,
-          (flags | CHUNK_START) as u8,
-          flags as u8,
-          cv_bytes.as_mut_ptr(),
-        );
-      }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      return None;
+      let prefix_len = prefix_blocks * BLOCK_LEN;
+      // SAFETY: AVX2 dispatch selected this kernel. `prefix_len` is non-zero,
+      // exact-block aligned, and within `input`.
+      let cv = unsafe { avx2_owned_exact_block_chain(key_words, flags, &input[..prefix_len], 0) };
+      cv_bytes = words8_to_le_bytes(&cv);
     }
     kernels::Blake3KernelId::X86Avx512 => {
-      #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-      // SAFETY: this branch only runs for the AVX-512 kernel on supported OSes,
-      // with one in-bounds exact-block input lane and a valid 32-byte output buffer.
-      unsafe {
-        x86_64::asm::hash_many_avx512(
-          input_ptrs.as_ptr(),
-          1,
-          prefix_blocks,
-          key_words.as_ptr(),
-          0,
-          false,
-          flags as u8,
-          (flags | CHUNK_START) as u8,
-          flags as u8,
-          cv_bytes.as_mut_ptr(),
-        );
+      #[cfg(feature = "diag")]
+      if kernel.owned_x86_hash_many {
+        let prefix_len = prefix_blocks * BLOCK_LEN;
+        // SAFETY: Diagnostic availability checked the owned AVX-512 hash-many feature set, and the prefix
+        // is exact-block aligned.
+        let cv = unsafe { avx512_owned_exact_block_hash_many(key_words, flags, &input[..prefix_len], 0) };
+        cv_bytes = words8_to_le_bytes(&cv);
+      } else {
+        let input_ptrs = [input.as_ptr()];
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        // SAFETY: this branch only runs for the AVX-512 kernel on supported OSes,
+        // with one in-bounds exact-block input lane and a valid 32-byte output buffer.
+        unsafe {
+          x86_64::asm::hash_many_avx512(
+            input_ptrs.as_ptr(),
+            1,
+            prefix_blocks,
+            key_words.as_ptr(),
+            0,
+            false,
+            flags as u8,
+            (flags | CHUNK_START) as u8,
+            flags as u8,
+            cv_bytes.as_mut_ptr(),
+          );
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        return None;
       }
-      #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-      return None;
+      #[cfg(not(feature = "diag"))]
+      {
+        let input_ptrs = [input.as_ptr()];
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        // SAFETY: this branch only runs for the AVX-512 kernel on supported OSes,
+        // with one in-bounds exact-block input lane and a valid 32-byte output buffer.
+        unsafe {
+          x86_64::asm::hash_many_avx512(
+            input_ptrs.as_ptr(),
+            1,
+            prefix_blocks,
+            key_words.as_ptr(),
+            0,
+            false,
+            flags as u8,
+            (flags | CHUNK_START) as u8,
+            flags as u8,
+            cv_bytes.as_mut_ptr(),
+          );
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+        return None;
+      }
     }
     _ => return None,
   }
@@ -3641,36 +4064,17 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
 
   // AVX2 exact-block one-chunk fast path. The remaining gap is concentrated at
   // the exact 4-block point (256 B), so wide-pipeline x86 also gets the path there.
-  #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   if kernel.id == kernels::Blake3KernelId::X86Avx2
     && use_x86_hash_many_exact_block_one_chunk_fast_path(kernel, input.len())
   {
     let blocks = input.len() / BLOCK_LEN;
     debug_assert!((1..=CHUNK_LEN / BLOCK_LEN).contains(&blocks));
-    let flags_start = flags | CHUNK_START;
-    let flags_end = flags | CHUNK_END | ROOT;
     debug_assert!(flags <= u8::MAX as u32);
-    debug_assert!(flags_start <= u8::MAX as u32);
-    debug_assert!(flags_end <= u8::MAX as u32);
-    let input_ptrs = [input.as_ptr()];
-    let mut out = [0u8; OUT_LEN];
-    // SAFETY: AVX2 dispatch selected this kernel; input is one contiguous
-    // full-chunk-or-less buffer; output points to one OUT_LEN digest lane.
-    unsafe {
-      x86_64::asm::hash_many_avx2(
-        input_ptrs.as_ptr(),
-        1,
-        blocks,
-        key_words.as_ptr(),
-        0,
-        false,
-        flags as u8,
-        flags_start as u8,
-        flags_end as u8,
-        out.as_mut_ptr(),
-      );
-    }
-    return words8_from_le_bytes_32(&out);
+    debug_assert!((flags | CHUNK_START) <= u8::MAX as u32);
+    debug_assert!((flags | CHUNK_END | ROOT) <= u8::MAX as u32);
+    // SAFETY: AVX2 dispatch selected this kernel, and this branch is restricted
+    // to non-empty exact-block one-chunk input.
+    return unsafe { avx2_owned_exact_block_chain(key_words, flags, input, CHUNK_END | ROOT) };
   }
 
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -3684,32 +4088,26 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     debug_assert!(flags <= u8::MAX as u32);
     debug_assert!(flags_start <= u8::MAX as u32);
     debug_assert!(flags_end <= u8::MAX as u32);
+    #[cfg(feature = "diag")]
+    if kernel.owned_x86_hash_many {
+      // SAFETY: Diagnostic availability checked the owned AVX-512 hash-many feature set, and `input` is
+      // one exact-block chunk prefix no longer than CHUNK_LEN.
+      return unsafe { avx512_owned_exact_block_hash_many(key_words, flags, input, CHUNK_END | ROOT) };
+    }
+    #[cfg(feature = "diag")]
+    let force_avx512_exact_block_asm = kernel.force_x86_avx512_exact_block_asm;
+    #[cfg(not(feature = "diag"))]
+    let force_avx512_exact_block_asm = false;
+    if blocks == 4 && !force_avx512_exact_block_asm && use_avx512_four_block_avx2_fast_path() {
+      // For the exact 4-block one-chunk case (256B input), the AVX2 path is a
+      // better fit than the AVX-512 4-lane sub-degree path. Keep this heuristic
+      // narrow so 64..1024B stay on the proven AVX-512 exact-block path.
+      // SAFETY: this branch is only enabled when AVX2 is available per dispatch,
+      // and input is one contiguous exact-block chunk.
+      return unsafe { avx2_owned_exact_block_chain(key_words, flags, input, CHUNK_END | ROOT) };
+    }
     let input_ptrs = [input.as_ptr()];
     let mut out = [0u8; OUT_LEN];
-    if blocks == 4 && use_avx512_four_block_avx2_fast_path() {
-      // For the exact 4-block one-chunk case (256B input), AVX2's internal
-      // tail cascade is a better fit than the AVX-512 4-lane sub-degree path.
-      // Keep this heuristic narrow so 64..1024B stay on the proven AVX-512
-      // exact-block path.
-      // SAFETY: this branch is only enabled when AVX2 is available per
-      // dispatch; input is one contiguous full-chunk-or-less buffer; output
-      // points to one OUT_LEN digest lane.
-      unsafe {
-        x86_64::asm::hash_many_avx2(
-          input_ptrs.as_ptr(),
-          1,
-          blocks,
-          key_words.as_ptr(),
-          0,
-          false,
-          flags as u8,
-          flags_start as u8,
-          flags_end as u8,
-          out.as_mut_ptr(),
-        );
-      }
-      return words8_from_le_bytes_32(&out);
-    }
     // SAFETY: AVX-512 dispatch selected this kernel; input is one contiguous
     // full-chunk-or-less buffer; output points to one OUT_LEN digest lane.
     unsafe {
@@ -3754,34 +4152,13 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     unsafe {
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 => {
-          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-          {
-            x86_64::asm::compress_in_place_sse41_mut(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
-          }
-          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-          {
-            cv = x86_64::compress_cv_sse41_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
-          }
+          x86_64::compress_in_place_sse41_bytes(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
         }
         kernels::Blake3KernelId::X86Avx2 => {
-          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-          {
-            x86_64::asm::compress_in_place_avx2_mut(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
-          }
-          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-          {
-            cv = x86_64::compress_cv_avx2_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
-          }
+          x86_64::compress_in_place_avx2_bytes(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
         }
         kernels::Blake3KernelId::X86Avx512 => {
-          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-          {
-            x86_64::asm::compress_in_place_avx512_mut(&mut cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
-          }
-          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-          {
-            cv = x86_64::compress_cv_avx512_bytes(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
-          }
+          cv = (kernel.x86_compress_cv_bytes)(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
         }
         _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
       }
@@ -3803,34 +4180,13 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     unsafe {
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 => {
-          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-          {
-            x86_64::asm::compress_in_place_sse41_mut(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
-          }
-          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-          {
-            cv = x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
-          }
+          x86_64::compress_in_place_sse41_bytes(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
         }
         kernels::Blake3KernelId::X86Avx2 => {
-          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-          {
-            x86_64::asm::compress_in_place_avx2_mut(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
-          }
-          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-          {
-            cv = x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
-          }
+          x86_64::compress_in_place_avx2_bytes(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
         }
         kernels::Blake3KernelId::X86Avx512 => {
-          #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-          {
-            x86_64::asm::compress_in_place_avx512_mut(&mut cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
-          }
-          #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-          {
-            cv = x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
-          }
+          cv = (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
         }
         _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
       }
@@ -3851,34 +4207,13 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
   unsafe {
     match kernel.id {
       kernels::Blake3KernelId::X86Sse41 => {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        {
-          x86_64::asm::compress_in_place_sse41_mut(&mut cv, block_ptr, 0, last_len as u32, final_flags);
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-          cv = x86_64::compress_cv_sse41_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
-        }
+        x86_64::compress_in_place_sse41_bytes(&mut cv, block_ptr, 0, last_len as u32, final_flags);
       }
       kernels::Blake3KernelId::X86Avx2 => {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        {
-          x86_64::asm::compress_in_place_avx2_mut(&mut cv, block_ptr, 0, last_len as u32, final_flags);
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-          cv = x86_64::compress_cv_avx2_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
-        }
+        x86_64::compress_in_place_avx2_bytes(&mut cv, block_ptr, 0, last_len as u32, final_flags);
       }
       kernels::Blake3KernelId::X86Avx512 => {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        {
-          x86_64::asm::compress_in_place_avx512_mut(&mut cv, block_ptr, 0, last_len as u32, final_flags);
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        {
-          cv = x86_64::compress_cv_avx512_bytes(&cv, block_ptr, 0, last_len as u32, final_flags);
-        }
+        cv = (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, last_len as u32, final_flags);
       }
       _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
     }
@@ -3957,7 +4292,7 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
 
 #[cfg(test)]
 mod tests {
-  use super::{Blake3, Blake3KeyedHash, OUT_LEN};
+  use super::{Blake3, Blake3KeyedHash, CHUNK_LEN, OUT_LEN};
   use crate::traits::{Digest, VerificationError, Xof};
 
   #[test]
@@ -3985,6 +4320,135 @@ mod tests {
       }
 
       assert_eq!(actual, expected, "xof squeeze mismatch for input_len={input_len}");
+    }
+  }
+
+  #[cfg(feature = "diag")]
+  #[test]
+  fn diag_forced_kernels_match_normal_paths() {
+    use super::{
+      Blake3DiagKernel, diag_blake3_digest_with_kernel, diag_blake3_kernel_available,
+      diag_blake3_keyed_digest_with_kernel, diag_blake3_streaming_digest_with_kernel, diag_blake3_xof_with_kernel,
+    };
+
+    const KERNELS: &[Blake3DiagKernel] = &[
+      Blake3DiagKernel::Portable,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Sse41,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx2,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx2OwnedHashMany,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512ExactBlockAsm,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512OwnedHashMany,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512OwnedCompress,
+      #[cfg(target_arch = "aarch64")]
+      Blake3DiagKernel::Aarch64Neon,
+    ];
+
+    for &kernel in KERNELS {
+      if !diag_blake3_kernel_available(kernel) {
+        continue;
+      }
+
+      for len in [0usize, 1, 64, 256, 1024, 4096, 8192, 16384] {
+        let input = input_pattern(len);
+
+        let digest = diag_blake3_digest_with_kernel(kernel, &input).unwrap();
+        assert_eq!(digest, *blake3::hash(&input).as_bytes(), "diag digest mismatch");
+
+        let keyed = diag_blake3_keyed_digest_with_kernel(kernel, KEY, &input).unwrap();
+        assert_eq!(keyed.to_bytes(), *blake3::keyed_hash(KEY, &input).as_bytes());
+
+        let mut xof = [0u8; 64];
+        diag_blake3_xof_with_kernel(kernel, &input, &mut xof).unwrap();
+        let mut expected_xof = [0u8; 64];
+        let mut official = blake3::Hasher::new();
+        official.update(&input);
+        official.finalize_xof().fill(&mut expected_xof);
+        assert_eq!(xof, expected_xof, "diag xof mismatch");
+
+        if kernel.supports_streaming() {
+          let streaming = diag_blake3_streaming_digest_with_kernel(kernel, &input, 64).unwrap();
+          assert_eq!(streaming, *blake3::hash(&input).as_bytes(), "diag streaming mismatch");
+        }
+      }
+    }
+  }
+
+  #[cfg(feature = "diag")]
+  #[test]
+  fn diag_raw_cv_helpers_match_portable() {
+    use super::{
+      Blake3DiagKernel, diag_blake3_chunk_cvs_with_kernel, diag_blake3_kernel_available,
+      diag_blake3_parent_cvs_with_kernel,
+    };
+
+    const KERNELS: &[Blake3DiagKernel] = &[
+      Blake3DiagKernel::Portable,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Sse41,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx2,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx2OwnedHashMany,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx2PairChunkTail,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx2PairParentTail,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512OwnedHashMany,
+      #[cfg(target_arch = "x86_64")]
+      Blake3DiagKernel::X86Avx512OwnedCompress,
+      #[cfg(target_arch = "aarch64")]
+      Blake3DiagKernel::Aarch64Neon,
+    ];
+
+    const RAW_CV_COUNTS: &[usize] = &[
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 23, 24, 31, 32,
+    ];
+
+    for &chunks in RAW_CV_COUNTS {
+      let input = input_pattern(chunks * CHUNK_LEN);
+      let mut expected = alloc::vec![0u8; chunks * OUT_LEN];
+      diag_blake3_chunk_cvs_with_kernel(Blake3DiagKernel::Portable, &input, &mut expected).unwrap();
+
+      for &kernel in KERNELS {
+        if !diag_blake3_kernel_available(kernel) {
+          continue;
+        }
+        let mut actual = alloc::vec![0u8; chunks * OUT_LEN];
+        diag_blake3_chunk_cvs_with_kernel(kernel, &input, &mut actual).unwrap();
+        assert_eq!(
+          actual, expected,
+          "diag chunk CV mismatch kernel={kernel:?} chunks={chunks}"
+        );
+      }
+    }
+
+    for &parents in RAW_CV_COUNTS {
+      let children = input_pattern(parents * 2 * OUT_LEN);
+      let mut expected = alloc::vec![0u8; parents * OUT_LEN];
+      diag_blake3_parent_cvs_with_kernel(Blake3DiagKernel::Portable, &children, &mut expected).unwrap();
+
+      for &kernel in KERNELS {
+        if !diag_blake3_kernel_available(kernel) {
+          continue;
+        }
+        let mut actual = alloc::vec![0u8; parents * OUT_LEN];
+        diag_blake3_parent_cvs_with_kernel(kernel, &children, &mut actual).unwrap();
+        assert_eq!(
+          actual, expected,
+          "diag parent CV mismatch kernel={kernel:?} parents={parents}"
+        );
+      }
     }
   }
 

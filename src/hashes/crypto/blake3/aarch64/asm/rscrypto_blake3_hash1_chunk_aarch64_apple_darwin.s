@@ -1,4 +1,9 @@
-
+// Copyright (c) 2026 rscrypto contributors
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+// rscrypto-owned macOS AArch64 BLAKE3 one-chunk assembly kernels.
+// Provenance: introduced in rscrypto local history by commit 795be60 and
+// tuned in commits 258c7cc and dd6730e for the rscrypto BLAKE3 AArch64 ABI.
 
     .text
     .macro G wa, wb, wc, wd, wmx, wmy
