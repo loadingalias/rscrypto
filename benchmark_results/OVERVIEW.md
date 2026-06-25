@@ -2,12 +2,13 @@
 
 Sources:
 
-- Linux benchmark CI run [#27973944251](https://github.com/loadingalias/rscrypto/actions/runs/27973944251), created 2026-06-22 18:11:11 UTC.
-- Linux commit: `b978c2ca45611325850d7f1af94718e497acde50`.
-- Artifacts: nine successful `benchmark-*` artifacts extracted into `benchmark_results/2026-06-22/linux/*/results.txt`.
+- Linux benchmark CI baseline run [#27973944251](https://github.com/loadingalias/rscrypto/actions/runs/27973944251), created 2026-06-22 18:11:11 UTC.
+- Linux baseline commit: `b978c2ca45611325850d7f1af94718e497acde50`.
+- Baseline artifacts: nine successful `benchmark-*` artifacts extracted into `benchmark_results/2026-06-22/linux/*/results.txt`.
+- BLAKE3 Linux refresh run [#28142543540](https://github.com/loadingalias/rscrypto/actions/runs/28142543540), created 2026-06-25 02:19:45 UTC at commit `3f209aa03cc0b8ac6875e7780f161174460e2253`; artifacts extracted into `benchmark_results/2026-06-25/linux/*/results.txt`.
 - Local macOS run: `benchmark_results/2026-06-22/macos/aarch64/results.txt` at commit `b978c2ca45611325850d7f1af94718e497acde50`.
 
-Scope: the 2026-06-22 nine-runner Linux CI benchmark matrix for commit `b978c2c`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
+Scope: the 2026-06-22 nine-runner Linux CI benchmark matrix for commit `b978c2c`, with BLAKE3 rows refreshed from the 2026-06-25 Linux CI run for commit `3f209aa`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
 
 Coverage note: this is a full Linux CI public benchmark pass. It includes checksum, hash, XOF, MAC, KDF, password-hashing, BLAKE2/BLAKE3, RSA import/verification, ECDSA P-256/P-384 signing and verification, Ed25519, X25519, AEAD, and ML-KEM-512/768/1024 keygen, encapsulation, and decapsulation rows. ML-KEM phase/arithmetic microbenches are present in the raw artifacts and intentionally excluded from release-level competitor claims.
 
@@ -15,14 +16,14 @@ Coverage note: this is a full Linux CI public benchmark pass. It includes checks
 
 | Scope | Pairs | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
-| Linux CI: all matched performance pairs | 10,781 | 7,550/2,374/857 | 70% | 1.79x | 1.22x |
-| Linux CI: fastest external per case | 6,750 | 4,095/1,985/670 | 61% | 1.59x | 1.11x |
+| Linux CI: all matched performance pairs | 10,781 | 7,544/2,381/856 | 70% | 1.79x | 1.22x |
+| Linux CI: fastest external per case | 6,750 | 4,089/1,992/669 | 61% | 1.59x | 1.11x |
 
 Shareable release summary:
 
-- **Headline:** 4,095 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,080 are wins or ties. Linux CI fastest-external geomean is 1.59x.
+- **Headline:** 4,089 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,081 are wins or ties. Linux CI fastest-external geomean is 1.59x.
 - **Checksums:** 5.20x geomean across 693 fastest-external rows; W/T/L is 520/119/54.
-- **Hashes/MACs/XOFs:** 1.35x geomean across 3,726 fastest-external rows; W/T/L is 2,080/1,428/218.
+- **Hashes/MACs/XOFs:** 1.35x geomean across 3,726 fastest-external rows; W/T/L is 2,074/1,435/217.
 - **Auth/KDF:** 1.25x geomean across 180 fastest-external rows; W/T/L is 160/20/0.
 - **Password hashing:** 1.08x geomean across 135 fastest-external rows; W/T/L is 68/28/39.
 - **Public-key:** 1.21x geomean across 333 fastest-external rows; W/T/L is 195/80/58.
@@ -51,12 +52,42 @@ Shareable release summary:
 | Category | Rows | W/T/L | Win % | Geomean | Median |
 | --- | --- | --- | --- | --- | --- |
 | Checksums | 693 | 520/119/54 | 75% | 5.20x | 2.37x |
-| Hashes/MACs/XOFs | 3,726 | 2,080/1,428/218 | 56% | 1.35x | 1.08x |
+| Hashes/MACs/XOFs | 3,726 | 2,074/1,435/217 | 56% | 1.35x | 1.08x |
 | Auth/KDF | 180 | 160/20/0 | 89% | 1.25x | 1.13x |
 | Password hashing | 135 | 68/28/39 | 50% | 1.08x | 1.05x |
 | Public-key | 333 | 195/80/58 | 59% | 1.21x | 1.10x |
 | RSA | 99 | 85/6/8 | 86% | 1.53x | 1.17x |
 | AEAD | 1,584 | 987/304/293 | 62% | 1.56x | 1.14x |
+
+## BLAKE3 Summary
+
+BLAKE3 rows are refreshed from Linux CI run [#28142543540](https://github.com/loadingalias/rscrypto/actions/runs/28142543540). The row set is the same 432 matched rscrypto-vs-official-`blake3` comparisons as the previous overview. All-pair and fastest-external BLAKE3 metrics are identical because official `blake3` is the only external implementation in this bench.
+
+| Scope | Rows | W/T/L | Geomean | Median |
+| --- | --- | --- | --- | --- |
+| All Linux BLAKE3 rows | 432 | 227/173/32 | 1.40x | 1.06x |
+| x86_64 | 192 | 80/97/15 | 1.24x | 1.03x |
+| AArch64 | 96 | 44/46/6 | 1.44x | 1.05x |
+
+| Platform | Rows | W/T/L | Geomean | Median |
+| --- | --- | --- | --- | --- |
+| AMD Zen4 | 48 | 21/24/3 | 1.31x | 1.03x |
+| AMD Zen5 | 48 | 21/25/2 | 1.32x | 1.03x |
+| AWS Graviton3 | 48 | 22/21/5 | 1.40x | 0.99x |
+| AWS Graviton4 | 48 | 22/25/1 | 1.47x | 1.05x |
+| IBM Power10 | 48 | 39/7/2 | 2.02x | 1.81x |
+| IBM z16/s390x | 48 | 41/2/5 | 1.86x | 2.07x |
+| Intel Ice Lake | 48 | 19/26/3 | 1.17x | 1.02x |
+| Intel Sapphire Rapids | 48 | 19/22/7 | 1.16x | 1.03x |
+| RISE RISC-V | 48 | 23/21/4 | 1.12x | 1.03x |
+
+| Operation | Rows | W/T/L | Geomean | Median |
+| --- | --- | --- | --- | --- |
+| `oneshot` | 99 | 45/46/8 | 1.32x | 1.04x |
+| `keyed` | 99 | 40/49/10 | 1.30x | 1.01x |
+| `derive-key` | 99 | 76/22/1 | 1.78x | 1.87x |
+| `streaming` | 36 | 10/21/5 | 1.15x | 1.01x |
+| `xof` | 99 | 56/35/8 | 1.33x | 1.07x |
 
 ## ML-KEM Summary
 
@@ -143,7 +174,7 @@ Linux CI primitives with matched exact `rscrypto` comparisons. Fastest columns a
 | `ascon-xof128` | 99 | 74/25/0 | 1.36x | 99 | 74/25/0 | 1.36x |
 | `aegis-256` | 198 | 91/83/24 | 1.38x | 198 | 91/83/24 | 1.38x |
 | `xchacha20-poly1305` | 198 | 176/22/0 | 1.38x | 198 | 176/22/0 | 1.38x |
-| `blake3` | 432 | 233/166/33 | 1.41x | 432 | 233/166/33 | 1.41x |
+| `blake3` | 432 | 227/173/32 | 1.40x | 432 | 227/173/32 | 1.40x |
 | `ecdsa-p256` | 72 | 62/10/0 | 1.51x | 200 | 186/14/0 | 2.41x |
 | `rsa-4096` | 27 | 23/2/2 | 1.57x | 59 | 55/2/2 | 2.50x |
 | `crc32c` | 99 | 45/39/15 | 1.61x | 198 | 141/42/15 | 2.22x |
@@ -222,7 +253,7 @@ Linux CI primitives with matched exact `rscrypto` comparisons. Fastest columns a
 | `ascon-hash` | 198 | 132/65/1 | 67% | 1.31x | 1.22x |
 | `ascon-aead` | 198 | 148/50/0 | 75% | 1.33x | 1.15x |
 | `aegis-crate` | 198 | 91/83/24 | 46% | 1.38x | 1.04x |
-| `blake3` | 432 | 233/166/33 | 54% | 1.41x | 1.08x |
+| `blake3` | 432 | 227/173/32 | 53% | 1.40x | 1.06x |
 | `dalek` | 108 | 84/15/9 | 78% | 1.45x | 1.25x |
 | `sha2` | 531 | 288/236/7 | 54% | 1.50x | 1.06x |
 | `ring` | 1,656 | 1,305/202/149 | 79% | 1.63x | 1.29x |
@@ -250,9 +281,9 @@ The macOS Apple Silicon run is local evidence for the same commit. It is useful 
 
 ## README Numbers
 
-- **Headline:** 4,095 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,080 are wins or ties. Linux CI geomean is 1.59x.
+- **Headline:** 4,089 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,081 are wins or ties. Linux CI geomean is 1.59x.
 - **Checksums:** 5.20x geomean across 693 Linux CI fastest-external rows; W/T/L 520/119/54.
-- **Hashes/MACs/XOFs:** 1.35x geomean across 3,726 Linux CI fastest-external rows; W/T/L 2,080/1,428/218.
+- **Hashes/MACs/XOFs:** 1.35x geomean across 3,726 Linux CI fastest-external rows; W/T/L 2,074/1,435/217.
 - **Auth/KDF:** 1.25x geomean across 180 Linux CI fastest-external rows; W/T/L 160/20/0.
 - **Password hashing:** 1.08x geomean across 135 Linux CI fastest-external rows; W/T/L 68/28/39.
 - **Public-key:** 1.21x geomean across 333 Linux CI fastest-external rows; W/T/L 195/80/58.

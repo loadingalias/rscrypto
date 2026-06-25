@@ -1,8 +1,7 @@
 //! aarch64 FEAT_SHA512 kernels for SHA-512.
 //!
-//! Apple/Darwin uses a hand-scheduled assembly compression primitive. Other
-//! aarch64 targets use the SHA-512 Crypto Extension intrinsics (grouped under
-//! `sha3` in Rust): `vsha512hq_u64`, `vsha512h2q_u64`,
+//! Uses the SHA-512 Crypto Extension intrinsics (grouped under `sha3` in
+//! Rust): `vsha512hq_u64`, `vsha512h2q_u64`,
 //! `vsha512su0q_u64`, `vsha512su1q_u64`.
 //!
 //! Available on Apple Silicon (M1+), Graviton2+, Ampere Altra, Cortex-A76+.
@@ -11,26 +10,16 @@
 #![allow(clippy::inline_always)]
 #![allow(clippy::indexing_slicing)]
 
-#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+#[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-use core::arch::global_asm;
 
-#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+#[cfg(target_arch = "aarch64")]
 use crate::hashes::util::Aligned64;
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-global_asm!(include_str!("asm/rscrypto_sha512_aarch64_apple_darwin.s"));
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-unsafe extern "C" {
-  fn rscrypto_sha512_block_data_order_hw(state: *mut u64, blocks: *const u8, block_count: usize);
-}
 
 /// K constants packed as 40 pairs of `[K[2i], K[2i+1]]` for `vld1q_u64` loads.
 ///
 /// Cache-line aligned (64 bytes) so the 640-byte table starts at an L1 boundary.
-#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+#[cfg(target_arch = "aarch64")]
 static K_PAIRS: Aligned64<[[u64; 2]; 40]> = Aligned64([
   [0x428a_2f98_d728_ae22, 0x7137_4491_23ef_65cd],
   [0xb5c0_fbcf_ec4d_3b2f, 0xe9b5_dba5_8189_dbbc],
@@ -80,23 +69,7 @@ static K_PAIRS: Aligned64<[[u64; 2]; 40]> = Aligned64([
 ///
 /// Caller must verify that `aarch64::SHA512` capability is available.
 /// `blocks.len()` must be a multiple of 128.
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-pub(crate) unsafe fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
-  debug_assert_eq!(blocks.len() % 128, 0);
-  if blocks.is_empty() {
-    return;
-  }
-
-  // SAFETY: Calls the Apple AArch64 SHA-512 compression primitive because:
-  // 1. Runtime dispatch only reaches this function after `aarch64::SHA512` has been detected.
-  // 2. `state` is a valid writable pointer to eight initialized u64 words.
-  // 3. `blocks` is non-empty and its length is a multiple of 128 bytes, asserted above.
-  // 4. `block_count` is derived from the slice length, so the assembly reads only complete input
-  //    blocks.
-  unsafe { rscrypto_sha512_block_data_order_hw(state.as_mut_ptr(), blocks.as_ptr(), blocks.len() / 128) };
-}
-
-#[cfg(all(target_arch = "aarch64", not(target_os = "macos")))]
+#[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "sha3")]
 pub(crate) unsafe fn compress_blocks_aarch64_sha512(state: &mut [u64; 8], blocks: &[u8]) {
   debug_assert_eq!(blocks.len() % 128, 0);

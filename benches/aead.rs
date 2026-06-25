@@ -163,12 +163,27 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let mut buf = data.clone();
+    #[cfg(feature = "diag")]
+    let mut buf_owned = data.clone();
     let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len() + 16);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
         buf.copy_from_slice(d);
         black_box(cipher_rs.encrypt_in_place(black_box(&nonce_rs), black_box(AAD), black_box(&mut buf)))
+      })
+    });
+
+    #[cfg(feature = "diag")]
+    g.bench_with_input(BenchmarkId::new("rscrypto-owned", len), data, |b, d| {
+      b.iter(|| {
+        buf_owned.copy_from_slice(d);
+        black_box(rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned(
+          black_box(&cipher_rs),
+          black_box(&nonce_rs),
+          black_box(AAD),
+          black_box(&mut buf_owned),
+        ))
       })
     });
 
@@ -268,6 +283,8 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
       .unwrap();
 
     let mut buf = ciphertext.clone();
+    #[cfg(feature = "diag")]
+    let mut buf_owned = ciphertext.clone();
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
       b.iter(|| {
@@ -281,6 +298,22 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
           )
           .unwrap();
         black_box(&buf);
+      })
+    });
+
+    #[cfg(feature = "diag")]
+    g.bench_with_input(BenchmarkId::new("rscrypto-owned", len), &ciphertext, |b, ct| {
+      b.iter(|| {
+        buf_owned.copy_from_slice(ct);
+        rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_owned(
+          black_box(&cipher_rs),
+          black_box(&nonce_rs),
+          black_box(AAD),
+          black_box(&mut buf_owned),
+          black_box(&tag_rs),
+        )
+        .unwrap();
+        black_box(&buf_owned);
       })
     });
 

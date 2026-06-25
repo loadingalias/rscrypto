@@ -19,8 +19,9 @@ use rsa::{
 };
 #[cfg(feature = "diag")]
 use rscrypto::auth::rsa::{
-  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_generic_exponent,
-  diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded_with_scratch,
+  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
+  diag_rsa_public_operation_generic_exponent, diag_rsa_public_operation_product, diag_rsa_verify_pkcs1v15_encoded,
+  diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, Sha256, Sha384, Sha512};
 
@@ -735,18 +736,28 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
   let mut group = c.benchmark_group("rsa-montgomery-thresholds");
 
   for (name, modulus_len) in [
+    ("rsa-2048-32-limbs", 256usize),
+    ("rsa-3072-48-limbs", 384usize),
     ("rsa-4096-64-limbs", 512usize),
     ("rsa-4160-65-limbs", 520usize),
+    ("rsa-6144-96-limbs", 768usize),
+    ("rsa-8128-127-limbs", 1016usize),
     ("rsa-8192-128-limbs", 1024usize),
   ] {
-    let key = RsaPublicKey::from_pkcs1_der(&synthetic_pkcs1_der(modulus_len)).unwrap();
+    let key = RsaPublicKey::from_pkcs1_der_with_policy(
+      &synthetic_pkcs1_der(modulus_len),
+      &RsaPublicKeyPolicy::legacy_verification(),
+    )
+    .unwrap();
     let input = modulus_minus_one(&key);
     let mut out_auto = vec![0u8; key.modulus().len()];
     let mut out_product = vec![0u8; key.modulus().len()];
     let mut out_cios = vec![0u8; key.modulus().len()];
+    let mut out_cios_portable = vec![0u8; key.modulus().len()];
     let mut scratch_auto = key.public_scratch();
     let mut scratch_product = key.public_scratch();
     let mut scratch_cios = key.public_scratch();
+    let mut scratch_cios_portable = key.public_scratch();
 
     group.bench_function(format!("{name}/auto"), |b| {
       b.iter(|| {
@@ -777,6 +788,17 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
           black_box(&input),
           black_box(&mut out_cios),
           black_box(&mut scratch_cios),
+        )
+        .unwrap()
+      })
+    });
+    group.bench_function(format!("{name}/cios-portable"), |b| {
+      b.iter(|| {
+        diag_rsa_public_operation_cios_portable(
+          black_box(&key),
+          black_box(&input),
+          black_box(&mut out_cios_portable),
+          black_box(&mut scratch_cios_portable),
         )
         .unwrap()
       })

@@ -1,8 +1,6 @@
 //! SHA-256 aarch64 SHA2 Crypto Extension kernel.
 //!
-//! Uses ARMv8 SHA2 instructions for hardware-accelerated compression. Darwin uses
-//! the same hand-scheduled assembly strategy as the SHA-512 Apple backend for
-//! multi-block compression; other targets use SHA2 intrinsics.
+//! Uses ARMv8 SHA2 instructions for hardware-accelerated compression.
 //!
 //! # Safety
 //!
@@ -14,18 +12,8 @@
 
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-use core::arch::global_asm;
 
 use crate::hashes::util::Aligned64;
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-global_asm!(include_str!("asm/rscrypto_sha256_aarch64_apple_darwin.s"));
-
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-unsafe extern "C" {
-  fn rscrypto_sha256_block_data_order_hw(state: *mut u32, blocks: *const u8, block_count: usize);
-}
 
 /// Flat K[0..64] round constants for SHA-256, used as a `vld1q_u32` source.
 ///
@@ -193,39 +181,7 @@ pub(crate) unsafe fn compress_single_block_aarch64_sha2(state: &mut [u32; 8], bl
 /// # Safety
 ///
 /// Caller must ensure `sha2` CPU feature is available.
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-#[target_feature(enable = "sha2")]
-pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: &[u8]) {
-  debug_assert_eq!(blocks.len() % 64, 0);
-  let (block_chunks, remainder) = blocks.as_chunks::<64>();
-  debug_assert!(remainder.is_empty());
-
-  if block_chunks.is_empty() {
-    return;
-  }
-
-  if block_chunks.len() == 1 {
-    // SAFETY: caller guarantees `sha2` feature.
-    unsafe {
-      compress_single_block_aarch64_sha2(state, &block_chunks[0]);
-    }
-    return;
-  }
-
-  // SAFETY: Calls the Apple AArch64 SHA-256 compression primitive because:
-  // 1. Runtime dispatch only reaches this function after `aarch64::SHA2` has been detected.
-  // 2. `state` is a valid writable pointer to eight initialized u32 words.
-  // 3. `blocks` is non-empty and its length is a multiple of 64 bytes, asserted above.
-  // 4. `block_count` is derived from the chunk count, so the assembly reads only complete input
-  //    blocks. The routine uses a fixed instruction schedule per block; the loop count is the public
-  //    input length.
-  unsafe {
-    rscrypto_sha256_block_data_order_hw(state.as_mut_ptr(), blocks.as_ptr(), block_chunks.len());
-  }
-}
-
 #[cfg(target_arch = "aarch64")]
-#[cfg(not(target_os = "macos"))]
 #[target_feature(enable = "sha2")]
 pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: &[u8]) {
   debug_assert_eq!(blocks.len() % 64, 0);

@@ -36,9 +36,10 @@ use rsa::{
 use rscrypto::RsaEncryptionError;
 #[cfg(feature = "diag")]
 use rscrypto::auth::rsa::{
-  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_comba_product,
-  diag_rsa_public_operation_product, diag_rsa_public_operation_window2_exponent, diag_rsa_verify_pkcs1v15_encoded,
-  diag_rsa_verify_pss_encoded, diag_rsa_verify_pss_encoded_with_scratch,
+  diag_rsa_public_operation_bitserial, diag_rsa_public_operation_cios, diag_rsa_public_operation_cios_portable,
+  diag_rsa_public_operation_comba_product, diag_rsa_public_operation_product,
+  diag_rsa_public_operation_window2_exponent, diag_rsa_verify_pkcs1v15_encoded, diag_rsa_verify_pss_encoded,
+  diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{
   RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicKey,
@@ -3712,10 +3713,12 @@ fn public_operation_montgomery_candidates_match_current_path() {
     let representative = modulus_minus_one(&key);
     let mut current = vec![0u8; key.modulus().len()];
     let mut cios = vec![0u8; key.modulus().len()];
+    let mut cios_portable = vec![0u8; key.modulus().len()];
     let mut comba = vec![0u8; key.modulus().len()];
     let mut product = vec![0u8; key.modulus().len()];
     let mut scratch = key.public_scratch();
     let mut cios_scratch = key.public_scratch();
+    let mut cios_portable_scratch = key.public_scratch();
     let mut comba_scratch = key.public_scratch();
     let mut product_scratch = key.public_scratch();
 
@@ -3723,9 +3726,15 @@ fn public_operation_montgomery_candidates_match_current_path() {
       .public_operation_with_scratch(&representative, &mut current, &mut scratch)
       .unwrap();
     diag_rsa_public_operation_cios(&key, &representative, &mut cios, &mut cios_scratch).unwrap();
+    diag_rsa_public_operation_cios_portable(&key, &representative, &mut cios_portable, &mut cios_portable_scratch)
+      .unwrap();
     diag_rsa_public_operation_comba_product(&key, &representative, &mut comba, &mut comba_scratch).unwrap();
     diag_rsa_public_operation_product(&key, &representative, &mut product, &mut product_scratch).unwrap();
     assert_eq!(cios, current, "CIOS mismatch for modulus-minus-one representative");
+    assert_eq!(
+      cios_portable, current,
+      "portable CIOS mismatch for modulus-minus-one representative"
+    );
     assert_eq!(
       comba, current,
       "Comba product Montgomery mismatch for modulus-minus-one representative"
@@ -3739,9 +3748,14 @@ fn public_operation_montgomery_candidates_match_current_path() {
       .public_operation_with_scratch(signature, &mut current, &mut scratch)
       .unwrap();
     diag_rsa_public_operation_cios(&key, signature, &mut cios, &mut cios_scratch).unwrap();
+    diag_rsa_public_operation_cios_portable(&key, signature, &mut cios_portable, &mut cios_portable_scratch).unwrap();
     diag_rsa_public_operation_comba_product(&key, signature, &mut comba, &mut comba_scratch).unwrap();
     diag_rsa_public_operation_product(&key, signature, &mut product, &mut product_scratch).unwrap();
     assert_eq!(cios, current, "CIOS mismatch for fixture signature representative");
+    assert_eq!(
+      cios_portable, current,
+      "portable CIOS mismatch for fixture signature representative"
+    );
     assert_eq!(
       comba, current,
       "Comba product Montgomery mismatch for fixture signature representative"

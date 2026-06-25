@@ -252,6 +252,84 @@ impl ChaCha20Poly1305 {
     ct::zeroize(&mut poly_key);
     Some(Ok(tag))
   }
+
+  fn encrypt_in_place_owned_unchecked(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Result<ChaCha20Poly1305Tag, SealError> {
+    #[cfg(target_arch = "aarch64")]
+    if let Some(result) = self.encrypt_in_place_interleaved_aarch64(nonce, aad, buffer) {
+      return result;
+    }
+
+    chacha20::xor_keystream(
+      AeadPrimitive::ChaCha20Poly1305,
+      self.key.as_bytes(),
+      1,
+      nonce.as_bytes(),
+      buffer,
+    )
+    .map_err(|_| SealError::too_large())?;
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let tag = ChaCha20Poly1305Tag::from_bytes(
+      poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, buffer, &poly_key)
+        .map_err(|_| SealError::too_large())?,
+    );
+    ct::zeroize(&mut poly_key);
+    Ok(tag)
+  }
+
+  fn decrypt_in_place_owned_unchecked(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Result<(), OpenError> {
+    let expected = self
+      .compute_tag(nonce, aad, buffer)
+      .map_err(|_| OpenError::too_large())?;
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Err(OpenError::verification());
+    }
+
+    chacha20::xor_keystream(
+      AeadPrimitive::ChaCha20Poly1305,
+      self.key.as_bytes(),
+      1,
+      nonce.as_bytes(),
+      buffer,
+    )
+    .map_err(|_| OpenError::too_large())?;
+    Ok(())
+  }
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_chacha20poly1305_encrypt_in_place_owned(
+  cipher: &ChaCha20Poly1305,
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+) -> Result<ChaCha20Poly1305Tag, SealError> {
+  super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+  cipher.encrypt_in_place_owned_unchecked(nonce, aad, buffer)
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_chacha20poly1305_decrypt_in_place_owned(
+  cipher: &ChaCha20Poly1305,
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+  tag: &ChaCha20Poly1305Tag,
+) -> Result<(), OpenError> {
+  super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+  cipher.decrypt_in_place_owned_unchecked(nonce, aad, buffer, tag)
 }
 
 impl Aead for ChaCha20Poly1305 {
@@ -290,27 +368,7 @@ impl Aead for ChaCha20Poly1305 {
       return result;
     }
 
-    #[cfg(target_arch = "aarch64")]
-    if let Some(result) = self.encrypt_in_place_interleaved_aarch64(nonce, aad, buffer) {
-      return result;
-    }
-
-    chacha20::xor_keystream(
-      AeadPrimitive::ChaCha20Poly1305,
-      self.key.as_bytes(),
-      1,
-      nonce.as_bytes(),
-      buffer,
-    )
-    .map_err(|_| SealError::too_large())?;
-
-    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
-    let tag = ChaCha20Poly1305Tag::from_bytes(
-      poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, buffer, &poly_key)
-        .map_err(|_| SealError::too_large())?,
-    );
-    ct::zeroize(&mut poly_key);
-    Ok(tag)
+    self.encrypt_in_place_owned_unchecked(nonce, aad, buffer)
   }
 
   fn decrypt_in_place(
@@ -332,23 +390,7 @@ impl Aead for ChaCha20Poly1305 {
       return result;
     }
 
-    let expected = self
-      .compute_tag(nonce, aad, buffer)
-      .map_err(|_| OpenError::too_large())?;
-    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
-      ct::zeroize(buffer);
-      return Err(OpenError::verification());
-    }
-
-    chacha20::xor_keystream(
-      AeadPrimitive::ChaCha20Poly1305,
-      self.key.as_bytes(),
-      1,
-      nonce.as_bytes(),
-      buffer,
-    )
-    .map_err(|_| OpenError::too_large())?;
-    Ok(())
+    self.decrypt_in_place_owned_unchecked(nonce, aad, buffer, tag)
   }
 }
 

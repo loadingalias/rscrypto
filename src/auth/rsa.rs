@@ -904,6 +904,30 @@ pub fn diag_rsa_public_operation_cios(
   clear_output_on_error(result, out)
 }
 
+/// Apply the RSA public operation with portable CIOS Montgomery multiplication.
+///
+/// Diagnostic-only benchmark candidate for measuring the Rust-owned CIOS path
+/// without dispatching into architecture assembly. Normal callers should use
+/// [`RsaPublicKey::public_operation`].
+///
+/// # Errors
+///
+/// Returns [`RsaPublicOpError`] if `input` or `out` is not exactly the modulus
+/// length, if `input >= n`, or if `scratch` was allocated for another key size.
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+pub fn diag_rsa_public_operation_cios_portable(
+  key: &RsaPublicKey,
+  input: &[u8],
+  out: &mut [u8],
+  scratch: &mut RsaPublicScratch,
+) -> Result<(), RsaPublicOpError> {
+  let result = key
+    .modulus
+    .public_operation_cios_portable(key.exponent, input, out, scratch);
+  clear_output_on_error(result, out)
+}
+
 /// Apply the RSA public operation with the generic square-and-multiply exponent loop.
 ///
 /// Diagnostic-only benchmark baseline for exponentiation strategy. This forces
@@ -5661,7 +5685,7 @@ impl RsaPublicModulus {
       return Err(RsaPublicOpError::RepresentativeOutOfRange);
     }
 
-    if use_cios_montgomery(self) {
+    if use_public_cios_montgomery(self) {
       #[cfg(all(
         target_arch = "aarch64",
         target_os = "macos",
@@ -6119,6 +6143,76 @@ impl RsaPublicModulus {
     }
 
     mont_reduce_cios(base, acc, self, t);
+    limbs_to_be(base, out);
+    Ok(())
+  }
+
+  #[cfg(feature = "diag")]
+  fn public_operation_cios_portable(
+    &self,
+    exponent: RsaPublicExponent,
+    input: &[u8],
+    out: &mut [u8],
+    scratch: &mut RsaPublicScratch,
+  ) -> Result<(), RsaPublicOpError> {
+    let RsaPublicArithmeticScratch {
+      r2,
+      t,
+      x,
+      tmp,
+      base,
+      acc,
+    } = scratch.arithmetic_scratch();
+    let limbs = self.limbs.len();
+    if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
+      return Err(RsaPublicOpError::InvalidLength);
+    }
+    if x.len() != limbs
+      || base.len() != limbs
+      || acc.len() != limbs
+      || tmp.len() != limbs
+      || t.len() != limbs.strict_mul(2).strict_add(2)
+    {
+      return Err(RsaPublicOpError::InvalidScratch);
+    }
+
+    limbs_from_be_into(input, x);
+    if cmp_limbs(x, &self.limbs) != core::cmp::Ordering::Less {
+      return Err(RsaPublicOpError::RepresentativeOutOfRange);
+    }
+
+    mont_mul_cios_portable(base, x, r2, self, t);
+    copy_limbs(acc, base);
+
+    match exponent.as_u64() {
+      3 => {
+        mont_square_cios_portable_in_place(acc, tmp, self, t);
+        mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
+      }
+      17 => {
+        for _ in 0..4 {
+          mont_square_cios_portable_in_place(acc, tmp, self, t);
+        }
+        mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
+      }
+      65_537 => {
+        for _ in 0..16 {
+          mont_square_cios_portable_in_place(acc, tmp, self, t);
+        }
+        mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
+      }
+      exponent => {
+        let top_bit = 63usize.strict_sub(exponent.leading_zeros() as usize);
+        for bit in (0..top_bit).rev() {
+          mont_square_cios_portable_in_place(acc, tmp, self, t);
+          if (exponent >> bit) & 1 == 1 {
+            mont_mul_cios_portable_in_place_left(acc, base, tmp, self, t);
+          }
+        }
+      }
+    }
+
+    mont_reduce_cios_portable(base, acc, self, t);
     limbs_to_be(base, out);
     Ok(())
   }
@@ -9583,41 +9677,43 @@ fn mont_mul_cios_in_place_left(
   mont_mul_cios(left, tmp, right, modulus, t);
 }
 
+#[cfg(feature = "diag")]
+#[allow(clippy::indexing_slicing)]
+fn mont_square_cios_portable_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
+  copy_limbs(tmp, value);
+  mont_mul_cios_portable(value, tmp, tmp, modulus, t);
+}
+
+#[cfg(feature = "diag")]
+#[allow(clippy::indexing_slicing)]
+fn mont_mul_cios_portable_in_place_left(
+  left: &mut [u64],
+  right: &[u64],
+  tmp: &mut [u64],
+  modulus: &RsaPublicModulus,
+  t: &mut [u64],
+) {
+  copy_limbs(tmp, left);
+  mont_mul_cios_portable(left, tmp, right, modulus, t);
+}
+
 #[inline]
 #[must_use]
 fn use_cios_montgomery(modulus: &RsaPublicModulus) -> bool {
   let limbs = modulus.limbs.len();
-  if limbs <= 64 || limbs == 128 {
-    return true;
-  }
+  limbs <= 64 || limbs == 128
+}
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "macos",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  if limbs == 128 && rsa_aarch64_asm::supports_bignum_mont_words(limbs) {
-    return true;
-  }
-
-  #[cfg(all(
-    target_arch = "x86_64",
-    target_os = "linux",
-    not(feature = "portable-only"),
-    not(miri)
-  ))]
-  if limbs == 128 && rsa_x86_64_asm::supports_bignum_mont_words(limbs) {
-    return true;
-  }
-
-  false
+#[inline]
+#[must_use]
+fn use_public_cios_montgomery(modulus: &RsaPublicModulus) -> bool {
+  modulus.limbs.len() <= 128
 }
 
 #[allow(clippy::indexing_slicing)]
 #[cfg(feature = "diag")]
 fn mont_square_auto_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
-  if use_cios_montgomery(modulus) {
+  if use_public_cios_montgomery(modulus) {
     mont_square_cios_in_place(value, tmp, modulus, t);
   } else {
     mont_square_in_place(value, tmp, modulus, t);
@@ -9633,7 +9729,7 @@ fn mont_mul_auto_in_place_left(
   modulus: &RsaPublicModulus,
   t: &mut [u64],
 ) {
-  if use_cios_montgomery(modulus) {
+  if use_public_cios_montgomery(modulus) {
     mont_mul_cios_in_place_left(left, right, tmp, modulus, t);
   } else {
     mont_mul_in_place_left(left, right, tmp, modulus, t);
@@ -9642,7 +9738,7 @@ fn mont_mul_auto_in_place_left(
 
 #[cfg(feature = "diag")]
 fn mont_mul_auto(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
-  if use_cios_montgomery(modulus) {
+  if use_public_cios_montgomery(modulus) {
     mont_mul_cios(out, a, b, modulus, t);
   } else {
     mont_mul(out, a, b, modulus, t);
@@ -9651,7 +9747,7 @@ fn mont_mul_auto(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
 
 #[cfg(feature = "diag")]
 fn mont_reduce_auto(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
-  if use_cios_montgomery(modulus) {
+  if use_public_cios_montgomery(modulus) {
     mont_reduce_cios(out, value, modulus, t);
   } else {
     mont_reduce(out, value, modulus, t);
@@ -13193,13 +13289,32 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[test]
-  fn montgomery_auto_threshold_uses_backend_cios_for_rsa8192() {
+  fn public_montgomery_threshold_uses_cios_through_rsa8192() {
     let rsa4096 = RsaPublicModulus::new(&[0xff; 512], 4096);
     let rsa4160 = RsaPublicModulus::new(&[0xff; 520], 4160);
+    let rsa6144 = RsaPublicModulus::new(&[0xff; 768], 6144);
+    let rsa8128 = RsaPublicModulus::new(&[0xff; 1016], 8128);
+    let rsa8192 = RsaPublicModulus::new(&[0xff; 1024], 8192);
+
+    assert!(use_public_cios_montgomery(&rsa4096));
+    assert!(use_public_cios_montgomery(&rsa4160));
+    assert!(use_public_cios_montgomery(&rsa6144));
+    assert!(use_public_cios_montgomery(&rsa8128));
+    assert!(use_public_cios_montgomery(&rsa8192));
+  }
+
+  #[test]
+  fn shared_montgomery_threshold_keeps_product_for_gap_widths() {
+    let rsa4096 = RsaPublicModulus::new(&[0xff; 512], 4096);
+    let rsa4160 = RsaPublicModulus::new(&[0xff; 520], 4160);
+    let rsa6144 = RsaPublicModulus::new(&[0xff; 768], 6144);
+    let rsa8128 = RsaPublicModulus::new(&[0xff; 1016], 8128);
     let rsa8192 = RsaPublicModulus::new(&[0xff; 1024], 8192);
 
     assert!(use_cios_montgomery(&rsa4096));
     assert!(!use_cios_montgomery(&rsa4160));
+    assert!(!use_cios_montgomery(&rsa6144));
+    assert!(!use_cios_montgomery(&rsa8128));
     assert!(use_cios_montgomery(&rsa8192));
   }
 

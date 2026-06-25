@@ -179,6 +179,10 @@ pub use chacha20::diag_chacha20_xor_keystream_wasm_simd128;
 pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+#[cfg(all(feature = "diag", feature = "chacha20poly1305"))]
+pub use chacha20poly1305::{
+  diag_chacha20poly1305_decrypt_in_place_owned, diag_chacha20poly1305_encrypt_in_place_owned,
+};
 #[cfg(all(feature = "diag", feature = "aes-gcm"))]
 pub use ghash::diag_ghash_block_portable;
 #[cfg(feature = "aes-gcm")]
