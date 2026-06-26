@@ -142,6 +142,15 @@ const P384_FIELD_MINUS_TWO: Uint<6> = Uint([
   0xffff_ffff_ffff_ffff,
   0xffff_ffff_ffff_ffff,
 ]);
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+const P384_FIELD_MONTGOMERY_ONE: Uint<6> = Uint([
+  0xffff_ffff_0000_0001,
+  0x0000_0000_ffff_ffff,
+  0x0000_0000_0000_0001,
+  0x0000_0000_0000_0000,
+  0x0000_0000_0000_0000,
+  0x0000_0000_0000_0000,
+]);
 const P384_B: Uint<6> = Uint([
   0x2a85_c8ed_d3ec_2aef,
   0xc656_398d_8a2e_d19d,
@@ -2598,7 +2607,7 @@ fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: 
   let mut scalar_words = ZeroizingWords::zeroed();
   scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
   let scalar = SecretScalar::new(Uint(*scalar_words.as_array()));
-  let point = scalar_mul_basepoint_comb_ct_secret(&P384, &scalar);
+  let point = p384_scalar_mul_basepoint_comb_nonexceptional_ct(&scalar);
   let words = p384_jacobian_to_words(point);
   jacobian_from_p384_words(curve.field_modulus, &words)
 }
@@ -2695,6 +2704,258 @@ fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]
     x: FieldElement::from_uint(x, modulus),
     y: FieldElement::from_uint(y, modulus),
   }
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[derive(Clone, Copy)]
+struct P384FieldElement {
+  value: Uint<6>,
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+impl P384FieldElement {
+  fn zero() -> Self {
+    Self { value: Uint::ZERO }
+  }
+
+  fn one() -> Self {
+    Self {
+      value: P384_FIELD_MONTGOMERY_ONE,
+    }
+  }
+
+  const fn from_montgomery(value: Uint<6>) -> Self {
+    Self { value }
+  }
+
+  fn to_generic(self) -> FieldElement<6> {
+    FieldElement::from_montgomery(self.value, &P384_FIELD_MODULUS)
+  }
+
+  fn add(self, rhs: Self) -> Self {
+    Self::from_montgomery(add_p384_field(self.value.0, rhs.value.0))
+  }
+
+  fn sub(self, rhs: Self) -> Self {
+    Self::from_montgomery(sub_p384_field(self.value.0, rhs.value.0))
+  }
+
+  fn mul(self, rhs: Self) -> Self {
+    Self::from_montgomery(Uint(p384_field_mul_words(self.value.0, rhs.value.0)))
+  }
+
+  fn square(self) -> Self {
+    Self::from_montgomery(Uint(p384_field_square_words(self.value.0)))
+  }
+
+  fn double(self) -> Self {
+    self.add(self)
+  }
+
+  fn triple(self) -> Self {
+    self.double().add(self)
+  }
+
+  fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
+    Self::from_montgomery(Uint::select(lhs.value, rhs.value, mask))
+  }
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[derive(Clone, Copy)]
+struct P384Affine {
+  x: P384FieldElement,
+  y: P384FieldElement,
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[derive(Clone, Copy)]
+struct P384Jacobian {
+  x: P384FieldElement,
+  y: P384FieldElement,
+  z: P384FieldElement,
+  infinity: bool,
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+impl P384Jacobian {
+  fn infinity() -> Self {
+    Self {
+      x: P384FieldElement::zero(),
+      y: P384FieldElement::one(),
+      z: P384FieldElement::zero(),
+      infinity: true,
+    }
+  }
+
+  fn from_affine(point: P384Affine) -> Self {
+    Self {
+      x: point.x,
+      y: point.y,
+      z: P384FieldElement::one(),
+      infinity: false,
+    }
+  }
+
+  fn to_generic(self) -> Jacobian<6> {
+    Jacobian {
+      x: self.x.to_generic(),
+      y: self.y.to_generic(),
+      z: self.z.to_generic(),
+      infinity: self.infinity,
+    }
+  }
+
+  fn select(lhs: Self, rhs: Self, mask: u64) -> Self {
+    let lhs_infinity = 0u64.wrapping_sub(u64::from(lhs.infinity));
+    let rhs_infinity = 0u64.wrapping_sub(u64::from(rhs.infinity));
+    let selected_infinity = lhs_infinity ^ (mask & (lhs_infinity ^ rhs_infinity));
+    Self {
+      x: P384FieldElement::select(lhs.x, rhs.x, mask),
+      y: P384FieldElement::select(lhs.y, rhs.y, mask),
+      z: P384FieldElement::select(lhs.z, rhs.z, mask),
+      infinity: selected_infinity != 0,
+    }
+  }
+
+  fn infinity_mask(&self) -> u64 {
+    0u64.wrapping_sub(u64::from(self.infinity))
+  }
+
+  fn double_ct(self) -> Self {
+    let delta = self.z.square();
+    let gamma = self.y.square();
+    let beta = self.x.mul(gamma);
+    let alpha = self.x.sub(delta).mul(self.x.add(delta)).triple();
+    let x3 = alpha.square().sub(beta.double().double().double());
+    let z3 = self.y.add(self.z).square().sub(gamma).sub(delta);
+    let y3 = alpha
+      .mul(beta.double().double().sub(x3))
+      .sub(gamma.square().double().double().double());
+
+    let raw = Self {
+      x: x3,
+      y: y3,
+      z: z3,
+      infinity: false,
+    };
+    Self::select(
+      raw,
+      Self::infinity(),
+      self.infinity_mask() | self.y.value.ct_is_zero_mask(),
+    )
+  }
+
+  // Incomplete mixed-add formula. The fixed-base comb loop below proves that
+  // finite, non-masked operands are neither equal nor opposite.
+  fn add_mixed_nonexceptional_ct(self, rhs: P384Affine, rhs_infinity_mask: u64) -> Self {
+    let z1z1 = self.z.square();
+    let u2 = rhs.x.mul(z1z1);
+    let s2 = rhs.y.mul(self.z).mul(z1z1);
+    let h = u2.sub(self.x);
+    let r = s2.sub(self.y).double();
+
+    let hh = h.square();
+    let i = hh.double().double();
+    let j = h.mul(i);
+    let v = self.x.mul(i);
+    let x3 = r.square().sub(j).sub(v.double());
+    let y3 = r.mul(v.sub(x3)).sub(self.y.mul(j).double());
+    let z3 = self.z.add(h).square().sub(z1z1).sub(hh);
+    let raw = Self {
+      x: x3,
+      y: y3,
+      z: z3,
+      infinity: false,
+    };
+
+    let with_self_infinity = Self::select(raw, Self::from_affine(rhs), self.infinity_mask());
+    Self::select(with_self_infinity, self, rhs_infinity_mask)
+  }
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
+  #[cfg(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ))]
+  {
+    ecdsa_platform_asm::p384_field_mul(&lhs, &rhs)
+  }
+
+  #[cfg(not(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  )))]
+  {
+    ecdsa_p384_field::mul(lhs, rhs)
+  }
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
+  #[cfg(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ))]
+  {
+    ecdsa_platform_asm::p384_field_square(&value)
+  }
+
+  #[cfg(not(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  )))]
+  {
+    ecdsa_p384_field::square(value)
+  }
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+fn select_p384_signing_generator_affine_ct(digit: usize) -> P384Affine {
+  let mut x = P384_SIGNING_GENERATOR_COMB_X[0];
+  let mut y = P384_SIGNING_GENERATOR_COMB_Y[0];
+
+  for (index, (&candidate_x, &candidate_y)) in P384_SIGNING_GENERATOR_COMB_X
+    .iter()
+    .zip(P384_SIGNING_GENERATOR_COMB_Y.iter())
+    .enumerate()
+    .skip(1)
+  {
+    let mask = mask_eq_usize(digit, index);
+    x = Uint::select(x, candidate_x, mask);
+    y = Uint::select(y, candidate_y, mask);
+  }
+
+  P384Affine {
+    x: P384FieldElement::from_montgomery(x),
+    y: P384FieldElement::from_montgomery(y),
+  }
+}
+
+#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+fn p384_scalar_mul_basepoint_comb_nonexceptional_ct(scalar: &SecretScalar<6>) -> Jacobian<6> {
+  let rows = P384_SIGNING_COMB_ROWS;
+  let mut acc = P384Jacobian::infinity();
+
+  for row in (0..rows).rev() {
+    acc = acc.double_ct();
+    let digit = signing_comb_digit_ct(scalar.value(), row, rows, P384_SIGNING_COMB_WIDTH);
+    let selected = select_p384_signing_generator_affine_ct(digit);
+
+    // P-384's signing comb represents a scalar as sum(2^row * S_row), where
+    // every S_row has bits only at positions `column * rows`. After the loop
+    // double, the accumulator coefficient has bits only at
+    // `column * rows + offset`, with 1 <= offset < rows. For nonzero digits it
+    // cannot equal S_row as an integer; both values are below the prime group
+    // order, so equality modulo the order is also impossible. Opposites are
+    // impossible because row 0 would require the scalar to equal the order, and
+    // later rows are bounded by less than half the order plus the sparse S_row.
+    acc = acc.add_mixed_nonexceptional_ct(selected, mask_eq_usize(digit, 0));
+  }
+
+  acc.to_generic()
 }
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
@@ -3830,6 +4091,26 @@ mod tests {
     EcdsaP384PublicKey::from_sec1_bytes(&sec1).unwrap()
   }
 
+  fn p384_sparse_scalar(bits: &[usize]) -> Uint<6> {
+    let mut scalar = Uint::ZERO;
+    for &bit in bits {
+      scalar.0[bit / 64] |= 1u64 << (bit % 64);
+    }
+    assert!(scalar.cmp(&P384_ORDER).is_lt());
+    scalar
+  }
+
+  fn assert_p384_nonexceptional_comb_matches_complete(scalar: Uint<6>) {
+    let complete = scalar_mul_basepoint_comb_ct(&P384, scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
+    let secret_scalar = SecretScalar::new(scalar);
+    let optimized = p384_scalar_mul_basepoint_comb_nonexceptional_ct(&secret_scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
+
+    assert!(
+      optimized == complete,
+      "P-384 nonexceptional comb must match complete comb"
+    );
+  }
+
   #[test]
   fn p256_sec1_rejects_wrong_shape_and_off_curve_points() {
     assert_eq!(
@@ -4076,6 +4357,29 @@ mod tests {
         backend == portable,
         "P-384 platform basepoint backend must match portable comb"
       );
+    }
+  }
+
+  #[test]
+  fn p384_nonexceptional_comb_matches_complete_comb_for_structured_scalars() {
+    for scalar in [
+      Uint::ONE,
+      Uint::from_u64(2),
+      Uint::from_u64(0x1234_5678_9abc_def0),
+      p384_sparse_scalar(&[0, 48, 96, 144, 192, 240, 288, 336]),
+      p384_sparse_scalar(&[1, 49, 97, 145, 193, 241, 289, 337]),
+      p384_sparse_scalar(&[47, 95, 143, 191, 239, 287, 335, 383]),
+      P384_ORDER.sub_raw(&Uint::ONE).0,
+    ] {
+      assert_p384_nonexceptional_comb_matches_complete(scalar);
+    }
+
+    for row in [0usize, 1, 2, 23, 46] {
+      for column in [0usize, 1, 3, 7] {
+        let bit = row + column * P384_SIGNING_COMB_ROWS;
+        let next_bit = bit + 1;
+        assert_p384_nonexceptional_comb_matches_complete(p384_sparse_scalar(&[bit, next_bit]));
+      }
     }
   }
 
