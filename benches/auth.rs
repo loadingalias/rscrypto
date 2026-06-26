@@ -1612,6 +1612,90 @@ fn mlkem_matrix_sample(c: &mut Criterion) {
 fn mlkem_matrix_sample(_: &mut Criterion) {}
 
 #[cfg(feature = "diag")]
+fn mlkem_keygen_phases(c: &mut Criterion) {
+  use rscrypto::auth::mlkem::{
+    diag_mlkem512_keygen_encode_digest, diag_mlkem512_keygen_expand_digest,
+    diag_mlkem512_keygen_from_product_domain_digest, diag_mlkem512_keygen_matrix_accumulate_digest,
+    diag_mlkem512_keygen_noise_ntt_digest, diag_mlkem512_keygen_noise_sample_digest,
+    diag_mlkem768_keygen_encode_digest, diag_mlkem768_keygen_expand_digest,
+    diag_mlkem768_keygen_from_product_domain_digest, diag_mlkem768_keygen_matrix_accumulate_digest,
+    diag_mlkem768_keygen_noise_ntt_digest, diag_mlkem768_keygen_noise_sample_digest,
+    diag_mlkem1024_keygen_encode_digest, diag_mlkem1024_keygen_expand_digest,
+    diag_mlkem1024_keygen_from_product_domain_digest, diag_mlkem1024_keygen_matrix_accumulate_digest,
+    diag_mlkem1024_keygen_noise_ntt_digest, diag_mlkem1024_keygen_noise_sample_digest,
+  };
+
+  let d = deterministic_bytes::<32>(0x10);
+  let rho = deterministic_bytes::<32>(0x42);
+  let sigma = deterministic_bytes::<32>(0x84);
+  let mut g = c.benchmark_group("mlkem-keygen-phases");
+
+  macro_rules! bench_profile {
+    (
+      $prefix:literal,
+      $expand:path,
+      $noise_sample:path,
+      $noise_ntt:path,
+      $matrix_accumulate:path,
+      $from_product_domain:path,
+      $encode:path
+    ) => {
+      g.bench_function(concat!($prefix, "/expand-seed"), |b| {
+        b.iter(|| black_box($expand(black_box(&d))))
+      });
+      g.bench_function(concat!($prefix, "/noise-sample"), |b| {
+        b.iter(|| black_box($noise_sample(black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/through-noise-ntt"), |b| {
+        b.iter(|| black_box($noise_ntt(black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/through-matrix-accumulate"), |b| {
+        b.iter(|| black_box($matrix_accumulate(black_box(&rho), black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/through-from-product-domain"), |b| {
+        b.iter(|| black_box($from_product_domain(black_box(&rho), black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/through-encode"), |b| {
+        b.iter(|| black_box($encode(black_box(&rho), black_box(&sigma))))
+      });
+    };
+  }
+
+  bench_profile!(
+    "k=2",
+    diag_mlkem512_keygen_expand_digest,
+    diag_mlkem512_keygen_noise_sample_digest,
+    diag_mlkem512_keygen_noise_ntt_digest,
+    diag_mlkem512_keygen_matrix_accumulate_digest,
+    diag_mlkem512_keygen_from_product_domain_digest,
+    diag_mlkem512_keygen_encode_digest
+  );
+  bench_profile!(
+    "k=3",
+    diag_mlkem768_keygen_expand_digest,
+    diag_mlkem768_keygen_noise_sample_digest,
+    diag_mlkem768_keygen_noise_ntt_digest,
+    diag_mlkem768_keygen_matrix_accumulate_digest,
+    diag_mlkem768_keygen_from_product_domain_digest,
+    diag_mlkem768_keygen_encode_digest
+  );
+  bench_profile!(
+    "k=4",
+    diag_mlkem1024_keygen_expand_digest,
+    diag_mlkem1024_keygen_noise_sample_digest,
+    diag_mlkem1024_keygen_noise_ntt_digest,
+    diag_mlkem1024_keygen_matrix_accumulate_digest,
+    diag_mlkem1024_keygen_from_product_domain_digest,
+    diag_mlkem1024_keygen_encode_digest
+  );
+
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
+fn mlkem_keygen_phases(_: &mut Criterion) {}
+
+#[cfg(feature = "diag")]
 fn mlkem_arithmetic(c: &mut Criterion) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   use rscrypto::auth::mlkem::diag_mlkem_aarch64_ntt_neon_digest;
@@ -1958,6 +2042,7 @@ criterion_group!(
   mlkem1024_encapsulate,
   mlkem1024_decapsulate,
   mlkem_matrix_sample,
+  mlkem_keygen_phases,
   mlkem_arithmetic,
   mlkem_decap_phases,
   mlkem_pke_phases

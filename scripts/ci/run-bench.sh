@@ -158,6 +158,7 @@ DEFAULT_AUTH_ALGOS=(
 )
 
 DEFAULT_MLKEM_PHASE_ALGOS=(
+  "mlkem-keygen-phases"
   "mlkem-matrix-sample"
   "mlkem-arithmetic"
   "mlkem-pke-phases"
@@ -291,6 +292,7 @@ auth_filter_token() {
     ml-kem-1024|mlkem1024) echo "^mlkem1024/" ;;
     mlkem-matrix|mlkem-matrix-sample) echo "^mlkem-matrix-sample/" ;;
     mlkem-arith|mlkem-arithmetic) echo "^mlkem-arithmetic/" ;;
+    mlkem-keygen|mlkem-keygen-phases) echo "^mlkem-keygen-phases/" ;;
     mlkem-pke|mlkem-pke-phases) echo "^mlkem-pke-phases/" ;;
     mlkem-decap|mlkem-decap-phases) echo "^mlkem-decap-phases/" ;;
     *) echo "$algo" ;;
@@ -736,6 +738,9 @@ if [[ -n "$ONLY_INPUT" ]]; then
         ;;
       mlkemphases)
         for algo in "${DEFAULT_MLKEM_PHASE_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
+        ;;
+      mlkemkeygen|mlkemkeygenphases)
+        append_unique "mlkem-keygen-phases" SELECTED_ALGOS
         ;;
       mlkemmatrix|mlkemmatrixsample)
         append_unique "mlkem-matrix-sample" SELECTED_ALGOS

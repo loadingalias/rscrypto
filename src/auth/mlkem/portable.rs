@@ -650,6 +650,23 @@ fn pke_keygen_expanded<
 ) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
   let mut s_hat = [[0u16; N]; K];
   let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+  keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
+  keygen_from_product_domain::<K>(&mut t_hat);
+
+  let keys = keygen_encode::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat);
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  keys
+}
+
+#[inline(always)]
+fn keygen_sample_noise<const K: usize, const ETA1_RANDOM_BYTES: usize>(
+  sigma: &[u8; SEED_BYTES],
+  s_hat: &mut PolyVec<K>,
+  t_hat: &mut PolyVec<K>,
+) {
   if K == 2 {
     let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, _) = s_tail.split_at_mut(1);
@@ -676,23 +693,29 @@ fn pke_keygen_expanded<
     sample_noise_pair::<ETA2_RANDOM_BYTES>(sigma, 4, &mut e1[0], 5, &mut e2[0]);
   } else {
     let mut nonce = 0u8;
-    for poly in &mut s_hat {
+    for poly in s_hat.iter_mut() {
       sample_noise::<ETA1_RANDOM_BYTES>(sigma, nonce, poly);
       nonce = nonce.wrapping_add(1);
     }
-    for poly in &mut t_hat {
+    for poly in t_hat.iter_mut() {
       sample_noise::<ETA1_RANDOM_BYTES>(sigma, nonce, poly);
       nonce = nonce.wrapping_add(1);
     }
   }
+}
 
-  for poly in &mut s_hat {
+#[inline(always)]
+fn keygen_ntt_noise<const K: usize>(s_hat: &mut PolyVec<K>, t_hat: &mut PolyVec<K>) {
+  for poly in s_hat.iter_mut() {
     ntt(poly);
   }
-  for poly in &mut t_hat {
+  for poly in t_hat.iter_mut() {
     ntt_to_montgomery_product_domain(poly);
   }
+}
 
+#[inline(always)]
+fn keygen_matrix_accumulate<const K: usize>(rho: &[u8; SEED_BYTES], s_hat: &PolyVec<K>, t_hat: &mut PolyVec<K>) {
   if use_fused_matrix_accumulate::<K>() {
     for (i, t_hat_i) in t_hat.iter_mut().enumerate() {
       if K == 4 {
@@ -725,13 +748,23 @@ fn pke_keygen_expanded<
       }
     }
   } else {
-    sample_matrix_ntt_mul_accumulate_materialized::<K>(rho, &s_hat, &mut t_hat, false);
+    sample_matrix_ntt_mul_accumulate_materialized::<K>(rho, s_hat, t_hat, false);
   }
+}
 
-  for poly in &mut t_hat {
+#[inline(always)]
+fn keygen_from_product_domain<const K: usize>(t_hat: &mut PolyVec<K>) {
+  for poly in t_hat.iter_mut() {
     poly_from_montgomery_product_domain(poly);
   }
+}
 
+#[inline(always)]
+fn keygen_encode<const K: usize, const DK_PKE_BYTES: usize, const EK_BYTES: usize>(
+  rho: &[u8; SEED_BYTES],
+  s_hat: &PolyVec<K>,
+  t_hat: &PolyVec<K>,
+) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
   let mut ek = [0u8; EK_BYTES];
   for (i, poly) in t_hat.iter().enumerate() {
     let start = i.strict_mul(POLY_BYTES);
@@ -745,14 +778,115 @@ fn pke_keygen_expanded<
     byte_encode::<12>(poly, &mut dk_pke[start..start.strict_add(POLY_BYTES)]);
   }
 
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
   (ek, dk_pke)
 }
 
 #[inline]
 pub(super) fn keygen_1024(random: &[u8; 64]) -> ([u8; 1568], [u8; 3168]) {
   keygen::<4, 4, 128, 1536, 1568, 3168>(random)
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_expand_digest<const K_U8: u8>(d: &[u8; SEED_BYTES]) -> u16 {
+  let mut seed = [0u8; 33];
+  seed[..SEED_BYTES].copy_from_slice(d);
+  seed[SEED_BYTES] = K_U8;
+
+  let mut expanded = g(&seed);
+  let digest = diag_fold_bytes(&expanded);
+  ct::zeroize(&mut seed);
+  ct::zeroize(&mut expanded);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_noise_sample_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
+  sigma: &[u8; SEED_BYTES],
+) -> u16 {
+  let mut s_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+
+  let digest = diag_fold_polyvec(&s_hat) ^ diag_fold_polyvec(&t_hat);
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_noise_ntt_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
+  sigma: &[u8; SEED_BYTES],
+) -> u16 {
+  let mut s_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+
+  let digest = diag_fold_polyvec(&s_hat) ^ diag_fold_polyvec(&t_hat);
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_matrix_accumulate_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
+  rho: &[u8; SEED_BYTES],
+  sigma: &[u8; SEED_BYTES],
+) -> u16 {
+  let mut s_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+  keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
+
+  let digest = diag_fold_polyvec(&t_hat);
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_from_product_domain_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
+  rho: &[u8; SEED_BYTES],
+  sigma: &[u8; SEED_BYTES],
+) -> u16 {
+  let mut s_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+  keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
+  keygen_from_product_domain::<K>(&mut t_hat);
+
+  let digest = diag_fold_polyvec(&t_hat);
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_encode_digest<
+  const K: usize,
+  const ETA1_RANDOM_BYTES: usize,
+  const DK_PKE_BYTES: usize,
+  const EK_BYTES: usize,
+>(
+  rho: &[u8; SEED_BYTES],
+  sigma: &[u8; SEED_BYTES],
+) -> u16 {
+  let mut s_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
+  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
+  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
+  keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
+  keygen_from_product_domain::<K>(&mut t_hat);
+
+  let (mut ek, mut dk_pke) = keygen_encode::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat);
+  let digest = diag_fold_bytes(&ek) ^ diag_fold_bytes(&dk_pke);
+  ct::zeroize(&mut ek);
+  ct::zeroize(&mut dk_pke);
+  zeroize_polyvec(&mut s_hat);
+  zeroize_polyvec(&mut t_hat);
+  digest
 }
 
 #[cfg(feature = "diag")]
@@ -775,6 +909,16 @@ pub(super) fn diag_keygen_secret_noise_digest<
   ct::zeroize(&mut ek);
   ct::zeroize(&mut dk_pke);
   digest
+}
+
+#[cfg(feature = "diag")]
+#[inline(never)]
+fn diag_fold_polyvec<const K: usize>(polyvec: &PolyVec<K>) -> u16 {
+  let mut acc = 0u16;
+  for poly in polyvec {
+    acc ^= diag_fold_poly(poly);
+  }
+  acc
 }
 
 #[cfg(feature = "diag")]
@@ -2310,6 +2454,15 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
   acc: &mut PolyVec<K>,
   transpose: bool,
 ) {
+  if K == 2 {
+    if transpose {
+      sample_matrix_ntt_mul_accumulate_materialized_k2_transpose(rho, rhs, acc);
+    } else {
+      sample_matrix_ntt_mul_accumulate_materialized_k2(rho, rhs, acc);
+    }
+    return;
+  }
+
   if K == 4 {
     if transpose {
       sample_matrix_ntt_mul_accumulate_materialized_k4_transpose(rho, rhs, acc);
@@ -2367,6 +2520,48 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
     sample_ntt_into(rho, j, i, &mut a);
     multiply_ntts_add_assign(&mut acc[dst], &a, &rhs[rhs_index]);
   }
+}
+
+#[inline(always)]
+fn sample_matrix_ntt_mul_accumulate_materialized_k2<const K: usize>(
+  rho: &[u8; SEED_BYTES],
+  rhs: &PolyVec<K>,
+  acc: &mut PolyVec<K>,
+) {
+  debug_assert_eq!(K, 2);
+
+  let mut row0 = [[0u16; N]; 2];
+  let (row0_left, row0_right) = row0.split_at_mut(1);
+  sample_ntt_pair_into(rho, 0, 0, 1, 0, &mut row0_left[0], &mut row0_right[0]);
+  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&row0[0], &row0[1]], [&rhs[0], &rhs[1]]);
+  zeroize_polyvec(&mut row0);
+
+  let mut row1 = [[0u16; N]; 2];
+  let (row1_left, row1_right) = row1.split_at_mut(1);
+  sample_ntt_pair_into(rho, 0, 1, 1, 1, &mut row1_left[0], &mut row1_right[0]);
+  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&row1[0], &row1[1]], [&rhs[0], &rhs[1]]);
+  zeroize_polyvec(&mut row1);
+}
+
+#[inline(always)]
+fn sample_matrix_ntt_mul_accumulate_materialized_k2_transpose<const K: usize>(
+  rho: &[u8; SEED_BYTES],
+  rhs: &PolyVec<K>,
+  acc: &mut PolyVec<K>,
+) {
+  debug_assert_eq!(K, 2);
+
+  let mut row0 = [[0u16; N]; 2];
+  let (row0_left, row0_right) = row0.split_at_mut(1);
+  sample_ntt_pair_into(rho, 0, 0, 0, 1, &mut row0_left[0], &mut row0_right[0]);
+  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&row0[0], &row0[1]], [&rhs[0], &rhs[1]]);
+  zeroize_polyvec(&mut row0);
+
+  let mut row1 = [[0u16; N]; 2];
+  let (row1_left, row1_right) = row1.split_at_mut(1);
+  sample_ntt_pair_into(rho, 1, 0, 1, 1, &mut row1_left[0], &mut row1_right[0]);
+  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&row1[0], &row1[1]], [&rhs[0], &rhs[1]]);
+  zeroize_polyvec(&mut row1);
 }
 
 #[inline(always)]
@@ -4337,6 +4532,39 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
 }
 
 #[inline(always)]
+fn multiply_ntts_accumulate_k2_refs(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    // SAFETY: aarch64 NEON K=2 dot-product dispatch because:
+    // 1. This function only compiles on aarch64 Linux with the portable-only escape hatch disabled.
+    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
+    //    contract.
+    // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
+    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
+    unsafe {
+      multiply_ntts_accumulate_k2_neon(acc, a, b);
+    }
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    multiply_ntts_add_assign(acc, a[0], b[0]);
+    multiply_ntts_add_assign(acc, a[1], b[1]);
+  }
+}
+
+#[inline(always)]
 fn multiply_ntts_accumulate_k3_refs(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   {
@@ -5091,6 +5319,33 @@ fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
     unsafe {
       let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
       let (c0, c1) = base_multiply_8_neon(a, b, gamma, coeff_offset);
+      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
+    }
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "neon")]
+fn multiply_ntts_accumulate_k2_neon(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
+  for i in (0..GAMMAS_MONT.len()).step_by(8) {
+    let coeff_offset = i.strict_mul(2);
+
+    // SAFETY: fixed-size gamma load because:
+    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
+    // 2. `i..i + 8` stays inside the public gamma table.
+    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
+      let (mut c0, mut c1) = base_multiply_8_neon(a[0], b[0], gamma, coeff_offset);
+      let (p0, p1) = base_multiply_8_neon(a[1], b[1], gamma, coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
       store_accumulated_8_neon(acc, coeff_offset, c0, c1);
     }
   }

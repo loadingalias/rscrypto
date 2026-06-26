@@ -1031,6 +1031,118 @@ mlkem_diag_keygen_secret_noise!(
 );
 
 #[cfg(feature = "diag")]
+macro_rules! mlkem_diag_keygen_phases {
+  (
+    $expand:ident,
+    $noise_sample:ident,
+    $noise_ntt:ident,
+    $matrix_accumulate:ident,
+    $from_product_domain:ident,
+    $encode:ident,
+    $k:expr,
+    $k_u8:expr,
+    $eta1_random_bytes:expr,
+    $dk_pke_bytes:expr,
+    $ek_bytes:expr,
+    $doc_name:literal
+  ) => {
+    #[doc = concat!("Benchmark-only keygen seed-expansion digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $expand(d: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_expand_digest::<$k_u8>(d)
+    }
+
+    #[doc = concat!("Benchmark-only keygen noise-sampling digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $noise_sample(sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_noise_sample_digest::<$k, $eta1_random_bytes>(sigma)
+    }
+
+    #[doc = concat!("Benchmark-only keygen noise NTT digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $noise_ntt(sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_noise_ntt_digest::<$k, $eta1_random_bytes>(sigma)
+    }
+
+    #[doc = concat!("Benchmark-only keygen matrix-accumulation digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $matrix_accumulate(rho: &[u8; ML_KEM_SEED_SIZE], sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_matrix_accumulate_digest::<$k, $eta1_random_bytes>(rho, sigma)
+    }
+
+    #[doc = concat!("Benchmark-only keygen product-domain exit digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $from_product_domain(rho: &[u8; ML_KEM_SEED_SIZE], sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_from_product_domain_digest::<$k, $eta1_random_bytes>(rho, sigma)
+    }
+
+    #[doc = concat!("Benchmark-only keygen encode digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $encode(rho: &[u8; ML_KEM_SEED_SIZE], sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_encode_digest::<$k, $eta1_random_bytes, $dk_pke_bytes, $ek_bytes>(rho, sigma)
+    }
+  };
+}
+
+#[cfg(feature = "diag")]
+mlkem_diag_keygen_phases!(
+  diag_mlkem512_keygen_expand_digest,
+  diag_mlkem512_keygen_noise_sample_digest,
+  diag_mlkem512_keygen_noise_ntt_digest,
+  diag_mlkem512_keygen_matrix_accumulate_digest,
+  diag_mlkem512_keygen_from_product_domain_digest,
+  diag_mlkem512_keygen_encode_digest,
+  2,
+  2,
+  192,
+  768,
+  800,
+  "ML-KEM-512"
+);
+#[cfg(feature = "diag")]
+mlkem_diag_keygen_phases!(
+  diag_mlkem768_keygen_expand_digest,
+  diag_mlkem768_keygen_noise_sample_digest,
+  diag_mlkem768_keygen_noise_ntt_digest,
+  diag_mlkem768_keygen_matrix_accumulate_digest,
+  diag_mlkem768_keygen_from_product_domain_digest,
+  diag_mlkem768_keygen_encode_digest,
+  3,
+  3,
+  128,
+  1152,
+  1184,
+  "ML-KEM-768"
+);
+#[cfg(feature = "diag")]
+mlkem_diag_keygen_phases!(
+  diag_mlkem1024_keygen_expand_digest,
+  diag_mlkem1024_keygen_noise_sample_digest,
+  diag_mlkem1024_keygen_noise_ntt_digest,
+  diag_mlkem1024_keygen_matrix_accumulate_digest,
+  diag_mlkem1024_keygen_from_product_domain_digest,
+  diag_mlkem1024_keygen_encode_digest,
+  4,
+  4,
+  128,
+  1536,
+  1568,
+  "ML-KEM-1024"
+);
+
+#[cfg(feature = "diag")]
 macro_rules! mlkem_diag_matrix_sample {
   ($scalar:ident, $pair:ident, $quad:ident, $k:expr, $doc_name:literal) => {
     #[doc = concat!("Benchmark-only scalar matrix sampling digest for ", $doc_name, ".")]
