@@ -451,20 +451,6 @@ pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portabl
   feature = "diag",
   feature = "ml-kem",
   target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub use auth::{
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest,
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest,
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_digest,
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_input_digest,
-};
-#[cfg(all(
-  feature = "diag",
-  feature = "ml-kem",
-  target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
   not(miri),
   not(feature = "portable-only")

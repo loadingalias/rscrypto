@@ -28,12 +28,7 @@ use core::arch::aarch64::{
   vqdmulhq_n_s16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vshll_n_u16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u64,
   vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsubq_s16, vsubq_u16,
 };
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 use core::arch::aarch64::{
   uint32x2_t, vadd_s16, vadd_u16, vand_s16, vand_u16, vcge_u16, vcgt_u16, vcgtq_u16, vdup_n_s16, vdup_n_u16,
   vget_low_u16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_u16_u32,
@@ -920,40 +915,39 @@ pub(super) unsafe fn diag_s390x_ntt_input_digest(mut poly: Poly) -> u16 {
   digest
 }
 
-/// Diagnostic digest for the aarch64 NTT assembly kernel.
+/// Diagnostic digest for the aarch64 NEON NTT kernel.
 ///
 /// # Safety
 ///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_ntt_asm_digest(seed: u16) -> u16 {
+/// The caller must only execute this on supported aarch64 targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_aarch64_ntt_neon_digest(seed: u16) -> u16 {
+  let poly = diag_poly(seed);
   // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_ntt_asm_digest(seed) }
+  unsafe { diag_aarch64_ntt_neon_input_digest(poly) }
 }
 
-/// Diagnostic digest for the aarch64 NTT assembly kernel.
+/// Diagnostic digest for the aarch64 NEON NTT kernel.
 ///
 /// # Safety
 ///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_ntt_asm_input_digest(poly: Poly) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_ntt_asm_input_digest(poly) }
+/// The caller must only execute this on supported aarch64 targets with baseline Advanced SIMD
+/// available.
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+pub(super) unsafe fn diag_aarch64_ntt_neon_input_digest(mut poly: Poly) -> u16 {
+  // SAFETY: Direct NEON diagnostic call because:
+  // 1. The caller guarantees this runs only on an aarch64 CPU with Advanced SIMD.
+  // 2. `poly` is a fixed 256-coefficient polynomial matching the NEON kernel contract.
+  // 3. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
+  //    can inspect the aarch64 NEON candidate itself.
+  // 4. The NEON memory access schedule depends only on public ML-KEM dimensions.
+  unsafe {
+    ntt_neon(&mut poly);
+  }
+  let digest = diag_fold_poly(&poly);
+  zeroize_poly(&mut poly);
+  digest
 }
 
 #[cfg(feature = "diag")]
@@ -1011,81 +1005,6 @@ pub(super) unsafe fn diag_s390x_inverse_ntt_montgomery_product_input_digest(mut 
   let digest = diag_fold_poly(&poly);
   zeroize_poly(&mut poly);
   digest
-}
-
-/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT assembly kernel.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
-/// available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_asm_digest(seed: u16) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_inverse_ntt_asm_digest(seed, INV_NTT_PRODUCT_SCALE_MONT) }
-}
-
-/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT assembly kernel.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
-/// available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_asm_input_digest(poly: Poly) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_inverse_ntt_asm_input_digest(poly, INV_NTT_PRODUCT_SCALE_MONT) }
-}
-
-/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT plus add assembly kernel.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
-/// available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest(seed: u16) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_inverse_ntt_add_assign_asm_digest(seed, INV_NTT_PRODUCT_SCALE_MONT) }
-}
-
-/// Diagnostic digest for the rscrypto-owned Linux aarch64 inverse-NTT plus add assembly kernel.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux targets with baseline Advanced SIMD
-/// available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest(
-  poly: Poly,
-  addend: Poly,
-) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_inverse_ntt_add_assign_asm_input_digest(poly, addend, INV_NTT_PRODUCT_SCALE_MONT) }
 }
 
 #[cfg(feature = "diag")]
@@ -3993,33 +3912,14 @@ fn sample_poly_cbd_eta3(input: &[u8], out: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn ntt(poly: &mut Poly) {
-  #[cfg(any(target_os = "macos", target_os = "linux"))]
-  {
-    // SAFETY: aarch64 NTT assembly dispatch because:
-    // 1. This function only compiles on supported aarch64 macOS/Linux targets with the portable-only
-    //    escape hatch disabled.
-    // 2. Advanced SIMD is baseline for those supported aarch64 targets.
-    // 3. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
-    // 4. The assembly returns the same canonical representation as the scalar/FIPS path, validated by
-    //    scalar-oracle tests before production dispatch.
-    // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-    //    values.
-    unsafe {
-      aarch64::ntt_asm(poly);
-    }
-  }
-
-  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-  {
-    // SAFETY: aarch64 NEON NTT dispatch because:
-    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-    // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
-    // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-    //    values.
-    unsafe {
-      ntt_neon(poly);
-    }
+  // SAFETY: aarch64 NEON NTT dispatch because:
+  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+  // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+  //    values.
+  unsafe {
+    ntt_neon(poly);
   }
 }
 
@@ -4097,32 +3997,15 @@ fn ntt_scalar(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn inverse_ntt_scaled(poly: &mut Poly, final_scale_mont: i16) {
-  #[cfg(target_os = "macos")]
-  {
-    // SAFETY: aarch64 Darwin inverse-NTT assembly dispatch because:
-    // 1. This function only compiles on aarch64 macOS with the portable-only escape hatch disabled.
-    // 2. Advanced SIMD is baseline for supported aarch64 macOS targets.
-    // 3. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
-    // 4. `final_scale_mont` is one of the public inverse-NTT Montgomery scale constants selected by the
-    //    caller.
-    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
-    unsafe {
-      aarch64::inverse_ntt_asm(poly, final_scale_mont);
-    }
-  }
-
-  #[cfg(not(target_os = "macos"))]
-  {
-    // SAFETY: aarch64 NEON inverse-NTT dispatch because:
-    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-    // 3. `poly` is a fixed 256-coefficient polynomial; the kernel's public loop bounds cover only
-    //    in-bounds contiguous 8-coefficient chunks.
-    // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-    //    values.
-    unsafe {
-      inverse_ntt_neon(poly, final_scale_mont);
-    }
+  // SAFETY: aarch64 NEON inverse-NTT dispatch because:
+  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 3. `poly` is a fixed 256-coefficient polynomial; the kernel's public loop bounds cover only
+  //    in-bounds contiguous 8-coefficient chunks.
+  // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+  //    values.
+  unsafe {
+    inverse_ntt_neon(poly, final_scale_mont);
   }
 }
 
@@ -4191,33 +4074,17 @@ fn inverse_ntt_montgomery_product_add_assign(poly: &mut Poly, addend: &Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
-  #[cfg(target_os = "macos")]
-  {
-    // SAFETY: aarch64 Darwin inverse-NTT plus add assembly dispatch because:
-    // 1. This function only compiles on aarch64 macOS with the portable-only escape hatch disabled.
-    // 2. Advanced SIMD is baseline for supported aarch64 macOS targets.
-    // 3. `poly` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
-    // 4. `addend` is already in canonical modulo-Q representation, matching the scalar add contract.
-    // 5. The assembly memory access schedule depends only on public ML-KEM dimensions.
-    unsafe {
-      aarch64::inverse_ntt_add_assign_asm(poly, addend, final_scale_mont);
-    }
-  }
-
-  #[cfg(not(target_os = "macos"))]
-  {
-    // SAFETY: aarch64 NEON inverse-NTT + add dispatch because:
-    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-    // 3. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
-    //    offsets.
-    // 4. `addend` is already in canonical modulo-Q representation, so the final add uses the same
-    //    constant-time modular addition as `poly_add_assign`.
-    // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
-    //    values.
-    unsafe {
-      inverse_ntt_neon_add_assign(poly, addend, final_scale_mont);
-    }
+  // SAFETY: aarch64 NEON inverse-NTT + add dispatch because:
+  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 3. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
+  //    offsets.
+  // 4. `addend` is already in canonical modulo-Q representation, so the final add uses the same
+  //    constant-time modular addition as `poly_add_assign`.
+  // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+  //    values.
+  unsafe {
+    inverse_ntt_neon_add_assign(poly, addend, final_scale_mont);
   }
 }
 
@@ -4795,12 +4662,7 @@ fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(any(target_os = "macos", target_os = "linux"))),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_neon(poly: &mut Poly) {
   let mut zeta_index = 1usize;
@@ -4843,12 +4705,7 @@ fn ntt_neon(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(any(target_os = "macos", target_os = "linux"))),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -4883,12 +4740,7 @@ fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(any(target_os = "macos", target_os = "linux"))),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -4911,12 +4763,7 @@ fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
   inverse_ntt_neon_butterflies(poly);
@@ -4937,12 +4784,7 @@ fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  not(target_os = "macos"),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
   inverse_ntt_neon_butterflies(poly);
@@ -4963,12 +4805,7 @@ fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont:
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
   let mut zeta_index = 127usize;
@@ -5016,12 +4853,7 @@ fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -5056,12 +4888,7 @@ fn inverse_ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn inverse_ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
@@ -5087,12 +4914,7 @@ fn inverse_ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn duplicate_i16_pair_lanes_neon(a: i16, b: i16) -> int16x4_t {
   let lanes = vdup_n_s16(a);
@@ -5100,12 +4922,7 @@ fn duplicate_i16_pair_lanes_neon(a: i16, b: i16) -> int16x4_t {
   vset_lane_s16::<3>(b, lanes)
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn zip_u16x4_pair_lanes_neon(lower: uint16x4_t, upper: uint16x4_t) -> uint16x8_t {
   let lower_pairs: uint32x2_t = vreinterpret_u32_u16(lower);
@@ -5277,12 +5094,7 @@ fn montgomery_reduce_i32x4_neon(value: int32x4_t) -> int16x4_t {
   vsub_s16(vshrn_n_s32::<16>(value), c)
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn mul_mont_const_mod_u16x4(a: uint16x4_t, b_mont: i16) -> uint16x4_t {
   signed_to_mod_q_s16x4(montgomery_reduce_i32x4_neon(vmull_n_s16(
@@ -5291,23 +5103,13 @@ fn mul_mont_const_mod_u16x4(a: uint16x4_t, b_mont: i16) -> uint16x4_t {
   )))
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn mul_mont_mod_u16x4(a: uint16x4_t, b_mont: int16x4_t) -> uint16x4_t {
   signed_to_mod_q_s16x4(montgomery_reduce_i32x4_neon(vmull_s16(vreinterpret_s16_u16(a), b_mont)))
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn add_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   let sum = vadd_u16(a, b);
@@ -5316,12 +5118,7 @@ fn add_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   vsub_u16(sum, vand_u16(ge_q, q))
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn sub_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   let diff = vsub_u16(a, b);
@@ -5339,12 +5136,7 @@ fn add_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
   vsubq_u16(sum, vandq_u16(ge_q, q))
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn sub_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
   let diff = vsubq_u16(a, b);
@@ -5377,12 +5169,7 @@ fn signed_to_mod_q_s16x8(value: int16x8_t) -> uint16x8_t {
   vreinterpretq_u16_s16(vaddq_s16(value, vandq_s16(negative, vdupq_n_s16(Q_I16))))
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  any(test, not(target_os = "macos")),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
   let negative = vshr_n_s16::<15>(value);
@@ -7228,61 +7015,45 @@ mod tests {
     assert_eq!(asm, scalar, "{label}");
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   #[test]
-  fn ntt_asm_raw_output_is_canonical() {
+  fn ntt_neon_output_is_canonical() {
     for seed in 0usize..1024 {
       let mut poly = test_poly(seed);
-      // SAFETY: raw assembly canonical-domain probe because:
-      // 1. This test only compiles on aarch64 targets that include the assembly backend.
-      // 2. `poly` is a fixed 256-coefficient polynomial matching the assembly ABI.
-      // 3. The raw symbol is required to return canonical scalar/FIPS coefficients before it can be
-      //    considered for production dispatch.
+      // SAFETY: direct NEON canonical-domain probe because:
+      // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 2. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions.
       unsafe {
-        aarch64::test_ntt_asm_raw(&mut poly);
+        ntt_neon(&mut poly);
       }
 
       for coeff in poly {
-        assert!(coeff < Q, "seed {seed} produced non-canonical raw coefficient {coeff}");
+        assert!(coeff < Q, "seed {seed} produced non-canonical NEON coefficient {coeff}");
       }
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   #[test]
-  fn ntt_asm_matches_scalar_reference() {
+  fn ntt_neon_matches_scalar_reference() {
     let zeros = [0u16; N];
-    assert_ntt_asm_matches_scalar_reference(zeros, "zero polynomial");
+    assert_ntt_neon_matches_scalar_reference(zeros, "zero polynomial");
 
     let all_max = [Q - 1; N];
-    assert_ntt_asm_matches_scalar_reference(all_max, "all q-1 polynomial");
+    assert_ntt_neon_matches_scalar_reference(all_max, "all q-1 polynomial");
 
     let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
-    assert_ntt_asm_matches_scalar_reference(alternating, "alternating 0/q-1 polynomial");
+    assert_ntt_neon_matches_scalar_reference(alternating, "alternating 0/q-1 polynomial");
 
     for seed in 0usize..1024 {
-      assert_ntt_asm_matches_scalar_reference(test_poly(seed), "seeded polynomial");
+      assert_ntt_neon_matches_scalar_reference(test_poly(seed), "seeded polynomial");
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   #[test]
-  fn ntt_asm_matches_scalar_for_fips_keygen_noise() {
+  fn ntt_neon_matches_scalar_for_fips_keygen_noise() {
     let d = [
       249, 206, 215, 37, 228, 105, 120, 238, 82, 21, 50, 99, 184, 68, 205, 166, 255, 59, 174, 206, 253, 125, 87, 13,
       254, 16, 123, 248, 146, 130, 47, 191,
@@ -7298,69 +7069,11 @@ mod tests {
     for nonce in 0u8..4 {
       let mut poly = [0u16; N];
       sample_noise::<ETA3_RANDOM_BYTES>(&sigma, nonce, &mut poly);
-      assert_ntt_asm_matches_scalar_reference(poly, "ML-KEM-512 fixed keygen noise");
+      assert_ntt_neon_matches_scalar_reference(poly, "ML-KEM-512 fixed keygen noise");
     }
 
     ct::zeroize(&mut sigma);
     ct::zeroize(&mut seed);
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  #[test]
-  fn inverse_ntt_asm_matches_scalar_reference() {
-    let zeros = [0u16; N];
-    assert_inverse_ntt_asm_matches_scalar_reference(zeros, INV_NTT_SCALE_MONT, "zero normal-scale polynomial");
-    assert_inverse_ntt_asm_matches_scalar_reference(zeros, INV_NTT_PRODUCT_SCALE_MONT, "zero product-scale polynomial");
-
-    let all_max = [Q - 1; N];
-    assert_inverse_ntt_asm_matches_scalar_reference(all_max, INV_NTT_SCALE_MONT, "all q-1 normal-scale polynomial");
-    assert_inverse_ntt_asm_matches_scalar_reference(
-      all_max,
-      INV_NTT_PRODUCT_SCALE_MONT,
-      "all q-1 product-scale polynomial",
-    );
-
-    let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
-    assert_inverse_ntt_asm_matches_scalar_reference(alternating, INV_NTT_SCALE_MONT, "alternating normal-scale");
-    assert_inverse_ntt_asm_matches_scalar_reference(
-      alternating,
-      INV_NTT_PRODUCT_SCALE_MONT,
-      "alternating product-scale",
-    );
-
-    for seed in 0usize..1024 {
-      let poly = test_poly(seed);
-      assert_inverse_ntt_asm_matches_scalar_reference(poly, INV_NTT_SCALE_MONT, "seeded normal-scale");
-      assert_inverse_ntt_asm_matches_scalar_reference(poly, INV_NTT_PRODUCT_SCALE_MONT, "seeded product-scale");
-    }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  #[test]
-  fn inverse_ntt_asm_add_assign_matches_scalar_reference() {
-    assert_inverse_ntt_add_assign_asm_matches_scalar_reference([0u16; N], [0u16; N], "all zero");
-    assert_inverse_ntt_add_assign_asm_matches_scalar_reference([Q - 1; N], [Q - 1; N], "all q-1");
-
-    let alternating = core::array::from_fn(|i| if i & 1 == 0 { 0 } else { Q - 1 });
-    assert_inverse_ntt_add_assign_asm_matches_scalar_reference(alternating, test_poly(0x37), "alternating");
-
-    for seed in 0usize..1024 {
-      assert_inverse_ntt_add_assign_asm_matches_scalar_reference(
-        test_poly(seed),
-        test_poly(seed.strict_add(0x3000)),
-        "seeded",
-      );
-    }
   }
 
   #[cfg(all(
@@ -7873,80 +7586,22 @@ mod tests {
     poly
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  fn assert_ntt_asm_matches_scalar_reference(poly: Poly, label: &str) {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  fn assert_ntt_neon_matches_scalar_reference(poly: Poly, label: &str) {
     let mut scalar = poly;
     ntt_scalar(&mut scalar);
 
-    let mut asm = poly;
-    // SAFETY: direct exact aarch64 assembly test call because:
-    // 1. This test only compiles on aarch64 targets that include the assembly backend.
-    // 2. `asm` is a fixed 256-coefficient polynomial matching the assembly ABI.
-    // 3. The assembly returns the scalar/FIPS representation directly.
-    // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
+    let mut accelerated = poly;
+    // SAFETY: direct aarch64 NEON test call because:
+    // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+    // 2. `accelerated` is a fixed 256-coefficient polynomial matching the kernel contract.
+    // 3. The NEON kernel returns the scalar/FIPS representation directly.
+    // 4. The memory access schedule depends only on public ML-KEM dimensions.
     unsafe {
-      aarch64::test_ntt_asm(&mut asm);
+      ntt_neon(&mut accelerated);
     }
 
-    assert_eq!(asm, scalar, "{label}");
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  fn assert_inverse_ntt_asm_matches_scalar_reference(poly: Poly, final_scale_mont: i16, label: &str) {
-    let mut scalar = poly;
-    inverse_ntt_scalar_with_scale(&mut scalar, final_scale_mont);
-
-    let mut asm = poly;
-    // SAFETY: direct aarch64 inverse-NTT assembly test call because:
-    // 1. This test only compiles on aarch64 macOS/Linux targets that include the assembly backend.
-    // 2. `asm` is a fixed 256-coefficient polynomial matching the assembly ABI.
-    // 3. The assembly returns the scalar/FIPS representation directly.
-    // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
-    unsafe {
-      aarch64::test_inverse_ntt_asm(&mut asm, final_scale_mont);
-    }
-
-    assert_eq!(asm, scalar, "{label}");
-    for coeff in asm {
-      assert!(coeff < Q, "{label} produced non-canonical coefficient {coeff}");
-    }
-  }
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    any(target_os = "macos", target_os = "linux"),
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  fn assert_inverse_ntt_add_assign_asm_matches_scalar_reference(poly: Poly, addend: Poly, label: &str) {
-    let mut scalar = poly;
-    inverse_ntt_scalar_with_scale(&mut scalar, INV_NTT_PRODUCT_SCALE_MONT);
-    poly_add_assign(&mut scalar, &addend);
-
-    let mut asm = poly;
-    // SAFETY: direct aarch64 inverse-NTT plus add assembly test call because:
-    // 1. This test only compiles on aarch64 macOS/Linux targets that include the assembly backend.
-    // 2. `asm` and `addend` are fixed 256-coefficient polynomials matching the assembly ABI.
-    // 3. The assembly returns the scalar/FIPS representation directly.
-    // 4. The assembly memory access schedule depends only on public ML-KEM dimensions.
-    unsafe {
-      aarch64::test_inverse_ntt_add_assign_asm(&mut asm, &addend, INV_NTT_PRODUCT_SCALE_MONT);
-    }
-
-    assert_eq!(asm, scalar, "{label}");
-    for coeff in asm {
-      assert!(coeff < Q, "{label} produced non-canonical coefficient {coeff}");
-    }
+    assert_eq!(accelerated, scalar, "{label}");
   }
 
   #[cfg(all(
@@ -8264,7 +7919,7 @@ mod tests {
 
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   #[test]
-  fn ntt_neon_matches_scalar_reference() {
+  fn ntt_neon_round_trip_matches_scalar_reference() {
     for seed in 0usize..16 {
       let mut scalar = test_poly(seed);
       let mut accelerated = scalar;

@@ -59,8 +59,8 @@ else
   echo "warning: native Linux/aarch64 host check bypassed for local smoke testing" | tee -a "$LOG_PATH"
 fi
 
-run_step "raw aarch64 NTT scalar oracle" \
-  cargo test --lib --features ml-kem ntt_asm -- --nocapture
+run_step "owned aarch64 NEON NTT scalar oracle" \
+  cargo test --lib --features ml-kem ntt_neon -- --nocapture
 
 run_step "owned aarch64 basemul scalar oracle" \
   cargo test --lib --features ml-kem basemul_accumulate -- --nocapture

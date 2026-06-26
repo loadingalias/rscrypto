@@ -7,6 +7,7 @@ Sources:
 - Linux artifacts: nine successful `benchmark-*` artifacts extracted into `benchmark_results/2026-06-25/linux/*/results.txt`.
 - Targeted P-384 follow-up CI run [#28212427930](https://github.com/loadingalias/rscrypto/actions/runs/28212427930), created 2026-06-26 02:02:44 UTC, commit `128c76e546243ed7d048553573c4047099dab56b`.
 - Targeted P-384 fixed-base follow-up CI run [#28216163852](https://github.com/loadingalias/rscrypto/actions/runs/28216163852), created 2026-06-26 03:58:13 UTC, commit `d8481124c5b69cfba61f8135bfcec03763200530`.
+- Targeted P-384 reduction-cleanup follow-up CI run [#28245803704](https://github.com/loadingalias/rscrypto/actions/runs/28245803704), created 2026-06-26 14:51:50 UTC, commit `562f3f85dba6ca21745a3189c83b53c2027d3009`.
 - Local macOS run: `benchmark_results/2026-06-22/macos/aarch64/results.txt` at commit `b978c2ca45611325850d7f1af94718e497acde50`.
 
 Scope: the 2026-06-25 nine-runner Linux CI benchmark matrix for commit `c5ece53`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
@@ -33,7 +34,7 @@ Shareable release summary:
 - **ML-KEM:** 1.49x geomean across 81 fastest-external rows; W/T/L is 63/8/10.
 - **ECDSA P-256/P-384:** Linux CI 1.42x geomean across 144 fastest-external rows; W/T/L is 115/13/16.
 - **Top current loss areas:** `argon2id-owasp` / `hash`: 0.95x geomean across 9 rows; W/T/L 2/1/6; pressure `rustcrypto` 6, `dryoc` 1; `mlkem1024` / `keygen`: 0.95x geomean across 9 rows; W/T/L 3/2/4; pressure `aws-lc-rs` 3, `libcrux` 1; `ecdsa-p384` / `sign`: 0.96x geomean across 36 rows; W/T/L 16/4/16; pressure `aws-lc-rs` 16; `ed25519` / `verify`: 0.98x geomean across 36 rows; W/T/L 8/16/12; pressure `ring` 9, `dalek` 7, `dryoc` 7, `aws-lc-rs` 4; `mlkem768` / `keygen`: 0.98x geomean across 9 rows; W/T/L 4/2/3; pressure `aws-lc-rs` 3.
-- **P-384 follow-up:** scoped x86_64 run [#28216163852](https://github.com/loadingalias/rscrypto/actions/runs/28216163852) moved the previously losing P-384 signing rows to W/T/L 16/0/0 vs AWS-LC, 1.38x geomean, and 1.40x median. This targeted run is not folded into the full nine-runner totals above.
+- **P-384 follow-up:** scoped x86_64 run [#28245803704](https://github.com/loadingalias/rscrypto/actions/runs/28245803704) kept the P-384 signing rows at W/T/L 16/0/0 vs AWS-LC after deleting the x86_64 P-384 order-reduction assembly, with 1.34x geomean and 1.35x median. This targeted run is not folded into the full nine-runner totals above.
 
 ## Coverage Matrix
 
@@ -141,25 +142,31 @@ s2n-bignum deletion slice.
 Run [#28216163852](https://github.com/loadingalias/rscrypto/actions/runs/28216163852) is the follow-up
 after specializing the owned fixed-base P-384 signing path on x86_64.
 
+Run [#28245803704](https://github.com/loadingalias/rscrypto/actions/runs/28245803704) is the follow-up
+after deleting `src/auth/asm/rscrypto_bignum_mod_n384_x86_64_unknown_linux.S` and routing x86_64
+P-384 nonce reduction through the owned reducer.
+
 | Scope | Rows | W/T/L | Geomean | Median |
 | --- | ---: | ---: | ---: | ---: |
 | Pre-delete x86_64 P-384 sign rows from run #28202726811 | 16 | 0/0/16 | 0.53x | 0.52x |
 | Post-delete x86_64 P-384 sign rows from run #28212427930 | 16 | 0/0/16 | 0.70x | 0.68x |
 | Post-delete x86_64 P-384 verify guard rows from run #28212427930 | 16 | 16/0/0 | 1.33x | 1.34x |
 | Post-specialization x86_64 P-384 sign rows from run #28216163852 | 16 | 16/0/0 | 1.38x | 1.40x |
+| Post-reduction-cleanup x86_64 P-384 sign rows from run #28245803704 | 16 | 16/0/0 | 1.34x | 1.35x |
 | Blended estimate if non-x86 rows remain unchanged | 36 | 16/4/16 | 1.08x | 0.98x |
 
-| Platform | Pre-delete sign geomean | Post-delete sign geomean | Post-specialization sign geomean |
-| --- | ---: | ---: | ---: |
-| AMD Zen4 | 0.53x | 0.70x | 1.38x |
-| AMD Zen5 | 0.57x | 0.66x | 1.41x |
-| Intel Ice Lake | 0.53x | 0.80x | 1.40x |
-| Intel Sapphire Rapids | 0.51x | 0.66x | 1.31x |
+| Platform | Pre-delete sign geomean | Post-delete sign geomean | Post-specialization sign geomean | Post-reduction-cleanup sign geomean |
+| --- | ---: | ---: | ---: | ---: |
+| AMD Zen4 | 0.53x | 0.70x | 1.38x | 1.33x |
+| AMD Zen5 | 0.57x | 0.66x | 1.41x | 1.38x |
+| Intel Ice Lake | 0.53x | 0.80x | 1.40x | 1.36x |
+| Intel Sapphire Rapids | 0.51x | 0.66x | 1.31x | 1.28x |
 
 Verdict: the deletion removed one vendored s2n-bignum assembly file and materially improved the worst
-P-384 signing rows; the later owned fixed-base specialization closed the x86_64 AWS-LC gap. Keep the
-arbitrary-point scalar-mul deletion, and remove narrower live s2n-bignum helpers only when the signing
-margin stays intact.
+P-384 signing rows; the later owned fixed-base specialization closed the x86_64 AWS-LC gap. Removing the
+x86_64 P-384 order-reduction helper costs about 3% of the signing ratio geomean but keeps every targeted
+row ahead of AWS-LC. Keep both deletions, and remove narrower live s2n-bignum helpers only when the
+signing margin stays intact.
 
 ## Primitive Summary
 
@@ -277,8 +284,9 @@ Linux CI primitives with matched exact `rscrypto` comparisons. Fastest columns a
 
 The P-384 signing line above is from the 2026-06-25 full nine-runner release
 matrix. The scoped x86_64 follow-up in run
-[#28216163852](https://github.com/loadingalias/rscrypto/actions/runs/28216163852)
-closed the x86_64 P-384 signing loss at W/T/L 16/0/0, 1.38x geomean vs AWS-LC.
+[#28245803704](https://github.com/loadingalias/rscrypto/actions/runs/28245803704)
+kept the x86_64 P-384 signing rows at W/T/L 16/0/0, 1.34x geomean vs AWS-LC after
+the x86_64 P-384 order-reduction assembly deletion.
 
 ## External Pressure
 
@@ -330,7 +338,7 @@ The macOS Apple Silicon run is local evidence for the earlier 2026-06-22 baselin
 - **ML-KEM:** 1.49x geomean across 81 Linux CI fastest-external rows; W/T/L 63/8/10.
 - **ECDSA P-256/P-384:** 1.42x Linux CI geomean across 144 fastest-external rows.
 - **Current top losses:** `argon2id-owasp` / `hash`: 0.95x geomean across 9 rows; W/T/L 2/1/6; pressure `rustcrypto` 6, `dryoc` 1; `mlkem1024` / `keygen`: 0.95x geomean across 9 rows; W/T/L 3/2/4; pressure `aws-lc-rs` 3, `libcrux` 1; `ecdsa-p384` / `sign`: 0.96x geomean across 36 rows; W/T/L 16/4/16; pressure `aws-lc-rs` 16; `ed25519` / `verify`: 0.98x geomean across 36 rows; W/T/L 8/16/12; pressure `ring` 9, `dalek` 7, `dryoc` 7, `aws-lc-rs` 4; `mlkem768` / `keygen`: 0.98x geomean across 9 rows; W/T/L 4/2/3; pressure `aws-lc-rs` 3.
-- **Targeted P-384 follow-up:** x86_64 P-384 signing is now W/T/L 16/0/0, 1.38x geomean vs AWS-LC in run #28216163852; this is a scoped follow-up, not part of the full-release totals above.
+- **Targeted P-384 follow-up:** x86_64 P-384 signing is W/T/L 16/0/0, 1.34x geomean vs AWS-LC after the order-reduction cleanup in run #28245803704; this is a scoped follow-up, not part of the full-release totals above.
 
 ## Raw Results
 

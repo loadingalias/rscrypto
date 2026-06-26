@@ -186,32 +186,25 @@ pub use mlkem::{
   feature = "diag",
   feature = "ml-kem",
   target_arch = "aarch64",
-  target_os = "linux",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub use mlkem::{
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_digest,
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_add_assign_asm_input_digest,
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_digest,
-  diag_mlkem_aarch64_inverse_ntt_montgomery_product_asm_input_digest,
-};
-#[cfg(all(
-  feature = "diag",
-  feature = "ml-kem",
-  target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
   not(miri),
   not(feature = "portable-only")
 ))]
 pub use mlkem::{
   diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest, diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest,
-  diag_mlkem_aarch64_ntt_asm_digest, diag_mlkem_aarch64_ntt_asm_input_digest,
   diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_digest,
   diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_input_digest,
   diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_digest,
   diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_input_digest,
 };
+#[cfg(all(
+  feature = "diag",
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub use mlkem::{diag_mlkem_aarch64_ntt_neon_digest, diag_mlkem_aarch64_ntt_neon_input_digest};
 #[cfg(all(feature = "diag", feature = "ml-kem"))]
 pub use mlkem::{
   diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
