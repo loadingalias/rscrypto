@@ -2573,8 +2573,9 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &Secre
 fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
   let mut scalar_words = ZeroizingWords::zeroed();
   scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
-  let generator_words = p384_jacobian_to_words(Jacobian::from_affine(P384.generator()));
-  let words = ecdsa_platform_asm::p384_point_scalarmul(scalar_words.as_array(), &generator_words);
+  let scalar = SecretScalar::new(Uint(*scalar_words.as_array()));
+  let point = scalar_mul_basepoint_comb_ct_secret(&P384, &scalar);
+  let words = p384_jacobian_to_words(point);
   jacobian_from_p384_words(curve.field_modulus, &words)
 }
 

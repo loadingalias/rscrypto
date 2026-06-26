@@ -1,9 +1,9 @@
 //! Linux x86-64 assembly backends for ECDSA curve operations.
 //!
-//! The embedded routines are adapted from s2n-bignum x86-64 P-256/P-384
-//! Montgomery-Jacobian scalar multiplication backends. This module owns the
-//! ABI boundary; `ecdsa.rs` owns scalar validation, blinding, affine
-//! conversion, and public API semantics.
+//! The embedded routines are adapted from s2n-bignum x86-64 P-256 fixed-base
+//! and P-384 bignum backends. This module owns the ABI boundary; `ecdsa.rs`
+//! owns scalar validation, blinding, affine conversion, and public API
+//! semantics.
 
 #![allow(unsafe_code)]
 
@@ -54,11 +54,6 @@ global_asm!(
   include_str!("asm/rscrypto_bignum_montinv_p384_x86_64_unknown_linux.S"),
   options(att_syntax)
 );
-global_asm!(
-  include_str!("asm/rscrypto_p384_montjscalarmul_alt_x86_64_unknown_linux.S"),
-  options(att_syntax)
-);
-
 unsafe extern "C" {
   fn rscrypto_p256_scalarmulbase(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
   fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
@@ -70,7 +65,6 @@ unsafe extern "C" {
   fn rscrypto_bignum_montsqr_p384(out: *mut u64, value: *const u64);
   fn rscrypto_bignum_montsqr_p384_alt(out: *mut u64, value: *const u64);
   fn rscrypto_bignum_montinv_p384(out: *mut u64, value: *const u64);
-  fn rscrypto_p384_montjscalarmul_alt(out: *mut u64, scalar: *const u64, point: *const u64);
 }
 
 #[inline]
@@ -231,19 +225,6 @@ pub(super) fn scalar_inverse<const L: usize>(value: &[u64; L], modulus: &[u64; L
       tmp.as_mut_ptr(),
     )
   };
-  out
-}
-
-#[inline]
-pub(super) fn p384_point_scalarmul(scalar: &[u64; 6], point: &[u64; 18]) -> [u64; 18] {
-  let mut out = [0u64; 18];
-  // SAFETY: P-384 Jacobian scalar multiplication call because:
-  // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
-  // 2. `out` and `point` are 18-limb arrays laid out as x/y/z P-384 Montgomery coordinates.
-  // 3. `scalar` has six little-endian `u64` limbs, matching the P-384 group-order size.
-  // 4. The routine uses fixed-window selection and constant-time table reads with respect to the
-  //    scalar.
-  unsafe { rscrypto_p384_montjscalarmul_alt(out.as_mut_ptr(), scalar.as_ptr(), point.as_ptr()) };
   out
 }
 

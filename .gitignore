@@ -23,7 +23,9 @@ AGENTS.md
 *.key
 
 # Junk
-private/tasks/
+private/tasks/*
+!private/tasks/asm.md
+!private/tasks/*-notebook.md
 docs/llvm-ppc64le-readvolatile-issue.md
 
 # Benchmark artifacts: publish only the curated overview.
