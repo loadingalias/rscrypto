@@ -433,10 +433,11 @@ pub use auth::{
 };
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub use auth::{
-  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
-  diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
-  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
-  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
+  diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
+  diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
+  diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
+  diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
 };
 #[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
 pub use auth::{

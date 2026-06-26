@@ -156,10 +156,11 @@ pub use ecdsa::{
 };
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub use ecdsa::{
-  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
-  diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
-  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
-  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
+  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
+  diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
+  diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
+  diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
+  diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
 };
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};

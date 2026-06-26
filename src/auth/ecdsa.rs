@@ -2074,6 +2074,12 @@ impl<const L: usize> Jacobian<L> {
       y: self.y.mul(z3),
     }
   }
+
+  fn to_affine_x_ct(self, exponent: Uint<L>) -> FieldElement<L> {
+    let inv_z = self.z.inv_ct(exponent);
+    let z2 = inv_z.square();
+    self.x.mul(z2)
+  }
 }
 
 #[derive(Clone, Copy)]
@@ -2323,6 +2329,24 @@ fn sign_digest_with_nonce_backend<const L: usize>(
       scalar_inverse_exponent,
       half_order,
       r,
+    ));
+  }
+
+  if is_p384_curve(curve) {
+    let mut scalar_words = ZeroizingWords::zeroed();
+    scalar_words.as_mut_array().copy_from_slice(&nonce.words()[..6]);
+    let nonce6 = SecretScalar::new(Uint(*scalar_words.as_array()));
+    let r = p384_scalar_mul_basepoint_r_platform(&nonce6);
+    let mut r_words = [0u64; L];
+    r_words.copy_from_slice(&r.0);
+    return Some(sign_digest_with_r(
+      curve,
+      secret_scalar,
+      nonce,
+      digest,
+      scalar_inverse_exponent,
+      half_order,
+      Uint(r_words),
     ));
   }
 
@@ -2587,6 +2611,17 @@ fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: 
   let point = p384_scalar_mul_basepoint_comb_backend(&scalar);
   let words = p384_jacobian_to_words(point);
   jacobian_from_p384_words(curve.field_modulus, &words)
+}
+
+#[cfg(any(
+  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+  all(target_arch = "x86_64", target_os = "linux")
+))]
+fn p384_scalar_mul_basepoint_r_platform(scalar: &SecretScalar<6>) -> Uint<6> {
+  p384_scalar_mul_basepoint_platform(&P384, scalar)
+    .to_affine_x_ct(P384_FIELD_MINUS_TWO)
+    .to_uint()
+    .reduce_once_ct(P384_ORDER_MODULUS.value)
 }
 
 #[cfg(not(any(
@@ -2963,6 +2998,22 @@ pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u
   out[..6].copy_from_slice(&point.x.value.0);
   out[6..].copy_from_slice(&point.y.value.0);
   out
+}
+
+#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
+pub fn diag_ecdsa_p384_basepoint_r_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
+  let secret = ZeroizingBytes::new(secret);
+  let digest = Sha384::digest(message);
+  let mut wide = ZeroizingBytes::zeroed();
+  hmac_expand_p384(secret.as_array(), &digest, wide.as_mut_array());
+  let nonce = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let point =
+    scalar_mul_basepoint_backend(&P384, &nonce).unwrap_or_else(|| scalar_mul_basepoint_comb_ct_secret(&P384, &nonce));
+  point
+    .to_affine_x_ct(P384_FIELD_MINUS_TWO)
+    .to_uint()
+    .reduce_once_ct(P384_ORDER_MODULUS.value)
+    .0
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
