@@ -22,16 +22,17 @@ use core::arch::aarch64::vgetq_lane_u16;
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, vaddq_s16, vaddq_s32, vaddq_u16, vaddq_u32,
-  vandq_s16, vandq_u16, vandq_u32, vcgeq_u16, vcombine_s16, vcombine_u32, vdup_n_u32, vdupq_n_s16, vdupq_n_u16,
-  vdupq_n_u32, vget_high_s16, vget_high_u32, vget_lane_u16, vget_low_s16, vget_low_u32, vld1_u16, vld1q_s16, vld1q_u16,
-  vld2q_u16, vmovn_s32, vmovn_u32, vmovn_u64, vmul_n_s16, vmull_n_s16, vmull_s16, vmull_u32, vmulq_n_s16, vmulq_n_u16,
-  vqdmulhq_n_s16, vreinterpretq_s16_u16, vreinterpretq_u16_s16, vshll_n_u16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u64,
-  vst1_u16, vst1q_u16, vst2q_u16, vsub_s16, vsubq_s16, vsubq_u16,
+  vandq_s16, vandq_u16, vandq_u32, vcgeq_u16, vcgtq_u32, vcombine_s16, vcombine_u16, vcombine_u32, vdup_n_u32,
+  vdupq_n_s16, vdupq_n_u16, vdupq_n_u32, vget_high_s16, vget_high_u16, vget_high_u32, vget_lane_u16, vget_low_s16,
+  vget_low_u32, vld1_u16, vld1q_s16, vld1q_u16, vld2q_u16, vmovl_u16, vmovn_s32, vmovn_u32, vmovn_u64, vmul_n_s16,
+  vmull_n_s16, vmull_s16, vmull_u32, vmulq_n_s16, vmulq_n_u16, vmulq_n_u32, vqdmulhq_n_s16, vreinterpretq_s16_u16,
+  vreinterpretq_u16_s16, vshll_n_u16, vshrn_n_s32, vshrq_n_s16, vshrq_n_u32, vshrq_n_u64, vst1_u16, vst1q_u16,
+  vst2q_u16, vsub_s16, vsubq_s16, vsubq_u16, vsubq_u32,
 };
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 use core::arch::aarch64::{
-  uint32x2_t, vadd_s16, vadd_u16, vand_s16, vand_u16, vcge_u16, vcgt_u16, vcgtq_u16, vdup_n_s16, vdup_n_u16,
-  vget_low_u16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_u16_u32,
+  uint32x2_t, uint32x4_t, vadd_s16, vadd_u16, vand_s16, vand_u16, vcge_u16, vcgt_u16, vcgtq_u16, vdup_n_s16,
+  vdup_n_u16, vget_low_u16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_u16_u32,
   vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vsub_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
 };
 #[cfg(all(
@@ -648,11 +649,11 @@ fn pke_keygen_expanded<
   sigma: &[u8; SEED_BYTES],
 ) -> ([u8; EK_BYTES], [u8; DK_PKE_BYTES]) {
   let mut s_hat = [[0u16; N]; K];
-  let mut e_hat = [[0u16; N]; K];
+  let mut t_hat = [[0u16; N]; K];
   if K == 2 {
     let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, _) = s_tail.split_at_mut(1);
-    let (e0, e_tail) = e_hat.split_at_mut(1);
+    let (e0, e_tail) = t_hat.split_at_mut(1);
     let (e1, _) = e_tail.split_at_mut(1);
     sample_noise_quad::<ETA1_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut e0[0], 3, &mut e1[0]);
   } else if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 4 {
@@ -661,14 +662,14 @@ fn pke_keygen_expanded<
     let (s2, s3) = s_tail.split_at_mut(1);
     sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut s2[0], 3, &mut s3[0]);
 
-    let (e0, e_tail) = e_hat.split_at_mut(1);
+    let (e0, e_tail) = t_hat.split_at_mut(1);
     let (e1, e_tail) = e_tail.split_at_mut(1);
     let (e2, e3) = e_tail.split_at_mut(1);
     sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 4, &mut e0[0], 5, &mut e1[0], 6, &mut e2[0], 7, &mut e3[0]);
   } else if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 3 {
     let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, s2) = s_tail.split_at_mut(1);
-    let (e0, e_tail) = e_hat.split_at_mut(1);
+    let (e0, e_tail) = t_hat.split_at_mut(1);
     sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut s2[0], 3, &mut e0[0]);
 
     let (e1, e2) = e_tail.split_at_mut(1);
@@ -679,7 +680,7 @@ fn pke_keygen_expanded<
       sample_noise::<ETA1_RANDOM_BYTES>(sigma, nonce, poly);
       nonce = nonce.wrapping_add(1);
     }
-    for poly in &mut e_hat {
+    for poly in &mut t_hat {
       sample_noise::<ETA1_RANDOM_BYTES>(sigma, nonce, poly);
       nonce = nonce.wrapping_add(1);
     }
@@ -688,17 +689,11 @@ fn pke_keygen_expanded<
   for poly in &mut s_hat {
     ntt(poly);
   }
-  for poly in &mut e_hat {
-    ntt(poly);
+  for poly in &mut t_hat {
+    ntt_to_montgomery_product_domain(poly);
   }
 
-  let mut t_hat = [[0u16; N]; K];
-  for i in 0..K {
-    t_hat[i] = e_hat[i];
-    poly_to_montgomery_product_domain(&mut t_hat[i]);
-  }
-
-  if use_fused_matrix_accumulate() {
+  if use_fused_matrix_accumulate::<K>() {
     for (i, t_hat_i) in t_hat.iter_mut().enumerate() {
       if K == 4 {
         sample_ntt_quad_mul_accumulate(
@@ -751,7 +746,7 @@ fn pke_keygen_expanded<
   }
 
   zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut e_hat);
+  zeroize_polyvec(&mut t_hat);
   (ek, dk_pke)
 }
 
@@ -2511,7 +2506,7 @@ fn matrix_accumulate_coord<const K: usize>(entry: usize, transpose: bool) -> ((u
 }
 
 #[inline]
-fn use_fused_matrix_accumulate() -> bool {
+fn use_fused_matrix_accumulate<const K: usize>() -> bool {
   if cfg!(any(miri, feature = "portable-only")) {
     return true;
   }
@@ -2523,7 +2518,7 @@ fn use_fused_matrix_accumulate() -> bool {
 
   #[cfg(target_arch = "aarch64")]
   {
-    false
+    K == 4
   }
 
   #[cfg(target_arch = "s390x")]
@@ -3968,6 +3963,25 @@ fn ntt(poly: &mut Poly) {
   ntt_scalar(poly);
 }
 
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+fn ntt_to_montgomery_product_domain(poly: &mut Poly) {
+  // SAFETY: aarch64 NEON NTT-to-product-domain dispatch because:
+  // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
+  // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 3. `poly` is a fixed 256-coefficient polynomial matching the kernel contract.
+  // 4. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
+  //    values.
+  unsafe {
+    ntt_to_montgomery_product_domain_neon(poly);
+  }
+}
+
+#[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+fn ntt_to_montgomery_product_domain(poly: &mut Poly) {
+  ntt(poly);
+  poly_to_montgomery_product_domain(poly);
+}
+
 #[cfg(any(
   test,
   miri,
@@ -4665,6 +4679,20 @@ fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn ntt_neon(poly: &mut Poly) {
+  ntt_neon_butterflies(poly);
+  canonicalize_ntt_neon(poly);
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn ntt_to_montgomery_product_domain_neon(poly: &mut Poly) {
+  ntt_neon_butterflies(poly);
+  canonicalize_ntt_product_domain_neon(poly);
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn ntt_neon_butterflies(poly: &mut Poly) {
   let mut zeta_index = 1usize;
   let mut len = 128usize;
   while len >= 8 {
@@ -4683,10 +4711,16 @@ fn ntt_neon(poly: &mut Poly) {
         // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
         //    availability.
         unsafe {
-          let u = vld1q_u16(poly.as_ptr().add(j));
-          let t = mul_mont_const_mod_u16x8(vld1q_u16(poly.as_ptr().add(j.strict_add(len))), zeta);
-          vst1q_u16(poly.as_mut_ptr().add(j.strict_add(len)), sub_mod_u16x8(u, t));
-          vst1q_u16(poly.as_mut_ptr().add(j), add_mod_u16x8(u, t));
+          let u = vreinterpretq_s16_u16(vld1q_u16(poly.as_ptr().add(j)));
+          let t = mul_mont_const_i16x8(
+            vreinterpretq_s16_u16(vld1q_u16(poly.as_ptr().add(j.strict_add(len)))),
+            zeta,
+          );
+          vst1q_u16(
+            poly.as_mut_ptr().add(j.strict_add(len)),
+            vreinterpretq_u16_s16(vsubq_s16(u, t)),
+          );
+          vst1q_u16(poly.as_mut_ptr().add(j), vreinterpretq_u16_s16(vaddq_s16(u, t)));
         }
         j = j.strict_add(8);
       }
@@ -4727,9 +4761,10 @@ fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
       let lower = vget_low_u16(vreinterpretq_u16_u32(vuzp1q_u32(pair_lanes, pair_lanes)));
       let upper = vget_low_u16(vreinterpretq_u16_u32(vuzp2q_u32(pair_lanes, pair_lanes)));
       let twiddles = duplicate_i16_pair_lanes_neon(zeta0, zeta1);
-      let t = mul_mont_mod_u16x4(upper, twiddles);
-      let lower_out = add_mod_u16x4(lower, t);
-      let upper_out = sub_mod_u16x4(lower, t);
+      let t = mul_mont_i16x4(vreinterpret_s16_u16(upper), twiddles);
+      let lower = vreinterpret_s16_u16(lower);
+      let lower_out = vreinterpret_u16_s16(vadd_s16(lower, t));
+      let upper_out = vreinterpret_u16_s16(vsub_s16(lower, t));
       vst1q_u16(
         poly.as_mut_ptr().add(start),
         zip_u16x4_pair_lanes_neon(lower_out, upper_out),
@@ -4754,12 +4789,55 @@ fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
     // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
     //    availability.
     unsafe {
-      let u = vld1_u16(poly.as_ptr().add(start));
-      let t = mul_mont_const_mod_u16x4(vld1_u16(poly.as_ptr().add(start.strict_add(4))), zeta);
-      vst1_u16(poly.as_mut_ptr().add(start.strict_add(4)), sub_mod_u16x4(u, t));
-      vst1_u16(poly.as_mut_ptr().add(start), add_mod_u16x4(u, t));
+      let u = vreinterpret_s16_u16(vld1_u16(poly.as_ptr().add(start)));
+      let t = mul_mont_const_i16x4(
+        vreinterpret_s16_u16(vld1_u16(poly.as_ptr().add(start.strict_add(4)))),
+        zeta,
+      );
+      vst1_u16(
+        poly.as_mut_ptr().add(start.strict_add(4)),
+        vreinterpret_u16_s16(vsub_s16(u, t)),
+      );
+      vst1_u16(poly.as_mut_ptr().add(start), vreinterpret_u16_s16(vadd_s16(u, t)));
     }
     start = start.strict_add(8);
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn canonicalize_ntt_neon(poly: &mut Poly) {
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size NEON forward-NTT canonicalization because:
+    // 1. `i` advances by 8 while `i < N == 256`, so `i..i + 8` is in bounds.
+    // 2. Lazy forward-NTT butterflies keep every signed lane inside `[-8Q, 8Q]`, so the reducer's fixed
+    //    add/subtract schedule is sufficient for canonical modulo-Q output.
+    // 3. Each load/store touches exactly 8 contiguous coefficients in the fixed polynomial.
+    // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let value = vreinterpretq_s16_u16(vld1q_u16(poly.as_ptr().add(i)));
+      vst1q_u16(poly.as_mut_ptr().add(i), canonicalize_lazy_i16x8(value));
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn canonicalize_ntt_product_domain_neon(poly: &mut Poly) {
+  for i in (0..N).step_by(8) {
+    // SAFETY: fixed-size NEON forward-NTT product-domain finalization because:
+    // 1. `i` advances by 8 while `i < N == 256`, so `i..i + 8` is in bounds.
+    // 2. Lazy forward-NTT butterflies keep every signed lane inside `[-8Q, 8Q]`; Montgomery reduction
+    //    of that signed residue is equivalent to canonicalizing and then applying
+    //    `poly_to_montgomery_product_domain`.
+    // 3. Each load/store touches exactly 8 contiguous coefficients in the fixed polynomial.
+    // 4. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
+    //    availability.
+    unsafe {
+      let value = vreinterpretq_s16_u16(vld1q_u16(poly.as_ptr().add(i)));
+      vst1q_u16(poly.as_mut_ptr().add(i), lazy_i16x8_to_product_domain(value));
+    }
   }
 }
 
@@ -5082,6 +5160,24 @@ fn mul_i16x8_to_i32x4_neon(a: int16x8_t, b: int16x8_t) -> (int32x4_t, int32x4_t)
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+fn mul_mont_const_i16x8(a: int16x8_t, b_mont: i16) -> int16x8_t {
+  montgomery_reduce_s16x8(vmulq_n_s16(a, b_mont), vshrq_n_s16::<1>(vqdmulhq_n_s16(a, b_mont)))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn mul_mont_const_i16x4(a: int16x4_t, b_mont: i16) -> int16x4_t {
+  montgomery_reduce_i32x4_neon(vmull_n_s16(a, b_mont))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn mul_mont_i16x4(a: int16x4_t, b_mont: int16x4_t) -> int16x4_t {
+  montgomery_reduce_i32x4_neon(vmull_s16(a, b_mont))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
 fn montgomery_reduce_i32x8_neon(lo: int32x4_t, hi: int32x4_t) -> int16x8_t {
   vcombine_s16(montgomery_reduce_i32x4_neon(lo), montgomery_reduce_i32x4_neon(hi))
 }
@@ -5147,11 +5243,35 @@ fn sub_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+fn canonicalize_lazy_i16x8(value: int16x8_t) -> uint16x8_t {
+  let negative = vshrq_n_s16::<15>(value);
+  let shifted = vaddq_s16(value, vandq_s16(negative, vdupq_n_s16((Q as i16) * 8)));
+  let shifted = vreinterpretq_u16_s16(shifted);
+  let lo = reduce_lazy_u32x4(vmovl_u16(vget_low_u16(shifted)));
+  let hi = reduce_lazy_u32x4(vmovl_u16(vget_high_u16(shifted)));
+  vcombine_u16(vmovn_u32(lo), vmovn_u32(hi))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn lazy_i16x8_to_product_domain(value: int16x8_t) -> uint16x8_t {
+  signed_to_mod_q_s16x8(montgomery_reduce_s16x8(value, vshrq_n_s16::<15>(value)))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn reduce_lazy_u32x4(value: uint32x4_t) -> uint32x4_t {
+  let quotient = vshrq_n_u32::<26>(vaddq_u32(vmulq_n_u32(value, 20_159), vdupq_n_u32(1 << 25)));
+  let product = vmulq_n_u32(quotient, Q_U32);
+  let reduced = vsubq_u32(value, product);
+  let borrowed = vcgtq_u32(product, value);
+  vaddq_u32(reduced, vandq_u32(borrowed, vdupq_n_u32(Q_U32)))
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
 fn mul_mont_const_mod_u16x8(a: uint16x8_t, b_mont: i16) -> uint16x8_t {
-  signed_to_mod_q_s16x8(montgomery_reduce_s16x8(
-    vmulq_n_s16(vreinterpretq_s16_u16(a), b_mont),
-    vshrq_n_s16::<1>(vqdmulhq_n_s16(vreinterpretq_s16_u16(a), b_mont)),
-  ))
+  signed_to_mod_q_s16x8(mul_mont_const_i16x8(vreinterpretq_s16_u16(a), b_mont))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -5176,7 +5296,12 @@ fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
   vreinterpret_u16_s16(vadd_s16(value, vand_s16(negative, vdup_n_s16(Q_I16))))
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, feature = "diag"),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn to_montgomery_product_domain_neon(poly: &mut Poly) {
   let high = vdupq_n_s16(0);
@@ -5626,6 +5751,11 @@ fn base_case_multiply_normal_reference(a0: u16, a1: u16, b0: u16, b1: u16, gamma
   (c0, c1)
 }
 
+#[cfg(any(
+  test,
+  feature = "diag",
+  not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))
+))]
 fn poly_to_montgomery_product_domain(poly: &mut Poly) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   {
@@ -7048,6 +7178,77 @@ mod tests {
 
     for seed in 0usize..1024 {
       assert_ntt_neon_matches_scalar_reference(test_poly(seed), "seeded polynomial");
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn ntt_product_domain_neon_matches_two_pass_reference() {
+    for seed in 0usize..1024 {
+      let mut expected = test_poly(seed);
+      ntt_scalar(&mut expected);
+      poly_to_montgomery_product_domain_scalar(&mut expected);
+
+      let mut actual = test_poly(seed);
+      // SAFETY: direct NEON fused-finalizer test because:
+      // 1. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 2. `actual` is a fixed 256-coefficient polynomial matching the kernel contract.
+      // 3. The kernel's memory access schedule depends only on public ML-KEM dimensions.
+      unsafe {
+        ntt_to_montgomery_product_domain_neon(&mut actual);
+      }
+
+      assert_eq!(actual, expected, "seed {seed}");
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn lazy_ntt_neon_finalizers_match_scalar_range() {
+    let min = -i32::from(Q) * 8;
+    let max = i32::from(Q) * 8;
+    let mut start = min;
+
+    while start <= max {
+      let lanes = [
+        start,
+        (start + 1).min(max),
+        (start + 2).min(max),
+        (start + 3).min(max),
+        (start + 4).min(max),
+        (start + 5).min(max),
+        (start + 6).min(max),
+        (start + 7).min(max),
+      ];
+      let lanes_i16 = lanes.map(|value| value as i16);
+      let mut canonical = [0u16; 8];
+      let mut product_domain = [0u16; 8];
+
+      // SAFETY: direct NEON lazy-finalizer test because:
+      // 1. `lanes_i16`, `canonical`, and `product_domain` are fixed eight-lane stack arrays.
+      // 2. This test only compiles on aarch64, where NEON is baseline for supported rscrypto targets.
+      // 3. The tested values cover the documented signed lazy NTT range `[-8Q, 8Q]`.
+      unsafe {
+        let values = vld1q_s16(lanes_i16.as_ptr());
+        vst1q_u16(canonical.as_mut_ptr(), canonicalize_lazy_i16x8(values));
+        vst1q_u16(product_domain.as_mut_ptr(), lazy_i16x8_to_product_domain(values));
+      }
+
+      for lane in 0..8 {
+        let mut expected = lanes[lane] % i32::from(Q);
+        if expected < 0 {
+          expected += i32::from(Q);
+        }
+        let expected = expected as u16;
+        assert_eq!(canonical[lane], expected, "canonical start {start} lane {lane}");
+        assert_eq!(
+          product_domain[lane],
+          to_montgomery_product_domain(expected),
+          "product-domain start {start} lane {lane}"
+        );
+      }
+
+      start += 8;
     }
   }
 
