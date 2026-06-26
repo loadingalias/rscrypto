@@ -1,9 +1,9 @@
 //! Linux x86-64 assembly backends for ECDSA curve operations.
 //!
-//! The embedded routines are adapted from s2n-bignum x86-64 P-256 fixed-base
-//! and P-384 bignum backends. This module owns the ABI boundary; `ecdsa.rs`
-//! owns scalar validation, blinding, affine conversion, and public API
-//! semantics.
+//! The embedded routines are adapted from s2n-bignum x86-64 P-256 fixed-base,
+//! P-256 order reduction, P-384 field, and scalar-inversion backends. This
+//! module owns the ABI boundary; `ecdsa.rs` owns scalar validation, blinding,
+//! affine conversion, and public API semantics.
 
 #![allow(unsafe_code)]
 
@@ -24,10 +24,6 @@ global_asm!(
 );
 global_asm!(
   include_str!("asm/rscrypto_bignum_mod_n256_x86_64_unknown_linux.S"),
-  options(att_syntax)
-);
-global_asm!(
-  include_str!("asm/rscrypto_bignum_mod_n384_x86_64_unknown_linux.S"),
   options(att_syntax)
 );
 global_asm!(
@@ -58,7 +54,6 @@ unsafe extern "C" {
   fn rscrypto_p256_scalarmulbase(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
   fn rscrypto_p256_scalarmulbase_alt(out: *mut u64, scalar: *const u64, blocksize: u64, table: *const u64);
   fn rscrypto_bignum_mod_n256(out: *mut u64, len: u64, input: *const u64);
-  fn rscrypto_bignum_mod_n384(out: *mut u64, len: u64, input: *const u64);
   fn rscrypto_bignum_modinv(k: u64, out: *mut u64, value: *const u64, modulus: *const u64, tmp: *mut u64);
   fn rscrypto_bignum_montmul_p384(out: *mut u64, lhs: *const u64, rhs: *const u64);
   fn rscrypto_bignum_montmul_p384_alt(out: *mut u64, lhs: *const u64, rhs: *const u64);
@@ -126,20 +121,6 @@ pub(super) fn p256_reduce_order_64(bytes: &[u8; 64]) -> [u64; 4] {
   //    input.
   // 4. The routine runs a fixed-size reduction for public length 8; the reduced value may be secret.
   unsafe { rscrypto_bignum_mod_n256(out.as_mut_ptr(), 8, input.as_ptr()) };
-  out
-}
-
-#[inline]
-pub(super) fn p384_reduce_order_96(bytes: &[u8; 96]) -> [u64; 6] {
-  let input = words_from_be_bytes_reversed::<12, 96>(bytes);
-  let mut out = [0u64; 6];
-  // SAFETY: P-384 order reduction call because:
-  // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
-  // 2. `out` has six `u64` limbs, which is the exact P-384 group-order output size.
-  // 3. `input` has twelve `u64` limbs and `len` is 12, so the assembly reads exactly the provided
-  //    input.
-  // 4. The routine runs a fixed-size reduction for public length 12; the reduced value may be secret.
-  unsafe { rscrypto_bignum_mod_n384(out.as_mut_ptr(), 12, input.as_ptr()) };
   out
 }
 

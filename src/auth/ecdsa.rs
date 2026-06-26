@@ -2519,7 +2519,10 @@ fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], mo
       let reduced = Uint(out);
       return Uint::select(reduced, Uint::ONE, reduced.ct_is_zero_mask());
     }
+  }
 
+  #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+  {
     if N == 96 && is_p384_order_modulus(modulus) {
       let mut fixed = ZeroizingBytes::zeroed();
       fixed.as_mut_array().copy_from_slice(bytes);
@@ -2530,6 +2533,15 @@ fn reduce_wide_order_nonzero<const L: usize, const N: usize>(bytes: &[u8; N], mo
       return Uint::select(reduced, Uint::ONE, reduced.ct_is_zero_mask());
     }
   }
+
+  reduce_wide_order_nonzero_owned(bytes, modulus)
+}
+
+fn reduce_wide_order_nonzero_owned<const L: usize, const N: usize>(
+  bytes: &[u8; N],
+  modulus: &'static Modulus<L>,
+) -> Uint<L> {
+  debug_assert_eq!(N % 8, 0);
 
   let mut radix = Uint::ZERO;
   if let Some(limb) = radix.0.get_mut(1) {
@@ -4380,6 +4392,47 @@ mod tests {
         let next_bit = bit + 1;
         assert_p384_nonexceptional_comb_matches_complete(p384_sparse_scalar(&[bit, next_bit]));
       }
+    }
+  }
+
+  fn p384_wide_from_low(low: Uint<6>) -> [u8; 96] {
+    let mut bytes = [0u8; 96];
+    low.write_be(&mut bytes[48..]);
+    bytes
+  }
+
+  #[test]
+  fn p384_owned_wide_order_reduction_handles_boundary_values() {
+    let order_minus_one = P384_ORDER.sub_raw(&Uint::ONE).0;
+    let (order_plus_one, carry) = P384_ORDER.add_raw(&Uint::ONE);
+    assert_eq!(carry, 0);
+
+    for (low, expected) in [
+      (Uint::ZERO, Uint::ONE),
+      (Uint::ONE, Uint::ONE),
+      (order_minus_one, order_minus_one),
+      (P384_ORDER, Uint::ONE),
+      (order_plus_one, Uint::ONE),
+    ] {
+      let reduced = reduce_wide_order_nonzero_owned(&p384_wide_from_low(low), &P384_ORDER_MODULUS);
+      assert_eq!(reduced.0, expected.0);
+    }
+  }
+
+  #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
+  #[test]
+  fn p384_owned_wide_order_reduction_matches_platform_reduction() {
+    for bytes in [[0u8; 96], [0xffu8; 96], {
+      let mut bytes = [0u8; 96];
+      for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = (index as u8).wrapping_mul(17).wrapping_add(0xa5);
+      }
+      bytes
+    }] {
+      let platform = Uint(ecdsa_platform_asm::p384_reduce_order_96(&bytes));
+      let platform = Uint::select(platform, Uint::ONE, platform.ct_is_zero_mask());
+      let owned = reduce_wide_order_nonzero_owned(&bytes, &P384_ORDER_MODULUS);
+      assert_eq!(owned.0, platform.0);
     }
   }
 

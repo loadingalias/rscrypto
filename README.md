@@ -13,12 +13,12 @@
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current Benchmark Evidence:** `1.59x` geomean across the Linux runners vs the fastest-external competitors with `4,095 / 6,750` wins and `6,080 / 6,750` wins-or-ties.
+**Current Benchmark Evidence:** `1.59x` geomean across the Linux runners vs the fastest-external competitors with `4,103 / 6,750` wins and `6,096 / 6,750` wins-or-ties.
 
 macOS Apple Silicon local evidence: `1.37x` geomean vs fastest-external competitors with `386 / 786` wins and `748 / 786` wins-or-ties.
 
 <p align="center">
-  <img alt="rscrypto benchmark chart: 1.59x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 5.20x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
+  <img alt="rscrypto benchmark chart: 1.59x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 5.22x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
        src="assets/readme/perf.svg"
        width="640">
 </p>
@@ -290,20 +290,20 @@ Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rsc
 | Area | Compared Against | Result |
 |---|---|---:|
 | **Linux vs Fastest External** | strongest known Rust competitor per case (usually aws-lc-rs) | **1.59x Geomean** |
-| Linux Scorecard | Fastest External | **4,095 wins / 6,750 Pairs** |
-| Linux Wins or Ties | Fastest External | **6,080 / 6,750 Pairs** |
-| Linux All Matched Pairs | Every Comparison Row | **1.79x Geomean; 9,924 / 10,781 Wins or Ties** |
+| Linux Scorecard | Fastest External | **4,103 wins / 6,750 Pairs** |
+| Linux Wins or Ties | Fastest External | **6,096 / 6,750 Pairs** |
+| Linux All Matched Pairs | Every Comparison Row | **1.80x Geomean; 9,945 / 10,781 Wins or Ties** |
 | macOS Apple Silicon vs Fastest External | Local Apple Silicon Run | **1.37x Geomean; 748 / 786 Wins or Ties** |
 | macOS Apple Silicon All Matched Pairs | Every Comparison Row | **1.81x Geomean; 1,263 / 1,309 Wins or Ties** |
-| macOS Apple Silicon ML-KEM | Fastest External | **0.87x Geomean; 2 / 9 Wins or Ties** |
-| Checksums | Linux | **5.20x Geomean** |
+| macOS Apple Silicon ML-KEM | Fastest External | **1.46x Geomean; 9 / 9 Wins or Ties** |
+| Checksums | Linux | **5.22x Geomean** |
 | Hashes, MACs, XOFs | Linux | **1.35x Geomean** |
-| Auth/KDF | Linux | **1.25x Geomean** |
-| Password hashing | Linux | **1.08x Geomean** |
-| Public-key | Linux, including ML-KEM | **1.21x Geomean** |
-| ML-KEM-512/768/1024 | Linux keygen/encapsulate/decapsulate | **1.06x Geomean** |
-| ECDSA P-256/P-384 | Linux | **1.41x Geomean** |
-| RSA import + verify | Linux | **1.53x Geomean** |
+| Auth/KDF | Linux | **1.24x Geomean** |
+| Password hashing | Linux | **1.07x Geomean** |
+| Public-key | Linux, including ML-KEM | **1.31x Geomean** |
+| ML-KEM-512/768/1024 | Linux keygen/encapsulate/decapsulate | **1.49x Geomean** |
+| ECDSA P-256/P-384 | Linux | **1.42x Geomean** |
+| RSA import + verify | Linux | **1.56x Geomean** |
 | AEAD | Linux | **1.56x Geomean** |
 
 Use [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
