@@ -1703,6 +1703,62 @@ fn mlkem_keygen_phases(c: &mut Criterion) {
 fn mlkem_keygen_phases(_: &mut Criterion) {}
 
 #[cfg(feature = "diag")]
+fn mlkem_keygen_matrix(c: &mut Criterion) {
+  use rscrypto::auth::mlkem::{
+    diag_mlkem512_keygen_matrix_accumulate_fused_digest, diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem512_keygen_matrix_row_multiply_digest, diag_mlkem768_keygen_matrix_accumulate_fused_digest,
+    diag_mlkem768_keygen_matrix_accumulate_materialized_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
+    diag_mlkem1024_keygen_matrix_accumulate_fused_digest, diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem1024_keygen_matrix_row_multiply_digest,
+  };
+
+  let rho = deterministic_bytes::<32>(0x42);
+  let sigma = deterministic_bytes::<32>(0x84);
+  let mut g = c.benchmark_group("mlkem-keygen-matrix");
+
+  macro_rules! bench_matrix {
+    ($prefix:literal, $fused:path, $materialized:path, $row_multiply:path, $seed:literal) => {
+      g.bench_function(concat!($prefix, "/fused-through-matrix-accumulate"), |b| {
+        b.iter(|| black_box($fused(black_box(&rho), black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/materialized-through-matrix-accumulate"), |b| {
+        b.iter(|| black_box($materialized(black_box(&rho), black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/materialized-row-multiply"), |b| {
+        b.iter(|| black_box($row_multiply(black_box($seed))))
+      });
+    };
+  }
+
+  bench_matrix!(
+    "k=2",
+    diag_mlkem512_keygen_matrix_accumulate_fused_digest,
+    diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem512_keygen_matrix_row_multiply_digest,
+    0x5120
+  );
+  bench_matrix!(
+    "k=3",
+    diag_mlkem768_keygen_matrix_accumulate_fused_digest,
+    diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem768_keygen_matrix_row_multiply_digest,
+    0x7680
+  );
+  bench_matrix!(
+    "k=4",
+    diag_mlkem1024_keygen_matrix_accumulate_fused_digest,
+    diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem1024_keygen_matrix_row_multiply_digest,
+    0x1024
+  );
+
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
+fn mlkem_keygen_matrix(_: &mut Criterion) {}
+
+#[cfg(feature = "diag")]
 fn mlkem_arithmetic(c: &mut Criterion) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   use rscrypto::auth::mlkem::diag_mlkem_aarch64_ntt_neon_digest;
@@ -2050,6 +2106,7 @@ criterion_group!(
   mlkem1024_decapsulate,
   mlkem_matrix_sample,
   mlkem_keygen_phases,
+  mlkem_keygen_matrix,
   mlkem_arithmetic,
   mlkem_decap_phases,
   mlkem_pke_phases

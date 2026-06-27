@@ -1143,6 +1143,63 @@ mlkem_diag_keygen_phases!(
 );
 
 #[cfg(feature = "diag")]
+macro_rules! mlkem_diag_keygen_matrix {
+  ($fused:ident, $materialized:ident, $row_multiply:ident, $k:expr, $eta1_random_bytes:expr, $doc_name:literal) => {
+    #[doc = concat!("Benchmark-only forced-fused keygen matrix-accumulation digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $fused(rho: &[u8; ML_KEM_SEED_SIZE], sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_matrix_accumulate_fused_digest::<$k, $eta1_random_bytes>(rho, sigma)
+    }
+
+    #[doc = concat!("Benchmark-only forced-materialized keygen matrix-accumulation digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $materialized(rho: &[u8; ML_KEM_SEED_SIZE], sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_matrix_accumulate_materialized_digest::<$k, $eta1_random_bytes>(rho, sigma)
+    }
+
+    #[doc = concat!("Benchmark-only materialized keygen matrix row-multiply digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $row_multiply(seed: u16) -> u16 {
+      portable::diag_keygen_matrix_row_multiply_digest::<$k>(seed)
+    }
+  };
+}
+
+#[cfg(feature = "diag")]
+mlkem_diag_keygen_matrix!(
+  diag_mlkem512_keygen_matrix_accumulate_fused_digest,
+  diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
+  diag_mlkem512_keygen_matrix_row_multiply_digest,
+  2,
+  192,
+  "ML-KEM-512"
+);
+#[cfg(feature = "diag")]
+mlkem_diag_keygen_matrix!(
+  diag_mlkem768_keygen_matrix_accumulate_fused_digest,
+  diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
+  diag_mlkem768_keygen_matrix_row_multiply_digest,
+  3,
+  128,
+  "ML-KEM-768"
+);
+#[cfg(feature = "diag")]
+mlkem_diag_keygen_matrix!(
+  diag_mlkem1024_keygen_matrix_accumulate_fused_digest,
+  diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
+  diag_mlkem1024_keygen_matrix_row_multiply_digest,
+  4,
+  128,
+  "ML-KEM-1024"
+);
+
+#[cfg(feature = "diag")]
 macro_rules! mlkem_diag_matrix_sample {
   ($scalar:ident, $pair:ident, $quad:ident, $k:expr, $doc_name:literal) => {
     #[doc = concat!("Benchmark-only scalar matrix sampling digest for ", $doc_name, ".")]
