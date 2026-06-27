@@ -1219,6 +1219,15 @@ pub fn diag_mlkem1024_keygen_matrix_row_sample_triple_digest(rho: &[u8; ML_KEM_S
 }
 
 #[cfg(feature = "diag")]
+/// Benchmark-only materialized K=4 keygen matrix row-sampling digest using the quad-XOF schedule.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_sample_quad_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k4_quad_digest(rho)
+}
+
+#[cfg(feature = "diag")]
 /// Benchmark-only ML-KEM-1024 keygen matrix row-multiply digest using the default dot-product path.
 #[doc(hidden)]
 #[inline]

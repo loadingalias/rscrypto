@@ -958,6 +958,24 @@ pub(super) fn diag_keygen_matrix_row_sample_k4_triple_digest(rho: &[u8; SEED_BYT
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_keygen_matrix_row_sample_k4_quad_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+
+  sample_matrix_ntt_materialized_k4_rows_quad(rho, &mut row0, &mut row1, &mut row2, &mut row3);
+
+  let digest =
+    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
+  zeroize_polyvec(&mut row0);
+  zeroize_polyvec(&mut row1);
+  zeroize_polyvec(&mut row2);
+  zeroize_polyvec(&mut row3);
+  digest
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u16 {
   let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
   let mut digest = 0u16;
@@ -3326,6 +3344,25 @@ fn sample_matrix_ntt_materialized_k4_rows(
   row2: &mut PolyVec<4>,
   row3: &mut PolyVec<4>,
 ) {
+  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  {
+    sample_matrix_ntt_materialized_k4_rows_quad(rho, row0, row1, row2, row3);
+  }
+  #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+  {
+    sample_matrix_ntt_materialized_k4_rows_triple(rho, row0, row1, row2, row3);
+  }
+}
+
+#[cfg(any(feature = "diag", all(target_arch = "aarch64", target_os = "macos")))]
+#[inline(always)]
+fn sample_matrix_ntt_materialized_k4_rows_quad(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<4>,
+  row1: &mut PolyVec<4>,
+  row2: &mut PolyVec<4>,
+  row3: &mut PolyVec<4>,
+) {
   {
     let [a0, a1, a2, a3] = polyvec4_mut(row0);
     sample_ntt_quad_into(rho, [(0, 0), (1, 0), (2, 0), (3, 0)], [a0, a1, a2, a3]);
@@ -3344,7 +3381,7 @@ fn sample_matrix_ntt_materialized_k4_rows(
   }
 }
 
-#[cfg(feature = "diag")]
+#[cfg(any(feature = "diag", not(all(target_arch = "aarch64", target_os = "macos"))))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows_triple(
   rho: &[u8; SEED_BYTES],
@@ -9066,7 +9103,7 @@ mod tests {
 
   #[cfg(feature = "diag")]
   #[test]
-  fn materialized_k4_row_sampler_matches_triple_schedule() {
+  fn materialized_k4_quad_row_sampler_matches_triple_schedule() {
     for seed in 0u8..64 {
       let mut rho = [0u8; SEED_BYTES];
       fill_diag_seed(&mut rho, seed);
@@ -9087,7 +9124,7 @@ mod tests {
       let mut actual1 = [[0u16; N]; 4];
       let mut actual2 = [[0u16; N]; 4];
       let mut actual3 = [[0u16; N]; 4];
-      sample_matrix_ntt_materialized_k4_rows(&rho, &mut actual0, &mut actual1, &mut actual2, &mut actual3);
+      sample_matrix_ntt_materialized_k4_rows_quad(&rho, &mut actual0, &mut actual1, &mut actual2, &mut actual3);
 
       assert_eq!(actual0, expected0, "row0 seed {seed}");
       assert_eq!(actual1, expected1, "row1 seed {seed}");
