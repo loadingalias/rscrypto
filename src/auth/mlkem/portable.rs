@@ -922,6 +922,84 @@ pub(super) fn diag_keygen_matrix_row_multiply_digest<const K: usize>(seed: u16) 
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_keygen_matrix_row_sample_k4_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+
+  sample_matrix_ntt_materialized_k4_rows(rho, &mut row0, &mut row1, &mut row2, &mut row3);
+
+  let digest =
+    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
+  zeroize_polyvec(&mut row0);
+  zeroize_polyvec(&mut row1);
+  zeroize_polyvec(&mut row2);
+  zeroize_polyvec(&mut row3);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_keygen_matrix_row_multiply_default_input_digest<const K: usize>(
+  matrix: &PolyMatrix<K>,
+  rhs: &PolyVec<K>,
+  acc: &PolyVec<K>,
+) -> u16 {
+  let mut acc = *acc;
+  for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
+    multiply_ntts_accumulate(acc_i, row, rhs);
+  }
+
+  let digest = diag_fold_polyvec(&acc);
+  zeroize_polyvec(&mut acc);
+  digest
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+pub(super) fn diag_keygen_matrix_mulcache_input<const K: usize>(rhs: &PolyVec<K>) -> PolyVecMulCache<K> {
+  polyvec_mulcache(rhs)
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+pub(super) fn diag_keygen_matrix_mulcache_input_digest<const K: usize>(rhs: &PolyVec<K>) -> u16 {
+  let mut rhs_cache = polyvec_mulcache(rhs);
+  let digest = diag_fold_polyvec_mulcache(&rhs_cache);
+  zeroize_polyvec_mulcache(&mut rhs_cache);
+  digest
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+pub(super) fn diag_keygen_matrix_row_multiply_cached_input_digest<const K: usize>(
+  matrix: &PolyMatrix<K>,
+  rhs: &PolyVec<K>,
+  acc: &PolyVec<K>,
+) -> u16 {
+  let mut acc = *acc;
+  let mut rhs_cache = polyvec_mulcache(rhs);
+  keygen_matrix_row_multiply_cached(matrix, rhs, &rhs_cache, &mut acc);
+
+  let digest = diag_fold_polyvec(&acc);
+  zeroize_polyvec_mulcache(&mut rhs_cache);
+  zeroize_polyvec(&mut acc);
+  digest
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+pub(super) fn diag_keygen_matrix_row_multiply_cached_core_input_digest<const K: usize>(
+  matrix: &PolyMatrix<K>,
+  rhs: &PolyVec<K>,
+  rhs_cache: &PolyVecMulCache<K>,
+  acc: &PolyVec<K>,
+) -> u16 {
+  let mut acc = *acc;
+  keygen_matrix_row_multiply_cached(matrix, rhs, rhs_cache, &mut acc);
+
+  let digest = diag_fold_polyvec(&acc);
+  zeroize_polyvec(&mut acc);
+  digest
+}
+
+#[cfg(feature = "diag")]
 fn keygen_matrix_row_multiply_materialized<const K: usize>(
   matrix: &PolyMatrix<K>,
   rhs: &PolyVec<K>,
@@ -930,9 +1008,7 @@ fn keygen_matrix_row_multiply_materialized<const K: usize>(
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   {
     let mut rhs_cache = polyvec_mulcache(rhs);
-    for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
-      multiply_ntts_accumulate_cached(acc_i, row, rhs, &rhs_cache);
-    }
+    keygen_matrix_row_multiply_cached(matrix, rhs, &rhs_cache, acc);
     zeroize_polyvec_mulcache(&mut rhs_cache);
   }
   #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
@@ -940,6 +1016,18 @@ fn keygen_matrix_row_multiply_materialized<const K: usize>(
     for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
       multiply_ntts_accumulate(acc_i, row, rhs);
     }
+  }
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+fn keygen_matrix_row_multiply_cached<const K: usize>(
+  matrix: &PolyMatrix<K>,
+  rhs: &PolyVec<K>,
+  rhs_cache: &PolyVecMulCache<K>,
+  acc: &mut PolyVec<K>,
+) {
+  for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
+    multiply_ntts_accumulate_cached(acc_i, row, rhs, rhs_cache);
   }
 }
 
@@ -1015,6 +1103,19 @@ fn diag_fold_polyvec<const K: usize>(polyvec: &PolyVec<K>) -> u16 {
   let mut acc = 0u16;
   for poly in polyvec {
     acc ^= diag_fold_poly(poly);
+  }
+  acc
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[inline(never)]
+fn diag_fold_polyvec_mulcache<const K: usize>(cache: &PolyVecMulCache<K>) -> u16 {
+  let mut acc = 0u16;
+  for (poly_index, cache_poly) in cache.iter().enumerate() {
+    for (coeff_index, &coeff) in cache_poly.iter().enumerate() {
+      let weight = poly_index.strict_mul(N / 2).strict_add(coeff_index).wrapping_add(1) as u16;
+      acc ^= coeff.wrapping_mul(weight);
+    }
   }
   acc
 }
@@ -2824,6 +2925,39 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
 }
 
 #[inline(always)]
+fn sample_matrix_ntt_materialized_k4_rows(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<4>,
+  row1: &mut PolyVec<4>,
+  row2: &mut PolyVec<4>,
+  row3: &mut PolyVec<4>,
+) {
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(row0);
+    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
+  }
+  {
+    let [_, _, _, a0] = polyvec4_mut(row0);
+    let [a1, a2, _, _] = polyvec4_mut(row1);
+    sample_ntt_triple_into(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2]);
+  }
+  {
+    let [_, _, a0, a1] = polyvec4_mut(row1);
+    let [a2, _, _, _] = polyvec4_mut(row2);
+    sample_ntt_triple_into(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2]);
+  }
+  {
+    let [_, a0, a1, a2] = polyvec4_mut(row2);
+    sample_ntt_triple_into(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2]);
+  }
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(row3);
+    sample_ntt_triple_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
+  }
+  sample_ntt_into(rho, 3, 3, &mut row3[3]);
+}
+
+#[inline(always)]
 fn sample_matrix_ntt_mul_accumulate_materialized_k4<const K: usize>(
   rho: &[u8; SEED_BYTES],
   rhs: &PolyVec<K>,
@@ -2836,29 +2970,7 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4<const K: usize>(
   let mut row2 = [[0u16; N]; 4];
   let mut row3 = [[0u16; N]; 4];
 
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(&mut row0);
-    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, _, a0] = polyvec4_mut(&mut row0);
-    let [a1, a2, _, _] = polyvec4_mut(&mut row1);
-    sample_ntt_triple_into(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, a0, a1] = polyvec4_mut(&mut row1);
-    let [a2, _, _, _] = polyvec4_mut(&mut row2);
-    sample_ntt_triple_into(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2]);
-  }
-  {
-    let [_, a0, a1, a2] = polyvec4_mut(&mut row2);
-    sample_ntt_triple_into(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(&mut row3);
-    sample_ntt_triple_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
-  }
-  sample_ntt_into(rho, 3, 3, &mut row3[3]);
+  sample_matrix_ntt_materialized_k4_rows(rho, &mut row0, &mut row1, &mut row2, &mut row3);
 
   let rhs = polyvec_as_k4(rhs);
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -6980,9 +7092,7 @@ fn compress_encode_compare_10(input: &Poly, expected: &[u8]) -> u8 {
     // 2. Advanced SIMD is baseline for supported aarch64 rscrypto targets.
     // 3. The helper uses fixed public loop bounds and fixed-stride loads.
     // 4. The compare accumulates all byte differences without secret-dependent early exit.
-    unsafe {
-      return compress_encode_compare_10_neon(input, expected);
-    }
+    unsafe { compress_encode_compare_10_neon(input, expected) }
   }
 
   #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]

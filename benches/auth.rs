@@ -48,6 +48,43 @@ fn deterministic_bytes<const N: usize>(offset: u8) -> [u8; N] {
   out
 }
 
+#[cfg(feature = "diag")]
+fn deterministic_mlkem_poly(seed: u16) -> [u16; 256] {
+  const Q: u32 = 3329;
+
+  let mut out = [0u16; 256];
+  let mut next = u32::from(seed);
+  for (i, coeff) in out.iter_mut().enumerate() {
+    next = next
+      .wrapping_mul(1_664_525)
+      .wrapping_add(1_013_904_223)
+      .wrapping_add(i as u32);
+    *coeff = (next % Q) as u16;
+  }
+  out
+}
+
+#[cfg(feature = "diag")]
+fn deterministic_mlkem_polyvec4(seed: u16) -> [[u16; 256]; 4] {
+  let mut out = [[0u16; 256]; 4];
+  for (i, poly) in out.iter_mut().enumerate() {
+    *poly = deterministic_mlkem_poly(seed.wrapping_add(i as u16));
+  }
+  out
+}
+
+#[cfg(feature = "diag")]
+fn deterministic_mlkem_polymatrix4(seed: u16) -> [[[u16; 256]; 4]; 4] {
+  let mut out = [[[0u16; 256]; 4]; 4];
+  for (row_index, row) in out.iter_mut().enumerate() {
+    for (poly_index, poly) in row.iter_mut().enumerate() {
+      let offset = row_index.strict_mul(4).strict_add(poly_index) as u16;
+      *poly = deterministic_mlkem_poly(seed.wrapping_add(offset));
+    }
+  }
+  out
+}
+
 #[cfg(all(
   any(unix, windows),
   not(target_arch = "wasm32"),
@@ -1709,11 +1746,21 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     diag_mlkem512_keygen_matrix_row_multiply_digest, diag_mlkem768_keygen_matrix_accumulate_fused_digest,
     diag_mlkem768_keygen_matrix_accumulate_materialized_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest, diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
-    diag_mlkem1024_keygen_matrix_row_multiply_digest,
+    diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest, diag_mlkem1024_keygen_matrix_row_multiply_digest,
+    diag_mlkem1024_keygen_matrix_row_sample_digest,
+  };
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  use rscrypto::auth::mlkem::{
+    diag_mlkem1024_keygen_matrix_mulcache_input, diag_mlkem1024_keygen_matrix_mulcache_input_digest,
+    diag_mlkem1024_keygen_matrix_row_multiply_cached_core_input_digest,
+    diag_mlkem1024_keygen_matrix_row_multiply_cached_input_digest,
   };
 
   let rho = deterministic_bytes::<32>(0x42);
   let sigma = deterministic_bytes::<32>(0x84);
+  let matrix4 = deterministic_mlkem_polymatrix4(0x9000);
+  let rhs4 = deterministic_mlkem_polyvec4(0x9100);
+  let acc4 = deterministic_mlkem_polyvec4(0x9200);
   let mut g = c.benchmark_group("mlkem-keygen-matrix");
 
   macro_rules! bench_matrix {
@@ -1751,6 +1798,46 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     diag_mlkem1024_keygen_matrix_row_multiply_digest,
     0x1024
   );
+
+  g.bench_function("k=4/materialized-row-sample", |b| {
+    b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/materialized-row-multiply-default-input", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest(
+        black_box(&matrix4),
+        black_box(&rhs4),
+        black_box(&acc4),
+      ))
+    })
+  });
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    let rhs4_cache = diag_mlkem1024_keygen_matrix_mulcache_input(&rhs4);
+
+    g.bench_function("k=4/materialized-mulcache-input", |b| {
+      b.iter(|| black_box(diag_mlkem1024_keygen_matrix_mulcache_input_digest(black_box(&rhs4))))
+    });
+    g.bench_function("k=4/materialized-row-multiply-cached-input", |b| {
+      b.iter(|| {
+        black_box(diag_mlkem1024_keygen_matrix_row_multiply_cached_input_digest(
+          black_box(&matrix4),
+          black_box(&rhs4),
+          black_box(&acc4),
+        ))
+      })
+    });
+    g.bench_function("k=4/materialized-row-multiply-cached-core-input", |b| {
+      b.iter(|| {
+        black_box(diag_mlkem1024_keygen_matrix_row_multiply_cached_core_input_digest(
+          black_box(&matrix4),
+          black_box(&rhs4),
+          black_box(&rhs4_cache),
+          black_box(&acc4),
+        ))
+      })
+    });
+  }
 
   g.finish();
 }

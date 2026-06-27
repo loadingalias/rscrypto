@@ -1200,6 +1200,74 @@ mlkem_diag_keygen_matrix!(
 );
 
 #[cfg(feature = "diag")]
+/// Benchmark-only materialized K=4 keygen matrix row-sampling digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_sample_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k4_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 keygen matrix row-multiply digest using the default dot-product path.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest(
+  matrix: &[[[u16; 256]; 4]; 4],
+  rhs: &[[u16; 256]; 4],
+  acc: &[[u16; 256]; 4],
+) -> u16 {
+  portable::diag_keygen_matrix_row_multiply_default_input_digest::<4>(matrix, rhs, acc)
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+/// Benchmark-only ML-KEM-1024 keygen RHS mulcache builder.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_mulcache_input(rhs: &[[u16; 256]; 4]) -> [[u16; 128]; 4] {
+  portable::diag_keygen_matrix_mulcache_input::<4>(rhs)
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+/// Benchmark-only ML-KEM-1024 keygen RHS mulcache digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_mulcache_input_digest(rhs: &[[u16; 256]; 4]) -> u16 {
+  portable::diag_keygen_matrix_mulcache_input_digest::<4>(rhs)
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+/// Benchmark-only ML-KEM-1024 keygen cached row-multiply digest, including RHS mulcache
+/// construction.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_multiply_cached_input_digest(
+  matrix: &[[[u16; 256]; 4]; 4],
+  rhs: &[[u16; 256]; 4],
+  acc: &[[u16; 256]; 4],
+) -> u16 {
+  portable::diag_keygen_matrix_row_multiply_cached_input_digest::<4>(matrix, rhs, acc)
+}
+
+#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+/// Benchmark-only ML-KEM-1024 keygen cached row-multiply digest with a precomputed RHS mulcache.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_multiply_cached_core_input_digest(
+  matrix: &[[[u16; 256]; 4]; 4],
+  rhs: &[[u16; 256]; 4],
+  rhs_cache: &[[u16; 128]; 4],
+  acc: &[[u16; 256]; 4],
+) -> u16 {
+  portable::diag_keygen_matrix_row_multiply_cached_core_input_digest::<4>(matrix, rhs, rhs_cache, acc)
+}
+
+#[cfg(feature = "diag")]
 macro_rules! mlkem_diag_matrix_sample {
   ($scalar:ident, $pair:ident, $quad:ident, $k:expr, $doc_name:literal) => {
     #[doc = concat!("Benchmark-only scalar matrix sampling digest for ", $doc_name, ".")]
