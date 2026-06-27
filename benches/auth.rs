@@ -1273,6 +1273,81 @@ fn ed25519_verify(c: &mut Criterion) {
   g.finish();
 }
 
+#[cfg(feature = "diag")]
+fn ed25519_verify_phase(c: &mut Criterion) {
+  use rscrypto::{
+    diag_ed25519_verify_challenge_reduce_digest, diag_ed25519_verify_portable_double_scalar_digest,
+    diag_ed25519_verify_public_decode_digest, diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
+  };
+
+  print_auth_diag_once();
+
+  let secret_bytes = [13u8; 32];
+  let secret = Ed25519SecretKey::from_bytes(secret_bytes);
+  let keypair = Ed25519Keypair::from_secret_key(secret);
+  let public = keypair.public_key();
+  let inputs = [0usize, 32, 1024, 16384]
+    .into_iter()
+    .map(|len| (len, common::random_bytes(len)))
+    .collect::<Vec<_>>();
+  let mut g = c.benchmark_group("ed25519/verify-phase");
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    let signature = keypair.sign(data);
+    let scalars = diag_ed25519_verify_scalars(&public, &signature, data).unwrap();
+
+    g.bench_with_input(BenchmarkId::new("challenge-reduce", len), data, |b, d| {
+      b.iter(|| {
+        black_box(diag_ed25519_verify_challenge_reduce_digest(
+          black_box(&public),
+          black_box(&signature),
+          black_box(d),
+        ))
+      })
+    });
+
+    g.bench_function(BenchmarkId::new("public-decode", len), |b| {
+      b.iter(|| black_box(diag_ed25519_verify_public_decode_digest(black_box(&scalars.public_key))))
+    });
+
+    g.bench_function(BenchmarkId::new("r-decode", len), |b| {
+      b.iter(|| black_box(diag_ed25519_verify_r_decode_digest(black_box(&scalars.r_bytes))))
+    });
+
+    g.bench_function(BenchmarkId::new("portable-double-scalar", len), |b| {
+      b.iter(|| {
+        black_box(diag_ed25519_verify_portable_double_scalar_digest(
+          black_box(&scalars.s_canonical),
+          black_box(&scalars.neg_challenge),
+          black_box(&scalars.public_key),
+        ))
+      })
+    });
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      any(target_os = "macos", target_os = "linux"),
+      not(feature = "portable-only"),
+      not(miri)
+    ))]
+    g.bench_function(BenchmarkId::new("aarch64-asm-double-scalar", len), |b| {
+      b.iter(|| {
+        black_box(rscrypto::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
+          black_box(&scalars.s_canonical),
+          black_box(&scalars.neg_challenge),
+          black_box(&scalars.public_key),
+        ))
+      })
+    });
+  }
+
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
+fn ed25519_verify_phase(_: &mut Criterion) {}
+
 // `ring` is omitted from x25519 benches: ring 0.17 only exposes
 // `EphemeralPrivateKey` (consumed by `agree_ephemeral`) and provides no
 // reusable static-key API. Including it would force a full keygen-and-discard
@@ -2248,6 +2323,7 @@ criterion_group!(
   ed25519_keypair_from_secret,
   ed25519_sign,
   ed25519_verify,
+  ed25519_verify_phase,
   x25519_public_key,
   x25519_diffie_hellman,
   mlkem512_keygen,

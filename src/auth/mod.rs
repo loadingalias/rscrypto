@@ -162,6 +162,21 @@ pub use ecdsa::{
   diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
   diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
 };
+#[cfg(all(
+  feature = "diag",
+  feature = "ed25519",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+pub use ed25519::diag_ed25519_verify_aarch64_asm_double_scalar_digest;
+#[cfg(all(feature = "diag", feature = "ed25519"))]
+pub use ed25519::{
+  DiagEd25519VerifyScalars, diag_ed25519_verify_challenge_reduce_digest,
+  diag_ed25519_verify_portable_double_scalar_digest, diag_ed25519_verify_public_decode_digest,
+  diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
+};
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]

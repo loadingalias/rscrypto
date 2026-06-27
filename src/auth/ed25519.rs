@@ -383,6 +383,16 @@ pub struct Ed25519Keypair {
   expanded: hash::ExpandedSecret,
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct DiagEd25519VerifyScalars {
+  pub r_bytes: [u8; PUBLIC_KEY_LENGTH],
+  pub s_canonical: [u8; SECRET_KEY_LENGTH],
+  pub neg_challenge: [u8; SECRET_KEY_LENGTH],
+  pub public_key: [u8; PUBLIC_KEY_LENGTH],
+}
+
 impl PartialEq for Ed25519Keypair {
   fn eq(&self, other: &Self) -> bool {
     let secret_eq = self.secret == other.secret;
@@ -600,6 +610,92 @@ fn hash_challenge(r_bytes: &[u8; PUBLIC_KEY_LENGTH], public_key: &[u8; PUBLIC_KE
   prefix[..PUBLIC_KEY_LENGTH].copy_from_slice(r_bytes);
   prefix[PUBLIC_KEY_LENGTH..].copy_from_slice(public_key);
   Sha512::digest_64_byte_prefix(&prefix, message)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_verify_scalars(
+  public_key: &Ed25519PublicKey,
+  signature: &Ed25519Signature,
+  message: &[u8],
+) -> Option<DiagEd25519VerifyScalars> {
+  let (r_bytes, s_bytes) = split_signature(signature);
+  let s = scalar::from_canonical_bytes(&s_bytes)?;
+  let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
+  let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
+  let neg_challenge = scalar::negate_mod(&challenge);
+
+  Some(DiagEd25519VerifyScalars {
+    r_bytes,
+    s_canonical: scalar::to_bytes(&s),
+    neg_challenge: scalar::to_bytes(&neg_challenge),
+    public_key: *public_key.as_bytes(),
+  })
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_verify_challenge_reduce_digest(
+  public_key: &Ed25519PublicKey,
+  signature: &Ed25519Signature,
+  message: &[u8],
+) -> [u8; SECRET_KEY_LENGTH] {
+  let (r_bytes, _) = split_signature(signature);
+  let challenge_digest = hash_challenge(&r_bytes, public_key.as_bytes(), message);
+  let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
+  scalar::to_bytes(&challenge)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_verify_public_decode_digest(public_key: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  point::ExtendedPoint::from_bytes(public_key)
+    .and_then(point::ExtendedPoint::to_bytes)
+    .unwrap_or_default()
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_verify_r_decode_digest(r_bytes: &[u8; PUBLIC_KEY_LENGTH]) -> [u8; PUBLIC_KEY_LENGTH] {
+  point::ExtendedPoint::from_bytes(r_bytes)
+    .filter(|point| !point.is_small_order())
+    .and_then(point::ExtendedPoint::to_bytes)
+    .unwrap_or_default()
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_verify_portable_double_scalar_digest(
+  s_canonical: &[u8; SECRET_KEY_LENGTH],
+  neg_challenge: &[u8; SECRET_KEY_LENGTH],
+  public_key: &[u8; PUBLIC_KEY_LENGTH],
+) -> [u8; PUBLIC_KEY_LENGTH] {
+  point::ExtendedPoint::from_bytes(public_key)
+    .map(|a_point| point::straus_wnaf_basepoint_vartime(s_canonical, neg_challenge, &a_point))
+    .and_then(point::ExtendedPoint::to_bytes)
+    .unwrap_or_default()
+}
+
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+#[doc(hidden)]
+#[must_use]
+pub fn diag_ed25519_verify_aarch64_asm_double_scalar_digest(
+  s_canonical: &[u8; SECRET_KEY_LENGTH],
+  neg_challenge: &[u8; SECRET_KEY_LENGTH],
+  public_key: &[u8; PUBLIC_KEY_LENGTH],
+) -> [u8; PUBLIC_KEY_LENGTH] {
+  aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge, public_key).unwrap_or_default()
 }
 
 #[cfg(all(

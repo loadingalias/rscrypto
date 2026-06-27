@@ -391,8 +391,23 @@ pub use auth::Kmac256;
 pub use auth::PhcError;
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
+#[cfg(all(
+  feature = "diag",
+  feature = "ed25519",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(feature = "portable-only"),
+  not(miri)
+))]
+pub use auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest;
 #[cfg(feature = "argon2")]
 pub use auth::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
+#[cfg(all(feature = "diag", feature = "ed25519"))]
+pub use auth::{
+  DiagEd25519VerifyScalars, diag_ed25519_verify_challenge_reduce_digest,
+  diag_ed25519_verify_portable_double_scalar_digest, diag_ed25519_verify_public_decode_digest,
+  diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
+};
 #[cfg(feature = "ecdsa-p256")]
 pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
