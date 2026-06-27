@@ -24,13 +24,10 @@ AGENTS.md
 
 # Junk
 private/tasks/*
-!private/tasks/asm.md
-!private/tasks/*-notebook.md
 docs/llvm-ppc64le-readvolatile-issue.md
 
 # Benchmark artifacts: publish only the curated overview.
 /benchmark_results/**
-!/benchmark_results/
 !/benchmark_results/OVERVIEW.md
 
 # Fuzzing
@@ -68,7 +65,4 @@ fuzz-packages/**/Cargo.lock
 # Testing
 proptest-regressions
 *.proptest-regressions
-.playwright-mcp/.cargo
 assets/distribution/
-rscrypto-visual-asset-system-desktop.png
-rscrypto-visual-asset-system-mobile.png

@@ -6,11 +6,38 @@ ssh-linux target="linux":
 ssh-linux-arch arch:
     @"$HOME/dev-machines/connect.sh" "{{ arch }}" rscrypto
 
+ssh-linux-icl:
+    @"$HOME/dev-machines/connect.sh" icl rscrypto
+
+ssh-linux-spr:
+    @"$HOME/dev-machines/connect.sh" spr rscrypto
+
+ssh-linux-g3:
+    @"$HOME/dev-machines/connect.sh" g3 rscrypto
+
+ssh-linux-g4:
+    @"$HOME/dev-machines/connect.sh" g4 rscrypto
+
+ssh-win:
+    @"$HOME/dev-machines/connect.sh" windows rscrypto
+
+ssh-create-linux target="linux" *args="":
+    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-30}" "$HOME/dev-machines/create.sh" {{ args }} "{{ target }}" rscrypto
+
+ssh-create-win *args="":
+    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-50}" "$HOME/dev-machines/create.sh" {{ args }} windows rscrypto
+
 ssh-create-linux-arch arch *args="":
-    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-30}" "$HOME/dev-machines/create.sh" {{ args }} "{{ arch }}"
+    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-60}" "$HOME/dev-machines/create.sh" {{ args }} "{{ arch }}" rscrypto
+
+ssh-create-linux-spr *args="":
+    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-60}" "$HOME/dev-machines/create.sh" {{ args }} spr rscrypto
+
+ssh-create-linux-g4 *args="":
+    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-60}" "$HOME/dev-machines/create.sh" {{ args }} g4 rscrypto
 
 ssh-join-linux-arch arch:
-    @"$HOME/dev-machines/join-tailscale.sh" "{{ arch }}"
+    @"$HOME/dev-machines/join-tailscale.sh" "{{ arch }}" rscrypto
 
 ssh-kill-linux target="linux":
     @"$HOME/dev-machines/kill.sh" "{{ target }}" rscrypto
@@ -18,14 +45,32 @@ ssh-kill-linux target="linux":
 ssh-kill-linux-arch arch:
     @"$HOME/dev-machines/kill.sh" "{{ arch }}" rscrypto
 
+ssh-kill-linux-spr:
+    @"$HOME/dev-machines/kill.sh" spr rscrypto
+
+ssh-kill-linux-g4:
+    @"$HOME/dev-machines/kill.sh" g4 rscrypto
+
+ssh-kill-win:
+    @"$HOME/dev-machines/kill.sh" windows rscrypto
+
 ssh-status:
-    @"$HOME/dev-machines/status.sh"
+    @"$HOME/dev-machines/status.sh" rscrypto
 
 ssh-bootstrap-linux target="linux":
     @"$HOME/dev-machines/bootstrap.sh" "{{ target }}" rscrypto
 
 ssh-bootstrap-linux-arch arch:
     @"$HOME/dev-machines/bootstrap.sh" "{{ arch }}" rscrypto
+
+ssh-bootstrap-linux-spr:
+    @"$HOME/dev-machines/bootstrap.sh" spr rscrypto
+
+ssh-bootstrap-linux-g4:
+    @"$HOME/dev-machines/bootstrap.sh" g4 rscrypto
+
+ssh-bootstrap-win:
+    @"$HOME/dev-machines/bootstrap.sh" windows rscrypto
 
 # Builds
 build:
