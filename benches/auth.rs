@@ -1846,6 +1846,52 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
 fn mlkem_keygen_matrix(_: &mut Criterion) {}
 
 #[cfg(feature = "diag")]
+fn mlkem_sampler_phases(c: &mut Criterion) {
+  use rscrypto::auth::mlkem::{
+    diag_mlkem1024_sampler_k4_row_sample_block_counts, diag_mlkem1024_sampler_k4_row_sample_counted_digest,
+    diag_mlkem1024_sampler_triple_parse_blocks_digest, diag_mlkem1024_sampler_triple_squeeze_blocks_digest,
+    diag_mlkem1024_sampler_triple_tail_block_digest, diag_mlkem1024_sampler_triple_xof_setup_digest,
+  };
+
+  print_auth_diag_once();
+
+  let rho = deterministic_bytes::<32>(0x42);
+  let counts = diag_mlkem1024_sampler_k4_row_sample_block_counts(&rho);
+  eprintln!("rscrypto-diag auth mlkem_sampler_k4_row_sample_blocks={counts:?}");
+
+  let mut g = c.benchmark_group("mlkem-sampler-phases");
+  g.bench_function("k=4/triple-xof-setup", |b| {
+    b.iter(|| black_box(diag_mlkem1024_sampler_triple_xof_setup_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/triple-squeeze-3-blocks", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_sampler_triple_squeeze_blocks_digest(
+        black_box(&rho),
+        black_box(3),
+      ))
+    })
+  });
+  g.bench_function("k=4/triple-parse-3-blocks", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_sampler_triple_parse_blocks_digest(
+        black_box(0x6100),
+        black_box(3),
+      ))
+    })
+  });
+  g.bench_function("k=4/triple-tail-block", |b| {
+    b.iter(|| black_box(diag_mlkem1024_sampler_triple_tail_block_digest(black_box(0x6200))))
+  });
+  g.bench_function("k=4/row-sample-counted", |b| {
+    b.iter(|| black_box(diag_mlkem1024_sampler_k4_row_sample_counted_digest(black_box(&rho))))
+  });
+  g.finish();
+}
+
+#[cfg(not(feature = "diag"))]
+fn mlkem_sampler_phases(_: &mut Criterion) {}
+
+#[cfg(feature = "diag")]
 fn mlkem_arithmetic(c: &mut Criterion) {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   use rscrypto::auth::mlkem::diag_mlkem_aarch64_ntt_neon_digest;
@@ -2194,6 +2240,7 @@ criterion_group!(
   mlkem_matrix_sample,
   mlkem_keygen_phases,
   mlkem_keygen_matrix,
+  mlkem_sampler_phases,
   mlkem_arithmetic,
   mlkem_decap_phases,
   mlkem_pke_phases

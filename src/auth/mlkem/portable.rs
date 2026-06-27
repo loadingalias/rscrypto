@@ -940,6 +940,184 @@ pub(super) fn diag_keygen_matrix_row_sample_k4_digest(rho: &[u8; SEED_BYTES]) ->
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
+  let mut digest = 0u16;
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      digest ^= diag_fold_keccak_state_prefix(state0, 0);
+      digest ^= diag_fold_keccak_state_prefix(state1, 1);
+      digest ^= diag_fold_keccak_state_prefix(state2, 2);
+    });
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    let mut buf0 = [0u8; SHAKE128_RATE_BYTES];
+    let mut buf1 = [0u8; SHAKE128_RATE_BYTES];
+    let mut buf2 = [0u8; SHAKE128_RATE_BYTES];
+    Shake128XofReader::squeeze_triple(
+      &mut reader0,
+      &mut reader1,
+      &mut reader2,
+      &mut buf0,
+      &mut buf1,
+      &mut buf2,
+    );
+    digest ^= diag_fold_bytes(&buf0);
+    digest ^= diag_fold_bytes(&buf1).rotate_left(1);
+    digest ^= diag_fold_bytes(&buf2).rotate_left(2);
+  }
+
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_squeeze_blocks_digest(rho: &[u8; SEED_BYTES], blocks: usize) -> u16 {
+  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
+  let mut digest = 0u16;
+
+  for block in 0..blocks {
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    {
+      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+        let domain = block as u16;
+        digest ^= diag_fold_keccak_state_prefix(state0, domain);
+        digest ^= diag_fold_keccak_state_prefix(state1, domain.wrapping_add(17));
+        digest ^= diag_fold_keccak_state_prefix(state2, domain.wrapping_add(34));
+      });
+    }
+
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    )))]
+    {
+      let mut buf0 = [0u8; SHAKE128_RATE_BYTES];
+      let mut buf1 = [0u8; SHAKE128_RATE_BYTES];
+      let mut buf2 = [0u8; SHAKE128_RATE_BYTES];
+      Shake128XofReader::squeeze_triple(
+        &mut reader0,
+        &mut reader1,
+        &mut reader2,
+        &mut buf0,
+        &mut buf1,
+        &mut buf2,
+      );
+      let domain = block as u16;
+      digest ^= diag_fold_bytes(&buf0).wrapping_add(domain);
+      digest ^= diag_fold_bytes(&buf1).wrapping_add(domain.wrapping_add(17));
+      digest ^= diag_fold_bytes(&buf2).wrapping_add(domain.wrapping_add(34));
+    }
+  }
+
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_parse_blocks_digest(seed: u16, blocks: usize) -> u16 {
+  let mut out0 = [0u16; N];
+  let mut out1 = [0u16; N];
+  let mut out2 = [0u16; N];
+  let mut filled = [0usize; 3];
+
+  for block in 0..blocks {
+    if filled.iter().all(|&n| n == N) {
+      break;
+    }
+    let bufs = diag_sampler_rate_blocks(seed, block as u16);
+    diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
+  }
+
+  let digest = diag_fold_poly(&out0)
+    ^ diag_fold_poly(&out1).rotate_left(1)
+    ^ diag_fold_poly(&out2).rotate_left(2)
+    ^ diag_fold_usize3(filled);
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_tail_block_digest(seed: u16) -> u16 {
+  let mut out0 = diag_poly(seed);
+  let mut out1 = diag_poly(seed.wrapping_add(1));
+  let mut out2 = diag_poly(seed.wrapping_add(2));
+  let mut filled = [220usize, 232usize, 244usize];
+  let bufs = diag_sampler_rate_blocks(seed.wrapping_add(3), 0);
+
+  diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
+
+  let digest = diag_fold_poly(&out0)
+    ^ diag_fold_poly(&out1).rotate_left(1)
+    ^ diag_fold_poly(&out2).rotate_left(2)
+    ^ diag_fold_usize3(filled);
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_k4_row_sample_counted_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+  let mut counts = [0u16; 16];
+
+  diag_sample_matrix_ntt_materialized_k4_rows_counted(rho, &mut row0, &mut row1, &mut row2, &mut row3, &mut counts);
+
+  let digest = diag_fold_polyvec(&row0)
+    ^ diag_fold_polyvec(&row1).rotate_left(1)
+    ^ diag_fold_polyvec(&row2).rotate_left(2)
+    ^ diag_fold_polyvec(&row3).rotate_left(3)
+    ^ diag_fold_u16s(&counts);
+  zeroize_polyvec(&mut row0);
+  zeroize_polyvec(&mut row1);
+  zeroize_polyvec(&mut row2);
+  zeroize_polyvec(&mut row3);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_k4_row_sample_block_counts(rho: &[u8; SEED_BYTES]) -> [u16; 16] {
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+  let mut counts = [0u16; 16];
+
+  diag_sample_matrix_ntt_materialized_k4_rows_counted(rho, &mut row0, &mut row1, &mut row2, &mut row3, &mut counts);
+
+  zeroize_polyvec(&mut row0);
+  zeroize_polyvec(&mut row1);
+  zeroize_polyvec(&mut row2);
+  zeroize_polyvec(&mut row3);
+  counts
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_keygen_matrix_row_multiply_default_input_digest<const K: usize>(
   matrix: &PolyMatrix<K>,
   rhs: &PolyVec<K>,
@@ -1118,6 +1296,95 @@ fn diag_fold_polyvec_mulcache<const K: usize>(cache: &PolyVecMulCache<K>) -> u16
     }
   }
   acc
+}
+
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(never)]
+fn diag_fold_keccak_state_prefix(state: &[u64; 25], domain: u16) -> u16 {
+  let mut acc = domain;
+  for (i, &word) in state[..8].iter().enumerate() {
+    acc ^= (word as u16).wrapping_mul((i as u16).wrapping_add(1));
+    acc ^= ((word >> 16) as u16).wrapping_mul((i as u16).wrapping_add(9));
+    acc ^= ((word >> 32) as u16).wrapping_mul((i as u16).wrapping_add(17));
+    acc ^= ((word >> 48) as u16).wrapping_mul((i as u16).wrapping_add(25));
+  }
+  acc
+}
+
+#[cfg(feature = "diag")]
+#[inline(never)]
+fn diag_fold_usize3(values: [usize; 3]) -> u16 {
+  let mut acc = 0u16;
+  for (i, value) in values.iter().copied().enumerate() {
+    acc ^= (value as u16).wrapping_mul((i as u16).wrapping_add(1));
+  }
+  acc
+}
+
+#[cfg(feature = "diag")]
+#[inline(never)]
+fn diag_fold_u16s(values: &[u16]) -> u16 {
+  let mut acc = 0u16;
+  for (i, &value) in values.iter().enumerate() {
+    acc ^= value.wrapping_mul((i as u16).wrapping_add(1));
+  }
+  acc
+}
+
+#[cfg(feature = "diag")]
+fn diag_sampler_rate_blocks(seed: u16, block: u16) -> [[u8; SHAKE128_RATE_BYTES]; 3] {
+  [
+    diag_sampler_rate_block(seed, block, 0),
+    diag_sampler_rate_block(seed, block, 1),
+    diag_sampler_rate_block(seed, block, 2),
+  ]
+}
+
+#[cfg(feature = "diag")]
+fn diag_sampler_rate_block(seed: u16, block: u16, lane: u16) -> [u8; SHAKE128_RATE_BYTES] {
+  let mut out = [0u8; SHAKE128_RATE_BYTES];
+  let mut next = u32::from(seed) ^ (u32::from(block) << 8) ^ (u32::from(lane) << 16);
+
+  for (i, byte) in out.iter_mut().enumerate() {
+    next = next
+      .wrapping_mul(1_664_525)
+      .wrapping_add(1_013_904_223)
+      .wrapping_add(i as u32);
+    *byte = (next >> 16) as u8;
+  }
+  out
+}
+
+#[cfg(feature = "diag")]
+fn diag_sample_ntt_triple_parse_block_from_bufs(
+  bufs: &[[u8; SHAKE128_RATE_BYTES]; 3],
+  out: [&mut Poly; 3],
+  filled: &mut [usize; 3],
+) {
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    // SAFETY: diagnostic parser dispatch over fixed local rate blocks because:
+    // 1. Each pointer names one initialized SHAKE128-sized local buffer.
+    // 2. The destination polynomials and filled counters are distinct.
+    // 3. The helper preserves the same bounded parser behavior as production.
+    unsafe {
+      sample_ntt_triple_block_neon_ptrs([bufs[0].as_ptr(), bufs[1].as_ptr(), bufs[2].as_ptr()], out, filled);
+    }
+  }
+
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    let [out0, out1, out2] = out;
+    sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
+    sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
+    sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
+  }
 }
 
 #[cfg(feature = "diag")]
@@ -2955,6 +3222,127 @@ fn sample_matrix_ntt_materialized_k4_rows(
     sample_ntt_triple_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
   }
   sample_ntt_into(rho, 3, 3, &mut row3[3]);
+}
+
+#[cfg(feature = "diag")]
+fn diag_sample_matrix_ntt_materialized_k4_rows_counted(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<4>,
+  row1: &mut PolyVec<4>,
+  row2: &mut PolyVec<4>,
+  row3: &mut PolyVec<4>,
+  counts: &mut [u16; 16],
+) {
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(row0);
+    diag_sample_ntt_triple_counted(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2], counts);
+  }
+  {
+    let [_, _, _, a0] = polyvec4_mut(row0);
+    let [a1, a2, _, _] = polyvec4_mut(row1);
+    diag_sample_ntt_triple_counted(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2], counts);
+  }
+  {
+    let [_, _, a0, a1] = polyvec4_mut(row1);
+    let [a2, _, _, _] = polyvec4_mut(row2);
+    diag_sample_ntt_triple_counted(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2], counts);
+  }
+  {
+    let [_, a0, a1, a2] = polyvec4_mut(row2);
+    diag_sample_ntt_triple_counted(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2], counts);
+  }
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(row3);
+    diag_sample_ntt_triple_counted(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2], counts);
+  }
+  counts[diag_sampler_count_index(3, 3)] = diag_sample_ntt_counted(rho, 3, 3, &mut row3[3]);
+}
+
+#[cfg(feature = "diag")]
+fn diag_sample_ntt_counted(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> u16 {
+  let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
+  let mut filled = 0usize;
+  let mut blocks = 0u16;
+  let mut buf = [0u8; SHAKE128_RATE_BYTES];
+
+  while filled < N {
+    reader.squeeze(&mut buf);
+    blocks = blocks.wrapping_add(1);
+    sample_ntt_block_public(&buf, out, &mut filled);
+  }
+  blocks
+}
+
+#[cfg(feature = "diag")]
+fn diag_sample_ntt_triple_counted(
+  rho: &[u8; SEED_BYTES],
+  lanes: [(u8, u8); 3],
+  out: [&mut Poly; 3],
+  counts: &mut [u16; 16],
+) {
+  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  let mut filled = [0usize; 3];
+  let mut blocks = [0u16; 3];
+  let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
+  let [out0, out1, out2] = out;
+
+  while filled[0] < N && filled[1] < N && filled[2] < N {
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    {
+      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+        sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
+      });
+    }
+
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    )))]
+    {
+      let [buf0, buf1, buf2] = &mut bufs;
+      Shake128XofReader::squeeze_triple(&mut reader0, &mut reader1, &mut reader2, buf0, buf1, buf2);
+      sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
+      sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
+      sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
+    }
+
+    blocks[0] = blocks[0].wrapping_add(1);
+    blocks[1] = blocks[1].wrapping_add(1);
+    blocks[2] = blocks[2].wrapping_add(1);
+  }
+
+  while filled[0] < N {
+    reader0.squeeze(&mut bufs[0]);
+    blocks[0] = blocks[0].wrapping_add(1);
+    sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
+  }
+  while filled[1] < N {
+    reader1.squeeze(&mut bufs[1]);
+    blocks[1] = blocks[1].wrapping_add(1);
+    sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
+  }
+  while filled[2] < N {
+    reader2.squeeze(&mut bufs[2]);
+    blocks[2] = blocks[2].wrapping_add(1);
+    sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
+  }
+
+  for (lane, block_count) in lanes.iter().copied().zip(blocks) {
+    counts[diag_sampler_count_index(lane.0, lane.1)] = block_count;
+  }
+}
+
+#[cfg(feature = "diag")]
+#[inline(always)]
+fn diag_sampler_count_index(j: u8, i: u8) -> usize {
+  usize::from(i).strict_mul(4).strict_add(usize::from(j))
 }
 
 #[inline(always)]

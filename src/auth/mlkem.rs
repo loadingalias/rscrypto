@@ -1268,6 +1268,60 @@ pub fn diag_mlkem1024_keygen_matrix_row_multiply_cached_core_input_digest(
 }
 
 #[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT XOF setup digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_xof_setup_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_sampler_triple_xof_setup_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT squeeze-only digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_squeeze_blocks_digest(rho: &[u8; ML_KEM_SEED_SIZE], blocks: usize) -> u16 {
+  portable::diag_sampler_triple_squeeze_blocks_digest(rho, blocks)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT parser-only digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_parse_blocks_digest(seed: u16, blocks: usize) -> u16 {
+  portable::diag_sampler_triple_parse_blocks_digest(seed, blocks)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT tail parser digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_tail_block_digest(seed: u16) -> u16 {
+  portable::diag_sampler_triple_tail_block_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only counted ML-KEM-1024 materialized K=4 row-sampling digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_k4_row_sample_counted_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_sampler_k4_row_sample_counted_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 materialized K=4 row-sampling rate-block counts.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_k4_row_sample_block_counts(rho: &[u8; ML_KEM_SEED_SIZE]) -> [u16; 16] {
+  portable::diag_sampler_k4_row_sample_block_counts(rho)
+}
+
+#[cfg(feature = "diag")]
 macro_rules! mlkem_diag_matrix_sample {
   ($scalar:ident, $pair:ident, $quad:ident, $k:expr, $doc_name:literal) => {
     #[doc = concat!("Benchmark-only scalar matrix sampling digest for ", $doc_name, ".")]
