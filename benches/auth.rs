@@ -1747,7 +1747,7 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     diag_mlkem768_keygen_matrix_accumulate_materialized_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest, diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest, diag_mlkem1024_keygen_matrix_row_multiply_digest,
-    diag_mlkem1024_keygen_matrix_row_sample_digest,
+    diag_mlkem1024_keygen_matrix_row_sample_digest, diag_mlkem1024_keygen_matrix_row_sample_triple_digest,
   };
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   use rscrypto::auth::mlkem::{
@@ -1802,6 +1802,9 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
   g.bench_function("k=4/materialized-row-sample", |b| {
     b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_digest(black_box(&rho))))
   });
+  g.bench_function("k=4/materialized-row-sample-triple", |b| {
+    b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_triple_digest(black_box(&rho))))
+  });
   g.bench_function("k=4/materialized-row-multiply-default-input", |b| {
     b.iter(|| {
       black_box(diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest(
@@ -1849,15 +1852,19 @@ fn mlkem_keygen_matrix(_: &mut Criterion) {}
 fn mlkem_sampler_phases(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
     diag_mlkem1024_sampler_k4_row_sample_block_counts, diag_mlkem1024_sampler_k4_row_sample_counted_digest,
+    diag_mlkem1024_sampler_triple_after_two_block_fills, diag_mlkem1024_sampler_triple_first_two_blocks_digest,
     diag_mlkem1024_sampler_triple_parse_blocks_digest, diag_mlkem1024_sampler_triple_squeeze_blocks_digest,
-    diag_mlkem1024_sampler_triple_tail_block_digest, diag_mlkem1024_sampler_triple_xof_setup_digest,
+    diag_mlkem1024_sampler_triple_tail_after_fill_digest, diag_mlkem1024_sampler_triple_tail_block_digest,
+    diag_mlkem1024_sampler_triple_xof_setup_digest,
   };
 
   print_auth_diag_once();
 
   let rho = deterministic_bytes::<32>(0x42);
   let counts = diag_mlkem1024_sampler_k4_row_sample_block_counts(&rho);
+  let fills_after_two = diag_mlkem1024_sampler_triple_after_two_block_fills(&rho);
   eprintln!("rscrypto-diag auth mlkem_sampler_k4_row_sample_blocks={counts:?}");
+  eprintln!("rscrypto-diag auth mlkem_sampler_triple_after_two_fills={fills_after_two:?}");
 
   let mut g = c.benchmark_group("mlkem-sampler-phases");
   g.bench_function("k=4/triple-xof-setup", |b| {
@@ -1876,6 +1883,17 @@ fn mlkem_sampler_phases(c: &mut Criterion) {
       black_box(diag_mlkem1024_sampler_triple_parse_blocks_digest(
         black_box(0x6100),
         black_box(3),
+      ))
+    })
+  });
+  g.bench_function("k=4/triple-first-two-blocks", |b| {
+    b.iter(|| black_box(diag_mlkem1024_sampler_triple_first_two_blocks_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/triple-third-tail-after-two", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_sampler_triple_tail_after_fill_digest(
+        black_box(0x6300),
+        black_box(fills_after_two),
       ))
     })
   });

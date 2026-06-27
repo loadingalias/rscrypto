@@ -1209,6 +1209,16 @@ pub fn diag_mlkem1024_keygen_matrix_row_sample_digest(rho: &[u8; ML_KEM_SEED_SIZ
 }
 
 #[cfg(feature = "diag")]
+/// Benchmark-only materialized K=4 keygen matrix row-sampling digest using the old triple-XOF
+/// schedule.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_sample_triple_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k4_triple_digest(rho)
+}
+
+#[cfg(feature = "diag")]
 /// Benchmark-only ML-KEM-1024 keygen matrix row-multiply digest using the default dot-product path.
 #[doc(hidden)]
 #[inline]
@@ -1292,6 +1302,33 @@ pub fn diag_mlkem1024_sampler_triple_squeeze_blocks_digest(rho: &[u8; ML_KEM_SEE
 #[must_use]
 pub fn diag_mlkem1024_sampler_triple_parse_blocks_digest(seed: u16, blocks: usize) -> u16 {
   portable::diag_sampler_triple_parse_blocks_digest(seed, blocks)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT first-two-block parser digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_first_two_blocks_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_sampler_triple_first_two_blocks_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT fill counts after two rate blocks.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_after_two_block_fills(rho: &[u8; ML_KEM_SEED_SIZE]) -> [u16; 3] {
+  portable::diag_sampler_triple_after_two_block_fills(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT tail parser digest using supplied fill counts.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_tail_after_fill_digest(seed: u16, filled: [u16; 3]) -> u16 {
+  portable::diag_sampler_triple_tail_after_fill_digest(seed, filled)
 }
 
 #[cfg(feature = "diag")]

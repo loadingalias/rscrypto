@@ -940,6 +940,24 @@ pub(super) fn diag_keygen_matrix_row_sample_k4_digest(rho: &[u8; SEED_BYTES]) ->
 }
 
 #[cfg(feature = "diag")]
+pub(super) fn diag_keygen_matrix_row_sample_k4_triple_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+
+  sample_matrix_ntt_materialized_k4_rows_triple(rho, &mut row0, &mut row1, &mut row2, &mut row3);
+
+  let digest =
+    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
+  zeroize_polyvec(&mut row0);
+  zeroize_polyvec(&mut row1);
+  zeroize_polyvec(&mut row2);
+  zeroize_polyvec(&mut row3);
+  digest
+}
+
+#[cfg(feature = "diag")]
 pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u16 {
   let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
   let mut digest = 0u16;
@@ -1047,6 +1065,65 @@ pub(super) fn diag_sampler_triple_parse_blocks_digest(seed: u16, blocks: usize) 
     let bufs = diag_sampler_rate_blocks(seed, block as u16);
     diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
   }
+
+  let digest = diag_fold_poly(&out0)
+    ^ diag_fold_poly(&out1).rotate_left(1)
+    ^ diag_fold_poly(&out2).rotate_left(2)
+    ^ diag_fold_usize3(filled);
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_first_two_blocks_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let mut out0 = [0u16; N];
+  let mut out1 = [0u16; N];
+  let mut out2 = [0u16; N];
+  let mut filled = [0usize; 3];
+
+  diag_sampler_triple_parse_seeded_blocks(rho, 2, [&mut out0, &mut out1, &mut out2], &mut filled);
+
+  let digest = diag_fold_poly(&out0)
+    ^ diag_fold_poly(&out1).rotate_left(1)
+    ^ diag_fold_poly(&out2).rotate_left(2)
+    ^ diag_fold_usize3(filled);
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_after_two_block_fills(rho: &[u8; SEED_BYTES]) -> [u16; 3] {
+  let mut out0 = [0u16; N];
+  let mut out1 = [0u16; N];
+  let mut out2 = [0u16; N];
+  let mut filled = [0usize; 3];
+
+  diag_sampler_triple_parse_seeded_blocks(rho, 2, [&mut out0, &mut out1, &mut out2], &mut filled);
+
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  debug_assert!(filled.iter().all(|&n| n <= N));
+  [filled[0] as u16, filled[1] as u16, filled[2] as u16]
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_tail_after_fill_digest(seed: u16, filled: [u16; 3]) -> u16 {
+  let mut out0 = diag_poly(seed);
+  let mut out1 = diag_poly(seed.wrapping_add(1));
+  let mut out2 = diag_poly(seed.wrapping_add(2));
+  let mut filled = [
+    usize::from(filled[0]).min(N),
+    usize::from(filled[1]).min(N),
+    usize::from(filled[2]).min(N),
+  ];
+  let bufs = diag_sampler_rate_blocks(seed.wrapping_add(5), 0);
+
+  diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
 
   let digest = diag_fold_poly(&out0)
     ^ diag_fold_poly(&out1).rotate_left(1)
@@ -1359,6 +1436,56 @@ fn diag_sampler_rate_block(seed: u16, block: u16, lane: u16) -> [u8; SHAKE128_RA
     *byte = (next >> 16) as u8;
   }
   out
+}
+
+#[cfg(feature = "diag")]
+fn diag_sampler_triple_parse_seeded_blocks(
+  rho: &[u8; SEED_BYTES],
+  blocks: usize,
+  out: [&mut Poly; 3],
+  filled: &mut [usize; 3],
+) {
+  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
+  let [out0, out1, out2] = out;
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
+
+  for _ in 0..blocks {
+    if filled.iter().all(|&n| n == N) {
+      break;
+    }
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    {
+      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+        sample_ntt_triple_state_block([state0, state1, state2], [&mut *out0, &mut *out1, &mut *out2], filled);
+      });
+    }
+
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    )))]
+    {
+      let [buf0, buf1, buf2] = &mut bufs;
+      Shake128XofReader::squeeze_triple(&mut reader0, &mut reader1, &mut reader2, buf0, buf1, buf2);
+      sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
+      sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
+      sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
+    }
+  }
 }
 
 #[cfg(feature = "diag")]
@@ -3193,6 +3320,33 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
 
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<4>,
+  row1: &mut PolyVec<4>,
+  row2: &mut PolyVec<4>,
+  row3: &mut PolyVec<4>,
+) {
+  {
+    let [a0, a1, a2, a3] = polyvec4_mut(row0);
+    sample_ntt_quad_into(rho, [(0, 0), (1, 0), (2, 0), (3, 0)], [a0, a1, a2, a3]);
+  }
+  {
+    let [a0, a1, a2, a3] = polyvec4_mut(row1);
+    sample_ntt_quad_into(rho, [(0, 1), (1, 1), (2, 1), (3, 1)], [a0, a1, a2, a3]);
+  }
+  {
+    let [a0, a1, a2, a3] = polyvec4_mut(row2);
+    sample_ntt_quad_into(rho, [(0, 2), (1, 2), (2, 2), (3, 2)], [a0, a1, a2, a3]);
+  }
+  {
+    let [a0, a1, a2, a3] = polyvec4_mut(row3);
+    sample_ntt_quad_into(rho, [(0, 3), (1, 3), (2, 3), (3, 3)], [a0, a1, a2, a3]);
+  }
+}
+
+#[cfg(feature = "diag")]
+#[inline(always)]
+fn sample_matrix_ntt_materialized_k4_rows_triple(
   rho: &[u8; SEED_BYTES],
   row0: &mut PolyVec<4>,
   row1: &mut PolyVec<4>,
@@ -8821,6 +8975,76 @@ mod tests {
     }
   }
 
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn sample_ntt_bounded_block_parser_matches_scalar_reference() {
+    fn scalar_parse_block(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
+      let mut n = *filled;
+      let mut offset = 0usize;
+      while n < N && offset.strict_add(2) < SHAKE128_RATE_BYTES {
+        let b0 = buf[offset];
+        let b1 = buf[offset.strict_add(1)];
+        let b2 = buf[offset.strict_add(2)];
+        let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+        let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+        if d1 < Q {
+          out[n] = d1;
+          n = n.strict_add(1);
+          if n == N {
+            break;
+          }
+        }
+        if d2 < Q {
+          out[n] = d2;
+          n = n.strict_add(1);
+        }
+        offset = offset.strict_add(3);
+      }
+      *filled = n;
+    }
+
+    let fill_offsets = [0usize, 1, 32, 144, 145, 200, 220, 255, 256];
+    for seed in 0usize..256 {
+      let mut buf = [0u8; SHAKE128_RATE_BYTES];
+      for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = (seed
+          .strict_mul(91)
+          .strict_add(i.strict_mul(19))
+          .strict_add((seed >> 2).strict_mul(23))
+          & 0xff) as u8;
+      }
+
+      for &start in &fill_offsets {
+        let mut expected = test_poly(seed.strict_add(start));
+        let mut actual = expected;
+        let mut expected_filled = start;
+        let mut actual_filled = start;
+
+        scalar_parse_block(&buf, &mut expected, &mut expected_filled);
+        // SAFETY: bounded parser equivalence test because:
+        // 1. `buf` is one full 168-byte SHAKE128 rate block.
+        // 2. `actual` is a fixed 256-coefficient destination and `actual_filled <= N`.
+        // 3. The scalar reference above defines the expected public SampleNTT prefix.
+        unsafe {
+          sample_ntt_block_asm_bounded(buf.as_ptr(), &mut actual, &mut actual_filled);
+        }
+
+        assert_eq!(actual_filled, expected_filled, "seed {seed}, start {start}");
+        assert_eq!(
+          &actual[..actual_filled],
+          &expected[..expected_filled],
+          "seed {seed}, start {start}"
+        );
+      }
+    }
+  }
+
   #[test]
   fn sample_ntt_quad_matches_scalar_samplers() {
     let mut rho = [0u8; SEED_BYTES];
@@ -8837,6 +9061,38 @@ mod tests {
 
     for (lane, &(j, i)) in lanes.iter().enumerate() {
       assert_eq!(actual[lane], sample_ntt(&rho, j, i), "lane {lane}");
+    }
+  }
+
+  #[cfg(feature = "diag")]
+  #[test]
+  fn materialized_k4_row_sampler_matches_triple_schedule() {
+    for seed in 0u8..64 {
+      let mut rho = [0u8; SEED_BYTES];
+      fill_diag_seed(&mut rho, seed);
+
+      let mut expected0 = [[0u16; N]; 4];
+      let mut expected1 = [[0u16; N]; 4];
+      let mut expected2 = [[0u16; N]; 4];
+      let mut expected3 = [[0u16; N]; 4];
+      sample_matrix_ntt_materialized_k4_rows_triple(
+        &rho,
+        &mut expected0,
+        &mut expected1,
+        &mut expected2,
+        &mut expected3,
+      );
+
+      let mut actual0 = [[0u16; N]; 4];
+      let mut actual1 = [[0u16; N]; 4];
+      let mut actual2 = [[0u16; N]; 4];
+      let mut actual3 = [[0u16; N]; 4];
+      sample_matrix_ntt_materialized_k4_rows(&rho, &mut actual0, &mut actual1, &mut actual2, &mut actual3);
+
+      assert_eq!(actual0, expected0, "row0 seed {seed}");
+      assert_eq!(actual1, expected1, "row1 seed {seed}");
+      assert_eq!(actual2, expected2, "row2 seed {seed}");
+      assert_eq!(actual3, expected3, "row3 seed {seed}");
     }
   }
 
