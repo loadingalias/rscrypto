@@ -554,6 +554,14 @@ pub(crate) trait Permuter: Copy {
     self.permute(state_b, len_hint);
   }
 
+  /// Permute three independent states in parallel.
+  /// Default: one paired permutation and one single-state permutation.
+  #[inline(always)]
+  fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
+    self.permute_x2(state_a, state_b, len_hint);
+    self.permute(state_c, len_hint);
+  }
+
   /// Permute four independent states in parallel.
   /// Default: two paired permutations.
   #[inline(always)]
@@ -721,6 +729,20 @@ impl Permuter for Aarch64Permuter {
   }
 
   #[inline(always)]
+  fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], _len_hint: usize) {
+    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
+    {
+      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+    }
+
+    #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"))))]
+    {
+      self.permute_x2(state_a, state_b, _len_hint);
+      self.permute(state_c, _len_hint);
+    }
+  }
+
+  #[inline(always)]
   fn permute_x4(
     self,
     state_a: &mut [u64; 25],
@@ -805,6 +827,18 @@ impl Permuter for Aarch64Permuter {
       self.permute(state_a, len_hint);
       self.permute(state_b, len_hint);
     }
+  }
+
+  #[inline(always)]
+  fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
+    #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
+    if self.has_sha3 {
+      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      return;
+    }
+
+    self.permute_x2(state_a, state_b, len_hint);
+    self.permute(state_c, len_hint);
   }
 
   #[inline(always)]
@@ -1429,6 +1463,39 @@ pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
 }
 
 #[cfg(feature = "ml-kem")]
+pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
+  ds: u8,
+  seed: &[u8; 32],
+  a: (u8, u8),
+  b: (u8, u8),
+  c: (u8, u8),
+) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
+  let permuter = PlatformPermuter::default();
+  let mut state_a = xof_seeded_32_2_state::<RATE>(ds, seed, a.0, a.1);
+  let mut state_b = xof_seeded_32_2_state::<RATE>(ds, seed, b.0, b.1);
+  let mut state_c = xof_seeded_32_2_state::<RATE>(ds, seed, c.0, c.1);
+  permuter.permute_x3(&mut state_a, &mut state_b, &mut state_c, 0);
+
+  (
+    KeccakXofImpl {
+      state: state_a,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_b,
+      pos: 0,
+      permuter,
+    },
+    KeccakXofImpl {
+      state: state_c,
+      pos: 0,
+      permuter,
+    },
+  )
+}
+
+#[cfg(feature = "ml-kem")]
 pub(crate) fn xof_seeded_32_2_quad<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
@@ -1676,6 +1743,70 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     }
   }
 
+  #[cfg(all(
+    feature = "ml-kem",
+    not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))
+  ))]
+  pub(crate) fn squeeze_triple_into(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    mut out_a: &mut [u8],
+    mut out_b: &mut [u8],
+    mut out_c: &mut [u8],
+  ) {
+    debug_assert_eq!(out_a.len(), out_b.len());
+    debug_assert_eq!(out_a.len(), out_c.len());
+    debug_assert_eq!(a.pos, b.pos);
+    debug_assert_eq!(a.pos, c.pos);
+
+    if a.pos == 0 && out_a.len() <= RATE {
+      Self::copy_state_prefix(&a.state, out_a);
+      Self::copy_state_prefix(&b.state, out_b);
+      Self::copy_state_prefix(&c.state, out_c);
+      a.pos = out_a.len();
+      b.pos = out_b.len();
+      c.pos = out_c.len();
+      return;
+    }
+
+    while !out_a.is_empty() {
+      if a.pos == RATE {
+        let permuter = a.permuter;
+        permuter.permute_x3(&mut a.state, &mut b.state, &mut c.state, 0);
+        a.pos = 0;
+        b.pos = 0;
+        c.pos = 0;
+      }
+
+      if a.pos == 0 && out_a.len() <= RATE {
+        Self::copy_state_prefix(&a.state, out_a);
+        Self::copy_state_prefix(&b.state, out_b);
+        Self::copy_state_prefix(&c.state, out_c);
+        a.pos = out_a.len();
+        b.pos = out_b.len();
+        c.pos = out_c.len();
+        return;
+      }
+
+      let take = core::cmp::min(RATE - a.pos, out_a.len());
+      Self::copy_state_bytes(&a.state, a.pos, &mut out_a[..take]);
+      Self::copy_state_bytes(&b.state, b.pos, &mut out_b[..take]);
+      Self::copy_state_bytes(&c.state, c.pos, &mut out_c[..take]);
+      a.pos = a.pos.strict_add(take);
+      b.pos = b.pos.strict_add(take);
+      c.pos = c.pos.strict_add(take);
+      out_a = &mut out_a[take..];
+      out_b = &mut out_b[take..];
+      out_c = &mut out_c[take..];
+    }
+  }
+
   #[cfg(feature = "ml-kem")]
   #[allow(clippy::too_many_arguments)]
   pub(crate) fn squeeze_quad_into(
@@ -1779,5 +1910,37 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     b.pos = RATE;
     c.pos = RATE;
     d.pos = RATE;
+  }
+
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  pub(crate) fn with_triple_rate_block(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
+  ) {
+    debug_assert_eq!(a.pos, b.pos);
+    debug_assert_eq!(a.pos, c.pos);
+    debug_assert!(a.pos == 0 || a.pos == RATE);
+
+    if a.pos == RATE {
+      let permuter = a.permuter;
+      permuter.permute_x3(&mut a.state, &mut b.state, &mut c.state, 0);
+      a.pos = 0;
+      b.pos = 0;
+      c.pos = 0;
+    }
+
+    f(&a.state, &b.state, &c.state);
+
+    a.pos = RATE;
+    b.pos = RATE;
+    c.pos = RATE;
   }
 }

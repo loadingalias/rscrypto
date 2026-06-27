@@ -10,6 +10,7 @@ use super::keccak::{
   xof_seeded_32_1 as keccak_xof_seeded_32_1, xof_seeded_32_1_pair as keccak_xof_seeded_32_1_pair,
   xof_seeded_32_1_quad as keccak_xof_seeded_32_1_quad, xof_seeded_32_2 as keccak_xof_seeded_32_2,
   xof_seeded_32_2_pair as keccak_xof_seeded_32_2_pair, xof_seeded_32_2_quad as keccak_xof_seeded_32_2_quad,
+  xof_seeded_32_2_triple as keccak_xof_seeded_32_2_triple,
 };
 use crate::traits::{Digest, Xof};
 
@@ -413,6 +414,22 @@ impl Shake128 {
 
   #[inline]
   #[cfg(feature = "ml-kem")]
+  pub(crate) fn xof_seeded_32_2_triple(
+    seed: &[u8; 32],
+    a: (u8, u8),
+    b: (u8, u8),
+    c: (u8, u8),
+  ) -> (Shake128XofReader, Shake128XofReader, Shake128XofReader) {
+    let (a, b, c) = keccak_xof_seeded_32_2_triple::<168>(0x1F, seed, a, b, c);
+    (
+      Shake128XofReader { inner: a },
+      Shake128XofReader { inner: b },
+      Shake128XofReader { inner: c },
+    )
+  }
+
+  #[inline]
+  #[cfg(feature = "ml-kem")]
   pub(crate) fn xof_seeded_32_2_quad(
     seed: &[u8; 32],
     a: (u8, u8),
@@ -485,6 +502,27 @@ impl Shake128XofReader {
   #[inline]
   #[cfg(all(
     feature = "ml-kem",
+    not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))
+  ))]
+  pub(crate) fn squeeze_triple(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    out_a: &mut [u8],
+    out_b: &mut [u8],
+    out_c: &mut [u8],
+  ) {
+    PublicKeccakXof::<168>::squeeze_triple_into(&mut a.inner, &mut b.inner, &mut c.inner, out_a, out_b, out_c);
+  }
+
+  #[inline]
+  #[cfg(all(
+    feature = "ml-kem",
     any(
       test,
       not(all(
@@ -534,6 +572,23 @@ impl Shake128XofReader {
     f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25], &[u64; 25]),
   ) {
     PublicKeccakXof::<168>::with_quad_rate_block(&mut a.inner, &mut b.inner, &mut c.inner, &mut d.inner, f);
+  }
+
+  #[inline]
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  pub(crate) fn with_triple_rate_block(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
+  ) {
+    PublicKeccakXof::<168>::with_triple_rate_block(&mut a.inner, &mut b.inner, &mut c.inner, f);
   }
 }
 

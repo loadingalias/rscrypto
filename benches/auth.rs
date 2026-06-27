@@ -1570,8 +1570,9 @@ fn mlkem_matrix_sample(c: &mut Criterion) {
     diag_mlkem512_matrix_sample_pair_digest, diag_mlkem512_matrix_sample_quad_digest,
     diag_mlkem512_matrix_sample_scalar_digest, diag_mlkem768_matrix_sample_pair_digest,
     diag_mlkem768_matrix_sample_quad_digest, diag_mlkem768_matrix_sample_scalar_digest,
-    diag_mlkem1024_matrix_sample_pair_digest, diag_mlkem1024_matrix_sample_quad_digest,
-    diag_mlkem1024_matrix_sample_scalar_digest,
+    diag_mlkem768_matrix_sample_triple_digest, diag_mlkem1024_matrix_sample_pair_digest,
+    diag_mlkem1024_matrix_sample_quad_digest, diag_mlkem1024_matrix_sample_scalar_digest,
+    diag_mlkem1024_matrix_sample_triple_digest,
   };
 
   let rho = deterministic_bytes::<32>(0x42);
@@ -1592,6 +1593,9 @@ fn mlkem_matrix_sample(c: &mut Criterion) {
   g.bench_function("k=3/pair", |b| {
     b.iter(|| black_box(diag_mlkem768_matrix_sample_pair_digest(black_box(&rho))))
   });
+  g.bench_function("k=3/triple", |b| {
+    b.iter(|| black_box(diag_mlkem768_matrix_sample_triple_digest(black_box(&rho))))
+  });
   g.bench_function("k=3/quad", |b| {
     b.iter(|| black_box(diag_mlkem768_matrix_sample_quad_digest(black_box(&rho))))
   });
@@ -1600,6 +1604,9 @@ fn mlkem_matrix_sample(c: &mut Criterion) {
   });
   g.bench_function("k=4/pair", |b| {
     b.iter(|| black_box(diag_mlkem1024_matrix_sample_pair_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/triple", |b| {
+    b.iter(|| black_box(diag_mlkem1024_matrix_sample_triple_digest(black_box(&rho))))
   });
   g.bench_function("k=4/quad", |b| {
     b.iter(|| black_box(diag_mlkem1024_matrix_sample_quad_digest(black_box(&rho))))

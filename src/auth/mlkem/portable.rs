@@ -103,6 +103,10 @@ const SAMPLE_NTT_ACC_CHUNK_COEFFS: usize = 16;
 type Poly = [u16; N];
 type PolyVec<const K: usize> = [Poly; K];
 type PolyMatrix<const K: usize> = [PolyVec<K>; K];
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+type PolyMulCache = [u16; N / 2];
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+type PolyVecMulCache<const K: usize> = [PolyMulCache; K];
 
 #[derive(Clone)]
 pub(super) struct PreparedEncapsulationArithmetic<const K: usize> {
@@ -939,6 +943,51 @@ pub(super) fn diag_matrix_sample_scalar_digest<const K: usize>(rho: &[u8; SEED_B
 pub(super) fn diag_matrix_sample_pair_digest<const K: usize>(rho: &[u8; SEED_BYTES]) -> u16 {
   let mut digest = 0u16;
   let mut entry = 0usize;
+  while entry.strict_add(1) < K.strict_mul(K) {
+    let (j0, i0) = matrix_sample_coord::<K>(entry);
+    let (j1, i1) = matrix_sample_coord::<K>(entry.strict_add(1));
+    let mut poly0 = [0u16; N];
+    let mut poly1 = [0u16; N];
+    sample_ntt_pair_into(rho, j0, i0, j1, i1, &mut poly0, &mut poly1);
+    digest ^= diag_fold_poly(&poly0);
+    digest ^= diag_fold_poly(&poly1);
+    zeroize_poly(&mut poly0);
+    zeroize_poly(&mut poly1);
+    entry = entry.strict_add(2);
+  }
+
+  if entry < K.strict_mul(K) {
+    let (j, i) = matrix_sample_coord::<K>(entry);
+    let mut poly = [0u16; N];
+    sample_ntt_into(rho, j, i, &mut poly);
+    digest ^= diag_fold_poly(&poly);
+    zeroize_poly(&mut poly);
+  }
+
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_matrix_sample_triple_digest<const K: usize>(rho: &[u8; SEED_BYTES]) -> u16 {
+  let mut digest = 0u16;
+  let mut entry = 0usize;
+  while entry.strict_add(2) < K.strict_mul(K) {
+    let coord0 = matrix_sample_coord::<K>(entry);
+    let coord1 = matrix_sample_coord::<K>(entry.strict_add(1));
+    let coord2 = matrix_sample_coord::<K>(entry.strict_add(2));
+    let mut poly0 = [0u16; N];
+    let mut poly1 = [0u16; N];
+    let mut poly2 = [0u16; N];
+    sample_ntt_triple_into(rho, [coord0, coord1, coord2], [&mut poly0, &mut poly1, &mut poly2]);
+    digest ^= diag_fold_poly(&poly0);
+    digest ^= diag_fold_poly(&poly1);
+    digest ^= diag_fold_poly(&poly2);
+    zeroize_poly(&mut poly0);
+    zeroize_poly(&mut poly1);
+    zeroize_poly(&mut poly2);
+    entry = entry.strict_add(3);
+  }
+
   while entry.strict_add(1) < K.strict_mul(K) {
     let (j0, i0) = matrix_sample_coord::<K>(entry);
     let (j1, i1) = matrix_sample_coord::<K>(entry.strict_add(1));
@@ -2531,16 +2580,30 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k2<const K: usize>(
   debug_assert_eq!(K, 2);
 
   let mut row0 = [[0u16; N]; 2];
-  let (row0_left, row0_right) = row0.split_at_mut(1);
-  sample_ntt_pair_into(rho, 0, 0, 1, 0, &mut row0_left[0], &mut row0_right[0]);
-  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&row0[0], &row0[1]], [&rhs[0], &rhs[1]]);
-  zeroize_polyvec(&mut row0);
-
   let mut row1 = [[0u16; N]; 2];
-  let (row1_left, row1_right) = row1.split_at_mut(1);
-  sample_ntt_pair_into(rho, 0, 1, 1, 1, &mut row1_left[0], &mut row1_right[0]);
-  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&row1[0], &row1[1]], [&rhs[0], &rhs[1]]);
-  zeroize_polyvec(&mut row1);
+  {
+    let [row0_a0, row0_a1] = polyvec2_mut(&mut row0);
+    let [row1_a0, row1_a1] = polyvec2_mut(&mut row1);
+    sample_ntt_four_materialized_into(
+      rho,
+      [(0, 0), (1, 0), (0, 1), (1, 1)],
+      [row0_a0, row0_a1, row1_a0, row1_a1],
+    );
+  }
+
+  let rhs = polyvec_as_k2(rhs);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    let mut rhs_cache = polyvec_mulcache(rhs);
+    multiply_ntts_accumulate_cached(&mut acc[0], &row0, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[1], &row1, rhs, &rhs_cache);
+    zeroize_polyvec_mulcache(&mut rhs_cache);
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    multiply_ntts_accumulate(&mut acc[0], &row0, rhs);
+    multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
+  }
 }
 
 #[inline(always)]
@@ -2552,16 +2615,30 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k2_transpose<const K: usize>(
   debug_assert_eq!(K, 2);
 
   let mut row0 = [[0u16; N]; 2];
-  let (row0_left, row0_right) = row0.split_at_mut(1);
-  sample_ntt_pair_into(rho, 0, 0, 0, 1, &mut row0_left[0], &mut row0_right[0]);
-  multiply_ntts_accumulate_k2_refs(&mut acc[0], [&row0[0], &row0[1]], [&rhs[0], &rhs[1]]);
-  zeroize_polyvec(&mut row0);
-
   let mut row1 = [[0u16; N]; 2];
-  let (row1_left, row1_right) = row1.split_at_mut(1);
-  sample_ntt_pair_into(rho, 1, 0, 1, 1, &mut row1_left[0], &mut row1_right[0]);
-  multiply_ntts_accumulate_k2_refs(&mut acc[1], [&row1[0], &row1[1]], [&rhs[0], &rhs[1]]);
-  zeroize_polyvec(&mut row1);
+  {
+    let [row0_a0, row0_a1] = polyvec2_mut(&mut row0);
+    let [row1_a0, row1_a1] = polyvec2_mut(&mut row1);
+    sample_ntt_four_materialized_into(
+      rho,
+      [(0, 0), (0, 1), (1, 0), (1, 1)],
+      [row0_a0, row0_a1, row1_a0, row1_a1],
+    );
+  }
+
+  let rhs = polyvec_as_k2(rhs);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    let mut rhs_cache = polyvec_mulcache(rhs);
+    multiply_ntts_accumulate_cached(&mut acc[0], &row0, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[1], &row1, rhs, &rhs_cache);
+    zeroize_polyvec_mulcache(&mut rhs_cache);
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    multiply_ntts_accumulate(&mut acc[0], &row0, rhs);
+    multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
+  }
 }
 
 #[inline(always)]
@@ -2572,29 +2649,40 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3<const K: usize>(
 ) {
   debug_assert_eq!(K, 3);
 
-  let mut a0 = [0u16; N];
-  let mut a1 = [0u16; N];
-  let mut a2 = [0u16; N];
-  let mut a3 = [0u16; N];
-  sample_ntt_four_materialized_into(
-    rho,
-    [(0, 0), (1, 0), (2, 0), (0, 1)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row1_a0 = a3;
+  let mut row0 = [[0u16; N]; 3];
+  let mut row1 = [[0u16; N]; 3];
+  let mut row2 = [[0u16; N]; 3];
 
-  sample_ntt_four_materialized_into(
-    rho,
-    [(1, 1), (2, 1), (0, 2), (1, 2)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row2_a0 = a2;
-  let row2_a1 = a3;
+  {
+    let [a0, a1, a2] = polyvec3_mut(&mut row0);
+    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
+  }
 
-  sample_ntt_into(rho, 2, 2, &mut a0);
-  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
+  {
+    let [a0, a1, a2] = polyvec3_mut(&mut row1);
+    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
+  }
+
+  {
+    let [a0, a1, a2] = polyvec3_mut(&mut row2);
+    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
+  }
+
+  let rhs = polyvec_as_k3(rhs);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    let mut rhs_cache = polyvec_mulcache(rhs);
+    multiply_ntts_accumulate_cached(&mut acc[0], &row0, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[1], &row1, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[2], &row2, rhs, &rhs_cache);
+    zeroize_polyvec_mulcache(&mut rhs_cache);
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    multiply_ntts_accumulate(&mut acc[0], &row0, rhs);
+    multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
+    multiply_ntts_accumulate(&mut acc[2], &row2, rhs);
+  }
 }
 
 #[inline(always)]
@@ -2605,29 +2693,40 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3_transpose<const K: usize>(
 ) {
   debug_assert_eq!(K, 3);
 
-  let mut a0 = [0u16; N];
-  let mut a1 = [0u16; N];
-  let mut a2 = [0u16; N];
-  let mut a3 = [0u16; N];
-  sample_ntt_four_materialized_into(
-    rho,
-    [(0, 0), (0, 1), (0, 2), (1, 0)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[0], [&a0, &a1, &a2], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row1_a0 = a3;
+  let mut row0 = [[0u16; N]; 3];
+  let mut row1 = [[0u16; N]; 3];
+  let mut row2 = [[0u16; N]; 3];
 
-  sample_ntt_four_materialized_into(
-    rho,
-    [(1, 1), (1, 2), (2, 0), (2, 1)],
-    [&mut a0, &mut a1, &mut a2, &mut a3],
-  );
-  multiply_ntts_accumulate_k3_refs(&mut acc[1], [&row1_a0, &a0, &a1], [&rhs[0], &rhs[1], &rhs[2]]);
-  let row2_a0 = a2;
-  let row2_a1 = a3;
+  {
+    let [a0, a1, a2] = polyvec3_mut(&mut row0);
+    sample_ntt_triple_into(rho, [(0, 0), (0, 1), (0, 2)], [a0, a1, a2]);
+  }
 
-  sample_ntt_into(rho, 2, 2, &mut a0);
-  multiply_ntts_accumulate_k3_refs(&mut acc[2], [&row2_a0, &row2_a1, &a0], [&rhs[0], &rhs[1], &rhs[2]]);
+  {
+    let [a0, a1, a2] = polyvec3_mut(&mut row1);
+    sample_ntt_triple_into(rho, [(1, 0), (1, 1), (1, 2)], [a0, a1, a2]);
+  }
+
+  {
+    let [a0, a1, a2] = polyvec3_mut(&mut row2);
+    sample_ntt_triple_into(rho, [(2, 0), (2, 1), (2, 2)], [a0, a1, a2]);
+  }
+
+  let rhs = polyvec_as_k3(rhs);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    let mut rhs_cache = polyvec_mulcache(rhs);
+    multiply_ntts_accumulate_cached(&mut acc[0], &row0, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[1], &row1, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[2], &row2, rhs, &rhs_cache);
+    zeroize_polyvec_mulcache(&mut rhs_cache);
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    multiply_ntts_accumulate(&mut acc[0], &row0, rhs);
+    multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
+    multiply_ntts_accumulate(&mut acc[2], &row2, rhs);
+  }
 }
 
 #[inline(always)]
@@ -2638,25 +2737,56 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4<const K: usize>(
 ) {
   debug_assert_eq!(K, 4);
 
-  macro_rules! accumulate_row {
-    ($dst:literal, $coords:expr) => {{
-      let mut a0 = [0u16; N];
-      let mut a1 = [0u16; N];
-      let mut a2 = [0u16; N];
-      let mut a3 = [0u16; N];
-      sample_ntt_four_materialized_into(rho, $coords, [&mut a0, &mut a1, &mut a2, &mut a3]);
-      multiply_ntts_accumulate_k4_refs(
-        &mut acc[$dst],
-        [&a0, &a1, &a2, &a3],
-        [&rhs[0], &rhs[1], &rhs[2], &rhs[3]],
-      );
-    }};
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(&mut row0);
+    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
+  }
+  {
+    let [_, _, _, a0] = polyvec4_mut(&mut row0);
+    let [a1, a2, _, _] = polyvec4_mut(&mut row1);
+    sample_ntt_triple_into(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2]);
+  }
+  {
+    let [_, _, a0, a1] = polyvec4_mut(&mut row1);
+    let [a2, _, _, _] = polyvec4_mut(&mut row2);
+    sample_ntt_triple_into(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2]);
+  }
+  {
+    let [_, a0, a1, a2] = polyvec4_mut(&mut row2);
+    sample_ntt_triple_into(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2]);
+  }
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(&mut row3);
+    sample_ntt_triple_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
+  }
+  sample_ntt_into(rho, 3, 3, &mut row3[3]);
+
+  let rhs = polyvec_as_k4(rhs);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  let mut rhs_cache = polyvec_mulcache(rhs);
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    multiply_ntts_accumulate_cached(&mut acc[0], &row0, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[1], &row1, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[2], &row2, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[3], &row3, rhs, &rhs_cache);
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    multiply_ntts_accumulate(&mut acc[0], &row0, rhs);
+    multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
+    multiply_ntts_accumulate(&mut acc[2], &row2, rhs);
+    multiply_ntts_accumulate(&mut acc[3], &row3, rhs);
   }
 
-  accumulate_row!(0, [(0, 0), (1, 0), (2, 0), (3, 0)]);
-  accumulate_row!(1, [(0, 1), (1, 1), (2, 1), (3, 1)]);
-  accumulate_row!(2, [(0, 2), (1, 2), (2, 2), (3, 2)]);
-  accumulate_row!(3, [(0, 3), (1, 3), (2, 3), (3, 3)]);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  zeroize_polyvec_mulcache(&mut rhs_cache);
 }
 
 #[inline(always)]
@@ -2667,25 +2797,56 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4_transpose<const K: usize>(
 ) {
   debug_assert_eq!(K, 4);
 
-  macro_rules! accumulate_row {
-    ($dst:literal, $coords:expr) => {{
-      let mut a0 = [0u16; N];
-      let mut a1 = [0u16; N];
-      let mut a2 = [0u16; N];
-      let mut a3 = [0u16; N];
-      sample_ntt_four_materialized_into(rho, $coords, [&mut a0, &mut a1, &mut a2, &mut a3]);
-      multiply_ntts_accumulate_k4_refs(
-        &mut acc[$dst],
-        [&a0, &a1, &a2, &a3],
-        [&rhs[0], &rhs[1], &rhs[2], &rhs[3]],
-      );
-    }};
+  let mut row0 = [[0u16; N]; 4];
+  let mut row1 = [[0u16; N]; 4];
+  let mut row2 = [[0u16; N]; 4];
+  let mut row3 = [[0u16; N]; 4];
+
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(&mut row0);
+    sample_ntt_triple_into(rho, [(0, 0), (0, 1), (0, 2)], [a0, a1, a2]);
+  }
+  {
+    let [_, _, _, a0] = polyvec4_mut(&mut row0);
+    let [a1, a2, _, _] = polyvec4_mut(&mut row1);
+    sample_ntt_triple_into(rho, [(0, 3), (1, 0), (1, 1)], [a0, a1, a2]);
+  }
+  {
+    let [_, _, a0, a1] = polyvec4_mut(&mut row1);
+    let [a2, _, _, _] = polyvec4_mut(&mut row2);
+    sample_ntt_triple_into(rho, [(1, 2), (1, 3), (2, 0)], [a0, a1, a2]);
+  }
+  {
+    let [_, a0, a1, a2] = polyvec4_mut(&mut row2);
+    sample_ntt_triple_into(rho, [(2, 1), (2, 2), (2, 3)], [a0, a1, a2]);
+  }
+  {
+    let [a0, a1, a2, _] = polyvec4_mut(&mut row3);
+    sample_ntt_triple_into(rho, [(3, 0), (3, 1), (3, 2)], [a0, a1, a2]);
+  }
+  sample_ntt_into(rho, 3, 3, &mut row3[3]);
+
+  let rhs = polyvec_as_k4(rhs);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  let mut rhs_cache = polyvec_mulcache(rhs);
+
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  {
+    multiply_ntts_accumulate_cached(&mut acc[0], &row0, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[1], &row1, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[2], &row2, rhs, &rhs_cache);
+    multiply_ntts_accumulate_cached(&mut acc[3], &row3, rhs, &rhs_cache);
+  }
+  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
+  {
+    multiply_ntts_accumulate(&mut acc[0], &row0, rhs);
+    multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
+    multiply_ntts_accumulate(&mut acc[2], &row2, rhs);
+    multiply_ntts_accumulate(&mut acc[3], &row3, rhs);
   }
 
-  accumulate_row!(0, [(0, 0), (0, 1), (0, 2), (0, 3)]);
-  accumulate_row!(1, [(1, 0), (1, 1), (1, 2), (1, 3)]);
-  accumulate_row!(2, [(2, 0), (2, 1), (2, 2), (2, 3)]);
-  accumulate_row!(3, [(3, 0), (3, 1), (3, 2), (3, 3)]);
+  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+  zeroize_polyvec_mulcache(&mut rhs_cache);
 }
 
 #[inline]
@@ -2713,7 +2874,7 @@ fn use_fused_matrix_accumulate<const K: usize>() -> bool {
 
   #[cfg(target_arch = "aarch64")]
   {
-    K == 4
+    cfg!(not(target_os = "linux")) && K == 4
   }
 
   #[cfg(target_arch = "s390x")]
@@ -2724,6 +2885,96 @@ fn use_fused_matrix_accumulate<const K: usize>() -> bool {
   #[cfg(not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64")))]
   {
     true
+  }
+}
+
+#[inline(always)]
+fn polyvec_as_k2<const K: usize>(polyvec: &PolyVec<K>) -> &PolyVec<2> {
+  assert_eq!(K, 2);
+  // SAFETY: checked fixed-size PolyVec view because:
+  // 1. The `assert_eq!(K, 2)` above proves the source array has exactly two `Poly` elements.
+  // 2. `PolyVec<K>` and `PolyVec<2>` are both arrays of `Poly` with identical layout when `K == 2`.
+  // 3. The returned shared reference cannot outlive the source shared reference.
+  unsafe { &*polyvec.as_ptr().cast::<PolyVec<2>>() }
+}
+
+#[inline(always)]
+fn polyvec_as_k3<const K: usize>(polyvec: &PolyVec<K>) -> &PolyVec<3> {
+  assert_eq!(K, 3);
+  // SAFETY: checked fixed-size PolyVec view because:
+  // 1. The `assert_eq!(K, 3)` above proves the source array has exactly three `Poly` elements.
+  // 2. `PolyVec<K>` and `PolyVec<3>` are both arrays of `Poly` with identical layout when `K == 3`.
+  // 3. The returned shared reference cannot outlive the source shared reference.
+  unsafe { &*polyvec.as_ptr().cast::<PolyVec<3>>() }
+}
+
+#[inline(always)]
+fn polyvec_as_k4<const K: usize>(polyvec: &PolyVec<K>) -> &PolyVec<4> {
+  assert_eq!(K, 4);
+  // SAFETY: checked fixed-size PolyVec view because:
+  // 1. The `assert_eq!(K, 4)` above proves the source array has exactly four `Poly` elements.
+  // 2. `PolyVec<K>` and `PolyVec<4>` are both arrays of `Poly` with identical layout when `K == 4`.
+  // 3. The returned shared reference cannot outlive the source shared reference.
+  unsafe { &*polyvec.as_ptr().cast::<PolyVec<4>>() }
+}
+
+#[inline(always)]
+fn polyvec2_mut(row: &mut PolyVec<2>) -> [&mut Poly; 2] {
+  let (a0, rest) = row.split_at_mut(1);
+  let (a1, _) = rest.split_at_mut(1);
+  [&mut a0[0], &mut a1[0]]
+}
+
+#[inline(always)]
+fn polyvec3_mut(row: &mut PolyVec<3>) -> [&mut Poly; 3] {
+  let (a0, rest) = row.split_at_mut(1);
+  let (a1, rest) = rest.split_at_mut(1);
+  let (a2, _) = rest.split_at_mut(1);
+  [&mut a0[0], &mut a1[0], &mut a2[0]]
+}
+
+#[inline(always)]
+fn polyvec4_mut(row: &mut PolyVec<4>) -> [&mut Poly; 4] {
+  let (a0, rest) = row.split_at_mut(1);
+  let (a1, rest) = rest.split_at_mut(1);
+  let (a2, rest) = rest.split_at_mut(1);
+  let (a3, _) = rest.split_at_mut(1);
+  [&mut a0[0], &mut a1[0], &mut a2[0], &mut a3[0]]
+}
+
+#[inline(always)]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+fn polyvec_mulcache<const K: usize>(polyvec: &PolyVec<K>) -> PolyVecMulCache<K> {
+  let mut cache = [[0u16; N / 2]; K];
+  for (poly, cache_poly) in polyvec.iter().zip(cache.iter_mut()) {
+    // SAFETY: aarch64 NEON mulcache computation because:
+    // 1. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+    // 2. `poly` and `cache_poly` are fixed-size, non-overlapping polynomial/cache arrays.
+    // 3. The kernel walks fixed public offsets and uses only arithmetic on coefficient values.
+    // 4. No branch or memory address depends on secret coefficient values.
+    unsafe {
+      poly_mulcache_compute_neon(poly, cache_poly);
+    }
+  }
+  cache
+}
+
+#[inline(always)]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+fn multiply_ntts_accumulate_cached<const K: usize>(
+  acc: &mut Poly,
+  a: &PolyVec<K>,
+  b: &PolyVec<K>,
+  b_cache: &PolyVecMulCache<K>,
+) {
+  // SAFETY: aarch64 NEON cached dot-product dispatch because:
+  // 1. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
+  // 2. `a`, `b`, and `b_cache` are matching fixed-size K-lane polynomial/cache vectors.
+  // 3. `b_cache` was computed from `b` with the public ML-KEM gamma table.
+  // 4. The kernel walks fixed public offsets; no branch or memory address depends on coefficient
+  //    values.
+  unsafe {
+    multiply_ntts_accumulate_cached_neon(acc, a, b, b_cache);
   }
 }
 
@@ -2740,6 +2991,11 @@ fn sample_ntt_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) {
 fn sample_ntt_pair_into(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8, out0: &mut Poly, out1: &mut Poly) {
   let (reader0, reader1) = Shake128::xof_seeded_32_2_pair(rho, (j0, i0), (j1, i1));
   sample_ntt_pair_from_xof_into(reader0, reader1, out0, out1);
+}
+
+fn sample_ntt_triple_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
+  let (reader0, reader1, reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  sample_ntt_triple_from_xof_into([reader0, reader1, reader2], out);
 }
 
 fn sample_ntt_quad_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
@@ -2798,7 +3054,7 @@ fn sample_ntt_from_xof_into(mut reader: impl Xof, out: &mut Poly) {
 
   while filled < N {
     reader.squeeze(&mut buf);
-    sample_ntt_block(&buf, out, &mut filled);
+    sample_ntt_block_public(&buf, out, &mut filled);
   }
 }
 
@@ -2819,11 +3075,41 @@ fn sample_ntt_pair_from_xof_into(
   }
   while filled0 < N {
     reader0.squeeze(&mut buf0);
-    sample_ntt_block(&buf0, out0, &mut filled0);
+    sample_ntt_block_public(&buf0, out0, &mut filled0);
   }
   while filled1 < N {
     reader1.squeeze(&mut buf1);
-    sample_ntt_block(&buf1, out1, &mut filled1);
+    sample_ntt_block_public(&buf1, out1, &mut filled1);
+  }
+}
+
+#[inline(always)]
+fn sample_ntt_block_public(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
+  #[cfg(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    // SAFETY: aarch64 SampleNTT block dispatch for public matrix samples because:
+    // 1. `buf` is one fixed SHAKE128 rate block.
+    // 2. The helper caps writes to the polynomial's remaining capacity.
+    // 3. NEON/Advanced SIMD is baseline for supported aarch64 macOS and Linux targets.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe {
+      sample_ntt_block_asm_bounded(buf.as_ptr(), out, filled);
+    }
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    any(target_os = "macos", target_os = "linux"),
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    sample_ntt_block(buf, out, filled);
   }
 }
 
@@ -3036,6 +3322,47 @@ unsafe fn sample_ntt_extract_16_candidates_neon(input: *const u8, out: &mut [u16
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// `rate_ptr` must point to one readable SHAKE128 rate block containing at least
+/// `SHAKE128_RATE_BYTES` bytes. The caller must guarantee that the active CPU supports NEON.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+unsafe fn sample_ntt_block_asm_bounded(rate_ptr: *const u8, out: &mut Poly, filled: &mut usize) {
+  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
+  let remaining = N.strict_sub(*filled);
+  if remaining == 0 {
+    return;
+  }
+
+  let mut accepted = core::mem::MaybeUninit::<[u16; MAX_CANDIDATES]>::uninit();
+  let accepted_ptr = accepted.as_mut_ptr().cast::<u16>();
+
+  // SAFETY: aarch64 compact rejection parser into bounded scratch because:
+  // 1. `rate_ptr` names one full readable 168-byte SHAKE128 rate block.
+  // 2. `accepted_ptr` points to `MAX_CANDIDATES` writable u16 slots, enough for every candidate a
+  //    single rate block can produce.
+  // 3. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  let accepted_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(accepted_ptr, rate_ptr) };
+  debug_assert!(accepted_len <= MAX_CANDIDATES);
+
+  let take = accepted_len.min(MAX_CANDIDATES).min(remaining);
+  if take == 0 {
+    return;
+  }
+
+  // SAFETY: copy accepted public samples into the partially-filled destination because:
+  // 1. `take <= remaining`, so `*filled..*filled + take` is inside the fixed 256-coefficient output.
+  // 2. The first `take` coefficients in `accepted_ptr` were initialized by the rejection parser.
+  // 3. The stack scratch array cannot overlap the caller-owned polynomial destination.
+  unsafe {
+    core::ptr::copy_nonoverlapping(accepted_ptr, out.as_mut_ptr().add(*filled), take);
+  }
+  *filled = (*filled).strict_add(take);
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
 fn sample_ntt_pair_block_neon(
   buf0: &[u8; SHAKE128_RATE_BYTES],
   out0: &mut Poly,
@@ -3047,8 +3374,23 @@ fn sample_ntt_pair_block_neon(
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
   if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
-    sample_ntt_block(buf0, out0, filled0);
-    sample_ntt_block(buf1, out1, filled1);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+      // SAFETY: bounded aarch64 SampleNTT tail parsing because:
+      // 1. `buf0` and `buf1` are fixed full SHAKE128 rate blocks.
+      // 2. The helper caps writes to each polynomial's remaining capacity.
+      // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
+      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+      unsafe {
+        sample_ntt_block_asm_bounded(buf0.as_ptr(), out0, filled0);
+        sample_ntt_block_asm_bounded(buf1.as_ptr(), out1, filled1);
+      }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+      sample_ntt_block(buf0, out0, filled0);
+      sample_ntt_block(buf1, out1, filled1);
+    }
     return;
   }
 
@@ -3133,6 +3475,55 @@ fn sample_ntt_pair_block_neon(
   }
 }
 
+fn sample_ntt_triple_from_xof_into(mut readers: [Shake128XofReader; 3], out: [&mut Poly; 3]) {
+  let mut filled = [0usize; 3];
+  let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
+  let [out0, out1, out2] = out;
+
+  while filled[0] < N && filled[1] < N && filled[2] < N {
+    let [reader0, reader1, reader2] = &mut readers;
+
+    #[cfg(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))]
+    {
+      Shake128XofReader::with_triple_rate_block(reader0, reader1, reader2, |state0, state1, state2| {
+        sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
+      });
+    }
+
+    #[cfg(not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    )))]
+    {
+      let [buf0, buf1, buf2] = &mut bufs;
+      Shake128XofReader::squeeze_triple(reader0, reader1, reader2, buf0, buf1, buf2);
+      sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
+      sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
+      sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
+    }
+  }
+
+  while filled[0] < N {
+    readers[0].squeeze(&mut bufs[0]);
+    sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
+  }
+  while filled[1] < N {
+    readers[1].squeeze(&mut bufs[1]);
+    sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
+  }
+  while filled[2] < N {
+    readers[2].squeeze(&mut bufs[2]);
+    sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
+  }
+}
+
 fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut Poly; 4]) {
   let mut filled = [0usize; 4];
   let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 4];
@@ -3168,19 +3559,19 @@ fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut
 
   while filled[0] < N {
     readers[0].squeeze(&mut bufs[0]);
-    sample_ntt_block(&bufs[0], out0, &mut filled[0]);
+    sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
   }
   while filled[1] < N {
     readers[1].squeeze(&mut bufs[1]);
-    sample_ntt_block(&bufs[1], out1, &mut filled[1]);
+    sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
   }
   while filled[2] < N {
     readers[2].squeeze(&mut bufs[2]);
-    sample_ntt_block(&bufs[2], out2, &mut filled[2]);
+    sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
   }
   while filled[3] < N {
     readers[3].squeeze(&mut bufs[3]);
-    sample_ntt_block(&bufs[3], out3, &mut filled[3]);
+    sample_ntt_block_public(&bufs[3], out3, &mut filled[3]);
   }
 }
 
@@ -3745,6 +4136,32 @@ fn sample_ntt_quad_block_neon(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut 
   not(feature = "portable-only")
 ))]
 #[inline(always)]
+fn sample_ntt_triple_state_block(states: [&[u64; 25]; 3], out: [&mut Poly; 3], filled: &mut [usize; 3]) {
+  let [out0, out1, out2] = out;
+  let rate_ptrs = [
+    states[0].as_ptr().cast::<u8>(),
+    states[1].as_ptr().cast::<u8>(),
+    states[2].as_ptr().cast::<u8>(),
+  ];
+  // SAFETY: Pointer-backed triple parsing over Keccak state memory because:
+  // 1. This path is little-endian aarch64 only, so the in-memory `u64` state layout is the XOF byte
+  //    order.
+  // 2. Each Keccak state has 25 u64 lanes (200 bytes), which covers the first 168-byte SHAKE128 rate
+  //    block.
+  // 3. The helper reads only offsets `< SHAKE128_RATE_BYTES` and keeps bounded output fallback
+  //    semantics.
+  unsafe {
+    sample_ntt_triple_block_neon_ptrs(rate_ptrs, [out0, out1, out2], filled);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
 fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
   let [out0, out1, out2, out3] = out;
   let rate_ptrs = [
@@ -3767,6 +4184,84 @@ fn sample_ntt_quad_state_block(states: [&[u64; 25]; 4], out: [&mut Poly; 4], fil
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// Each pointer in `rate_ptrs` must name one readable SHAKE128 rate block. The caller must
+/// guarantee that the active CPU supports NEON. Each output polynomial and filled counter must be
+/// distinct.
+unsafe fn sample_ntt_triple_block_neon_ptrs(rate_ptrs: [*const u8; 3], out: [&mut Poly; 3], filled: &mut [usize; 3]) {
+  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
+  let [out0, out1, out2] = out;
+  if N.strict_sub(filled[0]) < MAX_CANDIDATES
+    || N.strict_sub(filled[1]) < MAX_CANDIDATES
+    || N.strict_sub(filled[2]) < MAX_CANDIDATES
+  {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+      // SAFETY: bounded aarch64 SampleNTT tail parsing because:
+      // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+      // 2. The helper caps writes to each polynomial's remaining capacity.
+      // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+      unsafe {
+        sample_ntt_block_asm_bounded(rate_ptrs[0], out0, &mut filled[0]);
+        sample_ntt_block_asm_bounded(rate_ptrs[1], out1, &mut filled[1]);
+        sample_ntt_block_asm_bounded(rate_ptrs[2], out2, &mut filled[2]);
+      }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+      // SAFETY: Bounded pointer-backed scalar parsing because:
+      // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+      // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
+      // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+      // 4. Rejection branches depend only on public matrix-A samples, not secret material.
+      unsafe {
+        sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
+        sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
+        sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
+      }
+    }
+    return;
+  }
+
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  {
+    let n0 = filled[0];
+    let n1 = filled[1];
+    let n2 = filled[2];
+    // SAFETY: aarch64 compact assembly SampleNTT block parsing because:
+    // 1. Each pointer names one full 168-byte SHAKE128 rate block.
+    // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
+    // 3. Each destination polynomial is a distinct mutable borrow.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    let (count0, count1, count2) = unsafe {
+      (
+        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), rate_ptrs[0]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), rate_ptrs[1]),
+        aarch64::sample_ntt_rej_uniform_block_asm(out2.as_mut_ptr().add(n2), rate_ptrs[2]),
+      )
+    };
+    *filled = [n0.strict_add(count0), n1.strict_add(count1), n2.strict_add(count2)];
+  }
+
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  {
+    // SAFETY: scalar pointer parsing after capacity preflight because:
+    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+    // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
+    // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+    unsafe {
+      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
+      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
+      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
 unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
@@ -3776,16 +4271,33 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
     || N.strict_sub(filled[2]) < MAX_CANDIDATES
     || N.strict_sub(filled[3]) < MAX_CANDIDATES
   {
-    // SAFETY: Bounded pointer-backed scalar parsing because:
-    // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
-    // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
-    // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
-    // 4. Rejection branches depend only on public matrix-A samples, not secret material.
-    unsafe {
-      sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
-      sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
-      sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
-      sample_ntt_block_ptr(rate_ptrs[3], out3, &mut filled[3]);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+      // SAFETY: bounded aarch64 SampleNTT tail parsing because:
+      // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+      // 2. The helper caps writes to each polynomial's remaining capacity.
+      // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+      unsafe {
+        sample_ntt_block_asm_bounded(rate_ptrs[0], out0, &mut filled[0]);
+        sample_ntt_block_asm_bounded(rate_ptrs[1], out1, &mut filled[1]);
+        sample_ntt_block_asm_bounded(rate_ptrs[2], out2, &mut filled[2]);
+        sample_ntt_block_asm_bounded(rate_ptrs[3], out3, &mut filled[3]);
+      }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+      // SAFETY: Bounded pointer-backed scalar parsing because:
+      // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
+      // 2. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
+      // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
+      // 4. Rejection branches depend only on public matrix-A samples, not secret material.
+      unsafe {
+        sample_ntt_block_ptr(rate_ptrs[0], out0, &mut filled[0]);
+        sample_ntt_block_ptr(rate_ptrs[1], out1, &mut filled[1]);
+        sample_ntt_block_ptr(rate_ptrs[2], out2, &mut filled[2]);
+        sample_ntt_block_ptr(rate_ptrs[3], out3, &mut filled[3]);
+      }
     }
     return;
   }
@@ -3920,7 +4432,12 @@ unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut 
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  not(any(target_os = "macos", target_os = "linux")),
+  not(miri),
+  not(feature = "portable-only")
+))]
 /// # Safety
 ///
 /// `rate_ptr` must point to one readable SHAKE128 rate block containing at least
@@ -3957,6 +4474,12 @@ unsafe fn sample_ntt_block_ptr(rate_ptr: *const u8, out: &mut Poly, filled: &mut
   *filled = n;
 }
 
+#[cfg(not(all(
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux"),
+  not(miri),
+  not(feature = "portable-only")
+)))]
 #[inline]
 fn sample_ntt_block(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
   let mut n = *filled;
@@ -4529,120 +5052,6 @@ fn multiply_ntts_add_assign(acc: &mut Poly, a: &Poly, b: &Poly) {
   }
 
   multiply_ntts_add_assign_scalar(acc, a, b);
-}
-
-#[inline(always)]
-fn multiply_ntts_accumulate_k2_refs(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    // SAFETY: aarch64 NEON K=2 dot-product dispatch because:
-    // 1. This function only compiles on aarch64 Linux with the portable-only escape hatch disabled.
-    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-    // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
-    //    contract.
-    // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
-    unsafe {
-      multiply_ntts_accumulate_k2_neon(acc, a, b);
-    }
-  }
-
-  #[cfg(not(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(miri),
-    not(feature = "portable-only")
-  )))]
-  {
-    multiply_ntts_add_assign(acc, a[0], b[0]);
-    multiply_ntts_add_assign(acc, a[1], b[1]);
-  }
-}
-
-#[inline(always)]
-fn multiply_ntts_accumulate_k3_refs(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  {
-    // SAFETY: aarch64 NEON K=3 dot-product dispatch because:
-    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-    // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
-    //    contract.
-    // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
-    unsafe {
-      multiply_ntts_accumulate_k3_neon(acc, a, b);
-    }
-  }
-
-  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-  {
-    #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
-    {
-      if use_s390x_vector_arithmetic() {
-        // SAFETY: s390x z/Vector k=3 dot-product dispatch because:
-        // 1. Runtime capability detection confirmed the z/Vector facility before entering the
-        //    target-feature function.
-        // 2. Each input reference is a fixed 256-coefficient polynomial matching the kernel contract.
-        // 3. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-        // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
-        //    fixed-work shift/add multiplication rather than native scalar multiply.
-        unsafe {
-          return s390x::multiply_ntts_accumulate_k3_vector(acc, a, b);
-        }
-      }
-    }
-
-    multiply_ntts_add_assign(acc, a[0], b[0]);
-    multiply_ntts_add_assign(acc, a[1], b[1]);
-    multiply_ntts_add_assign(acc, a[2], b[2]);
-  }
-}
-
-#[inline(always)]
-fn multiply_ntts_accumulate_k4_refs(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  {
-    // SAFETY: aarch64 NEON K=4 dot-product dispatch because:
-    // 1. This function only compiles on aarch64 with the portable-only escape hatch disabled.
-    // 2. NEON/Advanced SIMD is baseline for supported aarch64 rscrypto targets.
-    // 3. `acc` and every input reference is a fixed 256-coefficient polynomial matching the kernel
-    //    contract.
-    // 4. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-    // 5. The kernel's memory access schedule is fixed and independent of secret coefficient values.
-    unsafe {
-      multiply_ntts_accumulate_k4_neon(acc, a, b);
-    }
-  }
-
-  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-  {
-    #[cfg(all(target_arch = "s390x", not(miri), not(feature = "portable-only")))]
-    {
-      if use_s390x_vector_arithmetic() {
-        // SAFETY: s390x z/Vector k=4 dot-product dispatch because:
-        // 1. Runtime capability detection confirmed the z/Vector facility before entering the
-        //    target-feature function.
-        // 2. Each input reference is a fixed 256-coefficient polynomial matching the kernel contract.
-        // 3. The borrow checker guarantees `acc` is not aliased by the read-only input polynomials.
-        // 4. The kernel's memory access schedule depends only on public ML-KEM dimensions and uses
-        //    fixed-work shift/add multiplication rather than native scalar multiply.
-        unsafe {
-          return s390x::multiply_ntts_accumulate_k4_vector(acc, a, b);
-        }
-      }
-    }
-
-    multiply_ntts_add_assign(acc, a[0], b[0]);
-    multiply_ntts_add_assign(acc, a[1], b[1]);
-    multiply_ntts_add_assign(acc, a[2], b[2]);
-    multiply_ntts_add_assign(acc, a[3], b[3]);
-  }
 }
 
 #[inline]
@@ -5241,6 +5650,108 @@ fn zip_u16x4_pair_lanes_neon(lower: uint16x4_t, upper: uint16x4_t) -> uint16x8_t
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+fn poly_mulcache_compute_neon(poly: &Poly, cache: &mut PolyMulCache) {
+  for i in (0..(N / 2)).step_by(8) {
+    let coeff_offset = i.strict_mul(2);
+
+    // SAFETY: fixed-size NEON mulcache chunk because:
+    // 1. `i` advances by 8 while `i < N / 2`, so `i..i + 8` is in-bounds for the 128-entry cache.
+    // 2. `coeff_offset == i * 2`, so `coeff_offset..coeff_offset + 16` is in-bounds for the
+    //    256-coefficient polynomial.
+    // 3. The gamma load uses the same public `i..i + 8` range as the cache chunk.
+    // 4. The function is gated by `#[target_feature(enable = "neon")]`, and callers prove NEON
+    //    availability.
+    // 5. The memory access schedule is fixed and independent of secret coefficient values.
+    unsafe {
+      let b_pair = vld2q_u16(poly.as_ptr().add(coeff_offset));
+      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
+      let product = mul_i16x8_to_i32x4_neon(vreinterpretq_s16_u16(b_pair.1), gamma);
+      vst1q_u16(
+        cache.as_mut_ptr().add(i),
+        signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(product.0, product.1)),
+      );
+    }
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn base_multiply_cached_8_neon(
+  a: &Poly,
+  b: &Poly,
+  b_cache: &PolyMulCache,
+  coeff_offset: usize,
+) -> (uint16x8_t, uint16x8_t) {
+  debug_assert_eq!(coeff_offset % 16, 0);
+  debug_assert!(coeff_offset.strict_add(16) <= N);
+  let cache_offset = coeff_offset / 2;
+
+  // SAFETY: fixed-size cached NEON base multiply because:
+  // 1. `coeff_offset + 16 <= N` is checked above for both fixed 256-coefficient polynomials.
+  // 2. `cache_offset == coeff_offset / 2`, so `cache_offset..cache_offset + 8` is in-bounds for the
+  //    128-entry mulcache matching this coefficient chunk.
+  // 3. Each load touches fixed public offsets; no address depends on coefficient values.
+  // 4. The function is gated by `#[target_feature(enable = "neon")]`, and callers prove NEON
+  //    availability.
+  unsafe {
+    let a_pair = vld2q_u16(a.as_ptr().add(coeff_offset));
+    let b_pair = vld2q_u16(b.as_ptr().add(coeff_offset));
+    let cached_b1_gamma = vreinterpretq_s16_u16(vld1q_u16(b_cache.as_ptr().add(cache_offset)));
+
+    let a0 = vreinterpretq_s16_u16(a_pair.0);
+    let a1 = vreinterpretq_s16_u16(a_pair.1);
+    let b0 = vreinterpretq_s16_u16(b_pair.0);
+    let b1 = vreinterpretq_s16_u16(b_pair.1);
+
+    let a0b0 = mul_i16x8_to_i32x4_neon(a0, b0);
+    let a1_cached = mul_i16x8_to_i32x4_neon(a1, cached_b1_gamma);
+    let c0 = signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(
+      vaddq_s32(a0b0.0, a1_cached.0),
+      vaddq_s32(a0b0.1, a1_cached.1),
+    ));
+
+    let a0b1 = mul_i16x8_to_i32x4_neon(a0, b1);
+    let a1b0 = mul_i16x8_to_i32x4_neon(a1, b0);
+    let c1 = signed_to_mod_q_s16x8(montgomery_reduce_i32x8_neon(
+      vaddq_s32(a0b1.0, a1b0.0),
+      vaddq_s32(a0b1.1, a1b0.1),
+    ));
+
+    (c0, c1)
+  }
+}
+
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "neon")]
+fn multiply_ntts_accumulate_cached_neon<const K: usize>(
+  acc: &mut Poly,
+  a: &PolyVec<K>,
+  b: &PolyVec<K>,
+  b_cache: &PolyVecMulCache<K>,
+) {
+  debug_assert!(K > 0);
+
+  for i in (0..GAMMAS_MONT.len()).step_by(8) {
+    let coeff_offset = i.strict_mul(2);
+    let (mut c0, mut c1) = base_multiply_cached_8_neon(&a[0], &b[0], &b_cache[0], coeff_offset);
+
+    for lane in 1..K {
+      let (p0, p1) = base_multiply_cached_8_neon(&a[lane], &b[lane], &b_cache[lane], coeff_offset);
+      c0 = add_mod_u16x8(c0, p0);
+      c1 = add_mod_u16x8(c1, p1);
+    }
+
+    store_accumulated_8_neon(acc, coeff_offset, c0, c1);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(target_os = "macos")),
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "neon")]
 fn base_multiply_8_neon(a: &Poly, b: &Poly, gamma: int16x8_t, coeff_offset: usize) -> (uint16x8_t, uint16x8_t) {
   debug_assert_eq!(coeff_offset % 16, 0);
   debug_assert!(coeff_offset.strict_add(16) <= N);
@@ -5326,32 +5837,10 @@ fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
 
 #[cfg(all(
   target_arch = "aarch64",
-  target_os = "linux",
+  any(test, not(any(target_os = "macos", target_os = "linux"))),
   not(miri),
   not(feature = "portable-only")
 ))]
-#[target_feature(enable = "neon")]
-fn multiply_ntts_accumulate_k2_neon(acc: &mut Poly, a: [&Poly; 2], b: [&Poly; 2]) {
-  for i in (0..GAMMAS_MONT.len()).step_by(8) {
-    let coeff_offset = i.strict_mul(2);
-
-    // SAFETY: fixed-size gamma load because:
-    // 1. `i` advances by 8 while `i < GAMMAS_MONT.len() == 128`.
-    // 2. `i..i + 8` stays inside the public gamma table.
-    // 3. The function is gated by `#[target_feature(enable = "neon")]`, and the caller proves NEON
-    //    availability.
-    unsafe {
-      let gamma = vld1q_s16(GAMMAS_MONT.as_ptr().add(i));
-      let (mut c0, mut c1) = base_multiply_8_neon(a[0], b[0], gamma, coeff_offset);
-      let (p0, p1) = base_multiply_8_neon(a[1], b[1], gamma, coeff_offset);
-      c0 = add_mod_u16x8(c0, p0);
-      c1 = add_mod_u16x8(c1, p1);
-      store_accumulated_8_neon(acc, coeff_offset, c0, c1);
-    }
-  }
-}
-
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 fn multiply_ntts_accumulate_k3_neon(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
@@ -5376,7 +5865,12 @@ fn multiply_ntts_accumulate_k3_neon(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]
   }
 }
 
-#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[cfg(all(
+  target_arch = "aarch64",
+  any(test, not(any(target_os = "macos", target_os = "linux"))),
+  not(miri),
+  not(feature = "portable-only")
+))]
 #[target_feature(enable = "neon")]
 fn multiply_ntts_accumulate_k4_neon(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
@@ -7291,6 +7785,19 @@ fn zeroize_polyvec<const K: usize>(polyvec: &mut PolyVec<K>) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
+#[inline]
+fn zeroize_polyvec_mulcache<const K: usize>(cache: &mut PolyVecMulCache<K>) {
+  let len = K.strict_mul(N / 2).strict_mul(core::mem::size_of::<u16>());
+  // SAFETY: ML-KEM mulcache byte view because:
+  // 1. `PolyVecMulCache<K>` is an array of `K` contiguous `[u16; 128]` cache entries.
+  // 2. `len` covers exactly the initialized `u16` cache storage in bytes.
+  // 3. `u16` has no padding and a zero byte pattern is the integer value zero.
+  let bytes = unsafe { core::slice::from_raw_parts_mut(cache.as_mut_ptr().cast::<u8>(), len) };
+  ct::zeroize_no_fence(bytes);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
 #[inline]
 fn zeroize_poly_no_fence(poly: &mut Poly) {
   let len = N.strict_mul(core::mem::size_of::<u16>());
@@ -7649,6 +8156,25 @@ mod tests {
 
     assert_eq!(left, sample_ntt(&rho, 0, 1));
     assert_eq!(right, sample_ntt(&rho, 2, 1));
+  }
+
+  #[test]
+  fn sample_ntt_triple_matches_scalar_samplers() {
+    let mut rho = [0u8; SEED_BYTES];
+    for (i, byte) in rho.iter_mut().enumerate() {
+      *byte = (i.strict_mul(43).strict_add(17)) as u8;
+    }
+
+    let lanes = [(0, 0), (1, 2), (2, 1)];
+    let mut actual = [[0u16; N]; 3];
+    {
+      let [out0, out1, out2] = &mut actual;
+      sample_ntt_triple_into(&rho, lanes, [out0, out1, out2]);
+    }
+
+    for (lane, &(j, i)) in lanes.iter().enumerate() {
+      assert_eq!(actual[lane], sample_ntt(&rho, j, i), "lane {lane}");
+    }
   }
 
   #[cfg(all(

@@ -1172,6 +1172,19 @@ macro_rules! mlkem_diag_matrix_sample {
 }
 
 #[cfg(feature = "diag")]
+macro_rules! mlkem_diag_matrix_sample_triple {
+  ($triple:ident, $k:expr, $doc_name:literal) => {
+    #[doc = concat!("Benchmark-only triple-XOF matrix sampling digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $triple(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_matrix_sample_triple_digest::<$k>(rho)
+    }
+  };
+}
+
+#[cfg(feature = "diag")]
 mlkem_diag_matrix_sample!(
   diag_mlkem512_matrix_sample_scalar_digest,
   diag_mlkem512_matrix_sample_pair_digest,
@@ -1188,6 +1201,8 @@ mlkem_diag_matrix_sample!(
   "ML-KEM-768"
 );
 #[cfg(feature = "diag")]
+mlkem_diag_matrix_sample_triple!(diag_mlkem768_matrix_sample_triple_digest, 3, "ML-KEM-768");
+#[cfg(feature = "diag")]
 mlkem_diag_matrix_sample!(
   diag_mlkem1024_matrix_sample_scalar_digest,
   diag_mlkem1024_matrix_sample_pair_digest,
@@ -1195,6 +1210,8 @@ mlkem_diag_matrix_sample!(
   4,
   "ML-KEM-1024"
 );
+#[cfg(feature = "diag")]
+mlkem_diag_matrix_sample_triple!(diag_mlkem1024_matrix_sample_triple_digest, 4, "ML-KEM-1024");
 
 #[cfg(feature = "diag")]
 #[doc(hidden)]

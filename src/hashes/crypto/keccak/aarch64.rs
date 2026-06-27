@@ -692,8 +692,11 @@ pub(crate) fn keccakf_aarch64_sha3_x2(state_a: &mut [u64; 25], state_b: &mut [u6
 #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25]) {
-  // SAFETY: NEON + SHA3 CE intrinsics are available via this function's
-  // #[target_feature(enable = "sha3")] attribute.
+  // SAFETY: NEON + SHA3 CE intrinsics are available because:
+  // 1. This function has `#[target_feature(enable = "sha3")]`.
+  // 2. `state_a`, `state_b`, and `state_c` are fixed 25-lane Keccak states, so every lane access is
+  //    statically in bounds.
+  // 3. The x2 vector lanes carry independent states A and B, while state C is kept in scalar lanes.
   unsafe {
     let mut a0 = combine_lanes(state_a[0], state_b[0]);
     let mut a1 = combine_lanes(state_a[1], state_b[1]);
@@ -844,7 +847,9 @@ pub(crate) fn keccakf_aarch64_sha3_x3_hybrid(
   state_b: &mut [u64; 25],
   state_c: &mut [u64; 25],
 ) {
-  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
+  // SAFETY: Calling the SHA3-targeted hybrid is valid because:
+  // 1. Production callers either compile under `target_feature = "sha3"` or check `aarch64::SHA3`.
+  // 2. The kernel test returns early when `aarch64::SHA3` is not present.
   unsafe { keccakf_sha3_x3_hybrid_impl(state_a, state_b, state_c) }
 }
 
