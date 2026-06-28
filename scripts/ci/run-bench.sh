@@ -191,6 +191,10 @@ DEFAULT_AEAD_ALGOS=(
   "ascon-aead128"
 )
 
+DIAG_AEAD_ALGOS=(
+  "aead-diag"
+)
+
 ALL_KNOWN_ALGOS=(
   "${DEFAULT_CHECKSUM_ALGOS[@]}"
   "${DEFAULT_HASH_ALGOS[@]}"
@@ -373,8 +377,17 @@ bench_features_for_target() {
     auth) echo "parallel,hmac,hkdf,pbkdf2,ecdsa,ed25519,x25519,ml-kem,diag" ;;
     password_hashing) echo "parallel,argon2,scrypt,phc-strings" ;;
     rsa) echo "parallel,rsa,diag" ;;
+    aead_diag) echo "parallel,sha2,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead,diag" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead" ;;
     *) echo "parallel" ;;
+  esac
+}
+
+bench_binary_for_target() {
+  local bench="${1:-}"
+  case "$bench" in
+    aead_diag) echo "aead" ;;
+    *) echo "$bench" ;;
   esac
 }
 
@@ -477,6 +490,14 @@ append_algo_plan_row() {
     crate="auth"
     bench="rsa"
     token="${raw_filter:-$(rsa_filter_token "$algo")}"
+    PLAN_ROWS+=("$crate|$bench|$token")
+    return 0
+  fi
+
+  if array_contains "$algo" "${DIAG_AEAD_ALGOS[@]}"; then
+    crate="aead"
+    bench="aead_diag"
+    token="${raw_filter:-chacha20-poly1305/encrypt}"
     PLAN_ROWS+=("$crate|$bench|$token")
     return 0
   fi
@@ -712,6 +733,9 @@ if [[ -n "$ONLY_INPUT" ]]; then
       aead)
         for algo in "${DEFAULT_AEAD_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
+      aeaddiag|chacha20poly1305diag|chacha20poly1305par4)
+        append_unique "aead-diag" SELECTED_ALGOS
+        ;;
       checksum|checksums)
         for algo in "${DEFAULT_CHECKSUM_ALGOS[@]}"; do append_unique "$algo" SELECTED_ALGOS; done
         ;;
@@ -931,10 +955,12 @@ run_bench_cmd() {
   local bench="$2"
   local filter="${3:-}"
   local bench_features
+  local cargo_bench
   local -a cmd
 
   bench_features="$(bench_features_for_target "$bench")"
-  cmd=(cargo bench --profile bench --features "$bench_features" --bench "$bench")
+  cargo_bench="$(bench_binary_for_target "$bench")"
+  cmd=(cargo bench --profile bench --features "$bench_features" --bench "$cargo_bench")
   if [[ -n "$filter" || "${#CRITERION_ARGS[@]}" -gt 0 ]]; then
     cmd+=(--)
     if [[ -n "$filter" ]]; then
@@ -950,7 +976,7 @@ run_bench_cmd() {
   if [[ -n "$RESULTS_PATH" ]]; then
     {
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      echo "bench=$bench"
+      echo "bench=$cargo_bench"
       [[ -n "$filter" ]] && echo "filter=$filter"
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     } >> "$RESULTS_PATH"

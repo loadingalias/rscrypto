@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "PRIMITIVES/SELECTORS (Empty or all = all public primitive benches)"
+        description: "PRIMITIVES/SELECTORS (Empty or all = all public primitive benches; aead_diag = diagnostic AEAD rows)"
         required: false
         type: string
         default: "all"
