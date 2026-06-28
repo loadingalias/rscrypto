@@ -165,6 +165,12 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
     let mut buf = data.clone();
     #[cfg(feature = "diag")]
     let mut buf_owned = data.clone();
+    #[cfg(all(
+      feature = "diag",
+      target_arch = "aarch64",
+      any(target_os = "linux", target_os = "macos")
+    ))]
+    let mut buf_owned_par4 = data.clone();
     let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len() + 16);
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
@@ -184,6 +190,25 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
           black_box(AAD),
           black_box(&mut buf_owned),
         ))
+      })
+    });
+
+    #[cfg(all(
+      feature = "diag",
+      target_arch = "aarch64",
+      any(target_os = "linux", target_os = "macos")
+    ))]
+    g.bench_with_input(BenchmarkId::new("rscrypto-owned-par4-bulk", len), data, |b, d| {
+      b.iter(|| {
+        buf_owned_par4.copy_from_slice(d);
+        black_box(
+          rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64(
+            black_box(&cipher_rs),
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut buf_owned_par4),
+          ),
+        )
       })
     });
 

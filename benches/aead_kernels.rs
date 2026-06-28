@@ -40,6 +40,20 @@ fn chacha20_xor_kernel(c: &mut Criterion) {
         black_box(buf.as_ptr())
       })
     });
+
+    #[cfg(all(feature = "diag", any(target_os = "linux", target_os = "macos")))]
+    g.bench_with_input(BenchmarkId::new("aarch64-owned-asm-8block", len), data, |b, d| {
+      b.iter(|| {
+        buf.copy_from_slice(d);
+        rscrypto::aead::diag_chacha20_xor_keystream_aarch64_owned_asm(
+          black_box(&KEY_32),
+          black_box(1),
+          black_box(&NONCE_12),
+          black_box(&mut buf),
+        );
+        black_box(buf.as_ptr())
+      })
+    });
   }
 
   g.finish();
@@ -69,6 +83,20 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
       b.iter(|| {
         black_box(
           rscrypto::aead::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
+            black_box(AAD),
+            black_box(d),
+            black_box(&POLY_KEY),
+          )
+          .unwrap(),
+        )
+      })
+    });
+
+    #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
+    g.bench_with_input(BenchmarkId::new("aarch64-owned-par4-asm", len), data, |b, d| {
+      b.iter(|| {
+        black_box(
+          rscrypto::aead::diag_chacha20poly1305_authenticate_aead_aarch64_owned_par4(
             black_box(AAD),
             black_box(d),
             black_box(&POLY_KEY),

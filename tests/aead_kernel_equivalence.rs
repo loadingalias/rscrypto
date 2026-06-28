@@ -31,6 +31,11 @@ type XorKeystreamFn = fn(&[u8; 32], u32, &[u8; 12], &mut [u8]);
 const BACKENDS: &[(&str, XorKeystreamFn)] = &[
   #[cfg(target_arch = "aarch64")]
   ("aarch64-neon", rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon),
+  #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
+  (
+    "aarch64-owned-asm-8block",
+    rscrypto::aead::diag_chacha20_xor_keystream_aarch64_owned_asm,
+  ),
   #[cfg(target_arch = "x86_64")]
   ("x86-avx2", rscrypto::aead::diag_chacha20_xor_keystream_x86_avx2),
   #[cfg(target_arch = "x86_64")]

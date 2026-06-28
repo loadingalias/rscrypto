@@ -141,6 +141,13 @@ pub use ascon128::{AsconAead128, AsconAead128Key, AsconAead128Tag};
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use chacha20::diag_chacha20_xor_keystream_aarch64_neon;
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos"),
+  any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
+))]
+pub use chacha20::diag_chacha20_xor_keystream_aarch64_owned_asm;
 // Re-export the per-backend ChaCha20 entry points for equivalence tests in
 // `tests/aead_kernel_equivalence.rs`. Mirrors the
 // `diag_compress_*` pattern used by Argon2.
@@ -177,6 +184,13 @@ pub use chacha20::diag_chacha20_xor_keystream_wasm_simd128;
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
 pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keystream_x86_avx512};
+#[cfg(all(
+  feature = "diag",
+  feature = "chacha20poly1305",
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos")
+))]
+pub use chacha20poly1305::diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64;
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(all(feature = "diag", feature = "chacha20poly1305"))]
@@ -187,14 +201,16 @@ pub use chacha20poly1305::{
 pub use ghash::diag_ghash_block_portable;
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
+#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
+pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
 #[cfg(all(
   feature = "diag",
   target_arch = "aarch64",
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use poly1305::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4;
-#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
-pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
+pub use poly1305::{
+  diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4, diag_chacha20poly1305_authenticate_aead_aarch64_owned_par4,
+};
 #[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
 pub use polyval::diag_polyval_reduce_portable;
 #[cfg(feature = "xchacha20poly1305")]

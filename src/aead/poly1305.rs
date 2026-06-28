@@ -794,6 +794,23 @@ pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   Some(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths))
 }
 
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos")
+))]
+pub fn diag_chacha20poly1305_authenticate_aead_aarch64_owned_par4(
+  aad: &[u8],
+  ciphertext: &[u8],
+  key: &[u8; 32],
+) -> Option<[u8; 16]> {
+  let lengths = super::AeadByteLengths::try_new(aad.len(), ciphertext.len()).ok()?;
+  let mut authenticator = aarch64_asm::AeadPar4Asm::new(key);
+  authenticator.update_padded_segment(aad);
+  authenticator.update_padded_segment(ciphertext);
+  Some(authenticator.finalize(lengths))
+}
+
 #[cfg_attr(not(any(feature = "xchacha20poly1305", feature = "diag", test)), allow(dead_code))]
 fn authenticate_aead_with(
   aad: &[u8],
@@ -814,6 +831,10 @@ fn authenticate_aead_with(
   Ok(tag)
 }
 
+#[cfg(target_arch = "aarch64")]
+#[cfg(all(feature = "diag", any(target_os = "linux", target_os = "macos")))]
+#[path = "poly1305/aarch64_asm.rs"]
+pub(crate) mod aarch64_asm;
 #[cfg(target_arch = "aarch64")]
 #[path = "poly1305/aarch64_neon.rs"]
 pub(crate) mod aarch64_neon;

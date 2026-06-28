@@ -149,6 +149,74 @@ fn chacha20poly1305_diag_owned_decrypt_zeroes_large_buffer_on_bad_tag() {
   );
 }
 
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos")
+))]
+#[test]
+fn chacha20poly1305_diag_owned_par4_encrypt_matches_normal_path() {
+  const PLAINTEXT_LENS: &[usize] = &[0, 1, 15, 16, 17, 511, 512, 513, 1024, 1025, 4095, 4096, 4097, 16_384];
+  const AAD_LENS: &[usize] = &[0, 1, 14, 15, 16, 17, 63, 64, 65, 257];
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x42; ChaCha20Poly1305::KEY_SIZE]);
+  let nonce = Nonce96::from_bytes([0x24; Nonce96::LENGTH]);
+  let cipher = ChaCha20Poly1305::new(&key);
+
+  for &plaintext_len in PLAINTEXT_LENS {
+    let plaintext = pattern_bytes(plaintext_len, 0x51);
+
+    for &aad_len in AAD_LENS {
+      let aad = pattern_bytes(aad_len, 0xa7);
+      let mut expected = plaintext.clone();
+      let expected_tag = cipher.encrypt_in_place(&nonce, &aad, &mut expected).unwrap();
+
+      let mut actual = plaintext.clone();
+      let actual_tag =
+        rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64(&cipher, &nonce, &aad, &mut actual)
+          .unwrap();
+
+      assert_eq!(
+        actual, expected,
+        "owned par4 ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+      );
+      assert_eq!(
+        actual_tag, expected_tag,
+        "owned par4 tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+      );
+    }
+  }
+}
+
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos")
+))]
+#[test]
+fn chacha20poly1305_diag_owned_par4_auth_matches_dispatched_path() {
+  const CIPHERTEXT_LENS: &[usize] = &[0, 1, 15, 16, 17, 63, 64, 65, 255, 256, 257, 511, 512, 513, 4096, 4097];
+  const AAD_LENS: &[usize] = &[0, 1, 15, 16, 17, 63, 64, 65, 257];
+
+  let key = [0x42; ChaCha20Poly1305::KEY_SIZE];
+
+  for &ciphertext_len in CIPHERTEXT_LENS {
+    let ciphertext = pattern_bytes(ciphertext_len, 0x51);
+
+    for &aad_len in AAD_LENS {
+      let aad = pattern_bytes(aad_len, 0xa7);
+      let expected = rscrypto::aead::diag_chacha20poly1305_authenticate_aead(&aad, &ciphertext, &key).unwrap();
+      let actual =
+        rscrypto::aead::diag_chacha20poly1305_authenticate_aead_aarch64_owned_par4(&aad, &ciphertext, &key).unwrap();
+
+      assert_eq!(
+        actual, expected,
+        "owned par4 auth mismatch ciphertext_len={ciphertext_len} aad_len={aad_len}"
+      );
+    }
+  }
+}
+
 #[test]
 fn chacha20poly1305_rejects_wrong_tag_length() {
   assert!(ChaCha20Poly1305::tag_from_slice(&[0u8; 0]).is_err());
