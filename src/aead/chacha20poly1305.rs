@@ -332,15 +332,18 @@ impl ChaCha20Poly1305 {
     let mut authenticator = poly1305::aarch64_asm::AeadPar4Asm::new(&poly_key);
     authenticator.update_padded_segment(aad);
 
+    let bulk_len = buffer
+      .len()
+      .strict_div(AARCH64_OWNED_PAR4_DIAG_CHUNK)
+      .strict_mul(AARCH64_OWNED_PAR4_DIAG_CHUNK);
+    let (bulk, remainder) = buffer.split_at_mut(bulk_len);
     let mut counter = 1u32;
-    let mut chunks = buffer.chunks_exact_mut(AARCH64_OWNED_PAR4_DIAG_CHUNK);
-    for chunk in &mut chunks {
-      chacha20::diag_chacha20_xor_keystream_aarch64_owned_asm(self.key.as_bytes(), counter, nonce.as_bytes(), chunk);
-      authenticator.update_padded_segment(chunk);
-      counter = counter.wrapping_add(8);
+    if !bulk.is_empty() {
+      chacha20::diag_chacha20_xor_keystream_aarch64_owned_asm(self.key.as_bytes(), counter, nonce.as_bytes(), bulk);
+      authenticator.update_padded_segment(bulk);
+      counter = counter.wrapping_add(bulk_len.strict_div(chacha20::BLOCK_SIZE) as u32);
     }
 
-    let remainder = chunks.into_remainder();
     if !remainder.is_empty() {
       chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
       authenticator.update_padded_segment(remainder);
