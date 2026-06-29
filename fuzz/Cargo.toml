@@ -27,10 +27,10 @@ rscrypto = { path = "..", features = ["std", "checksums", "hashes", "auth", "aea
 # ── Oracle crates for differential testing ────────────────────────────────────
 # AEAD
 ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
-aes-gcm = { version = "0.10", default-features = false, features = ["alloc", "aes"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["alloc", "aes"] }
 aes-gcm-siv = { version = "0.11", default-features = false, features = ["alloc", "aes"] }
 aegis = "0.9"
-chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
 
 # Auth
 argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }

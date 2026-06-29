@@ -19,13 +19,13 @@ pub fn run(data: &[u8]) {
   // Differential: rscrypto ↔ aes-gcm crate.
   use aes_gcm::aead::{Aead as _, KeyInit, Payload};
   let oracle = aes_gcm::Aes256Gcm::new_from_slice(&key_bytes).unwrap();
-  let on = aes_gcm::Nonce::from_slice(&nonce_bytes);
+  let on = aes_gcm::Nonce::from(nonce_bytes);
   assert_aead_against_oracle(
     &cipher,
     &nonce,
     aad,
     plaintext,
-    |pt, aad| oracle.encrypt(on, Payload { msg: pt, aad }).unwrap(),
-    |ct, aad| oracle.decrypt(on, Payload { msg: ct, aad }).unwrap(),
+    |pt, aad| oracle.encrypt(&on, Payload { msg: pt, aad }).unwrap(),
+    |ct, aad| oracle.decrypt(&on, Payload { msg: ct, aad }).unwrap(),
   );
 }

@@ -2,7 +2,7 @@
 
 use chacha20poly1305::{
   KeyInit, XChaCha20Poly1305 as Oracle,
-  aead::{Aead as _, AeadInPlace, Key, Payload, generic_array::GenericArray},
+  aead::{Aead as _, AeadInOut, Payload, array::Array},
 };
 use rscrypto::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag, aead::Nonce192};
 
@@ -58,15 +58,15 @@ fn xchacha20poly1305_matches_rustcrypto_oracle() {
   let nonce = Nonce192::from_bytes(nonce_bytes);
   let cipher = XChaCha20Poly1305::new(&key);
 
-  let oracle = Oracle::new(Key::<Oracle>::from_slice(&key_bytes));
-  let oracle_nonce = GenericArray::clone_from_slice(&nonce_bytes);
+  let oracle = Oracle::new(&Array(key_bytes));
+  let oracle_nonce = Array(nonce_bytes);
 
   let mut ours = plaintext.to_vec();
   let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
 
   let mut oracle_buffer = plaintext.to_vec();
   let oracle_tag = oracle
-    .encrypt_in_place_detached(&oracle_nonce, aad, &mut oracle_buffer)
+    .encrypt_inout_detached(&oracle_nonce, aad, oracle_buffer.as_mut_slice().into())
     .unwrap();
 
   assert_eq!(ours, oracle_buffer);
@@ -115,8 +115,8 @@ fn xchacha20poly1305_boundary_and_large_inputs_match_oracle() {
   let nonce = Nonce192::from_bytes(nonce_bytes);
   let cipher = XChaCha20Poly1305::new(&key);
 
-  let oracle = Oracle::new(Key::<Oracle>::from_slice(&key_bytes));
-  let oracle_nonce = GenericArray::clone_from_slice(&nonce_bytes);
+  let oracle = Oracle::new(&Array(key_bytes));
+  let oracle_nonce = Array(nonce_bytes);
 
   for &plaintext_len in PLAINTEXT_LENS {
     let plaintext = pattern_bytes(plaintext_len, 0x27);

@@ -6,8 +6,8 @@
 ))]
 
 use aes_gcm::{
-  Aes128Gcm as Aes128Oracle, Aes256Gcm as Aes256Oracle, KeyInit,
-  aead::{AeadInPlace, generic_array::GenericArray},
+  Aes128Gcm as Aes128Oracle, Aes256Gcm as Aes256Oracle,
+  aead::{AeadInOut, KeyInit, array::Array},
 };
 use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes256Gcm, Aes256GcmKey, aead::Nonce96};
 
@@ -33,10 +33,10 @@ fn assert_aes128_matches_oracle(len: usize, aad: &[u8]) {
   let mut ours = plaintext.clone();
   let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
 
-  let oracle = Aes128Oracle::new(GenericArray::from_slice(&key_bytes));
+  let oracle = Aes128Oracle::new(&Array(key_bytes));
   let mut expected = plaintext.clone();
   let expected_tag = oracle
-    .encrypt_in_place_detached(GenericArray::from_slice(&nonce_bytes), aad, &mut expected)
+    .encrypt_inout_detached(&Array(nonce_bytes), aad, expected.as_mut_slice().into())
     .unwrap();
 
   assert_eq!(ours, expected, "AES-128-GCM ciphertext mismatch at len {len}");
@@ -62,10 +62,10 @@ fn assert_aes256_matches_oracle(len: usize, aad: &[u8]) {
   let mut ours = plaintext.clone();
   let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
 
-  let oracle = Aes256Oracle::new(GenericArray::from_slice(&key_bytes));
+  let oracle = Aes256Oracle::new(&Array(key_bytes));
   let mut expected = plaintext.clone();
   let expected_tag = oracle
-    .encrypt_in_place_detached(GenericArray::from_slice(&nonce_bytes), aad, &mut expected)
+    .encrypt_inout_detached(&Array(nonce_bytes), aad, expected.as_mut_slice().into())
     .unwrap();
 
   assert_eq!(ours, expected, "AES-256-GCM ciphertext mismatch at len {len}");

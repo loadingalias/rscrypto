@@ -8,7 +8,7 @@ mod common;
 
 use core::hint::black_box;
 
-// Both aes-gcm and aes-gcm-siv re-export the same `aead` crate traits.
+use aes_gcm::aead::{AeadInOut as _, KeyInit as _};
 use aes_gcm_siv::aead::{AeadInPlace as _, KeyInit as _};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
@@ -53,7 +53,7 @@ fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
   let cipher_rs = rscrypto::XChaCha20Poly1305::new(&rscrypto::XChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::XChaCha20Poly1305::new(&KEY_32.into());
-  let nonce_rc = chacha20poly1305::XNonce::from_slice(&NONCE_24);
+  let nonce_rc = chacha20poly1305::XNonce::from(NONCE_24);
   let mut g = c.benchmark_group("xchacha20-poly1305/encrypt");
 
   for (len, data) in &inputs {
@@ -72,7 +72,11 @@ fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_rc
-            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
+            .encrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+            )
             .unwrap(),
         )
       })
@@ -87,7 +91,7 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce192::from_bytes(NONCE_24);
   let cipher_rs = rscrypto::XChaCha20Poly1305::new(&rscrypto::XChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::XChaCha20Poly1305::new(&KEY_32.into());
-  let nonce_rc = chacha20poly1305::XNonce::from_slice(&NONCE_24);
+  let nonce_rc = chacha20poly1305::XNonce::from(NONCE_24);
   let mut g = c.benchmark_group("xchacha20-poly1305/decrypt");
 
   for (len, data) in &inputs {
@@ -99,7 +103,9 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
 
     // Pre-encrypt with RustCrypto to get its tag format.
     let mut ct_rc = data.clone();
-    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .unwrap();
 
     let mut buf = ciphertext.clone();
 
@@ -124,10 +130,10 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_rc.copy_from_slice(ct);
         cipher_rc
-          .decrypt_in_place_detached(
-            black_box(nonce_rc),
+          .decrypt_inout_detached(
+            black_box(&nonce_rc),
             black_box(AAD),
-            black_box(&mut buf_rc),
+            black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
           .unwrap();
@@ -151,7 +157,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::ChaCha20Poly1305::new(&KEY_32.into());
-  let nonce_rc = chacha20poly1305::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = chacha20poly1305::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
       aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
@@ -217,7 +223,11 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_rc
-            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
+            .encrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+            )
             .unwrap(),
         )
       })
@@ -269,7 +279,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::ChaCha20Poly1305::new(&rscrypto::ChaCha20Poly1305Key::from_bytes(KEY_32));
   let cipher_rc = chacha20poly1305::ChaCha20Poly1305::new(&KEY_32.into());
-  let nonce_rc = chacha20poly1305::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = chacha20poly1305::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
       aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
@@ -285,7 +295,9 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
     let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_rc = data.clone();
-    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .unwrap();
 
     aws_lc_bench! {
       let mut ct_aws: Vec<u8> = data.clone();
@@ -348,10 +360,10 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_rc.copy_from_slice(ct);
         cipher_rc
-          .decrypt_in_place_detached(
-            black_box(nonce_rc),
+          .decrypt_inout_detached(
+            black_box(&nonce_rc),
             black_box(AAD),
-            black_box(&mut buf_rc),
+            black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
           .unwrap();
@@ -721,7 +733,7 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
-  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).unwrap());
   }
@@ -744,7 +756,11 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_rc
-            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
+            .encrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+            )
             .unwrap(),
         )
       })
@@ -798,7 +814,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256Gcm::new(&rscrypto::Aes256GcmKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
-  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).unwrap());
   }
@@ -812,7 +828,9 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
     let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_rc = data.clone();
-    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .unwrap();
 
     aws_lc_bench! {
       let mut ct_aws = data.clone();
@@ -859,10 +877,10 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_rc.copy_from_slice(ct);
         cipher_rc
-          .decrypt_in_place_detached(
-            black_box(nonce_rc),
+          .decrypt_inout_detached(
+            black_box(&nonce_rc),
             black_box(AAD),
-            black_box(&mut buf_rc),
+            black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
           .unwrap();
@@ -922,7 +940,7 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
-  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).unwrap());
   }
@@ -945,7 +963,11 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_rc
-            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
+            .encrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+            )
             .unwrap(),
         )
       })
@@ -999,7 +1021,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128Gcm::new(&rscrypto::Aes128GcmKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
-  let nonce_rc = aes_gcm::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).unwrap());
   }
@@ -1013,7 +1035,9 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
     let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_rc = data.clone();
-    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .unwrap();
 
     aws_lc_bench! {
       let mut ct_aws = data.clone();
@@ -1060,10 +1084,10 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_rc.copy_from_slice(ct);
         cipher_rc
-          .decrypt_in_place_detached(
-            black_box(nonce_rc),
+          .decrypt_inout_detached(
+            black_box(&nonce_rc),
             black_box(AAD),
-            black_box(&mut buf_rc),
+            black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
           .unwrap();

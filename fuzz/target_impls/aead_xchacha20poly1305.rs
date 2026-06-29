@@ -19,13 +19,13 @@ pub fn run(data: &[u8]) {
   // Differential: rscrypto ↔ chacha20poly1305 crate (XChaCha variant).
   use chacha20poly1305::aead::{Aead as _, KeyInit, Payload};
   let oracle = chacha20poly1305::XChaCha20Poly1305::new_from_slice(&key_bytes).unwrap();
-  let on = chacha20poly1305::XNonce::from_slice(&nonce_bytes);
+  let on = chacha20poly1305::XNonce::from(nonce_bytes);
   assert_aead_against_oracle(
     &cipher,
     &nonce,
     aad,
     plaintext,
-    |pt, aad| oracle.encrypt(on, Payload { msg: pt, aad }).unwrap(),
-    |ct, aad| oracle.decrypt(on, Payload { msg: ct, aad }).unwrap(),
+    |pt, aad| oracle.encrypt(&on, Payload { msg: pt, aad }).unwrap(),
+    |ct, aad| oracle.decrypt(&on, Payload { msg: ct, aad }).unwrap(),
   );
 }

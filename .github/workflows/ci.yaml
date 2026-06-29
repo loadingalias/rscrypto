@@ -22,6 +22,7 @@ permissions:
 jobs:
   rail-plan:
     name: Build Plan
+    if: ${{ github.event_name != 'pull_request' || github.actor != 'dependabot[bot]' }}
     runs-on: ubuntu-latest
     outputs:
       base_ref: ${{ steps.rail.outputs.base-ref || steps.manual.outputs.base_ref }}
@@ -47,10 +48,26 @@ jobs:
         with:
           version: "0.13.4"
 
+  dependency-smoke:
+    name: Dependency Smoke
+    if: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' }}
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-latest
+      timeout_minutes: 20
+      cache_key: dependabot-smoke
+      tools_mode: supply-chain
+      toolchain_components: "clippy, rustfmt"
+      enable_magic_cache: false
+      enable_rust_cache: true
+      run_script: |
+        set -euo pipefail
+        GITHUB_BASE_SHA="${{ github.event.pull_request.base.sha }}" bash scripts/ci/dependabot-smoke.sh
+
   suite:
     name: CI Suite
     needs: rail-plan
-    if: ${{ github.event_name != 'pull_request' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || (github.actor != 'dependabot[bot]' && (needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true')) }}
     uses: ./.github/workflows/_ci-suite.yaml
     with:
       scope: ${{ github.event_name == 'pull_request' && 'rail' || 'all' }}
@@ -63,12 +80,22 @@ jobs:
 
   complete:
     name: Complete
-    needs: suite
+    needs: [suite, dependency-smoke]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Assert suite passed
         run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.actor }}" == "dependabot[bot]" ]]; then
+            result="${{ needs.dependency-smoke.result }}"
+            if [[ "$result" != "success" ]]; then
+              echo "Dependency smoke result: $result"
+              exit 1
+            fi
+            echo "Dependency smoke: $result"
+            exit 0
+          fi
+
           result="${{ needs.suite.result }}"
           if [[ "$result" != "success" && "$result" != "skipped" ]]; then
             echo "CI suite result: $result"

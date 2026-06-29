@@ -163,7 +163,7 @@ sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.12.0"
 keccak = "0.2.0"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rapidhash = "4.4.1"
+rapidhash = "4.4.2"
 tiny-keccak = { version = "2.0.2", features = ["cshake", "kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
@@ -174,8 +174,8 @@ fips203 = { version = "0.4.3", default-features = false, features = ["ml-kem-512
 rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = false, features = ["hazmat"] }
 hmac = "0.13.0"
 hkdf = "0.13.0"
-chacha20poly1305 = "0.10.1"
-aes-gcm = "0.10.3"
+chacha20poly1305 = "0.11.0"
+aes-gcm = "0.11.0"
 aes-gcm-siv = "0.11.1"
 aegis = "0.9.12"
 ascon-aead = { version = "0.5", default-features = false, features = ["alloc"] }
