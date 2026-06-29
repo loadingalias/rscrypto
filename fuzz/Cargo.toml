@@ -49,7 +49,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = "1.8"
 digest = "0.11"
 sha2 = "0.11"
-sha3 = "0.11"
+sha3 = "0.12"
 tiny-keccak = { version = "2.0", features = ["cshake", "kmac", "shake"] }
 
 # Fast hashes
