@@ -139,12 +139,13 @@ checksum = "f02882884d3e1bc524fb12c79f107f6ad0e1cfd498c536ffb494301740995dfe"
 
 [[package]]
 name = "ascon-aead"
-version = "0.5.2"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "591bc0af38c82c526874bd78ae5c0fedc540530973ec68b32e80e9c0ce86e46f"
+checksum = "6cba922132fed390c20be89a16fa713999c46b2ce84ac4b0ecee0f3586a39d88"
 dependencies = [
- "aead 0.5.2",
+ "aead 0.6.1",
  "ascon-core",
+ "inout 0.2.2",
  "subtle",
 ]
 
