@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "aes-gcm"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support", features = ["aead"] }
-aes-gcm = { version = "0.10", default-features = false, features = ["alloc", "aes"] }
+aes-gcm = { version = "0.11", default-features = false, features = ["alloc", "aes"] }
 
 [workspace]
 members = ["."]
