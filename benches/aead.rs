@@ -1220,13 +1220,13 @@ fn aegis256_decrypt(c: &mut Criterion) {
 // Ascon-AEAD128
 
 fn ascon_aead128_encrypt(c: &mut Criterion) {
-  use ascon_aead::aead::{AeadInPlace as _, KeyInit as _, generic_array::GenericArray};
+  use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
 
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
   let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
-  let cipher_ac = ascon_aead::AsconAead128::new(GenericArray::from_slice(&KEY_16));
-  let nonce_ac = GenericArray::from_slice(&NONCE_16);
+  let cipher_ac = ascon_aead::AsconAead128::new(&Array(KEY_16));
+  let nonce_ac = Array(NONCE_16);
   let mut g = c.benchmark_group("ascon-aead128/encrypt");
 
   for (len, data) in &inputs {
@@ -1245,7 +1245,11 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_ac
-            .encrypt_in_place_detached(black_box(nonce_ac), black_box(AAD), black_box(&mut buf))
+            .encrypt_inout_detached(
+              black_box(&nonce_ac),
+              black_box(AAD),
+              black_box(buf.as_mut_slice().into()),
+            )
             .unwrap(),
         )
       })
@@ -1256,13 +1260,13 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
 }
 
 fn ascon_aead128_decrypt(c: &mut Criterion) {
-  use ascon_aead::aead::{AeadInPlace as _, KeyInit as _, generic_array::GenericArray};
+  use ascon_aead::aead::{AeadInOut as _, KeyInit as _, array::Array};
 
   let inputs = common::comp_sizes();
   let nonce_rs = rscrypto::aead::Nonce128::from_bytes(NONCE_16);
   let cipher_rs = rscrypto::AsconAead128::new(&rscrypto::AsconAead128Key::from_bytes(KEY_16));
-  let cipher_ac = ascon_aead::AsconAead128::new(GenericArray::from_slice(&KEY_16));
-  let nonce_ac = GenericArray::from_slice(&NONCE_16);
+  let cipher_ac = ascon_aead::AsconAead128::new(&Array(KEY_16));
+  let nonce_ac = Array(NONCE_16);
   let mut g = c.benchmark_group("ascon-aead128/decrypt");
 
   for (len, data) in &inputs {
@@ -1272,7 +1276,9 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
     let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
 
     let mut ct_ac = data.clone();
-    let tag_ac = cipher_ac.encrypt_in_place_detached(nonce_ac, AAD, &mut ct_ac).unwrap();
+    let tag_ac = cipher_ac
+      .encrypt_inout_detached(&nonce_ac, AAD, ct_ac.as_mut_slice().into())
+      .unwrap();
 
     let mut buf = ciphertext.clone();
 
@@ -1297,10 +1303,10 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_ac.copy_from_slice(ct);
         cipher_ac
-          .decrypt_in_place_detached(
-            black_box(nonce_ac),
+          .decrypt_inout_detached(
+            black_box(&nonce_ac),
             black_box(AAD),
-            black_box(&mut buf_ac),
+            black_box(buf_ac.as_mut_slice().into()),
             black_box(&tag_ac),
           )
           .unwrap();

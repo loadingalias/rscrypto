@@ -380,7 +380,7 @@ pub fn diag_ascon_aead128_tag_portable(
 mod tests {
   use alloc::{vec, vec::Vec};
 
-  use ascon_aead::aead::{Aead as _, KeyInit, Payload, generic_array::GenericArray};
+  use ascon_aead::aead::{Aead as _, KeyInit, Payload, array::Array};
 
   use super::*;
 
@@ -388,13 +388,13 @@ mod tests {
     let aead = AsconAead128::new(&AsconAead128Key::from_bytes(key));
     let nonce_typed = Nonce128::from_bytes(nonce);
     let oracle = ascon_aead::AsconAead128::new_from_slice(&key).unwrap();
-    let oracle_nonce = GenericArray::from_slice(&nonce);
+    let oracle_nonce = Array(nonce);
 
     let mut ours = plaintext.to_vec();
     let tag = aead.encrypt_in_place(&nonce_typed, aad, &mut ours).unwrap();
     let mut ours_combined = ours.clone();
     ours_combined.extend_from_slice(tag.as_bytes());
-    let expected = oracle.encrypt(oracle_nonce, Payload { msg: plaintext, aad }).unwrap();
+    let expected = oracle.encrypt(&oracle_nonce, Payload { msg: plaintext, aad }).unwrap();
     assert_eq!(ours_combined, expected, "encryption mismatch");
 
     let mut ours_buf = ours.clone();

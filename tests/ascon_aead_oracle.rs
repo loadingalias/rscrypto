@@ -19,7 +19,7 @@
 
 use ascon_aead::{
   AsconAead128 as Oracle,
-  aead::{AeadInPlace, KeyInit, generic_array::GenericArray},
+  aead::{AeadInOut, KeyInit, array::Array},
 };
 use rscrypto::{AsconAead128, AsconAead128Key, AsconAead128Tag, aead::Nonce128};
 
@@ -28,8 +28,8 @@ fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8
   let nonce = Nonce128::from_bytes(*nonce_bytes);
   let cipher = AsconAead128::new(&key);
 
-  let oracle = Oracle::new(GenericArray::from_slice(key_bytes));
-  let oracle_nonce = GenericArray::from_slice(nonce_bytes);
+  let oracle = Oracle::new(&Array(*key_bytes));
+  let oracle_nonce = Array(*nonce_bytes);
 
   // Encrypt with rscrypto.
   let mut ours = plaintext.to_vec();
@@ -38,7 +38,7 @@ fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8
   // Encrypt with oracle.
   let mut oracle_buf = plaintext.to_vec();
   let oracle_tag = oracle
-    .encrypt_in_place_detached(oracle_nonce, aad, &mut oracle_buf)
+    .encrypt_inout_detached(&oracle_nonce, aad, oracle_buf.as_mut_slice().into())
     .unwrap();
 
   assert_eq!(ours, oracle_buf, "ciphertext mismatch (len={})", plaintext.len());

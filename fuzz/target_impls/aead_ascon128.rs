@@ -17,15 +17,15 @@ pub fn run(data: &[u8]) {
   assert_aead_forgery(&cipher, &nonce, aad, plaintext, control);
 
   // Differential: rscrypto ↔ ascon-aead crate.
-  use ascon_aead::aead::{Aead as _, KeyInit, Payload, generic_array::GenericArray};
+  use ascon_aead::aead::{Aead as _, KeyInit, Payload, array::Array};
   let oracle = ascon_aead::AsconAead128::new_from_slice(&key_bytes).unwrap();
-  let on = GenericArray::from_slice(&nonce_bytes);
+  let on = Array(nonce_bytes);
   assert_aead_against_oracle(
     &cipher,
     &nonce,
     aad,
     plaintext,
-    |pt, aad| oracle.encrypt(on, Payload { msg: pt, aad }).unwrap(),
-    |ct, aad| oracle.decrypt(on, Payload { msg: ct, aad }).unwrap(),
+    |pt, aad| oracle.encrypt(&on, Payload { msg: pt, aad }).unwrap(),
+    |ct, aad| oracle.decrypt(&on, Payload { msg: ct, aad }).unwrap(),
   );
 }

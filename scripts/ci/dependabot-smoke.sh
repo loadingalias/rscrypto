@@ -44,8 +44,13 @@ run_root_smoke() {
 
 run_manifest_smoke() {
   local manifest=$1
+  local lockfile
+  lockfile="$(dirname "$manifest")/Cargo.lock"
 
   echo "Standalone dependency smoke: $manifest"
+  if [[ ! -f "$lockfile" ]]; then
+    cargo generate-lockfile --manifest-path "$manifest"
+  fi
   cargo fetch --manifest-path "$manifest" --locked
   cargo check --manifest-path "$manifest" --locked --all-targets --all-features
   cargo test --manifest-path "$manifest" --locked --all-features --no-run
