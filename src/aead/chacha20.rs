@@ -449,6 +449,33 @@ pub(crate) fn xor_keystream_aarch64_neon(
   aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
 }
 
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[inline]
+pub(crate) fn try_xor_keystream_x86_ssse3_x4(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) -> bool {
+  use crate::platform::caps::x86;
+
+  if buffer.len() != BLOCK_SIZE * x86_ssse3_x4::BLOCKS_PER_BATCH {
+    return false;
+  }
+
+  let caps = current_caps();
+  if !caps.has(x86::SSSE3) || !caps.has(x86::AVX) {
+    return false;
+  }
+
+  // SAFETY: Four-block x86 ChaCha20 XOR because:
+  // 1. The capability checks above prove SSSE3 and AVX are available.
+  // 2. `buffer.len()` is exactly 4 * 64 bytes, which is the helper's required chunk shape.
+  // 3. The helper XORs in place and does not retain pointers beyond the call.
+  unsafe { x86_ssse3_x4::xor_blocks(key, initial_counter, nonce, buffer) };
+  true
+}
+
 // ─── Forced-kernel diag entrypoints ────────────────────────────────────────
 //
 // Mirrors the `diag_compress_*` pattern in `src/auth/argon2/mod.rs`. Tests in

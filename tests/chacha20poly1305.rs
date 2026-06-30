@@ -149,6 +149,50 @@ fn chacha20poly1305_diag_owned_decrypt_zeroes_large_buffer_on_bad_tag() {
   );
 }
 
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[test]
+fn chacha20poly1305_diag_x86_short_fused_encrypt_matches_normal_path() {
+  const AAD_LENS: &[usize] = &[0, 1, 15, 16, 17, 31, 32, 33, 64];
+
+  let key = ChaCha20Poly1305Key::from_bytes([0x42; ChaCha20Poly1305::KEY_SIZE]);
+  let nonce = Nonce96::from_bytes([0x24; Nonce96::LENGTH]);
+  let cipher = ChaCha20Poly1305::new(&key);
+
+  for plaintext_len in 0..=512 {
+    let plaintext = pattern_bytes(plaintext_len, 0x51);
+
+    for &aad_len in AAD_LENS {
+      let aad = pattern_bytes(aad_len, 0xa7);
+      let mut actual = plaintext.clone();
+      let actual_tag =
+        rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_x86_64_short_fused(&cipher, &nonce, &aad, &mut actual);
+
+      if !(1..=256).contains(&plaintext_len) {
+        assert!(
+          actual_tag.is_none(),
+          "x86 short fused path must not apply at plaintext_len={plaintext_len}"
+        );
+        continue;
+      }
+
+      let mut expected = plaintext.clone();
+      let expected_tag = cipher.encrypt_in_place(&nonce, &aad, &mut expected).unwrap();
+      let actual_tag = actual_tag
+        .expect("x86 short fused path must apply for plaintext lengths 1..=256")
+        .unwrap();
+
+      assert_eq!(
+        actual, expected,
+        "x86 short fused ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+      );
+      assert_eq!(
+        actual_tag, expected_tag,
+        "x86 short fused tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+      );
+    }
+  }
+}
+
 #[cfg(all(
   feature = "diag",
   target_arch = "aarch64",

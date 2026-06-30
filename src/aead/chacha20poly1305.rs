@@ -32,6 +32,9 @@ const AARCH64_OWNED_PAR4_DIAG_CHUNK: usize = chacha20::BLOCK_SIZE * 8;
 ))]
 #[path = "chacha20poly1305/aarch64_asm.rs"]
 mod aarch64_asm;
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+#[path = "chacha20poly1305/x86_64_fused.rs"]
+mod x86_64_fused;
 
 define_aead_key_type!(ChaCha20Poly1305Key, KEY_SIZE, "ChaCha20-Poly1305 secret key bytes.");
 
@@ -439,6 +442,21 @@ pub fn diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64(
 ) -> Result<ChaCha20Poly1305Tag, SealError> {
   super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
   cipher.encrypt_in_place_owned_par4_aarch64_diag(nonce, aad, buffer)
+}
+
+#[cfg(all(feature = "diag", target_arch = "x86_64"))]
+pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_short_fused(
+  cipher: &ChaCha20Poly1305,
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+  if let Err(err) = super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN) {
+    return Some(Err(err));
+  }
+
+  x86_64_fused::encrypt_in_place_short(cipher.key.as_bytes(), nonce.as_bytes(), aad, buffer)
+    .map(|result| result.map(ChaCha20Poly1305Tag::from_bytes))
 }
 
 #[cfg(feature = "diag")]
