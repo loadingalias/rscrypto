@@ -142,7 +142,7 @@ const P384_FIELD_MINUS_TWO: Uint<6> = Uint([
   0xffff_ffff_ffff_ffff,
   0xffff_ffff_ffff_ffff,
 ]);
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 const P384_FIELD_MONTGOMERY_ONE: Uint<6> = Uint([
   0xffff_ffff_0000_0001,
   0x0000_0000_ffff_ffff,
@@ -2616,12 +2616,10 @@ fn scalar_mul_basepoint_backend<const L: usize>(curve: &Curve<L>, scalar: &Secre
 
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 fn p384_scalar_mul_basepoint_platform<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
-  let mut scalar_words = ZeroizingWords::zeroed();
-  scalar_words.as_mut_array().copy_from_slice(&scalar.words()[..6]);
-  let scalar = SecretScalar::new(Uint(*scalar_words.as_array()));
-  let point = p384_scalar_mul_basepoint_comb_nonexceptional_ct(&scalar);
-  let words = p384_jacobian_to_words(point);
-  jacobian_from_p384_words(curve.field_modulus, &words)
+  // The x86 nonexceptional comb backend showed measurable DudeCT separation on
+  // Zen4/Ice Lake P-384 signing. Keep the complete comb path until that backend
+  // has architecture-specific CT evidence.
+  scalar_mul_basepoint_comb_ct_secret(curve, scalar)
 }
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
@@ -2718,13 +2716,13 @@ fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct P384FieldElement {
   value: Uint<6>,
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 impl P384FieldElement {
   fn zero() -> Self {
     Self { value: Uint::ZERO }
@@ -2773,14 +2771,14 @@ impl P384FieldElement {
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct P384Affine {
   x: P384FieldElement,
   y: P384FieldElement,
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct P384Jacobian {
   x: P384FieldElement,
@@ -2789,7 +2787,7 @@ struct P384Jacobian {
   infinity: bool,
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 impl P384Jacobian {
   fn infinity() -> Self {
     Self {
@@ -2886,7 +2884,7 @@ impl P384Jacobian {
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
   #[cfg(any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
@@ -2905,7 +2903,7 @@ fn p384_field_mul_words(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
   #[cfg(any(
     all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
@@ -2924,7 +2922,7 @@ fn p384_field_square_words(value: [u64; 6]) -> [u64; 6] {
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 fn select_p384_signing_generator_affine_ct(digit: usize) -> P384Affine {
   let mut x = P384_SIGNING_GENERATOR_COMB_X[0];
   let mut y = P384_SIGNING_GENERATOR_COMB_Y[0];
@@ -2946,7 +2944,7 @@ fn select_p384_signing_generator_affine_ct(digit: usize) -> P384Affine {
   }
 }
 
-#[cfg(any(test, all(target_arch = "x86_64", target_os = "linux")))]
+#[cfg(test)]
 fn p384_scalar_mul_basepoint_comb_nonexceptional_ct(scalar: &SecretScalar<6>) -> Jacobian<6> {
   let rows = P384_SIGNING_COMB_ROWS;
   let mut acc = P384Jacobian::infinity();
@@ -2997,10 +2995,7 @@ fn p384_scalar_mul_basepoint_comb_backend(scalar: &SecretScalar<6>) -> Jacobian<
   acc
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
-))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 fn p384_jacobian_to_words(point: Jacobian<6>) -> [u64; 18] {
   let mut out = [0u64; 18];
   out[..6].copy_from_slice(&point.x.value.0);
@@ -3036,10 +3031,7 @@ fn p384_jacobian_from_words(words: &[u64; 18]) -> Jacobian<6> {
   }
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
-))]
+#[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
 #[allow(clippy::indexing_slicing)]
 fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64; 18]) -> Jacobian<L> {
   let mut x = [0u64; L];
