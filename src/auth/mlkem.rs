@@ -1144,7 +1144,15 @@ mlkem_diag_keygen_phases!(
 
 #[cfg(feature = "diag")]
 macro_rules! mlkem_diag_keygen_matrix {
-  ($fused:ident, $materialized:ident, $row_multiply:ident, $k:expr, $eta1_random_bytes:expr, $doc_name:literal) => {
+  (
+    $fused:ident,
+    $materialized:ident,
+    $windowed:ident,
+    $row_multiply:ident,
+    $k:expr,
+    $eta1_random_bytes:expr,
+    $doc_name:literal
+  ) => {
     #[doc = concat!("Benchmark-only forced-fused keygen matrix-accumulation digest for ", $doc_name, ".")]
     #[doc(hidden)]
     #[inline]
@@ -1161,6 +1169,14 @@ macro_rules! mlkem_diag_keygen_matrix {
       portable::diag_keygen_matrix_accumulate_materialized_digest::<$k, $eta1_random_bytes>(rho, sigma)
     }
 
+    #[doc = concat!("Benchmark-only forced-windowed keygen matrix-accumulation digest for ", $doc_name, ".")]
+    #[doc(hidden)]
+    #[inline]
+    #[must_use]
+    pub fn $windowed(rho: &[u8; ML_KEM_SEED_SIZE], sigma: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+      portable::diag_keygen_matrix_accumulate_windowed_digest::<$k, $eta1_random_bytes>(rho, sigma)
+    }
+
     #[doc = concat!("Benchmark-only materialized keygen matrix row-multiply digest for ", $doc_name, ".")]
     #[doc(hidden)]
     #[inline]
@@ -1175,6 +1191,7 @@ macro_rules! mlkem_diag_keygen_matrix {
 mlkem_diag_keygen_matrix!(
   diag_mlkem512_keygen_matrix_accumulate_fused_digest,
   diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
+  diag_mlkem512_keygen_matrix_accumulate_windowed_digest,
   diag_mlkem512_keygen_matrix_row_multiply_digest,
   2,
   192,
@@ -1184,6 +1201,7 @@ mlkem_diag_keygen_matrix!(
 mlkem_diag_keygen_matrix!(
   diag_mlkem768_keygen_matrix_accumulate_fused_digest,
   diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
+  diag_mlkem768_keygen_matrix_accumulate_windowed_digest,
   diag_mlkem768_keygen_matrix_row_multiply_digest,
   3,
   128,
@@ -1193,11 +1211,31 @@ mlkem_diag_keygen_matrix!(
 mlkem_diag_keygen_matrix!(
   diag_mlkem1024_keygen_matrix_accumulate_fused_digest,
   diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
+  diag_mlkem1024_keygen_matrix_accumulate_windowed_digest,
   diag_mlkem1024_keygen_matrix_row_multiply_digest,
   4,
   128,
   "ML-KEM-1024"
 );
+
+#[cfg(feature = "diag")]
+/// Benchmark-only materialized K=3 keygen matrix row-sampling digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem768_keygen_matrix_row_sample_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k3_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only materialized K=3 keygen matrix row-sampling digest using the initial-three-block
+/// parser path.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k3_initial_3blocks_digest(rho)
+}
 
 #[cfg(feature = "diag")]
 /// Benchmark-only materialized K=4 keygen matrix row-sampling digest.
@@ -1206,6 +1244,16 @@ mlkem_diag_keygen_matrix!(
 #[must_use]
 pub fn diag_mlkem1024_keygen_matrix_row_sample_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
   portable::diag_keygen_matrix_row_sample_k4_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only materialized K=4 keygen matrix row-sampling digest using the initial-three-block
+/// parser path.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_sample_initial_3blocks_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k4_initial_3blocks_digest(rho)
 }
 
 #[cfg(feature = "diag")]

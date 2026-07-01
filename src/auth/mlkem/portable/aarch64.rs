@@ -64,6 +64,8 @@ unsafe extern "C" {
   fn rscrypto_mlkem_rej_uniform_block_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
   fn rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux(out: *mut u16, input: *const u8, cap: usize) -> usize;
   #[cfg(any(test, feature = "diag"))]
+  fn rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
+  #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
@@ -145,6 +147,18 @@ pub(super) unsafe fn sample_ntt_rej_uniform_block_bounded_asm(out: *mut u16, inp
     // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
     unsafe { rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux(out, input, cap) }
   }
+}
+
+#[cfg(all(any(test, feature = "diag"), target_os = "linux"))]
+#[inline]
+pub(super) unsafe fn sample_ntt_rej_uniform_3blocks_asm(out: *mut u16, input: *const u8) -> usize {
+  // SAFETY: Linux aarch64 three-block SampleNTT rejection parser call because:
+  // 1. `input` points to three contiguous readable SHAKE128 rate blocks.
+  // 2. `out` points to writable capacity for one full 256-coefficient ML-KEM polynomial.
+  // 3. The assembly caps writes at 256 accepted candidates and returns the accepted count written.
+  // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+  // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  unsafe { rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux(out, input) }
 }
 
 #[inline]

@@ -91,42 +91,42 @@
         SAMPLE_NTT_COMPACT_STORE v17
 .endm
 
-.macro SAMPLE_NTT_SCALAR_STORE_LANE candidates, lane
+.macro SAMPLE_NTT_SCALAR_STORE_LANE candidates, lane, done
         umov    w15, \candidates\().h[\lane]
         cmp     w15, w8
         b.hs    1f
         strh    w15, [x0], #2
         add     x9, x9, #1
         cmp     x9, x2
-        b.hs    .Lsample_ntt_bounded_done
+        b.hs    \done
 1:
 .endm
 
-.macro SAMPLE_NTT_SCALAR_STORE candidates
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 0
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 1
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 2
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 3
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 4
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 5
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 6
-        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 7
+.macro SAMPLE_NTT_SCALAR_STORE candidates, done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 0, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 1, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 2, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 3, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 4, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 5, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 6, \done
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 7, \done
 .endm
 
-.macro SAMPLE_NTT_COMPACT_STORE_BOUNDED candidates
+.macro SAMPLE_NTT_COMPACT_STORE_BOUNDED candidates, done
         sub     x10, x2, x9
         cmp     x10, #8
         b.lo    1f
         SAMPLE_NTT_COMPACT_STORE \candidates
         cmp     x9, x2
-        b.hs    .Lsample_ntt_bounded_done
+        b.hs    \done
         b       2f
 1:
-        SAMPLE_NTT_SCALAR_STORE \candidates
+        SAMPLE_NTT_SCALAR_STORE \candidates, \done
 2:
 .endm
 
-.macro SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED in_ptr
+.macro SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED in_ptr, done
         ld3     {{ v0.16b, v1.16b, v2.16b }}, [\in_ptr], #48
         zip1    v4.16b, v0.16b, v1.16b
         zip2    v5.16b, v0.16b, v1.16b
@@ -140,13 +140,13 @@
         zip2    v17.8h, v4.8h, v6.8h
         zip1    v18.8h, v5.8h, v7.8h
         zip2    v19.8h, v5.8h, v7.8h
-        SAMPLE_NTT_COMPACT_STORE_BOUNDED v16
-        SAMPLE_NTT_COMPACT_STORE_BOUNDED v17
-        SAMPLE_NTT_COMPACT_STORE_BOUNDED v18
-        SAMPLE_NTT_COMPACT_STORE_BOUNDED v19
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v16, \done
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v17, \done
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v18, \done
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v19, \done
 .endm
 
-.macro SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED in_ptr
+.macro SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED in_ptr, done
         ld3     {{ v0.8b, v1.8b, v2.8b }}, [\in_ptr], #24
         zip1    v4.16b, v0.16b, v1.16b
         zip1    v5.16b, v1.16b, v2.16b
@@ -154,8 +154,8 @@
         ushr    v5.8h, v5.8h, #4
         zip1    v16.8h, v4.8h, v5.8h
         zip2    v17.8h, v4.8h, v5.8h
-        SAMPLE_NTT_COMPACT_STORE_BOUNDED v16
-        SAMPLE_NTT_COMPACT_STORE_BOUNDED v17
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v16, \done
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v17, \done
 .endm
 
 .globl rscrypto_mlkem_rej_uniform_block_aarch64_linux
@@ -215,13 +215,48 @@ rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux:
 
         mov     w14, #3
 .Lsample_ntt_bounded_block_loop:
-        SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED x13
+        SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED x13, .Lsample_ntt_bounded_done
         subs    w14, w14, #1
         b.ne    .Lsample_ntt_bounded_block_loop
 
-        SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED x13
+        SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED x13, .Lsample_ntt_bounded_done
 
 .Lsample_ntt_bounded_done:
         mov     x0, x9
         ret
 .size rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux, .-rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux
+
+.globl rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux
+.type rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux, %function
+.hidden rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux
+rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux:
+        mov     x9, #0
+        mov     x2, #256
+        mov     x13, x1
+        adrp    x3, .Lrscrypto_mlkem_rej_uniform_compact_table
+        add     x3, x3, :lo12:.Lrscrypto_mlkem_rej_uniform_compact_table
+        mov     x8, #1
+        movk    x8, #2, lsl #16
+        movk    x8, #4, lsl #32
+        movk    x8, #8, lsl #48
+        mov     v31.d[0], x8
+        mov     x8, #16
+        movk    x8, #32, lsl #16
+        movk    x8, #64, lsl #32
+        movk    x8, #128, lsl #48
+        mov     v31.d[1], x8
+        mov     w8, #3329
+        dup     v30.8h, w8
+
+        mov     w14, #10
+.Lsample_ntt_3blocks_loop:
+        SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED x13, .Lsample_ntt_3blocks_done
+        subs    w14, w14, #1
+        b.ne    .Lsample_ntt_3blocks_loop
+
+        SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED x13, .Lsample_ntt_3blocks_done
+
+.Lsample_ntt_3blocks_done:
+        mov     x0, x9
+        ret
+.size rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux, .-rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux

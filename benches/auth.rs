@@ -1818,12 +1818,15 @@ fn mlkem_keygen_phases(_: &mut Criterion) {}
 fn mlkem_keygen_matrix(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
     diag_mlkem512_keygen_matrix_accumulate_fused_digest, diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
-    diag_mlkem512_keygen_matrix_row_multiply_digest, diag_mlkem768_keygen_matrix_accumulate_fused_digest,
-    diag_mlkem768_keygen_matrix_accumulate_materialized_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
+    diag_mlkem512_keygen_matrix_accumulate_windowed_digest, diag_mlkem512_keygen_matrix_row_multiply_digest,
+    diag_mlkem768_keygen_matrix_accumulate_fused_digest, diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem768_keygen_matrix_accumulate_windowed_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
+    diag_mlkem768_keygen_matrix_row_sample_digest, diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest,
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest, diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem1024_keygen_matrix_accumulate_windowed_digest,
     diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest, diag_mlkem1024_keygen_matrix_row_multiply_digest,
-    diag_mlkem1024_keygen_matrix_row_sample_digest, diag_mlkem1024_keygen_matrix_row_sample_quad_digest,
-    diag_mlkem1024_keygen_matrix_row_sample_triple_digest,
+    diag_mlkem1024_keygen_matrix_row_sample_digest, diag_mlkem1024_keygen_matrix_row_sample_initial_3blocks_digest,
+    diag_mlkem1024_keygen_matrix_row_sample_quad_digest, diag_mlkem1024_keygen_matrix_row_sample_triple_digest,
   };
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   use rscrypto::auth::mlkem::{
@@ -1840,12 +1843,15 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
   let mut g = c.benchmark_group("mlkem-keygen-matrix");
 
   macro_rules! bench_matrix {
-    ($prefix:literal, $fused:path, $materialized:path, $row_multiply:path, $seed:literal) => {
+    ($prefix:literal, $fused:path, $materialized:path, $windowed:path, $row_multiply:path, $seed:literal) => {
       g.bench_function(concat!($prefix, "/fused-through-matrix-accumulate"), |b| {
         b.iter(|| black_box($fused(black_box(&rho), black_box(&sigma))))
       });
       g.bench_function(concat!($prefix, "/materialized-through-matrix-accumulate"), |b| {
         b.iter(|| black_box($materialized(black_box(&rho), black_box(&sigma))))
+      });
+      g.bench_function(concat!($prefix, "/windowed-through-matrix-accumulate"), |b| {
+        b.iter(|| black_box($windowed(black_box(&rho), black_box(&sigma))))
       });
       g.bench_function(concat!($prefix, "/materialized-row-multiply"), |b| {
         b.iter(|| black_box($row_multiply(black_box($seed))))
@@ -1857,6 +1863,7 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     "k=2",
     diag_mlkem512_keygen_matrix_accumulate_fused_digest,
     diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem512_keygen_matrix_accumulate_windowed_digest,
     diag_mlkem512_keygen_matrix_row_multiply_digest,
     0x5120
   );
@@ -1864,6 +1871,7 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     "k=3",
     diag_mlkem768_keygen_matrix_accumulate_fused_digest,
     diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem768_keygen_matrix_accumulate_windowed_digest,
     diag_mlkem768_keygen_matrix_row_multiply_digest,
     0x7680
   );
@@ -1871,12 +1879,30 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     "k=4",
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest,
     diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
+    diag_mlkem1024_keygen_matrix_accumulate_windowed_digest,
     diag_mlkem1024_keygen_matrix_row_multiply_digest,
     0x1024
   );
 
+  g.bench_function("k=3/materialized-row-sample", |b| {
+    b.iter(|| black_box(diag_mlkem768_keygen_matrix_row_sample_digest(black_box(&rho))))
+  });
+  g.bench_function("k=3/materialized-row-sample-initial-3blocks", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest(
+        black_box(&rho),
+      ))
+    })
+  });
   g.bench_function("k=4/materialized-row-sample", |b| {
     b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_digest(black_box(&rho))))
+  });
+  g.bench_function("k=4/materialized-row-sample-initial-3blocks", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_keygen_matrix_row_sample_initial_3blocks_digest(
+        black_box(&rho),
+      ))
+    })
   });
   g.bench_function("k=4/materialized-row-sample-triple", |b| {
     b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_triple_digest(black_box(&rho))))
