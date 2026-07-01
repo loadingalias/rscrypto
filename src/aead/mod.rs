@@ -191,8 +191,13 @@ pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keyst
   any(target_os = "linux", target_os = "macos")
 ))]
 pub use chacha20poly1305::diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64;
-#[cfg(all(feature = "diag", feature = "chacha20poly1305", target_arch = "x86_64"))]
-pub use chacha20poly1305::diag_chacha20poly1305_encrypt_in_place_x86_64_short_fused;
+#[cfg(all(
+  feature = "diag",
+  feature = "chacha20poly1305",
+  target_arch = "x86_64",
+  target_os = "linux"
+))]
+pub use chacha20poly1305::diag_chacha20poly1305_encrypt_in_place_x86_64_asm;
 #[cfg(feature = "chacha20poly1305")]
 pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(all(feature = "diag", feature = "chacha20poly1305"))]

@@ -32,9 +32,13 @@ const AARCH64_OWNED_PAR4_DIAG_CHUNK: usize = chacha20::BLOCK_SIZE * 8;
 ))]
 #[path = "chacha20poly1305/aarch64_asm.rs"]
 mod aarch64_asm;
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-#[path = "chacha20poly1305/x86_64_fused.rs"]
-mod x86_64_fused;
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  any(feature = "diag", all(not(debug_assertions), not(feature = "portable-only")))
+))]
+#[path = "chacha20poly1305/x86_64_asm.rs"]
+mod x86_64_asm;
 
 define_aead_key_type!(ChaCha20Poly1305Key, KEY_SIZE, "ChaCha20-Poly1305 secret key bytes.");
 
@@ -166,6 +170,36 @@ impl ChaCha20Poly1305 {
     let tag = poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, &poly_key);
     ct::zeroize(&mut poly_key);
     tag
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    any(feature = "diag", all(not(debug_assertions), not(feature = "portable-only")))
+  ))]
+  fn encrypt_in_place_asm_x86_64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    use crate::platform::caps::x86;
+
+    if buffer.is_empty() {
+      return None;
+    }
+
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+
+    if !caps.has(x86::AVX2.union(x86::BMI2)) {
+      return None;
+    }
+
+    let tag = x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
   #[cfg(all(
@@ -444,8 +478,8 @@ pub fn diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64(
   cipher.encrypt_in_place_owned_par4_aarch64_diag(nonce, aad, buffer)
 }
 
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_short_fused(
+#[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
   cipher: &ChaCha20Poly1305,
   nonce: &Nonce96,
   aad: &[u8],
@@ -455,8 +489,7 @@ pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_short_fused(
     return Some(Err(err));
   }
 
-  x86_64_fused::encrypt_in_place_short(cipher.key.as_bytes(), nonce.as_bytes(), aad, buffer)
-    .map(|result| result.map(ChaCha20Poly1305Tag::from_bytes))
+  cipher.encrypt_in_place_asm_x86_64(nonce, aad, buffer)
 }
 
 #[cfg(feature = "diag")]
@@ -504,6 +537,16 @@ impl Aead for ChaCha20Poly1305 {
       not(feature = "portable-only")
     ))]
     if let Some(result) = self.encrypt_in_place_asm_aarch64(nonce, aad, buffer) {
+      return result;
+    }
+
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if let Some(result) = self.encrypt_in_place_asm_x86_64(nonce, aad, buffer) {
       return result;
     }
 

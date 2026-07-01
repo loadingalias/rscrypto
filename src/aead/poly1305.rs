@@ -740,54 +740,6 @@ impl State {
     tag[12..16].copy_from_slice(&h3.to_le_bytes());
     tag
   }
-
-  #[cfg(all(feature = "diag", target_arch = "x86_64"))]
-  #[inline(always)]
-  fn zeroize(&mut self) {
-    ct::zeroize_words_no_fence(&mut self.r);
-    ct::zeroize_words_no_fence(&mut self.h);
-    ct::zeroize_words_no_fence(&mut self.pad);
-  }
-}
-
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-pub(crate) struct AeadScalar {
-  state: State,
-}
-
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-impl AeadScalar {
-  #[inline]
-  pub(crate) fn new(key: &[u8; 32]) -> Self {
-    Self { state: State::new(key) }
-  }
-
-  #[inline]
-  pub(crate) fn update_padded_segment(&mut self, segment: &[u8]) {
-    self.state.update_padded_segment(segment, State::compute_block_portable);
-  }
-
-  #[inline(always)]
-  pub(crate) fn update_padded_block(&mut self, block: &[u8; 16]) {
-    self.state.compute_block_portable(block, false);
-  }
-
-  #[inline]
-  pub(crate) fn finalize(mut self, lengths: super::AeadByteLengths) -> [u8; 16] {
-    let mut length_block = lengths.to_le_bytes_block();
-    self.state.compute_block_portable(&length_block, false);
-    let tag = self.state.finalize_in_place();
-    ct::zeroize(&mut length_block);
-    tag
-  }
-}
-
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-impl Drop for AeadScalar {
-  fn drop(&mut self) {
-    self.state.zeroize();
-    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-  }
 }
 
 #[cfg(test)]

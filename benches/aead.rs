@@ -171,8 +171,8 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
     let mut buf = data.clone();
     #[cfg(feature = "diag")]
     let mut buf_owned = data.clone();
-    #[cfg(all(feature = "diag", target_arch = "x86_64"))]
-    let mut buf_x86_short_fused = data.clone();
+    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    let mut buf_x86_asm = data.clone();
     #[cfg(all(
       feature = "diag",
       target_arch = "aarch64",
@@ -201,19 +201,19 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
       })
     });
 
-    #[cfg(all(feature = "diag", target_arch = "x86_64"))]
-    if (1..=256).contains(len) {
-      g.bench_with_input(BenchmarkId::new("rscrypto-x86-short-fused", len), data, |b, d| {
+    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    if *len != 0 {
+      g.bench_with_input(BenchmarkId::new("rscrypto-x86-asm", len), data, |b, d| {
         b.iter(|| {
-          buf_x86_short_fused.copy_from_slice(d);
+          buf_x86_asm.copy_from_slice(d);
           black_box(
-            rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_x86_64_short_fused(
+            rscrypto::aead::diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
               black_box(&cipher_rs),
               black_box(&nonce_rs),
               black_box(AAD),
-              black_box(&mut buf_x86_short_fused),
+              black_box(&mut buf_x86_asm),
             )
-            .expect("short fused path must apply to benchmarked short sizes"),
+            .expect("x86 asm path must apply to benchmarked non-empty sizes"),
           )
         })
       });
