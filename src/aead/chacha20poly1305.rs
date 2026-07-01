@@ -23,6 +23,18 @@ const AARCH64_INTERLEAVED_CHUNK: usize = 1024 * 1024;
   any(target_os = "linux", target_os = "macos")
 ))]
 const AARCH64_OWNED_PAR4_DIAG_CHUNK: usize = chacha20::BLOCK_SIZE * 8;
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  any(test, all(not(debug_assertions), not(feature = "portable-only")))
+))]
+const X86_64_ASM_ZEN5_MAX: usize = 1024;
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  any(test, all(not(debug_assertions), not(feature = "portable-only")))
+))]
+const X86_64_ASM_SPR_MAX: usize = 256;
 
 #[cfg(all(
   target_arch = "aarch64",
@@ -175,16 +187,49 @@ impl ChaCha20Poly1305 {
   #[cfg(all(
     target_arch = "x86_64",
     target_os = "linux",
-    any(feature = "diag", all(not(debug_assertions), not(feature = "portable-only")))
+    any(test, feature = "diag", all(not(debug_assertions), not(feature = "portable-only")))
   ))]
-  fn encrypt_in_place_asm_x86_64(
+  #[inline]
+  fn x86_64_asm_caps_available(caps: crate::platform::Caps) -> bool {
+    use crate::platform::caps::x86;
+
+    caps.has(x86::AVX2.union(x86::BMI2))
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    any(test, all(not(debug_assertions), not(feature = "portable-only")))
+  ))]
+  #[inline]
+  fn x86_64_asm_recommended(caps: crate::platform::Caps, plaintext_len: usize) -> bool {
+    use crate::platform::caps::x86;
+
+    if plaintext_len == 0 || !Self::x86_64_asm_caps_available(caps) {
+      return false;
+    }
+
+    // Measured on the 2026-07-01 x86_64 Linux bench run:
+    // - Sapphire Rapids regresses beyond 256 bytes.
+    // - AMD Zen5 regresses beyond 1024 bytes.
+    // - The remaining measured AVX2+BMI2 lanes, Zen4 and Ice Lake, benefit from the integrated pass
+    //   shape across the sampled non-empty sizes.
+    if caps.has(x86::INTEL_SAPPHIRE_RAPIDS) {
+      plaintext_len <= X86_64_ASM_SPR_MAX
+    } else if caps.has(x86::AMD_ZEN5) {
+      plaintext_len <= X86_64_ASM_ZEN5_MAX
+    } else {
+      true
+    }
+  }
+
+  #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  fn encrypt_in_place_asm_x86_64_forced(
     &self,
     nonce: &Nonce96,
     aad: &[u8],
     buffer: &mut [u8],
   ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
-    use crate::platform::caps::x86;
-
     if buffer.is_empty() {
       return None;
     }
@@ -194,7 +239,32 @@ impl ChaCha20Poly1305 {
     #[cfg(not(feature = "std"))]
     let caps = crate::platform::caps_static();
 
-    if !caps.has(x86::AVX2.union(x86::BMI2)) {
+    if !Self::x86_64_asm_caps_available(caps) {
+      return None;
+    }
+
+    let tag = x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(debug_assertions),
+    not(feature = "portable-only")
+  ))]
+  fn encrypt_in_place_asm_x86_64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+
+    if !Self::x86_64_asm_recommended(caps, buffer.len()) {
       return None;
     }
 
@@ -489,7 +559,7 @@ pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
     return Some(Err(err));
   }
 
-  cipher.encrypt_in_place_asm_x86_64(nonce, aad, buffer)
+  cipher.encrypt_in_place_asm_x86_64_forced(nonce, aad, buffer)
 }
 
 #[cfg(feature = "diag")]
@@ -622,6 +692,27 @@ mod tests {
     let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
     assert!(result.is_err());
     assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
+  }
+
+  #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+  #[test]
+  fn x86_64_asm_policy_matches_measured_thresholds() {
+    use crate::platform::{Caps, caps::x86};
+
+    let avx2_bmi2 = x86::AVX2 | x86::BMI2;
+    let zen5 = avx2_bmi2 | x86::AMD_ZEN5;
+    let spr = avx2_bmi2 | x86::INTEL_SAPPHIRE_RAPIDS;
+
+    assert!(!ChaCha20Poly1305::x86_64_asm_recommended(Caps::NONE, 1));
+    assert!(!ChaCha20Poly1305::x86_64_asm_recommended(avx2_bmi2, 0));
+
+    assert!(ChaCha20Poly1305::x86_64_asm_recommended(avx2_bmi2, 16_384));
+
+    assert!(ChaCha20Poly1305::x86_64_asm_recommended(zen5, X86_64_ASM_ZEN5_MAX));
+    assert!(!ChaCha20Poly1305::x86_64_asm_recommended(zen5, X86_64_ASM_ZEN5_MAX + 1));
+
+    assert!(ChaCha20Poly1305::x86_64_asm_recommended(spr, X86_64_ASM_SPR_MAX));
+    assert!(!ChaCha20Poly1305::x86_64_asm_recommended(spr, X86_64_ASM_SPR_MAX + 1));
   }
 
   #[test]
