@@ -13,6 +13,10 @@ const KEY_SIZE: usize = chacha20::KEY_SIZE;
 const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce96::LENGTH;
 const MAX_PLAINTEXT_LEN: u64 = (u32::MAX as u64) * (chacha20::BLOCK_SIZE as u64);
+#[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+const SMALL_AAD_FAST_MAX: usize = 63;
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+const POWER_SHORT_FAST_MAX: usize = chacha20::BLOCK_SIZE;
 #[cfg(target_arch = "aarch64")]
 const AARCH64_INTERLEAVED_MIN: usize = 1024;
 #[cfg(target_arch = "aarch64")]
@@ -182,6 +186,36 @@ impl ChaCha20Poly1305 {
     let tag = poly1305::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, aad, ciphertext, &poly_key);
     ct::zeroize(&mut poly_key);
     tag
+  }
+
+  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  fn encrypt_empty_text_fast(&self, nonce: &Nonce96, aad: &[u8]) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    if aad.len() > SMALL_AAD_FAST_MAX {
+      return None;
+    }
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let tag = poly1305::authenticate_aead_empty_text_portable(aad, &poly_key);
+    ct::zeroize(&mut poly_key);
+    Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
+  }
+
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  fn encrypt_short_text_power_fast(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Option<Result<ChaCha20Poly1305Tag, SealError>> {
+    if buffer.is_empty() || buffer.len() > POWER_SHORT_FAST_MAX || aad.len() > SMALL_AAD_FAST_MAX {
+      return None;
+    }
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    chacha20::xor_keystream_first_block_portable(self.key.as_bytes(), 1, nonce.as_bytes(), buffer);
+    let tag = poly1305::authenticate_aead_short_text_portable(aad, buffer, &poly_key);
+    ct::zeroize(&mut poly_key);
+    Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
   #[cfg(all(
@@ -600,6 +634,18 @@ impl Aead for ChaCha20Poly1305 {
   fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
+    #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+    if buffer.is_empty() {
+      if let Some(result) = self.encrypt_empty_text_fast(nonce, aad) {
+        return result;
+      }
+    }
+
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    if let Some(result) = self.encrypt_short_text_power_fast(nonce, aad, buffer) {
+      return result;
+    }
+
     #[cfg(all(
       target_arch = "aarch64",
       any(target_os = "linux", target_os = "macos"),
@@ -648,6 +694,9 @@ impl Aead for ChaCha20Poly1305 {
 
 #[cfg(test)]
 mod tests {
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  use alloc::vec::Vec;
+
   use super::*;
 
   #[test]
@@ -713,6 +762,54 @@ mod tests {
 
     assert!(ChaCha20Poly1305::x86_64_asm_recommended(spr, X86_64_ASM_SPR_MAX));
     assert!(!ChaCha20Poly1305::x86_64_asm_recommended(spr, X86_64_ASM_SPR_MAX + 1));
+  }
+
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[test]
+  fn power_short_fast_encrypt_matches_owned_path() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x24; NONCE_SIZE]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    for plaintext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65] {
+      let plaintext = (0..plaintext_len)
+        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+        .collect::<Vec<_>>();
+
+      for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63, 64] {
+        let aad = (0..aad_len)
+          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+          .collect::<Vec<_>>();
+
+        let mut actual = plaintext.clone();
+        let actual_tag = cipher.encrypt_short_text_power_fast(&nonce, &aad, &mut actual);
+        if plaintext_len == 0 || plaintext_len > POWER_SHORT_FAST_MAX || aad_len > SMALL_AAD_FAST_MAX {
+          assert!(
+            actual_tag.is_none(),
+            "Power short fast path applied outside its measured gate: plaintext_len={plaintext_len} aad_len={aad_len}"
+          );
+          assert_eq!(actual, plaintext);
+          continue;
+        }
+
+        let mut expected = plaintext.clone();
+        let expected_tag = cipher
+          .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut expected)
+          .unwrap();
+        let actual_tag = actual_tag
+          .expect("Power short fast path must apply inside its measured gate")
+          .unwrap();
+
+        assert_eq!(
+          actual, expected,
+          "Power short ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+        assert_eq!(
+          actual_tag, expected_tag,
+          "Power short tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+      }
+    }
   }
 
   #[test]

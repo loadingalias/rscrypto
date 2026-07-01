@@ -15,6 +15,8 @@ use crate::{
 
 const LIMB_MASK: u32 = 0x03ff_ffff;
 const FULL_BLOCK_HIBIT: u32 = 1 << 24;
+#[cfg(target_arch = "riscv64")]
+const RISCV64_PAR4_MIN: u64 = 4096;
 
 type ComputeBlockFn = fn(&mut State, &[u8; 16], bool);
 
@@ -773,7 +775,62 @@ pub(crate) fn authenticate_aead(
       return Ok(aarch64_neon::authenticate_aead_par4(aad, ciphertext, key, lengths));
     }
   }
+  #[cfg(target_arch = "riscv64")]
+  {
+    use crate::platform::caps::riscv;
+    if lengths.total_at_least(RISCV64_PAR4_MIN) && current_caps().has(riscv::V) {
+      return Ok(riscv64_vector::authenticate_aead_par4(aad, ciphertext, key, lengths));
+    }
+  }
   authenticate_aead_with(aad, ciphertext, key, compute_block_resolved(primitive), lengths)
+}
+
+#[cfg_attr(
+  not(any(
+    test,
+    target_arch = "x86_64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )),
+  allow(dead_code)
+)]
+fn authenticate_aead_portable_blocks(
+  aad: &[u8],
+  ciphertext: &[u8],
+  key: &[u8; 32],
+  lengths: super::AeadByteLengths,
+) -> [u8; 16] {
+  let mut state = State::new(key);
+  state.update_padded_segment(aad, State::compute_block_portable);
+  state.update_padded_segment(ciphertext, State::compute_block_portable);
+
+  let mut length_block = lengths.to_le_bytes_block();
+  state.compute_block_portable(&length_block, false);
+
+  let tag = state.finalize();
+  ct::zeroize(&mut length_block);
+  tag
+}
+
+#[cfg_attr(
+  not(any(
+    test,
+    target_arch = "x86_64",
+    all(target_arch = "powerpc64", target_endian = "little")
+  )),
+  allow(dead_code)
+)]
+pub(crate) fn authenticate_aead_empty_text_portable(aad: &[u8], key: &[u8; 32]) -> [u8; 16] {
+  authenticate_aead_portable_blocks(aad, &[], key, super::AeadByteLengths::from_usize(aad.len(), 0))
+}
+
+#[cfg_attr(not(all(target_arch = "powerpc64", target_endian = "little")), allow(dead_code))]
+pub(crate) fn authenticate_aead_short_text_portable(aad: &[u8], ciphertext: &[u8], key: &[u8; 32]) -> [u8; 16] {
+  authenticate_aead_portable_blocks(
+    aad,
+    ciphertext,
+    key,
+    super::AeadByteLengths::from_usize(aad.len(), ciphertext.len()),
+  )
 }
 
 #[cfg(feature = "diag")]
@@ -867,7 +924,6 @@ mod x86_avx2;
 mod x86_avx512;
 #[cfg(test)]
 mod tests {
-  #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
   use alloc::vec::Vec;
 
   use super::authenticate;
@@ -918,6 +974,23 @@ mod tests {
       super::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, &aad, &ciphertext, &poly_key).unwrap(),
       expected
     );
+  }
+
+  #[test]
+  fn empty_text_fast_path_matches_generic_aead_authentication() {
+    let key = [0x5au8; 32];
+
+    for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63] {
+      let aad = (0..aad_len)
+        .map(|index| index.strict_mul(11).strict_add(7) as u8)
+        .collect::<Vec<_>>();
+      let expected = super::authenticate_aead(AeadPrimitive::ChaCha20Poly1305, &aad, &[], &key).unwrap();
+      let actual = super::authenticate_aead_empty_text_portable(&aad, &key);
+      assert_eq!(
+        actual, expected,
+        "empty-text authentication mismatch at aad_len={aad_len}"
+      );
+    }
   }
 
   #[cfg(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64"))]
@@ -1026,6 +1099,26 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_arch = "riscv64")]
+  fn rvv_par4_matches_portable() {
+    if !crate::platform::caps().has(riscv::V) {
+      return;
+    }
+
+    let key = [0x5au8; 32];
+    for aad_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 80, 128] {
+      for ct_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 191, 256, 1024, 4096] {
+        let aad: Vec<u8> = (0..aad_len).map(|i| i.strict_mul(11).strict_add(7) as u8).collect();
+        let ct: Vec<u8> = (0..ct_len).map(|i| i.strict_mul(17).strict_add(3) as u8).collect();
+        let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+        let portable = authenticate_aead_portable(&aad, &ct, &key);
+        let parallel = super::riscv64_vector::authenticate_aead_par4(&aad, &ct, &key, lengths);
+        assert_eq!(parallel, portable, "mismatch at aad={aad_len} ct={ct_len}");
+      }
+    }
+  }
+
+  #[test]
   #[cfg(target_arch = "aarch64")]
   fn neon_par4_handles_high_carry_reduction() {
     if !crate::platform::caps().has(aarch64::NEON) {
@@ -1039,6 +1132,23 @@ mod tests {
 
     let portable = authenticate_aead_portable(&aad, &ct, &key);
     let parallel = super::aarch64_neon::authenticate_aead_par4(&aad, &ct, &key, lengths);
+    assert_eq!(parallel, portable);
+  }
+
+  #[test]
+  #[cfg(target_arch = "riscv64")]
+  fn rvv_par4_handles_high_carry_reduction() {
+    if !crate::platform::caps().has(riscv::V) {
+      return;
+    }
+
+    let key = [0xffu8; 32];
+    let aad = [0xffu8; 257];
+    let ct = [0xffu8; 4096];
+    let lengths = AeadByteLengths::try_new(aad.len(), ct.len()).unwrap();
+
+    let portable = authenticate_aead_portable(&aad, &ct, &key);
+    let parallel = super::riscv64_vector::authenticate_aead_par4(&aad, &ct, &key, lengths);
     assert_eq!(parallel, portable);
   }
 

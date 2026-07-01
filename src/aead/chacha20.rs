@@ -13,6 +13,7 @@ use crate::{
   },
   backend::cache::OnceCache,
   platform::{Arch, Caps},
+  traits::ct,
 };
 
 pub(crate) const KEY_SIZE: usize = 32;
@@ -141,8 +142,21 @@ pub(crate) fn block(key: &[u8; KEY_SIZE], counter: u32, nonce: &[u8; NONCE_SIZE]
 /// Derive a one-time Poly1305 key from the ChaCha20 block with counter 0.
 #[must_use]
 pub(crate) fn poly1305_key_gen(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE]) -> [u8; POLY1305_KEY_SIZE] {
+  let mut initial = init_state(key, 0, nonce);
+  let mut state = initial;
+  rounds(&mut state);
+
   let mut out = [0u8; POLY1305_KEY_SIZE];
-  out.copy_from_slice(&block(key, 0, nonce)[..POLY1305_KEY_SIZE]);
+  let mut index = 0usize;
+  while index < POLY1305_KEY_SIZE / 4 {
+    let word = state[index].wrapping_add(initial[index]);
+    let offset = index.strict_mul(4);
+    out[offset..offset.strict_add(4)].copy_from_slice(&word.to_le_bytes());
+    index = index.strict_add(1);
+  }
+  ct::zeroize_words_no_fence(&mut initial);
+  ct::zeroize_words_no_fence(&mut state);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   out
 }
 
@@ -233,6 +247,22 @@ fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u
   }
 }
 
+#[cfg_attr(not(all(target_arch = "powerpc64", target_endian = "little")), allow(dead_code))]
+pub(crate) fn xor_keystream_first_block_portable(
+  key: &[u8; KEY_SIZE],
+  counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  debug_assert!(buffer.len() <= BLOCK_SIZE);
+
+  let mut stream = block(key, counter, nonce);
+  for (dst, src) in buffer.iter_mut().zip(stream.iter().copied()) {
+    *dst ^= src;
+  }
+  ct::zeroize(&mut stream);
+}
+
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
 fn simd_u32x4_rotl(value: u32x4, bits: u32) -> u32x4 {
@@ -260,6 +290,7 @@ fn simd_u32x4_quarter_round(a: &mut u32x4, b: &mut u32x4, c: &mut u32x4, d: &mut
 }
 
 #[cfg(target_arch = "riscv64")]
+#[target_feature(enable = "v")]
 unsafe fn xor_keystream_u32x4_impl(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
