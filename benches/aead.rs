@@ -342,6 +342,8 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
     let mut buf = ciphertext.clone();
     #[cfg(feature = "diag")]
     let mut buf_owned = ciphertext.clone();
+    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    let mut buf_x86_asm = ciphertext.clone();
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), &ciphertext, |b, ct| {
       b.iter(|| {
@@ -373,6 +375,25 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
         black_box(&buf_owned);
       })
     });
+
+    #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+    if *len != 0 {
+      g.bench_with_input(BenchmarkId::new("rscrypto-x86-asm", len), &ciphertext, |b, ct| {
+        b.iter(|| {
+          buf_x86_asm.copy_from_slice(ct);
+          rscrypto::aead::diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
+            black_box(&cipher_rs),
+            black_box(&nonce_rs),
+            black_box(AAD),
+            black_box(&mut buf_x86_asm),
+            black_box(&tag_rs),
+          )
+          .expect("x86 asm path must apply to benchmarked non-empty sizes")
+          .unwrap();
+          black_box(&buf_x86_asm);
+        })
+      });
+    }
 
     let mut buf_rc = ct_rc.clone();
 

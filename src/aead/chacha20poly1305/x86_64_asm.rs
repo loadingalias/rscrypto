@@ -1,4 +1,4 @@
-//! x86_64 Linux integrated ChaCha20-Poly1305 seal assembly.
+//! x86_64 Linux integrated ChaCha20-Poly1305 seal/open assembly.
 //!
 //! The embedded assembly is adapted from the generated AWS-LC/BoringSSL x86_64
 //! ChaCha20-Poly1305 assembly. This Rust module owns the ABI boundary and
@@ -33,14 +33,39 @@ union SealData {
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
+struct OpenDataIn {
+  key: [u8; KEY_SIZE],
+  counter: u32,
+  nonce: [u8; 12],
+}
+
+#[repr(C)]
+union OpenData {
+  input: OpenDataIn,
+  out: TagOut,
+}
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
 struct TagOut {
   tag: [u8; 16],
 }
 
+const _: () = assert!(mem::size_of::<OpenData>() == 48);
+const _: () = assert!(mem::align_of::<OpenData>() == 16);
 const _: () = assert!(mem::size_of::<SealData>() == 64);
 const _: () = assert!(mem::align_of::<SealData>() == 16);
 
 unsafe extern "C" {
+  fn rscrypto_chacha20_poly1305_open_x86_64(
+    out_plaintext: *mut u8,
+    ciphertext: *const u8,
+    plaintext_len: usize,
+    aad: *const u8,
+    aad_len: usize,
+    data: *mut OpenData,
+  );
+
   fn rscrypto_chacha20_poly1305_seal_x86_64(
     out_ciphertext: *mut u8,
     plaintext: *const u8,
@@ -77,6 +102,38 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   // 5. `data` is 16-byte aligned and matches the assembly input/output union layout.
   unsafe {
     rscrypto_chacha20_poly1305_seal_x86_64(
+      buffer.as_mut_ptr(),
+      buffer.as_ptr(),
+      buffer.len(),
+      aad.as_ptr(),
+      aad.len(),
+      &mut data,
+    );
+    data.out.tag
+  }
+}
+
+#[inline]
+pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], buffer: &mut [u8]) -> [u8; 16] {
+  debug_assert!(!buffer.is_empty());
+
+  let mut data = OpenData {
+    input: OpenDataIn {
+      key: *key,
+      counter: 0,
+      nonce: *nonce,
+    },
+  };
+
+  // SAFETY: integrated x86_64 Linux open call because:
+  // 1. The caller gates this function on AVX2 and BMI2 before crossing the assembly ABI boundary.
+  // 2. `buffer.as_ptr()` and `buffer.as_mut_ptr()` are valid for `buffer.len()` bytes and may alias;
+  //    the assembly routine supports in-place open, matching the AWS-LC ABI.
+  // 3. `aad.as_ptr()` is valid for `aad.len()` bytes, including the conventional dangling pointer for
+  //    empty slices because the length is zero.
+  // 4. `data` is 16-byte aligned and matches the assembly input/output union layout.
+  unsafe {
+    rscrypto_chacha20_poly1305_open_x86_64(
       buffer.as_mut_ptr(),
       buffer.as_ptr(),
       buffer.len(),

@@ -39,6 +39,12 @@ const X86_64_ASM_ZEN5_MAX: usize = 1024;
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
 ))]
 const X86_64_ASM_SPR_MAX: usize = 256;
+#[cfg(all(
+  target_arch = "x86_64",
+  target_os = "linux",
+  any(test, all(not(debug_assertions), not(feature = "portable-only")))
+))]
+const X86_64_OPEN_ASM_SHORT_MAX: usize = 256;
 
 #[cfg(all(
   target_arch = "aarch64",
@@ -200,6 +206,26 @@ impl ChaCha20Poly1305 {
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
   }
 
+  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  fn decrypt_empty_text_fast(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    if aad.len() > SMALL_AAD_FAST_MAX {
+      return None;
+    }
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let expected = poly1305::authenticate_aead_empty_text_portable(aad, &poly_key);
+    ct::zeroize(&mut poly_key);
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      return Some(Err(OpenError::verification()));
+    }
+    Some(Ok(()))
+  }
+
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
   fn encrypt_short_text_power_fast(
     &self,
@@ -216,6 +242,30 @@ impl ChaCha20Poly1305 {
     let tag = poly1305::authenticate_aead_short_text_portable(aad, buffer, &poly_key);
     ct::zeroize(&mut poly_key);
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
+  }
+
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  fn decrypt_short_text_power_fast(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    if buffer.is_empty() || buffer.len() > POWER_SHORT_FAST_MAX || aad.len() > SMALL_AAD_FAST_MAX {
+      return None;
+    }
+
+    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
+    let expected = poly1305::authenticate_aead_short_text_portable(aad, buffer, &poly_key);
+    ct::zeroize(&mut poly_key);
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Some(Err(OpenError::verification()));
+    }
+
+    chacha20::xor_keystream_first_block_portable(self.key.as_bytes(), 1, nonce.as_bytes(), buffer);
+    Some(Ok(()))
   }
 
   #[cfg(all(
@@ -257,6 +307,30 @@ impl ChaCha20Poly1305 {
     }
   }
 
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    any(test, all(not(debug_assertions), not(feature = "portable-only")))
+  ))]
+  #[inline]
+  fn x86_64_open_asm_recommended(caps: crate::platform::Caps, ciphertext_len: usize) -> bool {
+    use crate::platform::caps::x86;
+
+    if ciphertext_len == 0 || !Self::x86_64_asm_caps_available(caps) {
+      return false;
+    }
+
+    // Measured on the 2026-07-01 decrypt bench:
+    // - all sampled x86_64 CPUs lose 1..=256 bytes on the generic split open path.
+    // - AMD Zen4 loses through the full sampled matrix; the repo only has a Zen5-specific AMD
+    //   discriminator, so AMD without Zen5 takes integrated open for every non-empty size.
+    if caps.has(x86::AMD) && !caps.has(x86::AMD_ZEN5) {
+      true
+    } else {
+      ciphertext_len <= X86_64_OPEN_ASM_SHORT_MAX
+    }
+  }
+
   #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
   fn encrypt_in_place_asm_x86_64_forced(
     &self,
@@ -279,6 +353,35 @@ impl ChaCha20Poly1305 {
 
     let tag = x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
+  }
+
+  #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  fn decrypt_in_place_asm_x86_64_forced(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    if buffer.is_empty() {
+      return None;
+    }
+
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+
+    if !Self::x86_64_asm_caps_available(caps) {
+      return None;
+    }
+
+    let expected = x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Some(Err(OpenError::verification()));
+    }
+    Some(Ok(()))
   }
 
   #[cfg(all(
@@ -304,6 +407,36 @@ impl ChaCha20Poly1305 {
 
     let tag = x86_64_asm::seal_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
     Some(Ok(ChaCha20Poly1305Tag::from_bytes(tag)))
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(debug_assertions),
+    not(feature = "portable-only")
+  ))]
+  fn decrypt_in_place_asm_x86_64(
+    &self,
+    nonce: &Nonce96,
+    aad: &[u8],
+    buffer: &mut [u8],
+    tag: &ChaCha20Poly1305Tag,
+  ) -> Option<Result<(), OpenError>> {
+    #[cfg(feature = "std")]
+    let caps = crate::platform::caps();
+    #[cfg(not(feature = "std"))]
+    let caps = crate::platform::caps_static();
+
+    if !Self::x86_64_open_asm_recommended(caps, buffer.len()) {
+      return None;
+    }
+
+    let expected = x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
+    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      ct::zeroize(buffer);
+      return Some(Err(OpenError::verification()));
+    }
+    Some(Ok(()))
   }
 
   #[cfg(all(
@@ -596,6 +729,21 @@ pub fn diag_chacha20poly1305_encrypt_in_place_x86_64_asm(
   cipher.encrypt_in_place_asm_x86_64_forced(nonce, aad, buffer)
 }
 
+#[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+pub fn diag_chacha20poly1305_decrypt_in_place_x86_64_asm(
+  cipher: &ChaCha20Poly1305,
+  nonce: &Nonce96,
+  aad: &[u8],
+  buffer: &mut [u8],
+  tag: &ChaCha20Poly1305Tag,
+) -> Option<Result<(), OpenError>> {
+  if let Err(err) = super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN) {
+    return Some(Err(err));
+  }
+
+  cipher.decrypt_in_place_asm_x86_64_forced(nonce, aad, buffer, tag)
+}
+
 #[cfg(feature = "diag")]
 pub fn diag_chacha20poly1305_decrypt_in_place_owned(
   cipher: &ChaCha20Poly1305,
@@ -678,6 +826,28 @@ impl Aead for ChaCha20Poly1305 {
   ) -> Result<(), OpenError> {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
+    #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+    if buffer.is_empty() {
+      if let Some(result) = self.decrypt_empty_text_fast(nonce, aad, tag) {
+        return result;
+      }
+    }
+
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    if let Some(result) = self.decrypt_short_text_power_fast(nonce, aad, buffer, tag) {
+      return result;
+    }
+
+    #[cfg(all(
+      target_arch = "x86_64",
+      target_os = "linux",
+      not(debug_assertions),
+      not(feature = "portable-only")
+    ))]
+    if let Some(result) = self.decrypt_in_place_asm_x86_64(nonce, aad, buffer, tag) {
+      return result;
+    }
+
     #[cfg(all(
       target_arch = "aarch64",
       any(target_os = "linux", target_os = "macos"),
@@ -694,7 +864,7 @@ impl Aead for ChaCha20Poly1305 {
 
 #[cfg(test)]
 mod tests {
-  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
   use alloc::vec::Vec;
 
   use super::*;
@@ -749,7 +919,8 @@ mod tests {
     use crate::platform::{Caps, caps::x86};
 
     let avx2_bmi2 = x86::AVX2 | x86::BMI2;
-    let zen5 = avx2_bmi2 | x86::AMD_ZEN5;
+    let amd_zen4 = avx2_bmi2 | x86::AMD;
+    let zen5 = avx2_bmi2 | x86::AMD | x86::AMD_ZEN5;
     let spr = avx2_bmi2 | x86::INTEL_SAPPHIRE_RAPIDS;
 
     assert!(!ChaCha20Poly1305::x86_64_asm_recommended(Caps::NONE, 1));
@@ -762,6 +933,120 @@ mod tests {
 
     assert!(ChaCha20Poly1305::x86_64_asm_recommended(spr, X86_64_ASM_SPR_MAX));
     assert!(!ChaCha20Poly1305::x86_64_asm_recommended(spr, X86_64_ASM_SPR_MAX + 1));
+
+    assert!(!ChaCha20Poly1305::x86_64_open_asm_recommended(Caps::NONE, 1));
+    assert!(!ChaCha20Poly1305::x86_64_open_asm_recommended(avx2_bmi2, 0));
+
+    assert!(ChaCha20Poly1305::x86_64_open_asm_recommended(
+      avx2_bmi2,
+      X86_64_OPEN_ASM_SHORT_MAX
+    ));
+    assert!(!ChaCha20Poly1305::x86_64_open_asm_recommended(
+      avx2_bmi2,
+      X86_64_OPEN_ASM_SHORT_MAX + 1
+    ));
+
+    assert!(ChaCha20Poly1305::x86_64_open_asm_recommended(amd_zen4, 16_384));
+    assert!(ChaCha20Poly1305::x86_64_open_asm_recommended(
+      zen5,
+      X86_64_OPEN_ASM_SHORT_MAX
+    ));
+    assert!(!ChaCha20Poly1305::x86_64_open_asm_recommended(
+      zen5,
+      X86_64_OPEN_ASM_SHORT_MAX + 1
+    ));
+    assert!(ChaCha20Poly1305::x86_64_open_asm_recommended(
+      spr,
+      X86_64_OPEN_ASM_SHORT_MAX
+    ));
+    assert!(!ChaCha20Poly1305::x86_64_open_asm_recommended(
+      spr,
+      X86_64_OPEN_ASM_SHORT_MAX + 1
+    ));
+  }
+
+  #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
+  #[test]
+  fn empty_text_fast_decrypt_matches_owned_path() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x24; NONCE_SIZE]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63, 64] {
+      let aad = (0..aad_len)
+        .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+        .collect::<Vec<_>>();
+      let mut ciphertext = Vec::new();
+
+      let expected_tag = cipher
+        .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
+        .unwrap();
+      let actual = cipher.decrypt_empty_text_fast(&nonce, &aad, &expected_tag);
+
+      if aad_len > SMALL_AAD_FAST_MAX {
+        assert!(
+          actual.is_none(),
+          "empty decrypt fast path applied outside its measured gate: aad_len={aad_len}"
+        );
+        continue;
+      }
+
+      actual
+        .expect("empty decrypt fast path must apply inside its measured gate")
+        .unwrap();
+
+      let mut bad_tag = expected_tag.to_bytes();
+      bad_tag[0] ^= 0x80;
+      assert_eq!(
+        cipher
+          .decrypt_empty_text_fast(&nonce, &aad, &ChaCha20Poly1305Tag::from_bytes(bad_tag))
+          .expect("empty decrypt fast path must apply inside its measured gate"),
+        Err(OpenError::verification())
+      );
+    }
+  }
+
+  #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
+  #[test]
+  fn x86_64_open_asm_matches_owned_path() {
+    if !ChaCha20Poly1305::x86_64_asm_caps_available(crate::platform::caps()) {
+      return;
+    }
+
+    let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x24; NONCE_SIZE]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    for plaintext_len in [
+      1usize, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024,
+    ] {
+      let plaintext = (0..plaintext_len)
+        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+        .collect::<Vec<_>>();
+
+      for aad_len in [0usize, 1, 13, 14, 15, 16, 17, 31, 32, 63, 64] {
+        let aad = (0..aad_len)
+          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+          .collect::<Vec<_>>();
+
+        let mut ciphertext = plaintext.clone();
+        let tag = cipher
+          .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
+          .unwrap();
+        let mut actual = ciphertext.clone();
+        let actual_tag = x86_64_asm::open_in_place(key.as_bytes(), nonce.as_bytes(), &aad, &mut actual);
+
+        assert_eq!(
+          actual, plaintext,
+          "x86 open asm plaintext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+        assert_eq!(
+          actual_tag,
+          tag.to_bytes(),
+          "x86 open asm tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+      }
+    }
   }
 
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
@@ -807,6 +1092,65 @@ mod tests {
         assert_eq!(
           actual_tag, expected_tag,
           "Power short tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+      }
+    }
+  }
+
+  #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+  #[test]
+  fn power_short_fast_decrypt_matches_owned_path() {
+    let key = ChaCha20Poly1305Key::from_bytes([0x42; KEY_SIZE]);
+    let nonce = Nonce96::from_bytes([0x24; NONCE_SIZE]);
+    let cipher = ChaCha20Poly1305::new(&key);
+
+    for plaintext_len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65] {
+      let plaintext = (0..plaintext_len)
+        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+        .collect::<Vec<_>>();
+
+      for aad_len in [0usize, 1, 14, 15, 16, 17, 31, 32, 33, 63, 64] {
+        let aad = (0..aad_len)
+          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+          .collect::<Vec<_>>();
+
+        let mut ciphertext = plaintext.clone();
+        let tag = cipher
+          .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
+          .unwrap();
+        let mut actual = ciphertext.clone();
+        let actual_result = cipher.decrypt_short_text_power_fast(&nonce, &aad, &mut actual, &tag);
+
+        if plaintext_len == 0 || plaintext_len > POWER_SHORT_FAST_MAX || aad_len > SMALL_AAD_FAST_MAX {
+          assert!(
+            actual_result.is_none(),
+            "Power short decrypt fast path applied outside its measured gate: plaintext_len={plaintext_len} \
+             aad_len={aad_len}"
+          );
+          assert_eq!(actual, ciphertext);
+          continue;
+        }
+
+        actual_result
+          .expect("Power short decrypt fast path must apply inside its measured gate")
+          .unwrap();
+        assert_eq!(
+          actual, plaintext,
+          "Power short plaintext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
+        );
+
+        let mut bad_tag = tag.to_bytes();
+        bad_tag[0] ^= 0x80;
+        let mut rejected = ciphertext.clone();
+        assert_eq!(
+          cipher
+            .decrypt_short_text_power_fast(&nonce, &aad, &mut rejected, &ChaCha20Poly1305Tag::from_bytes(bad_tag),)
+            .expect("Power short decrypt fast path must apply inside its measured gate"),
+          Err(OpenError::verification())
+        );
+        assert!(
+          rejected.iter().all(|&byte| byte == 0),
+          "Power short decrypt fast path did not zeroize rejected buffer"
         );
       }
     }

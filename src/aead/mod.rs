@@ -191,18 +191,20 @@ pub use chacha20::{diag_chacha20_xor_keystream_x86_avx2, diag_chacha20_xor_keyst
   any(target_os = "linux", target_os = "macos")
 ))]
 pub use chacha20poly1305::diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64;
+#[cfg(feature = "chacha20poly1305")]
+pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
+#[cfg(all(feature = "diag", feature = "chacha20poly1305"))]
+pub use chacha20poly1305::{
+  diag_chacha20poly1305_decrypt_in_place_owned, diag_chacha20poly1305_encrypt_in_place_owned,
+};
 #[cfg(all(
   feature = "diag",
   feature = "chacha20poly1305",
   target_arch = "x86_64",
   target_os = "linux"
 ))]
-pub use chacha20poly1305::diag_chacha20poly1305_encrypt_in_place_x86_64_asm;
-#[cfg(feature = "chacha20poly1305")]
-pub use chacha20poly1305::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
-#[cfg(all(feature = "diag", feature = "chacha20poly1305"))]
 pub use chacha20poly1305::{
-  diag_chacha20poly1305_decrypt_in_place_owned, diag_chacha20poly1305_encrypt_in_place_owned,
+  diag_chacha20poly1305_decrypt_in_place_x86_64_asm, diag_chacha20poly1305_encrypt_in_place_x86_64_asm,
 };
 #[cfg(all(feature = "diag", feature = "aes-gcm"))]
 pub use ghash::diag_ghash_block_portable;
