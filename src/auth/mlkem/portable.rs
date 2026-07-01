@@ -96,6 +96,10 @@ const HASH_BYTES: usize = 32;
 const SHARED_SECRET_BYTES: usize = 32;
 const POLY_BYTES: usize = 384;
 const SHAKE128_RATE_BYTES: usize = 168;
+#[cfg(any(test, feature = "diag"))]
+const SAMPLE_NTT_INITIAL_BLOCKS: usize = 3;
+#[cfg(any(test, feature = "diag"))]
+const SAMPLE_NTT_INITIAL_BYTES: usize = SHAKE128_RATE_BYTES * SAMPLE_NTT_INITIAL_BLOCKS;
 const ETA2_RANDOM_BYTES: usize = 128;
 const ETA3_RANDOM_BYTES: usize = 192;
 const SAMPLE_NTT_ACC_CHUNK_COEFFS: usize = 16;
@@ -1088,6 +1092,58 @@ pub(super) fn diag_sampler_triple_parse_blocks_digest(seed: u16, blocks: usize) 
     ^ diag_fold_poly(&out1).rotate_left(1)
     ^ diag_fold_poly(&out2).rotate_left(2)
     ^ diag_fold_usize3(filled);
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_initial_3blocks_parse_digest(seed: u16) -> u16 {
+  let mut bufs = [[0u8; SAMPLE_NTT_INITIAL_BYTES]; 3];
+  for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
+    let rate_blocks = diag_sampler_rate_blocks(seed, block as u16);
+    let start = block.strict_mul(SHAKE128_RATE_BYTES);
+    let end = start.strict_add(SHAKE128_RATE_BYTES);
+    bufs[0][start..end].copy_from_slice(&rate_blocks[0]);
+    bufs[1][start..end].copy_from_slice(&rate_blocks[1]);
+    bufs[2][start..end].copy_from_slice(&rate_blocks[2]);
+  }
+
+  let mut out0 = [0u16; N];
+  let mut out1 = [0u16; N];
+  let mut out2 = [0u16; N];
+  let mut filled = [0usize; 3];
+  sample_ntt_initial_3blocks_public(&bufs[0], &mut out0, &mut filled[0]);
+  sample_ntt_initial_3blocks_public(&bufs[1], &mut out1, &mut filled[1]);
+  sample_ntt_initial_3blocks_public(&bufs[2], &mut out2, &mut filled[2]);
+
+  let digest = diag_fold_poly(&out0)
+    ^ diag_fold_poly(&out1).rotate_left(1)
+    ^ diag_fold_poly(&out2).rotate_left(2)
+    ^ diag_fold_usize3(filled);
+  zeroize_poly(&mut out0);
+  zeroize_poly(&mut out1);
+  zeroize_poly(&mut out2);
+  digest
+}
+
+#[cfg(feature = "diag")]
+pub(super) fn diag_sampler_triple_initial_3blocks_seeded_digest(rho: &[u8; SEED_BYTES]) -> u16 {
+  let lanes = [(0, 0), (1, 0), (2, 0)];
+  let mut out0 = [0u16; N];
+  let mut out1 = [0u16; N];
+  let mut out2 = [0u16; N];
+  let blocks0 = sample_ntt_initial_3blocks_then_tail_into(rho, lanes[0].0, lanes[0].1, &mut out0);
+  let blocks1 = sample_ntt_initial_3blocks_then_tail_into(rho, lanes[1].0, lanes[1].1, &mut out1);
+  let blocks2 = sample_ntt_initial_3blocks_then_tail_into(rho, lanes[2].0, lanes[2].1, &mut out2);
+
+  let digest = diag_fold_poly(&out0)
+    ^ diag_fold_poly(&out1).rotate_left(1)
+    ^ diag_fold_poly(&out2).rotate_left(2)
+    ^ blocks0
+    ^ blocks1.rotate_left(1)
+    ^ blocks2.rotate_left(2);
   zeroize_poly(&mut out0);
   zeroize_poly(&mut out1);
   zeroize_poly(&mut out2);
@@ -3833,6 +3889,73 @@ fn sample_ntt_input(rho: &[u8; SEED_BYTES], j: u8, i: u8) -> [u8; SEED_BYTES + 2
   input
 }
 
+#[cfg(test)]
+fn sample_ntt_initial_3blocks_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> usize {
+  let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
+  let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
+  squeeze_sample_ntt_initial_blocks(&mut reader, &mut buf);
+
+  let mut filled = 0usize;
+  sample_ntt_initial_3blocks_public(&buf, out, &mut filled);
+  filled
+}
+
+#[cfg(any(test, feature = "diag"))]
+fn sample_ntt_initial_3blocks_then_tail_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> u16 {
+  let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
+  let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
+  squeeze_sample_ntt_initial_blocks(&mut reader, &mut buf);
+
+  let mut filled = 0usize;
+  sample_ntt_initial_3blocks_public(&buf, out, &mut filled);
+
+  let mut blocks = SAMPLE_NTT_INITIAL_BLOCKS as u16;
+  let mut tail = [0u8; SHAKE128_RATE_BYTES];
+  while filled < N {
+    reader.squeeze(&mut tail);
+    blocks = blocks.wrapping_add(1);
+    sample_ntt_block_public(&tail, out, &mut filled);
+  }
+  blocks
+}
+
+#[cfg(any(test, feature = "diag"))]
+fn squeeze_sample_ntt_initial_blocks(reader: &mut impl Xof, out: &mut [u8; SAMPLE_NTT_INITIAL_BYTES]) {
+  for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
+    let start = block.strict_mul(SHAKE128_RATE_BYTES);
+    let end = start.strict_add(SHAKE128_RATE_BYTES);
+    reader.squeeze(&mut out[start..end]);
+  }
+}
+
+#[cfg(any(test, feature = "diag"))]
+fn sample_ntt_initial_3blocks_public(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: &mut Poly, filled: &mut usize) {
+  let mut n = *filled;
+  let mut offset = 0usize;
+  while n < N && offset.strict_add(2) < SAMPLE_NTT_INITIAL_BYTES {
+    let b0 = buf[offset];
+    let b1 = buf[offset.strict_add(1)];
+    let b2 = buf[offset.strict_add(2)];
+    let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+    let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+    if d1 < Q {
+      out[n] = d1;
+      n = n.strict_add(1);
+      if n == N {
+        break;
+      }
+    }
+    if d2 < Q {
+      out[n] = d2;
+      n = n.strict_add(1);
+    }
+
+    offset = offset.strict_add(3);
+  }
+  *filled = n;
+}
+
 fn sample_ntt_from_xof_into(mut reader: impl Xof, out: &mut Poly) {
   let mut filled = 0usize;
   let mut buf = [0u8; SHAKE128_RATE_BYTES];
@@ -4120,30 +4243,30 @@ unsafe fn sample_ntt_block_asm_bounded(rate_ptr: *const u8, out: &mut Poly, fill
     return;
   }
 
-  let mut accepted = core::mem::MaybeUninit::<[u16; MAX_CANDIDATES]>::uninit();
-  let accepted_ptr = accepted.as_mut_ptr().cast::<u16>();
-
-  // SAFETY: aarch64 compact rejection parser into bounded scratch because:
-  // 1. `rate_ptr` names one full readable 168-byte SHAKE128 rate block.
-  // 2. `accepted_ptr` points to `MAX_CANDIDATES` writable u16 slots, enough for every candidate a
-  //    single rate block can produce.
-  // 3. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-  let accepted_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(accepted_ptr, rate_ptr) };
-  debug_assert!(accepted_len <= MAX_CANDIDATES);
-
-  let take = accepted_len.min(MAX_CANDIDATES).min(remaining);
-  if take == 0 {
+  if remaining >= MAX_CANDIDATES {
+    let n = *filled;
+    // SAFETY: aarch64 compact rejection parser directly into the destination because:
+    // 1. `rate_ptr` names one full readable 168-byte SHAKE128 rate block.
+    // 2. `remaining >= MAX_CANDIDATES`, so `out[n..]` has room for every possible accepted candidate
+    //    and for the parser's fixed eight-lane compact stores.
+    // 3. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    let accepted_len = unsafe { aarch64::sample_ntt_rej_uniform_block_asm(out.as_mut_ptr().add(n), rate_ptr) };
+    debug_assert!(accepted_len <= MAX_CANDIDATES);
+    *filled = n.strict_add(accepted_len);
     return;
   }
 
-  // SAFETY: copy accepted public samples into the partially-filled destination because:
-  // 1. `take <= remaining`, so `*filled..*filled + take` is inside the fixed 256-coefficient output.
-  // 2. The first `take` coefficients in `accepted_ptr` were initialized by the rejection parser.
-  // 3. The stack scratch array cannot overlap the caller-owned polynomial destination.
-  unsafe {
-    core::ptr::copy_nonoverlapping(accepted_ptr, out.as_mut_ptr().add(*filled), take);
-  }
-  *filled = (*filled).strict_add(take);
+  let n = *filled;
+  // SAFETY: aarch64 bounded rejection parser directly into the destination because:
+  // 1. `rate_ptr` names one full readable 168-byte SHAKE128 rate block.
+  // 2. `remaining` is the exact writable capacity in `out[n..]`.
+  // 3. The bounded assembly caps all writes to `remaining` accepted candidates and returns a count no
+  //    larger than that capacity.
+  // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  let accepted_len =
+    unsafe { aarch64::sample_ntt_rej_uniform_block_bounded_asm(out.as_mut_ptr().add(n), rate_ptr, remaining) };
+  debug_assert!(accepted_len <= remaining);
+  *filled = n.strict_add(accepted_len);
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -8957,6 +9080,43 @@ mod tests {
 
     for (lane, &(j, i)) in lanes.iter().enumerate() {
       assert_eq!(actual[lane], sample_ntt(&rho, j, i), "lane {lane}");
+    }
+  }
+
+  #[test]
+  fn sample_ntt_initial_3blocks_matches_full_sampler() {
+    for seed in 0usize..64 {
+      let mut rho = [0u8; SEED_BYTES];
+      for (i, byte) in rho.iter_mut().enumerate() {
+        *byte = (seed
+          .strict_mul(53)
+          .strict_add(i.strict_mul(47))
+          .strict_add((seed >> 1).strict_mul(19))
+          & 0xff) as u8;
+      }
+
+      for j in 0u8..4 {
+        for i in 0u8..4 {
+          let expected = sample_ntt(&rho, j, i);
+
+          let mut prefix = [0u16; N];
+          let prefix_len = sample_ntt_initial_3blocks_into(&rho, j, i, &mut prefix);
+          assert!(prefix_len <= N, "seed {seed}, lane ({j}, {i})");
+          assert_eq!(
+            &prefix[..prefix_len],
+            &expected[..prefix_len],
+            "initial prefix seed {seed}, lane ({j}, {i})"
+          );
+
+          let mut actual = [0u16; N];
+          let blocks = sample_ntt_initial_3blocks_then_tail_into(&rho, j, i, &mut actual);
+          assert!(
+            blocks >= SAMPLE_NTT_INITIAL_BLOCKS as u16,
+            "seed {seed}, lane ({j}, {i})"
+          );
+          assert_eq!(actual, expected, "full sample seed {seed}, lane ({j}, {i})");
+        }
+      }
     }
   }
 

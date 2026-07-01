@@ -1932,9 +1932,10 @@ fn mlkem_sampler_phases(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
     diag_mlkem1024_sampler_k4_row_sample_block_counts, diag_mlkem1024_sampler_k4_row_sample_counted_digest,
     diag_mlkem1024_sampler_triple_after_two_block_fills, diag_mlkem1024_sampler_triple_first_two_blocks_digest,
-    diag_mlkem1024_sampler_triple_parse_blocks_digest, diag_mlkem1024_sampler_triple_squeeze_blocks_digest,
-    diag_mlkem1024_sampler_triple_tail_after_fill_digest, diag_mlkem1024_sampler_triple_tail_block_digest,
-    diag_mlkem1024_sampler_triple_xof_setup_digest,
+    diag_mlkem1024_sampler_triple_initial_3blocks_parse_digest,
+    diag_mlkem1024_sampler_triple_initial_3blocks_seeded_digest, diag_mlkem1024_sampler_triple_parse_blocks_digest,
+    diag_mlkem1024_sampler_triple_squeeze_blocks_digest, diag_mlkem1024_sampler_triple_tail_after_fill_digest,
+    diag_mlkem1024_sampler_triple_tail_block_digest, diag_mlkem1024_sampler_triple_xof_setup_digest,
   };
 
   print_auth_diag_once();
@@ -1963,6 +1964,20 @@ fn mlkem_sampler_phases(c: &mut Criterion) {
         black_box(0x6100),
         black_box(3),
       ))
+    })
+  });
+  g.bench_function("k=4/triple-initial-3blocks-parse", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_sampler_triple_initial_3blocks_parse_digest(black_box(
+        0x6100,
+      )))
+    })
+  });
+  g.bench_function("k=4/triple-initial-3blocks-seeded", |b| {
+    b.iter(|| {
+      black_box(diag_mlkem1024_sampler_triple_initial_3blocks_seeded_digest(black_box(
+        &rho,
+      )))
     })
   });
   g.bench_function("k=4/triple-first-two-blocks", |b| {

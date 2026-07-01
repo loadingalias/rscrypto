@@ -21,6 +21,11 @@ global_asm!(include_str!("../asm/rscrypto_mlkem_basemul_aarch64_linux.s"));
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
   fn rscrypto_mlkem_rej_uniform_block_aarch64_apple_darwin(out: *mut u16, input: *const u8) -> usize;
+  fn rscrypto_mlkem_rej_uniform_block_bounded_aarch64_apple_darwin(
+    out: *mut u16,
+    input: *const u8,
+    cap: usize,
+  ) -> usize;
   fn rscrypto_mlkem_basemul_accumulate_aarch64_apple_darwin(
     acc: *mut u16,
     a: *const u16,
@@ -57,6 +62,7 @@ unsafe extern "C" {
 #[cfg(target_os = "linux")]
 unsafe extern "C" {
   fn rscrypto_mlkem_rej_uniform_block_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
+  fn rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux(out: *mut u16, input: *const u8, cap: usize) -> usize;
   #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_basemul_accumulate_aarch64_linux(
     acc: *mut u16,
@@ -112,6 +118,32 @@ pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *con
     // 3. Advanced SIMD is baseline for supported aarch64 Linux targets.
     // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
     unsafe { rscrypto_mlkem_rej_uniform_block_aarch64_linux(out, input) }
+  }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[inline]
+pub(super) unsafe fn sample_ntt_rej_uniform_block_bounded_asm(out: *mut u16, input: *const u8, cap: usize) -> usize {
+  #[cfg(target_os = "macos")]
+  {
+    // SAFETY: Darwin aarch64 bounded SampleNTT rejection parser call because:
+    // 1. `input` points to one readable 168-byte SHAKE128 rate block.
+    // 2. `out` points to writable capacity for `cap` accepted candidates.
+    // 3. The assembly caps writes at `cap` and returns the accepted count actually written.
+    // 4. Advanced SIMD is baseline for supported aarch64 macOS targets.
+    // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe { rscrypto_mlkem_rej_uniform_block_bounded_aarch64_apple_darwin(out, input, cap) }
+  }
+
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: Linux aarch64 bounded SampleNTT rejection parser call because:
+    // 1. `input` points to one readable 168-byte SHAKE128 rate block.
+    // 2. `out` points to writable capacity for `cap` accepted candidates.
+    // 3. The assembly caps writes at `cap` and returns the accepted count actually written.
+    // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+    // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe { rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux(out, input, cap) }
   }
 }
 

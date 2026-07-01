@@ -9,6 +9,13 @@
 // Returns:
 //   x0: accepted candidate count
 //
+// Bounded ABI:
+//   x0: uint16_t out[cap] write-only accepted candidates
+//   x1: const uint8_t input[168] read-only SHAKE128 rate block
+//   x2: output capacity in accepted candidates
+// Returns:
+//   x0: accepted candidate count, capped at x2
+//
 // The input is the public matrix-A XOF stream. Rejection branches and write
 // positions therefore depend only on public bytes, never secret key, noise,
 // message, or shared-secret material.
@@ -63,6 +70,73 @@
         SAMPLE_NTT_COMPACT_STORE v17
 .endm
 
+.macro SAMPLE_NTT_SCALAR_STORE_LANE candidates, lane
+        umov    w15, \candidates\().h[\lane]
+        cmp     w15, w8
+        b.hs    1f
+        strh    w15, [x0], #2
+        add     x9, x9, #1
+        cmp     x9, x2
+        b.hs    Lsample_ntt_bounded_done
+1:
+.endm
+
+.macro SAMPLE_NTT_SCALAR_STORE candidates
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 0
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 1
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 2
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 3
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 4
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 5
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 6
+        SAMPLE_NTT_SCALAR_STORE_LANE \candidates, 7
+.endm
+
+.macro SAMPLE_NTT_COMPACT_STORE_BOUNDED candidates
+        sub     x10, x2, x9
+        cmp     x10, #8
+        b.lo    1f
+        SAMPLE_NTT_COMPACT_STORE \candidates
+        cmp     x9, x2
+        b.hs    Lsample_ntt_bounded_done
+        b       2f
+1:
+        SAMPLE_NTT_SCALAR_STORE \candidates
+2:
+.endm
+
+.macro SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED in_ptr
+        ld3     {{ v0.16b, v1.16b, v2.16b }}, [\in_ptr], #48
+        zip1    v4.16b, v0.16b, v1.16b
+        zip2    v5.16b, v0.16b, v1.16b
+        zip1    v6.16b, v1.16b, v2.16b
+        zip2    v7.16b, v1.16b, v2.16b
+        bic     v4.8h, #0xf0, lsl #8
+        bic     v5.8h, #0xf0, lsl #8
+        ushr    v6.8h, v6.8h, #4
+        ushr    v7.8h, v7.8h, #4
+        zip1    v16.8h, v4.8h, v6.8h
+        zip2    v17.8h, v4.8h, v6.8h
+        zip1    v18.8h, v5.8h, v7.8h
+        zip2    v19.8h, v5.8h, v7.8h
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v16
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v17
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v18
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v19
+.endm
+
+.macro SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED in_ptr
+        ld3     {{ v0.8b, v1.8b, v2.8b }}, [\in_ptr], #24
+        zip1    v4.16b, v0.16b, v1.16b
+        zip1    v5.16b, v1.16b, v2.16b
+        bic     v4.8h, #0xf0, lsl #8
+        ushr    v5.8h, v5.8h, #4
+        zip1    v16.8h, v4.8h, v5.8h
+        zip2    v17.8h, v4.8h, v5.8h
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v16
+        SAMPLE_NTT_COMPACT_STORE_BOUNDED v17
+.endm
+
 .globl _rscrypto_mlkem_rej_uniform_block_aarch64_apple_darwin
 .private_extern _rscrypto_mlkem_rej_uniform_block_aarch64_apple_darwin
 _rscrypto_mlkem_rej_uniform_block_aarch64_apple_darwin:
@@ -90,6 +164,38 @@ Lsample_ntt_block_loop:
 
         SAMPLE_NTT_DECODE_COMPACT_16 x13
 
+        mov     x0, x9
+        ret
+
+.globl _rscrypto_mlkem_rej_uniform_block_bounded_aarch64_apple_darwin
+.private_extern _rscrypto_mlkem_rej_uniform_block_bounded_aarch64_apple_darwin
+_rscrypto_mlkem_rej_uniform_block_bounded_aarch64_apple_darwin:
+        mov     x9, #0
+        cbz     x2, Lsample_ntt_bounded_done
+        mov     x13, x1
+        adr     x3, Lrscrypto_mlkem_rej_uniform_compact_table
+        mov     x8, #1
+        movk    x8, #2, lsl #16
+        movk    x8, #4, lsl #32
+        movk    x8, #8, lsl #48
+        mov     v31.d[0], x8
+        mov     x8, #16
+        movk    x8, #32, lsl #16
+        movk    x8, #64, lsl #32
+        movk    x8, #128, lsl #48
+        mov     v31.d[1], x8
+        mov     w8, #3329
+        dup     v30.8h, w8
+
+        mov     w14, #3
+Lsample_ntt_bounded_block_loop:
+        SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED x13
+        subs    w14, w14, #1
+        b.ne    Lsample_ntt_bounded_block_loop
+
+        SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED x13
+
+Lsample_ntt_bounded_done:
         mov     x0, x9
         ret
 

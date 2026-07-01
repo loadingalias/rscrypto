@@ -1314,6 +1314,24 @@ pub fn diag_mlkem1024_sampler_triple_parse_blocks_digest(seed: u16, blocks: usiz
 }
 
 #[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT initial-three-block parser digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_initial_3blocks_parse_digest(seed: u16) -> u16 {
+  portable::diag_sampler_triple_initial_3blocks_parse_digest(seed)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only ML-KEM-1024 triple SampleNTT initial-three-block seeded digest.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_sampler_triple_initial_3blocks_seeded_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_sampler_triple_initial_3blocks_seeded_digest(rho)
+}
+
+#[cfg(feature = "diag")]
 /// Benchmark-only ML-KEM-1024 triple SampleNTT first-two-block parser digest.
 #[doc(hidden)]
 #[inline]
