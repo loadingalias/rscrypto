@@ -16,6 +16,12 @@
 // Returns:
 //   x0: accepted candidate count, capped at x2
 //
+// Three-block ABI:
+//   x0: uint16_t out[256] write-only accepted candidates
+//   x1: const uint8_t input[3 * 168] read-only contiguous SHAKE128 rate blocks
+// Returns:
+//   x0: accepted candidate count, capped at 256
+//
 // The input is the public matrix-A XOF stream. Rejection branches and write
 // positions therefore depend only on public bytes, never secret key, noise,
 // message, or shared-secret material.
@@ -248,11 +254,20 @@ rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux:
         mov     w8, #3329
         dup     v30.8h, w8
 
-        mov     w14, #10
-.Lsample_ntt_3blocks_loop:
+        mov     w14, #6
+.Lsample_ntt_3blocks_full_loop:
+        SAMPLE_NTT_DECODE_COMPACT_32 x13
+        subs    w14, w14, #1
+        b.ne    .Lsample_ntt_3blocks_full_loop
+
+        SAMPLE_NTT_DECODE_COMPACT_16 x13
+        SAMPLE_NTT_DECODE_COMPACT_16 x13
+
+        mov     w14, #3
+.Lsample_ntt_3blocks_tail_loop:
         SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED x13, .Lsample_ntt_3blocks_done
         subs    w14, w14, #1
-        b.ne    .Lsample_ntt_3blocks_loop
+        b.ne    .Lsample_ntt_3blocks_tail_loop
 
         SAMPLE_NTT_DECODE_COMPACT_16_BOUNDED x13, .Lsample_ntt_3blocks_done
 

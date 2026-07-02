@@ -1238,6 +1238,16 @@ pub fn diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest(rho: &[u8; 
 }
 
 #[cfg(feature = "diag")]
+/// Benchmark-only materialized K=3 keygen matrix row-sampling digest using a fixed
+/// first-three-block triple sampler.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem768_keygen_matrix_row_sample_first3_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k3_first3_digest(rho)
+}
+
+#[cfg(feature = "diag")]
 /// Benchmark-only materialized K=4 keygen matrix row-sampling digest.
 #[doc(hidden)]
 #[inline]
@@ -1254,6 +1264,16 @@ pub fn diag_mlkem1024_keygen_matrix_row_sample_digest(rho: &[u8; ML_KEM_SEED_SIZ
 #[must_use]
 pub fn diag_mlkem1024_keygen_matrix_row_sample_initial_3blocks_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
   portable::diag_keygen_matrix_row_sample_k4_initial_3blocks_digest(rho)
+}
+
+#[cfg(feature = "diag")]
+/// Benchmark-only materialized K=4 keygen matrix row-sampling digest using a fixed
+/// first-three-block triple sampler.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn diag_mlkem1024_keygen_matrix_row_sample_first3_digest(rho: &[u8; ML_KEM_SEED_SIZE]) -> u16 {
+  portable::diag_keygen_matrix_row_sample_k4_first3_digest(rho)
 }
 
 #[cfg(feature = "diag")]

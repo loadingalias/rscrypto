@@ -1821,11 +1821,13 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
     diag_mlkem512_keygen_matrix_accumulate_windowed_digest, diag_mlkem512_keygen_matrix_row_multiply_digest,
     diag_mlkem768_keygen_matrix_accumulate_fused_digest, diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem768_keygen_matrix_accumulate_windowed_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
-    diag_mlkem768_keygen_matrix_row_sample_digest, diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest,
+    diag_mlkem768_keygen_matrix_row_sample_digest, diag_mlkem768_keygen_matrix_row_sample_first3_digest,
+    diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest,
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest, diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem1024_keygen_matrix_accumulate_windowed_digest,
     diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest, diag_mlkem1024_keygen_matrix_row_multiply_digest,
-    diag_mlkem1024_keygen_matrix_row_sample_digest, diag_mlkem1024_keygen_matrix_row_sample_initial_3blocks_digest,
+    diag_mlkem1024_keygen_matrix_row_sample_digest, diag_mlkem1024_keygen_matrix_row_sample_first3_digest,
+    diag_mlkem1024_keygen_matrix_row_sample_initial_3blocks_digest,
     diag_mlkem1024_keygen_matrix_row_sample_quad_digest, diag_mlkem1024_keygen_matrix_row_sample_triple_digest,
   };
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -1894,6 +1896,9 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
       ))
     })
   });
+  g.bench_function("k=3/materialized-row-sample-first3", |b| {
+    b.iter(|| black_box(diag_mlkem768_keygen_matrix_row_sample_first3_digest(black_box(&rho))))
+  });
   g.bench_function("k=4/materialized-row-sample", |b| {
     b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_digest(black_box(&rho))))
   });
@@ -1903,6 +1908,9 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
         black_box(&rho),
       ))
     })
+  });
+  g.bench_function("k=4/materialized-row-sample-first3", |b| {
+    b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_first3_digest(black_box(&rho))))
   });
   g.bench_function("k=4/materialized-row-sample-triple", |b| {
     b.iter(|| black_box(diag_mlkem1024_keygen_matrix_row_sample_triple_digest(black_box(&rho))))

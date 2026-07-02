@@ -1305,7 +1305,7 @@ pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
 
 #[cfg(feature = "ml-kem")]
 #[inline(always)]
-fn xof_seeded_32_2_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8, y: u8) -> [u64; 25] {
+fn xof_seeded_32_2_base_state<const RATE: usize>(ds: u8, seed: &[u8; 32]) -> [u64; 25] {
   debug_assert!(RATE > 34);
   debug_assert_eq!(RATE % 8, 0);
 
@@ -1315,11 +1315,24 @@ fn xof_seeded_32_2_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8, y: u
   state[1] = u64::from_le_bytes(seed_words[1]);
   state[2] = u64::from_le_bytes(seed_words[2]);
   state[3] = u64::from_le_bytes(seed_words[3]);
-  state[4] = u64::from(x) | (u64::from(y) << 8) | (u64::from(ds) << 16);
+  state[4] = u64::from(ds) << 16;
 
   let last = RATE - 1;
   state[last / 8] ^= 0x80_u64 << ((last & 7).strict_mul(8));
   state
+}
+
+#[cfg(feature = "ml-kem")]
+#[inline(always)]
+fn xof_seeded_32_2_state_from_base(mut state: [u64; 25], x: u8, y: u8) -> [u64; 25] {
+  state[4] |= u64::from(x) | (u64::from(y) << 8);
+  state
+}
+
+#[cfg(feature = "ml-kem")]
+#[inline(always)]
+fn xof_seeded_32_2_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8, y: u8) -> [u64; 25] {
+  xof_seeded_32_2_state_from_base(xof_seeded_32_2_base_state::<RATE>(ds, seed), x, y)
 }
 
 #[cfg(feature = "ml-kem")]
@@ -1444,8 +1457,9 @@ pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
   b: (u8, u8),
 ) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
   let permuter = PlatformPermuter::default();
-  let mut state_a = xof_seeded_32_2_state::<RATE>(ds, seed, a.0, a.1);
-  let mut state_b = xof_seeded_32_2_state::<RATE>(ds, seed, b.0, b.1);
+  let base = xof_seeded_32_2_base_state::<RATE>(ds, seed);
+  let mut state_a = xof_seeded_32_2_state_from_base(base, a.0, a.1);
+  let mut state_b = xof_seeded_32_2_state_from_base(base, b.0, b.1);
   permuter.permute_x2(&mut state_a, &mut state_b, 0);
 
   (
@@ -1471,9 +1485,10 @@ pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
   c: (u8, u8),
 ) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
   let permuter = PlatformPermuter::default();
-  let mut state_a = xof_seeded_32_2_state::<RATE>(ds, seed, a.0, a.1);
-  let mut state_b = xof_seeded_32_2_state::<RATE>(ds, seed, b.0, b.1);
-  let mut state_c = xof_seeded_32_2_state::<RATE>(ds, seed, c.0, c.1);
+  let base = xof_seeded_32_2_base_state::<RATE>(ds, seed);
+  let mut state_a = xof_seeded_32_2_state_from_base(base, a.0, a.1);
+  let mut state_b = xof_seeded_32_2_state_from_base(base, b.0, b.1);
+  let mut state_c = xof_seeded_32_2_state_from_base(base, c.0, c.1);
   permuter.permute_x3(&mut state_a, &mut state_b, &mut state_c, 0);
 
   (
@@ -1510,10 +1525,11 @@ pub(crate) fn xof_seeded_32_2_quad<const RATE: usize>(
   PublicKeccakXof<RATE>,
 ) {
   let permuter = PlatformPermuter::default();
-  let mut state_a = xof_seeded_32_2_state::<RATE>(ds, seed, a.0, a.1);
-  let mut state_b = xof_seeded_32_2_state::<RATE>(ds, seed, b.0, b.1);
-  let mut state_c = xof_seeded_32_2_state::<RATE>(ds, seed, c.0, c.1);
-  let mut state_d = xof_seeded_32_2_state::<RATE>(ds, seed, d.0, d.1);
+  let base = xof_seeded_32_2_base_state::<RATE>(ds, seed);
+  let mut state_a = xof_seeded_32_2_state_from_base(base, a.0, a.1);
+  let mut state_b = xof_seeded_32_2_state_from_base(base, b.0, b.1);
+  let mut state_c = xof_seeded_32_2_state_from_base(base, c.0, c.1);
+  let mut state_d = xof_seeded_32_2_state_from_base(base, d.0, d.1);
   permuter.permute_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d, 0);
 
   (
