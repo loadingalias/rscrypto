@@ -1476,7 +1476,19 @@ pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
   )
 }
 
-#[cfg(feature = "ml-kem")]
+#[cfg(all(
+  feature = "ml-kem",
+  any(
+    test,
+    feature = "diag",
+    not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))
+  )
+))]
 pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
@@ -1508,6 +1520,96 @@ pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
       permuter,
     },
   )
+}
+
+#[cfg(all(
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(crate) struct PublicKeccakTripleXof<const RATE: usize> {
+  states: [[u64; 25]; 3],
+  pos: [usize; 3],
+  permuter: PlatformPermuter,
+  tail_started: bool,
+}
+
+#[cfg(all(
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+impl<const RATE: usize> PublicKeccakTripleXof<RATE> {
+  #[inline(always)]
+  pub(crate) fn with_triple_rate_block(&mut self, f: impl FnOnce([&[u64; 25]; 3])) {
+    debug_assert_eq!(self.pos[0], self.pos[1]);
+    debug_assert_eq!(self.pos[0], self.pos[2]);
+    debug_assert!(self.pos[0] == 0 || self.pos[0] == RATE);
+    debug_assert!(!self.tail_started);
+
+    if self.pos[0] == RATE {
+      let [state_a, state_b, state_c] = &mut self.states;
+      self.permuter.permute_x3(state_a, state_b, state_c, 0);
+      self.pos = [0; 3];
+    }
+
+    let [state_a, state_b, state_c] = &self.states;
+    f([state_a, state_b, state_c]);
+
+    self.pos = [RATE; 3];
+  }
+
+  #[inline(always)]
+  pub(crate) fn with_lane_rate_block(&mut self, lane: usize, f: impl FnOnce(&[u64; 25])) {
+    debug_assert!(lane < 3);
+    debug_assert!(self.pos[lane] == 0 || self.pos[lane] == RATE);
+    self.tail_started = true;
+
+    if self.pos[lane] == RATE {
+      self.permuter.permute(&mut self.states[lane], 0);
+      self.pos[lane] = 0;
+    }
+
+    f(&self.states[lane]);
+
+    self.pos[lane] = RATE;
+  }
+}
+
+#[cfg(all(
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(crate) fn xof_seeded_32_2_triple_cursor<const RATE: usize>(
+  ds: u8,
+  seed: &[u8; 32],
+  a: (u8, u8),
+  b: (u8, u8),
+  c: (u8, u8),
+) -> PublicKeccakTripleXof<RATE> {
+  let permuter = PlatformPermuter::default();
+  let base = xof_seeded_32_2_base_state::<RATE>(ds, seed);
+  let mut states = [
+    xof_seeded_32_2_state_from_base(base, a.0, a.1),
+    xof_seeded_32_2_state_from_base(base, b.0, b.1),
+    xof_seeded_32_2_state_from_base(base, c.0, c.1),
+  ];
+  let [state_a, state_b, state_c] = &mut states;
+  permuter.permute_x3(state_a, state_b, state_c, 0);
+
+  PublicKeccakTripleXof {
+    states,
+    pos: [0; 3],
+    permuter,
+    tail_started: false,
+  }
 }
 
 #[cfg(feature = "ml-kem")]
@@ -1932,6 +2034,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     feature = "ml-kem",
     target_arch = "aarch64",
     target_endian = "little",
+    any(test, feature = "diag"),
     not(miri),
     not(feature = "portable-only")
   ))]

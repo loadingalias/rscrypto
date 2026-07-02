@@ -52,6 +52,13 @@ use core::arch::x86_64::{
   _mm256_srli_epi32, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+use crate::hashes::crypto::Shake128TripleXofReader;
 use crate::{
   auth::mlkem::MlKemError,
   hashes::crypto::{Sha3_256, Sha3_512, Shake128, Shake128XofReader, Shake256, Shake256XofReader},
@@ -4246,8 +4253,27 @@ fn sample_ntt_pair_into(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8, 
 }
 
 fn sample_ntt_triple_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
-  let (reader0, reader1, reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
-  sample_ntt_triple_from_xof_into([reader0, reader1, reader2], out);
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    let mut reader = Shake128::xof_seeded_32_2_triple_cursor(rho, lanes[0], lanes[1], lanes[2]);
+    sample_ntt_triple_from_cursor_into(&mut reader, out);
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    let (reader0, reader1, reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+    sample_ntt_triple_from_xof_into([reader0, reader1, reader2], out);
+  }
 }
 
 fn sample_ntt_quad_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 4], out: [&mut Poly; 4]) {
@@ -5097,6 +5123,45 @@ fn sample_ntt_pair_block_neon(
   }
 }
 
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+fn sample_ntt_triple_from_cursor_into(reader: &mut Shake128TripleXofReader, out: [&mut Poly; 3]) {
+  let mut filled = [0usize; 3];
+  let [out0, out1, out2] = out;
+
+  while filled[0] < N && filled[1] < N && filled[2] < N {
+    reader.with_triple_rate_block(|states| {
+      sample_ntt_triple_state_block(states, [&mut *out0, &mut *out1, &mut *out2], &mut filled);
+    });
+  }
+
+  while filled[0] < N {
+    reader.with_lane_rate_block(0, |state| {
+      sample_ntt_state_block(state, out0, &mut filled[0]);
+    });
+  }
+  while filled[1] < N {
+    reader.with_lane_rate_block(1, |state| {
+      sample_ntt_state_block(state, out1, &mut filled[1]);
+    });
+  }
+  while filled[2] < N {
+    reader.with_lane_rate_block(2, |state| {
+      sample_ntt_state_block(state, out2, &mut filled[2]);
+    });
+  }
+}
+
+#[cfg(not(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+)))]
 fn sample_ntt_triple_from_xof_into(mut readers: [Shake128XofReader; 3], out: [&mut Poly; 3]) {
   let mut filled = [0usize; 3];
   let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
@@ -5766,6 +5831,43 @@ fn sample_ntt_quad_block_neon(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut 
   // 3. The helper preserves the same bounded output fallback as the scalar parser.
   unsafe {
     sample_ntt_quad_block_neon_ptrs(rate_ptrs, out, filled);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
+fn sample_ntt_state_block(state: &[u64; 25], out: &mut Poly, filled: &mut usize) {
+  let rate_ptr = state.as_ptr().cast::<u8>();
+  #[cfg(target_os = "linux")]
+  {
+    // SAFETY: Pointer-backed single-lane parsing over Keccak state memory because:
+    // 1. This path is little-endian aarch64 only, so the in-memory `u64` state layout is the XOF byte
+    //    order.
+    // 2. The Keccak state has 25 u64 lanes (200 bytes), which covers the first 168-byte SHAKE128 rate
+    //    block.
+    // 3. The helper caps writes to the polynomial's remaining capacity.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe {
+      sample_ntt_block_asm_bounded(rate_ptr, out, filled);
+    }
+  }
+  #[cfg(not(target_os = "linux"))]
+  {
+    // SAFETY: Pointer-backed scalar parsing over Keccak state memory because:
+    // 1. This path is little-endian aarch64 only, so the in-memory `u64` state layout is the XOF byte
+    //    order.
+    // 2. The Keccak state has 25 u64 lanes (200 bytes), which covers the first 168-byte SHAKE128 rate
+    //    block.
+    // 3. `sample_ntt_block_ptr` reads only offsets `< SHAKE128_RATE_BYTES`.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe {
+      sample_ntt_block_ptr(rate_ptr, out, filled);
+    }
   }
 }
 

@@ -4,13 +4,34 @@
 
 #[cfg(all(test, feature = "ml-kem"))]
 use super::keccak::xof_quad;
+#[cfg(all(
+  feature = "ml-kem",
+  any(
+    test,
+    feature = "diag",
+    not(all(
+      target_arch = "aarch64",
+      target_endian = "little",
+      not(miri),
+      not(feature = "portable-only")
+    ))
+  )
+))]
+use super::keccak::xof_seeded_32_2_triple as keccak_xof_seeded_32_2_triple;
 use super::keccak::{PublicKeccakCore, PublicKeccakXof};
+#[cfg(all(
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+use super::keccak::{PublicKeccakTripleXof, xof_seeded_32_2_triple_cursor as keccak_xof_seeded_32_2_triple_cursor};
 #[cfg(feature = "ml-kem")]
 use super::keccak::{
   xof_seeded_32_1 as keccak_xof_seeded_32_1, xof_seeded_32_1_pair as keccak_xof_seeded_32_1_pair,
   xof_seeded_32_1_quad as keccak_xof_seeded_32_1_quad, xof_seeded_32_2 as keccak_xof_seeded_32_2,
   xof_seeded_32_2_pair as keccak_xof_seeded_32_2_pair, xof_seeded_32_2_quad as keccak_xof_seeded_32_2_quad,
-  xof_seeded_32_2_triple as keccak_xof_seeded_32_2_triple,
 };
 use crate::traits::{Digest, Xof};
 
@@ -413,7 +434,19 @@ impl Shake128 {
   }
 
   #[inline]
-  #[cfg(feature = "ml-kem")]
+  #[cfg(all(
+    feature = "ml-kem",
+    any(
+      test,
+      feature = "diag",
+      not(all(
+        target_arch = "aarch64",
+        target_endian = "little",
+        not(miri),
+        not(feature = "portable-only")
+      ))
+    )
+  ))]
   pub(crate) fn xof_seeded_32_2_triple(
     seed: &[u8; 32],
     a: (u8, u8),
@@ -426,6 +459,25 @@ impl Shake128 {
       Shake128XofReader { inner: b },
       Shake128XofReader { inner: c },
     )
+  }
+
+  #[inline]
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  pub(crate) fn xof_seeded_32_2_triple_cursor(
+    seed: &[u8; 32],
+    a: (u8, u8),
+    b: (u8, u8),
+    c: (u8, u8),
+  ) -> Shake128TripleXofReader {
+    Shake128TripleXofReader {
+      inner: keccak_xof_seeded_32_2_triple_cursor::<168>(0x1F, seed, a, b, c),
+    }
   }
 
   #[inline]
@@ -477,6 +529,17 @@ impl Shake128 {
 #[derive(Clone)]
 pub struct Shake128XofReader {
   inner: PublicKeccakXof<168>,
+}
+
+#[cfg(all(
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+pub(crate) struct Shake128TripleXofReader {
+  inner: PublicKeccakTripleXof<168>,
 }
 
 impl core::fmt::Debug for Shake128XofReader {
@@ -579,6 +642,7 @@ impl Shake128XofReader {
     feature = "ml-kem",
     target_arch = "aarch64",
     target_endian = "little",
+    any(test, feature = "diag"),
     not(miri),
     not(feature = "portable-only")
   ))]
@@ -589,6 +653,25 @@ impl Shake128XofReader {
     f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
   ) {
     PublicKeccakXof::<168>::with_triple_rate_block(&mut a.inner, &mut b.inner, &mut c.inner, f);
+  }
+}
+
+#[cfg(all(
+  feature = "ml-kem",
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+impl Shake128TripleXofReader {
+  #[inline(always)]
+  pub(crate) fn with_triple_rate_block(&mut self, f: impl FnOnce([&[u64; 25]; 3])) {
+    self.inner.with_triple_rate_block(f);
+  }
+
+  #[inline(always)]
+  pub(crate) fn with_lane_rate_block(&mut self, lane: usize, f: impl FnOnce(&[u64; 25])) {
+    self.inner.with_lane_rate_block(lane, f);
   }
 }
 
@@ -843,6 +926,75 @@ mod tests {
     assert_eq!(actual_b, expected_b, "lane 1");
     assert_eq!(actual_c, expected_c, "lane 2");
     assert_eq!(actual_d, expected_d, "lane 3");
+  }
+
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  fn copy_shake128_rate_block(state: &[u64; 25]) -> [u8; 168] {
+    let mut out = [0u8; 168];
+    let mut offset = 0usize;
+    for &word in state.iter().take(168 / 8) {
+      out[offset..offset + 8].copy_from_slice(&word.to_le_bytes());
+      offset += 8;
+    }
+    out
+  }
+
+  #[cfg(all(
+    feature = "ml-kem",
+    target_arch = "aarch64",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn shake128_triple_cursor_matches_xof_readers() {
+    let mut seed = [0u8; 32];
+    for (i, byte) in seed.iter_mut().enumerate() {
+      *byte = (i.strict_mul(37).strict_add(11)) as u8;
+    }
+
+    let lanes = [(0, 0), (1, 2), (2, 1)];
+    let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(&seed, lanes[0], lanes[1], lanes[2]);
+    let mut cursor = Shake128::xof_seeded_32_2_triple_cursor(&seed, lanes[0], lanes[1], lanes[2]);
+
+    for block in 0..4 {
+      let mut actual = [[0u8; 168]; 3];
+      cursor.with_triple_rate_block(|states| {
+        actual[0] = copy_shake128_rate_block(states[0]);
+        actual[1] = copy_shake128_rate_block(states[1]);
+        actual[2] = copy_shake128_rate_block(states[2]);
+      });
+
+      let mut expected = [[0u8; 168]; 3];
+      reader0.squeeze(&mut expected[0]);
+      reader1.squeeze(&mut expected[1]);
+      reader2.squeeze(&mut expected[2]);
+
+      assert_eq!(actual, expected, "triple block {block}");
+    }
+
+    for lane in 0..3 {
+      let mut actual = [0u8; 168];
+      cursor.with_lane_rate_block(lane, |state| {
+        actual = copy_shake128_rate_block(state);
+      });
+
+      let mut expected = [0u8; 168];
+      match lane {
+        0 => reader0.squeeze(&mut expected),
+        1 => reader1.squeeze(&mut expected),
+        2 => reader2.squeeze(&mut expected),
+        _ => unreachable!(),
+      }
+
+      assert_eq!(actual, expected, "lane tail {lane}");
+    }
   }
 
   /// Test inputs of length `RATE - 1` for each SHA-3 variant.
