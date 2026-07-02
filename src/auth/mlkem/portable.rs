@@ -2852,7 +2852,7 @@ fn matrix_sample_coord<const K: usize>(entry: usize) -> (u8, u8) {
   ((entry % K) as u8, (entry / K) as u8)
 }
 
-#[cfg(feature = "diag")]
+#[cfg(any(test, feature = "diag"))]
 fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
   for (i, byte) in out.iter_mut().enumerate() {
     *byte = seed.wrapping_add(i as u8);
@@ -3472,20 +3472,7 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3<const K: usize>(
   let mut row1 = [[0u16; N]; 3];
   let mut row2 = [[0u16; N]; 3];
 
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row0);
-    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row1);
-    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
-  }
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row2);
-    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
-  }
+  sample_matrix_ntt_materialized_k3_rows(rho, &mut row0, &mut row1, &mut row2);
 
   let rhs = polyvec_as_k3(rhs);
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -3502,6 +3489,66 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k3<const K: usize>(
     multiply_ntts_accumulate(&mut acc[1], &row1, rhs);
     multiply_ntts_accumulate(&mut acc[2], &row2, rhs);
   }
+}
+
+#[inline(always)]
+fn sample_matrix_ntt_materialized_k3_rows(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<3>,
+  row1: &mut PolyVec<3>,
+  row2: &mut PolyVec<3>,
+) {
+  #[cfg(target_arch = "x86_64")]
+  {
+    sample_matrix_ntt_materialized_k3_rows_quad(rho, row0, row1, row2);
+  }
+  #[cfg(not(target_arch = "x86_64"))]
+  {
+    sample_matrix_ntt_materialized_k3_rows_triple(rho, row0, row1, row2);
+  }
+}
+
+#[cfg(any(test, not(target_arch = "x86_64")))]
+#[inline(always)]
+fn sample_matrix_ntt_materialized_k3_rows_triple(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<3>,
+  row1: &mut PolyVec<3>,
+  row2: &mut PolyVec<3>,
+) {
+  {
+    let [a0, a1, a2] = polyvec3_mut(row0);
+    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
+  }
+  {
+    let [a0, a1, a2] = polyvec3_mut(row1);
+    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
+  }
+  {
+    let [a0, a1, a2] = polyvec3_mut(row2);
+    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
+  }
+}
+
+#[cfg(any(test, target_arch = "x86_64"))]
+#[inline(always)]
+fn sample_matrix_ntt_materialized_k3_rows_quad(
+  rho: &[u8; SEED_BYTES],
+  row0: &mut PolyVec<3>,
+  row1: &mut PolyVec<3>,
+  row2: &mut PolyVec<3>,
+) {
+  {
+    let [a0, a1, a2] = polyvec3_mut(row0);
+    let [a3, _, _] = polyvec3_mut(row1);
+    sample_ntt_four_materialized_into(rho, [(0, 0), (1, 0), (2, 0), (0, 1)], [a0, a1, a2, a3]);
+  }
+  {
+    let [_, a0, a1] = polyvec3_mut(row1);
+    let [a2, a3, _] = polyvec3_mut(row2);
+    sample_ntt_four_materialized_into(rho, [(1, 1), (2, 1), (0, 2), (1, 2)], [a0, a1, a2, a3]);
+  }
+  sample_ntt_into(rho, 2, 2, &mut row2[2]);
 }
 
 #[cfg(any(test, feature = "diag"))]
@@ -3605,17 +3652,22 @@ fn sample_matrix_ntt_materialized_k4_rows(
   row2: &mut PolyVec<4>,
   row3: &mut PolyVec<4>,
 ) {
-  #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+  #[cfg(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))]
   {
     sample_matrix_ntt_materialized_k4_rows_quad(rho, row0, row1, row2, row3);
   }
-  #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+  #[cfg(not(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64")))]
   {
     sample_matrix_ntt_materialized_k4_rows_triple(rho, row0, row1, row2, row3);
   }
 }
 
-#[cfg(any(feature = "diag", all(target_arch = "aarch64", target_os = "macos")))]
+#[cfg(any(
+  test,
+  feature = "diag",
+  all(target_arch = "aarch64", target_os = "macos"),
+  target_arch = "x86_64"
+))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows_quad(
   rho: &[u8; SEED_BYTES],
@@ -3642,7 +3694,11 @@ fn sample_matrix_ntt_materialized_k4_rows_quad(
   }
 }
 
-#[cfg(any(feature = "diag", not(all(target_arch = "aarch64", target_os = "macos"))))]
+#[cfg(any(
+  test,
+  feature = "diag",
+  not(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))
+))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows_triple(
   rho: &[u8; SEED_BYTES],
@@ -9832,7 +9888,6 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "diag")]
   #[test]
   fn materialized_k4_quad_row_sampler_matches_triple_schedule() {
     for seed in 0u8..64 {
@@ -9861,6 +9916,28 @@ mod tests {
       assert_eq!(actual1, expected1, "row1 seed {seed}");
       assert_eq!(actual2, expected2, "row2 seed {seed}");
       assert_eq!(actual3, expected3, "row3 seed {seed}");
+    }
+  }
+
+  #[test]
+  fn materialized_k3_quad_row_sampler_matches_triple_schedule() {
+    for seed in 0u8..64 {
+      let mut rho = [0u8; SEED_BYTES];
+      fill_diag_seed(&mut rho, seed);
+
+      let mut expected0 = [[0u16; N]; 3];
+      let mut expected1 = [[0u16; N]; 3];
+      let mut expected2 = [[0u16; N]; 3];
+      sample_matrix_ntt_materialized_k3_rows_triple(&rho, &mut expected0, &mut expected1, &mut expected2);
+
+      let mut actual0 = [[0u16; N]; 3];
+      let mut actual1 = [[0u16; N]; 3];
+      let mut actual2 = [[0u16; N]; 3];
+      sample_matrix_ntt_materialized_k3_rows_quad(&rho, &mut actual0, &mut actual1, &mut actual2);
+
+      assert_eq!(actual0, expected0, "row0 seed {seed}");
+      assert_eq!(actual1, expected1, "row1 seed {seed}");
+      assert_eq!(actual2, expected2, "row2 seed {seed}");
     }
   }
 
