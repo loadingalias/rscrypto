@@ -48,6 +48,23 @@ unsafe extern "C" {
 unsafe extern "C" {
   fn rscrypto_mlkem_rej_uniform_block_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
   fn rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux(out: *mut u16, input: *const u8, cap: usize) -> usize;
+  fn rscrypto_mlkem_rej_uniform_triple_block_aarch64_linux(
+    out0: *mut u16,
+    input0: *const u8,
+    out1: *mut u16,
+    input1: *const u8,
+    out2: *mut u16,
+    input2: *const u8,
+  ) -> u64;
+  fn rscrypto_mlkem_rej_uniform_triple_block_bounded_aarch64_linux(
+    out0: *mut u16,
+    input0: *const u8,
+    out1: *mut u16,
+    input1: *const u8,
+    out2: *mut u16,
+    input2: *const u8,
+    caps: *const usize,
+  ) -> u64;
   #[cfg(any(test, feature = "diag"))]
   fn rscrypto_mlkem_rej_uniform_3blocks_aarch64_linux(out: *mut u16, input: *const u8) -> usize;
   #[cfg(any(test, feature = "diag"))]
@@ -85,6 +102,16 @@ unsafe extern "C" {
 }
 
 #[cfg(target_os = "linux")]
+#[inline(always)]
+fn unpack_triple_counts(packed: u64) -> [usize; 3] {
+  [
+    (packed & 0xffff) as usize,
+    ((packed >> 16) & 0xffff) as usize,
+    ((packed >> 32) & 0xffff) as usize,
+  ]
+}
+
+#[cfg(target_os = "linux")]
 #[inline]
 pub(super) unsafe fn sample_ntt_rej_uniform_block_asm(out: *mut u16, input: *const u8) -> usize {
   // SAFETY: Linux aarch64 SampleNTT rejection parser call because:
@@ -105,6 +132,62 @@ pub(super) unsafe fn sample_ntt_rej_uniform_block_bounded_asm(out: *mut u16, inp
   // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
   // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
   unsafe { rscrypto_mlkem_rej_uniform_block_bounded_aarch64_linux(out, input, cap) }
+}
+
+#[cfg(target_os = "linux")]
+#[inline]
+pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_asm(
+  out0: *mut u16,
+  input0: *const u8,
+  out1: *mut u16,
+  input1: *const u8,
+  out2: *mut u16,
+  input2: *const u8,
+) -> [usize; 3] {
+  // SAFETY: Linux aarch64 triple SampleNTT rejection parser call because:
+  // 1. Each input pointer names one readable 168-byte SHAKE128 rate block.
+  // 2. Each output pointer names writable capacity for all 112 possible accepted candidates from its
+  //    corresponding input block.
+  // 3. The output regions are distinct for the duration of the assembly call.
+  // 4. Advanced SIMD is baseline for supported aarch64 Linux targets.
+  // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  let packed =
+    unsafe { rscrypto_mlkem_rej_uniform_triple_block_aarch64_linux(out0, input0, out1, input1, out2, input2) };
+  unpack_triple_counts(packed)
+}
+
+#[cfg(target_os = "linux")]
+#[inline]
+pub(super) unsafe fn sample_ntt_rej_uniform_triple_block_bounded_asm(
+  out0: *mut u16,
+  input0: *const u8,
+  out1: *mut u16,
+  input1: *const u8,
+  out2: *mut u16,
+  input2: *const u8,
+  caps: [usize; 3],
+) -> [usize; 3] {
+  // SAFETY: Linux aarch64 bounded triple SampleNTT rejection parser call because:
+  // 1. Each input pointer names one readable 168-byte SHAKE128 rate block.
+  // 2. Each output pointer names writable capacity for the matching `caps` element.
+  // 3. `caps.as_ptr()` names three initialized `usize` capacities for the duration of this call.
+  // 4. The assembly caps each lane's writes at its corresponding capacity and returns each accepted
+  //    count in a 16-bit packed field.
+  // 5. The output regions are distinct for the duration of the assembly call.
+  // 6. Advanced SIMD is baseline for supported aarch64 Linux targets.
+  // 7. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  let packed = unsafe {
+    rscrypto_mlkem_rej_uniform_triple_block_bounded_aarch64_linux(
+      out0,
+      input0,
+      out1,
+      input1,
+      out2,
+      input2,
+      caps.as_ptr(),
+    )
+  };
+  unpack_triple_counts(packed)
 }
 
 #[cfg(all(any(test, feature = "diag"), target_os = "linux"))]

@@ -5745,16 +5745,30 @@ unsafe fn sample_ntt_triple_block_neon_ptrs(rate_ptrs: [*const u8; 3], out: [&mu
   {
     #[cfg(target_os = "linux")]
     {
-      // SAFETY: bounded aarch64 SampleNTT tail parsing because:
+      let n0 = filled[0];
+      let n1 = filled[1];
+      let n2 = filled[2];
+      let caps = [N.strict_sub(n0), N.strict_sub(n1), N.strict_sub(n2)];
+      // SAFETY: bounded aarch64 triple SampleNTT tail parsing because:
       // 1. The caller guarantees each pointer names one full readable SHAKE128 rate block.
-      // 2. The helper caps writes to each polynomial's remaining capacity.
-      // 3. Each destination polynomial and `filled` counter is distinct for the duration of its call.
-      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-      unsafe {
-        sample_ntt_block_asm_bounded(rate_ptrs[0], out0, &mut filled[0]);
-        sample_ntt_block_asm_bounded(rate_ptrs[1], out1, &mut filled[1]);
-        sample_ntt_block_asm_bounded(rate_ptrs[2], out2, &mut filled[2]);
-      }
+      // 2. `caps` is the exact writable capacity of each polynomial tail.
+      // 3. Each destination polynomial is a distinct mutable borrow, and each write starts at the
+      //    matching current fill offset.
+      // 4. The assembly caps each lane's writes to its capacity and returns per-lane counts.
+      // 5. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+      let [count0, count1, count2] = unsafe {
+        aarch64::sample_ntt_rej_uniform_triple_block_bounded_asm(
+          out0.as_mut_ptr().add(n0),
+          rate_ptrs[0],
+          out1.as_mut_ptr().add(n1),
+          rate_ptrs[1],
+          out2.as_mut_ptr().add(n2),
+          rate_ptrs[2],
+          caps,
+        )
+      };
+      debug_assert!(count0 <= caps[0] && count1 <= caps[1] && count2 <= caps[2]);
+      *filled = [n0.strict_add(count0), n1.strict_add(count1), n2.strict_add(count2)];
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -5777,18 +5791,22 @@ unsafe fn sample_ntt_triple_block_neon_ptrs(rate_ptrs: [*const u8; 3], out: [&mu
     let n0 = filled[0];
     let n1 = filled[1];
     let n2 = filled[2];
-    // SAFETY: aarch64 compact assembly SampleNTT block parsing because:
+    // SAFETY: aarch64 compact triple SampleNTT block parsing because:
     // 1. Each pointer names one full 168-byte SHAKE128 rate block.
     // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
     // 3. Each destination polynomial is a distinct mutable borrow.
     // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-    let (count0, count1, count2) = unsafe {
-      (
-        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), rate_ptrs[0]),
-        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), rate_ptrs[1]),
-        aarch64::sample_ntt_rej_uniform_block_asm(out2.as_mut_ptr().add(n2), rate_ptrs[2]),
+    let [count0, count1, count2] = unsafe {
+      aarch64::sample_ntt_rej_uniform_triple_block_asm(
+        out0.as_mut_ptr().add(n0),
+        rate_ptrs[0],
+        out1.as_mut_ptr().add(n1),
+        rate_ptrs[1],
+        out2.as_mut_ptr().add(n2),
+        rate_ptrs[2],
       )
     };
+    debug_assert!(count0 <= MAX_CANDIDATES && count1 <= MAX_CANDIDATES && count2 <= MAX_CANDIDATES);
     *filled = [n0.strict_add(count0), n1.strict_add(count1), n2.strict_add(count2)];
   }
 
@@ -9717,6 +9735,38 @@ mod tests {
     not(miri),
     not(feature = "portable-only")
   ))]
+  fn scalar_sample_ntt_block_to_slice(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut [u16]) -> usize {
+    let mut n = 0usize;
+    let mut offset = 0usize;
+    while n < out.len() && offset.strict_add(2) < SHAKE128_RATE_BYTES {
+      let b0 = buf[offset];
+      let b1 = buf[offset.strict_add(1)];
+      let b2 = buf[offset.strict_add(2)];
+      let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
+      let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
+
+      if d1 < Q {
+        out[n] = d1;
+        n = n.strict_add(1);
+        if n == out.len() {
+          break;
+        }
+      }
+      if d2 < Q {
+        out[n] = d2;
+        n = n.strict_add(1);
+      }
+      offset = offset.strict_add(3);
+    }
+    n
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn sample_ntt_rej_uniform_block_asm_matches_scalar_reference() {
     const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
@@ -9732,24 +9782,7 @@ mod tests {
       }
 
       let mut expected = [0u16; MAX_CANDIDATES];
-      let mut expected_len = 0usize;
-      let mut offset = 0usize;
-      while offset.strict_add(2) < SHAKE128_RATE_BYTES {
-        let b0 = buf[offset];
-        let b1 = buf[offset.strict_add(1)];
-        let b2 = buf[offset.strict_add(2)];
-        let d0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-        let d1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
-        if d0 < Q {
-          expected[expected_len] = d0;
-          expected_len = expected_len.strict_add(1);
-        }
-        if d1 < Q {
-          expected[expected_len] = d1;
-          expected_len = expected_len.strict_add(1);
-        }
-        offset = offset.strict_add(3);
-      }
+      let expected_len = scalar_sample_ntt_block_to_slice(&buf, &mut expected);
 
       let mut actual = [0u16; MAX_CANDIDATES];
       // SAFETY: direct aarch64 block parser test because:
@@ -9760,6 +9793,64 @@ mod tests {
 
       assert_eq!(actual_len, expected_len, "seed {seed}");
       assert_eq!(&actual[..actual_len], &expected[..expected_len], "seed {seed}");
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn sample_ntt_rej_uniform_triple_block_asm_matches_scalar_reference() {
+    const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
+    for seed in 0usize..512 {
+      let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
+      for (lane, buf) in bufs.iter_mut().enumerate() {
+        for (i, byte) in buf.iter_mut().enumerate() {
+          *byte = (seed
+            .strict_mul(97)
+            .strict_add(lane.strict_mul(43))
+            .strict_add(i.strict_mul(31))
+            .strict_add((seed >> 1).strict_mul(19))
+            & 0xff) as u8;
+        }
+      }
+
+      let mut expected = [[0u16; MAX_CANDIDATES]; 3];
+      let mut expected_counts = [0usize; 3];
+      for lane in 0..3 {
+        expected_counts[lane] = scalar_sample_ntt_block_to_slice(&bufs[lane], &mut expected[lane]);
+      }
+
+      let mut actual = [[0u16; MAX_CANDIDATES]; 3];
+      let [actual0, actual1, actual2] = &mut actual;
+      // SAFETY: direct aarch64 triple block parser test because:
+      // 1. Each buffer is one full 168-byte SHAKE128 rate block.
+      // 2. Each output has capacity for all 112 candidates from its matching block.
+      // 3. The outputs are distinct stack arrays for the duration of the call.
+      // 4. The test compares every accepted public candidate against the scalar parser above.
+      let actual_counts = unsafe {
+        aarch64::sample_ntt_rej_uniform_triple_block_asm(
+          actual0.as_mut_ptr(),
+          bufs[0].as_ptr(),
+          actual1.as_mut_ptr(),
+          bufs[1].as_ptr(),
+          actual2.as_mut_ptr(),
+          bufs[2].as_ptr(),
+        )
+      };
+
+      assert_eq!(actual_counts, expected_counts, "seed {seed}");
+      for lane in 0..3 {
+        assert_eq!(
+          &actual[lane][..actual_counts[lane]],
+          &expected[lane][..expected_counts[lane]],
+          "seed {seed}, lane {lane}"
+        );
+      }
     }
   }
 
@@ -9807,32 +9898,6 @@ mod tests {
   ))]
   #[test]
   fn sample_ntt_bounded_block_parser_matches_scalar_reference() {
-    fn scalar_parse_block(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
-      let mut n = *filled;
-      let mut offset = 0usize;
-      while n < N && offset.strict_add(2) < SHAKE128_RATE_BYTES {
-        let b0 = buf[offset];
-        let b1 = buf[offset.strict_add(1)];
-        let b2 = buf[offset.strict_add(2)];
-        let d1 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-        let d2 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
-
-        if d1 < Q {
-          out[n] = d1;
-          n = n.strict_add(1);
-          if n == N {
-            break;
-          }
-        }
-        if d2 < Q {
-          out[n] = d2;
-          n = n.strict_add(1);
-        }
-        offset = offset.strict_add(3);
-      }
-      *filled = n;
-    }
-
     let fill_offsets = [0usize, 1, 32, 144, 145, 200, 220, 255, 256];
     for seed in 0usize..256 {
       let mut buf = [0u8; SHAKE128_RATE_BYTES];
@@ -9850,7 +9915,7 @@ mod tests {
         let mut expected_filled = start;
         let mut actual_filled = start;
 
-        scalar_parse_block(&buf, &mut expected, &mut expected_filled);
+        expected_filled = expected_filled.strict_add(scalar_sample_ntt_block_to_slice(&buf, &mut expected[start..]));
         // SAFETY: bounded parser equivalence test because:
         // 1. `buf` is one full 168-byte SHAKE128 rate block.
         // 2. `actual` is a fixed 256-coefficient destination and `actual_filled <= N`.
@@ -9865,6 +9930,83 @@ mod tests {
           &expected[..expected_filled],
           "seed {seed}, start {start}"
         );
+      }
+    }
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  #[test]
+  fn sample_ntt_bounded_triple_block_parser_matches_scalar_reference() {
+    let fill_sets = [
+      [0usize, 1, 32],
+      [144, 145, 146],
+      [187, 179, 182],
+      [200, 220, 255],
+      [255, 256, 144],
+    ];
+
+    for seed in 0usize..256 {
+      let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
+      for (lane, buf) in bufs.iter_mut().enumerate() {
+        for (i, byte) in buf.iter_mut().enumerate() {
+          *byte = (seed
+            .strict_mul(101)
+            .strict_add(lane.strict_mul(47))
+            .strict_add(i.strict_mul(23))
+            .strict_add((seed >> 2).strict_mul(29))
+            & 0xff) as u8;
+        }
+      }
+
+      for starts in fill_sets {
+        let mut expected: [Poly; 3] =
+          core::array::from_fn(|lane| test_poly(seed.strict_add(lane.strict_mul(0x1100)).strict_add(starts[lane])));
+        let mut actual = expected;
+        let mut expected_filled = starts;
+
+        for lane in 0..3 {
+          expected_filled[lane] = expected_filled[lane].strict_add(scalar_sample_ntt_block_to_slice(
+            &bufs[lane],
+            &mut expected[lane][starts[lane]..],
+          ));
+        }
+
+        let caps = [
+          N.strict_sub(starts[0]),
+          N.strict_sub(starts[1]),
+          N.strict_sub(starts[2]),
+        ];
+        let [actual0, actual1, actual2] = &mut actual;
+        // SAFETY: bounded triple parser equivalence test because:
+        // 1. Each buffer is one full 168-byte SHAKE128 rate block.
+        // 2. Each output pointer starts at its current fill offset and has the corresponding `caps`
+        //    writable capacity.
+        // 3. The output polynomials are distinct stack arrays for the duration of the call.
+        // 4. The scalar reference above defines the expected public SampleNTT prefix for each lane.
+        let counts = unsafe {
+          aarch64::sample_ntt_rej_uniform_triple_block_bounded_asm(
+            actual0.as_mut_ptr().add(starts[0]),
+            bufs[0].as_ptr(),
+            actual1.as_mut_ptr().add(starts[1]),
+            bufs[1].as_ptr(),
+            actual2.as_mut_ptr().add(starts[2]),
+            bufs[2].as_ptr(),
+            caps,
+          )
+        };
+        let actual_filled = [
+          starts[0].strict_add(counts[0]),
+          starts[1].strict_add(counts[1]),
+          starts[2].strict_add(counts[2]),
+        ];
+
+        assert_eq!(actual_filled, expected_filled, "seed {seed}, starts {starts:?}");
+        assert_eq!(actual, expected, "seed {seed}, starts {starts:?}");
       }
     }
   }
