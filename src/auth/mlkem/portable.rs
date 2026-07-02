@@ -4108,7 +4108,7 @@ fn use_fused_matrix_accumulate<const K: usize>() -> bool {
 
   #[cfg(target_arch = "aarch64")]
   {
-    cfg!(not(target_os = "linux")) && K == 4
+    false
   }
 
   #[cfg(target_arch = "s390x")]
@@ -4116,7 +4116,18 @@ fn use_fused_matrix_accumulate<const K: usize>() -> bool {
     false
   }
 
-  #[cfg(not(any(target_arch = "aarch64", target_arch = "s390x", target_arch = "x86_64")))]
+  #[cfg(any(target_arch = "powerpc64", target_arch = "riscv64"))]
+  {
+    false
+  }
+
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "riscv64",
+    target_arch = "s390x",
+    target_arch = "x86_64"
+  )))]
   {
     true
   }

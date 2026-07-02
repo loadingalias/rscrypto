@@ -1817,12 +1817,13 @@ fn mlkem_keygen_phases(_: &mut Criterion) {}
 #[cfg(feature = "diag")]
 fn mlkem_keygen_matrix(c: &mut Criterion) {
   use rscrypto::auth::mlkem::{
-    diag_mlkem512_keygen_matrix_accumulate_fused_digest, diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
-    diag_mlkem512_keygen_matrix_accumulate_windowed_digest, diag_mlkem512_keygen_matrix_row_multiply_digest,
+    diag_mlkem512_keygen_matrix_accumulate_digest, diag_mlkem512_keygen_matrix_accumulate_fused_digest,
+    diag_mlkem512_keygen_matrix_accumulate_materialized_digest, diag_mlkem512_keygen_matrix_accumulate_windowed_digest,
+    diag_mlkem512_keygen_matrix_row_multiply_digest, diag_mlkem768_keygen_matrix_accumulate_digest,
     diag_mlkem768_keygen_matrix_accumulate_fused_digest, diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem768_keygen_matrix_accumulate_windowed_digest, diag_mlkem768_keygen_matrix_row_multiply_digest,
     diag_mlkem768_keygen_matrix_row_sample_digest, diag_mlkem768_keygen_matrix_row_sample_first3_digest,
-    diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest,
+    diag_mlkem768_keygen_matrix_row_sample_initial_3blocks_digest, diag_mlkem1024_keygen_matrix_accumulate_digest,
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest, diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem1024_keygen_matrix_accumulate_windowed_digest,
     diag_mlkem1024_keygen_matrix_row_multiply_default_input_digest, diag_mlkem1024_keygen_matrix_row_multiply_digest,
@@ -1845,7 +1846,10 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
   let mut g = c.benchmark_group("mlkem-keygen-matrix");
 
   macro_rules! bench_matrix {
-    ($prefix:literal, $fused:path, $materialized:path, $windowed:path, $row_multiply:path, $seed:literal) => {
+    ($prefix:literal, $default:path, $fused:path, $materialized:path, $windowed:path, $row_multiply:path, $seed:literal) => {
+      g.bench_function(concat!($prefix, "/default-through-matrix-accumulate"), |b| {
+        b.iter(|| black_box($default(black_box(&rho), black_box(&sigma))))
+      });
       g.bench_function(concat!($prefix, "/fused-through-matrix-accumulate"), |b| {
         b.iter(|| black_box($fused(black_box(&rho), black_box(&sigma))))
       });
@@ -1863,6 +1867,7 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
 
   bench_matrix!(
     "k=2",
+    diag_mlkem512_keygen_matrix_accumulate_digest,
     diag_mlkem512_keygen_matrix_accumulate_fused_digest,
     diag_mlkem512_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem512_keygen_matrix_accumulate_windowed_digest,
@@ -1871,6 +1876,7 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
   );
   bench_matrix!(
     "k=3",
+    diag_mlkem768_keygen_matrix_accumulate_digest,
     diag_mlkem768_keygen_matrix_accumulate_fused_digest,
     diag_mlkem768_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem768_keygen_matrix_accumulate_windowed_digest,
@@ -1879,6 +1885,7 @@ fn mlkem_keygen_matrix(c: &mut Criterion) {
   );
   bench_matrix!(
     "k=4",
+    diag_mlkem1024_keygen_matrix_accumulate_digest,
     diag_mlkem1024_keygen_matrix_accumulate_fused_digest,
     diag_mlkem1024_keygen_matrix_accumulate_materialized_digest,
     diag_mlkem1024_keygen_matrix_accumulate_windowed_digest,
