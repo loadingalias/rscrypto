@@ -217,6 +217,47 @@ mod tests {
     assert_eq!(state_b, ref_b, "x2 state_b mismatch vs single-state");
   }
 
+  /// Verify the production aarch64 x3 dispatch matches three independent portable runs.
+  #[test]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  fn keccakf1600_aarch64_platform_x3_matches_portable() {
+    use super::super::Permuter;
+
+    fn fill_pattern(out: &mut [u8; 200], seed: u8, seed_mul: u8, lane_mul: u8) {
+      for (i, byte) in out.iter_mut().enumerate() {
+        let lane = u8::try_from(i).expect("state index fits in u8");
+        *byte = seed.wrapping_mul(seed_mul).wrapping_add(lane.wrapping_mul(lane_mul));
+      }
+    }
+
+    let permuter = super::super::PlatformPermuter::default();
+    for seed in 0u8..8 {
+      let mut input_a = [0u8; 200];
+      let mut input_b = [0u8; 200];
+      let mut input_c = [0u8; 200];
+      fill_pattern(&mut input_a, seed, 1, 17);
+      fill_pattern(&mut input_b, seed, 3, 29);
+      fill_pattern(&mut input_c, seed, 5, 43);
+
+      let mut state_a = state_from_bytes(&input_a);
+      let mut state_b = state_from_bytes(&input_b);
+      let mut state_c = state_from_bytes(&input_c);
+
+      let mut expected_a = state_a;
+      let mut expected_b = state_b;
+      let mut expected_c = state_c;
+      super::super::keccakf_portable(&mut expected_a);
+      super::super::keccakf_portable(&mut expected_b);
+      super::super::keccakf_portable(&mut expected_c);
+
+      permuter.permute_x3(&mut state_a, &mut state_b, &mut state_c, 0);
+
+      assert_eq!(state_a, expected_a, "platform x3 state_a mismatch for seed={seed}");
+      assert_eq!(state_b, expected_b, "platform x3 state_b mismatch for seed={seed}");
+      assert_eq!(state_c, expected_c, "platform x3 state_c mismatch for seed={seed}");
+    }
+  }
+
   /// Verify Linux-targeted hybrid x3 kernel matches three independent portable runs.
   #[test]
   #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]

@@ -130,7 +130,7 @@ macro_rules! keccakf_sha3_neon_round {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", test))]
 macro_rules! keccakf_scalar_round {
   ($a0:ident, $a1:ident, $a2:ident, $a3:ident, $a4:ident,
    $a5:ident, $a6:ident, $a7:ident, $a8:ident, $a9:ident,
@@ -681,15 +681,13 @@ pub(crate) fn keccakf_aarch64_sha3_x2(state_a: &mut [u64; 25], state_b: &mut [u6
 /// Keccak-f[1600] hybrid batch: two states on SHA3 CE NEON lanes and one state
 /// on scalar aarch64 integer lanes inside the same round loop.
 ///
-/// This is Graviton-targeted scheduling for 4-way SHAKE batches. It keeps the
-/// third state resident in GPRs while the first two states use NEON SHA3
-/// instructions, avoiding a second complete x2 NEON permutation before the
-/// fourth state falls through the tuned scalar path.
+/// This test-only kernel preserves coverage for the old Graviton-targeted
+/// schedule while production uses lower-pressure x2 batching.
 ///
 /// # Safety
 ///
 /// Caller must ensure `sha3` target feature is available.
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", test))]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25]) {
   // SAFETY: NEON + SHA3 CE intrinsics are available because:
@@ -840,7 +838,7 @@ unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u6
   }
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", test))]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_x3_hybrid(
   state_a: &mut [u64; 25],
