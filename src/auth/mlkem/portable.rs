@@ -45,10 +45,11 @@ use core::arch::aarch64::{vget_high_u8, vget_low_u8, vld3q_u8, vmovl_u8, vorrq_u
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
   __m128i, __m256i, _mm_add_epi16, _mm_and_si128, _mm_cmpgt_epi16, _mm_loadl_epi64, _mm_loadu_si128, _mm_mulhi_epi16,
-  _mm_mullo_epi16, _mm_set1_epi16, _mm_setzero_si128, _mm_storel_epi64, _mm_storeu_si128, _mm_sub_epi16,
-  _mm256_add_epi32, _mm256_and_si256, _mm256_cmpgt_epi32, _mm256_cvtepi16_epi32, _mm256_loadu_si256,
-  _mm256_mulhi_epi16, _mm256_mullo_epi16, _mm256_mullo_epi32, _mm256_or_si256, _mm256_set1_epi32, _mm256_setzero_si256,
-  _mm256_slli_epi32, _mm256_srai_epi32, _mm256_srli_epi32, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
+  _mm_mullo_epi16, _mm_set1_epi16, _mm_setr_epi8, _mm_setzero_si128, _mm_shuffle_epi8, _mm_srli_epi16,
+  _mm_storel_epi64, _mm_storeu_si128, _mm_sub_epi16, _mm_unpacklo_epi16, _mm256_add_epi32, _mm256_and_si256,
+  _mm256_cmpgt_epi32, _mm256_cvtepi16_epi32, _mm256_loadu_si256, _mm256_mulhi_epi16, _mm256_mullo_epi16,
+  _mm256_mullo_epi32, _mm256_or_si256, _mm256_set1_epi32, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srai_epi32,
+  _mm256_srli_epi32, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
 use crate::{
@@ -4217,6 +4218,13 @@ fn use_s390x_vector_arithmetic() -> bool {
   crate::platform::caps().has(crate::platform::caps::s390x::VECTOR)
 }
 
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[inline(always)]
+fn use_x86_sample_ntt_simd() -> bool {
+  crate::platform::caps()
+    .has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41 | crate::platform::caps::x86::SSSE3)
+}
+
 fn sample_ntt_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) {
   sample_ntt_from_xof_into(Shake128::xof_seeded_32_2(rho, j, i), out);
 }
@@ -4651,6 +4659,22 @@ fn sample_ntt_block_public(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, fill
     }
   }
 
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  {
+    if use_x86_sample_ntt_simd() {
+      // SAFETY: x86_64 SIMD SampleNTT block dispatch because:
+      // 1. Runtime capability detection confirmed AVX2, SSE4.1, and SSSE3 before entering the
+      //    target-feature function.
+      // 2. `buf` is one fixed SHAKE128 rate block.
+      // 3. The helper caps writes to the polynomial's remaining capacity.
+      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+      unsafe {
+        sample_ntt_block_avx2(buf, out, filled);
+      }
+      return;
+    }
+  }
+
   #[cfg(not(all(
     target_arch = "aarch64",
     target_os = "linux",
@@ -4717,6 +4741,24 @@ fn sample_ntt_pair_block_scalar(
   out1: &mut Poly,
   filled1: &mut usize,
 ) {
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  {
+    if use_x86_sample_ntt_simd() {
+      // SAFETY: x86_64 SIMD SampleNTT pair dispatch because:
+      // 1. Runtime capability detection confirmed AVX2, SSE4.1, and SSSE3 before entering the
+      //    target-feature function.
+      // 2. Both inputs are fixed SHAKE128 rate blocks.
+      // 3. Each helper call caps writes to its matching polynomial's remaining capacity.
+      // 4. The two output polynomials are distinct mutable borrows, and rejection depends only on public
+      //    matrix-A XOF bytes.
+      unsafe {
+        sample_ntt_block_avx2(buf0, out0, filled0);
+        sample_ntt_block_avx2(buf1, out1, filled1);
+      }
+      return;
+    }
+  }
+
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
   if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
@@ -5233,10 +5275,10 @@ impl<'a> SampleNttProduct<'a> {
 
     #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
     {
-      if crate::platform::caps().has(crate::platform::caps::x86::AVX2 | crate::platform::caps::x86::SSE41) {
+      if use_x86_sample_ntt_simd() {
         // SAFETY: x86_64 AVX2 fused SampleNTT block dispatch because:
-        // 1. Runtime capability detection confirmed AVX2 and SSE4.1 before entering the target-feature
-        //    function.
+        // 1. Runtime capability detection confirmed AVX2, SSE4.1, and SSSE3 before entering the
+        //    target-feature function.
         // 2. `buf` is one fixed SHAKE128 rate block and `self` owns its 16-coefficient staging chunk.
         // 3. The borrow checker guarantees `acc` is not aliased by the read-only multiplicand in `self`.
         // 4. The memory access schedule depends only on public ML-KEM dimensions and rejection outcomes
@@ -5486,20 +5528,40 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-#[target_feature(enable = "avx2,sse4.1")]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
 fn sample_ntt_product_absorb_block_avx2(
   product: &mut SampleNttProduct<'_>,
   buf: &[u8; SHAKE128_RATE_BYTES],
   acc: &mut Poly,
 ) {
-  for chunk in buf.chunks_exact(3) {
-    let d1 = u16::from(chunk[0]) | (u16::from(chunk[1] & 0x0f) << 8);
-    let d2 = (u16::from(chunk[1]) >> 4) | (u16::from(chunk[2]) << 4);
-
-    if let Some(coeff_offset) = product.push_candidate(d1) {
-      multiply_ntts_add_assign_chunk_avx2(acc, &product.chunk, product.rhs, coeff_offset);
+  for chunk in 0usize..13 {
+    // SAFETY: chunked x86 SampleNTT extraction for fused product absorption because:
+    // 1. `chunk < 13`, so `chunk * 12 + 16 <= 160 <= SHAKE128_RATE_BYTES`.
+    // 2. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+    let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(chunk.strict_mul(12)), false) };
+    sample_ntt_product_absorb_candidates_avx2(product, &candidates, acc);
+    if product.is_done() {
+      return;
     }
-    if let Some(coeff_offset) = product.push_candidate(d2) {
+  }
+
+  // SAFETY: final shifted extraction for fused product absorption because:
+  // 1. Loading from offset 152 reads exactly bytes 152..168, inside the 168-byte SHAKE128 rate block.
+  // 2. The shifted shuffle masks decode logical bytes 156..168, the final 12-byte SampleNTT group.
+  // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+  let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(152), true) };
+  sample_ntt_product_absorb_candidates_avx2(product, &candidates, acc);
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+fn sample_ntt_product_absorb_candidates_avx2(
+  product: &mut SampleNttProduct<'_>,
+  candidates: &[u16; 8],
+  acc: &mut Poly,
+) {
+  for &candidate in candidates {
+    if let Some(coeff_offset) = product.push_candidate(candidate) {
       multiply_ntts_add_assign_chunk_avx2(acc, &product.chunk, product.rhs, coeff_offset);
     }
     if product.is_done() {
@@ -5650,6 +5712,27 @@ fn sample_ntt_quad_block(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut Poly;
   #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
   {
     let [out0, out1, out2, out3] = out;
+
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+    {
+      if use_x86_sample_ntt_simd() {
+        // SAFETY: x86_64 SIMD SampleNTT quad dispatch because:
+        // 1. Runtime capability detection confirmed AVX2, SSE4.1, and SSSE3 before entering the
+        //    target-feature function.
+        // 2. Each input is a fixed SHAKE128 rate block.
+        // 3. Each helper call caps writes to its matching polynomial's remaining capacity.
+        // 4. All output polynomials are distinct mutable borrows, and rejection depends only on public
+        //    matrix-A XOF bytes.
+        unsafe {
+          sample_ntt_block_avx2(&bufs[0], out0, &mut filled[0]);
+          sample_ntt_block_avx2(&bufs[1], out1, &mut filled[1]);
+          sample_ntt_block_avx2(&bufs[2], out2, &mut filled[2]);
+          sample_ntt_block_avx2(&bufs[3], out3, &mut filled[3]);
+        }
+        return;
+      }
+    }
+
     sample_ntt_block(&bufs[0], out0, &mut filled[0]);
     sample_ntt_block(&bufs[1], out1, &mut filled[1]);
     sample_ntt_block(&bufs[2], out2, &mut filled[2]);
@@ -5948,6 +6031,160 @@ unsafe fn sample_ntt_block_ptr(rate_ptr: *const u8, out: &mut Poly, filled: &mut
     offset = offset.strict_add(3);
   }
   *filled = n;
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// # Safety
+///
+/// The active CPU must support AVX2, SSE4.1, and SSSE3. `buf` must be one SHAKE128 rate block,
+/// and `out`/`filled` must describe one unique ML-KEM polynomial destination.
+unsafe fn sample_ntt_block_avx2(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
+  const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
+  let remaining = N.strict_sub(*filled);
+  if remaining == 0 {
+    return;
+  }
+
+  if remaining >= MAX_CANDIDATES {
+    sample_ntt_block_avx2_full(buf, out, filled);
+  } else {
+    sample_ntt_block_avx2_bounded(buf, out, filled);
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+fn sample_ntt_block_avx2_full(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
+  let mut n = *filled;
+  let out_ptr = out.as_mut_ptr();
+
+  for chunk in 0usize..13 {
+    // SAFETY: chunked x86 SampleNTT extraction because:
+    // 1. `chunk < 13`, so `chunk * 12 + 16 <= 160 <= SHAKE128_RATE_BYTES`.
+    // 2. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+    let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(chunk.strict_mul(12)), false) };
+    sample_ntt_store_candidates_full(out_ptr, &mut n, &candidates);
+  }
+
+  // SAFETY: final shifted extraction because:
+  // 1. Loading from offset 152 reads exactly bytes 152..168, inside the 168-byte SHAKE128 rate block.
+  // 2. The shifted shuffle masks decode logical bytes 156..168, the final 12-byte SampleNTT group.
+  // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+  let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(152), true) };
+  sample_ntt_store_candidates_full(out_ptr, &mut n, &candidates);
+
+  debug_assert!(n <= N);
+  *filled = n;
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+fn sample_ntt_block_avx2_bounded(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
+  let mut n = *filled;
+  let out_ptr = out.as_mut_ptr();
+
+  for chunk in 0usize..13 {
+    if n == N {
+      *filled = n;
+      return;
+    }
+
+    // SAFETY: chunked x86 SampleNTT extraction because:
+    // 1. `chunk < 13`, so `chunk * 12 + 16 <= 160 <= SHAKE128_RATE_BYTES`.
+    // 2. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+    let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(chunk.strict_mul(12)), false) };
+    sample_ntt_store_candidates_bounded(out_ptr, &mut n, &candidates);
+  }
+
+  if n != N {
+    // SAFETY: final shifted extraction because:
+    // 1. Loading from offset 152 reads exactly bytes 152..168, inside the 168-byte SHAKE128 rate block.
+    // 2. The shifted shuffle masks decode logical bytes 156..168, the final 12-byte SampleNTT group.
+    // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+    let candidates = unsafe { sample_ntt_extract_8_candidates_avx2(buf.as_ptr().add(152), true) };
+    sample_ntt_store_candidates_bounded(out_ptr, &mut n, &candidates);
+  }
+
+  debug_assert!(n <= N);
+  *filled = n;
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[inline(always)]
+fn sample_ntt_store_candidates_full(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
+  for &candidate in candidates {
+    if candidate < Q {
+      // SAFETY: full-capacity public SampleNTT store because:
+      // 1. The caller entered this path only when the destination had room for every candidate in the
+      //    rate block.
+      // 2. `n` is advanced by at most the 112 candidates in the fixed block, so each accepted write stays
+      //    inside the polynomial.
+      // 3. `out` comes from a unique mutable polynomial borrow.
+      unsafe {
+        *out.add(*n) = candidate;
+      }
+      *n = (*n).strict_add(1);
+    }
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[inline(always)]
+fn sample_ntt_store_candidates_bounded(out: *mut u16, n: &mut usize, candidates: &[u16; 8]) {
+  for &candidate in candidates {
+    if candidate < Q {
+      if *n == N {
+        return;
+      }
+
+      // SAFETY: bounded public SampleNTT store because:
+      // 1. `*n < N` is checked immediately before the write.
+      // 2. `out` comes from a unique mutable polynomial borrow.
+      // 3. Rejection and the accepted write position depend only on public matrix-A XOF bytes.
+      unsafe {
+        *out.add(*n) = candidate;
+      }
+      *n = (*n).strict_add(1);
+    }
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1,ssse3")]
+unsafe fn sample_ntt_extract_8_candidates_avx2(input: *const u8, shifted_tail: bool) -> [u16; 8] {
+  let pad = i8::MIN;
+  let (even_mask, odd_mask) = if shifted_tail {
+    (
+      _mm_setr_epi8(4, 5, 7, 8, 10, 11, 13, 14, pad, pad, pad, pad, pad, pad, pad, pad),
+      _mm_setr_epi8(5, 6, 8, 9, 11, 12, 14, 15, pad, pad, pad, pad, pad, pad, pad, pad),
+    )
+  } else {
+    (
+      _mm_setr_epi8(0, 1, 3, 4, 6, 7, 9, 10, pad, pad, pad, pad, pad, pad, pad, pad),
+      _mm_setr_epi8(1, 2, 4, 5, 7, 8, 10, 11, pad, pad, pad, pad, pad, pad, pad, pad),
+    )
+  };
+
+  // SAFETY: unaligned 16-byte input load because:
+  // 1. The caller guarantees `input..input + 16` is readable inside the SHAKE128 rate block.
+  // 2. `_mm_loadu_si128` accepts arbitrary alignment.
+  // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
+  let block = unsafe { _mm_loadu_si128(input.cast::<__m128i>()) };
+  let mask_12 = _mm_set1_epi16(0x0fff);
+  let even = _mm_and_si128(_mm_shuffle_epi8(block, even_mask), mask_12);
+  let odd = _mm_srli_epi16::<4>(_mm_shuffle_epi8(block, odd_mask));
+  let interleaved = _mm_unpacklo_epi16(even, odd);
+
+  let mut candidates = [0u16; 8];
+  // SAFETY: store exactly eight decoded candidates because:
+  // 1. `candidates` is a fully initialized local `[u16; 8]` destination.
+  // 2. `_mm_storeu_si128` writes exactly 16 bytes and accepts arbitrary alignment.
+  unsafe {
+    _mm_storeu_si128(candidates.as_mut_ptr().cast::<__m128i>(), interleaved);
+  }
+  candidates
 }
 
 #[cfg(not(all(
@@ -9729,11 +9966,14 @@ mod tests {
     }
   }
 
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
-    not(miri),
-    not(feature = "portable-only")
+  #[cfg(any(
+    all(
+      target_arch = "aarch64",
+      target_os = "linux",
+      not(miri),
+      not(feature = "portable-only")
+    ),
+    all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))
   ))]
   fn scalar_sample_ntt_block_to_slice(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut [u16]) -> usize {
     let mut n = 0usize;
@@ -9759,6 +9999,46 @@ mod tests {
       offset = offset.strict_add(3);
     }
     n
+  }
+
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn sample_ntt_block_avx2_matches_scalar_reference() {
+    if !use_x86_sample_ntt_simd() {
+      return;
+    }
+
+    let fill_offsets = [0usize, 1, 32, 112, 144, 145, 200, 220, 255, 256];
+    for seed in 0usize..512 {
+      let mut buf = [0u8; SHAKE128_RATE_BYTES];
+      for (i, byte) in buf.iter_mut().enumerate() {
+        *byte = (seed
+          .strict_mul(109)
+          .strict_add(i.strict_mul(37))
+          .strict_add((seed >> 2).strict_mul(41))
+          & 0xff) as u8;
+      }
+
+      for &start in &fill_offsets {
+        let mut expected = test_poly(seed.strict_add(start));
+        let mut actual = expected;
+        let mut expected_filled = start;
+        let mut actual_filled = start;
+
+        expected_filled = expected_filled.strict_add(scalar_sample_ntt_block_to_slice(&buf, &mut expected[start..]));
+        // SAFETY: direct x86 SIMD block parser equivalence test because:
+        // 1. Runtime capability detection confirmed AVX2, SSE4.1, and SSSE3 above.
+        // 2. `buf` is one full 168-byte SHAKE128 rate block.
+        // 3. `actual` is a fixed 256-coefficient destination and `actual_filled <= N`.
+        // 4. The scalar reference above defines the expected public SampleNTT prefix.
+        unsafe {
+          sample_ntt_block_avx2(&buf, &mut actual, &mut actual_filled);
+        }
+
+        assert_eq!(actual_filled, expected_filled, "seed {seed}, start {start}");
+        assert_eq!(actual, expected, "seed {seed}, start {start}");
+      }
+    }
   }
 
   #[cfg(all(
