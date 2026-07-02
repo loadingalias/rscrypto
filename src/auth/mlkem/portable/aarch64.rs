@@ -5,7 +5,7 @@ use core::arch::global_asm;
 
 #[cfg(any(feature = "diag", all(test, target_os = "linux")))]
 use super::PolyVec;
-#[cfg(target_os = "linux")]
+#[cfg(all(test, target_os = "linux"))]
 use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
 use super::{GAMMAS_MONT, Poly};
 
@@ -74,12 +74,12 @@ unsafe extern "C" {
     b: *const u16,
     gammas_mont: *const i16,
   );
-  fn rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux(
+  #[cfg(test)]
+  fn rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
     acc: *mut u16,
     a: *const u16,
     b: *const u16,
     gammas_mont: *const i16,
-    chunks: usize,
   );
   fn rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux(
     acc: *mut u16,
@@ -532,34 +532,29 @@ pub(super) unsafe fn diag_basemul_accumulate_k4_asm_input_digest(
   digest
 }
 
-#[cfg(target_os = "linux")]
-#[inline]
-pub(super) unsafe fn basemul_accumulate_chunks_asm(
+#[cfg(all(test, target_os = "linux"))]
+pub(super) unsafe fn test_basemul_accumulate_chunk_asm(
   acc: &mut Poly,
-  a: *const u16,
+  a: &[u16; SAMPLE_NTT_ACC_CHUNK_COEFFS],
   b: &Poly,
   coeff_offset: usize,
-  chunks: usize,
 ) {
   debug_assert_eq!(coeff_offset % SAMPLE_NTT_ACC_CHUNK_COEFFS, 0);
-  debug_assert!(chunks <= (acc.len().strict_sub(coeff_offset)) / SAMPLE_NTT_ACC_CHUNK_COEFFS);
+  debug_assert!(coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS) <= acc.len());
   let gamma_offset = coeff_offset / 2;
 
-  // SAFETY: direct access to the chunk-loop base-multiply assembly entry point because:
-  // 1. The caller guarantees `a` points to `chunks * 16` readable SampleNTT coefficients.
-  // 2. `coeff_offset` and `chunks` are checked to keep all `acc`, `b`, and `GAMMAS_MONT` accesses in
-  //    bounds.
-  // 3. The caller guarantees `a` does not alias the mutable accumulator. The borrow checker prevents
-  //    `b` from aliasing `acc`.
-  // 4. The assembly memory schedule is fixed for the public chunk count; no branch or memory address
-  //    depends on secret coefficient values.
+  // SAFETY: test-only direct access to the chunk base-multiply assembly entry point because:
+  // 1. `a` contains exactly one 16-coefficient SampleNTT chunk.
+  // 2. `coeff_offset` is checked to keep all `acc`, `b`, and `GAMMAS_MONT` accesses in bounds.
+  // 3. Tests compare the output against the scalar/FIPS chunk accumulator before the symbol is
+  //    considered for production dispatch.
+  // 4. The assembly memory schedule is fixed for one public 16-coefficient chunk.
   unsafe {
-    rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux(
+    rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux(
       acc.as_mut_ptr().add(coeff_offset),
-      a,
+      a.as_ptr(),
       b.as_ptr().add(coeff_offset),
       GAMMAS_MONT.as_ptr().add(gamma_offset),
-      chunks,
     );
   }
 }

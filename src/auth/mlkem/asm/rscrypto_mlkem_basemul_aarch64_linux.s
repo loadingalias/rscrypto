@@ -8,14 +8,12 @@
 //   x1: const uint16_t a[256|16]     read-only multiplicand
 //   x2: const uint16_t b[256|16]     read-only multiplicand
 //   x3: const int16_t gamma[128|8]   read-only Montgomery gammas
-//   x4: size_t chunks                chunk count for the variable-chunk entry
 //
 // The full-polynomial entry processes 16 fixed chunks. The K=3/K=4 entries take
 // x1/x2 as contiguous PolyVec bases with 512-byte polynomial strides and fuse
-// the whole dot product into one accumulator pass. The chunks entry processes a
-// caller-provided number of contiguous 16-coefficient chunks for the fused
-// SampleNTT path. All branches and memory addresses depend only on public ML-KEM
-// dimensions.
+// the whole dot product into one accumulator pass. The chunk entry processes
+// exactly one 16-coefficient chunk and is used by the fused SampleNTT path tests.
+// All branches and memory addresses depend only on public ML-KEM dimensions.
 
 .text
 .balign 4
@@ -187,22 +185,17 @@ rscrypto_mlkem_basemul_accumulate_aarch64_linux:
         ret
 .size rscrypto_mlkem_basemul_accumulate_aarch64_linux, .-rscrypto_mlkem_basemul_accumulate_aarch64_linux
 
-.globl rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux
-.type rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux, %function
-.hidden rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux
-rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux:
-        cbz     x4, 2f
+.globl rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux
+.type rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux, %function
+.hidden rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux
+rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux:
         mov     w8, #3329
         dup     v30.8h, w8
         mov     w8, #62209
         dup     v31.8h, w8
-1:
         BASEMUL_ACCUMULATE_16
-        subs    x4, x4, #1
-        b.ne    1b
-2:
         ret
-.size rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux, .-rscrypto_mlkem_basemul_accumulate_chunks_aarch64_linux
+.size rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux, .-rscrypto_mlkem_basemul_accumulate_chunk_aarch64_linux
 
 .globl rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux
 .type rscrypto_mlkem_basemul_accumulate_k2_aarch64_linux, %function

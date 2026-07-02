@@ -5326,12 +5326,7 @@ impl<'a> SampleNttProduct<'a> {
   }
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  not(target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
+#[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 macro_rules! multiply_ntts_add_assign_chunk_neon_body {
   ($acc:expr, $a_ptr:expr, $b:expr, $coeff_offset:expr) => {{
     let gamma_offset = $coeff_offset / 2;
@@ -5388,6 +5383,35 @@ macro_rules! sample_ntt_product_absorb_candidate_neon {
       }
     }
   }};
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_os = "linux",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[target_feature(enable = "neon")]
+#[inline]
+/// # Safety
+///
+/// `a_ptr` must point to 16 readable accepted SampleNTT coefficients. `coeff_offset` must be a
+/// 16-coefficient boundary inside `acc` and `b`. The caller must guarantee that the active CPU
+/// supports NEON.
+unsafe fn multiply_ntts_add_assign_chunk_neon_ptr(acc: &mut Poly, a_ptr: *const u16, b: &Poly, coeff_offset: usize) {
+  debug_assert_eq!(coeff_offset % SAMPLE_NTT_ACC_CHUNK_COEFFS, 0);
+  debug_assert!(coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS) <= N);
+
+  // SAFETY: pointer-backed NEON chunk multiply-accumulate because:
+  // 1. `a_ptr` points to 16 contiguous accepted SampleNTT coefficients by this function's caller
+  //    contract.
+  // 2. `coeff_offset` is checked to keep the 16-coefficient `acc` and `b` accesses in bounds.
+  // 3. The borrow checker guarantees `acc` is not aliased by read-only `b`; `a_ptr` points to local
+  //    scratch owned by the caller.
+  // 4. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
+  unsafe {
+    multiply_ntts_add_assign_chunk_neon_body!(acc, a_ptr, b, coeff_offset);
+  }
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -5456,19 +5480,20 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
     let total_len = prefix_len.strict_add(take);
     let full_len = total_len - (total_len % SAMPLE_NTT_ACC_CHUNK_COEFFS);
 
-    if full_len != 0 {
-      let chunks = full_len / SAMPLE_NTT_ACC_CHUNK_COEFFS;
-      // SAFETY: compacted accepted-candidate chunk-loop multiply because:
-      // 1. `full_len` is a non-zero multiple of 16 and `full_len <= total_len`, so `accepted_ptr` names
-      //    `chunks * 16` initialized accepted coefficients.
-      // 2. `base_offset` is the prior full-chunk boundary, and `take` is capped at the remaining
-      //    polynomial length, keeping every accumulated chunk in bounds.
+    let mut chunk_start = 0usize;
+    while chunk_start < full_len {
+      let coeff_offset = base_offset.strict_add(chunk_start);
+      // SAFETY: compacted accepted-candidate chunk multiply because:
+      // 1. `chunk_start + 16 <= full_len <= total_len`, so the pointer names 16 initialized accepted
+      //    coefficients in `accepted_ptr`.
+      // 2. `coeff_offset` starts at the prior full-chunk boundary and advances in 16-coefficient steps;
+      //    `take` is capped at the remaining polynomial length, keeping every chunk in bounds.
       // 3. `accepted_ptr` is local scratch and cannot alias `acc` or `product.rhs`.
-      // 4. The assembly walks fixed public chunk offsets; no branch or memory address depends on secret
-      //    coefficient values.
+      // 4. This function is already gated by `#[target_feature(enable = "neon")]`.
       unsafe {
-        aarch64::basemul_accumulate_chunks_asm(acc, accepted_ptr, product.rhs, base_offset, chunks);
+        multiply_ntts_add_assign_chunk_neon_ptr(acc, accepted_ptr.add(chunk_start), product.rhs, coeff_offset);
       }
+      chunk_start = chunk_start.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS);
     }
 
     let remainder_len = total_len.strict_sub(full_len);
@@ -9772,37 +9797,30 @@ mod tests {
     not(feature = "portable-only")
   ))]
   #[test]
-  fn basemul_accumulate_chunks_asm_matches_scalar_reference() {
-    for seed in 0usize..64 {
+  fn basemul_accumulate_chunk_asm_matches_scalar_reference() {
+    for seed in 0usize..128 {
       let acc = test_poly(seed);
       let a = test_poly(seed.strict_add(0x3000));
       let b = test_poly(seed.strict_add(0x4000));
 
       for coeff_offset in (0..N).step_by(SAMPLE_NTT_ACC_CHUNK_COEFFS) {
-        let max_chunks = (N.strict_sub(coeff_offset)) / SAMPLE_NTT_ACC_CHUNK_COEFFS;
-        for chunks in 1..=max_chunks.min(7) {
-          let mut scalar = acc;
-          for chunk_index in 0..chunks {
-            let chunk_offset = coeff_offset.strict_add(chunk_index.strict_mul(SAMPLE_NTT_ACC_CHUNK_COEFFS));
-            let mut chunk = [0u16; SAMPLE_NTT_ACC_CHUNK_COEFFS];
-            chunk.copy_from_slice(&a[chunk_offset..chunk_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS)]);
-            multiply_ntts_add_assign_chunk_scalar(&mut scalar, &chunk, &b, chunk_offset);
-          }
+        let mut chunk = [0u16; SAMPLE_NTT_ACC_CHUNK_COEFFS];
+        chunk.copy_from_slice(&a[coeff_offset..coeff_offset.strict_add(SAMPLE_NTT_ACC_CHUNK_COEFFS)]);
 
-          let mut asm = acc;
-          // SAFETY: direct aarch64 assembly chunk-loop test call because:
-          // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
-          // 2. `a.as_ptr().add(coeff_offset)` names `chunks * 16` readable coefficients because `chunks <=
-          //    max_chunks`.
-          // 3. `coeff_offset` is emitted from fixed 16-coefficient public chunk boundaries.
-          // 4. The test keeps `a`, `b`, and `acc` distinct and compares against the scalar/FIPS chunk
-          //    accumulator for the same chunk span.
-          unsafe {
-            aarch64::basemul_accumulate_chunks_asm(&mut asm, a.as_ptr().add(coeff_offset), &b, coeff_offset, chunks);
-          }
+        let mut scalar = acc;
+        multiply_ntts_add_assign_chunk_scalar(&mut scalar, &chunk, &b, coeff_offset);
 
-          assert_eq!(asm, scalar, "seed {seed}, coeff_offset {coeff_offset}, chunks {chunks}");
+        let mut asm = acc;
+        // SAFETY: direct aarch64 assembly chunk test call because:
+        // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+        // 2. `chunk` contains exactly one 16-coefficient SampleNTT chunk.
+        // 3. `coeff_offset` is emitted from fixed 16-coefficient public chunk boundaries.
+        // 4. The test compares against the scalar/FIPS chunk accumulator before production dispatch.
+        unsafe {
+          aarch64::test_basemul_accumulate_chunk_asm(&mut asm, &chunk, &b, coeff_offset);
         }
+
+        assert_eq!(asm, scalar, "seed {seed}, coeff_offset {coeff_offset}");
       }
     }
   }
