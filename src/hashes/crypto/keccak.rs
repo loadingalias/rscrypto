@@ -732,7 +732,7 @@ impl Permuter for Aarch64Permuter {
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], _len_hint: usize) {
     #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
     {
-      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      aarch64::keccakf_aarch64_sha3_x3(state_a, state_b, state_c);
     }
 
     #[cfg(not(all(target_os = "linux", not(target_vendor = "apple"))))]
@@ -763,7 +763,7 @@ impl Permuter for Aarch64Permuter {
 
     #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
     {
-      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      aarch64::keccakf_aarch64_sha3_x3(state_a, state_b, state_c);
       keccakf_portable(state_d);
     }
 
@@ -833,7 +833,7 @@ impl Permuter for Aarch64Permuter {
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
     #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
     if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      aarch64::keccakf_aarch64_sha3_x3(state_a, state_b, state_c);
       return;
     }
 
@@ -857,7 +857,7 @@ impl Permuter for Aarch64Permuter {
 
     #[cfg(all(target_os = "linux", not(target_vendor = "apple")))]
     if self.has_sha3 {
-      aarch64::keccakf_aarch64_sha3_x3_hybrid(state_a, state_b, state_c);
+      aarch64::keccakf_aarch64_sha3_x3(state_a, state_b, state_c);
       keccakf_portable(state_d);
       return;
     }
