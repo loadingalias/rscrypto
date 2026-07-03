@@ -557,7 +557,6 @@ pub(crate) trait Permuter: Copy {
   /// Permute three independent states in parallel.
   /// Default: one paired permutation and one single-state permutation.
   #[inline(always)]
-  #[allow(dead_code)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
     self.permute_x2(state_a, state_b, len_hint);
     self.permute(state_c, len_hint);
@@ -1478,7 +1477,6 @@ pub(crate) fn xof_seeded_32_2_pair<const RATE: usize>(
 }
 
 #[cfg(feature = "ml-kem")]
-#[allow(dead_code)]
 pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
@@ -1492,48 +1490,6 @@ pub(crate) fn xof_seeded_32_2_triple<const RATE: usize>(
   let mut state_b = xof_seeded_32_2_state_from_base(base, b.0, b.1);
   let mut state_c = xof_seeded_32_2_state_from_base(base, c.0, c.1);
   permuter.permute_x3(&mut state_a, &mut state_b, &mut state_c, 0);
-
-  (
-    KeccakXofImpl {
-      state: state_a,
-      pos: 0,
-      permuter,
-    },
-    KeccakXofImpl {
-      state: state_b,
-      pos: 0,
-      permuter,
-    },
-    KeccakXofImpl {
-      state: state_c,
-      pos: 0,
-      permuter,
-    },
-  )
-}
-
-#[cfg(all(
-  feature = "ml-kem",
-  target_arch = "aarch64",
-  target_os = "linux",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(crate) fn xof_seeded_32_2_triple_matrix<const RATE: usize>(
-  ds: u8,
-  seed: &[u8; 32],
-  a: (u8, u8),
-  b: (u8, u8),
-  c: (u8, u8),
-) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
-  let permuter = PlatformPermuter::default();
-  let base = xof_seeded_32_2_base_state::<RATE>(ds, seed);
-  let mut state_a = xof_seeded_32_2_state_from_base(base, a.0, a.1);
-  let mut state_b = xof_seeded_32_2_state_from_base(base, b.0, b.1);
-  let mut state_c = xof_seeded_32_2_state_from_base(base, c.0, c.1);
-  permuter.permute_x2(&mut state_a, &mut state_b, 0);
-  permuter.permute(&mut state_c, 0);
 
   (
     KeccakXofImpl {
@@ -1979,7 +1935,6 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     not(miri),
     not(feature = "portable-only")
   ))]
-  #[allow(dead_code)]
   pub(crate) fn with_triple_rate_block(
     a: &mut Self,
     b: &mut Self,
@@ -1993,40 +1948,6 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakXofImpl<RATE, P,
     if a.pos == RATE {
       let permuter = a.permuter;
       permuter.permute_x3(&mut a.state, &mut b.state, &mut c.state, 0);
-      a.pos = 0;
-      b.pos = 0;
-      c.pos = 0;
-    }
-
-    f(&a.state, &b.state, &c.state);
-
-    a.pos = RATE;
-    b.pos = RATE;
-    c.pos = RATE;
-  }
-
-  #[cfg(all(
-    feature = "ml-kem",
-    target_arch = "aarch64",
-    target_os = "linux",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  pub(crate) fn with_triple_matrix_rate_block(
-    a: &mut Self,
-    b: &mut Self,
-    c: &mut Self,
-    f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
-  ) {
-    debug_assert_eq!(a.pos, b.pos);
-    debug_assert_eq!(a.pos, c.pos);
-    debug_assert!(a.pos == 0 || a.pos == RATE);
-
-    if a.pos == RATE {
-      let permuter = a.permuter;
-      permuter.permute_x2(&mut a.state, &mut b.state, 0);
-      permuter.permute(&mut c.state, 0);
       a.pos = 0;
       b.pos = 0;
       c.pos = 0;

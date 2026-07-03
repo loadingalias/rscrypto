@@ -4,15 +4,6 @@
 
 #[cfg(all(test, feature = "ml-kem"))]
 use super::keccak::xof_quad;
-#[cfg(all(
-  feature = "ml-kem",
-  target_arch = "aarch64",
-  target_os = "linux",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-use super::keccak::xof_seeded_32_2_triple_matrix as keccak_xof_seeded_32_2_triple_matrix;
 use super::keccak::{PublicKeccakCore, PublicKeccakXof};
 #[cfg(feature = "ml-kem")]
 use super::keccak::{
@@ -423,7 +414,6 @@ impl Shake128 {
 
   #[inline]
   #[cfg(feature = "ml-kem")]
-  #[allow(dead_code)]
   pub(crate) fn xof_seeded_32_2_triple(
     seed: &[u8; 32],
     a: (u8, u8),
@@ -431,29 +421,6 @@ impl Shake128 {
     c: (u8, u8),
   ) -> (Shake128XofReader, Shake128XofReader, Shake128XofReader) {
     let (a, b, c) = keccak_xof_seeded_32_2_triple::<168>(0x1F, seed, a, b, c);
-    (
-      Shake128XofReader { inner: a },
-      Shake128XofReader { inner: b },
-      Shake128XofReader { inner: c },
-    )
-  }
-
-  #[inline]
-  #[cfg(all(
-    feature = "ml-kem",
-    target_arch = "aarch64",
-    target_os = "linux",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  pub(crate) fn xof_seeded_32_2_triple_matrix(
-    seed: &[u8; 32],
-    a: (u8, u8),
-    b: (u8, u8),
-    c: (u8, u8),
-  ) -> (Shake128XofReader, Shake128XofReader, Shake128XofReader) {
-    let (a, b, c) = keccak_xof_seeded_32_2_triple_matrix::<168>(0x1F, seed, a, b, c);
     (
       Shake128XofReader { inner: a },
       Shake128XofReader { inner: b },
@@ -615,7 +582,6 @@ impl Shake128XofReader {
     not(miri),
     not(feature = "portable-only")
   ))]
-  #[allow(dead_code)]
   pub(crate) fn with_triple_rate_block(
     a: &mut Self,
     b: &mut Self,
@@ -623,23 +589,6 @@ impl Shake128XofReader {
     f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
   ) {
     PublicKeccakXof::<168>::with_triple_rate_block(&mut a.inner, &mut b.inner, &mut c.inner, f);
-  }
-
-  #[cfg(all(
-    feature = "ml-kem",
-    target_arch = "aarch64",
-    target_os = "linux",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  pub(crate) fn with_triple_matrix_rate_block(
-    a: &mut Self,
-    b: &mut Self,
-    c: &mut Self,
-    f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
-  ) {
-    PublicKeccakXof::<168>::with_triple_matrix_rate_block(&mut a.inner, &mut b.inner, &mut c.inner, f);
   }
 }
 
