@@ -1114,7 +1114,7 @@ pub(super) fn diag_keygen_matrix_row_sample_k4_quad_digest(rho: &[u8; SEED_BYTES
 
 #[cfg(feature = "diag")]
 pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
+  let (mut reader0, mut reader1, mut reader2) = sample_ntt_triple_xof_readers(rho, [(0, 0), (1, 0), (2, 0)]);
   let mut digest = 0u16;
 
   #[cfg(all(
@@ -1124,7 +1124,7 @@ pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u1
     not(feature = "portable-only")
   ))]
   {
-    Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+    sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
       digest ^= diag_fold_keccak_state_prefix(state0, 0);
       digest ^= diag_fold_keccak_state_prefix(state1, 1);
       digest ^= diag_fold_keccak_state_prefix(state2, 2);
@@ -1159,7 +1159,7 @@ pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u1
 
 #[cfg(feature = "diag")]
 pub(super) fn diag_sampler_triple_squeeze_blocks_digest(rho: &[u8; SEED_BYTES], blocks: usize) -> u16 {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
+  let (mut reader0, mut reader1, mut reader2) = sample_ntt_triple_xof_readers(rho, [(0, 0), (1, 0), (2, 0)]);
   let mut digest = 0u16;
 
   for block in 0..blocks {
@@ -1170,7 +1170,7 @@ pub(super) fn diag_sampler_triple_squeeze_blocks_digest(rho: &[u8; SEED_BYTES], 
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
         let domain = block as u16;
         digest ^= diag_fold_keccak_state_prefix(state0, domain);
         digest ^= diag_fold_keccak_state_prefix(state1, domain.wrapping_add(17));
@@ -1650,7 +1650,7 @@ fn diag_sampler_triple_parse_seeded_blocks(
   out: [&mut Poly; 3],
   filled: &mut [usize; 3],
 ) {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
+  let (mut reader0, mut reader1, mut reader2) = sample_ntt_triple_xof_readers(rho, [(0, 0), (1, 0), (2, 0)]);
   let [out0, out1, out2] = out;
   #[cfg(not(all(
     target_arch = "aarch64",
@@ -1672,7 +1672,7 @@ fn diag_sampler_triple_parse_seeded_blocks(
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
         sample_ntt_triple_state_block([state0, state1, state2], [&mut *out0, &mut *out1, &mut *out2], filled);
       });
     }
@@ -3857,7 +3857,7 @@ fn diag_sample_ntt_triple_counted(
   out: [&mut Poly; 3],
   counts: &mut [u16; 16],
 ) {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  let (mut reader0, mut reader1, mut reader2) = sample_ntt_triple_xof_readers(rho, lanes);
   let mut filled = [0usize; 3];
   let mut blocks = [0u16; 3];
   let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
@@ -3871,7 +3871,7 @@ fn diag_sample_ntt_triple_counted(
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
         sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
       });
     }
@@ -4245,8 +4245,36 @@ fn sample_ntt_pair_into(rho: &[u8; SEED_BYTES], j0: u8, i0: u8, j1: u8, i1: u8, 
   sample_ntt_pair_from_xof_into(reader0, reader1, out0, out1);
 }
 
+#[inline(always)]
+fn sample_ntt_triple_xof_readers(
+  rho: &[u8; SEED_BYTES],
+  lanes: [(u8, u8); 3],
+) -> (Shake128XofReader, Shake128XofReader, Shake128XofReader) {
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
+  {
+    Shake128::xof_seeded_32_2_triple_matrix(rho, lanes[0], lanes[1], lanes[2])
+  }
+
+  #[cfg(not(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    target_endian = "little",
+    not(miri),
+    not(feature = "portable-only")
+  )))]
+  {
+    Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2])
+  }
+}
+
 fn sample_ntt_triple_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
-  let (reader0, reader1, reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  let (reader0, reader1, reader2) = sample_ntt_triple_xof_readers(rho, lanes);
   sample_ntt_triple_from_xof_into([reader0, reader1, reader2], out);
 }
 
@@ -4341,7 +4369,7 @@ fn squeeze_sample_ntt_initial_blocks(reader: &mut impl Xof, out: &mut [u8; SAMPL
 
 #[cfg(any(test, feature = "diag"))]
 fn sample_ntt_triple_first3_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  let (mut reader0, mut reader1, mut reader2) = sample_ntt_triple_xof_readers(rho, lanes);
   let [out0, out1, out2] = out;
   let mut filled = [0usize; 3];
 
@@ -4355,7 +4383,7 @@ fn sample_ntt_triple_first3_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], o
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
         sample_ntt_triple_state_block(
           [state0, state1, state2],
           [&mut *out0, &mut *out1, &mut *out2],
@@ -4414,7 +4442,7 @@ fn sample_ntt_triple_initial_3blocks_then_tail_into(
   lanes: [(u8, u8); 3],
   out: [&mut Poly; 3],
 ) -> [u16; 3] {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
+  let (mut reader0, mut reader1, mut reader2) = sample_ntt_triple_xof_readers(rho, lanes);
   let mut initial = [[0u8; SAMPLE_NTT_INITIAL_BYTES]; 3];
 
   for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
@@ -4428,7 +4456,7 @@ fn sample_ntt_triple_initial_3blocks_then_tail_into(
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
         copy_keccak_rate_block(state0, &mut initial[0][start..end]);
         copy_keccak_rate_block(state1, &mut initial[1][start..end]);
         copy_keccak_rate_block(state2, &mut initial[2][start..end]);
@@ -4471,7 +4499,7 @@ fn sample_ntt_triple_initial_3blocks_then_tail_into(
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
         sample_ntt_triple_state_block(
           [state0, state1, state2],
           [&mut *out0, &mut *out1, &mut *out2],
@@ -5112,7 +5140,7 @@ fn sample_ntt_triple_from_xof_into(mut readers: [Shake128XofReader; 3], out: [&m
       not(feature = "portable-only")
     ))]
     {
-      Shake128XofReader::with_triple_rate_block(reader0, reader1, reader2, |state0, state1, state2| {
+      sample_ntt_triple_rate_block(reader0, reader1, reader2, |state0, state1, state2| {
         sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
       });
     }
@@ -5766,6 +5794,30 @@ fn sample_ntt_quad_block_neon(bufs: &[[u8; SHAKE128_RATE_BYTES]; 4], out: [&mut 
   // 3. The helper preserves the same bounded output fallback as the scalar parser.
   unsafe {
     sample_ntt_quad_block_neon_ptrs(rate_ptrs, out, filled);
+  }
+}
+
+#[cfg(all(
+  target_arch = "aarch64",
+  target_endian = "little",
+  not(miri),
+  not(feature = "portable-only")
+))]
+#[inline(always)]
+fn sample_ntt_triple_rate_block(
+  reader0: &mut Shake128XofReader,
+  reader1: &mut Shake128XofReader,
+  reader2: &mut Shake128XofReader,
+  f: impl FnOnce(&[u64; 25], &[u64; 25], &[u64; 25]),
+) {
+  #[cfg(target_os = "linux")]
+  {
+    Shake128XofReader::with_triple_matrix_rate_block(reader0, reader1, reader2, f);
+  }
+
+  #[cfg(not(target_os = "linux"))]
+  {
+    Shake128XofReader::with_triple_rate_block(reader0, reader1, reader2, f);
   }
 }
 
