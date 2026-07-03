@@ -40,6 +40,11 @@ CASE_METADATA = {
     "left_class": "fixed secret bytes",
     "right_class": "random secret bytes",
   },
+  "ietf_chacha20poly1305_fixed_vs_random_key_open": {
+    "primitive": "aead.open_authentication",
+    "left_class": "valid open with fixed secret key",
+    "right_class": "valid open with random secret key",
+  },
   "xchacha20poly1305_fixed_vs_random_key_open": {
     "primitive": "aead.open_authentication",
     "left_class": "valid open with fixed secret key",
@@ -437,7 +442,7 @@ CASE_METADATA = {
       "required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
     ),
   },
-  "chacha20poly1305_fixed_vs_random_key_seal": {
+  "ietf_chacha20poly1305_fixed_vs_random_key_seal": {
     "primitive": "aead.symmetric_transform",
     "left_class": "fixed secret key",
     "right_class": "random secret key",

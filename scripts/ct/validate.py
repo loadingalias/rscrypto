@@ -8,8 +8,9 @@ import hashlib
 import json
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+from toml_compat import tomllib
 
 
 VALID_CLAIMS = {"ct-claimed", "ct-intended", "best-effort", "unsupported"}
@@ -328,6 +329,13 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       fail(errors, f"DudeCT runner has unmanifested bench(es): {', '.join(missing_from_manifest)}")
     if missing_from_runner:
       fail(errors, f"ct.toml has DudeCT case(s) missing from runner: {', '.join(missing_from_runner)}")
+    for case in ct.get("dudect_case", []):
+      name = case.get("name", "<unnamed>")
+      filter_value = str(case.get("filter", ""))
+      matches = sorted(bench for bench in registered_dudect if filter_value in bench)
+      if matches != [name]:
+        matched = ", ".join(matches) if matches else "<none>"
+        fail(errors, f"DudeCT case {name} filter {filter_value!r} must match exactly itself; matched: {matched}")
 
   unit_ids: set[str] = set()
   for unit in ct.get("evidence_unit", []):

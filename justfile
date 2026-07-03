@@ -111,7 +111,7 @@ test-fuzz *args="":
 # Constant-Time (CT) Validation Engine
 ct *args="":
     @scripts/ct/artifacts.sh {{ args }}
-    @scripts/ct/validate.py {{ args }}
+    @scripts/ct/python.sh scripts/ct/validate.py {{ args }}
 
 # Run DudeCT Timing Checks
 ct-dudect *args="":
@@ -119,11 +119,11 @@ ct-dudect *args="":
 
 # Build CT Artifacts; Run Timing Evidence; Emit CT Reports
 ct-full *args="":
-    @scripts/ct/full.py {{ args }}
+    @scripts/ct/python.sh scripts/ct/full.py {{ args }}
 
 # Run BINSEC; Manifest-Declared Binary CT Kernels
 ct-binsec *args="":
-    @scripts/ct/binsec.py {{ args }}
+    @scripts/ct/python.sh scripts/ct/binsec.py {{ args }}
 
 # Build CT Harness Artifacts
 ct-artifacts *args="":
@@ -131,7 +131,7 @@ ct-artifacts *args="":
 
 # Validate CT Manifest & Generated Artifacts
 ct-validate *args="":
-    @scripts/ct/validate.py {{ args }}
+    @scripts/ct/python.sh scripts/ct/validate.py {{ args }}
 
 # Coverage
 

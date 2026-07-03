@@ -11,10 +11,11 @@ import re
 import socket
 import subprocess
 import sys
-import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from toml_compat import tomllib
 
 
 def run(args: list[str], *, cwd: Path) -> str:

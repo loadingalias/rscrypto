@@ -36,7 +36,7 @@ runs:
     # runs-on.com S3-backed cache intercept. No-op on non-runs-on pools.
     - name: Setup MagicCache
       if: inputs.enable-magic-cache == 'true'
-      uses: runs-on/action@d141ef83eb66d096ce8afc767e09115a65c63b60  # v2.1.2
+      uses: runs-on/action@4e5f72399b6b17f2e79c511c1b38a315a64d22dc  # v2.2.0
 
     - name: Setup Toolchain
       uses: ./.github/actions/setup-toolchain

@@ -783,10 +783,10 @@ impl Aead for ChaCha20Poly1305 {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
-    if buffer.is_empty() {
-      if let Some(result) = self.encrypt_empty_text_fast(nonce, aad) {
-        return result;
-      }
+    if buffer.is_empty()
+      && let Some(result) = self.encrypt_empty_text_fast(nonce, aad)
+    {
+      return result;
     }
 
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
@@ -827,10 +827,10 @@ impl Aead for ChaCha20Poly1305 {
     super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
 
     #[cfg(any(target_arch = "x86_64", all(target_arch = "powerpc64", target_endian = "little")))]
-    if buffer.is_empty() {
-      if let Some(result) = self.decrypt_empty_text_fast(nonce, aad, tag) {
-        return result;
-      }
+    if buffer.is_empty()
+      && let Some(result) = self.decrypt_empty_text_fast(nonce, aad, tag)
+    {
+      return result;
     }
 
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]

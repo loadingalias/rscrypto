@@ -9591,15 +9591,28 @@ mod tests {
   ))]
   #[test]
   fn basemul_accumulate_k2_asm_matches_scalar_reference() {
-    assert_basemul_accumulate_k2_asm_matches_scalar_reference([0u16; N], [[0u16; N]; 2], [[0u16; N]; 2], "all zero");
-    assert_basemul_accumulate_k2_asm_matches_scalar_reference([Q - 1; N], [[Q - 1; N]; 2], [[Q - 1; N]; 2], "all q-1");
+    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      [0u16; N],
+      [[0u16; N]; 2],
+      [[0u16; N]; 2],
+      "all zero",
+      aarch64::test_basemul_accumulate_k2_asm,
+    );
+    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      [Q - 1; N],
+      [[Q - 1; N]; 2],
+      [[Q - 1; N]; 2],
+      "all q-1",
+      aarch64::test_basemul_accumulate_k2_asm,
+    );
 
     for seed in 0usize..256 {
-      assert_basemul_accumulate_k2_asm_matches_scalar_reference(
+      assert_basemul_accumulate_k_asm_matches_scalar_reference(
         test_poly(seed),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x4500).strict_add(i.strict_mul(0x100)))),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x4a00).strict_add(i.strict_mul(0x100)))),
         "seeded",
+        aarch64::test_basemul_accumulate_k2_asm,
       );
     }
   }
@@ -9610,20 +9623,26 @@ mod tests {
     not(miri),
     not(feature = "portable-only")
   ))]
-  fn assert_basemul_accumulate_k2_asm_matches_scalar_reference(acc: Poly, a: PolyVec<2>, b: PolyVec<2>, label: &str) {
+  fn assert_basemul_accumulate_k_asm_matches_scalar_reference<const K: usize>(
+    acc: Poly,
+    a: PolyVec<K>,
+    b: PolyVec<K>,
+    label: &str,
+    asm_fn: unsafe fn(&mut Poly, &PolyVec<K>, &PolyVec<K>),
+  ) {
     let mut scalar = acc;
-    for i in 0..2 {
-      multiply_ntts_add_assign_scalar(&mut scalar, &a[i], &b[i]);
+    for (a_poly, b_poly) in a.iter().zip(b.iter()) {
+      multiply_ntts_add_assign_scalar(&mut scalar, a_poly, b_poly);
     }
 
     let mut asm = acc;
-    // SAFETY: direct aarch64 assembly K=2 dot-product test call because:
+    // SAFETY: direct aarch64 assembly K-vector dot-product test call because:
     // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
     // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
     // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
     // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
     unsafe {
-      aarch64::test_basemul_accumulate_k2_asm(&mut asm, &a, &b);
+      asm_fn(&mut asm, &a, &b);
     }
 
     assert_eq!(asm, scalar, "{label}");
@@ -9833,15 +9852,28 @@ mod tests {
   ))]
   #[test]
   fn basemul_accumulate_k3_asm_matches_scalar_reference() {
-    assert_basemul_accumulate_k3_asm_matches_scalar_reference([0u16; N], [[0u16; N]; 3], [[0u16; N]; 3], "all zero");
-    assert_basemul_accumulate_k3_asm_matches_scalar_reference([Q - 1; N], [[Q - 1; N]; 3], [[Q - 1; N]; 3], "all q-1");
+    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      [0u16; N],
+      [[0u16; N]; 3],
+      [[0u16; N]; 3],
+      "all zero",
+      aarch64::test_basemul_accumulate_k3_asm,
+    );
+    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      [Q - 1; N],
+      [[Q - 1; N]; 3],
+      [[Q - 1; N]; 3],
+      "all q-1",
+      aarch64::test_basemul_accumulate_k3_asm,
+    );
 
     for seed in 0usize..256 {
-      assert_basemul_accumulate_k3_asm_matches_scalar_reference(
+      assert_basemul_accumulate_k_asm_matches_scalar_reference(
         test_poly(seed),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x5000).strict_add(i.strict_mul(0x100)))),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x6000).strict_add(i.strict_mul(0x100)))),
         "seeded",
+        aarch64::test_basemul_accumulate_k3_asm,
       );
     }
   }
@@ -9854,15 +9886,28 @@ mod tests {
   ))]
   #[test]
   fn basemul_accumulate_k4_asm_matches_scalar_reference() {
-    assert_basemul_accumulate_k4_asm_matches_scalar_reference([0u16; N], [[0u16; N]; 4], [[0u16; N]; 4], "all zero");
-    assert_basemul_accumulate_k4_asm_matches_scalar_reference([Q - 1; N], [[Q - 1; N]; 4], [[Q - 1; N]; 4], "all q-1");
+    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      [0u16; N],
+      [[0u16; N]; 4],
+      [[0u16; N]; 4],
+      "all zero",
+      aarch64::test_basemul_accumulate_k4_asm,
+    );
+    assert_basemul_accumulate_k_asm_matches_scalar_reference(
+      [Q - 1; N],
+      [[Q - 1; N]; 4],
+      [[Q - 1; N]; 4],
+      "all q-1",
+      aarch64::test_basemul_accumulate_k4_asm,
+    );
 
     for seed in 0usize..256 {
-      assert_basemul_accumulate_k4_asm_matches_scalar_reference(
+      assert_basemul_accumulate_k_asm_matches_scalar_reference(
         test_poly(seed),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x7000).strict_add(i.strict_mul(0x100)))),
         core::array::from_fn(|i| test_poly(seed.strict_add(0x8000).strict_add(i.strict_mul(0x100)))),
         "seeded",
+        aarch64::test_basemul_accumulate_k4_asm,
       );
     }
   }

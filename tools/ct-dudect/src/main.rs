@@ -363,7 +363,7 @@ aead_fixed_vs_random_key_open!(
   0x16
 );
 aead_fixed_vs_random_key_open!(
-  chacha20poly1305_fixed_vs_random_key_open,
+  ietf_chacha20poly1305_fixed_vs_random_key_open,
   ChaCha20Poly1305,
   ChaCha20Poly1305Key,
   Nonce96,
@@ -1674,7 +1674,7 @@ fn rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b(runner: &mut CtRunner, rn
 fn rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng, stage: u8) {
   let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
-  let policy = RsaPublicKeyPolicy::default();
+  let policy = RsaPublicKeyPolicy::legacy_verification();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     inputs.push(random_class(rng));
@@ -1691,7 +1691,7 @@ fn rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner: &mut CtRunner, rng:
 fn rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut BenchRng, stage: u8) {
   let der_a = rsa_pkcs8_der(RSA_CT_KEY_A_INDEX);
   let der_b = rsa_pkcs8_der(RSA_CT_KEY_B_SAME_SHAPE_INDEX);
-  let policy = RsaPublicKeyPolicy::default();
+  let policy = RsaPublicKeyPolicy::legacy_verification();
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     inputs.push(random_class(rng));
@@ -1879,7 +1879,7 @@ aead_fixed_vs_random_key_seal!(
   0x36
 );
 aead_fixed_vs_random_key_seal!(
-  chacha20poly1305_fixed_vs_random_key_seal,
+  ietf_chacha20poly1305_fixed_vs_random_key_seal,
   ChaCha20Poly1305,
   ChaCha20Poly1305Key,
   Nonce96,
@@ -2003,7 +2003,7 @@ ctbench_main_with_seeds!(
   (aes256_gcm_siv_diag_ctr32_fixed_vs_random_key, Some(0x733235366374726b)),
   (aes128_gcm_siv_diag_raw_tag_aes_varying_block, Some(0x7331323874616762)),
   (aes256_gcm_siv_diag_raw_tag_aes_varying_block, Some(0x7332353674616762)),
-  (chacha20poly1305_fixed_vs_random_key_open, Some(0x6368613230706f70)),
+  (ietf_chacha20poly1305_fixed_vs_random_key_open, Some(0x6368613230706f70)),
   (xchacha20poly1305_fixed_vs_random_key_open, Some(0x7863686163686132)),
   (aegis256_fixed_vs_random_key_open, Some(0x61656769736f706e)),
   (ascon_aead128_fixed_vs_random_key_open, Some(0x6173636f6e6f706e)),
@@ -2080,7 +2080,7 @@ ctbench_main_with_seeds!(
   (aes256gcm_fixed_vs_random_key_seal, Some(0x6165733235366773)),
   (aes128gcmsiv_fixed_vs_random_key_seal, Some(0x6131323867737365)),
   (aes256gcmsiv_fixed_vs_random_key_seal, Some(0x6132353667737365)),
-  (chacha20poly1305_fixed_vs_random_key_seal, Some(0x6368616368613230)),
+  (ietf_chacha20poly1305_fixed_vs_random_key_seal, Some(0x6368616368613230)),
   (xchacha20poly1305_fixed_vs_random_key_seal, Some(0x7863686132307365)),
   (aegis256_fixed_vs_random_key_seal, Some(0x6165676973736561)),
   (ascon_aead128_fixed_vs_random_key_seal, Some(0x6173636f6e736561)),

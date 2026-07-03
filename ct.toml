@@ -394,9 +394,9 @@ gate = "diagnostic"
 reason = "s390x AES-GCM-SIV timing trace for raw tag AES under block variation."
 
 [[dudect_case]]
-name = "chacha20poly1305_fixed_vs_random_key_open"
+name = "ietf_chacha20poly1305_fixed_vs_random_key_open"
 primitive = "aead.open_authentication"
-filter = "chacha20poly1305_fixed_vs_random_key_open"
+filter = "ietf_chacha20poly1305_fixed_vs_random_key_open"
 left_class = "valid open with fixed secret key"
 right_class = "valid open with random secret key"
 samples = 20000
@@ -827,7 +827,7 @@ reason = "ECDSA signing CT root-cause isolation."
 [[dudect_case]]
 name = "rsa_pkcs1v15_fixed_vs_random_message"
 primitive = "rsa.private_ops"
-filter = "rsa_pkcs1v15"
+filter = "rsa_pkcs1v15_fixed_vs_random_message"
 left_class = "fixed message"
 right_class = "random same-length message"
 samples = 128
@@ -872,7 +872,7 @@ smoke_samples = 2000
 [[dudect_case]]
 name = "rsa_private_key_pkcs8_import_key_a_vs_key_b"
 primitive = "rsa.private_key_material"
-filter = "rsa_private_key_pkcs8_import"
+filter = "rsa_private_key_pkcs8_import_key_a_vs_key_b"
 left_class = "valid PKCS#8 private key A"
 right_class = "valid same-size same-shape PKCS#8 private key B"
 samples = 50000
@@ -1099,7 +1099,7 @@ smoke_samples = 256
 [[dudect_case]]
 name = "argon2i_fixed_vs_random_password"
 primitive = "password.argon2i"
-filter = "argon2i"
+filter = "argon2i_fixed_vs_random_password"
 left_class = "fixed password"
 right_class = "random same-length password"
 samples = 128
@@ -1159,9 +1159,9 @@ gate = "diagnostic"
 reason = "High-level AEAD seal varies public ciphertext/tag output with the key class; required AES-GCM-SIV evidence is carried by the secret-only key-derivation/POLYVAL/tag-AES/CTR probes."
 
 [[dudect_case]]
-name = "chacha20poly1305_fixed_vs_random_key_seal"
+name = "ietf_chacha20poly1305_fixed_vs_random_key_seal"
 primitive = "aead.symmetric_transform"
-filter = "chacha20poly1305_fixed_vs_random_key_seal"
+filter = "ietf_chacha20poly1305_fixed_vs_random_key_seal"
 left_class = "fixed secret key"
 right_class = "random secret key"
 samples = 20000
@@ -1393,7 +1393,7 @@ binsec = [
 id = "aead.open_authentication.chacha20poly1305"
 primitive = "aead.open_authentication"
 variant = "ChaCha20Poly1305"
-dudect = ["chacha20poly1305_fixed_vs_random_key_open"]
+dudect = ["ietf_chacha20poly1305_fixed_vs_random_key_open"]
 binsec = ["aead.open_authentication.poly1305_block_portable.all"]
 
 [[evidence_unit]]
@@ -1461,7 +1461,7 @@ binsec = [
 id = "aead.symmetric_transform.chacha20poly1305"
 primitive = "aead.symmetric_transform"
 variant = "ChaCha20Poly1305"
-dudect = ["chacha20poly1305_fixed_vs_random_key_seal"]
+dudect = ["ietf_chacha20poly1305_fixed_vs_random_key_seal"]
 binsec = ["aead.symmetric_transform.chacha20poly1305_seal.portable.all"]
 
 [[evidence_unit]]

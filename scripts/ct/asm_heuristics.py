@@ -7,11 +7,12 @@ import argparse
 import hashlib
 import json
 import re
-import tomllib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from toml_compat import tomllib
 
 
 BRANCH_CONDS_AARCH64 = {

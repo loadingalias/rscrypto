@@ -162,8 +162,8 @@ sha2 = "0.11.0"
 sha2_010 = { package = "sha2", version = "0.10.9" }
 sha3 = "0.12.0"
 keccak = "0.2.0"
-xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-rapidhash = "4.4.2"
+xxhash-rust = { version = "0.8.16", features = ["xxh3"] }
+rapidhash = "4.5.0"
 tiny-keccak = { version = "2.0.2", features = ["cshake", "kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
@@ -208,7 +208,7 @@ libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
 ] }
 
 [target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
-aws-lc-rs = "1.17.0"
+aws-lc-rs = "1.17.1"
 aws-lc-sys = "0.41.0"
 
 [lib]

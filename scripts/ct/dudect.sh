@@ -126,13 +126,7 @@ echo "$COMMAND"
   RSCRYPTO_CT_DUDECT_SAMPLES="$SAMPLES" cargo "${CARGO_ARGS[@]}"
 ) | tee "$STDOUT_PATH"
 
-if [[ -z "$PYTHON" ]]; then
-  if command -v python3 >/dev/null 2>&1; then
-    PYTHON="python3"
-  elif command -v python >/dev/null 2>&1; then
-    PYTHON="python"
-  fi
-fi
+PYTHON="$("$ROOT/scripts/ct/python.sh" --print)"
 
 if [[ -z "$PYTHON" ]]; then
   echo "python3 or python is required to generate the dudect report" >&2

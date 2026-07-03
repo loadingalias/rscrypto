@@ -103,14 +103,7 @@ for tool in "$LLVM_OBJDUMP" "$LLVM_NM" "$LLVM_SIZE"; do
   fi
 done
 
-PYTHON="${PYTHON:-}"
-if [[ -z "$PYTHON" ]]; then
-  if command -v python3 >/dev/null 2>&1; then
-    PYTHON="python3"
-  elif command -v python >/dev/null 2>&1; then
-    PYTHON="python"
-  fi
-fi
+PYTHON="$("$ROOT/scripts/ct/python.sh" --print)"
 
 if [[ -z "$PYTHON" ]]; then
   echo "python3 or python is required to generate CT provenance" >&2
