@@ -10257,6 +10257,8 @@ mod tests {
   ))]
   #[test]
   fn sample_ntt_bounded_block_parser_matches_scalar_reference() {
+    const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
+
     let fill_offsets = [0usize, 1, 32, 144, 145, 200, 220, 255, 256];
     for seed in 0usize..256 {
       let mut buf = [0u8; SHAKE128_RATE_BYTES];
@@ -10289,6 +10291,9 @@ mod tests {
           &expected[..expected_filled],
           "seed {seed}, start {start}"
         );
+        if N.strict_sub(start) < MAX_CANDIDATES {
+          assert_eq!(actual, expected, "seed {seed}, start {start}");
+        }
       }
     }
   }

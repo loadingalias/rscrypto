@@ -158,16 +158,10 @@
 .endm
 
 .macro SAMPLE_NTT_COMPACT_STORE_BOUNDED candidates, done
-        sub     x10, x2, x9
-        cmp     x10, #8
-        b.lo    1f
-        SAMPLE_NTT_COMPACT_STORE \candidates
-        cmp     x9, x2
-        b.hs    \done
-        b       2f
-1:
+        // Bounded tail parsing must not use the compact eight-lane store: it
+        // writes slack lanes beyond the accepted count, which is safe only for
+        // full-capacity scratch buffers. Store accepted lanes exactly here.
         SAMPLE_NTT_SCALAR_STORE \candidates, \done
-2:
 .endm
 
 .macro SAMPLE_NTT_DECODE_COMPACT_32_BOUNDED in_ptr, done
