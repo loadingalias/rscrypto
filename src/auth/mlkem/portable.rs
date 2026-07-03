@@ -9786,6 +9786,29 @@ mod tests {
     not(miri),
     not(feature = "portable-only")
   ))]
+  fn assert_basemul_accumulate_asm_matches_scalar_reference(acc: Poly, a: Poly, b: Poly, label: &str) {
+    let mut scalar = acc;
+    multiply_ntts_add_assign_scalar(&mut scalar, &a, &b);
+
+    let mut asm = acc;
+    // SAFETY: direct aarch64 assembly single-polynomial accumulator test call because:
+    // 1. This test only compiles on aarch64 Linux targets that include the assembly backend.
+    // 2. `asm`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
+    // 3. The test compares against the scalar/FIPS accumulator before production dispatch.
+    // 4. The assembly memory schedule depends only on public ML-KEM dimensions.
+    unsafe {
+      aarch64::test_basemul_accumulate_asm(&mut asm, &a, &b);
+    }
+
+    assert_eq!(asm, scalar, "{label}");
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "linux",
+    not(miri),
+    not(feature = "portable-only")
+  ))]
   #[test]
   fn basemul_accumulate_asm_matches_scalar_reference() {
     assert_basemul_accumulate_asm_matches_scalar_reference([0u16; N], [0u16; N], [0u16; N], "all zero");

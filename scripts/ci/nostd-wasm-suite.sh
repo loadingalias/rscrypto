@@ -20,8 +20,44 @@ install_wasmtime() {
     return
   fi
 
-  curl -fsSL https://wasmtime.dev/install.sh | bash
-  export PATH="$HOME/.wasmtime/bin:$PATH"
+  local version="${WASMTIME_VERSION:-v46.0.1}"
+  local host_os host_arch platform archive_name archive_url tmpdir archive install_dir
+
+  case "$(uname -s)" in
+    Linux) host_os="linux" ;;
+    Darwin) host_os="macos" ;;
+    *)
+      echo "unsupported Wasmtime host OS: $(uname -s)" >&2
+      return 1
+      ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64 | amd64) host_arch="x86_64" ;;
+    aarch64 | arm64) host_arch="aarch64" ;;
+    *)
+      echo "unsupported Wasmtime host arch: $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+
+  platform="${host_arch}-${host_os}"
+  archive_name="wasmtime-${version}-${platform}.tar.xz"
+  archive_url="https://github.com/bytecodealliance/wasmtime/releases/download/${version}/${archive_name}"
+  tmpdir="$(mktemp -d)"
+  archive="${tmpdir}/${archive_name}"
+  install_dir="${WASMTIME_HOME:-$HOME/.wasmtime}"
+
+  echo "Installing Wasmtime ${version} for ${platform}"
+  curl --fail --location --show-error --silent --retry 3 --retry-delay 2 --output "$archive" "$archive_url"
+  tar -xJf "$archive" -C "$tmpdir"
+  mkdir -p "$install_dir/bin"
+  cp "$tmpdir/wasmtime-${version}-${platform}/wasmtime" "$install_dir/bin/wasmtime"
+  chmod +x "$install_dir/bin/wasmtime"
+  rm -rf "$tmpdir"
+
+  export PATH="$install_dir/bin:$PATH"
+  wasmtime --version
 }
 
 run_wasm_runtime_vectors() {

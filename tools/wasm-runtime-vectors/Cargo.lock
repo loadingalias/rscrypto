@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "rscrypto"
-version = "0.3.1"
+version = "0.6.1"
 
 [[package]]
 name = "rscrypto-wasm-runtime-vectors"
