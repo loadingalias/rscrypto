@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aegis",
  "aes-gcm",

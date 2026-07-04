@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.6.2](https://github.com/loadingalias/rscrypto/compare/v0.6.1...v0.6.2) - 2026-07-04
+
+### 🏗️ Build
+
+- route CT tooling through a Python compatibility shim ci: refresh runs-on action pin workspace: refresh fast hash and AWS-LC dependency locks benchmarks: refresh performance overview artifacts crypto: fix ChaCha20-Poly1305 lint and aarch64 ML-KEM asm tests ([6f9dae8](https://github.com/loadingalias/rscrypto/commit/6f9dae8bb4c14bc46cd3ba189a5dba36a63c508e))
+- decouple asm ownership check from task notes ([c31d405](https://github.com/loadingalias/rscrypto/commit/c31d40564a9723c9301369f7a7a88c7bb70dbf69))
+- scope dev-machine recipes and ignore task notebooks ([7236a1f](https://github.com/loadingalias/rscrypto/commit/7236a1f23f8c460ef6007889de563d11ffcb1a8b))
+
+### 👷 CI
+
+- pin Wasmtime install for no_std wasm suite auth: restore aarch64 ML-KEM basemul asm test helper ([86fac6f](https://github.com/loadingalias/rscrypto/commit/86fac6f1db53e30aa3ad8f06a3cebf028c792e77))
+
+### 📦 Other Changes
+
+- benchmarks: refresh July 4 performance overview and chart ([878999c](https://github.com/loadingalias/rscrypto/commit/878999cbb7c48f368e1dc8d753cf88ff9b536732))
+- auth: harden RSA private CRT arithmetic aead: gate forced ChaCha20 kernels on runtime caps ([596498f](https://github.com/loadingalias/rscrypto/commit/596498f0e07e869eac71fd31c157aa1b22186239))
+- auth: fix aarch64 ML-KEM bounded SampleNTT stores ([73eb536](https://github.com/loadingalias/rscrypto/commit/73eb53611f762ab2c6dadad1c81a07f47fa4972b))
+- crypto: revert aarch64 ML-KEM matrix XOF split route ([6e0a871](https://github.com/loadingalias/rscrypto/commit/6e0a87146c9a187cf5c9d6225ae4452d06504edf))
+- crypto: route aarch64 ML-KEM matrix XOF around x3 hybrid ([7cefb0d](https://github.com/loadingalias/rscrypto/commit/7cefb0d50464b392fdc9d312316026c83de75e9f))
+- Revert "crypto: feed aarch64 ML-KEM sampler from triple SHAKE state" ([bc21ad6](https://github.com/loadingalias/rscrypto/commit/bc21ad6cfe15e840183ec02ab218e71701852d1c))
+- auth: batch aarch64 ML-KEM fused chunk accumulation ([81f2184](https://github.com/loadingalias/rscrypto/commit/81f2184d9dadbe0e3706320a48b4430c04d95e17))
+- hashes: revert regressing aarch64 Keccak x3 assembly ([342356e](https://github.com/loadingalias/rscrypto/commit/342356e10248e643248b2d412b17d128c5a648bc))
+- hashes: add owned aarch64 Keccak x3 assembly ([481105a](https://github.com/loadingalias/rscrypto/commit/481105a8b86c43c4d43cfeb8ad74ef41ac02d763))
+- hashes: restore aarch64 Keccak hybrid batch dispatch ([4887c16](https://github.com/loadingalias/rscrypto/commit/4887c161439b91e0eb7183811df1c69c5cd769ed))
+- hashes: route aarch64 Keccak batches through paired SHA3 lanes ([bad0bc6](https://github.com/loadingalias/rscrypto/commit/bad0bc68f80456bd096445ebb83368588493149f))
+- auth: batch aarch64 ML-KEM triple rejection parsing ([dae2b42](https://github.com/loadingalias/rscrypto/commit/dae2b42e90eb5345379b22e97b7921026cda45d5))
+- auth: keep AArch64 ML-KEM SampleNTT asm on Linux ([883f255](https://github.com/loadingalias/rscrypto/commit/883f2550443dd85038ad462173d3ca24ff744247))
+- auth: add bounded AArch64 ML-KEM SampleNTT tail parser bench: expose ML-KEM three-block sampler diagnostics ([a74f9cb](https://github.com/loadingalias/rscrypto/commit/a74f9cb1ad64b6bc16bcfe4f19b61463a98d6fcd))
+- aead: restore x86 and POWER ChaCha20-Poly1305 open fast paths bench: expose x86 ChaCha20-Poly1305 open diagnostic row ([e05a270](https://github.com/loadingalias/rscrypto/commit/e05a27056a951faec4607c7bbf58e58685e3d192))
+- aead: add measured Linux ChaCha20-Poly1305 fast paths ([f26ef5d](https://github.com/loadingalias/rscrypto/commit/f26ef5d6a15a4931df278b1ae7d1bd0736945e63))
+- aead: gate x86 ChaCha20-Poly1305 asm by measured thresholds ([57fe253](https://github.com/loadingalias/rscrypto/commit/57fe253fecf58353ac2e86225a46e88e123b6c06))
+- auth: route x86 P-384 signing through complete comb ([1bcc2d1](https://github.com/loadingalias/rscrypto/commit/1bcc2d19cf7b2df93ad3e814a1763ab9ce7e84b4))
+- aead: batch owned AArch64 ChaCha20-Poly1305 par4 bulk ([b09e389](https://github.com/loadingalias/rscrypto/commit/b09e38924a432aac293b311c9a182aac24d125d2))
+- aead: add owned AArch64 ChaCha20-Poly1305 par4 diagnostics bench: compare owned AArch64 ChaCha20-Poly1305 par4 rows ([1ffcf00](https://github.com/loadingalias/rscrypto/commit/1ffcf00ea01574d9a59818948c2f864aa8c6d5e7))
+- auth: expose Ed25519 verify phase diagnostics bench: add Ed25519 verify phase rows ([dbeff3d](https://github.com/loadingalias/rscrypto/commit/dbeff3d1c363732f26352d17da3a47deb8988a82))
+- auth: split ML-KEM-1024 row sampling by aarch64 platform bench: expose ML-KEM-1024 quad row sampler comparator ([a6315a2](https://github.com/loadingalias/rscrypto/commit/a6315a21afa57e7b54da80acfd88b10174d82c78))
+- auth: batch ML-KEM-1024 materialized row sampling through quad XOF bench: compare ML-KEM-1024 row sampler schedules ([77e0543](https://github.com/loadingalias/rscrypto/commit/77e0543011f589c164719cd1b28ff00f7d792a78))
+- auth: expose ML-KEM sampler phase diagnostics bench: add ML-KEM sampler phase rows ([1b3ec7c](https://github.com/loadingalias/rscrypto/commit/1b3ec7c7ef40f90f61713a086745cd335c05b011))
+- auth: expose ML-KEM-1024 materialized keygen split diagnostics bench: add ML-KEM-1024 materialized matrix split rows ([2f103b9](https://github.com/loadingalias/rscrypto/commit/2f103b97a63decff488d762d36aa92fe43182037))
+- auth: expose forced ML-KEM keygen matrix diagnostics bench: add ML-KEM keygen matrix split rows ([9843d86](https://github.com/loadingalias/rscrypto/commit/9843d8645c73eb374f4aa15a14e700abc883e700))
+- auth: batch aarch64 ML-KEM matrix sampling through triple XOF hashes: add Linux aarch64 Keccak x3 permutation support bench: expose ML-KEM triple matrix sampling rows ([22a3fda](https://github.com/loadingalias/rscrypto/commit/22a3fda51838e07f070a8d7b9f31724546803eaf))
+- auth: expose ML-KEM keygen phase diagnostics and gate K2 aarch64 accumulation bench: add ML-KEM keygen phase rows ci: add ML-KEM keygen phase selector ([1379d30](https://github.com/loadingalias/rscrypto/commit/1379d306836cc614c4c290f80aa7db4f1b7978bf))
+- auth: tune aarch64 ML-KEM keygen finalization ([7775a8d](https://github.com/loadingalias/rscrypto/commit/7775a8d847d971d550f6807242df82a9c90674c4))
+- auth: route aarch64 ML-KEM NTT through owned NEON ([816e919](https://github.com/loadingalias/rscrypto/commit/816e9190864ab49e8ed94a5b5fc58a6f746808c5))
+- auth: shortcut P-384 signing r path and delete dead x86 asm ([2a54d93](https://github.com/loadingalias/rscrypto/commit/2a54d933ed46c752988344223d7609d2ffd6b75b))
+- hashes: clear x86 Blake3 and introspection clippy lints ([ae22843](https://github.com/loadingalias/rscrypto/commit/ae22843cd938313784cd1f4967f55cd68eaffc9a))
+- aead: tune owned AArch64 ChaCha20-Poly1305 path hashes: clear BLAKE3 diag clippy lints docs: record assembly replacement tuning decisions ([c8f6bfb](https://github.com/loadingalias/rscrypto/commit/c8f6bfb91b6fe7cb8c22f4cb9728a98a8abcf47e))
+- hashes: delete Darwin SHA-2 assembly for owned aarch64 kernels aead: expose owned ChaCha20-Poly1305 diagnostic path auth: widen public RSA CIOS threshold and add portable diagnostics bench: split AEAD and RSA assembly replacement benchmarks benchmarks: refresh BLAKE3 overview and README perf chart docs: track assembly ownership notebook decisions ([76f4fa3](https://github.com/loadingalias/rscrypto/commit/76f4fa343412c39c8c6a3bd1b7f3e866a42513aa))
+- hashes: retarget BLAKE3 x86 compression and expose diag kernels aead: mark AES-GCM assembly as rscrypto-owned auth: mark RSA assembly as rscrypto-owned bench: add BLAKE3 diagnostic benches and gap report build: gate assembly provenance with ledger check ([e643fe5](https://github.com/loadingalias/rscrypto/commit/e643fe55af7311aa2ccf17f18613e8a63871d08a))
+
+
+
 ## [0.6.1](https://github.com/loadingalias/rscrypto/compare/v0.6.0...v0.6.1) - 2026-06-24
 
 ### 📦 Other Changes
