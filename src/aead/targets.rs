@@ -135,7 +135,7 @@ fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
       }
     }
     Arch::S390x => {
-      if caps.has(s390x::MSA) {
+      if caps.has(s390x::VECTOR) {
         AeadBackend::S390xVector
       } else {
         AeadBackend::Portable
@@ -410,8 +410,12 @@ mod tests {
       AeadBackend::S390xMsa
     );
     assert_eq!(
-      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::MSA),
+      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::VECTOR),
       AeadBackend::S390xVector
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::XChaCha20Poly1305, Arch::S390x, s390x::MSA),
+      AeadBackend::Portable
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aes256GcmSiv, Arch::Power, power::POWER8_CRYPTO),

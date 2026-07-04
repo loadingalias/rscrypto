@@ -3111,57 +3111,11 @@ impl RsaPrivateKeyComponents {
       return Err(RsaPrivateOpError::InvalidLength);
     }
 
-    if blinding.validate {
-      let mut one = vec![0u8; len];
-      let Some(last) = one.last_mut() else {
-        return Err(RsaPrivateOpError::InvalidLength);
-      };
-      *last = 1;
-      let mut factor_check = vec![0u8; len];
-      mod_mul_representatives(
-        &self.public.modulus,
-        blinding.factor,
-        blinding.inverse,
-        &mut factor_check,
-      )?;
-      if !ct::constant_time_eq(&factor_check, &one) {
-        return Err(RsaPrivateOpError::InvalidBlindingFactor);
-      }
-    }
-
-    let mut blinding_power = SecretBigEndianBuffer::zeroed(len);
-    let mut scratch = self.public.public_scratch();
-    self
-      .public
-      .public_operation_with_scratch(blinding.factor, blinding_power.as_mut_slice(), &mut scratch)
-      .map_err(|_| RsaPrivateOpError::InvalidBlindingFactor)?;
-
-    let mut blinded = SecretBigEndianBuffer::zeroed(len);
-    mod_mul_representatives(
-      &self.public.modulus,
-      input,
-      blinding_power.as_slice(),
-      blinded.as_mut_slice(),
-    )?;
-    let mut blinded_signature = SecretBigEndianBuffer::zeroed(len);
-    self.private_operation(blinded.as_slice(), blinded_signature.as_mut_slice())?;
-    mod_mul_representatives(
-      &self.public.modulus,
-      blinded_signature.as_slice(),
-      blinding.inverse,
-      out,
-    )?;
-
-    let mut checked = vec![0u8; len];
-    self
-      .public
-      .public_operation_with_scratch(out, &mut checked, &mut scratch)
-      .map_err(|_| RsaPrivateOpError::FaultCheckFailed)?;
-    if ct::constant_time_eq(&checked, input) {
-      Ok(())
-    } else {
-      Err(RsaPrivateOpError::FaultCheckFailed)
-    }
+    let mut scratch = RsaPrivateScratch::new_components(self);
+    scratch.encoded.as_mut_slice().copy_from_slice(input);
+    let result = self.private_operation_with_blinding_factor_and_scratch(blinding, out, &mut scratch);
+    scratch.clear();
+    result
   }
 
   fn private_operation_with_blinding_factor_and_scratch(
@@ -3305,67 +3259,6 @@ impl RsaPrivateKeyComponents {
     } else {
       Err(RsaPrivateOpError::FaultCheckFailed)
     }
-  }
-
-  fn private_operation(&self, input: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
-    self.private_operation_crt(input, out)
-  }
-
-  fn private_operation_crt(&self, input: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
-    let n_len = self.public.modulus().len();
-    if input.len() != n_len || out.len() != n_len {
-      return Err(RsaPrivateOpError::InvalidLength);
-    }
-
-    let prime_p = self.prime_p.as_bytes();
-    let prime_q = self.prime_q.as_bytes();
-    let modulus_p = &self.prime_p_modulus;
-    let modulus_q = &self.prime_q_modulus;
-
-    let input_p = private_import_unsigned_be_mod(input, prime_p);
-    let input_q = private_import_unsigned_be_mod(input, prime_q);
-    let mut representative_p = SecretBigEndianBuffer::zeroed(prime_p.len());
-    let mut representative_q = SecretBigEndianBuffer::zeroed(prime_q.len());
-    left_pad_be(input_p.as_slice(), representative_p.as_mut_slice())?;
-    left_pad_be(input_q.as_slice(), representative_q.as_mut_slice())?;
-
-    let mut m1 = SecretBigEndianBuffer::zeroed(prime_p.len());
-    let mut m2 = SecretBigEndianBuffer::zeroed(prime_q.len());
-    private_exponentiate_representative(
-      modulus_p,
-      self.exponent_p.as_bytes(),
-      representative_p.as_slice(),
-      m1.as_mut_slice(),
-    )?;
-    private_exponentiate_representative(
-      modulus_q,
-      self.exponent_q.as_bytes(),
-      representative_q.as_slice(),
-      m2.as_mut_slice(),
-    )?;
-
-    let m2_mod_p = private_import_unsigned_be_mod(m2.as_slice(), prime_p);
-    let mut m2_mod_p_fixed = SecretBigEndianBuffer::zeroed(prime_p.len());
-    left_pad_be(m2_mod_p.as_slice(), m2_mod_p_fixed.as_mut_slice())?;
-    let difference = private_sub_mod_unsigned_be(m1.as_slice(), m2_mod_p_fixed.as_slice(), prime_p)?;
-    let mut difference_fixed = SecretBigEndianBuffer::zeroed(prime_p.len());
-    left_pad_be(difference.as_slice(), difference_fixed.as_mut_slice())?;
-
-    let mut coefficient = SecretBigEndianBuffer::zeroed(prime_p.len());
-    left_pad_be(self.coefficient.as_bytes(), coefficient.as_mut_slice())?;
-    let mut h = SecretBigEndianBuffer::zeroed(prime_p.len());
-    mod_mul_representatives(
-      modulus_p,
-      coefficient.as_slice(),
-      difference_fixed.as_slice(),
-      h.as_mut_slice(),
-    )?;
-
-    let q_times_h =
-      private_import_product_unsigned_be(prime_q, h.as_slice()).ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
-    let recombined = private_add_unsigned_be_to_len(q_times_h.as_slice(), m2.as_slice(), n_len)?;
-    left_pad_be(recombined.as_slice(), out)?;
-    Ok(())
   }
 
   fn private_operation_crt_from_blinded_scratch(
@@ -3592,6 +3485,7 @@ struct SecretBigEndianBuffer {
 }
 
 impl SecretBigEndianBuffer {
+  #[cfg(feature = "getrandom")]
   fn new(bytes: Vec<u8>) -> Self {
     Self { bytes }
   }
@@ -8369,6 +8263,7 @@ fn is_canonical_positive_unsigned_be(bytes: &[u8]) -> bool {
   matches!(bytes.first(), Some(&first) if first != 0)
 }
 
+#[cfg(feature = "getrandom")]
 fn unsigned_be_cmp(left: &[u8], right: &[u8]) -> core::cmp::Ordering {
   match left.len().cmp(&right.len()) {
     core::cmp::Ordering::Equal => left.cmp(right),
@@ -8456,26 +8351,6 @@ fn left_pad_be(src: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
   Ok(())
 }
 
-fn private_sub_mod_unsigned_be(
-  left: &[u8],
-  right: &[u8],
-  modulus: &[u8],
-) -> Result<SecretBigEndianBuffer, RsaPrivateOpError> {
-  if left.len() != right.len() || left.len() != modulus.len() {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-
-  let difference = match unsigned_be_cmp(left, right) {
-    core::cmp::Ordering::Less => {
-      let plus_modulus = private_add_unsigned_be_to_len(left, modulus, modulus.len().strict_add(1))?;
-      private_sub_unsigned_be_to_len(plus_modulus.as_slice(), right, modulus.len())?
-    }
-    core::cmp::Ordering::Equal => SecretBigEndianBuffer::new(vec![0]),
-    core::cmp::Ordering::Greater => private_sub_unsigned_be_to_len(left, right, modulus.len())?,
-  };
-  Ok(difference)
-}
-
 #[allow(clippy::indexing_slicing)]
 fn private_sub_mod_unsigned_be_to_fixed(
   left: &[u8],
@@ -8487,17 +8362,30 @@ fn private_sub_mod_unsigned_be_to_fixed(
     return Err(RsaPrivateOpError::InvalidLength);
   }
 
-  match unsigned_be_cmp(left, right) {
-    core::cmp::Ordering::Equal => {
-      out.fill(0);
-      Ok(())
-    }
-    core::cmp::Ordering::Greater => private_sub_unsigned_be_to_fixed(left, right, out),
-    core::cmp::Ordering::Less => private_sub_mod_less_unsigned_be_to_fixed(left, right, modulus, out),
+  let mut borrow = 0u16;
+  for index in 0..out.len() {
+    let src = out.len().strict_sub(index).strict_sub(1);
+    let subtrahend = u16::from(right[src]).strict_add(borrow);
+    let difference = u16::from(left[src]).wrapping_sub(subtrahend);
+    out[src] = difference as u8;
+    borrow = (difference >> 15) & 1;
   }
+
+  let mask = 0u16.wrapping_sub(borrow);
+  let mut carry = 0u16;
+  for index in 0..out.len() {
+    let dst = out.len().strict_sub(index).strict_sub(1);
+    let addend = u16::from(modulus[dst]) & mask;
+    let sum = u16::from(out[dst]).strict_add(addend).strict_add(carry);
+    out[dst] = sum as u8;
+    carry = sum >> 8;
+  }
+
+  Ok(())
 }
 
 #[allow(clippy::indexing_slicing)]
+#[cfg(feature = "getrandom")]
 fn private_sub_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
   if left.len() != right.len() || left.len() != out.len() || unsigned_be_cmp(left, right) == core::cmp::Ordering::Less {
     return Err(RsaPrivateOpError::InvalidLength);
@@ -8524,81 +8412,7 @@ fn private_sub_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -
 }
 
 #[allow(clippy::indexing_slicing)]
-fn private_sub_mod_less_unsigned_be_to_fixed(
-  left: &[u8],
-  right: &[u8],
-  modulus: &[u8],
-  out: &mut [u8],
-) -> Result<(), RsaPrivateOpError> {
-  if left.len() != right.len() || left.len() != modulus.len() || out.len() != modulus.len() {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-
-  let mut carry = 0u16;
-  let mut borrow = 0i16;
-  for index in 0..out.len() {
-    let src = out.len().strict_sub(index).strict_sub(1);
-    let sum = u16::from(left[src])
-      .strict_add(u16::from(modulus[src]))
-      .strict_add(carry);
-    let sum_byte = (sum & 0xff) as i16;
-    carry = sum >> 8;
-
-    let mut difference = sum_byte - i16::from(right[src]) - borrow;
-    if difference < 0 {
-      difference += 256;
-      borrow = 1;
-    } else {
-      borrow = 0;
-    }
-    out[src] = difference as u8;
-  }
-
-  if carry == borrow as u16 {
-    Ok(())
-  } else {
-    Err(RsaPrivateOpError::InvalidLength)
-  }
-}
-
-#[allow(clippy::indexing_slicing)]
-fn private_add_unsigned_be_to_len(
-  left: &[u8],
-  right: &[u8],
-  len: usize,
-) -> Result<SecretBigEndianBuffer, RsaPrivateOpError> {
-  if left.len() > len || right.len() > len {
-    return Err(RsaPrivateOpError::InvalidLength);
-  }
-
-  let mut out = vec![0u8; len];
-  let mut carry = 0u16;
-  for index in 0..len {
-    let left_byte = left
-      .len()
-      .checked_sub(index.strict_add(1))
-      .and_then(|src| left.get(src))
-      .copied()
-      .unwrap_or(0);
-    let right_byte = right
-      .len()
-      .checked_sub(index.strict_add(1))
-      .and_then(|src| right.get(src))
-      .copied()
-      .unwrap_or(0);
-    let sum = u16::from(left_byte).strict_add(u16::from(right_byte)).strict_add(carry);
-    let dst = len.strict_sub(index).strict_sub(1);
-    out[dst] = sum as u8;
-    carry = sum >> 8;
-  }
-
-  if carry != 0 {
-    return Err(RsaPrivateOpError::RepresentativeOutOfRange);
-  }
-  Ok(private_import_canonical_unsigned_be(out))
-}
-
-#[allow(clippy::indexing_slicing)]
+#[cfg(feature = "getrandom")]
 fn private_sub_unsigned_be_to_len(
   left: &[u8],
   right: &[u8],
@@ -8641,6 +8455,7 @@ fn private_sub_unsigned_be_to_len(
 }
 
 #[allow(clippy::indexing_slicing)]
+#[cfg(feature = "getrandom")]
 fn private_exponentiate_representative(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -8664,7 +8479,7 @@ fn private_exponentiate_representative(
   let mut reduced = SecretLimbs::zeroed(limbs);
 
   limbs_from_be_into(input, representative.as_mut_slice());
-  if cmp_limbs(representative.as_slice(), &modulus.limbs) != core::cmp::Ordering::Less {
+  if !ct_limbs_lt(representative.as_slice(), &modulus.limbs) {
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
@@ -8736,7 +8551,7 @@ fn private_exponentiate_representative_with_scratch(
   scratch.ensure_limb_count(limbs)?;
 
   limbs_from_be_into(input, scratch.representative.as_mut_slice());
-  if cmp_limbs(scratch.representative.as_slice(), &modulus.limbs) != core::cmp::Ordering::Less {
+  if !ct_limbs_lt(scratch.representative.as_slice(), &modulus.limbs) {
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
@@ -8804,6 +8619,7 @@ fn private_exponentiate_representative_with_scratch(
 }
 
 #[allow(clippy::indexing_slicing)]
+#[cfg(feature = "getrandom")]
 fn private_fixed_window_table(
   base: &[u64],
   one_montgomery: &[u64],
@@ -8905,6 +8721,7 @@ fn private_choice_eq_mask_u8(left: u8, right: u8) -> u64 {
   0u64.wrapping_sub(is_zero)
 }
 
+#[cfg(feature = "getrandom")]
 fn mod_mul_representatives(
   modulus: &RsaPublicModulus,
   left: &[u8],
@@ -8927,9 +8744,7 @@ fn mod_mul_representatives(
 
   limbs_from_be_into(left, left_limbs.as_mut_slice());
   limbs_from_be_into(right, right_limbs.as_mut_slice());
-  if cmp_limbs(left_limbs.as_slice(), &modulus.limbs) != core::cmp::Ordering::Less
-    || cmp_limbs(right_limbs.as_slice(), &modulus.limbs) != core::cmp::Ordering::Less
-  {
+  if !ct_limbs_lt(left_limbs.as_slice(), &modulus.limbs) || !ct_limbs_lt(right_limbs.as_slice(), &modulus.limbs) {
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
@@ -9017,9 +8832,7 @@ fn mod_mul_representatives_with_scratch(
 
   limbs_from_be_into(left, left_limbs);
   limbs_from_be_into(right, right_limbs);
-  if cmp_limbs(left_limbs, &modulus.limbs) != core::cmp::Ordering::Less
-    || cmp_limbs(right_limbs, &modulus.limbs) != core::cmp::Ordering::Less
-  {
+  if !ct_limbs_lt(left_limbs, &modulus.limbs) || !ct_limbs_lt(right_limbs, &modulus.limbs) {
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
@@ -9047,6 +8860,7 @@ fn private_mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulu
   }
 }
 
+#[cfg(feature = "getrandom")]
 fn private_import_product_unsigned_be(left: &[u8], right: &[u8]) -> Option<SecretBigEndianBuffer> {
   let left = SecretLimbs::from_be(left);
   let right = SecretLimbs::from_be(right);
@@ -9283,6 +9097,7 @@ fn private_sub_small_unsigned_be_to_fixed(
   }
 }
 
+#[cfg(feature = "getrandom")]
 fn private_import_unsigned_be_mod(value: &[u8], modulus: &[u8]) -> SecretBigEndianBuffer {
   if is_zero_unsigned_be(modulus) {
     return SecretBigEndianBuffer::new(vec![0]);
@@ -9356,12 +9171,14 @@ fn add_bit_mod_in_place(value: &mut [u64], modulus: &[u64], bit: u8) {
   subtract_modulus_if_needed(value, modulus, carry);
 }
 
+#[cfg(feature = "getrandom")]
 fn private_import_limbs_to_canonical_be(limbs: &[u64]) -> SecretBigEndianBuffer {
   let mut bytes = vec![0u8; limbs.len().strict_mul(8)];
   limbs_to_be(limbs, &mut bytes);
   private_import_canonical_unsigned_be(bytes)
 }
 
+#[cfg(feature = "getrandom")]
 fn private_import_canonical_unsigned_be(mut bytes: Vec<u8>) -> SecretBigEndianBuffer {
   let first_nonzero = bytes.iter().position(|&byte| byte != 0);
   let canonical = match first_nonzero {
@@ -9383,6 +9200,17 @@ fn cmp_limbs(a: &[u64], b: &[u64]) -> core::cmp::Ordering {
     }
   }
   core::cmp::Ordering::Equal
+}
+
+fn ct_limbs_lt(left: &[u64], right: &[u64]) -> bool {
+  debug_assert_eq!(left.len(), right.len());
+  let mut borrow = 0u64;
+  for (&left_limb, &right_limb) in left.iter().zip(right) {
+    let (difference, limb_borrow) = left_limb.overflowing_sub(right_limb);
+    let (_, carry_borrow) = difference.overflowing_sub(borrow);
+    borrow = u64::from(limb_borrow) | u64::from(carry_borrow);
+  }
+  borrow == 1
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -10308,6 +10136,24 @@ mod tests {
       *byte = (index as u8).wrapping_mul(17).wrapping_add(0xa5);
     }
     RsaKeygenDrbg::new(&seed, label)
+  }
+
+  #[test]
+  fn private_mod_subtraction_handles_borrow_equal_and_no_borrow() {
+    for (left, right, modulus, expected) in [
+      ([0x03], [0x01], [0x0b], [0x02]),
+      ([0x01], [0x03], [0x0b], [0x09]),
+      ([0x03], [0x03], [0x0b], [0x00]),
+      ([0x00], [0x00], [0x01], [0x00]),
+    ] {
+      let mut out = [0u8; 1];
+      private_sub_mod_unsigned_be_to_fixed(&left, &right, &modulus, &mut out).unwrap();
+      assert_eq!(out, expected);
+    }
+
+    let mut out = [0u8; 2];
+    private_sub_mod_unsigned_be_to_fixed(&[0x00, 0x01], &[0x01, 0x00], &[0x01, 0x01], &mut out).unwrap();
+    assert_eq!(out, [0x00, 0x02]);
   }
 
   fn integer_unsigned(value: &[u8]) -> Vec<u8> {
@@ -13884,9 +13730,32 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
       let right_limbs = limbs_from_be(&right_padded);
 
       prop_assert_eq!(cmp_limbs(&left_limbs, &right_limbs), left_padded.cmp(&right_padded));
+      prop_assert_eq!(ct_limbs_lt(&left_limbs, &right_limbs), left_padded < right_padded);
 
       left.clear();
       right.clear();
+    }
+
+    #[test]
+    fn private_mod_subtraction_matches_u32_arithmetic(
+      modulus in 1u32..=u32::MAX,
+      left in any::<u32>(),
+      right in any::<u32>(),
+    ) {
+      let left = left % modulus;
+      let right = right % modulus;
+      let expected = ((u64::from(left) + u64::from(modulus) - u64::from(right)) % u64::from(modulus)) as u32;
+      let mut out = [0u8; 4];
+
+      private_sub_mod_unsigned_be_to_fixed(
+        &left.to_be_bytes(),
+        &right.to_be_bytes(),
+        &modulus.to_be_bytes(),
+        &mut out,
+      )
+      .unwrap();
+
+      prop_assert_eq!(out, expected.to_be_bytes());
     }
 
     #[test]

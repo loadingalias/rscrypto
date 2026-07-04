@@ -827,7 +827,7 @@ mod tests {
   #[test]
   #[cfg(target_arch = "s390x")]
   fn s390x_backend_matches_portable() {
-    if !crate::platform::caps().has(s390x::MSA) {
+    if !crate::platform::caps().has(s390x::VECTOR) {
       return;
     }
 

@@ -20,37 +20,85 @@
 
 #![cfg(all(feature = "diag", feature = "chacha20poly1305"))]
 
-use rscrypto::aead::diag_chacha20_xor_keystream_portable;
+#[cfg(target_arch = "aarch64")]
+use rscrypto::platform::caps::aarch64;
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+use rscrypto::platform::caps::power;
+#[cfg(target_arch = "riscv64")]
+use rscrypto::platform::caps::riscv;
+#[cfg(target_arch = "s390x")]
+use rscrypto::platform::caps::s390x;
+#[cfg(target_arch = "wasm32")]
+use rscrypto::platform::caps::wasm;
+#[cfg(target_arch = "x86_64")]
+use rscrypto::platform::caps::x86;
+use rscrypto::{
+  aead::diag_chacha20_xor_keystream_portable,
+  platform::{self, Caps},
+};
 
 /// Function pointer type for ChaCha20 XOR-keystream kernels.
 type XorKeystreamFn = fn(&[u8; 32], u32, &[u8; 12], &mut [u8]);
 
-/// Compiled backends keyed by name. Each entry pairs a stable name (used in
-/// failure messages) with the diag entry point. Backends not compiled on
-/// this target are absent from the table.
-const BACKENDS: &[(&str, XorKeystreamFn)] = &[
+#[derive(Clone, Copy)]
+struct Backend {
+  name: &'static str,
+  required: Caps,
+  xor_keystream: XorKeystreamFn,
+}
+
+/// Compiled backends keyed by name and required runtime capability. Backends
+/// not compiled on this target are absent from the table; compiled backends
+/// whose instructions are not legal on this host are skipped before invocation.
+const BACKENDS: &[Backend] = &[
   #[cfg(target_arch = "aarch64")]
-  ("aarch64-neon", rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon),
+  Backend {
+    name: "aarch64-neon",
+    required: aarch64::NEON,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon,
+  },
   #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
-  (
-    "aarch64-owned-asm-8block",
-    rscrypto::aead::diag_chacha20_xor_keystream_aarch64_owned_asm,
-  ),
+  Backend {
+    name: "aarch64-owned-asm-8block",
+    required: aarch64::NEON,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_aarch64_owned_asm,
+  },
   #[cfg(target_arch = "x86_64")]
-  ("x86-avx2", rscrypto::aead::diag_chacha20_xor_keystream_x86_avx2),
+  Backend {
+    name: "x86-avx2",
+    required: x86::AVX2,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_x86_avx2,
+  },
   #[cfg(target_arch = "x86_64")]
-  ("x86-avx512", rscrypto::aead::diag_chacha20_xor_keystream_x86_avx512),
+  Backend {
+    name: "x86-avx512",
+    required: x86::AVX512_READY,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_x86_avx512,
+  },
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-  ("power-vsx", rscrypto::aead::diag_chacha20_xor_keystream_power_vsx),
+  Backend {
+    name: "power-vsx",
+    required: power::POWER8_VECTOR,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_power_vsx,
+  },
   #[cfg(target_arch = "s390x")]
-  ("s390x-vector", rscrypto::aead::diag_chacha20_xor_keystream_s390x_vector),
+  Backend {
+    name: "s390x-vector",
+    required: s390x::VECTOR,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_s390x_vector,
+  },
   #[cfg(target_arch = "riscv64")]
-  (
-    "riscv64-vector",
-    rscrypto::aead::diag_chacha20_xor_keystream_riscv64_vector,
-  ),
+  Backend {
+    name: "riscv64-vector",
+    required: riscv::V,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_riscv64_vector,
+  },
   #[cfg(target_arch = "wasm32")]
-  ("wasm-simd128", rscrypto::aead::diag_chacha20_xor_keystream_wasm_simd128),
+  Backend {
+    name: "wasm-simd128",
+    required: wasm::SIMD128,
+    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_wasm_simd128,
+  },
 ];
 
 /// Boundary-aware test sizes. Each ChaCha20 block is 64 bytes; SIMD
@@ -92,12 +140,13 @@ fn all_chacha20_backends_match_portable_at_counter_zero() {
     let mut expected = plain.clone();
     diag_chacha20_xor_keystream_portable(&key, 0, &nonce, &mut expected);
 
-    for &(name, kernel) in BACKENDS {
+    for backend in runnable_backends() {
       let mut actual = plain.clone();
-      kernel(&key, 0, &nonce, &mut actual);
+      (backend.xor_keystream)(&key, 0, &nonce, &mut actual);
       assert_eq!(
         actual, expected,
-        "ChaCha20 backend {name} diverged from portable at len={len}, counter=0"
+        "ChaCha20 backend {} diverged from portable at len={len}, counter=0",
+        backend.name
       );
     }
   }
@@ -124,12 +173,13 @@ fn all_chacha20_backends_match_portable_at_arbitrary_counters() {
       let mut expected = plain.clone();
       diag_chacha20_xor_keystream_portable(&key, counter, &nonce, &mut expected);
 
-      for &(name, kernel) in BACKENDS {
+      for backend in runnable_backends() {
         let mut actual = plain.clone();
-        kernel(&key, counter, &nonce, &mut actual);
+        (backend.xor_keystream)(&key, counter, &nonce, &mut actual);
         assert_eq!(
           actual, expected,
-          "ChaCha20 backend {name} diverged from portable at len={len}, counter={counter}"
+          "ChaCha20 backend {} diverged from portable at len={len}, counter={counter}",
+          backend.name
         );
       }
     }
@@ -147,14 +197,22 @@ fn all_chacha20_backends_self_inverse() {
   for &len in TEST_SIZES {
     let original = deterministic_buffer(0xDE, len);
 
-    for &(name, kernel) in BACKENDS {
+    for backend in runnable_backends() {
       let mut buffer = original.clone();
-      kernel(&key, 0, &nonce, &mut buffer);
-      kernel(&key, 0, &nonce, &mut buffer);
+      (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
+      (backend.xor_keystream)(&key, 0, &nonce, &mut buffer);
       assert_eq!(
         buffer, original,
-        "ChaCha20 backend {name} not self-inverse at len={len}"
+        "ChaCha20 backend {} not self-inverse at len={len}",
+        backend.name
       );
     }
   }
+}
+
+fn runnable_backends() -> impl Iterator<Item = &'static Backend> {
+  let caps = platform::caps();
+  BACKENDS
+    .iter()
+    .filter(move |backend| backend.required == Caps::NONE || caps.has(backend.required))
 }
