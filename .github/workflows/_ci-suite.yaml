@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: local
+      include_riscv:
+        description: "Run the native RISC-V lane. Keep enabled for weekly/manual evidence; disable for release-blocking push CI."
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -162,6 +167,7 @@ jobs:
         fi
 
   ci-riscv:
+    if: ${{ inputs.include_riscv }}
     name: CI (RISE RISC-V riscv64)
     uses: ./.github/workflows/_rust-job.yaml
     with:

@@ -1,11 +1,7 @@
 #![cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 
 #[cfg(feature = "ecdsa-p256")]
-use p256::ecdsa::signature::{Signer as _, Verifier as _};
-#[cfg(feature = "ecdsa-p256")]
 use p256::ecdsa::{Signature as P256OracleSignature, SigningKey as P256OracleSigningKey};
-#[cfg(all(feature = "ecdsa-p384", not(feature = "ecdsa-p256")))]
-use p384::ecdsa::signature::{Signer as _, Verifier as _};
 #[cfg(feature = "ecdsa-p384")]
 use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSigningKey};
 #[cfg(feature = "ecdsa-p256")]
@@ -67,12 +63,14 @@ fn p256_verify_accepts_rustcrypto_raw_and_der_signatures() {
   let secret = [0x11u8; 32];
   let message = b"rscrypto p-256 oracle verification";
   let signing_key = P256OracleSigningKey::from_slice(&secret).expect("P-256 oracle secret must parse");
-  let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
+  let sec1 = EcdsaP256SecretKey::from_bytes(secret)
+    .expect("P-256 rscrypto secret must parse")
+    .public_key()
+    .to_sec1_bytes();
   let public =
-    EcdsaP256PublicKey::from_spki_der(&spki_der(SECP256R1_OID, sec1.as_bytes())).expect("P-256 SPKI must parse");
+    EcdsaP256PublicKey::from_spki_der(&spki_der(SECP256R1_OID, sec1.as_slice())).expect("P-256 SPKI must parse");
 
-  let oracle_signature: P256OracleSignature = signing_key.sign(message);
+  let oracle_signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, message);
   let raw = EcdsaP256Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref()))
     .expect("P-256 raw signature must parse");
   let der = EcdsaP256Signature::from_der(oracle_signature.to_der().as_bytes()).expect("P-256 DER signature must parse");
@@ -87,12 +85,14 @@ fn p256_verify_rejects_tampered_rustcrypto_signature() {
   let secret = [0x23u8; 32];
   let message = b"rscrypto p-256 tamper";
   let signing_key = P256OracleSigningKey::from_slice(&secret).expect("P-256 oracle secret must parse");
-  let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
+  let sec1 = EcdsaP256SecretKey::from_bytes(secret)
+    .expect("P-256 rscrypto secret must parse")
+    .public_key()
+    .to_sec1_bytes();
   let public =
-    EcdsaP256PublicKey::from_spki_der(&spki_der(SECP256R1_OID, sec1.as_bytes())).expect("P-256 SPKI must parse");
+    EcdsaP256PublicKey::from_spki_der(&spki_der(SECP256R1_OID, sec1.as_slice())).expect("P-256 SPKI must parse");
 
-  let oracle_signature: P256OracleSignature = signing_key.sign(message);
+  let oracle_signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, message);
   let mut bytes: [u8; EcdsaP256Signature::LENGTH] = array_from_slice(oracle_signature.to_bytes().as_ref());
   bytes[17] ^= 0x40;
   let tampered = EcdsaP256Signature::from_bytes(bytes).expect("tampered P-256 signature scalar shape must parse");
@@ -115,7 +115,6 @@ fn p256_sign_derives_oracle_public_key_and_signature_verifies_with_rustcrypto() 
   let message = b"rscrypto p-256 signing oracle";
   let signing_key = P256OracleSigningKey::from_slice(&secret).expect("P-256 oracle secret must parse");
   let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
   let rs_secret = EcdsaP256SecretKey::from_bytes(secret).expect("P-256 rscrypto secret must parse");
   let rs_public = rs_secret.public_key();
   let rs_signature = rs_secret
@@ -124,10 +123,8 @@ fn p256_sign_derives_oracle_public_key_and_signature_verifies_with_rustcrypto() 
   let oracle_signature =
     P256OracleSignature::from_slice(rs_signature.as_bytes()).expect("P-256 oracle signature must parse");
 
-  assert_eq!(rs_public.to_sec1_bytes().as_slice(), sec1.as_bytes());
   assert!(rs_public.verify(message, &rs_signature).is_ok());
-  verifying_key
-    .verify(message, &oracle_signature)
+  p256::ecdsa::signature::Verifier::verify(verifying_key, message, &oracle_signature)
     .expect("RustCrypto must verify rscrypto P-256 signature");
 }
 
@@ -154,8 +151,7 @@ fn p256_blinded_sign_matches_deterministic_signature_and_rustcrypto_oracle() {
 
   assert_eq!(deterministic, blinded);
   assert!(rs_public.verify(message, &blinded).is_ok());
-  oracle_public
-    .verify(message, &oracle_signature)
+  p256::ecdsa::signature::Verifier::verify(&oracle_public, message, &oracle_signature)
     .expect("RustCrypto must verify rscrypto blinded P-256 signature");
 }
 
@@ -165,12 +161,14 @@ fn p384_verify_accepts_rustcrypto_raw_and_der_signatures() {
   let secret = [0x31u8; 48];
   let message = b"rscrypto p-384 oracle verification";
   let signing_key = P384OracleSigningKey::from_slice(&secret).expect("P-384 oracle secret must parse");
-  let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
+  let sec1 = EcdsaP384SecretKey::from_bytes(secret)
+    .expect("P-384 rscrypto secret must parse")
+    .public_key()
+    .to_sec1_bytes();
   let public =
-    EcdsaP384PublicKey::from_spki_der(&spki_der(SECP384R1_OID, sec1.as_bytes())).expect("P-384 SPKI must parse");
+    EcdsaP384PublicKey::from_spki_der(&spki_der(SECP384R1_OID, sec1.as_slice())).expect("P-384 SPKI must parse");
 
-  let oracle_signature: P384OracleSignature = signing_key.sign(message);
+  let oracle_signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, message);
   let raw = EcdsaP384Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref()))
     .expect("P-384 raw signature must parse");
   let der = EcdsaP384Signature::from_der(oracle_signature.to_der().as_bytes()).expect("P-384 DER signature must parse");
@@ -185,12 +183,14 @@ fn p384_verify_rejects_tampered_rustcrypto_signature() {
   let secret = [0x44u8; 48];
   let message = b"rscrypto p-384 tamper";
   let signing_key = P384OracleSigningKey::from_slice(&secret).expect("P-384 oracle secret must parse");
-  let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
+  let sec1 = EcdsaP384SecretKey::from_bytes(secret)
+    .expect("P-384 rscrypto secret must parse")
+    .public_key()
+    .to_sec1_bytes();
   let public =
-    EcdsaP384PublicKey::from_spki_der(&spki_der(SECP384R1_OID, sec1.as_bytes())).expect("P-384 SPKI must parse");
+    EcdsaP384PublicKey::from_spki_der(&spki_der(SECP384R1_OID, sec1.as_slice())).expect("P-384 SPKI must parse");
 
-  let oracle_signature: P384OracleSignature = signing_key.sign(message);
+  let oracle_signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, message);
   let mut bytes: [u8; EcdsaP384Signature::LENGTH] = array_from_slice(oracle_signature.to_bytes().as_ref());
   bytes[29] ^= 0x10;
   let tampered = EcdsaP384Signature::from_bytes(bytes).expect("tampered P-384 signature scalar shape must parse");
@@ -213,7 +213,6 @@ fn p384_sign_derives_oracle_public_key_and_signature_verifies_with_rustcrypto() 
   let message = b"rscrypto p-384 signing oracle";
   let signing_key = P384OracleSigningKey::from_slice(&secret).expect("P-384 oracle secret must parse");
   let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
   let rs_secret = EcdsaP384SecretKey::from_bytes(secret).expect("P-384 rscrypto secret must parse");
   let rs_public = rs_secret.public_key();
   let rs_signature = rs_secret
@@ -222,10 +221,8 @@ fn p384_sign_derives_oracle_public_key_and_signature_verifies_with_rustcrypto() 
   let oracle_signature =
     P384OracleSignature::from_slice(rs_signature.as_bytes()).expect("P-384 oracle signature must parse");
 
-  assert_eq!(rs_public.to_sec1_bytes().as_slice(), sec1.as_bytes());
   assert!(rs_public.verify(message, &rs_signature).is_ok());
-  verifying_key
-    .verify(message, &oracle_signature)
+  p384::ecdsa::signature::Verifier::verify(verifying_key, message, &oracle_signature)
     .expect("RustCrypto must verify rscrypto P-384 signature");
 }
 
@@ -252,7 +249,6 @@ fn p384_blinded_sign_matches_deterministic_signature_and_rustcrypto_oracle() {
 
   assert_eq!(deterministic, blinded);
   assert!(rs_public.verify(message, &blinded).is_ok());
-  oracle_public
-    .verify(message, &oracle_signature)
+  p384::ecdsa::signature::Verifier::verify(&oracle_public, message, &oracle_signature)
     .expect("RustCrypto must verify rscrypto blinded P-384 signature");
 }
