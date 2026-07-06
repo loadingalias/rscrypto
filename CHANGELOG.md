@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.6.3](https://github.com/loadingalias/rscrypto/compare/v0.6.2...v0.6.3) - 2026-07-05
+
+### 📦 Other Changes
+
+- auth: format argon2 docs ([0b455cf](https://github.com/loadingalias/rscrypto/commit/0b455cfb6217449707df4f03675441dfcf9f9e60))
+- workspace: add trusted release publishing gate ([4de9cbe](https://github.com/loadingalias/rscrypto/commit/4de9cbea87f9031bce37f343d4161e20fba2eb73))
+
+
+
 ## [0.6.2](https://github.com/loadingalias/rscrypto/compare/v0.6.1...v0.6.2) - 2026-07-04
 
 ### 🏗️ Build
