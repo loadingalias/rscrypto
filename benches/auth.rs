@@ -13,7 +13,7 @@ use fips203::{
 use hkdf::Hkdf as RustCryptoHkdf;
 use hmac::{Hmac, KeyInit};
 use libcrux_ml_kem::{mlkem512 as LibcruxMlKem512, mlkem768 as LibcruxMlKem768, mlkem1024 as LibcruxMlKem1024};
-use p256::ecdsa::{Signature as P256OracleSignature, SigningKey as P256OracleSigningKey, signature::Verifier as _};
+use p256::ecdsa::{Signature as P256OracleSignature, SigningKey as P256OracleSigningKey};
 use p384::ecdsa::{Signature as P384OracleSignature, SigningKey as P384OracleSigningKey};
 use rscrypto::{
   EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature, EcdsaP384Keypair, EcdsaP384PublicKey,
@@ -782,12 +782,15 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
   let secret_bytes = [0x11u8; 32];
   let signing_key = P256OracleSigningKey::from_slice(&secret_bytes).unwrap();
   let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
-  let public = EcdsaP256PublicKey::from_sec1_bytes(sec1.as_bytes()).unwrap();
-  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, sec1.as_bytes());
+  let sec1 = EcdsaP256SecretKey::from_bytes(secret_bytes)
+    .unwrap()
+    .public_key()
+    .to_sec1_bytes();
+  let public = EcdsaP256PublicKey::from_sec1_bytes(sec1.as_slice()).unwrap();
+  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, sec1.as_slice());
   aws_lc_bench! {
     let aws_upk =
-      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, sec1.as_bytes());
+      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED, sec1.as_slice());
   }
 
   let inputs = [0usize, 32, 1024, 16384]
@@ -798,7 +801,7 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let oracle_signature: P256OracleSignature = signing_key.sign(data);
+    let oracle_signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, data);
     let signature = EcdsaP256Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref())).unwrap();
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
@@ -810,8 +813,7 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
       b.iter(|| {
-        black_box(verifying_key)
-          .verify(black_box(d), black_box(&oracle_signature))
+        p256::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
           .unwrap();
         black_box(())
       })
@@ -887,7 +889,8 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
       b.iter(|| {
-        let signature: P256OracleSignature = black_box(&signing_key).sign(black_box(d));
+        let signature: P256OracleSignature =
+          p256::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(d));
         black_box(signature)
       })
     });
@@ -910,12 +913,15 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
   let secret_bytes = [0x31u8; 48];
   let signing_key = P384OracleSigningKey::from_slice(&secret_bytes).unwrap();
   let verifying_key = signing_key.verifying_key();
-  let sec1 = verifying_key.to_encoded_point(false);
-  let public = EcdsaP384PublicKey::from_sec1_bytes(sec1.as_bytes()).unwrap();
-  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, sec1.as_bytes());
+  let sec1 = EcdsaP384SecretKey::from_bytes(secret_bytes)
+    .unwrap()
+    .public_key()
+    .to_sec1_bytes();
+  let public = EcdsaP384PublicKey::from_sec1_bytes(sec1.as_slice()).unwrap();
+  let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, sec1.as_slice());
   aws_lc_bench! {
     let aws_upk =
-      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, sec1.as_bytes());
+      aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ECDSA_P384_SHA384_FIXED, sec1.as_slice());
   }
 
   let inputs = [0usize, 32, 1024, 16384]
@@ -926,7 +932,7 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
-    let oracle_signature: P384OracleSignature = signing_key.sign(data);
+    let oracle_signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, data);
     let signature = EcdsaP384Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref())).unwrap();
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
@@ -938,8 +944,7 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
       b.iter(|| {
-        black_box(verifying_key)
-          .verify(black_box(d), black_box(&oracle_signature))
+        p384::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
           .unwrap();
         black_box(())
       })
@@ -1015,7 +1020,8 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
       b.iter(|| {
-        let signature: P384OracleSignature = black_box(&signing_key).sign(black_box(d));
+        let signature: P384OracleSignature =
+          p384::ecdsa::signature::Signer::sign(black_box(&signing_key), black_box(d));
         black_box(signature)
       })
     });
