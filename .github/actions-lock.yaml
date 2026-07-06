@@ -43,6 +43,11 @@ actions/cache:
   sha: "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
   updated: "2026-07-03T17:27:26Z"
   notes: "Cache dependencies and build artifacts"
+actions/attest-build-provenance:
+  ref: v4.1.1
+  sha: "0f67c3f4856b2e3261c31976d6725780e5e4c373"
+  updated: "2026-07-05T00:00:00Z"
+  notes: "SLSA build provenance attestations for release crate artifacts"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Testing & Reporting
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -105,3 +110,8 @@ taiki-e/upload-rust-binary-action:
   sha: "f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6"
   updated: "2026-07-03T17:27:33Z"
   notes: "Build and upload pre-built binaries to GitHub Releases"
+rust-lang/crates-io-auth-action:
+  ref: v1.0.5
+  sha: "c6f97d42243bad5fab37ca0427f495c86d5b1a18"
+  updated: "2026-07-05T00:00:00Z"
+  notes: "crates.io Trusted Publishing short-lived token exchange"

@@ -62,7 +62,7 @@ runs:
       if: inputs.tools-mode != 'none'
       shell: bash
       env:
-        CARGO_RAIL_VERSION: "0.11.0"
+        CARGO_RAIL_VERSION: "0.13.4"
       run: scripts/ci/install-tools.sh ${{ inputs.tools-mode }}
 
     - name: Setup Rust Cache

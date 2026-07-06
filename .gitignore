@@ -24,6 +24,10 @@ AGENTS.md
 
 # Junk
 docs/llvm-ppc64le-readvolatile-issue.md
+/docs/tasks/
+
+# Private funding/grant working notes
+/docs/funding/
 
 # Benchmark artifacts: publish only the curated overview.
 /benchmark_results/**

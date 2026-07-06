@@ -34,7 +34,7 @@ machine code.
 
 It does not claim resistance to physical side channels such as power analysis,
 electromagnetic leakage, acoustic leakage, fault injection, rowhammer, or
-platform compromise. Those need separate hardware and operational evidence. This is likely to be expanded in the future, but as of now, the focus is on software-observable timing leakage.
+platform compromise. Those need separate hardware and operational evidence.
 
 Speculation is handled by avoiding secret-dependent branches and addresses in
 claimed code paths. This is not a blanket Spectre-class guarantee for a whole

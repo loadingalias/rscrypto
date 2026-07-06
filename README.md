@@ -348,6 +348,8 @@ Please, do not report real-world vulnerabilities through public GitHub issues.
 - Feature flags: [`docs/features.md`](docs/features.md)
 - Public type inventory: [`docs/types.md`](docs/types.md)
 - Constant-time policy: [`docs/constant-time.md`](docs/constant-time.md)
+- Threat model: [`docs/threat-model.md`](docs/threat-model.md)
+- Release process: [`docs/release.md`](docs/release.md)
 - Compliance posture: [`docs/compliance.md`](docs/compliance.md)
 - Platform matrix: [`docs/platforms.md`](docs/platforms.md)
 - Test vector coverage: [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md)

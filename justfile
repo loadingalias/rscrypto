@@ -1,76 +1,94 @@
-# Linux Dev Box via Tailscale + AWS EC2 + Mutagen; Mutagen is one-way sync from the local repo to remote.
+# Remote dev. Provider mechanics live in ~/dev-machines.
 
-ssh-linux target="linux":
-    @"$HOME/dev-machines/connect.sh" "{{ target }}" rscrypto
+ssh target:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto "{{ target }}"
 
-ssh-linux-arch arch:
-    @"$HOME/dev-machines/connect.sh" "{{ arch }}" rscrypto
+ssh-check target:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto "{{ target }}" --check
 
-ssh-linux-icl:
-    @"$HOME/dev-machines/connect.sh" icl rscrypto
+ssh-create target *args="":
+    @"$HOME/dev-machines/dev-machine" create rscrypto "{{ target }}" {{ args }}
 
-ssh-linux-spr:
-    @"$HOME/dev-machines/connect.sh" spr rscrypto
+ssh-kill target:
+    @"$HOME/dev-machines/dev-machine" kill rscrypto "{{ target }}"
 
-ssh-linux-g3:
-    @"$HOME/dev-machines/connect.sh" g3 rscrypto
+ssh-status target="":
+    @if [ -n "{{ target }}" ]; then "$HOME/dev-machines/dev-machine" status rscrypto "{{ target }}"; else "$HOME/dev-machines/dev-machine" status rscrypto; fi
 
-ssh-linux-g4:
-    @"$HOME/dev-machines/connect.sh" g4 rscrypto
+ssh-bootstrap target:
+    @"$HOME/dev-machines/dev-machine" bootstrap rscrypto "{{ target }}"
 
-ssh-win:
-    @"$HOME/dev-machines/connect.sh" windows rscrypto
+ssh-aws-linux-x64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-x64
 
-ssh-create-linux target="linux" *args="":
-    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-30}" "$HOME/dev-machines/create.sh" {{ args }} "{{ target }}" rscrypto
+ssh-aws-linux-arm64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64
 
-ssh-create-win *args="":
-    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-50}" "$HOME/dev-machines/create.sh" {{ args }} windows rscrypto
+ssh-aws-windows-x64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-windows-x64
 
-ssh-create-linux-arch arch *args="":
-    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-60}" "$HOME/dev-machines/create.sh" {{ args }} "{{ arch }}" rscrypto
+ssh-azure-linux-x64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-x64
 
-ssh-create-linux-spr *args="":
-    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-60}" "$HOME/dev-machines/create.sh" {{ args }} spr rscrypto
+ssh-azure-linux-arm64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-arm64
 
-ssh-create-linux-g4 *args="":
-    @DEV_MACHINE_CREATE_VOLUME_SIZE_GB="${DEV_MACHINE_CREATE_VOLUME_SIZE_GB:-60}" "$HOME/dev-machines/create.sh" {{ args }} g4 rscrypto
+ssh-azure-windows-x64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-x64
 
-ssh-join-linux-arch arch:
-    @"$HOME/dev-machines/join-tailscale.sh" "{{ arch }}" rscrypto
+ssh-azure-windows-arm64:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-arm64
 
-ssh-kill-linux target="linux":
-    @"$HOME/dev-machines/kill.sh" "{{ target }}" rscrypto
+ssh-aws-linux-x64-perf:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-x64-perf
 
-ssh-kill-linux-arch arch:
-    @"$HOME/dev-machines/kill.sh" "{{ arch }}" rscrypto
+ssh-aws-linux-intel-gnr-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-intel-gnr-profile
 
-ssh-kill-linux-spr:
-    @"$HOME/dev-machines/kill.sh" spr rscrypto
+ssh-aws-linux-intel-spr-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-intel-spr-profile
 
-ssh-kill-linux-g4:
-    @"$HOME/dev-machines/kill.sh" g4 rscrypto
+ssh-aws-linux-amd-zen5-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-amd-zen5-profile
 
-ssh-kill-win:
-    @"$HOME/dev-machines/kill.sh" windows rscrypto
+ssh-aws-linux-amd-zen4-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-amd-zen4-profile
 
-ssh-status:
-    @"$HOME/dev-machines/status.sh" rscrypto
+ssh-aws-linux-arm64-graviton4-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64-graviton4-profile
 
-ssh-bootstrap-linux target="linux":
-    @"$HOME/dev-machines/bootstrap.sh" "{{ target }}" rscrypto
+ssh-azure-linux-intel-gnr-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-intel-gnr-profile
 
-ssh-bootstrap-linux-arch arch:
-    @"$HOME/dev-machines/bootstrap.sh" "{{ arch }}" rscrypto
+ssh-azure-linux-intel-emr-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-intel-emr-profile
 
-ssh-bootstrap-linux-spr:
-    @"$HOME/dev-machines/bootstrap.sh" spr rscrypto
+ssh-azure-linux-amd-zen5-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-amd-zen5-profile
 
-ssh-bootstrap-linux-g4:
-    @"$HOME/dev-machines/bootstrap.sh" g4 rscrypto
+ssh-azure-linux-amd-zen4-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-amd-zen4-profile
 
-ssh-bootstrap-win:
-    @"$HOME/dev-machines/bootstrap.sh" windows rscrypto
+ssh-azure-linux-arm64-cobalt-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-arm64-cobalt-profile
+
+ssh-azure-linux-arm64-ampere-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-linux-arm64-ampere-profile
+
+ssh-azure-windows-amd-zen5-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-amd-zen5-profile
+
+ssh-azure-windows-intel-gnr-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-intel-gnr-profile
+
+ssh-azure-windows-arm64-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-windows-arm64-profile
+
+ssh-aws-test-rdma:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-test-rdma
+
+ssh-azure-test-rdma:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto azure-test-rdma
 
 # Builds
 build:

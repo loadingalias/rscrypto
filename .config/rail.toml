@@ -58,11 +58,11 @@ enforce_msrv_inheritance = false
 
 [release]
 tag_prefix = "v"
-tag_format = "{prefix}{version}" # Single crate: just v0.4.0
+tag_format = "{prefix}{version}" # Single crate: vX.Y.Z
 
 require_clean = true
 push = true
-create_github_release = true
+create_github_release = false
 sign_tags = true
 publish_delay = 5
 

@@ -63,7 +63,8 @@ or benchmarks are not production dependencies.
 Constant-time claims are scoped. They apply only to named secret-bearing
 operations and target configurations, not to every API or every build. The
 README carries the public security summary; [`docs/constant-time.md`](docs/constant-time.md)
-is the exact claim model.
+is the exact claim model. The security boundary, adversary model, and review
+priorities are documented in [`docs/threat-model.md`](docs/threat-model.md).
 
 No third-party security audit, FIPS 140-3 validation, or formal proof is claimed
 today.

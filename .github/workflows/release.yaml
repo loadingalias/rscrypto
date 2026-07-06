@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      crate_name: ${{ steps.preflight.outputs.crate_name }}
+      crate_sha256: ${{ steps.preflight.outputs.crate_sha256 }}
+      crate_version: ${{ steps.preflight.outputs.crate_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: release-preflight
+          tools-mode: standard
+          toolchain-components: ""
+          enable-magic-cache: false
+          enable-rust-cache: true
+
+      - name: Release preflight
+        id: preflight
+        run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$GITHUB_REF_NAME"
+
+  publish:
+    name: Publish
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: crates-io
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          cache-key: release-publish
+          tools-mode: standard
+          toolchain-components: ""
+          enable-magic-cache: false
+          enable-rust-cache: true
+
+      - name: Release preflight
+        id: package
+        run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$GITHUB_REF_NAME"
+
+      - name: Assert preflight package is stable
+        run: |
+          set -euo pipefail
+          if [[ "${{ needs.preflight.outputs.crate_sha256 }}" != "${{ steps.package.outputs.crate_sha256 }}" ]]; then
+            echo "preflight package sha256 changed between jobs" >&2
+            exit 1
+          fi
+
+      - name: Attest crate provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: ${{ steps.package.outputs.crate_path }}
+
+      - name: Check existing crates.io package
+        id: existing
+        env:
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+        run: |
+          set -euo pipefail
+          url="https://crates.io/api/v1/crates/rscrypto/${CRATE_VERSION}/download"
+          if curl -fsSL -A "rscrypto-release/${CRATE_VERSION} (https://github.com/loadingalias/rscrypto)" "$url" -o published.crate; then
+            published_sha="$(sha256sum published.crate | awk '{print $1}')"
+            if [[ "$published_sha" != "$CRATE_SHA256" ]]; then
+              echo "crates.io already has rscrypto ${CRATE_VERSION}, but sha256 differs" >&2
+              echo "expected: $CRATE_SHA256" >&2
+              echo "actual:   $published_sha" >&2
+              exit 1
+            fi
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate with crates.io
+        if: steps.existing.outputs.published != 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publish to crates.io
+        if: steps.existing.outputs.published != 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+        run: |
+          set -euo pipefail
+          before_sha="$(sha256sum "${{ steps.package.outputs.crate_path }}" | awk '{print $1}')"
+          cargo publish -p rscrypto --locked
+          after_sha="$(sha256sum "${{ steps.package.outputs.crate_path }}" | awk '{print $1}')"
+          if [[ "$before_sha" != "$after_sha" || "$after_sha" != "$CRATE_SHA256" ]]; then
+            echo "cargo publish changed the package artifact" >&2
+            echo "before:   $before_sha" >&2
+            echo "after:    $after_sha" >&2
+            echo "expected: $CRATE_SHA256" >&2
+            exit 1
+          fi
+
+      - name: Verify crates.io package
+        env:
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+        run: |
+          set -euo pipefail
+          url="https://crates.io/api/v1/crates/rscrypto/${CRATE_VERSION}/download"
+          for attempt in {1..18}; do
+            if curl -fsSL -A "rscrypto-release/${CRATE_VERSION} (https://github.com/loadingalias/rscrypto)" "$url" -o published.crate; then
+              published_sha="$(sha256sum published.crate | awk '{print $1}')"
+              if [[ "$published_sha" == "$CRATE_SHA256" ]]; then
+                exit 0
+              fi
+              echo "crates.io sha256 mismatch for rscrypto ${CRATE_VERSION}" >&2
+              echo "expected: $CRATE_SHA256" >&2
+              echo "actual:   $published_sha" >&2
+              exit 1
+            fi
+            echo "crates.io package not available yet; retry $attempt/18"
+            sleep 10
+          done
+          echo "timed out waiting for rscrypto ${CRATE_VERSION} on crates.io" >&2
+          exit 1
+
+      - name: Write release checksums
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            "${{ steps.package.outputs.crate_sha256 }}" \
+            "${{ steps.package.outputs.crate_name }}" > SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<EOF
+          See [CHANGELOG.md](https://github.com/loadingalias/rscrypto/blob/main/CHANGELOG.md) for changes.
+
+          Crate artifact: \`${{ steps.package.outputs.crate_name }}\`
+          SHA-256: \`${{ steps.package.outputs.crate_sha256 }}\`
+
+          Verify provenance:
+
+          \`\`\`bash
+          gh attestation verify ${{ steps.package.outputs.crate_name }} --repo loadingalias/rscrypto
+          \`\`\`
+          EOF
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${{ steps.package.outputs.crate_path }}" SHA256SUMS --clobber
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "rscrypto $GITHUB_REF_NAME" \
+              --notes-file "$notes_file"
+          else
+            gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.crate_path }}" SHA256SUMS \
+              --verify-tag \
+              --title "rscrypto $GITHUB_REF_NAME" \
+              --notes-file "$notes_file"
+          fi

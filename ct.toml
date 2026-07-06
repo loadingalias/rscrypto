@@ -2363,7 +2363,7 @@ linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
-ci = "linux-x64-ci"
+ci = "ci-linux-x64"
 
 [[target]]
 name = "aarch64-unknown-linux-gnu"
@@ -2373,7 +2373,7 @@ linker = "platform-default-unpinned"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
-ci = "linux-arm64-ci"
+ci = "ci-linux-arm64"
 
 [[target]]
 name = "x86_64-unknown-linux-musl"
