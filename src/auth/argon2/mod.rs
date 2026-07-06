@@ -5,8 +5,8 @@
 //! - [`Argon2d`] — data-dependent indexing, highest throughput, vulnerable to side-channel timing
 //!   attacks. Useful for non-interactive, trusted- hardware settings (e.g. cryptocurrency
 //!   proof-of-work).
-//! - [`Argon2i`] — data-independent indexing: memory-access patterns do not depend on the
-//!   password. Useful when the adversary can observe cache or memory-access timing.
+//! - [`Argon2i`] — data-independent indexing: memory-access patterns do not depend on the password.
+//!   Useful when the adversary can observe cache or memory-access timing.
 //! - [`Argon2id`] — hybrid: first half of the first pass runs Argon2i, the rest runs Argon2d.
 //!   **Recommended default for password hashing** per RFC 9106 §4 and OWASP 2024 guidance.
 //!
