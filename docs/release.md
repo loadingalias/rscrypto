@@ -67,15 +67,17 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 4. Runs `cargo rail release check rscrypto --extended`.
 5. Builds the `.crate` with `cargo package --locked`.
 6. Rejects dirty VCS metadata and private or local-only package contents.
-7. Attests the `.crate` artifact with GitHub build provenance.
-8. Uses crates.io Trusted Publishing to get a temporary publish token.
-9. Publishes with `cargo publish -p rscrypto --locked`.
-10. Downloads the crate from crates.io and verifies the SHA-256 against the
+7. Waits for the `CI` workflow on the same commit to pass.
+8. Attests the `.crate` artifact with GitHub build provenance.
+9. Uses crates.io Trusted Publishing to get a temporary publish token.
+10. Publishes with `cargo publish -p rscrypto --locked`.
+11. Downloads the crate from crates.io and verifies the SHA-256 against the
     attested package.
-11. Creates or updates the GitHub Release with the crate and `SHA256SUMS`.
+12. Creates or updates the GitHub Release with the crate and `SHA256SUMS`.
 
-The publish job uses the `crates-io` GitHub environment, so the final publish
-step can require explicit approval in GitHub before the OIDC token is issued.
+The publish job uses the `crates-io` GitHub environment. GitHub requests
+approval only after preflight and CI have passed, and before the OIDC token is
+issued.
 
 ## Recovery
 

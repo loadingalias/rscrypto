@@ -77,6 +77,7 @@ jobs:
       supply_chain_mode: light
       cross_depth: shallow
       test_mode: commit
+      include_riscv: false
 
   complete:
     name: Complete
