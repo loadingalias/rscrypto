@@ -66,16 +66,27 @@ create_github_release = false
 sign_tags = true
 publish_delay = 5
 
-changelog_path = "CHANGELOG.md"
-changelog_relative_to = "workspace"
-skip_changelog_for = []
 require_changelog_entries = false
 require_release_notes = true
 release_notes_dir = "release-notes"
+pre_1_breaking_bump = "minor"
+unconventional_commits = "warn"
+semver_check = "warn"
+change_dir = ".changes"
+require_change_files = ["rscrypto"]
+
+[release.changelog]
+path = "CHANGELOG.md"
+relative_to = "workspace"
+
+[release.changelog.filters]
+skip_types = ["chore", "ci"]
+skip_scopes = []
 
 
 [change-detection]
 infrastructure = [
+  ".changes/**",
   ".github/**",
   ".config/**",
   "scripts/**",

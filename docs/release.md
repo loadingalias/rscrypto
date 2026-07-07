@@ -2,9 +2,10 @@
 
 `rscrypto` releases are human-tagged and CI-published.
 
-`cargo-rail` owns the release mutation: version bump, changelog, signed tag,
-and git push. GitHub Actions owns crates.io publishing and the GitHub Release.
-Do not run `cargo publish` locally for normal releases.
+`cargo-rail` owns the local release mutation: reviewed change file, version
+bump, changelog, release commit, signed tag, and tag push. GitHub Actions owns
+crates.io publishing and the GitHub Release. Do not run `cargo publish`
+locally for normal releases.
 
 ## One-Time Setup
 
@@ -34,26 +35,53 @@ OIDC token for a temporary crates.io token.
 
 ## Release Commands
 
-Run the checks first:
+Add release intent with a cargo-rail change file. Commit the change file with
+the code change when possible; if the code was already committed, add the
+change file before cutting the release. Change files live in `.changes/`.
+Use `--name` to choose the filename slug. The file may be renamed after
+creation as long as it remains a `.changes/*.md` file.
+
+```bash
+cargo rail change add rscrypto --bump patch --name release-workflow-cargo-rail-0-15 --message "Updated release workflow validation for cargo-rail 0.15."
+cargo rail change status
+```
+
+Use `--bump minor` or `--bump major` for larger user-visible changes.
+
+Run the pre-release checks from a clean tree:
 
 ```bash
 git status --short
+cargo rail config validate --strict
 cargo rail release check rscrypto --extended
-cargo rail release run rscrypto --bump patch --skip-publish --check
+cargo rail release run rscrypto --bump auto --skip-publish --check
 ```
 
-Use `--bump minor`, `--bump major`, or `--bump X.Y.Z` when that is the intended
-version.
+The same flow is available through the justfile:
+
+```bash
+just release-change patch "Fixed ECDSA oracle compatibility with p256."
+just release-status
+just release-check
+```
 
 When the plan is correct, run the release command:
 
 ```bash
-cargo rail release run rscrypto --bump patch --skip-publish
+cargo rail release run rscrypto --bump auto --yes --skip-publish
 ```
 
-That command is allowed to push because `.config/rail.toml` has `push = true`.
-It must not publish to crates.io; the `--skip-publish` flag is part of the
-release contract.
+or:
+
+```bash
+just release-tag
+```
+
+The `release-tag` recipe runs strict config validation and the extended
+pre-tag cargo-rail release check before it creates the release commit. That
+command is allowed to create the release commit and push the signed tag because
+`.config/rail.toml` has `push = true`. It must not publish to crates.io; the
+`--skip-publish` flag is part of the release contract.
 
 ## CI Release Gate
 
@@ -64,7 +92,7 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 2. Requires the tag target to match the checked-out commit.
 3. Requires the tag version, `Cargo.toml` version, and `CHANGELOG.md` heading
    to match.
-4. Runs `cargo rail release check rscrypto --extended`.
+4. Validates `.config/rail.toml` with `cargo rail config validate --strict`.
 5. Builds the `.crate` with `cargo package --locked`.
 6. Rejects dirty VCS metadata and private or local-only package contents.
 7. Waits for the `CI` workflow on the same commit to pass.

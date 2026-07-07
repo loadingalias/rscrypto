@@ -5,7 +5,8 @@
 set -euo pipefail
 
 MODE="${1:-standard}"
-CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.12.0}"
+CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.15.0}"
+CARGO_SEMVER_CHECKS_VERSION="${CARGO_SEMVER_CHECKS_VERSION:-0.48.0}"
 
 echo "Installing cargo tools (mode: $MODE)"
 
@@ -193,6 +194,24 @@ ensure_cargo_rail() {
   cargo binstall "cargo-rail@${required}" --no-confirm --force 2>/dev/null || cargo install cargo-rail --locked --version "$required" --force
 }
 
+ensure_cargo_semver_checks() {
+  local required="$1"
+  local installed=""
+
+  if command -v cargo-semver-checks &>/dev/null; then
+    installed="$(cargo-semver-checks --version 2>/dev/null | awk '{print $2}' || true)"
+    if [[ -n "$installed" ]] && version_gte "$installed" "$required"; then
+      echo "  cargo-semver-checks: cached ($installed)"
+      return 0
+    fi
+    echo "  cargo-semver-checks: stale ($installed), upgrading to >= $required"
+  else
+    echo "  cargo-semver-checks: installing (required >= $required)"
+  fi
+
+  cargo binstall "cargo-semver-checks@${required}" --no-confirm --force 2>/dev/null || cargo install cargo-semver-checks --locked --version "$required" --force
+}
+
 install_binsec_system_packages() {
   if [[ "$(uname -s)" != "Linux" ]]; then
     return 0
@@ -307,6 +326,7 @@ case "$MODE" in
     install_if_missing "cargo-deny" "cargo-deny"
     install_if_missing "cargo-audit" "cargo-audit"
     ensure_cargo_rail "$CARGO_RAIL_VERSION"
+    ensure_cargo_semver_checks "$CARGO_SEMVER_CHECKS_VERSION"
     install_if_missing "just" "just"
     ;;
 

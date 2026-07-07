@@ -176,6 +176,24 @@ bench-quick *args="":
 
 # Maintenance
 
+# Release
+release-change bump message:
+    cargo rail change add rscrypto --bump "{{ bump }}" --message "{{ message }}"
+
+release-status:
+    cargo rail change status
+
+release-check:
+    cargo rail config validate --strict
+    cargo rail change status
+    cargo rail release check rscrypto --extended
+    scripts/ci/release-plan-check.sh rscrypto
+
+release-tag:
+    cargo rail config validate --strict
+    cargo rail release check rscrypto --extended
+    cargo rail release run rscrypto --bump auto --yes --skip-publish
+
 # Update Root/Fuzz Manifests & GHA Pins
 update:
     @scripts/update/update-all.sh

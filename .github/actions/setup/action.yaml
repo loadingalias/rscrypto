@@ -49,7 +49,7 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v10
+        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v11
 
     - name: Cache BINSEC OPAM Switch
       if: inputs.tools-mode == 'ct-linux'
@@ -62,7 +62,8 @@ runs:
       if: inputs.tools-mode != 'none'
       shell: bash
       env:
-        CARGO_RAIL_VERSION: "0.13.4"
+        CARGO_RAIL_VERSION: "0.15.0"
+        CARGO_SEMVER_CHECKS_VERSION: "0.48.0"
       run: scripts/ci/install-tools.sh ${{ inputs.tools-mode }}
 
     - name: Setup Rust Cache

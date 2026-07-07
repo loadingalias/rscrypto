@@ -106,7 +106,11 @@ if ! grep -qE "^## \\[$tag_version\\]" CHANGELOG.md; then
   exit 1
 fi
 
-cargo rail release check "$crate" --extended
+cargo rail config validate --strict
+
+# `cargo rail release check` is a pre-tag gate. The release run consumes
+# `.changes` files before creating the signed tag, so tag preflight
+# validates the already-materialized release commit directly.
 
 scripts/ci/release-package-guard.sh \
   --crate "$crate" \

@@ -335,6 +335,7 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 - Portable and accelerated backends are differentially tested for byte-identical output.
 - Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
 - RSA private operations have extra regression coverage for memory safety and first-order timing leakage.
+- Release artifacts are signed-tag gated, published through crates.io Trusted Publishing, and covered by GitHub build provenance attestations.
 - No third-party audit or FIPS certificate as of now.
 
 Vulnerabilities should be reported through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new) or the process in [`SECURITY.md`](SECURITY.md).

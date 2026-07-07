@@ -166,6 +166,18 @@ run_justfile_check() {
   ok
 }
 
+needs_rail_config_check() {
+  if ! cargo rail --version >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if [[ "$RAIL_READY" != true ]]; then
+    return 0
+  fi
+
+  changed_file_matches '^\.config/rail\.toml$|^\.github/(workflows|actions)/.*\.ya?ml$|^scripts/ci/(install-tools|release-preflight)\.sh$|^justfile$'
+}
+
 needs_actions_check() {
   if [[ "$RAIL_READY" != true ]]; then
     return 0
@@ -188,6 +200,10 @@ needs_host_checks() {
 
 run_actions_check() {
   just check-actions
+}
+
+run_rail_config_check() {
+  cargo rail config validate --strict
 }
 
 run_host_checks() {
@@ -235,6 +251,12 @@ describe_rail_plan
 
 run_shell_syntax_checks
 run_justfile_check
+
+if needs_rail_config_check; then
+  start_task "cargo-rail config" run_rail_config_check
+else
+  skip "Cargo-rail config" "no release/tooling config changes"
+fi
 
 if needs_actions_check; then
   start_task "workflow action pins" run_actions_check
