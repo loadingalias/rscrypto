@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.4](https://github.com/loadingalias/rscrypto/compare/v0.6.3...v0.6.4) - 2026-07-07
+
+- Updated release workflow validation for cargo-rail 0.15.
+- Refreshed the dev dependency lockfile to avoid the crossbeam-epoch advisory in test tooling.
+
+### 📦 Other Changes
+
+- make ECDSA oracles tolerate p256 update ([ac62d9a](https://github.com/loadingalias/rscrypto/commit/ac62d9a937eb2aa4cdd25a4c1722687f4aedfd72))
+
+
+
 ## [0.6.3](https://github.com/loadingalias/rscrypto/compare/v0.6.2...v0.6.3) - 2026-07-05
 
 ### 📦 Other Changes
