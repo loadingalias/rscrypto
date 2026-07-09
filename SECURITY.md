@@ -27,8 +27,8 @@ In scope:
   documented standards, profiles, official vectors, or crate security
   boundaries.
 - Timing side channels in claimed constant-time code paths.
-- Secret-dependent oracle behavior in authentication, decryption,
-  decapsulation, signature verification, or key-agreement APIs.
+- Oracle behavior beyond the documented opaque failure shape in authentication,
+  decryption, decapsulation, signature verification, or key-agreement APIs.
 - Memory-safety issues in `unsafe` code.
 - Nonce, key, signature, or verification behavior that creates
   security-relevant API misuse.
@@ -64,10 +64,21 @@ Constant-time claims are scoped. They apply only to named secret-bearing
 operations and target configurations, not to every API or every build. The
 README carries the public security summary; [`docs/constant-time.md`](docs/constant-time.md)
 is the exact claim model. The security boundary, adversary model, and review
-priorities are documented in [`docs/threat-model.md`](docs/threat-model.md).
+priorities are documented in [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 No third-party security audit, FIPS 140-3 validation, or formal proof is claimed
 today.
+
+## Advisory Packet
+
+For a valid vulnerability, the advisory should include:
+
+- Affected `rscrypto` versions and feature flags.
+- Impacted primitives or parsing surfaces.
+- Whether exploitation requires `std`, `alloc`, `getrandom`, `serde`,
+  hardware acceleration, or a specific target architecture.
+- Severity, patched version, and credit preference.
+- CVSS and CWE when they are clear enough to be useful.
 
 ## AI-Assisted Reports
 

@@ -664,6 +664,33 @@ macro_rules! impl_mlkem_profile_ops {
     }
 
     impl $profile {
+      #[doc = concat!("Generate an ", $doc_name, " keypair from the platform entropy source.")]
+      /// # Errors
+      ///
+      /// Returns [`MlKemError::RandomGenerationFailed`] if the entropy source is unavailable.
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      #[inline]
+      pub fn try_generate_keypair() -> Result<($encapsulation_key, $decapsulation_key), MlKemError> {
+        Self::generate_keypair(|out| getrandom::fill(out).map_err(|_| MlKemError::RandomGenerationFailed))
+      }
+
+      #[doc = concat!("Encapsulate to an ", $doc_name, " key with platform entropy.")]
+      /// # Errors
+      ///
+      /// Returns [`MlKemError`] if the encapsulation key is invalid or the entropy source is
+      /// unavailable.
+      #[cfg(feature = "getrandom")]
+      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+      #[inline]
+      pub fn try_encapsulate(
+        encapsulation_key: &$encapsulation_key,
+      ) -> Result<($ciphertext, $shared_secret), MlKemError> {
+        Self::encapsulate(encapsulation_key, |out| {
+          getrandom::fill(out).map_err(|_| MlKemError::RandomGenerationFailed)
+        })
+      }
+
       #[doc = concat!("Validate and prepare an ", $doc_name, " encapsulation key for repeated operations.")]
       #[inline]
       pub fn prepare_encapsulation_key(
@@ -707,7 +734,10 @@ macro_rules! impl_mlkem_profile_ops {
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlKemError>,
       ) -> Result<($ciphertext, $shared_secret), MlKemError> {
         let mut random = [0u8; $profile::ENCAPSULATION_RANDOM_SIZE];
-        fill_random(&mut random)?;
+        if let Err(err) = fill_random(&mut random) {
+          ct::zeroize(&mut random);
+          return Err(err);
+        }
         let (ciphertext, shared_secret) = $encapsulate_prepared(&self.arithmetic, self.key_hash(), &random);
         ct::zeroize(&mut random);
         Ok((
@@ -862,7 +892,10 @@ macro_rules! impl_mlkem_profile_ops {
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), Self::KeyGenerationError>,
       ) -> Result<(Self::EncapsulationKey, Self::DecapsulationKey), Self::KeyGenerationError> {
         let mut random = [0u8; Self::KEY_GENERATION_RANDOM_SIZE];
-        fill_random(&mut random)?;
+        if let Err(err) = fill_random(&mut random) {
+          ct::zeroize(&mut random);
+          return Err(err);
+        }
         let (ek, dk) = $keygen(&random);
         ct::zeroize(&mut random);
         Ok(($encapsulation_key::from_bytes(ek), $decapsulation_key::from_bytes(dk)))
@@ -875,7 +908,10 @@ macro_rules! impl_mlkem_profile_ops {
         encapsulation_key.validate()?;
 
         let mut random = [0u8; Self::ENCAPSULATION_RANDOM_SIZE];
-        fill_random(&mut random)?;
+        if let Err(err) = fill_random(&mut random) {
+          ct::zeroize(&mut random);
+          return Err(err);
+        }
         let (ciphertext, shared_secret) = portable::encapsulate::<
           $k,
           $eta1_random_bytes,

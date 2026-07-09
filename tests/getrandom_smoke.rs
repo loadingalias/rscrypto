@@ -84,12 +84,65 @@ mod nonce_rng {
 
 #[cfg(feature = "ed25519")]
 mod ed25519_rng {
-  use rscrypto::Ed25519SecretKey;
+  use rscrypto::{Ed25519Keypair, Ed25519SecretKey};
   random_smoke!(secret_key, Ed25519SecretKey);
+
+  #[test]
+  fn keypair_try_generate() {
+    let keypair = Ed25519Keypair::try_generate().unwrap();
+    assert!(keypair.secret_key().as_bytes().iter().any(|&b| b != 0));
+  }
 }
 
 #[cfg(feature = "x25519")]
 mod x25519_rng {
   use rscrypto::X25519SecretKey;
   random_smoke!(secret_key, X25519SecretKey);
+
+  #[test]
+  fn secret_key_try_generate() {
+    let secret = X25519SecretKey::try_generate().unwrap();
+    assert!(secret.as_bytes().iter().any(|&b| b != 0));
+  }
+}
+
+#[cfg(feature = "ecdsa-p256")]
+mod ecdsa_p256_rng {
+  use rscrypto::EcdsaP256SecretKey;
+
+  #[test]
+  fn secret_key_try_generate() {
+    let secret = EcdsaP256SecretKey::try_generate().unwrap();
+    assert!(secret.as_bytes().iter().any(|&b| b != 0));
+  }
+}
+
+#[cfg(feature = "ecdsa-p384")]
+mod ecdsa_p384_rng {
+  use rscrypto::EcdsaP384SecretKey;
+
+  #[test]
+  fn secret_key_try_generate() {
+    let secret = EcdsaP384SecretKey::try_generate().unwrap();
+    assert!(secret.as_bytes().iter().any(|&b| b != 0));
+  }
+}
+
+#[cfg(feature = "ml-kem")]
+mod mlkem_rng {
+  use rscrypto::{MlKem512, MlKem768, MlKem1024};
+
+  #[test]
+  fn keypair_try_generate() {
+    let (ek512, dk512) = MlKem512::try_generate_keypair().unwrap();
+    let (ek768, dk768) = MlKem768::try_generate_keypair().unwrap();
+    let (ek1024, dk1024) = MlKem1024::try_generate_keypair().unwrap();
+
+    assert!(ek512.as_bytes().iter().any(|&b| b != 0));
+    assert!(dk512.as_bytes().iter().any(|&b| b != 0));
+    assert!(ek768.as_bytes().iter().any(|&b| b != 0));
+    assert!(dk768.as_bytes().iter().any(|&b| b != 0));
+    assert!(ek1024.as_bytes().iter().any(|&b| b != 0));
+    assert!(dk1024.as_bytes().iter().any(|&b| b != 0));
+  }
 }

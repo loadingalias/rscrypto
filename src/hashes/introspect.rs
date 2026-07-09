@@ -124,6 +124,11 @@ impl_hash_kernel_introspect!(
 );
 #[cfg(feature = "sha3")]
 impl_hash_kernel_introspect!(
+  crate::hashes::crypto::Cshake128,
+  crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
+);
+#[cfg(feature = "sha3")]
+impl_hash_kernel_introspect!(
   crate::hashes::crypto::Cshake256,
   crate::hashes::crypto::keccak::dispatch::kernel_name_for_len
 );

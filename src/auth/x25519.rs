@@ -182,7 +182,40 @@ impl X25519SecretKey {
     &self.0
   }
 
+  /// Try to construct a secret key by filling bytes from the provided closure.
+  ///
+  /// The closure may be called exactly once and must completely fill the
+  /// buffer or return an error. Any partially filled buffer is cleared before
+  /// returning an error.
+  #[inline]
+  pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
+    let mut bytes = [0u8; Self::LENGTH];
+    match fill(&mut bytes) {
+      Ok(()) => Ok(Self(bytes)),
+      Err(err) => {
+        ct::zeroize(&mut bytes);
+        Err(err)
+      }
+    }
+  }
+
+  /// Try to generate a secret key from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns a getrandom error if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, getrandom::Error> {
+    Self::try_generate_with(getrandom::fill)
+  }
+
   /// Construct a secret key by filling bytes from the provided closure.
+  ///
+  /// Compatibility name for caller-filled generation. Prefer
+  /// [`Self::try_generate_with`] when the entropy source can fail; this method
+  /// remains supported until the newer name has shipped for one release.
   ///
   /// ```rust
   /// # use rscrypto::X25519SecretKey;

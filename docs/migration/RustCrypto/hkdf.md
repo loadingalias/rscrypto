@@ -2,14 +2,14 @@
 
 > Replace `Hkdf::<Sha256>::new(Some(salt), ikm)` with `HkdfSha256::new(salt, ikm)`. The `Option<&[u8]>` salt becomes a plain `&[u8]` (empty slice == "no salt"); fused one-shot `HkdfSha256::derive_array::<N>(...)` collapses extract+expand.
 
-Verified against `hkdf = "0.13.0"` and the `rscrypto` 0.5.0 line.
-Evidence: `tests/hkdf_sha256_vectors.rs`, `tests/hkdf_sha384_vectors.rs`, the HKDF proptests, and `tests/hkdf_wycheproof.rs`.
+Verified against `hkdf = "0.13.0"` and the `rscrypto` 0.6.4 line.
+Evidence: `tests/hkdf_sha256_vectors.rs`, `tests/hkdf_sha384_vectors.rs`, `tests/hkdf_sha512_vectors.rs`, the HKDF proptests, and `tests/hkdf_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`hkdf` 0.13.x) | After (`rscrypto` 0.5.0) |
+| | Before (`hkdf` 0.13.x) | After (`rscrypto` 0.6.4) |
 |---|---|---|
-| Cargo dep | `hkdf = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.5.0", features = ["hkdf"] }` |
+| Cargo dep | `hkdf = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.6.4", features = ["hkdf"] }` |
 | Import | `use hkdf::Hkdf; use sha2::Sha256;` | `use rscrypto::HkdfSha256;` |
 | Call | `Hkdf::<Sha256>::new(Some(salt), ikm).expand(info, &mut okm)?` | `HkdfSha256::new(salt, ikm).expand(info, &mut okm)?` |
 
@@ -25,18 +25,18 @@ sha2 = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.5.0", features = ["hkdf"] }
+rscrypto = { version = "0.6.4", features = ["hkdf"] }
 ```
 
 The `hkdf` feature implies `hmac` which implies `sha2`.
 
 ## Algorithm map
 
-| `hkdf` instantiation | rscrypto type | Block size |
+| `hkdf` instantiation | rscrypto type | HashLen / PRK size |
 |---|---|---|
 | `Hkdf<Sha256>` | `HkdfSha256` | 32 bytes |
 | `Hkdf<Sha384>` | `HkdfSha384` | 48 bytes |
-| `Hkdf<Sha512>` | not currently mapped: file an issue | 64 bytes |
+| `Hkdf<Sha512>` | `HkdfSha512` | 64 bytes |
 
 ## API patterns
 
@@ -111,5 +111,5 @@ Both crates let you reuse the extracted PRK for multiple expansions with differe
 - **No `Hkdf::from_prk(prk)` constructor (yet).** RustCrypto exposes a way to skip the extract step when you already have a PRK from another source (e.g., a TLS exporter). rscrypto currently always extracts. If you need the "skip extract" path, file an issue.
 - **No `verify` method.** HKDF's output is intended to be used as key material, not compared. Both crates omit a `verify` helper; if you need to check that two parties derived the same key, route the comparison through HMAC over the derived key.
 - **No reset.** Both crates require constructing a fresh `Hkdf` for each `(salt, ikm)` pair. The `expand` step is stateless once the PRK is computed.
-- **Output length cap.** RFC 5869 limits OKM length to `255 × HashLen` (8160 bytes for SHA-256). Both crates return an error on overflow: `hkdf::InvalidLength` upstream, `rscrypto::HkdfOutputLengthError` here. Same `Result` shape; rename the type.
+- **Output length cap.** RFC 5869 limits OKM length to `255 × HashLen` (8160 bytes for SHA-256, 12240 for SHA-384, 16320 for SHA-512). Both crates return an error on overflow: `hkdf::InvalidLength` upstream, `rscrypto::HkdfOutputLengthError` here. Same `Result` shape; rename the type.
 - **`no_std`.** Both crates work in `no_std`. rscrypto adds no `alloc`-only helpers for HKDF: every variant is fixed-array or user-supplied buffer.

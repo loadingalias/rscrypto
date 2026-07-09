@@ -17,6 +17,9 @@ Use one leaf feature for one primitive, a group for a subset of primitives, or `
 
 macOS Apple Silicon local evidence: `1.37x` geomean vs fastest-external competitors with `382 / 774` wins and `708 / 774` wins-or-ties.
 
+Raw runs, methodology, and known losses are in
+[`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md).
+
 <p align="center">
   <img alt="rscrypto benchmark chart: 1.59x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 5.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
        src="assets/readme/perf.svg"
@@ -29,16 +32,17 @@ macOS Apple Silicon local evidence: `1.37x` geomean vs fastest-external competit
 
 ## Why rscrypto?
 
-- **Pure Rust Primitives:** Hashes, MACs, KDFs, password hashing, AEADs, signatures, key exchange, ML-KEM, RSA, and checksums live behind one crate, one feature model, and no OpenSSL or C/FFI dependency.
-- **Build Only What You Need:** Enable a leaf such as `sha2`, `aes-gcm`, `ed25519`, `x25519`, `ml-kem`, `rsa`, or `argon2`, use a family feature such as `aead` or `signatures`, or choose `full` for the complete surface.
-- **Consistent API Shape:** Supported primitives use concrete types, scoped errors, opaque verification failures, and the same verification convention instead of making every algorithm feel like a separate crate.
-- **First-Class Public-Key Support:** RSA includes strict DER import/export, PSS, PKCS#1 v1.5 signatures, OAEP, RSAES-PKCS1-v1_5, FIPS 186-5 A.1.3 probable-prime key generation, profile mapping, private-operation blinding, and reusable scratch APIs.
-- **Typed & Tested Post-Quantum KEMs:** `ml-kem` exposes ML-KEM-512/768/1024 key, ciphertext, and shared-secret types with prepared-key paths, ACVP vectors, `fips203` differential tests, scoped constant-time claims, and selected architecture kernels.
-- **Portable Rust Authority** SIMD and ASM backends are accelerators. The portable implementation remains the reference path and is differentially tested against accelerated kernels.
-- **Server, CLI, Embedded, Bare-Metal, and WASM.** `no_std` builds use the same feature model, with portable fallbacks across x86/x86_64, Arm/AArch64, Apple Silicon, IBM Z, IBM POWER, RISC-V, and WASM.
-- **Explicit Deployment Controls** `portable-only` forces runtime dispatch toward portable backends. The only optional external dependencies are `getrandom`, `serde`, and `rayon`; `rayon` is reached through the `parallel` feature.
-- **Deep Validation Coverage** Supported surfaces are backed by official vectors, Wycheproof where it maps to the API, ACVP ML-KEM vectors, differential tests against established crates, fuzz corpus replay, Miri, portable-vs-accelerated equivalence tests, cross-CPU CI, and RSA-specific leakage and memory-safety regression coverage.
-- **Constant-Time Validation Release Gate** Secret-bearing paths are tracked in `ct.toml`; claimed releases require the matching CT evidence, including harness coverage, build provenance, LLVM IR/assembly/object artifacts, generated-code heuristics, native DudeCT timing tests, binary checks where supported via BINSEC, and Miri/unsafe validation for relevant paths.
+- One feature model for hashes, MACs, KDFs, password hashing, AEADs,
+  signatures, key exchange, ML-KEM, RSA, and checksums.
+- No OpenSSL or production C/FFI dependency.
+- Concrete types, scoped errors, typed keys/nonces/tags, and opaque
+  verification failures across the supported primitives.
+- Portable Rust implementations are the reference path; SIMD and ASM are
+  accelerators tested against that path.
+- `no_std`, WASM, server, CLI, embedded, and audit-constrained builds use the
+  same leaf-feature model.
+- Public validation evidence covers vectors, differential tests, fuzz corpus
+  replay, Miri, backend equivalence, and scoped constant-time release gates.
 
 `rscrypto` is a primitives crate. It is not a TLS stack, PKI toolkit, key store, or protocol implementation. It is not a FIPS 140-3 validated module, third-party audited, formally verified, or a whole-crate constant-time claim today.
 
@@ -48,14 +52,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.6.4", default-features = false, features = ["sha2"] }
 ```
 
 Full primitive stack with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.6.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.6.4", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-gen entropy from the operating system.
@@ -76,177 +80,25 @@ assert_eq!(h.finalize(), one_shot);
 
 The common API shape is one-shot when convenient and streaming when needed.
 
-## Verify RSA Signatures
+## Common Workflows
 
-```toml
-[dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["rsa"] }
-```
+| Task | Feature | Start Here |
+|---|---|---|
+| AEAD seal/open | `chacha20poly1305,getrandom` | [`examples/aead_seal_open.rs`](examples/aead_seal_open.rs) |
+| Ed25519 and ECDSA signatures | `ed25519,ecdsa-p256,getrandom` | [`examples/signatures.rs`](examples/signatures.rs) |
+| RSA-PSS verification | `rsa` | [`examples/rsa_pss_verify.rs`](examples/rsa_pss_verify.rs) |
+| ML-KEM shared secret | `ml-kem,getrandom` | [`examples/mlkem_encapsulation.rs`](examples/mlkem_encapsulation.rs) |
+| Argon2id and scrypt password hashing | `password-hashing,getrandom` | [`examples/password_hashing.rs`](examples/password_hashing.rs) |
 
-```rust
-use rscrypto::{RsaPssProfile, RsaPublicKey};
-
-fn verify_release_signature(public_key_der: &[u8], message: &[u8], signature: &[u8]) -> bool {
-  let Ok(key) = RsaPublicKey::from_spki_der(public_key_der) else {
-    return false;
-  };
-
-  key.verify_pss(RsaPssProfile::Sha256, message, signature).is_ok()
-}
-```
-
-Default RSA imports accept modern verification keys (RSA-3072 through RSA-8192,
-exponent `65537`). RSA-2048 compatibility imports MUST opt in with
-`RsaPublicKeyPolicy::legacy_verification()` and the `*_with_policy` parser.
-
-For repeated verification with the same key, reuse `key.public_scratch()` with
-the `*_with_scratch` APIs instead of allocating per call.
-
-Add `getrandom` when `rscrypto` should generate RSA key material, PSS salt,
-encryption randomness, or private-operation blinding randomness. `no_std`
-encryption callers can use the `*_with_random_fill` methods with a platform
-RNG. RSA key generation seeds its HMAC_DRBG from `getrandom` and follows the
-crate's FIPS 186-5 Appendix A.1.3 probable-prime generation contract:
-
-```toml
-[dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["rsa", "getrandom"] }
-```
-
-## Sign ECDSA Messages
-
-```toml
-[dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["ecdsa-p256"] }
-```
-
-```rust
-use rscrypto::EcdsaP256SecretKey;
-
-fn sign_and_verify(secret_bytes: [u8; 32], message: &[u8]) -> bool {
-  let Ok(secret) = EcdsaP256SecretKey::from_bytes(secret_bytes) else {
-    return false;
-  };
-  let public = secret.public_key();
-
-  let Ok(signature) = secret.try_sign(message) else {
-    return false;
-  };
-
-  public.verify(message, &signature).is_ok()
-}
-```
-
-For P-384, enable `ecdsa-p384` and use `EcdsaP384SecretKey`,
-`EcdsaP384PublicKey`, and `EcdsaP384Signature`. ECDSA supports fixed
-P-256/SHA-256 and P-384/SHA-384 profiles, raw `r || s` signatures, DER
-signature import, SEC1/SPKI public-key import, deterministic signing, and
-caller-blinded signing APIs.
-
-## Establish An ML-KEM Shared Secret
-
-```toml
-[dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["ml-kem"] }
-```
-
-```rust
-use rscrypto::{Kem, MlKem768, MlKemError};
-
-fn deterministic_fill(seed: u8) -> impl FnMut(&mut [u8]) -> Result<(), MlKemError> {
-  move |out| {
-    for (i, b) in out.iter_mut().enumerate() {
-      *b = seed.wrapping_add(i as u8);
-    }
-    Ok(())
-  }
-}
-
-fn round_trip_mlkem768() -> Result<(), MlKemError> {
-  let (encapsulation_key, decapsulation_key) =
-    MlKem768::generate_keypair(deterministic_fill(0x40))?;
-  let (ciphertext, sender_secret) =
-    MlKem768::encapsulate(&encapsulation_key, deterministic_fill(0x90))?;
-  let receiver_secret = MlKem768::decapsulate(&decapsulation_key, &ciphertext)?;
-
-  assert_eq!(sender_secret, receiver_secret);
-  Ok(())
-}
-
-assert!(round_trip_mlkem768().is_ok());
-```
-
-Production callers should use a real entropy source for key generation and
-encapsulation randomness. The API accepts caller-supplied random-fill closures,
-so `ml-kem` works in `no_std` deployments that own their entropy boundary.
-
-## Encrypt Data
-
-```toml
-[dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["chacha20poly1305", "getrandom"] }
-```
-
-```rust
-use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key};
-
-fn encrypt_round_trip() -> bool {
-  let key = ChaCha20Poly1305Key::from_bytes([0x11; 32]);
-  let cipher = ChaCha20Poly1305::new(&key);
-
-  let aad = b"transfer:v1";
-  let mut sealed = [0u8; 10 + ChaCha20Poly1305::TAG_SIZE];
-  let Ok(nonce) = cipher.seal_random(aad, b"pay bob 10", &mut sealed) else {
-    return false;
-  };
-
-  let mut message = [0u8; 10];
-  let Ok(()) = cipher.decrypt(&nonce, aad, &sealed, &mut message) else {
-    return false;
-  };
-
-  &message == b"pay bob 10"
-}
-
-assert!(encrypt_round_trip());
-```
-
-For high-volume AES-GCM streams, use `aead::NonceCounter` instead of random
-96-bit nonces. It issues a monotonic nonce per seal and refuses to run past the
-deterministic invocation budget.
-
-## Hash Passwords
-
-```toml
-[dependencies]
-rscrypto = { version = "0.6.0", default-features = false, features = ["argon2", "phc-strings", "getrandom"] }
-```
-
-```rust
-use rscrypto::{Argon2Params, Argon2id};
-
-fn hash_password_round_trip() -> bool {
-  let password = b"correct horse battery staple";
-  let params = Argon2Params::default();
-  let Ok(encoded) = Argon2id::hash_string(&params, password) else {
-    return false;
-  };
-
-  Argon2id::verify_string(password, &encoded).is_ok()
-}
-
-assert!(hash_password_round_trip());
-```
-
-Tune `Argon2Params` for your latency and memory budget before shipping a
-password store.
+Use [`docs/types.md`](docs/types.md) when you need the full type map, and
+[`docs/features.md`](docs/features.md) when you need the smallest feature set.
 
 ## What You Get
 
 | Need | Included | Feature Path |
 |---|---|---|
-| Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
-| MACs & KDFs | HMAC-SHA-2, KMAC256, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
+| Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE128/256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
+| MACs & KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, standalone Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
 | Password Hashing | Argon2d/i/id, scrypt, PHC string encode/verify | `auth`, `argon2`, `scrypt`, `phc-strings` |
 | Public-Key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `auth`, `signatures`, `key-exchange`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519`, `ml-kem` |
 | AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
@@ -281,34 +133,6 @@ not blanket constant-time claims. See [`docs/constant-time.md`](docs/constant-ti
 for the exact claim model and [`docs/compliance.md`](docs/compliance.md) for
 review boundaries.
 
-## Performance
-
-Linux: Nine Linux runners across Intel/ARM x86/x86_64, ARM/aarch64, IBM Power/ppc64le, IBM Z/s390x, and RISC-V are used to benchmark `rscrypto` performance.
-
-Speedup is `external_crate_time / rscrypto_time`; values above `1.00x` mean `rscrypto` is faster.
-
-| Area | Compared Against | Result |
-|---|---|---:|
-| **Linux vs Fastest External** | strongest known Rust competitor per case (usually aws-lc-rs) | **1.59x Geomean** |
-| Linux Scorecard | Fastest External | **4,052 wins / 6,750 Pairs** |
-| Linux Wins or Ties | Fastest External | **6,101 / 6,750 Pairs** |
-| Linux All Matched Pairs | Every Comparison Row | **1.76x Geomean; 10,012 / 10,781 Wins or Ties** |
-| macOS Apple Silicon vs Fastest External | Local Apple Silicon Run | **1.37x Geomean; 708 / 774 Wins or Ties** |
-| macOS Apple Silicon All Matched Pairs | Every Comparison Row | **1.66x Geomean; 1,219 / 1,297 Wins or Ties** |
-| macOS Apple Silicon ML-KEM | Fastest External | **1.35x Geomean; 7 / 9 Wins or Ties** |
-| Checksums | Linux | **5.18x Geomean** |
-| Hashes, MACs, XOFs | Linux | **1.35x Geomean** |
-| Auth/KDF | Linux | **1.25x Geomean** |
-| Password hashing | Linux | **1.07x Geomean** |
-| Public-key | Linux, including ML-KEM | **1.33x Geomean** |
-| ML-KEM-512/768/1024 | Linux keygen/encapsulate/decapsulate | **1.49x Geomean** |
-| ECDSA P-256/P-384 | Linux | **1.45x Geomean** |
-| RSA import + verify | Linux | **1.55x Geomean** |
-| AEAD | Linux | **1.56x Geomean** |
-
-Use [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) for raw runs,
-methodology, platform-specific scorecards, and loss tables.
-
 ## Portability & Accel
 
 `rscrypto` keeps the portable Rust path as the byte-for-byte authority. ISA kernels are selected only when the target and runtime CPU support them.
@@ -326,39 +150,30 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 
 ## Security
 
-- Scoped constant-time claims for secret-bearing operations; see [`docs/constant-time.md`](docs/constant-time.md) for the details.
-- Opaque verification errors that avoid leaking failure details.
-- Secret-bearing types zeroize on drop and mask `Debug`.
-- Strict arithmetic for counters, lengths, offsets, and indices.
-- AEAD failed-open paths wipe output buffers.
-- ML-KEM-512/768/1024 have FIPS 203 ACVP vectors, `fips203` differential coverage, and CT evidence for declared secret-bearing operations.
-- Portable and accelerated backends are differentially tested for byte-identical output.
-- Official test vectors, Wycheproof coverage where applicable, fuzz corpus replay, and Miri run in CI.
-- RSA private operations have extra regression coverage for memory safety and first-order timing leakage.
-- Release artifacts are signed-tag gated, published through crates.io Trusted Publishing, and covered by GitHub build provenance attestations.
-- No third-party audit or FIPS certificate as of now.
+`rscrypto` makes scoped constant-time claims for named secret-bearing
+operations, not for every API or build. Secret-bearing types zeroize on drop and
+mask `Debug`; verification failures use opaque errors; failed AEAD opens wipe
+output buffers. Release artifacts are signed-tag gated, published through
+crates.io Trusted Publishing, and covered by GitHub build provenance
+attestations.
 
-Vulnerabilities should be reported through [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new) or the process in [`SECURITY.md`](SECURITY.md).
-
-Please, do not report real-world vulnerabilities through public GitHub issues.
+No third-party audit, FIPS 140-3 certificate, or formal whole-crate proof is
+claimed today. Report vulnerabilities through
+[GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new)
+or [`SECURITY.md`](SECURITY.md), not public issues.
 
 ## Docs
 
-- API reference: [docs.rs/rscrypto](https://docs.rs/rscrypto)
-- Examples: [`examples/`](examples/)
-- Feature flags: [`docs/features.md`](docs/features.md)
-- Public type inventory: [`docs/types.md`](docs/types.md)
-- Constant-time policy: [`docs/constant-time.md`](docs/constant-time.md)
-- Threat model: [`docs/threat-model.md`](docs/threat-model.md)
-- Release process: [`docs/release.md`](docs/release.md)
-- Compliance posture: [`docs/compliance.md`](docs/compliance.md)
-- Platform matrix: [`docs/platforms.md`](docs/platforms.md)
-- Test vector coverage: [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md)
-- Security policy: [`SECURITY.md`](SECURITY.md)
-- Migration guides: [`docs/migration/`](docs/migration/)
-- Benchmark methodology: [`docs/benchmarking.md`](docs/benchmarking.md)
-- Benchmarks: [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
-- Release history: [`CHANGELOG.md`](CHANGELOG.md)
+- Start: [docs.rs](https://docs.rs/rscrypto), [`examples/`](examples/),
+  [`docs/features.md`](docs/features.md), [`docs/types.md`](docs/types.md)
+- Security and review: [`SECURITY.md`](SECURITY.md),
+  [`THREAT_MODEL.md`](THREAT_MODEL.md), [`docs/constant-time.md`](docs/constant-time.md),
+  [`docs/compliance.md`](docs/compliance.md)
+- Evidence: [`docs/test-vector-coverage.md`](docs/test-vector-coverage.md),
+  [`docs/platforms.md`](docs/platforms.md),
+  [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
+- Switching crates: [`docs/migration/`](docs/migration/)
+- Releases: [`CHANGELOG.md`](CHANGELOG.md)
 
 ## MSRV
 

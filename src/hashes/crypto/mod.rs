@@ -48,7 +48,7 @@ pub use blake3::diag_blake3_keyed_digest_portable;
 #[cfg(feature = "blake3")]
 pub use blake3::{Blake3, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
-pub use cshake::{Cshake256, Cshake256XofReader};
+pub use cshake::{Cshake128, Cshake128XofReader, Cshake256, Cshake256XofReader};
 #[cfg(feature = "sha3")]
 pub use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256, Shake256XofReader};
 #[cfg(feature = "sha2")]

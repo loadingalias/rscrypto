@@ -4,6 +4,9 @@
 
 use super::keccak::KeccakCore;
 
+/// cSHAKE128 / KMAC128 bitrate in bytes.
+pub(crate) const RATE_128: usize = 168;
+
 /// cSHAKE256 / KMAC256 bitrate in bytes.
 pub(crate) const RATE_256: usize = 136;
 

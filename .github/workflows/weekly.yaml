@@ -132,6 +132,27 @@ jobs:
         fuzz-packages/*/artifacts/
       artifact_always: false
 
+  asan-fuzzing:
+    name: ASan Fuzz Corpus (${{ matrix.target.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - name: x86_64
+            runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+          - name: aarch64
+            runner: runs-on=${{ github.run_id }}/runner=linux-arm64-ci
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ${{ matrix.target.runner }}
+      timeout_minutes: 120
+      cache_key: weekly-asan-fuzz-${{ matrix.target.name }}
+      tools_mode: fuzz
+      toolchain_components: "rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: just test-fuzz-asan --all
+
   # --- Native ML-KEM promotion gate on the physical AWS targets. ---
   mlkem-graviton:
     name: ML-KEM Graviton Gate (${{ matrix.display_name }})
@@ -241,7 +262,7 @@ jobs:
   # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, mlkem-graviton, ct, coverage]
+    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -254,6 +275,7 @@ jobs:
             "miri=${{ needs.miri.result }}" \
             "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \
             "fuzzing=${{ needs.fuzzing.result }}" \
+            "asan-fuzzing=${{ needs.asan-fuzzing.result }}" \
             "mlkem-graviton=${{ needs.mlkem-graviton.result }}" \
             "ct=${{ needs.ct.result }}" \
             "coverage=${{ needs.coverage.result }}"

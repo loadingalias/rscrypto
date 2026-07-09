@@ -52,6 +52,7 @@ const P256_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-sha256-sign-v1";
 const P384_NONCE_DOMAIN: &[u8] = b"rscrypto-ecdsa-p384-sha384-sign-v1";
 const P256_PUBKEY_BLIND_DOMAIN: &[u8] = b"rscrypto-ecdsa-p256-pubkey-blind-v1";
 const P384_PUBKEY_BLIND_DOMAIN: &[u8] = b"rscrypto-ecdsa-p384-pubkey-blind-v1";
+const ECDSA_KEY_GENERATION_ATTEMPTS: usize = 32;
 
 const P256_FIELD: Uint<4> = Uint([
   0xffff_ffff_ffff_ffff,
@@ -742,6 +743,52 @@ impl fmt::Display for EcdsaError {
 
 impl core::error::Error for EcdsaError {}
 
+/// Errors returned by fallible ECDSA key generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EcdsaKeyGenerationError<E> {
+  /// The caller-provided random source failed.
+  Random(E),
+  /// Bounded scalar rejection exhausted its retry budget.
+  InvalidSecretKey,
+}
+
+impl<E> EcdsaKeyGenerationError<E> {
+  /// Construct a random-source error.
+  #[inline]
+  #[must_use]
+  pub const fn random(err: E) -> Self {
+    Self::Random(err)
+  }
+
+  /// Construct a scalar-rejection error.
+  #[inline]
+  #[must_use]
+  pub const fn invalid_secret_key() -> Self {
+    Self::InvalidSecretKey
+  }
+}
+
+impl<E> fmt::Display for EcdsaKeyGenerationError<E> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Random(_) => f.write_str("ECDSA key-generation random source failed"),
+      Self::InvalidSecretKey => f.write_str("ECDSA key-generation scalar rejection limit reached"),
+    }
+  }
+}
+
+impl<E> core::error::Error for EcdsaKeyGenerationError<E>
+where
+  E: core::error::Error + 'static,
+{
+  fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+    match self {
+      Self::Random(err) => Some(err),
+      Self::InvalidSecretKey => None,
+    }
+  }
+}
+
 /// P-256 ECDSA secret scalar.
 #[derive(Clone)]
 pub struct EcdsaP256SecretKey([u8; Self::LENGTH]);
@@ -755,7 +802,45 @@ impl EcdsaP256SecretKey {
     Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
   }
 
+  /// Try to generate a P-256 secret key with caller-supplied randomness.
+  ///
+  /// Random scalar candidates are retried when they are zero or outside the
+  /// curve order. The retry budget is bounded so a broken deterministic filler
+  /// cannot spin forever.
+  pub fn try_generate_with<E>(
+    mut fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<Self, EcdsaKeyGenerationError<E>> {
+    for _ in 0..ECDSA_KEY_GENERATION_ATTEMPTS {
+      let mut bytes = ZeroizingBytes::zeroed();
+      fill(bytes.as_mut_array()).map_err(EcdsaKeyGenerationError::Random)?;
+      match Self::from_zeroizing_bytes(bytes) {
+        Ok(key) => return Ok(key),
+        Err(EcdsaError::InvalidSecretKey) => continue,
+        Err(_) => return Err(EcdsaKeyGenerationError::InvalidSecretKey),
+      }
+    }
+
+    Err(EcdsaKeyGenerationError::InvalidSecretKey)
+  }
+
+  /// Try to generate a P-256 secret key from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
+  /// rejection exhausts its bounded retry budget.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
+    Self::try_generate_with(getrandom::fill)
+  }
+
   /// Construct a P-256 secret key by filling bytes from the provided closure.
+  ///
+  /// Compatibility name for caller-filled generation. Prefer
+  /// [`Self::try_generate_with`] when the entropy source can fail; this method
+  /// remains supported until the newer name has shipped for one release.
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Result<Self, EcdsaError> {
     let mut bytes = ZeroizingBytes::zeroed();
     fill(bytes.as_mut_array());
@@ -876,7 +961,45 @@ impl EcdsaP384SecretKey {
     Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
   }
 
+  /// Try to generate a P-384 secret key with caller-supplied randomness.
+  ///
+  /// Random scalar candidates are retried when they are zero or outside the
+  /// curve order. The retry budget is bounded so a broken deterministic filler
+  /// cannot spin forever.
+  pub fn try_generate_with<E>(
+    mut fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<Self, EcdsaKeyGenerationError<E>> {
+    for _ in 0..ECDSA_KEY_GENERATION_ATTEMPTS {
+      let mut bytes = ZeroizingBytes::zeroed();
+      fill(bytes.as_mut_array()).map_err(EcdsaKeyGenerationError::Random)?;
+      match Self::from_zeroizing_bytes(bytes) {
+        Ok(key) => return Ok(key),
+        Err(EcdsaError::InvalidSecretKey) => continue,
+        Err(_) => return Err(EcdsaKeyGenerationError::InvalidSecretKey),
+      }
+    }
+
+    Err(EcdsaKeyGenerationError::InvalidSecretKey)
+  }
+
+  /// Try to generate a P-384 secret key from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
+  /// rejection exhausts its bounded retry budget.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
+    Self::try_generate_with(getrandom::fill)
+  }
+
   /// Construct a P-384 secret key by filling bytes from the provided closure.
+  ///
+  /// Compatibility name for caller-filled generation. Prefer
+  /// [`Self::try_generate_with`] when the entropy source can fail; this method
+  /// remains supported until the newer name has shipped for one release.
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Result<Self, EcdsaError> {
     let mut bytes = ZeroizingBytes::zeroed();
     fill(bytes.as_mut_array());
@@ -984,6 +1107,26 @@ impl Drop for EcdsaP384SecretKey {
 
 impl_ct_eq!(EcdsaP384SecretKey);
 
+impl crate::traits::TrySigner for EcdsaP256SecretKey {
+  type Signature = EcdsaP256Signature;
+  type Error = EcdsaError;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    EcdsaP256SecretKey::try_sign(self, message)
+  }
+}
+
+impl crate::traits::TrySigner for EcdsaP384SecretKey {
+  type Signature = EcdsaP384Signature;
+  type Error = EcdsaError;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    EcdsaP384SecretKey::try_sign(self, message)
+  }
+}
+
 /// P-256 ECDSA keypair with typed secret and public halves.
 #[derive(Clone)]
 pub struct EcdsaP256Keypair {
@@ -992,6 +1135,27 @@ pub struct EcdsaP256Keypair {
 }
 
 impl EcdsaP256Keypair {
+  /// Try to generate a P-256 keypair with caller-supplied randomness.
+  #[inline]
+  pub fn try_generate_with<E>(
+    fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<Self, EcdsaKeyGenerationError<E>> {
+    EcdsaP256SecretKey::try_generate_with(fill).map(Self::from_secret_key)
+  }
+
+  /// Try to generate a P-256 keypair from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
+  /// rejection exhausts its bounded retry budget.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
+    EcdsaP256SecretKey::try_generate().map(Self::from_secret_key)
+  }
+
   /// Derive a P-256 keypair from a secret key.
   #[must_use]
   pub fn from_secret_key(secret: EcdsaP256SecretKey) -> Self {
@@ -1031,6 +1195,16 @@ impl EcdsaP256Keypair {
   }
 }
 
+impl crate::traits::TrySigner for EcdsaP256Keypair {
+  type Signature = EcdsaP256Signature;
+  type Error = EcdsaError;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    EcdsaP256Keypair::try_sign(self, message)
+  }
+}
+
 impl fmt::Debug for EcdsaP256Keypair {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_struct("EcdsaP256Keypair")
@@ -1047,6 +1221,27 @@ pub struct EcdsaP384Keypair {
 }
 
 impl EcdsaP384Keypair {
+  /// Try to generate a P-384 keypair with caller-supplied randomness.
+  #[inline]
+  pub fn try_generate_with<E>(
+    fill: impl FnMut(&mut [u8]) -> Result<(), E>,
+  ) -> Result<Self, EcdsaKeyGenerationError<E>> {
+    EcdsaP384SecretKey::try_generate_with(fill).map(Self::from_secret_key)
+  }
+
+  /// Try to generate a P-384 keypair from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns an ECDSA key-generation error if entropy is unavailable or scalar
+  /// rejection exhausts its bounded retry budget.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, EcdsaKeyGenerationError<getrandom::Error>> {
+    EcdsaP384SecretKey::try_generate().map(Self::from_secret_key)
+  }
+
   /// Derive a P-384 keypair from a secret key.
   #[must_use]
   pub fn from_secret_key(secret: EcdsaP384SecretKey) -> Self {
@@ -1083,6 +1278,16 @@ impl EcdsaP384Keypair {
     fill: impl FnOnce(&mut [u8; 96]),
   ) -> Result<EcdsaP384Signature, EcdsaError> {
     self.secret.try_sign_blinded(message, fill)
+  }
+}
+
+impl crate::traits::TrySigner for EcdsaP384Keypair {
+  type Signature = EcdsaP384Signature;
+  type Error = EcdsaError;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    EcdsaP384Keypair::try_sign(self, message)
   }
 }
 
@@ -1221,6 +1426,20 @@ impl fmt::Debug for EcdsaP384PublicKey {
     write!(f, "EcdsaP384PublicKey(")?;
     crate::hex::fmt_hex_lower(&self.to_sec1_bytes(), f)?;
     write!(f, ")")
+  }
+}
+
+impl crate::traits::Verifier<EcdsaP256Signature> for EcdsaP256PublicKey {
+  #[inline]
+  fn verify(&self, message: &[u8], signature: &EcdsaP256Signature) -> Result<(), VerificationError> {
+    EcdsaP256PublicKey::verify(self, message, signature)
+  }
+}
+
+impl crate::traits::Verifier<EcdsaP384Signature> for EcdsaP384PublicKey {
+  #[inline]
+  fn verify(&self, message: &[u8], signature: &EcdsaP384Signature) -> Result<(), VerificationError> {
+    EcdsaP384PublicKey::verify(self, message, signature)
   }
 }
 

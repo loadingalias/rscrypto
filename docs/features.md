@@ -10,28 +10,28 @@ Every primitive has its own leaf feature so size-conscious builds compile only w
 
 ```toml
 # One algorithm, no_std.
-rscrypto = { version = "0.6.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.6.4", default-features = false, features = ["sha2"] }
 
 # RSA public-key import and verification, no_std + alloc.
-rscrypto = { version = "0.6.0", default-features = false, features = ["rsa"] }
+rscrypto = { version = "0.6.4", default-features = false, features = ["rsa"] }
 
 # RSA key generation, signing, encryption, and private-operation blinding.
-rscrypto = { version = "0.6.0", default-features = false, features = ["rsa", "getrandom"] }
+rscrypto = { version = "0.6.4", default-features = false, features = ["rsa", "getrandom"] }
 
 # ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
-rscrypto = { version = "0.6.0", default-features = false, features = ["ecdsa"] }
+rscrypto = { version = "0.6.4", default-features = false, features = ["ecdsa"] }
 
 # FIPS 203 ML-KEM-512/768/1024 KEM APIs with caller-supplied randomness.
-rscrypto = { version = "0.6.0", default-features = false, features = ["ml-kem"] }
+rscrypto = { version = "0.6.4", default-features = false, features = ["ml-kem"] }
 
 # Everything.
-rscrypto = { version = "0.6.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.6.4", features = ["full", "getrandom"] }
 
 # Everything, with parallel BLAKE3 / Argon2 lanes via Rayon.
-rscrypto = { version = "0.6.0", features = ["full", "parallel", "getrandom"] }
+rscrypto = { version = "0.6.4", features = ["full", "parallel", "getrandom"] }
 
 # Audit-constrained: makes runtime dispatch ignore host SIMD/ASM capabilities.
-rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
+rscrypto = { version = "0.6.4", features = ["full", "portable-only"] }
 ```
 
 ## Complete Feature Index
@@ -42,7 +42,7 @@ rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
 |---|---|---|
 | `default` | `std` | Normal server, CLI, and app builds. |
 | `std` | `alloc` | Runtime CPU detection and `std::io` adapters. |
-| `alloc` | -- | Allocating APIs such as PHC string encoding and `Vec`-returning helpers. |
+| `alloc` | -- | Allocating APIs such as PHC string encoding and `Vec`-returning digest, MAC, AEAD, and signature helpers. |
 
 ### Umbrella Features
 
@@ -54,7 +54,7 @@ rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
 | `crypto-hashes` | `sha2`, `sha3`, `blake2b`, `blake2s`, `blake3`, `ascon-hash` |
 | `fast-hashes` | `xxh3`, `rapidhash` |
 | `auth` | `macs`, `kdfs`, `password-hashing`, `signatures`, `key-exchange` |
-| `macs` | `hmac`, `kmac` |
+| `macs` | `hmac`, `hmac-sha3`, `kmac`, `poly1305` |
 | `kdfs` | `hkdf`, `pbkdf2` |
 | `password-hashing` | `argon2`, `scrypt`, `phc-strings` |
 | `signatures` | `ecdsa`, `ed25519`, `rsa` |
@@ -70,7 +70,7 @@ rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
 | `crc32` | -- | CRC-32/IEEE and CRC-32C |
 | `crc64` | -- | CRC-64/XZ and CRC-64/NVMe |
 | `sha2` | -- | SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/256 |
-| `sha3` | -- | SHA3-224/256/384/512, SHAKE128/256, cSHAKE256 |
+| `sha3` | -- | SHA3-224/256/384/512, SHAKE128/256, cSHAKE128/256 |
 | `blake2b` | -- | BLAKE2b variable output, BLAKE2b-256, BLAKE2b-512 |
 | `blake2s` | -- | BLAKE2s-128, BLAKE2s-256 |
 | `blake3` | -- | BLAKE3 hash, keyed hash, and XOF |
@@ -78,8 +78,10 @@ rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
 | `xxh3` | -- | XXH3-64 and XXH3-128 |
 | `rapidhash` | -- | RapidHash-64 and RapidHash-128 |
 | `hmac` | `sha2` | HMAC-SHA256/384/512 |
-| `kmac` | `sha3` | KMAC256 |
-| `hkdf` | `hmac` | HKDF-SHA256 and HKDF-SHA384 |
+| `hmac-sha3` | `sha3` | HMAC-SHA3-224/256/384/512 |
+| `kmac` | `sha3` | KMAC128 and KMAC256 |
+| `hkdf` | `hmac` | HKDF-SHA256, HKDF-SHA384, and HKDF-SHA512 |
+| `poly1305` | -- | Standalone Poly1305 one-time MAC |
 | `pbkdf2` | `hmac` | PBKDF2-HMAC-SHA256 and PBKDF2-HMAC-SHA512 |
 | `phc-strings` | `alloc` | PHC string encode/decode support |
 | `argon2` | `blake2b`, `alloc` | Argon2i, Argon2d, Argon2id |
@@ -102,12 +104,17 @@ rscrypto = { version = "0.6.0", features = ["full", "portable-only"] }
 
 | Feature | Effect |
 |---|---|
-| `getrandom` | Enables `random()` / `try_random()` constructors via the `getrandom` crate, plus RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. ECDSA key generation, caller-blinded signing, ML-KEM key generation/encapsulation, and no-std RSA encryption can use caller-supplied byte-filling closures; deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
+| `getrandom` | Enables OS-RNG constructors such as `random()` / `try_random()`, `try_generate()` for Ed25519/X25519/ECDSA, `Poly1305OneTimeKey::try_generate()`, ML-KEM `try_generate_keypair()` / `try_encapsulate()`, AEAD random sealing helpers, RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. Caller-supplied byte-filling closures remain available for deterministic tests and constrained integrations; deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |
 | `diag` | Diagnostic introspection of dispatch decisions and selected benchmark-only component hooks. Requires `std`; hidden diagnostic symbols are not stable application API. |
 | `portable-only` | Makes runtime capability detection report no SIMD/ASM capabilities. See below. |
+
+Generation naming policy: keep existing `generate(...)`, `random()`, and
+`try_random()` compatibility names for the first release that exposes
+`try_generate()` / `try_generate_with(...)`. Decide on any actual deprecation
+only after that release.
 
 ## `portable-only`
 

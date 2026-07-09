@@ -18,6 +18,8 @@ include = [
   "/LICENSE-MIT",
   "/README.md",
   "/SECURITY.md",
+  "/THREAT_MODEL.md",
+  "/CONTRIBUTING.md",
   "/.config/target-matrix.json",
   "/assets/readme/perf.svg",
   "/benchmark_results/OVERVIEW.md",
@@ -94,9 +96,11 @@ xxh3 = []
 rapidhash = []
 
 hmac = ["sha2"]
+hmac-sha3 = ["sha3"]
 hkdf = ["hmac"]
 pbkdf2 = ["hmac"]
 kmac = ["sha3"]
+poly1305 = []
 ecdsa-p256 = ["hmac"]
 ecdsa-p384 = ["hmac"]
 ecdsa = ["ecdsa-p256", "ecdsa-p384"]
@@ -120,7 +124,7 @@ checksums = ["crc16", "crc24", "crc32", "crc64"]
 crypto-hashes = ["sha2", "sha3", "blake2b", "blake2s", "blake3", "ascon-hash"]
 fast-hashes = ["xxh3", "rapidhash"]
 hashes = ["crypto-hashes", "fast-hashes"]
-macs = ["hmac", "kmac"]
+macs = ["hmac", "hmac-sha3", "kmac", "poly1305"]
 kdfs = ["hkdf", "pbkdf2"]
 password-hashing = ["argon2", "scrypt", "phc-strings"]
 signatures = ["ecdsa", "ed25519", "rsa"]
@@ -234,6 +238,22 @@ required-features = ["checksums"]
 [[example]]
 name = "password_hashing"
 required-features = ["password-hashing", "getrandom"]
+
+[[example]]
+name = "aead_seal_open"
+required-features = ["alloc", "chacha20poly1305", "getrandom"]
+
+[[example]]
+name = "signatures"
+required-features = ["ed25519", "ecdsa-p256", "getrandom"]
+
+[[example]]
+name = "rsa_pss_verify"
+required-features = ["rsa"]
+
+[[example]]
+name = "mlkem_encapsulation"
+required-features = ["ml-kem", "getrandom"]
 
 [[bench]]
 name = "aead"

@@ -2,11 +2,12 @@
 
 use core::fmt;
 
-use super::hmac::{HmacSha256, HmacSha384, hmac_prefix_state};
+use super::hmac::{HmacSha256, HmacSha384, HmacSha512, hmac_prefix_state};
 use crate::{
   hashes::crypto::{
     sha256::{H0 as SHA256_H0, dispatch as sha256_dispatch, kernels::CompressBlocksFn as Sha256CompressBlocksFn},
-    sha384::{H0 as SHA384_H0, dispatch as sha384_dispatch, kernels::CompressBlocksFn as Sha512FamilyCompressBlocksFn},
+    sha384::{H0 as SHA384_H0, dispatch as sha384_dispatch, kernels::CompressBlocksFn as Sha384CompressBlocksFn},
+    sha512::{H0 as SHA512_H0, dispatch as sha512_dispatch, kernels::CompressBlocksFn as Sha512CompressBlocksFn},
   },
   traits::ct,
 };
@@ -18,6 +19,10 @@ const SHA256_BLOCK_SIZE: usize = 64;
 const SHA384_OUTPUT_SIZE: usize = 48;
 const SHA384_MAX_OUTPUT_SIZE: usize = 255 * SHA384_OUTPUT_SIZE;
 const SHA384_BLOCK_SIZE: usize = 128;
+
+const SHA512_OUTPUT_SIZE: usize = 64;
+const SHA512_MAX_OUTPUT_SIZE: usize = 255 * SHA512_OUTPUT_SIZE;
+const SHA512_BLOCK_SIZE: usize = 128;
 
 #[inline(always)]
 #[allow(clippy::indexing_slicing)]
@@ -42,6 +47,20 @@ fn write_u64x6_be(dst: &mut [u8], words: &[u64; 8]) {
   dst[24..32].copy_from_slice(&words[3].to_be_bytes());
   dst[32..40].copy_from_slice(&words[4].to_be_bytes());
   dst[40..48].copy_from_slice(&words[5].to_be_bytes());
+}
+
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
+  debug_assert!(dst.len() >= SHA512_OUTPUT_SIZE);
+  dst[0..8].copy_from_slice(&words[0].to_be_bytes());
+  dst[8..16].copy_from_slice(&words[1].to_be_bytes());
+  dst[16..24].copy_from_slice(&words[2].to_be_bytes());
+  dst[24..32].copy_from_slice(&words[3].to_be_bytes());
+  dst[32..40].copy_from_slice(&words[4].to_be_bytes());
+  dst[40..48].copy_from_slice(&words[5].to_be_bytes());
+  dst[48..56].copy_from_slice(&words[6].to_be_bytes());
+  dst[56..64].copy_from_slice(&words[7].to_be_bytes());
 }
 
 #[cfg(all(target_arch = "aarch64", target_os = "macos", not(miri)))]
@@ -341,7 +360,7 @@ pub struct HkdfSha384 {
   prk: [u8; SHA384_OUTPUT_SIZE],
   inner_init: [u64; 8],
   outer_init: [u64; 8],
-  compress: Sha512FamilyCompressBlocksFn,
+  compress: Sha384CompressBlocksFn,
 }
 
 impl fmt::Debug for HkdfSha384 {
@@ -497,7 +516,7 @@ impl HkdfSha384 {
   pub(crate) fn extract_with_compress_for_test(
     salt: &[u8],
     input_key_material: &[u8],
-    compress: Sha512FamilyCompressBlocksFn,
+    compress: Sha384CompressBlocksFn,
   ) -> Self {
     let zero_salt = [0u8; SHA384_OUTPUT_SIZE];
     let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
@@ -536,6 +555,216 @@ pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_
 }
 
 impl Drop for HkdfSha384 {
+  fn drop(&mut self) {
+    ct::zeroize(&mut self.prk);
+    for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
+/// HKDF-SHA512 pseudorandom key state.
+///
+/// `new()` and `extract()` perform HKDF-Extract and store the pseudorandom key
+/// for later `expand()` calls.
+#[derive(Clone)]
+pub struct HkdfSha512 {
+  prk: [u8; SHA512_OUTPUT_SIZE],
+  inner_init: [u64; 8],
+  outer_init: [u64; 8],
+  compress: Sha512CompressBlocksFn,
+}
+
+impl fmt::Debug for HkdfSha512 {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("HkdfSha512").finish_non_exhaustive()
+  }
+}
+
+impl HkdfSha512 {
+  /// HKDF-SHA512 pseudorandom key size in bytes.
+  pub const OUTPUT_SIZE: usize = SHA512_OUTPUT_SIZE;
+
+  /// Maximum RFC 5869 expand output size in bytes.
+  pub const MAX_OUTPUT_SIZE: usize = SHA512_MAX_OUTPUT_SIZE;
+
+  /// Perform HKDF-Extract with `salt` and `input_key_material`.
+  #[inline]
+  #[must_use]
+  pub fn new(salt: &[u8], input_key_material: &[u8]) -> Self {
+    Self::extract(salt, input_key_material)
+  }
+
+  /// Perform HKDF-Extract with `salt` and `input_key_material`.
+  #[must_use]
+  pub fn extract(salt: &[u8], input_key_material: &[u8]) -> Self {
+    let zero_salt = [0u8; SHA512_OUTPUT_SIZE];
+    let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
+    let prk = HmacSha512::mac(salt, input_key_material).to_bytes();
+
+    let compress = sha512_dispatch::compress_dispatch().select(0);
+
+    let mut key_block = [0u8; SHA512_BLOCK_SIZE];
+    key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&prk);
+
+    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = SHA512_H0;
+      compress(&mut inner_init, ipad);
+
+      let mut outer_init = SHA512_H0;
+      compress(&mut outer_init, opad);
+
+      (inner_init, outer_init)
+    });
+
+    Self {
+      prk,
+      inner_init,
+      outer_init,
+      compress,
+    }
+  }
+
+  /// Expand the stored pseudorandom key into `okm`.
+  #[inline]
+  #[allow(clippy::indexing_slicing)]
+  pub fn expand(&self, info: &[u8], okm: &mut [u8]) -> Result<(), HkdfOutputLengthError> {
+    if okm.len() > SHA512_MAX_OUTPUT_SIZE {
+      return Err(HkdfOutputLengthError::new());
+    }
+
+    if okm.is_empty() {
+      return Ok(());
+    }
+
+    let compress = self.compress;
+    let inner_init = self.inner_init;
+    let outer_init = self.outer_init;
+
+    let mut outer_block = [0u8; SHA512_BLOCK_SIZE];
+    outer_block[SHA512_OUTPUT_SIZE] = 0x80;
+    outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
+
+    let mut state = [0u64; 8];
+    let mut counter: u8 = 1;
+
+    let mut prev_tag = [0u8; SHA512_OUTPUT_SIZE];
+    let mut chunks = okm.chunks_mut(SHA512_OUTPUT_SIZE);
+    let Some(first) = chunks.next() else {
+      return Ok(());
+    };
+
+    expand_hmac_sha512_inner(compress, &inner_init, None, info, counter, &mut state, &mut outer_block);
+    expand_hmac_sha512_outer(compress, &outer_init, &mut state, &mut outer_block, &mut prev_tag);
+    first.copy_from_slice(&prev_tag[..first.len()]);
+    counter = counter.wrapping_add(1);
+
+    for chunk in chunks {
+      expand_hmac_sha512_inner(
+        compress,
+        &inner_init,
+        Some(&prev_tag),
+        info,
+        counter,
+        &mut state,
+        &mut outer_block,
+      );
+      expand_hmac_sha512_outer(compress, &outer_init, &mut state, &mut outer_block, &mut prev_tag);
+      chunk.copy_from_slice(&prev_tag[..chunk.len()]);
+      counter = counter.wrapping_add(1);
+    }
+
+    ct::zeroize_no_fence(&mut prev_tag);
+    ct::zeroize_no_fence(&mut outer_block);
+    for word in state.iter_mut() {
+      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
+      unsafe { core::ptr::write_volatile(word, 0) };
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+
+    Ok(())
+  }
+
+  /// Expand into a fixed-size array.
+  pub fn expand_array<const N: usize>(&self, info: &[u8]) -> Result<[u8; N], HkdfOutputLengthError> {
+    let mut out = [0u8; N];
+    self.expand(info, &mut out)?;
+    Ok(out)
+  }
+
+  /// Perform HKDF-Extract and HKDF-Expand in one shot.
+  #[inline]
+  pub fn derive(
+    salt: &[u8],
+    input_key_material: &[u8],
+    info: &[u8],
+    okm: &mut [u8],
+  ) -> Result<(), HkdfOutputLengthError> {
+    Self::new(salt, input_key_material).expand(info, okm)
+  }
+
+  /// Perform HKDF-Extract and HKDF-Expand into a fixed-size array.
+  #[inline]
+  pub fn derive_array<const N: usize>(
+    salt: &[u8],
+    input_key_material: &[u8],
+    info: &[u8],
+  ) -> Result<[u8; N], HkdfOutputLengthError> {
+    Self::new(salt, input_key_material).expand_array(info)
+  }
+
+  /// Return the extracted pseudorandom key bytes.
+  #[inline]
+  #[must_use]
+  pub fn prk(&self) -> &[u8; SHA512_OUTPUT_SIZE] {
+    &self.prk
+  }
+
+  #[cfg(any(test, feature = "diag"))]
+  pub(crate) fn extract_with_compress_for_test(
+    salt: &[u8],
+    input_key_material: &[u8],
+    compress: Sha512CompressBlocksFn,
+  ) -> Self {
+    let zero_salt = [0u8; SHA512_OUTPUT_SIZE];
+    let salt = if salt.is_empty() { &zero_salt[..] } else { salt };
+    let prk = HmacSha512::mac_with_compress_for_test(salt, input_key_material, compress);
+
+    let mut key_block = [0u8; SHA512_BLOCK_SIZE];
+    key_block[..SHA512_OUTPUT_SIZE].copy_from_slice(&prk);
+
+    let (inner_init, outer_init) = hmac_prefix_state(&mut key_block, |ipad, opad| {
+      let mut inner_init = SHA512_H0;
+      compress(&mut inner_init, ipad);
+
+      let mut outer_init = SHA512_H0;
+      compress(&mut outer_init, opad);
+
+      (inner_init, outer_init)
+    });
+
+    Self {
+      prk,
+      inner_init,
+      outer_init,
+      compress,
+    }
+  }
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_hkdf_sha512_derive_portable(input_key_material: &[u8; SHA512_OUTPUT_SIZE]) -> [u8; SHA512_OUTPUT_SIZE] {
+  let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
+  );
+  HkdfSha512::extract_with_compress_for_test(b"salt", input_key_material, compress)
+    .expand_array::<SHA512_OUTPUT_SIZE>(b"info")
+    .unwrap_or([0u8; SHA512_OUTPUT_SIZE])
+}
+
+impl Drop for HkdfSha512 {
   fn drop(&mut self) {
     ct::zeroize(&mut self.prk);
     for word in self.inner_init.iter_mut().chain(self.outer_init.iter_mut()) {
@@ -625,7 +854,7 @@ fn expand_hmac_sha256_outer(
 #[inline(always)]
 #[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha384_inner(
-  compress: Sha512FamilyCompressBlocksFn,
+  compress: Sha384CompressBlocksFn,
   inner_init: &[u64; 8],
   prev: Option<&[u8; SHA384_OUTPUT_SIZE]>,
   info: &[u8],
@@ -684,7 +913,7 @@ fn expand_hmac_sha384_inner(
 #[inline(always)]
 #[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha384_outer(
-  compress: Sha512FamilyCompressBlocksFn,
+  compress: Sha384CompressBlocksFn,
   outer_init: &[u64; 8],
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA384_BLOCK_SIZE],
@@ -694,6 +923,80 @@ fn expand_hmac_sha384_outer(
   compress(state, outer_block);
 
   write_u64x6_be(out, state);
+}
+
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn expand_hmac_sha512_inner(
+  compress: Sha512CompressBlocksFn,
+  inner_init: &[u64; 8],
+  prev: Option<&[u8; SHA512_OUTPUT_SIZE]>,
+  info: &[u8],
+  counter: u8,
+  state: &mut [u64; 8],
+  outer_block: &mut [u8; SHA512_BLOCK_SIZE],
+) {
+  *state = *inner_init;
+
+  let prev_len = if prev.is_some() { SHA512_OUTPUT_SIZE } else { 0 };
+  let msg_len = prev_len.strict_add(info.len()).strict_add(1);
+  let total_bytes = (SHA512_BLOCK_SIZE as u128).strict_add(msg_len as u128);
+
+  let mut block = [0u8; SHA512_BLOCK_SIZE];
+  let mut pos = 0usize;
+
+  if let Some(prev) = prev {
+    block[..SHA512_OUTPUT_SIZE].copy_from_slice(prev);
+    pos = SHA512_OUTPUT_SIZE;
+  }
+
+  let mut info_off = 0usize;
+  while info_off < info.len() {
+    let space = SHA512_BLOCK_SIZE.strict_sub(pos);
+    let remaining = info.len().strict_sub(info_off);
+    let take = if space < remaining { space } else { remaining };
+    block[pos..pos.strict_add(take)].copy_from_slice(&info[info_off..info_off.strict_add(take)]);
+    pos = pos.strict_add(take);
+    info_off = info_off.strict_add(take);
+    if pos == SHA512_BLOCK_SIZE {
+      compress(state, &block);
+      block = [0u8; SHA512_BLOCK_SIZE];
+      pos = 0;
+    }
+  }
+
+  block[pos] = counter;
+  pos = pos.strict_add(1);
+  if pos == SHA512_BLOCK_SIZE {
+    compress(state, &block);
+    block = [0u8; SHA512_BLOCK_SIZE];
+    pos = 0;
+  }
+
+  block[pos] = 0x80;
+  if pos.strict_add(1) > 112 {
+    compress(state, &block);
+    block = [0u8; SHA512_BLOCK_SIZE];
+  }
+  block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
+  compress(state, &block);
+
+  write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], state);
+}
+
+#[inline(always)]
+#[allow(clippy::indexing_slicing)]
+fn expand_hmac_sha512_outer(
+  compress: Sha512CompressBlocksFn,
+  outer_init: &[u64; 8],
+  state: &mut [u64; 8],
+  outer_block: &mut [u8; SHA512_BLOCK_SIZE],
+  out: &mut [u8; SHA512_OUTPUT_SIZE],
+) {
+  *state = *outer_init;
+  compress(state, outer_block);
+
+  write_u64x8_be(out, state);
 }
 
 #[cfg(test)]
@@ -712,10 +1015,15 @@ mod tests {
       ALL as SHA384_KERNELS, Sha384KernelId, compress_blocks_fn as sha384_compress_blocks_fn,
       required_caps as sha384_required_caps,
     },
+    sha512::kernels::{
+      ALL as SHA512_KERNELS, Sha512KernelId, compress_blocks_fn as sha512_compress_blocks_fn,
+      required_caps as sha512_required_caps,
+    },
   };
 
   type RustCryptoHkdfSha256 = RustCryptoHkdf<sha2::Sha256>;
   type RustCryptoHkdfSha384 = RustCryptoHkdf<sha2::Sha384>;
+  type RustCryptoHkdfSha512 = RustCryptoHkdf<sha2::Sha512>;
 
   fn pattern(len: usize, mul: u8, add: u8) -> Vec<u8> {
     (0..len)
@@ -846,6 +1154,64 @@ mod tests {
     }
   }
 
+  fn assert_hkdf_sha512_kernel(id: Sha512KernelId) {
+    let compress = sha512_compress_blocks_fn(id);
+    let cases = [
+      (0usize, 0usize, 0usize, 0usize),
+      (16, 32, 8, 64),
+      (64, 64, 64, 128),
+      (128, 96, 96, 256),
+      (192, 128, 160, 1024),
+    ];
+
+    for &(salt_len, ikm_len, info_len, out_len) in &cases {
+      let salt = pattern(salt_len, 17, 7);
+      let ikm = pattern(ikm_len, 23, 11);
+      let info = pattern(info_len, 37, 19);
+      let mut expected = vec![0u8; out_len];
+      RustCryptoHkdfSha512::new(Some(&salt), &ikm)
+        .expand(&info, &mut expected)
+        .unwrap();
+
+      let public = HkdfSha512::new(&salt, &ikm);
+      let forced = HkdfSha512::extract_with_compress_for_test(&salt, &ikm, compress);
+
+      let mut public_out = vec![0u8; out_len];
+      public.expand(&info, &mut public_out).unwrap();
+      assert_eq!(
+        public_out,
+        expected,
+        "hkdf-sha512 public mismatch kernel={} salt_len={} ikm_len={} info_len={} out_len={}",
+        id.as_str(),
+        salt_len,
+        ikm_len,
+        info_len,
+        out_len
+      );
+
+      let mut forced_out = vec![0u8; out_len];
+      forced.expand(&info, &mut forced_out).unwrap();
+      assert_eq!(
+        forced_out,
+        expected,
+        "hkdf-sha512 forced mismatch kernel={} salt_len={} ikm_len={} info_len={} out_len={}",
+        id.as_str(),
+        salt_len,
+        ikm_len,
+        info_len,
+        out_len
+      );
+      assert_eq!(
+        forced.prk(),
+        public.prk(),
+        "hkdf-sha512 prk mismatch kernel={} salt_len={} ikm_len={}",
+        id.as_str(),
+        salt_len,
+        ikm_len
+      );
+    }
+  }
+
   #[test]
   fn hkdf_sha256_forced_kernels_match_oracle() {
     let caps = crate::platform::caps();
@@ -862,6 +1228,16 @@ mod tests {
     for &id in SHA384_KERNELS {
       if caps.has(sha384_required_caps(id)) {
         assert_hkdf_sha384_kernel(id);
+      }
+    }
+  }
+
+  #[test]
+  fn hkdf_sha512_forced_kernels_match_oracle() {
+    let caps = crate::platform::caps();
+    for &id in SHA512_KERNELS {
+      if caps.has(sha512_required_caps(id)) {
+        assert_hkdf_sha512_kernel(id);
       }
     }
   }

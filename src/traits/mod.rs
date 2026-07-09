@@ -46,6 +46,7 @@ mod fast_hash;
 pub mod io;
 mod kem;
 mod mac;
+mod signature;
 mod xof;
 
 #[cfg(any(
@@ -64,4 +65,5 @@ pub use error::VerificationError;
 pub use fast_hash::FastHash;
 pub use kem::Kem;
 pub use mac::Mac;
+pub use signature::{TrySigner, TrySignerInto, Verifier};
 pub use xof::Xof;

@@ -14,7 +14,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["sha2"] }
 //! ```
 //!
 //! # Guides
@@ -22,7 +22,8 @@
 //! - Repository README: <https://github.com/loadingalias/rscrypto#readme>
 //! - Runnable examples: <https://github.com/loadingalias/rscrypto/tree/main/examples>
 //! - Additional docs: <https://github.com/loadingalias/rscrypto/tree/main/docs>
-//! - Security guidance: <https://github.com/loadingalias/rscrypto/blob/main/docs/security.md>
+//! - Security policy: <https://github.com/loadingalias/rscrypto/blob/main/SECURITY.md>
+//! - Threat model: <https://github.com/loadingalias/rscrypto/blob/main/THREAT_MODEL.md>
 //!
 //! # API Shape
 //!
@@ -30,7 +31,7 @@
 //! - Digests: `Type::digest(data)` or `new` / `update` / `finalize`.
 //! - XOFs: `Type::xof(data)` or `new` / `update` / `finalize_xof`.
 //! - MACs: `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)`.
-//! - AEADs: typed keys and nonces, with combined and detached APIs.
+//! - AEADs: typed keys and nonces, with combined, detached, and `alloc` Vec helpers.
 #![cfg_attr(
   feature = "sha2",
   doc = r#"
@@ -294,8 +295,10 @@ mod hex;
 pub mod aead;
 #[cfg(any(
   feature = "hmac",
+  feature = "hmac-sha3",
   feature = "hkdf",
   feature = "kmac",
+  feature = "poly1305",
   feature = "ecdsa-p256",
   feature = "ecdsa-p384",
   feature = "ed25519",
@@ -381,12 +384,8 @@ pub use aead::{AsconAead128, AsconAead128Key, AsconAead128Tag};
 pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 #[cfg(feature = "xchacha20poly1305")]
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
-#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
-pub use auth::EcdsaError;
 #[cfg(feature = "hkdf")]
 pub use auth::HkdfOutputLengthError;
-#[cfg(feature = "kmac")]
-pub use auth::Kmac256;
 #[cfg(feature = "phc-strings")]
 pub use auth::PhcError;
 #[cfg(all(feature = "diag", feature = "ed25519"))]
@@ -408,6 +407,8 @@ pub use auth::{
   diag_ed25519_verify_portable_double_scalar_digest, diag_ed25519_verify_public_decode_digest,
   diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
 };
+#[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
+pub use auth::{EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
 pub use auth::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
@@ -415,9 +416,16 @@ pub use auth::{EcdsaP384Keypair, EcdsaP384PublicKey, EcdsaP384SecretKey, EcdsaP3
 #[cfg(feature = "ed25519")]
 pub use auth::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
-pub use auth::{HkdfSha256, HkdfSha384};
+pub use auth::{HkdfSha256, HkdfSha384, HkdfSha512};
+#[cfg(feature = "hmac-sha3")]
+pub use auth::{
+  HmacSha3_224, HmacSha3_224Tag, HmacSha3_256, HmacSha3_256Tag, HmacSha3_384, HmacSha3_384Tag, HmacSha3_512,
+  HmacSha3_512Tag,
+};
 #[cfg(feature = "hmac")]
 pub use auth::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
+#[cfg(feature = "kmac")]
+pub use auth::{Kmac128, Kmac256};
 #[cfg(feature = "ml-kem")]
 pub use auth::{
   MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,
@@ -428,12 +436,15 @@ pub use auth::{
 };
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
+#[cfg(feature = "poly1305")]
+pub use auth::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 pub use auth::{
   RsaEncryptionError, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile,
   RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
   RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
-  RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+  RsaSignatureProfile, RsaSignatureSigner, RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey,
+  RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
 pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
@@ -459,7 +470,7 @@ pub use auth::{
   diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
 };
 #[cfg(all(feature = "diag", feature = "hkdf"))]
-pub use auth::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
+pub use auth::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable, diag_hkdf_sha512_derive_portable};
 #[cfg(all(feature = "diag", feature = "hmac"))]
 pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
 #[cfg(all(
@@ -518,8 +529,8 @@ pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sParams};
 pub use hashes::crypto::{Blake3, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
 pub use hashes::crypto::{
-  Cshake256, Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256,
-  Shake256XofReader,
+  Cshake128, Cshake128XofReader, Cshake256, Cshake256XofReader, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128,
+  Shake128XofReader, Shake256, Shake256XofReader,
 };
 #[cfg(feature = "sha2")]
 pub use hashes::crypto::{Sha224, Sha256, Sha384, Sha512, Sha512_256};
@@ -557,7 +568,9 @@ pub use secret::SecretBytes;
   feature = "ascon-aead"
 ))]
 pub use traits::Aead;
-pub use traits::{Checksum, ChecksumCombine, ConstantTimeEq, Kem, Mac, VerificationError, ct};
+pub use traits::{
+  Checksum, ChecksumCombine, ConstantTimeEq, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, ct,
+};
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
@@ -595,7 +608,8 @@ pub mod prelude {
   ))]
   pub use crate::traits::Aead;
   pub use crate::traits::{
-    Checksum, ChecksumCombine, ConstantTimeEq, Digest, FastHash, Kem, Mac, VerificationError, Xof,
+    Checksum, ChecksumCombine, ConstantTimeEq, Digest, FastHash, Kem, Mac, TrySigner, TrySignerInto, VerificationError,
+    Verifier, Xof,
   };
 }
 
@@ -941,7 +955,9 @@ mod send_sync_assertions {
     assert_send_sync::<Shake256>();
     assert_send_sync::<Shake128XofReader>();
     assert_send_sync::<Shake256XofReader>();
+    assert_send_sync::<Cshake128>();
     assert_send_sync::<Cshake256>();
+    assert_send_sync::<Cshake128XofReader>();
     assert_send_sync::<Cshake256XofReader>();
 
     // ASCON
@@ -1075,7 +1091,9 @@ mod send_sync_assertions {
     assert_clone::<Shake256>();
     assert_clone::<Shake128XofReader>();
     assert_clone::<Shake256XofReader>();
+    assert_clone::<Cshake128>();
     assert_clone::<Cshake256>();
+    assert_clone::<Cshake128XofReader>();
     assert_clone::<Cshake256XofReader>();
     assert_clone::<AsconHash256>();
     assert_clone::<AsconXof>();
@@ -1104,7 +1122,9 @@ mod send_sync_assertions {
     assert_debug::<Shake256>();
     assert_debug::<Shake128XofReader>();
     assert_debug::<Shake256XofReader>();
+    assert_debug::<Cshake128>();
     assert_debug::<Cshake256>();
+    assert_debug::<Cshake128XofReader>();
     assert_debug::<Cshake256XofReader>();
     assert_debug::<AsconHash256>();
     assert_debug::<AsconXof>();

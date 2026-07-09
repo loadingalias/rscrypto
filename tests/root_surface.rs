@@ -2,9 +2,7 @@
 
 #[cfg(feature = "aead")]
 use rscrypto::Aead;
-#[cfg(feature = "kmac")]
-use rscrypto::Kmac256;
-#[cfg(any(feature = "hmac", feature = "kmac"))]
+#[cfg(any(feature = "hmac", feature = "hmac-sha3", feature = "kmac"))]
 use rscrypto::Mac;
 #[cfg(all(feature = "aead", feature = "diag"))]
 use rscrypto::aead::introspect::{
@@ -39,18 +37,26 @@ use rscrypto::hashes::introspect::{
 use rscrypto::hashes::{DigestReader, DigestWriter};
 #[cfg(feature = "hashes")]
 use rscrypto::{
-  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake256,
-  Cshake256XofReader, Digest, FastHash, RapidHash, RapidHash128, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224,
-  Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128XofReader, Shake256, Shake256XofReader, Xof, Xxh3, Xxh3_128,
+  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake128,
+  Cshake128XofReader, Cshake256, Cshake256XofReader, Digest, FastHash, RapidHash, RapidHash128, Sha3_224, Sha3_256,
+  Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128XofReader, Shake256,
+  Shake256XofReader, Xof, Xxh3, Xxh3_128,
 };
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 #[cfg(feature = "ed25519")]
 use rscrypto::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
-use rscrypto::{HkdfSha256, HkdfSha384};
+use rscrypto::{HkdfSha256, HkdfSha384, HkdfSha512};
+#[cfg(feature = "hmac-sha3")]
+use rscrypto::{
+  HmacSha3_224, HmacSha3_224Tag, HmacSha3_256, HmacSha3_256Tag, HmacSha3_384, HmacSha3_384Tag, HmacSha3_512,
+  HmacSha3_512Tag,
+};
 #[cfg(feature = "hmac")]
 use rscrypto::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
+#[cfg(feature = "kmac")]
+use rscrypto::{Kmac128, Kmac256};
 #[cfg(feature = "ml-kem")]
 use rscrypto::{
   MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,
@@ -59,6 +65,8 @@ use rscrypto::{
   MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret,
 };
+#[cfg(feature = "poly1305")]
+use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 use rscrypto::{
   RsaEncryptionError, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
@@ -224,6 +232,27 @@ fn root_surface_mac_exports_compile() {
 }
 
 #[test]
+#[cfg(feature = "hmac-sha3")]
+fn root_surface_hmac_sha3_exports_compile() {
+  let key = b"root-surface-key";
+  let data = b"root-surface-data";
+
+  let tag224 = HmacSha3_224::mac(key, data);
+  let tag256 = HmacSha3_256::mac(key, data);
+  let tag384 = HmacSha3_384::mac(key, data);
+  let tag512 = HmacSha3_512::mac(key, data);
+  let _ = HmacSha3_224Tag::from_bytes(tag224.to_bytes());
+  let _ = HmacSha3_256Tag::from_bytes(tag256.to_bytes());
+  let _ = HmacSha3_384Tag::from_bytes(tag384.to_bytes());
+  let _ = HmacSha3_512Tag::from_bytes(tag512.to_bytes());
+
+  assert!(HmacSha3_224::verify_tag(key, data, &tag224).is_ok());
+  assert!(HmacSha3_256::verify_tag(key, data, &tag256).is_ok());
+  assert!(HmacSha3_384::verify_tag(key, data, &tag384).is_ok());
+  assert!(HmacSha3_512::verify_tag(key, data, &tag512).is_ok());
+}
+
+#[test]
 #[cfg(feature = "hkdf")]
 fn root_surface_kdf_exports_compile() {
   let key = b"root-surface-key";
@@ -237,6 +266,11 @@ fn root_surface_kdf_exports_compile() {
   let hkdf384 = HkdfSha384::new(b"salt", key);
   hkdf384.expand(b"info", &mut out384).unwrap();
   assert_eq!(out384, HkdfSha384::derive_array::<48>(b"salt", key, b"info").unwrap());
+
+  let mut out512 = [0u8; 64];
+  let hkdf512 = HkdfSha512::new(b"salt", key);
+  hkdf512.expand(b"info", &mut out512).unwrap();
+  assert_eq!(out512, HkdfSha512::derive_array::<64>(b"salt", key, b"info").unwrap());
   let _ = HkdfOutputLengthError::new();
 }
 
@@ -245,11 +279,28 @@ fn root_surface_kdf_exports_compile() {
 fn root_surface_kmac_exports_compile() {
   let key = b"root-surface-key";
   let data = b"root-surface-data";
+  let mut out128 = [0u8; 32];
+  let mut kmac128 = Kmac128::new(key, b"svc=v1");
+  kmac128.update(data);
+  kmac128.finalize_into(&mut out128);
+  assert!(Kmac128::verify_tag(key, b"svc=v1", data, &out128).is_ok());
+
   let mut out = [0u8; 32];
   let mut kmac = Kmac256::new(key, b"svc=v1");
   kmac.update(data);
   kmac.finalize_into(&mut out);
   assert!(Kmac256::verify_tag(key, b"svc=v1", data, &out).is_ok());
+}
+
+#[test]
+#[cfg(feature = "poly1305")]
+fn root_surface_poly1305_exports_compile() {
+  let key = Poly1305OneTimeKey::from_bytes([0x33; Poly1305OneTimeKey::LENGTH]);
+  let tag = Poly1305::authenticate_once(key, b"root-surface-poly1305");
+  let _ = Poly1305Tag::from_bytes(tag.to_bytes());
+
+  let key = Poly1305OneTimeKey::from_bytes([0x33; Poly1305OneTimeKey::LENGTH]);
+  assert!(Poly1305::verify_once(key, b"root-surface-poly1305", &tag).is_ok());
 }
 
 #[test]
@@ -816,6 +867,9 @@ fn root_surface_hash_exports_compile() {
   let mut cshake = Cshake256::xof(b"", b"ctx=v1", data);
   cshake.squeeze(&mut out);
 
+  let mut cshake128 = Cshake128::xof(b"", b"ctx=v1", data);
+  cshake128.squeeze(&mut out);
+  let _: Option<Cshake128XofReader> = None;
   let mut cxof = AsconCxof128::xof(b"ctx=v1", data).unwrap();
   cxof.squeeze(&mut out);
 
@@ -888,6 +942,7 @@ fn advanced_hash_modules_compile() {
   assert_hash_kernel_introspect::<Sha3_512>();
   assert_hash_kernel_introspect::<Shake128>();
   assert_hash_kernel_introspect::<Shake256>();
+  assert_hash_kernel_introspect::<Cshake128>();
   assert_hash_kernel_introspect::<Cshake256>();
   assert_hash_kernel_introspect::<AsconCxof128>();
   assert_hash_kernel_introspect::<Blake3>();

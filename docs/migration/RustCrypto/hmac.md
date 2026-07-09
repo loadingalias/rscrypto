@@ -1,15 +1,15 @@
 # Migration: `hmac` (RustCrypto) → `rscrypto`
 
-> Replace `Hmac::<Sha256>` (generic over digest) with `HmacSha256` (named per hash). Key construction is now infallible, `finalize()` borrows, and the one-shot helper `HmacSha256::mac(key, data)` returns a typed tag with constant-time equality.
+> Replace `Hmac::<Sha256>` / `Hmac::<Sha3_256>` (generic over digest) with named rscrypto types such as `HmacSha256` and `HmacSha3_256`. Key construction is infallible, `finalize()` borrows, and one-shot helpers return typed tags with constant-time equality.
 
-Verified against `hmac = "0.13.0"` and the `rscrypto` 0.5.0 line.
-Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, the HMAC proptests, and `tests/hmac_wycheproof.rs`.
+Verified against `hmac = "0.13.0"` and the `rscrypto` 0.6.4 line.
+Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, `tests/hmac_sha3_vectors.rs`, the HMAC proptests, and `tests/hmac_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.5.0) |
+| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.6.4) |
 |---|---|---|
-| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.5.0", features = ["hmac"] }` |
+| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.6.4", features = ["hmac"] }` |
 | Import | `use hmac::{Hmac, Mac, KeyInit}; use sha2::Sha256;` | `use rscrypto::{HmacSha256, Mac};` |
 | Call | `Hmac::<Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes()` | `HmacSha256::mac(key, data)` |
 
@@ -25,10 +25,10 @@ sha2 = "0.11"            # required as the generic parameter
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.5.0", features = ["hmac"] }
+rscrypto = { version = "0.6.4", features = ["hmac"] }
 ```
 
-The `hmac` feature implies `sha2`: no second dep to manage.
+The `hmac` feature implies `sha2`: no second dep to manage for SHA-2 HMAC. Use `features = ["hmac-sha3"]` for HMAC-SHA3, or `features = ["macs"]` when you want both SHA-2 and SHA-3 HMAC families.
 
 ## Algorithm map
 
@@ -37,7 +37,11 @@ The `hmac` feature implies `sha2`: no second dep to manage.
 | `Hmac<Sha256>` | `HmacSha256` | `HmacSha256Tag` |
 | `Hmac<Sha384>` | `HmacSha384` | `HmacSha384Tag` |
 | `Hmac<Sha512>` | `HmacSha512` | `HmacSha512Tag` |
-| `Hmac<Sha224>` / `Hmac<Sha512_224>` / `Hmac<Sha512_256>` / `Hmac<Sha3_*>` | not currently mapped: file an issue |  |
+| `Hmac<Sha3_224>` | `HmacSha3_224` | `HmacSha3_224Tag` |
+| `Hmac<Sha3_256>` | `HmacSha3_256` | `HmacSha3_256Tag` |
+| `Hmac<Sha3_384>` | `HmacSha3_384` | `HmacSha3_384Tag` |
+| `Hmac<Sha3_512>` | `HmacSha3_512` | `HmacSha3_512Tag` |
+| `Hmac<Sha224>` / `Hmac<Sha512_224>` / `Hmac<Sha512_256>` | not currently mapped: file an issue |  |
 
 ## API patterns
 
@@ -102,14 +106,14 @@ let expected_tag = HmacSha256Tag::from_bytes(expected_tag_bytes);
 HmacSha256::verify_tag(key, data, &expected_tag)?;   // Result<(), VerificationError>
 ```
 
-Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verify(&expected_tag)?;`. Tags are typed (`HmacSha256Tag`, `HmacSha384Tag`, `HmacSha512Tag`), and `==` on those typed tags is constant-time. Prefer `verify` / `verify_tag` for authentication decisions; use `as_bytes()` / `to_bytes()` only at protocol serialization boundaries.
+Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verify(&expected_tag)?;`. Tags are typed (`HmacSha256Tag`, `HmacSha384Tag`, `HmacSha512Tag`, and the `HmacSha3_*Tag` family), and `==` on those typed tags is constant-time. Prefer `verify` / `verify_tag` for authentication decisions; use `as_bytes()` / `to_bytes()` only at protocol serialization boundaries.
 
 ## Notes
 
-- **Generic parameter gone.** `Hmac<D>` becomes one of the named types (`HmacSha256`, `HmacSha384`, `HmacSha512`). Replace any `where D: Digest + BlockSizeUser` bound with the concrete rscrypto type. If you genuinely need to be generic over the underlying hash, file an issue.
+- **Generic parameter gone.** `Hmac<D>` becomes one of the named types (`HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha3_224`, `HmacSha3_256`, `HmacSha3_384`, `HmacSha3_512`). Replace any `where D: Digest + BlockSizeUser` bound with the concrete rscrypto type. If you genuinely need to be generic over the underlying hash, file an issue.
 - **`KeyInit` import not needed.** RustCrypto routes key construction through `KeyInit::new_from_slice`. rscrypto's `HmacSha256::new(&[u8])` is inherent: no extra trait import.
 - **`finalize` consumes vs. borrows.** Same pattern as `sha2` / `sha3` migrations, except HMAC returns a typed tag rather than a raw byte array.
 - **`Mac::chain_update` builder pattern.** RustCrypto's `chain_update(data) -> Self` lets you write `mac.chain_update(a).chain_update(b).finalize()`. rscrypto does not currently expose the chained variant; use `.update(a); .update(b);` then `.finalize()`. Same number of statements, no `Self` returns to thread.
-- **Long keys are pre-hashed (RFC 2104).** Both crates pre-hash any key longer than the underlying hash's block size (64 bytes for SHA-256/SHA-384, 128 bytes for SHA-512). Outputs are byte-identical regardless of key length.
+- **Long keys are pre-hashed (RFC 2104).** Both crates pre-hash any key longer than the underlying hash's block size (64 bytes for SHA-256, 128 bytes for SHA-384/SHA-512, and SHA-3 rates of 144/136/104/72 bytes for SHA3-224/256/384/512). Outputs are byte-identical regardless of key length.
 - **`MacError` → `VerificationError`.** RustCrypto's `MacError` is opaque (no detail). rscrypto's `VerificationError` is also opaque: both are designed not to leak timing information through error variants. The names differ; the contract is the same.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `mac_to_vec` / `finalize_to_vec` helpers are gated on `alloc`; the core fixed-array API works in pure `no_std`.

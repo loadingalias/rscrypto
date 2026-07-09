@@ -33,8 +33,8 @@ claims.
 |---|---|---|
 | AES-GCM AEAD | `Aes128Gcm`, `Aes256Gcm` (`aes-gcm`) follow the SP 800-38D GCM shape. | Key lifecycle, nonce lifecycle, invocation limits, protocol binding, and allowed-use policy. |
 | SHA-2 / SHA-3 / SHAKE | `Sha224`, `Sha256`, `Sha384`, `Sha512`, `Sha512_256`, `Sha3_*`, `Shake128`, `Shake256`. | Algorithm selection, message/domain separation, and any protocol-specific hash profile. |
-| KMAC / cSHAKE | `Kmac256`, `Cshake256`. | Customization strings, key management, and protocol profile. |
-| HMAC / HKDF / PBKDF2 | `HmacSha*`, `HkdfSha256`, `HkdfSha384`, `Pbkdf2Sha256`, `Pbkdf2Sha512`. | Key separation, salt/IKM policy, iteration counts, output lengths, and password policy. |
+| KMAC / cSHAKE | `Kmac128`, `Kmac256`, `Cshake128`, `Cshake256`. | Customization strings, key management, and protocol profile. |
+| HMAC / HKDF / PBKDF2 | `HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha3_*`, `HkdfSha256`, `HkdfSha384`, `HkdfSha512`, `Pbkdf2Sha256`, `Pbkdf2Sha512`. | Key separation, salt/IKM policy, iteration counts, output lengths, and password policy. |
 | ECDSA | P-256/SHA-256 and P-384/SHA-384 signing and verification (`ecdsa-p256`, `ecdsa-p384`, `ecdsa`). | Key generation policy, signature format, protocol profile, and acceptance criteria. |
 | RSA | RSA-PSS, RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, DER import/export, and `RsaPrivateKey::generate` under the crate's FIPS 186-5 Appendix A.1.3 probable-prime contract. | Entropy source, key policy, protocol profile, padding choice, blinding policy, and module-level validation. |
 | ML-KEM | `MlKem512`, `MlKem768`, `MlKem1024` expose the FIPS 203 parameter sets with typed keys, ciphertexts, shared secrets, prepared-key paths, ACVP vectors, and `fips203` differential tests. | Entropy source, key establishment protocol, hybrid/PQ migration policy, and validation boundary. |
@@ -52,6 +52,7 @@ above unless your own compliance target explicitly allows them:
 |---|---|
 | Misuse-resistant or non-NIST AEADs | `Aes128GcmSiv`, `Aes256GcmSiv`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, `Aegis256` |
 | Other hashes / XOFs | `Blake*`, `Blake3`, `Ascon*`, `Xxh3`, `RapidHash` |
+| Other MACs | Standalone `Poly1305` |
 | Other public-key primitives | `Ed25519*`, `X25519*` |
 | Password hashing outside SP 800-132 | `Argon2*`, `Scrypt` |
 | Checksums and fast hashes | `Crc*`, `Xxh3`, `RapidHash` |

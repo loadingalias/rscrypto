@@ -46,39 +46,45 @@
 //!
 //! ```toml
 //! [dependencies]
-//! # HMAC + KMAC only
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["macs"] }
+//! # MAC bundle: HMAC-SHA-2/SHA-3, KMAC128/256, and standalone Poly1305
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["macs"] }
 //!
 //! # HKDF only
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["hkdf"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["hkdf"] }
 //!
 //! # Ed25519 only
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["ed25519"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["ed25519"] }
 //!
 //! # ECDSA P-256/P-384 signing and verification
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["ecdsa"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["ecdsa"] }
 //!
 //! # RSA
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["rsa"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["rsa"] }
 //!
 //! # Signature primitives
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["signatures"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["signatures"] }
 //!
 //! # X25519 only
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["key-exchange"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["key-exchange"] }
 //!
 //! # Everything in auth/key-derivation
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["auth"] }
+//! rscrypto = { version = "0.6.4", default-features = false, features = ["auth"] }
 //! ```
 //!
 //! # API Conventions
 //!
-//! - MACs use `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)` for one-shot helpers,
-//!   plus `new` / `update` / `finalize` / `reset` for streaming.
+//! - Fixed-output MACs use `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)` for
+//!   one-shot helpers, plus `new` / `update` / `finalize` / `reset` for streaming.
 //! - KMAC is variable-output, so the streaming path uses `finalize_into`.
+//! - Standalone Poly1305 consumes a `Poly1305OneTimeKey`; it intentionally does not implement the
+//!   reusable-key `Mac` trait.
 //! - HKDF uses `new(salt, ikm)` for extract state, then `expand` / `expand_array`; one-shot helpers
 //!   are `derive` / `derive_array`.
 //! - ML-KEM uses FIPS 203 names: encapsulation keys are public, decapsulation keys are secret.
+//! - Key generation uses `try_generate_with(fill)` for caller-owned entropy and `try_generate()` /
+//!   `try_generate_keypair()` when `getrandom` is enabled.
+//! - Native generic signing uses `TrySigner`, `TrySignerInto`, and `Verifier`; RSA generic
+//!   signing/verifying goes through profile-bound wrappers.
 //! - Public values use typed `from_bytes` / `to_bytes` / `as_bytes` wrappers.
 //! - Secret values use typed `from_bytes` / `as_bytes` wrappers and require explicit
 //!   `expose_secret()` opt-in for owned extraction.
@@ -97,10 +103,12 @@
 //! - `ecdsa` - ECDSA P-256/SHA-256 and P-384/SHA-384 signing and verification.
 //! - `ed25519` - Ed25519 key and signature types.
 //! - `hmac` - HMAC-based authentication.
+//! - `hmac_sha3` - HMAC-SHA3 authentication.
 //! - `hkdf` - HKDF extract-then-expand key derivation.
-//! - `kmac` - KMAC256 variable-output MAC.
+//! - `kmac` - KMAC128/KMAC256 variable-output MACs.
 //! - `mlkem` - ML-KEM typed key, ciphertext, and shared-secret foundations.
 //! - `phc` - PHC string-format codec shared by password hashers.
+//! - `poly1305` - Standalone Poly1305 one-time authenticator.
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
 //!   RSAES-PKCS1-v1_5.
 //! - `scrypt` - scrypt password hashing (RFC 7914).
@@ -118,6 +126,8 @@ pub mod ed25519;
 pub mod hkdf;
 #[cfg(feature = "hmac")]
 pub mod hmac;
+#[cfg(feature = "hmac-sha3")]
+pub mod hmac_sha3;
 #[cfg(feature = "kmac")]
 pub mod kmac;
 #[cfg(feature = "ml-kem")]
@@ -126,6 +136,8 @@ pub mod mlkem;
 pub mod pbkdf2;
 #[cfg(feature = "phc-strings")]
 pub mod phc;
+#[cfg(feature = "poly1305")]
+pub mod poly1305;
 #[cfg(feature = "rsa")]
 pub mod rsa;
 #[cfg(feature = "scrypt")]
@@ -142,7 +154,7 @@ pub use curve25519_edwards::{
   diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
 };
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
-pub use ecdsa::EcdsaError;
+pub use ecdsa::{EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
 pub use ecdsa::{EcdsaP256Keypair, EcdsaP256PublicKey, EcdsaP256SecretKey, EcdsaP256Signature};
 #[cfg(feature = "ecdsa-p384")]
@@ -180,15 +192,20 @@ pub use ed25519::{
 #[cfg(feature = "ed25519")]
 pub use ed25519::{Ed25519Keypair, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature};
 #[cfg(feature = "hkdf")]
-pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384};
+pub use hkdf::{HkdfOutputLengthError, HkdfSha256, HkdfSha384, HkdfSha512};
 #[cfg(all(feature = "diag", feature = "hkdf"))]
-pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable};
+pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable, diag_hkdf_sha512_derive_portable};
 #[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(all(feature = "diag", feature = "hmac"))]
 pub use hmac::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
+#[cfg(feature = "hmac-sha3")]
+pub use hmac_sha3::{
+  HmacSha3_224, HmacSha3_224Tag, HmacSha3_256, HmacSha3_256Tag, HmacSha3_384, HmacSha3_384Tag, HmacSha3_512,
+  HmacSha3_512Tag,
+};
 #[cfg(feature = "kmac")]
-pub use kmac::Kmac256;
+pub use kmac::{Kmac128, Kmac256};
 #[cfg(feature = "ml-kem")]
 pub use mlkem::{
   MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512PreparedDecapsulationKey,
@@ -237,12 +254,15 @@ pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2Ve
 pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
 #[cfg(feature = "phc-strings")]
 pub use phc::PhcError;
+#[cfg(feature = "poly1305")]
+pub use poly1305::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 pub use rsa::{
   RsaEncryptionError, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile,
   RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
   RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
-  RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+  RsaSignatureProfile, RsaSignatureSigner, RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey,
+  RsaX509PublicKeyAlgorithm,
 };
 #[cfg(all(feature = "rsa", feature = "diag"))]
 pub use rsa::{

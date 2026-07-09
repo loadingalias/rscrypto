@@ -181,7 +181,40 @@ impl fmt::Debug for Ed25519SecretKey {
 }
 
 impl Ed25519SecretKey {
+  /// Try to construct a secret key by filling bytes from the provided closure.
+  ///
+  /// The closure may be called exactly once and must completely fill the
+  /// buffer or return an error. Any partially filled buffer is cleared before
+  /// returning an error.
+  #[inline]
+  pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
+    let mut bytes = [0u8; Self::LENGTH];
+    match fill(&mut bytes) {
+      Ok(()) => Ok(Self(bytes)),
+      Err(err) => {
+        ct::zeroize(&mut bytes);
+        Err(err)
+      }
+    }
+  }
+
+  /// Try to generate a secret key from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns a getrandom error if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, getrandom::Error> {
+    Self::try_generate_with(getrandom::fill)
+  }
+
   /// Construct a secret key by filling bytes from the provided closure.
+  ///
+  /// Compatibility name for caller-filled generation. Prefer
+  /// [`Self::try_generate_with`] when the entropy source can fail; this method
+  /// remains supported until the newer name has shipped for one release.
   ///
   /// ```rust
   /// # use rscrypto::Ed25519SecretKey;
@@ -363,6 +396,23 @@ impl_serde_bytes!(Ed25519Signature);
 
 impl_ct_eq!(Ed25519Signature);
 
+impl crate::traits::TrySigner for Ed25519SecretKey {
+  type Signature = Ed25519Signature;
+  type Error = core::convert::Infallible;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    Ok(self.sign(message))
+  }
+}
+
+impl crate::traits::Verifier<Ed25519Signature> for Ed25519PublicKey {
+  #[inline]
+  fn verify(&self, message: &[u8], signature: &Ed25519Signature) -> Result<(), VerificationError> {
+    Ed25519PublicKey::verify(self, message, signature)
+  }
+}
+
 /// Ed25519 keypair with typed secret and public halves.
 ///
 /// # Examples
@@ -404,6 +454,24 @@ impl PartialEq for Ed25519Keypair {
 impl Eq for Ed25519Keypair {}
 
 impl Ed25519Keypair {
+  /// Try to generate a keypair by filling secret-key bytes from the provided closure.
+  #[inline]
+  pub fn try_generate_with<E>(fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
+    Ed25519SecretKey::try_generate_with(fill).map(Self::from_secret_key)
+  }
+
+  /// Try to generate a keypair from the platform entropy source.
+  ///
+  /// # Errors
+  ///
+  /// Returns a getrandom error if the platform entropy source is unavailable.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_generate() -> Result<Self, getrandom::Error> {
+    Ed25519SecretKey::try_generate().map(Self::from_secret_key)
+  }
+
   /// Derive a keypair from a secret key.
   #[must_use]
   pub fn from_secret_key(secret: Ed25519SecretKey) -> Self {
@@ -432,6 +500,16 @@ impl Ed25519Keypair {
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
     sign_with_expanded(&self.expanded, &self.public, message)
+  }
+}
+
+impl crate::traits::TrySigner for Ed25519Keypair {
+  type Signature = Ed25519Signature;
+  type Error = core::convert::Infallible;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    Ok(self.sign(message))
   }
 }
 

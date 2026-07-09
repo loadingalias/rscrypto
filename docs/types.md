@@ -26,6 +26,14 @@ Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
 `ChecksumCombine`, `ConstantTimeEq`, `Digest`, `FastHash`, `Kem`, `Mac`,
 `VerificationError`, and `Xof`.
 
+## Native API Conventions
+
+- Prefer caller-provided output buffers and scratch buffers when both forms exist.
+- Use `alloc` helpers such as `*_to_vec` only when an owned allocation is the right boundary.
+- Enable `getrandom` for OS-backed one-liners; caller-supplied entropy remains the base path.
+- Bind RSA generic signing and verification through `RsaPrivateKey::signer(profile)` and
+  `RsaPublicKey::verifier(profile)` so the padding and hash policy are explicit.
+
 ## Checksums
 
 Features: `checksums` or `crc16` / `crc24` / `crc32` / `crc64`.
@@ -55,14 +63,14 @@ Features: `crypto-hashes` or `sha2` / `sha3` / `blake2b` / `blake2s` / `blake3` 
 | `Sha224` / `Sha256` / `Sha384` / `Sha512` / `Sha512_256` | 28-64B | FIPS 180-4 |
 | `Sha3_224` / `Sha3_256` / `Sha3_384` / `Sha3_512` | 28-64B | FIPS 202 |
 | `Shake128` / `Shake256` | XOF | FIPS 202 |
-| `Cshake256` | XOF | SP 800-185 |
+| `Cshake128` / `Cshake256` | XOF | SP 800-185 |
 | `Blake2b`, `Blake2b256`, `Blake2b512`, `Blake2bParams` | 1-64B / 32B / 64B | RFC 7693 |
 | `Blake2s128`, `Blake2s256`, `Blake2sParams` | 16B / 32B | RFC 7693 |
 | `Blake3`, `Blake3KeyedHash` | 32B / XOF | BLAKE3 spec |
 | `AsconHash256` / `AsconXof` / `AsconCxof128` | 32B / XOF | NIST SP 800-232 |
 
 XOF readers: `Shake128XofReader`, `Shake256XofReader`,
-`Cshake256XofReader`, `Blake3XofReader`, `AsconXofReader`, and
+`Cshake128XofReader`, `Cshake256XofReader`, `Blake3XofReader`, `AsconXofReader`, and
 `AsconCxof128Reader`.
 
 Aliases: `hashes::crypto::AsconXof128` and `hashes::crypto::AsconXof128Reader`.
@@ -85,13 +93,15 @@ Aliases: `hashes::fast::Xxh3_64` and `hashes::fast::RapidHash64`.
 
 ## MACs & KDFs
 
-Features: `macs` / `kdfs` or `hmac` / `hkdf` / `pbkdf2` / `kmac`.
+Features: `macs` / `kdfs` or `hmac` / `hmac-sha3` / `hkdf` / `pbkdf2` / `kmac` / `poly1305`.
 
 | Type | Tag/Output | Standard |
 |------|------------|----------|
 | `HmacSha256` / `HmacSha384` / `HmacSha512`; `HmacSha256Tag` / `HmacSha384Tag` / `HmacSha512Tag` | 32-64B | RFC 2104 |
-| `Kmac256` | variable | SP 800-185 |
-| `HkdfSha256` / `HkdfSha384` | 32-48B PRK | RFC 5869 |
+| `HmacSha3_224` / `HmacSha3_256` / `HmacSha3_384` / `HmacSha3_512`; matching `HmacSha3_*Tag` types | 28-64B | RFC 2104 over FIPS 202 SHA-3 |
+| `Kmac128` / `Kmac256` | variable | SP 800-185 |
+| `Poly1305`, `Poly1305OneTimeKey`, `Poly1305Tag` | 16B tag | RFC 8439 |
+| `HkdfSha256` / `HkdfSha384` / `HkdfSha512` | 32-64B PRK | RFC 5869 |
 | `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
 
 ## Password Hashing
@@ -118,6 +128,7 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature` | 32/32/64B | RFC 8032 |
 | `Ed25519Keypair` | -- | RFC 8032 |
 | `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
+| `RsaSignatureSigner`, `RsaSignatureVerifier` | profile-bound wrappers | RFC 8017 / RFC 4055 |
 | `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`, `RsaPublicKeyPolicy`, `RsaKeyGenerationContract` | -- | RFC 8017 / RFC 4055 / FIPS 186-5 / protocol-specific profiles |
 | `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
@@ -129,7 +140,11 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `MlKem768PreparedEncapsulationKey` / `MlKem768PreparedDecapsulationKey` | 1184B / 2400B | Validated reusable ML-KEM-768 state |
 | `MlKem1024PreparedEncapsulationKey` / `MlKem1024PreparedDecapsulationKey` | 1568B / 3168B | Validated reusable ML-KEM-1024 state |
 
-ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw `r || s` and DER signature import, SEC1/SPKI public keys, deterministic signing, keypair wrappers, and caller-blinded signing APIs for CT-claimed private-key scalar work.
+ECDSA supports P-256/SHA-256 and P-384/SHA-384 signing and verification, raw
+`r || s` and DER signature import, SEC1/SPKI public keys, deterministic signing,
+bounded-retry `try_generate_with` / `try_generate` key generation, keypair
+wrappers, and caller-blinded signing APIs for CT-claimed private-key scalar
+work.
 RSA public-key verification, import, and caller-filled public encryption require
 `rsa` (`alloc`, `sha2`). OS-backed private operations, key generation, and
 randomized encryption wrappers require `getrandom`. Key generation seeds a
@@ -138,10 +153,12 @@ salt/blinding APIs remain available for constrained private-operation
 integrations that own their entropy boundary.
 
 ML-KEM supports key generation, encapsulation, decapsulation, validated prepared
-encapsulation keys, and validated prepared decapsulation keys. The API takes
-caller-supplied random-fill closures for key generation and encapsulation, so
-`ml-kem` does not require `getrandom`. Each profile exposes FIPS 203 size,
-randomness, security-category, and required-RBG-strength constants.
+encapsulation keys, and validated prepared decapsulation keys. The core API
+takes caller-supplied random-fill closures for key generation and encapsulation,
+so `ml-kem` does not require `getrandom`; `try_generate_keypair` and
+`try_encapsulate` are available when `getrandom` is enabled. Each profile
+exposes FIPS 203 size, randomness, security-category, and required-RBG-strength
+constants.
 
 ## AEAD
 
@@ -162,12 +179,16 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 
 AEAD support types: `SealError`, `OpenError`, `AeadBufferError`,
 `NonceCounter`, `NonceCounterExhausted`, and `NonceCounterSealError`.
+Caller-buffer and detached APIs are allocation-free. With `alloc`, every AEAD
+also has `encrypt_to_vec` and `decrypt_to_vec`; with `alloc` + `getrandom`, it
+also has `seal_random_to_vec`.
 
 ## Error Types
 
 | Error | When | Recovery |
 |-------|------|----------|
 | `VerificationError` | MAC/AEAD/signature check fails | Reject input without revealing failure detail |
+| `EcdsaKeyGenerationError` | ECDSA random source failure or bounded scalar rejection exhaustion | Fix entropy source; investigate deterministic fillers |
 | `AeadBufferError` | Output buffer wrong size | Fix buffer length |
 | `SealError` | AEAD combined encrypt failure | Buffer / nonce / counter |
 | `OpenError` | AEAD combined decrypt failure | Buffer or verification |

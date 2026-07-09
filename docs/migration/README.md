@@ -26,7 +26,7 @@ API shape change, or not a good fit.
 |---|---|---|
 | [`blake3`](blake3.md) | `Blake3` | Verified against `blake3 1.8.5` |
 | [`sha2`](RustCrypto/sha2.md) (RustCrypto) | `Sha224`, `Sha256`, `Sha384`, `Sha512`, `Sha512_256` | Verified against `sha2 0.11.0` |
-| [`sha3`](RustCrypto/sha3.md) (RustCrypto) | `Sha3_224`, `Sha3_256`, `Sha3_384`, `Sha3_512`, `Shake128`, `Shake256`, `Cshake256` | Verified against `sha3 0.12.0` |
+| [`sha3`](RustCrypto/sha3.md) (RustCrypto) | `Sha3_224`, `Sha3_256`, `Sha3_384`, `Sha3_512`, `Shake128`, `Shake256`, `Cshake128`, `Cshake256` | Verified against `sha3 0.12.0` |
 | [`blake2`](RustCrypto/blake2.md) (RustCrypto) | `Blake2b256`, `Blake2b512`, `Blake2s128`, `Blake2s256` | Verified against `blake2 0.11.0-rc.6` |
 | [`ascon-hash`](RustCrypto/ascon-hash.md) (RustCrypto) | `AsconHash256`, `AsconXof`, `AsconCxof128` | Verified against `ascon-hash 0.4.0` |
 | [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.15` |
@@ -37,11 +37,11 @@ API shape change, or not a good fit.
 
 | From | To | Status |
 |---|---|---|
-| [`hmac`](RustCrypto/hmac.md) (RustCrypto) | `HmacSha256`, `HmacSha384`, `HmacSha512` | Verified against `hmac 0.13.0` |
-| [`hkdf`](RustCrypto/hkdf.md) (RustCrypto) | `HkdfSha256`, `HkdfSha384` | Verified against `hkdf 0.13.0` |
+| [`hmac`](RustCrypto/hmac.md) (RustCrypto) | `HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha3_224`, `HmacSha3_256`, `HmacSha3_384`, `HmacSha3_512` | Verified against `hmac 0.13.0` and RustCrypto SHA-3 digests |
+| [`hkdf`](RustCrypto/hkdf.md) (RustCrypto) | `HkdfSha256`, `HkdfSha384`, `HkdfSha512` | Verified against `hkdf 0.13.0` |
 | [`pbkdf2`](RustCrypto/pbkdf2.md) (RustCrypto) | `Pbkdf2Sha256`, `Pbkdf2Sha512` | Verified against `pbkdf2 0.13.0` |
-| [`sha3-kmac`](sha3-kmac.md) | `Kmac256` | KMAC256 covered by NIST, `tiny-keccak`, and Wycheproof tests |
-| [`tiny-keccak`](tiny-keccak.md) | `Kmac256`, `Cshake256` | Verified against `tiny-keccak 2.0.2` |
+| [`sha3-kmac`](sha3-kmac.md) | `Kmac128`, `Kmac256` | KMAC128/256 covered by NIST and `tiny-keccak`; KMAC256 also has Wycheproof coverage |
+| [`tiny-keccak`](tiny-keccak.md) | `Kmac128`, `Kmac256`, `Cshake128`, `Cshake256` | Verified against `tiny-keccak 2.0.2` |
 
 ## AEAD
 

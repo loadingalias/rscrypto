@@ -297,11 +297,19 @@ macro_rules! impl_ct_eq {
 /// Generate a `random()` constructor that fills `Self::LENGTH` bytes from
 /// the operating system CSPRNG via `getrandom`.
 ///
+/// Compatibility policy: keep `random()` / `try_random()` for the first
+/// release that exposes newer key-generation names; decide any actual
+/// deprecation only after that release.
+///
 /// Invoke inside an `impl` block for a tuple-struct with `LENGTH` and
 /// `from_bytes`.
 macro_rules! impl_getrandom {
   () => {
     /// Generate a random instance using the operating system's CSPRNG.
+    ///
+    /// Compatibility name: prefer `try_generate()` where the concrete key type
+    /// exposes it. This method remains supported in the release that introduces
+    /// the newer generation names.
     ///
     /// # Panics
     ///
@@ -319,6 +327,10 @@ macro_rules! impl_getrandom {
 
     /// Try to generate a random instance from the platform entropy source.
     ///
+    /// Compatibility name: prefer `try_generate()` where the concrete key type
+    /// exposes it. This method remains supported in the release that introduces
+    /// the newer generation names.
+    ///
     /// # Errors
     ///
     /// Returns a getrandom error if the platform entropy source is unavailable.
@@ -327,7 +339,13 @@ macro_rules! impl_getrandom {
     #[inline]
     pub fn try_random() -> Result<Self, getrandom::Error> {
       let mut bytes = [0u8; Self::LENGTH];
-      getrandom::fill(&mut bytes).map(|()| Self(bytes))
+      match getrandom::fill(&mut bytes) {
+        Ok(()) => Ok(Self(bytes)),
+        Err(err) => {
+          crate::traits::ct::zeroize(&mut bytes);
+          Err(err)
+        }
+      }
     }
   };
 }

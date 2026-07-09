@@ -93,15 +93,19 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 3. Requires the tag version, `Cargo.toml` version, and `CHANGELOG.md` heading
    to match.
 4. Validates `.config/rail.toml` with `cargo rail config validate --strict`.
-5. Builds the `.crate` with `cargo package --locked`.
-6. Rejects dirty VCS metadata and private or local-only package contents.
-7. Waits for the `CI` workflow on the same commit to pass.
-8. Attests the `.crate` artifact with GitHub build provenance.
-9. Uses crates.io Trusted Publishing to get a temporary publish token.
-10. Publishes with `cargo publish -p rscrypto --locked`.
-11. Downloads the crate from crates.io and verifies the SHA-256 against the
+5. Runs `cargo deny check all`, `cargo audit`, and `cargo semver-checks`.
+6. Builds the `.crate` with `cargo package --locked`.
+7. Rejects dirty VCS metadata and private or local-only package contents.
+8. Waits for the `CI` workflow on the same commit to pass.
+9. Attests the `.crate` artifact with GitHub build provenance.
+10. Runs the release CT evidence workflow and attaches a versioned CT evidence
+   bundle to the GitHub Release.
+11. Uses crates.io Trusted Publishing to get a temporary publish token.
+12. Publishes with `cargo publish -p rscrypto --locked`.
+13. Downloads the crate from crates.io and verifies the SHA-256 against the
     attested package.
-12. Creates or updates the GitHub Release with the crate and `SHA256SUMS`.
+14. Creates or updates the GitHub Release with the crate, CT evidence bundle,
+    and `SHA256SUMS`.
 
 The publish job uses the `crates-io` GitHub environment. GitHub requests
 approval only after preflight and CI have passed, and before the OIDC token is
@@ -124,6 +128,7 @@ Consumers can verify the GitHub Release artifact:
 gh release download vX.Y.Z --repo loadingalias/rscrypto -p 'rscrypto-*.crate' -p SHA256SUMS
 shasum -a 256 -c SHA256SUMS
 gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
 ```
 
 The crate downloaded from crates.io should have the same SHA-256 as the

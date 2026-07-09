@@ -110,6 +110,11 @@ ci-check:
 test-feature-matrix:
     @scripts/test/test-feature-matrix.sh
 
+test-native-api:
+    cargo test --no-default-features --features 'alloc,aead,ed25519,x25519,ecdsa,ml-kem' --test api_consistency
+    cargo test --features 'aead,signatures,key-exchange,getrandom' --test api_consistency
+    cargo test --features 'signatures,key-exchange,getrandom' --test getrandom_smoke
+
 # Tests
 test *crates="":
     @scripts/test/test.sh {{ crates }}
@@ -125,6 +130,9 @@ test-rsa-leakage:
 
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{ args }}
+
+test-fuzz-asan *args="":
+    @scripts/test/test-fuzz-asan.sh {{ args }}
 
 # Constant-Time (CT) Validation Engine
 ct *args="":

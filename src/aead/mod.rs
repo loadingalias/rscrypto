@@ -44,6 +44,7 @@
 //!
 //! - Every cipher uses a typed `*Key`, typed nonce wrapper, and typed `*Tag`.
 //! - Combined-buffer helpers use `encrypt` / `decrypt`.
+//! - Allocating combined helpers use `encrypt_to_vec` / `decrypt_to_vec`.
 //! - Detached helpers use `encrypt_in_place` / `decrypt_in_place`.
 //! - All AEADs implement the shared [`Aead`] trait with the same constructor and operation names.
 //!

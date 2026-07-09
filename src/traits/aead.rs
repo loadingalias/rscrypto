@@ -4,6 +4,8 @@
 //! explicit typed construction, byte-slice inputs, caller-provided output
 //! buffers, and opaque verification failures.
 
+#[cfg(feature = "alloc")]
+use alloc::{vec, vec::Vec};
 use core::fmt::Debug;
 
 #[cfg(feature = "getrandom")]
@@ -84,6 +86,33 @@ pub trait Aead: Clone {
     let nonce = Self::Nonce::try_random()?;
     self.encrypt(&nonce, aad, plaintext, out)?;
     Ok(nonce)
+  }
+
+  /// Allocate `ciphertext || tag`, encrypt `plaintext` into it with a fresh random nonce, and
+  /// return both values.
+  ///
+  /// Prefer the caller-buffer [`seal_random`](Self::seal_random) API for
+  /// allocation-free paths. This helper exists for application layers that
+  /// already own an allocator and want the common AEAD one-shot shape.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RandomSealError`] if nonce generation fails, allocation length
+  /// calculation overflows, the output length would be invalid, or sealing
+  /// fails.
+  #[cfg(all(feature = "alloc", feature = "getrandom"))]
+  #[cfg_attr(docsrs, doc(cfg(all(feature = "alloc", feature = "getrandom"))))]
+  #[inline]
+  fn seal_random_to_vec(&self, aad: &[u8], plaintext: &[u8]) -> Result<(Self::Nonce, Vec<u8>), RandomSealError> {
+    let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
+    let mut out = vec![0u8; len];
+    match self.seal_random(aad, plaintext, &mut out) {
+      Ok(nonce) => Ok((nonce, out)),
+      Err(err) => {
+        super::ct::zeroize(&mut out);
+        Err(err)
+      }
+    }
   }
 
   /// Encrypt `buffer` in place with a fresh random nonce and return the nonce and detached tag.
@@ -211,6 +240,30 @@ pub trait Aead: Clone {
     Ok(())
   }
 
+  /// Allocate `ciphertext || tag` and encrypt `plaintext` into it with a caller-supplied nonce.
+  ///
+  /// Prefer [`encrypt`](Self::encrypt) for allocation-free paths and
+  /// [`seal_random_to_vec`](Self::seal_random_to_vec) when the protocol does
+  /// not derive its own nonce.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`SealError`] if length calculation fails or encryption fails.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  fn encrypt_to_vec(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
+    let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
+    let mut out = vec![0u8; len];
+    match self.encrypt(nonce, aad, plaintext, &mut out) {
+      Ok(()) => Ok(out),
+      Err(err) => {
+        super::ct::zeroize(&mut out);
+        Err(err)
+      }
+    }
+  }
+
   /// Decrypt a combined `ciphertext || tag` into `out`.
   ///
   /// # Errors
@@ -238,5 +291,26 @@ pub trait Aead: Clone {
       return Err(e);
     }
     Ok(())
+  }
+
+  /// Allocate plaintext output and decrypt a combined `ciphertext || tag`.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`OpenError`] if the input is malformed or authentication fails.
+  /// Any allocated plaintext buffer is cleared before returning an error.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  fn decrypt_to_vec(&self, nonce: &Self::Nonce, aad: &[u8], ciphertext_and_tag: &[u8]) -> Result<Vec<u8>, OpenError> {
+    let len = Self::plaintext_len(ciphertext_and_tag.len())?;
+    let mut out = vec![0u8; len];
+    match self.decrypt(nonce, aad, ciphertext_and_tag, &mut out) {
+      Ok(()) => Ok(out),
+      Err(err) => {
+        super::ct::zeroize(&mut out);
+        Err(err)
+      }
+    }
   }
 }

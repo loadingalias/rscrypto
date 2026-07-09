@@ -557,6 +557,7 @@ pub(crate) trait Permuter: Copy {
   /// Permute three independent states in parallel.
   /// Default: one paired permutation and one single-state permutation.
   #[inline(always)]
+  #[allow(dead_code)]
   fn permute_x3(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25], len_hint: usize) {
     self.permute_x2(state_a, state_b, len_hint);
     self.permute(state_c, len_hint);
@@ -565,6 +566,7 @@ pub(crate) trait Permuter: Copy {
   /// Permute four independent states in parallel.
   /// Default: two paired permutations.
   #[inline(always)]
+  #[allow(dead_code)]
   fn permute_x4(
     self,
     state_a: &mut [u64; 25],

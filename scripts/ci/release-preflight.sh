@@ -107,6 +107,12 @@ if ! grep -qE "^## \\[$tag_version\\]" CHANGELOG.md; then
 fi
 
 cargo rail config validate --strict
+cargo deny check all
+# RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
+# verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
+# known Marvin advisory until the oracle dependency is removed or fixed.
+cargo audit --ignore RUSTSEC-2023-0071
+cargo semver-checks --package "$crate" --all-features
 
 # `cargo rail release check` is a pre-tag gate. The release run consumes
 # `.changes` files before creating the signed tag, so tag preflight

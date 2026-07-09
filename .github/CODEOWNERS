@@ -1,0 +1,17 @@
+# Security-sensitive repository surfaces.
+* @loadingalias
+
+/.github/ @loadingalias
+/.config/ @loadingalias
+/Cargo.toml @loadingalias
+/Cargo.lock @loadingalias
+/deny.toml @loadingalias
+/ct.toml @loadingalias
+/SECURITY.md @loadingalias
+/THREAT_MODEL.md @loadingalias
+/CONTRIBUTING.md @loadingalias
+/src/ @loadingalias
+/fuzz/ @loadingalias
+/fuzz-packages/ @loadingalias
+/oss-fuzz/ @loadingalias
+/scripts/ @loadingalias

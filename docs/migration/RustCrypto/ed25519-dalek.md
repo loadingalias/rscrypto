@@ -71,12 +71,10 @@ let signing_key = SigningKey::generate(&mut OsRng);
 ```rust
 // After (with `getrandom` feature)
 use rscrypto::Ed25519SecretKey;
-let secret = Ed25519SecretKey::generate_random()?;       // returns Result<_, Error>
+let secret = Ed25519SecretKey::try_generate()?;          // returns Result<_, Error>
 
-// Or supply your own RNG via a closure (no extra feature):
-let secret = Ed25519SecretKey::generate(|buf| {
-    // fill buf: &mut [u8; 32] from your CSPRNG
-});
+// Or supply your own fallible RNG via a closure (no extra feature):
+let secret = Ed25519SecretKey::try_generate_with(|buf| fill_csprng(buf))?;
 ```
 
 The closure form is the no-`getrandom` path: useful when you have a different entropy source (HSM, TPM, embedded TRNG).

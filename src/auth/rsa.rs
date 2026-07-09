@@ -1208,6 +1208,20 @@ pub struct RsaPrivateScratch {
   exponent_q_scratch: RsaPrivateExponentScratch,
 }
 
+/// RSA signer bound to a concrete signature profile.
+#[derive(Clone, Copy)]
+pub struct RsaSignatureSigner<'a> {
+  key: &'a RsaPrivateKey,
+  profile: RsaSignatureProfile,
+}
+
+/// RSA verifier bound to a concrete signature profile.
+#[derive(Clone, Copy)]
+pub struct RsaSignatureVerifier<'a> {
+  key: &'a RsaPublicKey,
+  profile: RsaSignatureProfile,
+}
+
 /// Borrowed RSA private-key CRT components.
 ///
 /// These fields contain private key material. Keep values canonical unsigned
@@ -1401,6 +1415,13 @@ impl RsaPrivateKey {
   #[must_use]
   pub fn signature_len(&self) -> usize {
     self.public_key().modulus().len()
+  }
+
+  /// Return a generic signer wrapper bound to `profile`.
+  #[inline]
+  #[must_use]
+  pub const fn signer(&self, profile: RsaSignatureProfile) -> RsaSignatureSigner<'_> {
+    RsaSignatureSigner::new(self, profile)
   }
 
   /// Allocate reusable scratch space for deterministic private operations.
@@ -2265,6 +2286,146 @@ impl RsaPrivateKey {
       scratch,
     );
     clear_decryption_output_on_error(result, out)
+  }
+}
+
+impl RsaSignatureSigner<'_> {
+  /// Construct a signer wrapper for `key` and `profile`.
+  #[inline]
+  #[must_use]
+  pub const fn new(key: &RsaPrivateKey, profile: RsaSignatureProfile) -> RsaSignatureSigner<'_> {
+    RsaSignatureSigner { key, profile }
+  }
+
+  /// Return the wrapped private key.
+  #[inline]
+  #[must_use]
+  pub const fn key(&self) -> &RsaPrivateKey {
+    self.key
+  }
+
+  /// Return the bound signature profile.
+  #[inline]
+  #[must_use]
+  pub const fn profile(&self) -> RsaSignatureProfile {
+    self.profile
+  }
+
+  /// Return the fixed signature length for this key.
+  #[inline]
+  #[must_use]
+  pub fn signature_len(&self) -> usize {
+    self.key.signature_len()
+  }
+
+  /// Sign `message` into `out` using the bound profile.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError`] if entropy is unavailable, the key is too
+  /// small for the selected profile, `out` has the wrong length, or the
+  /// post-signing public fault check fails.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_sign_into(&self, message: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
+    self.key.sign_signature(self.profile, message, out)
+  }
+
+  /// Allocate a signature buffer and sign `message` into it.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RsaPrivateOpError`] if signing fails. The temporary output buffer
+  /// is cleared before returning an error.
+  #[cfg(feature = "getrandom")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
+  #[inline]
+  pub fn try_sign_to_vec(&self, message: &[u8]) -> Result<Vec<u8>, RsaPrivateOpError> {
+    <Self as crate::traits::TrySignerInto>::try_sign_to_vec(self, message)
+  }
+}
+
+impl fmt::Debug for RsaSignatureSigner<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("RsaSignatureSigner")
+      .field("profile", &self.profile)
+      .finish_non_exhaustive()
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl crate::traits::TrySignerInto for RsaSignatureSigner<'_> {
+  type Error = RsaPrivateOpError;
+
+  #[inline]
+  fn signature_len(&self) -> usize {
+    RsaSignatureSigner::signature_len(self)
+  }
+
+  #[inline]
+  fn try_sign_into(&self, message: &[u8], out: &mut [u8]) -> Result<(), Self::Error> {
+    RsaSignatureSigner::try_sign_into(self, message, out)
+  }
+}
+
+#[cfg(feature = "getrandom")]
+impl crate::traits::TrySigner for RsaSignatureSigner<'_> {
+  type Signature = Vec<u8>;
+  type Error = RsaPrivateOpError;
+
+  #[inline]
+  fn try_sign(&self, message: &[u8]) -> Result<Self::Signature, Self::Error> {
+    self.try_sign_to_vec(message)
+  }
+}
+
+impl RsaSignatureVerifier<'_> {
+  /// Construct a verifier wrapper for `key` and `profile`.
+  #[inline]
+  #[must_use]
+  pub const fn new(key: &RsaPublicKey, profile: RsaSignatureProfile) -> RsaSignatureVerifier<'_> {
+    RsaSignatureVerifier { key, profile }
+  }
+
+  /// Return the wrapped public key.
+  #[inline]
+  #[must_use]
+  pub const fn key(&self) -> &RsaPublicKey {
+    self.key
+  }
+
+  /// Return the bound signature profile.
+  #[inline]
+  #[must_use]
+  pub const fn profile(&self) -> RsaSignatureProfile {
+    self.profile
+  }
+
+  /// Verify `signature` over `message` using the bound profile.
+  ///
+  /// # Errors
+  ///
+  /// Returns opaque [`VerificationError`] for any invalid signature.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify(&self, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
+    self.key.verify_signature(self.profile, message, signature)
+  }
+}
+
+impl fmt::Debug for RsaSignatureVerifier<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("RsaSignatureVerifier")
+      .field("profile", &self.profile)
+      .finish_non_exhaustive()
+  }
+}
+
+impl crate::traits::Verifier<[u8]> for RsaSignatureVerifier<'_> {
+  #[inline]
+  fn verify(&self, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
+    RsaSignatureVerifier::verify(self, message, signature)
   }
 }
 
@@ -4404,6 +4565,13 @@ impl RsaX509PublicKey {
 }
 
 impl RsaPublicKey {
+  /// Return a generic verifier wrapper bound to `profile`.
+  #[inline]
+  #[must_use]
+  pub const fn verifier(&self, profile: RsaSignatureProfile) -> RsaSignatureVerifier<'_> {
+    RsaSignatureVerifier::new(self, profile)
+  }
+
   /// Build an RSA public key from canonical unsigned big-endian components
   /// with the modern default policy.
   ///

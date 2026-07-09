@@ -79,6 +79,39 @@ fn detect_x86() -> Detected {
   }
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[inline]
+#[allow(unsafe_code)]
+fn cpuid_leaf(leaf: u32) -> core::arch::x86_64::CpuidResult {
+  // SAFETY: CPUID leaf read is safe here because:
+  // 1. This function is compiled only for x86_64 targets.
+  // 2. CPUID is a non-privileged CPU-identification instruction.
+  // 3. The intrinsic returns register values and does not access Rust memory.
+  unsafe { core::arch::x86_64::__cpuid(leaf) }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[inline]
+#[allow(unsafe_code)]
+fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> core::arch::x86_64::CpuidResult {
+  // SAFETY: CPUID leaf/subleaf read is safe here because:
+  // 1. This function is compiled only for x86_64 targets.
+  // 2. CPUID is a non-privileged CPU-identification instruction.
+  // 3. The intrinsic returns register values and does not access Rust memory.
+  unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) }
+}
+
+#[cfg(all(target_arch = "x86", feature = "std"))]
+#[inline]
+#[allow(unsafe_code)]
+fn cpuid_leaf(leaf: u32) -> core::arch::x86::CpuidResult {
+  // SAFETY: CPUID leaf read is safe here because:
+  // 1. This function is compiled only for x86 targets.
+  // 2. CPUID is a non-privileged CPU-identification instruction.
+  // 3. The intrinsic returns register values and does not access Rust memory.
+  unsafe { core::arch::x86::__cpuid(leaf) }
+}
+
 /// Batch CPUID result containing all extracted information.
 ///
 /// This struct consolidates all CPUID-derived data to avoid redundant calls.
@@ -114,7 +147,7 @@ struct CpuidBatch {
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[allow(unsafe_code)]
 fn cpuid_batch_x86_64() -> CpuidBatch {
-  use core::arch::x86_64::{__cpuid, __cpuid_count, _xgetbv};
+  use core::arch::x86_64::_xgetbv;
 
   use crate::platform::caps::x86;
 
@@ -127,14 +160,14 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   let mut caps = Caps::NONE;
 
   // CPUID leaf 0: vendor string
-  let cpuid0 = __cpuid(0);
+  let cpuid0 = cpuid_leaf(0);
   // "GenuineIntel" has EBX/EDX/ECX = "Genu" / "ineI" / "ntel".
   let is_intel = cpuid0.ebx == 0x756e_6547 && cpuid0.edx == 0x4965_6e69 && cpuid0.ecx == 0x6c65_746e;
   // "AuthenticAMD" has ebx = 0x68747541 ("Auth")
   let is_amd = cpuid0.ebx == 0x6874_7541;
 
   // CPUID leaf 1: processor info and feature bits
-  let cpuid1 = __cpuid(1);
+  let cpuid1 = cpuid_leaf(1);
 
   // Extract extended family (bits 27:20) + base family (bits 11:8)
   let base_family = (cpuid1.eax >> 8) & 0xF;
@@ -161,7 +194,10 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
 
   // Read XCR0 if OSXSAVE is enabled, otherwise assume no extended state support
   let xcr0 = if osxsave {
-    // SAFETY: XGETBV is safe when OSXSAVE is set (checked above)
+    // SAFETY: XGETBV reads XCR0 safely here because:
+    // 1. CPUID leaf 1 reported OSXSAVE, so the OS enabled XGETBV.
+    // 2. Index 0 reads XCR0, the architectural extended-state mask.
+    // 3. The intrinsic returns register state and does not access Rust memory.
     unsafe { _xgetbv(0) }
   } else {
     0
@@ -211,7 +247,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // Extended feature flags (leaf 7, subleaf 0)
-  let cpuid7 = __cpuid_count(7, 0);
+  let cpuid7 = cpuid_leaf_count(7, 0);
 
   // EBX features (leaf 7) - non-AVX features (no OS gating needed)
   if cpuid7.ebx & (1 << 3) != 0 {
@@ -297,7 +333,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // Extended feature flags (leaf 7, subleaf 1)
-  let cpuid7_1 = __cpuid_count(7, 1);
+  let cpuid7_1 = cpuid_leaf_count(7, 1);
 
   // EAX features (leaf 7, subleaf 1)
   // SHA512 doesn't require AVX-512 (uses XMM registers)
@@ -328,7 +364,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // AVX10 detection via CPUID leaf 0x24 (requires OS AVX-512 support)
   // AVX10 is Intel's unified vector ISA that subsumes AVX-512
   if os_avx512 && cpuid0.eax >= 0x24 {
-    let cpuid24 = __cpuid_count(0x24, 0);
+    let cpuid24 = cpuid_leaf_count(0x24, 0);
     let avx10_version = cpuid24.ebx & 0xFF;
     if avx10_version >= 1 {
       caps |= x86::AVX10_1;
@@ -341,7 +377,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // APX detection via CPUID leaf 0x29
   // APX doubles GPRs from 16 to 32 (R16-R31) on Granite Rapids+
   if cpuid0.eax >= 0x29 {
-    let cpuid29 = __cpuid_count(0x29, 0);
+    let cpuid29 = cpuid_leaf_count(0x29, 0);
     // APX_NCI_NDD_NF is bit 0 of EBX
     if cpuid29.ebx & 1 != 0 {
       caps |= x86::APX;
@@ -349,7 +385,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // Extended CPUID (leaf 0x80000001) for AMD-specific features
-  let cpuid_ext = __cpuid(0x8000_0001);
+  let cpuid_ext = cpuid_leaf(0x8000_0001);
   if cpuid_ext.ecx & (1 << 5) != 0 {
     caps |= x86::LZCNT;
   }
@@ -387,15 +423,12 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
 #[cfg(all(target_arch = "x86", feature = "std"))]
 #[allow(unsafe_code)]
 fn runtime_x86_32() -> Caps {
-  use core::arch::x86::{__cpuid, __cpuid_count};
-
   use crate::platform::caps::x86;
 
   let mut caps = Caps::NONE;
 
   // CPUID leaf 1: processor info and feature bits
-  // SAFETY: CPUID is always safe on x86
-  let cpuid1 = unsafe { __cpuid(1) };
+  let cpuid1 = cpuid_leaf(1);
 
   // ECX features (leaf 1)
   if cpuid1.ecx & (1 << 0) != 0 {

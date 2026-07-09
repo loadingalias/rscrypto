@@ -28,6 +28,38 @@ cargo run --example password_hashing --features password-hashing,getrandom
 
 Hashes a password with both Argon2id and scrypt, encodes the result as a PHC string, then verifies it through bounded `verify_string`. The default verify policy caps the cost parameters the verifier will accept, blocking attacker-supplied high-cost PHC strings. Prints both PHC encodings to stdout so you can inspect the format.
 
+### `aead_seal_open`: ChaCha20-Poly1305 seal/open
+
+```bash
+cargo run --example aead_seal_open --features chacha20poly1305,getrandom
+```
+
+Generates a ChaCha20-Poly1305 key, seals a short payload with associated data and a fresh random nonce, then opens it back to the original plaintext. This is the smallest AEAD example for the common "encrypt then authenticate" workflow.
+
+### `signatures`: Ed25519 and ECDSA P-256 signing
+
+```bash
+cargo run --example signatures --features ed25519,ecdsa-p256,getrandom
+```
+
+Generates Ed25519 and ECDSA P-256 keypairs, signs one message with each, and verifies both signatures through the public-key API. Use this when choosing between deterministic Ed25519 and randomized ECDSA protocol surfaces.
+
+### `rsa_pss_verify`: RSA-PSS fixture verification
+
+```bash
+cargo run --example rsa_pss_verify --features rsa
+```
+
+Loads a checked-in RSA-3072 SubjectPublicKeyInfo fixture and verifies a PSS/SHA-256 signature over a fixed message. This keeps the example deterministic and focused on the verification path used by certificate, package, and protocol integrations.
+
+### `mlkem_encapsulation`: ML-KEM-768 key encapsulation
+
+```bash
+cargo run --example mlkem_encapsulation --features ml-kem,getrandom
+```
+
+Generates an ML-KEM-768 keypair, encapsulates a shared secret to the public key, decapsulates with the private key, and asserts both sides derived the same bytes. This is the minimal KEM workflow for hybrid key-establishment prototypes.
+
 ### `parallel`: CRC chunk combining for large inputs
 
 ```bash
@@ -50,7 +82,9 @@ Prints the platform's detected CPU capabilities and reports which kernel the dis
 |---|---|
 | Hash data (one-shot or streaming) | `basic` (digest section) |
 | Compute and verify a MAC | `basic` (auth section) |
-| Encrypt and decrypt with AEAD | `basic` (AEAD section) |
+| Encrypt and decrypt with AEAD | `aead_seal_open`, `basic` (AEAD section) |
+| Sign and verify messages | `signatures`, `rsa_pss_verify` |
+| Encapsulate and decapsulate a KEM shared secret | `mlkem_encapsulation` |
 | Hash a password and verify safely | `password_hashing` |
 | Process a large file in parallel | `parallel` |
 | Confirm hardware acceleration is active | `introspect` |

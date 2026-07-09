@@ -98,12 +98,10 @@ let secret = EphemeralSecret::random_from_rng(OsRng);
 ```rust
 // After (with `getrandom` feature)
 use rscrypto::X25519SecretKey;
-let secret = X25519SecretKey::generate_random()?;            // Result<_, Error>
+let secret = X25519SecretKey::try_generate()?;               // Result<_, Error>
 
-// Or supply your own RNG via a closure (no extra feature):
-let secret = X25519SecretKey::generate(|buf| {
-    // fill buf: &mut [u8; 32] from your CSPRNG
-});
+// Or supply your own fallible RNG via a closure (no extra feature):
+let secret = X25519SecretKey::try_generate_with(|buf| fill_csprng(buf))?;
 ```
 
 ## Ephemeral vs static
@@ -121,4 +119,4 @@ If your protocol requires the ephemeral-only guarantee at the type level, file a
 - **`SharedSecret` zeroizes on drop.** Both crates do this. rscrypto exposes `expose_secret() -> SecretBytes<32>` if you need to feed the raw bytes into a KDF (and want the zeroization-on-drop guarantee preserved).
 - **No HKDF integration.** Some protocols KDF the X25519 shared secret immediately (e.g., Noise, Signal). rscrypto's `HkdfSha256` (from `features = ["hkdf"]`) is the natural pairing; see `RustCrypto/hkdf.md`.
 - **Constant-time scalar mult.** Both crates use constant-time field arithmetic. rscrypto's portable backend is constant-time on every target; SIMD acceleration (when available) is differential-tested against the portable path.
-- **`no_std`.** Both crates support `no_std` with no `alloc` requirement. The `getrandom`-backed `generate_random()` requires `getrandom`; the closure form `generate(|buf| ...)` does not.
+- **`no_std`.** Both crates support `no_std` with no `alloc` requirement. The `getrandom`-backed `try_generate()` requires `getrandom`; the closure form `try_generate_with(|buf| ...)` does not.
