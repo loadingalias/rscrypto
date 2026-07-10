@@ -44,6 +44,7 @@ PROVENANCE_REQUIRED_KEYS = {
   "rustc_commit_date",
   "rustc_host",
   "llvm_version",
+  "tools",
   "backend",
   "target",
   "target_triple",
@@ -71,6 +72,7 @@ PROVENANCE_REQUIRED_KEYS = {
   "dependency_lockfile_sha256",
   "workspace_lockfile",
   "workspace_lockfile_sha256",
+  "component_lockfiles",
   "host_runner",
   "host_uname",
   "host_os",
@@ -524,6 +526,7 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
   provenance_path = out_dir / "provenance.json"
   evidence_path = out_dir / "evidence-index.json"
   heuristics_path = out_dir / "asm-heuristics.json"
+  heuristics_summary_path = out_dir / "asm-heuristics.md"
   hashes_path = out_dir / "artifact-hashes.txt"
 
   if not out_dir.exists():
@@ -538,6 +541,8 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
     fail(errors, f"evidence index missing: {evidence_path}")
   if not heuristics_path.exists():
     fail(errors, f"asm heuristics report missing: {heuristics_path}")
+  if not heuristics_summary_path.exists():
+    fail(errors, f"asm heuristics summary missing: {heuristics_summary_path}")
   if not hashes_path.exists():
     fail(errors, f"artifact hashes missing: {hashes_path}")
 
@@ -596,6 +601,13 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
         fail(errors, "provenance artifacts must be a non-empty list")
       if not isinstance(provenance.get("reports"), list):
         fail(errors, "provenance reports must be a list")
+      tools = provenance.get("tools", {})
+      if not isinstance(tools, dict):
+        fail(errors, "provenance tools must be an object")
+      else:
+        for tool in ("python", "cargo", "rustc", "llvm_objdump", "llvm_nm", "llvm_size"):
+          if not isinstance(tools.get(tool), str) or not tools.get(tool):
+            fail(errors, f"provenance tools.{tool} must be a non-empty version string")
       if (root / "ct.toml").exists() and provenance.get("ct_manifest_sha256") != sha256_file(root / "ct.toml"):
         fail(errors, "provenance ct_manifest_sha256 does not match ct.toml")
       dependency_lock = root / str(provenance.get("dependency_lockfile", ""))
@@ -604,6 +616,23 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
       workspace_lock = root / str(provenance.get("workspace_lockfile", ""))
       if workspace_lock.exists() and provenance.get("workspace_lockfile_sha256") != sha256_file(workspace_lock):
         fail(errors, "provenance workspace_lockfile_sha256 mismatch")
+      component_locks = provenance.get("component_lockfiles", [])
+      if not isinstance(component_locks, list) or not component_locks:
+        fail(errors, "provenance component_lockfiles must be a non-empty list")
+      else:
+        expected_lock_paths = {
+          "Cargo.lock",
+          "tools/ct-harness/Cargo.lock",
+          "tools/ct-dudect/Cargo.lock",
+          "tools/ct-binsec-harness/Cargo.lock",
+        }
+        actual_lock_paths = [record.get("path") for record in component_locks]
+        if len(actual_lock_paths) != len(set(actual_lock_paths)) or set(actual_lock_paths) != expected_lock_paths:
+          fail(errors, "provenance component_lockfiles does not match the required lockfile set")
+        for record in component_locks:
+          path = root / str(record.get("path", ""))
+          if not path.is_file() or record.get("sha256") != sha256_file(path):
+            fail(errors, f"provenance component lockfile mismatch: {record.get('path')!r}")
 
   if hashes_path.exists():
     recorded = recorded_hashes(hashes_path)
@@ -638,7 +667,7 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
       fail(errors, f"invalid asm-heuristics JSON: {exc}")
     else:
       expected = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "rscrypto.ct.asm-heuristics",
         "target": target,
         "profile": profile,
@@ -651,6 +680,16 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
         fail(errors, f"asm-heuristics missing symbol(s): {', '.join(missing)}")
       if heuristics.get("unwaived_fail_count", 0) != 0:
         fail(errors, f"asm-heuristics has {heuristics.get('unwaived_fail_count')} unwaived failure finding(s)")
+      if heuristics.get("needs_fix_count", 0) != 0:
+        fail(errors, f"asm-heuristics has {heuristics.get('needs_fix_count')} finding(s) that need fixes")
+      if heuristics.get("unclassified_count", 0) != 0:
+        fail(errors, f"asm-heuristics has {heuristics.get('unclassified_count')} unclassified finding(s)")
+      if heuristics.get("finding_count", 0) != (
+        heuristics.get("needs_fix_count", 0)
+        + heuristics.get("needs_binsec_count", 0)
+        + heuristics.get("accepted_count", 0)
+      ):
+        fail(errors, "asm-heuristics disposition counts do not equal finding_count")
       summary = heuristics.get("symbol_summary", {})
       for symbol in sorted(expected_symbols):
         row = summary.get(symbol)
@@ -663,6 +702,10 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
         report_hashes = {report.get("name"): report.get("sha256") for report in provenance.get("reports", [])}
         if report_hashes.get("asm-heuristics.json") != sha256_file(heuristics_path):
           fail(errors, "provenance asm-heuristics.json hash mismatch")
+        if heuristics_summary_path.exists() and report_hashes.get("asm-heuristics.md") != sha256_file(
+          heuristics_summary_path
+        ):
+          fail(errors, "provenance asm-heuristics.md hash mismatch")
       elif provenance:
         fail(errors, "provenance reports missing asm-heuristics.json")
 
@@ -694,6 +737,10 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
       evidence_reports = {report.get("name"): report.get("sha256") for report in evidence.get("reports", [])}
       if heuristics_path.exists() and evidence_reports.get("asm-heuristics.json") != sha256_file(heuristics_path):
         fail(errors, "evidence-index asm-heuristics.json hash mismatch")
+      if heuristics_summary_path.exists() and evidence_reports.get("asm-heuristics.md") != sha256_file(
+        heuristics_summary_path
+      ):
+        fail(errors, "evidence-index asm-heuristics.md hash mismatch")
 
       primitive_ids = {primitive.get("id") for primitive in ct.get("primitive", [])}
       evidence_primitives = {primitive.get("id"): primitive for primitive in evidence.get("primitives", [])}

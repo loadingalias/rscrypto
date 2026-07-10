@@ -846,7 +846,11 @@ pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], par
   state.finalize()
 }
 
-#[cfg(all(feature = "diag", target_arch = "aarch64"))]
+#[cfg(all(
+  feature = "diag",
+  target_arch = "aarch64",
+  any(target_os = "linux", target_os = "macos")
+))]
 pub fn diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4(
   aad: &[u8],
   ciphertext: &[u8],

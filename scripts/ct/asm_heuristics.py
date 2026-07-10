@@ -73,6 +73,22 @@ BRANCH_CONDS_X86 = {
   "loopne",
 }
 DIV_MNEMONICS = {"div", "idiv", "udiv", "sdiv"}
+RISCV_MUL_MNEMONICS = {"mul", "mulh", "mulhsu", "mulhu", "mulw"}
+RISCV_DIV_MNEMONICS = {"div", "divu", "divw", "divuw", "rem", "remu", "remw", "remuw"}
+POWER_DIV_MNEMONICS = {
+  "divd",
+  "divde",
+  "divdeu",
+  "divdu",
+  "divw",
+  "divwe",
+  "divweu",
+  "divwu",
+  "modsd",
+  "modsw",
+  "modud",
+  "moduw",
+}
 S390X_DIV_MNEMONICS = {
   "d",
   "dd",
@@ -183,6 +199,20 @@ MLKEM_ARITHMETIC_SYMBOL_FRAGMENTS = (
   "rscrypto::auth::mlkem::portable::poly_",
   "rscrypto::auth::mlkem::portable::subtract_compress",
 )
+WAIVER_REQUIRED_FIELDS = {
+  "target",
+  "primitive",
+  "symbol",
+  "kind",
+  "artifact",
+  "locator",
+  "function_sha256",
+  "source",
+  "classification",
+  "rationale",
+  "reviewer",
+  "reviewed_at",
+}
 
 
 @dataclass
@@ -247,28 +277,83 @@ def waivers(root: Path) -> list[dict[str, Any]]:
   return list(ct.get("asm_waiver", []))
 
 
-def waiver_matches(waiver: dict[str, Any], finding: dict[str, Any], target: str) -> bool:
-  if waiver.get("target") not in (None, "*", target):
-    return False
-  if waiver.get("symbol") not in (None, "*", finding["symbol"]):
-    return False
-  if waiver.get("kind") not in (None, "*", finding["kind"]):
-    return False
-  if contains := waiver.get("instruction_contains"):
-    if contains not in finding.get("text", ""):
-      return False
-  return True
+def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
+  errors = []
+  identities = set()
+  for index, waiver in enumerate(configured):
+    missing = sorted(WAIVER_REQUIRED_FIELDS - set(waiver))
+    extra = sorted(set(waiver) - WAIVER_REQUIRED_FIELDS)
+    if missing:
+      errors.append(f"asm_waiver[{index}] missing field(s): {', '.join(missing)}")
+    if extra:
+      errors.append(f"asm_waiver[{index}] has unknown field(s): {', '.join(extra)}")
+    for field in ("target", "primitive", "symbol", "kind", "artifact", "locator", "function_sha256"):
+      if waiver.get(field) in (None, "", "*"):
+        errors.append(f"asm_waiver[{index}] field {field} must be exact")
+    if waiver.get("classification") != "public":
+      errors.append(f"asm_waiver[{index}] classification must be 'public'; secret or uncertain findings cannot be waived")
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(waiver.get("reviewed_at", ""))):
+      errors.append(f"asm_waiver[{index}] reviewed_at must use YYYY-MM-DD")
+    for field in ("source", "rationale", "reviewer"):
+      if not str(waiver.get(field, "")).strip():
+        errors.append(f"asm_waiver[{index}] field {field} must not be empty")
+    identity = tuple(waiver.get(field) for field in sorted(WAIVER_REQUIRED_FIELDS))
+    if identity in identities:
+      errors.append(f"asm_waiver[{index}] duplicates an earlier waiver")
+    identities.add(identity)
+  return errors
 
 
-def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> None:
+def waiver_matches(waiver: dict[str, Any], finding: dict[str, Any], target: str, primitive_id: str) -> bool:
+  return all(
+    (
+      waiver.get("target") == target,
+      waiver.get("primitive") == primitive_id,
+      waiver.get("symbol") == finding["symbol"],
+      waiver.get("kind") == finding["kind"],
+      waiver.get("artifact") == finding["file"],
+      waiver.get("locator") == finding["locator"],
+      waiver.get("function_sha256") == finding["function_sha256"],
+    )
+  )
+
+
+def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any]], target: str) -> list[str]:
+  used = set()
   for finding in findings:
-    matched = [waiver for waiver in configured if waiver_matches(waiver, finding, target)]
-    finding["waived"] = bool(matched)
-    if matched:
-      finding["waiver"] = {
-        "reason": matched[0].get("reason"),
-        "reviewed_by": matched[0].get("reviewed_by"),
-      }
+    accepted = []
+    for primitive_id in finding.get("primitive_ids", []):
+      matched = [
+        (index, waiver)
+        for index, waiver in enumerate(configured)
+        if waiver_matches(waiver, finding, target, primitive_id)
+      ]
+      if len(matched) > 1:
+        raise ValueError(f"multiple waivers match {primitive_id} {finding['locator']}")
+      if matched:
+        index, waiver = matched[0]
+        used.add(index)
+        accepted.append(
+          {
+            "primitive": primitive_id,
+            "classification": waiver["classification"],
+            "source": waiver["source"],
+            "rationale": waiver["rationale"],
+            "reviewer": waiver["reviewer"],
+            "reviewed_at": waiver["reviewed_at"],
+          }
+        )
+
+    accepted_primitives = {row["primitive"] for row in accepted}
+    unresolved = sorted(set(finding.get("primitive_ids", [])) - accepted_primitives)
+    finding["waivers"] = accepted
+    finding["unresolved_primitive_ids"] = unresolved
+    finding["waived"] = not unresolved and bool(accepted)
+    if finding["waived"]:
+      finding["operand_class"] = "public"
+      finding["disposition"] = "accepted"
+
+  return [f"asm_waiver[{index}] did not match generated disassembly" for index in range(len(configured)) if index not in used]
 
 
 def parse_symbol_addresses(artifact_dir: Path) -> dict[str, int]:
@@ -329,6 +414,10 @@ def parse_disassembly(path: Path) -> tuple[dict[str, FunctionBody], dict[int, li
   for line_number, line in enumerate(path.read_text(errors="replace").splitlines(), start=1):
     if match := label_re.match(line.strip()):
       symbol = normalize_symbol(match.group(2))
+      if symbol.startswith((".", "LBB", "Ltmp")):
+        if current is not None:
+          current.lines.append((line_number, line))
+        continue
       address = int(match.group(1), 16)
       current = FunctionBody(symbol=symbol, path=path, address=address, lines=[])
       functions_by_address.setdefault(address, []).append(current)
@@ -369,15 +458,24 @@ def direct_call_targets(line: str) -> set[str]:
   return {target for target in targets if target and not target.startswith((".", "Ltmp", "LBB"))}
 
 
+def is_call_relocation(line: str) -> bool:
+  return bool(re.search(r"\b(?:R_[A-Z0-9_]*(?:CALL|PLT32)|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH)\b", line))
+
+
 def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> set[str]:
   callees: set[str] = set()
   for index, (_, line) in enumerate(body.lines):
-    if mnemonic(line) not in DIRECT_CALL_MNEMONICS:
+    inst = mnemonic(line)
+    if inst not in DIRECT_CALL_MNEMONICS and not is_call_relocation(line):
       continue
     targets = direct_call_targets(line)
-    if index + 1 < len(body.lines):
+    if inst in DIRECT_CALL_MNEMONICS and index + 1 < len(body.lines):
       targets.update(direct_call_targets(body.lines[index + 1][1]))
-    callees.update(target for target in targets if target in functions)
+    callees.update(
+      target
+      for target in targets
+      if target in functions and target.startswith(("rscrypto::", "rscrypto_", "ct_entry_", "<rscrypto::"))
+    )
   callees.discard(body.symbol)
   return callees
 
@@ -432,6 +530,10 @@ def is_mlkem_arithmetic_symbol(symbol: str) -> bool:
   return symbol.startswith("ct_entry_mlkem") or any(fragment in symbol for fragment in MLKEM_ARITHMETIC_SYMBOL_FRAGMENTS)
 
 
+def is_ecdsa_scope(primitive_ids: list[str]) -> bool:
+  return any(primitive_id.startswith("signature.ecdsa_") for primitive_id in primitive_ids)
+
+
 def is_s390x_division(target: str, inst: str) -> bool:
   return target.startswith("s390x-") and inst in S390X_DIV_MNEMONICS
 
@@ -442,6 +544,20 @@ def is_s390x_scalar_multiply(target: str, inst: str) -> bool:
 
 def is_s390x_vector_multiply(target: str, inst: str) -> bool:
   return target.startswith("s390x-") and any(inst.startswith(prefix) for prefix in S390X_VECTOR_MUL_PREFIXES)
+
+
+def is_riscv_scalar_multiply(target: str, inst: str) -> bool:
+  return target.startswith(("riscv32", "riscv64")) and inst in RISCV_MUL_MNEMONICS
+
+
+def is_target_division_review(target: str, inst: str) -> bool:
+  normalized = inst.rstrip(".")
+  return (
+    target.startswith(("riscv32", "riscv64"))
+    and normalized in RISCV_DIV_MNEMONICS
+    or target.startswith(("powerpc", "ppc"))
+    and normalized in POWER_DIV_MNEMONICS
+  )
 
 
 def is_s390x_conditional_branch(target: str, inst: str) -> bool:
@@ -461,6 +577,11 @@ def finding(
   primitive_ids: list[str],
   roots: list[str],
 ) -> dict[str, Any]:
+  address_match = re.match(r"^\s*([0-9a-fA-F]+):", line)
+  offset = int(address_match.group(1), 16) if address_match else None
+  normalized_text = line.strip()
+  text_hash = hashlib.sha256(normalized_text.encode()).hexdigest()[:16]
+  locator_offset = f"0x{offset:x}" if offset is not None else f"line-{line_number}"
   return {
     "symbol": symbol,
     "scope": scope,
@@ -468,8 +589,13 @@ def finding(
     "roots": roots,
     "file": f"artifacts/{path.name}",
     "line": line_number,
+    "offset": offset,
+    "locator": f"{symbol}+{locator_offset}:{kind}:{text_hash}",
+    "function_sha256": None,
     "kind": kind,
     "severity": severity,
+    "operand_class": "unproven",
+    "disposition": "needs-fix" if severity == "fail" else "needs-binsec",
     "mnemonic": mnemonic(line),
     "text": line.strip(),
     "rationale": rationale,
@@ -488,9 +614,25 @@ def scan_symbol(
   roots: list[str],
 ) -> list[dict[str, Any]]:
   findings: list[dict[str, Any]] = []
-  for line_number, line in body.lines:
+  for line_index, (line_number, line) in enumerate(body.lines):
     inst = mnemonic(line)
     if not inst:
+      callees = direct_call_targets(line)
+      if is_call_relocation(line) and callees and not callees <= local_symbols:
+        findings.append(
+          finding(
+            symbol,
+            body.path,
+            line_number,
+            line,
+            "call",
+            "warn",
+            "Direct-call relocation leaves the local CT artifact; callee operand provenance is unproven.",
+            scope=scope,
+            primitive_ids=primitive_ids,
+            roots=roots,
+          )
+        )
       lowered = line.lower()
       if any(target in lowered for target in SUSPICIOUS_CALL_TARGETS):
         findings.append(
@@ -526,6 +668,24 @@ def scan_symbol(
           roots=roots,
         )
       )
+    elif (
+      is_ecdsa_scope(primitive_ids)
+      and (is_s390x_scalar_multiply(target, inst) or is_riscv_scalar_multiply(target, inst))
+    ):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "variable_latency_multiply",
+          "fail",
+          "Scalar multiply is forbidden in s390x/RISC-V ECDSA secret arithmetic; use the fixed-work limb multiplier.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
     elif is_s390x_division(target, inst):
       findings.append(
         finding(
@@ -537,6 +697,22 @@ def scan_symbol(
           "warn",
           "s390x division-family instruction found in a CT evidence closure outside ML-KEM arithmetic. "
           "Review operand provenance before treating it as release evidence.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
+    elif is_target_division_review(target, inst):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "variable_latency_division_review",
+          "warn",
+          "RISC-V/POWER division or remainder has implementation-dependent latency. "
+          "Operand provenance or binary proof is required.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,
@@ -569,6 +745,37 @@ def scan_symbol(
           "warn",
           "s390x vector multiply found in an ML-KEM CT evidence scope. This is allowed only for "
           "z/Vector-gated arithmetic with native IBM Z DudeCT coverage and no scalar multiply fallback.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
+    elif is_s390x_scalar_multiply(target, inst) or is_riscv_scalar_multiply(target, inst):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "variable_latency_multiply_review",
+          "warn",
+          "Scalar multiply in a s390x/RISC-V CT closure has implementation-dependent latency. "
+          "Operand provenance or binary proof is required; native timing evidence alone is not proof.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
+    elif re.search(r"\[[xrw][0-9]+,\s*[xrw][0-9]+", line) or re.search(r"\([^)]*,\s*%[a-z0-9]+", line):
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "register_indexed_memory",
+          "warn",
+          "Register-indexed memory operand provenance is unproven.",
           scope=scope,
           primitive_ids=primitive_ids,
           roots=roots,
@@ -640,6 +847,24 @@ def scan_symbol(
           roots=roots,
         )
       )
+    elif inst == "jalr":
+      relocation_window = [previous_line for _, previous_line in body.lines[max(0, line_index - 2) : line_index]]
+      if any("R_RISCV_CALL" in previous_line for previous_line in relocation_window):
+        continue
+      findings.append(
+        finding(
+          symbol,
+          body.path,
+          line_number,
+          line,
+          "indirect_call",
+          "warn",
+          "RISC-V indirect call target provenance is unproven.",
+          scope=scope,
+          primitive_ids=primitive_ids,
+          roots=roots,
+        )
+      )
     elif inst in INDIRECT_CALL_MNEMONICS:
       findings.append(
         finding(
@@ -655,21 +880,10 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif re.search(r"\[[xrw][0-9]+,\s*[xrw][0-9]+", line) or re.search(r"\([^)]*,\s*%[a-z0-9]+", line):
-      findings.append(
-        finding(
-          symbol,
-          body.path,
-          line_number,
-          line,
-          "register_indexed_memory",
-          "warn",
-          "Register-indexed memory access may be table lookup or public indexing; review operand provenance.",
-          scope=scope,
-          primitive_ids=primitive_ids,
-          roots=roots,
-        )
-      )
+  function_text = "\n".join(item.strip() for _, item in body.lines)
+  function_sha256 = hashlib.sha256(function_text.encode()).hexdigest()
+  for item in findings:
+    item["function_sha256"] = function_sha256
   return findings
 
 
@@ -692,6 +906,9 @@ def summarize(
       "finding_count": len(symbol_findings),
       "unwaived_fail_count": sum(1 for item in unwaived if item["severity"] == "fail"),
       "unwaived_warn_count": sum(1 for item in unwaived if item["severity"] == "warn"),
+      "needs_fix_count": sum(1 for item in unwaived if item["disposition"] == "needs-fix"),
+      "needs_binsec_count": sum(1 for item in unwaived if item["disposition"] == "needs-binsec"),
+      "accepted_count": sum(1 for item in symbol_findings if item["disposition"] == "accepted"),
     }
   return rows
 
@@ -715,8 +932,94 @@ def summarize_closure(
       "finding_count": len(primitive_findings),
       "unwaived_fail_count": sum(1 for item in primitive_unwaived if item["severity"] == "fail"),
       "unwaived_warn_count": sum(1 for item in primitive_unwaived if item["severity"] == "warn"),
+      "needs_fix_count": sum(1 for item in primitive_unwaived if item["disposition"] == "needs-fix"),
+      "needs_binsec_count": sum(1 for item in primitive_unwaived if item["disposition"] == "needs-binsec"),
+      "accepted_count": sum(1 for item in primitive_findings if primitive_id not in item["unresolved_primitive_ids"]),
     }
   return by_primitive
+
+
+def grouped_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+  for item in findings:
+    for primitive_id in item.get("primitive_ids", []):
+      key = (primitive_id, item["symbol"], item["kind"], item["file"])
+      row = groups.setdefault(
+        key,
+        {
+          "primitive": primitive_id,
+          "symbol": item["symbol"],
+          "kind": item["kind"],
+          "artifact": item["file"],
+          "finding_count": 0,
+          "needs_fix_count": 0,
+          "needs_binsec_count": 0,
+          "accepted_count": 0,
+        },
+      )
+      row["finding_count"] += 1
+      if primitive_id not in item.get("unresolved_primitive_ids", []):
+        row["accepted_count"] += 1
+      elif item["disposition"] == "needs-fix":
+        row["needs_fix_count"] += 1
+      else:
+        row["needs_binsec_count"] += 1
+  kind_priority = {
+    "register_indexed_memory": 0,
+    "conditional_branch": 1,
+    "register_branch": 1,
+    "indirect_jump": 2,
+    "indirect_call": 2,
+    "call": 2,
+  }
+  ordered = sorted(
+    groups,
+    key=lambda key: (key[0], kind_priority.get(key[2], 3), key[1], key[2], key[3]),
+  )
+  return [groups[key] for key in ordered]
+
+
+def markdown_report(report: dict[str, Any]) -> str:
+  lines = [
+    "# Constant-time assembly triage",
+    "",
+    f"- Target: `{report['target']}`",
+    f"- Profile: `{report['profile']}`",
+    f"- Unique findings: `{report['finding_count']}`",
+    f"- Needs fix: `{report['needs_fix_count']}`",
+    f"- Needs BINSEC/manual proof: `{report['needs_binsec_count']}`",
+    f"- Accepted by exact waiver: `{report['accepted_count']}`",
+    f"- Unclassified: `{report['unclassified_count']}`",
+    "",
+    "`needs-binsec` means operand provenance is unproven. It is not a constant-time waiver or a pass.",
+    "Grouped counts are per primitive and may reference the same instruction from multiple primitive closures.",
+    "",
+    "## Grouped findings",
+    "",
+    "| Primitive | Reachable symbol | Kind | Artifact | Findings | Needs fix | Needs BINSEC | Accepted |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: |",
+  ]
+  for row in report["grouped_findings"]:
+    values = [
+      row["primitive"],
+      row["symbol"],
+      row["kind"],
+      row["artifact"],
+      str(row["finding_count"]),
+      str(row["needs_fix_count"]),
+      str(row["needs_binsec_count"]),
+      str(row["accepted_count"]),
+    ]
+    escaped = [value.replace("|", "\\|") for value in values]
+    lines.append("| " + " | ".join(f"`{value}`" for value in escaped) + " |")
+
+  needs_fix = [item for item in report["findings"] if not item["waived"] and item["disposition"] == "needs-fix"]
+  if needs_fix:
+    lines.extend(["", "## Blocking findings", ""])
+    for item in needs_fix:
+      lines.append(f"- `{item['locator']}` in `{item['file']}`: `{item['text'].replace('`', '')}`")
+  lines.append("")
+  return "\n".join(lines)
 
 
 def main() -> int:
@@ -732,6 +1035,11 @@ def main() -> int:
   symbol_primitives = primitive_symbols(root)
   ct_roots_by_primitive = ct_intended_roots_by_primitive(root)
   configured_waivers = waivers(root)
+  waiver_errors = validate_waivers(configured_waivers)
+  if waiver_errors:
+    for error in waiver_errors:
+      print(error)
+    return 2
   functions: dict[str, FunctionBody] = {}
   findings: list[dict[str, Any]] = []
   disassembly_files = sorted([*args.artifact_dir.glob("*.o.disasm.txt"), *args.artifact_dir.glob("*.obj.disasm.txt")])
@@ -779,13 +1087,30 @@ def main() -> int:
       )
     )
 
-  apply_waivers(findings, configured_waivers, args.target)
+  try:
+    waiver_match_errors = apply_waivers(findings, configured_waivers, args.target)
+  except ValueError as exc:
+    print(f"invalid asm waiver set: {exc}")
+    return 2
+  if waiver_match_errors:
+    for error in waiver_match_errors:
+      print(error)
+    return 2
   missing_symbols = sorted(symbol for symbol in symbols if symbol not in functions)
   unwaived_failures = [item for item in findings if item["severity"] == "fail" and not item.get("waived")]
   unwaived_warnings = [item for item in findings if item["severity"] == "warn" and not item.get("waived")]
+  needs_fix = [item for item in findings if item["disposition"] == "needs-fix" and not item.get("waived")]
+  needs_binsec = [item for item in findings if item["disposition"] == "needs-binsec" and not item.get("waived")]
+  accepted = [item for item in findings if item["disposition"] == "accepted"]
+  unclassified = [
+    item
+    for item in findings
+    if item.get("operand_class") not in {"public", "secret", "unproven"}
+    or item.get("disposition") not in {"accepted", "needs-fix", "needs-binsec"}
+  ]
 
   report = {
-    "schema_version": 1,
+    "schema_version": 2,
     "kind": "rscrypto.ct.asm-heuristics",
     "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
     "target": args.target,
@@ -796,15 +1121,18 @@ def main() -> int:
       "non_ct_intended_primitives": "entry-symbol scan only",
     },
     "policy": {
-      "fail": ["variable_latency_division", "variable_latency_multiply", "indirect_jump"],
-      "warn": [
+      "needs_fix": ["variable_latency_division", "variable_latency_multiply", "indirect_jump"],
+      "needs_binsec": [
         "conditional_branch",
         "call",
         "indirect_call",
         "register_branch",
         "register_indexed_memory",
         "s390x_division_review",
+        "s390x_vector_multiply_review",
         "suspicious_relocation_target",
+        "variable_latency_division_review",
+        "variable_latency_multiply_review",
       ],
     },
     "disassembly_files": [
@@ -822,15 +1150,21 @@ def main() -> int:
     },
     "missing_symbols": missing_symbols,
     "finding_count": len(findings),
+    "needs_fix_count": len(needs_fix),
+    "needs_binsec_count": len(needs_binsec),
+    "accepted_count": len(accepted),
+    "unclassified_count": len(unclassified),
     "unwaived_fail_count": len(unwaived_failures),
     "unwaived_warn_count": len(unwaived_warnings),
     "waiver_count": sum(1 for item in findings if item.get("waived")),
+    "grouped_findings": grouped_findings(findings),
     "findings": findings,
   }
 
   out = args.out_dir / "asm-heuristics.json"
   out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-  if missing_symbols or unwaived_failures:
+  (args.out_dir / "asm-heuristics.md").write_text(markdown_report(report))
+  if missing_symbols or needs_fix or unclassified:
     return 1
   return 0
 

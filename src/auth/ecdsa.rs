@@ -1573,6 +1573,63 @@ fn mask_not(mask: u64) -> u64 {
   !mask
 }
 
+#[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+#[inline(never)]
+fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
+  let mut product_lo = 0u64;
+  let mut product_hi = 0u64;
+  let mut multiplicand_lo = lhs;
+  let mut multiplicand_hi = 0u64;
+  let mut multiplier = rhs;
+  let mut bit = 0u32;
+
+  while bit < u64::BITS {
+    // Keep LLVM from recognizing the bit-serial product and lowering it back to a target multiply.
+    // The CT artifact gate independently rejects scalar multiply in these ECDSA closures.
+    let selected_bit = core::hint::black_box(multiplier & 1);
+    let mask = 0u64.wrapping_sub(selected_bit);
+    let (next_lo, carry) = product_lo.overflowing_add(multiplicand_lo & mask);
+    let (next_hi, _) = product_hi.overflowing_add(multiplicand_hi & mask);
+    let (next_hi, _) = next_hi.overflowing_add(carry as u64);
+    product_lo = next_lo;
+    product_hi = next_hi;
+
+    multiplicand_hi = (multiplicand_hi << 1) | (multiplicand_lo >> 63);
+    multiplicand_lo <<= 1;
+    multiplier >>= 1;
+    bit += 1;
+  }
+
+  (product_lo, product_hi)
+}
+
+#[inline(always)]
+fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
+  #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  {
+    ct_mul_u64_wide(lhs, rhs)
+  }
+
+  #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  {
+    let product = (lhs as u128) * (rhs as u128);
+    (product as u64, (product >> 64) as u64)
+  }
+}
+
+#[inline(always)]
+fn mul_u64_low(lhs: u64, rhs: u64) -> u64 {
+  #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  {
+    ct_mul_u64_wide(lhs, rhs).0
+  }
+
+  #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  {
+    lhs.wrapping_mul(rhs)
+  }
+}
+
 struct ZeroizingBytes<const N: usize> {
   value: [u8; N],
 }
@@ -3896,26 +3953,22 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
 
   let mut limbs = [0u64; 13];
   for i in 0..L {
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for j in 0..L {
       let k = i + j;
-      let acc = u128::from(limbs[k]) + (u128::from(lhs.0[i]) * u128::from(rhs.0[j])) + carry;
-      limbs[k] = acc as u64;
-      carry = acc >> 64;
+      (limbs[k], carry) = mac_limb(limbs[k], lhs.0[i], rhs.0[j], carry);
     }
-    add_limb(&mut limbs, i + L, carry as u64);
+    add_limb(&mut limbs, i + L, carry);
   }
 
   for i in 0..L {
-    let factor = limbs[i].wrapping_mul(modulus.n0_inv);
-    let mut carry = 0u128;
+    let factor = mul_u64_low(limbs[i], modulus.n0_inv);
+    let mut carry = 0u64;
     for j in 0..L {
       let k = i + j;
-      let acc = u128::from(limbs[k]) + (u128::from(factor) * u128::from(modulus.value.0[j])) + carry;
-      limbs[k] = acc as u64;
-      carry = acc >> 64;
+      (limbs[k], carry) = mac_limb(limbs[k], factor, modulus.value.0[j], carry);
     }
-    add_limb(&mut limbs, i + L, carry as u64);
+    add_limb(&mut limbs, i + L, carry);
   }
 
   let mut out = [0u64; L];
@@ -3971,7 +4024,7 @@ fn montgomery_mul_p256_order(lhs: [u64; 4], rhs: [u64; 4]) -> Uint<4> {
       let (u3, carry) = mac_limb(t3, lhs[3], $rhs_limb, carry);
       let (u4, carry_extra) = adc_limb(t4, carry, 0);
 
-      let factor = u0.wrapping_mul(n0_inv);
+      let factor = mul_u64_low(u0, n0_inv);
       let (_, carry) = mac_limb(u0, factor, n[0], 0);
       let (v0, carry) = mac_limb(u1, factor, n[1], carry);
       let (v1, carry) = mac_limb(u2, factor, n[2], carry);
@@ -4031,7 +4084,7 @@ fn montgomery_mul_p384_order(lhs: [u64; 6], rhs: [u64; 6]) -> Uint<6> {
       let (u5, carry) = mac_limb(t5, lhs[5], $rhs_limb, carry);
       let (u6, carry_extra) = adc_limb(t6, carry, 0);
 
-      let factor = u0.wrapping_mul(n0_inv);
+      let factor = mul_u64_low(u0, n0_inv);
       let (_, carry) = mac_limb(u0, factor, n[0], 0);
       let (v0, carry) = mac_limb(u1, factor, n[1], carry);
       let (v1, carry) = mac_limb(u2, factor, n[2], carry);
@@ -4206,8 +4259,22 @@ fn sbb_limb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
 
 #[inline(always)]
 fn mac_limb(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  let result = u128::from(acc) + (u128::from(lhs) * u128::from(rhs)) + u128::from(carry);
-  (result as u64, (result >> 64) as u64)
+  #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  {
+    let (product_lo, product_hi) = mul_u64_wide(lhs, rhs);
+    let (result, carry0) = product_lo.overflowing_add(acc);
+    let (result, carry1) = result.overflowing_add(carry);
+    (
+      result,
+      product_hi.strict_add(u64::from(carry0)).strict_add(u64::from(carry1)),
+    )
+  }
+
+  #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  {
+    let result = u128::from(acc) + (u128::from(lhs) * u128::from(rhs)) + u128::from(carry);
+    (result as u64, (result >> 64) as u64)
+  }
 }
 
 #[allow(clippy::indexing_slicing)]
@@ -4332,6 +4399,27 @@ mod tests {
       optimized == complete,
       "P-384 nonexceptional comb must match complete comb"
     );
+  }
+
+  #[test]
+  fn ct_mul_u64_wide_matches_u128_for_edges_and_generated_inputs() {
+    const EDGES: [u64; 8] = [0, 1, 2, u32::MAX as u64, 1u64 << 32, 1u64 << 63, u64::MAX - 1, u64::MAX];
+
+    for lhs in EDGES {
+      for rhs in EDGES {
+        let product = u128::from(lhs) * u128::from(rhs);
+        assert_eq!(ct_mul_u64_wide(lhs, rhs), (product as u64, (product >> 64) as u64));
+      }
+    }
+
+    let mut lhs = 0x243f_6a88_85a3_08d3u64;
+    let mut rhs = 0x1319_8a2e_0370_7344u64;
+    for _ in 0..1024 {
+      lhs = lhs.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
+      rhs = rhs.wrapping_mul(0xd134_2543_de82_ef95).wrapping_add(1);
+      let product = u128::from(lhs) * u128::from(rhs);
+      assert_eq!(ct_mul_u64_wide(lhs, rhs), (product as u64, (product >> 64) as u64));
+    }
   }
 
   #[test]

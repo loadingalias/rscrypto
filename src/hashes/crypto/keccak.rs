@@ -684,6 +684,7 @@ pub(crate) struct Aarch64Permuter;
 #[derive(Clone, Copy)]
 pub(crate) struct Aarch64Permuter {
   has_sha3: bool,
+  #[cfg(target_os = "linux")]
   has_sve2_sha3: bool,
 }
 
@@ -695,6 +696,7 @@ impl Default for Aarch64Permuter {
     let caps = crate::platform::caps();
     Self {
       has_sha3: caps.has(aarch64_caps::SHA3),
+      #[cfg(target_os = "linux")]
       has_sve2_sha3: caps.has(aarch64_caps::SVE2_SHA3),
     }
   }

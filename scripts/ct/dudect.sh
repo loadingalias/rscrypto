@@ -107,7 +107,7 @@ REPORT_PATH="$OUT_DIR/dudect-report.json"
 mkdir -p "$OUT_DIR"
 rm -f "$STDOUT_PATH" "$CSV_PATH" "$REPORT_PATH"
 
-CARGO_ARGS=(run --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$ROOT/target/ct-dudect-build" --target "$TARGET")
+CARGO_ARGS=(run --locked --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$ROOT/target/ct-dudect-build" --target "$TARGET")
 if [[ "$PROFILE" == "release" ]]; then
   CARGO_ARGS+=(--release)
 elif [[ "$PROFILE" != "debug" ]]; then

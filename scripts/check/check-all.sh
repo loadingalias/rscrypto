@@ -234,7 +234,14 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 maybe_disable_sccache
-select_constrained_crates "$@"
+SCOPE_ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --skip-feature-matrix|--feature-matrix) ;;
+    *) SCOPE_ARGS+=("$arg") ;;
+  esac
+done
+select_constrained_crates "${SCOPE_ARGS[@]}"
 
 # Run host checks first (most likely to fail, fastest feedback)
 "$SCRIPT_DIR/check.sh" "$@"
@@ -247,13 +254,13 @@ trap 'rm -rf "$log_dir"' EXIT
 jobs=(windows linux ibm constrained)
 pids=()
 
-("$SCRIPT_DIR/check-win.sh" "$@") >"$log_dir/windows.log" 2>&1 &
+("$SCRIPT_DIR/check-win.sh" "${SCOPE_ARGS[@]}") >"$log_dir/windows.log" 2>&1 &
 pids+=( "$!" )
 
-("$SCRIPT_DIR/check-linux.sh" "$@") >"$log_dir/linux.log" 2>&1 &
+("$SCRIPT_DIR/check-linux.sh" "${SCOPE_ARGS[@]}") >"$log_dir/linux.log" 2>&1 &
 pids+=( "$!" )
 
-("$SCRIPT_DIR/check-ibm.sh" "$@") >"$log_dir/ibm.log" 2>&1 &
+("$SCRIPT_DIR/check-ibm.sh" "${SCOPE_ARGS[@]}") >"$log_dir/ibm.log" 2>&1 &
 pids+=( "$!" )
 
 (run_constrained_checks) >"$log_dir/constrained.log" 2>&1 &

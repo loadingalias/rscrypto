@@ -342,6 +342,7 @@ def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
     ("provenance.json", "provenance"),
     ("evidence-index.json", "evidence_index"),
     ("asm-heuristics.json", "asm_heuristics"),
+    ("asm-heuristics.md", "asm_heuristics_summary"),
   ):
     path = out_dir / relative
     if path.exists():
@@ -577,7 +578,7 @@ def build_primitive_evidence(
     ):
       binsec_status = "pass"
     elif required_binsec and not binsec_enabled:
-      binsec_status = "unsupported"
+      binsec_status = "not_applicable"
     elif required_binsec:
       binsec_status = "not_run"
     else:

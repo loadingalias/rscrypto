@@ -217,6 +217,7 @@ def build_harness(target: str, profile: str, rustflags: list[str]) -> tuple[Path
   cmd = [
     "cargo",
     "build",
+    "--locked",
     "--manifest-path",
     str(HARNESS_MANIFEST),
     "--target-dir",

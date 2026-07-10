@@ -81,7 +81,8 @@ fn detect_x86() -> Detected {
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[inline]
-#[allow(unsafe_code)]
+// MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
+#[allow(unsafe_code, unused_unsafe)]
 fn cpuid_leaf(leaf: u32) -> core::arch::x86_64::CpuidResult {
   // SAFETY: CPUID leaf read is safe here because:
   // 1. This function is compiled only for x86_64 targets.
@@ -92,7 +93,8 @@ fn cpuid_leaf(leaf: u32) -> core::arch::x86_64::CpuidResult {
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[inline]
-#[allow(unsafe_code)]
+// MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
+#[allow(unsafe_code, unused_unsafe)]
 fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> core::arch::x86_64::CpuidResult {
   // SAFETY: CPUID leaf/subleaf read is safe here because:
   // 1. This function is compiled only for x86_64 targets.
@@ -103,7 +105,8 @@ fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> core::arch::x86_64::CpuidResult 
 
 #[cfg(all(target_arch = "x86", feature = "std"))]
 #[inline]
-#[allow(unsafe_code)]
+// MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
+#[allow(unsafe_code, unused_unsafe)]
 fn cpuid_leaf(leaf: u32) -> core::arch::x86::CpuidResult {
   // SAFETY: CPUID leaf read is safe here because:
   // 1. This function is compiled only for x86 targets.

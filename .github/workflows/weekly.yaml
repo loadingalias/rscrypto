@@ -196,6 +196,10 @@ jobs:
       binsec_timeout: "900"
       upload_raw_artifacts: false
 
+  rsa:
+    name: RSA Evidence (weekly)
+    uses: ./.github/workflows/rsa.yaml
+
   # ─── Coverage (nextest + fuzz corpus → codecov). ──
   coverage:
     name: Coverage
@@ -262,7 +266,7 @@ jobs:
   # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, coverage]
+    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -278,6 +282,7 @@ jobs:
             "asan-fuzzing=${{ needs.asan-fuzzing.result }}" \
             "mlkem-graviton=${{ needs.mlkem-graviton.result }}" \
             "ct=${{ needs.ct.result }}" \
+            "rsa=${{ needs.rsa.result }}" \
             "coverage=${{ needs.coverage.result }}"
           do
             name="${lane%%=*}"

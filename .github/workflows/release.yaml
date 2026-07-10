@@ -47,7 +47,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [preflight, ci-gate, ct-evidence]
+    needs: [preflight, ci-gate, ct-evidence, rsa-evidence]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: crates-io
@@ -98,7 +98,7 @@ jobs:
         id: ct_evidence
         env:
           CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-        run: scripts/ci/package-release-ct-evidence.sh --version "$CRATE_VERSION"
+        run: scripts/ci/package-release-ct-evidence.sh --version "$CRATE_VERSION" --commit "$GITHUB_SHA"
 
       - name: Attest CT evidence provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -231,6 +231,10 @@ jobs:
       binsec_timeout: "900"
       dudect_gate: required
       upload_raw_artifacts: true
+
+  rsa-evidence:
+    name: RSA Evidence
+    uses: ./.github/workflows/rsa.yaml
 
   ci-gate:
     name: CI Gate

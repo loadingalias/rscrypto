@@ -10,7 +10,7 @@ positioning, and [`ct.toml`](ct.toml) for the machine-readable CT claim set.
 
 ## Audit Scope
 
-Review the `ct_claimed` core before the rest of the repository:
+Review the `ct-intended` candidate core before the rest of the repository:
 
 1. X25519 scalar multiplication.
 2. Ed25519 signing and secret-key public derivation.
@@ -66,8 +66,10 @@ In scope:
    beyond the single failure bit, and accepting inputs other implementations
    reject.
 2. **Co-located timing attacker.** Measures timing of secret-bearing
-   operations. Scope is exactly the `ct_claimed` set in `ct.toml`, under the
-   claim model in [`docs/constant-time.md`](docs/constant-time.md).
+   operations. `ct.toml` identifies candidate surfaces; a primitive/target
+   configuration enters the release claim only when every required gate passes
+   in the matching attested release bundle, under the model in
+   [`docs/constant-time.md`](docs/constant-time.md).
 3. **Caller mistakes.** Nonce reuse, dropped verification results, weak
    parameters. The API uses typed keys and nonces, `#[must_use]` verification
    results, `NonceCounter` invocation budgets, opaque errors, and zeroize on
@@ -93,7 +95,7 @@ Ordered by exposure to untrusted input:
 |---|---|---|
 | Parsers | RSA DER/SPKI/PKCS#8 import, ECDSA DER signatures and SEC1 points, ML-KEM key and ciphertext parsing, PHC strings, hex | Memory safety, panics, accepting what should be rejected |
 | Verification oracles | MAC `verify_tag`, AEAD open, signature `verify`, ML-KEM implicit rejection | Timing or error detail beyond the single failure bit |
-| Secret-bearing compute | Sign, decrypt, decapsulate, derive; the `ct_claimed` set | Timing leakage, incorrect arithmetic |
+| Secret-bearing compute | Sign, decrypt, decapsulate, derive; the release-evidenced subset of `ct.toml` | Timing leakage, incorrect arithmetic |
 | `unsafe` SIMD and assembly kernels | Per-architecture modules | Undefined behavior, divergence from the portable authority |
 | Dispatch | `src/platform`, `src/backend` | Selecting a kernel the CPU cannot run, or one that produces wrong output |
 
@@ -116,12 +118,15 @@ Ordered by exposure to untrusted input:
   execute every native SIMD or assembly kernel.
 - Constant-time evidence is produced by CI and release workflows. Consumers
   should use the versioned release bundle for the exact artifact they deploy.
+  Releases through `v0.6.4` have no such bundle and carry no release-bound CT
+  claim. Windows, Linux MUSL, Intel macOS, bare-metal, and WASM physical timing
+  evidence remains explicitly deferred.
 
 ## Review Priorities
 
 Where an external review buys the most, in order:
 
-1. The `ct_claimed` core listed above.
+1. The candidate constant-time core listed above.
 2. RSA DER import and the PKCS#1 v1.5, PSS, and OAEP padding checks.
 3. `unsafe` kernels with the weakest tool coverage: hand-written assembly is
    not visible to Miri.

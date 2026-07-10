@@ -109,6 +109,11 @@ def main() -> int:
 
   copy_file(report_json, destination / f"ct-report-{args.suffix}.json")
   copy_file(report_md, destination / f"ct-report-{args.suffix}.md")
+  copy_file(target_dir / "asm-heuristics.json", destination / f"asm-heuristics-{args.suffix}.json")
+  copy_file(target_dir / "asm-heuristics.md", destination / f"asm-heuristics-{args.suffix}.md")
+  copy_file(target_dir / "provenance.json", destination / f"provenance-{args.suffix}.json")
+  copy_file(target_dir / "evidence-index.json", destination / f"evidence-index-{args.suffix}.json")
+  copy_file(target_dir / "artifact-hashes.txt", destination / f"artifact-hashes-{args.suffix}.txt")
 
   if report is not None:
     package_component_reports(root, report, destination)

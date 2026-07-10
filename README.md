@@ -116,11 +116,14 @@ Public Type Inventory: [`docs/types.md`](docs/types.md).
 
 ## Constant-Time Boundaries
 
-`rscrypto` makes scoped constant-time claims for secret-bearing operations, not
-for every single function in the crate.
+`rscrypto` makes only release-bound, scoped constant-time claims for
+secret-bearing operations, not for every function in the crate. `ct.toml`
+records the candidate primitive/configuration set; it does not create a public
+claim by itself. A claim exists only where the matching signed GitHub release
+includes an attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` bundle that passes all
+required gates for that exact version, commit, target, profile, and feature set.
 
-The exact release gate is the set of primitive/config pairs marked
-`ct_claimed` in [`ct.toml`](ct.toml). The main secret-bearing surfaces are
+The main candidate secret-bearing surfaces in [`ct.toml`](ct.toml) are
 MAC/tag verification, AEAD authentication failure shape, X25519 scalar
 multiplication, Ed25519 signing and secret public-key derivation, ECDSA
 P-256/P-384 blinded signing, ML-KEM-512/768/1024 key gen,
@@ -130,8 +133,9 @@ and selected password-verification comparisons.
 Public parsing, unlisted key gen, OS randomness, raw hashes, checksums,
 non-cryptographic hashes, benchmark paths, and public-key verification math are
 not blanket constant-time claims. See [`docs/constant-time.md`](docs/constant-time.md)
-for the exact claim model and [`docs/compliance.md`](docs/compliance.md) for
-review boundaries.
+for the exact claim and verification model and [`docs/compliance.md`](docs/compliance.md)
+for review boundaries. Releases through `v0.6.4` do not contain this bundle and
+therefore carry no release-bound constant-time claim.
 
 ## Portability & Accel
 
@@ -150,8 +154,9 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 
 ## Security
 
-`rscrypto` makes scoped constant-time claims for named secret-bearing
-operations, not for every API or build. Secret-bearing types zeroize on drop and
+`rscrypto` makes scoped constant-time claims only when a matching release
+publishes the required evidence bundle, never for every API or build.
+Secret-bearing types zeroize on drop and
 mask `Debug`; verification failures use opaque errors; failed AEAD opens wipe
 output buffers. Release artifacts are signed-tag gated, published through
 crates.io Trusted Publishing, and covered by GitHub build provenance

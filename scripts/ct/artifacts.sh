@@ -118,6 +118,7 @@ mkdir -p "$ARTIFACT_DIR"
 
 echo "building CT harness for $TARGET ($PROFILE)"
 cargo rustc \
+  --locked \
   --manifest-path tools/ct-harness/Cargo.toml \
   --target-dir "$BUILD_TARGET_DIR" \
   --target "$TARGET" \

@@ -40,9 +40,10 @@ Speculation is handled by avoiding secret-dependent branches and addresses in
 claimed code paths. This is not a blanket Spectre-class guarantee for a whole
 process.
 
-## Claimed Surfaces
+## Candidate Surfaces
 
-The highest-sensitivity surfaces are private-key and auth operations:
+`ct.toml` places the following highest-sensitivity surfaces inside the release
+evidence gate. This is intent, not a standalone public claim:
 
 - MAC/tag verification and constant-time byte equality.
 - AEAD authentication and failed-open cleanup.
@@ -83,16 +84,27 @@ A target is not claimed because it builds. It is claimed only when the release
 has evidence for the exact compiler, codegen backend, linker, target
 CPU/features, profile, crate features, dependency lockfile, and primitive set.
 
-Current native release evidence is centered on LLVM-generated binaries for:
+The release workflow requires native evidence for these LLVM-generated target
+classes. A row is covered only when it appears as a passing lane in the
+matching release bundle:
 
-| Target class | Current public claim shape |
+| Target class | Required release evidence |
 |---|---|
 | Linux `x86_64-unknown-linux-gnu` | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
 | Linux `aarch64-unknown-linux-gnu` | Artifact review, generated-code heuristics, empirical timing tests, and binary checks where supported. |
 | Linux `riscv64gc-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
 | Linux `s390x-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
 | Linux `powerpc64le-unknown-linux-gnu` | Artifact review, generated-code heuristics, and empirical timing tests. |
-| macOS `aarch64-apple-darwin` | Local artifact review, generated-code heuristics, and empirical timing tests. |
+
+Release CI exercises multiple x86_64 and AArch64 microarchitectures. The exact
+CPU, target features, compiler, linker, tools, and artifact hashes are recorded
+per lane rather than generalized to every CPU implementing the same triple.
+
+ECDSA P-256/P-384 signing uses multiplication-free, fixed-work limb arithmetic
+on s390x and RISC-V to avoid the variable-latency scalar multiply observed in
+earlier native runs. That source and disassembly property is necessary, not
+sufficient: those targets are promoted only after their native required
+DudeCT cases pass in the matching release evidence.
 
 For ML-KEM, the s390x claim covers the fixed-work z/Vector arithmetic kernels
 present in the release evidence. It does not cover native scalar multiply or
@@ -100,14 +112,32 @@ divide substitutions for secret-fed ML-KEM arithmetic, and it does not cover
 unreviewed hand-written assembly.
 
 Linux MUSL, macOS `x86_64`, Windows MSVC, bare-metal `no_std`, and WASM builds
-may compile and may be intended to follow the same coding rules, but they need
-separate target-appropriate evidence before they should be described as covered
-by a release CT claim.
+may compile and may follow the same coding rules, but physical timing evidence
+is explicitly deferred. Apple Silicon macOS evidence is local rather than part
+of the release bundle. Artifact and heuristic analysis for a deferred target
+must never be represented as native physical timing evidence.
 
 `portable-only` constrains runtime dispatch to portable backends. It is useful
 for audit-constrained builds, but it is not a proof by itself.
 
 ## Evidence
+
+The source manifest is never sufficient to establish a release claim. The
+matching signed GitHub release must contain all of:
+
+- `rscrypto-X.Y.Z.crate` and `SHA256SUMS`.
+- An attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` built from the same release
+  commit.
+- `CT-EVIDENCE-BUNDLE.json`, naming the version, full commit, release profile,
+  required lane set, toolchain, target CPU/features, and per-lane hashes.
+- Raw generated-code artifacts matching each lane's provenance and artifact
+  hash ledger.
+
+The release packager fails closed on missing or extra lanes, dirty or
+mismatched provenance, incomplete timing cases, required BINSEC kernels that
+are absent or non-secure, and any compact/raw artifact hash mismatch. Releases
+through `v0.6.4` predate this bundle and carry no release-bound constant-time
+claim.
 
 Release evidence is defined per primitive in `ct.toml`. The normal native
 evidence set includes:
@@ -125,6 +155,19 @@ evidence set includes:
   paths.
 - Miri and unsafe-code validation where the CT path uses unsafe Rust.
 
+Assembly triage is grouped by primitive, reachable symbol, finding kind, and
+artifact. Register-indexed memory is presented first, then conditional control
+flow, then indirect calls. `needs-binsec` means operand provenance remains
+unproven; it is not a waiver, a proof, or a pass. An accepted waiver must bind
+the exact primitive, symbol, kind, artifact, stable instruction locator,
+function hash, source, public classification, rationale, reviewer, and review
+date. Source or disassembly movement invalidates it.
+
+BINSEC is required on the GNU Linux targets supported by the workflow. Every
+manifest-required kernel must report `secure`. Other target reports record
+BINSEC as `not_applicable` with the target policy reason; that status is not
+binary proof.
+
 Statistical timing checks must be described precisely:
 
 ```text
@@ -132,3 +175,25 @@ No leakage detected for this configuration.
 ```
 
 They are evidence, not a formal proof.
+
+## Consumer Verification
+
+For release `vX.Y.Z`, download the crate, CT bundle, and checksums from that
+exact GitHub release, then verify both attestations and hashes:
+
+```bash
+gh release download vX.Y.Z --repo loadingalias/rscrypto \
+  -p 'rscrypto-X.Y.Z.crate' \
+  -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
+  -p SHA256SUMS
+sha256sum --check SHA256SUMS
+gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
+mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
+(cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
+```
+
+Inspect `CT-EVIDENCE-BUNDLE.json` and use only lanes whose exact target,
+compiler, target CPU/features, profile, and primitive evidence match the
+configuration being evaluated. A missing bundle, lane, or required pass means
+there is no release-bound constant-time claim for that configuration.

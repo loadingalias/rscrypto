@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -20,6 +21,22 @@ from toml_compat import tomllib
 
 def run(args: list[str], *, cwd: Path) -> str:
   return subprocess.check_output(args, cwd=cwd, text=True, stderr=subprocess.STDOUT)
+
+
+def optional_version(args: list[str], *, cwd: Path) -> str | None:
+  try:
+    return run(args, cwd=cwd).strip() or None
+  except (OSError, subprocess.CalledProcessError):
+    return None
+
+
+def llvm_tool(root: Path, name: str) -> str:
+  sysroot = Path(run(["rustc", "--print", "sysroot"], cwd=root).strip())
+  host = parse_rustc_verbose(run(["rustc", "-vV"], cwd=root)).get("host", "")
+  candidate = sysroot / "lib" / "rustlib" / host / "bin" / name
+  if candidate.exists():
+    return str(candidate)
+  return shutil.which(name) or name
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -167,9 +184,22 @@ def write_artifact_hashes(out_dir: Path, artifacts: list[dict[str, Any]]) -> Non
   (out_dir / "artifact-hashes.txt").write_text("\n".join(lines) + "\n")
 
 
+def component_lockfiles(root: Path) -> list[dict[str, str]]:
+  paths = (
+    "Cargo.lock",
+    "tools/ct-harness/Cargo.lock",
+    "tools/ct-dudect/Cargo.lock",
+    "tools/ct-binsec-harness/Cargo.lock",
+  )
+  return [{"path": path, "sha256": sha256_file(root / path)} for path in paths]
+
+
 def report_records(out_dir: Path) -> list[dict[str, Any]]:
   reports = []
-  for name, kind in (("asm-heuristics.json", "asm_heuristics"),):
+  for name, kind in (
+    ("asm-heuristics.json", "asm_heuristics"),
+    ("asm-heuristics.md", "asm_heuristics_summary"),
+  ):
     path = out_dir / name
     if path.exists():
       reports.append(
@@ -298,6 +328,15 @@ def main() -> int:
     "rustc_commit_date": rustc_verbose.get("commit_date"),
     "rustc_host": rustc_verbose.get("host"),
     "llvm_version": rustc_verbose.get("LLVM version"),
+    "tools": {
+      "python": sys.version,
+      "cargo": run(["cargo", "-V"], cwd=root).strip(),
+      "rustc": rustc_verbose_text.strip(),
+      "llvm_objdump": optional_version([llvm_tool(root, "llvm-objdump"), "--version"], cwd=root),
+      "llvm_nm": optional_version([llvm_tool(root, "llvm-nm"), "--version"], cwd=root),
+      "llvm_size": optional_version([llvm_tool(root, "llvm-size"), "--version"], cwd=root),
+      "rustfilt": optional_version([shutil.which("rustfilt") or "rustfilt", "--version"], cwd=root),
+    },
     "backend": args.backend,
     "target": args.target,
     "target_triple": args.target,
@@ -325,6 +364,7 @@ def main() -> int:
     "dependency_lockfile_sha256": sha256_file(dependency_lockfile),
     "workspace_lockfile": "Cargo.lock",
     "workspace_lockfile_sha256": sha256_file(workspace_lockfile),
+    "component_lockfiles": component_lockfiles(root),
     "host_runner": socket.gethostname(),
     "host_uname": run(["uname", "-a"], cwd=root),
     "host_os": sys.platform,

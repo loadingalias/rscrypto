@@ -65,23 +65,34 @@ just release-status
 just release-check
 ```
 
-When the plan is correct, run the release command:
+When the plan is correct, prepare the release candidate without creating a
+tag:
 
 ```bash
-cargo rail release run rscrypto --bump auto --yes --skip-publish
+just release-prepare
 ```
 
-or:
+`release-prepare` lets cargo-rail create and push the version/changelog release
+commit with `--skip-tag`, refreshes all standalone CT tool lockfiles against
+that new version, and pushes one normal `workspace:` follow-up commit. This
+keeps the release candidate reproducible without modifying a signed tag or
+hand-editing generated lockfiles.
+
+Wait for CI on the resulting `main` commit, then manually dispatch
+`weekly.yaml` on that exact commit. Weekly requires both the full CT matrix and
+the dedicated RSA workflow. If either fails, fix the release candidate and run
+both gates again. Do not create the tag.
+
+Once CI and Weekly are green, finalize the release:
 
 ```bash
 just release-tag
 ```
 
-The `release-tag` recipe runs strict config validation and the extended
-pre-tag cargo-rail release check before it creates the release commit. That
-command is allowed to create the release commit and push the signed tag because
-`.config/rail.toml` has `push = true`. It must not publish to crates.io; the
-`--skip-publish` flag is part of the release contract.
+The `release-tag` recipe reruns strict validation and the extended pre-tag
+check, then uses `cargo rail release finalize` to create and push the signed
+tag. It must not publish to crates.io; the `--skip-publish` flag is part of the
+release contract.
 
 ## CI Release Gate
 
@@ -98,13 +109,17 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 7. Rejects dirty VCS metadata and private or local-only package contents.
 8. Waits for the `CI` workflow on the same commit to pass.
 9. Attests the `.crate` artifact with GitHub build provenance.
-10. Runs the release CT evidence workflow and attaches a versioned CT evidence
-   bundle to the GitHub Release.
-11. Uses crates.io Trusted Publishing to get a temporary publish token.
-12. Publishes with `cargo publish -p rscrypto --locked`.
-13. Downloads the crate from crates.io and verifies the SHA-256 against the
+10. Runs every release CT lane and the dedicated RSA evidence workflow, and
+    rejects any failed required gate.
+11. Validates that the complete CT lane set, version, commit, clean provenance,
+    tool versions, timing coverage, BINSEC coverage, and raw artifact hashes
+    agree before creating the versioned CT evidence bundle.
+12. Attests the CT evidence bundle with GitHub build provenance.
+13. Uses crates.io Trusted Publishing to get a temporary publish token.
+14. Publishes with `cargo publish -p rscrypto --locked`.
+15. Downloads the crate from crates.io and verifies the SHA-256 against the
     attested package.
-14. Creates or updates the GitHub Release with the crate, CT evidence bundle,
+16. Creates or updates the GitHub Release with the crate, CT evidence bundle,
     and `SHA256SUMS`.
 
 The publish job uses the `crates-io` GitHub environment. GitHub requests
@@ -125,10 +140,15 @@ commit before creating the next release tag.
 Consumers can verify the GitHub Release artifact:
 
 ```bash
-gh release download vX.Y.Z --repo loadingalias/rscrypto -p 'rscrypto-*.crate' -p SHA256SUMS
-shasum -a 256 -c SHA256SUMS
+gh release download vX.Y.Z --repo loadingalias/rscrypto \
+  -p 'rscrypto-X.Y.Z.crate' \
+  -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
+  -p SHA256SUMS
+sha256sum --check SHA256SUMS
 gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
+mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
+(cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
 ```
 
 The crate downloaded from crates.io should have the same SHA-256 as the

@@ -46,15 +46,9 @@ const fn fiat_p384_subborrowx_u64(arg1: fiat_p384_u1, arg2: u64, arg3: u64) -> (
   (out1, out2)
 }
 
-const fn fiat_p384_mulx_u64(arg1: u64, arg2: u64) -> (u64, u64) {
-  let mut out1: u64 = 0;
-  let mut out2: u64 = 0;
-  let x1: u128 = ((arg1 as u128) * (arg2 as u128));
-  let x2: u64 = ((x1 & (0xffffffffffffffff as u128)) as u64);
-  let x3: u64 = ((x1 >> 64) as u64);
-  out1 = x2;
-  out2 = x3;
-  (out1, out2)
+#[inline(always)]
+fn fiat_p384_mulx_u64(arg1: u64, arg2: u64) -> (u64, u64) {
+  super::mul_u64_wide(arg1, arg2)
 }
 
 const fn fiat_p384_cmovznz_u64(arg1: fiat_p384_u1, arg2: u64, arg3: u64) -> u64 {
@@ -67,7 +61,7 @@ const fn fiat_p384_cmovznz_u64(arg1: fiat_p384_u1, arg2: u64, arg3: u64) -> u64 
   out1
 }
 
-const fn fiat_p384_mul(
+fn fiat_p384_mul(
   arg1: &fiat_p384_montgomery_domain_field_element,
   arg2: &fiat_p384_montgomery_domain_field_element,
 ) -> fiat_p384_montgomery_domain_field_element {
@@ -332,9 +326,7 @@ const fn fiat_p384_mul(
   out1
 }
 
-const fn fiat_p384_square(
-  arg1: &fiat_p384_montgomery_domain_field_element,
-) -> fiat_p384_montgomery_domain_field_element {
+fn fiat_p384_square(arg1: &fiat_p384_montgomery_domain_field_element) -> fiat_p384_montgomery_domain_field_element {
   let mut out1: fiat_p384_montgomery_domain_field_element = [0; 6];
   let x1: u64 = (arg1[1]);
   let x2: u64 = (arg1[2]);
@@ -597,11 +589,11 @@ const fn fiat_p384_square(
 }
 
 #[inline]
-pub(crate) const fn mul(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
+pub(crate) fn mul(lhs: [u64; 6], rhs: [u64; 6]) -> [u64; 6] {
   fiat_p384_mul(&lhs, &rhs)
 }
 
 #[inline]
-pub(crate) const fn square(value: [u64; 6]) -> [u64; 6] {
+pub(crate) fn square(value: [u64; 6]) -> [u64; 6] {
   fiat_p384_square(&value)
 }
