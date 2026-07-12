@@ -38,8 +38,7 @@ count_matches() {
   local pattern=$1
   shift
   local count
-  count=$({ rg --no-heading --count-matches "$pattern" "$@" 2>/dev/null || true; } \
-    | awk -F: '{ total += $NF } END { print total + 0 }')
+  count=$({ grep -ERho "$pattern" "$@" 2>/dev/null || true; } | wc -l | tr -d ' ')
   echo "$count"
 }
 
@@ -82,7 +81,7 @@ require_file "$CHECK_ALL"
 require_unique_feature_sets "$COMPILE_MATRIX"
 require_unique_feature_sets "$EXECUTABLE_MATRIX"
 
-rg -q 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
+grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "local check-all must retain one explicit feature-matrix execution"
 
 [[ $(count_matches 'just test-feature-matrix' "$WORKFLOWS") -eq 1 ]] \
@@ -90,11 +89,11 @@ rg -q 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
 [[ $(count_matches 'just check-feature-matrix' "$WORKFLOWS") -eq 1 ]] \
   || fail "ordinary workflows must have exactly one compile feature-matrix owner"
 
-if rg -n 'just check --all|check-all\.sh' "$WORKFLOWS" >/dev/null; then
+if grep -ERn 'just check --all|check-all\.sh' "$WORKFLOWS" >/dev/null; then
   fail "native workflows must not invoke comprehensive cross-target checks"
 fi
 
-if rg -n 'test-feature-matrix|check-feature-matrix' "$WEEKLY" >/dev/null; then
+if grep -En 'test-feature-matrix|check-feature-matrix' "$WEEKLY" >/dev/null; then
   fail "weekly must inherit feature contracts from the reusable suite"
 fi
 

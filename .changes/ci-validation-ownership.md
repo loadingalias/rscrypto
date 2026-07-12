@@ -12,3 +12,7 @@ Updated repository automation to cargo-rail 0.17.0 and cargo-rail-action v5.
 Configuration sync now records the public open-world consumer boundary, CI
 checks the compiler-backed unified Cargo graph, and pull requests require
 change-file coverage from the planner's resolved base reference.
+
+Made consolidated CI lanes self-contained by removing the ownership checker's
+ripgrep dependency and pinning the MUSL cross-target lane to the same verified
+Zig build used locally.
