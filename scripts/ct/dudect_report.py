@@ -196,23 +196,23 @@ CASE_METADATA = {
   },
   "ecdsa_p256_sign_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",
-    "left_class": "P-256 signing with fixed secret and projective blinding",
-    "right_class": "P-256 signing with random secret and projective blinding",
+    "left_class": "P-256 signing with fixed secret and projective and scalar blinding",
+    "right_class": "P-256 signing with random secret and projective and scalar blinding",
   },
   "ecdsa_p256_keypair_sign_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",
-    "left_class": "P-256 keypair signing with fixed secret and projective blinding",
-    "right_class": "P-256 keypair signing with random secret and projective blinding",
+    "left_class": "P-256 keypair signing with fixed secret and projective and scalar blinding",
+    "right_class": "P-256 keypair signing with random secret and projective and scalar blinding",
   },
   "ecdsa_p384_sign_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p384_sign",
-    "left_class": "P-384 signing with fixed secret and projective blinding",
-    "right_class": "P-384 signing with random secret and projective blinding",
+    "left_class": "P-384 signing with fixed secret and projective and scalar blinding",
+    "right_class": "P-384 signing with random secret and projective and scalar blinding",
   },
   "ecdsa_p384_keypair_sign_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p384_sign",
-    "left_class": "P-384 keypair signing with fixed secret and projective blinding",
-    "right_class": "P-384 keypair signing with random secret and projective blinding",
+    "left_class": "P-384 keypair signing with fixed secret and projective and scalar blinding",
+    "right_class": "P-384 keypair signing with random secret and projective and scalar blinding",
   },
   "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",
@@ -248,6 +248,13 @@ CASE_METADATA = {
     "right_class": "P-256 diagnostic fixed-r order multiply with random secret",
     "gate": "diagnostic",
     "reason": "ECDSA signing CT root-cause isolation.",
+  },
+  "ecdsa_p256_diag_blinded_order_mul_fixed_vs_random_secret": {
+    "primitive": "signature.ecdsa_p256_sign",
+    "left_class": "P-256 diagnostic blinded fixed-r order multiply with fixed secret",
+    "right_class": "P-256 diagnostic blinded fixed-r order multiply with random secret",
+    "gate": "diagnostic",
+    "reason": "Mitigation isolation for s390x fixed-r private-scalar multiplication.",
   },
   "ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",

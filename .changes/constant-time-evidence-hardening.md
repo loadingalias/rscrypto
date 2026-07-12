@@ -18,3 +18,8 @@ transition lint-clean across the full matrix.
 Corrected the public constant-time boundary: `ct.toml` records intent, while a
 claim exists only for configurations with passing evidence in the matching
 attested release bundle.
+
+Removed secret-fed overflow panic branches from the fixed-work ECDSA limb
+multiply-accumulate used on s390x and RISC-V. Blinded signing now additively
+masks the private scalar during `r·d`, with direct full-width carry equivalence
+tests and regenerated target evidence.

@@ -18,9 +18,10 @@ use rscrypto::{
   },
   auth::diag_rsa_private_component_validation_32,
   diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
-  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_order_mul_fixed_r_limb_digest,
-  diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
-  diag_ecdsa_p256_final_multiply_limb_digest, diag_ecdsa_p384_basepoint_blinded_limb_digest,
+  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
+  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
+  diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
+  diag_ecdsa_p384_basepoint_blinded_limb_digest,
   diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
   diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
   diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
@@ -64,6 +65,25 @@ fn random_class(rng: &mut BenchRng) -> Class {
   } else {
     Class::Right
   }
+}
+
+fn balanced_classes(rng: &mut BenchRng, count: usize) -> Vec<Class> {
+  const BLOCK_LEN: usize = 32;
+
+  let mut classes = Vec::with_capacity(count);
+  while classes.len() < count {
+    let start = classes.len();
+    let len = (count - start).min(BLOCK_LEN);
+    let extra_left = len % 2 == 1 && rng.random::<bool>();
+    let left_len = len / 2 + usize::from(extra_left);
+    classes.extend((0..len).map(|index| if index < left_len { Class::Left } else { Class::Right }));
+
+    for index in (1..len).rev() {
+      let other = rng.random_range(0..=index);
+      classes[start..].swap(index, other);
+    }
+  }
+  classes
 }
 
 fn mlkem_poly_from_seed(seed: u16) -> [u16; 256] {
@@ -1049,8 +1069,7 @@ fn valid_p384_secret(rng: &mut BenchRng) -> [u8; EcdsaP384SecretKey::LENGTH] {
 
 fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1069,21 +1088,17 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
 
 fn ecdsa_p256_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
       valid_p256_secret(rng)
     };
-    inputs.push((
-      class,
-      EcdsaP256Keypair::from_secret_key(EcdsaP256SecretKey::from_bytes(secret).unwrap()),
-      rand_array::<64>(rng),
-    ));
+    inputs.push((class, secret, rand_array::<64>(rng)));
   }
 
-  for (class, keypair, blind) in inputs {
+  for (class, secret, blind) in inputs {
+    let keypair = EcdsaP256Keypair::from_secret_key(EcdsaP256SecretKey::from_bytes(secret).unwrap());
     runner.run_one(class, || {
       std::hint::black_box(
         keypair
@@ -1097,8 +1112,7 @@ fn ecdsa_p256_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &m
 
 fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1117,21 +1131,17 @@ fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
 
 fn ecdsa_p384_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
       valid_p384_secret(rng)
     };
-    inputs.push((
-      class,
-      EcdsaP384Keypair::from_secret_key(EcdsaP384SecretKey::from_bytes(secret).unwrap()),
-      rand_array::<96>(rng),
-    ));
+    inputs.push((class, secret, rand_array::<96>(rng)));
   }
 
-  for (class, keypair, blind) in inputs {
+  for (class, secret, blind) in inputs {
+    let keypair = EcdsaP384Keypair::from_secret_key(EcdsaP384SecretKey::from_bytes(secret).unwrap());
     runner.run_one(class, || {
       std::hint::black_box(
         keypair
@@ -1145,8 +1155,7 @@ fn ecdsa_p384_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &m
 
 fn ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1164,8 +1173,7 @@ fn ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rn
 
 fn ecdsa_p256_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let wide = if matches!(class, Class::Left) {
       [0x42; 64]
     } else {
@@ -1183,8 +1191,7 @@ fn ecdsa_p256_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng:
 
 fn ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1202,8 +1209,7 @@ fn ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunne
 
 fn ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1221,8 +1227,7 @@ fn ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret(runner: &mut CtRunner, r
 
 fn ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1238,10 +1243,27 @@ fn ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret(runner: &mut CtRunne
   }
 }
 
+fn ecdsa_p256_diag_blinded_order_mul_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for class in balanced_classes(rng, samples()) {
+    let secret = if matches!(class, Class::Left) {
+      [0x42; EcdsaP256SecretKey::LENGTH]
+    } else {
+      valid_p256_secret(rng)
+    };
+    inputs.push((class, secret, rand_array::<64>(rng)));
+  }
+
+  for (class, secret, blind) in inputs {
+    runner.run_one(class, || {
+      std::hint::black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret, blind))[0]
+    });
+  }
+}
+
 fn ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1259,8 +1281,7 @@ fn ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, r
 
 fn ecdsa_p256_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP256SecretKey::LENGTH]
     } else {
@@ -1278,8 +1299,7 @@ fn ecdsa_p256_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, 
 
 fn ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1297,8 +1317,7 @@ fn ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rn
 
 fn ecdsa_p384_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let wide = if matches!(class, Class::Left) {
       [0x42; 96]
     } else {
@@ -1316,8 +1335,7 @@ fn ecdsa_p384_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng:
 
 fn ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1335,8 +1353,7 @@ fn ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunne
 
 fn ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1354,8 +1371,7 @@ fn ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret(runner: &mut CtRunner, r
 
 fn ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1373,8 +1389,7 @@ fn ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret(runner: &mut CtRunne
 
 fn ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1392,8 +1407,7 @@ fn ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, r
 
 fn ecdsa_p384_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
+  for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
       [0x42; EcdsaP384SecretKey::LENGTH]
     } else {
@@ -1976,6 +1990,30 @@ fn blake3_keyed_parallel_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut Be
   }
 }
 
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use dudect_bencher::rand::SeedableRng;
+
+  #[test]
+  fn balanced_classes_are_shuffled_and_locally_balanced() {
+    let mut rng = BenchRng::seed_from_u64(0x7273_6372_7970_746f);
+    let classes = balanced_classes(&mut rng, 65);
+
+    assert_eq!(classes.len(), 65);
+    for block in classes[..64].chunks_exact(32) {
+      let left = block.iter().filter(|class| matches!(class, Class::Left)).count();
+      assert_eq!(left, 16);
+    }
+
+    let transitions = classes[..64]
+      .windows(2)
+      .filter(|pair| matches!(pair, [Class::Left, Class::Right] | [Class::Right, Class::Left]))
+      .count();
+    assert!(transitions > 16 && transitions < 48);
+  }
+}
+
 ctbench_main_with_seeds!(
   (constant_time_eq_equal_vs_first_diff, Some(0x727363727970746f)),
   (secret_wrappers_eq_and_debug_fixed_vs_random, Some(0x7365637265745f77)),
@@ -2039,6 +2077,7 @@ ctbench_main_with_seeds!(
   (ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret, Some(0x7032353662617365)),
   (ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret, Some(0x7032353666696e73)),
   (ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret, Some(0x703235366d756c72)),
+  (ecdsa_p256_diag_blinded_order_mul_fixed_vs_random_secret, Some(0x703235366d756c62)),
   (ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret, Some(0x70323536696e766b)),
   (ecdsa_p256_diag_final_multiply_fixed_vs_random_secret, Some(0x703235366d756c73)),
   (ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret, Some(0x703338346e6f6e63)),
