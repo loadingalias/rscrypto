@@ -73,6 +73,13 @@ resolved base ref feeds `cargo rail change check --required`. Execution scope
 comes from the planner contract; workflows and scripts must not reconstruct it
 from diagnostic impact fields.
 
+Compiler-backed unification runs in the dedicated blocking Cargo Graph
+Assurance job, not the fast Quality lane. The planner selects it for Cargo,
+Rust source, build, test, bench, example, toolchain, or rail configuration
+changes. Pushes to `main`, Weekly, and release preflight always run the complete
+19-target proof. The job retains cargo-rail's structured JSON result and its
+identity-validated compiler-evidence cache.
+
 When the plan is correct, prepare the release candidate without creating a
 tag:
 

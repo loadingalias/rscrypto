@@ -109,5 +109,19 @@ unknown_file_policy = "strict" # Unknown crate files build/test; unknown workspa
 confidence_profile = "balanced" # Planner confidence profile: strict, balanced, fast
 bot_pr_confidence_profile = "strict" # Optional planner profile override for bot-authored PRs
 
+[change-detection.custom]
+cargo_graph = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  ".cargo/**",
+  ".config/rail.toml",
+  "build.rs",
+  "src/**",
+  "tests/**",
+  "benches/**",
+  "examples/**",
+]
+
 [run]
 default_profile = "local" # Default run profile (built-ins: local, ci, nightly)

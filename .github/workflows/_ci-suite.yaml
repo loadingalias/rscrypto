@@ -1,7 +1,7 @@
 name: _ci-suite
 
-# Reusable CI suite: quality, feature contracts, native targets, cross targets,
-# and supply-chain validation.
+# Reusable CI suite: quality, Cargo graph assurance, feature contracts, native
+# targets, cross targets, and supply-chain validation.
 # Called by ci.yaml (per PR/push) and weekly.yaml (scheduled full run).
 
 on:
@@ -22,6 +22,11 @@ on:
         default: local
       include_riscv:
         description: "Run the native RISC-V lane. Keep enabled for weekly/manual evidence; disable for release-blocking push CI."
+        required: false
+        type: boolean
+        default: true
+      include_cargo_graph:
+        description: "Run exhaustive compiler-backed cargo-rail unification assurance."
         required: false
         type: boolean
         default: true
@@ -54,11 +59,33 @@ jobs:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 30
       cache_key: ${{ inputs.cache_key_prefix }}-quality
-      tools_mode: quality
+      tools_mode: minimal
       toolchain_components: "clippy, rustfmt, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
       run_script: just ci-check
+
+  cargo-graph:
+    if: ${{ inputs.include_cargo_graph }}
+    name: Cargo Graph Assurance
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 90
+      cache_key: ${{ inputs.cache_key_prefix }}-cargo-graph
+      tools_mode: rail
+      toolchain_components: "rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: |
+        mkdir -p target/cargo-rail
+        cargo rail config validate --strict
+        cargo rail config sync --check
+        cargo rail unify --check --explain --format json \
+          --output target/cargo-rail/unify-result.json
+      artifact_name: cargo-graph-${{ inputs.cache_key_prefix }}
+      artifact_path: target/cargo-rail/unify-result.json
+      artifact_always: true
 
   feature-contracts:
     name: Feature Contracts

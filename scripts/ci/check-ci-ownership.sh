@@ -24,6 +24,7 @@ CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
 COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
 EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
+CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 
 fail() {
   echo "CI ownership error: $*" >&2
@@ -73,6 +74,7 @@ require_file "$CROSS_SCRIPT"
 require_file "$COMPILE_MATRIX"
 require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
+require_file "$CI_CHECK"
 
 [[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
   || fail "compile feature matrix must retain all 29 profiles"
@@ -101,6 +103,11 @@ fi
   || fail "the reusable suite must have exactly one cross-target owner"
 [[ $(count_matches 'scripts/ci/native-check\.sh' "$SUITE") -eq 4 ]] \
   || fail "native validation must be owned by Linux, IBM Z, POWER10, and RISC-V job definitions"
+[[ $(count_matches 'cargo rail unify --check' "$SUITE") -eq 1 ]] \
+  || fail "the reusable suite must have exactly one Cargo graph assurance owner"
+if grep -n 'check-unify' "$CI_CHECK" >/dev/null; then
+  fail "the fast quality lane must not own exhaustive Cargo graph assurance"
+fi
 
 ci_musl=$(jq '[.ci[] | select(.name | contains("musl"))] | length' "$MANIFEST")
 [[ "$ci_musl" -eq 0 ]] || fail "MUSL targets must not masquerade as native host jobs"
@@ -111,6 +118,7 @@ ci_linux=$(jq '[.ci[] | select(.name | endswith("unknown-linux-gnu"))] | length'
 group_musl=$(jq '[.groups.linux[] | select(contains("musl"))] | length' "$MANIFEST")
 [[ "$group_musl" -eq 2 ]] || fail "the target manifest must retain both MUSL triples"
 
+# shellcheck disable=SC2016 # `$target` is an intentional literal in the workflow contract regex.
 [[ $(count_matches 'cargo (check|clippy|build) --target "\$target"' "$CROSS_SCRIPT") -ge 3 ]] \
   || fail "MUSL evidence must pass the target triple explicitly to Cargo"
 

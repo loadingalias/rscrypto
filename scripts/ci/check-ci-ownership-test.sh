@@ -53,6 +53,12 @@ sed -i.bak '/scripts\/ci\/cross-targets\.sh/d' "$missing_cross_owner/.github/wor
 rm -f "$missing_cross_owner/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$missing_cross_owner" "missing cross-target owner"
 
+missing_graph_owner="$TMP_ROOT/missing-graph-owner"
+make_fixture "$missing_graph_owner"
+sed -i.bak '/cargo rail unify --check/d' "$missing_graph_owner/.github/workflows/_ci-suite.yaml"
+rm -f "$missing_graph_owner/.github/workflows/_ci-suite.yaml.bak"
+expect_failure "$missing_graph_owner" "missing Cargo graph assurance owner"
+
 shrunk_matrix="$TMP_ROOT/shrunk-matrix"
 make_fixture "$shrunk_matrix"
 sed -i.bak '/  "crc16"/d' "$shrunk_matrix/scripts/test/test-feature-matrix.sh"

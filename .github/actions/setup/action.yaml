@@ -9,7 +9,7 @@ inputs:
     required: false
     default: ""
   tools-mode:
-    description: Tool install mode (standard, quality, ci, supply-chain, bench, ibm, fuzz, coverage, ct-linux, minimal, none).
+    description: Tool install mode (standard, rail, ci, supply-chain, bench, ibm, fuzz, coverage, ct-linux, minimal, none).
     required: false
     default: "standard"
   toolchain-components:
@@ -72,6 +72,7 @@ runs:
       with:
         shared-key: "rscrypto-v1"
         key: ${{ inputs.cache-key }}
+        cache-directories: ${{ inputs.tools-mode == 'rail' && 'target/cargo-rail/cache' || '' }}
         cache-on-failure: true
         # Populate cache on main, manual dispatch, and PRs (so slow platforms
         # like IBM/RISC-V warm their cache before merge).

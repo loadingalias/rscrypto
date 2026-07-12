@@ -19,10 +19,6 @@ echo "🔗 Checking workflow ownership and action pins..."
 "$SCRIPT_DIR/check-ci-ownership-test.sh"
 "$SCRIPT_DIR/pin-actions.sh" --verify-only
 
-echo ""
-echo "🚆 Checking cargo-rail config and unified Cargo graph..."
-just check-unify
-
 export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
 "$SCRIPT_DIR/../check/check.sh" --all
 

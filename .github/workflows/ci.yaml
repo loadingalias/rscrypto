@@ -28,6 +28,7 @@ jobs:
       build: ${{ steps.rail.outputs.build || 'true' }}
       test: ${{ steps.rail.outputs.test || 'true' }}
       infra: ${{ steps.rail.outputs.infra || 'true' }}
+      cargo_graph: ${{ steps.graph.outputs.enabled || 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -46,6 +47,19 @@ jobs:
         env:
           RAIL_BASE_REF: ${{ steps.rail.outputs.base-ref }}
         run: cargo rail change check --since "$RAIL_BASE_REF" --required
+
+      - name: Resolve Cargo Graph Assurance
+        id: graph
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RAIL_SCOPE_JSON: ${{ steps.rail.outputs.scope-json }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            enabled="$(jq -r '.surfaces["custom:cargo_graph"] // false' <<<"$RAIL_SCOPE_JSON")"
+          else
+            enabled=true
+          fi
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
 
   dependency-smoke:
     name: Dependency Smoke
@@ -73,6 +87,7 @@ jobs:
       supply_chain_mode: light
       test_mode: commit
       include_riscv: false
+      include_cargo_graph: ${{ needs.rail-plan.outputs.cargo_graph == 'true' }}
 
   complete:
     name: Complete

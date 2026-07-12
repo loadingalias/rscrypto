@@ -16,3 +16,8 @@ change-file coverage from the planner's resolved base reference.
 Made consolidated CI lanes self-contained by removing the ownership checker's
 ripgrep dependency and pinning the MUSL cross-target lane to the same verified
 Zig build used locally.
+
+Separated fast Quality checks from exhaustive compiler-backed Cargo graph
+assurance. The dedicated blocking lane receives a realistic timeout, retained
+proof artifacts, an identity-validated compiler-evidence cache, planner-based
+PR selection, and unconditional main, Weekly, and release execution.

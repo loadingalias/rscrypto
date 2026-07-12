@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI.
-# Usage: install-tools.sh [standard|quality|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Usage: install-tools.sh [standard|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
@@ -330,11 +330,10 @@ case "$MODE" in
     install_if_missing "just" "just"
     ;;
 
-  quality)
-    # Architecture-independent repository validation.
+  rail)
+    # Compiler-backed Cargo graph assurance.
     install_binstall
     ensure_cargo_rail "$CARGO_RAIL_VERSION"
-    install_if_missing "just" "just"
     ;;
 
   ci)
@@ -408,7 +407,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|quality|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
+    echo "Usage: install-tools.sh [standard|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
     exit 1
     ;;
 esac

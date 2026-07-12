@@ -27,6 +27,7 @@ jobs:
       cache_key_prefix: weekly
       supply_chain_mode: full
       test_mode: weekly
+      include_cargo_graph: true
 
   # ─── Miri memory-safety (stacked borrows). ──
   miri:
