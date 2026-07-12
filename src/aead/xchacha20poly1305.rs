@@ -62,7 +62,6 @@ define_aead_tag_type!(
 /// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Clone)]
 pub struct XChaCha20Poly1305 {
   key: XChaCha20Poly1305Key,
 }
@@ -158,7 +157,9 @@ impl Aead for XChaCha20Poly1305 {
   type Tag = XChaCha20Poly1305Tag;
 
   fn new(key: &Self::Key) -> Self {
-    Self { key: key.clone() }
+    Self {
+      key: key.duplicate_secret(),
+    }
   }
 
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {

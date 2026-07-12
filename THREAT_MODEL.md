@@ -114,6 +114,11 @@ Ordered by exposure to untrusted input:
 ## Known Gaps
 
 - No third-party security audit yet.
+- Secret containers and parsing temporaries use volatile source-level wipes,
+  and `scripts/check/zeroize-evidence.sh` checks representative optimized MIR,
+  LLVM IR, and assembly paths. This does not prove that every compiler-created
+  register copy or spill is erased on every target. The crate does not lock
+  pages, prevent swapping, or replace hardware-backed key storage.
 - Miri covers portable paths only; sanitizer and interpreter coverage do not
   execute every native SIMD or assembly kernel.
 - Constant-time evidence is produced by CI and release workflows. Consumers

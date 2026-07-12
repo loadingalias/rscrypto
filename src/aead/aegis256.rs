@@ -337,7 +337,6 @@ define_aead_tag_type!(Aegis256Tag, TAG_SIZE, "AEGIS-256 128-bit authentication t
 /// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Clone)]
 pub struct Aegis256 {
   key: Aegis256Key,
   #[cfg(any(
@@ -506,7 +505,7 @@ impl Aead for Aegis256 {
 
   fn new(key: &Self::Key) -> Self {
     Self {
-      key: key.clone(),
+      key: key.duplicate_secret(),
       #[cfg(any(
         target_arch = "x86_64",
         target_arch = "aarch64",

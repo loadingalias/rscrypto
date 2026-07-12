@@ -2,14 +2,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
 
 maybe_disable_sccache
 
 LOG_DIR=$(mktemp -d)
-trap 'rm -rf "$LOG_DIR"' EXIT
-TARGET_DIR="$LOG_DIR/target"
+TARGET_DIR="$REPO_ROOT/target/feature-matrix"
+
+cleanup() {
+  rm -rf "$LOG_DIR" "$TARGET_DIR"
+}
+trap cleanup EXIT
+rm -rf "$TARGET_DIR"
 
 cleanup_feature_artifacts() {
   cargo clean --target-dir "$TARGET_DIR" -p rscrypto >/dev/null 2>&1 || true
@@ -62,6 +68,9 @@ FEATURE_SETS=(
   "std,full,portable-only"
 )
 
+TOTAL=${#FEATURE_SETS[@]}
+STARTED_AT=$SECONDS
+
 # RISC-V: nightly rustc crashes (SIGABRT in glibc allocator) when linking
 # per-feature test binaries on the RISE runner. Downgrade to cargo-check so
 # we still verify every feature combination compiles; full test coverage is
@@ -69,15 +78,20 @@ FEATURE_SETS=(
 ARCH=$(uname -m)
 if [[ "$ARCH" == "riscv64" ]]; then
   CARGO_CMD="cargo check --workspace --lib --tests"
-  echo "Compilation rscrypto feature matrix (riscv64: check-only)"
+  COMMAND_CLASS="cargo check"
+  echo "Compilation rscrypto feature matrix ($TOTAL profiles; riscv64: check-only)"
 else
   CARGO_CMD="cargo test --workspace --lib --tests"
-  echo "Executable rscrypto feature matrix"
+  COMMAND_CLASS="cargo test"
+  echo "Executable rscrypto feature matrix ($TOTAL profiles)"
 fi
 
-for feature_set in "${FEATURE_SETS[@]}"; do
+for i in "${!FEATURE_SETS[@]}"; do
+  feature_set=${FEATURE_SETS[$i]}
+  profile=$((i + 1))
+  profile_started_at=$SECONDS
   log_path="$LOG_DIR/$(echo "$feature_set" | tr ',' '_').log"
-  step "--no-default-features --features $feature_set"
+  step "[$profile/$TOTAL] $COMMAND_CLASS --no-default-features --features $feature_set"
   # Isolate reduced-feature test builds from the workspace target dir. The
   # commit lane runs full-feature and no_std checks first, and sharing the same
   # restored target cache has produced flaky matrix failures in CI.
@@ -89,6 +103,7 @@ for feature_set in "${FEATURE_SETS[@]}"; do
   fi
   cleanup_feature_artifacts
   ok
+  echo "    elapsed: $((SECONDS - profile_started_at))s"
 done
 
-echo "${GREEN}✓${RESET} Executable feature matrix passed"
+echo "${GREEN}✓${RESET} Feature matrix passed: $TOTAL/$TOTAL profiles in $((SECONDS - STARTED_AT))s"

@@ -14,6 +14,7 @@ use core::{
 
 use crate::{
   SecretBytes,
+  secret::ZeroizingBytes,
   traits::{Kem, ct},
 };
 
@@ -121,7 +122,6 @@ macro_rules! define_mlkem_public_bytes {
 macro_rules! define_mlkem_secret_bytes {
   ($name:ident, $len:expr, $doc:expr) => {
     #[doc = $doc]
-    #[derive(Clone)]
     pub struct $name([u8; Self::LENGTH]);
 
     impl $name {
@@ -140,6 +140,13 @@ macro_rules! define_mlkem_secret_bytes {
       #[must_use]
       pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
         SecretBytes::new(self.0)
+      }
+
+      /// Explicitly duplicate this secret value.
+      #[inline]
+      #[must_use]
+      pub const fn duplicate_secret(&self) -> Self {
+        Self(self.0)
       }
 
       /// Borrow the secret bytes.
@@ -379,7 +386,6 @@ macro_rules! define_mlkem_prepared_keys {
     }
 
     #[doc = concat!("Validated, reusable ", $doc_name, " decapsulation key.")]
-    #[derive(Clone)]
     pub struct $prepared_decapsulation_key {
       key: $decapsulation_key,
       arithmetic: portable::PreparedDecapsulationArithmetic<$k>,
@@ -415,6 +421,16 @@ macro_rules! define_mlkem_prepared_keys {
         self.key.expose_secret()
       }
 
+      /// Explicitly duplicate this prepared secret key and its derived arithmetic.
+      #[inline]
+      #[must_use]
+      pub fn duplicate_secret(&self) -> Self {
+        Self {
+          key: self.key.duplicate_secret(),
+          arithmetic: self.arithmetic.clone(),
+        }
+      }
+
       /// Borrow the wrapped decapsulation key bytes.
       #[inline]
       #[must_use]
@@ -442,7 +458,7 @@ macro_rules! define_mlkem_prepared_keys {
         let arithmetic =
           portable::validate_and_prepare_decapsulation_key::<$k, $dk_pke_bytes, $ek_bytes, $dk_bytes>(key.as_bytes())?;
         Ok(Self {
-          key: key.clone(),
+          key: key.duplicate_secret(),
           arithmetic,
         })
       }
@@ -733,13 +749,9 @@ macro_rules! impl_mlkem_profile_ops {
         &self,
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), MlKemError>,
       ) -> Result<($ciphertext, $shared_secret), MlKemError> {
-        let mut random = [0u8; $profile::ENCAPSULATION_RANDOM_SIZE];
-        if let Err(err) = fill_random(&mut random) {
-          ct::zeroize(&mut random);
-          return Err(err);
-        }
-        let (ciphertext, shared_secret) = $encapsulate_prepared(&self.arithmetic, self.key_hash(), &random);
-        ct::zeroize(&mut random);
+        let mut random = ZeroizingBytes::<{ $profile::ENCAPSULATION_RANDOM_SIZE }>::zeroed();
+        fill_random(random.as_mut_array())?;
+        let (ciphertext, shared_secret) = $encapsulate_prepared(&self.arithmetic, self.key_hash(), random.as_array());
         Ok((
           $ciphertext::from_bytes(ciphertext),
           $shared_secret::from_bytes(shared_secret),
@@ -891,13 +903,9 @@ macro_rules! impl_mlkem_profile_ops {
       fn generate_keypair(
         mut fill_random: impl FnMut(&mut [u8]) -> Result<(), Self::KeyGenerationError>,
       ) -> Result<(Self::EncapsulationKey, Self::DecapsulationKey), Self::KeyGenerationError> {
-        let mut random = [0u8; Self::KEY_GENERATION_RANDOM_SIZE];
-        if let Err(err) = fill_random(&mut random) {
-          ct::zeroize(&mut random);
-          return Err(err);
-        }
-        let (ek, dk) = $keygen(&random);
-        ct::zeroize(&mut random);
+        let mut random = ZeroizingBytes::<{ Self::KEY_GENERATION_RANDOM_SIZE }>::zeroed();
+        fill_random(random.as_mut_array())?;
+        let (ek, dk) = $keygen(random.as_array());
         Ok(($encapsulation_key::from_bytes(ek), $decapsulation_key::from_bytes(dk)))
       }
 
@@ -907,11 +915,8 @@ macro_rules! impl_mlkem_profile_ops {
       ) -> Result<(Self::Ciphertext, Self::SharedSecret), Self::EncapsulationError> {
         encapsulation_key.validate()?;
 
-        let mut random = [0u8; Self::ENCAPSULATION_RANDOM_SIZE];
-        if let Err(err) = fill_random(&mut random) {
-          ct::zeroize(&mut random);
-          return Err(err);
-        }
+        let mut random = ZeroizingBytes::<{ Self::ENCAPSULATION_RANDOM_SIZE }>::zeroed();
+        fill_random(random.as_mut_array())?;
         let (ciphertext, shared_secret) = portable::encapsulate::<
           $k,
           $eta1_random_bytes,
@@ -922,8 +927,7 @@ macro_rules! impl_mlkem_profile_ops {
           $dv,
           $poly_du_bytes,
           $poly_dv_bytes,
-        >(encapsulation_key.as_bytes(), &random);
-        ct::zeroize(&mut random);
+        >(encapsulation_key.as_bytes(), random.as_array());
         Ok((
           $ciphertext::from_bytes(ciphertext),
           $shared_secret::from_bytes(shared_secret),

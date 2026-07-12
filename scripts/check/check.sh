@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Host-only checks: fmt, check, optional rscrypto feature matrix, clippy,
+# Host-only checks: fmt, check, opt-in rscrypto feature matrices, clippy,
 # optional deny/audit, doc
-# Usage: check.sh [--skip-feature-matrix] [--all] [crate1 crate2 ...]
+# Usage: check.sh [--feature-matrix] [--all] [crate1 crate2 ...]
 
 # Prefer cargo-installed tools over any preinstalled runner tools.
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -14,7 +14,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 maybe_disable_sccache
 
-RUN_FEATURE_MATRIX=true
+RUN_FEATURE_MATRIX=false
 CHECK_ARGS=()
 for arg in "$@"; do
   case "$arg" in
@@ -87,21 +87,11 @@ ok
 
 if [[ "$CHECK_RSCRYPTO_FEATURE_MATRIX" == true ]]; then
   step "Checking rscrypto no_std matrix"
-  for feature_set in "" "alloc" "crc16" "crc24" "crc32" "crc64" "alloc,crc32" "sha2" "sha3" "xxh3" "hmac" "hmac-sha3" "kmac" "hkdf" "poly1305" "rsa" "rsa,getrandom" "x25519" "chacha20poly1305" "ascon-aead" "checksums" "hashes" "macs" "kdfs" "signatures" "key-exchange" "auth" "aead" "full"; do
-    if [[ -n "$feature_set" ]]; then
-      if ! cargo check -p rscrypto --no-default-features --features "$feature_set" --lib >>"$LOG_DIR/check.log" 2>&1; then
-        fail
-        show_error "$LOG_DIR/check.log"
-        exit 1
-      fi
-    else
-      if ! cargo check -p rscrypto --no-default-features --lib >>"$LOG_DIR/check.log" 2>&1; then
-        fail
-        show_error "$LOG_DIR/check.log"
-        exit 1
-      fi
-    fi
-  done
+  if ! "$SCRIPT_DIR/check-feature-matrix.sh" >>"$LOG_DIR/check.log" 2>&1; then
+    fail
+    show_error "$LOG_DIR/check.log"
+    exit 1
+  fi
   ok
 
   step "Testing rscrypto feature matrix"

@@ -9,7 +9,7 @@ inputs:
     required: false
     default: ""
   tools-mode:
-    description: Tool install mode (standard, ci, supply-chain, bench, ibm, fuzz, coverage, ct-linux, minimal, none).
+    description: Tool install mode (standard, quality, ci, supply-chain, bench, ibm, fuzz, coverage, ct-linux, minimal, none).
     required: false
     default: "standard"
   toolchain-components:
@@ -62,7 +62,7 @@ runs:
       if: inputs.tools-mode != 'none'
       shell: bash
       env:
-        CARGO_RAIL_VERSION: "0.15.0"
+        CARGO_RAIL_VERSION: "0.17.0"
         CARGO_SEMVER_CHECKS_VERSION: "0.48.0"
       run: scripts/ci/install-tools.sh ${{ inputs.tools-mode }}
 

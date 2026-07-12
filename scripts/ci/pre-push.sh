@@ -183,7 +183,7 @@ needs_actions_check() {
     return 0
   fi
 
-  changed_file_matches '^\.github/actions-lock\.yaml$|^\.github/(workflows|actions)/.*\.ya?ml$|^scripts/ci/pin-actions\.sh$'
+  changed_file_matches '^\.config/target-matrix\.json$|^\.github/actions-lock\.yaml$|^\.github/(workflows|actions)/.*\.ya?ml$|^scripts/ci/(pin-actions|check-ci-ownership|check-ci-ownership-test)\.sh$'
 }
 
 needs_host_checks() {
@@ -204,13 +204,22 @@ run_actions_check() {
 
 run_rail_config_check() {
   cargo rail config validate --strict
+  cargo rail config sync --check
+}
+
+run_rail_unify_check() {
+  cargo rail unify --check --explain
+}
+
+run_rail_change_check() {
+  cargo rail change check --merge-base --required
 }
 
 run_host_checks() {
   if [[ "$PRE_PUSH_PROFILE" == "full" ]]; then
-    just check --all
+    just check --all --feature-matrix
   else
-    just check --skip-feature-matrix
+    just check
   fi
 }
 
@@ -256,6 +265,14 @@ if needs_rail_config_check; then
   start_task "cargo-rail config" run_rail_config_check
 else
   skip "Cargo-rail config" "no release/tooling config changes"
+fi
+
+if [[ "$RAIL_READY" != true ]] || rail_surface_is_enabled build || rail_surface_is_enabled test; then
+  start_task "cargo-rail unify" run_rail_unify_check
+  start_task "release intent coverage" run_rail_change_check
+else
+  skip "Cargo-rail unify" "no build/test surface"
+  skip "Release intent coverage" "no build/test surface"
 fi
 
 if needs_actions_check; then

@@ -235,16 +235,22 @@ echo ""
 
 maybe_disable_sccache
 SCOPE_ARGS=()
+HOST_ARGS=("$@")
+FEATURE_MODE_SET=false
 for arg in "$@"; do
   case "$arg" in
-    --skip-feature-matrix|--feature-matrix) ;;
+    --skip-feature-matrix|--feature-matrix) FEATURE_MODE_SET=true ;;
     *) SCOPE_ARGS+=("$arg") ;;
   esac
 done
+if [[ "$FEATURE_MODE_SET" == false ]]; then
+  HOST_ARGS+=(--feature-matrix)
+fi
 select_constrained_crates "${SCOPE_ARGS[@]}"
 
 # Run host checks first (most likely to fail, fastest feedback)
-"$SCRIPT_DIR/check.sh" "$@"
+"$SCRIPT_DIR/check.sh" "${HOST_ARGS[@]}"
+"$SCRIPT_DIR/zeroize-evidence.sh"
 echo ""
 
 echo "Cross targets ${DIM}(parallel)${RESET}"

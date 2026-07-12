@@ -39,7 +39,7 @@ use crate::aead::{AeadBufferError, AeadNonce, OpenError, SealError};
 /// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub trait Aead: Clone {
+pub trait Aead {
   /// Key size in bytes.
   const KEY_SIZE: usize;
 
@@ -50,7 +50,7 @@ pub trait Aead: Clone {
   const TAG_SIZE: usize;
 
   /// Algorithm-specific key wrapper.
-  type Key: Clone + Eq;
+  type Key: Eq;
 
   /// Algorithm-specific nonce wrapper.
   type Nonce: AeadNonce;

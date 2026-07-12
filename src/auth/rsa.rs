@@ -49,6 +49,7 @@ use core::{
 };
 
 use crate::{
+  SecretVec,
   hashes::crypto::{Sha256, Sha384, Sha512},
   traits::{Digest, VerificationError, ct},
 };
@@ -1387,27 +1388,35 @@ impl RsaPrivateKey {
 
   /// Encode this private key as a PKCS #1 `RSAPrivateKey` DER object.
   ///
-  /// The returned bytes contain private key material. Callers that persist or
-  /// log this buffer are responsible for protecting it.
+  /// The returned allocation zeroizes on drop. Borrow it with
+  /// [`SecretVec::as_bytes`]; extracting an ordinary `Vec<u8>` requires
+  /// [`SecretVec::into_unprotected_vec`].
   #[must_use]
-  pub fn to_pkcs1_der(&self) -> Vec<u8> {
+  pub fn to_pkcs1_der(&self) -> SecretVec {
     self.components.to_pkcs1_der()
   }
 
   /// Encode this private key as a PKCS #8 `PrivateKeyInfo` DER object.
   ///
-  /// The returned bytes contain private key material. Callers that persist or
-  /// log this buffer are responsible for protecting it.
+  /// The returned allocation zeroizes on drop. Borrow it with
+  /// [`SecretVec::as_bytes`]; extracting an ordinary `Vec<u8>` requires
+  /// [`SecretVec::into_unprotected_vec`].
   #[must_use]
-  pub fn to_pkcs8_der(&self) -> Vec<u8> {
-    let mut pkcs1 = self.to_pkcs1_der();
-    let der = der_sequence_from_parts(&[
-      der_integer_unsigned(&[0]).as_slice(),
-      der_rsa_encryption_algorithm_identifier().as_slice(),
-      der_tlv(TAG_OCTET_STRING, &pkcs1).as_slice(),
-    ]);
-    ct::zeroize(&mut pkcs1);
-    der
+  pub fn to_pkcs8_der(&self) -> SecretVec {
+    let pkcs1 = self.to_pkcs1_der();
+    let algorithm = der_rsa_encryption_algorithm_identifier();
+    let body_len = der_integer_tlv_len(&[0])
+      .strict_add(algorithm.len())
+      .strict_add(der_tlv_len(pkcs1.len()));
+    let mut der = Vec::with_capacity(der_tlv_len(body_len));
+    der.push(TAG_SEQUENCE);
+    der_push_len(body_len, &mut der);
+    der_push_integer_unsigned(&[0], &mut der);
+    der.extend_from_slice(&algorithm);
+    der.push(TAG_OCTET_STRING);
+    der_push_len(pkcs1.len(), &mut der);
+    der.extend_from_slice(pkcs1.as_bytes());
+    SecretVec::new(der)
   }
 
   /// Return the fixed signature length for this key.
@@ -2551,18 +2560,29 @@ impl RsaPrivateKeyComponents {
     &self.public
   }
 
-  fn to_pkcs1_der(&self) -> Vec<u8> {
-    der_sequence_from_parts(&[
-      der_integer_unsigned(&[0]).as_slice(),
-      der_integer_unsigned(self.public.modulus()).as_slice(),
-      der_integer_unsigned(&self.public.public_exponent().as_u64().to_be_bytes()).as_slice(),
-      der_integer_unsigned(self.private_exponent.as_bytes()).as_slice(),
-      der_integer_unsigned(self.prime_p.as_bytes()).as_slice(),
-      der_integer_unsigned(self.prime_q.as_bytes()).as_slice(),
-      der_integer_unsigned(self.exponent_p.as_bytes()).as_slice(),
-      der_integer_unsigned(self.exponent_q.as_bytes()).as_slice(),
-      der_integer_unsigned(self.coefficient.as_bytes()).as_slice(),
-    ])
+  fn to_pkcs1_der(&self) -> SecretVec {
+    let public_exponent = self.public.public_exponent().as_u64().to_be_bytes();
+    let values: [&[u8]; 9] = [
+      &[0],
+      self.public.modulus(),
+      &public_exponent,
+      self.private_exponent.as_bytes(),
+      self.prime_p.as_bytes(),
+      self.prime_q.as_bytes(),
+      self.exponent_p.as_bytes(),
+      self.exponent_q.as_bytes(),
+      self.coefficient.as_bytes(),
+    ];
+    let body_len = values
+      .iter()
+      .fold(0usize, |len, value| len.strict_add(der_integer_tlv_len(value)));
+    let mut der = Vec::with_capacity(der_tlv_len(body_len));
+    der.push(TAG_SEQUENCE);
+    der_push_len(body_len, &mut der);
+    for value in values {
+      der_push_integer_unsigned(value, &mut der);
+    }
+    SecretVec::new(der)
   }
 
   #[cfg(feature = "getrandom")]
@@ -6308,6 +6328,28 @@ fn der_integer_unsigned(value: &[u8]) -> Vec<u8> {
   der_tlv(TAG_INTEGER, &encoded)
 }
 
+fn der_integer_tlv_len(value: &[u8]) -> usize {
+  let first_nonzero = value.iter().position(|&byte| byte != 0);
+  let value = first_nonzero.and_then(|index| value.get(index..)).unwrap_or(&[0]);
+  let content_len = value
+    .len()
+    .strict_add(usize::from(value.first().is_some_and(|byte| byte & 0x80 != 0)));
+  der_tlv_len(content_len)
+}
+
+fn der_push_integer_unsigned(value: &[u8], out: &mut Vec<u8>) {
+  let first_nonzero = value.iter().position(|&byte| byte != 0);
+  let value = first_nonzero.and_then(|index| value.get(index..)).unwrap_or(&[0]);
+  let needs_sign_padding = value.first().is_some_and(|byte| byte & 0x80 != 0);
+  let content_len = value.len().strict_add(usize::from(needs_sign_padding));
+  out.push(TAG_INTEGER);
+  der_push_len(content_len, out);
+  if needs_sign_padding {
+    out.push(0);
+  }
+  out.extend_from_slice(value);
+}
+
 fn der_bit_string_zero_unused(value: &[u8]) -> Vec<u8> {
   let mut body = Vec::with_capacity(value.len().strict_add(1));
   body.push(0);
@@ -6321,6 +6363,10 @@ fn der_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
   der_push_len(value.len(), &mut out);
   out.extend_from_slice(value);
   out
+}
+
+fn der_tlv_len(value_len: usize) -> usize {
+  1usize.strict_add(der_len_len(value_len)).strict_add(value_len)
 }
 
 fn der_len_len(len: usize) -> usize {
@@ -11517,7 +11563,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key.public_key().to_pkcs1_der(),
       test_pkcs1_public_key(&rsa_private_modulus(), &[0x01, 0x00, 0x01])
     );
-    assert_eq!(key.to_pkcs8_der(), test_pkcs8_private_key(&pkcs1, &rsa_algorithm),);
+    assert_eq!(
+      key.to_pkcs8_der().as_bytes(),
+      test_pkcs8_private_key(&pkcs1, &rsa_algorithm)
+    );
 
     let exported_pkcs1 = key.to_pkcs1_der();
     let imported_pkcs1 =

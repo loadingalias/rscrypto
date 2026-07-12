@@ -6,6 +6,7 @@ use core::fmt;
 
 use crate::{
   SecretBytes,
+  secret::ZeroizingBytes,
   traits::{VerificationError, ct},
 };
 
@@ -55,9 +56,9 @@ impl Poly1305OneTimeKey {
   /// Generate a one-time key with caller-supplied entropy.
   #[inline]
   pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes)?;
-    Ok(Self::from_bytes(bytes))
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array())?;
+    Ok(Self::from_bytes(*bytes.as_array()))
   }
 
   /// Generate a one-time key from the platform entropy source.

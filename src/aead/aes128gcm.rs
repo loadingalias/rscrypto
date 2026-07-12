@@ -106,7 +106,6 @@ define_aead_tag_type!(Aes128GcmTag, TAG_SIZE, "AES-128-GCM authentication tag (1
 /// hardware AES extensions (Zkne / Zvkned), encryption falls back to the
 /// constant-time portable / fixslice implementation. That path is slower,
 /// but it avoids secret-indexed lookup tables.
-#[derive(Clone)]
 pub struct Aes128Gcm {
   /// Pre-expanded AES-128 round keys.
   ek: aes::Aes128EncKey,

@@ -30,13 +30,13 @@ pub trait Kem {
   type EncapsulationKey: Clone + Eq + Debug + AsRef<[u8]>;
 
   /// Private key used by the decapsulating party.
-  type DecapsulationKey: Clone + Eq + Debug + AsRef<[u8]>;
+  type DecapsulationKey: Eq + Debug + AsRef<[u8]>;
 
   /// Public ciphertext sent by the encapsulating party.
   type Ciphertext: Clone + Eq + Debug + AsRef<[u8]>;
 
   /// Secret established by encapsulation or decapsulation.
-  type SharedSecret: Clone + Eq + Debug + AsRef<[u8]>;
+  type SharedSecret: Eq + Debug + AsRef<[u8]>;
 
   /// Error returned by key generation.
   type KeyGenerationError;

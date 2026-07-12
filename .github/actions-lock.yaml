@@ -90,10 +90,10 @@ Swatinem/rust-cache:
   updated: "2026-07-03T17:27:29Z"
   notes: "GitHub runner Rust cache"
 loadingalias/cargo-rail-action:
-  ref: v4.1.3
-  sha: "95875a43ad5583b4d6a1dc65630afb0c2ecb6b30"
-  updated: "2026-07-03T17:27:30Z"
-  notes: "cargo-rail plan outputs for CI base-ref and surfaces"
+  ref: v5.0.0
+  sha: "c10d627fb0e9f896ca5018cd6d6408bce3432c1c"
+  updated: "2026-07-12T00:00:00Z"
+  notes: "cargo-rail scope v2 outputs and release-intent base-ref for CI"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RunsOn (AWS EC2 Runners)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

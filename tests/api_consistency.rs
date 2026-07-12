@@ -330,11 +330,12 @@ fn ed25519_types_follow_byte_roundtrip_and_verify_conventions() {
     Ok::<(), ()>(())
   })
   .unwrap();
-  let keypair = Ed25519Keypair::from_secret_key(secret.clone());
+  let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
   let public = Ed25519PublicKey::from_bytes(keypair.public_key().to_bytes());
   let signature = TrySigner::try_sign(&keypair, b"api-consistency-ed25519").unwrap();
 
   assert_eq!(*secret.expose_secret().as_bytes(), *secret.as_bytes());
+  assert_eq!(secret.duplicate_secret().as_bytes(), secret.as_bytes());
   assert_eq!(public.to_bytes(), *public.as_bytes());
   assert_eq!(signature.to_bytes(), *signature.as_bytes());
   assert!(public.verify(b"api-consistency-ed25519", &signature).is_ok());

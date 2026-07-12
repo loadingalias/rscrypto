@@ -86,14 +86,43 @@ cargo build --target "$TARGET" --no-default-features --lib --release
 cargo check --target "$TARGET" --no-default-features --features alloc --lib
 
 if [[ "$DEPTH" == "deep" ]]; then
-  # Individual feature flags.
-  for f in checksums hashes aead auth; do
-    cargo check --target "$TARGET" --no-default-features --features "$f" --lib
-  done
+  # Union of the historical check-all facade matrix and the dedicated weekly
+  # no_std/WASM combinations. This preserves the old coverage exactly once.
+  FEATURE_SETS=(
+    "crc16"
+    "crc24"
+    "crc32"
+    "crc64"
+    "alloc,crc32"
+    "sha2"
+    "sha3"
+    "xxh3"
+    "hmac"
+    "hmac-sha3"
+    "kmac"
+    "hkdf"
+    "poly1305"
+    "rsa"
+    "x25519"
+    "ml-kem"
+    "chacha20poly1305"
+    "ascon-aead"
+    "checksums"
+    "hashes"
+    "macs"
+    "kdfs"
+    "signatures"
+    "key-exchange"
+    "auth"
+    "aead"
+    "full"
+    "alloc,checksums"
+    "alloc,hashes"
+    "alloc,checksums,hashes,auth,aead"
+  )
 
-  # Common feature combinations.
-  for combo in "alloc,checksums" "alloc,hashes" "alloc,checksums,hashes,auth,aead"; do
-    cargo check --target "$TARGET" --no-default-features --features "$combo" --lib
+  for feature_set in "${FEATURE_SETS[@]}"; do
+    cargo check --target "$TARGET" --no-default-features --features "$feature_set" --lib
   done
 
   # Full no_std release build.

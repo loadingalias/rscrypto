@@ -57,7 +57,7 @@ use crate::auth::curve25519_edwards;
   test
 ))]
 use crate::backend::curve25519::FieldElement;
-use crate::{SecretBytes, traits::ct};
+use crate::{SecretBytes, secret::ZeroizingBytes, traits::ct};
 
 const POINT_LENGTH: usize = 32;
 #[cfg(any(
@@ -146,7 +146,6 @@ define_unit_error! {
 }
 
 /// X25519 secret scalar bytes.
-#[derive(Clone)]
 pub struct X25519SecretKey([u8; Self::LENGTH]);
 
 impl PartialEq for X25519SecretKey {
@@ -175,6 +174,13 @@ impl X25519SecretKey {
     SecretBytes::new(self.0)
   }
 
+  /// Explicitly duplicate this secret key.
+  #[inline]
+  #[must_use]
+  pub const fn duplicate_secret(&self) -> Self {
+    Self(self.0)
+  }
+
   /// Borrow the secret key bytes.
   #[inline]
   #[must_use]
@@ -189,14 +195,9 @@ impl X25519SecretKey {
   /// returning an error.
   #[inline]
   pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
-    let mut bytes = [0u8; Self::LENGTH];
-    match fill(&mut bytes) {
-      Ok(()) => Ok(Self(bytes)),
-      Err(err) => {
-        ct::zeroize(&mut bytes);
-        Err(err)
-      }
-    }
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array())?;
+    Ok(Self(*bytes.as_array()))
   }
 
   /// Try to generate a secret key from the platform entropy source.
@@ -225,9 +226,9 @@ impl X25519SecretKey {
   #[inline]
   #[must_use]
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self(bytes)
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array());
+    Self(*bytes.as_array())
   }
 
   impl_getrandom!();
@@ -497,7 +498,6 @@ impl From<X25519SecretKey> for X25519PublicKey {
 }
 
 /// X25519 shared secret bytes.
-#[derive(Clone)]
 pub struct X25519SharedSecret([u8; Self::LENGTH]);
 
 impl PartialEq for X25519SharedSecret {
@@ -524,6 +524,13 @@ impl X25519SharedSecret {
   #[must_use]
   pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
     SecretBytes::new(self.0)
+  }
+
+  /// Explicitly duplicate this shared secret.
+  #[inline]
+  #[must_use]
+  pub const fn duplicate_secret(&self) -> Self {
+    Self(self.0)
   }
 
   /// Borrow the shared secret bytes.

@@ -114,7 +114,6 @@ define_aead_tag_type!(AsconAead128Tag, TAG_SIZE, "Ascon-AEAD128 128-bit authenti
 /// # }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Clone)]
 pub struct AsconAead128 {
   key: AsconAead128Key,
 }
@@ -264,7 +263,9 @@ impl Aead for AsconAead128 {
   type Tag = AsconAead128Tag;
 
   fn new(key: &Self::Key) -> Self {
-    Self { key: key.clone() }
+    Self {
+      key: key.duplicate_secret(),
+    }
   }
 
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {

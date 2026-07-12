@@ -558,6 +558,8 @@ pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
 ))]
 pub use hex::{DisplaySecret, InvalidHexError};
 pub use secret::SecretBytes;
+#[cfg(feature = "alloc")]
+pub use secret::SecretVec;
 // Trait re-exports.
 #[cfg(any(
   feature = "aes-gcm",

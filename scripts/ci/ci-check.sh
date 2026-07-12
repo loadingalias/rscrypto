@@ -1,59 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ci-check.sh - CI Quality Checks (runs natively on target machines)
-# This script runs in CI on actual target machines (x86_64, aarch64, Windows).
-# No cross-compilation - each CI runner compiles natively for its platform.
-#
-# Local development uses `just check` for host checks and `just check-all` for cross-targets.
+# Architecture-independent CI quality checks. Run once on the primary x86_64
+# CI host. Native and cross-target validation have separate owners.
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🔍 CI Quality Checks"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Native CI quality lanes intentionally validate the shipped library surface
-# only. Bench, test, and example targets can pull in benchmark/oracle dev
-# tooling and foreign-language build steps that are outside the release crate.
-# Dedicated later steps still compile and run tests natively.
-CHECK_TARGETS=(--lib)
-
 # Prefer cargo-installed tools over any preinstalled runner tools.
 export PATH="$HOME/.cargo/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
-
-maybe_disable_sccache
-apply_ci_resource_profile
-
-# Format Check
-echo ""
-echo "📐 Checking formatting..."
-cargo fmt --all -- --check
-
-# Cargo Check
-echo ""
-echo "🔧 Running cargo check..."
-cargo check --workspace "${CHECK_TARGETS[@]}" --all-features
 
 echo ""
-echo "🧪 Running executable feature matrix..."
-"$SCRIPT_DIR/../test/test-feature-matrix.sh"
+echo "🔗 Checking workflow ownership and action pins..."
+"$SCRIPT_DIR/check-ci-ownership.sh"
+"$SCRIPT_DIR/check-ci-ownership-test.sh"
+"$SCRIPT_DIR/pin-actions.sh" --verify-only
 
-# Clippy
 echo ""
-echo "📎 Running clippy..."
-cargo clippy --workspace "${CHECK_TARGETS[@]}" --all-features -- -D warnings
+echo "🚆 Checking cargo-rail config and unified Cargo graph..."
+just check-unify
 
-# Documentation
+export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
+"$SCRIPT_DIR/../check/check.sh" --all
+
 echo ""
-echo "📚 Building documentation..."
-if [[ "${RSCRYPTO_CI_RESOURCE_PROFILE:-}" == "constrained" ]]; then
-  skip "rustdoc on constrained CI runners" "native check/clippy/test coverage retained"
-else
-  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
-fi
+echo "🔨 Building all targets..."
+cargo build --workspace --all-targets --all-features
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

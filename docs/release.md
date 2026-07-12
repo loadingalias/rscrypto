@@ -42,7 +42,7 @@ Use `--name` to choose the filename slug. The file may be renamed after
 creation as long as it remains a `.changes/*.md` file.
 
 ```bash
-cargo rail change add rscrypto --bump patch --name release-workflow-cargo-rail-0-15 --message "Updated release workflow validation for cargo-rail 0.15."
+cargo rail change add rscrypto --bump patch --name concise-change-name --message "Describe the user-visible change."
 cargo rail change status
 ```
 
@@ -53,6 +53,8 @@ Run the pre-release checks from a clean tree:
 ```bash
 git status --short
 cargo rail config validate --strict
+cargo rail config sync --check
+cargo rail unify --check --explain
 cargo rail release check rscrypto --extended
 cargo rail release run rscrypto --bump auto --skip-publish --check
 ```
@@ -64,6 +66,12 @@ just release-change patch "Fixed ECDSA oracle compatibility with p256."
 just release-status
 just release-check
 ```
+
+Pull-request CI uses cargo-rail-action v5 with cargo-rail 0.17.0. The action's
+surface outputs decide whether the single-crate CI suite is required, and its
+resolved base ref feeds `cargo rail change check --required`. Execution scope
+comes from the planner contract; workflows and scripts must not reconstruct it
+from diagnostic impact fields.
 
 When the plan is correct, prepare the release candidate without creating a
 tag:
@@ -103,7 +111,8 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 2. Requires the tag target to match the checked-out commit.
 3. Requires the tag version, `Cargo.toml` version, and `CHANGELOG.md` heading
    to match.
-4. Validates `.config/rail.toml` with `cargo rail config validate --strict`.
+4. Validates and sync-checks `.config/rail.toml`, then proves the unified Cargo
+   graph is clean with cargo-rail 0.17.0.
 5. Runs `cargo deny check all`, `cargo audit`, and `cargo semver-checks`.
 6. Builds the `.crate` with `cargo package --locked`.
 7. Rejects dirty VCS metadata and private or local-only package contents.

@@ -12,6 +12,7 @@ use super::hmac::{HmacSha256, HmacSha384};
 use crate::{
   SecretBytes,
   hashes::crypto::{Sha256, Sha384},
+  secret::ZeroizingBytes,
   traits::{Mac, VerificationError, ct},
 };
 
@@ -790,7 +791,6 @@ where
 }
 
 /// P-256 ECDSA secret scalar.
-#[derive(Clone)]
 pub struct EcdsaP256SecretKey([u8; Self::LENGTH]);
 
 impl EcdsaP256SecretKey {
@@ -860,6 +860,13 @@ impl EcdsaP256SecretKey {
   #[must_use]
   pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
     SecretBytes::new(self.0)
+  }
+
+  /// Explicitly duplicate this secret key.
+  #[inline]
+  #[must_use]
+  pub const fn duplicate_secret(&self) -> Self {
+    Self(self.0)
   }
 
   /// Borrow the secret key bytes.
@@ -949,7 +956,6 @@ impl Drop for EcdsaP256SecretKey {
 impl_ct_eq!(EcdsaP256SecretKey);
 
 /// P-384 ECDSA secret scalar.
-#[derive(Clone)]
 pub struct EcdsaP384SecretKey([u8; Self::LENGTH]);
 
 impl EcdsaP384SecretKey {
@@ -1019,6 +1025,13 @@ impl EcdsaP384SecretKey {
   #[must_use]
   pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
     SecretBytes::new(self.0)
+  }
+
+  /// Explicitly duplicate this secret key.
+  #[inline]
+  #[must_use]
+  pub const fn duplicate_secret(&self) -> Self {
+    Self(self.0)
   }
 
   /// Borrow the secret key bytes.
@@ -1128,13 +1141,22 @@ impl crate::traits::TrySigner for EcdsaP384SecretKey {
 }
 
 /// P-256 ECDSA keypair with typed secret and public halves.
-#[derive(Clone)]
 pub struct EcdsaP256Keypair {
   secret: EcdsaP256SecretKey,
   public: EcdsaP256PublicKey,
 }
 
 impl EcdsaP256Keypair {
+  /// Explicitly duplicate this secret-bearing keypair.
+  #[inline]
+  #[must_use]
+  pub fn duplicate_secret(&self) -> Self {
+    Self {
+      secret: self.secret.duplicate_secret(),
+      public: self.public.clone(),
+    }
+  }
+
   /// Try to generate a P-256 keypair with caller-supplied randomness.
   #[inline]
   pub fn try_generate_with<E>(
@@ -1214,13 +1236,22 @@ impl fmt::Debug for EcdsaP256Keypair {
 }
 
 /// P-384 ECDSA keypair with typed secret and public halves.
-#[derive(Clone)]
 pub struct EcdsaP384Keypair {
   secret: EcdsaP384SecretKey,
   public: EcdsaP384PublicKey,
 }
 
 impl EcdsaP384Keypair {
+  /// Explicitly duplicate this secret-bearing keypair.
+  #[inline]
+  #[must_use]
+  pub fn duplicate_secret(&self) -> Self {
+    Self {
+      secret: self.secret.duplicate_secret(),
+      public: self.public.clone(),
+    }
+  }
+
   /// Try to generate a P-384 keypair with caller-supplied randomness.
   #[inline]
   pub fn try_generate_with<E>(
@@ -1627,34 +1658,6 @@ fn mul_u64_low(lhs: u64, rhs: u64) -> u64 {
   #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
   {
     lhs.wrapping_mul(rhs)
-  }
-}
-
-struct ZeroizingBytes<const N: usize> {
-  value: [u8; N],
-}
-
-impl<const N: usize> ZeroizingBytes<N> {
-  const fn new(value: [u8; N]) -> Self {
-    Self { value }
-  }
-
-  const fn zeroed() -> Self {
-    Self { value: [0u8; N] }
-  }
-
-  const fn as_array(&self) -> &[u8; N] {
-    &self.value
-  }
-
-  fn as_mut_array(&mut self) -> &mut [u8; N] {
-    &mut self.value
-  }
-}
-
-impl<const N: usize> Drop for ZeroizingBytes<N> {
-  fn drop(&mut self) {
-    ct::zeroize(&mut self.value);
   }
 }
 

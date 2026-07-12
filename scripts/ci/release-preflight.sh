@@ -107,6 +107,8 @@ if ! grep -qE "^## \\[$tag_version\\]" CHANGELOG.md; then
 fi
 
 cargo rail config validate --strict
+cargo rail config sync --check
+cargo rail unify --check --explain
 cargo deny check all
 # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
 # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the

@@ -443,7 +443,6 @@ macro_rules! define_blake2_dispatch {
 macro_rules! define_aead_key_type {
   ($name:ident, $len:expr, $doc:literal) => {
     #[doc = $doc]
-    #[derive(Clone)]
     pub struct $name([u8; Self::LENGTH]);
 
     impl PartialEq for $name {
@@ -470,6 +469,13 @@ macro_rules! define_aead_key_type {
       #[must_use]
       pub fn expose_secret(&self) -> crate::SecretBytes<{ Self::LENGTH }> {
         crate::SecretBytes::new(self.0)
+      }
+
+      /// Explicitly duplicate this secret key.
+      #[inline]
+      #[must_use]
+      pub const fn duplicate_secret(&self) -> Self {
+        Self(self.0)
       }
 
       /// Borrow the key bytes.
@@ -513,9 +519,9 @@ macro_rules! define_aead_key_type {
       #[inline]
       #[must_use]
       pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-        let mut bytes = [0u8; Self::LENGTH];
-        fill(&mut bytes);
-        Self(bytes)
+        let mut bytes = crate::secret::ZeroizingBytes::<{ Self::LENGTH }>::zeroed();
+        fill(bytes.as_mut_array());
+        Self(*bytes.as_array())
       }
 
       impl_getrandom!();
@@ -525,6 +531,7 @@ macro_rules! define_aead_key_type {
     impl_serde_secret_bytes!($name);
 
     impl Drop for $name {
+      #[inline]
       fn drop(&mut self) {
         crate::traits::ct::zeroize(&mut self.0);
       }

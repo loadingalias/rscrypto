@@ -127,7 +127,7 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 - **`Key<T>` is gone, `Nonce` is gone.** Use the per-algorithm `Aes256GcmKey` and the size-specific `Nonce96`. No `KeyInit` trait import; `Aes256Gcm::new(&key)` is inherent.
 - **`Payload { msg, aad }` is gone.** Pass `aad` and `msg` (or `aad` and the in-place buffer) as positional args. AAD is a plain `&[u8]`; pass `b""` for "no AAD".
-- **`finalize` consumes vs. borrows: not applicable.** AEAD ciphers in both crates are stateless across calls; the cipher type is `Clone` and you can encrypt many messages with the same `cipher` value, supplying a fresh nonce each time.
+- **Cipher reuse does not require cloning.** AEAD cipher values are reusable but do not implement `Clone`, because cloning would silently duplicate secret state. Keep one cipher value and supply a fresh nonce for each encryption.
 - **Nonce reuse is catastrophic for AES-GCM.** Both crates accept any `Nonce96`: there's no enforcement against duplicate nonces. If you migrated from `aes-gcm` because of a nonce-reuse incident, switch to `Aes256GcmSiv` (see `aes-gcm-siv.md`); it tolerates accidental reuse.
 - **Random nonces are unsafe at scale.** With 96-bit nonces, the collision probability after `2^32` messages is around `2^-32`. For random-nonce flows, switch to `XChaCha20Poly1305` (192-bit nonces): see `chacha20poly1305.md`.
 - **`AeadInPlace` trait import not needed.** RustCrypto requires importing `aead::AeadInPlace` separately to call the `_in_place_detached` methods. rscrypto exposes both shapes through the single `Aead` trait.

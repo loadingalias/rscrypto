@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI.
-# Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Usage: install-tools.sh [standard|quality|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
 MODE="${1:-standard}"
-CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.15.0}"
+CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.17.0}"
 CARGO_SEMVER_CHECKS_VERSION="${CARGO_SEMVER_CHECKS_VERSION:-0.48.0}"
 
 echo "Installing cargo tools (mode: $MODE)"
@@ -330,6 +330,13 @@ case "$MODE" in
     install_if_missing "just" "just"
     ;;
 
+  quality)
+    # Architecture-independent repository validation.
+    install_binstall
+    ensure_cargo_rail "$CARGO_RAIL_VERSION"
+    install_if_missing "just" "just"
+    ;;
+
   ci)
     # Native CI tools: test runner + just wrapper only. Supply-chain tooling
     # belongs to the dedicated supply-chain lane.
@@ -401,7 +408,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
+    echo "Usage: install-tools.sh [standard|quality|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
     exit 1
     ;;
 esac

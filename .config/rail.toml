@@ -33,9 +33,9 @@ transitive_host = "root"
 
 strict_version_compat = true
 exact_pin_handling = "warn"
-major_version_conflict = "bump"
+major_version_conflict = "warn"
 
-msrv = true
+msrv = false # Root package MSRV is authoritative; this single-crate workspace does not inherit workspace.package.
 msrv_source = "max"
 
 detect_unused = true
@@ -54,6 +54,7 @@ include = []
 max_backups = 2
 sort_dependencies = true
 enforce_msrv_inheritance = false
+consumer_scope = "open" # Published library: preserve dormant public feature and dependency APIs.
 
 
 [release]
@@ -74,14 +75,21 @@ unconventional_commits = "warn"
 semver_check = "warn"
 change_dir = ".changes"
 require_change_files = ["rscrypto"]
+forge = "auto"  # Release creation provider: auto, github, gitlab
 
 [release.changelog]
 path = "CHANGELOG.md"
 relative_to = "workspace"
+entry_format = "- {scope}{breaking}{description}{prs} ({sha_link})"  # Entry placeholders: scope, breaking, description, prs, sha, sha_link, type
+emoji = true  # Render emoji in changelog section headers
+group_order = ["breaking", "feat", "fix", "build", "chore", "ci", "deps", "docs", "other", "perf", "refactor", "style", "test"]  # Commit type section order
+fallback = "other"  # Fallback section for unlisted types, or skip
 
 [release.changelog.filters]
 skip_types = ["chore", "ci"]
 skip_scopes = []
+include_paths = []  # Optional changelog attribution include globs
+exclude_paths = []  # Optional changelog attribution exclude globs
 
 
 [change-detection]
@@ -97,7 +105,7 @@ infrastructure = [
   "rustfmt.toml",
   ".cargo/config.toml",
 ]
-unknown_file_policy = "owned_build_test" # Enable build+test fallback for unclassified crate-owned files
+unknown_file_policy = "strict" # Unknown crate files build/test; unknown workspace files run infrastructure checks.
 confidence_profile = "balanced" # Planner confidence profile: strict, balanced, fast
 bot_pr_confidence_profile = "strict" # Optional planner profile override for bot-authored PRs
 

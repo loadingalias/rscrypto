@@ -24,32 +24,9 @@ jobs:
     name: CI Suite (weekly)
     uses: ./.github/workflows/_ci-suite.yaml
     with:
-      scope: all
       cache_key_prefix: weekly
       supply_chain_mode: full
-      cross_depth: deep
       test_mode: weekly
-
-  # ─── Executable feature-matrix sweep (26 combinations). ──
-  feature-matrix:
-    name: Feature Matrix (${{ matrix.target.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - name: x86_64
-            runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-          - name: aarch64
-            runner: runs-on=${{ github.run_id }}/runner=linux-arm64-ci
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ${{ matrix.target.runner }}
-      timeout_minutes: 60
-      cache_key: weekly-feature-matrix-${{ matrix.target.name }}
-      tools_mode: minimal
-      enable_magic_cache: true
-      enable_rust_cache: true
-      run_script: just test-feature-matrix
 
   # ─── Miri memory-safety (stacked borrows). ──
   miri:
@@ -266,7 +243,7 @@ jobs:
   # ─── Gate: every required lane must pass. ──
   complete:
     name: Complete (weekly)
-    needs: [suite, feature-matrix, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
+    needs: [suite, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -275,7 +252,6 @@ jobs:
           failed=0
           for lane in \
             "suite=${{ needs.suite.result }}" \
-            "feature-matrix=${{ needs.feature-matrix.result }}" \
             "miri=${{ needs.miri.result }}" \
             "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \
             "fuzzing=${{ needs.fuzzing.result }}" \

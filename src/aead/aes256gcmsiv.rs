@@ -82,7 +82,6 @@ define_aead_tag_type!(
 /// hardware AES extensions (Zkne / Zvkned), encryption falls back to the
 /// constant-time portable implementation. That path is slower, but it
 /// avoids secret-indexed lookup tables.
-#[derive(Clone)]
 pub struct Aes256GcmSiv {
   master_ek: aes::Aes256EncKey,
   #[cfg_attr(target_arch = "wasm32", allow(dead_code))]

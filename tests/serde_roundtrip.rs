@@ -159,3 +159,17 @@ fn wrong_length_bytes_rejected() {
   assert!(serde_json::from_str::<Nonce96>(&short).is_err());
   assert!(serde_json::from_str::<Nonce96>(&long).is_err());
 }
+
+#[cfg(all(feature = "serde-secrets", feature = "aes-gcm"))]
+#[test]
+fn secret_sequence_rejects_partial_and_wrong_length_inputs() {
+  use rscrypto::Aes256GcmKey;
+
+  assert!(serde_json::from_str::<Aes256GcmKey>("[17,34]").is_err());
+  assert!(serde_json::from_str::<Aes256GcmKey>("[17,\"not-a-byte\"]").is_err());
+
+  let exact = vec![0x42u8; Aes256GcmKey::LENGTH];
+  let encoded = serde_json::to_string(&exact).unwrap();
+  let key = serde_json::from_str::<Aes256GcmKey>(&encoded).unwrap();
+  assert_eq!(key.as_bytes(), exact.as_slice());
+}

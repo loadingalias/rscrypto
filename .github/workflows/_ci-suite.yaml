@@ -1,35 +1,18 @@
 name: _ci-suite
 
-# Reusable CI suite: ci matrix, IBM/RISC-V lanes, no-std, wasm, supply-chain.
+# Reusable CI suite: quality, feature contracts, native targets, cross targets,
+# and supply-chain validation.
 # Called by ci.yaml (per PR/push) and weekly.yaml (scheduled full run).
 
 on:
   workflow_call:
     inputs:
-      scope:
-        description: "'rail' (cargo-rail narrowed) or 'all' (full workspace)."
-        required: true
-        type: string
-      base_ref:
-        description: "Base ref passed to cargo-rail when scope=rail."
-        required: false
-        type: string
-        default: ""
-      scope_json:
-        description: "Scope JSON from cargo-rail when scope=rail."
-        required: false
-        type: string
-        default: ""
       cache_key_prefix:
         description: "Cache-key prefix, segregates commit/weekly caches."
         required: true
         type: string
       supply_chain_mode:
         description: "'light' (cargo deny check advisories) or 'full' (deny all + audit)."
-        required: true
-        type: string
-      cross_depth:
-        description: "'shallow' (PR smoke) or 'deep' (full feature sweep) for no-std/wasm."
         required: true
         type: string
       test_mode:
@@ -52,8 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ci: ${{ steps.matrix.outputs.ci }}
-      no_std: ${{ steps.matrix.outputs.no_std }}
-      wasm: ${{ steps.matrix.outputs.wasm }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -64,9 +45,35 @@ jobs:
         run: |
           {
             echo "ci=$(bash scripts/lib/target-matrix.sh --format json --key ci)"
-            echo "no_std=$(bash scripts/lib/target-matrix.sh --format json --key no_std)"
-            echo "wasm=$(bash scripts/lib/target-matrix.sh --format json --key wasm)"
           } >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Quality
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 30
+      cache_key: ${{ inputs.cache_key_prefix }}-quality
+      tools_mode: quality
+      toolchain_components: "clippy, rustfmt, rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: just ci-check
+
+  feature-contracts:
+    name: Feature Contracts
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 90
+      cache_key: ${{ inputs.cache_key_prefix }}-feature-contracts
+      tools_mode: minimal
+      toolchain_components: "rust-src"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      run_script: |
+        just check-feature-matrix
+        just test-feature-matrix
 
   ci:
     name: CI (${{ matrix.target.name }})
@@ -81,7 +88,7 @@ jobs:
       timeout_minutes: 180
       cache_key: ${{ inputs.cache_key_prefix }}-${{ matrix.target.name }}
       tools_mode: ${{ contains(matrix.target.name, 'windows-msvc') && 'none' || 'ci' }}
-      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && '' || 'clippy, rustfmt, rust-src' }}
+      toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && 'clippy' || 'clippy, rustfmt, rust-src' }}
       enable_magic_cache: ${{ matrix.target.type == 'runson' }}
       enable_rust_cache: true
       run_script: |
@@ -89,28 +96,18 @@ jobs:
         case "${{ matrix.target.name }}" in
           x86_64-pc-windows-msvc)
             echo "Windows x86_64 lane: compile smoke plus BLAKE3 ASM runtime vectors"
-            cargo check --workspace --lib --all-features
+            cargo clippy --workspace --lib --all-features -- -D warnings
             cargo test --workspace --all-features --no-run
             cargo test --workspace --features blake3 --test blake3_official_vectors --test blake3_differential
             ;;
           aarch64-pc-windows-msvc)
             echo "Windows AArch64 lane: compile-only smoke"
-            cargo check --workspace --lib --all-features
+            cargo clippy --workspace --lib --all-features -- -D warnings
             cargo test --workspace --all-features --no-run
             ;;
           *)
-            export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
-            if [[ "${{ inputs.scope }}" == "rail" ]]; then
-              export RAIL_SINCE="${{ inputs.base_ref }}"
-              export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-              just check
-              just build
-              just test
-            else
-              just check --all
-              just build
-              just test --all
-            fi
+            bash scripts/ci/native-check.sh --all-targets
+            bash scripts/test/test.sh --all
             ;;
         esac
 
@@ -131,14 +128,8 @@ jobs:
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
         export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        bash scripts/ci/ci-check.sh
-        if [[ "${{ inputs.scope }}" == "rail" ]]; then
-          export RAIL_SINCE="${{ inputs.base_ref }}"
-          export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-          bash scripts/test/test.sh
-        else
-          bash scripts/test/test.sh --all
-        fi
+        bash scripts/ci/native-check.sh
+        bash scripts/test/test.sh --all
 
   ci-ibm-power10:
     name: CI (IBM POWER10 ppc64le)
@@ -157,14 +148,8 @@ jobs:
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
         export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        bash scripts/ci/ci-check.sh
-        if [[ "${{ inputs.scope }}" == "rail" ]]; then
-          export RAIL_SINCE="${{ inputs.base_ref }}"
-          export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-          bash scripts/test/test.sh
-        else
-          bash scripts/test/test.sh --all
-        fi
+        bash scripts/ci/native-check.sh
+        bash scripts/test/test.sh --all
 
   ci-riscv:
     if: ${{ inputs.include_riscv }}
@@ -186,48 +171,21 @@ jobs:
         export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
         export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
         export RSCRYPTO_SKIP_DOCTESTS=1
-        bash scripts/ci/ci-check.sh
-        if [[ "${{ inputs.scope }}" == "rail" ]]; then
-          export RAIL_SINCE="${{ inputs.base_ref }}"
-          export RAIL_SCOPE_JSON='${{ inputs.scope_json }}'
-          bash scripts/test/test.sh
-        else
-          bash scripts/test/test.sh --all
-        fi
+        bash scripts/ci/native-check.sh
+        bash scripts/test/test.sh --all
 
-  no-std:
-    name: no_std (${{ matrix.target }})
-    needs: target-matrix
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.no_std) }}
+  cross-targets:
+    name: Cross Targets
     uses: ./.github/workflows/_rust-job.yaml
     with:
-      runner: ubuntu-latest
-      timeout_minutes: 25
-      cache_key: ${{ inputs.cache_key_prefix }}-no-std-${{ matrix.target }}
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 90
+      cache_key: ${{ inputs.cache_key_prefix }}-cross-targets
       tools_mode: none
-      enable_magic_cache: false
+      toolchain_components: "clippy, rust-src"
+      enable_magic_cache: true
       enable_rust_cache: true
-      run_script: bash scripts/ci/nostd-wasm-suite.sh "${{ matrix.target }}" "${{ inputs.cross_depth }}"
-
-  wasm:
-    name: wasm (${{ matrix.target }})
-    needs: target-matrix
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.target-matrix.outputs.wasm) }}
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-latest
-      timeout_minutes: 25
-      cache_key: ${{ inputs.cache_key_prefix }}-wasm-${{ matrix.target }}
-      tools_mode: none
-      enable_magic_cache: false
-      enable_rust_cache: true
-      run_script: bash scripts/ci/nostd-wasm-suite.sh "${{ matrix.target }}" "${{ inputs.cross_depth }}"
+      run_script: bash scripts/ci/cross-targets.sh deep
 
   supply-chain:
     name: Supply Chain (${{ inputs.supply_chain_mode }})

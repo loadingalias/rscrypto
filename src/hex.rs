@@ -177,10 +177,11 @@ macro_rules! impl_hex_fmt_secret {
     impl core::str::FromStr for $type {
       type Err = crate::hex::InvalidHexError;
 
+      #[inline]
       fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut buf = [0u8; Self::LENGTH];
-        crate::hex::from_hex(s, &mut buf)?;
-        Ok(Self::from_bytes(buf))
+        let mut bytes = crate::secret::ZeroizingBytes::<{ Self::LENGTH }>::zeroed();
+        crate::hex::from_hex(s, bytes.as_mut_array())?;
+        Ok(Self::from_bytes(*bytes.as_array()))
       }
     }
 
@@ -262,7 +263,45 @@ macro_rules! impl_serde_bytes {
 #[cfg(feature = "serde-secrets")]
 macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {
-    impl_serde_bytes_inner!($type, "serde-secrets");
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde-secrets")))]
+    impl serde::Serialize for $type {
+      fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(self.as_bytes())
+      }
+    }
+
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde-secrets")))]
+    impl<'de> serde::Deserialize<'de> for $type {
+      fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SecretByteVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SecretByteVisitor {
+          type Value = $type;
+
+          fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "{} bytes", <$type>::LENGTH)
+          }
+
+          fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+            let array: [u8; <$type>::LENGTH] = v.try_into().map_err(|_| E::invalid_length(v.len(), &self))?;
+            let bytes = crate::secret::ZeroizingBytes::new(array);
+            Ok(<$type>::from_bytes(*bytes.as_array()))
+          }
+
+          fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut bytes = crate::secret::ZeroizingBytes::<{ <$type>::LENGTH }>::zeroed();
+            for (i, byte) in bytes.as_mut_array().iter_mut().enumerate() {
+              *byte = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(i, &self))?;
+            }
+            Ok(<$type>::from_bytes(*bytes.as_array()))
+          }
+        }
+
+        deserializer.deserialize_bytes(SecretByteVisitor)
+      }
+    }
   };
 }
 
@@ -338,16 +377,31 @@ macro_rules! impl_getrandom {
     #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
     #[inline]
     pub fn try_random() -> Result<Self, getrandom::Error> {
-      let mut bytes = [0u8; Self::LENGTH];
-      match getrandom::fill(&mut bytes) {
-        Ok(()) => Ok(Self(bytes)),
-        Err(err) => {
-          crate::traits::ct::zeroize(&mut bytes);
-          Err(err)
-        }
-      }
+      let mut bytes = crate::secret::ZeroizingBytes::<{ Self::LENGTH }>::zeroed();
+      getrandom::fill(bytes.as_mut_array())?;
+      Ok(Self(*bytes.as_array()))
     }
   };
+}
+
+#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_hex_success() -> bool {
+  let parsed = core::hint::black_box("1111111111111111111111111111111111111111111111111111111111111111")
+    .parse::<crate::Aes256GcmKey>();
+  core::hint::black_box(parsed.is_ok())
+}
+
+#[cfg(all(feature = "diag", feature = "aes-gcm"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_hex_error() -> bool {
+  let parsed = core::hint::black_box("11111111111111111111111111111111111111111111111111111111111111zz")
+    .parse::<crate::Aes256GcmKey>();
+  core::hint::black_box(parsed.is_err())
 }
 
 // Tests
@@ -396,6 +450,22 @@ mod tests {
     let mut out = [0u8; 2];
     let err = from_hex("abzz", &mut out).unwrap_err();
     assert_eq!(err, InvalidHexError::InvalidChar { byte: b'z', index: 2 });
+  }
+
+  #[cfg(feature = "aes-gcm")]
+  #[test]
+  fn secret_from_str_rejects_after_partial_decode() {
+    use crate::Aes256GcmKey;
+
+    let mut encoded = alloc::string::String::from("11").repeat(Aes256GcmKey::LENGTH);
+    encoded.replace_range(encoded.len().strict_sub(2).., "zz");
+    assert_eq!(
+      encoded.parse::<Aes256GcmKey>().unwrap_err(),
+      InvalidHexError::InvalidChar {
+        byte: b'z',
+        index: encoded.len().strict_sub(2),
+      }
+    );
   }
 
   #[test]

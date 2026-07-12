@@ -230,3 +230,10 @@ also has `seal_random_to_vec`.
 | `ct::zeroize` | Volatile-write buffer wipe |
 | `DisplaySecret` | Opt-in hex display for secret keys |
 | `SecretBytes<N>` | Fixed-size secret byte buffer that zeroizes on drop |
+| `SecretVec` | Variable-length secret allocation that zeroizes on drop; ordinary extraction requires `into_unprotected_vec()` |
+
+Secret keys, shared secrets, keypairs, and AEAD cipher contexts do not implement
+`Clone`. Where duplication is necessary, call the concrete type's
+`duplicate_secret()` method so the additional secret lifetime is visible at the
+call site. RSA private-key DER exports return `SecretVec`; borrow the encoded
+bytes for parsers and writers whenever possible.

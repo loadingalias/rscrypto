@@ -362,7 +362,7 @@ fn root_surface_mlkem_exports_compile() {
 #[cfg(feature = "ed25519")]
 fn root_surface_signature_exports_compile() {
   let secret = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
-  let keypair = Ed25519Keypair::from_secret_key(secret.clone());
+  let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
   let public = keypair.public_key();
   let signature = keypair.sign(b"root-surface-ed25519");
 
@@ -447,6 +447,7 @@ fn root_surface_rsa_generated_key_end_to_end() {
 
   let pkcs1_der = key.to_pkcs1_der();
   let pkcs8_der = key.to_pkcs8_der();
+  assert_eq!(format!("{pkcs1_der:?}"), "SecretVec(****)");
   assert_eq!(
     RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1_der, &policy)
       .unwrap()
@@ -467,6 +468,15 @@ fn root_surface_rsa_generated_key_end_to_end() {
     RsaPublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy).unwrap(),
     *public_key
   );
+
+  let mut unprotected_pkcs1 = key.to_pkcs1_der().into_unprotected_vec();
+  assert_eq!(
+    RsaPrivateKey::from_pkcs1_der_with_policy(&unprotected_pkcs1, &policy)
+      .unwrap()
+      .public_key(),
+    public_key
+  );
+  rscrypto::traits::ct::zeroize(&mut unprotected_pkcs1);
 
   let mut signature = vec![0u8; key.signature_len()];
   for (pkcs1v15_profile, pss_profile) in [

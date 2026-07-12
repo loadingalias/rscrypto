@@ -97,7 +97,7 @@ pub fn run(data: &[u8]) {
 
   let key = Aes256GcmKey::from_bytes(key_bytes);
   exercise_secret_parse(
-    key.clone(),
+    key.duplicate_secret(),
     format!("{}", key.display_secret()),
     format!("{}", key.display_secret()).to_uppercase(),
     &key_candidate,
@@ -108,7 +108,7 @@ pub fn run(data: &[u8]) {
 
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
   exercise_secret_parse(
-    secret.clone(),
+    secret.duplicate_secret(),
     format!("{}", secret.display_secret()),
     format!("{}", secret.display_secret()).to_uppercase(),
     &secret_candidate,
@@ -122,7 +122,7 @@ pub fn run(data: &[u8]) {
 
   let x25519_secret = X25519SecretKey::from_bytes(secret_bytes);
   exercise_secret_parse(
-    x25519_secret.clone(),
+    x25519_secret.duplicate_secret(),
     format!("{}", x25519_secret.display_secret()),
     format!("{}", x25519_secret.display_secret()).to_uppercase(),
     &x25519_secret_candidate,
@@ -130,7 +130,7 @@ pub fn run(data: &[u8]) {
 
   let x25519_shared = X25519SharedSecret::from_bytes(key_bytes);
   exercise_secret_parse(
-    x25519_shared.clone(),
+    x25519_shared.duplicate_secret(),
     format!("{}", x25519_shared.display_secret()),
     format!("{}", x25519_shared.display_secret()).to_uppercase(),
     &x25519_shared_candidate,

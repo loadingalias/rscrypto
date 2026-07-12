@@ -104,6 +104,17 @@ check *args="":
 check-all *args="":
     @scripts/check/check-all.sh {{ args }}
 
+check-feature-matrix:
+    @scripts/check/check-feature-matrix.sh
+
+check-zeroize-evidence:
+    @scripts/check/zeroize-evidence.sh
+
+check-unify:
+    cargo rail config validate --strict
+    cargo rail config sync --check
+    cargo rail unify --check --explain
+
 ci-check:
     @scripts/ci/ci-check.sh
 
@@ -192,13 +203,13 @@ release-status:
     cargo rail change status
 
 release-check:
-    cargo rail config validate --strict
+    just check-unify
     cargo rail change status
     cargo rail release check rscrypto --extended
     scripts/ci/release-plan-check.sh rscrypto
 
 release-prepare:
-    cargo rail config validate --strict
+    just check-unify
     cargo rail release check rscrypto --extended
     cargo rail release run rscrypto --bump auto --yes --skip-publish --skip-tag
     cargo update --manifest-path tools/ct-harness/Cargo.toml -p rscrypto
@@ -209,7 +220,7 @@ release-prepare:
     git push
 
 release-tag:
-    cargo rail config validate --strict
+    just check-unify
     cargo rail release check rscrypto --extended
     cargo rail release finalize rscrypto --yes --skip-publish
 
@@ -226,6 +237,8 @@ pin-actions:
 
 check-actions:
     @scripts/ci/pin-actions.sh --verify-only
+    @scripts/ci/check-ci-ownership.sh
+    @scripts/ci/check-ci-ownership-test.sh
 
 push *args="":
     @scripts/ci/pre-push.sh --light

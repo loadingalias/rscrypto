@@ -9,14 +9,19 @@ its caller.
 |--------|---------|
 | `check/check.sh`               | `just check` |
 | `check/check-all.sh`           | `just check-all` |
-| `ci/ci-check.sh`               | `just ci-check`, `_ci-suite.yaml` (IBM/RISC-V pre-run) |
+| `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
+| `check/zeroize-evidence.sh`    | `just check-zeroize-evidence`, `scripts/check/check-all.sh` |
+| `ci/ci-check.sh`               | `just ci-check`, `_ci-suite.yaml` (quality lane) |
+| `ci/native-check.sh`           | `_ci-suite.yaml` (native Linux/IBM/RISC-V lanes) |
 | `test/test.sh`                 | `just test`, `just test-all`, `_ci-suite.yaml` |
-| `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `scripts/ci/ci-check.sh`, `weekly.yaml` |
+| `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
 | `test/test-miri.sh`            | `just test-miri`, `weekly.yaml` |
 | `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
+| `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
+| `ci/check-ci-ownership-test.sh`| `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/pre-push.sh`               | `just push`, `just push-full`, optional `.git/hooks/pre-push` |
 | `update/update-all.sh`         | `just update`, `just update-check` |
@@ -43,7 +48,8 @@ its caller.
 |--------|---------|
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
 | `ci/emit-manual-matrix.sh`     | `bench.yaml` |
-| `ci/nostd-wasm-suite.sh`       | `_ci-suite.yaml` (no_std, wasm matrices) |
+| `ci/nostd-wasm-suite.sh`       | `ci/cross-targets.sh` |
+| `ci/cross-targets.sh`          | `_ci-suite.yaml` (consolidated cross-target lane) |
 
 ## Shared Libraries (sourced, not invoked)
 

@@ -6,7 +6,7 @@
 //! use rscrypto::auth::ed25519::{Ed25519Keypair, Ed25519SecretKey};
 //!
 //! let secret = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
-//! let keypair = Ed25519Keypair::from_secret_key(secret.clone());
+//! let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
 //! let public = keypair.public_key();
 //! let sig = secret.sign(b"auth");
 //!
@@ -35,6 +35,7 @@ use core::{
 use crate::{
   SecretBytes,
   hashes::crypto::Sha512,
+  secret::ZeroizingBytes,
   traits::{Digest, VerificationError, ct},
 };
 
@@ -123,7 +124,6 @@ const _: fn(&scalar::Scalar, &scalar::Scalar, &scalar::Scalar) -> scalar::Scalar
 ///
 /// Provides typed signing and public-key derivation instead of vague `&[u8]`
 /// parameters at the call site.
-#[derive(Clone)]
 pub struct Ed25519SecretKey([u8; Self::LENGTH]);
 
 impl PartialEq for Ed25519SecretKey {
@@ -150,6 +150,13 @@ impl Ed25519SecretKey {
   #[must_use]
   pub fn expose_secret(&self) -> SecretBytes<{ Self::LENGTH }> {
     SecretBytes::new(self.0)
+  }
+
+  /// Explicitly duplicate this secret key.
+  #[inline]
+  #[must_use]
+  pub const fn duplicate_secret(&self) -> Self {
+    Self(self.0)
   }
 
   /// Borrow the secret key bytes.
@@ -188,14 +195,9 @@ impl Ed25519SecretKey {
   /// returning an error.
   #[inline]
   pub fn try_generate_with<E>(mut fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
-    let mut bytes = [0u8; Self::LENGTH];
-    match fill(&mut bytes) {
-      Ok(()) => Ok(Self(bytes)),
-      Err(err) => {
-        ct::zeroize(&mut bytes);
-        Err(err)
-      }
-    }
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array())?;
+    Ok(Self(*bytes.as_array()))
   }
 
   /// Try to generate a secret key from the platform entropy source.
@@ -224,9 +226,9 @@ impl Ed25519SecretKey {
   #[inline]
   #[must_use]
   pub fn generate(fill: impl FnOnce(&mut [u8; Self::LENGTH])) -> Self {
-    let mut bytes = [0u8; Self::LENGTH];
-    fill(&mut bytes);
-    Self(bytes)
+    let mut bytes = ZeroizingBytes::zeroed();
+    fill(bytes.as_mut_array());
+    Self(*bytes.as_array())
   }
 
   impl_getrandom!();
@@ -426,7 +428,6 @@ impl crate::traits::Verifier<Ed25519Signature> for Ed25519PublicKey {
 ///
 /// assert!(keypair.public_key().verify(b"auth", &signature).is_ok());
 /// ```
-#[derive(Clone)]
 pub struct Ed25519Keypair {
   secret: Ed25519SecretKey,
   public: Ed25519PublicKey,
@@ -454,6 +455,17 @@ impl PartialEq for Ed25519Keypair {
 impl Eq for Ed25519Keypair {}
 
 impl Ed25519Keypair {
+  /// Explicitly duplicate this secret-bearing keypair.
+  #[inline]
+  #[must_use]
+  pub fn duplicate_secret(&self) -> Self {
+    Self {
+      secret: self.secret.duplicate_secret(),
+      public: self.public,
+      expanded: self.expanded.clone(),
+    }
+  }
+
   /// Try to generate a keypair by filling secret-key bytes from the provided closure.
   #[inline]
   pub fn try_generate_with<E>(fill: impl FnMut(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
@@ -977,9 +989,9 @@ mod tests {
     let first = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([1u8; Ed25519SecretKey::LENGTH]));
     let second = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([2u8; Ed25519SecretKey::LENGTH]));
 
-    let mut secret_mismatch = first.clone();
-    secret_mismatch.secret = second.secret.clone();
-    let mut public_mismatch = first.clone();
+    let mut secret_mismatch = first.duplicate_secret();
+    secret_mismatch.secret = second.secret.duplicate_secret();
+    let mut public_mismatch = first.duplicate_secret();
     public_mismatch.public = second.public;
 
     assert_eq!(first, first);
