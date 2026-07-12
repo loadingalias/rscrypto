@@ -25,6 +25,7 @@ COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
 EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
+RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 
 fail() {
   echo "CI ownership error: $*" >&2
@@ -75,6 +76,7 @@ require_file "$COMPILE_MATRIX"
 require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
+require_file "$RELEASE_PREFLIGHT"
 
 [[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
   || fail "compile feature matrix must retain all 29 profiles"
@@ -90,6 +92,12 @@ grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "ordinary workflows must have exactly one executable feature-matrix owner"
 [[ $(count_matches 'just check-feature-matrix' "$WORKFLOWS") -eq 1 ]] \
   || fail "ordinary workflows must have exactly one compile feature-matrix owner"
+# shellcheck disable=SC2016 # `$crate` is an intentional literal in the release-preflight contract regex.
+[[ $(count_matches 'cargo semver-checks --package "\$crate" --all-features' "$RELEASE_PREFLIGHT") -eq 1 ]] \
+  || fail "tag preflight must have exactly one final-version SemVer owner"
+if grep -ERn 'cargo semver-checks' "$WORKFLOWS" >/dev/null; then
+  fail "ordinary workflows must leave version-aware SemVer analysis to cargo-rail release planning"
+fi
 
 if grep -ERn 'just check --all|check-all\.sh' "$WORKFLOWS" >/dev/null; then
   fail "native workflows must not invoke comprehensive cross-target checks"

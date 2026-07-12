@@ -59,6 +59,11 @@ sed -i.bak '/cargo rail unify --check/d' "$missing_graph_owner/.github/workflows
 rm -f "$missing_graph_owner/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$missing_graph_owner" "missing Cargo graph assurance owner"
 
+duplicate_semver_owner="$TMP_ROOT/duplicate-semver-owner"
+make_fixture "$duplicate_semver_owner"
+printf '\n# duplicate owner\n      run: cargo semver-checks --package rscrypto --all-features\n' >>"$duplicate_semver_owner/.github/workflows/weekly.yaml"
+expect_failure "$duplicate_semver_owner" "duplicate SemVer owner"
+
 shrunk_matrix="$TMP_ROOT/shrunk-matrix"
 make_fixture "$shrunk_matrix"
 sed -i.bak '/  "crc16"/d' "$shrunk_matrix/scripts/test/test-feature-matrix.sh"

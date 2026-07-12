@@ -120,11 +120,16 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
    to match.
 4. Validates and sync-checks `.config/rail.toml`, then proves the unified Cargo
    graph is clean with cargo-rail 0.17.0.
-5. Runs `cargo deny check all`, `cargo audit`, and `cargo semver-checks`.
-6. Builds the `.crate` with `cargo package --locked`.
+5. Runs `cargo deny check all`, `cargo audit`, and the single hard SemVer check
+   against the finalized release version. Before tagging, cargo-rail's automatic
+   release plan uses compatibility analysis to select the required version bump;
+   the extended release check reports the advisory verdict.
+6. Builds the `.crate` once with `cargo package --locked` and transfers that
+   validated artifact to the publish job.
 7. Rejects dirty VCS metadata and private or local-only package contents.
 8. Waits for the `CI` workflow on the same commit to pass.
-9. Attests the `.crate` artifact with GitHub build provenance.
+9. Verifies the transferred artifact's SHA-256, then attests it with GitHub
+   build provenance.
 10. Runs every release CT lane and the dedicated RSA evidence workflow, and
     rejects any failed required gate.
 11. Validates that the complete CT lane set, version, commit, clean provenance,

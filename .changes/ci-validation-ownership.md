@@ -21,3 +21,8 @@ Separated fast Quality checks from exhaustive compiler-backed Cargo graph
 assurance. The dedicated blocking lane receives a realistic timeout, retained
 proof artifacts, an identity-validated compiler-evidence cache, planner-based
 PR selection, and unconditional main, Weekly, and release execution.
+
+Consolidated SemVer ownership under cargo-rail's version-aware release planning
+and one hard check of the finalized tag. Release preflight now builds and
+validates the crate once; the publish job verifies and attests that transferred
+artifact instead of repeating the complete preflight.

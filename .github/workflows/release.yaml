@@ -36,7 +36,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache-key: release-preflight
-          tools-mode: standard
+          tools-mode: release
           toolchain-components: ""
           enable-magic-cache: false
           enable-rust-cache: true
@@ -44,6 +44,15 @@ jobs:
       - name: Release preflight
         id: preflight
         run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$GITHUB_REF_NAME"
+
+      - name: Preserve validated crate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-crate-${{ github.sha }}
+          path: ${{ steps.preflight.outputs.crate_path }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
   publish:
     name: Publish
@@ -66,22 +75,39 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache-key: release-publish
-          tools-mode: standard
+          tools-mode: none
           toolchain-components: ""
           enable-magic-cache: false
           enable-rust-cache: true
 
-      - name: Release preflight
-        id: package
-        run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$GITHUB_REF_NAME"
+      - name: Restore validated crate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-crate-${{ github.sha }}
+          path: target/package
 
-      - name: Assert preflight package is stable
+      - name: Verify validated crate
+        id: package
+        env:
+          CRATE_NAME: ${{ needs.preflight.outputs.crate_name }}
+          CRATE_SHA256: ${{ needs.preflight.outputs.crate_sha256 }}
+          CRATE_VERSION: ${{ needs.preflight.outputs.crate_version }}
         run: |
           set -euo pipefail
-          if [[ "${{ needs.preflight.outputs.crate_sha256 }}" != "${{ steps.package.outputs.crate_sha256 }}" ]]; then
-            echo "preflight package sha256 changed between jobs" >&2
+          crate_path="target/package/$CRATE_NAME"
+          actual_sha256="$(sha256sum "$crate_path" | awk '{print $1}')"
+          if [[ "$actual_sha256" != "$CRATE_SHA256" ]]; then
+            echo "validated crate sha256 changed during artifact transfer" >&2
+            echo "expected: $CRATE_SHA256" >&2
+            echo "actual:   $actual_sha256" >&2
             exit 1
           fi
+          {
+            echo "crate_path=$crate_path"
+            echo "crate_name=$CRATE_NAME"
+            echo "crate_sha256=$CRATE_SHA256"
+            echo "crate_version=$CRATE_VERSION"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Attest crate provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1

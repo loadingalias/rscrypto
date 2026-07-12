@@ -330,6 +330,15 @@ case "$MODE" in
     install_if_missing "just" "just"
     ;;
 
+  release)
+    # Tag preflight owns graph, supply-chain, and package validation.
+    install_binstall
+    ensure_cargo_rail "$CARGO_RAIL_VERSION"
+    ensure_cargo_semver_checks "$CARGO_SEMVER_CHECKS_VERSION"
+    install_if_missing "cargo-deny" "cargo-deny"
+    install_if_missing "cargo-audit" "cargo-audit"
+    ;;
+
   rail)
     # Compiler-backed Cargo graph assurance.
     install_binstall
