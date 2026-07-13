@@ -1087,6 +1087,8 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
 }
 
 fn ecdsa_p256_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  // Keep public-key derivation outside the measurement pass so its cache and predictor state
+  // cannot be attributed to the forwarding signing entrypoint.
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
@@ -1094,11 +1096,14 @@ fn ecdsa_p256_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &m
     } else {
       valid_p256_secret(rng)
     };
-    inputs.push((class, secret, rand_array::<64>(rng)));
+    inputs.push((
+      class,
+      EcdsaP256Keypair::from_secret_key(EcdsaP256SecretKey::from_bytes(secret).unwrap()),
+      rand_array::<64>(rng),
+    ));
   }
 
-  for (class, secret, blind) in inputs {
-    let keypair = EcdsaP256Keypair::from_secret_key(EcdsaP256SecretKey::from_bytes(secret).unwrap());
+  for (class, keypair, blind) in inputs {
     runner.run_one(class, || {
       std::hint::black_box(
         keypair
@@ -1130,6 +1135,8 @@ fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
 }
 
 fn ecdsa_p384_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
+  // Keep public-key derivation outside the measurement pass so its cache and predictor state
+  // cannot be attributed to the forwarding signing entrypoint.
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
     let secret = if matches!(class, Class::Left) {
@@ -1137,11 +1144,14 @@ fn ecdsa_p384_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &m
     } else {
       valid_p384_secret(rng)
     };
-    inputs.push((class, secret, rand_array::<96>(rng)));
+    inputs.push((
+      class,
+      EcdsaP384Keypair::from_secret_key(EcdsaP384SecretKey::from_bytes(secret).unwrap()),
+      rand_array::<96>(rng),
+    ));
   }
 
-  for (class, secret, blind) in inputs {
-    let keypair = EcdsaP384Keypair::from_secret_key(EcdsaP384SecretKey::from_bytes(secret).unwrap());
+  for (class, keypair, blind) in inputs {
     runner.run_one(class, || {
       std::hint::black_box(
         keypair
