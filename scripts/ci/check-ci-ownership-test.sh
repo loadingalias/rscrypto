@@ -75,6 +75,12 @@ sed -i.bak '/fuzz-packages/d' "$missing_fuzz_packages/.github/dependabot.yaml"
 rm -f "$missing_fuzz_packages/.github/dependabot.yaml.bak"
 expect_failure "$missing_fuzz_packages" "incomplete Dependabot Cargo manifest coverage"
 
+missing_tools="$TMP_ROOT/missing-tools"
+make_fixture "$missing_tools"
+sed -i.bak '/tools\/\*/d' "$missing_tools/.github/dependabot.yaml"
+rm -f "$missing_tools/.github/dependabot.yaml.bak"
+expect_failure "$missing_tools" "missing standalone tool dependency coverage"
+
 duplicate_semver_owner="$TMP_ROOT/duplicate-semver-owner"
 make_fixture "$duplicate_semver_owner"
 printf '\n# duplicate owner\n      run: cargo semver-checks --package rscrypto --all-features\n' >>"$duplicate_semver_owner/.github/workflows/weekly.yaml"

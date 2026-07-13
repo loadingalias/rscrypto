@@ -84,6 +84,9 @@ classify_changed_files() {
       fuzz-packages/*/Cargo.toml | fuzz-packages/*/Cargo.lock)
         add_manifest "${path%/*}/Cargo.toml"
         ;;
+      tools/*/Cargo.toml | tools/*/Cargo.lock)
+        add_manifest "${path%/*}/Cargo.toml"
+        ;;
       .github/actions-lock.yaml | .github/dependabot.yaml | .github/workflows/* | .github/actions/*)
         RUN_AUTOMATION=true
         ;;

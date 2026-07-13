@@ -11,6 +11,7 @@ updates:
       - "/"
       - "/fuzz"
       - "/fuzz-packages/*"
+      - "/tools/*"
     schedule:
       interval: "weekly"
       day: "monday"

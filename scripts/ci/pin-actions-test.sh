@@ -88,5 +88,8 @@ PATH="$fake_bin:$PATH" "$CHECKER" --update-lock --root "$nested_action" >/dev/nu
 grep -Fq \
   'uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4.37.0' \
   "$nested_action/.github/workflows/scorecard.yaml"
+yq eval -i '."github/codeql-action/upload-sarif".updated = "unchanged"' "$nested_action/.github/actions-lock.yaml"
+PATH="$fake_bin:$PATH" "$CHECKER" --update-lock --root "$nested_action" >/dev/null
+[[ $(yq eval -r '."github/codeql-action/upload-sarif".updated' "$nested_action/.github/actions-lock.yaml") == "unchanged" ]]
 
 echo "Action pin regression tests passed"

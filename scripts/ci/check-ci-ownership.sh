@@ -84,7 +84,8 @@ require_file "$DEPENDABOT"
 [[ $(yq eval '[.updates[] | select(."package-ecosystem" == "cargo")] | length' "$DEPENDABOT") == "1" ]] \
   || fail "Dependabot must have exactly one non-overlapping Cargo update entry"
 [[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | .directories | sort | join(",")' "$DEPENDABOT") \
-  == "/,/fuzz,/fuzz-packages/*" ]] || fail "Dependabot Cargo coverage must include root, fuzz, and every scoped fuzz package"
+  == "/,/fuzz,/fuzz-packages/*,/tools/*" ]] \
+  || fail "Dependabot Cargo coverage must include root, fuzz, scoped fuzz packages, and standalone tools"
 [[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | ."open-pull-requests-limit"' "$DEPENDABOT") == "5" ]] \
   || fail "Dependabot Cargo PR capacity must remain bounded at five"
 if grep -En 'group-by:[[:space:]]*dependency-name' "$DEPENDABOT" >/dev/null; then

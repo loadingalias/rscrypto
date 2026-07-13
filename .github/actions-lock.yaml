@@ -26,27 +26,27 @@
 actions/checkout:
   ref: v7.0.0
   sha: "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"
-  updated: "2026-07-13T17:23:34Z"
+  updated: "2026-07-13T17:52:44Z"
   notes: "Repository checkout - used in every workflow"
 actions/upload-artifact:
   ref: v7.0.1
   sha: "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-  updated: "2026-07-13T17:23:35Z"
+  updated: "2026-07-13T17:52:45Z"
   notes: "Upload build artifacts and test results"
 actions/download-artifact:
   ref: v8.0.1
   sha: "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
-  updated: "2026-07-13T17:23:36Z"
+  updated: "2026-07-13T17:52:46Z"
   notes: "Download build artifacts"
 actions/cache:
   ref: v6.1.0
   sha: "55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
-  updated: "2026-07-13T17:23:37Z"
+  updated: "2026-07-13T17:52:47Z"
   notes: "Cache dependencies and build artifacts"
 actions/attest-build-provenance:
   ref: v4.1.1
   sha: "0f67c3f4856b2e3261c31976d6725780e5e4c373"
-  updated: "2026-07-13T17:23:37Z"
+  updated: "2026-07-13T17:52:47Z"
   notes: "SLSA build provenance attestations for release crate artifacts"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Testing & Reporting
@@ -54,22 +54,22 @@ actions/attest-build-provenance:
 mikepenz/action-junit-report:
   ref: v6.4.2
   sha: "d9f48fc87bc235f7e214acf696ca5abc0a986f16"
-  updated: "2026-07-13T17:23:38Z"
+  updated: "2026-07-13T17:52:48Z"
   notes: "Publish JUnit test reports as GitHub Checks"
 codecov/codecov-action:
   ref: v7.0.0
   sha: "fb8b3582c8e4def4969c97caa2f19720cb33a72f"
-  updated: "2026-07-13T17:23:39Z"
+  updated: "2026-07-13T17:52:49Z"
   notes: "Upload coverage reports to Codecov"
 ossf/scorecard-action:
   ref: v2.4.3
   sha: "4eaacf0543bb3f2c246792bd56e8cdeffafb205a"
-  updated: "2026-07-13T17:23:39Z"
+  updated: "2026-07-13T17:52:49Z"
   notes: "OpenSSF Scorecard security posture checks"
 github/codeql-action/upload-sarif:
   ref: v4.37.0
   sha: "99df26d4f13ea111d4ec1a7dddef6063f76b97e9"
-  updated: "2026-07-13T17:23:40Z"
+  updated: "2026-07-13T17:52:50Z"
   notes: "Upload Scorecard SARIF results to GitHub code scanning"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Rust Toolchain & Ecosystem
@@ -77,22 +77,22 @@ github/codeql-action/upload-sarif:
 dtolnay/rust-toolchain:
   ref: v1
   sha: "e97e2d8cc328f1b50210efc529dca0028893a2d9"
-  updated: "2026-07-13T17:23:41Z"
+  updated: "2026-07-13T17:52:51Z"
   notes: "Rust toolchain installation - always tracks latest nightly"
 taiki-e/install-action:
   ref: v2.83.2
   sha: "43aecc8d72668fbcfe75c31400bc4f890f1c5853"
-  updated: "2026-07-13T17:23:42Z"
+  updated: "2026-07-13T17:52:52Z"
   notes: "Install cargo tools (nextest, just, deny, audit)"
 Swatinem/rust-cache:
   ref: v2.9.1
   sha: "c19371144df3bb44fab255c43d04cbc2ab54d1c4"
-  updated: "2026-07-13T17:23:42Z"
+  updated: "2026-07-13T17:52:52Z"
   notes: "GitHub runner Rust cache"
 loadingalias/cargo-rail-action:
   ref: v5.1.0
   sha: "90f7f739028887508c6e8d8b7cc510dc612eb653"
-  updated: "2026-07-13T17:23:43Z"
+  updated: "2026-07-13T17:52:53Z"
   notes: "cargo-rail scope v2 outputs and release-intent base-ref for CI"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # RunsOn (AWS EC2 Runners)
@@ -100,7 +100,7 @@ loadingalias/cargo-rail-action:
 runs-on/action:
   ref: v2.2.0
   sha: "4e5f72399b6b17f2e79c511c1b38a315a64d22dc"
-  updated: "2026-07-13T17:23:44Z"
+  updated: "2026-07-13T17:52:54Z"
   notes: "RunsOn MagicCache - S3-backed unlimited cache for AWS EC2 runners"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Release Workflow Actions
@@ -108,20 +108,20 @@ runs-on/action:
 taiki-e/create-gh-release-action:
   ref: v1.11.0
   sha: "eba8ea96c86cca8a37f1b56e94b4d13301fba651"
-  updated: "2026-07-13T17:23:45Z"
+  updated: "2026-07-13T17:52:54Z"
   notes: "Create GitHub releases from CHANGELOG.md"
 taiki-e/setup-cross-toolchain-action:
   ref: v1.41.0
   sha: "3d9770ce98eb7dbcf378563182a5e8031165f75b"
-  updated: "2026-07-13T17:23:45Z"
+  updated: "2026-07-13T17:52:55Z"
   notes: "Cross-compilation toolchain setup for multi-target builds"
 taiki-e/upload-rust-binary-action:
   ref: v1.30.2
   sha: "f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6"
-  updated: "2026-07-13T17:23:46Z"
+  updated: "2026-07-13T17:52:56Z"
   notes: "Build and upload pre-built binaries to GitHub Releases"
 rust-lang/crates-io-auth-action:
   ref: v1.0.5
   sha: "c6f97d42243bad5fab37ca0427f495c86d5b1a18"
-  updated: "2026-07-13T17:23:47Z"
+  updated: "2026-07-13T17:52:56Z"
   notes: "crates.io Trusted Publishing short-lived token exchange"

@@ -154,9 +154,16 @@ update_lock_file() {
       continue
     fi
 
-    local sha
+    local sha current_sha
     if ! sha=$(resolve_ref_to_sha "$action" "$ref"); then
       echo "  ❌ Failed to resolve SHA"
+      continue
+    fi
+
+    current_sha=$(yq eval -r ".\"$action\".sha // \"\"" "$LOCK_FILE")
+    if [[ "$sha" == "$current_sha" ]]; then
+      echo "  ✅ $ref already resolves to $sha"
+      echo ""
       continue
     fi
 

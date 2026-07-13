@@ -63,6 +63,22 @@ discover_fuzz_workspaces() {
   fi
 }
 
+discover_tool_workspaces() {
+  local manifest
+
+  if [[ ! -d "$REPO_ROOT/tools" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r manifest; do
+    local workspace_dir
+    workspace_dir=$(dirname "$manifest")
+    if [[ -f "$workspace_dir/Cargo.lock" ]]; then
+      printf '%s\n' "$workspace_dir"
+    fi
+  done < <(find "$REPO_ROOT/tools" -mindepth 2 -maxdepth 2 -name Cargo.toml -type f | sort)
+}
+
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "rscrypto dependency update"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -78,6 +94,13 @@ while IFS= read -r fuzz_dir; do
   update_workspace "$fuzz_dir" "fuzz: ${fuzz_dir#"$REPO_ROOT"/}"
   FUZZ_COUNT=$((FUZZ_COUNT + 1))
 done < <(discover_fuzz_workspaces)
+
+TOOL_COUNT=0
+while IFS= read -r tool_dir; do
+  [[ -z "$tool_dir" ]] && continue
+  update_workspace "$tool_dir" "tool: ${tool_dir#"$REPO_ROOT"/}"
+  TOOL_COUNT=$((TOOL_COUNT + 1))
+done < <(discover_tool_workspaces)
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -96,6 +119,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Fuzz workspaces seen: $FUZZ_COUNT"
+echo "Tool workspaces seen: $TOOL_COUNT"
 if [[ "$CHECK_ONLY" == true ]]; then
   echo "Workspace updated: no"
   echo "Mode: check-only"
