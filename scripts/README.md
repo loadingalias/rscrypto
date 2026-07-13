@@ -20,9 +20,12 @@ its caller.
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
+| `ci/pin-actions-test.sh`       | `just check-actions`, `ci/dependabot-smoke.sh` |
+| `ci/dependabot-smoke-test.sh`  | `just check-actions` |
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
+| `ci/upgrade-actions-test.sh`   | `just check-actions` |
 | `ci/pre-push.sh`               | `just push`, `just push-full`, optional `.git/hooks/pre-push` |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
@@ -47,6 +50,7 @@ its caller.
 | Script | Callers |
 |--------|---------|
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
+| `ci/dependabot-smoke.sh`       | `ci.yaml` (Dependabot PR lane) |
 | `ci/emit-manual-matrix.sh`     | `bench.yaml` |
 | `ci/nostd-wasm-suite.sh`       | `ci/cross-targets.sh` |
 | `ci/cross-targets.sh`          | `_ci-suite.yaml` (consolidated cross-target lane) |

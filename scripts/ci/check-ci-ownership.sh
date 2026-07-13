@@ -26,6 +26,7 @@ EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
+DEPENDABOT="$ROOT/.github/dependabot.yaml"
 
 fail() {
   echo "CI ownership error: $*" >&2
@@ -77,6 +78,18 @@ require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
 require_file "$RELEASE_PREFLIGHT"
+require_file "$DEPENDABOT"
+
+[[ $(yq eval '.version' "$DEPENDABOT") == "2" ]] || fail "Dependabot config must use version 2"
+[[ $(yq eval '[.updates[] | select(."package-ecosystem" == "cargo")] | length' "$DEPENDABOT") == "1" ]] \
+  || fail "Dependabot must have exactly one non-overlapping Cargo update entry"
+[[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | .directories | sort | join(",")' "$DEPENDABOT") \
+  == "/,/fuzz,/fuzz-packages/*" ]] || fail "Dependabot Cargo coverage must include root, fuzz, and every scoped fuzz package"
+[[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | ."open-pull-requests-limit"' "$DEPENDABOT") == "5" ]] \
+  || fail "Dependabot Cargo PR capacity must remain bounded at five"
+if grep -En 'group-by:[[:space:]]*dependency-name' "$DEPENDABOT" >/dev/null; then
+  fail "Dependabot must not use the upstream-broken cross-directory dependency-name grouping"
+fi
 
 [[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
   || fail "compile feature matrix must retain all 29 profiles"

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Install cargo tools for CI.
-# Usage: install-tools.sh [standard|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Usage: install-tools.sh [standard|quality|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
 MODE="${1:-standard}"
 CARGO_RAIL_VERSION="${CARGO_RAIL_VERSION:-0.17.0}"
 CARGO_SEMVER_CHECKS_VERSION="${CARGO_SEMVER_CHECKS_VERSION:-0.48.0}"
+ACTIONLINT_VERSION="${ACTIONLINT_VERSION:-1.7.12}"
+ZIZMOR_VERSION="${ZIZMOR_VERSION:-1.26.1}"
 
 echo "Installing cargo tools (mode: $MODE)"
 
@@ -135,6 +137,27 @@ install_if_missing() {
 
   echo "  $tool: installing..."
   cargo binstall "$tool" --no-confirm --force 2>/dev/null || cargo install "$tool" --locked
+}
+
+install_actionlint() {
+  if command -v actionlint &>/dev/null; then
+    echo "  actionlint: cached"
+    return 0
+  fi
+
+  echo "  actionlint: installing..."
+  GOBIN="$HOME/.cargo/bin" go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"
+}
+
+install_zizmor() {
+  if command -v zizmor &>/dev/null; then
+    echo "  zizmor: cached"
+    return 0
+  fi
+
+  echo "  zizmor: installing..."
+  cargo binstall "zizmor@${ZIZMOR_VERSION}" --no-confirm --force 2>/dev/null \
+    || cargo install zizmor --locked --version "$ZIZMOR_VERSION"
 }
 
 install_just_portable() {
@@ -330,6 +353,13 @@ case "$MODE" in
     install_if_missing "just" "just"
     ;;
 
+  quality)
+    install_binstall
+    install_if_missing "just" "just"
+    install_actionlint
+    install_zizmor
+    ;;
+
   release)
     # Tag preflight owns graph, supply-chain, and package validation.
     install_binstall
@@ -357,6 +387,8 @@ case "$MODE" in
     install_binstall
     install_if_missing "cargo-deny" "cargo-deny"
     install_if_missing "cargo-audit" "cargo-audit"
+    install_actionlint
+    install_zizmor
     ;;
 
   ibm)
@@ -416,7 +448,7 @@ case "$MODE" in
 
   *)
     echo "Unknown mode: $MODE"
-    echo "Usage: install-tools.sh [standard|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
+    echo "Usage: install-tools.sh [standard|quality|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]"
     exit 1
     ;;
 esac

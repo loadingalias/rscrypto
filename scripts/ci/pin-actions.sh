@@ -8,11 +8,12 @@ set -euo pipefail
 #   then rewrites all workflow files to use SHA-pinned references.
 #
 # Usage:
-#   ./scripts/ci/pin-actions.sh [--verify-only] [--update-lock]
+#   ./scripts/ci/pin-actions.sh [--verify-only] [--update-lock] [--root PATH]
 #
 # Options:
 #   --verify-only    Check if workflows match lock file (CI mode)
 #   --update-lock    Resolve the refs already in the lock file to SHAs
+#   --root PATH      Operate on another repository root (validation fixtures)
 #
 # Requirements:
 #   - yq (YAML processor): brew install yq OR apt-get install yq
@@ -20,18 +21,13 @@ set -euo pipefail
 #   - gh (GitHub CLI) OR curl
 #
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-LOCK_FILE="$REPO_ROOT/.github/actions-lock.yaml"
-WORKFLOWS_DIR="$REPO_ROOT/.github/workflows"
-ACTIONS_DIR="$REPO_ROOT/.github/actions"
-
 VERIFY_ONLY=false
 UPDATE_LOCK=false
+ROOT_OVERRIDE=""
 
-# Parse arguments
-for arg in "$@"; do
-  case $arg in
+# Parse arguments.
+while [[ $# -gt 0 ]]; do
+  case $1 in
     --verify-only)
       VERIFY_ONLY=true
       shift
@@ -40,13 +36,27 @@ for arg in "$@"; do
       UPDATE_LOCK=true
       shift
       ;;
+    --root)
+      ROOT_OVERRIDE=${2:?missing path after --root}
+      shift 2
+      ;;
     *)
-      echo "Unknown option: $arg"
-      echo "Usage: $0 [--verify-only] [--update-lock]"
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--verify-only] [--update-lock] [--root PATH]"
       exit 1
       ;;
   esac
 done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -n "$ROOT_OVERRIDE" ]]; then
+  REPO_ROOT="$(cd "$ROOT_OVERRIDE" && pwd)"
+else
+  REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+fi
+LOCK_FILE="$REPO_ROOT/.github/actions-lock.yaml"
+WORKFLOWS_DIR="$REPO_ROOT/.github/workflows"
+ACTIONS_DIR="$REPO_ROOT/.github/actions"
 
 # Dependency Checks
 
@@ -74,16 +84,32 @@ workflow_files() {
 
 # GitHub API - Resolve ref to SHA
 
+action_repository() {
+  local action="$1"
+  local owner=${action%%/*}
+  local remainder=${action#*/}
+  local repository=${remainder%%/*}
+
+  if [[ -z "$owner" || -z "$repository" || "$remainder" == "$action" ]]; then
+    echo "ERROR: invalid GitHub Action name '$action'" >&2
+    return 1
+  fi
+
+  printf '%s/%s\n' "$owner" "$repository"
+}
+
 resolve_ref_to_sha() {
   local action="$1"  # e.g., "actions/checkout"
   local ref="$2"     # e.g., "v4" or "master"
+  local repository
+  repository=$(action_repository "$action")
 
   echo "  Resolving $action@$ref..." >&2
 
   # Try gh CLI first (respects auth, higher rate limits)
   if command -v gh &> /dev/null && gh auth status &> /dev/null; then
     local sha
-    sha=$(gh api "repos/$action/commits/$ref" --jq '.sha' 2>/dev/null || echo "")
+    sha=$(gh api "repos/$repository/commits/$ref" --jq '.sha' 2>/dev/null || echo "")
     if [ -n "$sha" ]; then
       echo "$sha"
       return 0
@@ -92,7 +118,7 @@ resolve_ref_to_sha() {
 
   # Fallback to curl (unauthenticated, 60 req/hour limit)
   local sha
-  sha=$(curl -sSL "https://api.github.com/repos/$action/commits/$ref" 2>/dev/null | jq -r '.sha // empty')
+  sha=$(curl -sSL "https://api.github.com/repos/$repository/commits/$ref" 2>/dev/null | jq -r '.sha // empty')
 
   if [ -z "$sha" ]; then
     echo "ERROR: Failed to resolve $action@$ref" >&2
@@ -229,6 +255,7 @@ verify_workflows() {
 
   local unpinned=()
   local unlocked=()
+  local mismatched=()
 
   for file in $files; do
     # Find lines with "uses:" that are NOT pinned to a SHA
@@ -250,20 +277,33 @@ verify_workflows() {
     external_uses=$(grep -n "uses:" "$file" \
       | grep -v "uses: \\./\\.github/actions/" \
       | grep -v "uses: \\./\\.github/workflows/" \
-      | sed -E 's/^[0-9]+:[[:space:]-]*uses:[[:space:]]*([^[:space:]#]+).*/\1/' \
       | grep -v '^docker://' \
       | grep -v '^$' \
       || true)
 
-    local use_ref action
-    while IFS= read -r use_ref; do
-      [ -z "$use_ref" ] && continue
+    local line use_ref action workflow_sha workflow_ref lock_sha lock_ref
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      use_ref=$(sed -E 's/^[0-9]+:[[:space:]-]*uses:[[:space:]]*([^[:space:]#]+).*/\1/' <<<"$line")
       action="${use_ref%@*}"
       if [ "$action" = "$use_ref" ]; then
         continue
       fi
       if ! yq eval -e ".\"$action\"" "$LOCK_FILE" >/dev/null 2>&1; then
         unlocked+=("$file:$action")
+        continue
+      fi
+
+      workflow_sha="${use_ref##*@}"
+      workflow_ref=$(sed -nE 's/.*#[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/p' <<<"$line")
+      lock_sha=$(yq eval -r ".\"$action\".sha // \"\"" "$LOCK_FILE")
+      lock_ref=$(yq eval -r ".\"$action\".ref // \"\"" "$LOCK_FILE")
+
+      if [[ "$workflow_sha" != "$lock_sha" ]]; then
+        mismatched+=("$file:$action SHA $workflow_sha != $lock_sha")
+      fi
+      if [[ -z "$workflow_ref" || "$workflow_ref" != "$lock_ref" ]]; then
+        mismatched+=("$file:$action ref ${workflow_ref:-<missing>} != $lock_ref")
       fi
     done <<< "$external_uses"
   done
@@ -278,12 +318,22 @@ verify_workflows() {
     echo ""
   fi
 
-  if [ ${#unpinned[@]} -gt 0 ] || [ ${#unlocked[@]} -gt 0 ]; then
+  if [ ${#mismatched[@]} -gt 0 ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "❌ LOCK CONSISTENCY FAILED"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "Found workflow pins that differ from .github/actions-lock.yaml:"
+    printf '  - %s\n' "${mismatched[@]}"
+    echo ""
+  fi
+
+  if [ ${#unpinned[@]} -gt 0 ] || [ ${#unlocked[@]} -gt 0 ] || [ ${#mismatched[@]} -gt 0 ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "❌ VERIFICATION FAILED"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "Found ${#unpinned[@]} file(s) with unpinned actions."
+    echo "Found ${#unpinned[@]} unpinned file(s), ${#unlocked[@]} unlocked action(s), and ${#mismatched[@]} lock mismatch(es)."
     echo ""
     echo "To fix, run:"
     echo "  1. Add missing external actions to .github/actions-lock.yaml"

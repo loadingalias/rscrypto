@@ -11,6 +11,7 @@ make_fixture() {
   local fixture=$1
   mkdir -p "$fixture/.github" "$fixture/.config" "$fixture/scripts/check" "$fixture/scripts/test"
   cp -R "$REPO_ROOT/.github/workflows" "$fixture/.github/workflows"
+  cp "$REPO_ROOT/.github/dependabot.yaml" "$fixture/.github/dependabot.yaml"
   cp "$REPO_ROOT/.config/target-matrix.json" "$fixture/.config/target-matrix.json"
   cp -R "$REPO_ROOT/scripts/ci" "$fixture/scripts/ci"
   cp "$REPO_ROOT/scripts/check/check-all.sh" "$REPO_ROOT/scripts/check/check-feature-matrix.sh" "$fixture/scripts/check/"
@@ -58,6 +59,21 @@ make_fixture "$missing_graph_owner"
 sed -i.bak '/cargo rail unify --check/d' "$missing_graph_owner/.github/workflows/_ci-suite.yaml"
 rm -f "$missing_graph_owner/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$missing_graph_owner" "missing Cargo graph assurance owner"
+
+broken_dependabot_grouping="$TMP_ROOT/broken-dependabot-grouping"
+make_fixture "$broken_dependabot_grouping"
+cat >>"$broken_dependabot_grouping/.github/dependabot.yaml" <<'EOF'
+    groups:
+      broken:
+        group-by: dependency-name
+EOF
+expect_failure "$broken_dependabot_grouping" "broken cross-directory Dependabot grouping"
+
+missing_fuzz_packages="$TMP_ROOT/missing-fuzz-packages"
+make_fixture "$missing_fuzz_packages"
+sed -i.bak '/fuzz-packages/d' "$missing_fuzz_packages/.github/dependabot.yaml"
+rm -f "$missing_fuzz_packages/.github/dependabot.yaml.bak"
+expect_failure "$missing_fuzz_packages" "incomplete Dependabot Cargo manifest coverage"
 
 duplicate_semver_owner="$TMP_ROOT/duplicate-semver-owner"
 make_fixture "$duplicate_semver_owner"

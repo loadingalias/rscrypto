@@ -62,6 +62,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -75,11 +76,15 @@ jobs:
       - name: Pre Run
         if: inputs.pre_script != ''
         shell: bash
-        run: ${{ inputs.pre_script }}
+        env:
+          PRE_SCRIPT: ${{ inputs.pre_script }}
+        run: bash -euo pipefail <<<"$PRE_SCRIPT"
 
       - name: Run
         shell: bash
-        run: ${{ inputs.run_script }}
+        env:
+          RUN_SCRIPT: ${{ inputs.run_script }}
+        run: bash -euo pipefail <<<"$RUN_SCRIPT"
 
       - name: Upload Artifact (always)
         if: always() && inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always

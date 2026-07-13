@@ -7,9 +7,8 @@
 //! - **`RapidHash64` / `RapidHash128`** — the standard V3 algorithm with avalanche finisher (extra
 //!   `rapid_mix`). C++-compatible output. Use when you need stable, cross-language hash values.
 //!
-//! - **`RapidHashFast64` / `RapidHashFast128`** — V3 core with avalanche disabled. Saves one
-//!   128-bit multiply at finalization. Use when you only need a fast in-process hash (e.g. hash
-//!   maps) and don't need C++ compatibility.
+//! - **`RapidHashFast64` / `RapidHashFast128`** — upstream's native-endian in-memory fast
+//!   algorithm. Its output is implementation-defined and is not a portable V3 fingerprint.
 
 #![allow(clippy::indexing_slicing)] // Tight block parsing
 
@@ -35,11 +34,11 @@ pub struct RapidHash64;
 #[derive(Clone, Debug, Default)]
 pub struct RapidHash128;
 
-/// Fast V3 rapidhash (64-bit) — avalanche disabled for maximum throughput.
+/// Upstream-compatible native-endian in-memory fast hash (64-bit).
 #[derive(Clone, Debug, Default)]
 pub struct RapidHashFast64;
 
-/// Fast V3 rapidhash (128-bit) — avalanche disabled for maximum throughput.
+/// Two seeded lanes of the native-endian in-memory fast hash (128-bit).
 #[derive(Clone, Debug, Default)]
 pub struct RapidHashFast128;
 

@@ -43,6 +43,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
       - name: Load matrix
         id: matrix
         env:
@@ -59,7 +61,7 @@ jobs:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
       timeout_minutes: 30
       cache_key: ${{ inputs.cache_key_prefix }}-quality
-      tools_mode: minimal
+      tools_mode: quality
       toolchain_components: "clippy, rustfmt, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true

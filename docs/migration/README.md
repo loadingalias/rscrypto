@@ -31,7 +31,7 @@ API shape change, or not a good fit.
 | [`ascon-hash`](RustCrypto/ascon-hash.md) (RustCrypto) | `AsconHash256`, `AsconXof`, `AsconCxof128` | Verified against `ascon-hash 0.4.0` |
 | [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.16` |
 | [`twox-hash`](twox-hash.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | API migration guidance; XXH3 output covered by `xxhash-rust` oracle tests |
-| [`rapidhash`](rapidhash.md) | `RapidHash`, `RapidHash128`, `RapidStreamHasher`, `RapidHasher`, `RapidBuildHasher` | Verified against `rapidhash 4.5.0` |
+| [`rapidhash`](rapidhash.md) | `RapidHash`, `RapidHash128`, `RapidStreamHasher`, `RapidHasher`, `RapidBuildHasher` | Verified against `rapidhash 4.5.1` |
 
 ## Auth (MAC + KDF)
 
@@ -57,7 +57,7 @@ API shape change, or not a good fit.
 
 | From | To | Status |
 |---|---|---|
-| [`p256`](RustCrypto/p256.md) / [`p384`](RustCrypto/p384.md) (RustCrypto) | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey`, raw/DER signatures | Signing and verification tested against RustCrypto `p256 0.13.2` / `p384 0.13.1` |
+| [`p256`](RustCrypto/p256.md) / [`p384`](RustCrypto/p384.md) (RustCrypto) | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey`, raw/DER signatures | Signing and verification tested against RustCrypto `p256 0.14.0` / `p384 0.13.1` |
 | [`ed25519-dalek`](RustCrypto/ed25519-dalek.md) | `Ed25519SecretKey`, `Ed25519PublicKey`, `Ed25519Signature`, `Ed25519Keypair` | Verified against `ed25519-dalek 2.2.0` |
 | [`rsa`](RustCrypto/rsa.md) (RustCrypto) | `RsaPublicKey`, `RsaPrivateKey`, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP | Partial; verified through CAVP, Wycheproof, and RustCrypto/ring/OpenSSL oracles |
 | [`x25519-dalek`](RustCrypto/x25519-dalek.md) | `X25519SecretKey`, `X25519PublicKey`, `X25519SharedSecret` | Verified against `x25519-dalek 2.0.1` |

@@ -1,5 +1,9 @@
-use p256::ecdsa::{Signature as P256OracleSignature, VerifyingKey as P256OracleVerifyingKey, signature::Verifier as _};
-use p384::ecdsa::{Signature as P384OracleSignature, VerifyingKey as P384OracleVerifyingKey};
+use p256::ecdsa::{
+  Signature as P256OracleSignature, VerifyingKey as P256OracleVerifyingKey, signature::Verifier as P256Verifier,
+};
+use p384::ecdsa::{
+  Signature as P384OracleSignature, VerifyingKey as P384OracleVerifyingKey, signature::Verifier as P384Verifier,
+};
 use rscrypto::{
   EcdsaP256PublicKey, EcdsaP256Signature, EcdsaP384PublicKey, EcdsaP384Signature, EcdsaError,
 };
@@ -37,7 +41,7 @@ fn run_p256(input: &mut FuzzInput<'_>) {
     P256OracleVerifyingKey::from_sec1_bytes(&public_bytes),
     P256OracleSignature::from_slice(&signature_bytes),
   ) {
-    (Ok(public), Ok(signature)) => public.verify(message, &signature).is_ok(),
+    (Ok(public), Ok(signature)) => P256Verifier::verify(&public, message, &signature).is_ok(),
     _ => false,
   };
 
@@ -65,7 +69,7 @@ fn run_p384(input: &mut FuzzInput<'_>) {
     P384OracleVerifyingKey::from_sec1_bytes(&public_bytes),
     P384OracleSignature::from_slice(&signature_bytes),
   ) {
-    (Ok(public), Ok(signature)) => public.verify(message, &signature).is_ok(),
+    (Ok(public), Ok(signature)) => P384Verifier::verify(&public, message, &signature).is_ok(),
     _ => false,
   };
 

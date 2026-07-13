@@ -237,8 +237,13 @@ pin-actions:
 
 check-actions:
     @scripts/ci/pin-actions.sh --verify-only
+    @scripts/ci/pin-actions-test.sh
+    @scripts/ci/upgrade-actions-test.sh
+    @scripts/ci/dependabot-smoke-test.sh
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh
+    @actionlint
+    @zizmor .github/workflows .github/actions
 
 push *args="":
     @scripts/ci/pre-push.sh --light

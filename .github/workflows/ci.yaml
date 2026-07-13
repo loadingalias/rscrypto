@@ -34,11 +34,12 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Build Plan (PR)
         if: github.event_name == 'pull_request'
         id: rail
-        uses: loadingalias/cargo-rail-action@c10d627fb0e9f896ca5018cd6d6408bce3432c1c  # v5.0.0
+        uses: loadingalias/cargo-rail-action@90f7f739028887508c6e8d8b7cc510dc612eb653  # v5.1.0
         with:
           version: "0.17.0"
 
@@ -96,26 +97,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Assert suite passed
+        env:
+          ACTOR: ${{ github.actor }}
+          DEPENDENCY_SMOKE_RESULT: ${{ needs.dependency-smoke.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          PLAN_RESULT: ${{ needs.rail-plan.result }}
+          SUITE_RESULT: ${{ needs.suite.result }}
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.actor }}" == "dependabot[bot]" ]]; then
-            result="${{ needs.dependency-smoke.result }}"
-            if [[ "$result" != "success" ]]; then
-              echo "Dependency smoke result: $result"
+          if [[ "$EVENT_NAME" == "pull_request" && "$ACTOR" == "dependabot[bot]" ]]; then
+            if [[ "$DEPENDENCY_SMOKE_RESULT" != "success" ]]; then
+              echo "Dependency smoke result: $DEPENDENCY_SMOKE_RESULT"
               exit 1
             fi
-            echo "Dependency smoke: $result"
+            echo "Dependency smoke: $DEPENDENCY_SMOKE_RESULT"
             exit 0
           fi
 
-          plan_result="${{ needs.rail-plan.result }}"
-          if [[ "$plan_result" != "success" ]]; then
-            echo "Build plan result: $plan_result"
+          if [[ "$PLAN_RESULT" != "success" ]]; then
+            echo "Build plan result: $PLAN_RESULT"
             exit 1
           fi
 
-          result="${{ needs.suite.result }}"
-          if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-            echo "CI suite result: $result"
+          if [[ "$SUITE_RESULT" != "success" && "$SUITE_RESULT" != "skipped" ]]; then
+            echo "CI suite result: $SUITE_RESULT"
             exit 1
           fi
-          echo "CI suite: $result"
+          echo "CI suite: $SUITE_RESULT"

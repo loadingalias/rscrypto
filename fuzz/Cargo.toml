@@ -37,7 +37,7 @@ argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"
 ed25519-dalek = "2.2"
 hmac = "0.13"
 hkdf = "0.13"
-p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "std"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "std"] }
 p384 = { version = "0.13.1", default-features = false, features = ["ecdsa", "std"] }
 pbkdf2 = "0.13"
 scrypt = { version = "0.12", default-features = false }
@@ -53,7 +53,7 @@ sha3 = "0.12"
 tiny-keccak = { version = "2.0", features = ["cshake", "kmac", "shake"] }
 
 # Fast hashes
-rapidhash = "=4.5.0"
+rapidhash = "=4.5.1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Checksums

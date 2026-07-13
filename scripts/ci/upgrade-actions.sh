@@ -12,29 +12,41 @@ CHECK_ONLY=false
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/ci/upgrade-actions.sh [--check]
+Usage: scripts/ci/upgrade-actions.sh [--check] [--root PATH]
 
 Options:
   --check    Print the refs that would change without editing the lock file.
+  --root     Operate on another repository root (validation fixtures).
 USAGE
 }
 
-for arg in "$@"; do
-  case "$arg" in
+ROOT_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --check)
       CHECK_ONLY=true
+      shift
+      ;;
+    --root)
+      ROOT_OVERRIDE=${2:?missing path after --root}
+      shift 2
       ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      echo "Unknown option: $arg"
+      echo "Unknown option: $1"
       usage
       exit 1
       ;;
   esac
 done
+
+if [[ -n "$ROOT_OVERRIDE" ]]; then
+  REPO_ROOT="$(cd "$ROOT_OVERRIDE" && pwd)"
+  LOCK_FILE="$REPO_ROOT/.github/actions-lock.yaml"
+fi
 
 check_dependencies() {
   local missing=()
@@ -84,18 +96,46 @@ raw_github() {
   curl -fsSL "${headers[@]}" "$url"
 }
 
+action_repository() {
+  local action="$1"
+  local owner=${action%%/*}
+  local remainder=${action#*/}
+  local repository=${remainder%%/*}
+
+  if [[ -z "$owner" || -z "$repository" || "$remainder" == "$action" ]]; then
+    echo "ERROR: invalid GitHub Action name '$action'" >&2
+    return 1
+  fi
+
+  printf '%s/%s\n' "$owner" "$repository"
+}
+
+action_definition_prefix() {
+  local action="$1"
+  local repository="$2"
+
+  if [[ "$action" == "$repository" ]]; then
+    return 0
+  fi
+
+  printf '%s/' "${action#"$repository"/}"
+}
+
 list_tags() {
   local action="$1"
+  local repository
+  repository=$(action_repository "$action")
 
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    gh api --paginate "repos/$action/tags?per_page=100" --jq '.[].name'
-    return 0
+    if gh api --paginate "repos/$repository/tags?per_page=100" --jq '.[].name' 2>/dev/null; then
+      return 0
+    fi
   fi
 
   local page=1
   while true; do
     local response names
-    response=$(github_api "https://api.github.com/repos/$action/tags?per_page=100&page=$page")
+    response=$(github_api "https://api.github.com/repos/$repository/tags?per_page=100&page=$page")
     names=$(jq -r '.[].name' <<<"$response")
 
     if [[ -z "$names" ]]; then
@@ -131,11 +171,13 @@ stable_semver_tags() {
 action_runtime() {
   local action="$1"
   local ref="$2"
-  local tmp
+  local repository definition_prefix tmp
+  repository=$(action_repository "$action")
+  definition_prefix=$(action_definition_prefix "$action" "$repository")
   tmp=$(mktemp)
 
   for filename in action.yml action.yaml; do
-    if raw_github "https://raw.githubusercontent.com/$action/$ref/$filename" >"$tmp" 2>/dev/null; then
+    if raw_github "https://raw.githubusercontent.com/$repository/$ref/${definition_prefix}${filename}" >"$tmp" 2>/dev/null; then
       yq eval '.runs.using // ""' "$tmp" 2>/dev/null || true
       rm -f "$tmp"
       return 0

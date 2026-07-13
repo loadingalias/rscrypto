@@ -1,5 +1,9 @@
-use p256::ecdsa::{Signature as P256OracleSignature, VerifyingKey as P256OracleVerifyingKey, signature::Verifier as _};
-use p384::ecdsa::{Signature as P384OracleSignature, VerifyingKey as P384OracleVerifyingKey};
+use p256::ecdsa::{
+  Signature as P256OracleSignature, VerifyingKey as P256OracleVerifyingKey, signature::Verifier as P256Verifier,
+};
+use p384::ecdsa::{
+  Signature as P384OracleSignature, VerifyingKey as P384OracleVerifyingKey, signature::Verifier as P384Verifier,
+};
 use rscrypto::{EcdsaP256Keypair, EcdsaP256SecretKey, EcdsaP384Keypair, EcdsaP384SecretKey};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
@@ -25,7 +29,7 @@ fn run_p256(input: &mut FuzzInput<'_>) {
   let oracle_signature = P256OracleSignature::from_slice(signature.as_bytes()).expect("derived P-256 signature");
 
   assert!(public.verify(message, &signature).is_ok());
-  assert!(oracle_public.verify(message, &oracle_signature).is_ok());
+  assert!(P256Verifier::verify(&oracle_public, message, &oracle_signature).is_ok());
 
   let mut tampered = message.to_vec();
   tampered.push(0x80);
@@ -43,7 +47,7 @@ fn run_p384(input: &mut FuzzInput<'_>) {
   let oracle_signature = P384OracleSignature::from_slice(signature.as_bytes()).expect("derived P-384 signature");
 
   assert!(public.verify(message, &signature).is_ok());
-  assert!(oracle_public.verify(message, &oracle_signature).is_ok());
+  assert!(P384Verifier::verify(&oracle_public, message, &oracle_signature).is_ok());
 
   let mut tampered = message.to_vec();
   tampered.push(0x80);
