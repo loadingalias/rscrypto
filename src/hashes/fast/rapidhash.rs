@@ -15,6 +15,10 @@
 
 use crate::traits::FastHash;
 
+mod stream;
+
+pub use stream::{RapidBuildHasher, RapidHasher, RapidStreamHasher};
+
 #[doc(hidden)]
 pub(crate) mod dispatch;
 #[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
@@ -1277,100 +1281,6 @@ impl FastHash for RapidHashFast128 {
   #[inline(always)]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
     dispatch::hash128_fast_with_seed(seed, data)
-  }
-}
-
-// ─── BuildHasher support ──────────────────────────────────────────────────
-
-/// Streaming [`core::hash::Hasher`] backed by rapidhash-64.
-///
-/// Created by [`RapidBuildHasher`]. Buffers input and computes the hash
-/// on [`finish`](core::hash::Hasher::finish).
-#[cfg(feature = "alloc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub struct RapidHasher {
-  buf: alloc::vec::Vec<u8>,
-  seed: u64,
-}
-
-#[cfg(feature = "alloc")]
-impl core::fmt::Debug for RapidHasher {
-  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-    f.debug_struct("RapidHasher")
-      .field("seed", &self.seed)
-      .field("buffered", &self.buf.len())
-      .finish()
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl core::hash::Hasher for RapidHasher {
-  #[inline]
-  fn write(&mut self, bytes: &[u8]) {
-    self.buf.extend_from_slice(bytes);
-  }
-
-  #[inline]
-  fn finish(&self) -> u64 {
-    RapidHash64::hash_with_seed(self.seed, &self.buf)
-  }
-}
-
-/// [`BuildHasher`](core::hash::BuildHasher) producing [`RapidHasher`] instances.
-///
-/// # Examples
-///
-/// ```
-/// use std::collections::HashMap;
-///
-/// use rscrypto::hashes::fast::rapidhash::RapidBuildHasher;
-///
-/// let mut map: HashMap<&str, i32, RapidBuildHasher> = HashMap::with_hasher(RapidBuildHasher::new());
-/// map.insert("hello", 42);
-/// assert_eq!(map["hello"], 42);
-/// ```
-#[cfg(feature = "alloc")]
-#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-#[derive(Clone, Debug)]
-pub struct RapidBuildHasher {
-  seed: u64,
-}
-
-#[cfg(feature = "alloc")]
-impl RapidBuildHasher {
-  /// Create a builder with the default seed (0).
-  #[inline]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self { seed: 0 }
-  }
-
-  /// Create a builder with a custom seed.
-  #[inline]
-  #[must_use]
-  pub const fn with_seed(seed: u64) -> Self {
-    Self { seed }
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl Default for RapidBuildHasher {
-  #[inline]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl core::hash::BuildHasher for RapidBuildHasher {
-  type Hasher = RapidHasher;
-
-  #[inline]
-  fn build_hasher(&self) -> Self::Hasher {
-    RapidHasher {
-      buf: alloc::vec::Vec::new(),
-      seed: self.seed,
-    }
   }
 }
 

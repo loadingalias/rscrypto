@@ -29,9 +29,9 @@ API shape change, or not a good fit.
 | [`sha3`](RustCrypto/sha3.md) (RustCrypto) | `Sha3_224`, `Sha3_256`, `Sha3_384`, `Sha3_512`, `Shake128`, `Shake256`, `Cshake128`, `Cshake256` | Verified against `sha3 0.12.0` |
 | [`blake2`](RustCrypto/blake2.md) (RustCrypto) | `Blake2b256`, `Blake2b512`, `Blake2s128`, `Blake2s256` | Verified against `blake2 0.11.0-rc.6` |
 | [`ascon-hash`](RustCrypto/ascon-hash.md) (RustCrypto) | `AsconHash256`, `AsconXof`, `AsconCxof128` | Verified against `ascon-hash 0.4.0` |
-| [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.15` |
-| [`twox-hash`](twox-hash.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3BuildHasher` | API migration guidance; XXH3 output covered by `xxhash-rust` oracle tests |
-| [`rapidhash`](rapidhash.md) | `RapidHash`, `RapidHash128`, `RapidHasher`, `RapidBuildHasher` | Verified against `rapidhash 4.4.1` |
+| [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.16` |
+| [`twox-hash`](twox-hash.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | API migration guidance; XXH3 output covered by `xxhash-rust` oracle tests |
+| [`rapidhash`](rapidhash.md) | `RapidHash`, `RapidHash128`, `RapidStreamHasher`, `RapidHasher`, `RapidBuildHasher` | Verified against `rapidhash 4.5.0` |
 
 ## Auth (MAC + KDF)
 

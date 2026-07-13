@@ -2,7 +2,7 @@
 
 > Replace `rapidhash::v3::rapidhash_v3` with `rscrypto::RapidHash::hash`. Bit-equivalent, single feature flag, no version-pinning gymnastics.
 
-Verified against `rapidhash = "4.4.1"` (V3 with avalanche, default secrets) and the `rscrypto` 0.5.0 line.
+Verified against `rapidhash = "4.5.0"` (V3 with avalanche, default secrets) and the `rscrypto` 0.5.0 line.
 Evidence: `tests/rapidhash_differential.rs`.
 
 ## TL;DR
@@ -90,10 +90,10 @@ let h = RapidHashFast::hash(b"123456789");
 ### Streaming (via `core::hash::Hasher`)
 
 ```rust
-// Before
-use rapidhash::v3::RapidStreamHasher;        // verify exact name in your version
-use core::hash::Hasher;
-let mut hasher = RapidStreamHasher::new();
+// Before (`rapidhash` 4.5)
+use rapidhash::v3::{RapidSecrets, RapidStreamHasherV3};
+let secrets = RapidSecrets::seed_cpp(0);
+let mut hasher = RapidStreamHasherV3::new(&secrets);
 hasher.write(b"foo");
 hasher.write(b"bar");
 let h = hasher.finish();
@@ -101,20 +101,25 @@ let h = hasher.finish();
 
 ```rust
 // After
-use rscrypto::RapidHasher;
+use rscrypto::RapidStreamHasher;
 use core::hash::Hasher;
-let mut hasher = RapidHasher::default();
+let mut hasher = RapidStreamHasher::default();
 hasher.write(b"foo");
 hasher.write(b"bar");
 let h = hasher.finish();
 ```
 
-For `HashMap` / `HashSet` use, `RapidBuildHasher` slots into `HashMap<K, V, RapidBuildHasher>`.
+For `HashMap` / `HashSet` use, `RapidBuildHasher` slots into
+`HashMap<K, V, RapidBuildHasher>` and produces `RapidHasher`. The builder uses a
+fixed seed and is intended for trusted keys. Its output is implementation-defined,
+not a C++-compatible V3 fingerprint. Use `RapidStreamHasher` when separate writes
+must equal hashing their byte concatenation.
 
 ## Notes
 
 - **Version selection.** `rapidhash` 4.x ships V1, V2, and V3 simultaneously. rscrypto targets V3 with avalanche (the C++-compatible default). If you depend on V1 or V2 outputs (e.g., for parity with an existing on-disk format), keep `rapidhash` as a sibling dependency.
-- **`RapidSecrets` is hidden.** rscrypto's `hash_with_seed` takes a single `u64` and derives the full secret schedule internally. If you need to inject custom secrets (e.g., for HashDoS-resistant deployments with a runtime-randomised secret block), file an issue.
+- **Custom secrets are not exposed.** rscrypto's `hash_with_seed` derives the V3 secret schedule from one `u64`. A borrowed custom-secret API would add lifetimes and configuration states without improving the trusted-input paths this module targets. Keep `rapidhash` when exact custom-secret interoperability is required.
 - **`RapidHashFast` opt-in.** The `Fast` variants drop the avalanche finisher for ~2x throughput on small inputs at the cost of weaker bit avalanche. Only choose `RapidHashFast` if you are not interoperating with the C++ `rapidhash` reference.
-- **Streaming requires `alloc`.** `RapidHasher` and `RapidBuildHasher` are gated on `alloc`. The one-shot `RapidHash::hash` is fully `no_std`.
+- **Allocation-free state.** `RapidStreamHasher` keeps bounded inline V3 streaming state. `RapidHasher` is the smaller collection-key state produced by `RapidBuildHasher`. All three work without `alloc`, including in pure `no_std` builds.
+- **Trusted collection keys only.** `RapidBuildHasher` is deterministic and does not draw entropy. Retain the standard library's randomized map hasher when an attacker can choose map or set keys.
 - **Not cryptographic.** `rapidhash` and `RapidHash` are non-cryptographic. Do not use either for password hashing, MAC, or any verification step where an attacker controls input. Use `Blake3` or `Sha256` for those.

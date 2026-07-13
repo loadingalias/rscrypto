@@ -11,7 +11,11 @@
 
 mod common;
 
-use core::{hash::Hasher, hint::black_box};
+use core::{
+  hash::{BuildHasher, Hasher},
+  hint::black_box,
+};
+use std::collections::HashMap;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rscrypto::FastHash;
@@ -117,11 +121,93 @@ fn rapidhash_v3_128(c: &mut Criterion) {
   g.finish();
 }
 
+fn rapidhash_build_hasher(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let mut g = c.benchmark_group("rapidhash-buildhasher");
+  let ours = rscrypto::RapidBuildHasher::new();
+  let upstream = rapidhash::fast::SeedableState::fixed();
+
+  for (len, data) in &inputs {
+    common::set_throughput(&mut g, *len);
+    g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+      b.iter(|| black_box(ours.hash_one(black_box(d.as_slice()))))
+    });
+    g.bench_with_input(BenchmarkId::new("rapidhash", len), data, |b, d| {
+      b.iter(|| black_box(upstream.hash_one(black_box(d.as_slice()))))
+    });
+  }
+  g.finish();
+}
+
+fn rapidhash_hashmap_lookup(c: &mut Criterion) {
+  let key = common::random_bytes(32);
+  let mut ours = HashMap::with_capacity_and_hasher(1, rscrypto::RapidBuildHasher::new());
+  let mut upstream = HashMap::with_capacity_and_hasher(1, rapidhash::fast::SeedableState::fixed());
+  ours.insert(key.as_slice(), 1u8);
+  upstream.insert(key.as_slice(), 1u8);
+
+  let mut g = c.benchmark_group("rapidhash-hashmap/lookup-32");
+  g.bench_function("rscrypto", |b| {
+    b.iter(|| black_box(ours.get(black_box(key.as_slice()))))
+  });
+  g.bench_function("rapidhash", |b| {
+    b.iter(|| black_box(upstream.get(black_box(key.as_slice()))))
+  });
+  g.finish();
+}
+
+fn rapidhash_streaming(c: &mut Criterion) {
+  let inputs = common::comp_sizes();
+  let secrets = rapidhash::v3::RapidSecrets::seed_cpp(0);
+
+  for (group_name, chunk_size) in [
+    ("rapidhash-stream/one-write", usize::MAX),
+    ("rapidhash-stream/chunk-64", 64),
+  ] {
+    let mut g = c.benchmark_group(group_name);
+    for (len, data) in &inputs {
+      common::set_throughput(&mut g, *len);
+
+      g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
+        b.iter(|| {
+          let mut hasher = rscrypto::RapidStreamHasher::new();
+          if chunk_size == usize::MAX {
+            hasher.write(black_box(d));
+          } else {
+            for chunk in d.chunks(chunk_size) {
+              hasher.write(black_box(chunk));
+            }
+          }
+          black_box(hasher.finish())
+        })
+      });
+
+      g.bench_with_input(BenchmarkId::new("rapidhash", len), data, |b, d| {
+        b.iter(|| {
+          let mut hasher = rapidhash::v3::RapidStreamHasherV3::new(&secrets);
+          if chunk_size == usize::MAX {
+            hasher.write(black_box(d));
+          } else {
+            for chunk in d.chunks(chunk_size) {
+              hasher.write(black_box(chunk));
+            }
+          }
+          black_box(hasher.finish())
+        })
+      });
+    }
+    g.finish();
+  }
+}
+
 criterion_group!(
   benches,
   rapidhash_fast_64,
   rapidhash_fast_128,
   rapidhash_v3_64,
-  rapidhash_v3_128
+  rapidhash_v3_128,
+  rapidhash_build_hasher,
+  rapidhash_hashmap_lookup,
+  rapidhash_streaming
 );
 criterion_main!(benches);

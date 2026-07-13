@@ -85,11 +85,15 @@ Features: `fast-hashes` or `xxh3` / `rapidhash`.
 | `Xxh3` / `Xxh3_128` | `u64` / `u128` |
 | `RapidHash` / `RapidHash128` | `u64` / `u128` |
 | `RapidHashFast64` / `RapidHashFast128` | `u64` / `u128` |
+| `Xxh3Hasher` / `Xxh3_128Hasher` | streaming `u64` / `u128` |
+| `RapidStreamHasher` | streaming `u64` |
+| `RapidHasher` | collection-key `u64` |
 
 Aliases: `hashes::fast::Xxh3_64` and `hashes::fast::RapidHash64`.
 
-`BuildHasher` support requires `alloc`: `Xxh3BuildHasher`, `Xxh3Hasher`,
-`RapidBuildHasher`, and `RapidHasher`.
+All fast hashers use bounded inline state and do not allocate.
+`RapidStreamHasher` preserves concatenated-stream output; `RapidBuildHasher`
+produces `RapidHasher` for collections. Both builders work in pure `no_std`.
 
 ## MACs & KDFs
 

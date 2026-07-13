@@ -1,4 +1,8 @@
+use super::{ACC_NB, DEFAULT_SECRET_SIZE};
 use crate::platform::Caps;
+
+pub type StreamAccumulateFn =
+  fn([u64; ACC_NB], &[u8], usize, &[u8; DEFAULT_SECRET_SIZE], usize, usize, bool) -> [u64; ACC_NB];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -98,6 +102,25 @@ pub fn hash128_long_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u128 {
     Xxh3KernelId::Vector => super::s390x::xxh3_128_long,
     #[cfg(target_arch = "riscv64")]
     Xxh3KernelId::Rvv => super::riscv64_v::xxh3_128_long,
+  }
+}
+
+#[must_use]
+pub fn stream_accumulate_fn(id: Xxh3KernelId) -> StreamAccumulateFn {
+  match id {
+    Xxh3KernelId::Portable => super::stream_accumulate_portable,
+    #[cfg(target_arch = "x86_64")]
+    Xxh3KernelId::Avx2 => super::x86_64_avx2::stream_accumulate,
+    #[cfg(target_arch = "aarch64")]
+    Xxh3KernelId::Neon => super::aarch64_neon::stream_accumulate,
+    #[cfg(target_arch = "x86_64")]
+    Xxh3KernelId::Avx512 => super::x86_64_avx512::stream_accumulate,
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    Xxh3KernelId::Vsx => super::power::stream_accumulate,
+    #[cfg(target_arch = "s390x")]
+    Xxh3KernelId::Vector => super::s390x::stream_accumulate,
+    #[cfg(target_arch = "riscv64")]
+    Xxh3KernelId::Rvv => super::stream_accumulate_portable,
   }
 }
 

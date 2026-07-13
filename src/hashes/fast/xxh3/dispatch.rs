@@ -4,7 +4,10 @@
 use super::kernels::hash64_fn;
 use super::{
   dispatch_tables::DispatchTable,
-  kernels::{Xxh3KernelId, hash64_long_fn, hash128_long_fn, required_caps},
+  kernels::{
+    StreamAccumulateFn, Xxh3KernelId, hash64_long_fn, hash128_long_fn, required_caps,
+    stream_accumulate_fn as kernel_stream_accumulate_fn,
+  },
 };
 use crate::{backend::cache::OnceCache, platform::Caps};
 
@@ -17,6 +20,7 @@ struct ActiveDispatch {
   long64: Hash64Fn,
   /// Long-path-only entry for 128-bit hash (>240B, no redundant length checks).
   long128: Hash128Fn,
+  stream_accumulate: StreamAccumulateFn,
   #[cfg(any(test, feature = "diag"))]
   boundaries: [usize; 3],
   #[cfg(any(test, feature = "diag"))]
@@ -79,6 +83,7 @@ fn active() -> ActiveDispatch {
     ActiveDispatch {
       long64: hash64_long_fn(l_id),
       long128: hash128_long_fn(l_id),
+      stream_accumulate: kernel_stream_accumulate_fn(l_id),
       #[cfg(any(test, feature = "diag"))]
       boundaries: table.boundaries,
       #[cfg(any(test, feature = "diag"))]
@@ -99,6 +104,11 @@ fn active() -> ActiveDispatch {
       l_name: l_id.as_str(),
     }
   })
+}
+
+#[inline]
+pub(crate) fn stream_accumulate_fn() -> StreamAccumulateFn {
+  active().stream_accumulate
 }
 
 #[cfg(any(test, feature = "diag"))]

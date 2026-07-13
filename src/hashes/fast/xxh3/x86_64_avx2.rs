@@ -13,8 +13,8 @@
 use core::arch::x86_64::*;
 
 use super::{
-  ACC_NB, DEFAULT_SECRET, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE, SECRET_LASTACC_START,
-  SECRET_MERGEACCS_START, STRIPE_LEN,
+  ACC_NB, DEFAULT_SECRET, DEFAULT_SECRET_SIZE, INITIAL_ACC, PRIME32_1, PRIME64_1, PRIME64_2, SECRET_CONSUME_RATE,
+  SECRET_LASTACC_START, SECRET_MERGEACCS_START, STRIPE_LEN,
 };
 
 /// Shuffle mask: swap 32-bit pairs within each 64-bit lane.
@@ -118,6 +118,78 @@ unsafe fn scramble_acc(acc: &mut [__m256i; 2], secret: *const u8) {
 }
 
 // Long-path loop (SIMD inner, scalar merge)
+
+#[target_feature(enable = "avx2")]
+unsafe fn stream_accumulate_inner(
+  initial: [u64; ACC_NB],
+  input: &[u8],
+  input_offset: usize,
+  secret: &[u8; DEFAULT_SECRET_SIZE],
+  secret_offset: usize,
+  stripes: usize,
+  scramble_after: bool,
+) -> [u64; ACC_NB] {
+  debug_assert!(input_offset.strict_add(stripes.strict_mul(STRIPE_LEN)) <= input.len());
+  debug_assert!(stripes != 0);
+  debug_assert!(
+    secret_offset
+      .strict_add(stripes.strict_sub(1).strict_mul(SECRET_CONSUME_RATE))
+      .strict_add(STRIPE_LEN)
+      <= secret.len()
+  );
+  // SAFETY: Accumulating validated XXH3 stripes because:
+  // 1. The dispatcher selects this function only when AVX2 is available.
+  // 2. The assertions above prove every 64-byte input and secret load is in bounds.
+  // 3. `initial` and the returned array each contain exactly eight `u64` lanes.
+  unsafe {
+    let mut acc = load_acc(&initial);
+    let mut stripe = 0usize;
+    while stripe < stripes {
+      accumulate_512(
+        &mut acc,
+        input
+          .as_ptr()
+          .add(input_offset.strict_add(stripe.strict_mul(STRIPE_LEN))),
+        secret
+          .as_ptr()
+          .add(secret_offset.strict_add(stripe.strict_mul(SECRET_CONSUME_RATE))),
+      );
+      stripe = stripe.strict_add(1);
+    }
+    if scramble_after {
+      scramble_acc(
+        &mut acc,
+        secret.as_ptr().add(DEFAULT_SECRET_SIZE.strict_sub(STRIPE_LEN)),
+      );
+    }
+    store_acc(&acc)
+  }
+}
+
+pub(crate) fn stream_accumulate(
+  initial: [u64; ACC_NB],
+  input: &[u8],
+  input_offset: usize,
+  secret: &[u8; DEFAULT_SECRET_SIZE],
+  secret_offset: usize,
+  stripes: usize,
+  scramble_after: bool,
+) -> [u64; ACC_NB] {
+  // SAFETY: Calling the AVX2 streaming kernel because:
+  // 1. Runtime dispatch selects this wrapper only after AVX2 capability detection.
+  // 2. `stream_accumulate_inner` validates all slice offsets before pointer arithmetic.
+  unsafe {
+    stream_accumulate_inner(
+      initial,
+      input,
+      input_offset,
+      secret,
+      secret_offset,
+      stripes,
+      scramble_after,
+    )
+  }
+}
 
 #[target_feature(enable = "avx2")]
 unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {

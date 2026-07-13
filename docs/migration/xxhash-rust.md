@@ -120,7 +120,9 @@ Renames at the streaming layer:
 
 - **Streaming = `Hasher` trait.** `xxhash-rust`'s streaming type rolls its own `update` / `digest` method names; rscrypto routes streaming through the standard `core::hash::Hasher` so it slots into `BuildHasher`-based collections without an adapter.
 - **Argument order swap** for `hash_with_seed`. Re-read every call site that previously used `xxh3_64_with_seed`.
-- **Streaming requires `alloc`.** `Xxh3Hasher` and `Xxh3BuildHasher` are gated on `alloc`. The one-shot `Xxh3::hash` / `Xxh3::hash_with_seed` is fully `no_std`.
-- **128-bit streaming.** rscrypto exposes `Xxh3_128` for one-shot 128-bit; for 128-bit streaming you currently need to feed your data into the 128-bit one-shot rather than incrementally: file an issue if 128-bit streaming is a hard requirement.
+- **Allocation-free streaming.** `Xxh3Hasher` keeps bounded inline XXH3 state. It and `Xxh3BuildHasher` work without `alloc`, including in pure `no_std` builds.
+- **128-bit streaming.** Use `Xxh3_128Hasher::write` and `finish` when the input must be supplied incrementally. The state is allocation-free and produces the same output as `Xxh3_128::hash` over the concatenated bytes.
+- **Custom secrets are not exposed.** Seeded XXH3 is covered; arbitrary borrowed secret buffers are not. Keep `xxhash-rust` when a stored or cross-language format requires exact custom-secret output.
+- **Trusted collection keys only.** `Xxh3BuildHasher` is deterministic and does not draw entropy. Retain the standard library's randomized map hasher when an attacker can choose keys.
 - **`xxh32` / `xxh64` legacy.** rscrypto ships only XXH3 (the modern variant). If you depend on the legacy XXH32 or XXH64 algorithms, keep `xxhash-rust` for those.
 - **No SIMD-acceleration trade-off.** Both crates ship SIMD backends; rscrypto runtime-dispatches with the same three-tier model used elsewhere (`std` enables runtime detection; the portable kernel is always present).

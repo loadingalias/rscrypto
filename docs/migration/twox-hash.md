@@ -110,5 +110,5 @@ Both implement `core::hash::Hasher`: same `write` / `finish` shape. Rename the t
 
 - **Drop-in for `BuildHasher`.** `twox-hash` ships `xxhash3_64::RandomState`, `xxhash3_64::FixedState`, etc. for `HashMap` / `HashSet` use. rscrypto's `Xxh3BuildHasher` is the equivalent (`HashMap<K, V, Xxh3BuildHasher>`).
 - **Legacy XXH32 / XXH64.** rscrypto does not ship the legacy variants. Keep `twox-hash` as a sibling dependency for those, or open a feature request.
-- **Streaming requires `alloc`.** `Xxh3Hasher` and `Xxh3BuildHasher` are gated on `alloc`. The one-shot `Xxh3::hash` / `Xxh3::hash_with_seed` is fully `no_std`.
+- **Allocation-free streaming.** `Xxh3Hasher` keeps bounded inline XXH3 state. It and `Xxh3BuildHasher` work without `alloc`, including in pure `no_std` builds.
 - **`twox-hash` 1.x → 2.x.** If you are still on `twox-hash` 1.x, the API was substantially reworked in 2.x. Migrate to 2.x first or jump straight to rscrypto using the 1.x shape (`Xxh3Hasher` for streaming, `Xxh3::hash` for one-shot). The patterns above are the destination either way.

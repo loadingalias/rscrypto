@@ -535,14 +535,14 @@ pub use hashes::crypto::{
 };
 #[cfg(feature = "sha2")]
 pub use hashes::crypto::{Sha224, Sha256, Sha384, Sha512, Sha512_256};
-#[cfg(all(feature = "rapidhash", feature = "alloc"))]
-pub use hashes::fast::{RapidBuildHasher, RapidHasher};
+#[cfg(feature = "rapidhash")]
+pub use hashes::fast::{RapidBuildHasher, RapidHasher, RapidStreamHasher};
 #[cfg(feature = "rapidhash")]
 pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128};
 #[cfg(feature = "xxh3")]
 pub use hashes::fast::{Xxh3, Xxh3_128};
-#[cfg(all(feature = "xxh3", feature = "alloc"))]
-pub use hashes::fast::{Xxh3BuildHasher, Xxh3Hasher};
+#[cfg(feature = "xxh3")]
+pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
 // Hex re-exports.
 #[cfg(any(
   feature = "aes-gcm",
@@ -982,14 +982,12 @@ mod send_sync_assertions {
     assert_send_sync::<hashes::fast::RapidHashFast64>();
     assert_send_sync::<hashes::fast::RapidHashFast128>();
 
-    // BuildHasher types
-    #[cfg(feature = "alloc")]
-    {
-      assert_send_sync::<Xxh3BuildHasher>();
-      assert_send_sync::<Xxh3Hasher>();
-      assert_send_sync::<RapidBuildHasher>();
-      assert_send_sync::<RapidHasher>();
-    }
+    assert_send_sync::<Xxh3BuildHasher>();
+    assert_send_sync::<Xxh3Hasher>();
+    assert_send_sync::<Xxh3_128Hasher>();
+    assert_send_sync::<RapidBuildHasher>();
+    assert_send_sync::<RapidHasher>();
+    assert_send_sync::<RapidStreamHasher>();
   }
 
   #[test]
@@ -1143,16 +1141,15 @@ mod send_sync_assertions {
     assert_debug::<hashes::fast::RapidHashFast64>();
     assert_debug::<hashes::fast::RapidHashFast128>();
 
-    // BuildHasher types
-    #[cfg(feature = "alloc")]
-    {
-      assert_clone::<Xxh3BuildHasher>();
-      assert_clone::<RapidBuildHasher>();
-      assert_debug::<Xxh3BuildHasher>();
-      assert_debug::<Xxh3Hasher>();
-      assert_debug::<RapidBuildHasher>();
-      assert_debug::<RapidHasher>();
-    }
+    assert_clone::<Xxh3BuildHasher>();
+    assert_clone::<RapidBuildHasher>();
+    assert_clone::<RapidStreamHasher>();
+    assert_debug::<Xxh3BuildHasher>();
+    assert_debug::<Xxh3Hasher>();
+    assert_debug::<Xxh3_128Hasher>();
+    assert_debug::<RapidBuildHasher>();
+    assert_debug::<RapidHasher>();
+    assert_debug::<RapidStreamHasher>();
   }
 
   #[test]
