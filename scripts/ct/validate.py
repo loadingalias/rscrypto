@@ -322,6 +322,15 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       fail(errors, f"DudeCT case {name} missing filter")
     if case.get("gate") == "diagnostic" and not (case.get("reason") or case.get("notes")):
       fail(errors, f"diagnostic DudeCT case {name} requires reason or notes")
+    timeout_seconds = case.get("timeout_seconds")
+    if timeout_seconds is not None:
+      if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds <= 0:
+        fail(errors, f"DudeCT case {name} timeout_seconds must be a positive integer")
+      timeout_reason = case.get("timeout_reason")
+      if not isinstance(timeout_reason, str) or not timeout_reason.strip():
+        fail(errors, f"DudeCT case {name} timeout_seconds requires timeout_reason")
+    elif case.get("timeout_reason") is not None:
+      fail(errors, f"DudeCT case {name} timeout_reason requires timeout_seconds")
 
   registered_dudect = dudect_registered_benches(root, errors)
   if registered_dudect:

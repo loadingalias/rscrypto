@@ -300,6 +300,13 @@ def case_sample_count(case: dict[str, Any], *, smoke: bool, override: int | None
   return int(value)
 
 
+def case_timeout_seconds(case: dict[str, Any], fallback: int) -> int:
+  value = case.get("timeout_seconds", fallback)
+  if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    raise ValueError(f"DudeCT case {case.get('name', '<unnamed>')} timeout_seconds must be a positive integer")
+  return value
+
+
 def file_record(path: Path, base: Path, kind: str) -> dict[str, Any]:
   return {
     "path": str(path.relative_to(base)),
@@ -412,6 +419,8 @@ def dudect_case_result(
     "right_class": case.get("right_class"),
     "status": status,
     "requested_samples": samples,
+    "timeout_seconds": timeout,
+    "timeout_reason": case.get("timeout_reason"),
     "failure_count": failure_count,
     "command_result": result_record(result),
     "artifacts": copied,
@@ -837,15 +846,33 @@ def build_findings(
         }
       )
       continue
-    findings.append(
-      {
-        "kind": "dudect_failure",
-        "category": "timing_failure",
-        "severity": "blocker",
-        "summary": f"{case['name']} did not pass DudeCT",
-        "primitive": case["primitive"],
-      }
-    )
+    command_status = case.get("command_result", {}).get("status")
+    if case.get("report") is None and command_status in {"fail", "timeout"}:
+      timed_out = command_status == "timeout"
+      findings.append(
+        {
+          "kind": "dudect_inconclusive",
+          "category": "evidence_inconclusive" if timed_out else "tooling_failure",
+          "severity": "blocker",
+          "summary": (
+            f"{case['name']} exceeded its {case.get('timeout_seconds')}-second DudeCT evidence budget"
+            if timed_out
+            else f"{case['name']} failed before DudeCT evidence was produced"
+          ),
+          "primitive": case["primitive"],
+          "timeout_seconds": case.get("timeout_seconds"),
+        }
+      )
+    else:
+      findings.append(
+        {
+          "kind": "dudect_failure",
+          "category": "timing_failure",
+          "severity": "blocker",
+          "summary": f"{case['name']} produced a timing result above the DudeCT threshold",
+          "primitive": case["primitive"],
+        }
+      )
 
   for kernel in binsec_kernels:
     if kernel.get("status") == "secure":
@@ -1027,6 +1054,7 @@ def main() -> int:
         "gate": args.dudect_gate,
         "coverage_mode": "filtered" if filtered_dudect else args.dudect_gate,
         "samples": "manifest",
+        "default_timeout_seconds": args.dudect_timeout,
         "threshold_abs_max_t": args.threshold,
         "smoke": False,
         "cases": [],
@@ -1129,6 +1157,7 @@ def main() -> int:
   fallback_samples = int(os.environ.get("RSCRYPTO_CT_DUDECT_SAMPLES", "20000"))
   for case in manifest_cases:
     samples = case_sample_count(case, smoke=False, override=None, fallback=fallback_samples)
+    timeout_seconds = case_timeout_seconds(case, args.dudect_timeout)
     print(f"ct-full: dudect {case['name']}", flush=True)
     dudect_cases.append(
       dudect_case_result(
@@ -1141,7 +1170,7 @@ def main() -> int:
         args.threshold,
         False,
         case,
-        args.dudect_timeout,
+        timeout_seconds,
       )
     )
 
@@ -1209,6 +1238,7 @@ def main() -> int:
       "gate": args.dudect_gate,
       "coverage_mode": "filtered" if filtered_dudect else args.dudect_gate,
       "samples": "manifest",
+      "default_timeout_seconds": args.dudect_timeout,
       "threshold_abs_max_t": args.threshold,
       "smoke": False,
       "cases": dudect_cases,

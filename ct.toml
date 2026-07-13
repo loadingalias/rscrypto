@@ -662,6 +662,8 @@ left_class = "fixed P-384 signing secret with projective and scalar blinding"
 right_class = "random P-384 signing secret with projective and scalar blinding"
 samples = 20000
 smoke_samples = 2000
+timeout_seconds = 3600
+timeout_reason = "Physical RISC-V needs more time for the full 20,000-sample P-384 gate."
 
 [[dudect_case]]
 name = "ecdsa_p384_keypair_sign_fixed_vs_random_secret"
@@ -671,6 +673,8 @@ left_class = "fixed P-384 keypair signing secret with projective and scalar blin
 right_class = "random P-384 keypair signing secret with projective and scalar blinding"
 samples = 20000
 smoke_samples = 2000
+timeout_seconds = 3600
+timeout_reason = "Physical RISC-V needs more time for the full 20,000-sample P-384 gate."
 
 [[dudect_case]]
 name = "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret"
