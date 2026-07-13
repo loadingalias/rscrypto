@@ -218,7 +218,7 @@ libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
 
 [target.'cfg(all(any(unix, windows), not(target_arch = "wasm32"), not(any(target_arch = "s390x", target_arch = "powerpc64"))))'.dev-dependencies]
 aws-lc-rs = "1.17.1"
-aws-lc-sys = "0.41.0"
+aws-lc-sys = "0.42.0"
 
 [lib]
 bench = false
