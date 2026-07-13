@@ -177,7 +177,7 @@ tiny-keccak = { version = "2.0.2", features = ["cshake", "kmac", "shake"] }
 digest = { version = "0.11.3", features = ["dev"] }
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
 p384 = { version = "0.13.1", default-features = false, features = ["ecdsa", "pkcs8", "std"] }
-ed25519-dalek = "2.2.0"
+ed25519-dalek = "3.0.0"
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 fips203 = { version = "0.4.3", default-features = false, features = ["ml-kem-512", "ml-kem-768", "ml-kem-1024"] }
 rustcrypto-ml-kem = { package = "ml-kem", version = "0.3.2", default-features = false, features = ["hazmat"] }
