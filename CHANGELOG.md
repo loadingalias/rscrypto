@@ -1,5 +1,94 @@
 # Changelog
 
+
+## [0.7.0](https://github.com/loadingalias/rscrypto/compare/v0.6.4...v0.7.0) - 2026-07-13
+
+- Consolidated CI validation into explicit quality, feature-contract, native,
+  cross-target, and supply-chain owners. The complete compile and executable
+  feature matrices remain blocking, MUSL targets are now passed explicitly, and
+  IBM Z, POWER10, and RISC-V runners retain native all-features correctness and
+  backend-equivalence coverage without repeating architecture-independent work.
+  
+  Updated repository automation to cargo-rail 0.17.0 and cargo-rail-action v5.
+  Configuration sync now records the public open-world consumer boundary, CI
+  checks the compiler-backed unified Cargo graph, and pull requests require
+  change-file coverage from the planner's resolved base reference.
+  
+  Made consolidated CI lanes self-contained by removing the ownership checker's
+  ripgrep dependency and pinning the MUSL cross-target lane to the same verified
+  Zig build used locally.
+  
+  Separated fast Quality checks from exhaustive compiler-backed Cargo graph
+  assurance. The dedicated blocking lane receives a realistic timeout, retained
+  proof artifacts, an identity-validated compiler-evidence cache, planner-based
+  PR selection, and unconditional main, Weekly, and release execution.
+  
+  Consolidated SemVer ownership under cargo-rail's version-aware release planning
+  and one hard check of the finalized tag. Release preflight now builds and
+  validates the crate once; the publish job verifies and attests that transferred
+  artifact instead of repeating the complete preflight.
+
+- Removed variable-latency scalar multiplication from ECDSA P-256/P-384 secret
+  arithmetic on s390x and RISC-V while preserving signing support, and restored
+  the affected native timing cases as required release gates.
+  
+  Made constant-time assembly triage fail closed on target-sensitive arithmetic,
+  grouped every reachable finding with exact review-bound waivers, and bound
+  release evidence to the complete lane set, source commit, toolchain, target
+  configuration, generated artifacts, timing results, and BINSEC results. Weekly
+  and release publication now both require the dedicated RSA evidence workflow.
+  Cross-platform checks now keep host-only feature-matrix flags out of target
+  crate selection and keep target-only diagnostics plus CPUID's MSRV safety
+  transition lint-clean across the full matrix.
+  
+  Corrected the public constant-time boundary: `ct.toml` records intent, while a
+  claim exists only for configurations with passing evidence in the matching
+  attested release bundle.
+  
+  Removed secret-fed overflow panic branches from the fixed-work ECDSA limb
+  multiply-accumulate used on s390x and RISC-V. Blinded signing now additively
+  masks the private scalar during `r·d`, with direct full-width carry equivalence
+  tests and regenerated target evidence.
+
+- Replaced heap-buffered RapidHash and XXH3 `Hasher` implementations with fixed-size,
+  allocation-free state. Added the collection-oriented `RapidHasher`, concatenating
+  `RapidStreamHasher`, deterministic `RapidBuildHasher`, and XXH3-128 streaming.
+  Deterministic builder documentation now restricts it to trusted keys.
+  
+  Accelerated long XXH3 streams with AVX2, AVX-512, NEON, VSX, and z/Vector, and
+  added seeded partition fuzzing, RapidHash collection properties, backend
+  equivalence tests, and explicit allocation coverage.
+
+- Closed native API gaps with HKDF-SHA512, HMAC-SHA3, KMAC128, standalone
+  Poly1305, `getrandom` key-generation helpers, AEAD `*_to_vec` helpers, generic
+  signing/verification traits, and dedicated AEAD, signature, RSA, and ML-KEM
+  examples.
+  
+  Hardened release and security automation with versioned constant-time evidence
+  bundles, release-path audit and semver checks, weekly ASan fuzz-corpus replay,
+  OpenSSF Scorecard, CODEOWNERS, CONTRIBUTING guidance, and committed minimized
+  fuzz seeds.
+  
+  Pruned duplicated public Markdown, made `THREAT_MODEL.md` the canonical audit
+  entry point, folded advisory readiness into `SECURITY.md`, and kept
+  maintainer-only release and benchmark evidence out of README onboarding.
+
+- Private RSA DER exports now return `SecretVec`, which wipes its allocation on
+  drop and requires `into_unprotected_vec()` for ordinary extraction. Secret
+  parsing, Serde deserialization, and generation use zeroizing temporary guards.
+  Secret keys, shared secrets, keypairs, and AEAD cipher contexts no longer
+  implement `Clone`; use `duplicate_secret()` where an additional owned secret is
+  required.
+
+### 📦 Other Changes
+
+- make RapidHash and XXH3 streaming allocation-free ([822c865](https://github.com/loadingalias/rscrypto/commit/822c865ad909e51d0ab64338c5513db15c24170a))
+- isolate ECDSA keypair timing setup ([c8cc2d2](https://github.com/loadingalias/rscrypto/commit/c8cc2d20e740aff9a45bc4bb11e1b5fad7c697e7))
+- blind fixed-work ECDSA scalar products ([0fb9929](https://github.com/loadingalias/rscrypto/commit/0fb9929dbc33fb0ee497dcfb381f465dffe59baf))
+- harden secret lifecycles and explicit secret duplication ci: consolidate validation and adopt cargo-rail 0.17 planning ([1837da7](https://github.com/loadingalias/rscrypto/commit/1837da704e566c2f672de2b4f9f6eaeb890bb3e6))
+- remove variable-latency ECDSA multiplication on s390x and RISC-V ([2a8a11c](https://github.com/loadingalias/rscrypto/commit/2a8a11c53aed7b829a2bcf7cd4aa4d7b5f6f07f5))
+
+
 ## [0.6.4](https://github.com/loadingalias/rscrypto/compare/v0.6.3...v0.6.4) - 2026-07-07
 
 - Updated release workflow validation for cargo-rail 0.15.
