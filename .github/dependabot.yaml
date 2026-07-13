@@ -17,7 +17,11 @@ updates:
       day: "monday"
       time: "06:00"
       timezone: "America/New_York"
-    open-pull-requests-limit: 5
+    # Cargo manifests are coordinated oracles and feature-scoped harnesses.
+    # Dependabot cannot refresh cross-directory Cargo PRs reliably, so routine
+    # version updates flow through `just update`. Security updates retain
+    # GitHub's separate ten-PR limit and remain enabled repository-wide.
+    open-pull-requests-limit: 0
     rebase-strategy: "auto"
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

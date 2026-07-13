@@ -86,8 +86,8 @@ require_file "$DEPENDABOT"
 [[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | .directories | sort | join(",")' "$DEPENDABOT") \
   == "/,/fuzz,/fuzz-packages/*,/tools/*" ]] \
   || fail "Dependabot Cargo coverage must include root, fuzz, scoped fuzz packages, and standalone tools"
-[[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | ."open-pull-requests-limit"' "$DEPENDABOT") == "5" ]] \
-  || fail "Dependabot Cargo PR capacity must remain bounded at five"
+[[ $(yq eval '.updates[] | select(."package-ecosystem" == "cargo") | ."open-pull-requests-limit"' "$DEPENDABOT") == "0" ]] \
+  || fail "routine Cargo version PRs must stay disabled in favor of coordinated updates"
 if grep -En 'group-by:[[:space:]]*dependency-name' "$DEPENDABOT" >/dev/null; then
   fail "Dependabot must not use the upstream-broken cross-directory dependency-name grouping"
 fi
