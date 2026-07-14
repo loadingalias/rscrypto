@@ -221,7 +221,6 @@ release-prepare:
 
 release-tag:
     just check-unify
-    cargo rail release check rscrypto --extended
     cargo rail release finalize rscrypto --yes --skip-publish
 
 # Update Root/Fuzz Manifests & GHA Pins
@@ -243,6 +242,7 @@ check-actions:
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh
     @scripts/ci/pre-push-test.sh
+    @scripts/ci/release-recipes-test.sh
     @actionlint
     @zizmor .github/workflows .github/actions
 

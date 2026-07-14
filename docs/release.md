@@ -104,10 +104,12 @@ Once CI and Weekly are green, finalize the release:
 just release-tag
 ```
 
-The `release-tag` recipe reruns strict validation and the extended pre-tag
-check, then uses `cargo rail release finalize` to create and push the signed
-tag. It must not publish to crates.io; the `--skip-publish` flag is part of the
-release contract.
+The `release-tag` recipe reruns strict configuration and Cargo-graph validation,
+then uses `cargo rail release finalize` to validate the materialized release,
+create the signed tag, and push it. It does not rerun `cargo rail release check`:
+that command validates pending release intent and correctly fails after
+`release-prepare` consumes the change files. Finalization must not publish to
+crates.io; the `--skip-publish` flag is part of the release contract.
 
 ## CI Release Gate
 
