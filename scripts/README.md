@@ -24,6 +24,7 @@ its caller.
 | `ci/dependabot-smoke-test.sh`  | `just check-actions` |
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
+| `ci/pre-push-test.sh`          | `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/upgrade-actions-test.sh`   | `just check-actions` |
 | `ci/pre-push.sh`               | `just push`, `just push-full`, optional `.git/hooks/pre-push` |

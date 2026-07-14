@@ -211,7 +211,7 @@ release-check:
 release-prepare:
     just check-unify
     cargo rail release check rscrypto --extended
-    cargo rail release run rscrypto --bump auto --yes --skip-publish --skip-tag
+    RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --yes --skip-publish --skip-tag
     cargo update --manifest-path tools/ct-harness/Cargo.toml -p rscrypto
     cargo update --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto
     cargo update --manifest-path tools/ct-binsec-harness/Cargo.toml -p rscrypto
@@ -242,6 +242,7 @@ check-actions:
     @scripts/ci/dependabot-smoke-test.sh
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh
+    @scripts/ci/pre-push-test.sh
     @actionlint
     @zizmor .github/workflows .github/actions
 

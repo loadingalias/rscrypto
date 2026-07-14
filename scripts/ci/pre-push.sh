@@ -269,7 +269,11 @@ fi
 
 if [[ "$RAIL_READY" != true ]] || rail_surface_is_enabled build || rail_surface_is_enabled test; then
   start_task "cargo-rail unify" run_rail_unify_check
-  start_task "release intent coverage" run_rail_change_check
+  if [[ "${RSCRYPTO_RELEASE_PUSH:-}" == "1" ]]; then
+    skip "Release intent coverage" "cargo-rail validated and consumed the release change files"
+  else
+    start_task "release intent coverage" run_rail_change_check
+  fi
 else
   skip "Cargo-rail unify" "no build/test surface"
   skip "Release intent coverage" "no build/test surface"
