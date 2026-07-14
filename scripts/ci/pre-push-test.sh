@@ -41,6 +41,8 @@ if (
     PATH="$fake_bin:$PATH" \
     MOCK_LOG="$mock_log" \
     RAIL_PLAN_JSON_CACHE="$plan" \
+    RAIL_SCOPE_JSON= \
+    RAIL_SCOPE_JSON_CACHE= \
     scripts/ci/pre-push.sh --light
 ) >"$normal_output" 2>&1; then
   echo "ordinary pushes must fail when release intent coverage fails" >&2
@@ -56,6 +58,8 @@ release_output="$TMP_ROOT/release.out"
     PATH="$fake_bin:$PATH" \
     MOCK_LOG="$mock_log" \
     RAIL_PLAN_JSON_CACHE="$plan" \
+    RAIL_SCOPE_JSON= \
+    RAIL_SCOPE_JSON_CACHE= \
     RSCRYPTO_RELEASE_PUSH=1 \
     scripts/ci/pre-push.sh --light
 ) >"$release_output" 2>&1

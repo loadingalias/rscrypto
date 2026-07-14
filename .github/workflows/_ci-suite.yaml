@@ -191,7 +191,7 @@ jobs:
       tools_mode: none
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
-      enable_rust_cache: false
+      enable_rust_cache: true
       pre_script: |
         uname -a
         lscpu

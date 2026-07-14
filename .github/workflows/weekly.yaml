@@ -146,12 +146,11 @@ jobs:
     with:
       runner: runs-on=${{ github.run_id }}/runner=${{ matrix.platform }}
       timeout_minutes: 180
-      cache_key: ""
+      cache_key: weekly-mlkem-${{ matrix.platform }}
       tools_mode: minimal
       toolchain_components: "clippy, rustfmt, rust-src"
-      # Benchmark evidence should be a clean native build on the exact host.
       enable_magic_cache: false
-      enable_rust_cache: false
+      enable_rust_cache: true
       pre_script: |
         echo "ML-KEM gate host: ${{ matrix.display_name }} (${{ matrix.platform }})"
         uname -a

@@ -69,12 +69,11 @@ jobs:
     with:
       runner: ${{ matrix.runner }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
-      cache_key: ""
+      cache_key: bench-${{ matrix.artifact_suffix }}
       tools_mode: ${{ matrix.tools_mode }}
       toolchain_components: ${{ matrix.toolchain_components }}
-      # Clean builds required for bench integrity — no caching on any bench lane.
       enable_magic_cache: false
-      enable_rust_cache: false
+      enable_rust_cache: true
       pre_script: |
         echo "Bench host: ${{ matrix.platform }} (${{ matrix.os }})"
         uname -a
