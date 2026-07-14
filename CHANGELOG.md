@@ -1,6 +1,15 @@
 # Changelog
 
 
+
+## [0.7.1](https://github.com/loadingalias/rscrypto/compare/v0.7.0...v0.7.1) - 2026-07-14
+
+- Made release preflight consume the exact-commit Cargo graph assurance gate instead
+  of repeating the exhaustive target and feature sweep. Duplicate runs for the same
+  release tag now collapse immediately while signed-tag, audit, SemVer, constant-time,
+  RSA, package-integrity, provenance, and approval gates remain blocking.
+
+
 ## [0.7.0](https://github.com/loadingalias/rscrypto/compare/v0.6.4...v0.7.0) - 2026-07-13
 
 - Consolidated CI validation into explicit quality, feature-contract, native,
