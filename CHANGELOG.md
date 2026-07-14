@@ -3,6 +3,25 @@
 
 
 
+
+## [0.7.3](https://github.com/loadingalias/rscrypto/compare/v0.7.2...v0.7.3) - 2026-07-14
+
+- Hardened portable P-256 and P-384 caller-blinded fixed-base multiplication so
+  projective randomization is established before secret-selected points enter
+  field arithmetic. P-256 also randomizes the scalar representative with a group
+  order multiple. Corrected the timing harness's random-secret distribution and
+  extended RISC-V assembly screening to conditional branches.
+  
+  Made release tagging require successful CT and RSA evidence from the exact
+  candidate commit. Release publication now promotes that Weekly run's raw CT
+  artifacts instead of launching duplicate multi-hour evidence workflows, and RSA
+  workflow concurrency can no longer cancel its reusable-workflow caller.
+
+### 📦 Other Changes
+
+- blind portable ECDSA before secret-selected field arithmetic ([60f4dc2](https://github.com/loadingalias/rscrypto/commit/60f4dc20313587ead5bf75575522188b04f13945))
+
+
 ## [0.7.2](https://github.com/loadingalias/rscrypto/compare/v0.7.1...v0.7.2) - 2026-07-14
 
 - Stopped installing the unused BINSEC toolchain on physical RISC-V constant-time

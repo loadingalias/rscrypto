@@ -1,7 +1,7 @@
 [package]
 name = "rscrypto"
 description = "Pure Rust Cryptography: RSA, Ed25519, X25519, SHA-2/3, BLAKE2/3, AES-GCM/GCM-SIV, X/ChaCha20-Poly1305, Argon2, HMAC/HKDF, CRC. no_std, WASM, hardware acceleration."
-version = "0.7.2"
+version = "0.7.3"
 edition = "2024"
 rust-version = "1.91.0"
 autobenches = false
