@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   preflight:
@@ -271,7 +271,6 @@ jobs:
 
   ci-gate:
     name: CI Gate
-    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -314,6 +313,16 @@ jobs:
 
             if [[ "$run_status" == "completed" ]]; then
               if [[ "$run_conclusion" == "success" ]]; then
+                graph_result="$(
+                  gh run view "$run_id" \
+                    --repo "$GITHUB_REPOSITORY" \
+                    --json jobs \
+                    --jq '[.jobs[] | select(.name == "CI Suite / Cargo Graph Assurance / run")] | if length == 1 then .[0].conclusion else "missing" end'
+                )"
+                if [[ "$graph_result" != "success" ]]; then
+                  echo "Cargo Graph Assurance result for $RELEASE_SHA: $graph_result" >&2
+                  exit 1
+                fi
                 exit 0
               fi
               echo "CI did not pass for $RELEASE_SHA: $run_conclusion" >&2

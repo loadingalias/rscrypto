@@ -19,6 +19,7 @@ fi
 WORKFLOWS="$ROOT/.github/workflows"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
+RELEASE="$WORKFLOWS/release.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
 COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
@@ -71,6 +72,7 @@ require_unique_feature_sets() {
 
 require_file "$SUITE"
 require_file "$WEEKLY"
+require_file "$RELEASE"
 require_file "$MANIFEST"
 require_file "$CROSS_SCRIPT"
 require_file "$COMPILE_MATRIX"
@@ -127,6 +129,11 @@ fi
   || fail "native validation must be owned by Linux, IBM Z, POWER10, and RISC-V job definitions"
 [[ $(count_matches 'cargo rail unify --check' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one Cargo graph assurance owner"
+if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
+  fail "tag preflight must consume exact-commit CI graph assurance instead of repeating it"
+fi
+grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE" \
+  || fail "release CI Gate must verify exact-commit Cargo Graph Assurance"
 if grep -n 'check-unify' "$CI_CHECK" >/dev/null; then
   fail "the fast quality lane must not own exhaustive Cargo graph assurance"
 fi

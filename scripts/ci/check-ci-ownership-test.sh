@@ -60,6 +60,19 @@ sed -i.bak '/cargo rail unify --check/d' "$missing_graph_owner/.github/workflows
 rm -f "$missing_graph_owner/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$missing_graph_owner" "missing Cargo graph assurance owner"
 
+duplicate_release_graph="$TMP_ROOT/duplicate-release-graph"
+make_fixture "$duplicate_release_graph"
+printf '\n# duplicate release owner\ncargo rail unify --check --explain\n' \
+  >>"$duplicate_release_graph/scripts/ci/release-preflight.sh"
+expect_failure "$duplicate_release_graph" "duplicate release Cargo graph assurance owner"
+
+missing_release_graph_gate="$TMP_ROOT/missing-release-graph-gate"
+make_fixture "$missing_release_graph_gate"
+sed -i.bak '/CI Suite \/ Cargo Graph Assurance \/ run/d' \
+  "$missing_release_graph_gate/.github/workflows/release.yaml"
+rm -f "$missing_release_graph_gate/.github/workflows/release.yaml.bak"
+expect_failure "$missing_release_graph_gate" "missing release Cargo graph assurance gate"
+
 broken_dependabot_grouping="$TMP_ROOT/broken-dependabot-grouping"
 make_fixture "$broken_dependabot_grouping"
 cat >>"$broken_dependabot_grouping/.github/dependabot.yaml" <<'EOF'
