@@ -2,6 +2,14 @@
 
 
 
+
+## [0.7.2](https://github.com/loadingalias/rscrypto/compare/v0.7.1...v0.7.2) - 2026-07-14
+
+- Stopped installing the unused BINSEC toolchain on physical RISC-V constant-time
+  lanes and gave the full 20,000-sample P-384 evidence cases enough time to
+  complete without weakening their release gate.
+
+
 ## [0.7.1](https://github.com/loadingalias/rscrypto/compare/v0.7.0...v0.7.1) - 2026-07-14
 
 - Made release preflight consume the exact-commit Cargo graph assurance gate instead
