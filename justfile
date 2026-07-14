@@ -241,6 +241,7 @@ check-actions:
     @scripts/ci/dependabot-smoke-test.sh
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh
+    @scripts/ci/emit-manual-matrix-test.sh
     @scripts/ci/pre-push-test.sh
     @scripts/ci/release-recipes-test.sh
     @actionlint

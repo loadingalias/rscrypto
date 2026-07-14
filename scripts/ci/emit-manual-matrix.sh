@@ -124,7 +124,7 @@ append_ct_row_for_platform() {
       ROWS+=("{\"platform\":\"ibm-power10\",\"target\":\"powerpc64le-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${CT_IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false,\"enable_rust_cache\":true}")
       ;;
     rise-riscv)
-      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"ct-linux\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false,\"enable_rust_cache\":true}")
+      ROWS+=("{\"platform\":\"rise-riscv\",\"target\":\"riscv64gc-unknown-linux-gnu\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${CT_RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"none\",\"toolchain_components\":\"${COMPONENTS_CT}\",\"enable_magic_cache\":false,\"enable_rust_cache\":true}")
       ;;
     *)
       echo "error: unsupported CT platform '$platform'" >&2
