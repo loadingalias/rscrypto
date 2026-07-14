@@ -45,6 +45,7 @@ const COMB_WIDTH: usize = 4;
 const COMB_TABLE_SIZE: usize = 1 << COMB_WIDTH;
 const P256_SIGNING_COMB_ROWS: usize = 37;
 const P384_SIGNING_COMB_ROWS: usize = 48;
+const _: () = assert!(P256_SIGNING_COMB_ROWS * P256_SIGNING_COMB_WIDTH == 259);
 
 const ID_EC_PUBLIC_KEY_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const SECP256R1_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
@@ -891,8 +892,8 @@ impl EcdsaP256SecretKey {
   /// Derive the matching P-256 public key with caller-supplied blinding.
   ///
   /// The closure should fill the buffer from a CSPRNG. Blinding does not
-  /// change the public key; it randomizes the internal projective
-  /// representation used during derivation.
+  /// change the public key; it randomizes the portable fixed-base scalar and
+  /// the internal projective representation used during derivation.
   #[must_use]
   pub fn public_key_blinded(&self, fill: impl FnOnce(&mut [u8; 64])) -> EcdsaP256PublicKey {
     let mut blind = ZeroizingBytes::zeroed();
@@ -916,7 +917,8 @@ impl EcdsaP256SecretKey {
   ///
   /// The closure should fill the buffer from a CSPRNG. The ECDSA nonce remains
   /// deterministic; the random bytes blind the internal projective `kG` point
-  /// and mask the private-scalar product.
+  /// and the private-scalar product. The portable backend also adds a random
+  /// multiple of the group order before fixed-base multiplication.
   ///
   /// # Errors
   ///
@@ -2814,9 +2816,51 @@ fn scalar_mul_basepoint_blinded<const L: usize>(
 ) -> Affine<L> {
   let z = FieldElement::from_uint(blind.value(), curve.field_modulus);
   scalar_mul_basepoint_backend(curve, scalar)
-    .unwrap_or_else(|| scalar_mul_basepoint_comb_ct_secret(curve, scalar))
+    .unwrap_or_else(|| {
+      if is_p256_curve(curve) {
+        let scalar = p256_blinded_comb_scalar(scalar, blind, curve.scalar_modulus.value);
+        scalar_mul_basepoint_comb_ct_secret_blinded(curve, &scalar, z)
+      } else {
+        scalar_mul_basepoint_comb_ct_secret_blinded(curve, scalar, z)
+      }
+    })
     .randomize_z(z)
     .to_affine_ct(field_inverse_exponent)
+}
+
+fn p256_blinded_comb_scalar<const L: usize>(
+  scalar: &SecretScalar<L>,
+  blind: &SecretScalar<L>,
+  order: Uint<L>,
+) -> SecretScalar<5> {
+  debug_assert_eq!(L, 4);
+
+  // The P-256 signing comb consumes 259 bits. For k < n and factor <= 7,
+  // k + factor*n < 8n < 2^259, so the comb loses no high bits. Adding the order
+  // multiple preserves kG while randomizing secret-dependent field operands.
+  let mut scalar_words = [0u64; 5];
+  let mut order_words = [0u64; 5];
+  for index in 0..L {
+    if let (Some(dst), Some(&src)) = (scalar_words.get_mut(index), scalar.value.0.get(index)) {
+      *dst = src;
+    }
+    if let (Some(dst), Some(&src)) = (order_words.get_mut(index), order.0.get(index)) {
+      *dst = src;
+    }
+  }
+
+  let mut multiple = Uint(order_words);
+  let mut blinded = Uint(scalar_words);
+  let mut factor = blind.value.0.first().copied().unwrap_or(0) & 7;
+  factor |= mask_zero_u64(factor) & 1;
+  for bit in 0..3 {
+    let mask = 0u64.wrapping_sub((factor >> bit) & 1);
+    let addend = Uint::select(Uint::ZERO, multiple, mask);
+    blinded = blinded.add_raw(&addend).0;
+    multiple = multiple.add_raw(&multiple).0;
+  }
+
+  SecretScalar::new(blinded)
 }
 
 #[cfg(any(
@@ -2897,10 +2941,6 @@ fn scalar_mul_basepoint_affine_backend<const L: usize>(
   None
 }
 
-#[cfg(any(
-  all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
-  all(target_arch = "x86_64", target_os = "linux")
-))]
 fn is_p256_curve<const L: usize>(curve: &Curve<L>) -> bool {
   L == 4
     && core::ptr::from_ref(curve.field_modulus).cast::<()>() == core::ptr::from_ref(&P256_FIELD_MODULUS).cast::<()>()
@@ -3282,7 +3322,10 @@ fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L
 }
 
 #[allow(clippy::indexing_slicing)]
-fn scalar_mul_basepoint_comb_ct_secret<const L: usize>(curve: &Curve<L>, scalar: &SecretScalar<L>) -> Jacobian<L> {
+fn scalar_mul_basepoint_comb_ct_secret<const L: usize, const S: usize>(
+  curve: &Curve<L>,
+  scalar: &SecretScalar<S>,
+) -> Jacobian<L> {
   let scalar = SecretScalar::new(scalar.value());
   let rows = curve.signing_comb_rows;
   let mut acc = Jacobian::infinity(curve.field_modulus);
@@ -3292,6 +3335,43 @@ fn scalar_mul_basepoint_comb_ct_secret<const L: usize>(curve: &Curve<L>, scalar:
     let digit = signing_comb_digit_ct(scalar.value(), row, rows, curve.signing_comb_width);
     let selected = select_signing_generator_affine_ct(curve, digit);
     acc = acc.add_mixed_ct(selected, mask_eq_usize(digit, 0));
+  }
+
+  acc
+}
+
+#[allow(clippy::indexing_slicing)]
+fn scalar_mul_basepoint_comb_ct_secret_blinded<const L: usize, const S: usize>(
+  curve: &Curve<L>,
+  scalar: &SecretScalar<S>,
+  z: FieldElement<L>,
+) -> Jacobian<L> {
+  let rows = curve.signing_comb_rows;
+  let z2 = z.square();
+  let z3 = z2.mul(z);
+  let public_rhs = select_signing_generator_affine_ct(curve, 0);
+  let mut acc = Jacobian::infinity(curve.field_modulus);
+
+  for row in (0..rows).rev() {
+    acc = acc.double_ct();
+    let digit = signing_comb_digit_ct(scalar.value(), row, rows, curve.signing_comb_width);
+    let selected = select_signing_generator_affine_ct(curve, digit);
+    let digit_zero = mask_eq_usize(digit, 0);
+    let acc_infinity = acc.infinity_mask();
+    // Before the first nonzero digit, keep mixed-add operands public and
+    // constant-select the secret table point only after projecting it with z.
+    let safe_rhs = Affine {
+      x: FieldElement::select(selected.x, public_rhs.x, acc_infinity),
+      y: FieldElement::select(selected.y, public_rhs.y, acc_infinity),
+    };
+    let added = acc.add_mixed_ct(safe_rhs, digit_zero);
+    let initialized = Jacobian {
+      x: selected.x.mul(z2),
+      y: selected.y.mul(z3),
+      z,
+      infinity: false,
+    };
+    acc = Jacobian::select(added, initialized, acc_infinity & mask_not(digit_zero));
   }
 
   acc
@@ -4606,6 +4686,35 @@ mod tests {
         .cmp(&P384_ORDER_HALF)
         .is_le()
     );
+  }
+
+  #[test]
+  fn p256_comb_scalar_blinding_preserves_the_group_element() {
+    let max_scalar = P256_ORDER.sub_raw(&Uint::ONE).0;
+    for scalar_value in [Uint::ONE, Uint::from_u64(0x1234_5678_9abc_def0), max_scalar] {
+      let scalar = SecretScalar::new(scalar_value);
+      let expected = scalar_mul_basepoint_comb_ct_secret(&P256, &scalar).to_affine_ct(P256_FIELD_MINUS_TWO);
+      let z = FieldElement::from_uint(Uint::from_u64(2), &P256_FIELD_MODULUS);
+
+      for factor in 0u64..=7 {
+        let blind = SecretScalar::new(Uint::from_u64(factor));
+        let blinded = p256_blinded_comb_scalar(&scalar, &blind, P256_ORDER);
+        let actual = scalar_mul_basepoint_comb_ct_secret_blinded(&P256, &blinded, z).to_affine_ct(P256_FIELD_MINUS_TWO);
+        assert!(
+          actual == expected,
+          "adding a multiple of the P-256 order must preserve kG"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn p384_comb_projective_blinding_preserves_the_group_element() {
+    let scalar = SecretScalar::new(Uint::<6>::from_u64(0x1234_5678_9abc_def0));
+    let expected = scalar_mul_basepoint_comb_ct_secret(&P384, &scalar).to_affine_ct(P384_FIELD_MINUS_TWO);
+    let z = FieldElement::from_uint(Uint::from_u64(2), &P384_FIELD_MODULUS);
+    let actual = scalar_mul_basepoint_comb_ct_secret_blinded(&P384, &scalar, z).to_affine_ct(P384_FIELD_MINUS_TWO);
+    assert!(actual == expected, "projective blinding must preserve kG");
   }
 
   #[cfg(any(

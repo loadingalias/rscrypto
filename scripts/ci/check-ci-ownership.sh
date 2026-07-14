@@ -20,6 +20,7 @@ WORKFLOWS="$ROOT/.github/workflows"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
 RELEASE="$WORKFLOWS/release.yaml"
+RSA="$WORKFLOWS/rsa.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
 COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
@@ -27,6 +28,7 @@ EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
+RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
 DEPENDABOT="$ROOT/.github/dependabot.yaml"
 
 fail() {
@@ -73,6 +75,7 @@ require_unique_feature_sets() {
 require_file "$SUITE"
 require_file "$WEEKLY"
 require_file "$RELEASE"
+require_file "$RSA"
 require_file "$MANIFEST"
 require_file "$CROSS_SCRIPT"
 require_file "$COMPILE_MATRIX"
@@ -80,6 +83,7 @@ require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
 require_file "$RELEASE_PREFLIGHT"
+require_file "$RELEASE_EVIDENCE"
 require_file "$DEPENDABOT"
 
 [[ $(yq eval '.version' "$DEPENDABOT") == "2" ]] || fail "Dependabot config must use version 2"
@@ -134,6 +138,17 @@ if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
 fi
 grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE" \
   || fail "release CI Gate must verify exact-commit Cargo Graph Assurance"
+[[ $(yq eval '.concurrency.group' "$RSA") == 'rsa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' ]] \
+  || fail "reusable RSA workflow concurrency must not collide with its caller"
+[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == "true" ]] \
+  || fail "Weekly must preserve raw CT artifacts for exact-commit release promotion"
+grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE" \
+  || fail "release must require exact-commit Weekly CT and RSA evidence"
+grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}' "$RELEASE" \
+  || fail "release must consume CT artifacts from the validated Weekly run"
+if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then
+  fail "tag workflow must promote exact-commit evidence instead of rerunning CT or RSA"
+fi
 if grep -n 'check-unify' "$CI_CHECK" >/dev/null; then
   fail "the fast quality lane must not own exhaustive Cargo graph assurance"
 fi

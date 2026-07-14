@@ -183,7 +183,7 @@ needs_actions_check() {
     return 0
   fi
 
-  changed_file_matches '^\.config/target-matrix\.json$|^\.github/actions-lock\.yaml$|^\.github/(workflows|actions)/.*\.ya?ml$|^scripts/ci/(pin-actions|check-ci-ownership|check-ci-ownership-test)\.sh$'
+  changed_file_matches '^\.config/target-matrix\.json$|^\.github/actions-lock\.yaml$|^\.github/(workflows|actions)/.*\.ya?ml$|^scripts/ci/(pin-actions|check-ci-ownership|check-ci-ownership-test|release-evidence-check|release-evidence-check-test|release-recipes-test)\.sh$'
 }
 
 needs_host_checks() {

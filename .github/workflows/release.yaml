@@ -57,11 +57,12 @@ jobs:
 
   publish:
     name: Publish
-    needs: [preflight, ci-gate, ct-evidence, rsa-evidence]
+    needs: [preflight, ci-gate, evidence-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: crates-io
     permissions:
+      actions: read
       contents: write
       id-token: write
       attestations: write
@@ -121,6 +122,8 @@ jobs:
         with:
           pattern: ct-*
           path: ct-release-artifacts
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}
 
       - name: Package CT release evidence
         id: ct_evidence
@@ -254,20 +257,28 @@ jobs:
               --notes-file "$notes_file"
           fi
 
-  ct-evidence:
-    name: CT Evidence
+  evidence-gate:
+    name: Release Evidence Gate
     needs: preflight
-    uses: ./.github/workflows/ct.yaml
-    with:
-      platforms: all
-      dudect_timeout: "1800"
-      binsec_timeout: "900"
-      dudect_gate: required
-      upload_raw_artifacts: true
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      weekly_run_id: ${{ steps.evidence.outputs.weekly_run_id }}
+      weekly_run_url: ${{ steps.evidence.outputs.weekly_run_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
-  rsa-evidence:
-    name: RSA Evidence
-    uses: ./.github/workflows/rsa.yaml
+      - name: Verify exact-commit CT and RSA evidence
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"
 
   ci-gate:
     name: CI Gate

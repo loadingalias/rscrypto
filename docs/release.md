@@ -95,8 +95,9 @@ hand-editing generated lockfiles.
 
 Wait for CI on the resulting `main` commit, then manually dispatch
 `weekly.yaml` on that exact commit. Weekly requires both the full CT matrix and
-the dedicated RSA workflow. If either fails, fix the release candidate and run
-both gates again. Do not create the tag.
+the dedicated RSA workflow and retains the raw CT artifacts needed for the
+release bundle. If either fails, fix the release candidate and run both gates
+again. Do not create the tag.
 
 Once CI and Weekly are green, finalize the release:
 
@@ -105,11 +106,13 @@ just release-tag
 ```
 
 The `release-tag` recipe reruns strict configuration and Cargo-graph validation,
-then uses `cargo rail release finalize` to validate the materialized release,
-create the signed tag, and push it. It does not rerun `cargo rail release check`:
-that command validates pending release intent and correctly fails after
-`release-prepare` consumes the change files. Finalization must not publish to
-crates.io; the `--skip-publish` flag is part of the release contract.
+refuses to tag unless the exact candidate commit has a successful Weekly run
+with complete CT and RSA jobs, then uses `cargo rail release finalize` to
+validate the materialized release, create the signed tag, and push it. It does
+not rerun `cargo rail release check`: that command validates pending release
+intent and correctly fails after `release-prepare` consumes the change files.
+Finalization must not publish to crates.io; the `--skip-publish` flag is part of
+the release contract.
 
 ## CI Release Gate
 
@@ -132,9 +135,10 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 8. Waits for the `CI` workflow on the same commit to pass.
 9. Verifies the transferred artifact's SHA-256, then attests it with GitHub
    build provenance.
-10. Runs every release CT lane and the dedicated RSA evidence workflow, and
-    rejects any failed required gate.
-11. Validates that the complete CT lane set, version, commit, clean provenance,
+10. Requires the successful Weekly CT and RSA evidence from the exact tag
+    commit and downloads that run's raw CT artifacts. The tag workflow does not
+    rerun either multi-hour evidence suite.
+11. Validates that the promoted CT lane set, version, commit, clean provenance,
     tool versions, timing coverage, BINSEC coverage, and raw artifact hashes
     agree before creating the versioned CT evidence bundle.
 12. Attests the CT evidence bundle with GitHub build provenance.

@@ -2860,7 +2860,7 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while the blinded APIs randomize the projective fixed-base point before affine conversion and mask the private-scalar product. On s390x and RISC-V, secret-fed limb products use multiplication-free fixed-work arithmetic and remain subject to the native weekly timing gate."
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while P-256 portable blinded signing adds a random multiple of the group order and blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x and RISC-V, secret-fed limb products use multiplication-free fixed-work arithmetic and remain subject to the native weekly timing gate."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p256_sign"]
@@ -2879,7 +2879,7 @@ public = ["message", "message_length", "signature"]
 may_leak = ["message_length", "signature"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while the blinded APIs randomize the projective fixed-base point before affine conversion and mask the private-scalar product. On s390x and RISC-V, secret-fed limb products use multiplication-free fixed-work arithmetic and remain subject to the native weekly timing gate."
+notes = "Release CT evidence covers the blinded signing APIs. Deterministic signing uses fixed-work HMAC-derived wide nonce reduction instead of RFC6979's secret-dependent rejection loop, while portable blinded signing blinds the projective accumulator before fixed-base multiplication, reblinds before affine conversion, and masks the private-scalar product. On s390x and RISC-V, secret-fed limb products use multiplication-free fixed-work arithmetic and remain subject to the native weekly timing gate."
 [primitive.harness]
 status = "covered"
 symbols = ["ct_entry_ecdsa_p384_sign"]

@@ -75,6 +75,26 @@ BRANCH_CONDS_X86 = {
 DIV_MNEMONICS = {"div", "idiv", "udiv", "sdiv"}
 RISCV_MUL_MNEMONICS = {"mul", "mulh", "mulhsu", "mulhu", "mulw"}
 RISCV_DIV_MNEMONICS = {"div", "divu", "divw", "divuw", "rem", "remu", "remw", "remuw"}
+RISCV_BRANCH_CONDS = {
+  "beq",
+  "beqz",
+  "bge",
+  "bgez",
+  "bgeu",
+  "bgt",
+  "bgtz",
+  "bgtu",
+  "ble",
+  "bleu",
+  "blez",
+  "blt",
+  "bltz",
+  "bltu",
+  "bne",
+  "bnez",
+  "c.beqz",
+  "c.bnez",
+}
 POWER_DIV_MNEMONICS = {
   "divd",
   "divde",
@@ -167,9 +187,9 @@ BRANCH_CONDS_S390X = {
   "jo",
   "jp",
 }
-DIRECT_CALL_MNEMONICS = {"bl", "brasl", "call", "callq"}
+DIRECT_CALL_MNEMONICS = {"bl", "brasl", "call", "callq", "jal"}
 INDIRECT_JUMP_MNEMONICS = {"br"}
-INDIRECT_CALL_MNEMONICS = {"blr"}
+INDIRECT_CALL_MNEMONICS = {"blr", "jalr"}
 SUSPICIOUS_CALL_TARGETS = (
   "panic",
   "panic_bounds_check",
@@ -459,7 +479,7 @@ def direct_call_targets(line: str) -> set[str]:
 
 
 def is_call_relocation(line: str) -> bool:
-  return bool(re.search(r"\b(?:R_[A-Z0-9_]*(?:CALL|PLT32)|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH)\b", line))
+  return bool(re.search(r"\b(?:R_[A-Z0-9_]*(?:CALL(?:_PLT)?|PLT32)|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH)\b", line))
 
 
 def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> set[str]:
@@ -562,6 +582,10 @@ def is_target_division_review(target: str, inst: str) -> bool:
 
 def is_s390x_conditional_branch(target: str, inst: str) -> bool:
   return target.startswith("s390x-") and inst in BRANCH_CONDS_S390X
+
+
+def is_riscv_conditional_branch(target: str, inst: str) -> bool:
+  return target.startswith(("riscv32", "riscv64")) and inst in RISCV_BRANCH_CONDS
 
 
 def finding(
@@ -814,7 +838,12 @@ def scan_symbol(
           roots=roots,
         )
       )
-    elif inst in BRANCH_CONDS_AARCH64 or inst in BRANCH_CONDS_X86 or is_s390x_conditional_branch(target, inst):
+    elif (
+      inst in BRANCH_CONDS_AARCH64
+      or inst in BRANCH_CONDS_X86
+      or is_riscv_conditional_branch(target, inst)
+      or is_s390x_conditional_branch(target, inst)
+    ):
       findings.append(
         finding(
           symbol,

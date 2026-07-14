@@ -1056,14 +1056,18 @@ fn ed25519_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut 
 fn valid_p256_secret(rng: &mut BenchRng) -> [u8; EcdsaP256SecretKey::LENGTH] {
   let mut secret = rand_array::<{ EcdsaP256SecretKey::LENGTH }>(rng);
   secret[0] &= 0x7f;
-  secret[EcdsaP256SecretKey::LENGTH - 1] |= 1;
+  if secret.iter().all(|&byte| byte == 0) {
+    secret[EcdsaP256SecretKey::LENGTH - 1] = 1;
+  }
   secret
 }
 
 fn valid_p384_secret(rng: &mut BenchRng) -> [u8; EcdsaP384SecretKey::LENGTH] {
   let mut secret = rand_array::<{ EcdsaP384SecretKey::LENGTH }>(rng);
   secret[0] &= 0x7f;
-  secret[EcdsaP384SecretKey::LENGTH - 1] |= 1;
+  if secret.iter().all(|&byte| byte == 0) {
+    secret[EcdsaP384SecretKey::LENGTH - 1] = 1;
+  }
   secret
 }
 

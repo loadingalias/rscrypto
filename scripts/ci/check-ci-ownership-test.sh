@@ -73,6 +73,24 @@ sed -i.bak '/CI Suite \/ Cargo Graph Assurance \/ run/d' \
 rm -f "$missing_release_graph_gate/.github/workflows/release.yaml.bak"
 expect_failure "$missing_release_graph_gate" "missing release Cargo graph assurance gate"
 
+colliding_rsa_concurrency="$TMP_ROOT/colliding-rsa-concurrency"
+make_fixture "$colliding_rsa_concurrency"
+sed -i.bak 's/group: rsa-/group: /' "$colliding_rsa_concurrency/.github/workflows/rsa.yaml"
+rm -f "$colliding_rsa_concurrency/.github/workflows/rsa.yaml.bak"
+expect_failure "$colliding_rsa_concurrency" "reusable RSA workflow concurrency collision"
+
+missing_release_evidence_gate="$TMP_ROOT/missing-release-evidence-gate"
+make_fixture "$missing_release_evidence_gate"
+sed -i.bak '/release-evidence-check\.sh/d' "$missing_release_evidence_gate/.github/workflows/release.yaml"
+rm -f "$missing_release_evidence_gate/.github/workflows/release.yaml.bak"
+expect_failure "$missing_release_evidence_gate" "missing exact-commit release evidence gate"
+
+compact_weekly_ct="$TMP_ROOT/compact-weekly-ct"
+make_fixture "$compact_weekly_ct"
+sed -i.bak 's/upload_raw_artifacts: true/upload_raw_artifacts: false/' "$compact_weekly_ct/.github/workflows/weekly.yaml"
+rm -f "$compact_weekly_ct/.github/workflows/weekly.yaml.bak"
+expect_failure "$compact_weekly_ct" "Weekly without raw release CT evidence"
+
 broken_dependabot_grouping="$TMP_ROOT/broken-dependabot-grouping"
 make_fixture "$broken_dependabot_grouping"
 cat >>"$broken_dependabot_grouping/.github/dependabot.yaml" <<'EOF'

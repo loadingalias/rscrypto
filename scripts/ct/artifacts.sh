@@ -113,8 +113,14 @@ fi
 OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE"
 ARTIFACT_DIR="$OUT_DIR/artifacts"
 BUILD_TARGET_DIR="$ROOT/target/ct-build"
+DEPS_DIR="$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"
 rm -rf "$OUT_DIR"
 mkdir -p "$ARTIFACT_DIR"
+
+# Cargo keeps content-hashed compiler outputs from older source revisions in
+# `deps/`. The scanner must consume exactly one fresh harness build or duplicate
+# symbols make the production call closure ambiguous.
+rm -f "$DEPS_DIR"/rscrypto_ct_harness*.{ll,s,o,obj}
 
 echo "building CT harness for $TARGET ($PROFILE)"
 cargo rustc \
@@ -127,7 +133,6 @@ cargo rustc \
   -- \
   --emit=llvm-ir,asm,obj
 
-DEPS_DIR="$BUILD_TARGET_DIR/$TARGET/$PROFILE/deps"
 EMITTED=()
 while IFS= read -r artifact; do
   EMITTED+=("$artifact")
@@ -144,6 +149,11 @@ if [[ ${#EMITTED[@]} -eq 0 ]]; then
   echo "no CT harness emitted artifacts found in $DEPS_DIR" >&2
   exit 1
 fi
+if [[ ${#EMITTED[@]} -ne 3 ]]; then
+  echo "expected one fresh CT harness each for LLVM IR, assembly, and object output; found ${#EMITTED[@]}" >&2
+  printf '  %s\n' "${EMITTED[@]}" >&2
+  exit 1
+fi
 
 for artifact in "${EMITTED[@]}"; do
   cp "$artifact" "$ARTIFACT_DIR/"
@@ -153,8 +163,8 @@ OBJECTS=()
 while IFS= read -r obj; do
   OBJECTS+=("$obj")
 done < <(find "$ARTIFACT_DIR" -maxdepth 1 -type f \( -name '*.o' -o -name '*.obj' \) | sort)
-if [[ ${#OBJECTS[@]} -eq 0 ]]; then
-  echo "no CT harness object file found in $ARTIFACT_DIR" >&2
+if [[ ${#OBJECTS[@]} -ne 1 ]]; then
+  echo "expected exactly one fresh CT harness object file in $ARTIFACT_DIR; found ${#OBJECTS[@]}" >&2
   exit 1
 fi
 

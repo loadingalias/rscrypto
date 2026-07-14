@@ -75,6 +75,14 @@ if ! "$SCRIPT_DIR/asm-ledger.sh" >"$LOG_DIR/asm-ledger.log" 2>&1; then
 fi
 ok
 
+step "Checking CT assembly scanner"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/asm_heuristics_test.py" >"$LOG_DIR/ct-asm-scanner.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/ct-asm-scanner.log"
+  exit 1
+fi
+ok
+
 # Check
 step "Checking"
 # shellcheck disable=SC2086

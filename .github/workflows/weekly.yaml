@@ -171,7 +171,7 @@ jobs:
       platforms: all
       dudect_timeout: "1800"
       binsec_timeout: "900"
-      upload_raw_artifacts: false
+      upload_raw_artifacts: true
 
   rsa:
     name: RSA Evidence (weekly)
