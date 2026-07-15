@@ -5,6 +5,12 @@
 
 
 
+
+## [0.7.4](https://github.com/loadingalias/rscrypto/compare/v0.7.3...v0.7.4) - 2026-07-15
+
+- Fixed release CT evidence packaging under GitHub Actions by isolating matrix discovery from workflow step outputs.
+
+
 ## [0.7.3](https://github.com/loadingalias/rscrypto/compare/v0.7.2...v0.7.3) - 2026-07-14
 
 - Hardened portable P-256 and P-384 caller-blinded fixed-base multiplication so
