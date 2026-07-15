@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CHECKER="$SCRIPT_DIR/release-evidence-check.sh"
 TMP_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -110,6 +111,24 @@ GITHUB_OUTPUT="$output" "$CHECKER" --root "$fixture" --commit "$release_sha" --r
 grep -Fxq "weekly_commit=$evidence_sha" "$output"
 grep -Fxq 'weekly_version=0.7.3' "$output"
 grep -Fxq 'weekly_evidence_mode=release_only_delta' "$output"
+
+"$REPO_ROOT/scripts/ct/python.sh" - "$REPO_ROOT" "$fixture" "$evidence_sha" <<'PY'
+import hashlib
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+fixture = pathlib.Path(sys.argv[2])
+evidence_commit = sys.argv[3]
+sys.path.insert(0, str(root / "scripts" / "ct"))
+
+from validate_release_evidence import sha256_file, sha256_git_file
+
+expected = hashlib.sha256(subprocess.check_output(["git", "show", f"{evidence_commit}:Cargo.lock"], cwd=fixture)).hexdigest()
+assert sha256_git_file(fixture, evidence_commit, "Cargo.lock") == expected
+assert sha256_git_file(fixture, evidence_commit, "Cargo.lock") != sha256_file(fixture / "Cargo.lock")
+PY
 
 printf 'pub fn marker() { unreachable!() }\n' >"$fixture/src/lib.rs"
 git -C "$fixture" add src/lib.rs

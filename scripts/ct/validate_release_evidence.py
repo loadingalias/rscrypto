@@ -38,6 +38,14 @@ def sha256_file(path: Path) -> str:
   return digest.hexdigest()
 
 
+def sha256_git_file(root: Path, commit: str, path: str) -> str:
+  try:
+    contents = subprocess.check_output(["git", "show", f"{commit}:{path}"], cwd=root)
+  except subprocess.CalledProcessError as exc:
+    fail(f"cannot read {path} from evidence commit {commit}: {exc}")
+  return hashlib.sha256(contents).hexdigest()
+
+
 def unique_file(root: Path, name: str) -> Path:
   matches = sorted(path for path in root.rglob(name) if path.is_file())
   if len(matches) != 1:
@@ -220,7 +228,7 @@ def validate_provenance(
     "features": ["std", "full", "parallel"],
   }.items():
     require_equal(provenance.get(key), expected, f"{suffix} provenance {key}")
-  require_equal(provenance.get("ct_manifest_sha256"), sha256_file(root / "ct.toml"), f"{suffix} ct.toml hash")
+  require_equal(provenance.get("ct_manifest_sha256"), sha256_git_file(root, commit, "ct.toml"), f"{suffix} ct.toml hash")
   tools = provenance.get("tools", {})
   for tool in ("python", "cargo", "rustc", "llvm_objdump", "llvm_nm", "llvm_size"):
     if not isinstance(tools.get(tool), str) or not tools[tool]:
@@ -240,10 +248,8 @@ def validate_provenance(
   if len(actual_lock_paths) != len(set(actual_lock_paths)) or set(actual_lock_paths) != expected_lock_paths:
     fail(f"{suffix} provenance component lockfile set is incomplete or duplicated")
   for record in component_locks:
-    path = root / str(record.get("path", ""))
-    if not path.is_file():
-      fail(f"{suffix} provenance references missing component lockfile {record.get('path')!r}")
-    require_equal(record.get("sha256"), sha256_file(path), f"{suffix} component lockfile {record.get('path')}")
+    path = str(record.get("path", ""))
+    require_equal(record.get("sha256"), sha256_git_file(root, commit, path), f"{suffix} component lockfile {path}")
 
 
 def validate_indexes(
