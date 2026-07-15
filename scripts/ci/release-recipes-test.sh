@@ -11,12 +11,14 @@ grep -Fq "cargo rail release check rscrypto --extended" <<<"$prepare_recipe"
 grep -Fq "RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --yes --skip-publish --skip-tag" \
   <<<"$prepare_recipe"
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
+grep -Fq 'scripts/ci/release-ci-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
 
+ci_line=$(grep -nF 'scripts/ci/release-ci-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 evidence_line=$(grep -nF 'scripts/ci/release-evidence-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 finalize_line=$(grep -nF 'cargo rail release finalize' <<<"$tag_recipe" | cut -d: -f1)
-if (( evidence_line >= finalize_line )); then
-  echo "release-tag must validate releasable evidence before creating the tag" >&2
+if (( ci_line >= evidence_line || evidence_line >= finalize_line )); then
+  echo "release-tag must validate exact-commit CI and evidence before creating the tag" >&2
   exit 1
 fi
 

@@ -25,6 +25,8 @@ its caller.
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
+| `ci/release-ci-check.sh`       | `just release-tag`, `release.yaml`, `ci/release-ci-check-test.sh` |
+| `ci/release-ci-check-test.sh`  | `just check-actions` |
 | `ci/release-recipes-test.sh`   | `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/upgrade-actions-test.sh`   | `just check-actions` |

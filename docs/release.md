@@ -67,7 +67,7 @@ just release-status
 just release-check
 ```
 
-Pull-request CI uses cargo-rail-action v5 with cargo-rail 0.17.0. The action's
+Pull-request CI uses cargo-rail-action v5 with cargo-rail 0.17.3. The action's
 surface outputs decide whether the single-crate CI suite is required, and its
 resolved base ref feeds `cargo rail change check --required`. Execution scope
 comes from the planner contract; workflows and scripts must not reconstruct it
@@ -114,13 +114,14 @@ just release-tag
 ```
 
 The `release-tag` recipe reruns strict configuration and Cargo-graph validation,
-refuses to tag without complete CT and RSA evidence from either the exact
-candidate or a proven release-only ancestor, then uses `cargo rail release
-finalize` to validate the materialized release, create the signed tag, and push
-it. It does not rerun `cargo rail release check`: that command validates pending
-release intent and correctly fails after `release-prepare` consumes the change
-files. Finalization must not publish to crates.io; the `--skip-publish` flag is
-part of the release contract.
+requires successful push CI and Cargo Graph Assurance for the exact candidate,
+and refuses to tag without complete CT and RSA evidence from either that commit
+or a proven release-only ancestor. It then uses `cargo rail release finalize`
+to validate the materialized release, create the signed tag, and push it. It
+does not rerun `cargo rail release check`: that command validates pending release
+intent and correctly fails after `release-prepare` consumes the change files.
+Finalization must not publish to crates.io; the `--skip-publish` flag is part of
+the release contract.
 
 ## CI Release Gate
 
@@ -132,7 +133,7 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 3. Requires the tag version, `Cargo.toml` version, and `CHANGELOG.md` heading
    to match.
 4. Validates and sync-checks `.config/rail.toml`, then proves the unified Cargo
-   graph is clean with cargo-rail 0.17.0.
+   graph is clean with cargo-rail 0.17.3.
 5. Runs `cargo deny check all`, `cargo audit`, and the single hard SemVer check
    against the finalized release version. Before tagging, cargo-rail's automatic
    release plan uses compatibility analysis to select the required version bump;

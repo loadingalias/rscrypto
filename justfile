@@ -221,6 +221,7 @@ release-prepare:
 
 release-tag:
     just check-unify
+    scripts/ci/release-ci-check.sh --commit "$(git rev-parse HEAD)"
     scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"
     cargo rail release finalize rscrypto --yes --skip-publish
 
@@ -244,6 +245,7 @@ check-actions:
     @scripts/ci/check-ci-ownership-test.sh
     @scripts/ci/emit-manual-matrix-test.sh
     @scripts/ci/pre-push-test.sh
+    @scripts/ci/release-ci-check-test.sh
     @scripts/ci/release-evidence-check-test.sh
     @scripts/ci/release-recipes-test.sh
     @actionlint

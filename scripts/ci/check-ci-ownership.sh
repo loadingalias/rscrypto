@@ -28,6 +28,7 @@ EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
+RELEASE_CI="$ROOT/scripts/ci/release-ci-check.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
 DEPENDABOT="$ROOT/.github/dependabot.yaml"
 
@@ -83,6 +84,7 @@ require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
 require_file "$RELEASE_PREFLIGHT"
+require_file "$RELEASE_CI"
 require_file "$RELEASE_EVIDENCE"
 require_file "$DEPENDABOT"
 
@@ -136,7 +138,9 @@ fi
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
   fail "tag preflight must consume exact-commit CI graph assurance instead of repeating it"
 fi
-grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE" \
+grep -Fq 'scripts/ci/release-ci-check.sh --commit "$GITHUB_SHA" --wait' "$RELEASE" \
+  || fail "release CI Gate must use the shared exact-commit checker"
+grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE_CI" \
   || fail "release CI Gate must verify exact-commit Cargo Graph Assurance"
 [[ $(yq eval '.concurrency.group' "$RSA") == 'rsa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' ]] \
   || fail "reusable RSA workflow concurrency must not collide with its caller"

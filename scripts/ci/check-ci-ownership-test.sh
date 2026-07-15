@@ -69,9 +69,15 @@ expect_failure "$duplicate_release_graph" "duplicate release Cargo graph assuran
 missing_release_graph_gate="$TMP_ROOT/missing-release-graph-gate"
 make_fixture "$missing_release_graph_gate"
 sed -i.bak '/CI Suite \/ Cargo Graph Assurance \/ run/d' \
-  "$missing_release_graph_gate/.github/workflows/release.yaml"
-rm -f "$missing_release_graph_gate/.github/workflows/release.yaml.bak"
+  "$missing_release_graph_gate/scripts/ci/release-ci-check.sh"
+rm -f "$missing_release_graph_gate/scripts/ci/release-ci-check.sh.bak"
 expect_failure "$missing_release_graph_gate" "missing release Cargo graph assurance gate"
+
+missing_release_ci_gate="$TMP_ROOT/missing-release-ci-gate"
+make_fixture "$missing_release_ci_gate"
+sed -i.bak '/release-ci-check\.sh/d' "$missing_release_ci_gate/.github/workflows/release.yaml"
+rm -f "$missing_release_ci_gate/.github/workflows/release.yaml.bak"
+expect_failure "$missing_release_ci_gate" "missing shared exact-commit release CI gate"
 
 colliding_rsa_concurrency="$TMP_ROOT/colliding-rsa-concurrency"
 make_fixture "$colliding_rsa_concurrency"
