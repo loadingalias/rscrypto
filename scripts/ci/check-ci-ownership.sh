@@ -143,7 +143,7 @@ grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE" \
 [[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == "true" ]] \
   || fail "Weekly must preserve raw CT artifacts for exact-commit release promotion"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE" \
-  || fail "release must require exact-commit Weekly CT and RSA evidence"
+  || fail "release must require exact or release-equivalent Weekly CT and RSA evidence"
 grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}' "$RELEASE" \
   || fail "release must consume CT artifacts from the validated Weekly run"
 if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then

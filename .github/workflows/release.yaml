@@ -129,7 +129,14 @@ jobs:
         id: ct_evidence
         env:
           CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-        run: scripts/ci/package-release-ct-evidence.sh --version "$CRATE_VERSION" --commit "$GITHUB_SHA"
+          EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
+          EVIDENCE_VERSION: ${{ needs.evidence-gate.outputs.weekly_version }}
+        run: |
+          scripts/ci/package-release-ct-evidence.sh \
+            --version "$CRATE_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --evidence-version "$EVIDENCE_VERSION" \
+            --evidence-commit "$EVIDENCE_COMMIT"
 
       - name: Attest CT evidence provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
@@ -225,6 +232,9 @@ jobs:
           CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
           CT_BUNDLE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
           CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
+          CT_EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
+          CT_EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
+          CT_EVIDENCE_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
         run: |
           set -euo pipefail
           notes_file="$(mktemp)"
@@ -236,6 +246,8 @@ jobs:
 
           Constant-time evidence bundle: \`${CT_BUNDLE_NAME}\`
           SHA-256: \`${CT_BUNDLE_SHA256}\`
+          Evidence commit: \`${CT_EVIDENCE_COMMIT}\` (\`${CT_EVIDENCE_MODE}\`)
+          Evidence run: ${CT_EVIDENCE_RUN}
 
           Verify provenance:
 
@@ -267,14 +279,17 @@ jobs:
     outputs:
       weekly_run_id: ${{ steps.evidence.outputs.weekly_run_id }}
       weekly_run_url: ${{ steps.evidence.outputs.weekly_run_url }}
+      weekly_commit: ${{ steps.evidence.outputs.weekly_commit }}
+      weekly_version: ${{ steps.evidence.outputs.weekly_version }}
+      weekly_evidence_mode: ${{ steps.evidence.outputs.weekly_evidence_mode }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact-commit CT and RSA evidence
+      - name: Verify CT and RSA release evidence
         id: evidence
         env:
           GH_TOKEN: ${{ github.token }}

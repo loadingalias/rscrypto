@@ -16,7 +16,7 @@ grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"'
 evidence_line=$(grep -nF 'scripts/ci/release-evidence-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 finalize_line=$(grep -nF 'cargo rail release finalize' <<<"$tag_recipe" | cut -d: -f1)
 if (( evidence_line >= finalize_line )); then
-  echo "release-tag must validate exact-commit evidence before creating the tag" >&2
+  echo "release-tag must validate releasable evidence before creating the tag" >&2
   exit 1
 fi
 

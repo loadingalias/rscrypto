@@ -401,6 +401,8 @@ def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--version", required=True)
   parser.add_argument("--commit", required=True)
+  parser.add_argument("--evidence-version")
+  parser.add_argument("--evidence-commit")
   parser.add_argument("--input", required=True, type=Path)
   parser.add_argument("--metadata-out", required=True, type=Path)
   args = parser.parse_args()
@@ -409,6 +411,12 @@ def main() -> int:
     fail("--version must be an unprefixed SemVer version")
   if re.fullmatch(r"[0-9a-f]{40}", args.commit) is None:
     fail("--commit must be a full lowercase Git commit")
+  evidence_version = args.evidence_version or args.version
+  evidence_commit = args.evidence_commit or args.commit
+  if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", evidence_version) is None:
+    fail("--evidence-version must be an unprefixed SemVer version")
+  if re.fullmatch(r"[0-9a-f]{40}", evidence_commit) is None:
+    fail("--evidence-commit must be a full lowercase Git commit")
   if not args.input.is_dir():
     fail(f"CT evidence artifact directory missing: {args.input}")
 
@@ -430,8 +438,14 @@ def main() -> int:
     "crate": "rscrypto",
     "crate_version": args.version,
     "git_commit": args.commit,
+    "evidence_crate_version": evidence_version,
+    "evidence_git_commit": evidence_commit,
+    "evidence_mode": "exact_commit" if evidence_commit == args.commit else "release_only_delta",
     "profile": "release",
-    "lanes": [validate_lane(args.input, suffix, target, args.version, args.commit, root, ct) for suffix, target in lanes.items()],
+    "lanes": [
+      validate_lane(args.input, suffix, target, evidence_version, evidence_commit, root, ct)
+      for suffix, target in lanes.items()
+    ],
   }
   args.metadata_out.parent.mkdir(parents=True, exist_ok=True)
   args.metadata_out.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
