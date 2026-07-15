@@ -6,6 +6,16 @@
 
 
 
+
+## [0.7.5](https://github.com/loadingalias/rscrypto/compare/v0.7.3...v0.7.5) - 2026-07-15
+
+- Allowed successful CT and RSA evidence to be promoted across a mechanically verified release-tooling-only delta while preserving exact-commit evidence for every runtime-affecting change.
+
+### 📦 Other Changes
+
+- sync CT tool locks for release ([bef01a7](https://github.com/loadingalias/rscrypto/commit/bef01a7136def5dbdd9306719108a87bb4d7d9ea))
+
+
 ## [0.7.4](https://github.com/loadingalias/rscrypto/compare/v0.7.3...v0.7.4) - 2026-07-15
 
 - Fixed release CT evidence packaging under GitHub Actions by isolating matrix discovery from workflow step outputs.
