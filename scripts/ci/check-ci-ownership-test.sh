@@ -79,6 +79,12 @@ sed -i.bak '/release-ci-check\.sh/d' "$missing_release_ci_gate/.github/workflows
 rm -f "$missing_release_ci_gate/.github/workflows/release.yaml.bak"
 expect_failure "$missing_release_ci_gate" "missing shared exact-commit release CI gate"
 
+missing_release_ci_checkout="$TMP_ROOT/missing-release-ci-checkout"
+make_fixture "$missing_release_ci_checkout"
+yq eval 'del(.jobs."ci-gate".steps[] | select(.uses | test("^actions/checkout@")))' -i \
+  "$missing_release_ci_checkout/.github/workflows/release.yaml"
+expect_failure "$missing_release_ci_checkout" "release CI gate without checkout"
+
 colliding_rsa_concurrency="$TMP_ROOT/colliding-rsa-concurrency"
 make_fixture "$colliding_rsa_concurrency"
 sed -i.bak 's/group: rsa-/group: /' "$colliding_rsa_concurrency/.github/workflows/rsa.yaml"

@@ -138,6 +138,8 @@ fi
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
   fail "tag preflight must consume exact-commit CI graph assurance instead of repeating it"
 fi
+[[ $(yq eval '[.jobs."ci-gate".steps[] | select(.uses | test("^actions/checkout@[0-9a-f]{40}$"))] | length' "$RELEASE") -eq 1 ]] \
+  || fail "release CI Gate must check out the shared exact-commit checker"
 grep -Fq 'scripts/ci/release-ci-check.sh --commit "$GITHUB_SHA" --wait' "$RELEASE" \
   || fail "release CI Gate must use the shared exact-commit checker"
 grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE_CI" \
