@@ -36,4 +36,21 @@ for name in (
   assert name not in cases, f"{name} redundantly precomputes public keys without measuring them"
 PY
 
+github_output="$(mktemp)"
+trap 'rm -f "$github_output"' EXIT
+GITHUB_OUTPUT="$github_output" scripts/ct/python.sh - "$REPO_ROOT" <<'PY'
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts" / "ct"))
+
+from validate_release_evidence import expected_lanes
+
+lanes = expected_lanes(root, root / "scripts" / "ci" / "emit-manual-matrix.sh")
+assert len(lanes) == 9, "release validation must resolve every CT lane under GitHub Actions"
+assert pathlib.Path(os.environ["GITHUB_OUTPUT"]).stat().st_size == 0, "matrix lookup must not write step outputs"
+PY
+
 echo "Manual matrix CT regression tests passed"
