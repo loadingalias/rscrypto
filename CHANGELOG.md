@@ -7,6 +7,12 @@
 
 
 
+
+## [0.7.6](https://github.com/loadingalias/rscrypto/compare/v0.7.5...v0.7.6) - 2026-07-15
+
+- Bound promoted CT manifest and tool-lock hashes to the recorded evidence commit instead of the release commit's version-only lockfiles.
+
+
 ## [0.7.5](https://github.com/loadingalias/rscrypto/compare/v0.7.3...v0.7.5) - 2026-07-15
 
 - Allowed successful CT and RSA evidence to be promoted across a mechanically verified release-tooling-only delta while preserving exact-commit evidence for every runtime-affecting change.
