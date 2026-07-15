@@ -199,20 +199,10 @@ CASE_METADATA = {
     "left_class": "P-256 signing with fixed secret and projective and scalar blinding",
     "right_class": "P-256 signing with random secret and projective and scalar blinding",
   },
-  "ecdsa_p256_keypair_sign_fixed_vs_random_secret": {
-    "primitive": "signature.ecdsa_p256_sign",
-    "left_class": "P-256 keypair signing with fixed secret and projective and scalar blinding",
-    "right_class": "P-256 keypair signing with random secret and projective and scalar blinding",
-  },
   "ecdsa_p384_sign_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p384_sign",
     "left_class": "P-384 signing with fixed secret and projective and scalar blinding",
     "right_class": "P-384 signing with random secret and projective and scalar blinding",
-  },
-  "ecdsa_p384_keypair_sign_fixed_vs_random_secret": {
-    "primitive": "signature.ecdsa_p384_sign",
-    "left_class": "P-384 keypair signing with fixed secret and projective and scalar blinding",
-    "right_class": "P-384 keypair signing with random secret and projective and scalar blinding",
   },
   "ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret": {
     "primitive": "signature.ecdsa_p256_sign",

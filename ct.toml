@@ -646,31 +646,11 @@ samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
-name = "ecdsa_p256_keypair_sign_fixed_vs_random_secret"
-primitive = "signature.ecdsa_p256_sign"
-filter = "ecdsa_p256_keypair_sign_fixed_vs_random_secret"
-left_class = "fixed P-256 keypair signing secret with projective and scalar blinding"
-right_class = "random P-256 keypair signing secret with projective and scalar blinding"
-samples = 20000
-smoke_samples = 2000
-
-[[dudect_case]]
 name = "ecdsa_p384_sign_fixed_vs_random_secret"
 primitive = "signature.ecdsa_p384_sign"
 filter = "ecdsa_p384_sign_fixed_vs_random_secret"
 left_class = "fixed P-384 signing secret with projective and scalar blinding"
 right_class = "random P-384 signing secret with projective and scalar blinding"
-samples = 20000
-smoke_samples = 2000
-timeout_seconds = 7200
-timeout_reason = "Physical RISC-V needs a two-hour evidence budget for the full 20,000-sample P-384 gate."
-
-[[dudect_case]]
-name = "ecdsa_p384_keypair_sign_fixed_vs_random_secret"
-primitive = "signature.ecdsa_p384_sign"
-filter = "ecdsa_p384_keypair_sign_fixed_vs_random_secret"
-left_class = "fixed P-384 keypair signing secret with projective and scalar blinding"
-right_class = "random P-384 keypair signing secret with projective and scalar blinding"
 samples = 20000
 smoke_samples = 2000
 timeout_seconds = 7200

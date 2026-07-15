@@ -2,8 +2,8 @@ use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::R
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
   Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256Keypair,
-  EcdsaP256SecretKey, EcdsaP384Keypair, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
+  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256SecretKey,
+  EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
   HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512,
   MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024,
   MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile,
@@ -1090,35 +1090,6 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
   }
 }
 
-fn ecdsa_p256_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
-  // Keep public-key derivation outside the measurement pass so its cache and predictor state
-  // cannot be attributed to the forwarding signing entrypoint.
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let secret = if matches!(class, Class::Left) {
-      [0x42; EcdsaP256SecretKey::LENGTH]
-    } else {
-      valid_p256_secret(rng)
-    };
-    inputs.push((
-      class,
-      EcdsaP256Keypair::from_secret_key(EcdsaP256SecretKey::from_bytes(secret).unwrap()),
-      rand_array::<64>(rng),
-    ));
-  }
-
-  for (class, keypair, blind) in inputs {
-    runner.run_one(class, || {
-      std::hint::black_box(
-        keypair
-          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
-          .unwrap()
-          .to_bytes(),
-      );
-    });
-  }
-}
-
 fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for class in balanced_classes(rng, samples()) {
@@ -1134,35 +1105,6 @@ fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
     let key = EcdsaP384SecretKey::from_bytes(secret).unwrap();
     runner.run_one(class, || {
       std::hint::black_box(key.try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind)).unwrap().to_bytes());
-    });
-  }
-}
-
-fn ecdsa_p384_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut BenchRng) {
-  // Keep public-key derivation outside the measurement pass so its cache and predictor state
-  // cannot be attributed to the forwarding signing entrypoint.
-  let mut inputs = Vec::with_capacity(samples());
-  for class in balanced_classes(rng, samples()) {
-    let secret = if matches!(class, Class::Left) {
-      [0x42; EcdsaP384SecretKey::LENGTH]
-    } else {
-      valid_p384_secret(rng)
-    };
-    inputs.push((
-      class,
-      EcdsaP384Keypair::from_secret_key(EcdsaP384SecretKey::from_bytes(secret).unwrap()),
-      rand_array::<96>(rng),
-    ));
-  }
-
-  for (class, keypair, blind) in inputs {
-    runner.run_one(class, || {
-      std::hint::black_box(
-        keypair
-          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
-          .unwrap()
-          .to_bytes(),
-      );
     });
   }
 }
@@ -2083,9 +2025,7 @@ ctbench_main_with_seeds!(
   (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
   (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
-  (ecdsa_p256_keypair_sign_fixed_vs_random_secret, Some(0x703235365f6b6579)),
   (ecdsa_p384_sign_fixed_vs_random_secret, Some(0x703338345f736967)),
-  (ecdsa_p384_keypair_sign_fixed_vs_random_secret, Some(0x703338345f6b6579)),
   (ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret, Some(0x703235366e6f6e63)),
   (ecdsa_p256_diag_reduce_wide_fixed_vs_random_input, Some(0x7032353672656475)),
   (ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret, Some(0x7032353662617365)),

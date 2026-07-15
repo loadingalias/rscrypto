@@ -24,14 +24,16 @@ import tomllib
 
 manifest = tomllib.loads(pathlib.Path(sys.argv[1]).read_text())
 cases = {case["name"]: case for case in manifest["dudect_case"]}
+p384_sign = cases["ecdsa_p384_sign_fixed_vs_random_secret"]
+assert p384_sign["samples"] == 20_000, "P-384 signing must retain the full evidence sample count"
+assert p384_sign.get("gate", "required") == "required", "P-384 signing must remain release-blocking"
+assert p384_sign["timeout_seconds"] == 7_200, "P-384 signing must fit physical RISC-V runtime"
+
 for name in (
-  "ecdsa_p384_sign_fixed_vs_random_secret",
+  "ecdsa_p256_keypair_sign_fixed_vs_random_secret",
   "ecdsa_p384_keypair_sign_fixed_vs_random_secret",
 ):
-  case = cases[name]
-  assert case["samples"] == 20_000, f"{name} must retain the full evidence sample count"
-  assert case.get("gate", "required") == "required", f"{name} must remain release-blocking"
-  assert case["timeout_seconds"] == 7_200, f"{name} must fit physical RISC-V runtime"
+  assert name not in cases, f"{name} redundantly precomputes public keys without measuring them"
 PY
 
 echo "Manual matrix CT regression tests passed"
