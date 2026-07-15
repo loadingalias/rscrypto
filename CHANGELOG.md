@@ -1,13 +1,11 @@
 # Changelog
 
-
-`0.6.3` and the `0.7.0` through `0.7.6` entries below record unpublished
+`0.6.3` and the `0.7.0` through `0.7.7` entries below record unpublished
 release candidates. `0.7.4` was prepared but never tagged.
 
 ## [0.7.8](https://github.com/loadingalias/rscrypto/compare/v0.7.7...v0.7.8) - 2026-07-15
 
 - Fixed tag-triggered publication by checking out the repository before the shared exact-commit CI gate runs.
-
 
 ## [0.7.7](https://github.com/loadingalias/rscrypto/compare/v0.7.6...v0.7.7) - 2026-07-15
 
