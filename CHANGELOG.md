@@ -1,8 +1,21 @@
 # Changelog
 
+
 `0.6.3` and the `0.7.0` through `0.7.6` entries below record unpublished
 release candidates. `0.7.4` was prepared but never tagged.
 
+
+
+## [0.7.7](https://github.com/loadingalias/rscrypto/compare/v0.7.6...v0.7.7) - 2026-07-15
+
+- Hardened release finalization so signed tags require successful exact-commit CI,
+  Cargo graph assurance, constant-time evidence, and RSA evidence. Adopted
+  cargo-rail 0.17.3 for recoverable release pushes and isolated fast-hash
+  allocation accounting from parallel test-harness threads.
+
+### 📦 Other Changes
+
+- isolate allocation checks from harness threads ([27eb73d](https://github.com/loadingalias/rscrypto/commit/27eb73db5bacae83c031b8e84ea1b49be876c109))
 
 
 ## [0.7.6](https://github.com/loadingalias/rscrypto/compare/v0.7.5...v0.7.6) - 2026-07-15
