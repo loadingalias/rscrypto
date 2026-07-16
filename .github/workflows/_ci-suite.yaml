@@ -20,11 +20,6 @@ on:
         required: false
         type: string
         default: local
-      include_riscv:
-        description: "Run the native RISC-V lane. Keep enabled for weekly/manual evidence; disable for release-blocking push CI."
-        required: false
-        type: boolean
-        default: true
       include_cargo_graph:
         description: "Run exhaustive compiler-backed cargo-rail unification assurance."
         required: false
@@ -177,29 +172,6 @@ jobs:
         sed -n '1,50p' /proc/cpuinfo
       run_script: |
         export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        bash scripts/ci/native-check.sh
-        bash scripts/test/test.sh --all
-
-  ci-riscv:
-    if: ${{ inputs.include_riscv }}
-    name: CI (RISE RISC-V riscv64)
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: ubuntu-24.04-riscv
-      timeout_minutes: 240
-      cache_key: ${{ inputs.cache_key_prefix }}-riscv64
-      tools_mode: none
-      toolchain_components: "clippy, rustfmt"
-      enable_magic_cache: false
-      enable_rust_cache: true
-      pre_script: |
-        uname -a
-        lscpu
-        sed -n '1,50p' /proc/cpuinfo
-      run_script: |
-        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
-        export RSCRYPTO_SKIP_DOCTESTS=1
         bash scripts/ci/native-check.sh
         bash scripts/test/test.sh --all
 

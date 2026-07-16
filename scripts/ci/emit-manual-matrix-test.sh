@@ -17,6 +17,23 @@ jq -e '
   and .[0].enable_rust_cache == true
 ' <<<"$matrix" >/dev/null
 
+ct_default="$({
+  cd "$REPO_ROOT"
+  GH_RUN_ID=1 CT_PLATFORMS=all scripts/ci/emit-manual-matrix.sh ct
+})"
+jq -e 'length == 8 and all(.platform != "rise-riscv")' <<<"$ct_default" >/dev/null
+
+bench_default="$({
+  cd "$REPO_ROOT"
+  GH_RUN_ID=1 BENCH_PLATFORMS=all scripts/ci/emit-manual-matrix.sh bench
+})"
+jq -e 'length == 8 and all(.platform != "rise-riscv")' <<<"$bench_default" >/dev/null
+
+if GH_RUN_ID=1 BENCH_PLATFORMS=riscv scripts/ci/emit-manual-matrix.sh bench >/dev/null 2>&1; then
+  echo "generic benchmark matrix accepted the RISC-V lane" >&2
+  exit 1
+fi
+
 scripts/ct/python.sh - "$REPO_ROOT/ct.toml" <<'PY'
 import pathlib
 import sys

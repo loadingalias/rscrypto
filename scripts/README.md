@@ -12,8 +12,8 @@ its caller.
 | `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
 | `check/zeroize-evidence.sh`    | `just check-zeroize-evidence`, `scripts/check/check-all.sh` |
 | `ci/ci-check.sh`               | `just ci-check`, `_ci-suite.yaml` (quality lane) |
-| `ci/native-check.sh`           | `_ci-suite.yaml` (native Linux/IBM/RISC-V lanes) |
-| `test/test.sh`                 | `just test`, `just test-all`, `_ci-suite.yaml` |
+| `ci/native-check.sh`           | `_ci-suite.yaml` (native Linux/IBM lanes), `riscv.yaml` |
+| `test/test.sh`                 | `just test`, `just test-all`, `_ci-suite.yaml`, `riscv.yaml` |
 | `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
 | `test/test-miri.sh`            | `just test-miri`, `weekly.yaml` |
 | `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
@@ -46,7 +46,7 @@ its caller.
 
 | Script | Callers |
 |--------|---------|
-| `ci/run-bench.sh`            | `scripts/bench/bench.sh`, `bench.yaml` |
+| `ci/run-bench.sh`            | `scripts/bench/bench.sh`, `bench.yaml`, `riscv.yaml` |
 | `bench/blake3-gap-gate.sh`   | `scripts/ci/run-bench.sh` |
 
 ## CI-only (not surfaced via `just`)
@@ -55,7 +55,7 @@ its caller.
 |--------|---------|
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
 | `ci/dependabot-smoke.sh`       | `ci.yaml` (Dependabot PR lane) |
-| `ci/emit-manual-matrix.sh`     | `bench.yaml` |
+| `ci/emit-manual-matrix.sh`     | `bench.yaml`, `ct.yaml` |
 | `ci/nostd-wasm-suite.sh`       | `ci/cross-targets.sh` |
 | `ci/cross-targets.sh`          | `_ci-suite.yaml` (consolidated cross-target lane) |
 

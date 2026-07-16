@@ -117,13 +117,21 @@ jobs:
         with:
           subject-path: ${{ steps.package.outputs.crate_path }}
 
-      - name: Download CT evidence
+      - name: Download non-RISC-V CT evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: ct-*
           path: ct-release-artifacts
           github-token: ${{ github.token }}
           run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}
+
+      - name: Download RISC-V CT evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: ct-rise-riscv
+          path: ct-release-artifacts/ct-rise-riscv
+          github-token: ${{ github.token }}
+          run-id: ${{ needs.evidence-gate.outputs.riscv_run_id }}
 
       - name: Package CT release evidence
         id: ct_evidence
@@ -234,7 +242,8 @@ jobs:
           CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
           CT_EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
           CT_EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
-          CT_EVIDENCE_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
+          CT_EVIDENCE_WEEKLY_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
+          CT_EVIDENCE_RISCV_RUN: ${{ needs.evidence-gate.outputs.riscv_run_url }}
         run: |
           set -euo pipefail
           notes_file="$(mktemp)"
@@ -247,7 +256,8 @@ jobs:
           Constant-time evidence bundle: \`${CT_BUNDLE_NAME}\`
           SHA-256: \`${CT_BUNDLE_SHA256}\`
           Evidence commit: \`${CT_EVIDENCE_COMMIT}\` (\`${CT_EVIDENCE_MODE}\`)
-          Evidence run: ${CT_EVIDENCE_RUN}
+          Weekly evidence run: ${CT_EVIDENCE_WEEKLY_RUN}
+          RISC-V evidence run: ${CT_EVIDENCE_RISCV_RUN}
 
           Verify provenance:
 
@@ -279,6 +289,8 @@ jobs:
     outputs:
       weekly_run_id: ${{ steps.evidence.outputs.weekly_run_id }}
       weekly_run_url: ${{ steps.evidence.outputs.weekly_run_url }}
+      riscv_run_id: ${{ steps.evidence.outputs.riscv_run_id }}
+      riscv_run_url: ${{ steps.evidence.outputs.riscv_run_url }}
       weekly_commit: ${{ steps.evidence.outputs.weekly_commit }}
       weekly_version: ${{ steps.evidence.outputs.weekly_version }}
       weekly_evidence_mode: ${{ steps.evidence.outputs.weekly_evidence_mode }}

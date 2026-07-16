@@ -87,7 +87,6 @@ jobs:
       cache_key_prefix: commit
       supply_chain_mode: light
       test_mode: commit
-      include_riscv: false
       include_cargo_graph: ${{ needs.rail-plan.outputs.cargo_graph == 'true' }}
 
   complete:

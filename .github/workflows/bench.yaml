@@ -9,7 +9,7 @@ on:
         type: string
         default: "all"
       platforms:
-        description: "RUNNERS (Empty = All). Options: zen4, spr, icl, zen5, g3, g4, s390x, power10, riscv."
+        description: "RUNNERS (Empty = All). Options: zen4, spr, icl, zen5, g3, g4, s390x, power10."
         required: false
         type: string
         default: "all"

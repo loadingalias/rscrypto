@@ -1,0 +1,168 @@
+name: RISC-V
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "LANES (Evidence = native + constant-time)"
+        required: true
+        type: choice
+        options:
+          - evidence
+          - native
+          - constant-time
+          - benchmark
+          - all
+        default: evidence
+      targets:
+        description: "BENCH PRIMITIVES/SELECTORS (Empty or all = all public primitive benches)"
+        required: false
+        type: string
+        default: "all"
+      filter:
+        description: "BENCH FILTERS (Optional)"
+        required: false
+        type: string
+      quick:
+        description: "QUICK BENCHMARK (Optional)"
+        required: false
+        type: boolean
+        default: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'native' || inputs.mode == 'all' }}
+    name: Native CI
+    concurrency:
+      group: riscv-native-${{ github.ref }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-riscv
+      timeout_minutes: 240
+      cache_key: weekly-riscv64
+      tools_mode: none
+      toolchain_components: "clippy, rustfmt"
+      enable_magic_cache: false
+      enable_rust_cache: true
+      pre_script: |
+        uname -a
+        lscpu
+        sed -n '1,50p' /proc/cpuinfo
+      run_script: |
+        export RSCRYPTO_TEST_MODE=weekly
+        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
+        export RSCRYPTO_SKIP_DOCTESTS=1
+        bash scripts/ci/native-check.sh
+        bash scripts/test/test.sh --all
+
+  ct:
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'constant-time' || inputs.mode == 'all' }}
+    name: Constant-Time Evidence (RISC-V)
+    concurrency:
+      group: riscv-ct-${{ github.ref }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/ct.yaml
+    with:
+      platforms: rise-riscv
+      dudect_timeout: "1800"
+      binsec_timeout: "900"
+      upload_raw_artifacts: true
+
+  benchmark:
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.mode == 'benchmark' || inputs.mode == 'all') }}
+    name: Benchmark
+    concurrency:
+      group: riscv-benchmark-${{ github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: ubuntu-24.04-riscv
+      timeout_minutes: 240
+      cache_key: bench-rise-riscv
+      tools_mode: ibm
+      toolchain_components: "clippy, rustfmt"
+      enable_magic_cache: false
+      enable_rust_cache: true
+      pre_script: |
+        echo "Bench host: rise-riscv (linux)"
+        uname -a
+        lscpu
+        sed -n '1,50p' /proc/cpuinfo
+      run_script: |
+        RUN_DATE="$(date -u +"%Y-%m-%d")"
+        RUN_TIME="$(date -u +"%H_%M_%S")"
+        RUN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+        BENCH_OUTPUT_DIR=benchmark-results \
+        BENCH_RESULTS_DIR=benchmark-results \
+        BENCH_RUN_DATE="$RUN_DATE" \
+        BENCH_RUN_TIME="$RUN_TIME" \
+        BENCH_RUN_OS=linux \
+        BENCH_RUN_ARCH=rise-riscv \
+        BENCH_RUN_COMMIT="$RUN_COMMIT" \
+        BENCH_RUN_MODE=ci \
+        BENCH_ONLY="${{ inputs.targets || 'all' }}" \
+        BENCH_FILTER="${{ inputs.filter }}" \
+        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
+        BENCH_ALLOW_FULL_HASHES_COMP=true \
+        BENCH_PLATFORM=rise-riscv \
+        scripts/ci/run-bench.sh
+      artifact_name: benchmark-rise-riscv
+      artifact_path: benchmark-results/
+
+  complete:
+    name: Complete (RISC-V)
+    needs: [native, ct, benchmark]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert selected lanes passed
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MODE: ${{ inputs.mode || 'evidence' }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+          CT_RESULT: ${{ needs.ct.result }}
+          BENCHMARK_RESULT: ${{ needs.benchmark.result }}
+        run: |
+          set -euo pipefail
+          required=(native ct)
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            case "$MODE" in
+              evidence) required=(native ct) ;;
+              native) required=(native) ;;
+              constant-time) required=(ct) ;;
+              benchmark) required=(benchmark) ;;
+              all) required=(native ct benchmark) ;;
+              *)
+                echo "Unknown RISC-V mode: $MODE" >&2
+                exit 2
+                ;;
+            esac
+          fi
+
+          failed=0
+          for lane in "${required[@]}"; do
+            case "$lane" in
+              native) result="$NATIVE_RESULT" ;;
+              ct) result="$CT_RESULT" ;;
+              benchmark) result="$BENCHMARK_RESULT" ;;
+            esac
+            if [[ "$result" == "success" ]]; then
+              echo "  OK: $lane"
+            else
+              echo "FAIL: $lane ($result)"
+              failed=1
+            fi
+          done
+          exit "$failed"

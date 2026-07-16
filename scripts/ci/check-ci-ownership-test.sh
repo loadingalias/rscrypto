@@ -97,11 +97,35 @@ sed -i.bak '/release-evidence-check\.sh/d' "$missing_release_evidence_gate/.gith
 rm -f "$missing_release_evidence_gate/.github/workflows/release.yaml.bak"
 expect_failure "$missing_release_evidence_gate" "missing exact-commit release evidence gate"
 
+missing_riscv_workflow="$TMP_ROOT/missing-riscv-workflow"
+make_fixture "$missing_riscv_workflow"
+rm "$missing_riscv_workflow/.github/workflows/riscv.yaml"
+expect_failure "$missing_riscv_workflow" "missing independent RISC-V workflow"
+
+missing_riscv_release_artifact="$TMP_ROOT/missing-riscv-release-artifact"
+make_fixture "$missing_riscv_release_artifact"
+sed -i.bak '/needs\.evidence-gate\.outputs\.riscv_run_id/d' \
+  "$missing_riscv_release_artifact/.github/workflows/release.yaml"
+rm -f "$missing_riscv_release_artifact/.github/workflows/release.yaml.bak"
+expect_failure "$missing_riscv_release_artifact" "release without validated RISC-V artifacts"
+
 compact_weekly_ct="$TMP_ROOT/compact-weekly-ct"
 make_fixture "$compact_weekly_ct"
 sed -i.bak 's/upload_raw_artifacts: true/upload_raw_artifacts: false/' "$compact_weekly_ct/.github/workflows/weekly.yaml"
 rm -f "$compact_weekly_ct/.github/workflows/weekly.yaml.bak"
 expect_failure "$compact_weekly_ct" "Weekly without raw release CT evidence"
+
+compact_riscv_ct="$TMP_ROOT/compact-riscv-ct"
+make_fixture "$compact_riscv_ct"
+sed -i.bak 's/upload_raw_artifacts: true/upload_raw_artifacts: false/' \
+  "$compact_riscv_ct/.github/workflows/riscv.yaml"
+rm -f "$compact_riscv_ct/.github/workflows/riscv.yaml.bak"
+expect_failure "$compact_riscv_ct" "RISC-V without raw release CT evidence"
+
+riscv_leaked_into_weekly="$TMP_ROOT/riscv-leaked-into-weekly"
+make_fixture "$riscv_leaked_into_weekly"
+printf '\n# riscv physical lane leaked back into Weekly\n' >>"$riscv_leaked_into_weekly/.github/workflows/weekly.yaml"
+expect_failure "$riscv_leaked_into_weekly" "RISC-V coupling in Weekly"
 
 broken_dependabot_grouping="$TMP_ROOT/broken-dependabot-grouping"
 make_fixture "$broken_dependabot_grouping"

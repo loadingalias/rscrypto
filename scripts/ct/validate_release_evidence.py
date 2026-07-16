@@ -56,7 +56,7 @@ def unique_file(root: Path, name: str) -> Path:
 def expected_lanes(root: Path, matrix_script: Path) -> dict[str, str]:
   env = dict(os.environ)
   env.pop("GITHUB_OUTPUT", None)
-  env.update({"GH_RUN_ID": "release-evidence-validation", "CT_PLATFORMS": "all"})
+  env.update({"GH_RUN_ID": "release-evidence-validation", "CT_PLATFORMS": "all,riscv"})
   try:
     output = subprocess.check_output([str(matrix_script), "ct"], cwd=root, env=env, text=True)
     matrix = json.loads(output)

@@ -96,20 +96,21 @@ keeps the release candidate reproducible without modifying a signed tag or
 hand-editing generated lockfiles.
 
 Wait for CI on the resulting `main` commit, then manually dispatch
-`weekly.yaml` on that exact commit. Weekly requires both the full CT matrix and
-the dedicated RSA workflow and retains the raw CT artifacts needed for the
+`weekly.yaml` and the `evidence` mode of `riscv.yaml` on that exact commit.
+Weekly owns the non-RISC-V CT matrix and dedicated RSA workflow; RISC-V owns
+its native and CT evidence. Both retain the raw CT artifacts needed for the
 release bundle. If runtime code, dependencies, features, build inputs, or test
-policy changes, both gates must pass again before tagging.
+policy changes, both evidence workflows must pass again before tagging.
 
-A release-tooling-only repair may promote the newest successful ancestor's
-Weekly evidence. The evidence checker permits only changelog, release/CT
-tooling, and root-package version changes. It parses and compares `Cargo.toml`
-and every CT lockfile after normalizing only the local `rscrypto` version, and
-rejects every other changed path. The evidence bundle records both the release
-commit and the promoted evidence commit. This exception does not apply to
-runtime, dependency, feature, build, or test changes.
+A release-tooling-only repair may promote the newest successful ancestor with
+paired Weekly and RISC-V evidence. The evidence checker permits only changelog,
+release/CT tooling, and root-package version changes. It parses and compares
+`Cargo.toml` and every CT lockfile after normalizing only the local `rscrypto`
+version, and rejects every other changed path. The evidence bundle records both
+the release commit and the promoted evidence commit. This exception does not
+apply to runtime, dependency, feature, build, or test changes.
 
-Once CI and the required Weekly evidence are green, finalize the release:
+Once CI and both evidence workflows are green, finalize the release:
 
 ```bash
 just release-tag
@@ -146,9 +147,10 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 8. Waits for the `CI` workflow on the same commit to pass.
 9. Verifies the transferred artifact's SHA-256, then attests it with GitHub
    build provenance.
-10. Requires successful Weekly CT and RSA evidence from the exact tag commit or
-    a mechanically proven release-only ancestor, then downloads that run's raw
-    CT artifacts. The tag workflow does not rerun either multi-hour suite.
+10. Requires successful Weekly CT/RSA evidence and RISC-V native/CT evidence
+    from the exact tag commit or the same mechanically proven release-only
+    ancestor, then downloads raw CT artifacts from both runs. The tag workflow
+    does not rerun either multi-hour suite.
 11. Validates the evidence commit's CT lane set, version, clean provenance,
     tool versions, timing coverage, BINSEC coverage, and raw artifact hashes.
     The bundle separately records the release commit and evidence commit.

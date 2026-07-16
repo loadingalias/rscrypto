@@ -13,29 +13,82 @@ cat >"$TMP_ROOT/bin/gh" <<'EOF'
 set -euo pipefail
 
 if [[ "$1 $2" == "run list" ]]; then
-  if [[ ${FAKE_GH_MODE:-success} == missing-run ]]; then
-    echo '[]'
-  else
-    cat <<JSON
+  case " $* " in
+    *" --workflow weekly.yaml "*)
+      if [[ ${FAKE_GH_MODE:-success} == missing-weekly ]]; then
+        echo '[]'
+      else
+        cat <<JSON
 [{"databaseId":4242,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4242","createdAt":"2026-07-14T00:00:00Z"}]
 JSON
-  fi
+      fi
+      ;;
+    *" --workflow riscv.yaml "*)
+      if [[ ${FAKE_GH_MODE:-success} == missing-riscv ]]; then
+        echo '[]'
+      else
+        cat <<JSON
+[
+  {"databaseId":4343,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4343","createdAt":"2026-07-14T00:00:00Z"},
+  {"databaseId":4344,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4344","createdAt":"2026-07-14T01:00:00Z"}
+]
+JSON
+      fi
+      ;;
+    *)
+      echo "unexpected run list workflow: $*" >&2
+      exit 2
+      ;;
+  esac
   exit 0
 fi
 
 if [[ "$1 $2" == "run view" ]]; then
-  rsa_conclusion=success
-  if [[ ${FAKE_GH_MODE:-success} == failed-rsa ]]; then
-    rsa_conclusion=failure
-  fi
-  cat <<JSON
+  case "$3" in
+    4242)
+      rsa_conclusion=success
+      if [[ ${FAKE_GH_MODE:-success} == failed-rsa ]]; then
+        rsa_conclusion=failure
+      fi
+      cat <<JSON
 {"jobs":[
-  {"name":"Constant-Time Evidence (weekly) / CT Full (RISE RISC-V riscv64) / run","conclusion":"success"},
   {"name":"Constant-Time Evidence (weekly) / Complete (CT)","conclusion":"success"},
   {"name":"RSA Evidence (weekly) / Complete (RSA)","conclusion":"${rsa_conclusion}"},
   {"name":"Complete (weekly)","conclusion":"success"}
 ]}
 JSON
+      ;;
+    4343)
+      native_conclusion=success
+      ct_conclusion=success
+      if [[ ${FAKE_GH_MODE:-success} == failed-riscv-native ]]; then
+        native_conclusion=failure
+      fi
+      if [[ ${FAKE_GH_MODE:-success} == failed-riscv-ct ]]; then
+        ct_conclusion=failure
+      fi
+      cat <<JSON
+{"jobs":[
+  {"name":"Native CI / run","conclusion":"${native_conclusion}"},
+  {"name":"Constant-Time Evidence (RISC-V) / CT Full (RISE RISC-V riscv64) / run","conclusion":"${ct_conclusion}"},
+  {"name":"Constant-Time Evidence (RISC-V) / Complete (CT)","conclusion":"${ct_conclusion}"},
+  {"name":"Complete (RISC-V)","conclusion":"${ct_conclusion}"}
+]}
+JSON
+      ;;
+    4344)
+      cat <<JSON
+{"jobs":[
+  {"name":"Benchmark / run","conclusion":"success"},
+  {"name":"Complete (RISC-V)","conclusion":"success"}
+]}
+JSON
+      ;;
+    *)
+      echo "unexpected run view id: $3" >&2
+      exit 2
+      ;;
+  esac
   exit 0
 fi
 
@@ -84,17 +137,34 @@ output="$TMP_ROOT/github-output"
 GITHUB_OUTPUT="$output" "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null
 grep -Fxq 'weekly_run_id=4242' "$output"
 grep -Fxq 'weekly_run_url=https://example.invalid/runs/4242' "$output"
+grep -Fxq 'riscv_run_id=4343' "$output"
+grep -Fxq 'riscv_run_url=https://example.invalid/runs/4343' "$output"
 grep -Fxq "weekly_commit=$evidence_sha" "$output"
 grep -Fxq 'weekly_version=0.7.3' "$output"
 grep -Fxq 'weekly_evidence_mode=exact_commit' "$output"
 
-if FAKE_GH_MODE=missing-run "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+if FAKE_GH_MODE=missing-weekly "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
   echo "release evidence check accepted a missing exact-commit Weekly run" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=missing-riscv "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted missing exact-commit RISC-V evidence" >&2
   exit 1
 fi
 
 if FAKE_GH_MODE=failed-rsa "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
   echo "release evidence check accepted failed RSA evidence" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=failed-riscv-native "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted failed RISC-V native evidence" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=failed-riscv-ct "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted failed RISC-V CT evidence" >&2
   exit 1
 fi
 

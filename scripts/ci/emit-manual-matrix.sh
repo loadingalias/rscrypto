@@ -85,9 +85,6 @@ append_row_for_platform() {
     ibm-power10)
       ROWS+=("{\"platform\":\"ibm-power10\",\"os\":\"linux\",\"display_name\":\"IBM POWER10 ppc64le\",\"artifact_suffix\":\"ibm-power10\",\"timeout_minutes\":${IBM_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-ppc64le-p10\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\"}")
       ;;
-    rise-riscv)
-      ROWS+=("{\"platform\":\"rise-riscv\",\"os\":\"linux\",\"display_name\":\"RISE RISC-V riscv64\",\"artifact_suffix\":\"rise-riscv\",\"timeout_minutes\":${RISCV_TIMEOUT_MINUTES},\"runner\":\"ubuntu-24.04-riscv\",\"tools_mode\":\"ibm\",\"toolchain_components\":\"clippy, rustfmt\"}")
-      ;;
     *)
       echo "error: unsupported bench platform '$platform'" >&2
       exit 2
@@ -144,7 +141,6 @@ COMPONENTS_STD="clippy, rustfmt, rust-src"
 COMPONENTS_CT="clippy, rustfmt, rust-src, llvm-tools-preview"
 RUNSON_TIMEOUT_MINUTES=180
 IBM_TIMEOUT_MINUTES=240
-RISCV_TIMEOUT_MINUTES=240
 BENCH_PLATFORMS_ALL=(
   "amd-zen4"
   "intel-spr"
@@ -154,7 +150,6 @@ BENCH_PLATFORMS_ALL=(
   "graviton4"
   "ibm-s390x"
   "ibm-power10"
-  "rise-riscv"
 )
 CT_PLATFORMS_ALL=(
   "amd-zen4"
@@ -167,6 +162,16 @@ CT_PLATFORMS_ALL=(
   "ibm-power10"
   "rise-riscv"
 )
+CT_PLATFORMS_DEFAULT=(
+  "amd-zen4"
+  "intel-spr"
+  "intel-icl"
+  "amd-zen5"
+  "graviton3"
+  "graviton4"
+  "ibm-s390x"
+  "ibm-power10"
+)
 CT_RUNSON_TIMEOUT_MINUTES=360
 CT_IBM_TIMEOUT_MINUTES=420
 CT_RISCV_TIMEOUT_MINUTES=480
@@ -174,9 +179,13 @@ CT_RISCV_TIMEOUT_MINUTES=480
 if [[ "$MODE" == "ct" ]]; then
   PLATFORMS_INPUT="${CT_PLATFORMS:-}"
   ALL_PLATFORMS=("${CT_PLATFORMS_ALL[@]}")
+  DEFAULT_PLATFORMS=("${CT_PLATFORMS_DEFAULT[@]}")
+  PLATFORM_ALIASES="zen4 spr icl zen5 g3 g4 s390x power10 riscv"
 else
   PLATFORMS_INPUT="${BENCH_PLATFORMS:-}"
   ALL_PLATFORMS=("${BENCH_PLATFORMS_ALL[@]}")
+  DEFAULT_PLATFORMS=("${BENCH_PLATFORMS_ALL[@]}")
+  PLATFORM_ALIASES="zen4 spr icl zen5 g3 g4 s390x power10"
 fi
 PLATFORMS_INPUT="$(echo "$PLATFORMS_INPUT" | xargs)"
 
@@ -191,12 +200,12 @@ for token in "${platform_tokens[@]:+${platform_tokens[@]}}"; do
   normalized="$(normalize_platform "$token")"
   if [[ -z "$normalized" ]]; then
     echo "error: unknown $MODE platform '$token'" >&2
-    echo "supported: ${ALL_PLATFORMS[*]}, aliases: zen4 spr icl zen5 g3 g4 s390x power10 riscv, or all" >&2
+    echo "supported: ${ALL_PLATFORMS[*]}, aliases: $PLATFORM_ALIASES, or all" >&2
     exit 2
   fi
 
   if [[ "$normalized" == "all" ]]; then
-    for platform in "${ALL_PLATFORMS[@]}"; do
+    for platform in "${DEFAULT_PLATFORMS[@]}"; do
       append_unique "$platform" SELECTED_PLATFORMS
     done
     continue
@@ -204,7 +213,7 @@ for token in "${platform_tokens[@]:+${platform_tokens[@]}}"; do
 
   if ! platform_is_supported "$normalized"; then
     echo "error: unsupported $MODE platform '$token' (normalized: $normalized)" >&2
-    echo "supported: ${ALL_PLATFORMS[*]}, aliases: zen4 spr icl zen5 g3 g4 s390x power10 riscv, or all" >&2
+    echo "supported: ${ALL_PLATFORMS[*]}, aliases: $PLATFORM_ALIASES, or all" >&2
     exit 2
   fi
 

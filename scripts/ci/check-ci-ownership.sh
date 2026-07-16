@@ -19,6 +19,7 @@ fi
 WORKFLOWS="$ROOT/.github/workflows"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
+RISCV="$WORKFLOWS/riscv.yaml"
 RELEASE="$WORKFLOWS/release.yaml"
 RSA="$WORKFLOWS/rsa.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
@@ -75,6 +76,7 @@ require_unique_feature_sets() {
 
 require_file "$SUITE"
 require_file "$WEEKLY"
+require_file "$RISCV"
 require_file "$RELEASE"
 require_file "$RSA"
 require_file "$MANIFEST"
@@ -131,8 +133,25 @@ fi
 
 [[ $(count_matches 'scripts/ci/cross-targets\.sh' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one cross-target owner"
-[[ $(count_matches 'scripts/ci/native-check\.sh' "$SUITE") -eq 4 ]] \
-  || fail "native validation must be owned by Linux, IBM Z, POWER10, and RISC-V job definitions"
+[[ $(count_matches 'scripts/ci/native-check\.sh' "$SUITE") -eq 3 ]] \
+  || fail "the reusable suite must own only Linux, IBM Z, and POWER10 native validation"
+[[ $(count_matches 'scripts/ci/native-check\.sh' "$RISCV") -eq 1 ]] \
+  || fail "the RISC-V workflow must own exactly one native validation lane"
+if grep -Ein 'riscv' "$SUITE" >/dev/null; then
+  fail "the reusable CI suite must not own physical RISC-V work"
+fi
+if grep -Ein 'riscv' "$WEEKLY" >/dev/null; then
+  fail "Weekly must not own physical RISC-V work"
+fi
+if grep -Ein 'riscv' "$WORKFLOWS/bench.yaml" >/dev/null; then
+  fail "the generic benchmark workflow must not expose RISC-V"
+fi
+[[ $(yq eval '.jobs.native.with.runner' "$RISCV") == "ubuntu-24.04-riscv" ]] \
+  || fail "the RISC-V workflow must own the RISE native runner"
+[[ $(yq eval '.jobs.ct.with.platforms' "$RISCV") == "rise-riscv" ]] \
+  || fail "the RISC-V workflow must select only the RISE CT lane"
+[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$RISCV") == "true" ]] \
+  || fail "the RISC-V workflow must retain raw CT artifacts for release promotion"
 [[ $(count_matches 'cargo rail unify --check' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one Cargo graph assurance owner"
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
@@ -149,9 +168,11 @@ grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE_CI" \
 [[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == "true" ]] \
   || fail "Weekly must preserve raw CT artifacts for exact-commit release promotion"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE" \
-  || fail "release must require exact or release-equivalent Weekly CT and RSA evidence"
+  || fail "release must require paired Weekly and RISC-V evidence from one valid commit"
 grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}' "$RELEASE" \
-  || fail "release must consume CT artifacts from the validated Weekly run"
+  || fail "release must consume non-RISC-V CT artifacts from the validated Weekly run"
+grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.riscv_run_id }}' "$RELEASE" \
+  || fail "release must consume RISC-V CT artifacts from the validated RISC-V run"
 if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then
   fail "tag workflow must promote exact-commit evidence instead of rerunning CT or RSA"
 fi
