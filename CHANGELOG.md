@@ -1,184 +1,47 @@
 # Changelog
 
-`0.6.3` and the `0.7.0` through `0.7.7` entries below record unpublished
-release candidates. `0.7.4` was prepared but never tagged.
+## [0.7.8](https://github.com/loadingalias/rscrypto/compare/v0.6.4...v0.7.8) - 2026-07-15
 
-## [0.7.8](https://github.com/loadingalias/rscrypto/compare/v0.7.7...v0.7.8) - 2026-07-15
+### Security and compatibility
 
-- Fixed tag-triggered publication by checking out the repository before the shared exact-commit CI gate runs.
-
-## [0.7.7](https://github.com/loadingalias/rscrypto/compare/v0.7.6...v0.7.7) - 2026-07-15
-
-- Hardened release finalization so signed tags require successful exact-commit CI,
-  Cargo graph assurance, constant-time evidence, and RSA evidence. Adopted
-  cargo-rail 0.17.3 for recoverable release pushes and isolated fast-hash
-  allocation accounting from parallel test-harness threads.
-
-## [0.7.6](https://github.com/loadingalias/rscrypto/compare/v0.7.5...v0.7.6) - 2026-07-15
-
-- Bound promoted CT manifest and tool-lock hashes to the recorded evidence commit instead of the release commit's version-only lockfiles.
-
-
-## [0.7.5](https://github.com/loadingalias/rscrypto/compare/v0.7.3...v0.7.5) - 2026-07-15
-
-- Allowed successful CT and RSA evidence to be promoted across a mechanically verified release-tooling-only delta while preserving exact-commit evidence for every runtime-affecting change.
-
-### 📦 Other Changes
-
-- sync CT tool locks for release ([bef01a7](https://github.com/loadingalias/rscrypto/commit/bef01a7136def5dbdd9306719108a87bb4d7d9ea))
-
-
-## [0.7.4](https://github.com/loadingalias/rscrypto/compare/v0.7.3...v0.7.4) - 2026-07-15
-
-- Fixed release CT evidence packaging under GitHub Actions by isolating matrix discovery from workflow step outputs.
-
-
-## [0.7.3](https://github.com/loadingalias/rscrypto/compare/v0.7.2...v0.7.3) - 2026-07-14
-
-- Hardened portable P-256 and P-384 caller-blinded fixed-base multiplication so
-  projective randomization is established before secret-selected points enter
-  field arithmetic. P-256 also randomizes the scalar representative with a group
-  order multiple. Corrected the timing harness's random-secret distribution and
-  extended RISC-V assembly screening to conditional branches.
-  
-  Made release tagging require successful CT and RSA evidence from the exact
-  candidate commit. Release publication now promotes that Weekly run's raw CT
-  artifacts instead of launching duplicate multi-hour evidence workflows, and RSA
-  workflow concurrency can no longer cancel its reusable-workflow caller.
-  
-  Removed redundant ECDSA keypair timing cases that spent their entire RISC-V
-  evidence budgets precomputing public keys without collecting samples. The
-  required 20,000-sample P-256/P-384 signing cases and constant-time thresholds
-  remain unchanged.
-
-### 📦 Other Changes
-
-- remove zero-sample ECDSA keypair timing cases ([31a9894](https://github.com/loadingalias/rscrypto/commit/31a9894355f2f7d09535cea47bdd4c568035f2dc))
-- sync CT tool locks for release ([fbf34a2](https://github.com/loadingalias/rscrypto/commit/fbf34a2a968a383230601714dbdf72cffa603476))
-- blind portable ECDSA before secret-selected field arithmetic ([60f4dc2](https://github.com/loadingalias/rscrypto/commit/60f4dc20313587ead5bf75575522188b04f13945))
-
-
-## [0.7.2](https://github.com/loadingalias/rscrypto/compare/v0.7.1...v0.7.2) - 2026-07-14
-
-- Stopped installing the unused BINSEC toolchain on physical RISC-V constant-time
-  lanes and gave the full 20,000-sample P-384 evidence cases enough time to
-  complete without weakening their release gate.
-
-
-## [0.7.1](https://github.com/loadingalias/rscrypto/compare/v0.7.0...v0.7.1) - 2026-07-14
-
-- Made release preflight consume the exact-commit Cargo graph assurance gate instead
-  of repeating the exhaustive target and feature sweep. Duplicate runs for the same
-  release tag now collapse immediately while signed-tag, audit, SemVer, constant-time,
-  RSA, package-integrity, provenance, and approval gates remain blocking.
-
-
-## [0.7.0](https://github.com/loadingalias/rscrypto/compare/v0.6.4...v0.7.0) - 2026-07-13
-
-- Consolidated CI validation into explicit quality, feature-contract, native,
-  cross-target, and supply-chain owners. The complete compile and executable
-  feature matrices remain blocking, MUSL targets are now passed explicitly, and
-  IBM Z, POWER10, and RISC-V runners retain native all-features correctness and
-  backend-equivalence coverage without repeating architecture-independent work.
-  
-  Updated repository automation to cargo-rail 0.17.0 and cargo-rail-action v5.
-  Configuration sync now records the public open-world consumer boundary, CI
-  checks the compiler-backed unified Cargo graph, and pull requests require
-  change-file coverage from the planner's resolved base reference.
-  
-  Made consolidated CI lanes self-contained by removing the ownership checker's
-  ripgrep dependency and pinning the MUSL cross-target lane to the same verified
-  Zig build used locally.
-  
-  Separated fast Quality checks from exhaustive compiler-backed Cargo graph
-  assurance. The dedicated blocking lane receives a realistic timeout, retained
-  proof artifacts, an identity-validated compiler-evidence cache, planner-based
-  PR selection, and unconditional main, Weekly, and release execution.
-  
-  Consolidated SemVer ownership under cargo-rail's version-aware release planning
-  and one hard check of the finalized tag. Release preflight now builds and
-  validates the crate once; the publish job verifies and attests that transferred
-  artifact instead of repeating the complete preflight.
-
-- Removed variable-latency scalar multiplication from ECDSA P-256/P-384 secret
-  arithmetic on s390x and RISC-V while preserving signing support, and restored
-  the affected native timing cases as required release gates.
-  
-  Made constant-time assembly triage fail closed on target-sensitive arithmetic,
-  grouped every reachable finding with exact review-bound waivers, and bound
-  release evidence to the complete lane set, source commit, toolchain, target
-  configuration, generated artifacts, timing results, and BINSEC results. Weekly
-  and release publication now both require the dedicated RSA evidence workflow.
-  Cross-platform checks now keep host-only feature-matrix flags out of target
-  crate selection and keep target-only diagnostics plus CPUID's MSRV safety
-  transition lint-clean across the full matrix.
-  
-  Corrected the public constant-time boundary: `ct.toml` records intent, while a
-  claim exists only for configurations with passing evidence in the matching
-  attested release bundle.
-  
-  Removed secret-fed overflow panic branches from the fixed-work ECDSA limb
-  multiply-accumulate used on s390x and RISC-V. Blinded signing now additively
-  masks the private scalar during `r·d`, with direct full-width carry equivalence
-  tests and regenerated target evidence.
-
-- Replaced heap-buffered RapidHash and XXH3 `Hasher` implementations with fixed-size,
-  allocation-free state. Added the collection-oriented `RapidHasher`, concatenating
-  `RapidStreamHasher`, deterministic `RapidBuildHasher`, and XXH3-128 streaming.
-  Deterministic builder documentation now restricts it to trusted keys.
-  
-  Accelerated long XXH3 streams with AVX2, AVX-512, NEON, VSX, and z/Vector, and
-  added seeded partition fuzzing, RapidHash collection properties, backend
-  equivalence tests, and explicit allocation coverage.
-
-- Closed native API gaps with HKDF-SHA512, HMAC-SHA3, KMAC128, standalone
-  Poly1305, `getrandom` key-generation helpers, AEAD `*_to_vec` helpers, generic
-  signing/verification traits, and dedicated AEAD, signature, RSA, and ML-KEM
-  examples.
-  
-  Hardened release and security automation with versioned constant-time evidence
-  bundles, release-path audit and semver checks, weekly ASan fuzz-corpus replay,
-  OpenSSF Scorecard, CODEOWNERS, CONTRIBUTING guidance, and committed minimized
-  fuzz seeds.
-  
-  Pruned duplicated public Markdown, made `THREAT_MODEL.md` the canonical audit
-  entry point, folded advisory readiness into `SECURITY.md`, and kept
-  maintainer-only release and benchmark evidence out of README onboarding.
-
+- Hardened P-256 and P-384 signing so secret arithmetic remains fixed-work on
+  s390x and RISC-V and caller blinding is established before secret-selected
+  points enter field arithmetic. Extended release evidence to cover the affected
+  native timing and assembly paths.
 - Private RSA DER exports now return `SecretVec`, which wipes its allocation on
   drop and requires `into_unprotected_vec()` for ordinary extraction. Secret
-  parsing, Serde deserialization, and generation use zeroizing temporary guards.
-  Secret keys, shared secrets, keypairs, and AEAD cipher contexts no longer
-  implement `Clone`; use `duplicate_secret()` where an additional owned secret is
-  required.
+  keys, shared secrets, keypairs, and AEAD cipher contexts no longer implement
+  `Clone`; use `duplicate_secret()` when another owned secret is required.
+- Constant-time claims are now limited to configurations with passing evidence
+  in the matching attested release bundle; `ct.toml` records intent rather than
+  proof by itself.
 
-### 📦 Other Changes
+### APIs and performance
 
-- make RapidHash and XXH3 streaming allocation-free ([822c865](https://github.com/loadingalias/rscrypto/commit/822c865ad909e51d0ab64338c5513db15c24170a))
-- isolate ECDSA keypair timing setup ([c8cc2d2](https://github.com/loadingalias/rscrypto/commit/c8cc2d20e740aff9a45bc4bb11e1b5fad7c697e7))
-- blind fixed-work ECDSA scalar products ([0fb9929](https://github.com/loadingalias/rscrypto/commit/0fb9929dbc33fb0ee497dcfb381f465dffe59baf))
-- harden secret lifecycles and explicit secret duplication ci: consolidate validation and adopt cargo-rail 0.17 planning ([1837da7](https://github.com/loadingalias/rscrypto/commit/1837da704e566c2f672de2b4f9f6eaeb890bb3e6))
-- remove variable-latency ECDSA multiplication on s390x and RISC-V ([2a8a11c](https://github.com/loadingalias/rscrypto/commit/2a8a11c53aed7b829a2bcf7cd4aa4d7b5f6f07f5))
+- Added HKDF-SHA512, HMAC-SHA3, KMAC128, standalone Poly1305, cSHAKE128,
+  `getrandom` key-generation helpers, allocating AEAD helpers, generic signature
+  traits, and focused AEAD, signature, RSA, and ML-KEM examples.
+- Replaced heap-buffered RapidHash and XXH3 streaming with fixed-size,
+  allocation-free state. Added collection-oriented RapidHash support and
+  XXH3-128 streaming, with accelerated long streams on AVX2, AVX-512, NEON, VSX,
+  and z/Vector.
 
+### Release assurance
 
-## [0.6.4](https://github.com/loadingalias/rscrypto/compare/v0.6.3...v0.6.4) - 2026-07-07
+- Release artifacts now include provenance-attested crate and constant-time
+  evidence bundles. Signed tags require successful exact-commit CI, unified Cargo
+  graph assurance, SemVer checks, constant-time evidence, RSA evidence, package
+  integrity checks, and crates.io Trusted Publishing approval.
+- Consolidated CI ownership and change selection around cargo-rail's compiler-backed
+  Cargo graph, while retaining complete native and cross-target correctness gates.
 
-- Updated release workflow validation for cargo-rail 0.15.
-- Refreshed the dev dependency lockfile to avoid the crossbeam-epoch advisory in test tooling.
+## [0.6.4](https://github.com/loadingalias/rscrypto/compare/v0.6.2...v0.6.4) - 2026-07-07
 
-### 📦 Other Changes
-
-- make ECDSA oracles tolerate p256 update ([ac62d9a](https://github.com/loadingalias/rscrypto/commit/ac62d9a937eb2aa4cdd25a4c1722687f4aedfd72))
-
-
-
-## [0.6.3](https://github.com/loadingalias/rscrypto/compare/v0.6.2...v0.6.3) - 2026-07-05
-
-### 📦 Other Changes
-
-- auth: format argon2 docs ([0b455cf](https://github.com/loadingalias/rscrypto/commit/0b455cfb6217449707df4f03675441dfcf9f9e60))
-- workspace: add trusted release publishing gate ([4de9cbe](https://github.com/loadingalias/rscrypto/commit/4de9cbea87f9031bce37f343d4161e20fba2eb73))
-
+- Added the trusted release-publishing gate and updated workflow validation for
+  cargo-rail 0.15.
+- Refreshed the development lockfile to remove the crossbeam-epoch advisory from
+  test tooling.
+- Updated the ECDSA differential-test oracles for the current `p256` behavior.
 
 
 ## [0.6.2](https://github.com/loadingalias/rscrypto/compare/v0.6.1...v0.6.2) - 2026-07-04

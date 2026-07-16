@@ -39,7 +39,9 @@ Add release intent with a cargo-rail change file. Commit the change file with
 the code change when possible; if the code was already committed, add the
 change file before cutting the release. Change files live in `.changes/`.
 Use `--name` to choose the filename slug. The file may be renamed after
-creation as long as it remains a `.changes/*.md` file.
+creation as long as it remains a `.changes/*.md` file. Changelog sections use
+only these reviewed change-file bodies; commit subjects are engineering history,
+not release notes.
 
 ```bash
 cargo rail change add rscrypto --bump patch --name concise-change-name --message "Describe the user-visible change."

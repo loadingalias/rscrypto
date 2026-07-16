@@ -71,7 +71,7 @@ require_changelog_entries = false
 require_release_notes = true
 release_notes_dir = "release-notes"
 pre_1_breaking_bump = "minor"
-unconventional_commits = "warn"
+unconventional_commits = "allow"  # Required .changes files own bumps and user-facing release notes.
 semver_check = "warn"
 change_dir = ".changes"
 require_change_files = ["rscrypto"]
@@ -82,8 +82,8 @@ path = "CHANGELOG.md"
 relative_to = "workspace"
 entry_format = "- {scope}{breaking}{description}{prs} ({sha_link})"  # Entry placeholders: scope, breaking, description, prs, sha, sha_link, type
 emoji = true  # Render emoji in changelog section headers
-group_order = ["breaking", "feat", "fix", "build", "chore", "ci", "deps", "docs", "other", "perf", "refactor", "style", "test"]  # Commit type section order
-fallback = "other"  # Fallback section for unlisted types, or skip
+group_order = []  # Render reviewed .changes entries only; commit subjects are not release notes.
+fallback = "skip"  # Drop commit-derived entries.
 
 [release.changelog.filters]
 skip_types = ["chore", "ci"]
