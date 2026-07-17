@@ -194,7 +194,7 @@ rsa = { version = "0.9.10", default-features = false, features = ["std", "u64_di
 dryoc = "0.8.0"
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dev-dependencies]
-libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
+libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
@@ -202,7 +202,7 @@ libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
 ] }
 
 [target.'cfg(target_arch = "aarch64")'.dev-dependencies]
-libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
+libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
@@ -210,7 +210,7 @@ libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
 ] }
 
 [target.'cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))'.dev-dependencies]
-libcrux-ml-kem = { version = "0.0.9", default-features = false, features = [
+libcrux-ml-kem = { version = "0.0.10", default-features = false, features = [
   "mlkem512",
   "mlkem768",
   "mlkem1024",
