@@ -11,6 +11,7 @@ make_fixture() {
   local fixture=$1
   mkdir -p "$fixture/.github" "$fixture/.config" "$fixture/scripts/check" "$fixture/scripts/test"
   cp -R "$REPO_ROOT/.github/workflows" "$fixture/.github/workflows"
+  cp -R "$REPO_ROOT/.github/rulesets" "$fixture/.github/rulesets"
   cp "$REPO_ROOT/.github/dependabot.yaml" "$fixture/.github/dependabot.yaml"
   cp "$REPO_ROOT/.config/target-matrix.json" "$fixture/.config/target-matrix.json"
   cp -R "$REPO_ROOT/scripts/ci" "$fixture/scripts/ci"
@@ -96,6 +97,17 @@ make_fixture "$missing_release_evidence_gate"
 sed -i.bak '/release-evidence-check\.sh/d' "$missing_release_evidence_gate/.github/workflows/release.yaml"
 rm -f "$missing_release_evidence_gate/.github/workflows/release.yaml.bak"
 expect_failure "$missing_release_evidence_gate" "missing exact-commit release evidence gate"
+
+missing_repository_controls="$TMP_ROOT/missing-repository-controls"
+make_fixture "$missing_repository_controls"
+sed -i.bak '/repository-controls-evidence\.sh/d' "$missing_repository_controls/.github/workflows/release.yaml"
+rm -f "$missing_repository_controls/.github/workflows/release.yaml.bak"
+expect_failure "$missing_repository_controls" "release without repository controls evidence"
+
+missing_repository_policy="$TMP_ROOT/missing-repository-policy"
+make_fixture "$missing_repository_policy"
+rm "$missing_repository_policy/.github/rulesets/protect-main.json"
+expect_failure "$missing_repository_policy" "missing repository ruleset policy"
 
 missing_riscv_workflow="$TMP_ROOT/missing-riscv-workflow"
 make_fixture "$missing_riscv_workflow"

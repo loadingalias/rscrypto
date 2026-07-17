@@ -208,6 +208,11 @@ release-check:
     cargo rail release check rscrypto --extended
     scripts/ci/release-plan-check.sh rscrypto
 
+check-repository-controls:
+    @scripts/ci/repository-controls-evidence.sh \
+      --commit "$(git rev-parse HEAD)" \
+      --output target/repository-controls.json
+
 release-prepare:
     just check-unify
     cargo rail release check rscrypto --extended
@@ -221,6 +226,7 @@ release-prepare:
 
 release-tag:
     just check-unify
+    just check-repository-controls
     scripts/ci/release-ci-check.sh --commit "$(git rev-parse HEAD)"
     scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"
     cargo rail release finalize rscrypto --yes --skip-publish
@@ -247,6 +253,7 @@ check-actions:
     @scripts/ci/pre-push-test.sh
     @scripts/ci/release-ci-check-test.sh
     @scripts/ci/release-evidence-check-test.sh
+    @scripts/ci/repository-controls-evidence-test.sh
     @scripts/ci/release-recipes-test.sh
     @actionlint
     @zizmor .github/workflows .github/actions

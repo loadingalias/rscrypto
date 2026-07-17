@@ -117,6 +117,22 @@ jobs:
         with:
           subject-path: ${{ steps.package.outputs.crate_path }}
 
+      - name: Capture repository controls
+        id: repository_controls
+        env:
+          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/ci/repository-controls-evidence.sh \
+            --commit "$GITHUB_SHA" \
+            --output "target/repository-controls/rscrypto-${CRATE_VERSION}-repository-controls.json" \
+            --allow-redacted-bypass
+
+      - name: Attest repository controls
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: ${{ steps.repository_controls.outputs.evidence_path }}
+
       - name: Download non-RISC-V CT evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
@@ -226,10 +242,13 @@ jobs:
           CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
           CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
           CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
+          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
+          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
         run: |
           set -euo pipefail
           printf '%s  %s\n' "$CRATE_SHA256" "$CRATE_NAME" > SHA256SUMS
           printf '%s  %s\n' "$CT_BUNDLE_SHA256" "$CT_BUNDLE_NAME" >> SHA256SUMS
+          printf '%s  %s\n' "$REPOSITORY_CONTROLS_SHA256" "$REPOSITORY_CONTROLS_NAME" >> SHA256SUMS
 
       - name: Create GitHub release
         env:
@@ -244,6 +263,9 @@ jobs:
           CT_EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
           CT_EVIDENCE_WEEKLY_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
           CT_EVIDENCE_RISCV_RUN: ${{ needs.evidence-gate.outputs.riscv_run_url }}
+          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
+          REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
+          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
         run: |
           set -euo pipefail
           notes_file="$(mktemp)"
@@ -259,21 +281,27 @@ jobs:
           Weekly evidence run: ${CT_EVIDENCE_WEEKLY_RUN}
           RISC-V evidence run: ${CT_EVIDENCE_RISCV_RUN}
 
+          Repository controls: \`${REPOSITORY_CONTROLS_NAME}\`
+          SHA-256: \`${REPOSITORY_CONTROLS_SHA256}\`
+
           Verify provenance:
 
           \`\`\`bash
           gh attestation verify "${CRATE_NAME}" --repo loadingalias/rscrypto
           gh attestation verify "${CT_BUNDLE_NAME}" --repo loadingalias/rscrypto
+          gh attestation verify "${REPOSITORY_CONTROLS_NAME}" --repo loadingalias/rscrypto
           \`\`\`
           EOF
 
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$CRATE_PATH" "$CT_BUNDLE_PATH" SHA256SUMS --clobber
+            gh release upload "$GITHUB_REF_NAME" \
+              "$CRATE_PATH" "$CT_BUNDLE_PATH" "$REPOSITORY_CONTROLS_PATH" SHA256SUMS --clobber
             gh release edit "$GITHUB_REF_NAME" \
               --title "rscrypto $GITHUB_REF_NAME" \
               --notes-file "$notes_file"
           else
-            gh release create "$GITHUB_REF_NAME" "$CRATE_PATH" "$CT_BUNDLE_PATH" SHA256SUMS \
+            gh release create "$GITHUB_REF_NAME" \
+              "$CRATE_PATH" "$CT_BUNDLE_PATH" "$REPOSITORY_CONTROLS_PATH" SHA256SUMS \
               --verify-tag \
               --title "rscrypto $GITHUB_REF_NAME" \
               --notes-file "$notes_file"

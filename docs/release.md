@@ -24,9 +24,11 @@ token publishing for new versions.
 
 Configure the GitHub repository:
 
-1. Create an environment named `crates-io`.
-2. Add required reviewers for that environment.
-3. Keep long-lived crates.io publish tokens out of repository secrets.
+1. Create the active `protect-main` branch ruleset described by
+   [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json), with no bypass actors.
+2. Create an environment named `crates-io`.
+3. Add required reviewers for that environment.
+4. Keep long-lived crates.io publish tokens out of repository secrets.
 
 The environment name must match both crates.io and
 [`.github/workflows/release.yaml`](../.github/workflows/release.yaml). If it
@@ -117,14 +119,25 @@ just release-tag
 ```
 
 The `release-tag` recipe reruns strict configuration and Cargo-graph validation,
-requires successful push CI and Cargo Graph Assurance for the exact candidate,
-and refuses to tag without complete CT and RSA evidence from either that commit
-or a proven release-only ancestor. It then uses `cargo rail release finalize`
-to validate the materialized release, create the signed tag, and push it. It
-does not rerun `cargo rail release check`: that command validates pending release
-intent and correctly fails after `release-prepare` consumes the change files.
-Finalization must not publish to crates.io; the `--skip-publish` flag is part of
-the release contract.
+uses the maintainer's GitHub access to check the complete live ruleset—including
+the empty bypass list—against the checked-in policy, requires successful push CI
+and Cargo Graph Assurance for the exact candidate, and refuses to tag without
+complete CT and RSA evidence from either that commit or a proven release-only
+ancestor. It then uses `cargo rail release finalize` to validate the materialized
+release, create the signed tag, and push it. It does not rerun `cargo rail release
+check`: that command validates pending release intent and correctly fails after
+`release-prepare` consumes the change files. Finalization must not publish to
+crates.io; the `--skip-publish` flag is part of the release contract.
+
+To check GitHub controls without running the release flow, use:
+
+```bash
+just check-repository-controls
+```
+
+This is the only routine local check that reads live GitHub settings. Normal
+checks and pre-push validation remain offline. The command writes the captured
+JSON to `target/repository-controls.json` and prints its SHA-256.
 
 ## CI Release Gate
 
@@ -147,20 +160,24 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
 8. Waits for the `CI` workflow on the same commit to pass.
 9. Verifies the transferred artifact's SHA-256, then attests it with GitHub
    build provenance.
-10. Requires successful Weekly CT/RSA evidence and RISC-V native/CT evidence
+10. Compares every rule visible to the restricted workflow token with the
+    checked-in policy and attests the resulting repository controls JSON. GitHub
+    redacts bypass actors from this token; the artifact labels that field as
+    redacted instead of pretending the workflow reverified the pre-tag gate.
+11. Requires successful Weekly CT/RSA evidence and RISC-V native/CT evidence
     from the exact tag commit or the same mechanically proven release-only
     ancestor, then downloads raw CT artifacts from both runs. The tag workflow
     does not rerun either multi-hour suite.
-11. Validates the evidence commit's CT lane set, version, clean provenance,
+12. Validates the evidence commit's CT lane set, version, clean provenance,
     tool versions, timing coverage, BINSEC coverage, and raw artifact hashes.
     The bundle separately records the release commit and evidence commit.
-12. Attests the CT evidence bundle with GitHub build provenance.
-13. Uses crates.io Trusted Publishing to get a temporary publish token.
-14. Publishes with `cargo publish -p rscrypto --locked`.
-15. Downloads the crate from crates.io and verifies the SHA-256 against the
+13. Attests the CT evidence bundle with GitHub build provenance.
+14. Uses crates.io Trusted Publishing to get a temporary publish token.
+15. Publishes with `cargo publish -p rscrypto --locked`.
+16. Downloads the crate from crates.io and verifies the SHA-256 against the
     attested package.
-16. Creates or updates the GitHub Release with the crate, CT evidence bundle,
-    and `SHA256SUMS`.
+17. Creates or updates the GitHub Release with the crate, CT evidence bundle,
+    repository controls JSON, and `SHA256SUMS`.
 
 The publish job uses the `crates-io` GitHub environment. GitHub requests
 approval only after preflight and CI have passed, and before the OIDC token is
@@ -183,13 +200,19 @@ Consumers can verify the GitHub Release artifact:
 gh release download vX.Y.Z --repo loadingalias/rscrypto \
   -p 'rscrypto-X.Y.Z.crate' \
   -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
+  -p 'rscrypto-X.Y.Z-repository-controls.json' \
   -p SHA256SUMS
 sha256sum --check SHA256SUMS
 gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-repository-controls.json --repo loadingalias/rscrypto
 mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
 (cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
 ```
 
 The crate downloaded from crates.io should have the same SHA-256 as the
-attested release artifact.
+attested release artifact. The repository controls JSON records the expected
+policy, live ruleset, effective rules on the default branch, capture time, and
+release commit. `validation.bypass_actors.status` states whether bypass actors
+were verified or redacted by GitHub. The JSON is evidence of the release-time
+configuration, not a claim that GitHub settings cannot change later.
