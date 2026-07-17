@@ -27,6 +27,10 @@ its caller.
 | `ci/pre-push-test.sh`          | `just check-actions` |
 | `ci/release-ci-check.sh`       | `just release-tag`, `release.yaml`, `ci/release-ci-check-test.sh` |
 | `ci/release-ci-check-test.sh`  | `just check-actions` |
+| `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |
+| `ci/release-evidence-check-test.sh` | `just check-actions` |
+| `ci/repository-controls-evidence.sh` | `just check-repository-controls`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |
+| `ci/repository-controls-evidence-test.sh` | `just check-actions` |
 | `ci/release-recipes-test.sh`   | `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/upgrade-actions-test.sh`   | `just check-actions` |

@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 prepare_recipe=$(cd "$REPO_ROOT" && just --show release-prepare)
 tag_recipe=$(cd "$REPO_ROOT" && just --show release-tag)
+controls_recipe=$(cd "$REPO_ROOT" && just --show check-repository-controls)
 
 grep -Fq "cargo rail release check rscrypto --extended" <<<"$prepare_recipe"
 grep -Fq "RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --yes --skip-publish --skip-tag" \
@@ -13,12 +14,19 @@ grep -Fq "RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
 grep -Fq 'scripts/ci/release-ci-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
+grep -Fq 'just check-repository-controls' <<<"$tag_recipe"
+grep -Fq 'scripts/ci/repository-controls-evidence.sh' <<<"$controls_recipe"
+if grep -Fq -- '--allow-redacted-bypass' <<<"$controls_recipe"; then
+  echo "the pre-tag repository controls gate must require full bypass visibility" >&2
+  exit 1
+fi
 
+controls_line=$(grep -nF 'just check-repository-controls' <<<"$tag_recipe" | cut -d: -f1)
 ci_line=$(grep -nF 'scripts/ci/release-ci-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 evidence_line=$(grep -nF 'scripts/ci/release-evidence-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 finalize_line=$(grep -nF 'cargo rail release finalize' <<<"$tag_recipe" | cut -d: -f1)
-if (( ci_line >= evidence_line || evidence_line >= finalize_line )); then
-  echo "release-tag must validate exact-commit CI and evidence before creating the tag" >&2
+if (( controls_line >= ci_line || ci_line >= evidence_line || evidence_line >= finalize_line )); then
+  echo "release-tag must validate repository controls, exact-commit CI, and evidence before creating the tag" >&2
   exit 1
 fi
 

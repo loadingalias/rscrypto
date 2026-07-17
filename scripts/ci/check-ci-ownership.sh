@@ -31,6 +31,9 @@ CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 RELEASE_CI="$ROOT/scripts/ci/release-ci-check.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
+REPOSITORY_CONTROLS="$ROOT/scripts/ci/repository-controls-evidence.sh"
+REPOSITORY_CONTROLS_TEST="$ROOT/scripts/ci/repository-controls-evidence-test.sh"
+REPOSITORY_POLICY="$ROOT/.github/rulesets/protect-main.json"
 DEPENDABOT="$ROOT/.github/dependabot.yaml"
 
 fail() {
@@ -88,6 +91,9 @@ require_file "$CI_CHECK"
 require_file "$RELEASE_PREFLIGHT"
 require_file "$RELEASE_CI"
 require_file "$RELEASE_EVIDENCE"
+require_file "$REPOSITORY_CONTROLS"
+require_file "$REPOSITORY_CONTROLS_TEST"
+require_file "$REPOSITORY_POLICY"
 require_file "$DEPENDABOT"
 
 [[ $(yq eval '.version' "$DEPENDABOT") == "2" ]] || fail "Dependabot config must use version 2"
@@ -169,6 +175,22 @@ grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE_CI" \
   || fail "Weekly must preserve raw CT artifacts for exact-commit release promotion"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE" \
   || fail "release must require paired Weekly and RISC-V evidence from one valid commit"
+grep -Fq 'scripts/ci/repository-controls-evidence.sh' "$RELEASE" \
+  || fail "release must capture the live repository controls"
+grep -Fq -- '--allow-redacted-bypass' "$RELEASE" \
+  || fail "release must explicitly acknowledge GitHub's workflow-token bypass redaction"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+grep -Fq 'subject-path: ${{ steps.repository_controls.outputs.evidence_path }}' "$RELEASE" \
+  || fail "release must attest the repository controls evidence"
+grep -Fq 'REPOSITORY_CONTROLS_SHA256' "$RELEASE" \
+  || fail "release must checksum the repository controls evidence"
+# shellcheck disable=SC2016 # Workflow shell variable is an intentional literal contract.
+grep -Fq '"$REPOSITORY_CONTROLS_PATH"' "$RELEASE" \
+  || fail "release must publish the repository controls evidence"
+grep -Fq '.github/rulesets/protect-main.json' "$REPOSITORY_CONTROLS" \
+  || fail "repository controls evidence must validate the checked-in policy"
+grep -Fq 'current_user_can_bypass == "never"' "$REPOSITORY_CONTROLS" \
+  || fail "repository controls evidence must reject bypass access"
 grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}' "$RELEASE" \
   || fail "release must consume non-RISC-V CT artifacts from the validated Weekly run"
 grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.riscv_run_id }}' "$RELEASE" \
