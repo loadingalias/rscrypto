@@ -6,19 +6,14 @@
 
 #![cfg(all(feature = "argon2", not(miri)))]
 
-use rscrypto::{Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
+use rscrypto::{Argon2Context, Argon2Params, Argon2d, Argon2i, Argon2id};
 
 fn canonical_params() -> Argon2Params {
-  Argon2Params::new()
-    .memory_cost_kib(32)
-    .time_cost(3)
-    .parallelism(4)
-    .output_len(32)
-    .version(Argon2Version::V0x13)
-    .secret(&[0x03u8; 8])
-    .associated_data(&[0x04u8; 12])
-    .build()
-    .expect("RFC 9106 canonical parameters are valid")
+  Argon2Params::new(32, 3, 4).expect("RFC 9106 canonical parameters are valid")
+}
+
+fn canonical_context() -> Argon2Context<'static> {
+  Argon2Context::new(&[0x03; 8], &[0x04; 12])
 }
 
 const RFC_PASSWORD: &[u8] = &[0x01u8; 32];
@@ -31,7 +26,14 @@ fn rfc9106_appendix_a1_argon2d() {
     0xbe, 0x39, 0x84, 0xf3, 0xc1, 0xa1, 0x3a, 0x4d, 0xb9, 0xfa, 0xbe, 0x4a, 0xcb,
   ];
   let mut out = [0u8; 32];
-  Argon2d::hash(&canonical_params(), RFC_PASSWORD, RFC_SALT, &mut out).unwrap();
+  Argon2d::derive_with_context(
+    &canonical_params(),
+    canonical_context(),
+    RFC_PASSWORD,
+    RFC_SALT,
+    &mut out,
+  )
+  .unwrap();
   assert_eq!(out, expected);
 }
 
@@ -42,7 +44,14 @@ fn rfc9106_appendix_a2_argon2i() {
     0x01, 0x6d, 0xd3, 0x88, 0xd2, 0x99, 0x52, 0xa4, 0xc4, 0x67, 0x2b, 0x6c, 0xe8,
   ];
   let mut out = [0u8; 32];
-  Argon2i::hash(&canonical_params(), RFC_PASSWORD, RFC_SALT, &mut out).unwrap();
+  Argon2i::derive_with_context(
+    &canonical_params(),
+    canonical_context(),
+    RFC_PASSWORD,
+    RFC_SALT,
+    &mut out,
+  )
+  .unwrap();
   assert_eq!(out, expected);
 }
 
@@ -53,7 +62,14 @@ fn rfc9106_appendix_a3_argon2id() {
     0x45, 0x2d, 0x75, 0xb6, 0x5e, 0xb5, 0x25, 0x20, 0xe9, 0x6b, 0x01, 0xe6, 0x59,
   ];
   let mut out = [0u8; 32];
-  Argon2id::hash(&canonical_params(), RFC_PASSWORD, RFC_SALT, &mut out).unwrap();
+  Argon2id::derive_with_context(
+    &canonical_params(),
+    canonical_context(),
+    RFC_PASSWORD,
+    RFC_SALT,
+    &mut out,
+  )
+  .unwrap();
   assert_eq!(out, expected);
 }
 
@@ -63,9 +79,12 @@ fn all_three_variants_produce_distinct_output() {
   // must produce three different 32-byte tags (reference-indexing modes
   // diverge).
   let params = canonical_params();
-  let d = Argon2d::hash_array::<32>(&params, RFC_PASSWORD, RFC_SALT).unwrap();
-  let i = Argon2i::hash_array::<32>(&params, RFC_PASSWORD, RFC_SALT).unwrap();
-  let id = Argon2id::hash_array::<32>(&params, RFC_PASSWORD, RFC_SALT).unwrap();
+  let mut d = [0u8; 32];
+  let mut i = [0u8; 32];
+  let mut id = [0u8; 32];
+  Argon2d::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut d).unwrap();
+  Argon2i::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut i).unwrap();
+  Argon2id::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut id).unwrap();
   assert_ne!(d, i);
   assert_ne!(d, id);
   assert_ne!(i, id);

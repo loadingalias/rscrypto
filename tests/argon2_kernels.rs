@@ -16,19 +16,12 @@
 #![allow(clippy::unwrap_used)]
 
 use rscrypto::{
-  Argon2Params, Argon2Version,
+  Argon2Params,
   auth::{argon2, argon2::Argon2Variant},
 };
 
-fn params(m_kib: u32, t: u32, p: u32, out_len: u32) -> Argon2Params {
-  Argon2Params::new()
-    .memory_cost_kib(m_kib)
-    .time_cost(t)
-    .parallelism(p)
-    .output_len(out_len)
-    .version(Argon2Version::V0x13)
-    .build()
-    .unwrap()
+fn params(m_kib: u32, t: u32, p: u32, _out_len: u32) -> Argon2Params {
+  Argon2Params::new(m_kib, t, p).unwrap()
 }
 
 const PASSWORD: &[u8] = b"correct horse battery staple";

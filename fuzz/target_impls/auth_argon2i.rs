@@ -1,4 +1,4 @@
-use rscrypto::{Argon2Params, Argon2Version, Argon2i};
+use rscrypto::{Argon2Params, Argon2i};
 use rscrypto_fuzz::{FuzzInput, pad_salt_to, some_or_return, split_at_ratio};
 
 pub fn run(data: &[u8]) {
@@ -13,13 +13,7 @@ pub fn run(data: &[u8]) {
   let t = 1u32.strict_add(u32::from(t_byte) % 4);
   let out_len = 4u32.strict_add(u32::from(out_len_byte) % 29);
 
-  let params = Argon2Params::new()
-    .memory_cost_kib(m_kib)
-    .time_cost(t)
-    .parallelism(1)
-    .output_len(out_len)
-    .version(Argon2Version::V0x13)
-    .build()
+  let params = Argon2Params::new(m_kib, t, 1)
     .expect("params must be valid for fuzzer ranges");
 
   // See `auth_argon2id.rs` for cost-parameter rationale.
@@ -27,7 +21,7 @@ pub fn run(data: &[u8]) {
   let salt_buf = pad_salt_to::<16>(salt_material, pw_salt_split);
 
   let mut actual = vec![0u8; out_len as usize];
-  Argon2i::hash(&params, password, &salt_buf, &mut actual).expect("hash within fuzz ranges");
+  Argon2i::derive(&params, password, &salt_buf, &mut actual).expect("hash within fuzz ranges");
 
   Argon2i::verify(&params, password, &salt_buf, &actual).expect("verify must accept the hash it just produced");
 

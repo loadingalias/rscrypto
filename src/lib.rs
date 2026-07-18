@@ -79,18 +79,15 @@ assert_eq!(&opened, b"data");
 # Password Hashing
 
 ```rust
-use rscrypto::{Argon2Params, Argon2VerifyPolicy, Argon2id};
+use rscrypto::Argon2idPassword;
 
-let params = Argon2Params::new().build()?;
-let encoded = Argon2id::hash_string(&params, b"correct horse battery staple")?;
+let passwords = Argon2idPassword::default();
+let encoded = passwords.hash_password(b"correct horse battery staple")?;
 
 assert!(
-  Argon2id::verify_string_with_policy(
-    b"correct horse battery staple",
-    &encoded,
-    &Argon2VerifyPolicy::default(),
-  )
-  .is_ok()
+  passwords
+    .verify_password(b"correct horse battery staple", &encoded)
+    .is_ok()
 );
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -386,8 +383,8 @@ pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 #[cfg(feature = "hkdf")]
 pub use auth::HkdfOutputLengthError;
-#[cfg(feature = "phc-strings")]
-pub use auth::PhcError;
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+pub use auth::PasswordStatus;
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(all(
@@ -400,7 +397,9 @@ pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
 ))]
 pub use auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest;
 #[cfg(feature = "argon2")]
-pub use auth::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
+pub use auth::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
+#[cfg(all(feature = "argon2", feature = "phc-strings"))]
+pub use auth::{Argon2VerificationLimits, Argon2idPassword};
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use auth::{
   DiagEd25519VerifyScalars, diag_ed25519_verify_challenge_reduce_digest,
@@ -447,7 +446,9 @@ pub use auth::{
   RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
-pub use auth::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
+pub use auth::{Scrypt, ScryptError, ScryptParams};
+#[cfg(all(feature = "scrypt", feature = "phc-strings"))]
+pub use auth::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]

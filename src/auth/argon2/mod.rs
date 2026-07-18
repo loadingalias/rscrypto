@@ -8,7 +8,8 @@
 //! - [`Argon2i`] — data-independent indexing: memory-access patterns do not depend on the password.
 //!   Useful when the adversary can observe cache or memory-access timing.
 //! - [`Argon2id`] — hybrid: first half of the first pass runs Argon2i, the rest runs Argon2d.
-//!   **Recommended default for password hashing** per RFC 9106 §4 and OWASP 2024 guidance.
+//!   **Recommended default for password hashing** per RFC 9106 §4 and the [OWASP Password Storage
+//!   Cheat Sheet][owasp-passwords].
 //!
 //! The implementation uses the BlaMka compression function from RFC 9106
 //! §3.6 layered on top of [`crate::Blake2b`]. A runtime-cached [`KernelId`]
@@ -21,18 +22,13 @@
 //! ```rust
 //! use rscrypto::{Argon2Params, Argon2id};
 //!
-//! let params = Argon2Params::new()
-//!   .memory_cost_kib(19 * 1024)
-//!   .time_cost(2)
-//!   .parallelism(1)
-//!   .build()
-//!   .expect("valid params");
+//! let params = Argon2Params::new(19 * 1024, 2, 1).expect("valid params");
 //!
 //! let password = b"correct horse battery staple";
 //! let salt = b"random-salt-1234";
 //!
 //! let mut hash = [0u8; 32];
-//! Argon2id::hash(&params, password, salt, &mut hash).expect("hash");
+//! Argon2id::derive(&params, password, salt, &mut hash).expect("derive");
 //!
 //! assert!(Argon2id::verify(&params, password, salt, &hash).is_ok());
 //! assert!(Argon2id::verify(&params, b"wrong", salt, &hash).is_err());
@@ -42,8 +38,8 @@
 //!
 //! - Salt length must be ≥ 8 bytes (RFC 9106 §3.1). 16 bytes recommended.
 //! - Memory cost must satisfy `m ≥ 8 · p` (KiB).
-//! - [`Argon2Params::validate`] enforces all RFC 9106 bounds; invalid inputs surface as
-//!   [`Argon2Error`] at build time, not at hash time.
+//! - [`Argon2Params::new`] rejects invalid cost profiles, so constructed parameters are always
+//!   valid.
 //! - The memory matrix is zeroized on drop.
 //! - [`Argon2id::verify`] is constant-time with respect to the stored hash bytes.
 //!
@@ -57,6 +53,8 @@
 //! Requires `alloc` — the memory matrix (`m_kib · 1024` bytes) cannot be
 //! stack-allocated. Bare-metal / heap-less targets should select
 //! [`crate::Pbkdf2Sha256`] (alloc-free).
+//!
+//! [owasp-passwords]: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
 
 #![allow(clippy::indexing_slicing)]
 #![allow(clippy::unwrap_used)]
@@ -109,11 +107,13 @@ const MAX_VAR_BYTES: u64 = u32::MAX as u64;
 /// Minimum output length in bytes (RFC 9106 §3.1).
 pub const MIN_OUTPUT_LEN: usize = 4;
 
-/// Default OWASP 2024 parameters (see [`Argon2Params::new`]).
+/// OWASP baseline parameters (see [`Argon2Params::new`]).
 const DEFAULT_MEMORY_KIB: u32 = 19 * 1024;
 const DEFAULT_TIME_COST: u32 = 2;
 const DEFAULT_PARALLELISM: u32 = 1;
+#[cfg(feature = "phc-strings")]
 const DEFAULT_OUTPUT_LEN: usize = 32;
+const ARGON2_VERSION: u32 = 0x13;
 
 /// BlaMka P permutation operates on 8×8 matrices of 16-byte "registers",
 /// i.e. on 16-u64 slabs.
@@ -159,7 +159,7 @@ fn zeroize_u64_slice(words: &mut [u64]) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-// ─── Variant, Version ───────────────────────────────────────────────────────
+// ─── Variant ────────────────────────────────────────────────────────────────
 
 /// Argon2 variant selector.
 ///
@@ -170,7 +170,6 @@ fn zeroize_u64_slice(words: &mut [u64]) {
 /// - `Argon2id` — data-independent for the first half of the first pass, data-dependent afterwards
 ///   (RFC 9106 §3.4.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[non_exhaustive]
 pub enum Argon2Variant {
   Argon2d,
   Argon2i,
@@ -189,34 +188,11 @@ impl Argon2Variant {
   }
 }
 
-/// Argon2 algorithm version.
-///
-/// `V0x13` (1.3) is the RFC 9106 default and should be used for all new
-/// deployments. `V0x10` (1.0) is supported only for decoding legacy PHC
-/// strings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
-pub enum Argon2Version {
-  V0x10,
-  #[default]
-  V0x13,
-}
-
-impl Argon2Version {
-  #[inline]
-  const fn as_u32(self) -> u32 {
-    match self {
-      Self::V0x10 => 0x10,
-      Self::V0x13 => 0x13,
-    }
-  }
-}
-
 // ─── Error ──────────────────────────────────────────────────────────────────
 
 /// Invalid Argon2 parameter or input.
 ///
-/// Surfaced at `build` or `hash` time — never at `verify` time (a parameter
+/// Surfaced at construction or derivation time — never at `verify` time (a parameter
 /// error during verification would leak whether the encoded hash was valid,
 /// so verify collapses these into [`crate::VerificationError`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -240,8 +216,16 @@ pub enum Argon2Error {
   SecretTooLong,
   /// Optional associated-data length exceeds 2^32-1 bytes.
   AssociatedDataTooLong,
+  /// The requested memory matrix exceeds the target's address space.
+  ResourceOverflow,
+  /// The allocator refused to provide the memory matrix.
+  AllocationFailed,
   /// The platform entropy source failed while generating a PHC salt.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
   EntropyUnavailable,
+  /// Password generation parameters exceed the verifier's resource limits.
+  #[cfg(feature = "phc-strings")]
+  VerificationLimitTooLow,
 }
 
 impl fmt::Display for Argon2Error {
@@ -256,7 +240,12 @@ impl fmt::Display for Argon2Error {
       Self::PasswordTooLong => "Argon2 password exceeds 2^32-1 bytes",
       Self::SecretTooLong => "Argon2 secret exceeds 2^32-1 bytes",
       Self::AssociatedDataTooLong => "Argon2 associated data exceeds 2^32-1 bytes",
+      Self::ResourceOverflow => "Argon2 memory matrix exceeds the target's address space",
+      Self::AllocationFailed => "Argon2 memory-matrix allocation failed",
+      #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       Self::EntropyUnavailable => "Argon2 entropy source unavailable",
+      #[cfg(feature = "phc-strings")]
+      Self::VerificationLimitTooLow => "Argon2 verification limits do not admit the generation parameters",
     })
   }
 }
@@ -265,175 +254,59 @@ impl core::error::Error for Argon2Error {}
 
 // ─── Parameters ─────────────────────────────────────────────────────────────
 
-/// Validated Argon2 cost-parameter set.
-///
-/// Constructed via [`Argon2Params::new`] and the setters; call
-/// [`Argon2Params::build`] to validate and produce a `Result<Argon2Params,
-/// Argon2Error>`. The output length is enforced by validators but is the
-/// same for every hash produced with this parameter set.
+/// Validated Argon2 cost parameters.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use rscrypto::{Argon2Params, Argon2id};
 ///
-/// let params = Argon2Params::new()
-///   .time_cost(3)
-///   .memory_cost_kib(65_536)
-///   .parallelism(4)
-///   .output_len(32)
-///   .build()
-///   .expect("valid params");
+/// let params = Argon2Params::new(65_536, 3, 4)?;
 ///
 /// let mut out = [0u8; 32];
-/// Argon2id::hash(&params, b"password", b"random-salt-1234", &mut out).unwrap();
+/// Argon2id::derive(&params, b"password", b"random-salt-1234", &mut out)?;
+/// # Ok::<(), rscrypto::Argon2Error>(())
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Argon2Params {
   time_cost: u32,
   memory_cost_kib: u32,
   parallelism: u32,
-  output_len: u32,
-  version: Argon2Version,
-  secret: Vec<u8>,
-  associated_data: Vec<u8>,
-}
-
-impl fmt::Debug for Argon2Params {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("Argon2Params")
-      .field("time_cost", &self.time_cost)
-      .field("memory_cost_kib", &self.memory_cost_kib)
-      .field("parallelism", &self.parallelism)
-      .field("output_len", &self.output_len)
-      .field("version", &self.version)
-      .field("secret_len", &self.secret.len())
-      .field("associated_data_len", &self.associated_data.len())
-      .finish()
-  }
-}
-
-impl Drop for Argon2Params {
-  fn drop(&mut self) {
-    if !self.secret.is_empty() {
-      ct::zeroize(&mut self.secret);
-    }
-    if !self.associated_data.is_empty() {
-      ct::zeroize(&mut self.associated_data);
-    }
-  }
 }
 
 impl Default for Argon2Params {
   fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl Argon2Params {
-  /// Create a new parameter builder pre-populated with OWASP 2024 defaults
-  /// (m = 19 MiB, t = 2, p = 1, output = 32 bytes, v = 1.3). Call the setters
-  /// to override, then [`Argon2Params::build`] to validate.
-  #[must_use]
-  pub fn new() -> Self {
     Self {
       time_cost: DEFAULT_TIME_COST,
       memory_cost_kib: DEFAULT_MEMORY_KIB,
       parallelism: DEFAULT_PARALLELISM,
-      output_len: DEFAULT_OUTPUT_LEN as u32,
-      version: Argon2Version::V0x13,
-      secret: Vec::new(),
-      associated_data: Vec::new(),
     }
   }
+}
 
-  /// Set the time cost (iterations). Must be ≥ 1.
-  #[must_use]
-  pub const fn time_cost(mut self, t: u32) -> Self {
-    self.time_cost = t;
-    self
-  }
-
-  /// Set the memory cost in KiB. Must satisfy `m ≥ 8 · p`.
-  #[must_use]
-  pub const fn memory_cost_kib(mut self, m: u32) -> Self {
-    self.memory_cost_kib = m;
-    self
-  }
-
-  /// Set the parallelism (number of lanes). Must be 1..=2^24-1.
-  #[must_use]
-  pub const fn parallelism(mut self, p: u32) -> Self {
-    self.parallelism = p;
-    self
-  }
-
-  /// Set the output tag length in bytes. Must be 4..=2^32-1.
-  #[must_use]
-  pub const fn output_len(mut self, t: u32) -> Self {
-    self.output_len = t;
-    self
-  }
-
-  /// Set the algorithm version.
-  #[must_use]
-  pub const fn version(mut self, v: Argon2Version) -> Self {
-    self.version = v;
-    self
-  }
-
-  /// Set the optional secret (pepper). Empty disables pepper.
-  #[must_use]
-  pub fn secret(mut self, secret: &[u8]) -> Self {
-    ct::zeroize(&mut self.secret);
-    self.secret.clear();
-    self.secret.extend_from_slice(secret);
-    self
-  }
-
-  /// Set the optional associated data. Empty means "none".
-  #[must_use]
-  pub fn associated_data(mut self, data: &[u8]) -> Self {
-    ct::zeroize(&mut self.associated_data);
-    self.associated_data.clear();
-    self.associated_data.extend_from_slice(data);
-    self
-  }
-
-  /// Validate every field against RFC 9106 bounds and return the finalised
-  /// parameter set.
-  pub fn build(self) -> Result<Self, Argon2Error> {
-    self.validate()?;
-    Ok(self)
-  }
-
-  /// Run validation without consuming the builder — returns the first error.
-  pub fn validate(&self) -> Result<(), Argon2Error> {
-    if self.time_cost < 1 {
+impl Argon2Params {
+  /// Construct an Argon2 v1.3 parameter profile.
+  pub const fn new(memory_cost_kib: u32, time_cost: u32, parallelism: u32) -> Result<Self, Argon2Error> {
+    if time_cost < 1 {
       return Err(Argon2Error::InvalidTimeCost);
     }
-    if self.parallelism < 1 || self.parallelism > (1 << 24) - 1 {
+    if parallelism < 1 || parallelism > (1 << 24) - 1 {
       return Err(Argon2Error::InvalidParallelism);
     }
-    // RFC 9106 §3.1: m >= 8 * p, m <= 2^32 - 1.
-    let min_memory = self.parallelism.checked_mul(8).ok_or(Argon2Error::InvalidMemoryCost)?;
-    if self.memory_cost_kib < min_memory {
+    let Some(min_memory) = parallelism.checked_mul(8) else {
+      return Err(Argon2Error::InvalidMemoryCost);
+    };
+    if memory_cost_kib < min_memory {
       return Err(Argon2Error::InvalidMemoryCost);
     }
-    if (self.output_len as usize) < MIN_OUTPUT_LEN {
-      return Err(Argon2Error::InvalidOutputLen);
-    }
-    if self.secret.len() as u64 > MAX_VAR_BYTES {
-      return Err(Argon2Error::SecretTooLong);
-    }
-    if self.associated_data.len() as u64 > MAX_VAR_BYTES {
-      return Err(Argon2Error::AssociatedDataTooLong);
-    }
-    Ok(())
+    Ok(Self {
+      time_cost,
+      memory_cost_kib,
+      parallelism,
+    })
   }
 
-  /// Common length checks for `password` / `salt` shared by all three variants.
-  fn check_inputs(&self, password: &[u8], salt: &[u8]) -> Result<(), Argon2Error> {
+  fn check_inputs(password: &[u8], salt: &[u8], context: Argon2Context<'_>) -> Result<(), Argon2Error> {
     if password.len() as u64 > MAX_VAR_BYTES {
       return Err(Argon2Error::PasswordTooLong);
     }
@@ -442,6 +315,12 @@ impl Argon2Params {
     }
     if salt.len() as u64 > MAX_VAR_BYTES {
       return Err(Argon2Error::SaltTooLong);
+    }
+    if context.secret.len() as u64 > MAX_VAR_BYTES {
+      return Err(Argon2Error::SecretTooLong);
+    }
+    if context.associated_data.len() as u64 > MAX_VAR_BYTES {
+      return Err(Argon2Error::AssociatedDataTooLong);
     }
     Ok(())
   }
@@ -463,68 +342,90 @@ impl Argon2Params {
   pub const fn get_parallelism(&self) -> u32 {
     self.parallelism
   }
+}
 
-  /// Output tag length in bytes.
-  #[must_use]
-  pub const fn get_output_len(&self) -> u32 {
-    self.output_len
-  }
+/// Borrowed optional Argon2 inputs that are not encoded in a PHC string.
+#[derive(Clone, Copy, Default)]
+pub struct Argon2Context<'a> {
+  secret: &'a [u8],
+  associated_data: &'a [u8],
+}
 
-  /// Algorithm version.
-  #[must_use]
-  pub const fn get_version(&self) -> Argon2Version {
-    self.version
+impl fmt::Debug for Argon2Context<'_> {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("Argon2Context")
+      .field("secret", &"[REDACTED]")
+      .field("secret_len", &self.secret.len())
+      .field("associated_data_len", &self.associated_data.len())
+      .finish()
   }
 }
 
-/// Operational limits for verifying Argon2 PHC strings from untrusted storage.
-///
-/// PHC strings encode their own memory, iteration, parallelism, and output
-/// lengths. `Argon2id::verify_string` and the matching variant helpers apply
-/// the default policy. Use `verify_string_with_policy` when a service needs
-/// tighter or looser deployment ceilings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Argon2VerifyPolicy {
-  /// Maximum encoded memory cost in KiB.
-  pub max_memory_cost_kib: u32,
-  /// Maximum encoded time cost.
-  pub max_time_cost: u32,
-  /// Maximum encoded parallelism.
-  pub max_parallelism: u32,
-  /// Maximum encoded output length in bytes.
-  pub max_output_len: usize,
-}
-
-impl Argon2VerifyPolicy {
-  /// Build a policy from explicit upper bounds.
+impl<'a> Argon2Context<'a> {
+  /// Borrow a pepper and associated data for one Argon2 operation.
   #[must_use]
-  pub const fn new(max_memory_cost_kib: u32, max_time_cost: u32, max_parallelism: u32, max_output_len: usize) -> Self {
+  pub const fn new(secret: &'a [u8], associated_data: &'a [u8]) -> Self {
     Self {
-      max_memory_cost_kib,
-      max_time_cost,
-      max_parallelism,
-      max_output_len,
+      secret,
+      associated_data,
+    }
+  }
+}
+
+/// Finite memory and work ceilings for Argon2id password verification.
+#[cfg(feature = "phc-strings")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Argon2VerificationLimits {
+  max_memory_bytes: u64,
+  max_block_work: u64,
+  max_parallelism: u32,
+}
+
+#[derive(Clone, Copy)]
+struct Argon2Shape {
+  blocks: u32,
+  memory_bytes: u64,
+  #[cfg(feature = "phc-strings")]
+  block_work: u64,
+}
+
+const fn argon2_shape(params: Argon2Params) -> Argon2Shape {
+  let lane_group = params.parallelism.strict_mul(SYNC_POINTS);
+  let blocks = (params.memory_cost_kib / lane_group).strict_mul(lane_group);
+  Argon2Shape {
+    blocks,
+    memory_bytes: (blocks as u64).strict_mul(BLOCK_SIZE as u64),
+    #[cfg(feature = "phc-strings")]
+    block_work: (blocks as u64).strict_mul(params.time_cost as u64),
+  }
+}
+
+#[cfg(feature = "phc-strings")]
+impl Argon2VerificationLimits {
+  /// Derive ceilings from the largest deployment profile the verifier admits.
+  #[must_use]
+  pub const fn for_profile(params: Argon2Params) -> Self {
+    let shape = argon2_shape(params);
+    Self {
+      max_memory_bytes: shape.memory_bytes,
+      max_block_work: shape.block_work,
+      max_parallelism: params.parallelism,
     }
   }
 
-  /// Return `true` when `params` and `output_len` are within this policy.
-  #[must_use]
-  pub const fn allows(&self, params: &Argon2Params, output_len: usize) -> bool {
-    params.memory_cost_kib <= self.max_memory_cost_kib
-      && params.time_cost <= self.max_time_cost
-      && params.parallelism <= self.max_parallelism
-      && output_len <= self.max_output_len
+  const fn allows(&self, params: Argon2Params) -> bool {
+    let usage = Self::for_profile(params);
+    usage.max_memory_bytes <= self.max_memory_bytes
+      && usage.max_block_work <= self.max_block_work
+      && usage.max_parallelism <= self.max_parallelism
   }
 }
 
-impl Default for Argon2VerifyPolicy {
+#[cfg(feature = "phc-strings")]
+impl Default for Argon2VerificationLimits {
   fn default() -> Self {
-    Self::new(
-      DEFAULT_MEMORY_KIB,
-      DEFAULT_TIME_COST,
-      DEFAULT_PARALLELISM,
-      DEFAULT_OUTPUT_LEN,
-    )
+    Self::for_profile(Argon2Params::default())
   }
 }
 
@@ -552,8 +453,7 @@ pub fn diag_active_kernel() -> KernelId {
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters per
-/// [`Argon2Params::validate`].
+/// Returns [`Argon2Error`] for invalid operation inputs or output length.
 #[cfg(feature = "diag")]
 pub fn diag_hash_active(
   params: &Argon2Params,
@@ -569,8 +469,7 @@ pub fn diag_hash_active(
 ///
 /// # Errors
 ///
-/// Returns [`Argon2Error`] for invalid parameters per
-/// [`Argon2Params::validate`].
+/// Returns [`Argon2Error`] for invalid operation inputs or output length.
 #[cfg(feature = "diag")]
 pub fn diag_hash_portable(
   params: &Argon2Params,
@@ -967,7 +866,7 @@ fn h_prime(input_parts: &[&[u8]], out: &mut [u8]) {
   // Feed LE32(out_len) then the input parts into Blake2b. For out_len <= 64
   // the single-block output is the answer directly.
   let len_le = u32::try_from(out_len)
-    .unwrap_or_else(|_| unreachable!("Argon2 H' out_len <= u32::MAX, validated by Argon2Params::validate"))
+    .unwrap_or_else(|_| unreachable!("Argon2 H' output length was checked before expansion"))
     .to_le_bytes();
 
   if out_len <= 64 {
@@ -1021,7 +920,7 @@ fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
   let out_len = out.len();
   assert!(out_len > 0, "H' output length must be positive");
   let len_le = u32::try_from(out_len)
-    .unwrap_or_else(|_| unreachable!("Argon2 H' out_len <= u32::MAX, validated by Argon2Params::validate"))
+    .unwrap_or_else(|_| unreachable!("Argon2 H' output length was checked before expansion"))
     .to_le_bytes();
 
   if out_len <= 64 {
@@ -1072,7 +971,14 @@ fn h_prime_diag_blake2b_portable(input_parts: &[&[u8]], out: &mut [u8]) {
 // ─── H0 initialisation (RFC 9106 §3.2) ──────────────────────────────────────
 
 /// Compute the 64-byte `H0` seed.
-fn compute_h0(params: &Argon2Params, password: &[u8], salt: &[u8], variant: Argon2Variant) -> [u8; 64] {
+fn compute_h0(
+  params: &Argon2Params,
+  context: Argon2Context<'_>,
+  password: &[u8],
+  salt: &[u8],
+  variant: Argon2Variant,
+  output_len: usize,
+) -> [u8; 64] {
   // All input lengths have been bounded ≤ MAX_VAR_BYTES (= u32::MAX) by
   // `check_inputs` before reaching here, so the `try_from` calls below are
   // infallible. We use `try_from + expect` rather than `as u32` to keep the
@@ -1085,28 +991,30 @@ fn compute_h0(params: &Argon2Params, password: &[u8], salt: &[u8], variant: Argo
 
   let mut hasher = Blake2b512::new();
   hasher.update(&params.parallelism.to_le_bytes());
-  hasher.update(&params.output_len.to_le_bytes());
+  hasher.update(&len_u32("output", output_len));
   hasher.update(&params.memory_cost_kib.to_le_bytes());
   hasher.update(&params.time_cost.to_le_bytes());
-  hasher.update(&params.version.as_u32().to_le_bytes());
+  hasher.update(&ARGON2_VERSION.to_le_bytes());
   hasher.update(&variant.y().to_le_bytes());
   hasher.update(&len_u32("password", password.len()));
   hasher.update(password);
   hasher.update(&len_u32("salt", salt.len()));
   hasher.update(salt);
-  hasher.update(&len_u32("secret", params.secret.len()));
-  hasher.update(&params.secret);
-  hasher.update(&len_u32("associated_data", params.associated_data.len()));
-  hasher.update(&params.associated_data);
+  hasher.update(&len_u32("secret", context.secret.len()));
+  hasher.update(context.secret);
+  hasher.update(&len_u32("associated_data", context.associated_data.len()));
+  hasher.update(context.associated_data);
   hasher.finalize()
 }
 
 #[cfg(feature = "diag")]
 fn compute_h0_diag_blake2b_portable(
   params: &Argon2Params,
+  context: Argon2Context<'_>,
   password: &[u8],
   salt: &[u8],
   variant: Argon2Variant,
+  output_len: usize,
 ) -> [u8; 64] {
   let len_u32 = |label: &'static str, len: usize| -> [u8; 4] {
     u32::try_from(len)
@@ -1115,15 +1023,15 @@ fn compute_h0_diag_blake2b_portable(
   };
 
   let parallelism = params.parallelism.to_le_bytes();
-  let output_len = params.output_len.to_le_bytes();
+  let output_len = len_u32("output", output_len);
   let memory_cost = params.memory_cost_kib.to_le_bytes();
   let time_cost = params.time_cost.to_le_bytes();
-  let version = params.version.as_u32().to_le_bytes();
+  let version = ARGON2_VERSION.to_le_bytes();
   let variant = variant.y().to_le_bytes();
   let password_len = len_u32("password", password.len());
   let salt_len = len_u32("salt", salt.len());
-  let secret_len = len_u32("secret", params.secret.len());
-  let associated_data_len = len_u32("associated_data", params.associated_data.len());
+  let secret_len = len_u32("secret", context.secret.len());
+  let associated_data_len = len_u32("associated_data", context.associated_data.len());
   let mut out = [0u8; 64];
   crate::hashes::crypto::blake2b::diag_hash_parts_portable(
     64,
@@ -1139,9 +1047,9 @@ fn compute_h0_diag_blake2b_portable(
       &salt_len,
       salt,
       &secret_len,
-      &params.secret,
+      context.secret,
       &associated_data_len,
-      &params.associated_data,
+      context.associated_data,
     ],
     &mut out,
   );
@@ -1235,17 +1143,20 @@ struct Matrix {
 }
 
 impl Matrix {
-  fn new(mem_kib: u32, lanes: u32) -> Result<Self, Argon2Error> {
-    // m' = 4 · p · ⌊m / (4p)⌋
-    let four_p = lanes.strict_mul(SYNC_POINTS);
-    let m_prime = mem_kib / four_p * four_p;
+  fn new(params: Argon2Params) -> Result<Self, Argon2Error> {
+    let shape = argon2_shape(params);
+    let lanes = params.parallelism;
+    let m_prime = shape.blocks;
     let lane_len = m_prime / lanes;
     let segment_len = lane_len / SYNC_POINTS;
+    if shape.memory_bytes > isize::MAX as u64 {
+      return Err(Argon2Error::ResourceOverflow);
+    }
     let total = m_prime as usize;
     let mut blocks = Vec::new();
     blocks
       .try_reserve_exact(total)
-      .map_err(|_| Argon2Error::InvalidMemoryCost)?;
+      .map_err(|_| Argon2Error::AllocationFailed)?;
     blocks.resize(total, MemoryBlock::zero());
     Ok(Self {
       blocks,
@@ -1470,7 +1381,6 @@ fn fill_segment(
   lane: u32,
   slice: u32,
   variant: Argon2Variant,
-  version: Argon2Version,
   time_cost: u32,
 ) {
   let lanes = matrix.lanes;
@@ -1494,7 +1404,6 @@ fn fill_segment(
       lane_len,
       total_blocks,
       variant,
-      version,
       time_cost,
     );
   }
@@ -1533,7 +1442,6 @@ unsafe fn fill_segment_inner(
   lane_len: u32,
   total_blocks: u32,
   variant: Argon2Variant,
-  version: Argon2Version,
   time_cost: u32,
 ) {
   let variant_y = variant.y();
@@ -1615,7 +1523,7 @@ unsafe fn fill_segment_inner(
 
     // Compute new block: G(B[lane][prev], B[ref_lane][ref_index]), optionally
     // XOR-accumulated into existing block (v1.3, pass > 0).
-    let xor_into = pass > 0 && version == Argon2Version::V0x13;
+    let xor_into = pass > 0;
     let ref_idx = (ref_lane as usize)
       .strict_mul(lane_len_usize)
       .strict_add(ref_index as usize);
@@ -1655,12 +1563,11 @@ fn fill_slice_sequential(
   pass: u32,
   slice: u32,
   variant: Argon2Variant,
-  version: Argon2Version,
   time_cost: u32,
 ) {
   let lanes = matrix.lanes;
   for lane in 0..lanes {
-    fill_segment(matrix, compress, pass, lane, slice, variant, version, time_cost);
+    fill_segment(matrix, compress, pass, lane, slice, variant, time_cost);
   }
 }
 
@@ -1683,7 +1590,6 @@ fn fill_slice_parallel(
   pass: u32,
   slice: u32,
   variant: Argon2Variant,
-  version: Argon2Version,
   time_cost: u32,
 ) {
   let lanes = matrix.lanes;
@@ -1727,7 +1633,6 @@ fn fill_slice_parallel(
             lane_len,
             total_blocks,
             variant,
-            version,
             time_cost,
           );
         }
@@ -1749,7 +1654,6 @@ fn fill_slice_parallel(
         lane_len,
         total_blocks,
         variant,
-        version,
         time_cost,
       );
     }
@@ -1768,15 +1672,14 @@ fn fill_slice(
   pass: u32,
   slice: u32,
   variant: Argon2Variant,
-  version: Argon2Version,
   time_cost: u32,
 ) {
   #[cfg(feature = "parallel")]
   if matrix.lanes > 1 && matrix.segment_len >= MIN_PARALLEL_SEGMENT_BLOCKS {
-    fill_slice_parallel(matrix, compress, pass, slice, variant, version, time_cost);
+    fill_slice_parallel(matrix, compress, pass, slice, variant, time_cost);
     return;
   }
-  fill_slice_sequential(matrix, compress, pass, slice, variant, version, time_cost);
+  fill_slice_sequential(matrix, compress, pass, slice, variant, time_cost);
 }
 
 // ─── Full Argon2 hash function ─────────────────────────────────────────────
@@ -1788,9 +1691,21 @@ fn argon2_hash(
   variant: Argon2Variant,
   out: &mut [u8],
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel(params, password, salt, variant, out, active_compress())
+  argon2_hash_with_context(params, Argon2Context::default(), password, salt, variant, out)
 }
 
+fn argon2_hash_with_context(
+  params: &Argon2Params,
+  context: Argon2Context<'_>,
+  password: &[u8],
+  salt: &[u8],
+  variant: Argon2Variant,
+  out: &mut [u8],
+) -> Result<(), Argon2Error> {
+  argon2_hash_with_kernel_inner(params, context, password, salt, variant, out, active_compress(), false)
+}
+
+#[cfg(feature = "diag")]
 fn argon2_hash_with_kernel(
   params: &Argon2Params,
   password: &[u8],
@@ -1799,7 +1714,16 @@ fn argon2_hash_with_kernel(
   out: &mut [u8],
   compress: CompressFn,
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel_inner(params, password, salt, variant, out, compress, false)
+  argon2_hash_with_kernel_inner(
+    params,
+    Argon2Context::default(),
+    password,
+    salt,
+    variant,
+    out,
+    compress,
+    false,
+  )
 }
 
 #[cfg(feature = "diag")]
@@ -1811,11 +1735,22 @@ fn argon2_hash_with_kernel_diag_blake2b(
   out: &mut [u8],
   compress: CompressFn,
 ) -> Result<(), Argon2Error> {
-  argon2_hash_with_kernel_inner(params, password, salt, variant, out, compress, true)
+  argon2_hash_with_kernel_inner(
+    params,
+    Argon2Context::default(),
+    password,
+    salt,
+    variant,
+    out,
+    compress,
+    true,
+  )
 }
 
+#[allow(clippy::too_many_arguments)] // Params, context, inputs, variant, output, and kernel are the real operation boundary.
 fn argon2_hash_with_kernel_inner(
   params: &Argon2Params,
+  context: Argon2Context<'_>,
   password: &[u8],
   salt: &[u8],
   variant: Argon2Variant,
@@ -1823,9 +1758,8 @@ fn argon2_hash_with_kernel_inner(
   compress: CompressFn,
   #[cfg_attr(not(feature = "diag"), allow(unused_variables))] diag_blake2b: bool,
 ) -> Result<(), Argon2Error> {
-  params.validate()?;
-  params.check_inputs(password, salt)?;
-  if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES || out.len() != params.output_len as usize {
+  Argon2Params::check_inputs(password, salt, context)?;
+  if out.len() < MIN_OUTPUT_LEN || out.len() as u64 > MAX_VAR_BYTES {
     return Err(Argon2Error::InvalidOutputLen);
   }
 
@@ -1834,19 +1768,19 @@ fn argon2_hash_with_kernel_inner(
     #[cfg(feature = "diag")]
     {
       if diag_blake2b {
-        compute_h0_diag_blake2b_portable(params, password, salt, variant)
+        compute_h0_diag_blake2b_portable(params, context, password, salt, variant, out.len())
       } else {
-        compute_h0(params, password, salt, variant)
+        compute_h0(params, context, password, salt, variant, out.len())
       }
     }
     #[cfg(not(feature = "diag"))]
     {
-      compute_h0(params, password, salt, variant)
+      compute_h0(params, context, password, salt, variant, out.len())
     }
   };
 
   // Allocate the memory matrix.
-  let mut matrix = Matrix::new(params.memory_cost_kib, params.parallelism)?;
+  let mut matrix = Matrix::new(*params)?;
   let lane_len = matrix.lane_len;
   let lanes = matrix.lanes;
 
@@ -1883,15 +1817,7 @@ fn argon2_hash_with_kernel_inner(
   // skipped when `parallelism == 1` to avoid rayon overhead.
   for pass in 0..params.time_cost {
     for slice in 0..SYNC_POINTS {
-      fill_slice(
-        &mut matrix,
-        compress,
-        pass,
-        slice,
-        variant,
-        params.version,
-        params.time_cost,
-      );
+      fill_slice(&mut matrix, compress, pass, slice, variant, params.time_cost);
     }
   }
 
@@ -1926,24 +1852,22 @@ fn argon2_hash_with_kernel_inner(
 macro_rules! define_argon2_variant {
   (
     $(#[$meta:meta])*
-    $name:ident { variant: $variant:expr, phc_algorithm: $phc_alg:literal }
+    $name:ident { variant: $variant:expr, algorithm: $algorithm:literal }
   ) => {
     $(#[$meta])*
     #[derive(Debug, Clone, Copy, Default)]
     pub struct $name;
 
     impl $name {
-      /// Algorithm identifier used in PHC strings and diagnostics (e.g.
-      /// `"argon2d"`, `"argon2i"`, `"argon2id"`).
-      pub const ALGORITHM: &'static str = $phc_alg;
+      /// Algorithm identifier used in diagnostics.
+      pub const ALGORITHM: &'static str = $algorithm;
 
-      /// Hash `password` with `salt` into `out`.
+      /// Derive bytes from `password` and `salt` into `out`.
       ///
       /// # Errors
       ///
-      /// Returns [`Argon2Error`] if parameters are out of range, the salt is
-      /// too short, or `out.len()` does not match `params.output_len`.
-      pub fn hash(
+      /// Returns [`Argon2Error`] if the salt or output length is invalid.
+      pub fn derive(
         params: &Argon2Params,
         password: &[u8],
         salt: &[u8],
@@ -1952,28 +1876,22 @@ macro_rules! define_argon2_variant {
         argon2_hash(params, password, salt, $variant, out)
       }
 
-      /// Hash `password` with `salt` into a fixed-size array.
+      /// Derive bytes with borrowed pepper and associated data.
       ///
       /// # Errors
       ///
-      /// Returns [`Argon2Error`] if `N != params.output_len`.
-      pub fn hash_array<const N: usize>(
+      /// Returns [`Argon2Error`] if any input length is invalid.
+      pub fn derive_with_context(
         params: &Argon2Params,
+        context: Argon2Context<'_>,
         password: &[u8],
         salt: &[u8],
-      ) -> Result<[u8; N], Argon2Error> {
-        let mut out = [0u8; N];
-        Self::hash(params, password, salt, &mut out)?;
-        Ok(out)
+        out: &mut [u8],
+      ) -> Result<(), Argon2Error> {
+        argon2_hash_with_context(params, context, password, salt, $variant, out)
       }
 
       /// Verify `expected` against a freshly-computed hash in constant time.
-      ///
-      /// The Argon2 hash always runs, even when `expected.len()` does not
-      /// match `params.output_len`. The length check is folded into the
-      /// final boolean, not an early return, so wall-clock cost does not
-      /// depend on whether the supplied tag has the right length —
-      /// `params.output_len` is not leaked through timing.
       ///
       /// # Errors
       ///
@@ -1986,17 +1904,15 @@ macro_rules! define_argon2_variant {
         salt: &[u8],
         expected: &[u8],
       ) -> Result<(), VerificationError> {
-        // Always allocate and hash to `params.output_len` regardless of
-        // `expected.len()`. The dominant cost (Argon2 fill) is constant; the
-        // residual byte-compare cost difference (≤ tens of ns) is dwarfed by
-        // the hash itself (≥ milliseconds at any realistic cost knobs).
-        let actual_len = params.output_len as usize;
-        let mut actual = alloc::vec![0u8; actual_len];
-        let hash_failed = Self::hash(params, password, salt, &mut actual).is_err();
-
-        // `constant_time_eq` returns false for length mismatches; combined
-        // with the always-run hash above, length-vs-bytes cases collapse
-        // into a single failure path.
+        if expected.len() < MIN_OUTPUT_LEN || expected.len() as u64 > MAX_VAR_BYTES {
+          return Err(VerificationError::new());
+        }
+        let mut actual = Vec::new();
+        actual
+          .try_reserve_exact(expected.len())
+          .map_err(|_| VerificationError::new())?;
+        actual.resize(expected.len(), 0);
+        let hash_failed = Self::derive(params, password, salt, &mut actual).is_err();
         let bytes_match = ct::constant_time_eq(&actual, expected);
         ct::zeroize(&mut actual);
 
@@ -2008,228 +1924,6 @@ macro_rules! define_argon2_variant {
         }
       }
 
-      /// Hash `password` with `salt` and encode the result as a PHC string.
-      ///
-      /// Emits `$argon2{d|i|id}$v=<ver>$m=<m>,t=<t>,p=<p>$<salt>$<hash>`
-      /// (standard RFC 4648 base64, no padding). `params.secret` and
-      /// `params.associated_data` are honoured during hashing but are **not**
-      /// embedded in the PHC string, per the PHC spec — callers holding
-      /// secrets must re-supply them when verifying.
-      ///
-      /// # Errors
-      ///
-      /// Propagates any [`Argon2Error`] from parameter validation or input
-      /// length checks.
-      #[cfg(feature = "phc-strings")]
-      pub fn hash_string_with_salt(
-        params: &Argon2Params,
-        password: &[u8],
-        salt: &[u8],
-      ) -> Result<alloc::string::String, Argon2Error> {
-        let mut hash = alloc::vec![0u8; params.output_len as usize];
-        Self::hash(params, password, salt, &mut hash)?;
-        let encoded = phc_integration::encode_string(Self::ALGORITHM, params, salt, &hash);
-        ct::zeroize(&mut hash);
-        Ok(encoded)
-      }
-
-      /// Hash `password` with a fresh 16-byte salt from the operating
-      /// system CSPRNG and encode the result as a PHC string.
-      ///
-      /// # Errors
-      ///
-      /// Propagates any [`Argon2Error`] from parameter validation or input
-      /// length checks. Returns [`Argon2Error::EntropyUnavailable`] if the
-      /// platform entropy source fails.
-      #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
-      pub fn hash_string(
-        params: &Argon2Params,
-        password: &[u8],
-      ) -> Result<alloc::string::String, Argon2Error> {
-        let mut salt = [0u8; 16];
-        getrandom::fill(&mut salt).map_err(|_| Argon2Error::EntropyUnavailable)?;
-        Self::hash_string_with_salt(params, password, &salt)
-      }
-
-      /// Verify `password` against a PHC-encoded hash in constant time.
-      ///
-      /// Parses the encoded string, rebuilds the cost parameters, re-hashes
-      /// `password` with the embedded salt, and compares in constant time.
-      /// Works only when the encoded string's algorithm matches `Self` — a
-      /// PHC string emitted by another variant is rejected opaquely.
-      ///
-      /// # Errors
-      ///
-      /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, parameter error, or default-policy violation. Errors
-      /// are intentionally opaque — callers needing to distinguish parse
-      /// failures should use the lower-level `decode_string` helper.
-      #[cfg(feature = "phc-strings")]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_string(
-        password: &[u8],
-        encoded: &str,
-      ) -> Result<(), VerificationError> {
-        Self::verify_string_with_policy(password, encoded, &Argon2VerifyPolicy::default())
-      }
-
-      /// Verify `password` against a PHC string after enforcing operational
-      /// bounds on its encoded cost parameters.
-      ///
-      /// # Errors
-      ///
-      /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, parameter error, or policy violation.
-      #[cfg(feature = "phc-strings")]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_string_with_policy(
-        password: &[u8],
-        encoded: &str,
-        policy: &Argon2VerifyPolicy,
-      ) -> Result<(), VerificationError> {
-        Self::verify_string_with_context_and_policy(password, encoded, &[], &[], policy)
-      }
-
-      /// Verify `password` against a PHC-encoded hash using an external
-      /// pepper and/or associated data.
-      ///
-      /// PHC strings carry the algorithm, cost parameters, salt, and hash.
-      /// They do not carry secret pepper material. This helper is the
-      /// verification counterpart for PHC strings produced from
-      /// [`Argon2Params::secret`] or [`Argon2Params::associated_data`].
-      ///
-      /// # Errors
-      ///
-      /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, parameter error, or default-policy violation.
-      #[cfg(feature = "phc-strings")]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_string_with_context(
-        password: &[u8],
-        encoded: &str,
-        secret: &[u8],
-        associated_data: &[u8],
-      ) -> Result<(), VerificationError> {
-        Self::verify_string_with_context_and_policy(
-          password,
-          encoded,
-          secret,
-          associated_data,
-          &Argon2VerifyPolicy::default(),
-        )
-      }
-
-      /// Verify `password` against a PHC-encoded hash without cost bounds.
-      ///
-      /// This compatibility helper accepts the encoded memory, iteration,
-      /// parallelism, and output length as long as the PHC string itself is
-      /// structurally valid. Use it only for trusted local migration inputs or
-      /// test-vector harnesses. For stored password verification, prefer
-      /// [`verify_string`](Self::verify_string) or
-      /// [`verify_string_with_policy`](Self::verify_string_with_policy).
-      ///
-      /// # Errors
-      ///
-      /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, or parameter error.
-      #[cfg(feature = "phc-strings")]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_string_unbounded(
-        password: &[u8],
-        encoded: &str,
-      ) -> Result<(), VerificationError> {
-        Self::verify_string_with_context_unbounded(password, encoded, &[], &[])
-      }
-
-      /// Verify `password` against a PHC string with external context and no
-      /// cost bounds.
-      ///
-      /// This is the compatibility counterpart to
-      /// [`verify_string_with_context`](Self::verify_string_with_context). Use
-      /// it only when the PHC string source is trusted and the caller has
-      /// already accepted the encoded cost parameters.
-      ///
-      /// # Errors
-      ///
-      /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, or parameter error.
-      #[cfg(feature = "phc-strings")]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_string_with_context_unbounded(
-        password: &[u8],
-        encoded: &str,
-        secret: &[u8],
-        associated_data: &[u8],
-      ) -> Result<(), VerificationError> {
-        Self::verify_string_with_context_and_policy(
-          password,
-          encoded,
-          secret,
-          associated_data,
-          &Argon2VerifyPolicy::new(u32::MAX, u32::MAX, u32::MAX, usize::MAX),
-        )
-      }
-
-      /// Verify `password` against a PHC string with external context and
-      /// explicit operational bounds.
-      ///
-      /// # Errors
-      ///
-      /// Returns [`VerificationError`] on any mismatch, malformed string,
-      /// variant mismatch, parameter error, or policy violation.
-      #[cfg(feature = "phc-strings")]
-      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-      pub fn verify_string_with_context_and_policy(
-        password: &[u8],
-        encoded: &str,
-        secret: &[u8],
-        associated_data: &[u8],
-        policy: &Argon2VerifyPolicy,
-      ) -> Result<(), VerificationError> {
-        let parsed = phc_integration::decode_string(encoded, Self::ALGORITHM)
-          .map_err(|_| VerificationError::new())?;
-        let mut params = parsed.params;
-        if !secret.is_empty() {
-          params = params.secret(secret);
-        }
-        if !associated_data.is_empty() {
-          params = params.associated_data(associated_data);
-        }
-        params = params.build().map_err(|_| VerificationError::new())?;
-        if !policy.allows(&params, parsed.hash.len()) {
-          return Err(VerificationError::new());
-        }
-        let mut actual = alloc::vec![0u8; parsed.hash.len()];
-        if Self::hash(&params, password, &parsed.salt, &mut actual).is_err() {
-          ct::zeroize(&mut actual);
-          return Err(VerificationError::new());
-        }
-        let ok = ct::constant_time_eq(&actual, &parsed.hash);
-        ct::zeroize(&mut actual);
-        if core::hint::black_box(ok) {
-          Ok(())
-        } else {
-          Err(VerificationError::new())
-        }
-      }
-
-      /// Decode a PHC string without re-hashing.
-      ///
-      /// Returns the parsed cost parameters, salt, and reference hash. Use
-      /// when you need programmatic access to the encoded components —
-      /// e.g. to re-hash with a new salt or compare multiple candidates.
-      ///
-      /// # Errors
-      ///
-      /// Returns [`crate::auth::phc::PhcError`] on any parse failure, or if
-      /// the encoded algorithm does not match `Self::ALGORITHM`.
-      #[cfg(feature = "phc-strings")]
-      pub fn decode_string(
-        encoded: &str,
-      ) -> Result<(Argon2Params, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>), crate::auth::phc::PhcError> {
-        let parsed = phc_integration::decode_string(encoded, Self::ALGORITHM)?;
-        Ok((parsed.params, parsed.salt, parsed.hash))
-      }
     }
   };
 }
@@ -2245,11 +1939,11 @@ define_argon2_variant! {
   ///
   /// ```rust
   /// use rscrypto::{Argon2Params, Argon2d};
-  /// let params = Argon2Params::new().memory_cost_kib(32).time_cost(3).parallelism(4).output_len(32).build().unwrap();
+  /// let params = Argon2Params::new(32, 3, 4).unwrap();
   /// let mut h = [0u8; 32];
-  /// Argon2d::hash(&params, &[0x01; 32], &[0x02; 16], &mut h).unwrap();
+  /// Argon2d::derive(&params, &[0x01; 32], &[0x02; 16], &mut h).unwrap();
   /// ```
-  Argon2d { variant: Argon2Variant::Argon2d, phc_algorithm: "argon2d" }
+  Argon2d { variant: Argon2Variant::Argon2d, algorithm: "argon2d" }
 }
 
 define_argon2_variant! {
@@ -2264,54 +1958,239 @@ define_argon2_variant! {
   ///
   /// ```rust
   /// use rscrypto::{Argon2Params, Argon2i};
-  /// let params = Argon2Params::new().memory_cost_kib(32).time_cost(3).parallelism(4).output_len(32).build().unwrap();
+  /// let params = Argon2Params::new(32, 3, 4).unwrap();
   /// let mut h = [0u8; 32];
-  /// Argon2i::hash(&params, &[0x01; 32], &[0x02; 16], &mut h).unwrap();
+  /// Argon2i::derive(&params, &[0x01; 32], &[0x02; 16], &mut h).unwrap();
   /// ```
-  Argon2i { variant: Argon2Variant::Argon2i, phc_algorithm: "argon2i" }
+  Argon2i { variant: Argon2Variant::Argon2i, algorithm: "argon2i" }
 }
 
 define_argon2_variant! {
   /// Argon2id — hybrid variant of Argon2 (RFC 9106). **Recommended default.**
   ///
   /// Runs Argon2i (data-independent) for the first half of the first pass
-  /// and Argon2d (data-dependent) for the rest. OWASP 2024 recommends this
+  /// and Argon2d (data-dependent) for the rest. OWASP recommends this
   /// variant for password hashing.
   ///
   /// # Examples
   ///
   /// ```rust
   /// use rscrypto::{Argon2Params, Argon2id};
-  /// let params = Argon2Params::new().memory_cost_kib(32).time_cost(3).parallelism(4).output_len(32).build().unwrap();
+  /// let params = Argon2Params::new(32, 3, 4).unwrap();
   /// let mut h = [0u8; 32];
-  /// Argon2id::hash(&params, &[0x01; 32], &[0x02; 16], &mut h).unwrap();
+  /// Argon2id::derive(&params, &[0x01; 32], &[0x02; 16], &mut h).unwrap();
   /// ```
-  Argon2id { variant: Argon2Variant::Argon2id, phc_algorithm: "argon2id" }
+  Argon2id { variant: Argon2Variant::Argon2id, algorithm: "argon2id" }
 }
 
-// ─── PHC string integration (feature: phc-strings) ─────────────────────────
+/// Argon2id password generation and bounded PHC verification.
+#[cfg(feature = "phc-strings")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Argon2idPassword {
+  generation: Argon2Params,
+  limits: Argon2VerificationLimits,
+}
 
 #[cfg(feature = "phc-strings")]
-mod phc_integration {
-  use alloc::{string::String, vec::Vec};
+impl Default for Argon2idPassword {
+  fn default() -> Self {
+    let generation = Argon2Params::default();
+    Self {
+      generation,
+      limits: Argon2VerificationLimits::for_profile(generation),
+    }
+  }
+}
 
-  use super::{Argon2Params, Argon2Version};
-  use crate::auth::phc::{self, PhcError};
-
-  /// Parsed PHC components reconstituted into rscrypto types.
-  pub(super) struct ParsedPhc {
-    pub params: Argon2Params,
-    pub salt: Vec<u8>,
-    pub hash: Vec<u8>,
+#[cfg(feature = "phc-strings")]
+impl Argon2idPassword {
+  /// Use `generation` for new hashes and derive matching verification limits.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Argon2Error::ResourceOverflow`] if the profile cannot fit the
+  /// target address space.
+  pub fn new(generation: Argon2Params) -> Result<Self, Argon2Error> {
+    if argon2_shape(generation).memory_bytes > isize::MAX as u64 {
+      return Err(Argon2Error::ResourceOverflow);
+    }
+    Ok(Self {
+      generation,
+      limits: Argon2VerificationLimits::for_profile(generation),
+    })
   }
 
-  /// Build `$argon2{d|i|id}$v=<ver>$m=<m>,t=<t>,p=<p>$<salt>$<hash>`.
-  pub(super) fn encode_string(algorithm: &str, params: &Argon2Params, salt: &[u8], hash: &[u8]) -> String {
-    let mut out = String::new();
-    out.push('$');
-    out.push_str(algorithm);
-    out.push_str("$v=");
-    phc::push_u32_decimal(&mut out, params.get_version().as_u32());
+  /// Use distinct generation parameters and finite verification limits.
+  pub fn with_limits(generation: Argon2Params, limits: Argon2VerificationLimits) -> Result<Self, Argon2Error> {
+    if argon2_shape(generation).memory_bytes > isize::MAX as u64 {
+      return Err(Argon2Error::ResourceOverflow);
+    }
+    if !limits.allows(generation) {
+      return Err(Argon2Error::VerificationLimitTooLow);
+    }
+    Ok(Self { generation, limits })
+  }
+
+  /// Hash a password with an OS-generated salt and canonical Argon2id PHC encoding.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  pub fn hash_password(&self, password: &[u8]) -> Result<alloc::string::String, Argon2Error> {
+    self.hash_password_with_context(password, Argon2Context::default())
+  }
+
+  /// Hash a password with borrowed pepper and associated data.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  pub fn hash_password_with_context(
+    &self,
+    password: &[u8],
+    context: Argon2Context<'_>,
+  ) -> Result<alloc::string::String, Argon2Error> {
+    let mut salt = [0u8; PASSWORD_SALT_LEN];
+    getrandom::fill(&mut salt).map_err(|_| Argon2Error::EntropyUnavailable)?;
+    let mut verifier = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
+    Argon2id::derive_with_context(&self.generation, context, password, &salt, verifier.as_mut_array())?;
+    Ok(password_phc::encode(self.generation, &salt, verifier.as_array()))
+  }
+
+  /// Verify a password after approving all encoded resource requests.
+  #[cfg(feature = "phc-strings")]
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_password(
+    &self,
+    password: &[u8],
+    encoded: &str,
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    self.verify_password_with_context(password, encoded, Argon2Context::default())
+  }
+
+  /// Verify a password with borrowed pepper and associated data.
+  #[cfg(feature = "phc-strings")]
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_password_with_context(
+    &self,
+    password: &[u8],
+    encoded: &str,
+    context: Argon2Context<'_>,
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    let approved = password_phc::approve(encoded, self.limits).map_err(|_| VerificationError::new())?;
+    let mut actual = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
+    Argon2id::derive_with_context(
+      &approved.params,
+      context,
+      password,
+      approved.salt(),
+      actual.as_mut_array(),
+    )
+    .map_err(|_| VerificationError::new())?;
+    let verified = ct::constant_time_eq(actual.as_array(), &approved.expected);
+    if !core::hint::black_box(verified) {
+      return Err(VerificationError::new());
+    }
+    if approved.params == self.generation && approved.salt_len as usize == PASSWORD_SALT_LEN {
+      Ok(crate::auth::PasswordStatus::Current)
+    } else {
+      Ok(crate::auth::PasswordStatus::NeedsRehash)
+    }
+  }
+}
+
+#[cfg(feature = "phc-strings")]
+const PASSWORD_SALT_LEN: usize = 16;
+#[cfg(feature = "phc-strings")]
+const MAX_PHC_SALT_LEN: usize = 48;
+#[cfg(feature = "phc-strings")]
+const PASSWORD_OUTPUT_LEN: usize = DEFAULT_OUTPUT_LEN;
+
+#[cfg(feature = "phc-strings")]
+mod password_phc {
+  #[cfg(any(feature = "getrandom", test))]
+  use alloc::string::String;
+
+  #[cfg(any(feature = "getrandom", test))]
+  use super::ARGON2_VERSION;
+  use super::{
+    Argon2Params, Argon2VerificationLimits, MAX_PHC_SALT_LEN, MIN_SALT_LEN, PASSWORD_OUTPUT_LEN, argon2_shape,
+  };
+  use crate::auth::phc::{self, PhcError};
+
+  pub(super) struct ApprovedPhc {
+    pub params: Argon2Params,
+    pub salt: [u8; MAX_PHC_SALT_LEN],
+    pub salt_len: u8,
+    pub expected: [u8; PASSWORD_OUTPUT_LEN],
+  }
+
+  impl ApprovedPhc {
+    pub fn salt(&self) -> &[u8] {
+      &self.salt[..self.salt_len as usize]
+    }
+  }
+
+  fn next_param<'a>(params: &mut phc::PhcParamIter<'a>, expected: &str) -> Result<&'a str, PhcError> {
+    let (key, value) = params.next().ok_or(PhcError::MissingParam)??;
+    if key != expected {
+      return Err(if matches!(key, "m" | "t" | "p") {
+        PhcError::DuplicateParam
+      } else {
+        PhcError::UnknownParam
+      });
+    }
+    Ok(value)
+  }
+
+  pub(super) fn approve(encoded: &str, limits: Argon2VerificationLimits) -> Result<ApprovedPhc, PhcError> {
+    let parts = phc::parse(encoded)?;
+    if parts.algorithm != "argon2id" {
+      return Err(PhcError::AlgorithmMismatch);
+    }
+    if parts.version != Some("19") {
+      return Err(PhcError::UnsupportedVersion);
+    }
+
+    let mut values = phc::PhcParamIter::new(parts.parameters);
+    let memory_cost_kib = phc::parse_param_u32(next_param(&mut values, "m")?)?;
+    let time_cost = phc::parse_param_u32(next_param(&mut values, "t")?)?;
+    let parallelism = phc::parse_param_u32(next_param(&mut values, "p")?)?;
+    if let Some(extra) = values.next() {
+      let (key, _) = extra?;
+      return Err(if matches!(key, "m" | "t" | "p") {
+        PhcError::DuplicateParam
+      } else {
+        PhcError::UnknownParam
+      });
+    }
+    let params = Argon2Params::new(memory_cost_kib, time_cost, parallelism).map_err(|_| PhcError::ParamOutOfRange)?;
+    let shape = argon2_shape(params);
+    if shape.memory_bytes > isize::MAX as u64 || !limits.allows(params) {
+      return Err(PhcError::ParamOutOfRange);
+    }
+
+    let salt_len = phc::base64_decoded_len(parts.salt_b64.len());
+    let output_len = phc::base64_decoded_len(parts.hash_b64.len());
+    if !(MIN_SALT_LEN..=MAX_PHC_SALT_LEN).contains(&salt_len) || output_len != PASSWORD_OUTPUT_LEN {
+      return Err(PhcError::InvalidLength);
+    }
+
+    let mut salt = [0u8; MAX_PHC_SALT_LEN];
+    let decoded_salt_len = phc::base64_decode_into(parts.salt_b64, &mut salt)?;
+    let mut expected = [0u8; PASSWORD_OUTPUT_LEN];
+    let decoded_output_len = phc::base64_decode_into(parts.hash_b64, &mut expected)?;
+    if decoded_salt_len != salt_len || decoded_output_len != PASSWORD_OUTPUT_LEN {
+      return Err(PhcError::InvalidLength);
+    }
+
+    Ok(ApprovedPhc {
+      params,
+      salt,
+      salt_len: decoded_salt_len as u8,
+      expected,
+    })
+  }
+
+  #[cfg(any(feature = "getrandom", test))]
+  pub(super) fn encode(params: Argon2Params, salt: &[u8], verifier: &[u8; PASSWORD_OUTPUT_LEN]) -> String {
+    let mut out = String::with_capacity(128);
+    out.push_str("$argon2id$v=");
+    phc::push_u32_decimal(&mut out, ARGON2_VERSION);
     out.push_str("$m=");
     phc::push_u32_decimal(&mut out, params.get_memory_cost_kib());
     out.push_str(",t=");
@@ -2321,76 +2200,8 @@ mod phc_integration {
     out.push('$');
     phc::base64_encode_into(salt, &mut out);
     out.push('$');
-    phc::base64_encode_into(hash, &mut out);
+    phc::base64_encode_into(verifier, &mut out);
     out
-  }
-
-  /// Parse a PHC string and reconstitute `(params, salt, hash)`.
-  pub(super) fn decode_string(encoded: &str, expected_algorithm: &str) -> Result<ParsedPhc, PhcError> {
-    let parts = phc::parse(encoded)?;
-    if parts.algorithm != expected_algorithm {
-      return Err(PhcError::AlgorithmMismatch);
-    }
-
-    // Parse version. Required for Argon2 (RFC 9106 recommends v=19).
-    let version = match parts.version {
-      Some(v) => match phc::parse_param_u32(v)? {
-        0x10 => Argon2Version::V0x10,
-        0x13 => Argon2Version::V0x13,
-        _ => return Err(PhcError::UnsupportedVersion),
-      },
-      None => Argon2Version::V0x13, // Permissive default: some encoders omit v=.
-    };
-
-    // Parse the params segment: exactly {m, t, p}, each exactly once, in any order.
-    let mut memory_kib: Option<u32> = None;
-    let mut time_cost: Option<u32> = None;
-    let mut parallelism: Option<u32> = None;
-    for pair in phc::PhcParamIter::new(parts.parameters) {
-      let (k, v) = pair?;
-      let value = phc::parse_param_u32(v)?;
-      match k {
-        "m" => {
-          if memory_kib.replace(value).is_some() {
-            return Err(PhcError::DuplicateParam);
-          }
-        }
-        "t" => {
-          if time_cost.replace(value).is_some() {
-            return Err(PhcError::DuplicateParam);
-          }
-        }
-        "p" => {
-          if parallelism.replace(value).is_some() {
-            return Err(PhcError::DuplicateParam);
-          }
-        }
-        _ => return Err(PhcError::UnknownParam),
-      }
-    }
-    let m = memory_kib.ok_or(PhcError::MissingParam)?;
-    let t = time_cost.ok_or(PhcError::MissingParam)?;
-    let p = parallelism.ok_or(PhcError::MissingParam)?;
-
-    // Decode salt and hash.
-    let salt = phc::decode_base64_to_vec(parts.salt_b64)?;
-    let hash = phc::decode_base64_to_vec(parts.hash_b64)?;
-
-    if salt.len() < super::MIN_SALT_LEN || hash.len() < super::MIN_OUTPUT_LEN {
-      return Err(PhcError::InvalidLength);
-    }
-
-    // Build params with the extracted cost knobs; output_len equals the
-    // decoded hash length so verify's length check passes.
-    let params = Argon2Params::new()
-      .memory_cost_kib(m)
-      .time_cost(t)
-      .parallelism(p)
-      .output_len(hash.len() as u32)
-      .version(version);
-    let params = params.build().map_err(|_| PhcError::ParamOutOfRange)?;
-
-    Ok(ParsedPhc { params, salt, hash })
   }
 }
 
@@ -2403,155 +2214,83 @@ mod tests {
 
   use super::*;
 
-  // RFC 9106 Appendix A test vectors (version 0x13, m=32, t=3, p=4, T=32).
   #[cfg(not(miri))]
-  const PASSWORD: &[u8] = &[0x01u8; 32];
+  const PASSWORD: &[u8] = &[0x01; 32];
   #[cfg(not(miri))]
-  const SALT: &[u8] = &[0x02u8; 16];
+  const SALT: &[u8] = &[0x02; 16];
   #[cfg(not(miri))]
-  const SECRET: &[u8] = &[0x03u8; 8];
+  const SECRET: &[u8] = &[0x03; 8];
   #[cfg(not(miri))]
-  const AD: &[u8] = &[0x04u8; 12];
+  const AD: &[u8] = &[0x04; 12];
 
   #[cfg(not(miri))]
   fn canon_params() -> Argon2Params {
-    Argon2Params::new()
-      .memory_cost_kib(32)
-      .time_cost(3)
-      .parallelism(4)
-      .output_len(32)
-      .version(Argon2Version::V0x13)
-      .secret(SECRET)
-      .associated_data(AD)
-      .build()
-      .unwrap()
+    Argon2Params::new(32, 3, 4).unwrap()
   }
 
-  // ── RFC 9106 Appendix A ────────────────────────────────────────────────
+  #[cfg(not(miri))]
+  fn canon_context() -> Argon2Context<'static> {
+    Argon2Context::new(SECRET, AD)
+  }
 
   #[test]
   #[cfg(not(miri))]
-  fn argon2d_rfc_appendix_a_vector() {
-    let expected: [u8; 32] = [
+  fn rfc9106_appendix_a_vectors() {
+    let expected_d: [u8; 32] = [
       0x51, 0x2b, 0x39, 0x1b, 0x6f, 0x11, 0x62, 0x97, 0x53, 0x71, 0xd3, 0x09, 0x19, 0x73, 0x42, 0x94, 0xf8, 0x68, 0xe3,
       0xbe, 0x39, 0x84, 0xf3, 0xc1, 0xa1, 0x3a, 0x4d, 0xb9, 0xfa, 0xbe, 0x4a, 0xcb,
     ];
-    let mut out = [0u8; 32];
-    Argon2d::hash(&canon_params(), PASSWORD, SALT, &mut out).unwrap();
-    assert_eq!(out, expected);
-  }
-
-  #[test]
-  #[cfg(not(miri))]
-  fn argon2i_rfc_appendix_a_vector() {
-    let expected: [u8; 32] = [
+    let expected_i: [u8; 32] = [
       0xc8, 0x14, 0xd9, 0xd1, 0xdc, 0x7f, 0x37, 0xaa, 0x13, 0xf0, 0xd7, 0x7f, 0x24, 0x94, 0xbd, 0xa1, 0xc8, 0xde, 0x6b,
       0x01, 0x6d, 0xd3, 0x88, 0xd2, 0x99, 0x52, 0xa4, 0xc4, 0x67, 0x2b, 0x6c, 0xe8,
     ];
-    let mut out = [0u8; 32];
-    Argon2i::hash(&canon_params(), PASSWORD, SALT, &mut out).unwrap();
-    assert_eq!(out, expected);
-  }
-
-  #[test]
-  #[cfg(not(miri))]
-  fn argon2id_rfc_appendix_a_vector() {
-    let expected: [u8; 32] = [
+    let expected_id: [u8; 32] = [
       0x0d, 0x64, 0x0d, 0xf5, 0x8d, 0x78, 0x76, 0x6c, 0x08, 0xc0, 0x37, 0xa3, 0x4a, 0x8b, 0x53, 0xc9, 0xd0, 0x1e, 0xf0,
       0x45, 0x2d, 0x75, 0xb6, 0x5e, 0xb5, 0x25, 0x20, 0xe9, 0x6b, 0x01, 0xe6, 0x59,
     ];
-    let mut out = [0u8; 32];
-    Argon2id::hash(&canon_params(), PASSWORD, SALT, &mut out).unwrap();
-    assert_eq!(out, expected);
-  }
 
-  // ── Verify ─────────────────────────────────────────────────────────────
+    let mut actual = [0u8; 32];
+    Argon2d::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual).unwrap();
+    assert_eq!(actual, expected_d);
+    Argon2i::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual).unwrap();
+    assert_eq!(actual, expected_i);
+    Argon2id::derive_with_context(&canon_params(), canon_context(), PASSWORD, SALT, &mut actual).unwrap();
+    assert_eq!(actual, expected_id);
+  }
 
   #[test]
   #[cfg(not(miri))]
-  fn argon2id_verify_accepts_correct() {
+  fn raw_verify_accepts_only_the_exact_inputs() {
     let params = canon_params();
-    let h = Argon2id::hash_array::<32>(&params, PASSWORD, SALT).unwrap();
-    assert!(Argon2id::verify(&params, PASSWORD, SALT, &h).is_ok());
+    let mut expected = [0u8; 32];
+    Argon2id::derive(&params, PASSWORD, SALT, &mut expected).unwrap();
+
+    assert!(Argon2id::verify(&params, PASSWORD, SALT, &expected).is_ok());
+    assert!(Argon2id::verify(&params, b"wrong", SALT, &expected).is_err());
+    assert!(Argon2id::verify(&params, PASSWORD, &[0xff; 16], &expected).is_err());
   }
 
   #[test]
-  #[cfg(not(miri))]
-  fn argon2id_verify_rejects_wrong_password() {
-    let params = canon_params();
-    let h = Argon2id::hash_array::<32>(&params, PASSWORD, SALT).unwrap();
-    assert!(Argon2id::verify(&params, b"wrong_password_wrong_wrong!!wrong", SALT, &h).is_err());
+  fn params_are_valid_by_construction() {
+    assert_eq!(Argon2Params::new(8, 0, 1), Err(Argon2Error::InvalidTimeCost));
+    assert_eq!(Argon2Params::new(8, 1, 0), Err(Argon2Error::InvalidParallelism));
+    assert_eq!(Argon2Params::new(16, 1, 4), Err(Argon2Error::InvalidMemoryCost));
+    assert!(Argon2Params::new(32, 1, 4).is_ok());
   }
 
   #[test]
-  #[cfg(not(miri))]
-  fn argon2id_verify_rejects_wrong_salt() {
-    let params = canon_params();
-    let h = Argon2id::hash_array::<32>(&params, PASSWORD, SALT).unwrap();
-    let wrong_salt = [0xffu8; 16];
-    assert!(Argon2id::verify(&params, PASSWORD, &wrong_salt, &h).is_err());
-  }
-
-  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
-  #[test]
-  #[cfg(not(miri))]
-  fn hash_string_uses_random_salt_and_verifies() {
-    let params = Argon2Params::new()
-      .memory_cost_kib(32)
-      .time_cost(1)
-      .parallelism(1)
-      .output_len(32)
-      .build()
-      .unwrap();
-
-    let encoded = Argon2id::hash_string(&params, b"password").unwrap();
-    assert!(Argon2id::verify_string(b"password", &encoded).is_ok());
-    assert!(Argon2id::verify_string(b"wrong-password", &encoded).is_err());
-  }
-
-  // ── Errors ─────────────────────────────────────────────────────────────
-
-  #[test]
-  fn invalid_params_fail_build() {
-    assert_eq!(
-      Argon2Params::new().time_cost(0).build().unwrap_err(),
-      Argon2Error::InvalidTimeCost
-    );
-    assert_eq!(
-      Argon2Params::new().parallelism(0).build().unwrap_err(),
-      Argon2Error::InvalidParallelism
-    );
-    assert_eq!(
-      Argon2Params::new()
-        .parallelism(4)
-        .memory_cost_kib(16) // < 8 * p
-        .build()
-        .unwrap_err(),
-      Argon2Error::InvalidMemoryCost
-    );
-    assert_eq!(
-      Argon2Params::new().output_len(3).build().unwrap_err(),
-      Argon2Error::InvalidOutputLen
-    );
-  }
-
-  #[test]
-  fn short_salt_rejected() {
-    let params = Argon2Params::new().memory_cost_kib(32).parallelism(4).build().unwrap();
+  fn derive_rejects_invalid_operation_lengths() {
+    let params = Argon2Params::new(32, 1, 4).unwrap();
     let mut out = [0u8; 32];
     assert_eq!(
-      Argon2id::hash(&params, b"pw", &[0u8; 7], &mut out).unwrap_err(),
-      Argon2Error::SaltTooShort
+      Argon2id::derive(&params, b"pw", &[0u8; 7], &mut out),
+      Err(Argon2Error::SaltTooShort)
     );
-  }
 
-  #[test]
-  fn output_len_mismatch_rejected() {
-    let params = Argon2Params::new().memory_cost_kib(32).parallelism(4).build().unwrap();
-    let mut out = [0u8; 16]; // params.output_len is 32
+    let mut short = [0u8; 3];
     assert_eq!(
-      Argon2id::hash(&params, b"pw", &[0u8; 16], &mut out).unwrap_err(),
-      Argon2Error::InvalidOutputLen
+      Argon2id::derive(&params, b"pw", &[0u8; 16], &mut short),
+      Err(Argon2Error::InvalidOutputLen)
     );
   }
 
@@ -2563,317 +2302,232 @@ mod tests {
     assert_err::<Argon2Error>();
   }
 
-  // ── Differential: rscrypto vs rustcrypto `argon2` oracle ──────────────
+  #[test]
+  fn context_debug_redacts_borrowed_inputs() {
+    let debug = alloc::format!("{:?}", Argon2Context::new(b"pepper-value", b"tenant-value"));
+    assert!(!debug.contains("pepper-value"));
+    assert!(!debug.contains("tenant-value"));
+    assert!(debug.contains("[REDACTED]"));
+  }
 
   #[cfg(not(miri))]
   fn oracle_hash(
-    algo: argon2::Algorithm,
+    algorithm: argon2::Algorithm,
     password: &[u8],
     salt: &[u8],
-    m_kib: u32,
-    t: u32,
-    p: u32,
-    out_len: usize,
+    memory_kib: u32,
+    time: u32,
+    parallelism: u32,
+    output_len: usize,
   ) -> vec::Vec<u8> {
-    let params = argon2::Params::new(m_kib, t, p, Some(out_len)).unwrap();
-    let ctx = argon2::Argon2::new(algo, argon2::Version::V0x13, params);
-    let mut out = alloc::vec![0u8; out_len];
-    ctx.hash_password_into(password, salt, &mut out).unwrap();
-    out
+    let params = argon2::Params::new(memory_kib, time, parallelism, Some(output_len)).unwrap();
+    let oracle = argon2::Argon2::new(algorithm, argon2::Version::V0x13, params);
+    let mut output = alloc::vec![0u8; output_len];
+    oracle.hash_password_into(password, salt, &mut output).unwrap();
+    output
   }
 
   #[test]
   #[cfg(not(miri))]
-  fn argon2d_matches_oracle_small_params() {
-    let cases: &[(u32, u32, u32, usize)] = &[(8, 1, 1, 16), (16, 2, 1, 32), (32, 3, 2, 32)];
-    for &(m, t, p, out_len) in cases {
-      let params = Argon2Params::new()
-        .memory_cost_kib(m)
-        .time_cost(t)
-        .parallelism(p)
-        .output_len(out_len as u32)
-        .build()
-        .unwrap();
-      let mut actual = alloc::vec![0u8; out_len];
-      Argon2d::hash(&params, b"password", &[0u8; 16], &mut actual).unwrap();
-      let expected = oracle_hash(argon2::Algorithm::Argon2d, b"password", &[0u8; 16], m, t, p, out_len);
-      assert_eq!(actual, expected, "argon2d mismatch m={m} t={t} p={p} T={out_len}");
+  fn all_variants_match_the_oracle() {
+    let cases: &[(u32, u32, u32, usize)] = &[(8, 1, 1, 16), (16, 2, 1, 32), (32, 3, 2, 64)];
+    for &(memory, time, parallelism, output_len) in cases {
+      let params = Argon2Params::new(memory, time, parallelism).unwrap();
+      let mut actual = alloc::vec![0u8; output_len];
+
+      Argon2d::derive(&params, b"password", &[0u8; 16], &mut actual).unwrap();
+      assert_eq!(
+        actual,
+        oracle_hash(
+          argon2::Algorithm::Argon2d,
+          b"password",
+          &[0u8; 16],
+          memory,
+          time,
+          parallelism,
+          output_len,
+        )
+      );
+
+      Argon2i::derive(&params, b"password", &[0u8; 16], &mut actual).unwrap();
+      assert_eq!(
+        actual,
+        oracle_hash(
+          argon2::Algorithm::Argon2i,
+          b"password",
+          &[0u8; 16],
+          memory,
+          time,
+          parallelism,
+          output_len,
+        )
+      );
+
+      Argon2id::derive(&params, b"password", &[0u8; 16], &mut actual).unwrap();
+      assert_eq!(
+        actual,
+        oracle_hash(
+          argon2::Algorithm::Argon2id,
+          b"password",
+          &[0u8; 16],
+          memory,
+          time,
+          parallelism,
+          output_len,
+        )
+      );
     }
   }
 
   #[test]
-  #[cfg(not(miri))]
-  fn argon2i_matches_oracle_small_params() {
-    let cases: &[(u32, u32, u32, usize)] = &[(8, 1, 1, 16), (16, 2, 1, 32), (32, 3, 2, 32)];
-    for &(m, t, p, out_len) in cases {
-      let params = Argon2Params::new()
-        .memory_cost_kib(m)
-        .time_cost(t)
-        .parallelism(p)
-        .output_len(out_len as u32)
-        .build()
-        .unwrap();
-      let mut actual = alloc::vec![0u8; out_len];
-      Argon2i::hash(&params, b"password", &[0u8; 16], &mut actual).unwrap();
-      let expected = oracle_hash(argon2::Algorithm::Argon2i, b"password", &[0u8; 16], m, t, p, out_len);
-      assert_eq!(actual, expected, "argon2i mismatch m={m} t={t} p={p} T={out_len}");
-    }
-  }
-
-  #[test]
-  #[cfg(not(miri))]
-  fn argon2id_matches_oracle_small_params() {
-    let cases: &[(u32, u32, u32, usize)] = &[(8, 1, 1, 16), (16, 2, 1, 32), (32, 3, 2, 32), (32, 3, 4, 64)];
-    for &(m, t, p, out_len) in cases {
-      let params = Argon2Params::new()
-        .memory_cost_kib(m)
-        .time_cost(t)
-        .parallelism(p)
-        .output_len(out_len as u32)
-        .build()
-        .unwrap();
-      let mut actual = alloc::vec![0u8; out_len];
-      Argon2id::hash(&params, b"password", &[0u8; 16], &mut actual).unwrap();
-      let expected = oracle_hash(argon2::Algorithm::Argon2id, b"password", &[0u8; 16], m, t, p, out_len);
-      assert_eq!(actual, expected, "argon2id mismatch m={m} t={t} p={p} T={out_len}");
-    }
-  }
-
-  // ── Kernel dispatch plumbing ─────────────────────────────────────────
-
-  #[test]
-  fn kernel_id_stringifies() {
+  fn kernel_contract_includes_the_portable_fallback() {
+    assert!(ALL_KERNELS.contains(&KernelId::Portable));
+    assert!(required_caps(KernelId::Portable).is_empty());
     assert_eq!(KernelId::Portable.as_str(), "portable");
   }
 
-  #[test]
-  fn portable_kernel_has_no_required_caps() {
-    assert!(required_caps(KernelId::Portable).is_empty());
-  }
-
-  // ── PHC string integration ───────────────────────────────────────────
-
   #[cfg(all(feature = "phc-strings", not(miri)))]
   mod phc_tests {
-    use alloc::{format, string::String, vec};
+    use alloc::format;
 
     use super::*;
-    use crate::auth::phc::PhcError;
+    use crate::auth::{PasswordStatus, phc::PhcError};
 
     fn small_params() -> Argon2Params {
-      Argon2Params::new()
-        .memory_cost_kib(32)
-        .time_cost(2)
-        .parallelism(1)
-        .output_len(32)
-        .build()
-        .unwrap()
+      Argon2Params::new(32, 2, 1).unwrap()
+    }
+
+    fn encode(params: Argon2Params, password: &[u8], salt: &[u8], context: Argon2Context<'_>) -> alloc::string::String {
+      let mut verifier = [0u8; PASSWORD_OUTPUT_LEN];
+      Argon2id::derive_with_context(&params, context, password, salt, &mut verifier).unwrap();
+      password_phc::encode(params, salt, &verifier)
     }
 
     #[test]
-    fn hash_string_with_salt_round_trip_id() {
+    fn canonical_password_record_round_trips() {
       let params = small_params();
-      let salt = [0xAAu8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
+      let password = Argon2idPassword::new(params).unwrap();
+      let encoded = encode(params, b"password", &[0xaa; 16], Argon2Context::default());
+
       assert!(encoded.starts_with("$argon2id$v=19$m=32,t=2,p=1$"));
-      assert!(Argon2id::verify_string(b"password", &encoded).is_ok());
-      assert!(Argon2id::verify_string_unbounded(b"password", &encoded).is_ok());
-      assert!(Argon2id::verify_string(b"wrongpassword", &encoded).is_err());
+      assert_eq!(
+        password.verify_password(b"password", &encoded),
+        Ok(PasswordStatus::Current)
+      );
+      assert!(password.verify_password(b"wrong", &encoded).is_err());
     }
 
     #[test]
-    fn verify_string_default_policy_rejects_oversized_argon2_costs() {
+    fn accepted_older_profile_requests_rehash() {
+      let generation = Argon2Params::new(40, 2, 1).unwrap();
+      let password = Argon2idPassword::new(generation).unwrap();
+      let encoded = encode(small_params(), b"password", &[0xbb; 16], Argon2Context::default());
+
+      assert_eq!(
+        password.verify_password(b"password", &encoded),
+        Ok(PasswordStatus::NeedsRehash)
+      );
+    }
+
+    #[test]
+    fn accepted_noncurrent_salt_length_requests_rehash() {
       let params = small_params();
-      let salt = [0xA0u8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
-      let too_much_memory = Argon2VerifyPolicy::default().max_memory_cost_kib.strict_add(1);
-      let expensive = encoded.replace("m=32", &format!("m={too_much_memory}"));
+      let password = Argon2idPassword::new(params).unwrap();
+      let encoded = encode(params, b"password", &[0xbb; 8], Argon2Context::default());
 
-      assert!(Argon2id::decode_string(&expensive).is_ok());
-      assert!(Argon2id::verify_string(b"password", &expensive).is_err());
-      assert!(Argon2id::verify_string_with_context(b"password", &expensive, &[], &[]).is_err());
+      assert_eq!(
+        password.verify_password(b"password", &encoded),
+        Ok(PasswordStatus::NeedsRehash)
+      );
     }
 
     #[test]
-    fn verify_string_with_policy_enforces_argon2_bounds() {
+    fn borrowed_context_is_required_for_context_bound_records() {
       let params = small_params();
-      let salt = [0xA1u8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
+      let password = Argon2idPassword::new(params).unwrap();
+      let context = Argon2Context::new(b"pepper", b"tenant");
+      let encoded = encode(params, b"password", &[0xcc; 16], context);
 
-      let allowed = Argon2VerifyPolicy::new(32, 2, 1, 32);
-      assert!(Argon2id::verify_string_with_policy(b"password", &encoded, &allowed).is_ok());
-
-      let low_memory = Argon2VerifyPolicy::new(31, 2, 1, 32);
-      assert!(Argon2id::verify_string_with_policy(b"password", &encoded, &low_memory).is_err());
-
-      let short_output = Argon2VerifyPolicy::new(32, 2, 1, 31);
-      assert!(Argon2id::verify_string_with_policy(b"password", &encoded, &short_output).is_err());
-    }
-
-    #[test]
-    fn verify_string_with_context_and_policy_enforces_argon2_bounds() {
-      let params = small_params().secret(b"pepper").build().unwrap();
-      let salt = [0xA2u8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"password", &salt).unwrap();
-
-      let allowed = Argon2VerifyPolicy::new(32, 2, 1, 32);
-      assert!(Argon2id::verify_string_with_context_and_policy(b"password", &encoded, b"pepper", &[], &allowed).is_ok());
-
-      let low_time = Argon2VerifyPolicy::new(32, 1, 1, 32);
+      assert!(password.verify_password(b"password", &encoded).is_err());
+      assert_eq!(
+        password.verify_password_with_context(b"password", &encoded, context),
+        Ok(PasswordStatus::Current)
+      );
       assert!(
-        Argon2id::verify_string_with_context_and_policy(b"password", &encoded, b"pepper", &[], &low_time).is_err()
+        password
+          .verify_password_with_context(b"password", &encoded, Argon2Context::new(b"wrong", b"tenant"),)
+          .is_err()
       );
     }
 
     #[test]
-    fn hash_string_round_trip_d_and_i() {
-      let params = small_params();
-      let salt = [0xBBu8; 16];
-      let encoded_d = Argon2d::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-      let encoded_i = Argon2i::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-      assert!(encoded_d.starts_with("$argon2d$"));
-      assert!(encoded_i.starts_with("$argon2i$"));
-      assert!(Argon2d::verify_string(b"pw", &encoded_d).is_ok());
-      assert!(Argon2i::verify_string(b"pw", &encoded_i).is_ok());
-    }
-
-    #[test]
-    fn verify_string_rejects_variant_mismatch() {
-      let params = small_params();
-      let salt = [0xCCu8; 16];
-      let encoded_d = Argon2d::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-      // Cross-feed: Argon2id expects its own algorithm label.
-      assert!(Argon2id::verify_string(b"pw", &encoded_d).is_err());
-      assert!(Argon2i::verify_string(b"pw", &encoded_d).is_err());
-    }
-
-    #[test]
-    fn decode_string_extracts_params_salt_hash() {
-      let params = small_params();
-      let salt = vec![0xDDu8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-
-      let (decoded_params, decoded_salt, decoded_hash) = Argon2id::decode_string(&encoded).unwrap();
-      assert_eq!(decoded_params.get_memory_cost_kib(), 32);
-      assert_eq!(decoded_params.get_time_cost(), 2);
-      assert_eq!(decoded_params.get_parallelism(), 1);
-      assert_eq!(decoded_params.get_output_len(), 32);
-      assert_eq!(decoded_params.get_version(), Argon2Version::V0x13);
-      assert_eq!(decoded_salt, salt);
-      assert_eq!(decoded_hash.len(), 32);
-
-      // Re-hashing with decoded params should give the same hash.
-      let mut rehashed = [0u8; 32];
-      Argon2id::hash(&decoded_params, b"pw", &decoded_salt, &mut rehashed).unwrap();
-      assert_eq!(rehashed.as_slice(), decoded_hash.as_slice());
-    }
-
-    #[test]
-    fn decode_string_rejects_malformed() {
+    fn approval_rejects_resource_requests_before_base64_decode() {
+      let limits = Argon2VerificationLimits::for_profile(small_params());
+      let expensive = "$argon2id$v=19$m=40,t=2,p=1$*$*";
       assert_eq!(
-        Argon2id::decode_string("not a phc string").unwrap_err(),
-        PhcError::MalformedInput
+        password_phc::approve(expensive, limits).err(),
+        Some(PhcError::ParamOutOfRange)
       );
-      // Short salt (2 bytes of "aa") should fail InvalidLength (< MIN_SALT_LEN = 8).
+
+      let admitted = "$argon2id$v=19$m=32,t=2,p=1$*$*";
       assert_eq!(
-        Argon2id::decode_string("$argon2id$m=32,t=2,p=1$YWE$aGFzaA").unwrap_err(),
-        PhcError::InvalidLength
-      );
-      // Hash segment with 2 bytes ("aa" → base64 "YWE") is below MIN_OUTPUT_LEN.
-      assert_eq!(
-        Argon2id::decode_string("$argon2id$m=32,t=2,p=1$QUFBQUFBQUFBQUFBQUFBQQ$YWE").unwrap_err(),
-        PhcError::InvalidLength
+        password_phc::approve(admitted, limits).err(),
+        Some(PhcError::InvalidLength)
       );
     }
 
     #[test]
-    fn verify_string_rejects_tampered_hash() {
-      let params = small_params();
-      let salt = [0xEEu8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-      // Flip a byte in the hash segment (last character).
-      let mut tampered: String = encoded.chars().collect();
-      let len = tampered.len();
-      tampered.replace_range(len - 1..len, "A"); // the original value was "A" or not — either way the test verifies rejection on corruption
-      // The tampering may coincidentally match; try multiple flips.
-      let mut matched_tamper = encoded.clone();
-      let variants = ["A", "B", "C"];
-      let last_char = encoded.chars().last().unwrap();
-      for v in variants {
-        if v.chars().next().unwrap() != last_char {
-          let mut t = encoded.clone();
-          let len = t.len();
-          t.replace_range(len - 1..len, v);
-          matched_tamper = t;
-          break;
-        }
+    fn actual_argon2_shape_defines_the_limit() {
+      let limits = Argon2VerificationLimits::for_profile(small_params());
+      let rounded_equivalent = Argon2Params::new(35, 2, 1).unwrap();
+      assert!(limits.allows(rounded_equivalent));
+      let next_matrix = Argon2Params::new(36, 2, 1).unwrap();
+      assert!(!limits.allows(next_matrix));
+    }
+
+    #[test]
+    fn generator_and_parser_share_the_full_argon2_parallelism_domain() {
+      let params = Argon2Params::new(2_048, 1, 256).unwrap();
+      let encoded = password_phc::encode(params, &[0x44; 16], &[0u8; PASSWORD_OUTPUT_LEN]);
+      let limits = Argon2VerificationLimits::for_profile(params);
+
+      assert!(password_phc::approve(&encoded, limits).is_ok());
+    }
+
+    #[test]
+    fn parser_accepts_only_the_canonical_argon2id_protocol() {
+      let limits = Argon2VerificationLimits::for_profile(small_params());
+      let salt = "AAAAAAAAAAAAAAAAAAAAAA";
+      let hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      let cases = [
+        format!("$argon2i$v=19$m=32,t=2,p=1$${salt}$${hash}"),
+        format!("$argon2id$m=32,t=2,p=1$${salt}$${hash}"),
+        format!("$argon2id$v=16$m=32,t=2,p=1$${salt}$${hash}"),
+        format!("$argon2id$v=19$t=2,m=32,p=1$${salt}$${hash}"),
+        format!("$argon2id$v=19$m=32,m=32,p=1$${salt}$${hash}"),
+        format!("$argon2id$v=19$m=32,t=2,x=1$${salt}$${hash}"),
+      ];
+      for encoded in cases {
+        assert!(password_phc::approve(&encoded, limits).is_err(), "{encoded}");
       }
-      assert!(Argon2id::verify_string(b"pw", &matched_tamper).is_err());
     }
 
+    #[cfg(feature = "getrandom")]
     #[test]
-    fn decode_string_rejects_duplicate_params() {
-      // Encode a hash and munge the params segment to include a duplicate `m=`.
-      let params = small_params();
-      let encoded = Argon2id::hash_string_with_salt(&params, b"pw", &[0xFFu8; 16]).unwrap();
-      let broken = encoded.replace("t=2", "m=99");
-      assert_eq!(Argon2id::decode_string(&broken).unwrap_err(), PhcError::DuplicateParam);
-    }
+    fn generated_records_use_fresh_salts() {
+      let password = Argon2idPassword::new(small_params()).unwrap();
+      let first = password.hash_password(b"password").unwrap();
+      let second = password.hash_password(b"password").unwrap();
 
-    #[test]
-    fn decode_string_accepts_missing_version() {
-      // Omitting the `$v=19` segment is permissive and defaults to V0x13.
-      let params = small_params();
-      let salt = [0x77u8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-      let no_v = encoded.replace("$v=19", "");
-      let (p, s, h) = Argon2id::decode_string(&no_v).unwrap();
-      assert_eq!(p.get_version(), Argon2Version::V0x13);
-      assert_eq!(s, salt);
-      assert_eq!(h.len(), 32);
-    }
-
-    #[test]
-    fn verify_string_with_context_handles_secret_and_associated_data() {
-      let params = small_params()
-        .secret(b"pepper")
-        .associated_data(b"context")
-        .build()
-        .unwrap();
-      let salt = [0x99u8; 16];
-      let encoded = Argon2id::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-
-      assert!(Argon2id::verify_string(b"pw", &encoded).is_err());
-      assert!(Argon2id::verify_string_with_context(b"pw", &encoded, b"pepper", b"context").is_ok());
-      assert!(Argon2id::verify_string_with_context_unbounded(b"pw", &encoded, b"pepper", b"context").is_ok());
-      assert!(Argon2id::verify_string_with_context(b"pw", &encoded, b"wrong", b"context").is_err());
-      assert!(Argon2id::verify_string_with_context(b"pw", &encoded, b"pepper", b"wrong").is_err());
-    }
-
-    #[test]
-    fn encoded_format_exact_for_known_vector() {
-      // Verify exact string shape with fixed params + salt.
-      let params = Argon2Params::new()
-        .memory_cost_kib(8)
-        .time_cost(1)
-        .parallelism(1)
-        .output_len(16)
-        .version(Argon2Version::V0x13)
-        .build()
-        .unwrap();
-      let salt = b"exampleSALTvalue"; // 16 bytes
-      let encoded = Argon2id::hash_string_with_salt(&params, b"password", salt).unwrap();
-      // Shape check: exactly 5 segments after leading $.
-      let segments: alloc::vec::Vec<&str> = encoded.split('$').collect();
-      assert_eq!(segments[0], "");
-      assert_eq!(segments[1], "argon2id");
-      assert_eq!(segments[2], "v=19");
-      assert_eq!(segments[3], "m=8,t=1,p=1");
-      // segments[4] is base64 salt (16 bytes → 22 chars)
-      assert_eq!(segments[4].len(), 22);
-      // segments[5] is base64 hash (16 bytes → 22 chars)
-      assert_eq!(segments[5].len(), 22);
-      assert_eq!(segments.len(), 6);
+      assert_ne!(first, second);
+      assert_eq!(
+        password.verify_password(b"password", &first),
+        Ok(PasswordStatus::Current)
+      );
+      assert_eq!(
+        password.verify_password(b"password", &second),
+        Ok(PasswordStatus::Current)
+      );
     }
   }
 }

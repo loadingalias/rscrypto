@@ -377,7 +377,7 @@ bench_features_for_target() {
     blake2) echo "parallel,blake2b,blake2s" ;;
     blake3) echo "parallel,blake3" ;;
     auth) echo "parallel,hmac,hkdf,pbkdf2,ecdsa,ed25519,x25519,ml-kem,diag" ;;
-    password_hashing) echo "parallel,argon2,scrypt,phc-strings" ;;
+    password_hashing) echo "parallel,argon2,scrypt,phc-strings,getrandom" ;;
     rsa) echo "parallel,rsa,diag" ;;
     aead_diag) echo "parallel,sha2,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead,diag" ;;
     aead) echo "parallel,aes-gcm,aes-gcm-siv,chacha20poly1305,xchacha20poly1305,aegis256,ascon-aead" ;;

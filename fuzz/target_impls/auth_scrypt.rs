@@ -16,19 +16,14 @@ pub fn run(data: &[u8]) {
   let r = 1u32.strict_add(u32::from(r_byte) % 4);
   let out_len = 1u32.strict_add(u32::from(out_len_byte) % 64);
 
-  let params = ScryptParams::new()
-    .log_n(log_n)
-    .r(r)
-    .p(1)
-    .output_len(out_len)
-    .build()
+  let params = ScryptParams::new(log_n, r, 1)
     .expect("params must be valid for fuzzer ranges");
 
   let (password, salt) = split_at_ratio(rest, pw_salt_split);
 
   // Property: hash succeeds for valid inputs.
   let mut actual = vec![0u8; out_len as usize];
-  Scrypt::hash(&params, password, salt, &mut actual).expect("hash within fuzz ranges");
+  Scrypt::derive(&params, password, salt, &mut actual).expect("hash within fuzz ranges");
 
   // Property: verify accepts the hash it just produced.
   Scrypt::verify(&params, password, salt, &actual).expect("verify must accept the hash it just produced");

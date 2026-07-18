@@ -11,15 +11,9 @@
 use rscrypto::{Scrypt, ScryptParams};
 
 fn hash_64(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32) -> [u8; 64] {
-  let params = ScryptParams::new()
-    .log_n(log_n)
-    .r(r)
-    .p(p)
-    .output_len(64)
-    .build()
-    .expect("RFC 7914 parameters validate");
+  let params = ScryptParams::new(log_n, r, p).expect("RFC 7914 parameters validate");
   let mut out = [0u8; 64];
-  Scrypt::hash(&params, password, salt, &mut out).expect("scrypt hash");
+  Scrypt::derive(&params, password, salt, &mut out).expect("scrypt hash");
   out
 }
 

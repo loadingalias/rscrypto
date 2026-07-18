@@ -25,24 +25,17 @@
 
 #![cfg(feature = "argon2")]
 
-use rscrypto::{Argon2Params, Argon2Version, Argon2id};
+use rscrypto::{Argon2Params, Argon2id};
 
 /// Single deterministic hash with the cheapest valid Argon2id config. Goal
 /// is exclusively memory-safety scrutiny under Miri; the actual hash output
 /// is irrelevant — we only care that hashing completes without UB.
 #[test]
 fn argon2id_minimal_p1_no_ub() {
-  let params = Argon2Params::new()
-    .memory_cost_kib(8) // RFC 9106 lower bound
-    .time_cost(1)
-    .parallelism(1)
-    .output_len(4)
-    .version(Argon2Version::V0x13)
-    .build()
-    .expect("minimal params are valid");
+  let params = Argon2Params::new(8, 1, 1).expect("minimal params are valid");
 
   let mut out = [0u8; 4];
-  Argon2id::hash(&params, b"pw", b"abcdefgh", &mut out).expect("Argon2id hash must succeed");
+  Argon2id::derive(&params, b"pw", b"abcdefgh", &mut out).expect("Argon2id hash must succeed");
 
   // Sanity: the output is non-zero (Argon2id can't produce all-zero from
   // a valid password+salt with overwhelming probability — if this fails
@@ -55,17 +48,10 @@ fn argon2id_minimal_p1_no_ub() {
 /// to hand out per-lane mutable borrows.
 #[test]
 fn argon2id_minimal_p2_no_ub() {
-  let params = Argon2Params::new()
-    .memory_cost_kib(16) // ≥ 8·p = 16
-    .time_cost(1)
-    .parallelism(2)
-    .output_len(4)
-    .version(Argon2Version::V0x13)
-    .build()
-    .expect("p=2 params are valid");
+  let params = Argon2Params::new(16, 1, 2).expect("p=2 params are valid");
 
   let mut out = [0u8; 4];
-  Argon2id::hash(&params, b"pw", b"abcdefgh", &mut out).expect("p=2 hash must succeed");
+  Argon2id::derive(&params, b"pw", b"abcdefgh", &mut out).expect("p=2 hash must succeed");
 
   assert_ne!(out, [0u8; 4]);
 }
@@ -73,16 +59,10 @@ fn argon2id_minimal_p2_no_ub() {
 /// Verify path — exercises the `H'` expansion + constant-time tag compare.
 #[test]
 fn argon2id_minimal_verify_no_ub() {
-  let params = Argon2Params::new()
-    .memory_cost_kib(8)
-    .time_cost(1)
-    .parallelism(1)
-    .output_len(4)
-    .build()
-    .expect("minimal params are valid");
+  let params = Argon2Params::new(8, 1, 1).expect("minimal params are valid");
 
   let mut hash = [0u8; 4];
-  Argon2id::hash(&params, b"correct", b"saltsalt", &mut hash).unwrap();
+  Argon2id::derive(&params, b"correct", b"saltsalt", &mut hash).unwrap();
 
   assert!(Argon2id::verify(&params, b"correct", b"saltsalt", &hash).is_ok());
   assert!(Argon2id::verify(&params, b"wrong", b"saltsalt", &hash).is_err());

@@ -6,15 +6,13 @@
 //! out-of-range parameter values, and trailing bytes in base64 are all
 //! rejected.
 //!
-//! This module is used internally by `crate::auth::argon2` and
-//! `crate::auth::scrypt` for their `hash_string` / `verify_string`
-//! helpers. The only public surface is [`PhcError`], which surfaces parse
-//! failures when callers use the typed `decode_*` helpers on the hashers.
+//! This module is crate-private. Algorithm modules own format-specific
+//! validation and expose only bounded password operations.
 //!
 //! [phc]: https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md
 
 #![allow(clippy::indexing_slicing)]
-// `decode_base64_to_vec` and `push_u32_decimal` are only reachable when a
+// Base64 and decimal helpers are only reachable when a
 // PHC-aware hasher (argon2 or scrypt) is enabled. Without either, the
 // helpers are dead code — silence the warning rather than cfg-gate every
 // symbol individually.
@@ -23,7 +21,8 @@
   allow(dead_code)
 )]
 
-use alloc::{string::String, vec, vec::Vec};
+#[cfg(any(feature = "getrandom", test))]
+use alloc::string::String;
 use core::fmt;
 
 // ─── Base64 (standard alphabet, no padding) ─────────────────────────────────
@@ -46,6 +45,7 @@ const B64_DECODE_TABLE: [u8; 256] = {
 ///
 /// Appends to `out` — callers managing multi-segment PHC strings reuse the
 /// same `String` buffer without intermediate allocation.
+#[cfg(any(feature = "getrandom", test))]
 pub(crate) fn base64_encode_into(bytes: &[u8], out: &mut String) {
   let full_triples = bytes.len() / 3;
   let tail = bytes.len() % 3;
@@ -89,11 +89,11 @@ pub(crate) const fn base64_decoded_len(encoded_len: usize) -> usize {
   // Each 4 chars → 3 bytes; each remaining 2 chars → 1 byte, 3 chars → 2 bytes.
   let full = encoded_len / 4;
   let tail = encoded_len % 4;
-  let bytes = full.wrapping_mul(3);
+  let bytes = full.strict_mul(3);
   match tail {
     0 => bytes,
-    2 => bytes.wrapping_add(1),
-    3 => bytes.wrapping_add(2),
+    2 => bytes.strict_add(1),
+    3 => bytes.strict_add(2),
     _ => bytes, // tail == 1 is invalid but we don't fail from const
   }
 }
@@ -175,23 +175,12 @@ pub(crate) fn base64_decode_into(s: &str, out: &mut [u8]) -> Result<usize, PhcEr
   Ok(written)
 }
 
-/// Decode a PHC base64 segment into a freshly-allocated `Vec<u8>`.
-///
-/// Shared between the Argon2 and scrypt PHC integrations — both call this
-/// from `decode_string` to materialise the salt and hash bytes.
-pub(crate) fn decode_base64_to_vec(encoded: &str) -> Result<Vec<u8>, PhcError> {
-  let cap = base64_decoded_len(encoded.len());
-  let mut buf = vec![0u8; cap];
-  let n = base64_decode_into(encoded, &mut buf)?;
-  buf.truncate(n);
-  Ok(buf)
-}
-
 /// Append `n` as base-10 decimal (no leading zero) to `out`.
 ///
 /// Shared decimal writer used by Argon2 and scrypt PHC encoders for cost
 /// parameters. Produces exactly the canonical form `PhcParamIter` +
 /// `parse_param_u32` accept on round-trip.
+#[cfg(any(feature = "getrandom", test))]
 pub(crate) fn push_u32_decimal(out: &mut String, n: u32) {
   if n == 0 {
     out.push('0');
@@ -382,15 +371,9 @@ pub(crate) fn parse(encoded: &str) -> Result<PhcParts<'_>, PhcError> {
 
 // ─── Error type ─────────────────────────────────────────────────────────────
 
-/// Parse or decode error for PHC-format strings.
-///
-/// Surfaced by the explicit `decode_*` helpers on Argon2/scrypt hashers.
-/// The `verify_string` flow collapses these into
-/// [`crate::VerificationError`] to avoid leaking whether a failure was a
-/// parse error vs. a wrong password.
+/// Internal parse or decode error for PHC-format strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum PhcError {
+pub(crate) enum PhcError {
   /// Input is longer than the implementation accepts.
   InputTooLong,
   /// Missing leading `$`, missing segment, or extra segments.

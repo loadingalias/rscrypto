@@ -20,13 +20,16 @@ cargo run --example basic --features full,getrandom
 
 Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes (`Xxh3`, `RapidHash`), AEAD (`ChaCha20Poly1305` with a fresh random nonce), hex formatting, secret-key Debug masking, byte-array round-trips through `from_bytes` / `to_bytes` / `as_bytes`, and the `std::io::{Read, Write}` adapters for streaming digests and checksums. Every section asserts that one-shot equals streaming. That is the API contract every primitive in `rscrypto` follows.
 
-### `password_hashing`: Argon2id and scrypt with bounded-policy verify
+### `password_hashing`: generated and bounded password records
 
 ```bash
 cargo run --example password_hashing --features password-hashing,getrandom
 ```
 
-Hashes a password with both Argon2id and scrypt, encodes the result as a PHC string, then verifies it through bounded `verify_string`. The default verify policy caps the cost parameters the verifier will accept, blocking attacker-supplied high-cost PHC strings. Prints both PHC encodings to stdout so you can inspect the format.
+Generates Argon2id and scrypt password records with fresh OS-random salts, then verifies them through
+the bounded `Argon2idPassword` and `ScryptPassword` APIs. Encoded costs outside each verifier's finite
+resource envelope are rejected before base64 decoding, allocation, or KDF work. The example prints
+both canonical PHC records so you can inspect their format.
 
 ### `aead_seal_open`: ChaCha20-Poly1305 seal/open
 

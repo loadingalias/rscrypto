@@ -197,22 +197,12 @@ fn rsa_blinding_pair(key: &RsaPrivateKey) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn argon2i_params() -> Argon2Params {
-  Argon2Params::new()
-    .memory_cost_kib(32)
-    .time_cost(1)
-    .parallelism(1)
-    .output_len(16)
-    .build()
+  Argon2Params::new(32, 1, 1)
     .unwrap()
 }
 
 fn argon2i_parallel_params() -> Argon2Params {
-  Argon2Params::new()
-    .memory_cost_kib(512)
-    .time_cost(1)
-    .parallelism(4)
-    .output_len(16)
-    .build()
+  Argon2Params::new(512, 1, 4)
     .unwrap()
 }
 
@@ -1759,7 +1749,7 @@ fn argon2i_fixed_vs_random_password(runner: &mut CtRunner, rng: &mut BenchRng) {
   for (class, password) in inputs {
     runner.run_one(class, || {
       let mut out = [0u8; 16];
-      Argon2i::hash(&params, &password, &salt, &mut out).is_ok()
+      Argon2i::derive(&params, &password, &salt, &mut out).is_ok()
     });
   }
 }
@@ -1781,7 +1771,7 @@ fn argon2i_parallel_fixed_vs_random_password(runner: &mut CtRunner, rng: &mut Be
   for (class, password) in inputs {
     runner.run_one(class, || {
       let mut out = [0u8; 16];
-      Argon2i::hash(&params, &password, &salt, &mut out).is_ok()
+      Argon2i::derive(&params, &password, &salt, &mut out).is_ok()
     });
   }
 }

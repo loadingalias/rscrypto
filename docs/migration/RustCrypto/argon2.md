@@ -1,161 +1,143 @@
 # Migration: `argon2` (RustCrypto) → `rscrypto`
 
-> Replace the runtime-variant `Argon2::new(Algorithm::*, Version, Params)` with type-level `Argon2id` / `Argon2i` / `Argon2d`. Same RFC 9106 spec, byte-identical output, PHC string round-trip built in (no `password-hash` crate dependency).
+rscrypto separates two jobs that should not share an API:
 
-Verified against `argon2 = "0.6.0-rc.8"` and the `rscrypto` 0.5.0 line.
-Evidence: `tests/argon2_vectors.rs`, `tests/argon2_differential.rs`, `tests/argon2_kernels.rs`, `tests/argon2_parallel.rs`, and `tests/phc_roundtrip.rs`.
-The examples use the 0.5-style call shape because that is still common in
-existing projects; the current oracle coverage in this repository is the 0.6
-RC dev-dependency.
+- `Argon2d`, `Argon2i`, and `Argon2id` are deterministic raw KDFs.
+- `Argon2idPassword` generates canonical password records and verifies hostile PHC input under finite resource limits.
 
-## TL;DR
+The raw implementations are checked against RFC 9106 vectors and the RustCrypto `argon2 0.6.0-rc.8` oracle in `tests/argon2_vectors.rs`, `tests/argon2_differential.rs`, `tests/argon2_kernels.rs`, and `tests/argon2_parallel.rs`.
 
-| | Before (`argon2` 0.5.x) | After (`rscrypto` 0.5.0) |
-|---|---|---|
-| Cargo dep | `argon2 = "0.5"` (+ `password-hash` for PHC) | `rscrypto = { version = "0.5.0", features = ["argon2", "phc-strings"] }` |
-| Import | `use argon2::{Argon2, Algorithm, Version, Params};` | `use rscrypto::{Argon2id, Argon2Params, Argon2Version};` |
-| Raw KDF | `Argon2::new(Argon2id, V0x13, Params::new(m, t, p, Some(N))?).hash_password_into(pw, salt, &mut out)?` | `Argon2id::hash(&Argon2Params::new()...build()?, pw, salt, &mut out)?` |
-
-## Cargo.toml
+## Cargo features
 
 ```toml
-# Before
-[dependencies]
-argon2 = "0.5"
-password-hash = "0.5"            # only if you need PHC strings
+# Raw Argon2 KDF
+rscrypto = { version = "0.7", default-features = false, features = ["argon2"] }
+
+# Password-record generation and verification
+rscrypto = { version = "0.7", default-features = false, features = [
+  "argon2",
+  "phc-strings",
+  "getrandom",
+] }
 ```
 
-```toml
-# After
-[dependencies]
-rscrypto = { version = "0.5.0", features = ["argon2", "phc-strings"] }
-```
+`getrandom` is needed only to generate password records. Verification needs `argon2` and `phc-strings`.
 
-Drop `phc-strings` if you only need the raw KDF and not PHC `$argon2id$...$...` storage strings. Drop `getrandom` from the feature list if you supply your own salt.
+## Raw KDF
 
-## Variant map
-
-| `argon2::Algorithm` value | rscrypto type | Notes |
-|---|---|---|
-| `Algorithm::Argon2id` | `Argon2id` | hybrid; recommended default |
-| `Algorithm::Argon2i` | `Argon2i` | data-independent; for side-channel-sensitive deployments |
-| `Algorithm::Argon2d` | `Argon2d` | data-dependent; legacy / Filecoin / niche |
-
-## API patterns
-
-### Raw KDF
+RustCrypto:
 
 ```rust
-// Before
 use argon2::{Algorithm, Argon2, Params, Version};
-let params = Params::new(19_456, 2, 1, Some(32)).unwrap();   // (mem KiB, time, parallel, output)
+
+let params = Params::new(19_456, 2, 1, Some(32))?;
 let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-let mut out = [0u8; 32];
-argon2.hash_password_into(password, salt, &mut out).unwrap();
+let mut output = [0u8; 32];
+argon2.hash_password_into(password, salt, &mut output)?;
 ```
 
-```rust
-// After
-use rscrypto::{Argon2Params, Argon2Version, Argon2id};
-let params = Argon2Params::new()
-    .memory_cost_kib(19_456)
-    .time_cost(2)
-    .parallelism(1)
-    .output_len(32)
-    .version(Argon2Version::V0x13)
-    .build()?;                                                // validates ranges at build time
-let mut out = [0u8; 32];
-Argon2id::hash(&params, password, salt, &mut out)?;
-```
-
-For switching variants, change the type: the `params` value is the same:
+rscrypto:
 
 ```rust
-Argon2id::hash(&params, password, salt, &mut out)?;
-Argon2i ::hash(&params, password, salt, &mut out)?;
-Argon2d ::hash(&params, password, salt, &mut out)?;
-```
-
-Fixed-size convenience: `let out: [u8; 32] = Argon2id::hash_array(&params, password, salt)?;`.
-
-### PHC encode (auto-generate salt)
-
-```rust
-// Before: requires the `password-hash` crate
-use argon2::{Argon2, password_hash::{PasswordHasher, SaltString}};
-use rand_core::OsRng;
-let salt = SaltString::generate(&mut OsRng);
-let phc = Argon2::default()
-    .hash_password(password, &salt)?
-    .to_string();
-// phc: String like "$argon2id$v=19$m=19456,t=2,p=1$..."
-```
-
-```rust
-// After (with `phc-strings` + `getrandom` features)
 use rscrypto::{Argon2Params, Argon2id};
-let phc: String = Argon2id::hash_string(&Argon2Params::default(), password)?;
+
+let params = Argon2Params::new(19_456, 2, 1)?;
+let mut output = [0u8; 32];
+Argon2id::derive(&params, password, salt, &mut output)?;
 ```
 
-### PHC encode (explicit salt)
+`Argon2Params::new(memory_kib, time_cost, parallelism)` returns a valid-by-construction Argon2 v1.3 profile. Output length comes from the destination slice. Switch variants by changing the type:
 
 ```rust
-// After (with `phc-strings`, no `getrandom` needed)
-use rscrypto::{Argon2Params, Argon2id};
-let phc = Argon2id::hash_string_with_salt(&Argon2Params::default(), password, salt)?;
+Argon2id::derive(&params, password, salt, &mut output)?;
+Argon2i::derive(&params, password, salt, &mut output)?;
+Argon2d::derive(&params, password, salt, &mut output)?;
 ```
 
-### PHC verify (constant-time)
+Argon2's optional secret and associated data are borrowed for one operation:
 
 ```rust
-// Before: requires the `password-hash` crate
-use argon2::{Argon2, password_hash::{PasswordHash, PasswordVerifier}};
-let parsed = PasswordHash::new(stored_phc)?;
-Argon2::default().verify_password(password, &parsed)?;
+use rscrypto::Argon2Context;
+
+let context = Argon2Context::new(pepper, associated_data);
+Argon2id::derive_with_context(&params, context, password, salt, &mut output)?;
 ```
+
+The raw API deliberately accepts caller-provided salts and variable output lengths because those are required KDF capabilities. It does not encode PHC strings.
+
+## Password records
+
+`Argon2idPassword` owns the generation profile and the finite verification limits:
 
 ```rust
-// After
-use rscrypto::Argon2id;
-Argon2id::verify_string(password, stored_phc)?;
+use rscrypto::{Argon2idPassword, PasswordStatus};
+
+let passwords = Argon2idPassword::default();
+let record = passwords.hash_password(password)?;
+
+match passwords.verify_password(password, &record)? {
+  PasswordStatus::Current => {}
+  PasswordStatus::NeedsRehash => {
+    let replacement = passwords.hash_password(password)?;
+    // Store replacement atomically.
+  }
+}
 ```
 
-`verify_string` applies `Argon2VerifyPolicy::default()` before hashing, so PHC
-strings with excessive encoded memory, time, parallelism, or output length
-reject without allocating the requested work buffer.
+Generation always uses Argon2id v1.3, a fresh 16-byte OS-random salt, a 32-byte verifier, and canonical `$argon2id$v=19$m=...,t=...,p=...$...$...` encoding. There is no caller-salt password helper.
 
-### Custom PHC verify policy
-
-Services with stricter local CPU or memory budgets can set explicit ceilings:
+For a custom generation profile:
 
 ```rust
-// After
-use rscrypto::{Argon2id, Argon2VerifyPolicy};
-let policy = Argon2VerifyPolicy::new(max_m_kib, max_t, max_p, max_output_len);
-Argon2id::verify_string_with_policy(password, stored_phc, &policy)?;
+use rscrypto::{Argon2Params, Argon2idPassword};
+
+let generation = Argon2Params::new(64 * 1024, 3, 1)?;
+let passwords = Argon2idPassword::new(generation)?;
 ```
 
-RustCrypto's `argon2` crate has no equivalent policy gate; you would have to parse
-the PHC string, reject high-cost cases, then re-encode. The built-in default
-policy is a hardening upgrade.
-
-### Verify with secret / associated data (pepper)
+To accept a broader finite migration envelope, derive limits from the largest deployment profile you intend to admit:
 
 ```rust
-// After
-use rscrypto::Argon2id;
-Argon2id::verify_string_with_context(password, stored_phc, secret, associated_data)?;
+use rscrypto::{
+  Argon2Params, Argon2VerificationLimits, Argon2idPassword,
+};
+
+let generation = Argon2Params::new(19_456, 2, 1)?;
+let accepted_profile = Argon2Params::new(64 * 1024, 3, 1)?;
+let limits = Argon2VerificationLimits::for_profile(accepted_profile);
+let passwords = Argon2idPassword::with_limits(generation, limits)?;
 ```
 
-The secret (pepper) and associated data are not embedded in the PHC string; they live in your application config / KMS. The `with_context` helpers thread them through verification. RustCrypto's `argon2` exposes the same on the `Argon2` builder; the rscrypto helper collapses it into one call.
+Limits compare the actual rounded matrix bytes, total block work, and parallelism—not merely each encoded integer in isolation. Verification rejects over-budget parameters before base64 decoding, allocation, or KDF work.
 
-## Notes
+Pepper and associated data remain external to the PHC record:
 
-- **Variant as type, not enum value.** `Argon2id::hash(...)` instead of `argon2.algorithm(Algorithm::Argon2id).hash_password_into(...)`. Enum-driven dispatch becomes type-driven; in tests this catches accidental variant swaps at compile time.
-- **`Argon2VerifyPolicy` is the migration win.** RustCrypto requires hand-rolling the cost-cap check before calling `verify_password`. rscrypto bakes it into `verify_string`; use `verify_string_with_policy` only when your deployment needs explicit ceilings, and `verify_string_unbounded` only for trusted migration/test-vector inputs.
-- **PHC strings without `password-hash`.** rscrypto rolls its own PHC parser/encoder under `features = ["phc-strings"]`. The output format is identical and round-trips with `password-hash`-encoded strings: your existing stored hashes still verify.
-- **`Argon2Params::default()` matches OWASP Password Storage Cheat Sheet guidance.** `m=19456 KiB, t=2, p=1, output_len=32 bytes` per the sheet as checked on 2026-06-14. RustCrypto's `Params::default()` matches; both crates will track the cheat sheet over time.
-- **`v=0x10` decode-only support.** Both crates can decode legacy `v=16` (Argon2 v1.0) PHC strings for compatibility; both produce `v=19` (v1.3) on encode.
-- **Memory cost is real.** `Argon2id::hash` allocates `memory_cost_kib * 1024` bytes for the lane state. `params.build()?` enforces `m >= 8 * p`; allocate failures (out-of-memory) surface as `Argon2Error::AllocationFailed` at hash time.
-- **Parallel lanes (`parallel` feature).** rscrypto's `parallel` umbrella feature enables Rayon-based lane parallelism for `p > 1`. RustCrypto's `argon2` is single-threaded only.
-- **`no_std` requires `alloc`.** Both crates need a heap for the memory matrix. The deepest-embedded targets (no `alloc`) cannot run Argon2. Use `pbkdf2-hmac-sha256` with a high iteration count instead.
+```rust
+use rscrypto::{Argon2Context, Argon2idPassword};
+
+let passwords = Argon2idPassword::default();
+let context = Argon2Context::new(pepper, tenant_id);
+let record = passwords.hash_password_with_context(password, context)?;
+let status = passwords.verify_password_with_context(password, &record, context)?;
+```
+
+## Compatibility boundary
+
+The password verifier accepts only the protocol rscrypto emits:
+
+- Argon2id, not Argon2d or Argon2i password records;
+- Argon2 v1.3 (`v=19`), not v1.0;
+- canonical ordered `m,t,p` parameters;
+- an 8–48-byte decoded salt;
+- exactly 32 decoded verifier bytes;
+- costs admitted by the configured finite limits.
+
+Common canonical RustCrypto Argon2id v1.3 records with 32-byte outputs remain verifiable. Noncanonical encodings, v1.0 records, different output sizes, and out-of-envelope profiles must be rehashed through the old stack during migration. rscrypto intentionally exposes neither a public PHC decoder nor an unbounded verifier.
+
+## Operational notes
+
+- `Argon2Params::default()` is `m=19_456 KiB, t=2, p=1`, the current [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) baseline.
+- Argon2d and Argon2id use data-dependent memory access and are not local side-channel constant-time claims. Argon2i is the data-independent raw variant.
+- The memory matrix is zeroized on drop. Target-size overflow and allocation failure are distinct errors on raw derivation.
+- The `parallel` feature enables Rayon lane parallelism when the profile and workload justify it.
+- Argon2 requires `alloc` and is not FIPS 140-3 approved.

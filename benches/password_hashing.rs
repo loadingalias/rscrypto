@@ -10,24 +10,19 @@ use core::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use dryoc::classic::crypto_pwhash::{PasswordHashAlgorithm, crypto_pwhash};
-use rscrypto::{Argon2Error, Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id, Scrypt, ScryptParams};
+use rscrypto::{
+  Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id, Argon2idPassword, Scrypt, ScryptParams, ScryptPassword,
+};
 
-/// Function pointer shared by all three `Argon2{d,i,id}::hash` variants.
+/// Function pointer shared by all three raw Argon2 variants.
 type ArgonHashFn = fn(&Argon2Params, &[u8], &[u8], &mut [u8]) -> Result<(), Argon2Error>;
 
 const PASSWORD: &[u8] = b"correct horse battery staple";
 const SALT: &[u8] = b"rscrypto-bench-salt-16bytes!";
 
 /// Build rscrypto params.
-fn rs_params(m_kib: u32, t: u32, p: u32, out_len: u32) -> Argon2Params {
-  Argon2Params::new()
-    .memory_cost_kib(m_kib)
-    .time_cost(t)
-    .parallelism(p)
-    .output_len(out_len)
-    .version(Argon2Version::V0x13)
-    .build()
-    .unwrap()
+fn rs_params(m_kib: u32, t: u32, p: u32, _out_len: u32) -> Argon2Params {
+  Argon2Params::new(m_kib, t, p).unwrap()
 }
 
 /// Build RustCrypto oracle context.
@@ -110,14 +105,14 @@ fn bench_small_variant(
 
 fn argon2d_small(c: &mut Criterion) {
   // dryoc has no Argon2d (libsodium only ships Argon2i and Argon2id).
-  bench_small_variant(c, "argon2d-small", Argon2d::hash, argon2::Algorithm::Argon2d, None);
+  bench_small_variant(c, "argon2d-small", Argon2d::derive, argon2::Algorithm::Argon2d, None);
 }
 
 fn argon2i_small(c: &mut Criterion) {
   bench_small_variant(
     c,
     "argon2i-small",
-    Argon2i::hash,
+    Argon2i::derive,
     argon2::Algorithm::Argon2i,
     Some(PasswordHashAlgorithm::Argon2i13),
   );
@@ -127,7 +122,7 @@ fn argon2id_small(c: &mut Criterion) {
   bench_small_variant(
     c,
     "argon2id-small",
-    Argon2id::hash,
+    Argon2id::derive,
     argon2::Algorithm::Argon2id,
     Some(PasswordHashAlgorithm::Argon2id13),
   );
@@ -150,7 +145,7 @@ fn argon2id_owasp(c: &mut Criterion) {
   g.bench_function(BenchmarkId::new("rscrypto", "m=19MiB_t=2_p=1"), |b| {
     let mut out = [0u8; 32];
     b.iter(|| {
-      Argon2id::hash(
+      Argon2id::derive(
         black_box(&rs_params),
         black_box(PASSWORD),
         black_box(SALT),
@@ -190,14 +185,8 @@ fn argon2id_owasp(c: &mut Criterion) {
 }
 
 /// Build rscrypto scrypt params.
-fn rs_scrypt_params(log_n: u8, r: u32, p: u32, out_len: u32) -> ScryptParams {
-  ScryptParams::new()
-    .log_n(log_n)
-    .r(r)
-    .p(p)
-    .output_len(out_len)
-    .build()
-    .unwrap()
+fn rs_scrypt_params(log_n: u8, r: u32, p: u32, _out_len: u32) -> ScryptParams {
+  ScryptParams::new(log_n, r, p).unwrap()
 }
 
 /// Build RustCrypto scrypt oracle params.
@@ -221,7 +210,7 @@ fn scrypt_small(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", &id), &rs, |b, params| {
       let mut out = [0u8; 32];
       b.iter(|| {
-        Scrypt::hash(
+        Scrypt::derive(
           black_box(params),
           black_box(PASSWORD),
           black_box(SALT),
@@ -255,7 +244,7 @@ fn scrypt_owasp(c: &mut Criterion) {
   g.bench_function(BenchmarkId::new("rscrypto", "log_n=17_r=8_p=1"), |b| {
     let mut out = [0u8; 32];
     b.iter(|| {
-      Scrypt::hash(
+      Scrypt::derive(
         black_box(&rs),
         black_box(PASSWORD),
         black_box(SALT),
@@ -281,13 +270,18 @@ fn scrypt_phc_roundtrip(c: &mut Criterion) {
   g.sample_size(20);
 
   let params = rs_scrypt_params(10, 8, 1, 32);
-  g.bench_function("hash_string_with_salt", |b| {
-    b.iter(|| Scrypt::hash_string_with_salt(black_box(&params), black_box(PASSWORD), black_box(SALT)).unwrap());
+  let password = ScryptPassword::new(params).unwrap();
+  g.bench_function("hash_password", |b| {
+    b.iter(|| password.hash_password(black_box(PASSWORD)).unwrap());
   });
 
-  let encoded = Scrypt::hash_string_with_salt(&params, PASSWORD, SALT).unwrap();
-  g.bench_function("verify_string", |b| {
-    b.iter(|| Scrypt::verify_string(black_box(PASSWORD), black_box(&encoded)).unwrap());
+  let encoded = password.hash_password(PASSWORD).unwrap();
+  g.bench_function("verify_password", |b| {
+    b.iter(|| {
+      password
+        .verify_password(black_box(PASSWORD), black_box(&encoded))
+        .unwrap()
+    });
   });
 
   g.finish();
@@ -304,13 +298,18 @@ fn argon2id_phc_roundtrip(c: &mut Criterion) {
   g.sample_size(30);
 
   let params = rs_params(32, 2, 1, 32);
-  g.bench_function("hash_string_with_salt", |b| {
-    b.iter(|| Argon2id::hash_string_with_salt(black_box(&params), black_box(PASSWORD), black_box(SALT)).unwrap());
+  let password = Argon2idPassword::new(params).unwrap();
+  g.bench_function("hash_password", |b| {
+    b.iter(|| password.hash_password(black_box(PASSWORD)).unwrap());
   });
 
-  let encoded = Argon2id::hash_string_with_salt(&params, PASSWORD, SALT).unwrap();
-  g.bench_function("verify_string", |b| {
-    b.iter(|| Argon2id::verify_string(black_box(PASSWORD), black_box(&encoded)).unwrap());
+  let encoded = password.hash_password(PASSWORD).unwrap();
+  g.bench_function("verify_password", |b| {
+    b.iter(|| {
+      password
+        .verify_password(black_box(PASSWORD), black_box(&encoded))
+        .unwrap()
+    });
   });
 
   g.finish();
@@ -349,7 +348,7 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", &id), &params, |b, params| {
       let mut out = [0u8; 32];
       b.iter(|| {
-        Argon2id::hash(
+        Argon2id::derive(
           black_box(params),
           black_box(PASSWORD),
           black_box(SALT),
@@ -385,7 +384,7 @@ fn argon2id_parallel_owasp(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", &id), &params, |b, params| {
       let mut out = [0u8; 32];
       b.iter(|| {
-        Argon2id::hash(
+        Argon2id::derive(
           black_box(params),
           black_box(PASSWORD),
           black_box(SALT),
