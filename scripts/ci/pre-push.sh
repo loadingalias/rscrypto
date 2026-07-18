@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
-# Pre-push hook: quality checks before allowing push.
-# Install:
-#   ln -sf ../../scripts/ci/pre-push.sh .git/hooks/pre-push
+# Change-aware quality checks used by the supported push recipes.
 # Profiles:
 #   --light  skip the exhaustive rscrypto feature matrix (default)
 #   --full   preserve the existing full host lane
 
 set -euo pipefail
-
-# `just push` validates explicitly, then sets this only for the Git invocation.
-# A linked copy of this script must not repeat the same suite as a pre-push hook.
-if [[ "${RSCRYPTO_PRE_PUSH_VALIDATED:-}" == "1" ]]; then
-  exit 0
-fi
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
@@ -275,11 +267,7 @@ fi
 
 if [[ "$RAIL_READY" != true ]] || rail_surface_is_enabled build || rail_surface_is_enabled test; then
   start_task "cargo-rail unify" run_rail_unify_check
-  if [[ "${RSCRYPTO_RELEASE_PUSH:-}" == "1" ]]; then
-    skip "Release intent coverage" "cargo-rail validated and consumed the release change files"
-  else
-    start_task "release intent coverage" run_rail_change_check
-  fi
+  start_task "release intent coverage" run_rail_change_check
 else
   skip "Cargo-rail unify" "no build/test surface"
   skip "Release intent coverage" "no build/test surface"

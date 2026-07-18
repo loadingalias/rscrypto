@@ -34,20 +34,6 @@ chmod +x "$fake_bin/just"
 
 plan='{"result":"success","files":[{"path":"Cargo.toml"}],"scope":{"mode":"workspace","surfaces":{"build":true,"test":true}}}'
 
-: >"$mock_log"
-(
-  cd "$fixture"
-  HOME="$TMP_ROOT/home" \
-    PATH="$fake_bin:$PATH" \
-    MOCK_LOG="$mock_log" \
-    RSCRYPTO_PRE_PUSH_VALIDATED=1 \
-    scripts/ci/pre-push.sh --light
-)
-if [[ -s "$mock_log" ]]; then
-  echo "an explicitly validated push must not repeat the linked pre-push suite" >&2
-  exit 1
-fi
-
 normal_output="$TMP_ROOT/normal.out"
 if (
   cd "$fixture"
@@ -64,26 +50,4 @@ if (
 fi
 grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
 
-: >"$mock_log"
-release_output="$TMP_ROOT/release.out"
-(
-  cd "$fixture"
-  HOME="$TMP_ROOT/home" \
-    PATH="$fake_bin:$PATH" \
-    MOCK_LOG="$mock_log" \
-    RAIL_PLAN_JSON_CACHE="$plan" \
-    RAIL_SCOPE_JSON='' \
-    RAIL_SCOPE_JSON_CACHE='' \
-    RSCRYPTO_RELEASE_PUSH=1 \
-    scripts/ci/pre-push.sh --light
-) >"$release_output" 2>&1
-
-if grep -Fq "cargo rail change check --merge-base --required" "$mock_log"; then
-  echo "cargo-rail release pushes must not recheck consumed change files" >&2
-  exit 1
-fi
-grep -Fq "cargo rail unify --check --explain" "$mock_log"
-grep -Fq "just check" "$mock_log"
-grep -Fq "cargo-rail validated and consumed the release change files" "$release_output"
-
-echo "Pre-push release regression tests passed"
+echo "Pre-push regression tests passed"
