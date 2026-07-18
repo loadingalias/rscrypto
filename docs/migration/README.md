@@ -66,8 +66,8 @@ API shape change, or not a good fit.
 
 | From | To | Status |
 |---|---|---|
-| [`argon2`](RustCrypto/argon2.md) (RustCrypto) | `Argon2id`, `Argon2i`, `Argon2d`, `Argon2Params`, `Argon2VerifyPolicy` | Verified against `argon2 0.6.0-rc.8` |
-| [`scrypt`](RustCrypto/scrypt.md) (RustCrypto) | `Scrypt`, `ScryptParams`, `ScryptVerifyPolicy` | Verified against `scrypt 0.12.0` |
+| [`argon2`](RustCrypto/argon2.md) (RustCrypto) | Raw `Argon2{d,i,id}` KDFs; bounded `Argon2idPassword` records | Verified against `argon2 0.6.0-rc.8` |
+| [`scrypt`](RustCrypto/scrypt.md) (RustCrypto) | Raw `Scrypt` KDF; bounded `ScryptPassword` records | Verified against `scrypt 0.12.0` |
 
 ## Stack Migrations
 

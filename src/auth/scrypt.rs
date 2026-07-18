@@ -3,8 +3,7 @@
 //! Memory-hard key derivation combining PBKDF2-HMAC-SHA256 with a
 //! Salsa20/8 core, via the BlockMix / ROMix construction of
 //! Percival & Josefsson (RFC 7914 §3–§5). Parameters are driven by
-//! [`ScryptParams`], whose defaults track OWASP 2024 (`log_n = 17`,
-//! `r = 8`, `p = 1`, `output = 32 bytes`).
+//! [`ScryptParams`], whose defaults use `log_n = 17`, `r = 8`, and `p = 1`.
 //!
 //! The implementation reuses [`crate::Pbkdf2Sha256`] for the setup /
 //! finalisation legs and is portable Rust throughout.
@@ -14,19 +13,13 @@
 //! ```rust
 //! use rscrypto::{Scrypt, ScryptParams};
 //!
-//! let params = ScryptParams::new()
-//!   .log_n(10)
-//!   .r(8)
-//!   .p(1)
-//!   .output_len(32)
-//!   .build()
-//!   .expect("valid params");
+//! let params = ScryptParams::new(10, 8, 1).expect("valid params");
 //!
 //! let password = b"correct horse battery staple";
 //! let salt = b"random-salt-1234";
 //!
 //! let mut hash = [0u8; 32];
-//! Scrypt::hash(&params, password, salt, &mut hash).expect("hash");
+//! Scrypt::derive(&params, password, salt, &mut hash).expect("derive");
 //!
 //! assert!(Scrypt::verify(&params, password, salt, &hash).is_ok());
 //! assert!(Scrypt::verify(&params, b"wrong", salt, &hash).is_err());
@@ -34,10 +27,10 @@
 //!
 //! # Security
 //!
-//! - [`Scrypt::MIN_SALT_LEN`] documents the 16-byte OWASP minimum. The algorithmic API accepts any
-//!   salt length; policy enforcement is the caller's responsibility.
-//! - [`ScryptParams::validate`] enforces RFC 7914 bounds (`log_n` in `1..=63`, `r ≥ 1`, `p ≥ 1`, `r
-//!   · p ≤ 2^30 − 1`, `output_len ≥ 1`).
+//! - [`Scrypt::MIN_SALT_LEN`] documents the 16-byte production recommendation. The algorithmic API
+//!   accepts any salt length; policy enforcement is the caller's responsibility.
+//! - [`ScryptParams::new`] rejects invalid cost profiles; output length is taken from the caller's
+//!   destination slice.
 //! - Allocation failure surfaces as [`ScryptError::AllocationFailed`] rather than a panic.
 //! - Working buffers (B, V, scratch) are zeroised on drop.
 //! - [`Scrypt::verify`] is constant-time with respect to the reference tag bytes.
@@ -74,16 +67,17 @@ pub const BLOCK_SIZE: usize = 64;
 /// Salsa20/8 block size in 32-bit words.
 const BLOCK_WORDS: usize = BLOCK_SIZE / 4; // 16
 
-/// OWASP 2024 defaults: `log_n = 17`, `r = 8`, `p = 1`, `output_len = 32`.
+/// OWASP baseline cost profile: `log_n = 17`, `r = 8`, `p = 1`.
 const DEFAULT_LOG_N: u8 = 17;
 const DEFAULT_R: u32 = 8;
 const DEFAULT_P: u32 = 1;
-const DEFAULT_OUTPUT_LEN: u32 = 32;
+#[cfg(feature = "phc-strings")]
+const DEFAULT_OUTPUT_LEN: usize = 32;
 
 /// Minimum salt length (bytes) recommended for production deployments.
 ///
 /// The scrypt algorithm accepts arbitrary salt lengths; this is a policy
-/// constant exposed for callers and not enforced at `hash`-time (RFC 7914
+/// constant exposed for callers and not enforced at derivation time (RFC 7914
 /// §11 test vectors use empty / short salts).
 pub const MIN_SALT_LEN: usize = 16;
 
@@ -97,7 +91,7 @@ const MAX_R_TIMES_P: u64 = (1u64 << 30) - 1;
 
 /// Invalid scrypt parameter, input length, or resource constraint.
 ///
-/// Surfaced at `build` or `hash` time — never at `verify` time (a parameter
+/// Surfaced at construction or derivation time — never at `verify` time (a parameter
 /// error during verification would leak information about the stored hash,
 /// so verify collapses these into [`crate::VerificationError`]).
 ///
@@ -107,8 +101,8 @@ const MAX_R_TIMES_P: u64 = (1u64 << 30) - 1;
 /// use rscrypto::{ScryptParams, auth::scrypt::ScryptError};
 ///
 /// assert_eq!(
-///   ScryptParams::new().log_n(0).build().unwrap_err(),
-///   ScryptError::InvalidLogN,
+///   ScryptParams::new(0, 8, 1).unwrap_err(),
+///   ScryptError::InvalidLogN
 /// );
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -128,7 +122,11 @@ pub enum ScryptError {
   /// The allocator refused to provide the working-set buffers.
   AllocationFailed,
   /// The platform entropy source failed while generating a PHC salt.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
   EntropyUnavailable,
+  /// Password generation parameters exceed the verifier's resource limits.
+  #[cfg(feature = "phc-strings")]
+  VerificationLimitTooLow,
 }
 
 impl fmt::Display for ScryptError {
@@ -140,7 +138,10 @@ impl fmt::Display for ScryptError {
       Self::InvalidOutputLen => "scrypt output length must be at least 1",
       Self::ResourceOverflow => "scrypt parameters exceed the target's address space",
       Self::AllocationFailed => "scrypt working-set allocation failed",
+      #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       Self::EntropyUnavailable => "scrypt entropy source unavailable",
+      #[cfg(feature = "phc-strings")]
+      Self::VerificationLimitTooLow => "scrypt verification limits do not admit the generation parameters",
     })
   }
 }
@@ -149,141 +150,53 @@ impl core::error::Error for ScryptError {}
 
 // ─── Parameters ─────────────────────────────────────────────────────────────
 
-/// Validated scrypt cost-parameter set.
-///
-/// Constructed via [`ScryptParams::new`] and the `log_n` / `r` / `p` /
-/// `output_len` setters; call [`ScryptParams::build`] to validate and
-/// produce a `Result<ScryptParams, ScryptError>`. Every field is
-/// stack-allocated — `ScryptParams` is `Copy` and cheap to clone.
+/// Validated scrypt cost parameters.
 ///
 /// # Examples
 ///
 /// ```rust
 /// use rscrypto::{Scrypt, ScryptParams};
 ///
-/// let params = ScryptParams::new()
-///   .log_n(10)
-///   .r(8)
-///   .p(1)
-///   .output_len(32)
-///   .build()
-///   .expect("valid params");
+/// let params = ScryptParams::new(10, 8, 1)?;
 ///
 /// let mut out = [0u8; 32];
-/// Scrypt::hash(&params, b"password", b"salty-salty-salt", &mut out).unwrap();
+/// Scrypt::derive(&params, b"password", b"salty-salty-salt", &mut out)?;
+/// # Ok::<(), rscrypto::ScryptError>(())
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ScryptParams {
   log_n: u8,
   r: u32,
   p: u32,
-  output_len: u32,
-}
-
-impl fmt::Debug for ScryptParams {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    f.debug_struct("ScryptParams")
-      .field("log_n", &self.log_n)
-      .field("r", &self.r)
-      .field("p", &self.p)
-      .field("output_len", &self.output_len)
-      .finish()
-  }
 }
 
 impl Default for ScryptParams {
   fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl ScryptParams {
-  /// Create a new parameter builder pre-populated with OWASP 2024 defaults
-  /// (`log_n = 17`, `r = 8`, `p = 1`, `output = 32`). Override via setters,
-  /// then call [`ScryptParams::build`] to validate.
-  #[must_use]
-  pub const fn new() -> Self {
     Self {
       log_n: DEFAULT_LOG_N,
       r: DEFAULT_R,
       p: DEFAULT_P,
-      output_len: DEFAULT_OUTPUT_LEN,
     }
   }
+}
 
-  /// Set `log_n` (the base-2 log of the CPU/memory cost `N`). Must be
-  /// in `1..=63`.
-  #[must_use]
-  pub const fn log_n(mut self, lg_n: u8) -> Self {
-    self.log_n = lg_n;
-    self
-  }
-
-  /// Set the block-size parameter `r`. Must be `≥ 1`.
-  #[must_use]
-  pub const fn r(mut self, r: u32) -> Self {
-    self.r = r;
-    self
-  }
-
-  /// Set the parallelisation parameter `p`. Must satisfy
-  /// `1 ≤ p` and `r · p ≤ 2^30 − 1`.
-  #[must_use]
-  pub const fn p(mut self, p: u32) -> Self {
-    self.p = p;
-    self
-  }
-
-  /// Set the derived-key length in bytes. Must be `≥ 1`.
-  ///
-  /// Capped at `2^32 - 1` bytes by the `u32` field type. RFC 7914 §2 permits
-  /// up to `(2^32 - 1) × 32 ≈ 137 GiB`; in practice deployments never need
-  /// more than a few hundred bytes, so the `u32` ceiling is a deliberate
-  /// design choice rather than a spec limitation.
-  #[must_use]
-  pub const fn output_len(mut self, t: u32) -> Self {
-    self.output_len = t;
-    self
-  }
-
-  /// Validate every field against RFC 7914 bounds and return the finalised
-  /// parameter set.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`ScryptError`] if any parameter is out of range.
-  pub const fn build(self) -> Result<Self, ScryptError> {
-    match self.validate() {
-      Ok(()) => Ok(self),
-      Err(e) => Err(e),
-    }
-  }
-
-  /// Run validation without consuming the builder — returns the first error.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`ScryptError`] on the first invalid field.
-  pub const fn validate(&self) -> Result<(), ScryptError> {
-    if self.log_n < 1 || self.log_n > 63 {
+impl ScryptParams {
+  /// Construct an RFC 7914 parameter profile.
+  pub const fn new(log_n: u8, r: u32, p: u32) -> Result<Self, ScryptError> {
+    if log_n < 1 || log_n > 63 {
       return Err(ScryptError::InvalidLogN);
     }
-    if self.r < 1 {
+    if r < 1 {
       return Err(ScryptError::InvalidR);
     }
-    if self.p < 1 {
+    if p < 1 {
       return Err(ScryptError::InvalidP);
     }
-    // `r` and `p` are both `u32`, so `r * p` always fits in `u64`
-    // (max `(2^32-1)^2 ≈ 2^64 - 2^33 + 1`). No overflow check needed.
-    let rp = (self.r as u64) * (self.p as u64);
+    let rp = (r as u64).strict_mul(p as u64);
     if rp > MAX_R_TIMES_P {
       return Err(ScryptError::InvalidP);
     }
-    if (self.output_len as usize) < MIN_OUTPUT_LEN {
-      return Err(ScryptError::InvalidOutputLen);
-    }
-    Ok(())
+    Ok(Self { log_n, r, p })
   }
 
   /// `log_n` (base-2 log of the CPU/memory cost).
@@ -303,57 +216,42 @@ impl ScryptParams {
   pub const fn get_p(&self) -> u32 {
     self.p
   }
-
-  /// Derived-key length in bytes.
-  #[must_use]
-  pub const fn get_output_len(&self) -> u32 {
-    self.output_len
-  }
 }
 
-/// Operational limits for verifying scrypt PHC strings from untrusted storage.
-///
-/// PHC strings encode their own CPU/memory parameters and output length.
-/// `Scrypt::verify_string` applies the default policy. Use
-/// `Scrypt::verify_string_with_policy` when a service needs tighter or looser
-/// deployment ceilings.
+/// Finite memory and work ceilings for scrypt password verification.
+#[cfg(feature = "phc-strings")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ScryptVerifyPolicy {
-  /// Maximum encoded `log_n` value.
-  pub max_log_n: u8,
-  /// Maximum encoded block-size parameter `r`.
-  pub max_r: u32,
-  /// Maximum encoded parallelisation parameter `p`.
-  pub max_p: u32,
-  /// Maximum encoded output length in bytes.
-  pub max_output_len: usize,
+pub struct ScryptVerificationLimits {
+  max_memory_bytes: u128,
+  max_work: u128,
 }
 
-impl ScryptVerifyPolicy {
-  /// Build a policy from explicit upper bounds.
+#[cfg(feature = "phc-strings")]
+impl ScryptVerificationLimits {
+  /// Derive ceilings from the largest deployment profile the verifier admits.
   #[must_use]
-  pub const fn new(max_log_n: u8, max_r: u32, max_p: u32, max_output_len: usize) -> Self {
+  pub const fn for_profile(params: ScryptParams) -> Self {
+    let n = 1u128 << params.log_n;
+    let r = params.r as u128;
+    let p = params.p as u128;
     Self {
-      max_log_n,
-      max_r,
-      max_p,
-      max_output_len,
+      max_memory_bytes: 128u128
+        .strict_mul(r)
+        .strict_mul(n.strict_add(p.strict_mul(2)).strict_add(1)),
+      max_work: n.strict_mul(r).strict_mul(p),
     }
   }
 
-  /// Return `true` when `params` and `output_len` are within this policy.
-  #[must_use]
-  pub const fn allows(&self, params: &ScryptParams, output_len: usize) -> bool {
-    params.log_n <= self.max_log_n
-      && params.r <= self.max_r
-      && params.p <= self.max_p
-      && output_len <= self.max_output_len
+  const fn allows(&self, params: ScryptParams) -> bool {
+    let usage = Self::for_profile(params);
+    usage.max_memory_bytes <= self.max_memory_bytes && usage.max_work <= self.max_work
   }
 }
 
-impl Default for ScryptVerifyPolicy {
+#[cfg(feature = "phc-strings")]
+impl Default for ScryptVerificationLimits {
   fn default() -> Self {
-    Self::new(DEFAULT_LOG_N, DEFAULT_R, DEFAULT_P, DEFAULT_OUTPUT_LEN as usize)
+    Self::for_profile(ScryptParams::default())
   }
 }
 
@@ -877,13 +775,18 @@ fn alloc_block_vec(len: usize) -> Result<Vec<SalsaBlock>, ScryptError> {
 
 // ─── Full scrypt ────────────────────────────────────────────────────────────
 
-#[inline]
-fn scrypt_shape(params: &ScryptParams, out: &[u8]) -> Result<(usize, usize, usize, usize, usize, usize), ScryptError> {
-  params.validate()?;
-  if out.len() != params.output_len as usize {
-    return Err(ScryptError::InvalidOutputLen);
-  }
+#[derive(Clone, Copy)]
+struct ScryptShape {
+  n: usize,
+  r: usize,
+  p: usize,
+  two_r: usize,
+  total_b_blocks: usize,
+  v_blocks: usize,
+}
 
+#[inline]
+fn scrypt_shape(params: &ScryptParams) -> Result<ScryptShape, ScryptError> {
   let log_n = params.log_n as u32;
   // Guard against the 32-bit target where `1 << log_n` would wrap.
   if log_n >= (usize::BITS) {
@@ -897,7 +800,28 @@ fn scrypt_shape(params: &ScryptParams, out: &[u8]) -> Result<(usize, usize, usiz
   let total_b_blocks = p.checked_mul(two_r).ok_or(ScryptError::ResourceOverflow)?;
   let v_blocks = n.checked_mul(two_r).ok_or(ScryptError::ResourceOverflow)?;
 
-  Ok((n, r, p, two_r, total_b_blocks, v_blocks))
+  let b_bytes = total_b_blocks
+    .checked_mul(BLOCK_SIZE)
+    .ok_or(ScryptError::ResourceOverflow)?;
+  let v_bytes = v_blocks.checked_mul(BLOCK_SIZE).ok_or(ScryptError::ResourceOverflow)?;
+  let scratch_bytes = two_r.checked_mul(BLOCK_SIZE).ok_or(ScryptError::ResourceOverflow)?;
+  let portable_bytes = b_bytes
+    .checked_mul(2)
+    .and_then(|bytes| bytes.checked_add(v_bytes))
+    .and_then(|bytes| bytes.checked_add(scratch_bytes))
+    .ok_or(ScryptError::ResourceOverflow)?;
+  if portable_bytes > isize::MAX as usize {
+    return Err(ScryptError::ResourceOverflow);
+  }
+
+  Ok(ScryptShape {
+    n,
+    r,
+    p,
+    two_r,
+    total_b_blocks,
+    v_blocks,
+  })
 }
 
 fn scrypt_hash_portable(
@@ -906,8 +830,11 @@ fn scrypt_hash_portable(
   salt: &[u8],
   out: &mut [u8],
 ) -> Result<(), ScryptError> {
-  let (n, r, p, two_r, total_b_blocks, v_blocks) = scrypt_shape(params, out)?;
-  let mut state = ScryptState::new(total_b_blocks, v_blocks, two_r)?;
+  if out.len() < MIN_OUTPUT_LEN {
+    return Err(ScryptError::InvalidOutputLen);
+  }
+  let shape = scrypt_shape(params)?;
+  let mut state = ScryptState::new(shape.total_b_blocks, shape.v_blocks, shape.two_r)?;
 
   // Pre-compute the HMAC prefix state from `password` once; both PBKDF2
   // legs use the same key and `Pbkdf2Sha256::new` hashes the password
@@ -929,11 +856,11 @@ fn scrypt_hash_portable(
   }
 
   // Step 2: for each p-chunk, apply ROMix.
-  for chunk_idx in 0..p {
-    let chunk_start = chunk_idx.strict_mul(two_r);
-    let chunk_end = chunk_start.strict_add(two_r);
+  for chunk_idx in 0..shape.p {
+    let chunk_start = chunk_idx.strict_mul(shape.two_r);
+    let chunk_end = chunk_start.strict_add(shape.two_r);
     let chunk = &mut state.b_u32[chunk_start..chunk_end];
-    ro_mix(chunk, &mut state.v, &mut state.scratch, n, r);
+    ro_mix(chunk, &mut state.v, &mut state.scratch, shape.n, shape.r);
   }
 
   // Re-serialise the mixed B back into the byte buffer for the final
@@ -961,10 +888,13 @@ fn scrypt_hash_x86_sse2(
   salt: &[u8],
   out: &mut [u8],
 ) -> Result<(), ScryptError> {
-  let (n, r, p, _, _, _) = scrypt_shape(params, out)?;
-  let r128 = r.checked_mul(128).ok_or(ScryptError::ResourceOverflow)?;
-  let b_len = p.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
-  let v_len = n.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
+  if out.len() < MIN_OUTPUT_LEN {
+    return Err(ScryptError::InvalidOutputLen);
+  }
+  let shape = scrypt_shape(params)?;
+  let r128 = shape.r.checked_mul(128).ok_or(ScryptError::ResourceOverflow)?;
+  let b_len = shape.p.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
+  let v_len = shape.n.checked_mul(r128).ok_or(ScryptError::ResourceOverflow)?;
   let mut state = ScryptByteState::new(b_len, v_len, r128)?;
 
   let prf = Pbkdf2Sha256::new(password);
@@ -974,7 +904,7 @@ fn scrypt_hash_x86_sse2(
     .map_err(|_| ScryptError::InvalidOutputLen)?;
 
   for chunk in state.b.chunks_exact_mut(r128) {
-    x86_sse2::ro_mix(chunk, &mut state.v, &mut state.scratch, n);
+    x86_sse2::ro_mix(chunk, &mut state.v, &mut state.scratch, shape.n);
   }
 
   prf
@@ -996,8 +926,8 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
 
 /// scrypt password-hashing (RFC 7914).
 ///
-/// Mirrors the UX of [`crate::Argon2id`]: `hash`, `hash_array`, `verify`
-/// for raw tags, and PHC-string helpers behind `feature = "phc-strings"`.
+/// Provides raw derivation and constant-time verification. Use
+/// `ScryptPassword` (feature `phc-strings`) for generated, bounded PHC password records.
 ///
 /// # Examples
 ///
@@ -1005,16 +935,10 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
 /// use rscrypto::{Scrypt, ScryptParams};
 ///
 /// // Small CI-friendly params — production deployments should use
-/// // `ScryptParams::new()` for the OWASP 2024 defaults.
-/// let params = ScryptParams::new()
-///   .log_n(10)
-///   .r(8)
-///   .p(1)
-///   .output_len(32)
-///   .build()
-///   .unwrap();
+/// let params = ScryptParams::new(10, 8, 1).unwrap();
 ///
-/// let hash = Scrypt::hash_array::<32>(&params, b"password", b"random-salt-1234").unwrap();
+/// let mut hash = [0u8; 32];
+/// Scrypt::derive(&params, b"password", b"random-salt-1234", &mut hash).unwrap();
 /// assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &hash).is_ok());
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
@@ -1031,40 +955,17 @@ impl Scrypt {
   /// Minimum output length (bytes) accepted by the hasher.
   pub const MIN_OUTPUT_LEN: usize = MIN_OUTPUT_LEN;
 
-  /// Hash `password` with `salt` into `out`.
+  /// Derive bytes from `password` and `salt` into `out`.
   ///
   /// # Errors
   ///
-  /// Returns [`ScryptError`] if parameters are out of range, `out.len()`
-  /// does not match `params.output_len`, or the working-set allocation
-  /// fails.
-  pub fn hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u8]) -> Result<(), ScryptError> {
+  /// Returns [`ScryptError`] if the output length, resource shape, or
+  /// working-set allocation is invalid.
+  pub fn derive(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u8]) -> Result<(), ScryptError> {
     scrypt_hash(params, password, salt, out)
   }
 
-  /// Hash `password` with `salt` into a fixed-size array.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`ScryptError`] if `N != params.output_len`, parameters are
-  /// out of range, or the working-set allocation fails.
-  pub fn hash_array<const N: usize>(
-    params: &ScryptParams,
-    password: &[u8],
-    salt: &[u8],
-  ) -> Result<[u8; N], ScryptError> {
-    let mut out = [0u8; N];
-    Self::hash(params, password, salt, &mut out)?;
-    Ok(out)
-  }
-
   /// Verify `expected` against a freshly-computed hash in constant time.
-  ///
-  /// scrypt always runs to completion regardless of `expected.len()` — the
-  /// length check is folded into the final boolean, not an early return,
-  /// so wall-clock cost does not leak `params.output_len`. The dominant
-  /// cost (ROMix at the configured `log_n / r / p`) is paid in every
-  /// failure path.
   ///
   /// # Errors
   ///
@@ -1072,9 +973,15 @@ impl Scrypt {
   /// input, or parameter error.
   #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
   pub fn verify(params: &ScryptParams, password: &[u8], salt: &[u8], expected: &[u8]) -> Result<(), VerificationError> {
-    let actual_len = params.output_len as usize;
-    let mut actual = alloc::vec![0u8; actual_len];
-    let hash_failed = Self::hash(params, password, salt, &mut actual).is_err();
+    if expected.len() < MIN_OUTPUT_LEN {
+      return Err(VerificationError::new());
+    }
+    let mut actual = Vec::new();
+    actual
+      .try_reserve_exact(expected.len())
+      .map_err(|_| VerificationError::new())?;
+    actual.resize(expected.len(), 0);
+    let hash_failed = Self::derive(params, password, salt, &mut actual).is_err();
 
     let bytes_match = ct::constant_time_eq(&actual, expected);
     ct::zeroize(&mut actual);
@@ -1086,154 +993,186 @@ impl Scrypt {
       Err(VerificationError::new())
     }
   }
+}
 
-  /// Hash `password` with `salt` and encode the result as a PHC string.
-  ///
-  /// Emits `$scrypt$ln=<log_n>,r=<r>,p=<p>$<salt>$<hash>` (RFC 4648
-  /// base64, no padding). scrypt has no version segment per PHC
-  /// convention.
-  ///
-  /// # Errors
-  ///
-  /// Propagates any [`ScryptError`] from parameter validation, input
-  /// length checks, or working-set allocation.
-  #[cfg(feature = "phc-strings")]
-  pub fn hash_string_with_salt(
-    params: &ScryptParams,
-    password: &[u8],
-    salt: &[u8],
-  ) -> Result<alloc::string::String, ScryptError> {
-    let mut hash = alloc::vec![0u8; params.output_len as usize];
-    Self::hash(params, password, salt, &mut hash)?;
-    let encoded = phc_integration::encode_string(params, salt, &hash);
-    ct::zeroize(&mut hash);
-    Ok(encoded)
-  }
+/// scrypt password generation and bounded PHC verification.
+#[cfg(feature = "phc-strings")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScryptPassword {
+  generation: ScryptParams,
+  limits: ScryptVerificationLimits,
+}
 
-  /// Hash `password` with a fresh 16-byte salt from the operating system
-  /// CSPRNG and encode the result as a PHC string.
-  ///
-  /// # Errors
-  ///
-  /// Propagates any [`ScryptError`] from parameter validation, input length
-  /// checks, working-set allocation, or entropy-source failure.
-  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
-  pub fn hash_string(params: &ScryptParams, password: &[u8]) -> Result<alloc::string::String, ScryptError> {
-    let mut salt = [0u8; 16];
-    getrandom::fill(&mut salt).map_err(|_| ScryptError::EntropyUnavailable)?;
-    Self::hash_string_with_salt(params, password, &salt)
-  }
-
-  /// Verify `password` against a PHC-encoded hash in constant time.
-  ///
-  /// Parses the encoded string, rebuilds the cost parameters, re-hashes
-  /// `password` with the embedded salt, and compares in constant time.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] on any mismatch, malformed string,
-  /// parameter error, or default-policy violation. Errors are intentionally
-  /// opaque — callers needing to distinguish parse failures should use
-  /// [`Scrypt::decode_string`].
-  #[cfg(feature = "phc-strings")]
-  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-  pub fn verify_string(password: &[u8], encoded: &str) -> Result<(), VerificationError> {
-    Self::verify_string_with_policy(password, encoded, &ScryptVerifyPolicy::default())
-  }
-
-  /// Verify `password` against a PHC-encoded hash without cost bounds.
-  ///
-  /// This compatibility helper accepts the encoded CPU/memory parameters and
-  /// output length as long as the PHC string itself is structurally valid. Use
-  /// it only for trusted local migration inputs or test-vector harnesses. For
-  /// stored password verification, prefer [`verify_string`](Self::verify_string)
-  /// or [`verify_string_with_policy`](Self::verify_string_with_policy).
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] on any mismatch, malformed string, or
-  /// parameter error.
-  #[cfg(feature = "phc-strings")]
-  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-  pub fn verify_string_unbounded(password: &[u8], encoded: &str) -> Result<(), VerificationError> {
-    Self::verify_string_with_policy(
-      password,
-      encoded,
-      &ScryptVerifyPolicy::new(u8::MAX, u32::MAX, u32::MAX, usize::MAX),
-    )
-  }
-
-  /// Verify `password` against a PHC string after enforcing operational
-  /// bounds on its encoded cost parameters.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] on any mismatch, malformed string,
-  /// parameter error, or policy violation.
-  #[cfg(feature = "phc-strings")]
-  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
-  pub fn verify_string_with_policy(
-    password: &[u8],
-    encoded: &str,
-    policy: &ScryptVerifyPolicy,
-  ) -> Result<(), VerificationError> {
-    let parsed = phc_integration::decode_string(encoded).map_err(|_| VerificationError::new())?;
-    if !policy.allows(&parsed.params, parsed.hash.len()) {
-      return Err(VerificationError::new());
+#[cfg(feature = "phc-strings")]
+impl Default for ScryptPassword {
+  fn default() -> Self {
+    let generation = ScryptParams::default();
+    Self {
+      generation,
+      limits: ScryptVerificationLimits::for_profile(generation),
     }
-    let mut actual = alloc::vec![0u8; parsed.hash.len()];
-    if Self::hash(&parsed.params, password, &parsed.salt, &mut actual).is_err() {
-      ct::zeroize(&mut actual);
-      return Err(VerificationError::new());
-    }
-    let ok = ct::constant_time_eq(&actual, &parsed.hash);
-    ct::zeroize(&mut actual);
-    if core::hint::black_box(ok) {
-      Ok(())
-    } else {
-      Err(VerificationError::new())
-    }
-  }
-
-  /// Decode a PHC string without re-hashing.
-  ///
-  /// Returns the parsed cost parameters, salt, and reference hash.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`crate::auth::phc::PhcError`] on any parse failure, or if
-  /// the encoded algorithm does not match `Self::ALGORITHM`.
-  #[cfg(feature = "phc-strings")]
-  pub fn decode_string(
-    encoded: &str,
-  ) -> Result<(ScryptParams, alloc::vec::Vec<u8>, alloc::vec::Vec<u8>), crate::auth::phc::PhcError> {
-    let parsed = phc_integration::decode_string(encoded)?;
-    Ok((parsed.params, parsed.salt, parsed.hash))
   }
 }
 
-// ─── PHC string integration (feature: phc-strings) ─────────────────────────
-
 #[cfg(feature = "phc-strings")]
-mod phc_integration {
-  use alloc::{string::String, vec::Vec};
-
-  use super::{MIN_OUTPUT_LEN, ScryptParams};
-  use crate::auth::phc::{self, PhcError};
-
-  /// Parsed PHC components reconstituted into rscrypto types.
-  pub(super) struct ParsedPhc {
-    pub params: ScryptParams,
-    pub salt: Vec<u8>,
-    pub hash: Vec<u8>,
+impl ScryptPassword {
+  /// Use `generation` for new hashes and derive matching verification limits.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`ScryptError::ResourceOverflow`] if the profile cannot fit the
+  /// target address space.
+  pub fn new(generation: ScryptParams) -> Result<Self, ScryptError> {
+    scrypt_shape(&generation)?;
+    Ok(Self {
+      generation,
+      limits: ScryptVerificationLimits::for_profile(generation),
+    })
   }
 
-  /// Build `$scrypt$ln=<log_n>,r=<r>,p=<p>$<salt>$<hash>`.
-  pub(super) fn encode_string(params: &ScryptParams, salt: &[u8], hash: &[u8]) -> String {
-    let mut out = String::new();
-    out.push('$');
-    out.push_str(super::Scrypt::ALGORITHM);
-    out.push_str("$ln=");
+  /// Use distinct generation parameters and finite verification limits.
+  pub fn with_limits(generation: ScryptParams, limits: ScryptVerificationLimits) -> Result<Self, ScryptError> {
+    scrypt_shape(&generation)?;
+    if !limits.allows(generation) {
+      return Err(ScryptError::VerificationLimitTooLow);
+    }
+    Ok(Self { generation, limits })
+  }
+
+  /// Hash a password with an OS-generated salt and canonical scrypt PHC encoding.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  pub fn hash_password(&self, password: &[u8]) -> Result<alloc::string::String, ScryptError> {
+    let mut salt = [0u8; PASSWORD_SALT_LEN];
+    getrandom::fill(&mut salt).map_err(|_| ScryptError::EntropyUnavailable)?;
+    let mut verifier = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
+    Scrypt::derive(&self.generation, password, &salt, verifier.as_mut_array())?;
+    Ok(password_phc::encode(self.generation, &salt, verifier.as_array()))
+  }
+
+  /// Verify a password after approving all encoded resource requests.
+  #[cfg(feature = "phc-strings")]
+  #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+  pub fn verify_password(
+    &self,
+    password: &[u8],
+    encoded: &str,
+  ) -> Result<crate::auth::PasswordStatus, VerificationError> {
+    let approved = password_phc::approve(encoded, self.limits).map_err(|_| VerificationError::new())?;
+    let mut actual = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
+    Scrypt::derive(&approved.params, password, approved.salt(), actual.as_mut_array())
+      .map_err(|_| VerificationError::new())?;
+    let verified = ct::constant_time_eq(actual.as_array(), &approved.expected);
+    if !core::hint::black_box(verified) {
+      return Err(VerificationError::new());
+    }
+    if approved.params == self.generation && approved.salt_len as usize == PASSWORD_SALT_LEN {
+      Ok(crate::auth::PasswordStatus::Current)
+    } else {
+      Ok(crate::auth::PasswordStatus::NeedsRehash)
+    }
+  }
+}
+
+#[cfg(feature = "phc-strings")]
+const PASSWORD_SALT_LEN: usize = 16;
+#[cfg(feature = "phc-strings")]
+const MIN_PHC_SALT_LEN: usize = 8;
+#[cfg(feature = "phc-strings")]
+const MAX_PHC_SALT_LEN: usize = 48;
+#[cfg(feature = "phc-strings")]
+const PASSWORD_OUTPUT_LEN: usize = DEFAULT_OUTPUT_LEN;
+
+#[cfg(feature = "phc-strings")]
+mod password_phc {
+  #[cfg(any(feature = "getrandom", test))]
+  use alloc::string::String;
+
+  use super::{
+    MAX_PHC_SALT_LEN, MIN_PHC_SALT_LEN, PASSWORD_OUTPUT_LEN, ScryptParams, ScryptVerificationLimits, scrypt_shape,
+  };
+  use crate::auth::phc::{self, PhcError};
+
+  pub(super) struct ApprovedPhc {
+    pub params: ScryptParams,
+    pub salt: [u8; MAX_PHC_SALT_LEN],
+    pub salt_len: u8,
+    pub expected: [u8; PASSWORD_OUTPUT_LEN],
+  }
+
+  impl ApprovedPhc {
+    pub fn salt(&self) -> &[u8] {
+      &self.salt[..self.salt_len as usize]
+    }
+  }
+
+  fn next_param<'a>(params: &mut phc::PhcParamIter<'a>, expected: &str) -> Result<&'a str, PhcError> {
+    let (key, value) = params.next().ok_or(PhcError::MissingParam)??;
+    if key != expected {
+      return Err(if matches!(key, "ln" | "r" | "p") {
+        PhcError::DuplicateParam
+      } else {
+        PhcError::UnknownParam
+      });
+    }
+    Ok(value)
+  }
+
+  pub(super) fn approve(encoded: &str, limits: ScryptVerificationLimits) -> Result<ApprovedPhc, PhcError> {
+    let parts = phc::parse(encoded)?;
+    if parts.algorithm != "scrypt" {
+      return Err(PhcError::AlgorithmMismatch);
+    }
+    if parts.version.is_some() {
+      return Err(PhcError::UnsupportedVersion);
+    }
+
+    let mut values = phc::PhcParamIter::new(parts.parameters);
+    let log_n = phc::parse_param_u32(next_param(&mut values, "ln")?)?;
+    let r = phc::parse_param_u32(next_param(&mut values, "r")?)?;
+    let p = phc::parse_param_u32(next_param(&mut values, "p")?)?;
+    if let Some(extra) = values.next() {
+      let (key, _) = extra?;
+      return Err(if matches!(key, "ln" | "r" | "p") {
+        PhcError::DuplicateParam
+      } else {
+        PhcError::UnknownParam
+      });
+    }
+    if log_n > u8::MAX as u32 {
+      return Err(PhcError::ParamOutOfRange);
+    }
+    let params = ScryptParams::new(log_n as u8, r, p).map_err(|_| PhcError::ParamOutOfRange)?;
+    scrypt_shape(&params).map_err(|_| PhcError::ParamOutOfRange)?;
+    if !limits.allows(params) {
+      return Err(PhcError::ParamOutOfRange);
+    }
+
+    let salt_len = phc::base64_decoded_len(parts.salt_b64.len());
+    let output_len = phc::base64_decoded_len(parts.hash_b64.len());
+    if !(MIN_PHC_SALT_LEN..=MAX_PHC_SALT_LEN).contains(&salt_len) || output_len != PASSWORD_OUTPUT_LEN {
+      return Err(PhcError::InvalidLength);
+    }
+
+    let mut salt = [0u8; MAX_PHC_SALT_LEN];
+    let decoded_salt_len = phc::base64_decode_into(parts.salt_b64, &mut salt)?;
+    let mut expected = [0u8; PASSWORD_OUTPUT_LEN];
+    let decoded_output_len = phc::base64_decode_into(parts.hash_b64, &mut expected)?;
+    if decoded_salt_len != salt_len || decoded_output_len != PASSWORD_OUTPUT_LEN {
+      return Err(PhcError::InvalidLength);
+    }
+
+    Ok(ApprovedPhc {
+      params,
+      salt,
+      salt_len: decoded_salt_len as u8,
+      expected,
+    })
+  }
+
+  #[cfg(any(feature = "getrandom", test))]
+  pub(super) fn encode(params: ScryptParams, salt: &[u8], verifier: &[u8; PASSWORD_OUTPUT_LEN]) -> String {
+    let mut out = String::with_capacity(112);
+    out.push_str("$scrypt$ln=");
     phc::push_u32_decimal(&mut out, u32::from(params.get_log_n()));
     out.push_str(",r=");
     phc::push_u32_decimal(&mut out, params.get_r());
@@ -1242,73 +1181,8 @@ mod phc_integration {
     out.push('$');
     phc::base64_encode_into(salt, &mut out);
     out.push('$');
-    phc::base64_encode_into(hash, &mut out);
+    phc::base64_encode_into(verifier, &mut out);
     out
-  }
-
-  /// Parse a PHC string and reconstitute `(params, salt, hash)`.
-  pub(super) fn decode_string(encoded: &str) -> Result<ParsedPhc, PhcError> {
-    let parts = phc::parse(encoded)?;
-    if parts.algorithm != super::Scrypt::ALGORITHM {
-      return Err(PhcError::AlgorithmMismatch);
-    }
-    // scrypt has no version segment per PHC convention. A `v=` prefix
-    // would have been parsed as the version slot; reject it.
-    if parts.version.is_some() {
-      return Err(PhcError::UnsupportedVersion);
-    }
-
-    let mut log_n: Option<u32> = None;
-    let mut r: Option<u32> = None;
-    let mut p: Option<u32> = None;
-
-    for pair in phc::PhcParamIter::new(parts.parameters) {
-      let (k, v) = pair?;
-      let value = phc::parse_param_u32(v)?;
-      match k {
-        "ln" => {
-          if log_n.replace(value).is_some() {
-            return Err(PhcError::DuplicateParam);
-          }
-        }
-        "r" => {
-          if r.replace(value).is_some() {
-            return Err(PhcError::DuplicateParam);
-          }
-        }
-        "p" => {
-          if p.replace(value).is_some() {
-            return Err(PhcError::DuplicateParam);
-          }
-        }
-        _ => return Err(PhcError::UnknownParam),
-      }
-    }
-
-    let log_n_u32 = log_n.ok_or(PhcError::MissingParam)?;
-    let r = r.ok_or(PhcError::MissingParam)?;
-    let p = p.ok_or(PhcError::MissingParam)?;
-
-    if log_n_u32 > u8::MAX as u32 {
-      return Err(PhcError::ParamOutOfRange);
-    }
-
-    let salt = phc::decode_base64_to_vec(parts.salt_b64)?;
-    let hash = phc::decode_base64_to_vec(parts.hash_b64)?;
-
-    if hash.len() < MIN_OUTPUT_LEN {
-      return Err(PhcError::InvalidLength);
-    }
-
-    let params = ScryptParams::new()
-      .log_n(log_n_u32 as u8)
-      .r(r)
-      .p(p)
-      .output_len(hash.len() as u32)
-      .build()
-      .map_err(|_| PhcError::ParamOutOfRange)?;
-
-    Ok(ParsedPhc { params, salt, hash })
   }
 }
 
@@ -1320,8 +1194,6 @@ mod tests {
 
   use super::*;
 
-  // ── RFC 7914 §11 vector 1 ─────────────────────────────────────────────
-  // P="" S="" N=16 r=1 p=1 dkLen=64
   const RFC_V1_EXPECTED: [u8; 64] = [
     0x77, 0xd6, 0x57, 0x62, 0x38, 0x65, 0x7b, 0x20, 0x3b, 0x19, 0xca, 0x42, 0xc1, 0x8a, 0x04, 0x97, 0xf1, 0x6b, 0x48,
     0x44, 0xe3, 0x07, 0x4a, 0xe8, 0xdf, 0xdf, 0xfa, 0x3f, 0xed, 0xe2, 0x14, 0x42, 0xfc, 0xd0, 0x06, 0x9d, 0xed, 0x09,
@@ -1329,478 +1201,253 @@ mod tests {
     0x35, 0xe2, 0x0c, 0x38, 0xd1, 0x89, 0x06,
   ];
 
+  fn small_params() -> ScryptParams {
+    ScryptParams::new(4, 1, 1).unwrap()
+  }
+
   #[test]
   fn rfc7914_vector_1_empty_inputs() {
-    let params = ScryptParams::new()
-      .log_n(4) // N = 16
-      .r(1)
-      .p(1)
-      .output_len(64)
-      .build()
-      .unwrap();
-    let mut out = [0u8; 64];
-    Scrypt::hash(&params, b"", b"", &mut out).unwrap();
-    assert_eq!(out, RFC_V1_EXPECTED);
+    let mut output = [0u8; 64];
+    Scrypt::derive(&small_params(), b"", b"", &mut output).unwrap();
+    assert_eq!(output, RFC_V1_EXPECTED);
   }
 
-  // ── Differential: rscrypto vs RustCrypto `scrypt` ─────────────────────
-
-  fn oracle_scrypt(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, out_len: usize) -> alloc::vec::Vec<u8> {
+  fn oracle_scrypt(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, output_len: usize) -> alloc::vec::Vec<u8> {
     let params = scrypt::Params::new(log_n, r, p).unwrap();
-    let mut out = vec![0u8; out_len];
-    scrypt::scrypt(password, salt, &params, &mut out).unwrap();
-    out
+    let mut output = vec![0u8; output_len];
+    scrypt::scrypt(password, salt, &params, &mut output).unwrap();
+    output
   }
 
   #[test]
-  fn matches_oracle_small_params() {
-    // Small enough to run under Miri too.
-    let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 32), (5, 2, 1, 32), (6, 2, 2, 32)];
-    for &(log_n, r, p, out_len) in cases {
-      let params = ScryptParams::new()
-        .log_n(log_n)
-        .r(r)
-        .p(p)
-        .output_len(out_len as u32)
-        .build()
-        .unwrap();
-      let mut actual = vec![0u8; out_len];
-      Scrypt::hash(&params, b"password", b"salty-salty-salt", &mut actual).unwrap();
-      let expected = oracle_scrypt(b"password", b"salty-salty-salt", log_n, r, p, out_len);
-      assert_eq!(actual, expected, "mismatch log_n={log_n} r={r} p={p} T={out_len}");
-    }
-  }
-
-  #[cfg(not(miri))]
-  #[test]
-  fn matches_oracle_owasp_shape() {
-    // log_n=10 keeps the test fast; OWASP uses 17 in production.
-    let log_n = 10;
-    let r = 8;
-    let p = 1;
-    let out_len = 32;
-    let params = ScryptParams::new()
-      .log_n(log_n)
-      .r(r)
-      .p(p)
-      .output_len(out_len as u32)
-      .build()
-      .unwrap();
-    let password = b"correct horse battery staple";
-    let salt = b"random-salt-1234";
-    let mut actual = vec![0u8; out_len];
-    Scrypt::hash(&params, password, salt, &mut actual).unwrap();
-    let expected = oracle_scrypt(password, salt, log_n, r, p, out_len);
-    assert_eq!(actual, expected);
-  }
-
-  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-  #[test]
-  fn x86_sse2_backend_matches_portable() {
-    let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 32), (5, 2, 1, 48), (6, 2, 2, 32), (7, 8, 1, 64)];
-    let password = b"backend-equivalence-password";
-    let salt = b"backend-equivalence-salt";
-
-    for &(log_n, r, p, out_len) in cases {
-      let params = ScryptParams::new()
-        .log_n(log_n)
-        .r(r)
-        .p(p)
-        .output_len(out_len as u32)
-        .build()
-        .unwrap();
-      let mut portable = vec![0u8; out_len];
-      let mut sse2 = vec![0u8; out_len];
-
-      scrypt_hash_portable(&params, password, salt, &mut portable).unwrap();
-      scrypt_hash_x86_sse2(&params, password, salt, &mut sse2).unwrap();
-
-      assert_eq!(sse2, portable, "mismatch log_n={log_n} r={r} p={p} T={out_len}");
-    }
-  }
-
-  // ── Verify ────────────────────────────────────────────────────────────
-
-  #[test]
-  fn verify_accepts_correct() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let h = Scrypt::hash_array::<32>(&params, b"password", b"random-salt-1234").unwrap();
-    assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &h).is_ok());
-  }
-
-  #[test]
-  fn verify_rejects_wrong_password() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let h = Scrypt::hash_array::<32>(&params, b"password", b"random-salt-1234").unwrap();
-    assert!(Scrypt::verify(&params, b"wrong-password!!", b"random-salt-1234", &h).is_err());
-  }
-
-  #[test]
-  fn verify_rejects_wrong_salt() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let h = Scrypt::hash_array::<32>(&params, b"password", b"random-salt-1234").unwrap();
-    assert!(Scrypt::verify(&params, b"password", b"other-salt-000000", &h).is_err());
-  }
-
-  #[test]
-  fn verify_rejects_length_mismatch() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let wrong_len = [0u8; 16];
-    assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &wrong_len).is_err());
-  }
-
-  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
-  #[test]
-  fn hash_string_uses_random_salt_and_verifies() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let encoded = Scrypt::hash_string(&params, b"password").unwrap();
-    assert!(Scrypt::verify_string(b"password", &encoded).is_ok());
-    assert!(Scrypt::verify_string(b"wrong-password", &encoded).is_err());
-  }
-
-  // ── Byte flips at every position ──────────────────────────────────────
-
-  #[test]
-  fn verify_rejects_byte_flip_at_every_position() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let password = b"correct horse battery staple";
-    let salt = b"random-salt-1234";
-    let hash = Scrypt::hash_array::<32>(&params, password, salt).unwrap();
-    for pos in 0..hash.len() {
-      let mut tampered = hash;
-      tampered[pos] ^= 0x01;
-      assert!(
-        Scrypt::verify(&params, password, salt, &tampered).is_err(),
-        "verify must reject flip at byte {pos}",
+  fn matches_the_oracle_across_shapes_and_output_lengths() {
+    let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 16), (5, 2, 1, 32), (6, 2, 2, 64)];
+    for &(log_n, r, p, output_len) in cases {
+      let params = ScryptParams::new(log_n, r, p).unwrap();
+      let mut actual = vec![0u8; output_len];
+      Scrypt::derive(&params, b"password", b"salty-salty-salt", &mut actual).unwrap();
+      assert_eq!(
+        actual,
+        oracle_scrypt(b"password", b"salty-salty-salt", log_n, r, p, output_len),
+        "mismatch log_n={log_n} r={r} p={p} output_len={output_len}",
       );
     }
   }
 
-  // ── Parameter validation ──────────────────────────────────────────────
+  #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+  #[test]
+  fn sse2_backend_matches_portable() {
+    let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 32), (5, 2, 1, 48), (6, 2, 2, 32), (7, 8, 1, 64)];
+    for &(log_n, r, p, output_len) in cases {
+      let params = ScryptParams::new(log_n, r, p).unwrap();
+      let mut portable = vec![0u8; output_len];
+      let mut sse2 = vec![0u8; output_len];
+      scrypt_hash_portable(&params, b"password", b"salty-salty-salt", &mut portable).unwrap();
+      scrypt_hash_x86_sse2(&params, b"password", b"salty-salty-salt", &mut sse2).unwrap();
+      assert_eq!(sse2, portable);
+    }
+  }
 
   #[test]
-  fn validate_rejects_zero_log_n() {
+  fn raw_verify_accepts_only_the_exact_inputs() {
+    let params = small_params();
+    let mut expected = [0u8; 32];
+    Scrypt::derive(&params, b"password", b"random-salt-1234", &mut expected).unwrap();
+
+    assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &expected).is_ok());
+    assert!(Scrypt::verify(&params, b"wrong", b"random-salt-1234", &expected).is_err());
+    assert!(Scrypt::verify(&params, b"password", b"other-salt-00000", &expected).is_err());
+
+    for position in 0..expected.len() {
+      let mut tampered = expected;
+      tampered[position] ^= 1;
+      assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &tampered).is_err());
+    }
+  }
+
+  #[test]
+  fn params_are_valid_by_construction() {
+    assert_eq!(ScryptParams::new(0, 1, 1), Err(ScryptError::InvalidLogN));
+    assert_eq!(ScryptParams::new(64, 1, 1), Err(ScryptError::InvalidLogN));
+    assert_eq!(ScryptParams::new(4, 0, 1), Err(ScryptError::InvalidR));
+    assert_eq!(ScryptParams::new(4, 1, 0), Err(ScryptError::InvalidP));
+    assert_eq!(ScryptParams::new(4, 1 << 15, 1 << 15), Err(ScryptError::InvalidP));
+    assert!(ScryptParams::new(4, 1, 1).is_ok());
+  }
+
+  #[test]
+  fn derive_rejects_empty_output() {
+    let mut output = [];
     assert_eq!(
-      ScryptParams::new().log_n(0).build().unwrap_err(),
-      ScryptError::InvalidLogN,
+      Scrypt::derive(&small_params(), b"password", b"salt", &mut output),
+      Err(ScryptError::InvalidOutputLen)
     );
   }
 
-  #[test]
-  fn validate_rejects_log_n_too_large() {
-    assert_eq!(
-      ScryptParams::new().log_n(64).build().unwrap_err(),
-      ScryptError::InvalidLogN,
-    );
-  }
-
-  #[test]
-  fn validate_rejects_zero_r() {
-    assert_eq!(ScryptParams::new().r(0).build().unwrap_err(), ScryptError::InvalidR,);
-  }
-
-  #[test]
-  fn validate_rejects_zero_p() {
-    assert_eq!(ScryptParams::new().p(0).build().unwrap_err(), ScryptError::InvalidP,);
-  }
-
-  #[test]
-  fn validate_rejects_r_times_p_over_limit() {
-    // r*p = 2^30 → exceeds 2^30 - 1.
-    assert_eq!(
-      ScryptParams::new()
-        .log_n(4)
-        .r(1 << 15)
-        .p(1 << 15)
-        .output_len(32)
-        .build()
-        .unwrap_err(),
-      ScryptError::InvalidP,
-    );
-  }
-
-  #[test]
-  fn validate_rejects_zero_output_len() {
-    assert_eq!(
-      ScryptParams::new().output_len(0).build().unwrap_err(),
-      ScryptError::InvalidOutputLen,
-    );
-  }
-
-  // ── Output length mismatch at hash-time ───────────────────────────────
-
-  #[test]
-  fn output_len_mismatch_rejected() {
-    let params = ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap();
-    let mut out = [0u8; 16];
-    assert_eq!(
-      Scrypt::hash(&params, b"pw", b"salty-salty-salt", &mut out).unwrap_err(),
-      ScryptError::InvalidOutputLen,
-    );
-  }
-
-  // ── Resource-overflow path on 64-bit hosts ────────────────────────────
-
-  // `log_n = 63` with `r = 2^20` validates (r·p = 2^20 ≤ 2^30−1) but
-  // `N · 2r = 2^63 · 2^21 = 2^84` does not fit in a 64-bit usize. The
-  // `checked_mul` in `scrypt_hash` must surface this as `ResourceOverflow`
-  // instead of panicking or silently allocating a truncated buffer.
   #[cfg(target_pointer_width = "64")]
   #[test]
-  fn hash_rejects_impossible_memory_size_on_64bit() {
-    let params = ScryptParams::new()
-      .log_n(63)
-      .r(1 << 20)
-      .p(1)
-      .output_len(32)
-      .build()
-      .unwrap();
-    let mut out = [0u8; 32];
+  fn derive_rejects_impossible_memory_shape_before_allocation() {
+    let params = ScryptParams::new(63, 1 << 20, 1).unwrap();
+    let mut output = [0u8; 32];
     assert_eq!(
-      Scrypt::hash(&params, b"pw", b"salty-salty-salt", &mut out).unwrap_err(),
-      ScryptError::ResourceOverflow,
+      Scrypt::derive(&params, b"password", b"salt", &mut output),
+      Err(ScryptError::ResourceOverflow)
     );
+    #[cfg(feature = "phc-strings")]
+    assert_eq!(ScryptPassword::new(params), Err(ScryptError::ResourceOverflow));
   }
 
-  // ── Error trait plumbing ──────────────────────────────────────────────
-
   #[test]
-  fn error_is_copy_and_implements_error_trait() {
+  fn error_contract_is_complete() {
     fn assert_copy<T: Copy>() {}
     fn assert_err<T: core::error::Error>() {}
     assert_copy::<ScryptError>();
     assert_err::<ScryptError>();
-  }
 
-  #[test]
-  fn error_display_is_non_empty_for_every_variant() {
-    let all = [
+    let variants = [
       ScryptError::InvalidLogN,
       ScryptError::InvalidR,
       ScryptError::InvalidP,
       ScryptError::InvalidOutputLen,
       ScryptError::ResourceOverflow,
       ScryptError::AllocationFailed,
+      #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
       ScryptError::EntropyUnavailable,
+      #[cfg(feature = "phc-strings")]
+      ScryptError::VerificationLimitTooLow,
     ];
-    for e in all {
-      let s = alloc::format!("{e}");
-      assert!(!s.is_empty());
+    for error in variants {
+      assert!(!alloc::format!("{error}").is_empty());
     }
   }
 
-  // ── Kernel dispatch ──────────────────────────────────────────────────
-
   #[test]
-  fn kernel_id_stringifies() {
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-    assert_eq!(KernelId::X86Sse2.as_str(), "x86-sse2");
+  fn kernel_contract_includes_the_portable_fallback() {
+    assert!(ALL_KERNELS.contains(&KernelId::Portable));
+    assert!(required_caps(KernelId::Portable).is_empty());
     assert_eq!(KernelId::Portable.as_str(), "portable");
   }
 
   #[test]
-  fn compiled_kernels_have_no_required_caps() {
-    for kernel in ALL_KERNELS {
-      assert!(required_caps(*kernel).is_empty());
-    }
+  fn salsa20_8_is_deterministic_and_non_identity() {
+    let original = SalsaBlock([0x1234_5678; BLOCK_WORDS]);
+    let mut first = original;
+    let mut second = original;
+    salsa20_8(&mut first);
+    salsa20_8(&mut second);
+    assert_eq!(first.0, second.0);
+    assert_ne!(first.0, original.0);
   }
 
-  #[test]
-  fn active_kernel_matches_compiled_target() {
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
-    assert_eq!(active_kernel(), KernelId::X86Sse2);
-
-    #[cfg(not(all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))))]
-    assert_eq!(active_kernel(), KernelId::Portable);
-  }
-
-  // ── Salsa20/8 self-consistency ───────────────────────────────────────
-
-  #[test]
-  fn salsa20_8_is_deterministic() {
-    let a = SalsaBlock([0x1234_5678; BLOCK_WORDS]);
-    let mut a1 = a;
-    let mut a2 = a;
-    salsa20_8(&mut a1);
-    salsa20_8(&mut a2);
-    assert_eq!(a1.0, a2.0);
-    assert_ne!(a1.0, a.0, "Salsa20/8 must not be the identity on a constant input");
-  }
-
-  // ── PHC integration ──────────────────────────────────────────────────
-
-  #[cfg(feature = "phc-strings")]
+  #[cfg(all(feature = "phc-strings", not(miri)))]
   mod phc_tests {
-    use alloc::{format, vec};
+    use alloc::format;
 
     use super::*;
-    use crate::auth::phc::PhcError;
+    use crate::auth::{PasswordStatus, phc::PhcError};
 
-    fn small_params() -> ScryptParams {
-      ScryptParams::new().log_n(4).r(1).p(1).output_len(32).build().unwrap()
+    fn encode(params: ScryptParams, password: &[u8], salt: &[u8]) -> alloc::string::String {
+      let mut verifier = [0u8; PASSWORD_OUTPUT_LEN];
+      Scrypt::derive(&params, password, salt, &mut verifier).unwrap();
+      password_phc::encode(params, salt, &verifier)
     }
 
     #[test]
-    fn hash_string_with_salt_round_trip() {
+    fn canonical_password_record_round_trips() {
       let params = small_params();
-      let salt = [0xAAu8; 16];
-      let encoded = Scrypt::hash_string_with_salt(&params, b"password", &salt).unwrap();
+      let password = ScryptPassword::new(params).unwrap();
+      let encoded = encode(params, b"password", &[0xaa; 16]);
+
       assert!(encoded.starts_with("$scrypt$ln=4,r=1,p=1$"));
-      assert!(Scrypt::verify_string(b"password", &encoded).is_ok());
-      assert!(Scrypt::verify_string_unbounded(b"password", &encoded).is_ok());
-      assert!(Scrypt::verify_string(b"wrongpassword", &encoded).is_err());
-    }
-
-    #[test]
-    fn verify_string_default_policy_rejects_oversized_scrypt_costs() {
-      let params = small_params();
-      let salt = [0xA0u8; 16];
-      let encoded = Scrypt::hash_string_with_salt(&params, b"password", &salt).unwrap();
-      let too_much_log_n = ScryptVerifyPolicy::default().max_log_n.strict_add(1);
-      let expensive = encoded.replace("ln=4", &format!("ln={too_much_log_n}"));
-
-      assert!(Scrypt::decode_string(&expensive).is_ok());
-      assert!(Scrypt::verify_string(b"password", &expensive).is_err());
-    }
-
-    #[test]
-    fn verify_string_with_policy_enforces_scrypt_bounds() {
-      let params = small_params();
-      let salt = [0xA1u8; 16];
-      let encoded = Scrypt::hash_string_with_salt(&params, b"password", &salt).unwrap();
-
-      let allowed = ScryptVerifyPolicy::new(4, 1, 1, 32);
-      assert!(Scrypt::verify_string_with_policy(b"password", &encoded, &allowed).is_ok());
-
-      let low_log_n = ScryptVerifyPolicy::new(3, 1, 1, 32);
-      assert!(Scrypt::verify_string_with_policy(b"password", &encoded, &low_log_n).is_err());
-
-      let short_output = ScryptVerifyPolicy::new(4, 1, 1, 31);
-      assert!(Scrypt::verify_string_with_policy(b"password", &encoded, &short_output).is_err());
-    }
-
-    #[test]
-    fn decode_string_extracts_params_salt_hash() {
-      let params = small_params();
-      let salt = vec![0xDDu8; 16];
-      let encoded = Scrypt::hash_string_with_salt(&params, b"pw", &salt).unwrap();
-
-      let (decoded_params, decoded_salt, decoded_hash) = Scrypt::decode_string(&encoded).unwrap();
-      assert_eq!(decoded_params.get_log_n(), 4);
-      assert_eq!(decoded_params.get_r(), 1);
-      assert_eq!(decoded_params.get_p(), 1);
-      assert_eq!(decoded_params.get_output_len(), 32);
-      assert_eq!(decoded_salt, salt);
-      assert_eq!(decoded_hash.len(), 32);
-
-      let mut rehashed = [0u8; 32];
-      Scrypt::hash(&decoded_params, b"pw", &decoded_salt, &mut rehashed).unwrap();
-      assert_eq!(rehashed.as_slice(), decoded_hash.as_slice());
-    }
-
-    #[test]
-    fn decode_string_rejects_duplicate_params() {
-      let params = small_params();
-      let encoded = Scrypt::hash_string_with_salt(&params, b"pw", &[0xFFu8; 16]).unwrap();
-      let broken = encoded.replace("r=1", "ln=4");
-      assert_eq!(Scrypt::decode_string(&broken).unwrap_err(), PhcError::DuplicateParam);
-    }
-
-    #[test]
-    fn decode_string_rejects_unknown_param() {
-      let params = small_params();
-      let encoded = Scrypt::hash_string_with_salt(&params, b"pw", &[0xFFu8; 16]).unwrap();
-      let broken = encoded.replace("ln=4", "bogus=1");
-      assert_eq!(Scrypt::decode_string(&broken).unwrap_err(), PhcError::UnknownParam);
-    }
-
-    #[test]
-    fn decode_string_rejects_algorithm_mismatch() {
-      // Argon2id-shaped string with scrypt decoder.
       assert_eq!(
-        Scrypt::decode_string("$argon2id$v=19$m=32,t=2,p=1$c29tZXNhbHQ$c29tZWhhc2g").unwrap_err(),
-        PhcError::AlgorithmMismatch,
+        password.verify_password(b"password", &encoded),
+        Ok(PasswordStatus::Current)
+      );
+      assert!(password.verify_password(b"wrong", &encoded).is_err());
+    }
+
+    #[test]
+    fn accepted_older_profile_requests_rehash() {
+      let generation = ScryptParams::new(5, 1, 1).unwrap();
+      let password = ScryptPassword::new(generation).unwrap();
+      let encoded = encode(small_params(), b"password", &[0xbb; 16]);
+
+      assert_eq!(
+        password.verify_password(b"password", &encoded),
+        Ok(PasswordStatus::NeedsRehash)
       );
     }
 
     #[test]
-    fn decode_string_rejects_version_segment() {
-      // scrypt PHC has no version segment; a `v=19` slot must be refused.
+    fn accepted_noncurrent_salt_length_requests_rehash() {
+      let params = small_params();
+      let password = ScryptPassword::new(params).unwrap();
+      let encoded = encode(params, b"password", &[0xbb; 8]);
+
       assert_eq!(
-        Scrypt::decode_string("$scrypt$v=1$ln=4,r=1,p=1$c29tZXNhbHQ$c29tZWhhc2g").unwrap_err(),
-        PhcError::UnsupportedVersion,
+        password.verify_password(b"password", &encoded),
+        Ok(PasswordStatus::NeedsRehash)
       );
     }
 
     #[test]
-    fn decode_string_distinguishes_version_segment_from_version_param() {
-      // `v=1` in the version slot → UnsupportedVersion (no version segment
-      // allowed). `version=1` in the params slot → UnknownParam. Pins both
-      // paths so a future parser regression that conflates them is caught.
+    fn approval_rejects_resource_requests_before_base64_decode() {
+      let limits = ScryptVerificationLimits::for_profile(small_params());
+      let expensive = "$scrypt$ln=5,r=1,p=1$*$*";
       assert_eq!(
-        Scrypt::decode_string("$scrypt$v=1$ln=4,r=1,p=1$c29tZXNhbHQ$c29tZWhhc2g").unwrap_err(),
-        PhcError::UnsupportedVersion,
+        password_phc::approve(expensive, limits).err(),
+        Some(PhcError::ParamOutOfRange)
+      );
+
+      let admitted = "$scrypt$ln=4,r=1,p=1$*$*";
+      assert_eq!(
+        password_phc::approve(admitted, limits).err(),
+        Some(PhcError::InvalidLength)
+      );
+    }
+
+    #[test]
+    fn limits_bound_both_memory_and_work() {
+      let limits = ScryptVerificationLimits::for_profile(small_params());
+      assert!(limits.allows(small_params()));
+      assert!(!limits.allows(ScryptParams::new(5, 1, 1).unwrap()));
+      assert!(!limits.allows(ScryptParams::new(4, 1, 2).unwrap()));
+    }
+
+    #[test]
+    fn parser_accepts_only_the_canonical_scrypt_protocol() {
+      let limits = ScryptVerificationLimits::for_profile(small_params());
+      let salt = "AAAAAAAAAAAAAAAAAAAAAA";
+      let hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+      let cases = [
+        format!("$argon2id$v=19$m=32,t=2,p=1$${salt}$${hash}"),
+        format!("$scrypt$v=1$ln=4,r=1,p=1$${salt}$${hash}"),
+        format!("$scrypt$r=1,ln=4,p=1$${salt}$${hash}"),
+        format!("$scrypt$ln=4,ln=4,p=1$${salt}$${hash}"),
+        format!("$scrypt$ln=4,r=1,x=1$${salt}$${hash}"),
+        format!("$scrypt$ln=04,r=1,p=1$${salt}$${hash}"),
+      ];
+      for encoded in cases {
+        assert!(password_phc::approve(&encoded, limits).is_err(), "{encoded}");
+      }
+    }
+
+    #[cfg(feature = "getrandom")]
+    #[test]
+    fn generated_records_use_fresh_salts() {
+      let password = ScryptPassword::new(small_params()).unwrap();
+      let first = password.hash_password(b"password").unwrap();
+      let second = password.hash_password(b"password").unwrap();
+
+      assert_ne!(first, second);
+      assert_eq!(
+        password.verify_password(b"password", &first),
+        Ok(PasswordStatus::Current)
       );
       assert_eq!(
-        Scrypt::decode_string("$scrypt$version=1,ln=4,r=1,p=1$c29tZXNhbHQ$c29tZWhhc2g").unwrap_err(),
-        PhcError::UnknownParam,
+        password.verify_password(b"password", &second),
+        Ok(PasswordStatus::Current)
       );
-    }
-
-    #[test]
-    fn decode_string_rejects_missing_required_param() {
-      // Drop the `ln=` key from an otherwise-valid string.
-      let params = small_params();
-      let encoded = Scrypt::hash_string_with_salt(&params, b"pw", &[0x11u8; 16]).unwrap();
-      let broken = encoded.replace("ln=4,", "");
-      assert_eq!(Scrypt::decode_string(&broken).unwrap_err(), PhcError::MissingParam);
-    }
-
-    #[test]
-    fn decode_string_rejects_out_of_range_log_n() {
-      // `ln=999` exceeds `u8::MAX` / RFC 7914 log_n ≤ 63. The decoder rejects
-      // at `log_n > u8::MAX` check, then at `ScryptParams::build()` if it
-      // slipped past.
-      let params = small_params();
-      let encoded = Scrypt::hash_string_with_salt(&params, b"pw", &[0x22u8; 16]).unwrap();
-      let broken = encoded.replace("ln=4", "ln=999");
-      assert_eq!(Scrypt::decode_string(&broken).unwrap_err(), PhcError::ParamOutOfRange);
-    }
-
-    #[test]
-    fn hash_array_and_hash_agree_byte_for_byte() {
-      let params = small_params();
-      let arr = Scrypt::hash_array::<32>(&params, b"pw", b"salty-salty-salt").unwrap();
-      let mut via_hash = [0u8; 32];
-      Scrypt::hash(&params, b"pw", b"salty-salty-salt", &mut via_hash).unwrap();
-      assert_eq!(arr, via_hash);
-    }
-
-    #[test]
-    fn hash_is_deterministic() {
-      // Two independent `Scrypt::hash` calls on identical inputs must
-      // produce byte-identical outputs. Guards against accidental reliance
-      // on uninitialised working-set memory in ROMix.
-      let params = small_params();
-      let mut a = [0u8; 32];
-      let mut b = [0u8; 32];
-      Scrypt::hash(&params, b"pw", b"salty-salty-salt", &mut a).unwrap();
-      Scrypt::hash(&params, b"pw", b"salty-salty-salt", &mut b).unwrap();
-      assert_eq!(a, b);
-    }
-
-    #[test]
-    fn encoded_format_exact_for_known_vector() {
-      let params = small_params();
-      let salt = b"exampleSALTvalue"; // 16 bytes
-      let encoded = Scrypt::hash_string_with_salt(&params, b"password", salt).unwrap();
-      let segments: alloc::vec::Vec<&str> = encoded.split('$').collect();
-      assert_eq!(segments[0], "");
-      assert_eq!(segments[1], "scrypt");
-      assert_eq!(segments[2], "ln=4,r=1,p=1");
-      assert_eq!(segments[3].len(), 22); // 16 bytes base64-nopad
-      assert_eq!(segments[4].len(), 43); // 32 bytes base64-nopad
-      assert_eq!(segments.len(), 5);
     }
   }
 }

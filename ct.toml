@@ -3009,10 +3009,8 @@ tier = "A"
 claim = "ct-intended"
 features = ["argon2"]
 entrypoints = [
-  "Argon2i::hash",
+  "Argon2i::derive",
   "Argon2i::verify",
-  "Argon2i::verify_string",
-  "Argon2i::verify_string_with_policy",
 ]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]
@@ -3029,7 +3027,12 @@ id = "password.argon2d_argon2id"
 tier = "A"
 claim = "best-effort"
 features = ["argon2"]
-entrypoints = ["Argon2d::*", "Argon2id::*"]
+entrypoints = [
+  "Argon2d::*",
+  "Argon2id::*",
+  "Argon2idPassword::verify_password",
+  "Argon2idPassword::verify_password_with_context",
+]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]
 may_leak = ["input_length", "public_parameter_error", "opaque_success_or_failure"]
@@ -3055,8 +3058,7 @@ features = ["scrypt"]
 entrypoints = [
   "Scrypt::derive",
   "Scrypt::verify",
-  "Scrypt::verify_string",
-  "Scrypt::verify_string_with_policy",
+  "ScryptPassword::verify_password",
 ]
 secrets = ["password", "derived_key", "expected_key"]
 public = ["salt", "params", "phc_string"]

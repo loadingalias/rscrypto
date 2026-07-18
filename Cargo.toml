@@ -310,7 +310,7 @@ required-features = ["rsa"]
 [[bench]]
 name = "password_hashing"
 harness = false
-required-features = ["argon2", "scrypt", "phc-strings"]
+required-features = ["argon2", "scrypt", "phc-strings", "getrandom"]
 
 [[bench]]
 name = "xxh3"

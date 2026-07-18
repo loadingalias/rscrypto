@@ -30,7 +30,8 @@ Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
 
 - Prefer caller-provided output buffers and scratch buffers when both forms exist.
 - Use `alloc` helpers such as `*_to_vec` only when an owned allocation is the right boundary.
-- Enable `getrandom` for OS-backed one-liners; caller-supplied entropy remains the base path.
+- Enable `getrandom` for OS-backed one-liners. Password-record salts are intentionally OS-owned;
+  other randomized APIs expose caller-supplied entropy where deterministic or constrained use needs it.
 - Bind RSA generic signing and verification through `RsaPrivateKey::signer(profile)` and
   `RsaPublicKey::verifier(profile)` so the padding and hash policy are explicit.
 
@@ -115,10 +116,15 @@ Features: `password-hashing` or `argon2` / `scrypt` / `phc-strings`.
 | Type | Output | Standard |
 |------|--------|----------|
 | `Argon2d` / `Argon2i` / `Argon2id` | variable | RFC 9106 |
-| `Argon2Params`, `Argon2VerifyPolicy`, `Argon2Version` | -- | RFC 9106 |
-| `Scrypt`, `ScryptParams`, `ScryptVerifyPolicy` | variable | RFC 7914 |
+| `Argon2Params`, `Argon2Context` | -- | RFC 9106 raw-KDF configuration |
+| `Argon2idPassword`, `Argon2VerificationLimits` | 32B verifier | Bounded canonical Argon2id PHC records |
+| `Scrypt`, `ScryptParams` | variable | RFC 7914 raw KDF |
+| `ScryptPassword`, `ScryptVerificationLimits` | 32B verifier | Bounded canonical scrypt PHC records |
+| `PasswordStatus` | -- | Current-profile / rehash decision |
 
-PHC string-format encode/decode shared by both families: `auth::phc` (feature `phc-strings`).
+Password-record operations require `phc-strings`; OS-salted generation also requires `getrandom`.
+PHC parsing and encoding are intentionally internal so attacker-controlled costs cannot bypass the
+algorithm-specific verification limits.
 
 ## Signatures & Key Exchange
 
@@ -191,7 +197,7 @@ also has `seal_random_to_vec`.
 
 | Error | When | Recovery |
 |-------|------|----------|
-| `VerificationError` | MAC/AEAD/signature check fails | Reject input without revealing failure detail |
+| `VerificationError` | MAC/AEAD/signature/password verification fails | Reject input without revealing failure detail |
 | `EcdsaKeyGenerationError` | ECDSA random source failure or bounded scalar rejection exhaustion | Fix entropy source; investigate deterministic fillers |
 | `AeadBufferError` | Output buffer wrong size | Fix buffer length |
 | `SealError` | AEAD combined encrypt failure | Buffer / nonce / counter |
@@ -199,9 +205,8 @@ also has `seal_random_to_vec`.
 | `NonceCounterSealError` | Deterministic-IV counter exhausted or buffer error | Rotate key / fix buffer |
 | `HkdfOutputLengthError` | HKDF expand exceeds max | Request less output |
 | `Pbkdf2Error` | PBKDF2 parameter validation | Adjust iterations / output length |
-| `Argon2Error` | Argon2 parameter or input validation | Adjust params per RFC 9106 |
-| `ScryptError` | scrypt parameter validation | Adjust N / r / p per RFC 7914 |
-| `PhcError` | PHC string parse / encode | Fix encoded form |
+| `Argon2Error` | Argon2 configuration, input, entropy, or resource failure | Fix the profile/input or restore resources |
+| `ScryptError` | scrypt configuration, entropy, or resource failure | Fix N/r/p or restore resources |
 | `X25519Error` | Low-order DH point | Reject peer key |
 | `MlKemError` | ML-KEM random source, key, or ciphertext validation failure | Reject input or fix entropy source |
 | `RsaKeyError` | RSA DER or component validation failure | Reject key / tighten import policy |

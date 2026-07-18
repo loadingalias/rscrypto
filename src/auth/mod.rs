@@ -107,7 +107,6 @@
 //! - `hkdf` - HKDF extract-then-expand key derivation.
 //! - `kmac` - KMAC128/KMAC256 variable-output MACs.
 //! - `mlkem` - ML-KEM typed key, ciphertext, and shared-secret foundations.
-//! - `phc` - PHC string-format codec shared by password hashers.
 //! - `poly1305` - Standalone Poly1305 one-time authenticator.
 //! - `rsa` - RSA key import/export/generation, signing, verification, OAEP, and legacy
 //!   RSAES-PKCS1-v1_5.
@@ -135,7 +134,7 @@ pub mod mlkem;
 #[cfg(feature = "pbkdf2")]
 pub mod pbkdf2;
 #[cfg(feature = "phc-strings")]
-pub mod phc;
+pub(crate) mod phc;
 #[cfg(feature = "poly1305")]
 pub mod poly1305;
 #[cfg(feature = "rsa")]
@@ -145,8 +144,29 @@ pub mod scrypt;
 #[cfg(feature = "x25519")]
 pub mod x25519;
 
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+/// Result of a successful password verification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PasswordStatus {
+  /// The stored cost profile and salt length match the generation profile.
+  Current,
+  /// The password is correct, but the stored profile should be regenerated.
+  NeedsRehash,
+}
+
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+impl PasswordStatus {
+  /// Whether the verified password should be hashed again with the current profile.
+  #[must_use]
+  pub const fn needs_rehash(self) -> bool {
+    matches!(self, Self::NeedsRehash)
+  }
+}
+
 #[cfg(feature = "argon2")]
-pub use argon2::{Argon2Error, Argon2Params, Argon2VerifyPolicy, Argon2Version, Argon2d, Argon2i, Argon2id};
+pub use argon2::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
+#[cfg(all(feature = "argon2", feature = "phc-strings"))]
+pub use argon2::{Argon2VerificationLimits, Argon2idPassword};
 #[cfg(all(feature = "diag", feature = "ed25519"))]
 pub use curve25519_edwards::diag_ed25519_select_basepoint_cached_limb_digest;
 #[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
@@ -253,8 +273,6 @@ pub use mlkem::{
 pub use pbkdf2::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(all(feature = "diag", feature = "pbkdf2"))]
 pub use pbkdf2::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
-#[cfg(feature = "phc-strings")]
-pub use phc::PhcError;
 #[cfg(feature = "poly1305")]
 pub use poly1305::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
@@ -272,7 +290,9 @@ pub use rsa::{
   diag_rsa_validate_pkcs8_private_key_der_stage,
 };
 #[cfg(feature = "scrypt")]
-pub use scrypt::{Scrypt, ScryptError, ScryptParams, ScryptVerifyPolicy};
+pub use scrypt::{Scrypt, ScryptError, ScryptParams};
+#[cfg(all(feature = "scrypt", feature = "phc-strings"))]
+pub use scrypt::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 

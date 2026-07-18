@@ -7,7 +7,7 @@
 #![cfg(all(feature = "argon2", not(miri)))]
 
 use proptest::{prelude::*, test_runner::Config as ProptestConfig};
-use rscrypto::{Argon2Params, Argon2Version, Argon2d, Argon2i, Argon2id};
+use rscrypto::{Argon2Params, Argon2d, Argon2i, Argon2id};
 
 /// Number of proptest cases. Argon2 hashing is expensive (one case ≈ 1-100ms
 /// at the cost knobs we sweep), so we cap fast iterative dev runs at 16 and
@@ -42,44 +42,23 @@ fn oracle_hash(
 }
 
 fn rs_hash_id(password: &[u8], salt: &[u8], m_kib: u32, t: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = Argon2Params::new()
-    .memory_cost_kib(m_kib)
-    .time_cost(t)
-    .parallelism(p)
-    .output_len(out_len as u32)
-    .version(Argon2Version::V0x13)
-    .build()
-    .unwrap();
+  let params = Argon2Params::new(m_kib, t, p).unwrap();
   let mut out = vec![0u8; out_len];
-  Argon2id::hash(&params, password, salt, &mut out).unwrap();
+  Argon2id::derive(&params, password, salt, &mut out).unwrap();
   out
 }
 
 fn rs_hash_d(password: &[u8], salt: &[u8], m_kib: u32, t: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = Argon2Params::new()
-    .memory_cost_kib(m_kib)
-    .time_cost(t)
-    .parallelism(p)
-    .output_len(out_len as u32)
-    .version(Argon2Version::V0x13)
-    .build()
-    .unwrap();
+  let params = Argon2Params::new(m_kib, t, p).unwrap();
   let mut out = vec![0u8; out_len];
-  Argon2d::hash(&params, password, salt, &mut out).unwrap();
+  Argon2d::derive(&params, password, salt, &mut out).unwrap();
   out
 }
 
 fn rs_hash_i(password: &[u8], salt: &[u8], m_kib: u32, t: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = Argon2Params::new()
-    .memory_cost_kib(m_kib)
-    .time_cost(t)
-    .parallelism(p)
-    .output_len(out_len as u32)
-    .version(Argon2Version::V0x13)
-    .build()
-    .unwrap();
+  let params = Argon2Params::new(m_kib, t, p).unwrap();
   let mut out = vec![0u8; out_len];
-  Argon2i::hash(&params, password, salt, &mut out).unwrap();
+  Argon2i::derive(&params, password, salt, &mut out).unwrap();
   out
 }
 
@@ -140,15 +119,10 @@ proptest! {
     p in 1u32..=2,
   ) {
     prop_assume!(m >= 8 * p);
-    let params = Argon2Params::new()
-      .memory_cost_kib(m)
-      .time_cost(t)
-      .parallelism(p)
-      .output_len(32)
-      .build()
+    let params = Argon2Params::new(m, t, p)
       .unwrap();
     let mut hash = [0u8; 32];
-    Argon2id::hash(&params, &password, &salt, &mut hash).unwrap();
+    Argon2id::derive(&params, &password, &salt, &mut hash).unwrap();
     prop_assert!(Argon2id::verify(&params, &password, &salt, &hash).is_ok());
   }
 }
@@ -199,17 +173,11 @@ fn argon2id_p8_matches_oracle() {
 /// — see the doc comment on `verify` in `src/auth/argon2/mod.rs`.
 #[test]
 fn argon2id_verify_rejects_length_mismatch() {
-  let params = Argon2Params::new()
-    .memory_cost_kib(8)
-    .time_cost(1)
-    .parallelism(1)
-    .output_len(32)
-    .build()
-    .unwrap();
+  let params = Argon2Params::new(8, 1, 1).unwrap();
   let password = b"pw";
   let salt = b"saltsalt";
   let mut hash = [0u8; 32];
-  Argon2id::hash(&params, password, salt, &mut hash).unwrap();
+  Argon2id::derive(&params, password, salt, &mut hash).unwrap();
 
   // Sanity: correct length verifies.
   assert!(Argon2id::verify(&params, password, salt, &hash).is_ok());
@@ -232,17 +200,11 @@ fn argon2id_verify_rejects_length_mismatch() {
 
 #[test]
 fn argon2id_verify_rejects_byte_flip_at_every_position() {
-  let params = Argon2Params::new()
-    .memory_cost_kib(32)
-    .time_cost(2)
-    .parallelism(1)
-    .output_len(32)
-    .build()
-    .unwrap();
+  let params = Argon2Params::new(32, 2, 1).unwrap();
   let password = b"correct horse battery staple";
   let salt = b"random-salt-1234";
   let mut hash = [0u8; 32];
-  Argon2id::hash(&params, password, salt, &mut hash).unwrap();
+  Argon2id::derive(&params, password, salt, &mut hash).unwrap();
 
   for pos in 0..hash.len() {
     let mut tampered = hash;
@@ -251,35 +213,5 @@ fn argon2id_verify_rejects_byte_flip_at_every_position() {
       Argon2id::verify(&params, password, salt, &tampered).is_err(),
       "verify must reject flip at byte {pos}"
     );
-  }
-}
-
-#[cfg(feature = "phc-strings")]
-mod phc_roundtrip {
-  use super::*;
-
-  proptest! {
-    #![proptest_config(ProptestConfig::with_cases(8))]
-
-    #[test]
-    fn argon2id_phc_roundtrip_verifies(
-      password in proptest::collection::vec(any::<u8>(), 1..48),
-      salt in proptest::collection::vec(any::<u8>(), 8..32),
-      m in proptest::sample::select(vec![8u32, 16, 32]),
-      t in 1u32..=2,
-      p in 1u32..=2,
-    ) {
-      prop_assume!(m >= 8 * p);
-      let params = Argon2Params::new()
-        .memory_cost_kib(m)
-        .time_cost(t)
-        .parallelism(p)
-        .output_len(32)
-        .build()
-        .unwrap();
-      let encoded = Argon2id::hash_string_with_salt(&params, &password, &salt).unwrap();
-      // This property intentionally varies policy-controlled PHC costs.
-      prop_assert!(Argon2id::verify_string_unbounded(&password, &encoded).is_ok());
-    }
   }
 }

@@ -1120,16 +1120,11 @@ macro_rules! argon2_entry {
       let Some(out) = (unsafe { output_slice(out, out_len) }) else {
         return STATUS_ERR;
       };
-      let Ok(params) = Argon2Params::new()
-        .memory_cost_kib(memory_cost_kib)
-        .time_cost(time_cost)
-        .output_len(out_len as u32)
-        .build()
-      else {
+      let Ok(params) = Argon2Params::new(memory_cost_kib, time_cost, 1) else {
         return STATUS_ERR;
       };
 
-      <$ty>::hash(&params, password, salt, out)
+      <$ty>::derive(&params, password, salt, out)
         .map(|()| STATUS_OK)
         .unwrap_or(STATUS_ERR)
     }
@@ -1157,12 +1152,7 @@ macro_rules! argon2_entry {
       let Some(expected) = (unsafe { input_slice(expected, expected_len) }) else {
         return STATUS_ERR;
       };
-      let Ok(params) = Argon2Params::new()
-        .memory_cost_kib(memory_cost_kib)
-        .time_cost(time_cost)
-        .output_len(expected_len as u32)
-        .build()
-      else {
+      let Ok(params) = Argon2Params::new(memory_cost_kib, time_cost, 1) else {
         return STATUS_ERR;
       };
 
@@ -1201,12 +1191,7 @@ pub extern "C" fn ct_entry_scrypt_verify(
   let Some(expected) = (unsafe { input_slice(expected, expected_len) }) else {
     return STATUS_ERR;
   };
-  let Ok(params) = ScryptParams::new()
-    .log_n(log_n)
-    .r(r)
-    .p(p)
-    .output_len(expected_len as u32)
-    .build()
+  let Ok(params) = ScryptParams::new(log_n, r, p)
   else {
     return STATUS_ERR;
   };

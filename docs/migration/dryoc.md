@@ -117,7 +117,8 @@ of accepting a zero output.
 
 `dryoc::classic::crypto_pwhash` takes libsodium-style `opslimit`, `memlimit`
 bytes, and algorithm constants. rscrypto takes explicit `Argon2Params`
-(`memory_cost_kib`, `time_cost`, `parallelism`, `output_len`).
+(`memory_cost_kib`, `time_cost`, `parallelism`); output length comes from the
+destination slice passed to the raw KDF.
 
 Do not copy parameters blindly. Convert `memlimit` from bytes to KiB, choose the
 variant (`Argon2id` or `Argon2i`), and document the resulting policy at the call

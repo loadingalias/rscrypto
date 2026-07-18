@@ -18,15 +18,9 @@ fn oracle_scrypt(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, out_le
 }
 
 fn rs_hash(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = ScryptParams::new()
-    .log_n(log_n)
-    .r(r)
-    .p(p)
-    .output_len(out_len as u32)
-    .build()
-    .unwrap();
+  let params = ScryptParams::new(log_n, r, p).unwrap();
   let mut out = vec![0u8; out_len];
-  Scrypt::hash(&params, password, salt, &mut out).unwrap();
+  Scrypt::derive(&params, password, salt, &mut out).unwrap();
   out
 }
 
@@ -59,15 +53,10 @@ proptest! {
     r in 1u32..=2,
     p in 1u32..=2,
   ) {
-    let params = ScryptParams::new()
-      .log_n(log_n)
-      .r(r)
-      .p(p)
-      .output_len(32)
-      .build()
+    let params = ScryptParams::new(log_n, r, p)
       .unwrap();
     let mut hash = [0u8; 32];
-    Scrypt::hash(&params, &password, &salt, &mut hash).unwrap();
+    Scrypt::derive(&params, &password, &salt, &mut hash).unwrap();
     prop_assert!(Scrypt::verify(&params, &password, &salt, &hash).is_ok());
   }
 }
@@ -91,37 +80,25 @@ fn scrypt_minimal_log_n_matches_oracle() {
 fn scrypt_short_dklen_is_prefix_of_wide() {
   // PBKDF2-HMAC-SHA256's output is a concatenation of blocks; asking for
   // `N` bytes yields the first `N` bytes of the block stream. Therefore
-  // `Scrypt::hash(.., out_len=1)` must equal the first byte of
-  // `Scrypt::hash(.., out_len=64)` for the same inputs. Exercises the
+  // `Scrypt::derive(.., out_len=1)` must equal the first byte of
+  // `Scrypt::derive(.., out_len=64)` for the same inputs. Exercises the
   // `out_len=1` PBKDF2 single-byte tail that the oracle rejects.
-  let params_short = rscrypto::ScryptParams::new()
-    .log_n(6)
-    .r(2)
-    .p(1)
-    .output_len(1)
-    .build()
-    .unwrap();
-  let params_wide = rscrypto::ScryptParams::new()
-    .log_n(6)
-    .r(2)
-    .p(1)
-    .output_len(64)
-    .build()
-    .unwrap();
+  let params_short = rscrypto::ScryptParams::new(6, 2, 1).unwrap();
+  let params_wide = rscrypto::ScryptParams::new(6, 2, 1).unwrap();
   let mut short_out = [0u8; 1];
   let mut wide_out = [0u8; 64];
-  Scrypt::hash(&params_short, b"pw", b"salty-salty-salt", &mut short_out).unwrap();
-  Scrypt::hash(&params_wide, b"pw", b"salty-salty-salt", &mut wide_out).unwrap();
+  Scrypt::derive(&params_short, b"pw", b"salty-salty-salt", &mut short_out).unwrap();
+  Scrypt::derive(&params_wide, b"pw", b"salty-salty-salt", &mut wide_out).unwrap();
   assert_eq!(short_out[0], wide_out[0]);
 }
 
 #[test]
 fn scrypt_verify_rejects_byte_flip_at_every_position() {
-  let params = ScryptParams::new().log_n(6).r(2).p(1).output_len(32).build().unwrap();
+  let params = ScryptParams::new(6, 2, 1).unwrap();
   let password = b"correct horse battery staple";
   let salt = b"random-salt-1234";
   let mut hash = [0u8; 32];
-  Scrypt::hash(&params, password, salt, &mut hash).unwrap();
+  Scrypt::derive(&params, password, salt, &mut hash).unwrap();
 
   for pos in 0..hash.len() {
     let mut tampered = hash;
@@ -130,34 +107,5 @@ fn scrypt_verify_rejects_byte_flip_at_every_position() {
       Scrypt::verify(&params, password, salt, &tampered).is_err(),
       "verify must reject flip at byte {pos}",
     );
-  }
-}
-
-#[cfg(feature = "phc-strings")]
-mod phc_roundtrip {
-  use super::*;
-
-  proptest! {
-    #![proptest_config(ProptestConfig::with_cases(8))]
-
-    #[test]
-    fn scrypt_phc_roundtrip_verifies(
-      password in proptest::collection::vec(any::<u8>(), 1..48),
-      salt in proptest::collection::vec(any::<u8>(), 8..32),
-      log_n in 4u8..=6,
-      r in 1u32..=2,
-      p in 1u32..=2,
-    ) {
-      let params = ScryptParams::new()
-        .log_n(log_n)
-        .r(r)
-        .p(p)
-        .output_len(32)
-        .build()
-        .unwrap();
-      let encoded = Scrypt::hash_string_with_salt(&params, &password, &salt).unwrap();
-      // This property intentionally varies policy-controlled PHC costs.
-      prop_assert!(Scrypt::verify_string_unbounded(&password, &encoded).is_ok());
-    }
   }
 }

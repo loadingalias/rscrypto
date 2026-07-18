@@ -6,20 +6,20 @@
 //! cargo run --example password_hashing --features password-hashing,getrandom
 //! ```
 
-use rscrypto::{Argon2Params, Argon2id, Scrypt, ScryptParams};
+use rscrypto::{Argon2idPassword, ScryptPassword};
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
   let password = b"correct horse battery staple";
 
-  let argon2 = Argon2Params::new().build()?;
-  let argon2_phc = Argon2id::hash_string(&argon2, password)?;
-  assert!(Argon2id::verify_string(password, &argon2_phc).is_ok());
-  assert!(Argon2id::verify_string(b"wrong password", &argon2_phc).is_err());
+  let argon2 = Argon2idPassword::default();
+  let argon2_phc = argon2.hash_password(password)?;
+  assert!(argon2.verify_password(password, &argon2_phc).is_ok());
+  assert!(argon2.verify_password(b"wrong password", &argon2_phc).is_err());
 
-  let scrypt = ScryptParams::new().build()?;
-  let scrypt_phc = Scrypt::hash_string(&scrypt, password)?;
-  assert!(Scrypt::verify_string(password, &scrypt_phc).is_ok());
-  assert!(Scrypt::verify_string(b"wrong password", &scrypt_phc).is_err());
+  let scrypt = ScryptPassword::default();
+  let scrypt_phc = scrypt.hash_password(password)?;
+  assert!(scrypt.verify_password(password, &scrypt_phc).is_ok());
+  assert!(scrypt.verify_password(b"wrong password", &scrypt_phc).is_err());
 
   println!("{argon2_phc}");
   println!("{scrypt_phc}");

@@ -99,7 +99,7 @@ Use [`docs/types.md`](docs/types.md) when you need the full type map, and
 |---|---|---|
 | Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE128/256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
 | MACs & KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, standalone Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
-| Password Hashing | Argon2d/i/id, scrypt, PHC string encode/verify | `auth`, `argon2`, `scrypt`, `phc-strings` |
+| Password Hashing | Raw Argon2d/i/id and scrypt KDFs; generated, bounded PHC password records | `auth`, `argon2`, `scrypt`, `phc-strings` |
 | Public-Key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `auth`, `signatures`, `key-exchange`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519`, `ml-kem` |
 | AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |

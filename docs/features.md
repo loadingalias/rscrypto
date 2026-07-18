@@ -83,7 +83,7 @@ rscrypto = { version = "0.6.4", features = ["full", "portable-only"] }
 | `hkdf` | `hmac` | HKDF-SHA256, HKDF-SHA384, and HKDF-SHA512 |
 | `poly1305` | -- | Standalone Poly1305 one-time MAC |
 | `pbkdf2` | `hmac` | PBKDF2-HMAC-SHA256 and PBKDF2-HMAC-SHA512 |
-| `phc-strings` | `alloc` | PHC string encode/decode support |
+| `phc-strings` | `alloc` | Canonical password-record generation and bounded PHC verification |
 | `argon2` | `blake2b`, `alloc` | Argon2i, Argon2d, Argon2id |
 | `scrypt` | `pbkdf2`, `alloc` | scrypt |
 | `ecdsa-p256` | `hmac` | ECDSA P-256/SHA-256 signing and verification |
@@ -104,7 +104,7 @@ rscrypto = { version = "0.6.4", features = ["full", "portable-only"] }
 
 | Feature | Effect |
 |---|---|
-| `getrandom` | Enables OS-RNG constructors such as `random()` / `try_random()`, `try_generate()` for Ed25519/X25519/ECDSA, `Poly1305OneTimeKey::try_generate()`, ML-KEM `try_generate_keypair()` / `try_encapsulate()`, AEAD random sealing helpers, RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. Caller-supplied byte-filling closures remain available for deterministic tests and constrained integrations; deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
+| `getrandom` | Enables OS-RNG constructors such as `random()` / `try_random()`, canonical Argon2id/scrypt password-record generation, `try_generate()` for Ed25519/X25519/ECDSA, `Poly1305OneTimeKey::try_generate()`, ML-KEM `try_generate_keypair()` / `try_encapsulate()`, AEAD random sealing helpers, RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. Password-record salts are intentionally OS-owned; other APIs retain caller-supplied byte-filling closures where deterministic tests or constrained integrations need them. Deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |
