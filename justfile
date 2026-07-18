@@ -254,6 +254,8 @@ check-actions:
     @scripts/ci/release-ci-check-test.sh
     @scripts/ci/release-evidence-check-test.sh
     @scripts/ci/repository-controls-evidence-test.sh
+    @scripts/ci/release-identity-test.sh
+    @scripts/ci/publish-immutable-release-test.sh
     @scripts/ci/release-recipes-test.sh
     @actionlint
     @zizmor .github/workflows .github/actions

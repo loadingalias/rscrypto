@@ -26,6 +26,8 @@ jobs:
       crate_name: ${{ steps.preflight.outputs.crate_name }}
       crate_sha256: ${{ steps.preflight.outputs.crate_sha256 }}
       crate_version: ${{ steps.preflight.outputs.crate_version }}
+      source_name: ${{ steps.preflight.outputs.source_name }}
+      source_sha256: ${{ steps.preflight.outputs.source_sha256 }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
@@ -46,11 +48,13 @@ jobs:
         id: preflight
         run: scripts/ci/release-preflight.sh --crate rscrypto --tag "$GITHUB_REF_NAME"
 
-      - name: Preserve validated crate
+      - name: Preserve validated release inputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: release-crate-${{ github.sha }}
-          path: ${{ steps.preflight.outputs.crate_path }}
+          name: release-inputs-${{ github.sha }}
+          path: |
+            ${{ steps.preflight.outputs.crate_path }}
+            ${{ steps.preflight.outputs.source_path }}
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -83,26 +87,36 @@ jobs:
           enable-magic-cache: false
           enable-rust-cache: true
 
-      - name: Restore validated crate
+      - name: Restore validated release inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          name: release-crate-${{ github.sha }}
+          name: release-inputs-${{ github.sha }}
           path: target/package
 
-      - name: Verify validated crate
+      - name: Verify validated release inputs
         id: package
         env:
           CRATE_NAME: ${{ needs.preflight.outputs.crate_name }}
           CRATE_SHA256: ${{ needs.preflight.outputs.crate_sha256 }}
           CRATE_VERSION: ${{ needs.preflight.outputs.crate_version }}
+          SOURCE_NAME: ${{ needs.preflight.outputs.source_name }}
+          SOURCE_SHA256: ${{ needs.preflight.outputs.source_sha256 }}
         run: |
           set -euo pipefail
           crate_path="target/package/$CRATE_NAME"
-          actual_sha256="$(sha256sum "$crate_path" | awk '{print $1}')"
-          if [[ "$actual_sha256" != "$CRATE_SHA256" ]]; then
+          source_path="target/package/$SOURCE_NAME"
+          actual_crate_sha256="$(sha256sum "$crate_path" | awk '{print $1}')"
+          actual_source_sha256="$(sha256sum "$source_path" | awk '{print $1}')"
+          if [[ "$actual_crate_sha256" != "$CRATE_SHA256" ]]; then
             echo "validated crate sha256 changed during artifact transfer" >&2
             echo "expected: $CRATE_SHA256" >&2
-            echo "actual:   $actual_sha256" >&2
+            echo "actual:   $actual_crate_sha256" >&2
+            exit 1
+          fi
+          if [[ "$actual_source_sha256" != "$SOURCE_SHA256" ]]; then
+            echo "validated source archive sha256 changed during artifact transfer" >&2
+            echo "expected: $SOURCE_SHA256" >&2
+            echo "actual:   $actual_source_sha256" >&2
             exit 1
           fi
           {
@@ -110,12 +124,20 @@ jobs:
             echo "crate_name=$CRATE_NAME"
             echo "crate_sha256=$CRATE_SHA256"
             echo "crate_version=$CRATE_VERSION"
+            echo "source_path=$source_path"
+            echo "source_name=$SOURCE_NAME"
+            echo "source_sha256=$SOURCE_SHA256"
           } >> "$GITHUB_OUTPUT"
 
       - name: Attest crate provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
         with:
           subject-path: ${{ steps.package.outputs.crate_path }}
+
+      - name: Attest source archive provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: ${{ steps.package.outputs.source_path }}
 
       - name: Capture repository controls
         id: repository_controls
@@ -167,6 +189,34 @@ jobs:
         with:
           subject-path: ${{ steps.ct_evidence.outputs.bundle_path }}
 
+      - name: Write release identity manifest
+        id: release_manifest
+        env:
+          CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
+          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
+          SOURCE_PATH: ${{ steps.package.outputs.source_path }}
+          CT_EVIDENCE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
+          REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
+          EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
+          EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
+        run: |
+          scripts/ci/write-release-manifest.sh \
+            --version "$CRATE_VERSION" \
+            --tag "$GITHUB_REF_NAME" \
+            --commit "$GITHUB_SHA" \
+            --source "$SOURCE_PATH" \
+            --crate "$CRATE_PATH" \
+            --ct-evidence "$CT_EVIDENCE_PATH" \
+            --repository-controls "$REPOSITORY_CONTROLS_PATH" \
+            --evidence-commit "$EVIDENCE_COMMIT" \
+            --evidence-mode "$EVIDENCE_MODE" \
+            --output "release-artifacts/rscrypto-${CRATE_VERSION}-release-manifest.json"
+
+      - name: Attest release identity manifest
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: ${{ steps.release_manifest.outputs.manifest_path }}
+
       - name: Check existing crates.io package
         id: existing
         env:
@@ -187,6 +237,107 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Write release checksums
+        env:
+          CRATE_NAME: ${{ steps.package.outputs.crate_name }}
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+          SOURCE_NAME: ${{ steps.package.outputs.source_name }}
+          SOURCE_SHA256: ${{ steps.package.outputs.source_sha256 }}
+          CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
+          CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
+          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
+          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
+          RELEASE_MANIFEST_NAME: ${{ steps.release_manifest.outputs.manifest_name }}
+          RELEASE_MANIFEST_SHA256: ${{ steps.release_manifest.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          {
+            printf '%s  %s\n' "$CRATE_SHA256" "$CRATE_NAME"
+            printf '%s  %s\n' "$SOURCE_SHA256" "$SOURCE_NAME"
+            printf '%s  %s\n' "$CT_BUNDLE_SHA256" "$CT_BUNDLE_NAME"
+            printf '%s  %s\n' "$REPOSITORY_CONTROLS_SHA256" "$REPOSITORY_CONTROLS_NAME"
+            printf '%s  %s\n' "$RELEASE_MANIFEST_SHA256" "$RELEASE_MANIFEST_NAME"
+          } > SHA256SUMS
+
+      - name: Attest release checksums
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        with:
+          subject-path: SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CRATE_NAME: ${{ steps.package.outputs.crate_name }}
+          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
+          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
+          SOURCE_NAME: ${{ steps.package.outputs.source_name }}
+          SOURCE_PATH: ${{ steps.package.outputs.source_path }}
+          SOURCE_SHA256: ${{ steps.package.outputs.source_sha256 }}
+          CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
+          CT_BUNDLE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
+          CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
+          CT_EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
+          CT_EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
+          CT_EVIDENCE_WEEKLY_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
+          CT_EVIDENCE_RISCV_RUN: ${{ needs.evidence-gate.outputs.riscv_run_url }}
+          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
+          REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
+          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
+          RELEASE_MANIFEST_NAME: ${{ steps.release_manifest.outputs.manifest_name }}
+          RELEASE_MANIFEST_PATH: ${{ steps.release_manifest.outputs.manifest_path }}
+          RELEASE_MANIFEST_SHA256: ${{ steps.release_manifest.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          notes_file="$(mktemp)"
+          cat > "$notes_file" <<EOF
+          Release tag: \`${GITHUB_REF_NAME}\`
+          Release commit: \`${GITHUB_SHA}\`
+
+          See [CHANGELOG.md](https://github.com/loadingalias/rscrypto/blob/${GITHUB_SHA}/CHANGELOG.md) for changes.
+
+          Crate artifact: \`${CRATE_NAME}\`
+          SHA-256: \`${CRATE_SHA256}\`
+
+          Source archive: \`${SOURCE_NAME}\`
+          SHA-256: \`${SOURCE_SHA256}\`
+
+          Constant-time evidence bundle: \`${CT_BUNDLE_NAME}\`
+          SHA-256: \`${CT_BUNDLE_SHA256}\`
+          Evidence commit: \`${CT_EVIDENCE_COMMIT}\` (\`${CT_EVIDENCE_MODE}\`)
+          Weekly evidence run: ${CT_EVIDENCE_WEEKLY_RUN}
+          RISC-V evidence run: ${CT_EVIDENCE_RISCV_RUN}
+
+          Repository controls: \`${REPOSITORY_CONTROLS_NAME}\`
+          SHA-256: \`${REPOSITORY_CONTROLS_SHA256}\`
+
+          Release identity manifest: \`${RELEASE_MANIFEST_NAME}\`
+          SHA-256: \`${RELEASE_MANIFEST_SHA256}\`
+
+          Verify provenance:
+
+          \`\`\`bash
+          gh attestation verify "${CRATE_NAME}" --repo loadingalias/rscrypto
+          gh attestation verify "${SOURCE_NAME}" --repo loadingalias/rscrypto
+          gh attestation verify "${CT_BUNDLE_NAME}" --repo loadingalias/rscrypto
+          gh attestation verify "${REPOSITORY_CONTROLS_NAME}" --repo loadingalias/rscrypto
+          gh attestation verify "${RELEASE_MANIFEST_NAME}" --repo loadingalias/rscrypto
+          gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
+          \`\`\`
+          EOF
+
+          scripts/ci/publish-immutable-release.sh \
+            --tag "$GITHUB_REF_NAME" \
+            --title "rscrypto $GITHUB_REF_NAME" \
+            --notes "$notes_file" \
+            --asset "$CRATE_PATH" \
+            --asset "$SOURCE_PATH" \
+            --asset "$CT_BUNDLE_PATH" \
+            --asset "$REPOSITORY_CONTROLS_PATH" \
+            --asset "$RELEASE_MANIFEST_PATH" \
+            --asset SHA256SUMS \
+            --stable-asset "$CRATE_PATH" \
+            --stable-asset "$SOURCE_PATH"
 
       - name: Authenticate with crates.io
         if: steps.existing.outputs.published != 'true'
@@ -235,77 +386,6 @@ jobs:
           done
           echo "timed out waiting for rscrypto ${CRATE_VERSION} on crates.io" >&2
           exit 1
-
-      - name: Write release checksums
-        env:
-          CRATE_NAME: ${{ steps.package.outputs.crate_name }}
-          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
-          CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
-          CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
-          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
-          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
-        run: |
-          set -euo pipefail
-          printf '%s  %s\n' "$CRATE_SHA256" "$CRATE_NAME" > SHA256SUMS
-          printf '%s  %s\n' "$CT_BUNDLE_SHA256" "$CT_BUNDLE_NAME" >> SHA256SUMS
-          printf '%s  %s\n' "$REPOSITORY_CONTROLS_SHA256" "$REPOSITORY_CONTROLS_NAME" >> SHA256SUMS
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CRATE_NAME: ${{ steps.package.outputs.crate_name }}
-          CRATE_PATH: ${{ steps.package.outputs.crate_path }}
-          CRATE_SHA256: ${{ steps.package.outputs.crate_sha256 }}
-          CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
-          CT_BUNDLE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
-          CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
-          CT_EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
-          CT_EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
-          CT_EVIDENCE_WEEKLY_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
-          CT_EVIDENCE_RISCV_RUN: ${{ needs.evidence-gate.outputs.riscv_run_url }}
-          REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
-          REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
-          REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
-        run: |
-          set -euo pipefail
-          notes_file="$(mktemp)"
-          cat > "$notes_file" <<EOF
-          See [CHANGELOG.md](https://github.com/loadingalias/rscrypto/blob/main/CHANGELOG.md) for changes.
-
-          Crate artifact: \`${CRATE_NAME}\`
-          SHA-256: \`${CRATE_SHA256}\`
-
-          Constant-time evidence bundle: \`${CT_BUNDLE_NAME}\`
-          SHA-256: \`${CT_BUNDLE_SHA256}\`
-          Evidence commit: \`${CT_EVIDENCE_COMMIT}\` (\`${CT_EVIDENCE_MODE}\`)
-          Weekly evidence run: ${CT_EVIDENCE_WEEKLY_RUN}
-          RISC-V evidence run: ${CT_EVIDENCE_RISCV_RUN}
-
-          Repository controls: \`${REPOSITORY_CONTROLS_NAME}\`
-          SHA-256: \`${REPOSITORY_CONTROLS_SHA256}\`
-
-          Verify provenance:
-
-          \`\`\`bash
-          gh attestation verify "${CRATE_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify "${CT_BUNDLE_NAME}" --repo loadingalias/rscrypto
-          gh attestation verify "${REPOSITORY_CONTROLS_NAME}" --repo loadingalias/rscrypto
-          \`\`\`
-          EOF
-
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" \
-              "$CRATE_PATH" "$CT_BUNDLE_PATH" "$REPOSITORY_CONTROLS_PATH" SHA256SUMS --clobber
-            gh release edit "$GITHUB_REF_NAME" \
-              --title "rscrypto $GITHUB_REF_NAME" \
-              --notes-file "$notes_file"
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              "$CRATE_PATH" "$CT_BUNDLE_PATH" "$REPOSITORY_CONTROLS_PATH" SHA256SUMS \
-              --verify-tag \
-              --title "rscrypto $GITHUB_REF_NAME" \
-              --notes-file "$notes_file"
-          fi
 
   evidence-gate:
     name: Release Evidence Gate

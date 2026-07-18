@@ -31,9 +31,16 @@ CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 RELEASE_CI="$ROOT/scripts/ci/release-ci-check.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
+RELEASE_SOURCE="$ROOT/scripts/ci/package-release-source.sh"
+RELEASE_MANIFEST="$ROOT/scripts/ci/write-release-manifest.sh"
+RELEASE_IDENTITY_TEST="$ROOT/scripts/ci/release-identity-test.sh"
+PUBLISH_RELEASE="$ROOT/scripts/ci/publish-immutable-release.sh"
+PUBLISH_RELEASE_TEST="$ROOT/scripts/ci/publish-immutable-release-test.sh"
 REPOSITORY_CONTROLS="$ROOT/scripts/ci/repository-controls-evidence.sh"
 REPOSITORY_CONTROLS_TEST="$ROOT/scripts/ci/repository-controls-evidence-test.sh"
 REPOSITORY_POLICY="$ROOT/.github/rulesets/protect-main.json"
+RELEASE_TAG_POLICY="$ROOT/.github/rulesets/protect-release-tags.json"
+RELEASE_IMMUTABILITY_POLICY="$ROOT/.github/repository-settings/release-immutability.json"
 DEPENDABOT="$ROOT/.github/dependabot.yaml"
 
 fail() {
@@ -91,9 +98,16 @@ require_file "$CI_CHECK"
 require_file "$RELEASE_PREFLIGHT"
 require_file "$RELEASE_CI"
 require_file "$RELEASE_EVIDENCE"
+require_file "$RELEASE_SOURCE"
+require_file "$RELEASE_MANIFEST"
+require_file "$RELEASE_IDENTITY_TEST"
+require_file "$PUBLISH_RELEASE"
+require_file "$PUBLISH_RELEASE_TEST"
 require_file "$REPOSITORY_CONTROLS"
 require_file "$REPOSITORY_CONTROLS_TEST"
 require_file "$REPOSITORY_POLICY"
+require_file "$RELEASE_TAG_POLICY"
+require_file "$RELEASE_IMMUTABILITY_POLICY"
 require_file "$DEPENDABOT"
 
 [[ $(yq eval '.version' "$DEPENDABOT") == "2" ]] || fail "Dependabot config must use version 2"
@@ -177,6 +191,10 @@ grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE
   || fail "release must require paired Weekly and RISC-V evidence from one valid commit"
 grep -Fq 'scripts/ci/repository-controls-evidence.sh' "$RELEASE" \
   || fail "release must capture the live repository controls"
+grep -Fq 'scripts/ci/package-release-source.sh' "$RELEASE_PREFLIGHT" \
+  || fail "release preflight must build the exact-commit source archive"
+grep -Fq 'scripts/ci/write-release-manifest.sh' "$RELEASE" \
+  || fail "release must bind artifacts and toolchain metadata in one identity manifest"
 grep -Fq -- '--allow-redacted-bypass' "$RELEASE" \
   || fail "release must explicitly acknowledge GitHub's workflow-token bypass redaction"
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
@@ -187,8 +205,52 @@ grep -Fq 'REPOSITORY_CONTROLS_SHA256' "$RELEASE" \
 # shellcheck disable=SC2016 # Workflow shell variable is an intentional literal contract.
 grep -Fq '"$REPOSITORY_CONTROLS_PATH"' "$RELEASE" \
   || fail "release must publish the repository controls evidence"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+grep -Fq 'subject-path: ${{ steps.package.outputs.source_path }}' "$RELEASE" \
+  || fail "release must attest the deterministic source archive"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+grep -Fq 'subject-path: ${{ steps.release_manifest.outputs.manifest_path }}' "$RELEASE" \
+  || fail "release must attest the identity manifest"
+grep -Fq 'subject-path: SHA256SUMS' "$RELEASE" \
+  || fail "release must attest its checksum set"
+grep -Fq 'SOURCE_SHA256' "$RELEASE" \
+  || fail "release must checksum the deterministic source archive"
+grep -Fq 'RELEASE_MANIFEST_SHA256' "$RELEASE" \
+  || fail "release must checksum the identity manifest"
+grep -Fq 'scripts/ci/publish-immutable-release.sh' "$RELEASE" \
+  || fail "release workflow must use the tested immutable publication state machine"
+immutable_release_line=$(grep -nF 'scripts/ci/publish-immutable-release.sh' "$RELEASE" | cut -d: -f1)
+crates_publish_line=$(grep -nF 'cargo publish -p rscrypto --locked' "$RELEASE" | cut -d: -f1)
+[[ "$immutable_release_line" -lt "$crates_publish_line" ]] \
+  || fail "release immutability must be verified before crates.io publication"
+grep -Fq 'gh release create "$tag"' "$PUBLISH_RELEASE" \
+  || fail "immutable publication must create the GitHub release"
+grep -Fq -- '--draft' "$PUBLISH_RELEASE" \
+  || fail "release assets must be assembled in a draft before immutable publication"
+grep -Fq 'gh release verify "$tag"' "$PUBLISH_RELEASE" \
+  || fail "release workflow must verify GitHub's immutable release attestation"
+grep -Fq 'gh release verify-asset "$tag"' "$PUBLISH_RELEASE" \
+  || fail "release workflow must verify assets against the immutable release"
+grep -Fq -- "--jq '.assets[].name'" "$PUBLISH_RELEASE" \
+  || fail "release workflow must reject missing or unexpected release assets"
+grep -Fq -- '--stable-asset "$CRATE_PATH"' "$RELEASE" \
+  || fail "release reruns must verify the crates.io-bound package asset"
+grep -Fq -- '--stable-asset "$SOURCE_PATH"' "$RELEASE" \
+  || fail "release reruns must verify the deterministic source archive"
 grep -Fq '.github/rulesets/protect-main.json' "$REPOSITORY_CONTROLS" \
   || fail "repository controls evidence must validate the checked-in policy"
+grep -Fq '.github/rulesets/protect-release-tags.json' "$REPOSITORY_CONTROLS" \
+  || fail "repository controls evidence must validate immutable release tags"
+jq -e '
+  .target == "tag"
+  and .enforcement == "active"
+  and .bypass_actors == []
+  and ([.rules[].type] | sort) == ["deletion", "update"]
+' "$RELEASE_TAG_POLICY" >/dev/null || fail "release tags must reject updates and deletion without bypass"
+jq -e '.enabled == true and (keys == ["enabled"])' "$RELEASE_IMMUTABILITY_POLICY" >/dev/null \
+  || fail "repository policy must require immutable releases"
+grep -Fq 'repos/$repo/immutable-releases' "$REPOSITORY_CONTROLS" \
+  || fail "repository controls evidence must validate immutable releases before tagging"
 grep -Fq 'current_user_can_bypass == "never"' "$REPOSITORY_CONTROLS" \
   || fail "repository controls evidence must reject bypass access"
 grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}' "$RELEASE" \

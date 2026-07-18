@@ -31,6 +31,11 @@ its caller.
 | `ci/release-evidence-check-test.sh` | `just check-actions` |
 | `ci/repository-controls-evidence.sh` | `just check-repository-controls`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |
 | `ci/repository-controls-evidence-test.sh` | `just check-actions` |
+| `ci/package-release-source.sh` | `release.yaml`, `ci/release-identity-test.sh` |
+| `ci/write-release-manifest.sh` | `release.yaml`, `ci/release-identity-test.sh` |
+| `ci/release-identity-test.sh` | `just check-actions` |
+| `ci/publish-immutable-release.sh` | `release.yaml`, `ci/publish-immutable-release-test.sh` |
+| `ci/publish-immutable-release-test.sh` | `just check-actions` |
 | `ci/release-recipes-test.sh`   | `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/upgrade-actions-test.sh`   | `just check-actions` |

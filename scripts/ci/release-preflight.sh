@@ -125,3 +125,8 @@ scripts/ci/release-package-guard.sh \
   --crate "$crate" \
   --expected-version "$tag_version" \
   --expected-git-sha "$tag_commit"
+
+scripts/ci/package-release-source.sh \
+  --version "$tag_version" \
+  --tag "$tag" \
+  --commit "$tag_commit"
