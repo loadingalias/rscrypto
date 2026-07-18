@@ -76,3 +76,4 @@ docs/llvm-ppc64le-readvolatile-issue.md
 proptest-regressions
 *.proptest-regressions
 assets/distribution/
+.ruff_cache/

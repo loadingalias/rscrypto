@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Pre-push hook: quality checks before allowing push.
-# Install:
-#   ln -sf ../../scripts/ci/pre-push.sh .git/hooks/pre-push
+# Change-aware quality checks used by the supported push recipes.
 # Profiles:
 #   --light  skip the exhaustive rscrypto feature matrix (default)
 #   --full   preserve the existing full host lane
@@ -269,11 +267,7 @@ fi
 
 if [[ "$RAIL_READY" != true ]] || rail_surface_is_enabled build || rail_surface_is_enabled test; then
   start_task "cargo-rail unify" run_rail_unify_check
-  if [[ "${RSCRYPTO_RELEASE_PUSH:-}" == "1" ]]; then
-    skip "Release intent coverage" "cargo-rail validated and consumed the release change files"
-  else
-    start_task "release intent coverage" run_rail_change_check
-  fi
+  start_task "release intent coverage" run_rail_change_check
 else
   skip "Cargo-rail unify" "no build/test surface"
   skip "Release intent coverage" "no build/test surface"

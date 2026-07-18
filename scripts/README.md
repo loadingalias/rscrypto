@@ -39,7 +39,7 @@ its caller.
 | `ci/release-recipes-test.sh`   | `just check-actions` |
 | `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
 | `ci/upgrade-actions-test.sh`   | `just check-actions` |
-| `ci/pre-push.sh`               | `just push`, `just push-full`, optional `.git/hooks/pre-push` |
+| `ci/pre-push.sh`               | `just push`, `just push-full` |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
 ## Cross-platform Check Helpers
