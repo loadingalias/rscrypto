@@ -17,8 +17,21 @@ case "$endpoint" in
   repos/loadingalias/rscrypto)
     echo '{"id":1115910108,"full_name":"loadingalias/rscrypto","visibility":"public","default_branch":"main"}'
     ;;
+  repos/loadingalias/rscrypto/immutable-releases)
+    if [[ ${FAKE_GH_MODE:-success} == "immutability-unavailable" ]]; then
+      exit 1
+    elif [[ ${FAKE_GH_MODE:-success} == "immutability-disabled" ]]; then
+      echo '{"enabled":false,"enforced_by_owner":false}'
+    else
+      echo '{"enabled":true,"enforced_by_owner":false}'
+    fi
+    ;;
   'repos/loadingalias/rscrypto/rulesets?includes_parents=true&per_page=100')
-    echo '[{"id":19077982,"name":"protect-main","target":"branch","source_type":"Repository","source":"loadingalias/rscrypto","enforcement":"active"}]'
+    if [[ ${FAKE_GH_MODE:-success} == "missing-tag" ]]; then
+      echo '[{"id":19077982,"name":"protect-main","target":"branch","source_type":"Repository","source":"loadingalias/rscrypto","enforcement":"active"}]'
+    else
+      echo '[{"id":19077982,"name":"protect-main","target":"branch","source_type":"Repository","source":"loadingalias/rscrypto","enforcement":"active"},{"id":19077983,"name":"protect-release-tags","target":"tag","source_type":"Repository","source":"loadingalias/rscrypto","enforcement":"active"}]'
+    fi
     ;;
   repos/loadingalias/rscrypto/rulesets/19077982)
     jq --arg mode "${FAKE_GH_MODE:-success}" '
@@ -48,6 +61,32 @@ case "$endpoint" in
         end
     ' "$EXPECTED_POLICY"
     ;;
+  repos/loadingalias/rscrypto/rulesets/19077983)
+    jq --arg mode "${FAKE_GH_MODE:-success}" '
+      . + {
+        id: 19077983,
+        source_type: "Repository",
+        source: "loadingalias/rscrypto",
+        current_user_can_bypass: "never",
+        created_at: "2026-07-17T12:00:00-04:00",
+        updated_at: "2026-07-17T12:00:00-04:00"
+      }
+      | if $mode == "tag-bypass" then
+          .bypass_actors = [{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always"}]
+          | .current_user_can_bypass = "always"
+        elif $mode == "inactive-tag" then
+          .enforcement = "disabled"
+        elif $mode == "mutable-tag" then
+          .rules |= map(select(.type != "update"))
+        elif $mode == "redacted" then
+          del(.bypass_actors, .current_user_can_bypass)
+        elif $mode == "redacted-self" then
+          del(.bypass_actors)
+        else
+          .
+        end
+    ' "$EXPECTED_TAG_POLICY"
+    ;;
   'repos/loadingalias/rscrypto/rules/branches/main?per_page=100')
     jq --arg mode "${FAKE_GH_MODE:-success}" '
       [.rules[] | . + {
@@ -71,6 +110,7 @@ chmod +x "$TMP_ROOT/bin/gh"
 
 export PATH="$TMP_ROOT/bin:$PATH"
 export EXPECTED_POLICY="$REPO_ROOT/.github/rulesets/protect-main.json"
+export EXPECTED_TAG_POLICY="$REPO_ROOT/.github/rulesets/protect-release-tags.json"
 export EXPECTED_SHA
 EXPECTED_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD)
 
@@ -83,20 +123,25 @@ GITHUB_OUTPUT="$github_output" "$CHECKER" \
   --output "$output" >/dev/null
 
 jq -e --arg commit "$EXPECTED_SHA" '
-  .schema_version == 1
+  .schema_version == 3
   and .kind == "rscrypto.repository-controls"
   and .release_commit == $commit
   and .repository.full_name == "loadingalias/rscrypto"
   and .repository.default_branch == "main"
   and .repository.default_branch_sha == $commit
   and .live.ruleset.current_user_can_bypass == "never"
+  and .live.release_tag_ruleset.current_user_can_bypass == "never"
+  and .live.release_immutability.enabled == true
+  and .validation.release_immutability.status == "verified_enabled"
+  and ([.live.release_tag_ruleset.rules[] | select(.type == "update")] | length == 1)
   and ([.live.effective_rules[] | select(.type == "required_status_checks")] | length == 1)
 ' "$output" >/dev/null
 grep -Fxq "evidence_name=$(basename "$output")" "$github_output"
 grep -Fxq "evidence_path=$output" "$github_output"
 grep -Eq '^evidence_sha256=[0-9a-f]{64}$' "$github_output"
 
-for mode in bypass inactive missing-check wrong-app wrong-effective redacted; do
+for mode in bypass inactive missing-check wrong-app wrong-effective missing-tag tag-bypass inactive-tag mutable-tag \
+  immutability-disabled immutability-unavailable redacted; do
   if FAKE_GH_MODE=$mode "$CHECKER" \
     --root "$REPO_ROOT" \
     --repo loadingalias/rscrypto \
@@ -114,7 +159,10 @@ FAKE_GH_MODE=redacted "$CHECKER" \
   --commit "$EXPECTED_SHA" \
   --output "$redacted_output" \
   --allow-redacted-bypass >/dev/null
-jq -e '.validation.bypass_actors.status == "redacted_by_github_api"' "$redacted_output" >/dev/null
+jq -e '
+  .validation.bypass_actors.status == "redacted_by_github_api"
+  and .validation.release_tag_bypass_actors.status == "redacted_by_github_api"
+' "$redacted_output" >/dev/null
 
 FAKE_GH_MODE=redacted-self "$CHECKER" \
   --root "$REPO_ROOT" \
@@ -132,5 +180,17 @@ if FAKE_GH_MODE=bypass "$CHECKER" \
   echo "repository controls check treated a visible bypass as redacted" >&2
   exit 1
 fi
+
+immutability_unavailable_output="$TMP_ROOT/immutability-unavailable.json"
+FAKE_GH_MODE=immutability-unavailable "$CHECKER" \
+  --root "$REPO_ROOT" \
+  --repo loadingalias/rscrypto \
+  --commit "$EXPECTED_SHA" \
+  --output "$immutability_unavailable_output" \
+  --allow-redacted-bypass >/dev/null
+jq -e '
+  .validation.release_immutability.status == "unavailable_to_workflow_token"
+  and .live.release_immutability == null
+' "$immutability_unavailable_output" >/dev/null
 
 echo "Repository controls evidence regression tests passed"

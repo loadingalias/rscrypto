@@ -26,9 +26,16 @@ Configure the GitHub repository:
 
 1. Create the active `protect-main` branch ruleset described by
    [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json), with no bypass actors.
-2. Create an environment named `crates-io`.
-3. Add required reviewers for that environment.
-4. Keep long-lived crates.io publish tokens out of repository secrets.
+2. Create the active `protect-release-tags` tag ruleset described by
+   [`.github/rulesets/protect-release-tags.json`](../.github/rulesets/protect-release-tags.json), with no bypass
+   actors. It permits a new `v*` tag but prevents updating or deleting an existing one.
+3. In **Settings → General → Releases**, enable release immutability as described by
+   [`.github/repository-settings/release-immutability.json`](../.github/repository-settings/release-immutability.json).
+   It applies only to releases published after the setting is enabled.
+4. Create an environment named `crates-io`.
+5. Add the current maintainer as its required reviewer. While the project has one maintainer, permit self-review;
+   enable independent review only after a second trusted maintainer exists.
+6. Keep long-lived crates.io publish tokens out of repository secrets.
 
 The environment name must match both crates.io and
 [`.github/workflows/release.yaml`](../.github/workflows/release.yaml). If it
@@ -154,16 +161,16 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
    against the finalized release version. Before tagging, cargo-rail's automatic
    release plan uses compatibility analysis to select the required version bump;
    the extended release check reports the advisory verdict.
-6. Builds the `.crate` once with `cargo package --locked` and transfers that
-   validated artifact to the publish job.
-7. Rejects dirty VCS metadata and private or local-only package contents.
+6. Builds the `.crate` once with `cargo package --locked` and creates a deterministic source archive from the exact
+   tag commit, then transfers both validated artifacts to the publish job.
+7. Rejects dirty or mismatched VCS metadata, private or local-only package contents, and source archives that cannot
+   be reproduced from the tag commit.
 8. Waits for the `CI` workflow on the same commit to pass.
-9. Verifies the transferred artifact's SHA-256, then attests it with GitHub
-   build provenance.
+9. Verifies both transferred SHA-256 values, then attests the crate and source archive with GitHub build provenance.
 10. Compares every rule visible to the restricted workflow token with the
-    checked-in policy and attests the resulting repository controls JSON. GitHub
-    redacts bypass actors from this token; the artifact labels that field as
-    redacted instead of pretending the workflow reverified the pre-tag gate.
+    checked-in default-branch and release-tag policies and attests the resulting repository controls JSON. GitHub
+    redacts bypass actors from this token; the artifact labels those fields as redacted instead of pretending the
+    workflow reverified the pre-tag gate.
 11. Requires successful Weekly CT/RSA evidence and RISC-V native/CT evidence
     from the exact tag commit or the same mechanically proven release-only
     ancestor, then downloads raw CT artifacts from both runs. The tag workflow
@@ -172,12 +179,15 @@ Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
     tool versions, timing coverage, BINSEC coverage, and raw artifact hashes.
     The bundle separately records the release commit and evidence commit.
 13. Attests the CT evidence bundle with GitHub build provenance.
-14. Uses crates.io Trusted Publishing to get a temporary publish token.
-15. Publishes with `cargo publish -p rscrypto --locked`.
-16. Downloads the crate from crates.io and verifies the SHA-256 against the
-    attested package.
-17. Creates or updates the GitHub Release with the crate, CT evidence bundle,
-    repository controls JSON, and `SHA256SUMS`.
+14. Writes and attests a release identity manifest binding the tag, commit, tree, pinned and active Rust toolchain,
+    Cargo lockfile, release workflow, source archive, crate, CT evidence, and repository controls.
+15. Writes and attests `SHA256SUMS` for every published release asset.
+16. Creates a draft GitHub Release, attaches every asset, publishes it as an immutable release, and verifies GitHub's
+    release attestation before any irreversible registry change. A rerun may repair an unpublished draft, but an
+    already-published release is verified instead of modified.
+17. Uses crates.io Trusted Publishing to get a temporary publish token.
+18. Publishes with `cargo publish -p rscrypto --locked`.
+19. Downloads the crate from crates.io and verifies the SHA-256 against the attested package.
 
 The publish job uses the `crates-io` GitHub environment. GitHub requests
 approval only after preflight and CI have passed, and before the OIDC token is
@@ -185,9 +195,10 @@ issued.
 
 ## Recovery
 
-Re-running the workflow is safe after a partial failure. If crates.io already
-has the version, the workflow downloads it and compares SHA-256 before touching
-the GitHub Release. A mismatch is a hard stop.
+Re-running the workflow is safe after a partial failure. If crates.io already has the version, the workflow downloads
+it and compares SHA-256 before touching the GitHub Release. A draft release can be repaired and then published. A
+published immutable release is never overwritten; the workflow verifies its release attestation and stable crate and
+source assets before publishing to crates.io. A mismatch is a hard stop.
 
 If the signed-tag key changes, update `.github/allowed-signers` in a reviewed
 commit before creating the next release tag.
@@ -199,20 +210,28 @@ Consumers can verify the GitHub Release artifact:
 ```bash
 gh release download vX.Y.Z --repo loadingalias/rscrypto \
   -p 'rscrypto-X.Y.Z.crate' \
+  -p 'rscrypto-X.Y.Z-source.tar.gz' \
   -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
   -p 'rscrypto-X.Y.Z-repository-controls.json' \
+  -p 'rscrypto-X.Y.Z-release-manifest.json' \
   -p SHA256SUMS
 sha256sum --check SHA256SUMS
+gh release verify vX.Y.Z --repo loadingalias/rscrypto
+gh release verify-asset vX.Y.Z rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
+gh release verify-asset vX.Y.Z rscrypto-X.Y.Z-source.tar.gz --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-source.tar.gz --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-repository-controls.json --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-release-manifest.json --repo loadingalias/rscrypto
+gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
 mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
 (cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
 ```
 
-The crate downloaded from crates.io should have the same SHA-256 as the
-attested release artifact. The repository controls JSON records the expected
-policy, live ruleset, effective rules on the default branch, capture time, and
-release commit. `validation.bypass_actors.status` states whether bypass actors
-were verified or redacted by GitHub. The JSON is evidence of the release-time
-configuration, not a claim that GitHub settings cannot change later.
+The crate downloaded from crates.io should have the same SHA-256 as the attested release artifact. The release
+identity manifest is the machine-readable join between the release's source, artifacts, evidence, and toolchain. The
+repository controls JSON records the expected policies, immutable-release setting, live branch and tag rulesets,
+effective rules on the default branch, capture time, and release commit. Its validation fields state whether each
+bypass list and the immutable-release setting were visible to the capturing token. The JSON is evidence of the
+release-time configuration, not a claim that GitHub settings cannot change later.

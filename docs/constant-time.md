@@ -122,10 +122,11 @@ for audit-constrained builds, but it is not a proof by itself.
 
 ## Evidence
 
-The source manifest is never sufficient to establish a release claim. The
-matching signed GitHub release must contain all of:
+Source inspection and `ct.toml` are not sufficient to establish a release claim. The matching signed GitHub release
+must contain all of:
 
-- `rscrypto-X.Y.Z.crate` and `SHA256SUMS`.
+- The attested release manifest, source archive, crate, and `SHA256SUMS` binding the release tag, commit, toolchain,
+  and artifacts.
 - An attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` built from the same release
   commit.
 - `CT-EVIDENCE-BUNDLE.json`, naming the version, full commit, release profile,
@@ -184,11 +185,20 @@ exact GitHub release, then verify both attestations and hashes:
 ```bash
 gh release download vX.Y.Z --repo loadingalias/rscrypto \
   -p 'rscrypto-X.Y.Z.crate' \
+  -p 'rscrypto-X.Y.Z-source.tar.gz' \
   -p 'rscrypto-X.Y.Z-ct-evidence.tar.gz' \
+  -p 'rscrypto-X.Y.Z-repository-controls.json' \
+  -p 'rscrypto-X.Y.Z-release-manifest.json' \
   -p SHA256SUMS
 sha256sum --check SHA256SUMS
+gh release verify vX.Y.Z --repo loadingalias/rscrypto
+gh release verify-asset vX.Y.Z rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z.crate --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-source.tar.gz --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-repository-controls.json --repo loadingalias/rscrypto
+gh attestation verify rscrypto-X.Y.Z-release-manifest.json --repo loadingalias/rscrypto
+gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
 mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
 (cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
 ```
