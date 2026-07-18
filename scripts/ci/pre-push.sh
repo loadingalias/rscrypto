@@ -8,6 +8,12 @@
 
 set -euo pipefail
 
+# `just push` validates explicitly, then sets this only for the Git invocation.
+# A linked copy of this script must not repeat the same suite as a pre-push hook.
+if [[ "${RSCRYPTO_PRE_PUSH_VALIDATED:-}" == "1" ]]; then
+  exit 0
+fi
+
 export PATH="$HOME/.cargo/bin:$PATH"
 
 usage() {

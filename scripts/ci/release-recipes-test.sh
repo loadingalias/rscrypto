@@ -13,6 +13,7 @@ push_full_recipe=$(cd "$REPO_ROOT" && just --dry-run push-full 2>&1)
 grep -Fq "cargo rail release check rscrypto --extended" <<<"$prepare_recipe"
 grep -Fq "RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --yes --pr" \
   <<<"$prepare_recipe"
+grep -Fq "RSCRYPTO_RELEASE_PUSH=1 git push" <<<"$prepare_recipe"
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
 # shellcheck disable=SC2016 # Match the literal command rendered by just.
 grep -Fq 'scripts/ci/release-ci-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
@@ -40,9 +41,9 @@ if grep -Fq "cargo rail release check" <<<"$tag_recipe"; then
 fi
 
 grep -Fq 'scripts/ci/pre-push.sh --light' <<<"$push_recipe"
-grep -Fq 'git push --set-upstream "origin" HEAD' <<<"$push_recipe"
+grep -Fq 'RSCRYPTO_PRE_PUSH_VALIDATED=1 git push --set-upstream "origin" HEAD' <<<"$push_recipe"
 grep -Fq 'scripts/ci/pre-push.sh --full' <<<"$push_full_recipe"
-grep -Fq 'git push --set-upstream "origin" HEAD' <<<"$push_full_recipe"
+grep -Fq 'RSCRYPTO_PRE_PUSH_VALIDATED=1 git push --set-upstream "origin" HEAD' <<<"$push_full_recipe"
 if grep -Fq -- '--no-verify' <<<"$push_recipe$push_full_recipe"; then
   echo "supported push recipes must not bypass Git hooks" >&2
   exit 1

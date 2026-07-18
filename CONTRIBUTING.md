@@ -82,8 +82,9 @@ just push
 ```
 
 `just push` runs the light, change-aware pre-push plan and then preserves any
-installed Git hooks. Use `just push-full` when the change is unusually broad
-or release-sensitive.
+installed Git hooks. A linked rscrypto pre-push hook recognizes that the same
+suite already passed instead of running it twice. Use `just push-full` when the
+change is unusually broad or release-sensitive.
 
 Open the pull request. A branch push alone does not start the normal PR suite:
 
