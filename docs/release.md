@@ -1,13 +1,92 @@
 # Release Process
 
-`rscrypto` releases are human-tagged and CI-published.
+`rscrypto` releases are approved by the maintainer and published by CI.
+`cargo-rail` prepares a release pull request and creates the signed tag. GitHub
+Actions builds, attests, and publishes the artifacts. A normal release must
+never run `cargo publish` locally.
 
-`cargo-rail` owns the local release mutation: reviewed change file, version
-bump, changelog, release commit, signed tag, and tag push. GitHub Actions owns
-crates.io publishing and the GitHub Release. Do not run `cargo publish`
-locally for normal releases.
+## Release at a glance
 
-## One-Time Setup
+1. Start from a clean, current `main` after all intended feature pull requests
+   have merged. Every user-visible change must already have a reviewed
+   `.changes/*.md` file.
+
+   ```bash
+   git switch main
+   git pull --ff-only
+   git status --short
+   just release-check
+   ```
+
+2. Prepare the release:
+
+   ```bash
+   just release-prepare
+   ```
+
+   This creates a `rail/release-*` branch, commits the generated version and
+   changelog, opens a pull request, refreshes the standalone constant-time tool
+   lockfiles, and pushes that follow-up commit. It does not tag or publish.
+
+3. Wait for the release pull request's required `Complete` check. Review the
+   version, changelog, and lockfile diff, then merge it in the GitHub UI.
+
+4. Record the exact merged release candidate:
+
+   ```bash
+   git switch main
+   git pull --ff-only
+   candidate=$(git rev-parse HEAD)
+   ```
+
+5. Wait for `main` CI to pass, then dispatch the expensive release evidence on
+   that commit. Do this before another pull request merges into `main`.
+
+   ```bash
+   gh workflow run weekly.yaml --ref main
+   gh workflow run riscv.yaml --ref main -f mode=evidence
+   ```
+
+   Confirm that both runs report `$candidate` as their head SHA. If code,
+   dependencies, features, build inputs, or test policy change afterward, rerun
+   both workflows.
+
+6. After exact-commit CI and both evidence workflows are green, create and push
+   the signed tag:
+
+   ```bash
+   test "$(git rev-parse HEAD)" = "$candidate"
+   just release-tag
+   ```
+
+   `release-tag` rechecks live repository controls, exact-commit CI, and release
+   evidence before allowing the tag. It never publishes to crates.io locally.
+
+7. The tag starts the `Release` workflow. Approve its `crates-io` environment
+   job after the prerequisite jobs pass. CI publishes and verifies the immutable
+   GitHub Release before publishing the same crate through crates.io Trusted
+   Publishing.
+
+8. Run the commands in [Verification](#verification).
+
+## Why each gate exists
+
+| Gate | What it prevents |
+|---|---|
+| Release pull request | An unreviewed version or changelog mutation reaching protected `main`. |
+| `main` CI | Tagging a commit that was never proven in its final protected-branch identity. |
+| Weekly and RISC-V evidence | Publishing cryptographic claims without the required platform and timing evidence. |
+| Signed immutable tag | Moving a released version to different source later. |
+| Immutable, attested GitHub Release | Publishing artifacts that cannot be tied back to the tag and build. |
+| Environment approval | A tag or compromised workflow publishing to crates.io without a final human decision. |
+| Trusted Publishing | Long-lived crates.io credentials becoming a repository secret. |
+
+The repeated pull-request and `main` checks are intentional. The first answers
+"may this change merge?" The second proves "this exact protected-branch commit
+may become a release." The expensive Weekly and RISC-V evidence is not repeated
+on every pull request; it runs only for a release candidate.
+
+## One-time setup
 
 Configure the crate on crates.io:
 
@@ -24,174 +103,84 @@ token publishing for new versions.
 
 Configure the GitHub repository:
 
-1. Create the active `protect-main` branch ruleset described by
-   [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json), with no bypass actors.
-2. Create the active `protect-release-tags` tag ruleset described by
-   [`.github/rulesets/protect-release-tags.json`](../.github/rulesets/protect-release-tags.json), with no bypass
-   actors. It permits a new `v*` tag but prevents updating or deleting an existing one.
-3. In **Settings → General → Releases**, enable release immutability as described by
-   [`.github/repository-settings/release-immutability.json`](../.github/repository-settings/release-immutability.json).
+1. Activate the `protect-main` branch ruleset described by
+   [`.github/rulesets/protect-main.json`](../.github/rulesets/protect-main.json),
+   with no bypass actors.
+2. Activate the `protect-release-tags` tag ruleset described by
+   [`.github/rulesets/protect-release-tags.json`](../.github/rulesets/protect-release-tags.json),
+   with no bypass actors. It permits a new `v*` tag but prevents updating or
+   deleting an existing one.
+3. In **Settings → General → Releases**, enable release immutability as described
+   by [`.github/repository-settings/release-immutability.json`](../.github/repository-settings/release-immutability.json).
    It applies only to releases published after the setting is enabled.
-4. Create an environment named `crates-io`.
-5. Add the current maintainer as its required reviewer. While the project has one maintainer, permit self-review;
-   enable independent review only after a second trusted maintainer exists.
-6. Keep long-lived crates.io publish tokens out of repository secrets.
+4. Create an environment named `crates-io` and add the current maintainer as its
+   required reviewer. Permit self-review while the project has one maintainer,
+   but disable administrator bypass. Require independent approval after a second
+   trusted maintainer exists.
+5. Keep long-lived crates.io publish tokens out of repository secrets.
 
-The environment name must match both crates.io and
-[`.github/workflows/release.yaml`](../.github/workflows/release.yaml). If it
-does not match, `rust-lang/crates-io-auth-action` cannot exchange the GitHub
-OIDC token for a temporary crates.io token.
+The environment name must match crates.io and
+[`.github/workflows/release.yaml`](../.github/workflows/release.yaml), or the
+OIDC token exchange will fail.
 
-## Release Commands
+## Release intent
 
-Add release intent with a cargo-rail change file. Commit the change file with
-the code change when possible; if the code was already committed, add the
-change file before cutting the release. Change files live in `.changes/`.
-Use `--name` to choose the filename slug. The file may be renamed after
-creation as long as it remains a `.changes/*.md` file. Changelog sections use
-only these reviewed change-file bodies; commit subjects are engineering history,
-not release notes.
+Commit a cargo-rail change file with each user-visible change when possible.
+Change files live in `.changes/`; their reviewed bodies become the changelog.
+Commit subjects remain engineering history, not release notes.
 
 ```bash
-cargo rail change add rscrypto --bump patch --name concise-change-name --message "Describe the user-visible change."
-cargo rail change status
-```
-
-Use `--bump minor` or `--bump major` for larger user-visible changes.
-
-Run the pre-release checks from a clean tree:
-
-```bash
-git status --short
-cargo rail config validate --strict
-cargo rail config sync --check
-cargo rail unify --check --explain
-cargo rail release check rscrypto --extended
-cargo rail release run rscrypto --bump auto --skip-publish --check
-```
-
-The same flow is available through the justfile:
-
-```bash
-just release-change patch "Fixed ECDSA oracle compatibility with p256."
+just release-change patch "Describe the user-visible result."
 just release-status
-just release-check
 ```
 
-Pull-request CI uses cargo-rail-action v5 with cargo-rail 0.17.3. The action's
-surface outputs decide whether the single-crate CI suite is required, and its
-resolved base ref feeds `cargo rail change check --required`. Execution scope
-comes from the planner contract; workflows and scripts must not reconstruct it
-from diagnostic impact fields.
+Use `minor` or `major` when compatibility requires it. Before preparing a
+release, `just release-check` validates configuration, dependency unification,
+pending intent, SemVer advice, and the generated release plan.
 
-Compiler-backed unification runs in the dedicated blocking Cargo Graph
-Assurance job, not the fast Quality lane. The planner selects it for Cargo,
-Rust source, build, test, bench, example, toolchain, or rail configuration
-changes. Pushes to `main`, Weekly, and release preflight always run the complete
-19-target proof. The job retains cargo-rail's structured JSON result and its
-identity-validated compiler-evidence cache.
+Pull-request CI uses cargo-rail's planner to select checks from the actual
+changed surfaces. Pushes to `main`, Weekly, and release preflight run the full
+Cargo graph proof because those commits can become release inputs.
 
-When the plan is correct, prepare the release candidate without creating a
-tag:
+`release-prepare` consumes the change files. After its pull request merges,
+`release-tag` deliberately does not rerun the pending-intent check. Instead, it
+validates the materialized release and uses `cargo rail release finalize
+--skip-publish` to create and push the signed tag.
 
-```bash
-just release-prepare
-```
-
-`release-prepare` lets cargo-rail create and push the version/changelog release
-commit with `--skip-tag`, refreshes all standalone CT tool lockfiles against
-that new version, and pushes one normal `workspace:` follow-up commit. This
-keeps the release candidate reproducible without modifying a signed tag or
-hand-editing generated lockfiles.
-
-Wait for CI on the resulting `main` commit, then manually dispatch
-`weekly.yaml` and the `evidence` mode of `riscv.yaml` on that exact commit.
-Weekly owns the non-RISC-V CT matrix and dedicated RSA workflow; RISC-V owns
-its native and CT evidence. Both retain the raw CT artifacts needed for the
-release bundle. If runtime code, dependencies, features, build inputs, or test
-policy changes, both evidence workflows must pass again before tagging.
-
-A release-tooling-only repair may promote the newest successful ancestor with
-paired Weekly and RISC-V evidence. The evidence checker permits only changelog,
-release/CT tooling, and root-package version changes. It parses and compares
-`Cargo.toml` and every CT lockfile after normalizing only the local `rscrypto`
-version, and rejects every other changed path. The evidence bundle records both
-the release commit and the promoted evidence commit. This exception does not
-apply to runtime, dependency, feature, build, or test changes.
-
-Once CI and both evidence workflows are green, finalize the release:
-
-```bash
-just release-tag
-```
-
-The `release-tag` recipe reruns strict configuration and Cargo-graph validation,
-uses the maintainer's GitHub access to check the complete live ruleset—including
-the empty bypass list—against the checked-in policy, requires successful push CI
-and Cargo Graph Assurance for the exact candidate, and refuses to tag without
-complete CT and RSA evidence from either that commit or a proven release-only
-ancestor. It then uses `cargo rail release finalize` to validate the materialized
-release, create the signed tag, and push it. It does not rerun `cargo rail release
-check`: that command validates pending release intent and correctly fails after
-`release-prepare` consumes the change files. Finalization must not publish to
-crates.io; the `--skip-publish` flag is part of the release contract.
-
-To check GitHub controls without running the release flow, use:
+To inspect live repository controls without starting a release:
 
 ```bash
 just check-repository-controls
 ```
 
-This is the only routine local check that reads live GitHub settings. Normal
-checks and pre-push validation remain offline. The command writes the captured
-JSON to `target/repository-controls.json` and prints its SHA-256.
+This is the only routine local check that reads live GitHub settings. It writes
+the captured JSON to `target/repository-controls.json`; normal checks and
+pre-push validation remain offline.
 
-## CI Release Gate
+## What the tag workflow proves
 
-Pushing a `vX.Y.Z` tag starts the `Release` workflow. The workflow:
+Pushing a `vX.Y.Z` tag starts the `Release` workflow. Before crates.io can
+receive anything, the workflow:
 
-1. Requires an annotated SSH-signed tag trusted by
-   [`.github/allowed-signers`](../.github/allowed-signers).
-2. Requires the tag target to match the checked-out commit.
-3. Requires the tag version, `Cargo.toml` version, and `CHANGELOG.md` heading
-   to match.
-4. Validates and sync-checks `.config/rail.toml`, then proves the unified Cargo
-   graph is clean with cargo-rail 0.17.3.
-5. Runs `cargo deny check all`, `cargo audit`, and the single hard SemVer check
-   against the finalized release version. Before tagging, cargo-rail's automatic
-   release plan uses compatibility analysis to select the required version bump;
-   the extended release check reports the advisory verdict.
-6. Builds the `.crate` once with `cargo package --locked` and creates a deterministic source archive from the exact
-   tag commit, then transfers both validated artifacts to the publish job.
-7. Rejects dirty or mismatched VCS metadata, private or local-only package contents, and source archives that cannot
-   be reproduced from the tag commit.
-8. Waits for the `CI` workflow on the same commit to pass.
-9. Verifies both transferred SHA-256 values, then attests the crate and source archive with GitHub build provenance.
-10. Compares every rule visible to the restricted workflow token with the
-    checked-in default-branch and release-tag policies and attests the resulting repository controls JSON. GitHub
-    redacts bypass actors from this token; the artifact labels those fields as redacted instead of pretending the
-    workflow reverified the pre-tag gate.
-11. Requires successful Weekly CT/RSA evidence and RISC-V native/CT evidence
-    from the exact tag commit or the same mechanically proven release-only
-    ancestor, then downloads raw CT artifacts from both runs. The tag workflow
-    does not rerun either multi-hour suite.
-12. Validates the evidence commit's CT lane set, version, clean provenance,
-    tool versions, timing coverage, BINSEC coverage, and raw artifact hashes.
-    The bundle separately records the release commit and evidence commit.
-13. Attests the CT evidence bundle with GitHub build provenance.
-14. Writes and attests a release identity manifest binding the tag, commit, tree, pinned and active Rust toolchain,
-    Cargo lockfile, release workflow, source archive, crate, CT evidence, and repository controls.
-15. Writes and attests `SHA256SUMS` for every published release asset.
-16. Creates a draft GitHub Release, attaches every asset, publishes it as an immutable release, and verifies GitHub's
-    release attestation before any irreversible registry change. A rerun may repair an unpublished draft, but an
-    already-published release is verified instead of modified.
-17. Uses crates.io Trusted Publishing to get a temporary publish token.
-18. Publishes with `cargo publish -p rscrypto --locked`.
-19. Downloads the crate from crates.io and verifies the SHA-256 against the attested package.
+1. Verifies the annotated SSH signature, tag target, crate version, and
+   changelog version.
+2. Revalidates configuration, the unified Cargo graph, dependency policy,
+   audit results, SemVer, and successful CI for the exact commit.
+3. Requires complete Weekly CT/RSA and RISC-V native/CT evidence from that
+   commit or a mechanically proven release-tooling-only ancestor.
+4. Builds the `.crate` once, reproduces the source archive from the tag, and
+   rejects dirty, private, local-only, or mismatched package contents.
+5. Captures repository controls and writes provenance attestations, an identity
+   manifest, and `SHA256SUMS` for the artifacts and evidence.
+6. Publishes and verifies the immutable GitHub Release, obtains a temporary
+   crates.io token through OIDC, publishes the same crate, then downloads it
+   from crates.io and verifies its SHA-256.
 
-The publish job uses the `crates-io` GitHub environment. GitHub requests
-approval only after preflight and CI have passed, and before the OIDC token is
-issued.
+A release-tooling-only repair may reuse the newest successful ancestor with
+paired Weekly and RISC-V evidence. The checker permits only changelog,
+release/CT tooling, root-package version, and normalized local CT lockfile
+version changes. Runtime, dependency, feature, build, or test changes invalidate
+that exception.
 
 ## Recovery
 

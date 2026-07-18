@@ -178,7 +178,8 @@ or [`SECURITY.md`](SECURITY.md), not public issues.
   [`docs/platforms.md`](docs/platforms.md),
   [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md)
 - Switching crates: [`docs/migration/`](docs/migration/)
-- Releases: [`CHANGELOG.md`](CHANGELOG.md)
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Releases: [`CHANGELOG.md`](CHANGELOG.md), [`docs/release.md`](docs/release.md)
 
 ## MSRV
 

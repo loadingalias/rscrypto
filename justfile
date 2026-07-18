@@ -216,7 +216,7 @@ check-repository-controls:
 release-prepare:
     just check-unify
     cargo rail release check rscrypto --extended
-    RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --yes --skip-publish --skip-tag
+    RSCRYPTO_RELEASE_PUSH=1 cargo rail release run rscrypto --bump auto --yes --pr
     cargo update --manifest-path tools/ct-harness/Cargo.toml -p rscrypto
     cargo update --manifest-path tools/ct-dudect/Cargo.toml -p rscrypto
     cargo update --manifest-path tools/ct-binsec-harness/Cargo.toml -p rscrypto
@@ -260,13 +260,13 @@ check-actions:
     @actionlint
     @zizmor .github/workflows .github/actions
 
-push *args="":
+push remote="origin":
     @scripts/ci/pre-push.sh --light
-    git push --no-verify {{ args }}
+    git push --set-upstream "{{ remote }}" HEAD
 
-push-full *args="":
+push-full remote="origin":
     @scripts/ci/pre-push.sh --full
-    git push --no-verify {{ args }}
+    git push --set-upstream "{{ remote }}" HEAD
 
 # Assets
 
