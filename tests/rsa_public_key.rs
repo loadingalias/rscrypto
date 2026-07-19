@@ -42,8 +42,8 @@ use rscrypto::auth::rsa::{
   diag_rsa_verify_pss_encoded_with_scratch,
 };
 use rscrypto::{
-  RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicKey,
-  RsaPublicKeyPolicy, RsaPublicOpError, RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey,
+  RsaJwtAlgorithm, RsaKeyError, RsaPkcs1v15Profile, RsaPrivateKey, RsaProtocolAlgorithmError, RsaPssProfile,
+  RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey,
   RsaX509PublicKeyAlgorithm, VerificationError,
 };
 
@@ -2819,21 +2819,18 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
   let out_of_range_pss_signature = public_key.modulus();
   let malformed_fixed_width_pss_signature = modulus_minus_one(public_key);
   let mut public_scratch = public_key.public_scratch();
-  assert_opaque_verification_failure(public_key.verify_jwt_alg("none", pss_fixture_message(), &pss_signature));
-  assert_opaque_verification_failure(public_key.verify_jwt_alg("PS1", pss_fixture_message(), &pss_signature));
-  assert_opaque_verification_failure(public_key.verify_jwt_alg("RS256", pss_fixture_message(), &pss_signature));
-  assert_opaque_verification_failure(public_key.verify_jwt_alg("PS256", pss_fixture_message(), short_pss_signature));
-  assert_opaque_verification_failure(public_key.verify_jwt_alg(
-    "PS256",
-    pss_fixture_message(),
-    out_of_range_pss_signature,
-  ));
-  assert_opaque_verification_failure(public_key.verify_jwt_alg(
+  let jwt_verifier = public_key.jwt_verifier(RsaJwtAlgorithm::Ps256);
+  assert_opaque_verification_failure(jwt_verifier.verify("none", pss_fixture_message(), &pss_signature));
+  assert_opaque_verification_failure(jwt_verifier.verify("PS1", pss_fixture_message(), &pss_signature));
+  assert_opaque_verification_failure(jwt_verifier.verify("RS256", pss_fixture_message(), &pss_signature));
+  assert_opaque_verification_failure(jwt_verifier.verify("PS256", pss_fixture_message(), short_pss_signature));
+  assert_opaque_verification_failure(jwt_verifier.verify("PS256", pss_fixture_message(), out_of_range_pss_signature));
+  assert_opaque_verification_failure(jwt_verifier.verify(
     "PS256",
     pss_fixture_message(),
     &malformed_fixed_width_pss_signature,
   ));
-  assert_opaque_verification_failure(public_key.verify_jwt_alg_with_scratch(
+  assert_opaque_verification_failure(jwt_verifier.verify_with_scratch(
     "PS256",
     pss_fixture_message(),
     &tampered_pss_signature,
@@ -3001,7 +2998,7 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
   let short_pkcs1_signature = &pkcs1_signature[..pkcs1_signature.len().strict_sub(1)];
   let out_of_range_pkcs1_signature = pkcs1_key.public_key().modulus();
   let malformed_fixed_width_pkcs1_signature = modulus_minus_one(pkcs1_key.public_key());
-  assert_opaque_verification_failure(pkcs1_key.public_key().verify_jwt_alg(
+  assert_opaque_verification_failure(pkcs1_key.public_key().jwt_verifier(RsaJwtAlgorithm::Rs256).verify(
     "RS256",
     pkcs1v15_fixture_message(),
     &malformed_fixed_width_pkcs1_signature,
@@ -3941,14 +3938,42 @@ fn protocol_algorithm_mappers_are_explicit_and_fail_closed() {
     RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0601),
     Ok(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512))
   );
-  assert_eq!(
-    RsaSignatureProfile::from_jwt_alg("PS256"),
-    Ok(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
-  );
-  assert_eq!(
-    RsaSignatureProfile::from_jwt_alg("RS512"),
-    Ok(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512))
-  );
+  for (algorithm, name, profile) in [
+    (
+      RsaJwtAlgorithm::Rs256,
+      "RS256",
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+    ),
+    (
+      RsaJwtAlgorithm::Rs384,
+      "RS384",
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384),
+    ),
+    (
+      RsaJwtAlgorithm::Rs512,
+      "RS512",
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512),
+    ),
+    (
+      RsaJwtAlgorithm::Ps256,
+      "PS256",
+      RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+    ),
+    (
+      RsaJwtAlgorithm::Ps384,
+      "PS384",
+      RsaSignatureProfile::pss(RsaPssProfile::Sha384),
+    ),
+    (
+      RsaJwtAlgorithm::Ps512,
+      "PS512",
+      RsaSignatureProfile::pss(RsaPssProfile::Sha512),
+    ),
+  ] {
+    assert_eq!(algorithm.as_str(), name);
+    assert_eq!(algorithm.to_string(), name);
+    assert_eq!(algorithm.signature_profile(), profile);
+  }
   assert_eq!(
     RsaSignatureProfile::from_cose_algorithm_id(-37),
     Ok(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
@@ -3969,12 +3994,6 @@ fn protocol_algorithm_mappers_are_explicit_and_fail_closed() {
   for tls_scheme in [0x0101, 0x0201, 0x0301, 0x0203, 0x0403, 0x0420, 0x0520, 0x0620, 0xffff] {
     assert_eq!(
       RsaSignatureProfile::from_tls_certificate_signature_scheme(tls_scheme),
-      Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm)
-    );
-  }
-  for jwt_alg in ["none", "HS256", "ES256", "EdDSA", "RS1", "PS1", "rs256", "RS256 "] {
-    assert_eq!(
-      RsaSignatureProfile::from_jwt_alg(jwt_alg),
       Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm)
     );
   }
@@ -4005,12 +4024,6 @@ fn provider_facing_legacy_algorithm_rejections_are_typed() {
     0xffff,
   ] {
     assert_unsupported_protocol_algorithm(RsaSignatureProfile::from_tls_certificate_signature_scheme(tls_scheme));
-  }
-
-  for jwt_alg in [
-    "none", "HS256", "ES256", "EdDSA", "RS1", "PS1", "rs256", "PS256\0", "RS256 ",
-  ] {
-    assert_unsupported_protocol_algorithm(RsaSignatureProfile::from_jwt_alg(jwt_alg));
   }
 
   for cose_algorithm in [0, 1, -7, -65535, -65_536, i64::MIN, -1, i64::MAX - 1, i64::MAX] {
@@ -4052,7 +4065,7 @@ fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
   assert!(
     pss_key
       .verify_signature(
-        RsaSignatureProfile::from_jwt_alg("PS256").unwrap(),
+        RsaJwtAlgorithm::Ps256.signature_profile(),
         pss_fixture_message(),
         &pss_sig,
       )
@@ -4081,7 +4094,7 @@ fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
   assert!(
     pkcs1_key
       .verify_signature(
-        RsaSignatureProfile::from_jwt_alg("RS256").unwrap(),
+        RsaJwtAlgorithm::Rs256.signature_profile(),
         pkcs1v15_fixture_message(),
         &pkcs1_sig,
       )
@@ -4098,30 +4111,42 @@ fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
 }
 
 #[test]
-fn jwt_and_cose_verification_helpers_reject_algorithm_confusion() {
+fn jwt_policy_and_cose_helpers_reject_algorithm_confusion() {
   let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
   let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
   let pkcs1_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
   let mut scratch = pss_key.public_scratch();
+  let pss_jwt = pss_key.jwt_verifier(RsaJwtAlgorithm::Ps256);
 
+  assert_eq!(pss_jwt.algorithm(), RsaJwtAlgorithm::Ps256);
+  assert!(core::ptr::eq(pss_jwt.key(), &pss_key));
+  assert!(pss_jwt.verify("PS256", pss_fixture_message(), &pss_sig).is_ok());
   assert!(
-    pss_key
-      .verify_expected_jwt_alg("PS256", "PS256", pss_profile, pss_fixture_message(), &pss_sig)
+    pss_jwt
+      .verify_with_scratch("PS256", pss_fixture_message(), &pss_sig, &mut scratch)
       .is_ok()
   );
-  assert!(
-    pss_key
-      .verify_expected_jwt_alg_with_scratch(
-        "PS256",
-        "PS256",
-        pss_profile,
-        pss_fixture_message(),
-        &pss_sig,
-        &mut scratch,
-      )
-      .is_ok()
-  );
+  for header_alg in [
+    "",
+    "none",
+    "HS256",
+    "ES256",
+    "EdDSA",
+    "RS256",
+    "PS1",
+    "ps256",
+    "Ps256",
+    "PS256\0",
+    "PS256 ",
+    "\"PS256\"",
+  ] {
+    assert_eq!(
+      pss_jwt.verify(header_alg, pss_fixture_message(), &pss_sig),
+      Err(VerificationError::new()),
+      "accepted noncanonical or mismatched JWT alg {header_alg:?}",
+    );
+  }
   assert!(
     pss_key
       .verify_expected_cose_algorithm_id(-37, -37, pss_profile, pss_fixture_message(), &pss_sig)
@@ -4140,12 +4165,9 @@ fn jwt_and_cose_verification_helpers_reject_algorithm_confusion() {
       .is_ok()
   );
   for result in [
-    pss_key.verify_expected_jwt_alg("PS256", "RS256", pss_profile, pss_fixture_message(), &pss_sig),
-    pss_key.verify_expected_jwt_alg("PS256", "PS256", pkcs1_profile, pss_fixture_message(), &pss_sig),
-    pss_key.verify_jwt_alg("RS256", pss_fixture_message(), &pss_sig),
-    pss_key.verify_jwt_alg("none", pss_fixture_message(), &pss_sig),
-    pss_key.verify_jwt_alg("HS256", pss_fixture_message(), &pss_sig),
-    pss_key.verify_jwt_alg("rs256", pss_fixture_message(), &pss_sig),
+    pss_key
+      .jwt_verifier(RsaJwtAlgorithm::Rs256)
+      .verify("RS256", pss_fixture_message(), &pss_sig),
     pss_key.verify_expected_cose_algorithm_id(-37, -257, pss_profile, pss_fixture_message(), &pss_sig),
     pss_key.verify_expected_cose_algorithm_id(-37, -37, pkcs1_profile, pss_fixture_message(), &pss_sig),
     pss_key.verify_cose_algorithm_id(-257, pss_fixture_message(), &pss_sig),
@@ -4157,22 +4179,16 @@ fn jwt_and_cose_verification_helpers_reject_algorithm_confusion() {
   let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
   let mut scratch = pkcs1_key.public_scratch();
+  let pkcs1_jwt = pkcs1_key.jwt_verifier(RsaJwtAlgorithm::Rs256);
 
   assert!(
-    pkcs1_key
-      .verify_expected_jwt_alg("RS256", "RS256", pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
+    pkcs1_jwt
+      .verify("RS256", pkcs1v15_fixture_message(), &pkcs1_sig)
       .is_ok()
   );
   assert!(
-    pkcs1_key
-      .verify_expected_jwt_alg_with_scratch(
-        "RS256",
-        "RS256",
-        pkcs1_profile,
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-        &mut scratch,
-      )
+    pkcs1_jwt
+      .verify_with_scratch("RS256", pkcs1v15_fixture_message(), &pkcs1_sig, &mut scratch)
       .is_ok()
   );
   assert!(
@@ -4193,11 +4209,10 @@ fn jwt_and_cose_verification_helpers_reject_algorithm_confusion() {
       .is_ok()
   );
   for result in [
-    pkcs1_key.verify_expected_jwt_alg("RS256", "PS256", pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
-    pkcs1_key.verify_expected_jwt_alg("RS256", "RS256", pss_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
-    pkcs1_key.verify_jwt_alg("PS256", pkcs1v15_fixture_message(), &pkcs1_sig),
-    pkcs1_key.verify_jwt_alg("RS1", pkcs1v15_fixture_message(), &pkcs1_sig),
-    pkcs1_key.verify_jwt_alg("ES256", pkcs1v15_fixture_message(), &pkcs1_sig),
+    pkcs1_key
+      .jwt_verifier(RsaJwtAlgorithm::Ps256)
+      .verify("PS256", pkcs1v15_fixture_message(), &pkcs1_sig),
+    pkcs1_jwt.verify("PS256", pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_expected_cose_algorithm_id(-257, -37, pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_expected_cose_algorithm_id(-257, -257, pss_profile, pkcs1v15_fixture_message(), &pkcs1_sig),
     pkcs1_key.verify_cose_algorithm_id(-37, pkcs1v15_fixture_message(), &pkcs1_sig),

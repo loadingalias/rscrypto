@@ -1,4 +1,4 @@
-use rscrypto::{RsaPublicKey, RsaSignatureProfile, RsaX509PublicKey};
+use rscrypto::{RsaJwtAlgorithm, RsaPublicKey, RsaSignatureProfile, RsaX509PublicKey};
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
 const RSA3072_SPKI: &[u8] = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
@@ -99,7 +99,8 @@ pub fn run(data: &[u8]) {
   match mode % 14 {
     0 => {
       key
-        .verify_jwt_alg_with_scratch("PS256", MESSAGE_PSS, RSA3072_PSS_SHA256, &mut scratch)
+        .jwt_verifier(RsaJwtAlgorithm::Ps256)
+        .verify_with_scratch("PS256", MESSAGE_PSS, RSA3072_PSS_SHA256, &mut scratch)
         .expect("valid JWT PS256 fixture must verify");
     }
     1 => {
@@ -133,7 +134,9 @@ pub fn run(data: &[u8]) {
         .expect("valid TLS certificate rsa_pkcs1_sha256 fixture must verify");
     }
     5 => {
-      let _ = key.verify_jwt_alg_with_scratch(select(&JWT_ALGS, selector), message, signature, &mut scratch);
+      let _ = key
+        .jwt_verifier(RsaJwtAlgorithm::Ps256)
+        .verify_with_scratch(select(&JWT_ALGS, selector), message, signature, &mut scratch);
     }
     6 => {
       let _ = key.verify_cose_algorithm_id_with_scratch(
@@ -175,7 +178,6 @@ pub fn run(data: &[u8]) {
       let _ = RsaSignatureProfile::from_x509_signature_algorithm_der(message);
     }
     12 => {
-      let _ = RsaSignatureProfile::from_jwt_alg(select(&JWT_ALGS, selector));
       let _ = RsaSignatureProfile::from_cose_algorithm_id(*select(&COSE_ALGORITHMS, selector));
       let _ = RsaSignatureProfile::from_tls13_signature_scheme(u16::from_be_bytes([selector, split]));
       let _ = RsaSignatureProfile::from_tls_certificate_signature_scheme(u16::from_be_bytes([selector, split]));
