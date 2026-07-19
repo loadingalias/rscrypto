@@ -119,7 +119,7 @@ macro_rules! define_kmac {
 
         for chunk in expected.chunks(block.len()) {
           reader.squeeze(&mut block[..chunk.len()]);
-          diff |= u8::from(!ct::constant_time_eq(&block[..chunk.len()], chunk));
+          diff |= u8::from(!ct::public_len_eq(&block[..chunk.len()], chunk));
         }
 
         ct::zeroize(&mut block);

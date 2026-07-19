@@ -5,52 +5,25 @@
 
 use core::fmt::Debug;
 
-use crate::traits::{VerificationError, ct};
+use crate::traits::VerificationError;
 
 /// Message authentication code producing a fixed-size tag.
 ///
 /// This trait is intended for fixed-size algorithms like HMAC-SHA256.
 ///
-/// # Examples
-///
-/// ```rust
-/// # use rscrypto::traits::Mac;
-/// # #[derive(Clone)]
-/// # struct MyMac { key: u8, state: u8 }
-/// # impl Mac for MyMac {
-/// #   const TAG_SIZE: usize = 4;
-/// #   type Tag = [u8; 4];
-/// #   fn new(key: &[u8]) -> Self {
-/// #     Self { key: key.first().copied().unwrap_or(0), state: 0 }
-/// #   }
-/// #   fn update(&mut self, data: &[u8]) {
-/// #     self.state = data.iter().fold(self.state, |acc, &b| acc.wrapping_add(b));
-/// #   }
-/// #   fn finalize(&self) -> Self::Tag { [self.state ^ self.key; 4] }
-/// #   fn reset(&mut self) { self.state = 0; }
-/// # }
-///
-/// let key = b"secret-key";
-///
-/// // One-shot.
-/// let tag = MyMac::mac(key, b"hello world");
-///
-/// // Streaming.
-/// let mut mac = MyMac::new(key);
-/// mac.update(b"hello ");
-/// mac.update(b"world");
-/// assert!(mac.verify(&tag).is_ok());
-///
-/// // Verify.
-/// assert!(MyMac::verify_tag(key, b"hello world", &tag).is_ok());
-/// ```
+/// Each implementation owns a semantic tag type whose [`Eq`] implementation
+/// defines verification behavior. rscrypto's built-in MACs compare their
+/// fixed-size tag owners without content-dependent exits. External
+/// implementations must provide the same property; the trait cannot prove it.
 pub trait Mac: Clone {
   /// Tag size in bytes.
   const TAG_SIZE: usize;
 
   /// The authentication tag type.
   ///
-  /// Typically `[u8; N]`.
+  /// This should be a semantic owner type, not a raw byte array. Its [`Eq`]
+  /// implementation is used by the default verification methods and must not
+  /// exit based on secret tag contents.
   type Tag: Copy + Eq + Debug + AsRef<[u8]>;
 
   /// Construct a new MAC state with `key`.
@@ -114,22 +87,22 @@ pub trait Mac: Clone {
     Self::mac(key, data).as_ref().to_vec()
   }
 
-  /// Verify `expected` against the current tag in constant time.
+  /// Verify `expected` against the current tag using the tag owner's equality.
   #[inline]
   #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_ref(), expected.as_ref()) {
+    if self.finalize() == *expected {
       Ok(())
     } else {
       Err(VerificationError::new())
     }
   }
 
-  /// Compute and verify a tag in one shot.
+  /// Compute and verify a tag in one shot using the tag owner's equality.
   #[inline]
   #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
   fn verify_tag(key: &[u8], data: &[u8], expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(Self::mac(key, data).as_ref(), expected.as_ref()) {
+    if Self::mac(key, data) == *expected {
       Ok(())
     } else {
       Err(VerificationError::new())

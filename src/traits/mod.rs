@@ -59,7 +59,6 @@ mod xof;
 ))]
 pub use aead::Aead;
 pub use checksum::{Checksum, ChecksumCombine};
-pub use ct::ConstantTimeEq;
 pub use digest::Digest;
 pub use error::VerificationError;
 pub use fast_hash::FastHash;

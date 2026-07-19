@@ -310,29 +310,6 @@ macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {};
 }
 
-/// Implement [`ConstantTimeEq`](crate::traits::ConstantTimeEq) for a type
-/// whose secret material lives in a single byte-array field.
-///
-/// Default form uses the tuple field `.0`; pass a field name for named structs.
-macro_rules! impl_ct_eq {
-  ($type:ty) => {
-    impl crate::traits::ConstantTimeEq for $type {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        crate::traits::ct::constant_time_eq(&self.0, &other.0)
-      }
-    }
-  };
-  ($type:ty, $field:ident) => {
-    impl crate::traits::ConstantTimeEq for $type {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        crate::traits::ct::constant_time_eq(&self.$field, &other.$field)
-      }
-    }
-  };
-}
-
 /// Generate a `random()` constructor that fills `Self::LENGTH` bytes from
 /// the operating system CSPRNG via `getrandom`.
 ///

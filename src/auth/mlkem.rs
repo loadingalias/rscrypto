@@ -92,7 +92,7 @@ macro_rules! define_mlkem_public_bytes {
     impl PartialEq for $name {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(&self.0, &other.0)
+        self.0 == other.0
       }
     }
 
@@ -113,7 +113,6 @@ macro_rules! define_mlkem_public_bytes {
       }
     }
 
-    impl_ct_eq!($name);
     impl_hex_fmt!($name);
     impl_serde_bytes!($name);
   };
@@ -167,7 +166,7 @@ macro_rules! define_mlkem_secret_bytes {
     impl PartialEq for $name {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(&self.0, &other.0)
+        ct::fixed_eq(&self.0, &other.0)
       }
     }
 
@@ -185,7 +184,6 @@ macro_rules! define_mlkem_secret_bytes {
       }
     }
 
-    impl_ct_eq!($name);
     impl_hex_fmt_secret!($name);
     impl_serde_secret_bytes!($name);
   };
@@ -357,7 +355,7 @@ macro_rules! define_mlkem_prepared_keys {
     impl PartialEq for $prepared_encapsulation_key {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(self.as_bytes(), other.as_bytes())
+        self.as_bytes() == other.as_bytes()
       }
     }
 
@@ -375,13 +373,6 @@ macro_rules! define_mlkem_prepared_keys {
         write!(f, "{}(", stringify!($prepared_encapsulation_key))?;
         crate::hex::fmt_hex_lower(self.as_bytes(), f)?;
         write!(f, ")")
-      }
-    }
-
-    impl crate::traits::ConstantTimeEq for $prepared_encapsulation_key {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(self.as_bytes(), other.as_bytes())
       }
     }
 
@@ -474,7 +465,7 @@ macro_rules! define_mlkem_prepared_keys {
     impl PartialEq for $prepared_decapsulation_key {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(self.as_bytes(), other.as_bytes())
+        ct::fixed_eq(self.as_bytes(), other.as_bytes())
       }
     }
 
@@ -483,13 +474,6 @@ macro_rules! define_mlkem_prepared_keys {
     impl fmt::Debug for $prepared_decapsulation_key {
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}(****)", stringify!($prepared_decapsulation_key))
-      }
-    }
-
-    impl crate::traits::ConstantTimeEq for $prepared_decapsulation_key {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(self.as_bytes(), other.as_bytes())
       }
     }
   };

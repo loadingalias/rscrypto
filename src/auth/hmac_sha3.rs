@@ -26,21 +26,7 @@ macro_rules! define_hmac_sha3_tag_type {
     impl PartialEq for $name {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(&self.0, &other.0)
-      }
-    }
-
-    impl PartialEq<[u8; $len]> for $name {
-      #[inline]
-      fn eq(&self, other: &[u8; $len]) -> bool {
-        ct::constant_time_eq(&self.0, other)
-      }
-    }
-
-    impl PartialEq<$name> for [u8; $len] {
-      #[inline]
-      fn eq(&self, other: &$name) -> bool {
-        ct::constant_time_eq(self, &other.0)
+        ct::fixed_eq(&self.0, &other.0)
       }
     }
 
@@ -134,13 +120,6 @@ macro_rules! define_hmac_sha3_tag_type {
       #[inline]
       fn as_ref(&self) -> &[u8; $len] {
         &self.0
-      }
-    }
-
-    impl crate::traits::ConstantTimeEq for $name {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(&self.0, &other.0)
       }
     }
 

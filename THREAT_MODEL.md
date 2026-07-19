@@ -19,7 +19,7 @@ Review the `ct-intended` candidate core before the rest of the repository:
 5. ML-KEM secret-noise key generation, encapsulation coins, decapsulation
    secret-key material, and implicit rejection.
 6. AEAD authentication and failed-open cleanup.
-7. MAC/tag verification, constant-time byte equality, and selected
+7. MAC/tag verification, fixed-size owner equality, and selected
    password-verification comparisons.
 
 Public parsing, raw hashes, checksums, non-cryptographic hashes, public-key
@@ -108,7 +108,7 @@ Ordered by exposure to untrusted input:
 | Wrong output from accelerated kernels | Portable path is the byte-for-byte authority | Portable-vs-accelerated differential tests and native CI |
 | Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |
 | Oracle behavior | Opaque errors, failed-open output wipe, single-bit failure shape | AEAD and verification tests, fuzz targets |
-| Secret exposure at rest | Zeroize on drop, masked `Debug`, constant-time equality on secret types | `src/secret.rs` and per-type tests |
+| Secret exposure at rest | Zeroize on drop, masked `Debug`, and fixed-size equality only on semantic secret owners | `src/secret.rs`, `ct.toml`, and per-owner tests |
 | Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | `deny.toml`, `.github/workflows/release.yaml`, `docs/release.md` |
 
 ## Known Gaps

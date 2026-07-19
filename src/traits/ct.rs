@@ -1,124 +1,52 @@
-//! Constant-time utilities for cryptographic operations.
+//! Secret-handling utilities for cryptographic operations.
 
-/// Constant-time equality comparison.
-///
-/// Implementors guarantee that the comparison examines every byte regardless
-/// of mismatches, preventing timing side-channels.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::ConstantTimeEq;
-///
-/// let a = [1u8, 2, 3, 4];
-/// let b = [1u8, 2, 3, 4];
-/// let c = [1u8, 2, 3, 5];
-///
-/// assert!(a.ct_eq(&b));
-/// assert!(!a.ct_eq(&c));
-/// ```
-pub trait ConstantTimeEq {
-  /// Returns `true` if `self` and `other` are equal.
-  ///
-  /// The comparison is constant-time with respect to the data contents.
-  #[must_use]
-  fn ct_eq(&self, other: &Self) -> bool;
-}
+#[inline(always)]
+fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
+  let mut difference = 0u64;
+  let mut left_chunks = left.chunks_exact(8);
+  let mut right_chunks = right.chunks_exact(8);
 
-impl<const N: usize> ConstantTimeEq for [u8; N] {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    constant_time_eq(self, other)
+  for (left_chunk, right_chunk) in left_chunks.by_ref().zip(right_chunks.by_ref()) {
+    let (Ok(left_bytes), Ok(right_bytes)) = (<&[u8; 8]>::try_from(left_chunk), <&[u8; 8]>::try_from(right_chunk))
+    else {
+      return u64::MAX;
+    };
+    difference |= u64::from_ne_bytes(*left_bytes) ^ u64::from_ne_bytes(*right_bytes);
   }
-}
 
-impl ConstantTimeEq for [u8] {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    constant_time_eq(self, other)
+  let mut remainder = 0u8;
+  for (left_byte, right_byte) in left_chunks.remainder().iter().zip(right_chunks.remainder()) {
+    remainder |= left_byte ^ right_byte;
   }
+  difference | u64::from(remainder)
 }
 
-/// Constant-time byte equality comparison.
+/// Compare two fixed-size byte arrays with work independent of their contents.
 ///
-/// Returns `true` if `a` and `b` have equal length and identical contents.
-/// The comparison examines every byte regardless of mismatches, preventing
-/// timing side-channels for equal-length inputs. Length mismatches return
-/// `false` immediately.
+/// This is crate-private by design. Public comparison policy belongs to the
+/// concrete cryptographic type that owns the bytes. Optimized machine-code
+/// evidence is tracked separately in `ct.toml`; source structure is not a
+/// universal constant-time guarantee.
+#[inline(always)]
+#[must_use]
+#[allow(dead_code)]
+pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> bool {
+  byte_difference(left, right) == 0
+}
+
+/// Compare two byte slices whose lengths are public protocol inputs.
 ///
-/// # Examples
-///
-/// ```
-/// use rscrypto::traits::ct::constant_time_eq;
-///
-/// let a = [1u8, 2, 3, 4];
-/// let b = [1u8, 2, 3, 4];
-/// let c = [1u8, 2, 3, 5];
-///
-/// assert!(constant_time_eq(&a, &b));
-/// assert!(!constant_time_eq(&a, &c));
-/// assert!(!constant_time_eq(&a, &[]));
-/// ```
+/// Length mismatch is intentionally observable. Equal-length contents are
+/// traversed without content-dependent exits. Keep callers individually
+/// classified in `ct.toml`; fixed-shape owner types must use [`fixed_eq`].
 #[inline]
 #[must_use]
-pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-  if a.len() != b.len() {
+#[allow(dead_code)]
+pub(crate) fn public_len_eq(left: &[u8], right: &[u8]) -> bool {
+  if left.len() != right.len() {
     return false;
   }
-
-  let len = a.len();
-  let mut acc0 = 0u64;
-  let mut acc1 = 0u64;
-  let mut acc2 = 0u64;
-  let mut acc3 = 0u64;
-  let mut i = 0usize;
-  let end32 = len & !31;
-  let a_ptr = a.as_ptr();
-  let b_ptr = b.as_ptr();
-
-  while i < end32 {
-    // SAFETY: `end32` rounds `len` down to a multiple of 32, so each unaligned
-    // 8-byte load stays within the slice bounds.
-    unsafe {
-      acc0 |=
-        core::ptr::read_unaligned(a_ptr.add(i).cast::<u64>()) ^ core::ptr::read_unaligned(b_ptr.add(i).cast::<u64>());
-      acc1 |= core::ptr::read_unaligned(a_ptr.add(i.strict_add(8)).cast::<u64>())
-        ^ core::ptr::read_unaligned(b_ptr.add(i.strict_add(8)).cast::<u64>());
-      acc2 |= core::ptr::read_unaligned(a_ptr.add(i.strict_add(16)).cast::<u64>())
-        ^ core::ptr::read_unaligned(b_ptr.add(i.strict_add(16)).cast::<u64>());
-      acc3 |= core::ptr::read_unaligned(a_ptr.add(i.strict_add(24)).cast::<u64>())
-        ^ core::ptr::read_unaligned(b_ptr.add(i.strict_add(24)).cast::<u64>());
-    }
-    i = i.strict_add(32);
-  }
-
-  let mut acc = acc0 | acc1 | acc2 | acc3;
-  let end8 = len & !7;
-  while i < end8 {
-    // SAFETY: `end8` rounds `len` down to a multiple of 8, so each unaligned
-    // 8-byte load stays within the slice bounds.
-    unsafe {
-      acc |=
-        core::ptr::read_unaligned(a_ptr.add(i).cast::<u64>()) ^ core::ptr::read_unaligned(b_ptr.add(i).cast::<u64>());
-    }
-    i = i.strict_add(8);
-  }
-
-  while i < len {
-    // SAFETY: `i < len`, so these raw-pointer reads are in-bounds.
-    unsafe {
-      acc |= (*a_ptr.add(i) ^ *b_ptr.add(i)) as u64;
-    }
-    i = i.strict_add(1);
-  }
-
-  let mut observed = acc;
-  // SAFETY: `observed` is a valid stack slot. The volatile round-trip prevents
-  // the optimizer from collapsing the loop into an early-exit byte compare.
-  unsafe {
-    core::ptr::write_volatile(&mut observed, acc);
-    core::ptr::read_volatile(&observed) == 0
-  }
+  byte_difference(left, right) == 0
 }
 
 /// Volatile-zero a byte slice without emitting a compiler fence.
@@ -227,98 +155,22 @@ pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
 mod tests {
   use super::*;
 
-  // ── constant_time_eq ────────────────────────────────────────────────────
-
   #[test]
-  fn equal_slices() {
-    assert!(constant_time_eq(b"abcdef", b"abcdef"));
+  fn fixed_eq_checks_every_position() {
+    let value = [0x5a; 64];
+    assert!(fixed_eq(&value, &value));
+    for index in [0, value.len() / 2, value.len() - 1] {
+      let mut different = value;
+      different[index] ^= 1;
+      assert!(!fixed_eq(&value, &different));
+    }
   }
 
   #[test]
-  fn differ_first_byte() {
-    assert!(!constant_time_eq(b"\x00bcdef", b"\xFFbcdef"));
-  }
-
-  #[test]
-  fn differ_last_byte() {
-    assert!(!constant_time_eq(b"abcde\x00", b"abcde\xFF"));
-  }
-
-  #[test]
-  fn differ_middle_byte() {
-    assert!(!constant_time_eq(b"ab\x00def", b"ab\xFFdef"));
-  }
-
-  #[test]
-  fn both_empty() {
-    assert!(constant_time_eq(b"", b""));
-  }
-
-  #[test]
-  fn one_empty_one_not() {
-    assert!(!constant_time_eq(b"", b"x"));
-    assert!(!constant_time_eq(b"x", b""));
-  }
-
-  #[test]
-  fn length_mismatch() {
-    assert!(!constant_time_eq(b"short", b"longer"));
-    assert!(!constant_time_eq(b"longer", b"short"));
-  }
-
-  #[test]
-  fn single_byte_equal() {
-    assert!(constant_time_eq(&[0x42], &[0x42]));
-  }
-
-  #[test]
-  fn single_byte_differ() {
-    assert!(!constant_time_eq(&[0x00], &[0x01]));
-  }
-
-  #[test]
-  fn all_zeros_equal() {
-    assert!(constant_time_eq(&[0u8; 64], &[0u8; 64]));
-  }
-
-  #[test]
-  fn all_ones_equal() {
-    assert!(constant_time_eq(&[0xFF; 64], &[0xFF; 64]));
-  }
-
-  #[test]
-  fn equal_misaligned_long_slices() {
-    let a = [0x5Au8; 73];
-    let b = [0x5Au8; 73];
-    assert!(constant_time_eq(&a[1..], &b[1..]));
-  }
-
-  #[test]
-  fn differ_misaligned_long_slices() {
-    let a = [0x5Au8; 73];
-    let mut b = [0x5Au8; 73];
-    b[64] ^= 0x80;
-    assert!(!constant_time_eq(&a[1..], &b[1..]));
-  }
-
-  // ── ConstantTimeEq trait ────────────────────────────────────────────────
-
-  #[test]
-  fn ct_eq_fixed_array() {
-    let a = [1u8, 2, 3, 4];
-    let b = [1u8, 2, 3, 4];
-    let c = [1u8, 2, 3, 5];
-    assert!(a.ct_eq(&b));
-    assert!(!a.ct_eq(&c));
-  }
-
-  #[test]
-  fn ct_eq_slice() {
-    let a: &[u8] = &[10, 20, 30];
-    let b: &[u8] = &[10, 20, 30];
-    let c: &[u8] = &[10, 20, 31];
-    assert!(a.ct_eq(b));
-    assert!(!a.ct_eq(c));
+  fn public_len_eq_exposes_only_length_and_result() {
+    assert!(public_len_eq(b"abcdef", b"abcdef"));
+    assert!(!public_len_eq(b"abcdef", b"abcdeg"));
+    assert!(!public_len_eq(b"abcdef", b"abcde"));
   }
 
   // ── zeroize ─────────────────────────────────────────────────────────────

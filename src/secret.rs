@@ -58,15 +58,6 @@ impl<const N: usize> AsRef<[u8]> for SecretBytes<N> {
   }
 }
 
-impl<const N: usize> PartialEq for SecretBytes<N> {
-  #[inline]
-  fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl<const N: usize> Eq for SecretBytes<N> {}
-
 impl<const N: usize> fmt::Debug for SecretBytes<N> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("SecretBytes(****)")
@@ -151,17 +142,6 @@ impl core::ops::Deref for SecretVec {
     self.as_bytes()
   }
 }
-
-#[cfg(feature = "alloc")]
-impl PartialEq for SecretVec {
-  #[inline]
-  fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(self.as_bytes(), other.as_bytes())
-  }
-}
-
-#[cfg(feature = "alloc")]
-impl Eq for SecretVec {}
 
 #[cfg(feature = "alloc")]
 impl fmt::Debug for SecretVec {

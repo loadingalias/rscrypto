@@ -126,5 +126,8 @@ For streaming keyed mode, use `Blake2b512::new_keyed(&key)`. The MAC type and th
 - **MAC unification.** RustCrypto separates `Blake2bMac` from `Blake2b` because the MAC and the hash use different parameter blocks. rscrypto exposes both modes from the same type via `keyed_digest` / `new_keyed`. Personalisation, salt, and tree-hashing parameters are reachable through `Blake2bParams` / `Blake2sParams`.
 - **`finalize` consumes vs. borrows.** Same as `sha2` / `sha3`: drop `.clone()`.
 - **`Output<D>` → `[u8; N]`.** Same as `sha2` / `sha3`.
-- **Constant-time tag comparison.** RustCrypto's `Mac::verify(&tag)` does the constant-time check for you. rscrypto leaves Blake2 keyed-output verification at the call site: import `rscrypto::ConstantTimeEq` and call `tag.ct_eq(&expected)` instead of `==`.
+- **No generic keyed-output comparison.** rscrypto's Blake2 keyed digest
+  returns raw bytes without a generic secret-comparison API. Use HMAC, KMAC,
+  or typed `Blake3KeyedHash` verification when the protocol needs built-in
+  verification.
 - **`no_std`.** Both crates support `no_std`. rscrypto runtime-detects SIMD when `std` is enabled and falls back to compile-time `target_feature` selection in `no_std` builds.

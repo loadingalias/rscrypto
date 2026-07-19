@@ -128,7 +128,7 @@ pub struct Ed25519SecretKey([u8; Self::LENGTH]);
 
 impl PartialEq for Ed25519SecretKey {
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
@@ -243,8 +243,6 @@ impl Drop for Ed25519SecretKey {
   }
 }
 
-impl_ct_eq!(Ed25519SecretKey);
-
 /// Ed25519 public key bytes.
 #[derive(Clone, Copy)]
 pub struct Ed25519PublicKey {
@@ -332,8 +330,6 @@ impl fmt::Debug for Ed25519PublicKey {
 impl_hex_fmt!(Ed25519PublicKey);
 impl_serde_bytes!(Ed25519PublicKey);
 
-impl_ct_eq!(Ed25519PublicKey, bytes);
-
 impl Ed25519PublicKey {
   /// Verify a message/signature pair against this public key.
   ///
@@ -395,8 +391,6 @@ impl fmt::Debug for Ed25519Signature {
 
 impl_hex_fmt!(Ed25519Signature);
 impl_serde_bytes!(Ed25519Signature);
-
-impl_ct_eq!(Ed25519Signature);
 
 impl crate::traits::TrySigner for Ed25519SecretKey {
   type Signature = Ed25519Signature;
@@ -846,7 +840,7 @@ fn verify_aarch64_encoded_r(
   }
 
   aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge_bytes, public_key).map(|combined| {
-    if ct::constant_time_eq(&combined, r_bytes) {
+    if ct::fixed_eq(&combined, r_bytes) {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -864,7 +858,7 @@ fn verify_aarch64_encoded_r(
 fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
   SMALL_ORDER_ENCODINGS
     .iter()
-    .any(|small_order| ct::constant_time_eq(bytes, small_order))
+    .any(|small_order| ct::fixed_eq(bytes, small_order))
 }
 
 // Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable

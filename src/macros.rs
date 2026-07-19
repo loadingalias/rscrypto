@@ -447,7 +447,7 @@ macro_rules! define_aead_key_type {
 
     impl PartialEq for $name {
       fn eq(&self, other: &Self) -> bool {
-        crate::traits::ct::constant_time_eq(&self.0, &other.0)
+        crate::traits::ct::fixed_eq(&self.0, &other.0)
       }
     }
 
@@ -492,8 +492,6 @@ macro_rules! define_aead_key_type {
         &self.0
       }
     }
-
-    impl_ct_eq!($name);
 
     impl core::fmt::Debug for $name {
       fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -556,7 +554,7 @@ macro_rules! define_aead_tag_type {
     impl PartialEq for $name {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        crate::traits::ct::constant_time_eq(&self.0, &other.0)
+        crate::traits::ct::fixed_eq(&self.0, &other.0)
       }
     }
 
@@ -608,8 +606,6 @@ macro_rules! define_aead_tag_type {
         &self.0
       }
     }
-
-    impl_ct_eq!($name);
 
     impl core::fmt::Debug for $name {
       fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

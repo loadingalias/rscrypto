@@ -1,6 +1,6 @@
 # Migration: `hmac` (RustCrypto) → `rscrypto`
 
-> Replace `Hmac::<Sha256>` / `Hmac::<Sha3_256>` (generic over digest) with named rscrypto types such as `HmacSha256` and `HmacSha3_256`. Key construction is infallible, `finalize()` borrows, and one-shot helpers return typed tags with constant-time equality.
+> Replace `Hmac::<Sha256>` / `Hmac::<Sha3_256>` (generic over digest) with named rscrypto types such as `HmacSha256` and `HmacSha3_256`. Key construction is infallible, `finalize()` borrows, and one-shot helpers return typed tags with fixed-size, type-owned equality.
 
 Verified against `hmac = "0.13.0"` and the `rscrypto` 0.6.4 line.
 Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, `tests/hmac_sha3_vectors.rs`, the HMAC proptests, and `tests/hmac_wycheproof.rs`.

@@ -261,7 +261,7 @@ mod macros;
 
 // Internal modules (not published as separate crates)
 // `hex` is an internal utility module for public byte newtypes that expose
-// hex formatting, parsing, constant-time equality, or explicit secret display.
+// hex formatting, parsing, or explicit secret display.
 // Public re-exports of `DisplaySecret` / `InvalidHexError` stay gated to the
 // features that surface them in the public API.
 #[cfg(any(
@@ -572,9 +572,7 @@ pub use secret::SecretVec;
   feature = "ascon-aead"
 ))]
 pub use traits::Aead;
-pub use traits::{
-  Checksum, ChecksumCombine, ConstantTimeEq, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, ct,
-};
+pub use traits::{Checksum, ChecksumCombine, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, ct};
 #[cfg(any(
   feature = "sha2",
   feature = "sha3",
@@ -612,8 +610,7 @@ pub mod prelude {
   ))]
   pub use crate::traits::Aead;
   pub use crate::traits::{
-    Checksum, ChecksumCombine, ConstantTimeEq, Digest, FastHash, Kem, Mac, TrySigner, TrySignerInto, VerificationError,
-    Verifier, Xof,
+    Checksum, ChecksumCombine, Digest, FastHash, Kem, Mac, TrySigner, TrySignerInto, VerificationError, Verifier, Xof,
   };
 }
 
@@ -808,6 +805,58 @@ let _ = writer.crc();
 ```
 "#]
 pub struct __ApiPatternAudit;
+
+#[cfg(all(doctest, feature = "full"))]
+#[doc(hidden)]
+#[doc = r#"
+```compile_fail
+use rscrypto::ConstantTimeEq;
+```
+
+```compile_fail
+let left = [0u8; 32];
+let right = [0u8; 32];
+let _ = left.ct_eq(&right);
+```
+
+```compile_fail
+let left = [0u8; 32];
+let right = [0u8; 32];
+let _ = rscrypto::ct::constant_time_eq(&left, &right);
+```
+
+```compile_fail
+use rscrypto::SecretBytes;
+
+let left = SecretBytes::new([0u8; 32]);
+let right = SecretBytes::new([0u8; 32]);
+let _ = left == right;
+```
+
+```compile_fail
+use rscrypto::SecretVec;
+
+fn compare(left: &SecretVec, right: &SecretVec) -> bool {
+  left == right
+}
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let tag = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let _ = tag == [0u8; HmacSha256Tag::LENGTH];
+```
+
+```rust
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+assert!(left == right);
+```
+"#]
+pub struct __OwnerEqualityBoundaryAudit;
 
 // Compile-time trait assertions.
 //

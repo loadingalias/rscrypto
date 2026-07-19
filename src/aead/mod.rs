@@ -299,13 +299,6 @@ macro_rules! define_nonce_type {
       }
     }
 
-    impl crate::traits::ConstantTimeEq for $name {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        crate::traits::ct::constant_time_eq(&self.0, &other.0)
-      }
-    }
-
     impl $name {
       #[doc = concat!(
                                                     "Construct a nonce by filling bytes from the provided closure.\n\n",

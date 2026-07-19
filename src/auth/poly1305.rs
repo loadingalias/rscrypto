@@ -89,21 +89,7 @@ pub struct Poly1305Tag([u8; Self::LENGTH]);
 impl PartialEq for Poly1305Tag {
   #[inline]
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl PartialEq<[u8; TAG_SIZE]> for Poly1305Tag {
-  #[inline]
-  fn eq(&self, other: &[u8; TAG_SIZE]) -> bool {
-    ct::constant_time_eq(&self.0, other)
-  }
-}
-
-impl PartialEq<Poly1305Tag> for [u8; TAG_SIZE] {
-  #[inline]
-  fn eq(&self, other: &Poly1305Tag) -> bool {
-    ct::constant_time_eq(self, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
@@ -197,13 +183,6 @@ impl AsRef<[u8; TAG_SIZE]> for Poly1305Tag {
   #[inline]
   fn as_ref(&self) -> &[u8; TAG_SIZE] {
     &self.0
-  }
-}
-
-impl crate::traits::ConstantTimeEq for Poly1305Tag {
-  #[inline]
-  fn ct_eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
   }
 }
 
@@ -501,7 +480,7 @@ impl Poly1305 {
   #[inline]
   #[must_use = "Poly1305 verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify(self, expected: &Poly1305Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
+    if self.finalize() == *expected {
       Ok(())
     } else {
       Err(VerificationError::new())

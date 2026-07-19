@@ -20,10 +20,9 @@ impl types.
 | `Kem` | Key encapsulation mechanism profile |
 | `FastHash` | One-shot seeded non-crypto hash |
 | `Aead` | Authenticated encryption |
-| `ConstantTimeEq` | Constant-time byte equality |
 
 Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
-`ChecksumCombine`, `ConstantTimeEq`, `Digest`, `FastHash`, `Kem`, `Mac`,
+`ChecksumCombine`, `Digest`, `FastHash`, `Kem`, `Mac`,
 `VerificationError`, and `Xof`.
 
 ## Native API Conventions
@@ -238,11 +237,14 @@ also has `seal_random_to_vec`.
 
 | Item | Purpose |
 |------|---------|
-| `ct::constant_time_eq` | Constant-time byte comparison |
 | `ct::zeroize` | Volatile-write buffer wipe |
 | `DisplaySecret` | Opt-in hex display for secret keys |
 | `SecretBytes<N>` | Fixed-size secret byte buffer that zeroizes on drop |
 | `SecretVec` | Variable-length secret allocation that zeroizes on drop; ordinary extraction requires `into_unprotected_vec()` |
+
+Generic secret wrappers deliberately do not implement equality. Fixed-size
+keys, shared secrets, authentication tags, and keyed outputs compare only
+through their concrete semantic owner types.
 
 Secret keys, shared secrets, keypairs, and AEAD cipher contexts do not implement
 `Clone`. Where duplication is necessary, call the concrete type's

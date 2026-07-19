@@ -29,21 +29,7 @@ macro_rules! define_hmac_tag_type {
     impl PartialEq for $name {
       #[inline]
       fn eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(&self.0, &other.0)
-      }
-    }
-
-    impl PartialEq<[u8; $len]> for $name {
-      #[inline]
-      fn eq(&self, other: &[u8; $len]) -> bool {
-        ct::constant_time_eq(&self.0, other)
-      }
-    }
-
-    impl PartialEq<$name> for [u8; $len] {
-      #[inline]
-      fn eq(&self, other: &$name) -> bool {
-        ct::constant_time_eq(self, &other.0)
+        ct::fixed_eq(&self.0, &other.0)
       }
     }
 
@@ -137,13 +123,6 @@ macro_rules! define_hmac_tag_type {
       #[inline]
       fn as_ref(&self) -> &[u8; $len] {
         &self.0
-      }
-    }
-
-    impl crate::traits::ConstantTimeEq for $name {
-      #[inline]
-      fn ct_eq(&self, other: &Self) -> bool {
-        ct::constant_time_eq(&self.0, &other.0)
       }
     }
 
@@ -440,7 +419,7 @@ pub fn diag_hmac_sha256_verify_portable(key: &[u8; SHA256_TAG_SIZE], expected: &
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
   );
   let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
-  ct::constant_time_eq(&tag, expected)
+  ct::fixed_eq(&tag, expected)
 }
 
 impl Mac for HmacSha256 {
@@ -611,7 +590,7 @@ impl Mac for HmacSha256 {
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
+    if self.finalize() == *expected {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -729,7 +708,7 @@ pub fn diag_hmac_sha384_verify_portable(key: &[u8; SHA384_TAG_SIZE], expected: &
     crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
   );
   let tag = HmacSha384::mac_with_compress_for_test(key, b"binsec", compress);
-  ct::constant_time_eq(&tag, expected)
+  ct::fixed_eq(&tag, expected)
 }
 
 impl Mac for HmacSha384 {
@@ -883,7 +862,7 @@ impl Mac for HmacSha384 {
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
+    if self.finalize() == *expected {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -1001,7 +980,7 @@ pub fn diag_hmac_sha512_verify_portable(key: &[u8; SHA512_TAG_SIZE], expected: &
     crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
   );
   let tag = HmacSha512::mac_with_compress_for_test(key, b"binsec", compress);
-  ct::constant_time_eq(&tag, expected)
+  ct::fixed_eq(&tag, expected)
 }
 
 impl Mac for HmacSha512 {
@@ -1155,7 +1134,7 @@ impl Mac for HmacSha512 {
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if ct::constant_time_eq(self.finalize().as_bytes(), expected.as_bytes()) {
+    if self.finalize() == *expected {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -1250,8 +1229,8 @@ mod tests {
       let expected = oracle_hmac_sha384(&key, &data);
 
       assert_eq!(
-        HmacSha384::mac(&key, &data),
-        expected,
+        HmacSha384::mac(&key, &data).as_bytes(),
+        &expected,
         "sha384 public oneshot mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
         key_len,
@@ -1271,8 +1250,8 @@ mod tests {
         streaming.update(chunk);
       }
       assert_eq!(
-        streaming.finalize(),
-        expected,
+        streaming.finalize().as_bytes(),
+        &expected,
         "sha384 forced streaming mismatch kernel={} key_len={} data_len={} chunk_len={}",
         id.as_str(),
         key_len,
@@ -1283,8 +1262,8 @@ mod tests {
       streaming.reset();
       streaming.update(&data);
       assert_eq!(
-        streaming.finalize(),
-        expected,
+        streaming.finalize().as_bytes(),
+        &expected,
         "sha384 forced reset mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
         key_len,
@@ -1312,8 +1291,8 @@ mod tests {
       let expected = oracle_hmac_sha512(&key, &data);
 
       assert_eq!(
-        HmacSha512::mac(&key, &data),
-        expected,
+        HmacSha512::mac(&key, &data).as_bytes(),
+        &expected,
         "sha512 public oneshot mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
         key_len,
@@ -1333,8 +1312,8 @@ mod tests {
         streaming.update(chunk);
       }
       assert_eq!(
-        streaming.finalize(),
-        expected,
+        streaming.finalize().as_bytes(),
+        &expected,
         "sha512 forced streaming mismatch kernel={} key_len={} data_len={} chunk_len={}",
         id.as_str(),
         key_len,
@@ -1345,8 +1324,8 @@ mod tests {
       streaming.reset();
       streaming.update(&data);
       assert_eq!(
-        streaming.finalize(),
-        expected,
+        streaming.finalize().as_bytes(),
+        &expected,
         "sha512 forced reset mismatch kernel={} key_len={} data_len={}",
         id.as_str(),
         key_len,

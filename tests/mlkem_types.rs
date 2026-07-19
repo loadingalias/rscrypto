@@ -1,10 +1,9 @@
 #![cfg(feature = "ml-kem")]
 
 use rscrypto::{
-  ConstantTimeEq, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey,
-  MlKem512SharedSecret, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey,
-  MlKem768SharedSecret, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
-  MlKem1024SharedSecret,
+  MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem512SharedSecret, MlKem768,
+  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem768SharedSecret, MlKem1024,
+  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKem1024SharedSecret,
 };
 
 #[test]
@@ -48,10 +47,8 @@ fn mlkem_public_values_roundtrip_all_bytes() {
   let ct512 = MlKem512Ciphertext::from_bytes([0x52; MlKem512Ciphertext::LENGTH]);
   assert_eq!(ek512.to_bytes(), [0x51; MlKem512EncapsulationKey::LENGTH]);
   assert_eq!(ct512.to_bytes(), [0x52; MlKem512Ciphertext::LENGTH]);
-  assert!(ek512.ct_eq(&MlKem512EncapsulationKey::from_bytes(
-    [0x51; MlKem512EncapsulationKey::LENGTH]
-  )));
-  assert!(!ct512.ct_eq(&MlKem512Ciphertext::from_bytes([0x53; MlKem512Ciphertext::LENGTH])));
+  assert!(ek512 == MlKem512EncapsulationKey::from_bytes([0x51; MlKem512EncapsulationKey::LENGTH]));
+  assert!(ct512 != MlKem512Ciphertext::from_bytes([0x53; MlKem512Ciphertext::LENGTH]));
 
   let ek768 = MlKem768EncapsulationKey::from_bytes([0x61; MlKem768EncapsulationKey::LENGTH]);
   let ct768 = MlKem768Ciphertext::from_bytes([0x62; MlKem768Ciphertext::LENGTH]);
@@ -77,10 +74,8 @@ fn mlkem_secret_values_redact_debug_and_require_explicit_extraction() {
   let ss768 = MlKem768SharedSecret::from_bytes([0xb2; MlKem768SharedSecret::LENGTH]);
   assert_eq!(format!("{dk768:?}"), "MlKem768DecapsulationKey(****)");
   assert_eq!(format!("{ss768:?}"), "MlKem768SharedSecret(****)");
-  assert!(dk768.ct_eq(&MlKem768DecapsulationKey::from_bytes(
-    [0xb1; MlKem768DecapsulationKey::LENGTH]
-  )));
-  assert!(!ss768.ct_eq(&MlKem768SharedSecret::from_bytes([0xb3; MlKem768SharedSecret::LENGTH])));
+  assert!(dk768 == MlKem768DecapsulationKey::from_bytes([0xb1; MlKem768DecapsulationKey::LENGTH]));
+  assert!(ss768 != MlKem768SharedSecret::from_bytes([0xb3; MlKem768SharedSecret::LENGTH]));
 
   let dk1024 = MlKem1024DecapsulationKey::from_bytes([0xc1; MlKem1024DecapsulationKey::LENGTH]);
   let ss1024 = MlKem1024SharedSecret::from_bytes([0xc2; MlKem1024SharedSecret::LENGTH]);
