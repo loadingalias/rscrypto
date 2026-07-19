@@ -9486,7 +9486,7 @@ fn prf_eta<const RANDOM_BYTES: usize>(seed: &[u8; SEED_BYTES], nonce: u8, out: &
 
 fn ct_eq_mask(a: &[u8], b: &[u8]) -> u8 {
   debug_assert_eq!(a.len(), b.len());
-  0u8.wrapping_sub(u8::from(ct::constant_time_eq(a, b)))
+  0u8.wrapping_sub(u8::from(ct::public_len_eq(a, b)))
 }
 
 #[inline]

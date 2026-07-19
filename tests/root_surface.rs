@@ -104,7 +104,9 @@ fn fill_rsa_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), Rsa
 #[test]
 fn root_surface_core_exports_compile() {
   let _ = VerificationError::new();
-  assert!(ct::constant_time_eq(b"ok", b"ok"));
+  let mut secret = [0x5a; 8];
+  ct::zeroize(&mut secret);
+  assert_eq!(secret, [0; 8]);
 }
 
 #[test]

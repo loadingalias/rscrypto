@@ -15,10 +15,25 @@ from pathlib import Path
 
 
 CASE_METADATA = {
-  "constant_time_eq_equal_vs_first_diff": {
-    "primitive": "ct.constant_time_eq",
-    "left_class": "equal 64-byte inputs",
-    "right_class": "same length with first byte different",
+  "owner_eq_16_equal_vs_first_diff": {
+    "primitive": "owner_equality.fixed",
+    "left_class": "equal Aes128GcmKey owners",
+    "right_class": "Aes128GcmKey owners with first byte different",
+  },
+  "owner_eq_32_equal_vs_first_diff": {
+    "primitive": "owner_equality.fixed",
+    "left_class": "equal X25519SecretKey owners",
+    "right_class": "X25519SecretKey owners with first byte different",
+  },
+  "owner_eq_48_equal_vs_first_diff": {
+    "primitive": "owner_equality.fixed",
+    "left_class": "equal HmacSha384Tag owners",
+    "right_class": "HmacSha384Tag owners with first byte different",
+  },
+  "owner_eq_64_equal_vs_first_diff": {
+    "primitive": "owner_equality.fixed",
+    "left_class": "equal HmacSha512Tag owners",
+    "right_class": "HmacSha512Tag owners with first byte different",
   },
   "hmac_sha256_valid_vs_invalid_tag": {
     "primitive": "mac.hmac_verify",
@@ -35,8 +50,8 @@ CASE_METADATA = {
     "left_class": "valid keyed digest",
     "right_class": "invalid first digest byte",
   },
-  "secret_wrappers_eq_and_debug_fixed_vs_random": {
-    "primitive": "secret_wrappers.equality_and_display",
+  "secret_wrappers_debug_fixed_vs_random": {
+    "primitive": "secret_wrappers.exposure_and_display",
     "left_class": "fixed secret bytes",
     "right_class": "random secret bytes",
   },

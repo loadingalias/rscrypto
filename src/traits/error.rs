@@ -12,19 +12,13 @@ define_unit_error! {
   /// # Examples
   ///
   /// ```
-  /// use rscrypto::traits::{VerificationError, ct::constant_time_eq};
+  /// # #[cfg(feature = "hmac")]
+  /// # {
+  /// use rscrypto::{HmacSha256, HmacSha256Tag, Mac};
   ///
-  /// fn verify(computed: &[u8; 32], expected: &[u8; 32]) -> Result<(), VerificationError> {
-  ///   if constant_time_eq(computed, expected) {
-  ///     Ok(())
-  ///   } else {
-  ///     Err(VerificationError::new())
-  ///   }
-  /// }
-  ///
-  /// let a = [0u8; 32];
-  /// let b = [1u8; 32];
-  /// assert!(verify(&a, &b).is_err());
+  /// let expected = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+  /// assert!(HmacSha256::verify_tag(b"key", b"message", &expected).is_err());
+  /// # }
   /// ```
   ///
   /// # Security
@@ -32,7 +26,9 @@ define_unit_error! {
   /// This error provides no details about the failure to prevent timing
   /// side-channels. Treat it as a generic authentication failure and avoid
   /// mapping it to finer-grained protocol responses that would recreate an
-  /// oracle. The underlying verification should use constant-time comparison.
+  /// oracle. The underlying verification should compare a fixed-size semantic
+  /// owner whose implementation is covered by the constant-time evidence
+  /// policy in `ct.toml`.
   #[non_exhaustive]
   pub struct VerificationError;
   "verification failed"

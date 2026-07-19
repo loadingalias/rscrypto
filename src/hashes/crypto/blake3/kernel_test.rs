@@ -186,7 +186,7 @@ mod tests {
     // Keyed oneshot (uses length-based dispatch).
     let ours_keyed = Blake3::keyed_digest(KEY, &msg);
     let expected_keyed = *blake3::keyed_hash(KEY, &msg).as_bytes();
-    assert_eq!(ours_keyed, expected_keyed, "blake3 keyed oneshot mismatch");
+    assert_eq!(ours_keyed.as_bytes(), &expected_keyed, "blake3 keyed oneshot mismatch");
 
     // Derive-key oneshot (uses length-based dispatch for key material).
     let ours_derived = Blake3::derive_key(CONTEXT, &msg);
@@ -312,7 +312,7 @@ mod tests {
 
       let ours = Blake3::keyed_digest(KEY, &msg);
       let expected = *blake3::keyed_hash(KEY, &msg).as_bytes();
-      assert_eq!(ours, expected, "blake3 keyed oneshot mismatch len={len}");
+      assert_eq!(ours.as_bytes(), &expected, "blake3 keyed oneshot mismatch len={len}");
 
       let ours = Blake3::derive_key(CONTEXT, &msg);
       let expected = blake3::derive_key(CONTEXT, &msg);
@@ -442,7 +442,12 @@ mod tests {
       // Keyed hash one-shot.
       let ours_keyed = Blake3::keyed_digest(KEY, &msg);
       let expected_keyed = *blake3::keyed_hash(KEY, &msg).as_bytes();
-      assert_eq!(ours_keyed, expected_keyed, "blake3 keyed mismatch len={}", len);
+      assert_eq!(
+        ours_keyed.as_bytes(),
+        &expected_keyed,
+        "blake3 keyed mismatch len={}",
+        len
+      );
 
       // Derive-key one-shot.
       let ours_derived = Blake3::derive_key(CONTEXT, &msg);

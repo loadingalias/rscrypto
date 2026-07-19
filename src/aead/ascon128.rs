@@ -348,7 +348,7 @@ impl Aead for AsconAead128 {
     }
 
     let expected = self.finalize(&mut s);
-    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }
@@ -374,7 +374,7 @@ pub fn diag_ascon_aead128_tag_portable(
   s[1] ^= load_bytes(&block[8..]);
   permute_8_portable(&mut s);
   let tag = cipher.finalize(&mut s);
-  ct::constant_time_eq(&tag, expected)
+  ct::fixed_eq(&tag, expected)
 }
 
 #[cfg(test)]

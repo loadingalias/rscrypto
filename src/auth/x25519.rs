@@ -150,7 +150,7 @@ pub struct X25519SecretKey([u8; Self::LENGTH]);
 
 impl PartialEq for X25519SecretKey {
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
@@ -350,8 +350,6 @@ impl Drop for X25519SecretKey {
   }
 }
 
-impl_ct_eq!(X25519SecretKey);
-
 /// X25519 public key bytes.
 #[derive(Clone, Copy)]
 pub struct X25519PublicKey {
@@ -481,8 +479,6 @@ impl fmt::Debug for X25519PublicKey {
 impl_hex_fmt!(X25519PublicKey);
 impl_serde_bytes!(X25519PublicKey);
 
-impl_ct_eq!(X25519PublicKey, bytes);
-
 impl From<&X25519SecretKey> for X25519PublicKey {
   #[inline]
   fn from(secret: &X25519SecretKey) -> Self {
@@ -502,7 +498,7 @@ pub struct X25519SharedSecret([u8; Self::LENGTH]);
 
 impl PartialEq for X25519SharedSecret {
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
@@ -603,8 +599,6 @@ impl Drop for X25519SharedSecret {
     ct::zeroize(&mut self.0);
   }
 }
-
-impl_ct_eq!(X25519SharedSecret);
 
 #[allow(clippy::indexing_slicing)]
 #[must_use]

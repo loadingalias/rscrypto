@@ -944,7 +944,7 @@ impl EcdsaP256SecretKey {
 
 impl PartialEq for EcdsaP256SecretKey {
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
@@ -961,8 +961,6 @@ impl Drop for EcdsaP256SecretKey {
     ct::zeroize(&mut self.0);
   }
 }
-
-impl_ct_eq!(EcdsaP256SecretKey);
 
 /// P-384 ECDSA secret scalar.
 pub struct EcdsaP384SecretKey([u8; Self::LENGTH]);
@@ -1110,7 +1108,7 @@ impl EcdsaP384SecretKey {
 
 impl PartialEq for EcdsaP384SecretKey {
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
@@ -1127,8 +1125,6 @@ impl Drop for EcdsaP384SecretKey {
     ct::zeroize(&mut self.0);
   }
 }
-
-impl_ct_eq!(EcdsaP384SecretKey);
 
 impl crate::traits::TrySigner for EcdsaP256SecretKey {
   type Signature = EcdsaP256Signature;
@@ -1537,8 +1533,6 @@ impl fmt::Debug for EcdsaP256Signature {
   }
 }
 
-impl_ct_eq!(EcdsaP256Signature, bytes);
-
 /// P-384 ECDSA signature encoded as fixed-width `r || s`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EcdsaP384Signature {
@@ -1591,8 +1585,6 @@ impl fmt::Debug for EcdsaP384Signature {
     write!(f, ")")
   }
 }
-
-impl_ct_eq!(EcdsaP384Signature, bytes);
 
 #[inline(always)]
 fn mask_nonzero_u64(value: u64) -> u64 {

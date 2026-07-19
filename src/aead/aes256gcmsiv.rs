@@ -515,7 +515,7 @@ fn decrypt_riscv(
   ct::zeroize(&mut auth_key);
   ct::zeroize(&mut enc_key);
 
-  if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+  if !ct::fixed_eq(&expected, tag.as_bytes()) {
     ct::zeroize(buffer);
     return Err(crate::traits::VerificationError::new());
   }
@@ -888,7 +888,7 @@ unsafe fn decrypt_fused_aarch64(
     expected[15] &= 0x7f;
     aes::aarch64_encrypt_block_inline(&enc_ek, &mut expected);
 
-    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(crate::traits::VerificationError::new());
     }
@@ -1173,7 +1173,7 @@ unsafe fn decrypt_fused_ppc(
     expected[15] &= 0x7f;
     aes::ppc_encrypt_block_inline(&enc_ek, &mut expected);
 
-    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(crate::traits::VerificationError::new());
     }
@@ -1437,7 +1437,7 @@ unsafe fn decrypt_fused_s390x(
     aes::s390x_encrypt_block_raw_inline(enc_key_bytes, &mut expected);
     ct::zeroize(enc_key_bytes);
 
-    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(crate::traits::VerificationError::new());
     }
@@ -1582,7 +1582,7 @@ impl Aead for Aes256GcmSiv {
       let expected = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
       ct::zeroize(&mut auth_key);
       ct::zeroize(&mut enc_key);
-      if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()) {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -1648,7 +1648,7 @@ impl Aead for Aes256GcmSiv {
     ct::zeroize(&mut auth_key);
     ct::zeroize(&mut enc_key);
 
-    if !ct::constant_time_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }

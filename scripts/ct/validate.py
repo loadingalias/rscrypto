@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ VALID_BINSEC_TIERS = {"A", "B", "C"}
 VALID_BINSEC_INPUT_KINDS = {"global", "const"}
 VALID_BINSEC_POLICIES = {"required", "unsupported"}
 VALID_PHYSICAL_TIMING_POLICIES = {"required", "unsupported"}
+VALID_OPERATION_EVIDENCE_KINDS = {"primitive", "unit", "harness", "dudect", "binsec"}
 CT_REQUIRED_PROFILE_NAMES = {"tier_a", "tier_b"}
 PROVENANCE_REQUIRED_KEYS = {
   "schema_version",
@@ -198,7 +200,90 @@ def dudect_registered_benches(root: Path, errors: list[str]) -> set[str]:
     fail(errors, "DudeCT source has no ctbench_main_with_seeds! registry")
     return set()
   body = text[start:]
-  return set(re.findall(r"^\s*\(([A-Za-z0-9_]+),\s*Some\(", body, re.MULTILINE))
+  return set(re.findall(r"\(\s*([A-Za-z0-9_]+),\s*Some\(", body))
+
+
+def compiler_public_api_snapshot(root: Path, prefixes: tuple[str, ...], errors: list[str]) -> tuple[int, str] | None:
+  """Return the audited public security API count and digest from rustdoc JSON."""
+  target_dir = root / "target" / "ct-api-inventory"
+  command = [
+    "cargo",
+    "rustdoc",
+    "--quiet",
+    "--lib",
+    "--all-features",
+    "--target-dir",
+    str(target_dir),
+    "--",
+    "-Z",
+    "unstable-options",
+    "--output-format",
+    "json",
+  ]
+  completed = subprocess.run(command, cwd=root, capture_output=True, text=True, check=False)
+  if completed.returncode != 0:
+    detail = completed.stderr.strip().splitlines()
+    suffix = f": {detail[-1]}" if detail else ""
+    fail(errors, f"compiler public-API inventory failed{suffix}")
+    return None
+
+  rustdoc_path = target_dir / "doc" / "rscrypto.json"
+  if not rustdoc_path.is_file():
+    fail(errors, f"compiler public-API inventory missing {rustdoc_path}")
+    return None
+  try:
+    rustdoc = json.loads(rustdoc_path.read_text())
+  except json.JSONDecodeError as exc:
+    fail(errors, f"invalid compiler public-API inventory JSON: {exc}")
+    return None
+
+  index = rustdoc.get("index", {})
+  paths = rustdoc.get("paths", {})
+  rows: set[str] = set()
+  for item_id, summary in paths.items():
+    if summary.get("crate_id") != 0:
+      continue
+    path = "::".join(summary.get("path", []))
+    if not path.startswith(prefixes):
+      continue
+    item = index.get(item_id)
+    if not isinstance(item, dict) or item.get("visibility") != "public":
+      continue
+    kind = summary.get("kind")
+    if kind == "function":
+      rows.add(path)
+      continue
+
+    inner = item.get("inner", {})
+    if kind == "trait":
+      for child_id in inner.get("trait", {}).get("items", []):
+        child = index.get(str(child_id), {})
+        if "function" in child.get("inner", {}):
+          rows.add(f"{path}::{child.get('name')}")
+      continue
+
+    type_inner = inner.get(kind, {})
+    if not isinstance(type_inner, dict):
+      continue
+    for impl_id in type_inner.get("impls", []):
+      implementation = index.get(str(impl_id), {}).get("inner", {}).get("impl", {})
+      trait = implementation.get("trait")
+      trait_name = trait.get("path") if isinstance(trait, dict) else None
+      for child_id in implementation.get("items", []):
+        child = index.get(str(child_id), {})
+        if "function" not in child.get("inner", {}):
+          continue
+        span = child.get("span") or {}
+        if not str(span.get("filename", "")).startswith("src/"):
+          continue
+        name = child.get("name")
+        if trait_name:
+          rows.add(f"<{path} as {trait_name}>::{name}")
+        elif child.get("visibility") == "public":
+          rows.add(f"{path}::{name}")
+
+  encoded = ("\n".join(sorted(rows)) + "\n").encode()
+  return len(rows), hashlib.sha256(encoded).hexdigest()
 
 
 def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dict:
@@ -464,6 +549,151 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
         fail(errors, f"evidence unit {unit_id} references BINSEC kernel {kernel_id} for different primitive {kernel.get('primitive')!r}")
       if not kernel.get("required", False):
         fail(errors, f"evidence unit {unit_id} cannot rely on non-required BINSEC kernel {kernel_id}")
+
+  inventory = ct.get("operation_inventory")
+  if not isinstance(inventory, dict):
+    fail(errors, "ct.toml missing [operation_inventory]")
+  else:
+    if inventory.get("schema_version") != 1:
+      fail(errors, f"operation_inventory schema_version expected 1, got {inventory.get('schema_version')!r}")
+    if inventory.get("authority") != "ct.toml":
+      fail(errors, "operation_inventory authority must be ct.toml")
+    required_scope = {"production", "feature-gated", "target-gated", "trait-defaults", "escape-hatches"}
+    actual_scope = set(inventory.get("scope", []))
+    if actual_scope != required_scope:
+      fail(errors, f"operation_inventory scope must be exactly {', '.join(sorted(required_scope))}")
+    prefixes = inventory.get("compiler_api_prefixes")
+    if not isinstance(prefixes, list) or not prefixes or any(not isinstance(prefix, str) or not prefix for prefix in prefixes):
+      fail(errors, "operation_inventory compiler_api_prefixes must be a non-empty list of strings")
+    elif len(prefixes) != len(set(prefixes)):
+      fail(errors, "operation_inventory compiler_api_prefixes must not contain duplicates")
+    else:
+      snapshot = compiler_public_api_snapshot(root, tuple(prefixes), errors)
+      if snapshot is not None:
+        actual_count, actual_sha256 = snapshot
+        expected_count = inventory.get("compiler_api_item_count")
+        expected_sha256 = inventory.get("compiler_api_sha256")
+        if actual_count != expected_count:
+          fail(errors, f"compiler public-API inventory expected {expected_count} items, got {actual_count}")
+        if actual_sha256 != expected_sha256:
+          fail(
+            errors,
+            "compiler public-API inventory digest changed; audit and classify the public surface before updating ct.toml",
+          )
+
+  operation_ids: set[str] = set()
+  operation_api: dict[str, str] = {}
+  referenced_primitives: set[str] = set()
+  known_evidence = {
+    "primitive": primitive_ids,
+    "unit": unit_ids,
+    "harness": all_harness_symbols,
+    "dudect": dudect_names,
+    "binsec": binsec_ids,
+  }
+  for operation in ct.get("operation", []):
+    operation_id = operation.get("id", "<unnamed>")
+    if operation_id in operation_ids:
+      fail(errors, f"duplicate operation id {operation_id}")
+    operation_ids.add(operation_id)
+
+    claim = operation.get("claim")
+    if claim not in VALID_CLAIMS:
+      fail(errors, f"operation {operation_id} has invalid claim {claim!r}")
+    if claim == "ct-claimed":
+      fail(errors, f"operation {operation_id} is ct-claimed before release evidence gates exist")
+
+    for field in ("api", "features", "targets", "variable_time_components", "permitted_leakage"):
+      values = operation.get(field)
+      if not isinstance(values, list) or not values or any(not isinstance(value, str) or not value for value in values):
+        fail(errors, f"operation {operation_id} {field} must be a non-empty list of strings")
+    for field in ("secret_inputs", "public_inputs"):
+      values = operation.get(field)
+      if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+        fail(errors, f"operation {operation_id} {field} must be a list of strings")
+
+    for api in operation.get("api", []):
+      owner = operation_api.get(api)
+      if owner is not None:
+        fail(errors, f"operation API family {api!r} is listed by both {owner} and {operation_id}")
+      operation_api[api] = operation_id
+
+    evidence = operation.get("evidence", [])
+    limitation = operation.get("limitation")
+    if not evidence and not (isinstance(limitation, str) and limitation.strip()):
+      fail(errors, f"operation {operation_id} requires linked evidence or an explicit limitation")
+    if evidence and (not isinstance(evidence, list) or any(not isinstance(value, str) for value in evidence)):
+      fail(errors, f"operation {operation_id} evidence must be a list of kind:id strings")
+      evidence = []
+    for reference in evidence:
+      kind, separator, evidence_id = reference.partition(":")
+      if not separator or kind not in VALID_OPERATION_EVIDENCE_KINDS or not evidence_id:
+        fail(errors, f"operation {operation_id} has invalid evidence reference {reference!r}")
+        continue
+      if evidence_id not in known_evidence[kind]:
+        fail(errors, f"operation {operation_id} references unknown {kind} evidence {evidence_id!r}")
+      if kind == "primitive":
+        referenced_primitives.add(evidence_id)
+
+  if not operation_ids:
+    fail(errors, "ct.toml has no [[operation]] security inventory")
+  missing_operation_primitives = sorted(primitive_ids - referenced_primitives)
+  if missing_operation_primitives:
+    fail(errors, f"security operation inventory does not map primitive(s): {', '.join(missing_operation_primitives)}")
+
+  comparison_ids: set[str] = set()
+  expected_public_len_calls: dict[str, int] = {}
+  for comparison in ct.get("public_len_comparison", []):
+    comparison_id = comparison.get("id", "<unnamed>")
+    if comparison_id in comparison_ids:
+      fail(errors, f"duplicate public-length comparison id {comparison_id}")
+    comparison_ids.add(comparison_id)
+
+    source = comparison.get("source")
+    if not isinstance(source, str) or not source.startswith("src/") or not (root / source).is_file():
+      fail(errors, f"public-length comparison {comparison_id} has invalid source {source!r}")
+      continue
+    call_count = comparison.get("call_count")
+    if isinstance(call_count, bool) or not isinstance(call_count, int) or call_count <= 0:
+      fail(errors, f"public-length comparison {comparison_id} call_count must be a positive integer")
+      continue
+    if source in expected_public_len_calls:
+      fail(errors, f"public-length comparison source {source} is listed more than once")
+    expected_public_len_calls[source] = call_count
+
+    operations = comparison.get("operations")
+    if not isinstance(operations, list) or not operations:
+      fail(errors, f"public-length comparison {comparison_id} operations must be a non-empty list")
+    else:
+      for operation_id in operations:
+        if operation_id not in operation_ids:
+          fail(errors, f"public-length comparison {comparison_id} references unknown operation {operation_id!r}")
+    for field in ("public_length", "secret_contents", "tests"):
+      if not isinstance(comparison.get(field), str) or not comparison.get(field, "").strip():
+        fail(errors, f"public-length comparison {comparison_id} requires {field}")
+
+  actual_public_len_calls: dict[str, int] = {}
+  for source_path in (root / "src").rglob("*.rs"):
+    count = source_path.read_text().count("ct::public_len_eq(")
+    if count:
+      actual_public_len_calls[source_path.relative_to(root).as_posix()] = count
+  if actual_public_len_calls != expected_public_len_calls:
+    missing_sources = sorted(set(actual_public_len_calls) - set(expected_public_len_calls))
+    stale_sources = sorted(set(expected_public_len_calls) - set(actual_public_len_calls))
+    wrong_counts = sorted(
+      source
+      for source in set(actual_public_len_calls).intersection(expected_public_len_calls)
+      if actual_public_len_calls[source] != expected_public_len_calls[source]
+    )
+    if missing_sources:
+      fail(errors, f"unclassified public_len_eq caller source(s): {', '.join(missing_sources)}")
+    if stale_sources:
+      fail(errors, f"stale public_len_eq inventory source(s): {', '.join(stale_sources)}")
+    for source in wrong_counts:
+      fail(
+        errors,
+        f"public_len_eq call count for {source} expected {expected_public_len_calls[source]}, got {actual_public_len_calls[source]}",
+      )
 
   return ct
 

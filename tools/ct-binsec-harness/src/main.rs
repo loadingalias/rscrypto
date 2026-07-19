@@ -1,15 +1,16 @@
-use core::{ptr, slice};
+use core::ptr;
 
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
   Aes256GcmSiv, Aes256GcmSivKey, AsconAead128, AsconAead128Key, Blake3KeyedHash, ChaCha20Poly1305,
-  ChaCha20Poly1305Key, Kmac256, SecretBytes, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  ChaCha20Poly1305Key, HmacSha384Tag, HmacSha512Tag, Kmac256, X25519SecretKey, XChaCha20Poly1305,
+  XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
-  traits::ct,
 };
 
 const LEN_16: usize = 16;
 const LEN_32: usize = 32;
+const LEN_48: usize = 48;
 const LEN_64: usize = 64;
 const CURVE25519_LIMBS: usize = 5;
 const ARGON2_BLOCK_WORDS: usize = 128;
@@ -95,6 +96,14 @@ pub static mut CT_BINSEC_LHS_32: [u8; LEN_32] = [0u8; LEN_32];
 #[unsafe(no_mangle)]
 #[used]
 pub static mut CT_BINSEC_RHS_32: [u8; LEN_32] = [0u8; LEN_32];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_LHS_48: [u8; LEN_48] = [0u8; LEN_48];
+
+#[unsafe(no_mangle)]
+#[used]
+pub static mut CT_BINSEC_RHS_48: [u8; LEN_48] = [0u8; LEN_48];
 
 #[unsafe(no_mangle)]
 #[used]
@@ -233,13 +242,6 @@ pub static mut CT_BINSEC_RSA_OTHER_32: [u8; 32] = [0u8; 32];
 pub static mut CT_BINSEC_RESULT: u8 = 0;
 
 #[inline(always)]
-unsafe fn slice_from_global<const N: usize>(ptr: *const [u8; N]) -> &'static [u8] {
-  // SAFETY: BINSEC harness globals are fixed-size byte arrays with static
-  // storage duration. The caller passes the address of one such global.
-  unsafe { slice::from_raw_parts(ptr.cast::<u8>(), N) }
-}
-
-#[inline(always)]
 unsafe fn array_from_global<const N: usize>(ptr: *const [u8; N]) -> [u8; N] {
   // SAFETY: BINSEC harness globals are fixed-size byte arrays with static
   // storage duration. `read_volatile` keeps the symbolic bytes observable.
@@ -266,41 +268,41 @@ pub extern "C" fn ct_binsec_done(result: u8) -> ! {
 
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub extern "C" fn ct_binsec_constant_time_eq_64() -> ! {
+pub extern "C" fn ct_binsec_owner_eq_64() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let lhs = unsafe { slice_from_global(ptr::addr_of!(CT_BINSEC_LHS_64)) };
+  let lhs = HmacSha512Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_64)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let rhs = unsafe { slice_from_global(ptr::addr_of!(CT_BINSEC_RHS_64)) };
-  ct_binsec_done(u8::from(ct::constant_time_eq(lhs, rhs)))
+  let rhs = HmacSha512Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_64)) });
+  ct_binsec_done(u8::from(lhs == rhs))
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub extern "C" fn ct_binsec_constant_time_eq_32() -> ! {
+pub extern "C" fn ct_binsec_owner_eq_48() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let lhs = unsafe { slice_from_global(ptr::addr_of!(CT_BINSEC_LHS_32)) };
+  let lhs = HmacSha384Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_48)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let rhs = unsafe { slice_from_global(ptr::addr_of!(CT_BINSEC_RHS_32)) };
-  ct_binsec_done(u8::from(ct::constant_time_eq(lhs, rhs)))
+  let rhs = HmacSha384Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_48)) });
+  ct_binsec_done(u8::from(lhs == rhs))
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub extern "C" fn ct_binsec_constant_time_eq_16() -> ! {
+pub extern "C" fn ct_binsec_owner_eq_32() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let lhs = unsafe { slice_from_global(ptr::addr_of!(CT_BINSEC_LHS_16)) };
+  let lhs = X25519SecretKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_32)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let rhs = unsafe { slice_from_global(ptr::addr_of!(CT_BINSEC_RHS_16)) };
-  ct_binsec_done(u8::from(ct::constant_time_eq(lhs, rhs)))
+  let rhs = X25519SecretKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_32)) });
+  ct_binsec_done(u8::from(lhs == rhs))
 }
 
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub extern "C" fn ct_binsec_secret_bytes32_eq() -> ! {
+pub extern "C" fn ct_binsec_owner_eq_16() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let lhs = SecretBytes::<32>::from(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_32)) });
+  let lhs = Aes128GcmKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_16)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
-  let rhs = SecretBytes::<32>::from(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_32)) });
+  let rhs = Aes128GcmKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_16)) });
   ct_binsec_done(u8::from(lhs == rhs))
 }
 
@@ -822,10 +824,10 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
 #[unsafe(no_mangle)]
 #[used]
 pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 44] = [
-  ct_binsec_constant_time_eq_64,
-  ct_binsec_constant_time_eq_32,
-  ct_binsec_constant_time_eq_16,
-  ct_binsec_secret_bytes32_eq,
+  ct_binsec_owner_eq_16,
+  ct_binsec_owner_eq_32,
+  ct_binsec_owner_eq_48,
+  ct_binsec_owner_eq_64,
   ct_binsec_hmac_sha256_verify,
   ct_binsec_hmac_sha384_verify,
   ct_binsec_hmac_sha512_verify,
@@ -877,5 +879,5 @@ pub static CT_BINSEC_X86_ENTRYPOINTS: [unsafe extern "C" fn() -> !; 2] = [
 ];
 
 fn main() {
-  ct_binsec_constant_time_eq_64();
+  ct_binsec_owner_eq_64();
 }

@@ -8,6 +8,68 @@ release_report = "ct-report.json"
 harness = "tools/ct-harness"
 artifact_script = "scripts/ct/artifacts.sh"
 
+[operation_inventory]
+schema_version = 1
+authority = "ct.toml"
+scope = ["production", "feature-gated", "target-gated", "trait-defaults", "escape-hatches"]
+completeness = "Every security primitive must be referenced by at least one checked public-operation family; every family must carry evidence or an explicit limitation; the all-features compiler API snapshot prevents unaudited public-surface drift."
+compiler_api_prefixes = [
+  "rscrypto::aead",
+  "rscrypto::auth",
+  "rscrypto::backend",
+  "rscrypto::hashes::crypto",
+  "rscrypto::hex",
+  "rscrypto::secret",
+  "rscrypto::traits",
+]
+compiler_api_item_count = 2248
+compiler_api_sha256 = "1179eb9727d21ccfbecbc64bef9e54b2ddb98739991edc1ca1460cd806829ea8"
+
+[[public_len_comparison]]
+id = "kmac.verify_expected_output"
+source = "src/auth/kmac.rs"
+call_count = 1
+operations = ["kmac.variable_output_and_verify"]
+public_length = "The caller selects KMAC output length and supplies an expected buffer of that public length."
+secret_contents = "The computed KMAC output and expected bytes are traversed fully for each public-length chunk."
+tests = "KMAC NIST/Wycheproof/differential tests plus kmac256_valid_vs_invalid_tag DudeCT."
+
+[[public_len_comparison]]
+id = "rsa.public_modulus_and_profile_shapes"
+source = "src/auth/rsa.rs"
+call_count = 12
+operations = ["rsa.private_key_import_export_and_generation", "rsa.private_sign_and_decrypt", "rsa.public_operations"]
+public_length = "Widths derive from the public modulus, digest algorithm, DER/padding profile, or caller-visible encoded length."
+secret_contents = "Private representatives, decoded plaintext/hash fields, or validation intermediates are compared without content-dependent exits after public shape checks."
+tests = "RSA official/Wycheproof/differential/private-operation tests and RSA CT harness/DudeCT cases."
+
+[[public_len_comparison]]
+id = "mlkem.parameter_set_shapes"
+source = "src/auth/mlkem/portable.rs"
+call_count = 1
+operations = ["kem.mlkem512", "kem.mlkem768", "kem.mlkem1024"]
+public_length = "Encoded key/ciphertext widths are fixed by the public ML-KEM parameter set and validated before comparison."
+secret_contents = "Decapsulation implicit-rejection ciphertext/key material is traversed fully at that public parameter-set width."
+tests = "ML-KEM ACVP, differential, property, operation, CT harness, and DudeCT cases for all parameter sets."
+
+[[public_len_comparison]]
+id = "argon2.caller_selected_output"
+source = "src/auth/argon2/mod.rs"
+call_count = 1
+operations = ["password.argon2i", "password.argon2d_and_argon2id"]
+public_length = "Primitive verification derives exactly the caller-supplied expected output length after public bounds checks."
+secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
+tests = "Argon2 vectors/differentials/parallel tests and variant CT harness/DudeCT cases."
+
+[[public_len_comparison]]
+id = "scrypt.caller_selected_output"
+source = "src/auth/scrypt.rs"
+call_count = 1
+operations = ["password.scrypt"]
+public_length = "Primitive verification derives exactly the caller-supplied expected output length after public minimum-length checks."
+secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
+tests = "scrypt vectors/differentials and verification CT harness/DudeCT cases."
+
 [status]
 ct_claimed = "all required evidence has passed for the exact primitive/configuration pair"
 ct_intended = "implementation is in scope for the policy; release evidence must pass before a release claim is made"
@@ -50,10 +112,10 @@ path = "tools/ct-harness"
 kind = "staticlib"
 status = "covered"
 symbols = [
-  "ct_entry_constant_time_eq",
-  "ct_entry_secret_bytes32_eq",
-  "ct_entry_x25519_secret_eq",
-  "ct_entry_ed25519_secret_eq",
+  "ct_entry_owner_eq_16",
+  "ct_entry_owner_eq_32",
+  "ct_entry_owner_eq_48",
+  "ct_entry_owner_eq_64",
   "ct_entry_secret_bytes32_debug_masked",
   "ct_entry_hmac_sha256_verify",
   "ct_entry_hmac_sha384_verify",
@@ -120,8 +182,8 @@ symbols = [
   "ct_entry_classification_best_effort",
 ]
 covers = [
-  "ct.constant_time_eq",
-  "secret_wrappers.equality_and_display",
+  "owner_equality.fixed",
+  "secret_wrappers.exposure_and_display",
   "mac.hmac_verify",
   "mac.kmac256_verify",
   "keyed_hash.blake3_verify",
@@ -148,18 +210,45 @@ covers = [
 notes = "Harness coverage is complete for Step 3/4/5. This does not make release CT claims; ct-claimed still requires the evidence gates in the required profiles."
 
 [[dudect_case]]
-name = "constant_time_eq_equal_vs_first_diff"
-primitive = "ct.constant_time_eq"
-filter = "constant_time_eq"
-left_class = "equal 64-byte inputs"
-right_class = "same length with first byte different"
+name = "owner_eq_16_equal_vs_first_diff"
+primitive = "owner_equality.fixed"
+filter = "owner_eq_16"
+left_class = "equal Aes128GcmKey owners"
+right_class = "Aes128GcmKey owners with first byte different"
 samples = 20000
 smoke_samples = 2000
 
 [[dudect_case]]
-name = "secret_wrappers_eq_and_debug_fixed_vs_random"
-primitive = "secret_wrappers.equality_and_display"
-filter = "secret_wrappers"
+name = "owner_eq_32_equal_vs_first_diff"
+primitive = "owner_equality.fixed"
+filter = "owner_eq_32"
+left_class = "equal X25519SecretKey owners"
+right_class = "X25519SecretKey owners with first byte different"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "owner_eq_48_equal_vs_first_diff"
+primitive = "owner_equality.fixed"
+filter = "owner_eq_48"
+left_class = "equal HmacSha384Tag owners"
+right_class = "HmacSha384Tag owners with first byte different"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "owner_eq_64_equal_vs_first_diff"
+primitive = "owner_equality.fixed"
+filter = "owner_eq_64"
+left_class = "equal HmacSha512Tag owners"
+right_class = "HmacSha512Tag owners with first byte different"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "secret_wrappers_debug_fixed_vs_random"
+primitive = "secret_wrappers.exposure_and_display"
+filter = "secret_wrappers_debug"
 left_class = "fixed secret bytes"
 right_class = "random secret bytes"
 samples = 20000
@@ -1244,6 +1333,34 @@ samples = 4096
 smoke_samples = 512
 
 [[evidence_unit]]
+id = "owner_equality.fixed.16"
+primitive = "owner_equality.fixed"
+variant = "Owner16"
+dudect = ["owner_eq_16_equal_vs_first_diff"]
+binsec = ["owner_equality.fixed.16.portable.all"]
+
+[[evidence_unit]]
+id = "owner_equality.fixed.32"
+primitive = "owner_equality.fixed"
+variant = "Owner32"
+dudect = ["owner_eq_32_equal_vs_first_diff"]
+binsec = ["owner_equality.fixed.32.portable.all"]
+
+[[evidence_unit]]
+id = "owner_equality.fixed.48"
+primitive = "owner_equality.fixed"
+variant = "Owner48"
+dudect = ["owner_eq_48_equal_vs_first_diff"]
+binsec = ["owner_equality.fixed.48.portable.all"]
+
+[[evidence_unit]]
+id = "owner_equality.fixed.64"
+primitive = "owner_equality.fixed"
+variant = "Owner64"
+dudect = ["owner_eq_64_equal_vs_first_diff"]
+binsec = ["owner_equality.fixed.64.portable.all"]
+
+[[evidence_unit]]
 id = "mac.hmac_verify.sha256"
 primitive = "mac.hmac_verify"
 variant = "HmacSha256"
@@ -1548,9 +1665,9 @@ binsec = ["kdf.pbkdf2.sha512_verify.portable.all"]
 notes = "The DudeCT case executes Pbkdf2Sha256 and Pbkdf2Sha512 with the same class input."
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.64.x86_64_linux"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_64"
+id = "owner_equality.fixed.64.x86_64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_64"
 tier = "A"
 required = true
 targets = ["x86_64-unknown-linux-gnu"]
@@ -1564,9 +1681,9 @@ assumptions = []
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.32.x86_64_linux"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_32"
+id = "owner_equality.fixed.32.x86_64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_32"
 tier = "A"
 required = true
 targets = ["x86_64-unknown-linux-gnu"]
@@ -1580,9 +1697,9 @@ assumptions = []
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.16.x86_64_linux"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_16"
+id = "owner_equality.fixed.16.x86_64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_16"
 tier = "A"
 required = true
 targets = ["x86_64-unknown-linux-gnu"]
@@ -1596,19 +1713,20 @@ assumptions = []
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "secret_wrappers.secret_bytes32_eq.x86_64_linux"
-primitive = "secret_wrappers.equality_and_display"
-symbol = "ct_binsec_secret_bytes32_eq"
+id = "owner_equality.fixed.48.x86_64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_48"
 tier = "A"
 required = true
 targets = ["x86_64-unknown-linux-gnu"]
 rustflags = ["-C", "target-cpu=x86-64"]
 secrets = [
-  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
-  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_LHS_48", kind = "global", bytes = 48 },
+  { name = "CT_BINSEC_RHS_48", kind = "global", bytes = 48 },
 ]
-public = [{ name = "LEN_32", kind = "const", value = 32 }]
+public = [{ name = "LEN_48", kind = "const", value = 48 }]
 assumptions = []
+notes = "HmacSha384Tag owner equality with a fixed public owner size."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -1711,9 +1829,9 @@ notes = "Diagnostic verifier target for the shipped AVX-512 IFMA Ed25519 signing
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.64.aarch64_linux"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_64"
+id = "owner_equality.fixed.64.aarch64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_64"
 tier = "A"
 required = true
 targets = ["aarch64-unknown-linux-gnu"]
@@ -1727,9 +1845,9 @@ assumptions = []
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.32.aarch64_linux"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_32"
+id = "owner_equality.fixed.32.aarch64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_32"
 tier = "A"
 required = true
 targets = ["aarch64-unknown-linux-gnu"]
@@ -1743,9 +1861,9 @@ assumptions = []
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.16.aarch64_linux"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_16"
+id = "owner_equality.fixed.16.aarch64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_16"
 tier = "A"
 required = true
 targets = ["aarch64-unknown-linux-gnu"]
@@ -1759,19 +1877,20 @@ assumptions = []
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "secret_wrappers.secret_bytes32_eq.aarch64_linux"
-primitive = "secret_wrappers.equality_and_display"
-symbol = "ct_binsec_secret_bytes32_eq"
+id = "owner_equality.fixed.48.aarch64_linux"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_48"
 tier = "A"
 required = true
 targets = ["aarch64-unknown-linux-gnu"]
 rustflags = ["-C", "target-feature=+neon,+lse"]
 secrets = [
-  { name = "CT_BINSEC_LHS_32", kind = "global", bytes = 32 },
-  { name = "CT_BINSEC_RHS_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_LHS_48", kind = "global", bytes = 48 },
+  { name = "CT_BINSEC_RHS_48", kind = "global", bytes = 48 },
 ]
-public = [{ name = "LEN_32", kind = "const", value = 32 }]
+public = [{ name = "LEN_48", kind = "const", value = 48 }]
 assumptions = []
+notes = "HmacSha384Tag owner equality with a fixed public owner size."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -1843,9 +1962,9 @@ notes = "Production passes an Ed25519 signed radix-16 digit; the BINSEC harness 
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "ct.constant_time_eq.portable.all"
-primitive = "ct.constant_time_eq"
-symbol = "ct_binsec_constant_time_eq_64"
+id = "owner_equality.fixed.64.portable.all"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_64"
 tier = "A"
 required = true
 targets = ["*"]
@@ -1856,13 +1975,13 @@ secrets = [
 ]
 public = [{ name = "LEN_64", kind = "const", value = 64 }]
 assumptions = []
-notes = "Portable all-target kernel for the fixed-length equality primitive. Target-specific kernels may add stronger ISA coverage."
+notes = "Portable all-target HmacSha512Tag owner equality kernel."
 claim = "ct-intended"
 
 [[binsec_kernel]]
-id = "secret_wrappers.secret_bytes32_eq.portable.all"
-primitive = "secret_wrappers.equality_and_display"
-symbol = "ct_binsec_secret_bytes32_eq"
+id = "owner_equality.fixed.32.portable.all"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_32"
 tier = "A"
 required = true
 targets = ["*"]
@@ -1873,7 +1992,41 @@ secrets = [
 ]
 public = [{ name = "LEN_32", kind = "const", value = 32 }]
 assumptions = []
-notes = "Portable all-target kernel for secret wrapper equality."
+notes = "Portable all-target X25519SecretKey owner equality kernel."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "owner_equality.fixed.16.portable.all"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_16"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_LHS_16", kind = "global", bytes = 16 },
+  { name = "CT_BINSEC_RHS_16", kind = "global", bytes = 16 },
+]
+public = [{ name = "LEN_16", kind = "const", value = 16 }]
+assumptions = []
+notes = "Portable all-target Aes128GcmKey owner equality kernel."
+claim = "ct-intended"
+
+[[binsec_kernel]]
+id = "owner_equality.fixed.48.portable.all"
+primitive = "owner_equality.fixed"
+symbol = "ct_binsec_owner_eq_48"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+secrets = [
+  { name = "CT_BINSEC_LHS_48", kind = "global", bytes = 48 },
+  { name = "CT_BINSEC_RHS_48", kind = "global", bytes = 48 },
+]
+public = [{ name = "LEN_48", kind = "const", value = 48 }]
+assumptions = []
+notes = "Portable all-target HmacSha384Tag owner equality kernel."
 claim = "ct-intended"
 
 [[binsec_kernel]]
@@ -2546,47 +2699,458 @@ binsec = "unsupported"
 binsec_reason = "WASM targets do not run the native Linux BINSEC executable harness in this workflow."
 ci = "artifact-only"
 
-[[primitive]]
-id = "ct.constant_time_eq"
-tier = "A"
+[[operation]]
+id = "secrets.fixed_owner_equality"
+api = [
+  "rscrypto::*Key::eq",
+  "rscrypto::*SharedSecret::eq",
+  "rscrypto::*Tag::eq",
+  "rscrypto::Blake3KeyedHash::eq",
+  "rscrypto::MlKem*DecapsulationKey::eq",
+  "rscrypto::MlKem*PreparedDecapsulationKey::eq",
+]
+features = ["algorithm owner feature"]
+targets = ["all-supported"]
+secret_inputs = ["left owner bytes", "right owner bytes"]
+public_inputs = ["concrete owner type and fixed size"]
+variable_time_components = ["none at the Rust source boundary; optimized lowering is target-specific evidence"]
+permitted_leakage = ["owner type", "fixed owner size", "boolean equality result"]
 claim = "ct-intended"
-features = ["always"]
-entrypoints = ["rscrypto::traits::ct::constant_time_eq", "rscrypto::ConstantTimeEq::ct_eq"]
-secrets = ["left_bytes", "right_bytes"]
-public = ["left_len", "right_len"]
-may_leak = ["input_length", "length_mismatch"]
-must_not_leak_ref = "common_secret_data"
-required = ["tier_a"]
-notes = "Length mismatch is public shape. Equal-length byte contents must not influence timing."
-[primitive.harness]
-status = "covered"
-symbols = ["ct_entry_constant_time_eq"]
+evidence = [
+  "primitive:owner_equality.fixed",
+  "unit:owner_equality.fixed.16",
+  "unit:owner_equality.fixed.32",
+  "unit:owner_equality.fixed.48",
+  "unit:owner_equality.fixed.64",
+]
+limitation = "Returning bool declassifies the comparison result until T3.4. T3.3 owns exact release-binary proof."
+
+[[operation]]
+id = "secrets.generic_wrapper_lifecycle"
+api = [
+  "rscrypto::SecretBytes::{new,as_bytes,expose}",
+  "rscrypto::SecretVec::{as_bytes,len,is_empty,clear,into_unprotected_vec}",
+  "rscrypto::traits::ct::zeroize",
+]
+features = ["always", "alloc for SecretVec"]
+targets = ["all-supported"]
+secret_inputs = ["wrapped bytes", "bytes being cleared"]
+public_inputs = ["wrapper size", "allocation length", "explicit exposure request"]
+variable_time_components = ["public-length copy and clear loops", "allocator behavior for SecretVec extraction/drop"]
+permitted_leakage = ["wrapper type", "public length", "explicitly exposed bytes"]
+claim = "best-effort"
+evidence = ["primitive:secret_wrappers.exposure_and_display", "harness:ct_entry_secret_bytes32_debug_masked"]
+limitation = "SecretBytes and SecretVec intentionally provide no equality. Explicit extraction transfers secret-lifecycle responsibility to the caller; zeroization evidence is maintained separately from timing claims."
+
+[[operation]]
+id = "secrets.owner_construction_and_exposure"
+api = [
+  "rscrypto::*Key::{from_bytes,try_from_slice,generate,try_generate,try_generate_with,duplicate_secret,as_bytes,expose_secret,display_secret}",
+  "rscrypto::*SharedSecret::{from_bytes,duplicate_secret,as_bytes,expose_secret,display_secret}",
+  "rscrypto::MlKem*DecapsulationKey::{from_bytes,try_from_slice,duplicate_secret,as_bytes,expose_secret,display_secret}",
+  "rscrypto::Poly1305OneTimeKey::{from_bytes,try_generate,try_generate_with,as_bytes,expose_secret}",
+]
+features = ["algorithm owner feature", "getrandom", "serde-secrets"]
+targets = ["all-supported"]
+secret_inputs = ["raw secret bytes", "generated entropy", "serialized secret material"]
+public_inputs = ["concrete owner type", "fixed owner size", "parse success", "exposure request"]
+variable_time_components = ["entropy-source latency", "public parse/feature paths", "explicit formatting and serialization"]
+permitted_leakage = ["owner type", "fixed size", "construction success", "caller-authorized secret exposure"]
+claim = "best-effort"
+evidence = ["primitive:secret_wrappers.exposure_and_display"]
+limitation = "display_secret, expose_secret, AsRef/as_bytes, and serde-secrets are explicit escape hatches. Debug remains masked; the manifest does not claim that authorized formatting or serialization hides the secret."
+
+[[operation]]
+id = "aead.construct_and_seal"
+api = [
+  "rscrypto::Aead::{new,encrypt_in_place,encrypt,seal,seal_with_random_nonce}",
+  "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{new,encrypt_in_place,encrypt}",
+  "rscrypto::NonceCounter::*::encrypt*",
+]
+features = ["aead algorithm feature", "alloc/std for allocating helpers", "getrandom for random nonces"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["key", "plaintext", "derived authentication/encryption subkeys", "cipher state"]
+public_inputs = ["nonce", "AAD", "plaintext length", "output capacity", "backend capabilities"]
+variable_time_components = ["public-length loops", "public buffer errors", "public backend dispatch", "entropy-source latency for random nonces"]
+permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
+claim = "ct-intended"
+evidence = ["primitive:aead.symmetric_transform", "unit:aead.symmetric_transform.aes128gcm", "unit:aead.symmetric_transform.chacha20poly1305"]
+limitation = "Release claims require exact target artifacts. Random-nonce helper timing includes the platform entropy source."
+
+[[operation]]
+id = "aead.open_and_authenticate"
+api = [
+  "rscrypto::Aead::{decrypt_in_place,decrypt,open}",
+  "rscrypto::{Aes128Gcm,Aes256Gcm,Aes128GcmSiv,Aes256GcmSiv,ChaCha20Poly1305,XChaCha20Poly1305,Aegis256,AsconAead128}::{decrypt_in_place,decrypt}",
+]
+features = ["aead algorithm feature", "alloc/std for allocating helpers"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["key", "derived authentication/encryption subkeys", "authenticated plaintext"]
+public_inputs = ["nonce", "AAD", "ciphertext", "tag owner", "lengths", "backend capabilities"]
+variable_time_components = ["public-length loops", "public buffer-shape rejection", "public backend dispatch", "opaque authentication result"]
+permitted_leakage = ["algorithm", "lengths", "nonce", "AAD", "backend", "opaque success/failure"]
+claim = "ct-intended"
+evidence = ["primitive:aead.open_authentication", "primitive:aead.symmetric_transform", "unit:aead.open_authentication.aes128gcm", "unit:aead.open_authentication.ascon_aead128"]
+limitation = "The bool-like authentication decision is surfaced only as an opaque Result, but exact release-machine-code evidence remains T3.3 work."
+
+[[operation]]
+id = "aead.public_nonce_tag_and_error_values"
+api = [
+  "rscrypto::aead::Nonce*::{from_bytes,to_bytes,as_bytes,generate,try_random}",
+  "rscrypto::*Tag::{from_bytes,try_from,to_bytes,as_bytes,as_slice}",
+  "rscrypto::aead::{AeadBufferError,SealError,OpenError,RandomSealError,NonceCounter*}::*",
+]
+features = ["aead algorithm feature", "serde"]
+targets = ["all-supported"]
+secret_inputs = []
+public_inputs = ["nonce bytes", "tag bytes", "buffer shape", "opaque error category"]
+variable_time_components = ["ordinary public-data parsing, formatting, hashing, and equality"]
+permitted_leakage = ["all inputs and results are public", "tag equality result"]
+claim = "best-effort"
+evidence = ["primitive:public_hashes_and_checksums"]
+limitation = "Nonces, encoded tags, and error metadata are public values. Ordinary equality is intentional except tag-owner PartialEq, which maps to the fixed-owner equality operation."
+
+[[operation]]
+id = "mac.compute_and_finalize"
+api = [
+  "rscrypto::Mac::{new,update,update_vectored,update_io_slices,finalize,reset,mac,finalize_to_vec,mac_to_vec}",
+  "rscrypto::{HmacSha*,Kmac*,Poly1305}::{new,update,finalize,reset,mac}",
+]
+features = ["hmac", "hmac-sha3", "kmac", "poly1305", "alloc/std for Vec/IoSlice helpers"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["MAC key", "MAC state", "message when caller classifies it secret", "computed tag"]
+public_inputs = ["message length", "algorithm", "backend capabilities"]
+variable_time_components = ["public message-length loops", "public backend dispatch", "allocation for Vec helpers"]
+permitted_leakage = ["algorithm", "message length", "backend", "returned tag"]
+claim = "ct-intended"
+evidence = ["primitive:mac.hmac_verify", "primitive:mac.kmac256_verify", "harness:ct_entry_hmac_sha256_verify", "harness:ct_entry_kmac256_verify"]
+limitation = "Mac is implementable downstream. Its default verification inherits the downstream Tag::Eq implementation and cannot prove that implementation's timing behavior."
+
+[[operation]]
+id = "mac.verify_typed_tag"
+api = [
+  "rscrypto::Mac::{verify,verify_tag}",
+  "rscrypto::HmacSha*::verify_tag",
+  "rscrypto::Poly1305::verify",
+]
+features = ["hmac", "hmac-sha3", "poly1305"]
+targets = ["all-supported"]
+secret_inputs = ["MAC key/state", "computed tag"]
+public_inputs = ["message", "typed expected tag", "public lengths"]
+variable_time_components = ["MAC computation over public length", "fixed owner equality", "opaque result conversion"]
+permitted_leakage = ["message length", "tag size", "opaque verification result"]
+claim = "ct-intended"
+evidence = ["primitive:mac.hmac_verify", "unit:mac.hmac_verify.sha256", "unit:mac.hmac_verify.sha384", "unit:mac.hmac_verify.sha512"]
+limitation = "The public Mac trait trusts downstream Tag::Eq. Built-in tag owners are checked; downstream implementations are an explicit boundary."
+
+[[operation]]
+id = "kmac.variable_output_and_verify"
+api = ["rscrypto::{Kmac128,Kmac256}::{new,update,finalize,mac,mac_array,verify,verify_tag}"]
+features = ["kmac", "alloc for allocating outputs"]
+targets = ["all-supported"]
+secret_inputs = ["KMAC key", "state", "computed output"]
+public_inputs = ["customization", "message", "requested output length", "expected output length"]
+variable_time_components = ["public-length sponge absorption/squeeze", "public expected-length mismatch", "public-length full-content comparison"]
+permitted_leakage = ["customization", "message/output lengths", "opaque verification result"]
+claim = "ct-intended"
+evidence = ["primitive:mac.kmac256_verify", "harness:ct_entry_kmac256_verify", "dudect:kmac256_valid_vs_invalid_tag"]
+limitation = "KMAC has protocol-defined variable output. Length is explicitly classified public; this is the only MAC verification family retaining an internal public-length comparison."
+
+[[operation]]
+id = "keyed_hash.compute_and_verify"
+api = [
+  "rscrypto::Blake2*::{new_keyed,keyed_digest}",
+  "rscrypto::Blake3::{new_keyed,keyed_digest,derive_key,verify_keyed}",
+  "rscrypto::Blake3KeyedHash::{from_bytes,to_bytes,as_bytes,eq}",
+]
+features = ["blake2b", "blake2s", "blake3", "parallel"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["key", "derive-key material", "keyed state", "keyed output when caller keeps it secret"]
+public_inputs = ["message", "context", "message/output lengths", "backend capabilities"]
+variable_time_components = ["public-length chunking", "public parallel threshold", "public backend dispatch", "fixed owner comparison for Blake3 verification"]
+permitted_leakage = ["algorithm", "context", "lengths", "backend", "verification result"]
+claim = "ct-intended"
+evidence = ["primitive:keyed_hash.blake2_blake3", "primitive:keyed_hash.blake3_verify", "harness:ct_entry_blake3_keyed_digest", "harness:ct_entry_blake3_verify_keyed"]
+limitation = "Keyed outputs are explicitly extractable/serializable. Only Blake3KeyedHash has a typed built-in verification path."
+
+[[operation]]
+id = "kdf.hkdf_extract_expand"
+api = ["rscrypto::HkdfSha{256,384,512}::{new,extract,expand,expand_array,derive,derive_array,prk}"]
+features = ["hkdf", "hmac"]
+targets = ["all-supported"]
+secret_inputs = ["input key material", "PRK", "OKM"]
+public_inputs = ["salt unless protocol classifies it secret", "info", "requested output length"]
+variable_time_components = ["public input/output-length loops", "public output-length validation"]
+permitted_leakage = ["salt/info/output lengths", "length error", "explicit PRK/OKM exposure"]
+claim = "ct-intended"
+evidence = ["primitive:kdf.hkdf", "unit:kdf.hkdf.sha256", "unit:kdf.hkdf.sha384"]
+limitation = "prk() and returned/output buffers expose derived secret material to the caller by design."
+
+[[operation]]
+id = "kdf.pbkdf2_derive_and_verify"
+api = ["rscrypto::Pbkdf2Sha{256,512}::{derive,verify,verify_password}", "rscrypto::Pbkdf2Params::*", "rscrypto::Pbkdf2VerifyPolicy::*"]
+features = ["pbkdf2", "alloc", "phc-strings"]
+targets = ["all-supported"]
+secret_inputs = ["password", "derived key", "computed verifier"]
+public_inputs = ["salt", "iteration count", "output length", "PHC string", "verification policy"]
+variable_time_components = ["public iteration count", "public output-length loops", "PHC parsing and policy rejection", "public-length full-content comparison"]
+permitted_leakage = ["parameters", "salt", "lengths", "policy decision", "opaque verification result"]
+claim = "ct-intended"
+evidence = ["primitive:kdf.pbkdf2", "unit:kdf.pbkdf2.sha256", "unit:kdf.pbkdf2.sha512"]
+limitation = "Primitive verify accepts a caller-selected public output length; PHC helpers pin and approve resource bounds before deriving."
+
+[[operation]]
+id = "password.argon2i"
+api = ["rscrypto::Argon2i::{derive,derive_with_context,verify}"]
+features = ["argon2", "alloc", "parallel"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["password", "secret/pepper", "computed output", "working memory"]
+public_inputs = ["salt", "associated data", "Argon2 parameters", "output length", "backend capabilities"]
+variable_time_components = ["public resource parameters", "public output length", "allocation/thread scheduling", "public backend dispatch"]
+permitted_leakage = ["parameters", "lengths", "backend", "allocation failure", "opaque verification result"]
+claim = "ct-intended"
+evidence = ["primitive:password.argon2i", "harness:ct_entry_argon2i_hash", "harness:ct_entry_argon2i_verify"]
+limitation = "OS allocation and parallel scheduling are outside instruction-level CT claims."
+
+[[operation]]
+id = "password.argon2d_and_argon2id"
+api = ["rscrypto::{Argon2d,Argon2id}::{derive,derive_with_context,verify}", "rscrypto::Argon2idPassword::{hash_password,verify_password,verify_password_with_context}"]
+features = ["argon2", "alloc", "parallel", "phc-strings", "getrandom"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = ["password", "secret/pepper", "computed output", "working memory"]
+public_inputs = ["salt", "associated data", "resource parameters", "PHC string/policy", "backend capabilities"]
+variable_time_components = ["Argon2d/Argon2id data-dependent memory addressing", "public resource parameters", "allocation/thread scheduling", "PHC parsing"]
+permitted_leakage = ["parameters", "salt", "lengths", "backend", "opaque verification result"]
+claim = "best-effort"
+evidence = ["primitive:password.argon2d_argon2id", "harness:ct_entry_argon2id_verify"]
+limitation = "Argon2d and the data-dependent Argon2id phase intentionally use password-dependent memory addresses and are not claimed constant-time."
+
+[[operation]]
+id = "password.scrypt"
+api = ["rscrypto::Scrypt::{derive,verify}", "rscrypto::ScryptPassword::{hash_password,verify_password}", "rscrypto::ScryptParams::*"]
+features = ["scrypt", "alloc", "parallel", "phc-strings", "getrandom"]
+targets = ["all-supported"]
+secret_inputs = ["password", "computed output", "ROMix working memory"]
+public_inputs = ["salt", "resource parameters", "output length", "PHC string/policy"]
+variable_time_components = ["password-dependent ROMix memory addressing", "public resource parameters", "allocation/thread scheduling", "PHC parsing"]
+permitted_leakage = ["parameters", "salt", "lengths", "opaque verification result"]
+claim = "best-effort"
+evidence = ["primitive:password.scrypt", "harness:ct_entry_scrypt_verify"]
+limitation = "scrypt intentionally uses password-dependent memory addressing and is not claimed constant-time."
+
+[[operation]]
+id = "kx.x25519_key_agreement"
+api = ["rscrypto::X25519SecretKey::{public_key,diffie_hellman}", "rscrypto::X25519SharedSecret::diffie_hellman", "rscrypto::X25519PublicKey::{from_bytes,basepoint,to_bytes,as_bytes}"]
+features = ["x25519", "getrandom", "serde-secrets"]
+targets = ["all-supported", "aarch64/x86_64 assembly where selected", "portable fallback"]
+secret_inputs = ["secret scalar", "shared secret", "clamped scalar scratch"]
+public_inputs = ["peer public key", "backend capabilities"]
+variable_time_components = ["public backend dispatch", "opaque all-zero shared-secret rejection"]
+permitted_leakage = ["public key", "backend", "opaque success/failure", "caller-authorized shared-secret exposure"]
+claim = "ct-intended"
+evidence = ["primitive:kx.x25519", "harness:ct_entry_x25519", "dudect:x25519_fixed_vs_random_scalar"]
+limitation = "Exact assembly and portable lowering are target-specific evidence. Shared-secret comparison remains a bool-returning owner operation until T3.4."
+
+[[operation]]
+id = "kem.mlkem512"
+api = ["rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret,eq}"]
+features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
+public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
+variable_time_components = ["public matrix rejection sampling", "public fixed-shape parsing", "full fixed-shape implicit-rejection comparison"]
+permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
+claim = "ct-intended"
+evidence = ["primitive:kem.mlkem512", "unit:kem.mlkem512.keygen", "unit:kem.mlkem512.encapsulate", "unit:kem.mlkem512.decapsulate"]
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret equality uses their fixed owners."
+
+[[operation]]
+id = "kem.mlkem768"
+api = ["rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret,eq}"]
+features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
+public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
+variable_time_components = ["public matrix rejection sampling", "public fixed-shape parsing", "full fixed-shape implicit-rejection comparison"]
+permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
+claim = "ct-intended"
+evidence = ["primitive:kem.mlkem768", "unit:kem.mlkem768.keygen", "unit:kem.mlkem768.encapsulate", "unit:kem.mlkem768.decapsulate"]
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret equality uses their fixed owners."
+
+[[operation]]
+id = "kem.mlkem1024"
+api = ["rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret,eq}"]
+features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
+targets = ["all-supported", "portable implementation"]
+secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
+public_inputs = ["encapsulation key", "ciphertext", "parameter set", "encoded lengths"]
+variable_time_components = ["public matrix rejection sampling", "public fixed-shape parsing", "full fixed-shape implicit-rejection comparison"]
+permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
+claim = "ct-intended"
+evidence = ["primitive:kem.mlkem1024", "unit:kem.mlkem1024.keygen", "unit:kem.mlkem1024.encapsulate", "unit:kem.mlkem1024.decapsulate"]
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret equality uses their fixed owners."
+
+[[operation]]
+id = "signature.ed25519_signing"
+api = ["rscrypto::Ed25519SecretKey::{public_key,sign}", "rscrypto::Ed25519Keypair::{from_secret_key,sign,try_sign}"]
+features = ["ed25519", "getrandom", "serde-secrets"]
+targets = ["all-supported", "target-selected fixed-base backend"]
+secret_inputs = ["secret seed", "expanded scalar", "nonce prefix", "deterministic nonce", "signing intermediates"]
+public_inputs = ["message", "public key", "backend capabilities"]
+variable_time_components = ["public message-length hashing", "public backend dispatch"]
+permitted_leakage = ["message length", "public key", "signature", "backend"]
+claim = "ct-intended"
+evidence = ["primitive:signature.ed25519_sign", "harness:ct_entry_ed25519_sign"]
+limitation = "Target-specific fixed-base kernels require their own release artifacts; source structure is not proof."
+
+[[operation]]
+id = "signature.ecdsa_signing"
+api = ["rscrypto::EcdsaP{256,384}SecretKey::{try_sign,try_sign_blinded}", "rscrypto::EcdsaP{256,384}Keypair::{try_sign,try_sign_blinded}"]
+features = ["ecdsa-p256", "ecdsa-p384", "getrandom", "serde-secrets"]
+targets = ["all-supported", "target-selected arithmetic backend"]
+secret_inputs = ["private scalar", "deterministic nonce", "blinding input", "signing intermediates"]
+public_inputs = ["message", "public key", "backend capabilities"]
+variable_time_components = ["public message-length hashing", "public backend dispatch", "opaque invalid-scalar/signing failure"]
+permitted_leakage = ["message length", "public key", "signature", "backend", "opaque failure"]
+claim = "ct-intended"
+evidence = ["primitive:signature.ecdsa_p256_sign", "primitive:signature.ecdsa_p384_sign", "harness:ct_entry_ecdsa_p256_sign", "harness:ct_entry_ecdsa_p384_sign"]
+limitation = "Blinding closures and entropy-source behavior are external. Exact arithmetic kernels require target-specific release evidence."
+
+[[operation]]
+id = "signature.public_parse_serialize_and_verify"
+api = ["rscrypto::{Ed25519,EcdsaP256,EcdsaP384}PublicKey::{from_bytes,to_bytes,as_bytes,verify}", "rscrypto::{Ed25519,EcdsaP256,EcdsaP384}Signature::{from_bytes,from_der,to_bytes,as_bytes}"]
+features = ["ed25519", "ecdsa-p256", "ecdsa-p384", "serde"]
+targets = ["all-supported"]
+secret_inputs = []
+public_inputs = ["public key", "message", "signature", "encoding"]
+variable_time_components = ["public parsing and validation", "public message-length hashing", "public scalar/point arithmetic", "ordinary public-value equality"]
+permitted_leakage = ["all inputs", "parse failure", "opaque verification result"]
+claim = "best-effort"
+evidence = ["primitive:signature.ed25519_verify_failure_shape", "harness:ct_entry_ed25519_verify"]
+limitation = "Signature verification inputs are public and are not blanket constant-time claims. Failure remains opaque; public signature/key equality is intentionally ordinary."
+
+[[operation]]
+id = "rsa.private_key_import_export_and_generation"
+api = ["rscrypto::RsaPrivateKey::{from_components,from_pkcs1_der*,from_pkcs8_der*,to_pkcs1_der,to_pkcs8_der,generate*}", "rscrypto::RsaPrivateKey::{modulus_bits,public_key}"]
+features = ["rsa", "alloc", "getrandom for generation"]
+targets = ["all-supported"]
+secret_inputs = ["private components", "private DER", "generated prime candidates", "exported secret DER"]
+public_inputs = ["public exponent", "policy", "requested modulus size", "DER shape"]
+variable_time_components = ["DER parsing", "big-integer allocation", "secret prime search and rejection", "entropy-source latency"]
+permitted_leakage = ["public modulus size/exponent", "parse/policy result", "generation progress/timing", "caller-authorized DER exposure"]
+claim = "ct-intended"
+evidence = ["primitive:rsa.private_key_material", "unit:rsa.private_key_material.component_validation_32", "harness:ct_entry_rsa_private_key_pkcs8_roundtrip"]
+limitation = "Prime generation is inherently variable-work and not a CT claim. Secret DER export is an explicit SecretVec escape hatch. The ct-intended claim covers fixed-shape private-component validation/import leaves tracked by evidence."
+
+[[operation]]
+id = "rsa.private_sign_and_decrypt"
+api = ["rscrypto::RsaPrivateKey::{sign_signature*,sign_pkcs1v15*,sign_pss*,decrypt_oaep*,decrypt_pkcs1v15*}"]
+features = ["rsa", "alloc", "getrandom for blinding/randomized padding"]
+targets = ["all-supported"]
+secret_inputs = ["private exponent/components", "plaintext", "blinding factor", "PSS salt", "private arithmetic scratch"]
+public_inputs = ["message/digest", "ciphertext", "padding profile", "modulus size", "output capacity"]
+variable_time_components = ["public modulus-width loops", "public padding/hash profiles", "entropy-source latency", "opaque input-shape rejection"]
+permitted_leakage = ["modulus/profile/lengths", "opaque success/failure"]
+claim = "ct-intended"
+evidence = ["primitive:rsa.private_ops", "unit:rsa.private_ops.pkcs1v15_sign", "unit:rsa.private_ops.pss_sign", "unit:rsa.private_ops.oaep_decrypt", "unit:rsa.private_ops.pkcs1v15_decrypt"]
+limitation = "All remaining variable-length internal comparisons use public modulus/profile-derived shapes. Full private operations remain target-artifact/DudeCT evidence, not source-only claims."
+
+[[operation]]
+id = "rsa.public_operations"
+api = ["rscrypto::RsaPublicKey::{from_pkcs1_der,from_spki_der,to_pkcs1_der,to_spki_der,encrypt*,verify*}", "rscrypto::Rsa*Profile::*", "rscrypto::RsaPublicKeyPolicy::*"]
+features = ["rsa", "alloc", "getrandom for randomized encryption"]
+targets = ["all-supported"]
+secret_inputs = ["plaintext passed to encryption"]
+public_inputs = ["public key", "message/digest", "signature", "ciphertext length", "padding/profile/policy"]
+variable_time_components = ["public DER parsing", "public-key arithmetic", "public padding validation", "entropy-source latency"]
+permitted_leakage = ["public key/profile/lengths", "parse/policy result", "verification result"]
+claim = "best-effort"
+limitation = "Public verification/parsing inputs are not CT claims. Encryption consumes plaintext but necessarily reveals ciphertext length and includes external randomness; no secret-dependent private-key arithmetic occurs."
+
+[[operation]]
+id = "public.hash_checksum_and_xof"
+api = ["rscrypto::{Digest,Xof,Checksum,ChecksumCombine,FastHash}::*", "rscrypto::{Sha*,Blake*,AsconHash*,Shake*,Cshake*,Crc*,Xxh3*,RapidHash*}::*"]
+features = ["hash/checksum algorithm feature", "std/alloc for I/O wrappers"]
+targets = ["all-supported", "backend selected by public target capabilities"]
+secret_inputs = []
+public_inputs = ["data", "seed", "initial checksum", "requested output length", "backend capabilities"]
+variable_time_components = ["public-length loops", "public backend dispatch", "public I/O behavior"]
+permitted_leakage = ["all inputs/results", "lengths", "backend"]
+claim = "best-effort"
+evidence = ["primitive:public_hashes_and_checksums", "harness:ct_entry_public_sha256_digest", "harness:ct_entry_public_crc32_checksum"]
+limitation = "Unkeyed hashes/checksums are public-data APIs and make no whole-API CT claim. Callers hashing secrets must use a separately inventoried keyed construction where appropriate."
+
+[[operation]]
+id = "traits.downstream_security_defaults"
+api = ["rscrypto::TrySigner::try_sign", "rscrypto::TrySignerInto::{try_sign_into,try_sign_to_vec}", "rscrypto::Verifier::verify", "rscrypto::Kem::{generate_keypair,encapsulate,decapsulate}"]
+features = ["always", "alloc for try_sign_to_vec"]
+targets = ["all-supported"]
+secret_inputs = ["implementation-defined signing key, decapsulation key, randomness, and derived secret"]
+public_inputs = ["implementation-defined message, signature, public key, and ciphertext"]
+variable_time_components = ["entirely implementation-defined except for each built-in implementation's separately inventoried path"]
+permitted_leakage = ["implementation-defined", "opaque verification failure where the contract requires it"]
+claim = "unsupported"
+limitation = "These public traits are downstream implementation boundaries. Built-in rscrypto implementations map to their algorithm operation rows; the traits cannot enforce timing, zeroization, or error-opacity properties on external implementations."
+
+[[operation]]
+id = "diagnostic.security_entrypoints"
+api = ["rscrypto::diag_*", "rscrypto::{aead,auth,hashes,secret}::*::diag_*"]
+features = ["diag"]
+targets = ["host or explicitly cfg-gated diagnostic target"]
+secret_inputs = ["operation-specific diagnostic key, password, scalar, state, or intermediate"]
+public_inputs = ["operation-specific fixed diagnostic shape and backend selector"]
+variable_time_components = ["operation-specific; each linked primitive/harness owns classification"]
+permitted_leakage = ["diagnostic digest/result intentionally returned to the caller", "feature and target"]
+claim = "unsupported"
+limitation = "The diag feature is an evidence/test surface, not a production secrecy boundary. Diagnostic return values deliberately declassify intermediates for harnesses and must not be enabled as an application security API."
 
 [[primitive]]
-id = "secret_wrappers.equality_and_display"
+id = "owner_equality.fixed"
 tier = "A"
 claim = "ct-intended"
 features = ["always"]
+variants = ["Owner16", "Owner32", "Owner48", "Owner64"]
 entrypoints = [
-  "rscrypto::SecretBytes::eq",
-  "secret-key newtype Eq impls",
-  "shared-secret newtype Eq impls",
-  "secret-key Debug impls",
+  "Aes128GcmKey::eq",
+  "X25519SecretKey::eq",
+  "HmacSha384Tag::eq",
+  "HmacSha512Tag::eq",
+  "fixed-size secret/key/tag owner Eq implementations",
 ]
-secrets = ["secret_bytes"]
-public = ["type", "length"]
-may_leak = ["type", "input_length"]
+secrets = ["left_owner_bytes", "right_owner_bytes"]
+public = ["concrete_owner_type", "owner_size"]
+may_leak = ["concrete_owner_type", "owner_size", "equality_result"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Secret Debug must remain masked. Explicit display_secret APIs are caller opt-in and outside opaque logging claims."
+notes = "Public callers select a semantic owner, never a raw secret length. Source structure and black_box are not machine-code proofs; T3.3 owns exact release-binary evidence. Returning bool remains an explicit T3.4 limitation."
 [primitive.harness]
 status = "covered"
-symbols = [
-  "ct_entry_secret_bytes32_eq",
-  "ct_entry_x25519_secret_eq",
-  "ct_entry_ed25519_secret_eq",
-  "ct_entry_secret_bytes32_debug_masked",
+symbols = ["ct_entry_owner_eq_16", "ct_entry_owner_eq_32", "ct_entry_owner_eq_48", "ct_entry_owner_eq_64"]
+
+[[primitive]]
+id = "secret_wrappers.exposure_and_display"
+tier = "C"
+claim = "best-effort"
+features = ["always"]
+entrypoints = [
+  "rscrypto::SecretBytes::new",
+  "rscrypto::SecretBytes::as_bytes",
+  "rscrypto::SecretBytes::expose",
+  "rscrypto::SecretVec::as_bytes",
+  "rscrypto::SecretVec::into_unprotected_vec",
+  "secret owner expose_secret methods",
+  "secret owner display_secret methods",
+  "secret owner Debug implementations",
 ]
+secrets = ["secret_bytes"]
+public = ["owner_type", "owner_length", "explicit_exposure_request"]
+may_leak = ["owner_type", "owner_length", "explicitly_exposed_secret"]
+must_not_leak_ref = "common_secret_data"
+required = ["classification"]
+notes = "Generic secret wrappers deliberately implement neither PartialEq nor Eq. Debug remains masked. expose, into_unprotected_vec, and display_secret are explicit caller-authorized declassification/lifecycle escape hatches, not constant-time claims."
+[primitive.harness]
+status = "covered"
+symbols = ["ct_entry_secret_bytes32_debug_masked"]
 
 [[primitive]]
 id = "mac.hmac_verify"
@@ -2634,7 +3198,7 @@ id = "keyed_hash.blake3_verify"
 tier = "A"
 claim = "ct-intended"
 features = ["blake3"]
-entrypoints = ["Blake3::verify_keyed", "Blake3KeyedHash::eq", "Blake3KeyedHash::ct_eq"]
+entrypoints = ["Blake3::verify_keyed", "Blake3KeyedHash::eq"]
 secrets = ["key", "computed_tag", "expected_tag"]
 public = ["data"]
 may_leak = ["input_length", "opaque_success_or_failure"]
@@ -3133,7 +3697,7 @@ public = ["data", "context", "output_length"]
 may_leak = ["input_length", "output_length"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_b"]
-notes = "Caller-visible verification must use ConstantTimeEq or a typed verify helper."
+notes = "Blake3 verification uses the Blake3KeyedHash owner. Blake2 keyed outputs have no generic comparison API; protocols needing built-in verification should use a typed MAC/KMAC/Blake3 owner."
 [primitive.harness]
 status = "covered"
 symbols = [

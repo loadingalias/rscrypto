@@ -24,7 +24,7 @@ use rscrypto::{
   XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
-  traits::{Kem as _, ct},
+  traits::Kem as _,
 };
 
 const STATUS_ERR: u8 = 0;
@@ -153,22 +153,6 @@ unsafe fn write_array<const N: usize>(ptr: *mut u8, value: &[u8; N]) -> bool {
 
 fn rsa_ct_fixture_key(pkcs8_der: &[u8]) -> Option<RsaPrivateKey> {
   RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8_der, &RsaPublicKeyPolicy::legacy_verification()).ok()
-}
-
-/// Constant-time equality harness.
-#[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_constant_time_eq(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> u8 {
-  // SAFETY: FFI inputs are converted under `input_slice`'s contract; invalid
-  // null/nonzero pairs return an error status instead of dereferencing.
-  let Some(a) = (unsafe { input_slice(a, a_len) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: Same reasoning as above for `b`.
-  let Some(b) = (unsafe { input_slice(b, b_len) }) else {
-    return STATUS_ERR;
-  };
-
-  u8::from(ct::constant_time_eq(a, b))
 }
 
 /// HMAC-SHA256 tag verification harness.
@@ -814,47 +798,28 @@ macro_rules! fixed_tag_verify_entry {
 fixed_tag_verify_entry!(ct_entry_hmac_sha384_verify, HmacSha384, HmacSha384Tag, 48);
 fixed_tag_verify_entry!(ct_entry_hmac_sha512_verify, HmacSha512, HmacSha512Tag, 64);
 
-#[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_secret_bytes32_eq(a: *const u8, b: *const u8) -> u8 {
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
-  let Some(a) = (unsafe { read_array::<32>(a) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
-  let Some(b) = (unsafe { read_array::<32>(b) }) else {
-    return STATUS_ERR;
-  };
+macro_rules! fixed_owner_eq_entry {
+  ($name:ident, $type:ty, $len:expr) => {
+    #[unsafe(no_mangle)]
+    pub extern "C" fn $name(a: *const u8, b: *const u8) -> u8 {
+      // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+      let Some(a) = (unsafe { read_array::<$len>(a) }) else {
+        return STATUS_ERR;
+      };
+      // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+      let Some(b) = (unsafe { read_array::<$len>(b) }) else {
+        return STATUS_ERR;
+      };
 
-  u8::from(SecretBytes::<32>::from(a) == SecretBytes::<32>::from(b))
+      u8::from(<$type>::from_bytes(a) == <$type>::from_bytes(b))
+    }
+  };
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_x25519_secret_eq(a: *const u8, b: *const u8) -> u8 {
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
-  let Some(a) = (unsafe { read_array::<32>(a) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
-  let Some(b) = (unsafe { read_array::<32>(b) }) else {
-    return STATUS_ERR;
-  };
-
-  u8::from(X25519SecretKey::from_bytes(a) == X25519SecretKey::from_bytes(b))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_ed25519_secret_eq(a: *const u8, b: *const u8) -> u8 {
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
-  let Some(a) = (unsafe { read_array::<32>(a) }) else {
-    return STATUS_ERR;
-  };
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
-  let Some(b) = (unsafe { read_array::<32>(b) }) else {
-    return STATUS_ERR;
-  };
-
-  u8::from(Ed25519SecretKey::from_bytes(a) == Ed25519SecretKey::from_bytes(b))
-}
+fixed_owner_eq_entry!(ct_entry_owner_eq_16, Aes128GcmKey, 16);
+fixed_owner_eq_entry!(ct_entry_owner_eq_32, X25519SecretKey, 32);
+fixed_owner_eq_entry!(ct_entry_owner_eq_48, HmacSha384Tag, 48);
+fixed_owner_eq_entry!(ct_entry_owner_eq_64, HmacSha512Tag, 64);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_secret_bytes32_debug_masked(secret: *const u8) -> u8 {

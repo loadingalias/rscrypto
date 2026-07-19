@@ -667,7 +667,7 @@ impl Aead for Aegis256 {
     )))]
     let computed = decrypt_portable(key, nonce, aad, buffer);
 
-    if !ct::constant_time_eq(&computed, tag.as_bytes()) {
+    if !ct::fixed_eq(&computed, tag.as_bytes()) {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }

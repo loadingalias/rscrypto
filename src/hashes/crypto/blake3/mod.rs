@@ -109,27 +109,11 @@ impl AsRef<[u8]> for Blake3KeyedHash {
 impl PartialEq for Blake3KeyedHash {
   #[inline]
   fn eq(&self, other: &Self) -> bool {
-    ct::constant_time_eq(&self.0, &other.0)
-  }
-}
-
-impl PartialEq<[u8; OUT_LEN]> for Blake3KeyedHash {
-  #[inline]
-  fn eq(&self, other: &[u8; OUT_LEN]) -> bool {
-    ct::constant_time_eq(&self.0, other)
-  }
-}
-
-impl PartialEq<Blake3KeyedHash> for [u8; OUT_LEN] {
-  #[inline]
-  fn eq(&self, other: &Blake3KeyedHash) -> bool {
-    ct::constant_time_eq(self, &other.0)
+    ct::fixed_eq(&self.0, &other.0)
   }
 }
 
 impl Eq for Blake3KeyedHash {}
-
-impl_ct_eq!(Blake3KeyedHash);
 
 impl core::fmt::Debug for Blake3KeyedHash {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

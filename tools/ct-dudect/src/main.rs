@@ -31,7 +31,7 @@ use rscrypto::{
   diag_mlkem_multiply_ntts_add_assign_input_digest, diag_mlkem_ntt_input_digest,
   diag_mlkem_to_montgomery_product_domain_input_digest, diag_rsa_import_pkcs8_private_key_der_stage,
   diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
-  traits::{Kem as _, ct},
+  traits::Kem as _,
   RsaEncryptionError, RsaPublicKeyPolicy,
 };
 
@@ -206,24 +206,33 @@ fn argon2i_parallel_params() -> Argon2Params {
     .unwrap()
 }
 
-fn constant_time_eq_equal_vs_first_diff(runner: &mut CtRunner, rng: &mut BenchRng) {
-  let mut inputs = Vec::with_capacity(samples());
-  for _ in 0..samples() {
-    let class = random_class(rng);
-    let a = rand_array::<64>(rng);
-    let mut b = a;
-    if matches!(class, Class::Right) {
-      b[0] ^= 1;
-    }
-    inputs.push((class, a, b));
-  }
+macro_rules! fixed_owner_eq_case {
+  ($name:ident, $type:ty, $len:expr) => {
+    fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
+      let mut inputs = Vec::with_capacity(samples());
+      for _ in 0..samples() {
+        let class = random_class(rng);
+        let left = rand_array::<$len>(rng);
+        let mut right = left;
+        if matches!(class, Class::Right) {
+          right[0] ^= 1;
+        }
+        inputs.push((class, <$type>::from_bytes(left), <$type>::from_bytes(right)));
+      }
 
-  for (class, a, b) in inputs {
-    runner.run_one(class, || ct::constant_time_eq(&a, &b));
-  }
+      for (class, left, right) in inputs {
+        runner.run_one(class, || left == right);
+      }
+    }
+  };
 }
 
-fn secret_wrappers_eq_and_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
+fixed_owner_eq_case!(owner_eq_16_equal_vs_first_diff, Aes128GcmKey, 16);
+fixed_owner_eq_case!(owner_eq_32_equal_vs_first_diff, X25519SecretKey, 32);
+fixed_owner_eq_case!(owner_eq_48_equal_vs_first_diff, HmacSha384Tag, 48);
+fixed_owner_eq_case!(owner_eq_64_equal_vs_first_diff, HmacSha512Tag, 64);
+
+fn secret_wrappers_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
     let class = random_class(rng);
@@ -237,10 +246,8 @@ fn secret_wrappers_eq_and_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut
 
   for (class, bytes) in inputs {
     runner.run_one(class, || {
-      let left = SecretBytes::<32>::new(bytes);
-      let right = SecretBytes::<32>::new(bytes);
-      let masked = format!("{left:?}");
-      left == right && masked.as_str() == "SecretBytes(****)"
+      let secret = SecretBytes::<32>::new(bytes);
+      format!("{secret:?}").as_str() == "SecretBytes(****)"
     });
   }
 }
@@ -1961,8 +1968,11 @@ mod tests {
 }
 
 ctbench_main_with_seeds!(
-  (constant_time_eq_equal_vs_first_diff, Some(0x727363727970746f)),
-  (secret_wrappers_eq_and_debug_fixed_vs_random, Some(0x7365637265745f77)),
+  (owner_eq_16_equal_vs_first_diff, Some(0x6f776e657231365f)),
+  (owner_eq_32_equal_vs_first_diff, Some(0x6f776e657233325f)),
+  (owner_eq_48_equal_vs_first_diff, Some(0x6f776e657234385f)),
+  (owner_eq_64_equal_vs_first_diff, Some(0x6f776e657236345f)),
+  (secret_wrappers_debug_fixed_vs_random, Some(0x7365637265745f77)),
   (hmac_sha256_valid_vs_invalid_tag, Some(0x686d61635f736861)),
   (hmac_sha384_valid_vs_invalid_tag, Some(0x686d61633338345f)),
   (hmac_sha512_valid_vs_invalid_tag, Some(0x686d61633531325f)),

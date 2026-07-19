@@ -1913,7 +1913,7 @@ macro_rules! define_argon2_variant {
           .map_err(|_| VerificationError::new())?;
         actual.resize(expected.len(), 0);
         let hash_failed = Self::derive(params, password, salt, &mut actual).is_err();
-        let bytes_match = ct::constant_time_eq(&actual, expected);
+        let bytes_match = ct::public_len_eq(&actual, expected);
         ct::zeroize(&mut actual);
 
         let success = !hash_failed & bytes_match;
@@ -2081,7 +2081,7 @@ impl Argon2idPassword {
       actual.as_mut_array(),
     )
     .map_err(|_| VerificationError::new())?;
-    let verified = ct::constant_time_eq(actual.as_array(), &approved.expected);
+    let verified = ct::fixed_eq(actual.as_array(), &approved.expected);
     if !core::hint::black_box(verified) {
       return Err(VerificationError::new());
     }
