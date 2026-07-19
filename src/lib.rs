@@ -439,11 +439,11 @@ pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2Veri
 pub use auth::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 pub use auth::{
-  RsaEncryptionError, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile,
-  RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
-  RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
-  RsaSignatureProfile, RsaSignatureSigner, RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey,
-  RsaX509PublicKeyAlgorithm,
+  RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError,
+  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch,
+  RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey,
+  RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
+  RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
 pub use auth::{Scrypt, ScryptError, ScryptParams};

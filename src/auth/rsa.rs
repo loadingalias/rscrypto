@@ -425,13 +425,81 @@ impl fmt::Display for RsaProtocolAlgorithmError {
 
 impl core::error::Error for RsaProtocolAlgorithmError {}
 
+/// RSA algorithms supported by the JWT/JWS policy boundary.
+///
+/// This type is intentionally not constructible from a string. Applications
+/// choose one variant from trusted verifier configuration, then pass the
+/// peer-controlled JOSE `alg` value only to [`RsaJwtVerifier::verify`] for an
+/// exact match. A token therefore cannot select or widen the verifier's
+/// cryptographic policy.
+///
+/// Runtime strings cannot construct policy:
+///
+/// ```compile_fail
+/// use rscrypto::RsaJwtAlgorithm;
+///
+/// let algorithm: RsaJwtAlgorithm = "PS256".parse().unwrap();
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RsaJwtAlgorithm {
+  /// RSASSA-PKCS1-v1_5 with SHA-256 (`RS256`).
+  Rs256,
+  /// RSASSA-PKCS1-v1_5 with SHA-384 (`RS384`).
+  Rs384,
+  /// RSASSA-PKCS1-v1_5 with SHA-512 (`RS512`).
+  Rs512,
+  /// RSASSA-PSS with SHA-256 and a 32-byte salt (`PS256`).
+  Ps256,
+  /// RSASSA-PSS with SHA-384 and a 48-byte salt (`PS384`).
+  Ps384,
+  /// RSASSA-PSS with SHA-512 and a 64-byte salt (`PS512`).
+  Ps512,
+}
+
+impl RsaJwtAlgorithm {
+  /// Return the canonical case-sensitive JOSE `alg` value.
+  #[inline]
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Rs256 => "RS256",
+      Self::Rs384 => "RS384",
+      Self::Rs512 => "RS512",
+      Self::Ps256 => "PS256",
+      Self::Ps384 => "PS384",
+      Self::Ps512 => "PS512",
+    }
+  }
+
+  /// Return the exact RSA signature profile fixed by this algorithm.
+  #[inline]
+  #[must_use]
+  pub const fn signature_profile(self) -> RsaSignatureProfile {
+    match self {
+      Self::Rs256 => RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      Self::Rs384 => RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384),
+      Self::Rs512 => RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512),
+      Self::Ps256 => RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+      Self::Ps384 => RsaSignatureProfile::pss(RsaPssProfile::Sha384),
+      Self::Ps512 => RsaSignatureProfile::pss(RsaPssProfile::Sha512),
+    }
+  }
+}
+
+impl fmt::Display for RsaJwtAlgorithm {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.write_str(self.as_str())
+  }
+}
+
 /// Typed RSA signature profile.
 ///
 /// This is the primitive-layer selector adapters should map to after they have
-/// parsed protocol-specific identifiers such as TLS `SignatureScheme`, JWT
-/// `alg`, COSE algorithm IDs, or X.509 algorithm parameters. Unsupported
-/// protocol algorithms, SHA-1 profiles, and ambiguous parameter encodings
-/// should fail before constructing this type.
+/// parsed protocol-specific identifiers such as TLS `SignatureScheme`, COSE
+/// algorithm IDs, or X.509 algorithm parameters. JWT/JWS uses the narrower
+/// [`RsaJwtAlgorithm`] and [`RsaJwtVerifier`] boundary so a token cannot select
+/// this profile. Unsupported protocol algorithms, SHA-1 profiles, and ambiguous
+/// parameter encodings should fail before constructing this type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RsaSignatureProfile {
   /// RSASSA-PSS with a typed hash/MGF1 profile and explicit salt length.
@@ -531,33 +599,6 @@ impl RsaSignatureProfile {
     }
   }
 
-  /// Map a JWT `alg` value to an RSA signature profile.
-  ///
-  /// Only the explicit RSA SHA-2 algorithms from JOSE are accepted. `none`,
-  /// HMAC, ECDSA, EdDSA, SHA-1, and unknown values fail closed.
-  ///
-  /// This is a parser for locally configured or already trusted policy values.
-  /// When `alg` comes from a JOSE header, use
-  /// [`RsaPublicKey::verify_expected_jwt_alg`] so the header is checked against
-  /// a locally pinned profile before verification.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`RsaProtocolAlgorithmError::UnsupportedAlgorithm`] for any value
-  /// other than `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, or `PS512`.
-  #[inline]
-  pub fn from_jwt_alg(alg: &str) -> Result<Self, RsaProtocolAlgorithmError> {
-    match alg {
-      "RS256" => Ok(Self::pkcs1v15(RsaPkcs1v15Profile::Sha256)),
-      "RS384" => Ok(Self::pkcs1v15(RsaPkcs1v15Profile::Sha384)),
-      "RS512" => Ok(Self::pkcs1v15(RsaPkcs1v15Profile::Sha512)),
-      "PS256" => Ok(Self::pss(RsaPssProfile::Sha256)),
-      "PS384" => Ok(Self::pss(RsaPssProfile::Sha384)),
-      "PS512" => Ok(Self::pss(RsaPssProfile::Sha512)),
-      _ => Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm),
-    }
-  }
-
   /// Map a COSE algorithm ID to an RSA signature profile.
   ///
   /// Accepts the explicit COSE RSASSA-PKCS1-v1_5 SHA-2 IDs `-257`, `-258`,
@@ -583,40 +624,6 @@ impl RsaSignatureProfile {
       -38 => Ok(Self::pss(RsaPssProfile::Sha384)),
       -39 => Ok(Self::pss(RsaPssProfile::Sha512)),
       _ => Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm),
-    }
-  }
-
-  /// Return `true` if this profile is exactly the profile named by a JOSE
-  /// `alg` value.
-  #[inline]
-  #[must_use]
-  pub fn matches_jwt_alg(self, alg: &str) -> bool {
-    match (self, alg) {
-      (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha256), "RS256")
-      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha384), "RS384")
-      | (Self::Pkcs1v15(RsaPkcs1v15Profile::Sha512), "RS512") => true,
-      (
-        Self::Pss {
-          profile: RsaPssProfile::Sha256,
-          salt_len,
-        },
-        "PS256",
-      ) => salt_len == RsaPssProfile::Sha256.digest_len(),
-      (
-        Self::Pss {
-          profile: RsaPssProfile::Sha384,
-          salt_len,
-        },
-        "PS384",
-      ) => salt_len == RsaPssProfile::Sha384.digest_len(),
-      (
-        Self::Pss {
-          profile: RsaPssProfile::Sha512,
-          salt_len,
-        },
-        "PS512",
-      ) => salt_len == RsaPssProfile::Sha512.digest_len(),
-      _ => false,
     }
   }
 
@@ -1223,6 +1230,18 @@ pub struct RsaSignatureVerifier<'a> {
   profile: RsaSignatureProfile,
 }
 
+/// RSA JWT/JWS verifier bound to one key and one locally selected algorithm.
+///
+/// A JOSE provider must parse the protected header, reject duplicate members
+/// and malformed serialization, and pass the single decoded `alg` string to
+/// [`Self::verify`]. This verifier checks that string against its fixed policy;
+/// it never maps peer metadata to a signature profile.
+#[derive(Clone, Copy)]
+pub struct RsaJwtVerifier<'a> {
+  key: &'a RsaPublicKey,
+  algorithm: RsaJwtAlgorithm,
+}
+
 /// Borrowed RSA private-key CRT components.
 ///
 /// These fields contain private key material. Keep values canonical unsigned
@@ -1431,6 +1450,16 @@ impl RsaPrivateKey {
   #[must_use]
   pub const fn signer(&self, profile: RsaSignatureProfile) -> RsaSignatureSigner<'_> {
     RsaSignatureSigner::new(self, profile)
+  }
+
+  /// Return a signer bound to one typed JWT/JWS algorithm.
+  ///
+  /// Use [`RsaJwtAlgorithm::as_str`] when emitting the matching protected
+  /// header. No runtime algorithm name is accepted by this API.
+  #[inline]
+  #[must_use]
+  pub const fn jwt_signer(&self, algorithm: RsaJwtAlgorithm) -> RsaSignatureSigner<'_> {
+    self.signer(algorithm.signature_profile())
   }
 
   /// Allocate reusable scratch space for deterministic private operations.
@@ -1655,52 +1684,6 @@ impl RsaPrivateKey {
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
     let result = RsaSignatureProfile::from_tls_certificate_signature_scheme(scheme)
-      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
-      .and_then(|profile| self.sign_signature_with_scratch(profile, message, out, scratch));
-    clear_output_on_error(result, out)
-  }
-
-  /// Sign a JWT/JWS signing input using an already-parsed JOSE `alg`.
-  ///
-  /// Primitive helper only: this is not a JWT, JWS, JOSE, or JSON provider
-  /// integration.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`RsaPrivateOpError::UnsupportedAlgorithm`] if `alg` is not an
-  /// accepted RSA SHA-2 JOSE algorithm. Other errors match
-  /// [`Self::sign_signature`].
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
-  pub fn sign_jwt_alg(&self, alg: &str, message: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
-    let result = RsaSignatureProfile::from_jwt_alg(alg)
-      .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
-      .and_then(|profile| self.sign_signature(profile, message, out));
-    clear_output_on_error(result, out)
-  }
-
-  /// Sign a JWT/JWS signing input using an already-parsed JOSE `alg` and caller-owned scratch.
-  ///
-  /// Primitive helper only: this is not a JWT, JWS, JOSE, or JSON provider
-  /// integration.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`RsaPrivateOpError::UnsupportedAlgorithm`] if `alg` is not an
-  /// accepted RSA SHA-2 JOSE algorithm. Other errors match
-  /// [`Self::sign_signature_with_scratch`].
-  #[cfg(feature = "getrandom")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-  #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
-  pub fn sign_jwt_alg_with_scratch(
-    &self,
-    alg: &str,
-    message: &[u8],
-    out: &mut [u8],
-    scratch: &mut RsaPrivateScratch,
-  ) -> Result<(), RsaPrivateOpError> {
-    let result = RsaSignatureProfile::from_jwt_alg(alg)
       .map_err(|_| RsaPrivateOpError::UnsupportedAlgorithm)
       .and_then(|profile| self.sign_signature_with_scratch(profile, message, out, scratch));
     clear_output_on_error(result, out)
@@ -2435,6 +2418,84 @@ impl crate::traits::Verifier<[u8]> for RsaSignatureVerifier<'_> {
   #[inline]
   fn verify(&self, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
     RsaSignatureVerifier::verify(self, message, signature)
+  }
+}
+
+impl<'a> RsaJwtVerifier<'a> {
+  /// Construct a verifier bound to `key` and one locally selected algorithm.
+  #[inline]
+  #[must_use]
+  pub const fn new(key: &'a RsaPublicKey, algorithm: RsaJwtAlgorithm) -> Self {
+    Self { key, algorithm }
+  }
+
+  /// Return the bound public key.
+  #[inline]
+  #[must_use]
+  pub const fn key(&self) -> &'a RsaPublicKey {
+    self.key
+  }
+
+  /// Return the verifier-owned JWT/JWS algorithm policy.
+  #[inline]
+  #[must_use]
+  pub const fn algorithm(&self) -> RsaJwtAlgorithm {
+    self.algorithm
+  }
+
+  /// Verify a JWS signing input after matching the protected-header `alg`.
+  ///
+  /// `header_alg` must be the single decoded algorithm string produced by a
+  /// strict JOSE parser. The parser remains responsible for rejecting duplicate
+  /// header members, malformed JSON or UTF-8, invalid base64url, unsupported
+  /// critical parameters, and malformed compact serialization.
+  ///
+  /// # Errors
+  ///
+  /// Returns opaque [`VerificationError`] when `header_alg` is not the exact
+  /// canonical name of the bound algorithm or the RSA signature is invalid.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify(&self, header_alg: &str, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
+    if header_alg != self.algorithm.as_str() {
+      return Err(VerificationError::new());
+    }
+    self
+      .key
+      .verify_signature(self.algorithm.signature_profile(), message, signature)
+  }
+
+  /// Verify with caller-owned RSA scratch after matching the protected-header `alg`.
+  ///
+  /// The same JOSE parsing requirements as [`Self::verify`] apply.
+  ///
+  /// # Errors
+  ///
+  /// Returns opaque [`VerificationError`] for an algorithm mismatch or invalid
+  /// signature.
+  #[inline]
+  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
+  pub fn verify_with_scratch(
+    &self,
+    header_alg: &str,
+    message: &[u8],
+    signature: &[u8],
+    scratch: &mut RsaPublicScratch,
+  ) -> Result<(), VerificationError> {
+    if header_alg != self.algorithm.as_str() {
+      return Err(VerificationError::new());
+    }
+    self
+      .key
+      .verify_signature_with_scratch(self.algorithm.signature_profile(), message, signature, scratch)
+  }
+}
+
+impl fmt::Debug for RsaJwtVerifier<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("RsaJwtVerifier")
+      .field("algorithm", &self.algorithm)
+      .finish_non_exhaustive()
   }
 }
 
@@ -4592,6 +4653,16 @@ impl RsaPublicKey {
     RsaSignatureVerifier::new(self, profile)
   }
 
+  /// Return a JWT/JWS verifier bound to one locally selected algorithm.
+  ///
+  /// The returned verifier treats the peer's protected-header `alg` value as
+  /// an assertion to match, never as a signature-profile selector.
+  #[inline]
+  #[must_use]
+  pub const fn jwt_verifier(&self, algorithm: RsaJwtAlgorithm) -> RsaJwtVerifier<'_> {
+    RsaJwtVerifier::new(self, algorithm)
+  }
+
   /// Build an RSA public key from canonical unsigned big-endian components
   /// with the modern default policy.
   ///
@@ -5297,104 +5368,6 @@ impl RsaPublicKey {
       }
       RsaSignatureProfile::Pkcs1v15(profile) => self.verify_pkcs1v15_with_scratch(profile, message, signature, scratch),
     }
-  }
-
-  /// Verify an RSA JWT/JWS signature only if the parsed JOSE `alg` matches the
-  /// locally configured expected `alg` and profile.
-  ///
-  /// `expected_alg` and `profile` must come from local verifier configuration.
-  /// `header_alg` is the value parsed from the peer-controlled JOSE header. A
-  /// header or profile mismatch is rejected before signature verification.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] if the algorithms differ, `profile` does
-  /// not match `expected_alg`, or the signature is invalid.
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_expected_jwt_alg(
-    &self,
-    expected_alg: &str,
-    header_alg: &str,
-    profile: RsaSignatureProfile,
-    message: &[u8],
-    signature: &[u8],
-  ) -> Result<(), VerificationError> {
-    if header_alg != expected_alg || !profile.matches_jwt_alg(expected_alg) {
-      return Err(VerificationError::new());
-    }
-    self.verify_signature(profile, message, signature)
-  }
-
-  /// Verify an RSA JWT/JWS signature with caller-owned scratch only if the
-  /// parsed JOSE `alg` matches the locally configured expected `alg` and
-  /// profile.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] for algorithm mismatch, unsupported expected
-  /// algorithms, or invalid signatures.
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_expected_jwt_alg_with_scratch(
-    &self,
-    expected_alg: &str,
-    header_alg: &str,
-    profile: RsaSignatureProfile,
-    message: &[u8],
-    signature: &[u8],
-    scratch: &mut RsaPublicScratch,
-  ) -> Result<(), VerificationError> {
-    if header_alg != expected_alg || !profile.matches_jwt_alg(expected_alg) {
-      return Err(VerificationError::new());
-    }
-    self.verify_signature_with_scratch(profile, message, signature, scratch)
-  }
-
-  /// Verify an RSA JWT/JWS signature by mapping the supplied JOSE `alg` directly.
-  ///
-  /// Compatibility helper only: prefer
-  /// [`verify_expected_jwt_alg`](Self::verify_expected_jwt_alg) when `alg` was
-  /// parsed from peer-controlled JOSE metadata. This is not a JWT, JWS, JOSE,
-  /// or JSON provider integration.
-  ///
-  /// `message` is the caller-constructed JWS Signing Input. This helper does
-  /// not parse JWT claims, JWS compact serialization, or JSON; it only enforces
-  /// the explicit RSA SHA-2 `alg` mapping before signature verification.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] if `alg` is not an accepted RSA SHA-2 JOSE
-  /// algorithm, or if the signature is invalid.
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_jwt_alg(&self, alg: &str, message: &[u8], signature: &[u8]) -> Result<(), VerificationError> {
-    let profile = RsaSignatureProfile::from_jwt_alg(alg).map_err(|_| VerificationError::new())?;
-    if !self.signature_profile_is_possible(profile) {
-      return Err(VerificationError::new());
-    }
-    let mut scratch = self.public_scratch();
-    self.verify_signature_with_scratch(profile, message, signature, &mut scratch)
-  }
-
-  /// Verify an RSA JWT/JWS signature using caller-owned RSA scratch space by
-  /// mapping the supplied JOSE `alg` directly.
-  ///
-  /// Compatibility helper only: prefer
-  /// [`verify_expected_jwt_alg_with_scratch`](Self::verify_expected_jwt_alg_with_scratch)
-  /// when `alg` was parsed from peer-controlled JOSE metadata.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`VerificationError`] if `alg` is unsupported or verification
-  /// fails.
-  #[must_use = "signature verification must be checked; a dropped Result silently accepts a forged signature"]
-  pub fn verify_jwt_alg_with_scratch(
-    &self,
-    alg: &str,
-    message: &[u8],
-    signature: &[u8],
-    scratch: &mut RsaPublicScratch,
-  ) -> Result<(), VerificationError> {
-    let profile = RsaSignatureProfile::from_jwt_alg(alg).map_err(|_| VerificationError::new())?;
-    self.verify_signature_with_scratch(profile, message, signature, scratch)
   }
 
   /// Verify an RSA COSE signature only if the parsed algorithm ID matches the
@@ -12020,12 +11993,24 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       )
       .unwrap();
 
-    key.sign_jwt_alg("PS512", message, &mut signature).unwrap();
-    key.public_key().verify_jwt_alg("PS512", message, &signature).unwrap();
+    let jwt_algorithm = RsaJwtAlgorithm::Ps512;
     key
-      .sign_jwt_alg_with_scratch("PS512", message, &mut signature, &mut scratch)
+      .jwt_signer(jwt_algorithm)
+      .try_sign_into(message, &mut signature)
       .unwrap();
-    key.public_key().verify_jwt_alg("PS512", message, &signature).unwrap();
+    key
+      .public_key()
+      .jwt_verifier(jwt_algorithm)
+      .verify("PS512", message, &signature)
+      .unwrap();
+    key
+      .sign_signature_with_scratch(jwt_algorithm.signature_profile(), message, &mut signature, &mut scratch)
+      .unwrap();
+    key
+      .public_key()
+      .jwt_verifier(jwt_algorithm)
+      .verify("PS512", message, &signature)
+      .unwrap();
 
     key.sign_cose_algorithm_id(-257, message, &mut signature).unwrap();
     key
@@ -12061,18 +12046,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     signature.fill(0xa5);
     assert_eq!(
       key.sign_tls_certificate_signature_scheme_with_scratch(0x0201, message, &mut signature, &mut scratch),
-      Err(RsaPrivateOpError::UnsupportedAlgorithm)
-    );
-    assert!(is_zero_unsigned_be(&signature));
-    signature.fill(0xa5);
-    assert_eq!(
-      key.sign_jwt_alg("HS256", message, &mut signature),
-      Err(RsaPrivateOpError::UnsupportedAlgorithm)
-    );
-    assert!(is_zero_unsigned_be(&signature));
-    signature.fill(0xa5);
-    assert_eq!(
-      key.sign_jwt_alg_with_scratch("HS256", message, &mut signature, &mut scratch),
       Err(RsaPrivateOpError::UnsupportedAlgorithm)
     );
     assert!(is_zero_unsigned_be(&signature));
@@ -13807,20 +13780,16 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
 
   #[test]
   fn protocol_adapter_mappings_are_explicit_and_reject_confusion() {
+    assert_eq!(RsaJwtAlgorithm::Ps256.as_str(), "PS256");
     assert_eq!(
-      RsaSignatureProfile::from_jwt_alg("PS256"),
-      Ok(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
+      RsaJwtAlgorithm::Ps256.signature_profile(),
+      RsaSignatureProfile::pss(RsaPssProfile::Sha256)
     );
+    assert_eq!(RsaJwtAlgorithm::Rs512.as_str(), "RS512");
     assert_eq!(
-      RsaSignatureProfile::from_jwt_alg("RS512"),
-      Ok(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512))
+      RsaJwtAlgorithm::Rs512.signature_profile(),
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512)
     );
-    for alg in ["none", "HS256", "ES256", "EdDSA", "RS1", "PS1", "rs256"] {
-      assert_eq!(
-        RsaSignatureProfile::from_jwt_alg(alg),
-        Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm)
-      );
-    }
 
     assert_eq!(
       RsaSignatureProfile::from_cose_algorithm_id(-37),

@@ -69,10 +69,11 @@ use rscrypto::{
 use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 use rscrypto::{
-  RsaEncryptionError, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
-  RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile,
-  RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch,
-  RsaSignatureProfile, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
+  RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile,
+  RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch,
+  RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey,
+  RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaTlsSignatureSchemes,
+  RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 use rscrypto::{VerificationError, ct};
 #[cfg(feature = "x25519")]
@@ -391,6 +392,7 @@ fn root_surface_rsa_exports_compile() {
   let _: Option<RsaPublicExponent> = None;
   let _: Option<RsaPublicKey> = None;
   let _: Option<RsaPublicScratch> = None;
+  let _: Option<RsaJwtVerifier<'static>> = None;
   let _: Option<RsaPrivateKey> = None;
   let _: Option<RsaPrivateKeyParts<'static>> = None;
   let _: Option<RsaPrivateScratch> = None;
@@ -630,28 +632,27 @@ fn root_surface_rsa_generated_key_end_to_end() {
     )
     .unwrap();
 
-  key.sign_jwt_alg("PS256", message, &mut signature).unwrap();
-  public_key
-    .verify_expected_jwt_alg("PS256", "PS256", pss_sha256, message, &signature)
+  key
+    .jwt_signer(RsaJwtAlgorithm::Ps256)
+    .try_sign_into(message, &mut signature)
     .unwrap();
-  public_key
-    .verify_expected_jwt_alg_with_scratch("PS256", "PS256", pss_sha256, message, &signature, &mut public_scratch)
+  let verifier = public_key.jwt_verifier(RsaJwtAlgorithm::Ps256);
+  verifier.verify("PS256", message, &signature).unwrap();
+  verifier
+    .verify_with_scratch("PS256", message, &signature, &mut public_scratch)
     .unwrap();
   key
-    .sign_jwt_alg_with_scratch("RS256", message, &mut signature, &mut private_scratch)
-    .unwrap();
-  public_key
-    .verify_expected_jwt_alg("RS256", "RS256", pkcs1v15_sha256, message, &signature)
-    .unwrap();
-  public_key
-    .verify_expected_jwt_alg_with_scratch(
-      "RS256",
-      "RS256",
-      pkcs1v15_sha256,
+    .sign_signature_with_scratch(
+      RsaJwtAlgorithm::Rs256.signature_profile(),
       message,
-      &signature,
-      &mut public_scratch,
+      &mut signature,
+      &mut private_scratch,
     )
+    .unwrap();
+  let verifier = public_key.jwt_verifier(RsaJwtAlgorithm::Rs256);
+  verifier.verify("RS256", message, &signature).unwrap();
+  verifier
+    .verify_with_scratch("RS256", message, &signature, &mut public_scratch)
     .unwrap();
 
   key.sign_cose_algorithm_id(-37, message, &mut signature).unwrap();

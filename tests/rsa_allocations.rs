@@ -8,7 +8,7 @@ use std::alloc::System;
 
 use rsa::{BigUint, RsaPrivateKey as RustCryptoRsaPrivateKey, pkcs1::EncodeRsaPrivateKey};
 use rscrypto::{
-  RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey,
+  RsaEncryptionError, RsaJwtAlgorithm, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey,
   RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
 };
 
@@ -408,7 +408,8 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   key
-    .verify_expected_jwt_alg_with_scratch("PS256", "PS256", pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
+    .jwt_verifier(RsaJwtAlgorithm::Ps256)
+    .verify_with_scratch("PS256", MESSAGE_PSS, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
@@ -469,7 +470,8 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   reset_allocations();
   key
-    .verify_expected_jwt_alg_with_scratch("RS256", "RS256", pkcs1v15_sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
+    .jwt_verifier(RsaJwtAlgorithm::Rs256)
+    .verify_with_scratch("RS256", MESSAGE_PKCS1V15, &sig, &mut scratch)
     .unwrap();
   assert_eq!(allocation_count(), 0);
 
@@ -562,22 +564,6 @@ fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation() {
   assert!(
     key
       .sign_tls_certificate_signature_scheme_with_scratch(0x0201, message, &mut signature, &mut scratch)
-      .is_err()
-  );
-  assert_eq!(allocation_count(), 0);
-  assert!(signature.iter().all(|&byte| byte == 0));
-
-  signature.fill(0xa5);
-  reset_allocations();
-  assert!(key.sign_jwt_alg("HS256", message, &mut signature).is_err());
-  assert_eq!(allocation_count(), 0);
-  assert!(signature.iter().all(|&byte| byte == 0));
-
-  signature.fill(0xa5);
-  reset_allocations();
-  assert!(
-    key
-      .sign_jwt_alg_with_scratch("HS256", message, &mut signature, &mut scratch)
       .is_err()
   );
   assert_eq!(allocation_count(), 0);
@@ -825,11 +811,21 @@ fn assert_one_shot_protocol_rejects_fail_before_scratch_allocation() {
     legacy_x509_public_key_from_spki(&pss_algorithm_spki_from_rsa_encryption_spki(&pss_spki()));
 
   reset_allocations();
-  assert!(key.verify_jwt_alg("none", MESSAGE_PSS, &sig).is_err());
+  assert!(
+    key
+      .jwt_verifier(RsaJwtAlgorithm::Ps256)
+      .verify("none", MESSAGE_PSS, &sig)
+      .is_err()
+  );
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
-  assert!(key.verify_jwt_alg("PS1", MESSAGE_PSS, &sig).is_err());
+  assert!(
+    key
+      .jwt_verifier(RsaJwtAlgorithm::Ps256)
+      .verify("PS1", MESSAGE_PSS, &sig)
+      .is_err()
+  );
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();

@@ -34,6 +34,8 @@ Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
   other randomized APIs expose caller-supplied entropy where deterministic or constrained use needs it.
 - Bind RSA generic signing and verification through `RsaPrivateKey::signer(profile)` and
   `RsaPublicKey::verifier(profile)` so the padding and hash policy are explicit.
+- Bind JWT/JWS verification through `RsaPublicKey::jwt_verifier(algorithm)`. The verifier owns one typed
+  `RsaJwtAlgorithm`; peer-controlled `alg` metadata can match that policy but cannot select it.
 
 ## Checksums
 
@@ -139,6 +141,7 @@ Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519
 | `Ed25519Keypair` | -- | RFC 8032 |
 | `RsaPublicKey`, `RsaPrivateKey`, `RsaPrivateKeyParts`, `RsaX509PublicKey`, `RsaPublicScratch`, `RsaPrivateScratch` | variable | RFC 8017 / RFC 4055 |
 | `RsaSignatureSigner`, `RsaSignatureVerifier` | profile-bound wrappers | RFC 8017 / RFC 4055 |
+| `RsaJwtAlgorithm`, `RsaJwtVerifier` | verifier-owned JWT/JWS policy | RFC 7515 / RFC 8725 |
 | `RsaSignatureProfile`, `RsaPssProfile`, `RsaPkcs1v15Profile`, `RsaOaepProfile`, `RsaPublicKeyPolicy`, `RsaKeyGenerationContract` | -- | RFC 8017 / RFC 4055 / FIPS 186-5 / protocol-specific profiles |
 | `RsaPublicExponent`, `RsaPublicExponentPolicy`, `RsaTlsSignatureSchemes`, `RsaX509PublicKeyAlgorithm` | -- | RSA policy / protocol mapping |
 | `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret` | 32B each | RFC 7748 |
@@ -214,7 +217,7 @@ also has `seal_random_to_vec`.
 | `RsaPrivateOpError` | RSA private operation, padding, entropy, or fault-check failure | Reject input; do not expose reason to peer |
 | `RsaEncryptionError` | RSA public encryption shape, padding, or entropy failure | Fix input / entropy source |
 | `RsaKeyGenerationError` | RSA key generation policy or entropy failure | Adjust key size/policy or entropy source |
-| `RsaProtocolAlgorithmError` | Unsupported/confused JWT/COSE/TLS/X.509 RSA selector | Reject algorithm mapping |
+| `RsaProtocolAlgorithmError` | Unsupported/confused COSE/TLS/X.509 RSA selector | Reject algorithm mapping |
 | `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
 | `InvalidHexError` | Hex decode failure | Fix input |
 | `platform::OverrideError` | Override after detection init | Set before first call |
