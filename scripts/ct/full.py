@@ -343,6 +343,26 @@ def load_json_if_exists(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def candidate_identity(out_dir: Path) -> dict[str, Any]:
+  provenance_path = out_dir / "provenance.json"
+  provenance = load_json_if_exists(provenance_path)
+  if provenance is None:
+    return {
+      "crate_version": None,
+      "git_commit": None,
+      "git_dirty": None,
+      "provenance": "provenance.json",
+      "provenance_sha256": None,
+    }
+  return {
+    "crate_version": provenance.get("crate_version"),
+    "git_commit": provenance.get("git_commit"),
+    "git_dirty": provenance.get("git_dirty"),
+    "provenance": "provenance.json",
+    "provenance_sha256": sha256_file(provenance_path),
+  }
+
+
 def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
   records = []
   for relative, kind in (
@@ -355,11 +375,39 @@ def collect_artifact_records(out_dir: Path) -> list[dict[str, Any]]:
     if path.exists():
       records.append(file_record(path, out_dir, kind))
 
-  for path in sorted((out_dir / "dudect" / "cases").glob("*/dudect-report.json")):
-    records.append(file_record(path, out_dir, "dudect_report"))
+  for path in sorted((out_dir / "dudect" / "cases").glob("*/*")):
+    if not path.is_file():
+      continue
+    kind = {
+      "dudect-report.json": "dudect_report",
+      "dudect-raw.csv": "dudect_raw_samples",
+      "dudect.stdout.txt": "dudect_stdout",
+    }.get(path.name, "dudect_component")
+    records.append(file_record(path, out_dir, kind))
 
-  for path in sorted((out_dir / "binsec").glob("*/binsec-report.json")):
-    records.append(file_record(path, out_dir, "binsec_report"))
+  for relative, kind in (
+    ("dudect/rscrypto-ct-dudect", "dudect_binary"),
+    ("dudect/rscrypto-ct-dudect.exe", "dudect_binary"),
+    ("dudect/rscrypto-ct-dudect.binary.disasm.txt", "dudect_binary_disassembly"),
+    ("dudect/rscrypto-ct-dudect.binary.symbols.txt", "dudect_binary_symbol_map"),
+    ("dudect/dudect-linker-command.txt", "dudect_linker_command"),
+  ):
+    path = out_dir / relative
+    if path.exists():
+      records.append(file_record(path, out_dir, kind))
+
+  for path in sorted((out_dir / "binsec").glob("*/*")):
+    if not path.is_file():
+      continue
+    kind = {
+      "binsec-report.json": "binsec_report",
+      "driver.elf": "binsec_driver",
+      "driver.disasm": "binsec_driver_disassembly",
+      "checkct.cfg": "binsec_configuration",
+      "binsec.log": "binsec_log",
+      "binsec-stats.toml": "binsec_statistics",
+    }.get(path.name, "binsec_component")
+    records.append(file_record(path, out_dir, kind))
 
   return records
 
@@ -443,6 +491,38 @@ def dudect_case_result(
     ):
       if key in case_report:
         row[key] = case_report[key]
+  if report is not None:
+    for key in (
+      "crate_version",
+      "git_commit",
+      "git_dirty",
+      "features",
+      "default_features",
+      "backend",
+      "profile_settings",
+      "dudect_manifest_sha256",
+      "harness_manifest_sha256",
+      "dudect_lockfile_sha256",
+      "rustc_verbose",
+      "cargo",
+      "configured_rustflags",
+      "environment_rustflags",
+      "effective_rustflags",
+      "rustflags_source",
+      "target_cpu",
+      "target_features",
+      "target_cfg_features",
+      "linker",
+      "linker_path",
+      "linker_sha256",
+      "linker_version",
+      "binary",
+      "binary_disassembly",
+      "binary_symbols",
+      "linker_command_log",
+    ):
+      if key in report:
+        row[key] = report[key]
   row["primitive"] = case["primitive"]
   row["gate"] = case.get("gate", "required")
   row["diagnostic_reason"] = case.get("reason") or case.get("notes") or row.get("diagnostic_reason")
@@ -1009,6 +1089,7 @@ def main() -> int:
     timeout=None,
   )
   steps.append(result_record(validate_result))
+  identity = candidate_identity(out_dir)
   if artifacts_result.status != "pass" or validate_result.status != "pass":
     for step in steps:
       if step["status"] != "pass":
@@ -1019,6 +1100,7 @@ def main() -> int:
       "schema_version": 1,
       "kind": "rscrypto.ct.full-report",
       "crate": "rscrypto",
+      **identity,
       "generated_at_utc": now_utc(),
       "target": target,
       "target_triple": target,
@@ -1148,6 +1230,27 @@ def main() -> int:
           "report": str(report_path),
           "reason": report.get("reason"),
           "category": binsec_result_category(report),
+          "backend": report.get("backend"),
+          "target": report.get("target"),
+          "target_triple": report.get("target_triple"),
+          "profile": report.get("profile"),
+          "crate_version": report.get("crate_version"),
+          "git_commit": report.get("git_commit"),
+          "git_dirty": report.get("git_dirty"),
+          "ct_manifest_sha256": report.get("ct_manifest_sha256"),
+          "harness_manifest_sha256": report.get("harness_manifest_sha256"),
+          "harness_lockfile_sha256": report.get("harness_lockfile_sha256"),
+          "rustc_verbose": report.get("rustc_verbose"),
+          "cargo": report.get("cargo"),
+          "features": report.get("features"),
+          "default_features": report.get("default_features"),
+          "profile_settings": report.get("profile_settings"),
+          "rustflags": report.get("rustflags"),
+          "harness_elf_type": report.get("harness_elf_type"),
+          "load_sections": report.get("load_sections"),
+          "binsec_version": report.get("binsec_version"),
+          "artifacts": report.get("artifacts", {}),
+          "artifact_dir": str(report_path.parent.relative_to(out_dir)),
         }
       )
   else:
@@ -1203,6 +1306,7 @@ def main() -> int:
     "schema_version": 1,
     "kind": "rscrypto.ct.full-report",
     "crate": "rscrypto",
+    **identity,
     "generated_at_utc": now_utc(),
     "target": target,
     "target_triple": target,

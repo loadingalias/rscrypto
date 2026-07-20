@@ -17,7 +17,12 @@ codegen-units = 1
 
 [lib]
 name = "rscrypto_ct_harness"
-crate-type = ["staticlib"]
+crate-type = ["rlib", "staticlib"]
+bench = false
+
+[[bin]]
+name = "rscrypto-ct-evidence"
+path = "src/main.rs"
 bench = false
 
 [dependencies]

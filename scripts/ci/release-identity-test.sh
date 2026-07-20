@@ -80,8 +80,8 @@ write_manifest() {
     --crate "$artifacts/rscrypto-1.2.3.crate" \
     --ct-evidence "${CT_PATH:-$artifacts/rscrypto-1.2.3-ct-evidence.tar.gz}" \
     --repository-controls "${CONTROLS_PATH:-$artifacts/rscrypto-1.2.3-repository-controls.json}" \
-    --evidence-commit "$commit" \
-    --evidence-mode exact_commit \
+    --evidence-commit "${EVIDENCE_COMMIT:-$commit}" \
+    --evidence-mode "${EVIDENCE_MODE:-exact_commit}" \
     --output "${MANIFEST_PATH:-$artifacts/rscrypto-1.2.3-release-manifest.json}"
 }
 
@@ -107,6 +107,16 @@ jq -e --arg commit "$commit" '
 grep -Fxq "manifest_path=$manifest" "$github_output"
 grep -Fxq "manifest_name=$(basename "$manifest")" "$github_output"
 grep -Eq '^manifest_sha256=[0-9a-f]{64}$' "$github_output"
+
+if EVIDENCE_MODE=release_only_delta MANIFEST_PATH="$TMP_ROOT/ancestor-mode.json" write_manifest >/dev/null 2>&1; then
+  echo "release manifest accepted ancestor evidence mode" >&2
+  exit 1
+fi
+if EVIDENCE_COMMIT=0000000000000000000000000000000000000000 \
+  MANIFEST_PATH="$TMP_ROOT/other-evidence-commit.json" write_manifest >/dev/null 2>&1; then
+  echo "release manifest accepted evidence for another commit" >&2
+  exit 1
+fi
 
 tampered_source="$TMP_ROOT/rscrypto-1.2.3-source.tar.gz"
 cp "$artifacts/rscrypto-1.2.3-source.tar.gz" "$tampered_source"

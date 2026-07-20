@@ -170,7 +170,7 @@ jobs:
         if [[ "$raw_artifacts" == "true" ]]; then
           package_args+=(--raw)
         fi
-        python3 scripts/ct/package_evidence.py "${package_args[@]}"
+        scripts/ct/python.sh scripts/ct/package_evidence.py "${package_args[@]}"
 
         exit "$status"
       artifact_name: ct-${{ matrix.artifact_suffix }}

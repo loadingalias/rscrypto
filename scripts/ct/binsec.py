@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 from toml_compat import tomllib
@@ -26,6 +27,31 @@ def sha256_file(path: Path) -> str:
     for chunk in iter(lambda: fh.read(1024 * 1024), b""):
       h.update(chunk)
   return h.hexdigest()
+
+
+@lru_cache(maxsize=1)
+def candidate_identity() -> dict[str, object]:
+  with (ROOT / "Cargo.toml").open("rb") as source:
+    crate = tomllib.load(source)
+  with HARNESS_MANIFEST.open("rb") as source:
+    harness = tomllib.load(source)
+  dependency = harness["dependencies"]["rscrypto"]
+  rustc_verbose = run(["rustc", "-vV"]).stdout.strip()
+  status = run(["git", "status", "--short", "--untracked-files=all"]).stdout.splitlines()
+  return {
+    "crate_version": crate["package"]["version"],
+    "git_commit": run(["git", "rev-parse", "HEAD"]).stdout.strip(),
+    "git_dirty": bool(status),
+    "git_status": status,
+    "ct_manifest_sha256": sha256_file(ROOT / "ct.toml"),
+    "harness_manifest_sha256": sha256_file(HARNESS_MANIFEST),
+    "harness_lockfile_sha256": sha256_file(ROOT / "tools" / "ct-binsec-harness" / "Cargo.lock"),
+    "rustc_verbose": rustc_verbose,
+    "cargo": run(["cargo", "-V"]).stdout.strip(),
+    "features": dependency["features"],
+    "default_features": dependency.get("default-features", True),
+    "profile_settings": harness.get("profile", {}).get("release", {}),
+  }
 
 
 def run(
@@ -365,6 +391,7 @@ def write_report(
     "schema_version": 1,
     "kind": "rscrypto.ct.binsec",
     "crate": "rscrypto",
+    **candidate_identity(),
     "backend": "llvm",
     "target": target,
     "target_triple": target,

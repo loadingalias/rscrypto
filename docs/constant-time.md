@@ -146,9 +146,12 @@ evidence set includes:
 
 - Stable harness entrypoints.
 - Build and host provenance.
-- LLVM IR, assembly, object, and symbol artifacts.
+- LLVM IR, assembly, pre-link objects, and symbol artifacts.
+- A fat-LTO final linked equality evidence executable, its exact linker
+  command and linker identity, and post-link disassembly, symbols, and size.
 - Automated checks for suspicious generated-code patterns.
-- Empirical timing tests on native executable targets.
+- Empirical timing tests on native executable targets, bound to the hashed
+  timing executable, disassembly, symbol map, and linker command.
 - ML-KEM DudeCT cases for key generation secret noise, encapsulation coins,
   decapsulation secret keys, implicit rejection, NTT, inverse NTT,
   product-domain conversion, basemul/dot products, and compress/decompress
@@ -156,6 +159,20 @@ evidence set includes:
 - Binary-level checks for small high-risk kernels on supported Linux ELF/ISA
   paths.
 - Miri and unsafe-code validation where the CT path uses unsafe Rust.
+
+The linked equality executable retains production owner comparisons at the
+distinct 16-, 28-, 32-, 48-, 64-, 1632-, 2400-, and 3168-byte owner widths.
+The required owner timing cases remain the manifest-declared 16-, 32-, 48-,
+and 64-byte cases. Public-length internal comparisons are mapped in `ct.toml`
+to retained production entrypoints or to an explicit limitation; an uncovered
+call is not silently treated as binary evidence.
+
+This executable is an unpublished evidence surface. It proves only its exact
+source, toolchain, backend, target, target features, feature set, profile, and
+linker configuration. It is not the crate's public API, it is not a sealed
+decision type, and it does not generalize to arbitrary downstream binaries.
+Equality still returns `bool`; that declassification limitation remains until
+T3.4.
 
 Assembly triage is grouped by primitive, reachable symbol, finding kind, and
 artifact. Register-indexed memory is presented first, then conditional control
@@ -168,7 +185,8 @@ date. Source or disassembly movement invalidates it.
 BINSEC is required on the GNU Linux targets supported by the workflow. Every
 manifest-required kernel must report `secure`. Other target reports record
 BINSEC as `not_applicable` with the target policy reason; that status is not
-binary proof.
+binary proof. Each formal result is bound to its hashed proof driver,
+disassembly, configuration, solver log, candidate identity, and toolchain.
 
 Statistical timing checks must be described precisely:
 

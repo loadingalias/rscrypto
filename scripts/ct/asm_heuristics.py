@@ -292,9 +292,70 @@ def ct_intended_roots_by_primitive(root: Path) -> dict[str, set[str]]:
   return roots
 
 
+def equality_release_roots(root: Path) -> set[str]:
+  ct = load_toml(root / "ct.toml")
+  release_binary = ct.get("equality_evidence", {}).get("release_binary", {})
+  return set(release_binary.get("owner_symbols", [])) | set(release_binary.get("public_len_symbols", []))
+
+
 def waivers(root: Path) -> list[dict[str, Any]]:
   ct = load_toml(root / "ct.toml")
   return list(ct.get("asm_waiver", []))
+
+
+def public_operand_rules(root: Path) -> list[dict[str, Any]]:
+  ct = load_toml(root / "ct.toml")
+  return list(ct.get("asm_public_operand", []))
+
+
+def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[dict[str, Any]]) -> list[str]:
+  required = {"primitive", "root", "symbol", "kind", "max_count", "source", "rationale"}
+  errors: list[str] = []
+  match_counts = [0] * len(configured)
+  for index, rule in enumerate(configured):
+    if set(rule) != required:
+      errors.append(f"asm_public_operand[{index}] must contain exactly: {', '.join(sorted(required))}")
+      continue
+    if any(not isinstance(rule.get(field), str) or not rule.get(field, "").strip() for field in required - {"max_count"}):
+      errors.append(f"asm_public_operand[{index}] string fields must be non-empty")
+    max_count = rule.get("max_count")
+    if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count <= 0:
+      errors.append(f"asm_public_operand[{index}] max_count must be a positive integer")
+
+  if errors:
+    return errors
+
+  for finding in findings:
+    matches = [
+      index
+      for index, rule in enumerate(configured)
+      if rule["symbol"] == finding["symbol"]
+      and rule["kind"] == finding["kind"]
+      and rule["primitive"] in finding.get("primitive_ids", [])
+      and rule["root"] in finding.get("roots", [])
+    ]
+    if len(matches) > 1:
+      errors.append(f"multiple asm_public_operand rules match {finding['locator']}")
+      continue
+    if not matches:
+      continue
+    index = matches[0]
+    rule = configured[index]
+    match_counts[index] += 1
+    finding["operand_class"] = "public"
+    finding["disposition"] = "accepted"
+    finding["public_classification"] = {
+      "primitive": rule["primitive"],
+      "root": rule["root"],
+      "source": rule["source"],
+      "rationale": rule["rationale"],
+    }
+
+  for index, count in enumerate(match_counts):
+    max_count = configured[index]["max_count"]
+    if count > max_count:
+      errors.append(f"asm_public_operand[{index}] matched {count} findings, exceeding max_count {max_count}")
+  return errors
 
 
 def validate_waivers(configured: list[dict[str, Any]]) -> list[str]:
@@ -482,7 +543,7 @@ def is_call_relocation(line: str) -> bool:
   return bool(re.search(r"\b(?:R_[A-Z0-9_]*(?:CALL(?:_PLT)?|PLT32)|ARM64_RELOC_BRANCH26|X86_64_RELOC_BRANCH)\b", line))
 
 
-def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> set[str]:
+def all_direct_callees(body: FunctionBody) -> set[str]:
   callees: set[str] = set()
   for index, (_, line) in enumerate(body.lines):
     inst = mnemonic(line)
@@ -490,14 +551,24 @@ def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> se
       continue
     targets = direct_call_targets(line)
     if inst in DIRECT_CALL_MNEMONICS and index + 1 < len(body.lines):
-      targets.update(direct_call_targets(body.lines[index + 1][1]))
-    callees.update(
-      target
-      for target in targets
-      if target in functions and target.startswith(("rscrypto::", "rscrypto_", "ct_entry_", "<rscrypto::"))
-    )
+      next_line = body.lines[index + 1][1]
+      if is_call_relocation(next_line):
+        targets.update(direct_call_targets(next_line))
+    callees.update(targets)
   callees.discard(body.symbol)
   return callees
+
+
+def direct_callees(body: FunctionBody, functions: dict[str, FunctionBody]) -> set[str]:
+  return {
+    target
+    for target in all_direct_callees(body)
+    if target in functions and target.startswith(("rscrypto::", "rscrypto_", "ct_entry_", "<rscrypto::"))
+  }
+
+
+def is_ct_internal_symbol(symbol: str) -> bool:
+  return symbol.startswith(("rscrypto::", "rscrypto_", "ct_entry_", "<rscrypto::"))
 
 
 def build_call_graph(functions: dict[str, FunctionBody]) -> dict[str, set[str]]:
@@ -524,6 +595,33 @@ def closure_roots(
   for primitive_id, roots in roots_by_primitive.items():
     by_primitive[primitive_id] = {root: reachable_closure(root, call_graph) for root in sorted(roots)}
   return by_primitive
+
+
+def final_equality_closure(roots: set[str], functions: dict[str, FunctionBody], artifact: Path) -> dict[str, Any]:
+  call_graph = build_call_graph(functions)
+  by_root = {root: reachable_closure(root, call_graph) for root in sorted(roots) if root in functions}
+  reachable = sorted({symbol for symbols in by_root.values() for symbol in symbols})
+  terminal_calls: dict[str, list[str]] = {}
+  unresolved_internal_calls = []
+  for symbol in reachable:
+    callees = all_direct_callees(functions[symbol])
+    terminal = sorted(target for target in callees if not is_ct_internal_symbol(target))
+    if terminal:
+      terminal_calls[symbol] = terminal
+    for target in callees:
+      if is_ct_internal_symbol(target) and target not in functions:
+        unresolved_internal_calls.append({"caller": symbol, "target": target})
+  return {
+    "artifact": f"artifacts/{artifact.name}",
+    "artifact_sha256": sha256_file(artifact),
+    "root_symbols": sorted(roots),
+    "missing_root_symbols": sorted(roots - set(functions)),
+    "reachable_symbols_by_root": {root: sorted(symbols) for root, symbols in by_root.items()},
+    "reachable_symbol_count": len(reachable),
+    "reachable_symbols": reachable,
+    "terminal_calls_by_symbol": terminal_calls,
+    "unresolved_internal_calls": unresolved_internal_calls,
+  }
 
 
 def is_s390x_return(target: str, inst: str, line: str) -> bool:
@@ -860,7 +958,7 @@ def scan_symbol(
       )
     elif inst in DIRECT_CALL_MNEMONICS:
       callees = direct_call_targets(line)
-      if callees and callees <= local_symbols:
+      if callees and callees <= local_symbols and all(is_ct_internal_symbol(callee) for callee in callees):
         continue
       findings.append(
         finding(
@@ -1064,6 +1162,8 @@ def main() -> int:
   symbol_primitives = primitive_symbols(root)
   ct_roots_by_primitive = ct_intended_roots_by_primitive(root)
   configured_waivers = waivers(root)
+  configured_public_operands = public_operand_rules(root)
+  equality_roots = equality_release_roots(root)
   waiver_errors = validate_waivers(configured_waivers)
   if waiver_errors:
     for error in waiver_errors:
@@ -1072,6 +1172,11 @@ def main() -> int:
   functions: dict[str, FunctionBody] = {}
   findings: list[dict[str, Any]] = []
   disassembly_files = sorted([*args.artifact_dir.glob("*.o.disasm.txt"), *args.artifact_dir.glob("*.obj.disasm.txt")])
+  final_disassembly_files = sorted(args.artifact_dir.glob("*.binary.disasm.txt"))
+  if len(final_disassembly_files) != 1:
+    print(f"expected exactly one final binary disassembly, found {len(final_disassembly_files)}")
+    return 2
+  disassembly_files.extend(final_disassembly_files)
   symbol_addresses = parse_symbol_addresses(args.artifact_dir)
   aliases = parse_asm_aliases(args.artifact_dir)
 
@@ -1086,6 +1191,15 @@ def main() -> int:
       if len(bodies) == 1:
         functions[symbol] = bodies[0]
     apply_alias_bodies(functions, aliases)
+
+  final_functions, _ = parse_disassembly(final_disassembly_files[0])
+  final_equality = final_equality_closure(equality_roots, final_functions, final_disassembly_files[0])
+  if final_equality["missing_root_symbols"] or final_equality["unresolved_internal_calls"]:
+    for symbol in final_equality["missing_root_symbols"]:
+      print(f"final equality binary is missing root {symbol}")
+    for call in final_equality["unresolved_internal_calls"]:
+      print(f"final equality closure cannot resolve {call['caller']} -> {call['target']}")
+    return 2
 
   call_graph = build_call_graph(functions)
   closures = closure_roots(ct_roots_by_primitive, call_graph)
@@ -1117,6 +1231,11 @@ def main() -> int:
     )
 
   try:
+    public_operand_errors = apply_public_operand_rules(findings, configured_public_operands)
+    if public_operand_errors:
+      for error in public_operand_errors:
+        print(error)
+      return 2
     waiver_match_errors = apply_waivers(findings, configured_waivers, args.target)
   except ValueError as exc:
     print(f"invalid asm waiver set: {exc}")
@@ -1126,7 +1245,9 @@ def main() -> int:
       print(error)
     return 2
   missing_symbols = sorted(symbol for symbol in symbols if symbol not in functions)
-  unwaived_failures = [item for item in findings if item["severity"] == "fail" and not item.get("waived")]
+  unwaived_failures = [
+    item for item in findings if item["severity"] == "fail" and item["disposition"] != "accepted" and not item.get("waived")
+  ]
   unwaived_warnings = [item for item in findings if item["severity"] == "warn" and not item.get("waived")]
   needs_fix = [item for item in findings if item["disposition"] == "needs-fix" and not item.get("waived")]
   needs_binsec = [item for item in findings if item["disposition"] == "needs-binsec" and not item.get("waived")]
@@ -1136,6 +1257,21 @@ def main() -> int:
     for item in findings
     if item.get("operand_class") not in {"public", "secret", "unproven"}
     or item.get("disposition") not in {"accepted", "needs-fix", "needs-binsec"}
+  ]
+  final_artifact = final_disassembly_files[0].name
+  final_reachable = set(final_equality["reachable_symbols"])
+  final_equality["terminal_call_sites"] = [
+    {
+      "symbol": item["symbol"],
+      "locator": item["locator"],
+      "text": item["text"],
+      "kind": item["kind"],
+      "function_sha256": item["function_sha256"],
+    }
+    for item in findings
+    if Path(item["file"]).name == final_artifact
+    and item["symbol"] in final_reachable
+    and item["kind"] in {"call", "indirect_call"}
   ]
 
   report = {
@@ -1177,6 +1313,7 @@ def main() -> int:
       "root_symbol_count": sum(len(roots) for roots in ct_roots_by_primitive.values()),
       "reachable_symbol_count": len(closure_symbols),
     },
+    "final_equality_call_closure": final_equality,
     "missing_symbols": missing_symbols,
     "finding_count": len(findings),
     "needs_fix_count": len(needs_fix),

@@ -15,13 +15,13 @@ use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
   Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha256,
-  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
-  MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey,
-  MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
-  MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
-  RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
+  EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha3_224Tag,
+  HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512,
+  MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext,
+  MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey,
+  MlKem1024EncapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey,
+  XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
   traits::Kem as _,
@@ -800,6 +800,7 @@ fixed_tag_verify_entry!(ct_entry_hmac_sha512_verify, HmacSha512, HmacSha512Tag, 
 
 macro_rules! fixed_owner_eq_entry {
   ($name:ident, $type:ty, $len:expr) => {
+    #[inline(never)]
     #[unsafe(no_mangle)]
     pub extern "C" fn $name(a: *const u8, b: *const u8) -> u8 {
       // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
@@ -817,9 +818,13 @@ macro_rules! fixed_owner_eq_entry {
 }
 
 fixed_owner_eq_entry!(ct_entry_owner_eq_16, Aes128GcmKey, 16);
+fixed_owner_eq_entry!(ct_entry_owner_eq_28, HmacSha3_224Tag, 28);
 fixed_owner_eq_entry!(ct_entry_owner_eq_32, X25519SecretKey, 32);
 fixed_owner_eq_entry!(ct_entry_owner_eq_48, HmacSha384Tag, 48);
 fixed_owner_eq_entry!(ct_entry_owner_eq_64, HmacSha512Tag, 64);
+fixed_owner_eq_entry!(ct_entry_owner_eq_1632, MlKem512DecapsulationKey, 1632);
+fixed_owner_eq_entry!(ct_entry_owner_eq_2400, MlKem768DecapsulationKey, 2400);
+fixed_owner_eq_entry!(ct_entry_owner_eq_3168, MlKem1024DecapsulationKey, 3168);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_secret_bytes32_debug_masked(secret: *const u8) -> u8 {
