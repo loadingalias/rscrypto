@@ -77,7 +77,7 @@ jobs:
       run_script: |
         mkdir -p target/cargo-rail
         cargo rail config validate --strict
-        cargo rail config sync --check
+        cargo rail config migrate --check
         cargo rail unify --check --explain --format json \
           --output target/cargo-rail/unify-result.json
       artifact_name: cargo-graph-${{ inputs.cache_key_prefix }}

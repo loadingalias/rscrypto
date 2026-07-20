@@ -112,7 +112,7 @@ check-zeroize-evidence:
 
 check-unify:
     cargo rail config validate --strict
-    cargo rail config sync --check
+    cargo rail config migrate --check
     cargo rail unify --check --explain
 
 ci-check:

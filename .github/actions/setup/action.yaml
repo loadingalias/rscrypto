@@ -62,7 +62,7 @@ runs:
       if: inputs.tools-mode != 'none'
       shell: bash
       env:
-        CARGO_RAIL_VERSION: "0.17.3"
+        CARGO_RAIL_VERSION: "0.18.0"
         CARGO_SEMVER_CHECKS_VERSION: "0.48.0"
         TOOLS_MODE: ${{ inputs.tools-mode }}
       run: scripts/ci/install-tools.sh "$TOOLS_MODE"
