@@ -218,7 +218,12 @@ def dudect_registered_benches(root: Path, errors: list[str]) -> set[str]:
   return set(re.findall(r"\(\s*([A-Za-z0-9_]+),\s*Some\(", body))
 
 
-def compiler_public_api_snapshot(root: Path, prefixes: tuple[str, ...], errors: list[str]) -> tuple[int, str] | None:
+def compiler_public_api_snapshot(
+  root: Path,
+  target: str,
+  prefixes: tuple[str, ...],
+  errors: list[str],
+) -> tuple[int, str] | None:
   """Return the audited public security API count and digest from rustdoc JSON."""
   target_dir = root / "target" / "ct-api-inventory"
   command = [
@@ -227,6 +232,8 @@ def compiler_public_api_snapshot(root: Path, prefixes: tuple[str, ...], errors: 
     "--quiet",
     "--lib",
     "--all-features",
+    "--target",
+    target,
     "--target-dir",
     str(target_dir),
     "--",
@@ -242,7 +249,7 @@ def compiler_public_api_snapshot(root: Path, prefixes: tuple[str, ...], errors: 
     fail(errors, f"compiler public-API inventory failed{suffix}")
     return None
 
-  rustdoc_path = target_dir / "doc" / "rscrypto.json"
+  rustdoc_path = target_dir / target / "doc" / "rscrypto.json"
   if not rustdoc_path.is_file():
     fail(errors, f"compiler public-API inventory missing {rustdoc_path}")
     return None
@@ -301,7 +308,7 @@ def compiler_public_api_snapshot(root: Path, prefixes: tuple[str, ...], errors: 
   return len(rows), hashlib.sha256(encoded).hexdigest()
 
 
-def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dict:
+def validate_manifest(root: Path, selected_target: str, errors: list[str], warnings: list[str]) -> dict:
   ct_path = root / "ct.toml"
   matrix_path = root / ".config" / "target-matrix.json"
   if not ct_path.exists():
@@ -314,8 +321,17 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
   ct = load_toml(ct_path)
   matrix = json.loads(matrix_path.read_text())
 
+  target_rows = ct.get("target", [])
+  target_by_name: dict[str, dict] = {}
+  for target in target_rows:
+    name = target.get("name", "")
+    if name in target_by_name:
+      fail(errors, f"duplicate target {name or '<unnamed>'}")
+    else:
+      target_by_name[name] = target
+
   expected_targets = matrix_targets(matrix)
-  actual_targets = {target.get("name", "") for target in ct.get("target", [])}
+  actual_targets = set(target_by_name)
   missing = sorted(expected_targets - actual_targets)
   extra = sorted(actual_targets - expected_targets)
   if missing:
@@ -323,7 +339,7 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
   if extra:
     fail(errors, f"ct.toml has target(s) not in target matrix: {', '.join(extra)}")
 
-  for target in ct.get("target", []):
+  for target in target_rows:
     name = target.get("name", "<unnamed>")
     claim = target.get("claim")
     if claim not in VALID_CLAIMS:
@@ -345,6 +361,20 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
       fail(errors, f"target {name} binsec unsupported requires binsec_reason")
     if target.get("binsec") == "required" and "linux" not in name:
       fail(errors, f"target {name} requires BINSEC but is not a Linux target")
+    compiler_api_item_count = target.get("compiler_api_item_count")
+    compiler_api_sha256 = target.get("compiler_api_sha256")
+    if (compiler_api_item_count is None) != (compiler_api_sha256 is None):
+      fail(errors, f"target {name} compiler public-API snapshot must provide both count and digest")
+    elif target.get("physical_timing") == "required" and compiler_api_item_count is None:
+      fail(errors, f"target {name} requires a compiler public-API snapshot for release evidence")
+    if compiler_api_item_count is not None and (
+      isinstance(compiler_api_item_count, bool)
+      or not isinstance(compiler_api_item_count, int)
+      or compiler_api_item_count <= 0
+    ):
+      fail(errors, f"target {name} compiler_api_item_count must be a positive integer")
+    if compiler_api_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", str(compiler_api_sha256)):
+      fail(errors, f"target {name} compiler_api_sha256 must be a lowercase SHA-256 digest")
 
   harness_sections = ct.get("harness", [])
   all_harness_symbols = {symbol for harness in harness_sections for symbol in harness.get("symbols", [])}
@@ -684,18 +714,27 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
     elif len(prefixes) != len(set(prefixes)):
       fail(errors, "operation_inventory compiler_api_prefixes must not contain duplicates")
     else:
-      snapshot = compiler_public_api_snapshot(root, tuple(prefixes), errors)
-      if snapshot is not None:
-        actual_count, actual_sha256 = snapshot
-        expected_count = inventory.get("compiler_api_item_count")
-        expected_sha256 = inventory.get("compiler_api_sha256")
-        if actual_count != expected_count:
-          fail(errors, f"compiler public-API inventory expected {expected_count} items, got {actual_count}")
-        if actual_sha256 != expected_sha256:
-          fail(
-            errors,
-            "compiler public-API inventory digest changed; audit and classify the public surface before updating ct.toml",
-          )
+      target_inventory = target_by_name.get(selected_target)
+      if target_inventory is None:
+        fail(errors, f"compiler public-API inventory target is not declared: {selected_target}")
+      elif target_inventory.get("compiler_api_item_count") is None or target_inventory.get("compiler_api_sha256") is None:
+        fail(errors, f"target {selected_target} has no compiler public-API snapshot; evidence remains unsupported")
+      else:
+        snapshot = compiler_public_api_snapshot(root, selected_target, tuple(prefixes), errors)
+        if snapshot is not None:
+          actual_count, actual_sha256 = snapshot
+          expected_count = target_inventory.get("compiler_api_item_count")
+          expected_sha256 = target_inventory.get("compiler_api_sha256")
+          if actual_count != expected_count:
+            fail(
+              errors,
+              f"compiler public-API inventory for {selected_target} expected {expected_count} items, got {actual_count}",
+            )
+          if actual_sha256 != expected_sha256:
+            fail(
+              errors,
+              f"compiler public-API inventory digest changed for {selected_target}; audit and classify the public surface before updating ct.toml",
+            )
 
   operation_ids: set[str] = set()
   operation_api: dict[str, str] = {}
@@ -1394,16 +1433,15 @@ def main() -> int:
   errors: list[str] = []
   warnings: list[str] = []
 
-  ct = validate_manifest(root, errors, warnings)
-  if args.strict_coverage:
-    validate_strict_coverage(ct, errors, args.target)
-  if not args.manifest_only:
-    target = args.target
-    if target is None:
-      import subprocess
+  target = args.target
+  if target is None:
+    verbose = subprocess.check_output(["rustc", "-vV"], text=True)
+    target = next(line.split(":", 1)[1].strip() for line in verbose.splitlines() if line.startswith("host:"))
 
-      target = subprocess.check_output(["rustc", "-vV"], text=True)
-      target = next(line.split(":", 1)[1].strip() for line in target.splitlines() if line.startswith("host:"))
+  ct = validate_manifest(root, target, errors, warnings)
+  if args.strict_coverage:
+    validate_strict_coverage(ct, errors, target)
+  if not args.manifest_only:
     validate_artifacts(root, target, args.profile, ct, errors, warnings)
     if args.require_dudect:
       validate_dudect(root, target, args.profile, ct, errors, warnings)

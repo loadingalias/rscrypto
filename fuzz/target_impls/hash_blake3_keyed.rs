@@ -1,4 +1,4 @@
-use rscrypto::{Blake3, Digest};
+use rscrypto::{Blake3, Blake3KeyedHash, Digest};
 use rscrypto_fuzz::{FuzzInput, assert_xof_prefix, some_or_return};
 
 pub fn run(data: &[u8]) {
@@ -13,7 +13,7 @@ pub fn run(data: &[u8]) {
   let mut h = Blake3::new_keyed(&key);
   h.update(a);
   h.update(b);
-  let got = h.finalize();
+  let got = Blake3KeyedHash::from_bytes(h.finalize());
   assert_eq!(expected, got, "keyed blake3: chunk-split mismatch");
 
   // Property: reset preserves keyed mode
