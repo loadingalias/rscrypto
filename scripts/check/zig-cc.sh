@@ -20,11 +20,15 @@ set -euo pipefail
 # ZIG_CC_TARGET explicitly when this script is used as the linker.
 TARGET="${ZIG_CC_TARGET:-}"
 ARGS=()
+PRINT_CT_MAP=false
 for arg in "$@"; do
 	if [[ "$arg" == --target=* ]]; then
 		TARGET="${arg#--target=}"
 	else
 		ARGS+=("$arg")
+		if [[ "$arg" == "-Wl,--print-map" ]]; then
+			PRINT_CT_MAP=true
+		fi
 	fi
 done
 
@@ -68,5 +72,9 @@ x86_64-unknown-none) ZIG_TARGET="x86_64-freestanding" ;;
 	exit 1
 	;;
 esac
+
+if [[ -n "${RSCRYPTO_CT_LINK_MAP:-}" && "$PRINT_CT_MAP" == true ]]; then
+	exec zig cc -target "$ZIG_TARGET" "${ARGS[@]}" >"$RSCRYPTO_CT_LINK_MAP"
+fi
 
 exec zig cc -target "$ZIG_TARGET" "${ARGS[@]}"

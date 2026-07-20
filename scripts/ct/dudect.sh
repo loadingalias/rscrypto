@@ -104,26 +104,77 @@ OUT_DIR="$ROOT/target/ct/$TARGET/$PROFILE/dudect"
 STDOUT_PATH="$OUT_DIR/dudect.stdout.txt"
 CSV_PATH="$OUT_DIR/dudect-raw.csv"
 REPORT_PATH="$OUT_DIR/dudect-report.json"
+BINARY_PATH="$OUT_DIR/rscrypto-ct-dudect"
+LINKER_COMMAND_PATH="$OUT_DIR/dudect-linker-command.txt"
+BINARY_DISASM_PATH="$OUT_DIR/rscrypto-ct-dudect.binary.disasm.txt"
+BINARY_SYMBOLS_PATH="$OUT_DIR/rscrypto-ct-dudect.binary.symbols.txt"
 mkdir -p "$OUT_DIR"
 rm -f "$STDOUT_PATH" "$CSV_PATH" "$REPORT_PATH"
 
-CARGO_ARGS=(run --locked --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$ROOT/target/ct-dudect-build" --target "$TARGET")
+BUILD_TARGET_DIR="$ROOT/target/ct-dudect-build/$TARGET/$PROFILE"
+if [[ ! -s "$LINKER_COMMAND_PATH" ]]; then
+  rm -rf "$BUILD_TARGET_DIR"
+fi
+CARGO_ARGS=(--locked --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$BUILD_TARGET_DIR" --target "$TARGET")
 if [[ "$PROFILE" == "release" ]]; then
   CARGO_ARGS+=(--release)
 elif [[ "$PROFILE" != "debug" ]]; then
   echo "unsupported dudect profile: $PROFILE" >&2
   exit 2
 fi
-CARGO_ARGS+=(-- --out "$CSV_PATH")
-if [[ -n "$FILTER" ]]; then
-  CARGO_ARGS+=(--filter "$FILTER")
+
+linker_log_candidate="$(mktemp "$OUT_DIR/.dudect-linker-command.XXXXXXXX")"
+cargo rustc "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- --print link-args 2>&1 | tee "$linker_log_candidate"
+link_command_count=$(grep -c '"-o"' "$linker_log_candidate" || true)
+if [[ "$link_command_count" -gt 1 ]]; then
+  echo "expected at most one DudeCT linker command; found $link_command_count" >&2
+  rm -f "$linker_log_candidate"
+  exit 1
+fi
+if [[ "$link_command_count" -eq 1 ]]; then
+  mv "$linker_log_candidate" "$LINKER_COMMAND_PATH"
+else
+  rm -f "$linker_log_candidate"
+fi
+if [[ ! -s "$LINKER_COMMAND_PATH" ]]; then
+  echo "DudeCT linker command was not captured" >&2
+  exit 1
 fi
 
-COMMAND="RSCRYPTO_CT_DUDECT_SAMPLES=$SAMPLES cargo ${CARGO_ARGS[*]}"
+BUILT_BINARY="$BUILD_TARGET_DIR/$TARGET/$PROFILE/rscrypto-ct-dudect"
+if [[ -f "$BUILT_BINARY.exe" ]]; then
+  BUILT_BINARY="$BUILT_BINARY.exe"
+  BINARY_PATH="$BINARY_PATH.exe"
+fi
+if [[ ! -f "$BUILT_BINARY" ]]; then
+  echo "DudeCT executable missing: $BUILT_BINARY" >&2
+  exit 1
+fi
+cp "$BUILT_BINARY" "$BINARY_PATH"
+
+SYSROOT="$(rustc --print sysroot)"
+LLVM_BIN="$SYSROOT/lib/rustlib/$HOST_TARGET/bin"
+LLVM_OBJDUMP="${LLVM_OBJDUMP:-$LLVM_BIN/llvm-objdump}"
+LLVM_NM="${LLVM_NM:-$LLVM_BIN/llvm-nm}"
+for tool in "$LLVM_OBJDUMP" "$LLVM_NM"; do
+  if [[ ! -x "$tool" ]]; then
+    echo "missing LLVM tool: $tool" >&2
+    exit 1
+  fi
+done
+"$LLVM_OBJDUMP" --disassemble --reloc --demangle "$BINARY_PATH" > "$BINARY_DISASM_PATH"
+"$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
+
+RUNNER_ARGS=(--out "$CSV_PATH")
+if [[ -n "$FILTER" ]]; then
+  RUNNER_ARGS+=(--filter "$FILTER")
+fi
+
+COMMAND="RSCRYPTO_CT_DUDECT_SAMPLES=$SAMPLES $BINARY_PATH ${RUNNER_ARGS[*]}"
 echo "$COMMAND"
 (
   cd "$ROOT"
-  RSCRYPTO_CT_DUDECT_SAMPLES="$SAMPLES" cargo "${CARGO_ARGS[@]}"
+  RSCRYPTO_CT_DUDECT_SAMPLES="$SAMPLES" "$BINARY_PATH" "${RUNNER_ARGS[@]}"
 ) | tee "$STDOUT_PATH"
 
 PYTHON="$("$ROOT/scripts/ct/python.sh" --print)"
@@ -141,4 +192,8 @@ fi
   --profile "$PROFILE" \
   --threshold "$THRESHOLD" \
   --samples "$SAMPLES" \
-  --command "$COMMAND"
+  --command "$COMMAND" \
+  --binary "$BINARY_PATH" \
+  --binary-disassembly "$BINARY_DISASM_PATH" \
+  --binary-symbols "$BINARY_SYMBOLS_PATH" \
+  --linker-command-log "$LINKER_COMMAND_PATH"

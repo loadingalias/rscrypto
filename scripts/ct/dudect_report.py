@@ -9,9 +9,14 @@ import hashlib
 import json
 import platform
 import re
+import shlex
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+from toml_compat import tomllib
+from provenance import cfg_target_features, codegen_value, codegen_values, resolved_rustflags
 
 
 CASE_METADATA = {
@@ -559,7 +564,75 @@ def main() -> int:
   parser.add_argument("--threshold", type=float, default=10.0)
   parser.add_argument("--samples", type=int, required=True)
   parser.add_argument("--command", default="")
+  parser.add_argument("--binary", required=True, type=Path)
+  parser.add_argument("--binary-disassembly", required=True, type=Path)
+  parser.add_argument("--binary-symbols", required=True, type=Path)
+  parser.add_argument("--linker-command-log", required=True, type=Path)
   args = parser.parse_args()
+
+  root = Path(__file__).resolve().parents[2]
+  with (root / "Cargo.toml").open("rb") as source:
+    crate_version = tomllib.load(source)["package"]["version"]
+  with (root / "ct.toml").open("rb") as source:
+    release_binary = tomllib.load(source)["equality_evidence"]["release_binary"]
+  dudect_manifest_path = root / "tools" / "ct-dudect" / "Cargo.toml"
+  harness_manifest_path = root / "tools" / "ct-harness" / "Cargo.toml"
+  dudect_lockfile_path = root / "tools" / "ct-dudect" / "Cargo.lock"
+  with dudect_manifest_path.open("rb") as source:
+    dudect_manifest = tomllib.load(source)
+  configured_rustflags, environment_rustflags, effective_rustflags, rustflags_source = resolved_rustflags(
+    root, args.target
+  )
+  target_cfg = subprocess.check_output(
+    ["rustc", "--print", "cfg", "--target", args.target, *effective_rustflags],
+    cwd=root,
+    text=True,
+  )
+  expected_owner_symbols = {f"ct_entry_owner_eq_{width}" for width in release_binary["formal_owner_widths"]}
+  for path in (args.binary, args.binary_disassembly, args.binary_symbols, args.linker_command_log):
+    if not path.is_file():
+      raise ValueError(f"DudeCT evidence artifact missing: {path}")
+
+  symbol_counts = {symbol: 0 for symbol in expected_owner_symbols}
+  for line in args.binary_symbols.read_text().splitlines():
+    if match := re.search(r"\b_?(ct_entry_owner_eq_[0-9]+)\b", line):
+      if match.group(1) in symbol_counts:
+        symbol_counts[match.group(1)] += 1
+  wrong_symbol_counts = {symbol: count for symbol, count in symbol_counts.items() if count != 1}
+  if wrong_symbol_counts:
+    raise ValueError(f"DudeCT binary owner equality symbols must occur exactly once: {wrong_symbol_counts}")
+  owner_call_sites = {symbol: 0 for symbol in expected_owner_symbols}
+  current_symbol = ""
+  function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
+  for line in args.binary_disassembly.read_text(errors="replace").splitlines():
+    if match := function_label.match(line.strip()):
+      current_symbol = match.group(1).removeprefix("_")
+      continue
+    instruction = re.search(r"\b(?:bl|brasl|call|callq|jal)\b", line)
+    if instruction is None:
+      continue
+    for symbol in expected_owner_symbols:
+      if current_symbol != symbol and re.search(rf"<_?{re.escape(symbol)}(?:\+[^>]*)?>", line):
+        owner_call_sites[symbol] += 1
+  missing_call_sites = {symbol: count for symbol, count in owner_call_sites.items() if count < 1}
+  if missing_call_sites:
+    raise ValueError(f"DudeCT binary does not call every owner equality symbol: {missing_call_sites}")
+
+  linker_command = next(
+    (line for line in args.linker_command_log.read_text().splitlines() if '"-o"' in line),
+    "",
+  )
+  linker_tokens = shlex.split(linker_command)
+  first_object = next((index for index, token in enumerate(linker_tokens) if token.endswith((".o", ".obj"))), None)
+  if first_object is None or first_object == 0:
+    raise ValueError("DudeCT linker command does not identify the linker driver")
+  linker = linker_tokens[first_object - 1]
+  linker_path_text = shutil.which(linker)
+  if linker_path_text is None:
+    raise ValueError(f"DudeCT linker driver is not resolvable: {linker}")
+  linker_path = Path(linker_path_text).resolve()
+  linker_version = subprocess.check_output([str(linker_path), "--version"], cwd=root, text=True, stderr=subprocess.STDOUT).strip()
+  git_status = subprocess.check_output(["git", "status", "--short", "--untracked-files=all"], cwd=root, text=True).splitlines()
 
   seeds, results = parse_stdout(args.stdout)
   raw_rows = raw_csv_rows(args.csv)
@@ -588,13 +661,58 @@ def main() -> int:
     )
 
   report = {
-    "schema_version": 1,
+    "schema_version": 2,
     "kind": "rscrypto.ct.dudect",
     "crate": "rscrypto",
+    "crate_version": crate_version,
+    "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+    "git_dirty": bool(git_status),
+    "git_status": git_status,
     "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     "target": args.target,
     "target_triple": args.target,
     "profile": args.profile,
+    "profile_settings": dudect_manifest.get("profile", {}).get(args.profile, {}),
+    "features": release_binary["features"],
+    "default_features": release_binary["default_features"],
+    "backend": release_binary["backend"],
+    "dudect_manifest_sha256": sha256_file(dudect_manifest_path),
+    "harness_manifest_sha256": sha256_file(harness_manifest_path),
+    "dudect_lockfile_sha256": sha256_file(dudect_lockfile_path),
+    "cargo": subprocess.check_output(["cargo", "-V"], cwd=root, text=True).strip(),
+    "configured_rustflags": configured_rustflags,
+    "environment_rustflags": environment_rustflags,
+    "effective_rustflags": effective_rustflags,
+    "rustflags_source": rustflags_source,
+    "target_cpu": codegen_value(effective_rustflags, "target-cpu"),
+    "target_features": codegen_values(effective_rustflags, "target-feature"),
+    "target_cfg_features": cfg_target_features(target_cfg),
+    "linker": linker,
+    "linker_path": str(linker_path),
+    "linker_sha256": sha256_file(linker_path),
+    "linker_version": linker_version,
+    "binary": {
+      "path": str(args.binary),
+      "sha256": sha256_file(args.binary),
+      "bytes": args.binary.stat().st_size,
+      "owner_symbols": sorted(expected_owner_symbols),
+      "owner_call_sites": owner_call_sites,
+    },
+    "binary_disassembly": {
+      "path": str(args.binary_disassembly),
+      "sha256": sha256_file(args.binary_disassembly),
+      "bytes": args.binary_disassembly.stat().st_size,
+    },
+    "binary_symbols": {
+      "path": str(args.binary_symbols),
+      "sha256": sha256_file(args.binary_symbols),
+      "bytes": args.binary_symbols.stat().st_size,
+    },
+    "linker_command_log": {
+      "path": str(args.linker_command_log),
+      "sha256": sha256_file(args.linker_command_log),
+      "bytes": args.linker_command_log.stat().st_size,
+    },
     "threshold_abs_max_t": args.threshold,
     "requested_samples": args.samples,
     "command": args.command,

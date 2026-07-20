@@ -14,7 +14,7 @@ Required:
   --ct-evidence PATH
   --repository-controls PATH
   --evidence-commit SHA
-  --evidence-mode exact_commit|release_only_delta
+  --evidence-mode exact_commit
   --output PATH
 
 Optional:
@@ -61,8 +61,8 @@ fail() {
 [[ "$tag" == "v$version" ]] || fail "tag $tag does not match version $version"
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || fail "release commit must be a full lowercase Git commit"
 [[ "$evidence_commit" =~ ^[0-9a-f]{40}$ ]] || fail "evidence commit must be a full lowercase Git commit"
-[[ "$evidence_mode" == "exact_commit" || "$evidence_mode" == "release_only_delta" ]] \
-  || fail "invalid evidence mode: $evidence_mode"
+[[ "$evidence_mode" == "exact_commit" ]] || fail "invalid evidence mode: $evidence_mode"
+[[ "$evidence_commit" == "$commit" ]] || fail "evidence commit must equal the release commit"
 [[ -n "$output" ]] || fail "--output is required"
 
 for path in "$source_archive" "$crate_package" "$ct_evidence" "$repository_controls"; do

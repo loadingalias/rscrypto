@@ -93,86 +93,16 @@ select_pair() {
   [[ -n "$selected_weekly" && -n "$selected_riscv" ]]
 }
 
-release_only_delta() {
-  local evidence_commit=$1
-  local release_commit=$2
-  local path
-
-  git -C "$root" merge-base --is-ancestor "$evidence_commit" "$release_commit" || return 1
-
-  while IFS= read -r path; do
-    case "$path" in
-      CHANGELOG.md|Cargo.toml|Cargo.lock|docs/release.md|.changes/*|.github/workflows/release.yaml|scripts/ci/*|\
-        scripts/ct/validate_release_evidence.py|\
-        tools/ct-binsec-harness/Cargo.lock|tools/ct-dudect/Cargo.lock|tools/ct-harness/Cargo.lock) ;;
-      *) return 1 ;;
-    esac
-  done < <(git -C "$root" diff --name-only "$evidence_commit..$release_commit")
-
-  (
-    cd "$root"
-    "$SCRIPT_DIR/../ct/python.sh" - "$evidence_commit" "$release_commit" <<'PY'
-import copy
-import subprocess
-import sys
-import tomllib
-
-evidence_commit, release_commit = sys.argv[1:]
-lockfiles = (
-  "Cargo.lock",
-  "tools/ct-binsec-harness/Cargo.lock",
-  "tools/ct-dudect/Cargo.lock",
-  "tools/ct-harness/Cargo.lock",
-)
-
-
-def load(commit: str, path: str) -> dict:
-  raw = subprocess.check_output(["git", "show", f"{commit}:{path}"], text=True)
-  return tomllib.loads(raw)
-
-
-def normalized_manifest(commit: str) -> dict:
-  manifest = copy.deepcopy(load(commit, "Cargo.toml"))
-  manifest["package"]["version"] = "<release-version>"
-  return manifest
-
-
-def normalized_lock(commit: str, path: str) -> dict:
-  lock = copy.deepcopy(load(commit, path))
-  packages = [package for package in lock.get("package", []) if package.get("name") == "rscrypto" and "source" not in package]
-  if len(packages) != 1:
-    raise SystemExit(f"{path} must contain exactly one local rscrypto package, found {len(packages)}")
-  packages[0]["version"] = "<release-version>"
-  return lock
-
-
-if normalized_manifest(evidence_commit) != normalized_manifest(release_commit):
-  raise SystemExit("Cargo.toml changed beyond package.version")
-
-for path in lockfiles:
-  if normalized_lock(evidence_commit, path) != normalized_lock(release_commit, path):
-    raise SystemExit(f"{path} changed beyond the local rscrypto package version")
-PY
-  )
-}
-
 evidence_commit="$commit"
 evidence_mode="exact_commit"
 if ! select_pair "$commit"; then
-  while IFS= read -r candidate; do
-    [[ "$candidate" =~ ^[0-9a-fA-F]{40}$ ]] || continue
-    git -C "$root" cat-file -e "$candidate^{commit}" 2>/dev/null || continue
-    if release_only_delta "$candidate" "$commit" && select_pair "$candidate"; then
-      evidence_commit="$candidate"
-      evidence_mode="release_only_delta"
-      break
-    fi
-  done < <(jq -r 'sort_by(.createdAt) | reverse | .[].headSha' <<<"$weekly_runs" | awk '!seen[$0]++')
+  selected_weekly=""
+  selected_riscv=""
 fi
 
 if [[ -z "$selected_weekly" || -z "$selected_riscv" ]]; then
   echo "No paired successful Weekly and RISC-V evidence is valid for release commit $commit." >&2
-  echo "Both workflows must cover the same commit; an ancestor may be promoted only across a provably release-only delta." >&2
+  echo "Both workflows must cover the exact release commit; ancestor evidence cannot be promoted." >&2
   exit 1
 fi
 
@@ -218,8 +148,4 @@ if [[ -n ${GITHUB_OUTPUT:-} ]]; then
   } >>"$GITHUB_OUTPUT"
 fi
 
-if [[ "$evidence_mode" == "exact_commit" ]]; then
-  echo "Exact-commit release evidence passed: Weekly $weekly_run_url; RISC-V $riscv_run_url"
-else
-  echo "Release-only delta proven; promoted paired evidence from $evidence_commit: Weekly $weekly_run_url; RISC-V $riscv_run_url"
-fi
+echo "Exact-commit release evidence passed: Weekly $weekly_run_url; RISC-V $riscv_run_url"

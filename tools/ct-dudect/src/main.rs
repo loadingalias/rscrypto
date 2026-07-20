@@ -207,7 +207,7 @@ fn argon2i_parallel_params() -> Argon2Params {
 }
 
 macro_rules! fixed_owner_eq_case {
-  ($name:ident, $type:ty, $len:expr) => {
+  ($name:ident, $entry:path, $len:expr) => {
     fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
       let mut inputs = Vec::with_capacity(samples());
       for _ in 0..samples() {
@@ -217,20 +217,36 @@ macro_rules! fixed_owner_eq_case {
         if matches!(class, Class::Right) {
           right[0] ^= 1;
         }
-        inputs.push((class, <$type>::from_bytes(left), <$type>::from_bytes(right)));
+        inputs.push((class, left, right));
       }
 
       for (class, left, right) in inputs {
-        runner.run_one(class, || left == right);
+        runner.run_one(class, || $entry(left.as_ptr(), right.as_ptr()) == 1);
       }
     }
   };
 }
 
-fixed_owner_eq_case!(owner_eq_16_equal_vs_first_diff, Aes128GcmKey, 16);
-fixed_owner_eq_case!(owner_eq_32_equal_vs_first_diff, X25519SecretKey, 32);
-fixed_owner_eq_case!(owner_eq_48_equal_vs_first_diff, HmacSha384Tag, 48);
-fixed_owner_eq_case!(owner_eq_64_equal_vs_first_diff, HmacSha512Tag, 64);
+fixed_owner_eq_case!(
+  owner_eq_16_equal_vs_first_diff,
+  rscrypto_ct_harness::ct_entry_owner_eq_16,
+  16
+);
+fixed_owner_eq_case!(
+  owner_eq_32_equal_vs_first_diff,
+  rscrypto_ct_harness::ct_entry_owner_eq_32,
+  32
+);
+fixed_owner_eq_case!(
+  owner_eq_48_equal_vs_first_diff,
+  rscrypto_ct_harness::ct_entry_owner_eq_48,
+  48
+);
+fixed_owner_eq_case!(
+  owner_eq_64_equal_vs_first_diff,
+  rscrypto_ct_harness::ct_entry_owner_eq_64,
+  64
+);
 
 fn secret_wrappers_debug_fixed_vs_random(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());

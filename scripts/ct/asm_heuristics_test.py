@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from asm_heuristics import FunctionBody, direct_callees, is_call_relocation, is_riscv_conditional_branch
+from asm_heuristics import FunctionBody, all_direct_callees, direct_callees, is_call_relocation, is_riscv_conditional_branch
 
 
 def main() -> None:
@@ -27,6 +27,17 @@ def main() -> None:
     callee: FunctionBody(symbol=callee, path=root.path, address=0x100, lines=[]),
   }
   assert direct_callees(root, functions) == {callee}
+
+  final_root = FunctionBody(
+    symbol="ct_entry_owner_eq_16",
+    path=Path("final.binary.disasm.txt"),
+    address=0,
+    lines=[
+      (1, "1000: e8 0b 00 00 00\tcallq\t0x1010 <rscrypto::fixed_eq>"),
+      (2, "1005: 90\tadrp\tx0, 0x2000 <rscrypto::data::TABLE>"),
+    ],
+  )
+  assert all_direct_callees(final_root) == {"rscrypto::fixed_eq"}
 
 
 if __name__ == "__main__":

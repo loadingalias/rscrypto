@@ -202,7 +202,7 @@ run_actions_check() {
 
 run_rail_config_check() {
   cargo rail config validate --strict
-  cargo rail config sync --check
+  cargo rail config migrate --check
 }
 
 run_rail_unify_check() {

@@ -57,8 +57,14 @@ PROVENANCE_REQUIRED_KEYS = {
   "configured_rustflags",
   "environment_rustflags",
   "effective_rustflags",
+  "rustflags_source",
   "linker",
   "linker_source",
+  "linker_path",
+  "linker_sha256",
+  "linker_version",
+  "linker_command",
+  "linker_command_sha256",
   "link_args",
   "profile",
   "opt_level",
@@ -178,6 +184,15 @@ def generated_symbols(artifact_dir: Path) -> set[str]:
       if match := re.search(r"\b_?(ct_entry_[A-Za-z0-9_]+)\b", line):
         symbols.add(match.group(1))
   return symbols
+
+
+def symbol_counts(path: Path) -> dict[str, int]:
+  counts: dict[str, int] = {}
+  for line in path.read_text().splitlines():
+    if match := re.search(r"\b_?(ct_entry_[A-Za-z0-9_]+)\b", line):
+      symbol = match.group(1)
+      counts[symbol] = counts.get(symbol, 0) + 1
+  return counts
 
 
 def recorded_hashes(path: Path) -> dict[str, str]:
@@ -336,6 +351,84 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
   if not harness_sections:
     fail(errors, "ct.toml has no [[harness]] sections")
 
+  release_binary = ct.get("equality_evidence", {}).get("release_binary", {})
+  expected_release_binary = {
+    "name": "rscrypto-ct-evidence",
+    "kind": "executable",
+    "profile": "release",
+    "backend": "llvm",
+    "features": ["std", "full", "parallel", "diag"],
+    "default_features": False,
+  }
+  for field, expected in expected_release_binary.items():
+    if release_binary.get(field) != expected:
+      fail(errors, f"equality release binary {field} expected {expected!r}, got {release_binary.get(field)!r}")
+
+  harness_manifest_path = root / "tools" / "ct-harness" / "Cargo.toml"
+  dudect_manifest_path = root / "tools" / "ct-dudect" / "Cargo.toml"
+  with harness_manifest_path.open("rb") as source:
+    harness_manifest = tomllib.load(source)
+  with dudect_manifest_path.open("rb") as source:
+    dudect_manifest = tomllib.load(source)
+  harness_dependency = harness_manifest.get("dependencies", {}).get("rscrypto", {})
+  dudect_dependency = dudect_manifest.get("dependencies", {}).get("rscrypto", {})
+  for label, dependency in (("CT harness", harness_dependency), ("DudeCT", dudect_dependency)):
+    if dependency.get("features") != release_binary.get("features"):
+      fail(errors, f"{label} rscrypto features do not match the equality release binary")
+    if dependency.get("default-features") != release_binary.get("default_features"):
+      fail(errors, f"{label} rscrypto default features do not match the equality release binary")
+  harness_bins = [row for row in harness_manifest.get("bin", []) if row.get("name") == release_binary.get("name")]
+  if len(harness_bins) != 1:
+    fail(errors, "CT harness must define exactly one equality release binary")
+  if harness_manifest.get("profile", {}).get("release") != dudect_manifest.get("profile", {}).get("release"):
+    fail(errors, "CT harness and DudeCT release profiles must match")
+  owner_widths = release_binary.get("owner_widths", [])
+  owner_symbols = release_binary.get("owner_symbols", [])
+  public_len_symbols = release_binary.get("public_len_symbols", [])
+  if (
+    not isinstance(owner_widths, list)
+    or not owner_widths
+    or any(isinstance(width, bool) or not isinstance(width, int) or width <= 0 for width in owner_widths)
+    or owner_widths != sorted(set(owner_widths))
+  ):
+    fail(errors, f"equality release binary owner_widths must be positive, unique, and ordered: {owner_widths!r}")
+  required_owner_widths = {16, 32, 48, 64}
+  if not required_owner_widths.issubset(owner_widths):
+    fail(errors, "equality release binary must cover the required 16-, 32-, 48-, and 64-byte owners")
+  expected_owner_symbols = [f"ct_entry_owner_eq_{width}" for width in owner_widths]
+  if owner_symbols != expected_owner_symbols:
+    fail(errors, "equality release binary owner symbols do not match owner widths")
+  equality_symbols = owner_symbols + public_len_symbols
+  if not equality_symbols or len(equality_symbols) != len(set(equality_symbols)):
+    fail(errors, "equality release binary symbols must be non-empty and unique")
+  unknown_equality_symbols = sorted(set(equality_symbols) - all_harness_symbols)
+  if unknown_equality_symbols:
+    fail(errors, f"equality release binary references unknown harness symbol(s): {', '.join(unknown_equality_symbols)}")
+  if release_binary.get("formal_owner_widths") != [16, 32, 48, 64]:
+    fail(errors, "equality release binary formal_owner_widths must cover 16, 32, 48, and 64 bytes")
+  for field in ("formal_limitation", "downstream_limitation"):
+    if not isinstance(release_binary.get(field), str) or not release_binary.get(field, "").strip():
+      fail(errors, f"equality release binary requires {field}")
+
+  owner_primitives = [row for row in ct.get("primitive", []) if row.get("id") == "owner_equality.fixed"]
+  if len(owner_primitives) != 1:
+    fail(errors, "ct.toml must contain exactly one owner_equality.fixed primitive")
+  else:
+    owner_primitive = owner_primitives[0]
+    if owner_primitive.get("release_owner_widths") != owner_widths:
+      fail(errors, "owner_equality.fixed release widths do not match the equality release binary")
+    if owner_primitive.get("harness", {}).get("symbols") != owner_symbols:
+      fail(errors, "owner_equality.fixed harness symbols do not match the equality release binary")
+
+  evidence_main = root / "tools" / "ct-harness" / "src" / "main.rs"
+  retain_match = re.search(r"retain!\((.*?)\n  \);", evidence_main.read_text(), re.DOTALL)
+  if retain_match is None:
+    fail(errors, "CT harness lacks the final equality root retention list")
+  else:
+    retained_symbols = re.findall(r"\bct_entry_[A-Za-z0-9_]+\b", retain_match.group(1))
+    if retained_symbols != equality_symbols:
+      fail(errors, "CT harness equality retention list does not exactly match ct.toml")
+
   primitive_ids: set[str] = set()
   for primitive in ct.get("primitive", []):
     primitive_id = primitive.get("id", "<unnamed>")
@@ -391,6 +484,29 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
     for covered in harness.get("covers", []):
       if covered not in primitive_ids:
         fail(errors, f"harness {harness.get('name', '<unnamed>')} covers unknown primitive {covered}")
+
+  for index, rule in enumerate(ct.get("asm_public_operand", [])):
+    required_fields = {"primitive", "root", "symbol", "kind", "max_count", "source", "rationale"}
+    if set(rule) != required_fields:
+      fail(errors, f"asm_public_operand[{index}] has incomplete or unknown fields")
+      continue
+    primitive_id = rule.get("primitive")
+    if primitive_id not in primitive_ids:
+      fail(errors, f"asm_public_operand[{index}] references unknown primitive {primitive_id!r}")
+      continue
+    primitive = next(row for row in ct.get("primitive", []) if row.get("id") == primitive_id)
+    if rule.get("root") not in primitive.get("harness", {}).get("symbols", []):
+      fail(errors, f"asm_public_operand[{index}] root is not owned by primitive {primitive_id}")
+    if rule.get("kind") not in {"variable_latency_division", "variable_latency_multiply"}:
+      fail(errors, f"asm_public_operand[{index}] kind is not a public-operand-classifiable instruction")
+    max_count = rule.get("max_count")
+    if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count <= 0:
+      fail(errors, f"asm_public_operand[{index}] max_count must be a positive integer")
+    source, separator, line = str(rule.get("source", "")).rpartition(":")
+    if not separator or not line.isdigit() or not (root / source).is_file():
+      fail(errors, f"asm_public_operand[{index}] source must identify an existing source line")
+    if not isinstance(rule.get("rationale"), str) or not rule.get("rationale", "").strip():
+      fail(errors, f"asm_public_operand[{index}] requires a rationale")
 
   dudect_names: set[str] = set()
   dudect_by_name: dict[str, dict] = {}
@@ -671,6 +787,30 @@ def validate_manifest(root: Path, errors: list[str], warnings: list[str]) -> dic
     for field in ("public_length", "secret_contents", "tests"):
       if not isinstance(comparison.get(field), str) or not comparison.get(field, "").strip():
         fail(errors, f"public-length comparison {comparison_id} requires {field}")
+    evidence_symbols = comparison.get("evidence_symbols")
+    if not isinstance(evidence_symbols, list) or not evidence_symbols:
+      fail(errors, f"public-length comparison {comparison_id} requires release evidence symbols")
+      evidence_symbols = []
+    for symbol in evidence_symbols:
+      if symbol not in public_len_symbols:
+        fail(errors, f"public-length comparison {comparison_id} references unknown release symbol {symbol!r}")
+    evidenced_call_count = comparison.get("evidenced_call_count")
+    limited_call_count = comparison.get("limited_call_count")
+    if any(isinstance(value, bool) or not isinstance(value, int) or value < 0 for value in (evidenced_call_count, limited_call_count)):
+      fail(errors, f"public-length comparison {comparison_id} evidence counts must be non-negative integers")
+    elif evidenced_call_count + limited_call_count != call_count:
+      fail(errors, f"public-length comparison {comparison_id} evidence counts do not equal call_count")
+    limitation = comparison.get("limitation")
+    if isinstance(limited_call_count, int) and limited_call_count > 0 and (
+      not isinstance(limitation, str) or not limitation.strip()
+    ):
+      fail(errors, f"public-length comparison {comparison_id} limited calls require an explicit limitation")
+
+  mapped_public_len_symbols = {
+    symbol for comparison in ct.get("public_len_comparison", []) for symbol in comparison.get("evidence_symbols", [])
+  }
+  if mapped_public_len_symbols != set(public_len_symbols):
+    fail(errors, "public-length comparison evidence does not exactly cover the release binary public-length symbols")
 
   actual_public_len_calls: dict[str, int] = {}
   for source_path in (root / "src").rglob("*.rs"):
@@ -793,6 +933,9 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
     (".o.disasm.txt", ".obj.disasm.txt"),
     (".o.symbols.txt", ".obj.symbols.txt"),
     (".o.size.txt", ".obj.size.txt"),
+    (".binary.disasm.txt",),
+    (".binary.symbols.txt",),
+    (".binary.size.txt",),
   ]
   for suffixes in required_suffix_groups:
     if not any(path.name.endswith(suffixes) for path in files):
@@ -818,8 +961,8 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
       for key in sorted(PROVENANCE_REQUIRED_KEYS):
         if key not in provenance:
           fail(errors, f"provenance missing {key}")
-      if provenance.get("schema_version") != 1:
-        fail(errors, f"provenance schema_version expected 1, got {provenance.get('schema_version')!r}")
+      if provenance.get("schema_version") != 2:
+        fail(errors, f"provenance schema_version expected 2, got {provenance.get('schema_version')!r}")
       if provenance.get("kind") != "rscrypto.ct.provenance":
         fail(errors, f"provenance kind expected 'rscrypto.ct.provenance', got {provenance.get('kind')!r}")
       if provenance.get("target_triple") != target:
@@ -830,12 +973,28 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
         fail(errors, "provenance features must be a non-empty list")
       if not isinstance(provenance.get("effective_rustflags"), list):
         fail(errors, "provenance effective_rustflags must be a list")
+      if not isinstance(provenance.get("rustflags_source"), str) or not provenance.get("rustflags_source"):
+        fail(errors, "provenance rustflags_source must be a non-empty string")
       if not isinstance(provenance.get("target_cfg_features"), list):
         fail(errors, "provenance target_cfg_features must be a list")
       if not isinstance(provenance.get("target_features"), list):
         fail(errors, "provenance target_features must be a list")
       if not isinstance(provenance.get("link_args"), list):
         fail(errors, "provenance link_args must be a list")
+      for field in ("linker", "linker_source", "linker_path", "linker_sha256", "linker_version"):
+        if not isinstance(provenance.get(field), str) or not provenance.get(field):
+          fail(errors, f"provenance {field} must be a non-empty string")
+      if provenance.get("linker_command") != "artifacts/linker-command.txt":
+        fail(errors, "provenance linker_command must name the archived linker command")
+      linker_log = artifact_dir / "linker-command.txt"
+      if not linker_log.is_file() or provenance.get("linker_command_sha256") != sha256_file(linker_log):
+        fail(errors, "provenance linker_command_sha256 mismatch")
+      release_binary = ct.get("equality_evidence", {}).get("release_binary", {})
+      if provenance.get("features") != release_binary.get("features"):
+        fail(errors, "provenance features do not match the equality release binary feature set")
+      for field in ("opt_level", "lto", "panic", "codegen_units", "overflow_checks", "debug", "strip"):
+        if provenance.get(field) in (None, "unknown"):
+          fail(errors, f"provenance {field} must identify the resolved harness profile")
       if not isinstance(provenance.get("artifacts"), list) or not provenance.get("artifacts"):
         fail(errors, "provenance artifacts must be a non-empty list")
       if not isinstance(provenance.get("reports"), list):
@@ -898,6 +1057,41 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
   if extra_symbols:
     warn(warnings, f"generated artifacts include unmanifested ct_entry symbol(s): {', '.join(extra_symbols)}")
 
+  equality_symbols = set(ct.get("equality_evidence", {}).get("release_binary", {}).get("owner_symbols", []))
+  equality_symbols.update(ct.get("equality_evidence", {}).get("release_binary", {}).get("public_len_symbols", []))
+  equality_object_maps = sorted(artifact_dir.glob("rscrypto_ct_evidence*.o.symbols.txt"))
+  equality_object_maps.extend(sorted(artifact_dir.glob("rscrypto_ct_evidence*.obj.symbols.txt")))
+  binary_maps = sorted(artifact_dir.glob("*.binary.symbols.txt"))
+  binary_disassemblies = sorted(artifact_dir.glob("*.binary.disasm.txt"))
+  binary_raw_disassemblies = sorted(artifact_dir.glob("*.binary.raw-disasm.txt"))
+  binary_nm_maps = sorted(artifact_dir.glob("*.binary.nm-symbols.txt"))
+  binary_indirect_maps = sorted(artifact_dir.glob("*.binary.indirect-symbols.txt"))
+  binary_link_maps = sorted(artifact_dir.glob("rscrypto-ct-evidence.link-map.txt"))
+  linked_binaries = sorted(
+    path for path in artifact_dir.iterdir() if path.name in {"rscrypto-ct-evidence", "rscrypto-ct-evidence.exe"}
+  )
+  for role, paths in (
+    ("equality pre-link object symbol map", equality_object_maps),
+    ("final linked equality binary symbol map", binary_maps),
+    ("final linked equality binary disassembly", binary_disassemblies),
+    ("final linked equality binary raw disassembly", binary_raw_disassemblies),
+    ("final linked equality binary nm symbol map", binary_nm_maps),
+    ("final linked equality binary", linked_binaries),
+  ):
+    if len(paths) != 1:
+      fail(errors, f"expected exactly one {role}; found {len(paths)}")
+  if "linux" in target and len(binary_link_maps) != 1:
+    fail(errors, f"expected exactly one final linked equality binary linker map; found {len(binary_link_maps)}")
+  if "apple-darwin" in target and len(binary_indirect_maps) != 1:
+    fail(errors, f"expected exactly one final linked equality binary indirect symbol map; found {len(binary_indirect_maps)}")
+  for role, paths in (("equality pre-link object", equality_object_maps), ("final linked equality binary", binary_maps)):
+    if len(paths) != 1:
+      continue
+    counts = symbol_counts(paths[0])
+    missing = sorted(symbol for symbol in equality_symbols if counts.get(symbol) != 1)
+    if missing:
+      fail(errors, f"{role} missing or duplicating equality symbol(s): {', '.join(missing)}")
+
   heuristics = {}
   if heuristics_path.exists():
     try:
@@ -955,7 +1149,7 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
       fail(errors, f"invalid evidence-index JSON: {exc}")
     else:
       expected = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "rscrypto.ct.evidence-index",
         "crate": "rscrypto",
         "backend": "llvm",
@@ -1005,12 +1199,57 @@ def validate_artifacts(root: Path, target: str, profile: str, ct: dict, errors: 
           elif not row.get("locations"):
             fail(errors, f"evidence-index primitive {primitive_id} symbol {symbol} has no locations")
 
+      equality = ct.get("equality_evidence", {}).get("release_binary", {})
+      equality_symbols = set(equality.get("owner_symbols", [])) | set(equality.get("public_len_symbols", []))
+      equality_locations: dict[str, list[dict]] = {}
+      for primitive in evidence.get("primitives", []):
+        for row in primitive.get("harness", {}).get("symbols", []):
+          name = row.get("name")
+          if isinstance(name, str):
+            equality_locations.setdefault(name, []).extend(row.get("locations", []))
+      for symbol in equality_symbols:
+        object_names = [str(row.get("object", "")) for row in equality_locations.get(symbol, [])]
+        if sum(name.startswith("rscrypto_ct_evidence") and name.endswith((".o", ".obj")) for name in object_names) != 1:
+          fail(errors, f"evidence-index lacks one equality pre-link location for {symbol}")
+        if sum(name == "rscrypto-ct-evidence.binary" for name in object_names) != 1:
+          fail(errors, f"evidence-index lacks one final linked location for {symbol}")
+
+      final_closure = heuristics.get("final_equality_call_closure", {})
+      if set(final_closure.get("root_symbols", [])) != equality_symbols:
+        fail(errors, "final equality call closure roots do not match ct.toml")
+      if final_closure.get("missing_root_symbols"):
+        fail(errors, "final equality call closure has missing roots")
+      if final_closure.get("unresolved_internal_calls"):
+        fail(errors, "final equality call closure has unresolved internal calls")
+      terminal_call_sites = final_closure.get("terminal_call_sites")
+      if not isinstance(terminal_call_sites, list):
+        fail(errors, "final equality call closure lacks terminal call sites")
+      else:
+        terminal_call_locators = [row.get("locator") for row in terminal_call_sites if isinstance(row, dict)]
+        if len(terminal_call_locators) != len(terminal_call_sites) or any(
+          not isinstance(locator, str) or not locator for locator in terminal_call_locators
+        ):
+          fail(errors, "final equality call closure has an invalid terminal call site")
+        elif len(set(terminal_call_locators)) != len(terminal_call_locators):
+          fail(errors, "final equality call closure has duplicate terminal call sites")
+      final_disassemblies = [
+        row for row in provenance.get("artifacts", []) if row.get("kind") == "linked_binary_disassembly"
+      ]
+      if len(final_disassemblies) != 1:
+        fail(errors, "provenance lacks exactly one final linked binary disassembly")
+      else:
+        final_disassembly = final_disassemblies[0]
+        if final_closure.get("artifact") != final_disassembly.get("path") or final_closure.get(
+          "artifact_sha256"
+        ) != final_disassembly.get("sha256"):
+          fail(errors, "final equality call closure is not bound to the linked binary disassembly")
+
       unmanifested = evidence.get("unmanifested_ct_symbols", [])
       if unmanifested:
         warn(warnings, f"evidence-index includes unmanifested ct_entry symbol(s): {', '.join(unmanifested)}")
 
 
-def validate_dudect(root: Path, target: str, profile: str, errors: list[str], warnings: list[str]) -> None:
+def validate_dudect(root: Path, target: str, profile: str, ct: dict, errors: list[str], warnings: list[str]) -> None:
   report_path = root / "target" / "ct" / target / profile / "dudect" / "dudect-report.json"
   if not report_path.exists():
     fail(errors, f"dudect report missing: {report_path}")
@@ -1023,7 +1262,7 @@ def validate_dudect(root: Path, target: str, profile: str, errors: list[str], wa
     return
 
   expected = {
-    "schema_version": 1,
+    "schema_version": 2,
     "kind": "rscrypto.ct.dudect",
     "crate": "rscrypto",
     "target": target,
@@ -1033,6 +1272,85 @@ def validate_dudect(root: Path, target: str, profile: str, errors: list[str], wa
   for key, value in expected.items():
     if report.get(key) != value:
       fail(errors, f"dudect {key} expected {value!r}, got {report.get(key)!r}")
+
+  release_binary = ct.get("equality_evidence", {}).get("release_binary", {})
+  for key, value in {
+    "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+    "features": release_binary.get("features"),
+    "default_features": release_binary.get("default_features"),
+    "backend": release_binary.get("backend"),
+  }.items():
+    if report.get(key) != value:
+      fail(errors, f"dudect {key} expected {value!r}, got {report.get(key)!r}")
+  for key in ("crate_version", "linker", "linker_path", "linker_sha256", "linker_version"):
+    if not isinstance(report.get(key), str) or not report.get(key):
+      fail(errors, f"dudect {key} must be a non-empty string")
+
+  provenance_path = root / "target" / "ct" / target / profile / "provenance.json"
+  try:
+    provenance = json.loads(provenance_path.read_text())
+  except (OSError, json.JSONDecodeError) as exc:
+    fail(errors, f"dudect cannot load lane provenance: {exc}")
+    provenance = {}
+  for key in (
+    "configured_rustflags",
+    "environment_rustflags",
+    "effective_rustflags",
+    "rustflags_source",
+    "target_cpu",
+    "target_features",
+    "target_cfg_features",
+  ):
+    if report.get(key) != provenance.get(key):
+      fail(errors, f"dudect {key} does not match lane provenance")
+  if report.get("rustc_verbose") != provenance.get("tools", {}).get("rustc"):
+    fail(errors, "dudect rustc does not match lane provenance")
+  if report.get("cargo") != provenance.get("tools", {}).get("cargo"):
+    fail(errors, "dudect cargo does not match lane provenance")
+  dudect_manifest = root / "tools" / "ct-dudect" / "Cargo.toml"
+  harness_manifest = root / "tools" / "ct-harness" / "Cargo.toml"
+  dudect_lockfile = root / "tools" / "ct-dudect" / "Cargo.lock"
+  for key, path in (
+    ("dudect_manifest_sha256", dudect_manifest),
+    ("harness_manifest_sha256", harness_manifest),
+    ("dudect_lockfile_sha256", dudect_lockfile),
+  ):
+    if report.get(key) != sha256_file(path):
+      fail(errors, f"dudect {key} mismatch")
+  with dudect_manifest.open("rb") as source:
+    expected_profile_settings = tomllib.load(source).get("profile", {}).get(profile, {})
+  if report.get("profile_settings") != expected_profile_settings:
+    fail(errors, "dudect profile settings do not match its manifest")
+
+  dudect_dir = report_path.parent
+  timing_artifacts = {
+    "binary": dudect_dir / ("rscrypto-ct-dudect.exe" if (dudect_dir / "rscrypto-ct-dudect.exe").exists() else "rscrypto-ct-dudect"),
+    "binary_disassembly": dudect_dir / "rscrypto-ct-dudect.binary.disasm.txt",
+    "binary_symbols": dudect_dir / "rscrypto-ct-dudect.binary.symbols.txt",
+    "linker_command_log": dudect_dir / "dudect-linker-command.txt",
+  }
+  for field, path in timing_artifacts.items():
+    record = report.get(field, {})
+    if not path.is_file():
+      fail(errors, f"dudect {field} artifact missing: {path}")
+    elif record.get("sha256") != sha256_file(path) or record.get("bytes") != path.stat().st_size:
+      fail(errors, f"dudect {field} artifact identity mismatch")
+  expected_owner_symbols = {
+    f"ct_entry_owner_eq_{width}"
+    for width in release_binary.get("formal_owner_widths", [])
+  }
+  if set(report.get("binary", {}).get("owner_symbols", [])) != expected_owner_symbols:
+    fail(errors, "dudect binary owner symbol set must cover 16, 32, 48, and 64 bytes")
+  call_sites = report.get("binary", {}).get("owner_call_sites", {})
+  if set(call_sites) != expected_owner_symbols or any(
+    isinstance(count, bool) or not isinstance(count, int) or count < 1 for count in call_sites.values()
+  ):
+    fail(errors, "dudect binary must call every owner equality symbol")
+  if timing_artifacts["binary_symbols"].is_file():
+    counts = symbol_counts(timing_artifacts["binary_symbols"])
+    wrong = sorted(symbol for symbol in expected_owner_symbols if counts.get(symbol) != 1)
+    if wrong:
+      fail(errors, f"dudect binary missing or duplicating owner symbol(s): {', '.join(wrong)}")
 
   cases = report.get("cases")
   if not isinstance(cases, list) or not cases:
@@ -1088,7 +1406,7 @@ def main() -> int:
       target = next(line.split(":", 1)[1].strip() for line in target.splitlines() if line.startswith("host:"))
     validate_artifacts(root, target, args.profile, ct, errors, warnings)
     if args.require_dudect:
-      validate_dudect(root, target, args.profile, errors, warnings)
+      validate_dudect(root, target, args.profile, ct, errors, warnings)
 
   for message in warnings:
     print(f"warning: {message}", file=sys.stderr)

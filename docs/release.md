@@ -167,7 +167,7 @@ receive anything, the workflow:
 2. Revalidates configuration, the unified Cargo graph, dependency policy,
    audit results, SemVer, and successful CI for the exact commit.
 3. Requires complete Weekly CT/RSA and RISC-V native/CT evidence from that
-   commit or a mechanically proven release-tooling-only ancestor.
+   exact commit and crate version.
 4. Builds the `.crate` once, reproduces the source archive from the tag, and
    rejects dirty, private, local-only, or mismatched package contents.
 5. Captures repository controls and writes provenance attestations, an identity
@@ -176,11 +176,10 @@ receive anything, the workflow:
    crates.io token through OIDC, publishes the same crate, then downloads it
    from crates.io and verifies its SHA-256.
 
-A release-tooling-only repair may reuse the newest successful ancestor with
-paired Weekly and RISC-V evidence. The checker permits only changelog,
-release/CT tooling, root-package version, and normalized local CT lockfile
-version changes. Runtime, dependency, feature, build, or test changes invalidate
-that exception.
+Any change after the evidence run—including a version-only or release-tooling
+change—creates a new release candidate and requires fresh paired Weekly and
+RISC-V evidence. Ancestor binaries are never promoted into an exact-commit
+constant-time claim.
 
 ## Recovery
 

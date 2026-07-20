@@ -107,7 +107,7 @@ if ! grep -qE "^## \\[$tag_version\\]" CHANGELOG.md; then
 fi
 
 cargo rail config validate --strict
-cargo rail config sync --check
+cargo rail config migrate --check
 # Exact-commit CI owns exhaustive compiler-backed Cargo graph assurance. The
 # release CI Gate verifies that named job before publication can proceed.
 cargo deny check all

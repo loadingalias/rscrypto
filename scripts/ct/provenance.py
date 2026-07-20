@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -88,23 +89,35 @@ def target_rustflags(root: Path, target: str) -> list[str]:
   return list(flags)
 
 
-def env_rustflags() -> list[str]:
-  flags: list[str] = []
-  if value := os.environ.get("RUSTFLAGS"):
-    flags.extend(value.split())
+def resolved_rustflags(root: Path, target: str) -> tuple[list[str], list[str], list[str], str]:
+  configured = target_rustflags(root, target)
   if value := os.environ.get("CARGO_ENCODED_RUSTFLAGS"):
-    flags.extend(part for part in value.split("\x1f") if part)
-  return flags
+    environment = [part for part in value.split("\x1f") if part]
+    return configured, environment, environment, "CARGO_ENCODED_RUSTFLAGS"
+  if value := os.environ.get("RUSTFLAGS"):
+    environment = shlex.split(value)
+    return configured, environment, environment, "RUSTFLAGS"
+  target_key = target_env_key(target, "RUSTFLAGS")
+  if value := os.environ.get(target_key):
+    environment = shlex.split(value)
+    return configured, environment, configured + environment, target_key
+  if configured:
+    return configured, [], configured, ".cargo/config.toml"
+  if value := os.environ.get("CARGO_BUILD_RUSTFLAGS"):
+    environment = shlex.split(value)
+    return configured, environment, environment, "CARGO_BUILD_RUSTFLAGS"
+  return configured, [], [], "none"
 
 
 def codegen_value(flags: list[str], key: str) -> str:
   prefix = f"{key}="
+  value = "unspecified"
   for idx, flag in enumerate(flags):
     if flag == "-C" and idx + 1 < len(flags) and flags[idx + 1].startswith(prefix):
-      return flags[idx + 1][len(prefix) :]
-    if flag.startswith(f"-C{prefix}"):
-      return flag[len(f"-C{prefix}") :]
-  return "unspecified"
+      value = flags[idx + 1][len(prefix) :]
+    elif flag.startswith(f"-C{prefix}"):
+      value = flag[len(f"-C{prefix}") :]
+  return value
 
 
 def codegen_values(flags: list[str], key: str) -> list[str]:
@@ -140,11 +153,54 @@ def resolve_linker(root: Path, target: str) -> tuple[str, str]:
     if linker:
       return str(linker), ".cargo/config.toml"
 
-  return "platform-default-unpinned", "default"
+  return "cc", "rustc-target-default"
+
+
+def resolve_executable(command: str) -> Path | None:
+  parts = shlex.split(command)
+  if not parts:
+    return None
+  executable = "zig" if Path(parts[0]).name == "zig-cc.sh" else parts[0]
+  found = shutil.which(executable)
+  if found is None:
+    return None
+  return Path(found).resolve()
+
+
+def resolved_linker_version(path: Path | None, configured_linker: str, root: Path) -> str | None:
+  if path is None:
+    return None
+  parts = shlex.split(configured_linker)
+  if parts and Path(parts[0]).name == "zig-cc.sh":
+    zig_version = optional_version([str(path), "version"], cwd=root)
+    return f"zig {zig_version}" if zig_version else None
+  return optional_version([str(path), "--version"], cwd=root)
 
 
 def artifact_kind(path: Path) -> str:
   name = path.name
+  if name == "rscrypto-ct-evidence.link-map.txt":
+    return "linked_binary_link_map"
+  if name.endswith(".binary.raw-disasm.txt"):
+    return "linked_binary_raw_disassembly"
+  if name.endswith(".binary.nm-symbols.txt"):
+    return "linked_binary_nm_symbol_map"
+  if name.endswith(".binary.indirect-symbols.txt"):
+    return "linked_binary_indirect_symbol_map"
+  if name.endswith(".binary.disasm.txt"):
+    return "linked_binary_disassembly"
+  if name.endswith(".binary.symbols.txt"):
+    return "linked_binary_symbol_map"
+  if name.endswith(".binary.symbols.txt.rustfilt.txt"):
+    return "linked_binary_demangled_symbol_map"
+  if name.endswith(".binary.size.txt"):
+    return "linked_binary_size"
+  if name == "linker-command.txt":
+    return "linker_command"
+  if name in {"rscrypto-ct-evidence", "rscrypto-ct-evidence.exe"}:
+    return "linked_binary"
+  if name.endswith((".o.raw-symbols.txt", ".obj.raw-symbols.txt")):
+    return "raw_symbol_map"
   if name.endswith((".o.disasm.txt", ".obj.disasm.txt")):
     return "object_disassembly"
   if name.endswith((".o.symbols.txt.rustfilt.txt", ".obj.symbols.txt.rustfilt.txt")):
@@ -216,7 +272,9 @@ def report_records(out_dir: Path) -> list[dict[str, Any]]:
 
 def symbol_objects(artifact_dir: Path) -> dict[str, list[dict[str, str]]]:
   symbols: dict[str, list[dict[str, str]]] = {}
-  for path in sorted([*artifact_dir.glob("*.o.symbols.txt"), *artifact_dir.glob("*.obj.symbols.txt")]):
+  symbol_maps = sorted([*artifact_dir.glob("*.o.symbols.txt"), *artifact_dir.glob("*.obj.symbols.txt")])
+  symbol_maps.extend(sorted(artifact_dir.glob("*.binary.symbols.txt")))
+  for path in symbol_maps:
     object_name = path.name.removesuffix(".symbols.txt")
     for line in path.read_text().splitlines():
       if match := re.search(r"\b_?(ct_entry_[A-Za-z0-9_]+)\b", line):
@@ -278,6 +336,7 @@ def main() -> int:
   parser.add_argument("--build-target-dir", required=True, type=Path)
   parser.add_argument("--backend", default="llvm")
   parser.add_argument("--features", default="std,full")
+  parser.add_argument("--linker-command-log", required=True, type=Path)
   args = parser.parse_args()
 
   root = Path(__file__).resolve().parents[2]
@@ -287,24 +346,25 @@ def main() -> int:
 
   rustc_verbose_text = run(["rustc", "-vV"], cwd=root)
   rustc_verbose = parse_rustc_verbose(rustc_verbose_text)
-  target_cfg_text = run(["rustc", "--print", "cfg", "--target", args.target], cwd=root)
 
-  configured_rustflags = target_rustflags(root, args.target)
-  environment_rustflags = env_rustflags()
-  effective_rustflags = configured_rustflags + environment_rustflags
+  configured_rustflags, environment_rustflags, effective_rustflags, rustflags_source = resolved_rustflags(
+    root, args.target
+  )
+  target_cfg_text = run(["rustc", "--print", "cfg", "--target", args.target, *effective_rustflags], cwd=root)
   linker, linker_source = resolve_linker(root, args.target)
+  linker_path = resolve_executable(linker)
   artifacts = artifact_records(args.artifact_dir)
   reports = report_records(args.out_dir)
   write_artifact_hashes(args.out_dir, artifacts)
 
   dependency_lockfile = root / "tools" / "ct-harness" / "Cargo.lock"
   workspace_lockfile = root / "Cargo.lock"
-  profile = cargo.get("profile", {}).get(args.profile, {})
+  profile = harness_manifest.get("profile", {}).get(args.profile, {})
   status_entries = git_status(root)
   feature_list = [feature for feature in args.features.split(",") if feature]
 
   provenance = {
-    "schema_version": 1,
+    "schema_version": 2,
     "kind": "rscrypto.ct.provenance",
     "generated_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
     "crate": cargo.get("package", {}).get("name"),
@@ -347,8 +407,14 @@ def main() -> int:
     "configured_rustflags": configured_rustflags,
     "environment_rustflags": environment_rustflags,
     "effective_rustflags": effective_rustflags,
+    "rustflags_source": rustflags_source,
     "linker": linker,
     "linker_source": linker_source,
+    "linker_path": str(linker_path) if linker_path is not None else None,
+    "linker_sha256": sha256_file(linker_path) if linker_path is not None and linker_path.is_file() else None,
+    "linker_version": resolved_linker_version(linker_path, linker, root),
+    "linker_command": f"artifacts/{args.linker_command_log.name}",
+    "linker_command_sha256": sha256_file(args.linker_command_log),
     "link_args": codegen_values(effective_rustflags, "link-arg"),
     "profile": args.profile,
     "opt_level": str(profile.get("opt-level", "unknown")),
@@ -380,7 +446,7 @@ def main() -> int:
   symbols = symbol_objects(args.artifact_dir)
   expected_symbols = {symbol for harness in ct.get("harness", []) for symbol in harness.get("symbols", [])}
   evidence_index = {
-    "schema_version": 1,
+    "schema_version": 2,
     "kind": "rscrypto.ct.evidence-index",
     "provenance": "provenance.json",
     "provenance_sha256": sha256_file(provenance_path),

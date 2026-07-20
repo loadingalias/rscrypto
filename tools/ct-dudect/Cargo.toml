@@ -19,6 +19,7 @@ codegen-units = 1
 [dependencies]
 dudect-bencher = "0.7.0"
 rscrypto = { path = "../..", default-features = false, features = ["std", "full", "parallel", "diag"] }
+rscrypto-ct-harness = { path = "../ct-harness" }
 
 [[bin]]
 name = "rscrypto-ct-dudect"

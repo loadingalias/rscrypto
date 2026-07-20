@@ -8,6 +8,61 @@ release_report = "ct-report.json"
 harness = "tools/ct-harness"
 artifact_script = "scripts/ct/artifacts.sh"
 
+[equality_evidence.release_binary]
+name = "rscrypto-ct-evidence"
+kind = "executable"
+profile = "release"
+backend = "llvm"
+features = ["std", "full", "parallel", "diag"]
+default_features = false
+owner_widths = [16, 28, 32, 48, 64, 1632, 2400, 3168]
+owner_symbols = [
+  "ct_entry_owner_eq_16",
+  "ct_entry_owner_eq_28",
+  "ct_entry_owner_eq_32",
+  "ct_entry_owner_eq_48",
+  "ct_entry_owner_eq_64",
+  "ct_entry_owner_eq_1632",
+  "ct_entry_owner_eq_2400",
+  "ct_entry_owner_eq_3168",
+]
+public_len_symbols = [
+  "ct_entry_kmac256_verify",
+  "ct_entry_mlkem512_decapsulate",
+  "ct_entry_mlkem768_decapsulate",
+  "ct_entry_mlkem1024_decapsulate",
+  "ct_entry_argon2i_verify",
+  "ct_entry_argon2d_verify",
+  "ct_entry_argon2id_verify",
+  "ct_entry_scrypt_verify",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+]
+formal_owner_widths = [16, 32, 48, 64]
+formal_limitation = "BINSEC owner kernels cover the representative 16-, 32-, 48-, and 64-byte production monomorphizations. The 28- and ML-KEM-sized owner monomorphizations require linked-binary disassembly/closure and heuristics on every release lane; BINSEC proof kernels are deferred because they add no caller-selectable shape and the large copies exceed the present proof budget."
+downstream_limitation = "Evidence binds this final linked harness executable and its exact compiler/linker configuration. It does not claim constant-time behavior for arbitrary downstream binaries that rebuild or inline rscrypto differently. Returning bool remains the T3.4 declassification limitation."
+
+[[asm_public_operand]]
+primitive = "password.argon2i"
+root = "ct_entry_argon2i_verify"
+symbol = "rscrypto::auth::argon2::argon2_hash_with_kernel_inner"
+kind = "variable_latency_division"
+max_count = 2
+source = "src/auth/argon2/mod.rs:1751"
+rationale = "The divisions derive matrix dimensions and iteration bounds from validated public Argon2Params and the caller-visible output length. Password and salt contents do not feed the divisors."
+
+[[asm_public_operand]]
+primitive = "password.argon2i"
+root = "ct_entry_argon2i_verify"
+symbol = "rscrypto::auth::argon2::fill_segment_inner"
+kind = "variable_latency_division"
+max_count = 2
+source = "src/auth/argon2/mod.rs:1434"
+rationale = "For the Argon2i retained root, address generation and segment positions are data-independent; these divisions use public lane, segment, and matrix dimensions rather than password-derived contents."
+
 [operation_inventory]
 schema_version = 1
 authority = "ct.toml"
@@ -33,6 +88,9 @@ operations = ["kmac.variable_output_and_verify"]
 public_length = "The caller selects KMAC output length and supplies an expected buffer of that public length."
 secret_contents = "The computed KMAC output and expected bytes are traversed fully for each public-length chunk."
 tests = "KMAC NIST/Wycheproof/differential tests plus kmac256_valid_vs_invalid_tag DudeCT."
+evidence_symbols = ["ct_entry_kmac256_verify"]
+evidenced_call_count = 1
+limited_call_count = 0
 
 [[public_len_comparison]]
 id = "rsa.public_modulus_and_profile_shapes"
@@ -42,6 +100,16 @@ operations = ["rsa.private_key_import_export_and_generation", "rsa.private_sign_
 public_length = "Widths derive from the public modulus, digest algorithm, DER/padding profile, or caller-visible encoded length."
 secret_contents = "Private representatives, decoded plaintext/hash fields, or validation intermediates are compared without content-dependent exits after public shape checks."
 tests = "RSA official/Wycheproof/differential/private-operation tests and RSA CT harness/DudeCT cases."
+evidence_symbols = [
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+]
+evidenced_call_count = 7
+limited_call_count = 5
+limitation = "The two Miller-Rabin key-generation comparisons and three public verification comparisons are not reachable from the retained release equality roots. Their lengths remain public and their source traversal is audited, but T3.3 does not convert that source review into linked-binary evidence."
 
 [[public_len_comparison]]
 id = "mlkem.parameter_set_shapes"
@@ -51,6 +119,13 @@ operations = ["kem.mlkem512", "kem.mlkem768", "kem.mlkem1024"]
 public_length = "Encoded key/ciphertext widths are fixed by the public ML-KEM parameter set and validated before comparison."
 secret_contents = "Decapsulation implicit-rejection ciphertext/key material is traversed fully at that public parameter-set width."
 tests = "ML-KEM ACVP, differential, property, operation, CT harness, and DudeCT cases for all parameter sets."
+evidence_symbols = [
+  "ct_entry_mlkem512_decapsulate",
+  "ct_entry_mlkem768_decapsulate",
+  "ct_entry_mlkem1024_decapsulate",
+]
+evidenced_call_count = 1
+limited_call_count = 0
 
 [[public_len_comparison]]
 id = "argon2.caller_selected_output"
@@ -60,6 +135,9 @@ operations = ["password.argon2i", "password.argon2d_and_argon2id"]
 public_length = "Primitive verification derives exactly the caller-supplied expected output length after public bounds checks."
 secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
 tests = "Argon2 vectors/differentials/parallel tests and variant CT harness/DudeCT cases."
+evidence_symbols = ["ct_entry_argon2i_verify", "ct_entry_argon2d_verify", "ct_entry_argon2id_verify"]
+evidenced_call_count = 1
+limited_call_count = 0
 
 [[public_len_comparison]]
 id = "scrypt.caller_selected_output"
@@ -69,6 +147,9 @@ operations = ["password.scrypt"]
 public_length = "Primitive verification derives exactly the caller-supplied expected output length after public minimum-length checks."
 secret_contents = "The freshly derived password verifier and expected bytes are traversed fully before the temporary is cleared."
 tests = "scrypt vectors/differentials and verification CT harness/DudeCT cases."
+evidence_symbols = ["ct_entry_scrypt_verify"]
+evidenced_call_count = 1
+limited_call_count = 0
 
 [status]
 ct_claimed = "all required evidence has passed for the exact primitive/configuration pair"
@@ -113,9 +194,13 @@ kind = "staticlib"
 status = "covered"
 symbols = [
   "ct_entry_owner_eq_16",
+  "ct_entry_owner_eq_28",
   "ct_entry_owner_eq_32",
   "ct_entry_owner_eq_48",
   "ct_entry_owner_eq_64",
+  "ct_entry_owner_eq_1632",
+  "ct_entry_owner_eq_2400",
+  "ct_entry_owner_eq_3168",
   "ct_entry_secret_bytes32_debug_masked",
   "ct_entry_hmac_sha256_verify",
   "ct_entry_hmac_sha384_verify",
@@ -3110,6 +3195,7 @@ tier = "A"
 claim = "ct-intended"
 features = ["always"]
 variants = ["Owner16", "Owner32", "Owner48", "Owner64"]
+release_owner_widths = [16, 28, 32, 48, 64, 1632, 2400, 3168]
 entrypoints = [
   "Aes128GcmKey::eq",
   "X25519SecretKey::eq",
@@ -3125,7 +3211,16 @@ required = ["tier_a"]
 notes = "Public callers select a semantic owner, never a raw secret length. Source structure and black_box are not machine-code proofs; T3.3 owns exact release-binary evidence. Returning bool remains an explicit T3.4 limitation."
 [primitive.harness]
 status = "covered"
-symbols = ["ct_entry_owner_eq_16", "ct_entry_owner_eq_32", "ct_entry_owner_eq_48", "ct_entry_owner_eq_64"]
+symbols = [
+  "ct_entry_owner_eq_16",
+  "ct_entry_owner_eq_28",
+  "ct_entry_owner_eq_32",
+  "ct_entry_owner_eq_48",
+  "ct_entry_owner_eq_64",
+  "ct_entry_owner_eq_1632",
+  "ct_entry_owner_eq_2400",
+  "ct_entry_owner_eq_3168",
+]
 
 [[primitive]]
 id = "secret_wrappers.exposure_and_display"

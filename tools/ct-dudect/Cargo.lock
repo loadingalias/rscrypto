@@ -303,6 +303,14 @@ version = "0.0.0"
 dependencies = [
  "dudect-bencher",
  "rscrypto",
+ "rscrypto-ct-harness",
+]
+
+[[package]]
+name = "rscrypto-ct-harness"
+version = "0.0.0"
+dependencies = [
+ "rscrypto",
 ]
 
 [[package]]

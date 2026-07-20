@@ -28,33 +28,17 @@ targets = [
 include_paths = true
 include_renamed = true
 
-pin_transitives = false
-transitive_host = "root"
-
 strict_version_compat = true
 exact_pin_handling = "warn"
 major_version_conflict = "warn"
-
-msrv = false # Root package MSRV is authoritative; this single-crate workspace does not inherit workspace.package.
-msrv_source = "max"
-
-detect_unused = true
-compiler_diag_cache = true
-remove_unused = true
-
-prune_dead_features = true
 preserve_features = []
-
-detect_undeclared_features = true
-fix_undeclared_features = true
 skip_undeclared_patterns = []
 
 exclude = []
 include = []
 max_backups = 2
-sort_dependencies = true
-enforce_msrv_inheritance = false
 consumer_scope = "open" # Published library: preserve dormant public feature and dependency APIs.
+msrv_policy = { mode = "disabled" } # Root package MSRV remains authoritative in this single-crate workspace.
 
 
 [release]
@@ -62,8 +46,6 @@ tag_prefix = "v"
 tag_format = "{prefix}{version}" # Single crate: vX.Y.Z
 
 require_clean = true
-push = true
-create_github_release = false
 sign_tags = true
 publish_delay = 5
 
@@ -75,7 +57,7 @@ unconventional_commits = "allow"  # Required .changes files own bumps and user-f
 semver_check = "warn"
 change_dir = ".changes"
 require_change_files = ["rscrypto"]
-forge = "auto"  # Release creation provider: auto, github, gitlab
+remote_effects = "push" # Release automation pushes commits/tags; the repository workflow owns forge releases.
 
 [release.changelog]
 path = "CHANGELOG.md"
@@ -107,7 +89,6 @@ infrastructure = [
 ]
 unknown_file_policy = "strict" # Unknown crate files build/test; unknown workspace files run infrastructure checks.
 confidence_profile = "balanced" # Planner confidence profile: strict, balanced, fast
-bot_pr_confidence_profile = "strict" # Optional planner profile override for bot-authored PRs
 
 [change-detection.custom]
 cargo_graph = [

@@ -177,10 +177,10 @@ git -C "$fixture" commit -qm "release-only delta"
 release_sha=$(git -C "$fixture" rev-parse HEAD)
 
 : >"$output"
-GITHUB_OUTPUT="$output" "$CHECKER" --root "$fixture" --commit "$release_sha" --repo loadingalias/rscrypto >/dev/null
-grep -Fxq "weekly_commit=$evidence_sha" "$output"
-grep -Fxq 'weekly_version=0.7.3' "$output"
-grep -Fxq 'weekly_evidence_mode=release_only_delta' "$output"
+if GITHUB_OUTPUT="$output" "$CHECKER" --root "$fixture" --commit "$release_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check promoted evidence across a release-only delta" >&2
+  exit 1
+fi
 
 "$REPO_ROOT/scripts/ct/python.sh" - "$REPO_ROOT" "$fixture" "$evidence_sha" <<'PY'
 import hashlib

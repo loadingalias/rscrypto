@@ -83,6 +83,14 @@ if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/asm_heuristics_test.py" >"
 fi
 ok
 
+step "Checking CT evidence validation"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/evidence_validation_test.py" >"$LOG_DIR/ct-evidence-validation.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/ct-evidence-validation.log"
+  exit 1
+fi
+ok
+
 # Check
 step "Checking"
 # shellcheck disable=SC2086
