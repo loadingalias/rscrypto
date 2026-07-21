@@ -11,11 +11,11 @@ releasable history; it is not a working branch.
 | Push | Shares the branch after fast, change-aware local checks. |
 | Pull request | Declares merge intent and runs CI on the proposed change. |
 | Merge | Adds the reviewed change to protected `main`. |
-| `main` CI | Records proof for the exact commit that can become a release. |
 
-Pull-request and `main` CI may test the same source tree, but they authorize
-different events. Pull-request CI decides whether a change may merge. `main`
-CI proves the exact protected-branch commit used by the release gate.
+The protected branch requires an up-to-date `Complete` result and has no bypass
+actors, so merged commits do not repeat the pull-request suite. Release
+candidates get a separate exact-commit Weekly run with the complete CI suite,
+Cargo graph assurance, and release evidence.
 
 ## Daily branch workflow
 
@@ -85,14 +85,17 @@ just push
 current branch. No rscrypto Git-hook installation is required. Use `just
 push-full` when the change is unusually broad or release-sensitive.
 
-Open the pull request. A branch push alone does not start the normal PR suite:
+Open a draft pull request while work is still changing; expensive jobs wait
+until the pull request is ready for review. A branch push alone does not start
+the normal PR suite:
 
 ```bash
-gh pr create --base main --fill
+gh pr create --base main --fill --draft
 ```
 
-Wait for the required `Complete` check. Because the repository currently has
-one maintainer, no second approval is required; review the final diff yourself,
+Mark the pull request ready only when its head is ready for CI, then wait for
+the required `Complete` check. Because the repository currently has one
+maintainer, no second approval is required; review the final diff yourself,
 resolve any open threads, and merge in the GitHub UI.
 
 After the merge:

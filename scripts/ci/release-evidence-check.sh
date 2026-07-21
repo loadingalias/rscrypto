@@ -130,6 +130,7 @@ require_job() {
 
 require_job Weekly "$weekly_run_id" "$weekly_jobs" "Constant-Time Evidence (weekly) / Complete (CT)"
 require_job Weekly "$weekly_run_id" "$weekly_jobs" "RSA Evidence (weekly) / Complete (RSA)"
+require_job Weekly "$weekly_run_id" "$weekly_jobs" "CI Suite (weekly) / Cargo Graph Assurance / run"
 require_job Weekly "$weekly_run_id" "$weekly_jobs" "Complete (weekly)"
 require_job RISC-V "$riscv_run_id" "$riscv_jobs" "Native CI / run"
 require_job RISC-V "$riscv_run_id" "$riscv_jobs" "Constant-Time Evidence (RISC-V) / CT Full (RISE RISC-V riscv64) / run"

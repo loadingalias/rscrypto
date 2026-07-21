@@ -61,7 +61,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [preflight, ci-gate, evidence-gate]
+    needs: [preflight, evidence-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: crates-io
@@ -414,21 +414,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"
-
-  ci-gate:
-    name: CI Gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Wait for CI on release commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/release-ci-check.sh --commit "$GITHUB_SHA" --wait

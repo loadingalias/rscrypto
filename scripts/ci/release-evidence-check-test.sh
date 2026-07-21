@@ -47,13 +47,18 @@ if [[ "$1 $2" == "run view" ]]; then
   case "$3" in
     4242)
       rsa_conclusion=success
+      graph_conclusion=success
       if [[ ${FAKE_GH_MODE:-success} == failed-rsa ]]; then
         rsa_conclusion=failure
+      fi
+      if [[ ${FAKE_GH_MODE:-success} == failed-cargo-graph ]]; then
+        graph_conclusion=failure
       fi
       cat <<JSON
 {"jobs":[
   {"name":"Constant-Time Evidence (weekly) / Complete (CT)","conclusion":"success"},
   {"name":"RSA Evidence (weekly) / Complete (RSA)","conclusion":"${rsa_conclusion}"},
+  {"name":"CI Suite (weekly) / Cargo Graph Assurance / run","conclusion":"${graph_conclusion}"},
   {"name":"Complete (weekly)","conclusion":"success"}
 ]}
 JSON
@@ -155,6 +160,11 @@ fi
 
 if FAKE_GH_MODE=failed-rsa "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
   echo "release evidence check accepted failed RSA evidence" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=failed-cargo-graph "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted failed exact-commit Cargo Graph Assurance" >&2
   exit 1
 fi
 

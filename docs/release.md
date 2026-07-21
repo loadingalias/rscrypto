@@ -39,8 +39,9 @@ never run `cargo publish` locally.
    candidate=$(git rev-parse HEAD)
    ```
 
-5. Wait for `main` CI to pass, then dispatch the expensive release evidence on
-   that commit. Do this before another pull request merges into `main`.
+5. Dispatch the expensive release evidence on that commit. Do this before
+   another pull request merges into `main`. Weekly reruns the complete CI suite,
+   including compiler-backed Cargo graph assurance, on the exact candidate.
 
    ```bash
    gh workflow run weekly.yaml --ref main
@@ -51,15 +52,15 @@ never run `cargo publish` locally.
    dependencies, features, build inputs, or test policy change afterward, rerun
    both workflows.
 
-6. After exact-commit CI and both evidence workflows are green, create and push
-   the signed tag:
+6. After both exact-commit evidence workflows are green, create and push the
+   signed tag:
 
    ```bash
    test "$(git rev-parse HEAD)" = "$candidate"
    just release-tag
    ```
 
-   `release-tag` rechecks live repository controls, exact-commit CI, and release
+   `release-tag` rechecks live repository controls and exact-commit release
    evidence before allowing the tag. It never publishes to crates.io locally.
 
 7. The tag starts the `Release` workflow. Approve its `crates-io` environment
@@ -74,17 +75,16 @@ never run `cargo publish` locally.
 | Gate | What it prevents |
 |---|---|
 | Release pull request | An unreviewed version or changelog mutation reaching protected `main`. |
-| `main` CI | Tagging a commit that was never proven in its final protected-branch identity. |
+| Exact-commit Weekly suite | Tagging a candidate without full tests and compiler-backed Cargo graph assurance. |
 | Weekly and RISC-V evidence | Publishing cryptographic claims without the required platform and timing evidence. |
 | Signed immutable tag | Moving a released version to different source later. |
 | Immutable, attested GitHub Release | Publishing artifacts that cannot be tied back to the tag and build. |
 | Environment approval | A tag or compromised workflow publishing to crates.io without a final human decision. |
 | Trusted Publishing | Long-lived crates.io credentials becoming a repository secret. |
 
-The repeated pull-request and `main` checks are intentional. The first answers
-"may this change merge?" The second proves "this exact protected-branch commit
-may become a release." The expensive Weekly and RISC-V evidence is not repeated
-on every pull request; it runs only for a release candidate.
+Pull-request CI answers "may this change merge?" once. The exact-commit Weekly
+suite and RISC-V evidence answer "may this protected-branch commit become a
+release?" only for a release candidate.
 
 ## One-time setup
 
@@ -139,8 +139,8 @@ release, `just release-check` validates configuration, dependency unification,
 pending intent, SemVer advice, and the generated release plan.
 
 Pull-request CI uses cargo-rail's planner to select checks from the actual
-changed surfaces. Pushes to `main`, Weekly, and release preflight run the full
-Cargo graph proof because those commits can become release inputs.
+changed surfaces. Weekly runs the full Cargo graph proof for an exact release
+candidate; release preflight consumes that result instead of recompiling it.
 
 `release-prepare` consumes the change files. After its pull request merges,
 `release-tag` deliberately does not rerun the pending-intent check. Instead, it
@@ -164,8 +164,8 @@ receive anything, the workflow:
 
 1. Verifies the annotated SSH signature, tag target, crate version, and
    changelog version.
-2. Revalidates configuration, the unified Cargo graph, dependency policy,
-   audit results, SemVer, and successful CI for the exact commit.
+2. Revalidates configuration, dependency policy, audit results, SemVer, and the
+   exact-commit Weekly Cargo graph result.
 3. Requires complete Weekly CT/RSA and RISC-V native/CT evidence from that
    exact commit and crate version.
 4. Builds the `.crate` once, reproduces the source archive from the tag, and
