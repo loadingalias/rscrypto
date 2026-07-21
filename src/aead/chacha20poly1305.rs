@@ -1090,8 +1090,8 @@ mod tests {
           actual, expected,
           "Power short ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
         );
-        assert_eq!(
-          actual_tag, expected_tag,
+        assert!(
+          actual_tag.ct_eq(&expected_tag).declassify(),
           "Power short tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
         );
       }
