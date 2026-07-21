@@ -1,9 +1,5 @@
 version: 2
 updates:
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Rust Dependencies (Cargo)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
   # One non-overlapping scan covers every Cargo manifest. Keep updates
   # independent: cross-directory `group-by` PRs cannot currently refresh.
   - package-ecosystem: "cargo"
@@ -24,18 +20,8 @@ updates:
     open-pull-requests-limit: 0
     rebase-strategy: "auto"
 
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # GitHub Actions (Security-Critical: SHA-Pinned)
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  # Dependabot understands SHA-pinned actions when formatted as:
-  #   uses: actions/checkout@abc123...  # v4.1.7
-  #
-  # It will:
-  #   1. Monitor the semantic version in the comment
-  #   2. Update the SHA when new versions release
-  #   3. Preserve the SHA-pinned format for security
-  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
+  # Workflow pins are authoritative. Dependabot updates the immutable SHA and
+  # same-line semantic ref; dependency smoke validates both against upstream.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -46,11 +32,9 @@ updates:
     open-pull-requests-limit: 1
     rebase-strategy: "auto"
 
-    # Group all GitHub Actions updates to reduce PR noise
     groups:
       github-actions:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
-    # Note: Major version updates are NOT grouped
-    # These require manual review due to potential breaking changes
+    # Major updates stay separate for explicit review.

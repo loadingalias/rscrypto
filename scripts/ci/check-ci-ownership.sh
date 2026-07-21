@@ -121,6 +121,12 @@ require_file "$DEPENDABOT"
 if grep -En 'group-by:[[:space:]]*dependency-name' "$DEPENDABOT" >/dev/null; then
   fail "Dependabot must not use the upstream-broken cross-directory dependency-name grouping"
 fi
+[[ $(yq eval '[.updates[] | select(."package-ecosystem" == "github-actions")] | length' "$DEPENDABOT") == "1" ]] \
+  || fail "Dependabot must have exactly one GitHub Actions update entry"
+[[ $(yq eval '.updates[] | select(."package-ecosystem" == "github-actions") | .directory' "$DEPENDABOT") == "/" ]] \
+  || fail "Dependabot must scan all repository workflows"
+[[ $(yq eval '.updates[] | select(."package-ecosystem" == "github-actions") | ."open-pull-requests-limit"' "$DEPENDABOT") == "1" ]] \
+  || fail "Dependabot must limit GitHub Actions updates to one open pull request"
 
 [[ $(yq eval '.on.push // "missing"' "$CI") == "missing" ]] \
   || fail "ordinary CI must not repeat the PR suite after merge"

@@ -230,21 +230,16 @@ release-tag:
     scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"
     cargo rail release finalize rscrypto --yes --skip-publish
 
-# Update Root/Fuzz Manifests & GHA Pins
+# Update coordinated Cargo manifests
 update:
     @scripts/update/update-all.sh
 
 update-check:
     @scripts/update/update-all.sh --check
 
-# Refresh .github/actions-lock.yaml SHAs
-pin-actions:
-    @scripts/ci/pin-actions.sh --update-lock
-
 check-actions:
-    @scripts/ci/pin-actions.sh --verify-only
-    @scripts/ci/pin-actions-test.sh
-    @scripts/ci/upgrade-actions-test.sh
+    @scripts/ci/check-action-pins.sh
+    @scripts/ci/check-action-pins-test.sh
     @scripts/ci/dependabot-smoke-test.sh
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh

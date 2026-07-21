@@ -58,8 +58,8 @@ run_manifest_smoke() {
 
 run_automation_smoke() {
   echo "GitHub Actions dependency smoke"
-  scripts/ci/pin-actions.sh --verify-only
-  scripts/ci/pin-actions-test.sh
+  scripts/ci/check-action-pins.sh
+  scripts/ci/check-action-pins-test.sh
   scripts/ci/check-ci-ownership.sh
   scripts/ci/check-ci-ownership-test.sh
   actionlint
@@ -87,7 +87,7 @@ classify_changed_files() {
       tools/*/Cargo.toml | tools/*/Cargo.lock)
         add_manifest "${path%/*}/Cargo.toml"
         ;;
-      .github/actions-lock.yaml | .github/dependabot.yaml | .github/workflows/* | .github/actions/*)
+      .github/dependabot.yaml | .github/workflows/* | .github/actions/*)
         RUN_AUTOMATION=true
         ;;
       *)

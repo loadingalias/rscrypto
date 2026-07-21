@@ -33,6 +33,12 @@ baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
 
+missing_action_updates="$TMP_ROOT/missing-action-updates"
+make_fixture "$missing_action_updates"
+yq eval 'del(.updates[] | select(."package-ecosystem" == "github-actions"))' -i \
+  "$missing_action_updates/.github/dependabot.yaml"
+expect_failure "$missing_action_updates" "GitHub Actions updates are disabled"
+
 push_ci="$TMP_ROOT/push-ci"
 make_fixture "$push_ci"
 yq eval '.on.push.branches = ["main"]' -i "$push_ci/.github/workflows/ci.yaml"
