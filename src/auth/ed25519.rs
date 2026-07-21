@@ -126,17 +126,15 @@ const _: fn(&scalar::Scalar, &scalar::Scalar, &scalar::Scalar) -> scalar::Scalar
 /// parameters at the call site.
 pub struct Ed25519SecretKey([u8; Self::LENGTH]);
 
-impl PartialEq for Ed25519SecretKey {
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for Ed25519SecretKey {}
-
 impl Ed25519SecretKey {
   /// Secret key length in bytes.
   pub const LENGTH: usize = SECRET_KEY_LENGTH;
+
+  /// Compare two secret keys without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
 
   /// Construct a secret key from its byte representation.
   #[inline]
@@ -438,17 +436,13 @@ pub struct DiagEd25519VerifyScalars {
   pub public_key: [u8; PUBLIC_KEY_LENGTH],
 }
 
-impl PartialEq for Ed25519Keypair {
-  fn eq(&self, other: &Self) -> bool {
-    let secret_eq = self.secret == other.secret;
-    let public_eq = self.public == other.public;
-    secret_eq & public_eq
-  }
-}
-
-impl Eq for Ed25519Keypair {}
-
 impl Ed25519Keypair {
+  /// Compare both halves of two keypairs without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    self.secret.ct_eq(&other.secret) & ct::fixed_eq(self.public.as_bytes(), other.public.as_bytes())
+  }
+
   /// Explicitly duplicate this secret-bearing keypair.
   #[inline]
   #[must_use]
@@ -840,7 +834,7 @@ fn verify_aarch64_encoded_r(
   }
 
   aarch64_asm::double_scalar_basepoint_encoded(s_canonical, neg_challenge_bytes, public_key).map(|combined| {
-    if ct::fixed_eq(&combined, r_bytes) {
+    if ct::fixed_eq(&combined, r_bytes).declassify() {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -858,7 +852,7 @@ fn verify_aarch64_encoded_r(
 fn is_small_order_encoded(bytes: &[u8; PUBLIC_KEY_LENGTH]) -> bool {
   SMALL_ORDER_ENCODINGS
     .iter()
-    .any(|small_order| ct::fixed_eq(bytes, small_order))
+    .any(|small_order| ct::fixed_eq(bytes, small_order).declassify())
 }
 
 // Dispatch: AArch64 assembly verify fast path → IFMA → AVX2 → portable
@@ -979,7 +973,7 @@ mod tests {
   }
 
   #[test]
-  fn keypair_equality_requires_matching_secret_and_public_halves() {
+  fn keypair_ct_equality_requires_matching_secret_and_public_halves() {
     let first = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([1u8; Ed25519SecretKey::LENGTH]));
     let second = Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes([2u8; Ed25519SecretKey::LENGTH]));
 
@@ -988,10 +982,10 @@ mod tests {
     let mut public_mismatch = first.duplicate_secret();
     public_mismatch.public = second.public;
 
-    assert_eq!(first, first);
-    assert_ne!(first, secret_mismatch);
-    assert_ne!(first, public_mismatch);
-    assert_ne!(first, second);
+    assert!(first.ct_eq(&first).declassify());
+    assert!(!first.ct_eq(&secret_mismatch).declassify());
+    assert!(!first.ct_eq(&public_mismatch).declassify());
+    assert!(!first.ct_eq(&second).declassify());
   }
 
   #[test]

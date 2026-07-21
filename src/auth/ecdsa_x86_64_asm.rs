@@ -76,8 +76,8 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
     // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
     // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
     // 3. Runtime capabilities prove BMI2 and ADX before selecting this backend.
-    // 4. The assembly routine is constant-time with respect to the scalar; ECDSA signing uses secret
-    //    nonce material.
+    // 4. The scalar may contain secret nonce material. Generated-code timing assurance is
+    //    configuration- and release-evidence-bound; see `ct.toml`.
     // 5. The table is generated for `P256_AARCH64_BASEPOINT_BLOCKSIZE` and contains every entry the
     //    s2n-bignum fixed-base routine reads for that block size.
     unsafe {
@@ -93,8 +93,8 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
     // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
     // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
     // 3. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
-    // 4. The assembly routine is constant-time with respect to the scalar; ECDSA signing uses secret
-    //    nonce material.
+    // 4. The scalar may contain secret nonce material. Generated-code timing assurance is
+    //    configuration- and release-evidence-bound; see `ct.toml`.
     // 5. The table is generated for `P256_AARCH64_BASEPOINT_BLOCKSIZE` and contains every entry the
     //    s2n-bignum fixed-base routine reads for that block size.
     unsafe {
@@ -134,7 +134,8 @@ pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
     // 2. `out`, `lhs`, and `rhs` are six-limb arrays, which is the exact P-384 field size.
     // 3. Runtime capabilities prove BMI2 and ADX before selecting this backend.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
-    // 5. The routine is constant-time with respect to the field-element values.
+    // 5. Field elements may be secret. Generated-code timing assurance is configuration- and
+    //    release-evidence-bound; see `ct.toml`.
     unsafe { rscrypto_bignum_montmul_p384(out.as_mut_ptr(), lhs.as_ptr(), rhs.as_ptr()) };
   } else {
     // SAFETY: baseline P-384 field Montgomery multiplication call because:
@@ -142,7 +143,8 @@ pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
     // 2. `out`, `lhs`, and `rhs` are six-limb arrays, which is the exact P-384 field size.
     // 3. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
-    // 5. The routine is constant-time with respect to the field-element values.
+    // 5. Field elements may be secret. Generated-code timing assurance is configuration- and
+    //    release-evidence-bound; see `ct.toml`.
     unsafe { rscrypto_bignum_montmul_p384_alt(out.as_mut_ptr(), lhs.as_ptr(), rhs.as_ptr()) };
   }
 
@@ -159,7 +161,8 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
     // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
     // 3. Runtime capabilities prove BMI2 and ADX before selecting this backend.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
-    // 5. The routine is constant-time with respect to the field-element value.
+    // 5. Field elements may be secret. Generated-code timing assurance is configuration- and
+    //    release-evidence-bound; see `ct.toml`.
     unsafe { rscrypto_bignum_montsqr_p384(out.as_mut_ptr(), value.as_ptr()) };
   } else {
     // SAFETY: baseline P-384 field Montgomery square call because:
@@ -167,7 +170,8 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
     // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
     // 3. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
     // 4. Callers route only P-384 field elements in Montgomery form through this wrapper.
-    // 5. The routine is constant-time with respect to the field-element value.
+    // 5. Field elements may be secret. Generated-code timing assurance is configuration- and
+    //    release-evidence-bound; see `ct.toml`.
     unsafe { rscrypto_bignum_montsqr_p384_alt(out.as_mut_ptr(), value.as_ptr()) };
   }
 

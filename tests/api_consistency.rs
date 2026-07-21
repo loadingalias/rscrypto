@@ -114,18 +114,13 @@ fn squeeze_32(mut reader: impl Xof) -> [u8; 32] {
 }
 
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
-fn assert_mac_api<M>()
-where
-  M: Mac,
-  M::Tag: PartialEq + core::fmt::Debug,
-{
+fn assert_mac_api<M: Mac>() {
   let key = b"api-consistency-key";
   let mut mac = M::new(key);
   mac.update(b"abc");
   let expected = mac.finalize();
   mac.reset();
   mac.update(b"abc");
-  assert_eq!(mac.finalize(), expected);
   assert!(mac.verify(&expected).is_ok());
 }
 

@@ -289,7 +289,7 @@ impl FieldElement {
     self.normalize().0.iter().all(|&limb| limb == 0)
   }
 
-  /// Constant-time conditional swap.
+  /// Branchless conditional swap at the Rust source level.
   #[inline]
   #[cfg(feature = "x25519")]
   #[allow(dead_code)]

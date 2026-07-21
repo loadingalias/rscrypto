@@ -78,11 +78,12 @@ define_aead_tag_type!(
 ///
 /// # Security
 ///
-/// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), all AES
-/// operations use constant-time hardware instructions. On RISC-V without
-/// hardware AES extensions (Zkne / Zvkned), encryption falls back to the
-/// constant-time portable / fixslice implementation. That path is slower,
-/// but it avoids secret-indexed lookup tables.
+/// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), AES operations use
+/// dedicated hardware instructions. On RISC-V without hardware AES extensions
+/// (Zkne / Zvkned), encryption falls back to a fixed-work portable / fixslice
+/// source implementation that avoids secret-indexed lookup tables. These
+/// source and ISA properties are necessary, not sufficient: generated-code
+/// timing claims are configuration- and release-evidence-bound; see `ct.toml`.
 pub struct Aes128GcmSiv {
   master_ek: aes::Aes128EncKey,
   #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -518,7 +519,7 @@ fn decrypt_riscv(
   ct::zeroize(&mut auth_key);
   ct::zeroize(&mut enc_key);
 
-  if !ct::fixed_eq(&expected, tag.as_bytes()) {
+  if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
     ct::zeroize(buffer);
     return Err(crate::traits::VerificationError::new());
   }
@@ -859,7 +860,7 @@ unsafe fn decrypt_fused_aarch64(
     expected[15] &= 0x7f;
     aes::aarch64_encrypt_block_128_inline(&enc_ek, &mut expected);
 
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(crate::traits::VerificationError::new());
     }
@@ -1124,7 +1125,7 @@ unsafe fn decrypt_fused_ppc(
     expected[15] &= 0x7f;
     aes::ppc_encrypt_block_128_inline(&enc_ek, &mut expected);
 
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(crate::traits::VerificationError::new());
     }
@@ -1370,7 +1371,7 @@ unsafe fn decrypt_fused_s390x(
     aes::s390x_encrypt_block_raw_128_inline(enc_key_bytes, &mut expected);
     ct::zeroize(enc_key_bytes);
 
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(crate::traits::VerificationError::new());
     }
@@ -1515,7 +1516,7 @@ impl Aead for Aes128GcmSiv {
       let expected = compute_tag_wide(&auth_key, &ek, nonce, aad, buffer);
       ct::zeroize(&mut auth_key);
       ct::zeroize(&mut enc_key);
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -1581,7 +1582,7 @@ impl Aead for Aes128GcmSiv {
     ct::zeroize(&mut auth_key);
     ct::zeroize(&mut enc_key);
 
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }

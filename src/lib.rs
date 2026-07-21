@@ -106,14 +106,15 @@ assert!(
 //!
 //! # Security Posture
 //!
-//! Constant-time equality and fixed-width verification checks where the input
-//! shape has already reached the primitive boundary. Public structural rejects
-//! such as malformed lengths, unsupported algorithms, or out-of-range RSA
-//! representatives may fail before the full primitive work. Opaque verification
-//! errors leak no failure detail. Zeroize on drop for every secret-bearing
-//! type. `strict_*` arithmetic on counters and lengths; release builds keep
-//! `overflow-checks = true`. Continuous libFuzzer with corpus replay in CI;
-//! Miri on the portable backends.
+//! Fixed-size secret-bearing owners expose comparison through an opaque
+//! [`ct::CtDecision`] and require explicit declassification. Public structural
+//! rejects such as malformed lengths, unsupported algorithms, or out-of-range
+//! RSA representatives may fail before the full primitive work. Opaque
+//! verification errors leak no failure detail. Generated-code constant-time
+//! claims remain compiler-, target-, feature-, and release-evidence-bound.
+//! Zeroize on drop for every secret-bearing type. `strict_*` arithmetic on
+//! counters and lengths; release builds keep `overflow-checks = true`.
+//! Continuous libFuzzer with corpus replay in CI; Miri on the portable backends.
 //!
 //! `rscrypto` is a primitives crate, not a FIPS 140-3 validated module. It
 //! exposes FIPS-aligned primitives (AES-256-GCM, SHA-2, SHA-3 / SHAKE, HMAC,
@@ -848,12 +849,75 @@ let tag = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
 let _ = tag == [0u8; HmacSha256Tag::LENGTH];
 ```
 
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let _ = left == right;
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let _: bool = left.ct_eq(&right);
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let _: bool = left.ct_eq(&right).into();
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+if left.ct_eq(&right) {}
+```
+
+```compile_fail
+let _ = rscrypto::ct::CtDecision { mask: u8::MAX };
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let decision = left.ct_eq(&right);
+let _ = decision.declassify();
+let _ = decision.declassify();
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let first = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let second = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let third = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let _ = first.ct_eq(&second) == second.ct_eq(&third);
+```
+
+```compile_fail
+use rscrypto::HmacSha256Tag;
+
+let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
+let _ = format!("{:?}", left.ct_eq(&right));
+```
+
 ```rust
 use rscrypto::HmacSha256Tag;
 
 let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
 let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
-assert!(left == right);
+assert!(left.ct_eq(&right).declassify());
 ```
 "#]
 pub struct __OwnerEqualityBoundaryAudit;

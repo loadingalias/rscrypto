@@ -127,6 +127,12 @@ macro_rules! define_mlkem_secret_bytes {
       /// Length in bytes.
       pub const LENGTH: usize = $len;
 
+      /// Compare two secret values without exposing a branchable boolean.
+      #[inline]
+      pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+        ct::fixed_eq(&self.0, &other.0)
+      }
+
       /// Construct the typed value from raw bytes.
       #[inline]
       #[must_use]
@@ -162,15 +168,6 @@ macro_rules! define_mlkem_secret_bytes {
         &self.0
       }
     }
-
-    impl PartialEq for $name {
-      #[inline]
-      fn eq(&self, other: &Self) -> bool {
-        ct::fixed_eq(&self.0, &other.0)
-      }
-    }
-
-    impl Eq for $name {}
 
     impl fmt::Debug for $name {
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -428,6 +425,12 @@ macro_rules! define_mlkem_prepared_keys {
       pub const fn as_bytes(&self) -> &[u8; Self::LENGTH] {
         self.key.as_bytes()
       }
+
+      /// Compare two prepared secret keys without exposing a branchable boolean.
+      #[inline]
+      pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+        ct::fixed_eq(self.as_bytes(), other.as_bytes())
+      }
     }
 
     impl core::convert::TryFrom<$decapsulation_key> for $prepared_decapsulation_key {
@@ -461,15 +464,6 @@ macro_rules! define_mlkem_prepared_keys {
         self.as_bytes()
       }
     }
-
-    impl PartialEq for $prepared_decapsulation_key {
-      #[inline]
-      fn eq(&self, other: &Self) -> bool {
-        ct::fixed_eq(self.as_bytes(), other.as_bytes())
-      }
-    }
-
-    impl Eq for $prepared_decapsulation_key {}
 
     impl fmt::Debug for $prepared_decapsulation_key {
       fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

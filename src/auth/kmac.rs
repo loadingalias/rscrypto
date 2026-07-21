@@ -89,9 +89,11 @@ macro_rules! define_kmac {
         out
       }
 
-      /// Verify `expected` against the MAC of `data` in constant time.
+      /// Verify `expected` after traversing its public-length contents.
       ///
       /// This is the one-shot helper. Use [`Self::verify`] for an already-accumulated state.
+      /// Generated-code timing claims are configuration- and release-evidence-bound;
+      /// see `ct.toml`.
       #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
       pub fn verify_tag(
         key: &[u8],
@@ -104,9 +106,11 @@ macro_rules! define_kmac {
         state.verify(expected)
       }
 
-      #[doc = concat!("Verify `expected` against the current KMAC", $bits, " output in constant time.")]
+      #[doc = concat!("Verify `expected` against the current KMAC", $bits, " output after a full public-length comparison.")]
       /// This checks the MAC for the bytes already absorbed into `self`; it does
       /// not recompute from `(key, customization, data)` like [`Self::verify_tag`].
+      /// Generated-code timing claims are configuration- and release-evidence-bound;
+      /// see `ct.toml`.
       #[must_use = "MAC verification must be checked; a dropped Result silently accepts a forged tag"]
       pub fn verify(&self, expected: &[u8]) -> Result<(), VerificationError> {
         if expected.is_empty() {
@@ -119,7 +123,7 @@ macro_rules! define_kmac {
 
         for chunk in expected.chunks(block.len()) {
           reader.squeeze(&mut block[..chunk.len()]);
-          diff |= u8::from(!ct::public_len_eq(&block[..chunk.len()], chunk));
+          diff |= (!ct::public_len_eq(&block[..chunk.len()], chunk)).into_u8();
         }
 
         ct::zeroize(&mut block);

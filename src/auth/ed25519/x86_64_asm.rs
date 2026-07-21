@@ -61,8 +61,8 @@ fn basepoint_mul_affine(s: &[u8; SECRET_KEY_LENGTH]) -> [u64; AFFINE_POINT_LIMBS
     // 2. `out` has space for eight `u64` affine limbs.
     // 3. `s_words` has four little-endian `u64` scalar limbs, matching the s2n-bignum ABI.
     // 4. Runtime capabilities prove BMI2 and ADX before selecting this backend.
-    // 5. The assembly routine is constant-time with respect to the scalar; signing uses secret nonce
-    //    material.
+    // 5. The scalar may contain secret nonce material. Generated-code timing assurance is
+    //    configuration- and release-evidence-bound; see `ct.toml`.
     unsafe { rscrypto_edwards25519_scalarmulbase(out.as_mut_ptr(), s_words.as_ptr()) };
   } else {
     // SAFETY: baseline fixed-base scalar multiplication call because:
@@ -70,8 +70,8 @@ fn basepoint_mul_affine(s: &[u8; SECRET_KEY_LENGTH]) -> [u64; AFFINE_POINT_LIMBS
     // 2. `out` has space for eight `u64` affine limbs.
     // 3. `s_words` has four little-endian `u64` scalar limbs, matching the s2n-bignum ABI.
     // 4. The `_alt` routine is the baseline x86-64 backend and does not require BMI2 or ADX.
-    // 5. The assembly routine is constant-time with respect to the scalar; signing uses secret nonce
-    //    material.
+    // 5. The scalar may contain secret nonce material. Generated-code timing assurance is
+    //    configuration- and release-evidence-bound; see `ct.toml`.
     unsafe { rscrypto_edwards25519_scalarmulbase_alt(out.as_mut_ptr(), s_words.as_ptr()) };
   }
 

@@ -35,7 +35,7 @@
 //! let bob = rscrypto::X25519SecretKey::from_bytes([9u8; 32]);
 //! let alice_shared = alice.diffie_hellman(&bob.public_key())?;
 //! let bob_shared = bob.diffie_hellman(&alice.public_key())?;
-//! assert_eq!(alice_shared, bob_shared);
+//! assert!(alice_shared.ct_eq(&bob_shared).declassify());
 //! # }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

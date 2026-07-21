@@ -273,7 +273,7 @@ pub extern "C" fn ct_binsec_owner_eq_64() -> ! {
   let lhs = HmacSha512Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_64)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let rhs = HmacSha512Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_64)) });
-  ct_binsec_done(u8::from(lhs == rhs))
+  ct_binsec_done(u8::from(lhs.ct_eq(&rhs).declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -283,7 +283,7 @@ pub extern "C" fn ct_binsec_owner_eq_48() -> ! {
   let lhs = HmacSha384Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_48)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let rhs = HmacSha384Tag::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_48)) });
-  ct_binsec_done(u8::from(lhs == rhs))
+  ct_binsec_done(u8::from(lhs.ct_eq(&rhs).declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -293,7 +293,7 @@ pub extern "C" fn ct_binsec_owner_eq_32() -> ! {
   let lhs = X25519SecretKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_32)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let rhs = X25519SecretKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_32)) });
-  ct_binsec_done(u8::from(lhs == rhs))
+  ct_binsec_done(u8::from(lhs.ct_eq(&rhs).declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -303,7 +303,7 @@ pub extern "C" fn ct_binsec_owner_eq_16() -> ! {
   let lhs = Aes128GcmKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_LHS_16)) });
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let rhs = Aes128GcmKey::from_bytes(unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_16)) });
-  ct_binsec_done(u8::from(lhs == rhs))
+  ct_binsec_done(u8::from(lhs.ct_eq(&rhs).declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -314,7 +314,7 @@ pub extern "C" fn ct_binsec_hmac_sha256_verify() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_32)) };
   let ok = rscrypto::diag_hmac_sha256_verify_portable(&key, &expected);
-  ct_binsec_done(u8::from(ok))
+  ct_binsec_done(u8::from(ok.declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -325,7 +325,7 @@ pub extern "C" fn ct_binsec_hmac_sha384_verify() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_48)) };
   let ok = rscrypto::diag_hmac_sha384_verify_portable(&key, &expected);
-  ct_binsec_done(u8::from(ok))
+  ct_binsec_done(u8::from(ok.declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -336,7 +336,7 @@ pub extern "C" fn ct_binsec_hmac_sha512_verify() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_64)) };
   let ok = rscrypto::diag_hmac_sha512_verify_portable(&key, &expected);
-  ct_binsec_done(u8::from(ok))
+  ct_binsec_done(u8::from(ok.declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -359,8 +359,8 @@ pub extern "C" fn ct_binsec_blake3_verify_keyed() -> ! {
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_32)) };
   let expected = Blake3KeyedHash::from_bytes(expected);
   let actual = rscrypto::hashes::crypto::diag_blake3_keyed_digest_portable(&key);
-  let ok = actual == expected;
-  ct_binsec_done(u8::from(ok))
+  let ok = actual.ct_eq(&expected);
+  ct_binsec_done(u8::from(ok.declassify()))
 }
 
 #[unsafe(no_mangle)]
@@ -485,7 +485,7 @@ pub extern "C" fn ct_binsec_ascon_aead128_tag_portable() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_RHS_16)) };
   let ok = rscrypto::aead::diag_ascon_aead128_tag_portable(&key, &nonce, &block, &expected);
-  ct_binsec_done(u8::from(ok))
+  ct_binsec_done(u8::from(ok.declassify()))
 }
 
 macro_rules! aead_seal_entry {

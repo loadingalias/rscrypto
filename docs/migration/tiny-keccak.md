@@ -108,7 +108,7 @@ let mut tag = [0u8; 64];
 Kmac256::mac_into(key, custom, data, &mut tag);
 ```
 
-### KMAC256: constant-time verification
+### KMAC256: opaque verification
 
 ```rust
 // Before
@@ -129,7 +129,7 @@ use rscrypto::Kmac256;
 Kmac256::verify_tag(key, custom, data, &expected)?;   // Result<(), VerificationError>
 ```
 
-Drop the `subtle` dependency for the verify path. Streaming form: `let mut k = Kmac256::new(key, custom); k.update(data); k.verify(&expected)?;`.
+Drop the `subtle` dependency for the verify path. Streaming form: `let mut k = Kmac256::new(key, custom); k.update(data); k.verify(&expected)?;`. Verification traverses the public-length expected tag before returning one opaque result; generated-code constant-time claims remain limited to the exact configuration in the matching [release evidence](../constant-time.md).
 
 ### cSHAKE256: XOF streaming
 

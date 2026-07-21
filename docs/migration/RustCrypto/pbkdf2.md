@@ -83,7 +83,7 @@ let k_mac: [u8; 32] = state.derive_array_with_params(mac_params)?;
 
 `pbkdf2 = "0.13"` does not expose the precompute as a public type: every `pbkdf2_hmac` call rebuilds the schedule. Migrating to `Pbkdf2Sha256::new(...)` is a free perf win for multi-key derivations.
 
-### Constant-time password verification
+### Opaque password verification
 
 ```rust
 // Before
@@ -99,10 +99,10 @@ let ok: bool = got.ct_eq(&stored_hash).into();
 // After
 use rscrypto::Pbkdf2Sha256;
 Pbkdf2Sha256::verify_password(submitted_password, &stored_salt, stored_iters, &stored_hash)?;
-// Ok(()) on match, Err(VerificationError) on mismatch: both via constant-time compare
+// Ok(()) on match, Err(VerificationError) on mismatch after full tag comparison
 ```
 
-Drop the `subtle` dependency for the verify path. The stateful form is `state.verify(salt, iters, &expected)`, which applies the same default policy.
+Drop the `subtle` dependency for the verify path. The stateful form is `state.verify(salt, iters, &expected)`, which applies the same default policy. The comparison has content-independent source structure for a public output length, but generated-code constant-time claims remain limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md).
 
 ## Notes
 

@@ -123,6 +123,12 @@ claim by itself. A claim exists only where the matching signed GitHub release
 includes an attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` bundle that passes all
 required gates for that exact version, commit, target, profile, and feature set.
 
+Secret-bearing fixed-size owners do not implement `PartialEq` or `Eq`. Their
+`ct_eq` methods return an opaque `CtDecision`; callers must explicitly consume
+it with `declassify()` to obtain a branchable bit. Verification APIs keep that
+boundary internal and return one opaque `Result`. This is misuse resistance at
+the Rust API boundary, not proof about downstream machine code.
+
 The main candidate secret-bearing surfaces in [`ct.toml`](ct.toml) are
 MAC/tag verification, AEAD authentication failure shape, X25519 scalar
 multiplication, Ed25519 signing and secret public-key derivation, ECDSA

@@ -220,17 +220,17 @@ fn root_surface_mac_exports_compile() {
 
   let mut mac = HmacSha256::new(key);
   mac.update(data);
-  assert_eq!(tag, mac.finalize());
+  assert!(tag.ct_eq(&mac.finalize()).declassify());
   assert!(mac.verify(&tag).is_ok());
 
   let mut mac384 = HmacSha384::new(key);
   mac384.update(data);
-  assert_eq!(tag384, mac384.finalize());
+  assert!(tag384.ct_eq(&mac384.finalize()).declassify());
   assert!(mac384.verify(&tag384).is_ok());
 
   let mut mac512 = HmacSha512::new(key);
   mac512.update(data);
-  assert_eq!(tag512, mac512.finalize());
+  assert!(tag512.ct_eq(&mac512.finalize()).declassify());
   assert!(mac512.verify(&tag512).is_ok());
 }
 
@@ -814,7 +814,7 @@ fn root_surface_key_exchange_exports_compile() {
 
   assert_eq!(alice_public.as_bytes().len(), 32);
   assert_eq!(alice_shared.as_bytes().len(), 32);
-  assert_eq!(alice_shared, bob_shared);
+  assert!(alice_shared.ct_eq(&bob_shared).declassify());
   let _ = X25519Error::new();
 }
 

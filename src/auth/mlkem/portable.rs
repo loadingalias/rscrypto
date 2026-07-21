@@ -6536,7 +6536,7 @@ fn inverse_ntt_scaled_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mon
   // 3. `poly` and `addend` are fixed 256-coefficient polynomials; all loads/stores use public fixed
   //    offsets.
   // 4. `addend` is already in canonical modulo-Q representation, so the final add uses the same
-  //    constant-time modular addition as `poly_add_assign`.
+  //    fixed-schedule modular addition as `poly_add_assign`.
   // 5. The memory access schedule depends only on public ML-KEM dimensions, not on coefficient
   //    values.
   unsafe {
@@ -9486,7 +9486,7 @@ fn prf_eta<const RANDOM_BYTES: usize>(seed: &[u8; SEED_BYTES], nonce: u8, out: &
 
 fn ct_eq_mask(a: &[u8], b: &[u8]) -> u8 {
   debug_assert_eq!(a.len(), b.len());
-  0u8.wrapping_sub(u8::from(ct::public_len_eq(a, b)))
+  ct::public_len_eq(a, b).into_mask()
 }
 
 #[inline]
@@ -9561,12 +9561,12 @@ mod tests {
     .unwrap();
 
     let decapsulated = MlKem512::decapsulate(&decapsulation_key, &ciphertext).unwrap();
-    assert_eq!(decapsulated, shared_secret);
+    assert!(decapsulated.ct_eq(&shared_secret).declassify());
 
     let mut modified = ciphertext.to_bytes();
     modified[0] ^= 1;
     let rejected = MlKem512::decapsulate(&decapsulation_key, &MlKem512Ciphertext::from_bytes(modified)).unwrap();
-    assert_ne!(rejected, shared_secret);
+    assert!(!rejected.ct_eq(&shared_secret).declassify());
   }
 
   #[test]

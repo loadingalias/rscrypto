@@ -50,13 +50,13 @@ pub trait Aead {
   const TAG_SIZE: usize;
 
   /// Algorithm-specific key wrapper.
-  type Key: Eq;
+  type Key;
 
   /// Algorithm-specific nonce wrapper.
   type Nonce: AeadNonce;
 
   /// Algorithm-specific tag wrapper.
-  type Tag: Copy + Eq + Debug + AsRef<[u8]>;
+  type Tag: Copy + Debug + AsRef<[u8]>;
 
   /// Construct a new AEAD instance from `key`.
   #[must_use]

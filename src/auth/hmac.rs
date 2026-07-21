@@ -26,15 +26,6 @@ macro_rules! define_hmac_tag_type {
     #[derive(Clone, Copy)]
     pub struct $name([u8; Self::LENGTH]);
 
-    impl PartialEq for $name {
-      #[inline]
-      fn eq(&self, other: &Self) -> bool {
-        ct::fixed_eq(&self.0, &other.0)
-      }
-    }
-
-    impl Eq for $name {}
-
     impl core::hash::Hash for $name {
       #[inline]
       fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -45,6 +36,12 @@ macro_rules! define_hmac_tag_type {
     impl $name {
       /// Tag length in bytes.
       pub const LENGTH: usize = $len;
+
+      /// Compare two tags without exposing a branchable boolean.
+      #[inline]
+      pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+        ct::fixed_eq(&self.0, &other.0)
+      }
 
       /// Construct a typed tag from raw bytes.
       #[inline]
@@ -359,7 +356,10 @@ impl HmacSha256 {
     <Self as Mac>::mac(key, data)
   }
 
-  /// Verify `expected` against the HMAC tag of `data` in constant time.
+  /// Verify `expected` through the tag owner's sealed comparison decision.
+  ///
+  /// Generated-code timing claims are configuration- and release-evidence-bound;
+  /// see `ct.toml`.
   #[inline]
   #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &HmacSha256Tag) -> Result<(), VerificationError> {
@@ -413,8 +413,10 @@ impl HmacSha256 {
 }
 
 #[cfg(feature = "diag")]
-#[must_use]
-pub fn diag_hmac_sha256_verify_portable(key: &[u8; SHA256_TAG_SIZE], expected: &[u8; SHA256_TAG_SIZE]) -> bool {
+pub fn diag_hmac_sha256_verify_portable(
+  key: &[u8; SHA256_TAG_SIZE],
+  expected: &[u8; SHA256_TAG_SIZE],
+) -> ct::CtDecision {
   let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
   );
@@ -590,7 +592,7 @@ impl Mac for HmacSha256 {
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if self.finalize() == *expected {
+    if self.finalize().ct_eq(expected).declassify() {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -650,7 +652,10 @@ impl HmacSha384 {
     <Self as Mac>::mac(key, data)
   }
 
-  /// Verify `expected` against the HMAC tag of `data` in constant time.
+  /// Verify `expected` through the tag owner's sealed comparison decision.
+  ///
+  /// Generated-code timing claims are configuration- and release-evidence-bound;
+  /// see `ct.toml`.
   #[inline]
   #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &HmacSha384Tag) -> Result<(), VerificationError> {
@@ -702,8 +707,10 @@ impl HmacSha384 {
 }
 
 #[cfg(feature = "diag")]
-#[must_use]
-pub fn diag_hmac_sha384_verify_portable(key: &[u8; SHA384_TAG_SIZE], expected: &[u8; SHA384_TAG_SIZE]) -> bool {
+pub fn diag_hmac_sha384_verify_portable(
+  key: &[u8; SHA384_TAG_SIZE],
+  expected: &[u8; SHA384_TAG_SIZE],
+) -> ct::CtDecision {
   let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
   );
@@ -862,7 +869,7 @@ impl Mac for HmacSha384 {
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if self.finalize() == *expected {
+    if self.finalize().ct_eq(expected).declassify() {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -922,7 +929,10 @@ impl HmacSha512 {
     <Self as Mac>::mac(key, data)
   }
 
-  /// Verify `expected` against the HMAC tag of `data` in constant time.
+  /// Verify `expected` through the tag owner's sealed comparison decision.
+  ///
+  /// Generated-code timing claims are configuration- and release-evidence-bound;
+  /// see `ct.toml`.
   #[inline]
   #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_tag(key: &[u8], data: &[u8], expected: &HmacSha512Tag) -> Result<(), VerificationError> {
@@ -974,8 +984,10 @@ impl HmacSha512 {
 }
 
 #[cfg(feature = "diag")]
-#[must_use]
-pub fn diag_hmac_sha512_verify_portable(key: &[u8; SHA512_TAG_SIZE], expected: &[u8; SHA512_TAG_SIZE]) -> bool {
+pub fn diag_hmac_sha512_verify_portable(
+  key: &[u8; SHA512_TAG_SIZE],
+  expected: &[u8; SHA512_TAG_SIZE],
+) -> ct::CtDecision {
   let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
   );
@@ -1134,7 +1146,7 @@ impl Mac for HmacSha512 {
 
   #[inline]
   fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
-    if self.finalize() == *expected {
+    if self.finalize().ct_eq(expected).declassify() {
       Ok(())
     } else {
       Err(VerificationError::new())

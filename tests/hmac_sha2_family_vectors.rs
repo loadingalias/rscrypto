@@ -46,7 +46,10 @@ fn hmac_sha384_rfc4231_vectors() {
   for (i, (key, data, expected_hex)) in cases.iter().enumerate() {
     let expected = HmacSha384Tag::from_bytes(decode_hex::<48>(expected_hex));
     let actual = HmacSha384::mac(key, data);
-    assert_eq!(actual, expected, "HMAC-SHA384 RFC 4231 vector {i} mismatch");
+    assert!(
+      actual.ct_eq(&expected).declassify(),
+      "HMAC-SHA384 RFC 4231 vector {i} mismatch"
+    );
     assert!(HmacSha384::verify_tag(key, data, &expected).is_ok());
   }
 
@@ -98,7 +101,10 @@ fn hmac_sha512_rfc4231_vectors() {
   for (i, (key, data, expected_hex)) in cases.iter().enumerate() {
     let expected = HmacSha512Tag::from_bytes(decode_hex::<64>(expected_hex));
     let actual = HmacSha512::mac(key, data);
-    assert_eq!(actual, expected, "HMAC-SHA512 RFC 4231 vector {i} mismatch");
+    assert!(
+      actual.ct_eq(&expected).declassify(),
+      "HMAC-SHA512 RFC 4231 vector {i} mismatch"
+    );
     assert!(HmacSha512::verify_tag(key, data, &expected).is_ok());
   }
 
@@ -155,18 +161,16 @@ fn hmac_sha2_64bit_family_oneshot_matches_streaming() {
     let oneshot384 = HmacSha384::mac(key, &data);
     let mut streaming384 = HmacSha384::new(key);
     streaming384.update(&data);
-    assert_eq!(
-      oneshot384,
-      streaming384.finalize(),
+    assert!(
+      oneshot384.ct_eq(&streaming384.finalize()).declassify(),
       "HMAC-SHA384 oneshot != streaming at len {len}"
     );
 
     let oneshot512 = HmacSha512::mac(key, &data);
     let mut streaming512 = HmacSha512::new(key);
     streaming512.update(&data);
-    assert_eq!(
-      oneshot512,
-      streaming512.finalize(),
+    assert!(
+      oneshot512.ct_eq(&streaming512.finalize()).declassify(),
       "HMAC-SHA512 oneshot != streaming at len {len}"
     );
   }

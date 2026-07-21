@@ -35,6 +35,6 @@ proptest! {
     }
     let streaming = mac.finalize();
 
-    prop_assert_eq!(streaming, oneshot);
+    prop_assert!(streaming.ct_eq(&oneshot).declassify());
   }
 }

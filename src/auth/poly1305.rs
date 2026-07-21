@@ -86,15 +86,6 @@ impl fmt::Debug for Poly1305OneTimeKey {
 #[derive(Clone, Copy)]
 pub struct Poly1305Tag([u8; Self::LENGTH]);
 
-impl PartialEq for Poly1305Tag {
-  #[inline]
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for Poly1305Tag {}
-
 impl core::hash::Hash for Poly1305Tag {
   #[inline]
   fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -105,6 +96,12 @@ impl core::hash::Hash for Poly1305Tag {
 impl Poly1305Tag {
   /// Poly1305 tag length in bytes.
   pub const LENGTH: usize = TAG_SIZE;
+
+  /// Compare two tags without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
 
   /// Construct a typed tag from raw bytes.
   #[inline]
@@ -476,11 +473,14 @@ impl Poly1305 {
     Poly1305Tag::from_bytes(core::mem::take(&mut self.state).finalize())
   }
 
-  /// Verify `expected` against the current Poly1305 state in constant time.
+  /// Verify `expected` through the tag owner's sealed comparison decision.
+  ///
+  /// Generated-code timing claims are configuration- and release-evidence-bound;
+  /// see `ct.toml`.
   #[inline]
   #[must_use = "Poly1305 verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify(self, expected: &Poly1305Tag) -> Result<(), VerificationError> {
-    if self.finalize() == *expected {
+    if self.finalize().ct_eq(expected).declassify() {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -501,7 +501,8 @@ impl Poly1305 {
   #[must_use = "Poly1305 verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_once(key: Poly1305OneTimeKey, data: &[u8], expected: &Poly1305Tag) -> Result<(), VerificationError> {
     Self::authenticate_once(key, data)
-      .eq(expected)
+      .ct_eq(expected)
+      .declassify()
       .then_some(())
       .ok_or_else(VerificationError::new)
   }

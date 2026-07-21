@@ -139,7 +139,11 @@ macro_rules! mlkem_profile_properties {
         modified[byte_idx] ^= 1u8 << bit_idx;
         let rejected = <$profile>::decapsulate(&dk, &<$ciphertext>::from_bytes(modified)).unwrap();
 
-        prop_assert_ne!(encapsulated, rejected, "{name} modified ciphertext returned original shared secret", name = $name);
+        prop_assert!(
+          !encapsulated.ct_eq(&rejected).declassify(),
+          "{name} modified ciphertext returned original shared secret",
+          name = $name
+        );
       }
 
       #[test]

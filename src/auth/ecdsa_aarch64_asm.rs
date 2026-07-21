@@ -75,8 +75,8 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
   // SAFETY: P-256 fixed-base scalar multiplication call because:
   // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `scalar` are fixed-size arrays with the exact limb counts required by s2n-bignum.
-  // 3. The assembly routine is constant-time with respect to the scalar; ECDSA signing uses secret
-  //    nonce material.
+  // 3. The scalar may contain secret nonce material. Generated-code timing assurance is
+  //    configuration- and release-evidence-bound; see `ct.toml`.
   // 4. The table is generated for `P256_AARCH64_BASEPOINT_BLOCKSIZE` and contains every entry the
   //    s2n-bignum fixed-base routine reads for that block size.
   unsafe {
@@ -125,7 +125,8 @@ pub(super) fn p384_field_mul(lhs: &[u64; 6], rhs: &[u64; 6]) -> [u64; 6] {
   // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out`, `lhs`, and `rhs` are six-limb arrays, which is the exact P-384 field size.
   // 3. Callers route only P-384 field elements in Montgomery form through this wrapper.
-  // 4. The routine is constant-time with respect to the field-element values.
+  // 4. Field elements may be secret. Generated-code timing assurance is configuration- and
+  //    release-evidence-bound; see `ct.toml`.
   unsafe { rscrypto_bignum_montmul_p384(out.as_mut_ptr(), lhs.as_ptr(), rhs.as_ptr()) };
   out
 }
@@ -137,7 +138,8 @@ pub(super) fn p384_field_square(value: &[u64; 6]) -> [u64; 6] {
   // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `value` are six-limb arrays, which is the exact P-384 field size.
   // 3. Callers route only P-384 field elements in Montgomery form through this wrapper.
-  // 4. The routine is constant-time with respect to the field-element value.
+  // 4. Field elements may be secret. Generated-code timing assurance is configuration- and
+  //    release-evidence-bound; see `ct.toml`.
   unsafe { rscrypto_bignum_montsqr_p384(out.as_mut_ptr(), value.as_ptr()) };
   out
 }
@@ -184,7 +186,8 @@ pub(super) fn p384_point_double(point: &[u64; 18]) -> [u64; 18] {
   // 1. This module is compiled only for supported AArch64, matching the embedded assembly ABI.
   // 2. `out` and `point` are 18-limb arrays laid out as x/y/z P-384 Montgomery coordinates.
   // 3. Callers preserve the Rust-level infinity flag and select the infinity result when required.
-  // 4. The routine is constant-time with respect to the point coordinate values.
+  // 4. Point coordinates may be secret. Generated-code timing assurance is configuration- and
+  //    release-evidence-bound; see `ct.toml`.
   unsafe { rscrypto_p384_montjdouble_alt(out.as_mut_ptr(), point.as_ptr()) };
   out
 }
@@ -197,7 +200,8 @@ pub(super) fn p384_point_mixadd(lhs: &[u64; 18], rhs: &[u64; 12]) -> [u64; 18] {
   // 2. `out` and `lhs` are 18-limb Jacobian arrays; `rhs` is a 12-limb affine x/y array.
   // 3. Callers preserve the Rust-level infinity and zero-digit handling around this raw point
   //    operation.
-  // 4. The routine is constant-time with respect to the point coordinate values.
+  // 4. Point coordinates may be secret. Generated-code timing assurance is configuration- and
+  //    release-evidence-bound; see `ct.toml`.
   unsafe { rscrypto_p384_montjmixadd_alt(out.as_mut_ptr(), lhs.as_ptr(), rhs.as_ptr()) };
   out
 }

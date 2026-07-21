@@ -1,5 +1,88 @@
 //! Secret-handling utilities for cryptographic operations.
 
+/// Opaque result of a content-independent cryptographic comparison.
+///
+/// Safe code can obtain a decision only from a semantic owner such as a key,
+/// shared secret, or authentication tag. The private representation prevents
+/// implicit conversion or inspection; [`declassify`](Self::declassify) is the
+/// single explicit boundary that exposes the equality result as a `bool`.
+///
+/// `CtDecision` preserves the source-level comparison structure. Constant-time
+/// claims still depend on the exact compiler, target, features, and generated
+/// binary covered by the release evidence in `ct.toml`.
+#[must_use = "a cryptographic comparison decision must be composed or explicitly declassified"]
+pub struct CtDecision {
+  mask: u8,
+}
+
+impl CtDecision {
+  const TRUE_MASK: u8 = u8::MAX;
+
+  #[inline(always)]
+  const fn from_difference(difference: u64) -> Self {
+    let nonzero = ((difference | difference.wrapping_neg()) >> 63) as u8;
+    Self {
+      mask: nonzero.wrapping_sub(1),
+    }
+  }
+
+  /// Expose the comparison result as a branchable boolean.
+  ///
+  /// Call this only at the semantic boundary where revealing equality is
+  /// intended. Declassification consumes the decision so the opaque value
+  /// cannot accidentally be reused after that boundary.
+  #[inline(always)]
+  #[must_use]
+  pub const fn declassify(self) -> bool {
+    self.mask == Self::TRUE_MASK
+  }
+
+  #[inline(always)]
+  #[allow(dead_code)]
+  pub(crate) const fn into_u8(self) -> u8 {
+    self.mask & 1
+  }
+
+  #[inline(always)]
+  #[allow(dead_code)]
+  pub(crate) const fn into_mask(self) -> u8 {
+    self.mask
+  }
+}
+
+impl core::ops::BitAnd for CtDecision {
+  type Output = Self;
+
+  #[inline(always)]
+  fn bitand(self, rhs: Self) -> Self::Output {
+    Self {
+      mask: self.mask & rhs.mask,
+    }
+  }
+}
+
+impl core::ops::BitOr for CtDecision {
+  type Output = Self;
+
+  #[inline(always)]
+  fn bitor(self, rhs: Self) -> Self::Output {
+    Self {
+      mask: self.mask | rhs.mask,
+    }
+  }
+}
+
+impl core::ops::Not for CtDecision {
+  type Output = Self;
+
+  #[inline(always)]
+  fn not(self) -> Self::Output {
+    Self {
+      mask: self.mask ^ Self::TRUE_MASK,
+    }
+  }
+}
+
 #[inline(always)]
 fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
   let mut difference = 0u64;
@@ -28,10 +111,9 @@ fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
 /// evidence is tracked separately in `ct.toml`; source structure is not a
 /// universal constant-time guarantee.
 #[inline(always)]
-#[must_use]
 #[allow(dead_code)]
-pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> bool {
-  byte_difference(left, right) == 0
+pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> CtDecision {
+  CtDecision::from_difference(byte_difference(left, right))
 }
 
 /// Compare two byte slices whose lengths are public protocol inputs.
@@ -40,13 +122,12 @@ pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> bool 
 /// traversed without content-dependent exits. Keep callers individually
 /// classified in `ct.toml`; fixed-shape owner types must use [`fixed_eq`].
 #[inline]
-#[must_use]
 #[allow(dead_code)]
-pub(crate) fn public_len_eq(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn public_len_eq(left: &[u8], right: &[u8]) -> CtDecision {
   if left.len() != right.len() {
-    return false;
+    return CtDecision::from_difference(1);
   }
-  byte_difference(left, right) == 0
+  CtDecision::from_difference(byte_difference(left, right))
 }
 
 /// Volatile-zero a byte slice without emitting a compiler fence.
@@ -158,19 +239,32 @@ mod tests {
   #[test]
   fn fixed_eq_checks_every_position() {
     let value = [0x5a; 64];
-    assert!(fixed_eq(&value, &value));
+    assert!(fixed_eq(&value, &value).declassify());
     for index in [0, value.len() / 2, value.len() - 1] {
       let mut different = value;
       different[index] ^= 1;
-      assert!(!fixed_eq(&value, &different));
+      assert!(!fixed_eq(&value, &different).declassify());
     }
   }
 
   #[test]
   fn public_len_eq_exposes_only_length_and_result() {
-    assert!(public_len_eq(b"abcdef", b"abcdef"));
-    assert!(!public_len_eq(b"abcdef", b"abcdeg"));
-    assert!(!public_len_eq(b"abcdef", b"abcde"));
+    assert!(public_len_eq(b"abcdef", b"abcdef").declassify());
+    assert!(!public_len_eq(b"abcdef", b"abcdeg").declassify());
+    assert!(!public_len_eq(b"abcdef", b"abcde").declassify());
+  }
+
+  #[test]
+  fn decisions_compose_before_declassification() {
+    let equal = fixed_eq(b"equal", b"equal");
+    let different = fixed_eq(b"equal", b"other");
+    assert!(!(equal & different).declassify());
+
+    let equal = fixed_eq(b"equal", b"equal");
+    let different = fixed_eq(b"equal", b"other");
+    assert!((equal | different).declassify());
+
+    assert!((!fixed_eq(b"equal", b"other")).declassify());
   }
 
   // ── zeroize ─────────────────────────────────────────────────────────────

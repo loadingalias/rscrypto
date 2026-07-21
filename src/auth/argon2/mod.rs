@@ -41,7 +41,8 @@
 //! - [`Argon2Params::new`] rejects invalid cost profiles, so constructed parameters are always
 //!   valid.
 //! - The memory matrix is zeroized on drop.
-//! - [`Argon2id::verify`] is constant-time with respect to the stored hash bytes.
+//! - [`Argon2id::verify`] traverses every stored-hash byte before returning an opaque result;
+//!   generated-code timing claims remain configuration- and release-evidence-bound.
 //!
 //! # Compliance
 //!
@@ -1891,7 +1892,11 @@ macro_rules! define_argon2_variant {
         argon2_hash_with_context(params, context, password, salt, $variant, out)
       }
 
-      /// Verify `expected` against a freshly-computed hash in constant time.
+      /// Verify `expected` after traversing the freshly computed hash and every
+      /// expected byte.
+      ///
+      /// Generated-code timing claims are configuration- and release-evidence-bound;
+      /// see `ct.toml`.
       ///
       /// # Errors
       ///
@@ -1916,7 +1921,7 @@ macro_rules! define_argon2_variant {
         let bytes_match = ct::public_len_eq(&actual, expected);
         ct::zeroize(&mut actual);
 
-        let success = !hash_failed & bytes_match;
+        let success = !hash_failed & bytes_match.declassify();
         if core::hint::black_box(success) {
           Ok(())
         } else {
@@ -2082,7 +2087,7 @@ impl Argon2idPassword {
     )
     .map_err(|_| VerificationError::new())?;
     let verified = ct::fixed_eq(actual.as_array(), &approved.expected);
-    if !core::hint::black_box(verified) {
+    if !core::hint::black_box(verified.declassify()) {
       return Err(VerificationError::new());
     }
     if approved.params == self.generation && approved.salt_len as usize == PASSWORD_SALT_LEN {

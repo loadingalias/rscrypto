@@ -195,8 +195,8 @@ fn chacha20poly1305_diag_x86_asm_encrypt_matches_owned_path() {
         actual, expected,
         "x86 asm ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
       );
-      assert_eq!(
-        actual_tag, expected_tag,
+      assert!(
+        actual_tag.ct_eq(&expected_tag).declassify(),
         "x86 asm tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
       );
     }
@@ -234,8 +234,8 @@ fn chacha20poly1305_diag_owned_par4_encrypt_matches_normal_path() {
         actual, expected,
         "owned par4 ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
       );
-      assert_eq!(
-        actual_tag, expected_tag,
+      assert!(
+        actual_tag.ct_eq(&expected_tag).declassify(),
         "owned par4 tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
       );
     }

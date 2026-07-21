@@ -47,21 +47,18 @@ const OUTPUT_BLOCK_LEN: usize = 2 * OUT_LEN;
 const CV_STACK_LEN: usize = 54;
 
 /// BLAKE3 keyed-hash output (32 bytes).
-///
-/// Equality is constant-time, matching the security semantics expected for tag
-/// verification.
-// Manual `PartialEq` is constant-time but byte-equivalent to a derived
-// implementation, so the `Hash`/`Eq` contract `a == b → hash(a) == hash(b)`
-// is preserved. The lint flags the divergence between `derive(Hash)` and a
-// hand-written `eq`, which is the right shape here: variable-time `==` on a
-// MAC-shaped output would be a footgun.
-#[allow(clippy::derived_hash_with_manual_eq)]
 #[derive(Clone, Copy, Default, Hash)]
 pub struct Blake3KeyedHash([u8; OUT_LEN]);
 
 impl Blake3KeyedHash {
   /// Keyed-hash output length in bytes.
   pub const LENGTH: usize = OUT_LEN;
+
+  /// Compare two keyed hashes without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
 
   /// Construct from raw bytes.
   #[inline]
@@ -105,15 +102,6 @@ impl AsRef<[u8]> for Blake3KeyedHash {
     &self.0
   }
 }
-
-impl PartialEq for Blake3KeyedHash {
-  #[inline]
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for Blake3KeyedHash {}
 
 impl core::fmt::Debug for Blake3KeyedHash {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -2782,14 +2770,15 @@ impl Blake3 {
     Blake3KeyedHash::from_bytes(digest_public_oneshot(key_words, KEYED_HASH, data))
   }
 
-  /// Compute and verify the keyed hash of `data` in constant time.
+  /// Compute and verify the keyed hash through its sealed comparison decision.
   ///
   /// This avoids accidental use of short-circuit `==` on `[u8; 32]` when
-  /// authenticating data with keyed BLAKE3.
+  /// authenticating data with keyed BLAKE3. Generated-code timing claims are
+  /// configuration- and release-evidence-bound; see `ct.toml`.
   #[inline]
   #[must_use = "keyed-hash verification must be checked; a dropped Result silently accepts a forged tag"]
   pub fn verify_keyed(key: &[u8; KEY_LEN], data: &[u8], expected: &Blake3KeyedHash) -> Result<(), VerificationError> {
-    if Self::keyed_digest(key, data) == *expected {
+    if Self::keyed_digest(key, data).ct_eq(expected).declassify() {
       Ok(())
     } else {
       Err(VerificationError::new())
@@ -4502,9 +4491,10 @@ mod tests {
         for chunk in input.chunks(split) {
           h.update(chunk);
         }
-        assert_eq!(
-          Blake3KeyedHash::from_bytes(h.finalize()),
-          expected_keyed,
+        assert!(
+          Blake3KeyedHash::from_bytes(h.finalize())
+            .ct_eq(&expected_keyed)
+            .declassify(),
           "keyed streaming mismatch len={len} split={split}"
         );
       }

@@ -64,9 +64,8 @@ macro_rules! assert_hmac_sha3 {
 
       let expected = <$tag>::from_bytes(hmac_sha3_oracle!($oracle, &key, &data, $tag_len, $rate));
 
-      assert_eq!(
-        <$ours>::mac(&key, &data),
-        expected,
+      assert!(
+        <$ours>::mac(&key, &data).ct_eq(&expected).declassify(),
         "{} one-shot mismatch key_len={} data_len={}",
         $name,
         key_len,
@@ -78,9 +77,8 @@ macro_rules! assert_hmac_sha3 {
       for chunk in data.chunks(chunk_len) {
         streaming.update(chunk);
       }
-      assert_eq!(
-        streaming.finalize(),
-        expected,
+      assert!(
+        streaming.finalize().ct_eq(&expected).declassify(),
         "{} streaming mismatch key_len={} data_len={} chunk_len={}",
         $name,
         key_len,
@@ -90,7 +88,11 @@ macro_rules! assert_hmac_sha3 {
 
       streaming.reset();
       streaming.update(&data);
-      assert_eq!(streaming.finalize(), expected, "{} reset mismatch", $name);
+      assert!(
+        streaming.finalize().ct_eq(&expected).declassify(),
+        "{} reset mismatch",
+        $name
+      );
 
       let mut corrupted = expected.to_bytes();
       if !corrupted.is_empty() {

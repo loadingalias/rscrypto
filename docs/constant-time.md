@@ -79,6 +79,24 @@ otherwise:
 Public length may leak. Public algorithm/profile selection may leak. A single
 opaque authentication success/failure result may leak.
 
+## Source-Level Decision Boundary
+
+Secret-bearing fixed-size keys, shared secrets, authentication tags, keypairs,
+and keyed outputs do not implement `PartialEq` or `Eq`. Their inherent `ct_eq`
+methods return `CtDecision`, an opaque, non-`Copy` value with no public
+constructor, formatting, equality, or implicit boolean conversion. Decisions
+can be composed with bitwise `&`, `|`, and `!`; the consuming `declassify()`
+method is the only public route to a branchable equality bit.
+
+Verification APIs keep that boundary inside the primitive and return one opaque
+`Result`. Public keys, nonces, signatures, and ciphertext containers are public
+data and retain ordinary equality where useful.
+
+This API prevents accidental source-level branching during comparison. It does
+not prove the generated machine code. A constant-time claim still requires the
+exact compiler, target, CPU features, crate features, profile, linker, and
+binary recorded by the matching release evidence.
+
 ## Target Scope
 
 A target is not claimed because it builds. It is claimed only when the release
@@ -167,12 +185,11 @@ and 64-byte cases. Public-length internal comparisons are mapped in `ct.toml`
 to retained production entrypoints or to an explicit limitation; an uncovered
 call is not silently treated as binary evidence.
 
-This executable is an unpublished evidence surface. It proves only its exact
-source, toolchain, backend, target, target features, feature set, profile, and
-linker configuration. It is not the crate's public API, it is not a sealed
-decision type, and it does not generalize to arbitrary downstream binaries.
-Equality still returns `bool`; that declassification limitation remains until
-T3.4.
+This executable is an unpublished evidence surface. It declassifies the
+production `CtDecision` only at retained evidence ABI entrypoints. It proves
+only its exact source, toolchain, backend, target, target features, feature set,
+profile, and linker configuration. It is not the crate's public API and does
+not generalize to arbitrary downstream binaries.
 
 Assembly triage is grouped by primitive, reachable symbol, finding kind, and
 artifact. Register-indexed memory is presented first, then conditional control

@@ -12,7 +12,8 @@ const BLOCK_SIZE: usize = 16;
 // These tables implement the Hamburg technique (CHES 2009) for computing the
 // AES S-box using only 4-bit nibble lookups via byte-shuffle instructions
 // (PSHUFB, VPERM, vrgather). All operations are register-to-register with
-// no secret-dependent memory access — constant-time by construction.
+// no secret-dependent memory access in the source/assembly design. Exact
+// timing claims remain bound to the generated binary and release evidence.
 //
 // Reference: Hamburg, "Accelerating AES with Vector Permute Instructions"
 // https://www.shiftleft.org/papers/vector_aes/vector_aes.pdf

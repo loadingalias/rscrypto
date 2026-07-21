@@ -14,7 +14,7 @@
 //! let alice_shared = alice.diffie_hellman(&bob_public)?;
 //! let bob_shared = bob.diffie_hellman(&alice_public)?;
 //!
-//! assert_eq!(alice_shared, bob_shared);
+//! assert!(alice_shared.ct_eq(&bob_shared).declassify());
 //! assert_eq!(alice_public.as_bytes().len(), X25519PublicKey::LENGTH);
 //! # Ok::<(), rscrypto::auth::X25519Error>(())
 //! ```
@@ -148,17 +148,15 @@ define_unit_error! {
 /// X25519 secret scalar bytes.
 pub struct X25519SecretKey([u8; Self::LENGTH]);
 
-impl PartialEq for X25519SecretKey {
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for X25519SecretKey {}
-
 impl X25519SecretKey {
   /// Secret key length in bytes.
   pub const LENGTH: usize = POINT_LENGTH;
+
+  /// Compare two secret keys without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
 
   /// Construct a secret key from its byte representation.
   #[inline]
@@ -496,17 +494,15 @@ impl From<X25519SecretKey> for X25519PublicKey {
 /// X25519 shared secret bytes.
 pub struct X25519SharedSecret([u8; Self::LENGTH]);
 
-impl PartialEq for X25519SharedSecret {
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for X25519SharedSecret {}
-
 impl X25519SharedSecret {
   /// Shared secret length in bytes.
   pub const LENGTH: usize = POINT_LENGTH;
+
+  /// Compare two shared secrets without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
 
   /// Construct a shared secret from its byte representation.
   #[inline]

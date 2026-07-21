@@ -43,7 +43,7 @@ public_len_symbols = [
 ]
 formal_owner_widths = [16, 32, 48, 64]
 formal_limitation = "BINSEC owner kernels cover the representative 16-, 32-, 48-, and 64-byte production monomorphizations. The 28- and ML-KEM-sized owner monomorphizations require linked-binary disassembly/closure and heuristics on every release lane; BINSEC proof kernels are deferred because they add no caller-selectable shape and the large copies exceed the present proof budget."
-downstream_limitation = "Evidence binds this final linked harness executable and its exact compiler/linker configuration. It does not claim constant-time behavior for arbitrary downstream binaries that rebuild or inline rscrypto differently. Returning bool remains the T3.4 declassification limitation."
+downstream_limitation = "Evidence binds this final linked harness executable and its exact compiler/linker configuration. It does not claim constant-time behavior for arbitrary downstream binaries that rebuild or inline rscrypto differently. Production owner comparisons return an opaque CtDecision and the evidence ABI declassifies only at its retained entrypoints."
 
 [[asm_public_operand]]
 primitive = "password.argon2i"
@@ -2591,8 +2591,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2253
-compiler_api_sha256 = "3911999a7a2d68a4d0dd5e0604f0d8cb78b04c340c36fc39e82ad658f348c9f0"
+compiler_api_item_count = 2261
+compiler_api_sha256 = "a08f563d15c951a2286451972cbc524d69100bfe6e3c027d8dbed381d869767f"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2603,8 +2603,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2248
-compiler_api_sha256 = "1179eb9727d21ccfbecbc64bef9e54b2ddb98739991edc1ca1460cd806829ea8"
+compiler_api_item_count = 2256
+compiler_api_sha256 = "58d9a255a6c13f093a5a0946be4c6cf3c08125415738d9e2013157cbbb84e186"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2663,8 +2663,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2248
-compiler_api_sha256 = "1179eb9727d21ccfbecbc64bef9e54b2ddb98739991edc1ca1460cd806829ea8"
+compiler_api_item_count = 2256
+compiler_api_sha256 = "58d9a255a6c13f093a5a0946be4c6cf3c08125415738d9e2013157cbbb84e186"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2688,8 +2688,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2242
-compiler_api_sha256 = "93ae78986ed4ad9b10aa847b8120eceeba8dc72a545d3e4fea581a8c939df5a9"
+compiler_api_item_count = 2250
+compiler_api_sha256 = "613c917f01b4ac52fa19f4a3c33f1e73e154d8ce74622f98c3ab74448072b6f8"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2701,8 +2701,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2242
-compiler_api_sha256 = "35dd3622aa03f55488161e245664b40f7245518d187ed4759d97772d2ecd2ff6"
+compiler_api_item_count = 2250
+compiler_api_sha256 = "9f6f605b4ad27fe7fcc4de4b830ae99ee4b1ab54e5ccf848da6845c6ecc9a788"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2714,8 +2714,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2244
-compiler_api_sha256 = "4da5379ebd04c77e14b8fcc449393c8322af346cf6b80f399e3511fbac8c3cc1"
+compiler_api_item_count = 2252
+compiler_api_sha256 = "7b5a444acb4147d30322f21acde5ccf1a671b13420ccbb4820e004fd118d8fb5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2797,19 +2797,20 @@ ci = "artifact-only"
 [[operation]]
 id = "secrets.fixed_owner_equality"
 api = [
-  "rscrypto::*Key::eq",
-  "rscrypto::*SharedSecret::eq",
-  "rscrypto::*Tag::eq",
-  "rscrypto::Blake3KeyedHash::eq",
-  "rscrypto::MlKem*DecapsulationKey::eq",
-  "rscrypto::MlKem*PreparedDecapsulationKey::eq",
+  "rscrypto::*Key::ct_eq",
+  "rscrypto::*SharedSecret::ct_eq",
+  "rscrypto::*Tag::ct_eq",
+  "rscrypto::Blake3KeyedHash::ct_eq",
+  "rscrypto::Ed25519Keypair::ct_eq",
+  "rscrypto::MlKem*DecapsulationKey::ct_eq",
+  "rscrypto::MlKem*PreparedDecapsulationKey::ct_eq",
 ]
 features = ["algorithm owner feature"]
 targets = ["all-supported"]
 secret_inputs = ["left owner bytes", "right owner bytes"]
 public_inputs = ["concrete owner type and fixed size"]
 variable_time_components = ["none at the Rust source boundary; optimized lowering is target-specific evidence"]
-permitted_leakage = ["owner type", "fixed owner size", "boolean equality result"]
+permitted_leakage = ["owner type", "fixed owner size", "explicitly declassified equality result"]
 claim = "ct-intended"
 evidence = [
   "primitive:owner_equality.fixed",
@@ -2818,7 +2819,7 @@ evidence = [
   "unit:owner_equality.fixed.48",
   "unit:owner_equality.fixed.64",
 ]
-limitation = "Returning bool declassifies the comparison result until T3.4. T3.3 owns exact release-binary proof."
+limitation = "CtDecision seals the source-level result until explicit declassification. Ed25519Keypair composes its secret and public 32-byte decisions before declassification. T3.3 owns exact release-binary proof; this API boundary does not generalize evidence to downstream codegen."
 
 [[operation]]
 id = "secrets.generic_wrapper_lifecycle"
@@ -2903,7 +2904,7 @@ variable_time_components = ["ordinary public-data parsing, formatting, hashing, 
 permitted_leakage = ["all inputs and results are public", "tag equality result"]
 claim = "best-effort"
 evidence = ["primitive:public_hashes_and_checksums"]
-limitation = "Nonces, encoded tags, and error metadata are public values. Ordinary equality is intentional except tag-owner PartialEq, which maps to the fixed-owner equality operation."
+limitation = "Nonces, encoded public values, and error metadata use ordinary equality where useful. Secret-bearing tag owners instead expose ct_eq through the fixed-owner comparison operation."
 
 [[operation]]
 id = "mac.compute_and_finalize"
@@ -2919,7 +2920,7 @@ variable_time_components = ["public message-length loops", "public backend dispa
 permitted_leakage = ["algorithm", "message length", "backend", "returned tag"]
 claim = "ct-intended"
 evidence = ["primitive:mac.hmac_verify", "primitive:mac.kmac256_verify", "harness:ct_entry_hmac_sha256_verify", "harness:ct_entry_kmac256_verify"]
-limitation = "Mac is implementable downstream. Its default verification inherits the downstream Tag::Eq implementation and cannot prove that implementation's timing behavior."
+limitation = "Mac is implementable downstream. Each implementation owns verify; the default verify_tag delegates to it, so downstream verification timing remains outside rscrypto's evidence."
 
 [[operation]]
 id = "mac.verify_typed_tag"
@@ -2932,11 +2933,11 @@ features = ["hmac", "hmac-sha3", "poly1305"]
 targets = ["all-supported"]
 secret_inputs = ["MAC key/state", "computed tag"]
 public_inputs = ["message", "typed expected tag", "public lengths"]
-variable_time_components = ["MAC computation over public length", "fixed owner equality", "opaque result conversion"]
+variable_time_components = ["MAC computation over public length", "sealed fixed-owner comparison", "opaque result conversion"]
 permitted_leakage = ["message length", "tag size", "opaque verification result"]
 claim = "ct-intended"
 evidence = ["primitive:mac.hmac_verify", "unit:mac.hmac_verify.sha256", "unit:mac.hmac_verify.sha384", "unit:mac.hmac_verify.sha512"]
-limitation = "The public Mac trait trusts downstream Tag::Eq. Built-in tag owners are checked; downstream implementations are an explicit boundary."
+limitation = "The public Mac trait requires each implementation to define verify. Built-in implementations use sealed tag-owner comparisons; downstream implementations are an explicit evidence boundary."
 
 [[operation]]
 id = "kmac.variable_output_and_verify"
@@ -2956,7 +2957,7 @@ id = "keyed_hash.compute_and_verify"
 api = [
   "rscrypto::Blake2*::{new_keyed,keyed_digest}",
   "rscrypto::Blake3::{new_keyed,keyed_digest,derive_key,verify_keyed}",
-  "rscrypto::Blake3KeyedHash::{from_bytes,to_bytes,as_bytes,eq}",
+  "rscrypto::Blake3KeyedHash::{from_bytes,to_bytes,as_bytes,ct_eq}",
 ]
 features = ["blake2b", "blake2s", "blake3", "parallel"]
 targets = ["all-supported", "backend selected by public target capabilities"]
@@ -3044,11 +3045,11 @@ variable_time_components = ["public backend dispatch", "opaque all-zero shared-s
 permitted_leakage = ["public key", "backend", "opaque success/failure", "caller-authorized shared-secret exposure"]
 claim = "ct-intended"
 evidence = ["primitive:kx.x25519", "harness:ct_entry_x25519", "dudect:x25519_fixed_vs_random_scalar"]
-limitation = "Exact assembly and portable lowering are target-specific evidence. Shared-secret comparison remains a bool-returning owner operation until T3.4."
+limitation = "Exact assembly and portable lowering are target-specific evidence. Shared-secret comparison returns CtDecision; downstream declassification and codegen remain outside this operation's release evidence."
 
 [[operation]]
 id = "kem.mlkem512"
-api = ["rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret,eq}"]
+api = ["rscrypto::MlKem512::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem512*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}", "rscrypto::MlKem512{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq", "rscrypto::MlKem512{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq"]
 features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
 targets = ["all-supported", "portable implementation"]
 secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
@@ -3057,11 +3058,11 @@ variable_time_components = ["public matrix rejection sampling", "public fixed-sh
 permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
 claim = "ct-intended"
 evidence = ["primitive:kem.mlkem512", "unit:kem.mlkem512.keygen", "unit:kem.mlkem512.encapsulate", "unit:kem.mlkem512.decapsulate"]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret equality uses their fixed owners."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
 
 [[operation]]
 id = "kem.mlkem768"
-api = ["rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret,eq}"]
+api = ["rscrypto::MlKem768::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem768*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}", "rscrypto::MlKem768{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq", "rscrypto::MlKem768{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq"]
 features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
 targets = ["all-supported", "portable implementation"]
 secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
@@ -3070,11 +3071,11 @@ variable_time_components = ["public matrix rejection sampling", "public fixed-sh
 permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
 claim = "ct-intended"
 evidence = ["primitive:kem.mlkem768", "unit:kem.mlkem768.keygen", "unit:kem.mlkem768.encapsulate", "unit:kem.mlkem768.decapsulate"]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret equality uses their fixed owners."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
 
 [[operation]]
 id = "kem.mlkem1024"
-api = ["rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret,eq}"]
+api = ["rscrypto::MlKem1024::{generate_keypair,generate_keypair_with,encapsulate,encapsulate_with,decapsulate}", "rscrypto::MlKem1024*::{from_bytes,try_from_slice,to_bytes,as_bytes,expose_secret,duplicate_secret}", "rscrypto::MlKem1024{DecapsulationKey,PreparedDecapsulationKey,SharedSecret}::ct_eq", "rscrypto::MlKem1024{EncapsulationKey,PreparedEncapsulationKey,Ciphertext}::eq"]
 features = ["ml-kem", "getrandom", "serde", "serde-secrets"]
 targets = ["all-supported", "portable implementation"]
 secret_inputs = ["key-generation secret seed", "decapsulation key", "encapsulation randomness", "shared secret", "implicit-rejection fallback"]
@@ -3083,7 +3084,7 @@ variable_time_components = ["public matrix rejection sampling", "public fixed-sh
 permitted_leakage = ["parameter set", "public key", "ciphertext", "fixed sizes", "caller-authorized secret exposure"]
 claim = "ct-intended"
 evidence = ["primitive:kem.mlkem1024", "unit:kem.mlkem1024.keygen", "unit:kem.mlkem1024.encapsulate", "unit:kem.mlkem1024.decapsulate"]
-limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret equality uses their fixed owners."
+limitation = "Public encapsulation-key/ciphertext equality is ordinary equality. Decapsulation-key/shared-secret owners return CtDecision and require explicit declassification."
 
 [[operation]]
 id = "signature.ed25519_signing"
@@ -3207,18 +3208,18 @@ features = ["always"]
 variants = ["Owner16", "Owner32", "Owner48", "Owner64"]
 release_owner_widths = [16, 28, 32, 48, 64, 1632, 2400, 3168]
 entrypoints = [
-  "Aes128GcmKey::eq",
-  "X25519SecretKey::eq",
-  "HmacSha384Tag::eq",
-  "HmacSha512Tag::eq",
-  "fixed-size secret/key/tag owner Eq implementations",
+  "Aes128GcmKey::ct_eq",
+  "X25519SecretKey::ct_eq",
+  "HmacSha384Tag::ct_eq",
+  "HmacSha512Tag::ct_eq",
+  "fixed-size secret/key/tag owner ct_eq implementations",
 ]
 secrets = ["left_owner_bytes", "right_owner_bytes"]
 public = ["concrete_owner_type", "owner_size"]
 may_leak = ["concrete_owner_type", "owner_size", "equality_result"]
 must_not_leak_ref = "common_secret_data"
 required = ["tier_a"]
-notes = "Public callers select a semantic owner, never a raw secret length. Source structure and black_box are not machine-code proofs; T3.3 owns exact release-binary evidence. Returning bool remains an explicit T3.4 limitation."
+notes = "Public callers select a semantic owner, never a raw secret length. CtDecision is opaque, non-Copy, and explicitly declassified; it prevents an accidental source-level branch but is not a machine-code proof. T3.3 owns exact release-binary evidence."
 [primitive.harness]
 status = "covered"
 symbols = [
@@ -3303,7 +3304,7 @@ id = "keyed_hash.blake3_verify"
 tier = "A"
 claim = "ct-intended"
 features = ["blake3"]
-entrypoints = ["Blake3::verify_keyed", "Blake3KeyedHash::eq"]
+entrypoints = ["Blake3::verify_keyed", "Blake3KeyedHash::ct_eq"]
 secrets = ["key", "computed_tag", "expected_tag"]
 public = ["data"]
 may_leak = ["input_length", "opaque_success_or_failure"]

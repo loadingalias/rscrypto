@@ -804,6 +804,12 @@ impl EcdsaP256SecretKey {
   /// P-256 secret scalar length in bytes.
   pub const LENGTH: usize = 32;
 
+  /// Compare two secret keys without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
+
   /// Parse a P-256 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
     Self::from_zeroizing_bytes(ZeroizingBytes::new(bytes))
@@ -942,14 +948,6 @@ impl EcdsaP256SecretKey {
   }
 }
 
-impl PartialEq for EcdsaP256SecretKey {
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for EcdsaP256SecretKey {}
-
 impl fmt::Debug for EcdsaP256SecretKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("EcdsaP256SecretKey(****)")
@@ -968,6 +966,12 @@ pub struct EcdsaP384SecretKey([u8; Self::LENGTH]);
 impl EcdsaP384SecretKey {
   /// P-384 secret scalar length in bytes.
   pub const LENGTH: usize = 48;
+
+  /// Compare two secret keys without exposing a branchable boolean.
+  #[inline]
+  pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+    ct::fixed_eq(&self.0, &other.0)
+  }
 
   /// Parse a P-384 secret scalar.
   pub fn from_bytes(bytes: [u8; Self::LENGTH]) -> Result<Self, EcdsaError> {
@@ -1105,14 +1109,6 @@ impl EcdsaP384SecretKey {
     crate::hex::DisplaySecret(self.as_bytes())
   }
 }
-
-impl PartialEq for EcdsaP384SecretKey {
-  fn eq(&self, other: &Self) -> bool {
-    ct::fixed_eq(&self.0, &other.0)
-  }
-}
-
-impl Eq for EcdsaP384SecretKey {}
 
 impl fmt::Debug for EcdsaP384SecretKey {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

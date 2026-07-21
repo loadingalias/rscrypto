@@ -187,7 +187,7 @@ unsafe fn vperm_z(table: i64x2, indices: i64x2, mask_0f: i64x2) -> i64x2 {
 }
 
 /// Single AES round via Hamburg vperm: SubBytes + ShiftRows + MixColumns +
-/// AddRoundKey. Constant-time — all register-to-register, no table lookups.
+/// AddRoundKey using only register-to-register operations and no table lookups.
 ///
 /// # Safety
 /// Requires the s390x vector facility (z13+).
