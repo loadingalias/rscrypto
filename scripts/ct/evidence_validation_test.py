@@ -6,6 +6,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import validate as manifest_validation
 from asm_heuristics import apply_public_operand_rules
 from provenance import codegen_value
 from symbolize_linked_binary import Symbol, parse_indirect_symbols, parse_link_map, symbolize
@@ -89,6 +90,29 @@ def equality_fixture() -> tuple[dict, dict, dict]:
   return ct, evidence, heuristics
 
 
+def manifest_errors(mutate) -> list[str]:
+  root = Path(__file__).resolve().parents[2]
+  manifest = manifest_validation.load_toml(root / "ct.toml")
+  mutate(manifest)
+  selected_target = "aarch64-apple-darwin"
+  selected = next(target for target in manifest["target"] if target["name"] == selected_target)
+
+  original_load = manifest_validation.load_toml
+  original_snapshot = manifest_validation.compiler_public_api_snapshot
+  manifest_validation.load_toml = lambda _path: manifest
+  manifest_validation.compiler_public_api_snapshot = lambda _root, _target, _prefixes, _errors: (
+    selected["compiler_api_item_count"],
+    selected["compiler_api_sha256"],
+  )
+  try:
+    errors: list[str] = []
+    manifest_validation.validate_manifest(root, selected_target, errors, [])
+    return errors
+  finally:
+    manifest_validation.load_toml = original_load
+    manifest_validation.compiler_public_api_snapshot = original_snapshot
+
+
 def main() -> None:
   assert codegen_value(["-C", "target-cpu=native", "-C", "target-cpu=x86-64"], "target-cpu") == "x86-64"
 
@@ -99,6 +123,21 @@ def main() -> None:
 
   expect_failure(lambda: records_by_name([{"name": "same"}, {"name": "same"}], "fixture"))
   expect_failure(lambda: records_by_path([{"path": "same"}, {"path": "same"}], "fixture"))
+
+  def duplicate_target(manifest) -> None:
+    manifest["target"].append(dict(manifest["target"][0]))
+
+  assert "duplicate target x86_64-unknown-linux-gnu" in manifest_errors(duplicate_target)
+
+  def required_target_without_snapshot(manifest) -> None:
+    target = next(row for row in manifest["target"] if row["name"] == "x86_64-unknown-linux-musl")
+    target["physical_timing"] = "required"
+
+  assert (
+    "target x86_64-unknown-linux-musl requires a compiler public-API snapshot for release evidence"
+    in manifest_errors(required_target_without_snapshot)
+  )
+
   with tempfile.TemporaryDirectory() as temporary:
     temporary_path = Path(temporary)
     hashes = temporary_path / "hashes.txt"
@@ -116,6 +155,14 @@ def main() -> None:
 
     gnu_link_map = temporary_path / "gnu-link-map.txt"
     gnu_link_map.write_text(
+      "Discarded input sections\n"
+      "\n"
+      " .text.ct_entry_discarded\n"
+      "                0x0000000000000000       0x20 input.o\n"
+      "\n"
+      "Memory Configuration\n"
+      "\n"
+      "Linker script and memory map\n"
       " .text.ct_entry_owner_eq_16\n"
       "                0x0000000000002000       0x10 input.o\n"
       " .text._RNv_test\n"

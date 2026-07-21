@@ -65,7 +65,20 @@ def parse_link_map(path: Path, known_names: dict[str, str]) -> list[Symbol]:
   gnu_wrapped_section = re.compile(r"^\s*(\.text\.[^ ]+)\s*$")
   gnu_wrapped_address = re.compile(r"^\s*0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)(?:\s+.*)?$")
   pending_gnu_section: str | None = None
+  in_discarded_sections = False
   for line in path.read_text(errors="replace").splitlines():
+    marker = line.strip()
+    if marker == "Discarded input sections":
+      in_discarded_sections = True
+      pending_gnu_section = None
+      continue
+    if marker in {"Memory Configuration", "Linker script and memory map"}:
+      in_discarded_sections = False
+      pending_gnu_section = None
+      continue
+    if in_discarded_sections:
+      continue
+
     match = table_row.match(line)
     if match is not None:
       pending_gnu_section = None
