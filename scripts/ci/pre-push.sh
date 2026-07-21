@@ -181,7 +181,7 @@ needs_actions_check() {
     return 0
   fi
 
-  changed_file_matches '^\.config/target-matrix\.json$|^\.github/actions-lock\.yaml$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/ci/(pin-actions|check-ci-ownership|check-ci-ownership-test|release-evidence-check|release-evidence-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$'
+  changed_file_matches '^\.config/target-matrix\.json$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/ci/(check-action-pins|check-action-pins-test|check-ci-ownership|check-ci-ownership-test|release-evidence-check|release-evidence-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$'
 }
 
 needs_host_checks() {

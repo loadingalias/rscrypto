@@ -17,7 +17,7 @@ echo ""
 echo "🔗 Checking workflow ownership and action pins..."
 "$SCRIPT_DIR/check-ci-ownership.sh"
 "$SCRIPT_DIR/check-ci-ownership-test.sh"
-"$SCRIPT_DIR/pin-actions.sh" --verify-only
+"$SCRIPT_DIR/check-action-pins.sh"
 
 export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
 "$SCRIPT_DIR/../check/check.sh" --all

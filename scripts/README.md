@@ -19,8 +19,8 @@ its caller.
 | `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
-| `ci/pin-actions.sh`            | `just pin-actions`, `just check-actions`, `scripts/update/update-all.sh` |
-| `ci/pin-actions-test.sh`       | `just check-actions`, `ci/dependabot-smoke.sh` |
+| `ci/check-action-pins.sh`      | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh` |
+| `ci/check-action-pins-test.sh` | `just check-actions`, `ci/dependabot-smoke.sh` |
 | `ci/dependabot-smoke-test.sh`  | `just check-actions` |
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
@@ -35,8 +35,6 @@ its caller.
 | `ci/publish-immutable-release.sh` | `release.yaml`, `ci/publish-immutable-release-test.sh` |
 | `ci/publish-immutable-release-test.sh` | `just check-actions` |
 | `ci/release-recipes-test.sh`   | `just check-actions` |
-| `ci/upgrade-actions.sh`        | `scripts/update/update-all.sh` |
-| `ci/upgrade-actions-test.sh`   | `just check-actions` |
 | `ci/pre-push.sh`               | `just push`, `just push-full` |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 

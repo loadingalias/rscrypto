@@ -104,18 +104,6 @@ done < <(discover_tool_workspaces)
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "GitHub actions upgrade/pinning"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if [[ "$CHECK_ONLY" == true ]]; then
-  "$REPO_ROOT/scripts/ci/upgrade-actions.sh" --check
-  "$REPO_ROOT/scripts/ci/pin-actions.sh" --verify-only
-else
-  "$REPO_ROOT/scripts/ci/upgrade-actions.sh"
-  "$REPO_ROOT/scripts/ci/pin-actions.sh" --update-lock
-fi
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Summary"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Fuzz workspaces seen: $FUZZ_COUNT"

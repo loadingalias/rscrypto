@@ -25,7 +25,7 @@ assert_plan false false 1 fuzz/Cargo.toml fuzz/Cargo.lock
 assert_plan false false 1 fuzz-packages/fast-rapidhash/Cargo.toml fuzz-packages/fast-rapidhash/Cargo.lock
 assert_plan false false 1 tools/ct-dudect/Cargo.toml tools/ct-dudect/Cargo.lock
 assert_plan false true 0 .github/workflows/ci.yaml
-assert_plan true true 0 Cargo.lock .github/workflows/ci.yaml .github/actions-lock.yaml
+assert_plan true true 0 Cargo.lock .github/workflows/ci.yaml .github/dependabot.yaml
 
 CHANGED=(src/lib.rs)
 classify_changed_files
