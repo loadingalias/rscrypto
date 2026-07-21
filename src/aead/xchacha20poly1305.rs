@@ -206,7 +206,7 @@ impl Aead for XChaCha20Poly1305 {
       .map_err(|_| OpenError::too_large())?;
     ct::zeroize(&mut poly_key);
 
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       ct::zeroize(&mut subkey);
       return Err(OpenError::verification());

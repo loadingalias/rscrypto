@@ -19,7 +19,7 @@ Review the `ct-intended` candidate core before the rest of the repository:
 5. ML-KEM secret-noise key generation, encapsulation coins, decapsulation
    secret-key material, and implicit rejection.
 6. AEAD authentication and failed-open cleanup.
-7. MAC/tag verification, fixed-size owner equality, and selected
+7. MAC/tag verification, fixed-size owner comparison/declassification, and selected
    password-verification comparisons.
 
 Public parsing, raw hashes, checksums, non-cryptographic hashes, public-key
@@ -45,7 +45,9 @@ Everything that crosses the boundary:
 | Build configuration | Cargo features, target features | Trusted. |
 
 Outputs are digests, tags, ciphertexts, signatures, derived keys, and opaque
-errors. A failed verification returns one success/failure bit and nothing else.
+errors. Direct comparison of fixed-size secret-bearing owners returns an opaque
+`CtDecision`; only explicit, consuming declassification exposes the equality
+bit. A failed verification returns one success/failure result and nothing else.
 
 ## Assets
 
@@ -108,7 +110,7 @@ Ordered by exposure to untrusted input:
 | Wrong output from accelerated kernels | Portable path is the byte-for-byte authority | Portable-vs-accelerated differential tests and native CI |
 | Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |
 | Oracle behavior | Opaque errors, failed-open output wipe, single-bit failure shape | AEAD and verification tests, fuzz targets |
-| Secret exposure at rest | Zeroize on drop, masked `Debug`, and fixed-size equality only on semantic secret owners | `src/secret.rs`, `ct.toml`, and per-owner tests |
+| Secret exposure at rest | Zeroize on drop, masked `Debug`, and sealed fixed-size comparison only on semantic secret owners | `src/secret.rs`, `ct.toml`, and per-owner tests |
 | Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | `deny.toml`, `.github/workflows/release.yaml`, `docs/release.md` |
 
 ## Known Gaps

@@ -33,8 +33,8 @@ define_aead_tag_type!(Aes128GcmTag, TAG_SIZE, "AES-128-GCM authentication tag (1
 /// nonce uniqueness rules, same 96-bit IV, same combined and detached
 /// surfaces. AES-128 has the same multi-target hardware acceleration —
 /// AES-NI / VAES, AES-CE, CPACF KM, POWER vcipher, RV64 Zvkned / Zkne /
-/// vperm / fixslice — and falls back to the constant-time portable
-/// schedule when no hardware path is available.
+/// vperm / fixslice — and falls back to the table-free portable schedule when
+/// no hardware path is available.
 ///
 /// # Nonce Uniqueness
 ///
@@ -101,11 +101,12 @@ define_aead_tag_type!(Aes128GcmTag, TAG_SIZE, "AES-128-GCM authentication tag (1
 ///
 /// # Security
 ///
-/// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), all AES
-/// operations use constant-time hardware instructions. On RISC-V without
-/// hardware AES extensions (Zkne / Zvkned), encryption falls back to the
-/// constant-time portable / fixslice implementation. That path is slower,
-/// but it avoids secret-indexed lookup tables.
+/// On x86_64 (AES-NI), aarch64 (AES-CE), and s390x (CPACF), AES operations use
+/// dedicated hardware instructions. On RISC-V without hardware AES extensions
+/// (Zkne / Zvkned), encryption falls back to a fixed-work portable / fixslice
+/// source implementation that avoids secret-indexed lookup tables. These
+/// source and ISA properties are necessary, not sufficient: generated-code
+/// timing claims are configuration- and release-evidence-bound; see `ct.toml`.
 pub struct Aes128Gcm {
   /// Pre-expanded AES-128 round keys.
   ek: aes::Aes128EncKey,
@@ -872,7 +873,7 @@ impl Aead for Aes128Gcm {
       // 2. `acc` and `h_polyval` are initialized GHASH field elements.
       acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
       let expected = encrypt_j0_tag(&self.ek, &j0, acc);
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -904,7 +905,7 @@ impl Aead for Aes128Gcm {
       // SAFETY: x86 GHASH final multiply because PCLMUL_READY was checked above.
       acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
       let expected = encrypt_j0_tag(&self.ek, &j0, acc);
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -946,7 +947,7 @@ impl Aead for Aes128Gcm {
       // 2. `acc` and `h_polyval` are initialized GHASH field elements.
       acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
       let expected = encrypt_j0_tag(&self.ek, &j0, acc);
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -972,7 +973,7 @@ impl Aead for Aes128Gcm {
       // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
       acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
       let expected = encrypt_j0_tag(&self.ek, &j0, acc);
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -986,7 +987,7 @@ impl Aead for Aes128Gcm {
         compute_tag_short_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
           .map_err(|_| OpenError::too_large())?
     {
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -996,7 +997,7 @@ impl Aead for Aes128Gcm {
     if should_use_wide_ghash(self.backend, aad.len(), buffer.len()) {
       let expected = compute_tag_wide(&self.ek, self.h_powers_rev[3], &self.h_powers_rev, &j0, aad, buffer)
         .map_err(|_| OpenError::too_large())?;
-      if !ct::fixed_eq(&expected, tag.as_bytes()) {
+      if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
       }
@@ -1004,7 +1005,7 @@ impl Aead for Aes128Gcm {
       return Ok(());
     }
     let expected = compute_tag(&self.ek, self.h_powers_rev[3], &j0, aad, buffer).map_err(|_| OpenError::too_large())?;
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }

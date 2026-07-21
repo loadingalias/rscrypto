@@ -1,6 +1,6 @@
 #![cfg(feature = "x25519")]
 
-use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey};
+use rscrypto::{X25519PublicKey, X25519SecretKey};
 use serde_json::Value;
 
 mod common;
@@ -60,9 +60,8 @@ fn wycheproof_x25519_vectors_match_or_reject_all_zero_shared_secret() {
 
       if expected_shared == [0u8; 32] {
         counts.zero_shared_rejected = counts.zero_shared_rejected.strict_add(1);
-        assert_eq!(
-          result,
-          Err(X25519Error::new()),
+        assert!(
+          result.is_err(),
           "Wycheproof X25519 tcId {} must reject all-zero shared secret",
           test["tcId"]
         );

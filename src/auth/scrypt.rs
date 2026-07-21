@@ -33,7 +33,8 @@
 //!   destination slice.
 //! - Allocation failure surfaces as [`ScryptError::AllocationFailed`] rather than a panic.
 //! - Working buffers (B, V, scratch) are zeroised on drop.
-//! - [`Scrypt::verify`] is constant-time with respect to the reference tag bytes.
+//! - [`Scrypt::verify`] traverses every reference-tag byte before returning an opaque result;
+//!   generated-code timing claims remain configuration- and release-evidence-bound.
 //!
 //! # Compliance
 //!
@@ -926,7 +927,7 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
 
 /// scrypt password-hashing (RFC 7914).
 ///
-/// Provides raw derivation and constant-time verification. Use
+/// Provides raw derivation and opaque full-tag verification. Use
 /// `ScryptPassword` (feature `phc-strings`) for generated, bounded PHC password records.
 ///
 /// # Examples
@@ -965,7 +966,11 @@ impl Scrypt {
     scrypt_hash(params, password, salt, out)
   }
 
-  /// Verify `expected` against a freshly-computed hash in constant time.
+  /// Verify `expected` after traversing the freshly computed hash and every
+  /// expected byte.
+  ///
+  /// Generated-code timing claims are configuration- and release-evidence-bound;
+  /// see `ct.toml`.
   ///
   /// # Errors
   ///
@@ -986,7 +991,7 @@ impl Scrypt {
     let bytes_match = ct::public_len_eq(&actual, expected);
     ct::zeroize(&mut actual);
 
-    let success = !hash_failed & bytes_match;
+    let success = !hash_failed & bytes_match.declassify();
     if core::hint::black_box(success) {
       Ok(())
     } else {
@@ -1062,7 +1067,7 @@ impl ScryptPassword {
     Scrypt::derive(&approved.params, password, approved.salt(), actual.as_mut_array())
       .map_err(|_| VerificationError::new())?;
     let verified = ct::fixed_eq(actual.as_array(), &approved.expected);
-    if !core::hint::black_box(verified) {
+    if !core::hint::black_box(verified.declassify()) {
       return Err(VerificationError::new());
     }
     if approved.params == self.generation && approved.salt_len as usize == PASSWORD_SALT_LEN {

@@ -1,16 +1,17 @@
 #![allow(clippy::indexing_slicing)]
 
-//! Portable constant-time AES block cipher core with hardware dispatch.
+//! Portable table-free AES block-cipher core with hardware dispatch.
 //!
 //! This module provides AES-128 and AES-256 key expansion and single-block
-//! encryption for use by AES-based AEAD constructions (GCM, GCM-SIV). All
-//! operations are constant-time: no table lookups indexed by secret data.
+//! encryption for use by AES-based AEAD constructions (GCM, GCM-SIV). The Rust
+//! source uses fixed operation schedules and no secret-indexed table lookups;
+//! generated-code timing claims remain bound to `ct.toml` release evidence.
 //!
 //! On x86_64 with AES-NI, aarch64 with AES-CE, or RISC-V with scalar/vector
 //! crypto AES, the hardware path is selected at key-expansion time. The
 //! portable S-box uses algebraic inversion in GF(2^8) via the Fermat power
-//! chain (x^254) and constant-time field arithmetic, avoiding any lookup
-//! tables that could leak through cache timing.
+//! chain (x^254) and fixed-schedule field arithmetic, avoiding lookup tables
+//! that could leak through cache timing.
 
 /// AES block size in bytes.
 pub(crate) const BLOCK_SIZE: usize = 16;
@@ -128,7 +129,7 @@ enum KeyInner {
   Riscv64ScalarCrypto(rv_scalar_aes::RvScalarRoundKeys),
   #[cfg(target_arch = "riscv64")]
   Riscv64VectorCrypto(rv_aes::RvRoundKeys),
-  /// Hamburg vperm via vrgather.vv -- uses portable key schedule, constant-time.
+  /// Hamburg vperm via `vrgather.vv` with the table-free portable key schedule.
   #[cfg(target_arch = "riscv64")]
   #[allow(dead_code)] // V-only AES is kept for GCM-SIV and explicit diagnostic paths; GCM does not select it yet.
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS]),
@@ -212,7 +213,7 @@ enum Key128Inner {
   Riscv64ScalarCrypto(rv_scalar_aes::RvScalar128RoundKeys),
   #[cfg(target_arch = "riscv64")]
   Riscv64VectorCrypto(rv_aes::Rv128RoundKeys),
-  /// Hamburg vperm via vrgather.vv -- uses portable key schedule, constant-time.
+  /// Hamburg vperm via `vrgather.vv` with the table-free portable key schedule.
   #[cfg(target_arch = "riscv64")]
   #[allow(dead_code)] // V-only AES is kept for GCM-SIV and explicit diagnostic paths; GCM does not select it yet.
   Riscv64Vperm([u32; EXPANDED_KEY_WORDS_128]),
@@ -268,19 +269,19 @@ impl Drop for Aes128EncKey {
   }
 }
 
-// Constant-time GF(2^8) arithmetic for the AES S-box
+// Fixed-schedule GF(2^8) arithmetic for the AES S-box.
 
 /// Multiply two elements in GF(2^8) mod the AES irreducible polynomial
 /// p(x) = x^8 + x^4 + x^3 + x + 1 (0x11b).
 ///
-/// Constant-time: fixed iteration count, no secret-dependent branches.
+/// The Rust source has a fixed operation count and no secret-dependent branches.
 #[inline(always)]
 const fn gf256_mul(a: u8, b: u8) -> u8 {
   // Schoolbook carryless multiply into a u16, then reduce.
   let a = a as u16;
   let b = b as u16;
 
-  // Accumulate partial products (unrolled, constant-time).
+  // Accumulate partial products with a fixed unrolled schedule.
   let mut prod: u16 = 0;
   prod ^= a.wrapping_mul(b & 1);
   prod ^= (a << 1).wrapping_mul((b >> 1) & 1);
@@ -313,7 +314,7 @@ const fn gf256_sq(x: u8) -> u8 {
 /// Compute x^(-1) in GF(2^8) via the Fermat power chain: x^254.
 ///
 /// Returns 0 for input 0 (matching the AES S-box convention).
-/// Constant-time: always executes the same operations regardless of input.
+/// The Rust source always executes the same operations regardless of input.
 #[inline(always)]
 const fn gf256_inv(x: u8) -> u8 {
   // Addition chain for 254 = 2+4+8+16+32+64+128:
@@ -337,7 +338,7 @@ const fn gf256_inv(x: u8) -> u8 {
 /// AES forward S-box: S(x) = affine(x^{-1}).
 ///
 /// Computes the inverse in GF(2^8), then applies the AES affine transform.
-/// Constant-time: no table lookups, fixed operations.
+/// The Rust source has no table lookups and a fixed operation schedule.
 #[inline(always)]
 const fn sbox(x: u8) -> u8 {
   let inv = gf256_inv(x);
@@ -571,7 +572,7 @@ fn riscv64_fixslice_key_inner_128(key: &[u8; KEY_SIZE_128]) -> Key128Inner {
 ///
 /// Mirrors [`aes256_expand_key`]: each backend converts to its native
 /// hardware round-key format at expansion time when its capability is
-/// detected; otherwise the constant-time portable schedule is used.
+/// detected; otherwise the table-free portable schedule is used.
 #[inline]
 pub(crate) fn aes128_expand_key(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
   #[cfg(target_arch = "x86_64")]
@@ -670,7 +671,7 @@ pub(crate) fn aes256_expand_key_riscv_vperm(key: &[u8; KEY_SIZE]) -> Aes256EncKe
 #[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes256_expand_key_riscv_ttable(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
-  // Preserve the old RISC-V ttable entry point while routing to the constant-time fixslice schedule.
+  // Preserve the old RISC-V ttable entry point while routing to the table-free fixslice schedule.
   Aes256EncKey {
     inner: riscv64_fixslice_key_inner(key),
   }
@@ -709,7 +710,7 @@ pub(crate) fn aes128_expand_key_riscv_vperm(key: &[u8; KEY_SIZE_128]) -> Aes128E
 #[cfg(all(target_arch = "riscv64", feature = "aes-gcm-siv"))]
 #[inline]
 pub(crate) fn aes128_expand_key_riscv_ttable(key: &[u8; KEY_SIZE_128]) -> Aes128EncKey {
-  // Preserve the old RISC-V ttable entry point while routing to the constant-time fixslice schedule.
+  // Preserve the old RISC-V ttable entry point while routing to the table-free fixslice schedule.
   Aes128EncKey {
     inner: riscv64_fixslice_key_inner_128(key),
   }

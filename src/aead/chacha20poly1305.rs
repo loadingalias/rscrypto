@@ -219,7 +219,7 @@ impl ChaCha20Poly1305 {
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
     let expected = poly1305::authenticate_aead_empty_text_portable(aad, &poly_key);
     ct::zeroize(&mut poly_key);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       return Some(Err(OpenError::verification()));
     }
     Some(Ok(()))
@@ -258,7 +258,7 @@ impl ChaCha20Poly1305 {
     let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
     let expected = poly1305::authenticate_aead_short_text_portable(aad, buffer, &poly_key);
     ct::zeroize(&mut poly_key);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
     }
@@ -376,7 +376,7 @@ impl ChaCha20Poly1305 {
     }
 
     let expected = x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
     }
@@ -431,7 +431,7 @@ impl ChaCha20Poly1305 {
     }
 
     let expected = x86_64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
     }
@@ -476,7 +476,7 @@ impl ChaCha20Poly1305 {
     }
 
     let expected = aarch64_asm::open_in_place(self.key.as_bytes(), nonce.as_bytes(), aad, buffer);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
     }
@@ -581,7 +581,7 @@ impl ChaCha20Poly1305 {
 
     let expected = authenticator.finalize(lengths);
     ct::zeroize(&mut poly_key);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Some(Err(OpenError::verification()));
     }
@@ -671,7 +671,7 @@ impl ChaCha20Poly1305 {
     let expected = self
       .compute_tag(nonce, aad, buffer)
       .map_err(|_| OpenError::too_large())?;
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }
@@ -1090,8 +1090,8 @@ mod tests {
           actual, expected,
           "Power short ciphertext mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
         );
-        assert_eq!(
-          actual_tag, expected_tag,
+        assert!(
+          actual_tag.ct_eq(&expected_tag).declassify(),
           "Power short tag mismatch plaintext_len={plaintext_len} aad_len={aad_len}"
         );
       }

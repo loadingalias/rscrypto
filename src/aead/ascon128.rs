@@ -2,8 +2,10 @@
 
 //! Ascon-AEAD128 authenticated encryption (NIST SP 800-232).
 //!
-//! Pure Rust, constant-time, `no_std` implementation with 128-bit key,
-//! 128-bit nonce, and 128-bit authentication tag.
+//! Pure Rust, `no_std` implementation with fixed-work, table-free source
+//! structure, a 128-bit key, a 128-bit nonce, and a 128-bit authentication
+//! tag. Generated-code timing claims remain configuration- and
+//! release-evidence-bound; see `ct.toml`.
 
 use core::fmt;
 
@@ -348,7 +350,7 @@ impl Aead for AsconAead128 {
     }
 
     let expected = self.finalize(&mut s);
-    if !ct::fixed_eq(&expected, tag.as_bytes()) {
+    if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }
@@ -358,13 +360,12 @@ impl Aead for AsconAead128 {
 }
 
 #[cfg(feature = "diag")]
-#[must_use]
 pub fn diag_ascon_aead128_tag_portable(
   key: &[u8; KEY_SIZE],
   nonce: &[u8; NONCE_SIZE],
   block: &[u8; RATE],
   expected: &[u8; TAG_SIZE],
-) -> bool {
+) -> ct::CtDecision {
   let key = AsconAead128Key::from_bytes(*key);
   let nonce = Nonce128::from_bytes(*nonce);
   let cipher = AsconAead128::new(&key);

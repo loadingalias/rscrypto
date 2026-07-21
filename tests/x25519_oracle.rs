@@ -16,7 +16,7 @@
 #![cfg(all(feature = "x25519", not(miri)))]
 
 use proptest::prelude::*;
-use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey};
+use rscrypto::{X25519PublicKey, X25519SecretKey};
 use x25519_dalek::{PublicKey as DalekPublicKey, StaticSecret as DalekStaticSecret};
 
 const PROPTEST_CASES: u32 = if cfg!(debug_assertions) { 64 } else { 256 };
@@ -51,7 +51,7 @@ proptest::proptest! {
     let ours_result = ours_secret.diffie_hellman(&ours_peer);
 
     if dalek_shared == [0u8; 32] {
-      prop_assert_eq!(ours_result, Err(X25519Error::new()),
+      prop_assert!(ours_result.is_err(),
         "dalek emitted all-zero shared secret but rscrypto did not reject");
     } else {
       let ours = ours_result.expect("rscrypto rejected non-low-order point that dalek accepted");
@@ -97,7 +97,7 @@ proptest::proptest! {
     let dalek_view = dalek_bob.diffie_hellman(&dalek_alice_pub).to_bytes();
 
     if dalek_view == [0u8; 32] {
-      prop_assert_eq!(ours_view, Err(X25519Error::new()));
+      prop_assert!(ours_view.is_err());
     } else {
       let ours = ours_view.expect("rscrypto rejected what dalek accepted");
       prop_assert_eq!(*ours.as_bytes(), dalek_view);

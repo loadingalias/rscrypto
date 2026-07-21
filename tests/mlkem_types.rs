@@ -74,8 +74,18 @@ fn mlkem_secret_values_redact_debug_and_require_explicit_extraction() {
   let ss768 = MlKem768SharedSecret::from_bytes([0xb2; MlKem768SharedSecret::LENGTH]);
   assert_eq!(format!("{dk768:?}"), "MlKem768DecapsulationKey(****)");
   assert_eq!(format!("{ss768:?}"), "MlKem768SharedSecret(****)");
-  assert!(dk768 == MlKem768DecapsulationKey::from_bytes([0xb1; MlKem768DecapsulationKey::LENGTH]));
-  assert!(ss768 != MlKem768SharedSecret::from_bytes([0xb3; MlKem768SharedSecret::LENGTH]));
+  assert!(
+    dk768
+      .ct_eq(&MlKem768DecapsulationKey::from_bytes(
+        [0xb1; MlKem768DecapsulationKey::LENGTH]
+      ))
+      .declassify()
+  );
+  assert!(
+    !ss768
+      .ct_eq(&MlKem768SharedSecret::from_bytes([0xb3; MlKem768SharedSecret::LENGTH]))
+      .declassify()
+  );
 
   let dk1024 = MlKem1024DecapsulationKey::from_bytes([0xc1; MlKem1024DecapsulationKey::LENGTH]);
   let ss1024 = MlKem1024SharedSecret::from_bytes([0xc2; MlKem1024SharedSecret::LENGTH]);

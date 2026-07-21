@@ -14,7 +14,7 @@ fn poly1305_matches_rfc_8439_section_2_5_2() {
   let expected = Poly1305Tag::from_bytes(decode_hex_array("a8061dc1305136c6c22b8baf0c0127a9"));
 
   let tag = Poly1305::authenticate_once(key, message);
-  assert_eq!(tag, expected);
+  assert!(tag.ct_eq(&expected).declassify());
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn poly1305_streaming_matches_oneshot() {
   poly1305.update(b"bcde");
   poly1305.update(b"f");
 
-  assert_eq!(poly1305.finalize(), expected);
+  assert!(poly1305.finalize().ct_eq(&expected).declassify());
 }
 
 #[test]

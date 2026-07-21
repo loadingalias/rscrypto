@@ -1,6 +1,9 @@
 #![allow(clippy::indexing_slicing)]
 
-//! Constant-time GHASH universal hash (NIST SP 800-38D).
+//! Fixed-schedule, table-free GHASH universal hash (NIST SP 800-38D).
+//!
+//! Generated-code timing claims remain configuration- and
+//! release-evidence-bound; see `ct.toml`.
 //!
 //! GHASH operates in GF(2^128) with the irreducible polynomial
 //! x^128 + x^7 + x^2 + x + 1 (big-endian / MSB-first convention).

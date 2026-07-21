@@ -1,13 +1,14 @@
 //! Error types for cryptographic operations.
 //!
-//! Minimal, timing-safe error types designed to prevent information leakage.
+//! Minimal, opaque error types designed to avoid failure-detail leakage.
 //! Individual crates may define additional errors as needed.
 
 define_unit_error! {
   /// Verification failed.
   ///
   /// Returned when cryptographic verification fails (MAC tags, AEAD tags,
-  /// signatures). Intentionally opaque to prevent timing side-channels.
+  /// signatures). Intentionally opaque so callers cannot distinguish internal
+  /// failure causes.
   ///
   /// # Examples
   ///
@@ -23,12 +24,12 @@ define_unit_error! {
   ///
   /// # Security
   ///
-  /// This error provides no details about the failure to prevent timing
-  /// side-channels. Treat it as a generic authentication failure and avoid
-  /// mapping it to finer-grained protocol responses that would recreate an
-  /// oracle. The underlying verification should compare a fixed-size semantic
-  /// owner whose implementation is covered by the constant-time evidence
-  /// policy in `ct.toml`.
+  /// This error provides no details about the failure. Treat it as a generic
+  /// authentication failure and avoid mapping it to finer-grained protocol
+  /// responses that would recreate an oracle. Opacity does not by itself make
+  /// success and failure take identical time. The underlying verification
+  /// should use a sealed comparison decision, with any generated-code timing
+  /// claim bounded by `ct.toml` and matching release evidence.
   #[non_exhaustive]
   pub struct VerificationError;
   "verification failed"

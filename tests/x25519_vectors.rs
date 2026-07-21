@@ -1,6 +1,6 @@
 #![cfg(feature = "x25519")]
 
-use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+use rscrypto::{X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 use x25519_dalek::{PublicKey as DalekPublicKey, StaticSecret as DalekStaticSecret};
 
 mod common;
@@ -79,7 +79,7 @@ fn rfc_7748_diffie_hellman_vector_matches() {
   assert_eq!(alice.public_key(), alice_public);
   assert_eq!(bob.public_key(), bob_public);
   assert_eq!(*alice_shared.as_bytes(), expected);
-  assert_eq!(alice_shared, bob_shared);
+  assert!(alice_shared.ct_eq(&bob_shared).declassify());
 }
 
 #[test]
@@ -87,11 +87,8 @@ fn low_order_points_return_all_zero_error() {
   let secret = X25519SecretKey::from_bytes([0x42; X25519SecretKey::LENGTH]);
   let low_order = X25519PublicKey::from_bytes([0u8; X25519PublicKey::LENGTH]);
 
-  assert_eq!(secret.diffie_hellman(&low_order), Err(X25519Error::new()));
-  assert_eq!(
-    X25519SharedSecret::diffie_hellman(&secret, &low_order),
-    Err(X25519Error::new())
-  );
+  assert!(secret.diffie_hellman(&low_order).is_err());
+  assert!(X25519SharedSecret::diffie_hellman(&secret, &low_order).is_err());
 }
 
 #[test]
@@ -101,9 +98,8 @@ fn non_canonical_public_inputs_are_accepted_and_reduced() {
     "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
   ));
 
-  assert_eq!(
-    secret.diffie_hellman(&public),
-    Err(X25519Error::new()),
+  assert!(
+    secret.diffie_hellman(&public).is_err(),
     "u = p should reduce to zero and fail the all-zero check"
   );
   assert_eq!(
@@ -142,7 +138,7 @@ fn public_keys_and_shared_secrets_match_x25519_dalek() {
     let dalek_shared = dalek_secret.diffie_hellman(&dalek_peer).to_bytes();
 
     if dalek_shared.iter().all(|&byte| byte == 0) {
-      assert_eq!(ours_shared, Err(X25519Error::new()));
+      assert!(ours_shared.is_err());
     } else {
       assert_eq!(*ours_shared.unwrap().as_bytes(), dalek_shared);
     }

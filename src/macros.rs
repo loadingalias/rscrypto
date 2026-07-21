@@ -445,17 +445,15 @@ macro_rules! define_aead_key_type {
     #[doc = $doc]
     pub struct $name([u8; Self::LENGTH]);
 
-    impl PartialEq for $name {
-      fn eq(&self, other: &Self) -> bool {
-        crate::traits::ct::fixed_eq(&self.0, &other.0)
-      }
-    }
-
-    impl Eq for $name {}
-
     impl $name {
       /// Key length in bytes.
       pub const LENGTH: usize = $len;
+
+      /// Compare two keys without exposing a branchable boolean.
+      #[inline]
+      pub fn ct_eq(&self, other: &Self) -> crate::traits::ct::CtDecision {
+        crate::traits::ct::fixed_eq(&self.0, &other.0)
+      }
 
       /// Construct a typed key from raw bytes.
       #[inline]
@@ -551,15 +549,6 @@ macro_rules! define_aead_tag_type {
     #[derive(Clone, Copy)]
     pub struct $name([u8; Self::LENGTH]);
 
-    impl PartialEq for $name {
-      #[inline]
-      fn eq(&self, other: &Self) -> bool {
-        crate::traits::ct::fixed_eq(&self.0, &other.0)
-      }
-    }
-
-    impl Eq for $name {}
-
     impl core::hash::Hash for $name {
       #[inline]
       fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -570,6 +559,12 @@ macro_rules! define_aead_tag_type {
     impl $name {
       /// Tag length in bytes.
       pub const LENGTH: usize = $len;
+
+      /// Compare two tags without exposing a branchable boolean.
+      #[inline]
+      pub fn ct_eq(&self, other: &Self) -> crate::traits::ct::CtDecision {
+        crate::traits::ct::fixed_eq(&self.0, &other.0)
+      }
 
       /// Construct a typed tag from raw bytes.
       #[inline]

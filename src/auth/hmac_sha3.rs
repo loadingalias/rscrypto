@@ -23,15 +23,6 @@ macro_rules! define_hmac_sha3_tag_type {
     #[derive(Clone, Copy)]
     pub struct $name([u8; Self::LENGTH]);
 
-    impl PartialEq for $name {
-      #[inline]
-      fn eq(&self, other: &Self) -> bool {
-        ct::fixed_eq(&self.0, &other.0)
-      }
-    }
-
-    impl Eq for $name {}
-
     impl core::hash::Hash for $name {
       #[inline]
       fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
@@ -42,6 +33,12 @@ macro_rules! define_hmac_sha3_tag_type {
     impl $name {
       /// Tag length in bytes.
       pub const LENGTH: usize = $len;
+
+      /// Compare two tags without exposing a branchable boolean.
+      #[inline]
+      pub fn ct_eq(&self, other: &Self) -> ct::CtDecision {
+        ct::fixed_eq(&self.0, &other.0)
+      }
 
       /// Construct a typed tag from raw bytes.
       #[inline]
@@ -251,7 +248,10 @@ macro_rules! define_hmac_sha3 {
         <Self as Mac>::mac(key, data)
       }
 
-      /// Verify `expected` against the HMAC tag of `data` in constant time.
+      /// Verify `expected` through the tag owner's sealed comparison decision.
+      ///
+      /// Generated-code timing claims are configuration- and release-evidence-bound;
+      /// see `ct.toml`.
       #[inline]
       #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
       pub fn verify_tag(key: &[u8], data: &[u8], expected: &$tag) -> Result<(), VerificationError> {
@@ -297,6 +297,15 @@ macro_rules! define_hmac_sha3 {
       #[inline]
       fn reset(&mut self) {
         self.inner = self.inner_init.clone();
+      }
+
+      #[inline]
+      fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
+        if self.finalize().ct_eq(expected).declassify() {
+          Ok(())
+        } else {
+          Err(VerificationError::new())
+        }
       }
     }
   };

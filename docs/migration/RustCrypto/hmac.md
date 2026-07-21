@@ -1,6 +1,6 @@
 # Migration: `hmac` (RustCrypto) → `rscrypto`
 
-> Replace `Hmac::<Sha256>` / `Hmac::<Sha3_256>` (generic over digest) with named rscrypto types such as `HmacSha256` and `HmacSha3_256`. Key construction is infallible, `finalize()` borrows, and one-shot helpers return typed tags with fixed-size, type-owned equality.
+> Replace `Hmac::<Sha256>` / `Hmac::<Sha3_256>` (generic over digest) with named rscrypto types such as `HmacSha256` and `HmacSha3_256`. Key construction is infallible, `finalize()` borrows, and one-shot helpers return typed tags with sealed comparison decisions.
 
 Verified against `hmac = "0.13.0"` and the `rscrypto` 0.6.4 line.
 Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, `tests/hmac_sha3_vectors.rs`, the HMAC proptests, and `tests/hmac_wycheproof.rs`.
@@ -88,7 +88,7 @@ let tag = mac.finalize();                      // borrows &self
 
 `finalize()` borrows in rscrypto; you can read the running tag, keep feeding bytes, and finalize again. `mac.reset()` restores the keyed initial state without rebuilding.
 
-### Constant-time verification
+### Opaque verification
 
 ```rust
 // Before
@@ -106,7 +106,7 @@ let expected_tag = HmacSha256Tag::from_bytes(expected_tag_bytes);
 HmacSha256::verify_tag(key, data, &expected_tag)?;   // Result<(), VerificationError>
 ```
 
-Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verify(&expected_tag)?;`. Tags are typed (`HmacSha256Tag`, `HmacSha384Tag`, `HmacSha512Tag`, and the `HmacSha3_*Tag` family), and `==` on those typed tags is constant-time. Prefer `verify` / `verify_tag` for authentication decisions; use `as_bytes()` / `to_bytes()` only at protocol serialization boundaries.
+Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verify(&expected_tag)?;`. Tags are typed (`HmacSha256Tag`, `HmacSha384Tag`, `HmacSha512Tag`, and the `HmacSha3_*Tag` family) and deliberately do not implement `PartialEq` or `Eq`. Prefer `verify` / `verify_tag` for authentication decisions. Direct tag comparison is explicit: `left.ct_eq(&right)` returns an opaque `CtDecision`, and only `.declassify()` exposes a branchable bit. This source-level boundary is not a universal timing proof; constant-time claims remain limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md). Use `as_bytes()` / `to_bytes()` only at protocol serialization boundaries.
 
 ## Notes
 
@@ -115,5 +115,5 @@ Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verif
 - **`finalize` consumes vs. borrows.** Same pattern as `sha2` / `sha3` migrations, except HMAC returns a typed tag rather than a raw byte array.
 - **`Mac::chain_update` builder pattern.** RustCrypto's `chain_update(data) -> Self` lets you write `mac.chain_update(a).chain_update(b).finalize()`. rscrypto does not currently expose the chained variant; use `.update(a); .update(b);` then `.finalize()`. Same number of statements, no `Self` returns to thread.
 - **Long keys are pre-hashed (RFC 2104).** Both crates pre-hash any key longer than the underlying hash's block size (64 bytes for SHA-256, 128 bytes for SHA-384/SHA-512, and SHA-3 rates of 144/136/104/72 bytes for SHA3-224/256/384/512). Outputs are byte-identical regardless of key length.
-- **`MacError` → `VerificationError`.** RustCrypto's `MacError` is opaque (no detail). rscrypto's `VerificationError` is also opaque: both are designed not to leak timing information through error variants. The names differ; the contract is the same.
+- **`MacError` → `VerificationError`.** RustCrypto's `MacError` is opaque (no detail). rscrypto's `VerificationError` is also opaque, so neither exposes an error-variant oracle. Error opacity alone does not prove identical timing. The names differ; the result contract is the same.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `mac_to_vec` / `finalize_to_vec` helpers are gated on `alloc`; the core fixed-array API works in pure `no_std`.

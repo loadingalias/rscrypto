@@ -102,7 +102,7 @@ fn detached_aliases_match_core_behavior() {
   let tag_right = aead.encrypt_in_place_detached(&nonce, aad, &mut right).unwrap();
 
   assert_eq!(left, right);
-  assert_eq!(tag_left, tag_right);
+  assert!(tag_left.ct_eq(&tag_right).declassify());
 
   aead
     .decrypt_in_place_detached(&nonce, aad, &mut right, &tag_right)

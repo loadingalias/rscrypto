@@ -55,7 +55,7 @@ macro_rules! mlkem_profile_tests {
       .unwrap();
 
       let decapsulated = <$profile>::decapsulate(&dk, &ciphertext).unwrap();
-      assert_eq!(encapsulated, decapsulated);
+      assert!(encapsulated.ct_eq(&decapsulated).declassify());
     }
 
     #[test]
@@ -90,7 +90,7 @@ macro_rules! mlkem_profile_tests {
       let profile_prepared_ek = <$profile>::prepare_encapsulation_key(&ek).unwrap();
       let profile_prepared_dk = <$profile>::prepare_decapsulation_key(&dk).unwrap();
       assert_eq!(prepared_ek, profile_prepared_ek);
-      assert_eq!(prepared_dk, profile_prepared_dk);
+      assert!(prepared_dk.ct_eq(&profile_prepared_dk).declassify());
 
       let (validating_ciphertext, validating_shared) = <$profile>::encapsulate(&ek, |out| {
         out.copy_from_slice(&encaps_random);
@@ -105,15 +105,14 @@ macro_rules! mlkem_profile_tests {
         .unwrap();
 
       assert_eq!(validating_ciphertext, prepared_ciphertext);
-      assert_eq!(validating_shared, prepared_shared);
-      assert_eq!(
-        prepared_dk.decapsulate(&prepared_ciphertext).unwrap(),
-        validating_shared
-      );
-      assert_eq!(
-        <$profile>::decapsulate_prepared(&prepared_dk, &prepared_ciphertext).unwrap(),
-        <$profile>::decapsulate(&dk, &prepared_ciphertext).unwrap()
-      );
+      assert!(validating_shared.ct_eq(&prepared_shared).declassify());
+
+      let prepared_decapsulated = prepared_dk.decapsulate(&prepared_ciphertext).unwrap();
+      assert!(prepared_decapsulated.ct_eq(&validating_shared).declassify());
+
+      let profile_prepared_shared = <$profile>::decapsulate_prepared(&prepared_dk, &prepared_ciphertext).unwrap();
+      let validating_decapsulated = <$profile>::decapsulate(&dk, &prepared_ciphertext).unwrap();
+      assert!(profile_prepared_shared.ct_eq(&validating_decapsulated).declassify());
     }
 
     #[test]
@@ -208,7 +207,7 @@ macro_rules! mlkem_profile_tests {
       let modified = <$ciphertext>::from_bytes(modified);
 
       let rejected = <$profile>::decapsulate(&dk, &modified).unwrap();
-      assert_ne!(encapsulated, rejected);
+      assert!(!encapsulated.ct_eq(&rejected).declassify());
     }
   };
 }

@@ -812,7 +812,7 @@ macro_rules! fixed_owner_eq_entry {
         return STATUS_ERR;
       };
 
-      u8::from(<$type>::from_bytes(a) == <$type>::from_bytes(b))
+      u8::from(<$type>::from_bytes(a).ct_eq(&<$type>::from_bytes(b)).declassify())
     }
   };
 }

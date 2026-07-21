@@ -7,7 +7,13 @@ import tempfile
 from pathlib import Path
 
 import validate as manifest_validation
-from asm_heuristics import apply_public_operand_rules
+from asm_heuristics import (
+  FunctionBody,
+  apply_public_operand_rules,
+  apply_waivers,
+  summarize,
+  summarize_closure,
+)
 from provenance import codegen_value
 from symbolize_linked_binary import Symbol, parse_indirect_symbols, parse_link_map, symbolize
 from validate_release_evidence import (
@@ -212,11 +218,13 @@ def main() -> None:
   finding = {
     "symbol": "rscrypto::auth::argon2::fill_segment_inner",
     "kind": "variable_latency_division",
+    "severity": "fail",
     "primitive_ids": ["password.argon2i"],
     "roots": ["ct_entry_argon2i_verify"],
     "locator": "fixture",
     "operand_class": "unproven",
     "disposition": "needs-fix",
+    "waived": False,
   }
   rule = {
     "primitive": "password.argon2i",
@@ -229,6 +237,44 @@ def main() -> None:
   }
   assert apply_public_operand_rules([finding], [rule]) == []
   assert finding["operand_class"] == "public" and finding["disposition"] == "accepted"
+  assert apply_waivers([finding], [], "aarch64-apple-darwin") == []
+  assert finding["unresolved_primitive_ids"] == []
+
+  functions = {
+    finding["symbol"]: FunctionBody(finding["symbol"], Path("fixture"), 0, []),
+    rule["root"]: FunctionBody(rule["root"], Path("fixture"), 0, []),
+  }
+  symbol_summary = summarize(set(functions), functions, [finding])[finding["symbol"]]
+  assert symbol_summary["unwaived_fail_count"] == 0
+  assert symbol_summary["accepted_count"] == 1
+
+  closures = {rule["primitive"]: {rule["root"]: set(functions)}}
+  primitive_summary = summarize_closure(closures, functions, [finding])[rule["primitive"]]
+  assert primitive_summary["unwaived_fail_count"] == 0
+  assert primitive_summary["accepted_count"] == 1
+
+  mixed = dict(
+    finding,
+    primitive_ids=[rule["primitive"], "fixture.unresolved"],
+    operand_class="unproven",
+    disposition="needs-fix",
+    waived=False,
+  )
+  assert apply_public_operand_rules([mixed], [rule]) == []
+  assert apply_waivers([mixed], [], "aarch64-apple-darwin") == []
+  assert mixed["unresolved_primitive_ids"] == ["fixture.unresolved"]
+  assert mixed["operand_class"] == "unproven" and mixed["disposition"] == "needs-fix"
+
+  mixed_closures = {
+    rule["primitive"]: {rule["root"]: set(functions)},
+    "fixture.unresolved": {rule["root"]: set(functions)},
+  }
+  mixed_summary = summarize_closure(mixed_closures, functions, [mixed])
+  assert mixed_summary[rule["primitive"]]["unwaived_fail_count"] == 0
+  assert mixed_summary[rule["primitive"]]["accepted_count"] == 1
+  assert mixed_summary["fixture.unresolved"]["unwaived_fail_count"] == 1
+  assert mixed_summary["fixture.unresolved"]["accepted_count"] == 0
+
   extra = dict(finding, locator="fixture-2", operand_class="unproven", disposition="needs-fix")
   assert apply_public_operand_rules([finding, extra], [rule])
 

@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
   let (ciphertext, shared_secret) = MlKem768::try_encapsulate(&encapsulation_key)?;
   let decapsulated = MlKem768::decapsulate(&decapsulation_key, &ciphertext)?;
 
-  assert_eq!(shared_secret, decapsulated);
+  assert!(shared_secret.ct_eq(&decapsulated).declassify());
   println!(
     "ML-KEM-768 encapsulated {} shared-secret bytes",
     shared_secret.as_bytes().len()

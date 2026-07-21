@@ -426,13 +426,24 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
         )
 
     accepted_primitives = {row["primitive"] for row in accepted}
-    unresolved = sorted(set(finding.get("primitive_ids", [])) - accepted_primitives)
+    public_classification = finding.get("public_classification")
+    public_primitives = (
+      {public_classification["primitive"]}
+      if isinstance(public_classification, dict)
+      and public_classification.get("primitive") in finding.get("primitive_ids", [])
+      else set()
+    )
+    resolved_primitives = accepted_primitives | public_primitives
+    unresolved = sorted(set(finding.get("primitive_ids", [])) - resolved_primitives)
     finding["waivers"] = accepted
     finding["unresolved_primitive_ids"] = unresolved
     finding["waived"] = not unresolved and bool(accepted)
-    if finding["waived"]:
+    if not unresolved and resolved_primitives:
       finding["operand_class"] = "public"
       finding["disposition"] = "accepted"
+    elif unresolved and finding["disposition"] == "accepted":
+      finding["operand_class"] = "unproven"
+      finding["disposition"] = "needs-fix" if finding["severity"] == "fail" else "needs-binsec"
 
   return [f"asm_waiver[{index}] did not match generated disassembly" for index in range(len(configured)) if index not in used]
 
@@ -1026,15 +1037,17 @@ def summarize(
   rows = {}
   for symbol in sorted(symbols):
     symbol_findings = findings_by_symbol.get(symbol, [])
-    unwaived = [item for item in symbol_findings if not item.get("waived")]
+    unresolved = [
+      item for item in symbol_findings if not item.get("waived") and item["disposition"] != "accepted"
+    ]
     rows[symbol] = {
       "present": symbol in functions,
       "instruction_lines": len(functions[symbol].lines) if symbol in functions else 0,
       "finding_count": len(symbol_findings),
-      "unwaived_fail_count": sum(1 for item in unwaived if item["severity"] == "fail"),
-      "unwaived_warn_count": sum(1 for item in unwaived if item["severity"] == "warn"),
-      "needs_fix_count": sum(1 for item in unwaived if item["disposition"] == "needs-fix"),
-      "needs_binsec_count": sum(1 for item in unwaived if item["disposition"] == "needs-binsec"),
+      "unwaived_fail_count": sum(1 for item in unresolved if item["severity"] == "fail"),
+      "unwaived_warn_count": sum(1 for item in unresolved if item["severity"] == "warn"),
+      "needs_fix_count": sum(1 for item in unresolved if item["disposition"] == "needs-fix"),
+      "needs_binsec_count": sum(1 for item in unresolved if item["disposition"] == "needs-binsec"),
       "accepted_count": sum(1 for item in symbol_findings if item["disposition"] == "accepted"),
     }
   return rows
@@ -1045,23 +1058,31 @@ def summarize_closure(
   functions: dict[str, FunctionBody],
   findings: list[dict[str, Any]],
 ) -> dict[str, Any]:
-  unwaived = [item for item in findings if not item.get("waived")]
   by_primitive: dict[str, dict[str, Any]] = {}
   for primitive_id, roots in sorted(closures.items()):
     reachable = sorted({symbol for symbols in roots.values() for symbol in symbols})
     primitive_findings = [item for item in findings if primitive_id in item.get("primitive_ids", [])]
-    primitive_unwaived = [item for item in unwaived if primitive_id in item.get("primitive_ids", [])]
+    primitive_unresolved = [
+      item
+      for item in primitive_findings
+      if not item.get("waived")
+      and primitive_id in item.get("unresolved_primitive_ids", item.get("primitive_ids", []))
+    ]
     by_primitive[primitive_id] = {
       "root_symbols": sorted(roots),
       "reachable_symbol_count": len(reachable),
       "reachable_symbols": reachable,
       "missing_root_symbols": sorted(root for root in roots if root not in functions),
       "finding_count": len(primitive_findings),
-      "unwaived_fail_count": sum(1 for item in primitive_unwaived if item["severity"] == "fail"),
-      "unwaived_warn_count": sum(1 for item in primitive_unwaived if item["severity"] == "warn"),
-      "needs_fix_count": sum(1 for item in primitive_unwaived if item["disposition"] == "needs-fix"),
-      "needs_binsec_count": sum(1 for item in primitive_unwaived if item["disposition"] == "needs-binsec"),
-      "accepted_count": sum(1 for item in primitive_findings if primitive_id not in item["unresolved_primitive_ids"]),
+      "unwaived_fail_count": sum(1 for item in primitive_unresolved if item["severity"] == "fail"),
+      "unwaived_warn_count": sum(1 for item in primitive_unresolved if item["severity"] == "warn"),
+      "needs_fix_count": sum(1 for item in primitive_unresolved if item["disposition"] == "needs-fix"),
+      "needs_binsec_count": sum(1 for item in primitive_unresolved if item["disposition"] == "needs-binsec"),
+      "accepted_count": sum(
+        1
+        for item in primitive_findings
+        if primitive_id not in item.get("unresolved_primitive_ids", item.get("primitive_ids", []))
+      ),
     }
   return by_primitive
 
@@ -1248,7 +1269,11 @@ def main() -> int:
   unwaived_failures = [
     item for item in findings if item["severity"] == "fail" and item["disposition"] != "accepted" and not item.get("waived")
   ]
-  unwaived_warnings = [item for item in findings if item["severity"] == "warn" and not item.get("waived")]
+  unwaived_warnings = [
+    item
+    for item in findings
+    if item["severity"] == "warn" and item["disposition"] != "accepted" and not item.get("waived")
+  ]
   needs_fix = [item for item in findings if item["disposition"] == "needs-fix" and not item.get("waived")]
   needs_binsec = [item for item in findings if item["disposition"] == "needs-binsec" and not item.get("waived")]
   accepted = [item for item in findings if item["disposition"] == "accepted"]

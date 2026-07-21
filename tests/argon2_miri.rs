@@ -56,7 +56,7 @@ fn argon2id_minimal_p2_no_ub() {
   assert_ne!(out, [0u8; 4]);
 }
 
-/// Verify path — exercises the `H'` expansion + constant-time tag compare.
+/// Verify path — exercises the `H'` expansion and full stored-tag comparison.
 #[test]
 fn argon2id_minimal_verify_no_ub() {
   let params = Argon2Params::new(8, 1, 1).expect("minimal params are valid");

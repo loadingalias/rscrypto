@@ -290,12 +290,12 @@ define_aead_tag_type!(Aegis256Tag, TAG_SIZE, "AEGIS-256 128-bit authentication t
 ///
 /// # Security
 ///
-/// On x86_64 (AES-NI), aarch64 (AES-CE), and POWER (vcipher), all AES
-/// round operations use constant-time hardware instructions. On RISC-V
-/// without hardware AES extensions (Zkne / Zvkned), the implementation
-/// falls back to the constant-time portable round function instead of
-/// secret-indexed lookup tables. That fallback is much slower, but it
-/// avoids the cache-timing side channel.
+/// On x86_64 (AES-NI), aarch64 (AES-CE), and POWER (vcipher), AES rounds use
+/// dedicated hardware instructions. On RISC-V without hardware AES extensions
+/// (Zkne / Zvkned), the implementation falls back to a fixed-work portable
+/// source implementation without secret-indexed lookup tables. These source
+/// and ISA properties are necessary, not sufficient: generated-code timing
+/// claims are configuration- and release-evidence-bound; see `ct.toml`.
 ///
 /// # Examples
 ///
@@ -667,7 +667,7 @@ impl Aead for Aegis256 {
     )))]
     let computed = decrypt_portable(key, nonce, aad, buffer);
 
-    if !ct::fixed_eq(&computed, tag.as_bytes()) {
+    if !ct::fixed_eq(&computed, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
     }

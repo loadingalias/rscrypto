@@ -1,13 +1,16 @@
 #![allow(clippy::indexing_slicing)]
 
-//! Constant-time POLYVAL universal hash (RFC 8452).
+//! Fixed-schedule, table-free POLYVAL universal hash (RFC 8452).
+//!
+//! Generated-code timing claims remain configuration- and
+//! release-evidence-bound; see `ct.toml`.
 //!
 //! POLYVAL operates in GF(2^128) with the irreducible polynomial
 //! x^128 + x^127 + x^126 + x^121 + 1 (the bit-reversal of GHASH's
 //! polynomial).
 //!
 //! The portable implementation uses:
-//! - **Pornin's bmul64** for constant-time 64×64 carryless multiplication (16 integer multiplies
+//! - **Pornin's bmul64** for fixed-schedule 64×64 carryless multiplication (16 integer multiplies
 //!   per call, no table lookups)
 //! - **Karatsuba** decomposition for the 128×128 product (6 bmul64 calls)
 //! - **Montgomery reduction** (2-pass fold from the bottom) for modular reduction — the key
@@ -2258,7 +2261,7 @@ impl Drop for Polyval {
   }
 }
 
-// Pornin's bmul64: constant-time 64×64 → low-64 carryless multiplication
+// Pornin's bmul64: fixed-schedule 64×64 → low-64 carryless multiplication.
 
 /// Carryless multiply of two 64-bit values, returning the LOW 64 bits.
 ///
@@ -2273,7 +2276,9 @@ impl Drop for Polyval {
 /// carryless product at each bit position.
 ///
 /// Cost: 16 integer multiplies + 20 bitwise ops.
-/// Constant-time: no branches, no table lookups, no data-dependent memory access.
+/// The Rust source has no branches, table lookups, or data-dependent memory
+/// access. Integer-multiply latency and generated code remain target-specific
+/// evidence questions.
 #[inline]
 fn bmul64(x: u64, y: u64) -> u64 {
   let x0 = x & 0x1111_1111_1111_1111;

@@ -387,10 +387,10 @@ impl ExtendedPoint {
     let rhs_x = rhs.x.mul(&self.z).normalize().to_bytes();
     let lhs_y = self.y.mul(&rhs.z).normalize().to_bytes();
     let rhs_y = rhs.y.mul(&self.z).normalize().to_bytes();
-    let diff = u8::from(ct::fixed_eq(&lhs_z, &zero))
-      | u8::from(ct::fixed_eq(&rhs_z, &zero))
-      | u8::from(!ct::fixed_eq(&lhs_x, &rhs_x))
-      | u8::from(!ct::fixed_eq(&lhs_y, &rhs_y));
+    let diff = ct::fixed_eq(&lhs_z, &zero).into_u8()
+      | ct::fixed_eq(&rhs_z, &zero).into_u8()
+      | (!ct::fixed_eq(&lhs_x, &rhs_x)).into_u8()
+      | (!ct::fixed_eq(&lhs_y, &rhs_y)).into_u8();
     core::hint::black_box(diff) == 0
   }
 

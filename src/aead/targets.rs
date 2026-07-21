@@ -43,7 +43,7 @@ pub enum AeadBackend {
   Aarch64AesPmull,
   Aarch64Sve2AesPmull,
   S390xMsa,
-  /// Hamburg vperm AES rounds for AEGIS — constant-time via z/Vector VPERM.
+  /// Hamburg vperm AES rounds for AEGIS using register-only z/Vector VPERM.
   /// Used on s390x z13+ where no single-round AES instruction exists.
   S390xVperm,
   S390xVector,
@@ -52,7 +52,7 @@ pub enum AeadBackend {
   Riscv64ScalarCrypto,
   Riscv64VectorCrypto,
   Riscv64Vector,
-  /// Hamburg vperm AES via `vrgather.vv` — practically constant-time.
+  /// Hamburg vperm AES via register-only `vrgather.vv` operations.
   /// Kept as an explicit backend, but not selected for V-only RISC-V until
   /// it beats the scalar portable path on benchmark hardware.
   Riscv64Vperm,
@@ -205,7 +205,7 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
       } else if caps.has(riscv::ZKNE) && (caps.has(riscv::ZBC) || caps.has(riscv::ZBKC)) {
         AeadBackend::Riscv64ScalarCrypto
       } else {
-        // Constant-time scalar fallback. V-only Hamburg vperm is currently
+        // Table-free scalar fallback. V-only Hamburg vperm is currently
         // much slower than the portable path on RISE benchmark hardware, so
         // do not select it automatically.
         AeadBackend::Portable
@@ -248,7 +248,7 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
     }
     Arch::S390x => {
       // AEGIS needs single AES rounds — CPACF KM/KMA only do full blocks.
-      // Hamburg vperm provides constant-time rounds on z13+ (vector facility).
+      // Hamburg vperm keeps the rounds register-only on z13+ (vector facility).
       if caps.has(s390x::VECTOR) {
         AeadBackend::S390xVperm
       } else {
@@ -268,7 +268,7 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
       } else if caps.has(riscv::ZKNE) {
         AeadBackend::Riscv64ScalarCrypto
       } else {
-        // Constant-time scalar fallback. V-only Hamburg vperm is currently
+        // Table-free scalar fallback. V-only Hamburg vperm is currently
         // much slower than the portable path on RISE benchmark hardware, so
         // do not select it automatically.
         AeadBackend::Portable
@@ -485,7 +485,7 @@ mod tests {
       AeadBackend::Portable
     );
 
-    // Tier 4: constant-time portable fallback (bare scalar, no V, no crypto)
+    // Tier 4: table-free portable fallback (bare scalar, no V, no crypto)
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, Caps::NONE),
       AeadBackend::Portable

@@ -3397,7 +3397,7 @@ impl RsaPrivateKeyComponents {
         scratch.checked.as_mut_slice(),
         &mut scratch.mul_scratch,
       )?;
-      if !ct::public_len_eq(scratch.checked.as_slice(), scratch.one.as_slice()) {
+      if !ct::public_len_eq(scratch.checked.as_slice(), scratch.one.as_slice()).declassify() {
         return Err(RsaPrivateOpError::InvalidBlindingFactor);
       }
     }
@@ -3435,7 +3435,7 @@ impl RsaPrivateKeyComponents {
         &mut scratch.public_scratch,
       )
       .map_err(|_| RsaPrivateOpError::FaultCheckFailed)?;
-    if ct::public_len_eq(scratch.checked.as_slice(), scratch.encoded.as_slice()) {
+    if ct::public_len_eq(scratch.checked.as_slice(), scratch.encoded.as_slice()).declassify() {
       scratch
         .blinded_private_result
         .as_mut_slice()
@@ -3492,7 +3492,7 @@ impl RsaPrivateKeyComponents {
         &mut scratch.public_scratch,
       )
       .map_err(|_| RsaPrivateOpError::FaultCheckFailed)?;
-    if ct::public_len_eq(scratch.checked.as_slice(), scratch.encoded.as_slice()) {
+    if ct::public_len_eq(scratch.checked.as_slice(), scratch.encoded.as_slice()).declassify() {
       scratch
         .blinded_private_result
         .as_mut_slice()
@@ -7229,7 +7229,7 @@ fn keygen_miller_rabin_accepts_base(
     return Err(RsaKeyGenerationError::ArithmeticFailure);
   }
 
-  let mut accepted = keygen_is_one_fixed(&x) || ct::public_len_eq(&x, n_minus_one_fixed);
+  let mut accepted = keygen_is_one_fixed(&x) || ct::public_len_eq(&x, n_minus_one_fixed).declassify();
   for _ in 1..powers_of_two {
     if accepted {
       break;
@@ -7242,7 +7242,7 @@ fn keygen_miller_rabin_accepts_base(
     }
     x.copy_from_slice(&squared);
     ct::zeroize(&mut squared);
-    accepted = ct::public_len_eq(&x, n_minus_one_fixed);
+    accepted = ct::public_len_eq(&x, n_minus_one_fixed).declassify();
   }
 
   ct::zeroize(&mut x);
@@ -8205,7 +8205,7 @@ where
   }
 
   let (decoded_label_hash, rest) = masked_db.split_at(h_len);
-  bad |= u8::from(!ct::public_len_eq(decoded_label_hash, label_hash.as_ref()));
+  bad |= (!ct::public_len_eq(decoded_label_hash, label_hash.as_ref())).into_u8();
 
   let mut seen_separator = 0u8;
   let mut separator = 0usize;
@@ -8324,7 +8324,7 @@ where
   verifier.update(salt);
   let expected_h = verifier.finalize();
 
-  if ct::public_len_eq(expected_h.as_ref(), h) {
+  if ct::public_len_eq(expected_h.as_ref(), h).declassify() {
     Ok(())
   } else {
     Err(VerificationError::new())
@@ -8359,8 +8359,8 @@ where
     valid &= byte == 0xff;
   }
   valid &= encoded.get(separator_index).copied() == Some(0x00);
-  valid &= ct::public_len_eq(prefix, digest_info_prefix);
-  valid &= ct::public_len_eq(value, digest.as_ref());
+  valid &= ct::public_len_eq(prefix, digest_info_prefix).declassify();
+  valid &= ct::public_len_eq(value, digest.as_ref()).declassify();
 
   if valid { Ok(()) } else { Err(VerificationError::new()) }
 }
@@ -8480,16 +8480,13 @@ fn ct_unsigned_be_lt_public_shape(left: &[u8], right: &[u8]) -> bool {
 }
 
 fn ct_slices_eq_public_shape(left: &[u8], right: &[u8]) -> bool {
-  if left.len() != right.len() {
-    return false;
-  }
-  ct::public_len_eq(left, right)
+  ct::public_len_eq(left, right).declassify()
 }
 
 fn product_matches_unsigned_be_fixed(left: &[u8], right: &[u8], expected: &[u8]) -> bool {
   let mut product = vec![0u8; expected.len()];
-  let matched = private_import_product_unsigned_be_to_fixed(left, right, &mut product).is_ok()
-    && ct::public_len_eq(&product, expected);
+  let imported = private_import_product_unsigned_be_to_fixed(left, right, &mut product).is_ok();
+  let matched = imported & ct::public_len_eq(&product, expected).declassify();
   ct::zeroize(&mut product);
   matched
 }
@@ -8506,7 +8503,7 @@ fn ct_eq_left_padded_unsigned_be(value: &[u8], expected: &[u8]) -> bool {
   dst.copy_from_slice(value);
   let eq = ct::public_len_eq(&padded, expected);
   ct::zeroize(&mut padded);
-  eq
+  eq.declassify()
 }
 
 fn private_component_modulus(bytes: &[u8]) -> Result<RsaPublicModulus, RsaPrivateOpError> {

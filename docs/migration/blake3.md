@@ -2,7 +2,7 @@
 
 > Same algorithm, same outputs. Replace `blake3::Hasher` with `rscrypto::Blake3`.
 > Unkeyed hashes return `[u8; 32]`; keyed hashes return `Blake3KeyedHash` so
-> equality stays constant-time for authenticator use.
+> authenticator comparison requires an explicit sealed decision.
 
 Verified against `blake3 = "1.8.5"` and the `rscrypto` 0.5.0 line.
 Evidence: `tests/blake3_official_vectors.rs` and `tests/blake3_differential.rs`.
@@ -84,7 +84,9 @@ let tag = Blake3::keyed_digest(&key, b"message");
 assert!(Blake3::verify_keyed(&key, b"message", &tag).is_ok());
 ```
 
-`tag` is a `Blake3KeyedHash`, not a raw array. Its `==` is constant-time.
+`tag` is a `Blake3KeyedHash`, not a raw array. It does not implement `==`;
+use `tag.ct_eq(&other)` for an opaque `CtDecision`, or prefer
+`Blake3::verify_keyed` for an authentication result.
 Streaming form: `Blake3::new_keyed(&key)` (matches `blake3::Hasher::new_keyed`).
 
 ### Key derivation (KDF)
@@ -134,7 +136,10 @@ Renames: `reader.fill(&mut out)` → `reader.squeeze(&mut out)`. The one-shot fo
   because unkeyed hashes are usually content IDs, cache keys, or integrity
   fingerprints; ordinary array equality is fine there. For authenticator use,
   `Blake3::keyed_digest` returns `Blake3KeyedHash` and `Blake3::verify_keyed`
-  verifies it in constant time.
+  traverses the fixed-size tag before returning one opaque result. This is a
+  source-level boundary, not a universal timing proof; constant-time claims are
+  limited to the compiler, target, features, and binary in the matching
+  [release evidence](../constant-time.md).
 - **`finalize` borrows in both crates.** `blake3::Hasher::finalize(&self)` and `Blake3::finalize(&self)` are both idempotent: call repeatedly without rebuilding.
 - **Parallel hashing.** `blake3` ships a `rayon` feature for multi-threaded chunk hashing. rscrypto exposes the same via the `parallel` umbrella feature (`features = ["blake3", "parallel"]`); the public API is unchanged.
 - **`std::io::Write`.** `blake3::Hasher: io::Write`. `rscrypto::Blake3`

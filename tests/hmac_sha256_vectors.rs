@@ -33,7 +33,10 @@ fn hmac_sha256_rfc4231_vectors() {
   for (i, (key, data, expected_hex)) in cases.iter().enumerate() {
     let expected = HmacSha256Tag::from_bytes(decode_hex::<32>(&expected_hex.replace('\n', "")));
     let actual = HmacSha256::mac(key, data);
-    assert_eq!(actual, expected, "HMAC-SHA256 RFC 4231 vector {i} mismatch");
+    assert!(
+      actual.ct_eq(&expected).declassify(),
+      "HMAC-SHA256 RFC 4231 vector {i} mismatch"
+    );
     assert!(HmacSha256::verify_tag(key, data, &expected).is_ok());
   }
 }
@@ -84,6 +87,9 @@ fn hmac_sha256_oneshot_matches_streaming() {
     mac.update(&data);
     let streaming = mac.finalize();
 
-    assert_eq!(oneshot, streaming, "oneshot != streaming at data len {len}");
+    assert!(
+      oneshot.ct_eq(&streaming).declassify(),
+      "oneshot != streaming at data len {len}"
+    );
   }
 }

@@ -417,16 +417,22 @@ macro_rules! define_pbkdf2_sha2 {
         Ok(out)
       }
 
-      /// Verify `expected` against the derived key in constant time using the
+      /// Verify `expected` after a full public-length comparison using the
       /// default password policy.
+      ///
+      /// Generated-code timing claims are configuration- and release-evidence-bound;
+      /// see `ct.toml`.
       #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
         self.verify_with_policy(salt, iterations, expected, &Self::DEFAULT_VERIFY_POLICY)
       }
 
-      /// Verify `expected` against the derived key in constant time using an
+      /// Verify `expected` after a full public-length comparison using an
       /// explicit password policy.
+      ///
+      /// Generated-code timing claims are configuration- and release-evidence-bound;
+      /// see `ct.toml`.
       #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_with_policy(

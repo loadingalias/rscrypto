@@ -237,7 +237,7 @@ fn ct_abs_i8(value: i8) -> u8 {
   ((value ^ sign) - sign) as u8
 }
 
-/// Constant-time cached-point selection for AVX2 fixed-base tables.
+/// Fixed-schedule cached-point selection for AVX2 fixed-base tables.
 ///
 /// # Safety
 ///
@@ -728,7 +728,7 @@ impl CachedPointIfma {
   }
 }
 
-/// Constant-time cached-point selection for IFMA fixed-base tables.
+/// Fixed-schedule cached-point selection for IFMA fixed-base tables.
 ///
 /// # Safety
 ///
