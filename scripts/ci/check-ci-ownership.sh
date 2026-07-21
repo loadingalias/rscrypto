@@ -17,6 +17,7 @@ if [[ -z "$ROOT" ]]; then
 fi
 
 WORKFLOWS="$ROOT/.github/workflows"
+CI="$WORKFLOWS/ci.yaml"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
 RISCV="$WORKFLOWS/riscv.yaml"
@@ -29,7 +30,6 @@ EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
-RELEASE_CI="$ROOT/scripts/ci/release-ci-check.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
 RELEASE_SOURCE="$ROOT/scripts/ci/package-release-source.sh"
 RELEASE_MANIFEST="$ROOT/scripts/ci/write-release-manifest.sh"
@@ -84,6 +84,7 @@ require_unique_feature_sets() {
   [[ -z "$duplicate" ]] || fail "duplicate feature profile in $1: $duplicate"
 }
 
+require_file "$CI"
 require_file "$SUITE"
 require_file "$WEEKLY"
 require_file "$RISCV"
@@ -96,7 +97,6 @@ require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
 require_file "$RELEASE_PREFLIGHT"
-require_file "$RELEASE_CI"
 require_file "$RELEASE_EVIDENCE"
 require_file "$RELEASE_SOURCE"
 require_file "$RELEASE_MANIFEST"
@@ -121,6 +121,15 @@ require_file "$DEPENDABOT"
 if grep -En 'group-by:[[:space:]]*dependency-name' "$DEPENDABOT" >/dev/null; then
   fail "Dependabot must not use the upstream-broken cross-directory dependency-name grouping"
 fi
+
+[[ $(yq eval '.on.push // "missing"' "$CI") == "missing" ]] \
+  || fail "ordinary CI must not repeat the PR suite after merge"
+[[ $(yq eval '[.on.pull_request.types[]] | sort | join(",")' "$CI") \
+  == "opened,ready_for_review,reopened,synchronize" ]] \
+  || fail "CI must run when a ready pull request is opened, updated, reopened, or leaves draft"
+[[ $(yq eval '[.jobs[] | select((.if // "") | contains("pull_request.draft"))] | length' "$CI") \
+  == $(yq eval '.jobs | length' "$CI") ]] \
+  || fail "every CI job must defer draft pull requests"
 
 [[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
   || fail "compile feature matrix must retain all 29 profiles"
@@ -175,14 +184,10 @@ fi
 [[ $(count_matches 'cargo rail unify --check' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one Cargo graph assurance owner"
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
-  fail "tag preflight must consume exact-commit CI graph assurance instead of repeating it"
+  fail "tag preflight must consume exact-commit Weekly graph assurance instead of repeating it"
 fi
-[[ $(yq eval '[.jobs."ci-gate".steps[] | select(.uses | test("^actions/checkout@[0-9a-f]{40}$"))] | length' "$RELEASE") -eq 1 ]] \
-  || fail "release CI Gate must check out the shared exact-commit checker"
-grep -Fq 'scripts/ci/release-ci-check.sh --commit "$GITHUB_SHA" --wait' "$RELEASE" \
-  || fail "release CI Gate must use the shared exact-commit checker"
-grep -Fq 'CI Suite / Cargo Graph Assurance / run' "$RELEASE_CI" \
-  || fail "release CI Gate must verify exact-commit Cargo Graph Assurance"
+grep -Fq 'CI Suite (weekly) / Cargo Graph Assurance / run' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require exact-commit Weekly Cargo Graph Assurance"
 [[ $(yq eval '.concurrency.group' "$RSA") == 'rsa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' ]] \
   || fail "reusable RSA workflow concurrency must not collide with its caller"
 [[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == "true" ]] \

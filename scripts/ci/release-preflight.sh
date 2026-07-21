@@ -108,8 +108,8 @@ fi
 
 cargo rail config validate --strict
 cargo rail config migrate --check
-# Exact-commit CI owns exhaustive compiler-backed Cargo graph assurance. The
-# release CI Gate verifies that named job before publication can proceed.
+# Exact-commit Weekly owns exhaustive compiler-backed Cargo graph assurance.
+# The release evidence gate verifies that named job before publication.
 cargo deny check all
 # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
 # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the

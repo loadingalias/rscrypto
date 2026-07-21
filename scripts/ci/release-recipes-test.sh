@@ -15,8 +15,6 @@ grep -Fq "cargo rail release run rscrypto --bump auto --yes --pr" <<<"$prepare_r
 grep -Fq "git push" <<<"$prepare_recipe"
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
 # shellcheck disable=SC2016 # Match the literal command rendered by just.
-grep -Fq 'scripts/ci/release-ci-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
-# shellcheck disable=SC2016 # Match the literal command rendered by just.
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
 grep -Fq 'just check-repository-controls' <<<"$tag_recipe"
 grep -Fq 'scripts/ci/repository-controls-evidence.sh' <<<"$controls_recipe"
@@ -26,11 +24,10 @@ if grep -Fq -- '--allow-redacted-bypass' <<<"$controls_recipe"; then
 fi
 
 controls_line=$(grep -nF 'just check-repository-controls' <<<"$tag_recipe" | cut -d: -f1)
-ci_line=$(grep -nF 'scripts/ci/release-ci-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 evidence_line=$(grep -nF 'scripts/ci/release-evidence-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 finalize_line=$(grep -nF 'cargo rail release finalize' <<<"$tag_recipe" | cut -d: -f1)
-if (( controls_line >= ci_line || ci_line >= evidence_line || evidence_line >= finalize_line )); then
-  echo "release-tag must validate repository controls, exact-commit CI, and evidence before creating the tag" >&2
+if (( controls_line >= evidence_line || evidence_line >= finalize_line )); then
+  echo "release-tag must validate repository controls and exact-commit evidence before creating the tag" >&2
   exit 1
 fi
 

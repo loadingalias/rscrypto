@@ -1,10 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:
@@ -22,7 +20,7 @@ permissions:
 jobs:
   rail-plan:
     name: Build Plan
-    if: ${{ github.event_name != 'pull_request' || github.actor != 'dependabot[bot]' }}
+    if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]') }}
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.rail.outputs.build || 'true' }}
@@ -64,7 +62,7 @@ jobs:
 
   dependency-smoke:
     name: Dependency Smoke
-    if: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' }}
+    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft && github.actor == 'dependabot[bot]' }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
@@ -81,7 +79,7 @@ jobs:
   suite:
     name: CI Suite
     needs: rail-plan
-    if: ${{ github.event_name != 'pull_request' || (github.actor != 'dependabot[bot]' && (needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true')) }}
+    if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]' && (needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true')) }}
     uses: ./.github/workflows/_ci-suite.yaml
     with:
       cache_key_prefix: commit
@@ -92,7 +90,7 @@ jobs:
   complete:
     name: Complete
     needs: [rail-plan, suite, dependency-smoke]
-    if: always()
+    if: ${{ always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     steps:
       - name: Assert suite passed

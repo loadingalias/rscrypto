@@ -25,8 +25,6 @@ its caller.
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
-| `ci/release-ci-check.sh`       | `just release-tag`, `release.yaml`, `ci/release-ci-check-test.sh` |
-| `ci/release-ci-check-test.sh`  | `just check-actions` |
 | `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |
 | `ci/release-evidence-check-test.sh` | `just check-actions` |
 | `ci/repository-controls-evidence.sh` | `just check-repository-controls`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |

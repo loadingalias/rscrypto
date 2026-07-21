@@ -33,6 +33,22 @@ baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
 
+push_ci="$TMP_ROOT/push-ci"
+make_fixture "$push_ci"
+yq eval '.on.push.branches = ["main"]' -i "$push_ci/.github/workflows/ci.yaml"
+expect_failure "$push_ci" "duplicated post-merge CI"
+
+missing_ready_event="$TMP_ROOT/missing-ready-event"
+make_fixture "$missing_ready_event"
+yq eval 'del(.on.pull_request.types[] | select(. == "ready_for_review"))' -i \
+  "$missing_ready_event/.github/workflows/ci.yaml"
+expect_failure "$missing_ready_event" "draft PR cannot start CI when marked ready"
+
+draft_runs_suite="$TMP_ROOT/draft-runs-suite"
+make_fixture "$draft_runs_suite"
+yq eval '.jobs.suite.if = "always()"' -i "$draft_runs_suite/.github/workflows/ci.yaml"
+expect_failure "$draft_runs_suite" "draft PR can run the expensive suite"
+
 duplicate_matrix="$TMP_ROOT/duplicate-matrix"
 make_fixture "$duplicate_matrix"
 printf '\n# duplicate owner\n      run: just test-feature-matrix\n' >>"$duplicate_matrix/.github/workflows/weekly.yaml"
@@ -70,22 +86,10 @@ expect_failure "$duplicate_release_graph" "duplicate release Cargo graph assuran
 
 missing_release_graph_gate="$TMP_ROOT/missing-release-graph-gate"
 make_fixture "$missing_release_graph_gate"
-sed -i.bak '/CI Suite \/ Cargo Graph Assurance \/ run/d' \
-  "$missing_release_graph_gate/scripts/ci/release-ci-check.sh"
-rm -f "$missing_release_graph_gate/scripts/ci/release-ci-check.sh.bak"
+sed -i.bak '/CI Suite (weekly) \/ Cargo Graph Assurance \/ run/d' \
+  "$missing_release_graph_gate/scripts/ci/release-evidence-check.sh"
+rm -f "$missing_release_graph_gate/scripts/ci/release-evidence-check.sh.bak"
 expect_failure "$missing_release_graph_gate" "missing release Cargo graph assurance gate"
-
-missing_release_ci_gate="$TMP_ROOT/missing-release-ci-gate"
-make_fixture "$missing_release_ci_gate"
-sed -i.bak '/release-ci-check\.sh/d' "$missing_release_ci_gate/.github/workflows/release.yaml"
-rm -f "$missing_release_ci_gate/.github/workflows/release.yaml.bak"
-expect_failure "$missing_release_ci_gate" "missing shared exact-commit release CI gate"
-
-missing_release_ci_checkout="$TMP_ROOT/missing-release-ci-checkout"
-make_fixture "$missing_release_ci_checkout"
-yq eval 'del(.jobs."ci-gate".steps[] | select(.uses | test("^actions/checkout@")))' -i \
-  "$missing_release_ci_checkout/.github/workflows/release.yaml"
-expect_failure "$missing_release_ci_checkout" "release CI gate without checkout"
 
 colliding_rsa_concurrency="$TMP_ROOT/colliding-rsa-concurrency"
 make_fixture "$colliding_rsa_concurrency"
