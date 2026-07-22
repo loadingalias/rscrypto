@@ -60,7 +60,7 @@ echo "Host checks ${DIM}($SCOPE_DESC)${RESET}"
 
 # Format
 step "Formatting"
-if ! cargo fmt --all >"$LOG_DIR/fmt.log" 2>&1; then
+if ! cargo fmt --all -- --check >"$LOG_DIR/fmt.log" 2>&1; then
   fail
   show_error "$LOG_DIR/fmt.log"
   exit 1
@@ -94,7 +94,7 @@ ok
 # Check
 step "Checking"
 # shellcheck disable=SC2086
-if ! cargo check $CRATE_FLAGS --all-targets --all-features >"$LOG_DIR/check.log" 2>&1; then
+if ! cargo check $CRATE_FLAGS --all-targets --all-features --locked >"$LOG_DIR/check.log" 2>&1; then
   fail
   show_error "$LOG_DIR/check.log"
   exit 1
@@ -124,7 +124,7 @@ fi
 # Clippy
 step "Linting"
 # shellcheck disable=SC2086
-if ! cargo clippy $CRATE_FLAGS --all-targets --all-features -- -D warnings >"$LOG_DIR/clippy.log" 2>&1; then
+if ! cargo clippy $CRATE_FLAGS --all-targets --all-features --locked -- -D warnings >"$LOG_DIR/clippy.log" 2>&1; then
   fail
   show_error "$LOG_DIR/clippy.log"
   exit 1
@@ -134,7 +134,7 @@ ok
 # Audit/Deny (workspace only). CI owns this in the dedicated supply-chain lane.
 if [[ "$FULL_WORKSPACE" == true && "${RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN:-}" != "1" ]]; then
   step "Auditing deps"
-  if ! cargo deny check all >"$LOG_DIR/deny.log" 2>&1; then
+  if ! cargo deny --locked check all >"$LOG_DIR/deny.log" 2>&1; then
     fail
     show_error "$LOG_DIR/deny.log"
     exit 1
@@ -153,7 +153,7 @@ fi
 # Documentation
 step "Building docs"
 # shellcheck disable=SC2086
-if ! cargo doc $CRATE_FLAGS --no-deps --all-features >"$LOG_DIR/doc.log" 2>&1; then
+if ! cargo doc $CRATE_FLAGS --no-deps --all-features --locked >"$LOG_DIR/doc.log" 2>&1; then
   fail
   show_error "$LOG_DIR/doc.log"
   exit 1

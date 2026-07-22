@@ -30,6 +30,7 @@ its caller.
 | `ci/run-rust-job-test.sh`      | `just check-actions` |
 | `ci/emit-manual-matrix-test.sh`| `just check-actions` |
 | `ci/changed-test-planning-test.sh` | `just check-actions` |
+| `ci/check-worktree-test.sh`    | `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
 | `ci/release-plan-check.sh`     | `just release-check` |
 | `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |

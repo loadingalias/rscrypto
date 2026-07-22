@@ -18,6 +18,11 @@ rail_plan_json() {
   local since_arg
   since_arg="$(rail_since_args)"
 
+  if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
+    RAIL_PLAN_JSON_CACHE=""
+    return 1
+  fi
+
   local plan_output
   # shellcheck disable=SC2086
   if ! plan_output="$(cargo rail plan $since_arg --quiet --json 2>/dev/null)"; then
