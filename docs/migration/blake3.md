@@ -4,14 +4,14 @@
 > Unkeyed hashes return `[u8; 32]`; keyed hashes return `Blake3KeyedHash` so
 > authenticator comparison requires an explicit sealed decision.
 
-Verified against `blake3 = "1.8.5"` and the `rscrypto` 0.5.0 line.
+Verified against `blake3 = "1.8.5"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/blake3_official_vectors.rs` and `tests/blake3_differential.rs`.
 
 ## TL;DR
 
-| | Before (`blake3` 1.x) | After (`rscrypto` 0.5.0) |
+| | Before (`blake3` 1.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
-| Cargo dep | `blake3 = "1.8"` | `rscrypto = { version = "0.5.0", features = ["blake3"] }` |
+| Cargo dep | `blake3 = "1.8"` | `rscrypto = { version = "0.7.8", features = ["blake3"] }` |
 | Import | `use blake3::Hasher;` | `use rscrypto::{Blake3, prelude::*};` |
 | Call | `blake3::hash(data).as_bytes()` | `&Blake3::digest(data)` |
 
@@ -26,7 +26,7 @@ blake3 = "1.8"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.5.0", features = ["blake3"] }
+rscrypto = { version = "0.7.8", features = ["blake3"] }
 ```
 
 ## API patterns

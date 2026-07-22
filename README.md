@@ -52,14 +52,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.6.4", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["sha2"] }
 ```
 
 Full primitive stack with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.6.4", features = ["full", "getrandom"] }
+rscrypto = { version = "0.7.8", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-gen entropy from the operating system.

@@ -30,9 +30,13 @@ unlisted build configurations are not blanket constant-time claims.
 
 `rscrypto` is a primitives library. It computes hashes, MACs, KDFs, password
 hashes, AEADs, signatures, key exchanges, and checksums on caller-provided
-buffers. It does not open sockets, touch the filesystem, read the clock, or
-spawn threads outside the opt-in `parallel` feature. Protocol design, key
-storage, key rotation, and transport are the caller's responsibility.
+inputs. It does not open sockets, read the clock, or spawn production threads
+outside the opt-in `parallel` feature. With `std`, runtime CPU detection may
+read OS-exposed capability data such as `/proc/self/auxv`, `/proc/cpuinfo`, and
+sysfs; `getrandom` constructors obtain randomness from the operating system.
+The crate does not read application data or manage keys on disk. Protocol
+design, key storage, key rotation, and transport are the caller's
+responsibility.
 
 Everything that crosses the boundary:
 
@@ -98,14 +102,14 @@ Ordered by exposure to untrusted input:
 | Parsers | RSA DER/SPKI/PKCS#8 import, ECDSA DER signatures and SEC1 points, ML-KEM key and ciphertext parsing, PHC strings, hex | Memory safety, panics, accepting what should be rejected |
 | Verification oracles | MAC `verify_tag`, AEAD open, signature `verify`, ML-KEM implicit rejection | Timing or error detail beyond the single failure bit |
 | Secret-bearing compute | Sign, decrypt, decapsulate, derive; the release-evidenced subset of `ct.toml` | Timing leakage, incorrect arithmetic |
-| `unsafe` SIMD and assembly kernels | Per-architecture modules | Undefined behavior, divergence from the portable authority |
+| `unsafe` low-level code | SIMD/assembly kernels, raw buffer helpers, zeroization, and dispatch | Undefined behavior, divergence from the portable authority |
 | Dispatch | `src/platform`, `src/backend` | Selecting a kernel the CPU cannot run, or one that produces wrong output |
 
 ## Mitigations And Evidence
 
 | Risk | Mitigation | Evidence |
 |---|---|---|
-| Memory safety | `unsafe` confined to kernel and platform modules; unsafe lint gates enabled | Miri on portable paths in CI |
+| Memory safety | Unsafe operations are lint-gated and require local `SAFETY` proofs; the safe portable path remains authoritative | Miri on portable paths in CI |
 | Parser abuse | Strict imports, `strict_*` arithmetic, release overflow checks | Fuzz targets, Wycheproof where mapped, official vectors |
 | Wrong output from accelerated kernels | Portable path is the byte-for-byte authority | Portable-vs-accelerated differential tests and native CI |
 | Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |

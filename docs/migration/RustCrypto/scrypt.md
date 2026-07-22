@@ -11,10 +11,10 @@ The implementation is checked against RFC 7914 vectors and the RustCrypto `scryp
 
 ```toml
 # Raw scrypt KDF
-rscrypto = { version = "0.7", default-features = false, features = ["scrypt"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["scrypt"] }
 
 # Password-record generation and verification
-rscrypto = { version = "0.7", default-features = false, features = [
+rscrypto = { version = "0.7.8", default-features = false, features = [
   "scrypt",
   "phc-strings",
   "getrandom",

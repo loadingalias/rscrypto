@@ -10,8 +10,9 @@ building your own module boundary and evidence package. Do not use it as a
 FIPS 140-3 answer by itself.
 
 External standards references in this page were checked against NIST CSRC on
-2026-06-23. Regulated deployments should check the current standard text and
-their own assessor requirements before release.
+2026-07-21. Several linked publications have active revision or errata notes;
+regulated deployments must review those notes, the current standard text, and
+their assessor's requirements before release.
 
 ## Quick Answer
 

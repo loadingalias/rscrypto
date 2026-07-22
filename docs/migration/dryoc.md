@@ -14,7 +14,7 @@ The direct BLAKE2b, Ed25519, and X25519 examples below are covered by
 dryoc = "0.8"
 
 # After: choose only the primitive features you use
-rscrypto = { version = "0.5.0", default-features = false, features = ["blake2b", "ed25519", "x25519", "argon2"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["blake2b", "ed25519", "x25519", "argon2"] }
 ```
 
 ## Map
