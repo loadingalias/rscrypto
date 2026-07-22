@@ -7,7 +7,7 @@ when the target and CPU support them.
 ## Dispatch Model
 
 1. **Compile-time**: `#[cfg(target_feature = "...")]` selects the strongest backend permitted by `RUSTFLAGS` / `target-feature`.
-2. **Runtime detection** (`std` only): cached `platform::caps()` probes CPU features once at startup via `is_x86_feature_detected!` and the aarch64 / s390x / ppc64le / riscv64 equivalents, then dispatches to the strongest available kernel.
+2. **Runtime detection** (`std` only): cached `platform::caps()` probes CPU features once via detection intrinsics and, on supported Linux/Android targets, OS capability files such as `/proc/self/auxv`; it then dispatches to the strongest available kernel.
 3. **Portable Rust fallback**: always present. The portable implementation is the source of truth; SIMD and ASM kernels are differentially tested against it.
 
 In `no_std` builds, only the compile-time tier runs.
@@ -62,4 +62,4 @@ missing.
 
 Current geomean speedups by platform live in
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
-The current public set includes the 2026-06-22 nine-runner Linux CI matrix.
+The current public set is the 2026-07-04 nine-runner Linux CI matrix.

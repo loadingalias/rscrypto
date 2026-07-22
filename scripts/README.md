@@ -10,6 +10,7 @@ its caller.
 | `check/check.sh`               | `just check` |
 | `check/check-all.sh`           | `just check-all` |
 | `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
+| `check/asm-ledger.sh`          | `scripts/check/check.sh` |
 | `check/zeroize-evidence.sh`    | `just check-zeroize-evidence`, `scripts/check/check-all.sh` |
 | `ci/ci-check.sh`               | `just ci-check`, `_ci-suite.yaml` (quality lane) |
 | `ci/native-check.sh`           | `_ci-suite.yaml` (native Linux/IBM lanes), `riscv.yaml` |
@@ -17,6 +18,8 @@ its caller.
 | `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
 | `test/test-miri.sh`            | `just test-miri`, `weekly.yaml` |
 | `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
+| `test/test-fuzz-asan.sh`       | `just test-fuzz-asan` |
+| `test/test-rsa-leakage.sh`     | `just test-rsa-leakage`, `rsa.yaml` |
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/check-action-pins.sh`      | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh` |
@@ -24,18 +27,26 @@ its caller.
 | `ci/dependabot-smoke-test.sh`  | `just check-actions` |
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
+| `ci/emit-manual-matrix-test.sh`| `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
+| `ci/release-plan-check.sh`     | `just release-check` |
 | `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |
 | `ci/release-evidence-check-test.sh` | `just check-actions` |
 | `ci/repository-controls-evidence.sh` | `just check-repository-controls`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |
 | `ci/repository-controls-evidence-test.sh` | `just check-actions` |
 | `ci/package-release-source.sh` | `release.yaml`, `ci/release-identity-test.sh` |
+| `ci/package-release-ct-evidence.sh` | `release.yaml` |
+| `ci/release-package-guard.sh` | `ci/release-preflight.sh` |
+| `ci/release-preflight.sh` | `release.yaml` |
 | `ci/write-release-manifest.sh` | `release.yaml`, `ci/release-identity-test.sh` |
 | `ci/release-identity-test.sh` | `just check-actions` |
 | `ci/publish-immutable-release.sh` | `release.yaml`, `ci/publish-immutable-release-test.sh` |
 | `ci/publish-immutable-release-test.sh` | `just check-actions` |
 | `ci/release-recipes-test.sh`   | `just check-actions` |
 | `ci/pre-push.sh`               | `just push`, `just push-full` |
+| `ct/artifacts.sh`              | `just ct`, `just ct-artifacts`, `scripts/ct/full.py` |
+| `ct/dudect.sh`                 | `just ct-dudect`, `scripts/ct/full.py` |
+| `ct/python.sh`                 | CT recipes and Python-backed CT, check, and release scripts |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
 ## Cross-platform Check Helpers
@@ -61,6 +72,7 @@ its caller.
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
 | `ci/dependabot-smoke.sh`       | `ci.yaml` (Dependabot PR lane) |
 | `ci/emit-manual-matrix.sh`     | `bench.yaml`, `ct.yaml` |
+| `ci/mlkem-aarch64-gate.sh`     | `weekly.yaml` |
 | `ci/nostd-wasm-suite.sh`       | `ci/cross-targets.sh` |
 | `ci/cross-targets.sh`          | `_ci-suite.yaml` (consolidated cross-target lane) |
 

@@ -15,7 +15,7 @@ RSA test lane.
 openssl = "0.10"
 
 # After: choose only the primitive features you use
-rscrypto = { version = "0.5.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ed25519", "x25519", "rsa"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ed25519", "x25519", "rsa"] }
 ```
 
 ## Map

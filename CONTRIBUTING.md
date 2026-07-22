@@ -98,16 +98,20 @@ the required `Complete` check. Because the repository currently has one
 maintainer, no second approval is required; review the final diff yourself,
 resolve any open threads, and merge in the GitHub UI.
 
-After the merge:
+After GitHub reports the pull request merged:
 
 ```bash
 git switch main
 git pull --ff-only
-git branch -d <short-feature-name>
+git branch -D <short-feature-name>
 ```
 
-GitHub can delete the remote branch during the merge. Do not create release
-tags during daily development.
+Squash merges do not place the topic branch tip in `main`'s ancestry, so
+`git branch -d` can reject a branch whose pull request is already merged. Use
+`-D` only after verifying that exact pull request. GitHub can delete the remote
+branch during the merge; otherwise delete that exact branch with `git push
+origin --delete <short-feature-name>`. Do not create release tags during daily
+development.
 
 ## Security boundaries
 

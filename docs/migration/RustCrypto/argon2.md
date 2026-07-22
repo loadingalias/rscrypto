@@ -11,10 +11,10 @@ The raw implementations are checked against RFC 9106 vectors and the RustCrypto 
 
 ```toml
 # Raw Argon2 KDF
-rscrypto = { version = "0.7", default-features = false, features = ["argon2"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["argon2"] }
 
 # Password-record generation and verification
-rscrypto = { version = "0.7", default-features = false, features = [
+rscrypto = { version = "0.7.8", default-features = false, features = [
   "argon2",
   "phc-strings",
   "getrandom",

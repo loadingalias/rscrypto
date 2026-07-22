@@ -49,7 +49,7 @@ Out of scope:
 
 | Version | Supported |
 | ------- | --------- |
-| `0.6.x` | Yes |
+| `0.7.x` | Yes |
 
 Only the latest published minor release receives security patches. Users should
 stay current.

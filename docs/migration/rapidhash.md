@@ -2,14 +2,14 @@
 
 > Replace `rapidhash::v3::rapidhash_v3` with `rscrypto::RapidHash::hash`. Bit-equivalent, single feature flag, no version-pinning gymnastics.
 
-Verified against `rapidhash = "4.5.1"` (V3 with avalanche, default secrets) and the `rscrypto` 0.6 line.
+Verified against `rapidhash = "4.5.1"` (V3 with avalanche, default secrets) and the `rscrypto` 0.7.8 line.
 Evidence: `tests/rapidhash_differential.rs`.
 
 ## TL;DR
 
-| | Before (`rapidhash` 4.x) | After (`rscrypto` 0.6) |
+| | Before (`rapidhash` 4.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
-| Cargo dep | `rapidhash = "4.5.1"` | `rscrypto = { version = "0.6", features = ["rapidhash"] }` |
+| Cargo dep | `rapidhash = "4.5.1"` | `rscrypto = { version = "0.7.8", features = ["rapidhash"] }` |
 | Import | `use rapidhash::v3::rapidhash_v3;` | `use rscrypto::{FastHash, RapidHash};` |
 | Call | `rapidhash_v3(data)` | `RapidHash::hash(data)` |
 
@@ -24,7 +24,7 @@ rapidhash = "4.5.1"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.6", features = ["rapidhash"] }
+rscrypto = { version = "0.7.8", features = ["rapidhash"] }
 ```
 
 ## Algorithm map

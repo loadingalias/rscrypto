@@ -13,7 +13,7 @@ The direct examples below are covered by `tests/migration_ring.rs`.
 ring = "0.17"
 
 # After: choose only the primitive features you use
-rscrypto = { version = "0.5.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ecdsa", "ed25519", "rsa"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ecdsa", "ed25519", "rsa"] }
 ```
 
 ## Map

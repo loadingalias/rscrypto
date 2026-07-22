@@ -2,14 +2,14 @@
 
 > Same algorithms (FIPS 180-4), same `Sha224` / `Sha256` / `Sha384` / `Sha512` / `Sha512_256` names, same `new()` / `update()` / `finalize()` shape. The output type changes from `Output<D>` (a `GenericArray`) to `[u8; N]`, and `finalize()` now borrows instead of consuming.
 
-Verified against `sha2 = "0.11.0"` and the `rscrypto` 0.5.0 line.
+Verified against `sha2 = "0.11.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/sha2_official_vectors.rs`, `tests/sha256_differential.rs`, and `tests/sha512_differential.rs`.
 
 ## TL;DR
 
-| | Before (`sha2` 0.11.x) | After (`rscrypto` 0.5.0) |
+| | Before (`sha2` 0.11.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
-| Cargo dep | `sha2 = "0.11"` | `rscrypto = { version = "0.5.0", features = ["sha2"] }` |
+| Cargo dep | `sha2 = "0.11"` | `rscrypto = { version = "0.7.8", features = ["sha2"] }` |
 | Import | `use sha2::{Sha256, Digest};` | `use rscrypto::Sha256;` |
 | Call | `Sha256::digest(data)` | `Sha256::digest(data)` |
 
@@ -24,7 +24,7 @@ sha2 = "0.11"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.5.0", features = ["sha2"] }
+rscrypto = { version = "0.7.8", features = ["sha2"] }
 ```
 
 ## Algorithm map

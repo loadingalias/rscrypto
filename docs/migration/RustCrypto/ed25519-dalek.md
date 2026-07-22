@@ -2,14 +2,14 @@
 
 > Replace `SigningKey` / `VerifyingKey` / `Signature` with `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature`. Same RFC 8032 algorithm, byte-identical signatures (Ed25519 is deterministic), strict verification on by default.
 
-Verified against `ed25519-dalek = "2.2.0"` and the `rscrypto` 0.5.0 line.
+Verified against `ed25519-dalek = "2.2.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/ed25519_rfc8032_vectors.rs`, `tests/ed25519_oracle.rs`, and `tests/ed25519_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`ed25519-dalek` 2.x) | After (`rscrypto` 0.5.0) |
+| | Before (`ed25519-dalek` 2.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
-| Cargo dep | `ed25519-dalek = "2.2"` | `rscrypto = { version = "0.5.0", features = ["ed25519"] }` |
+| Cargo dep | `ed25519-dalek = "2.2"` | `rscrypto = { version = "0.7.8", features = ["ed25519"] }` |
 | Import | `use ed25519_dalek::{SigningKey, Signer, Verifier};` | `use rscrypto::{Ed25519SecretKey, Ed25519PublicKey, Ed25519Signature};` |
 | Sign | `signing_key.sign(msg)` | `secret.sign(msg)` |
 | Verify | `verifying_key.verify_strict(msg, &sig)?` | `public_key.verify(msg, &sig)?` |
@@ -25,7 +25,7 @@ ed25519-dalek = "2.2"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.5.0", features = ["ed25519"] }
+rscrypto = { version = "0.7.8", features = ["ed25519"] }
 ```
 
 The `ed25519` feature implies `sha2` (Ed25519 uses SHA-512 internally per RFC 8032).

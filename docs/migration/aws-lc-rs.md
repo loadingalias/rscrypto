@@ -12,7 +12,7 @@ The direct examples below are covered by `tests/migration_aws_lc_rs.rs`.
 aws-lc-rs = "1.17"
 
 # After: enable only the primitives you use
-rscrypto = { version = "0.5.0", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ecdsa", "ed25519", "x25519", "rsa"] }
+rscrypto = { version = "0.7.8", default-features = false, features = ["sha2", "hmac", "hkdf", "pbkdf2", "aes-gcm", "chacha20poly1305", "ecdsa", "ed25519", "x25519", "rsa"] }
 ```
 
 ## Map

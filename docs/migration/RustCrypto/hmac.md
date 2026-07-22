@@ -2,14 +2,14 @@
 
 > Replace `Hmac::<Sha256>` / `Hmac::<Sha3_256>` (generic over digest) with named rscrypto types such as `HmacSha256` and `HmacSha3_256`. Key construction is infallible, `finalize()` borrows, and one-shot helpers return typed tags with sealed comparison decisions.
 
-Verified against `hmac = "0.13.0"` and the `rscrypto` 0.6.4 line.
+Verified against `hmac = "0.13.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha2_family_vectors.rs`, `tests/hmac_sha3_vectors.rs`, the HMAC proptests, and `tests/hmac_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.6.4) |
+| | Before (`hmac` 0.13.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
-| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.6.4", features = ["hmac"] }` |
+| Cargo dep | `hmac = "0.13"` + `sha2 = "0.11"` | `rscrypto = { version = "0.7.8", features = ["hmac"] }` |
 | Import | `use hmac::{Hmac, Mac, KeyInit}; use sha2::Sha256;` | `use rscrypto::{HmacSha256, Mac};` |
 | Call | `Hmac::<Sha256>::new_from_slice(key).unwrap().chain_update(data).finalize().into_bytes()` | `HmacSha256::mac(key, data)` |
 
@@ -25,7 +25,7 @@ sha2 = "0.11"            # required as the generic parameter
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.6.4", features = ["hmac"] }
+rscrypto = { version = "0.7.8", features = ["hmac"] }
 ```
 
 The `hmac` feature implies `sha2`: no second dep to manage for SHA-2 HMAC. Use `features = ["hmac-sha3"]` for HMAC-SHA3, or `features = ["macs"]` when you want both SHA-2 and SHA-3 HMAC families.
