@@ -90,8 +90,8 @@ run_rail_scoped_doctests() {
       local affected
       affected="$(rail_plan_crates)"
       if [ -z "$affected" ]; then
-        echo "no doc-test targets"
-        return 0
+        run_workspace_doctests
+        return
       fi
 
       local crates=()
@@ -160,25 +160,14 @@ else
   echo "Running tests for planner-selected scope"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-  if ! rail_scope_surface_enabled test; then
-    echo "no test targets"
-  else
-    case "$(rail_scope_mode)" in
-      workspace)
-        if [ "$HAS_NEXTEST" = true ]; then
-          cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
-          run_workspace_doctests
-        else
-          cargo test --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
-        fi
-        ;;
-      crates)
-        affected="$(rail_plan_crates)"
-        if [ -z "$affected" ]; then
-          echo "no test targets"
-          exit 0
-        fi
-
+  case "$(rail_scope_mode)" in
+    empty)
+      echo "no test targets"
+      exit 0
+      ;;
+    crates)
+      affected="$(rail_plan_crates)"
+      if [ -n "$affected" ]; then
         if [ "$HAS_NEXTEST" = true ]; then
           CRATE_FLAGS=()
           for crate in $affected; do
@@ -191,10 +180,15 @@ else
             cargo test -p "$crate" --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
           done
         fi
-        ;;
-      *)
-        echo "no test targets"
-        ;;
-    esac
+        exit 0
+      fi
+      ;;
+  esac
+
+  if [ "$HAS_NEXTEST" = true ]; then
+    cargo nextest run --workspace -P "$PROFILE" --all-features --config-file .config/nextest.toml "${NEXTEST_THREAD_ARGS[@]:+${NEXTEST_THREAD_ARGS[@]}}"
+    run_workspace_doctests
+  else
+    cargo test --workspace --all-features "${CARGO_TEST_TARGET_ARGS[@]:+${CARGO_TEST_TARGET_ARGS[@]}}"
   fi
 fi

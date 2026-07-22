@@ -52,8 +52,26 @@ expect_failure "$missing_ready_event" "draft PR cannot start CI when marked read
 
 draft_runs_suite="$TMP_ROOT/draft-runs-suite"
 make_fixture "$draft_runs_suite"
-yq eval '.jobs.suite.if = "always()"' -i "$draft_runs_suite/.github/workflows/ci.yaml"
+yq eval '.jobs.suite."if" = "always()"' -i "$draft_runs_suite/.github/workflows/ci.yaml"
 expect_failure "$draft_runs_suite" "draft PR can run the expensive suite"
+
+planner_failure_skips_suite="$TMP_ROOT/planner-failure-skips-suite"
+make_fixture "$planner_failure_skips_suite"
+yq eval '.jobs.suite."if" = "github.event_name != '\''pull_request'\'' || !github.event.pull_request.draft"' -i \
+  "$planner_failure_skips_suite/.github/workflows/ci.yaml"
+expect_failure "$planner_failure_skips_suite" "planner failure can skip the CI suite"
+
+missing_plan_resolver="$TMP_ROOT/missing-plan-resolver"
+make_fixture "$missing_plan_resolver"
+rm "$missing_plan_resolver/scripts/ci/resolve-rail-plan.sh"
+expect_failure "$missing_plan_resolver" "workflow plan outputs bypass repository validation"
+
+unchecked_suite_skip="$TMP_ROOT/unchecked-suite-skip"
+make_fixture "$unchecked_suite_skip"
+sed -i.bak '/if \[\[ "\$PLAN_VALID" != "true" || "\$PLAN_EMPTY" != "true" \]\]/d' \
+  "$unchecked_suite_skip/.github/workflows/ci.yaml"
+rm -f "$unchecked_suite_skip/.github/workflows/ci.yaml.bak"
+expect_failure "$unchecked_suite_skip" "Complete accepts an unvalidated suite skip"
 
 shell_fragment_input="$TMP_ROOT/shell-fragment-input"
 make_fixture "$shell_fragment_input"

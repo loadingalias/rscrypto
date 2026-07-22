@@ -29,6 +29,7 @@ its caller.
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
 | `ci/run-rust-job-test.sh`      | `just check-actions` |
 | `ci/emit-manual-matrix-test.sh`| `just check-actions` |
+| `ci/changed-test-planning-test.sh` | `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
 | `ci/release-plan-check.sh`     | `just release-check` |
 | `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |
@@ -76,6 +77,7 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 |--------|---------|
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
 | `ci/run-rust-job.sh`           | `.github/workflows/_rust-job.yaml` |
+| `ci/resolve-rail-plan.sh`       | `.github/workflows/ci.yaml` |
 | `ci/dependabot-smoke.sh`       | `ci/run-rust-job.sh` |
 | `ci/emit-manual-matrix.sh`     | `bench.yaml`, `ct.yaml` |
 | `ci/mlkem-aarch64-gate.sh`     | `ci/run-rust-job.sh` |
