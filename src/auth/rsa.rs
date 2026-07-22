@@ -10795,8 +10795,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn private_key_components_debug_redacts_secret_material() {
     let der = test_pkcs1_private_key();
-    let key = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
-    let debug = format!("{key:?}");
+    let components = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let debug = format!("{components:?}");
 
     assert!(debug.contains("modulus_bits"));
     assert!(debug.contains("public_exponent"));
@@ -10814,6 +10814,19 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     ] {
       assert!(!debug.contains(&format!("{secret:?}")));
     }
+
+    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    assert_eq!(
+      format!("{key:?}"),
+      format!(
+        "RsaPrivateKey {{ public: {:?}, private_components: \"****\", .. }}",
+        key.public_key()
+      )
+    );
+    assert_eq!(
+      format!("{:?}", key.private_scratch()),
+      format!("RsaPrivateScratch {{ bytes: {}, .. }}", key.signature_len())
+    );
   }
 
   #[test]

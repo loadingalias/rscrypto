@@ -5,7 +5,6 @@ use core::arch::aarch64::*;
 mod asm;
 
 /// AES-256 round keys stored as 15 × 128-bit NEON vectors for AES-CE.
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(in crate::aead) struct CeRoundKeys {
   rk: [uint8x16_t; 15],
@@ -1400,7 +1399,6 @@ pub(super) unsafe fn encrypt_block(keys: &CeRoundKeys, block: &mut [u8; 16]) {
 /// AES-128-GCM-SIV path in `aes128gcmsiv.rs` can hold these round keys
 /// across the `#[target_feature(enable = "aes,neon")]` scope via
 /// `aes::aarch64_expand_key_128_inline` / `aes::aarch64_encrypt_block_128_inline`.
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(in crate::aead) struct Ce128RoundKeys {
   rk: [uint8x16_t; 11],

@@ -242,6 +242,30 @@ pub fn diag_zeroize_fixed_stack(input: [u8; 32]) -> u8 {
   core::hint::black_box(secret.as_bytes()[0])
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_fixed_move(input: [u8; 32]) -> u8 {
+  let secret = SecretBytes::new(input);
+  let mut exposed = secret.expose();
+  let output = core::hint::black_box(exposed[0]);
+  ct::zeroize(&mut exposed);
+  output
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_early_return(input: [u8; 32], stop: bool) -> u8 {
+  let secret = SecretBytes::new(input);
+  if core::hint::black_box(stop) {
+    return 0;
+  }
+  core::hint::black_box(secret.as_bytes()[0])
+}
+
 #[cfg(all(feature = "diag", feature = "alloc"))]
 #[doc(hidden)]
 #[unsafe(no_mangle)]

@@ -4,7 +4,6 @@ use core::arch::riscv64::{aes64es, aes64esm};
 ///
 /// Each round key is kept in canonical AES byte order and split into the
 /// upper/lower 64-bit halves consumed by the RV64 scalar AES instructions.
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(super) struct RvScalarRoundKeys {
   rk: [(u64, u64); 15],
@@ -152,7 +151,6 @@ pub(super) unsafe fn encrypt_4blocks(keys: &RvScalarRoundKeys, blocks: &mut [[u8
 // AES-128 (11 round keys, 10 rounds)
 
 /// AES-128 round keys stored as 11 pairs of 64-bit halves for scalar AES.
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(super) struct RvScalar128RoundKeys {
   rk: [(u64, u64); 11],

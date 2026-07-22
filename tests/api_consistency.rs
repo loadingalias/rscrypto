@@ -124,6 +124,45 @@ fn assert_mac_api<M: Mac>() {
   assert!(mac.verify(&expected).is_ok());
 }
 
+#[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
+struct NonCloneMac {
+  key: u8,
+  state: u8,
+}
+
+#[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
+impl Mac for NonCloneMac {
+  const TAG_SIZE: usize = 1;
+  type Tag = [u8; Self::TAG_SIZE];
+
+  fn new(key: &[u8]) -> Self {
+    Self {
+      key: key.first().copied().unwrap_or(0),
+      state: 0,
+    }
+  }
+
+  fn update(&mut self, data: &[u8]) {
+    self.state = data.iter().fold(self.state, |state, byte| state.wrapping_add(*byte));
+  }
+
+  fn finalize(&self) -> Self::Tag {
+    [self.state ^ self.key]
+  }
+
+  fn reset(&mut self) {
+    self.state = 0;
+  }
+
+  fn verify(&self, expected: &Self::Tag) -> Result<(), VerificationError> {
+    if self.finalize() == *expected {
+      Ok(())
+    } else {
+      Err(VerificationError::new())
+    }
+  }
+}
+
 #[cfg(feature = "aead")]
 fn assert_aead_api<A>(key: A::Key, nonce: A::Nonce)
 where
@@ -221,6 +260,12 @@ fn all_macs_follow_new_update_finalize_reset() {
   assert_mac_api::<HmacSha256>();
   assert_mac_api::<HmacSha384>();
   assert_mac_api::<HmacSha512>();
+}
+
+#[test]
+#[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
+fn mac_trait_accepts_non_clone_implementations() {
+  assert_mac_api::<NonCloneMac>();
 }
 
 #[test]

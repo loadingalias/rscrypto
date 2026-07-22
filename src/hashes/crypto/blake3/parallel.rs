@@ -5,7 +5,7 @@ use super::{
   hash_full_chunks_cvs_scoped, hash_one_full_chunk_cv, hash_power_of_two_subtree_roots_parallel_rayon, join, kernels,
   pow2_floor, reduce_power_of_two_chunk_cvs_any, single_chunk_output, words8_to_le_bytes, words16_from_le_bytes_64,
 };
-use crate::hashes::crypto::blake3::kernels::Kernel;
+use crate::{hashes::crypto::blake3::kernels::Kernel, traits::ct};
 
 struct ParallelBatchSpec<'a> {
   input: &'a [u8],
@@ -20,14 +20,38 @@ struct ParallelBatchSpec<'a> {
 pub(super) struct ParallelBatchScratch {
   roots: alloc::vec::Vec<[u32; 8]>,
   leaf_cvs: alloc::vec::Vec<[u32; 8]>,
+  zeroize: bool,
 }
 
 impl ParallelBatchScratch {
   #[inline]
   fn clear(&mut self) {
+    if self.zeroize {
+      ct::zeroize_words_no_fence(self.roots.as_flattened_mut());
+      ct::zeroize_words_no_fence(self.leaf_cvs.as_flattened_mut());
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
     self.roots.clear();
     self.leaf_cvs.clear();
+    self.zeroize = false;
   }
+}
+
+impl Drop for ParallelBatchScratch {
+  fn drop(&mut self) {
+    self.clear();
+  }
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_blake3_parallel_scratch(input: [u32; 8]) -> u32 {
+  let mut scratch = ParallelBatchScratch::default();
+  scratch.zeroize = true;
+  scratch.roots.push(input);
+  core::hint::black_box(scratch.roots[0][0])
 }
 
 impl Blake3 {
@@ -50,22 +74,32 @@ impl Blake3 {
   #[inline(never)]
   fn commit_parallel_batch(&mut self, batch: ParallelBatchSpec<'_>, scratch: &mut ParallelBatchScratch) {
     #[inline]
-    fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, cv: [u32; 8]) {
+    fn push_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, mut cv: [u32; 8], zeroize: bool) {
       stack[*len].write(cv);
       *len += 1;
+      if zeroize {
+        ct::zeroize_words(&mut cv);
+      }
     }
 
     #[inline]
-    fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize) -> [u32; 8] {
+    fn pop_stack(stack: &mut [MaybeUninit<[u32; 8]>; CV_STACK_LEN], len: &mut usize, zeroize: bool) -> [u32; 8] {
       *len -= 1;
       // SAFETY: `len` tracks the number of initialized entries.
-      unsafe { stack[*len].assume_init_read() }
+      let cv = unsafe { stack[*len].assume_init_read() };
+      if zeroize {
+        // SAFETY: the slot held the `Copy` CV read above and remains
+        // initialized until the next push overwrites it.
+        ct::zeroize_words(unsafe { stack[*len].assume_init_mut() });
+      }
+      cv
     }
 
     let batch_input = batch.input;
     let base_counter = batch.base_counter;
     let commit = batch.commit_chunks;
     let threads = batch.threads;
+    let zeroize = self.chunk_state.flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0;
 
     let mut stack_len = self.cv_stack_len as usize;
     let mut counter = base_counter;
@@ -73,6 +107,7 @@ impl Blake3 {
     let mut remaining_commit = commit;
 
     scratch.clear();
+    scratch.zeroize = zeroize;
 
     while remaining_commit != 0 {
       let mut size = pow2_floor(remaining_commit);
@@ -95,7 +130,7 @@ impl Blake3 {
       let subtree_input = &batch_input[bytes_base..bytes_base + subtree_bytes];
       let bulk_kernel = kernels::kernel(self.bulk_kernel_id);
 
-      let subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
+      let mut subtree_cv = if size >= threads && (counter == 0 || (counter & (size as u64 - 1)) == 0) {
         const MAX_SUBTREE_CHUNKS: usize = 1 << 12;
 
         let mut subtree_chunks = size / threads;
@@ -151,16 +186,26 @@ impl Blake3 {
       let mut total = counter >> level;
       let mut cv = subtree_cv;
       while total & 1 == 0 {
-        cv = kernels::parent_cv_inline(
-          self.bulk_kernel_id,
-          pop_stack(&mut self.cv_stack, &mut stack_len),
-          cv,
-          self.key_words,
-          self.chunk_state.flags,
-        );
+        let mut left = pop_stack(&mut self.cv_stack, &mut stack_len, zeroize);
+        let mut next_cv =
+          kernels::parent_cv_inline(self.bulk_kernel_id, left, cv, self.key_words, self.chunk_state.flags);
+        if zeroize {
+          ct::zeroize_words_no_fence(&mut left);
+          ct::zeroize_words_no_fence(&mut cv);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        core::mem::swap(&mut cv, &mut next_cv);
+        if zeroize {
+          ct::zeroize_words(&mut next_cv);
+        }
         total >>= 1;
       }
-      push_stack(&mut self.cv_stack, &mut stack_len, cv);
+      push_stack(&mut self.cv_stack, &mut stack_len, cv, zeroize);
+      if zeroize {
+        ct::zeroize_words_no_fence(&mut cv);
+        ct::zeroize_words_no_fence(&mut subtree_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
 
       offset_chunks = offset_chunks.strict_add(size);
       remaining_commit -= size;
@@ -312,7 +357,7 @@ fn compress_subtree_wide_bytes<J: join::Join>(
     let mut out_len = full_chunks;
     let rem = chunks_exact.remainder();
     if !rem.is_empty() {
-      let cv_words = single_chunk_output(
+      let mut cv_words = single_chunk_output(
         kernel,
         key_words,
         chunk_counter.strict_add(full_chunks as u64),
@@ -322,6 +367,9 @@ fn compress_subtree_wide_bytes<J: join::Join>(
       .chaining_value();
       out[out_len] = words8_to_le_bytes(&cv_words);
       out_len = out_len.strict_add(1);
+      if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut cv_words);
+      }
     }
 
     return out_len;
@@ -377,14 +425,18 @@ fn compress_subtree_wide_bytes<J: join::Join>(
   debug_assert_eq!(left_n, degree);
   debug_assert!(right_n >= 1 && right_n <= left_n);
 
-  if left_n == 1 {
+  let out_len = if left_n == 1 {
     out[0] = left_out[0];
     out[1] = right_out[0];
-    return 2;
+    2
+  } else {
+    let num_children = left_n.strict_add(right_n);
+    compress_parents_parallel_bytes(kernel, &cv_array[..num_children], key_words, flags, out)
+  };
+  if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize(cv_array.as_flattened_mut());
   }
-
-  let num_children = left_n.strict_add(right_n);
-  compress_parents_parallel_bytes(kernel, &cv_array[..num_children], key_words, flags, out)
+  out_len
 }
 
 #[inline]
@@ -422,13 +474,18 @@ fn compress_subtree_to_parent_node_bytes<J: join::Join>(
   let mut out = [0u8; BLOCK_LEN];
   out[..OUT_LEN].copy_from_slice(&cv_array[0]);
   out[OUT_LEN..].copy_from_slice(&cv_array[1]);
+  if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(cv_array.as_flattened_mut());
+    ct::zeroize_no_fence(out_array.as_flattened_mut());
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
   out
 }
 
 #[inline]
 pub(super) fn root_output_oneshot_join_parallel(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   input: &[u8],
   threads: usize,
@@ -440,15 +497,22 @@ pub(super) fn root_output_oneshot_join_parallel(
   let depth = (usize::BITS - 1 - threads.leading_zeros()) as usize;
   let budget = depth.max(1);
 
-  let parent_block =
+  let mut parent_block =
     compress_subtree_to_parent_node_bytes::<join::RayonJoin>(kernel, key_words, 0, flags, input, budget);
-  let block_words = words16_from_le_bytes_64(&parent_block);
-  OutputState {
+  let mut block_words = words16_from_le_bytes_64(&parent_block);
+  let output = OutputState {
     kernel_id: kernel.id,
     input_chaining_value: key_words,
     block_words,
     counter: 0,
     block_len: BLOCK_LEN as u32,
     flags: super::PARENT | flags,
+  };
+  if flags & (super::KEYED_HASH | super::DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut parent_block);
+    ct::zeroize_words_no_fence(&mut block_words);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
+  output
 }

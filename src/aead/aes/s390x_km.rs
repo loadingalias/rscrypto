@@ -6,7 +6,6 @@ use super::{EXPANDED_KEY_WORDS, EXPANDED_KEY_WORDS_128};
 /// alongside the full expanded schedule. This avoids 8 BE serializations
 /// per `encrypt_block` call — critical for GCM-SIV which does 7 AES
 /// calls for even a 0-byte message.
-#[derive(Clone)]
 #[repr(C, align(8))]
 pub(in crate::aead) struct KmKey {
   /// Raw 32-byte AES-256 key, ready for the KM parameter block.
@@ -182,7 +181,6 @@ pub(super) unsafe fn encrypt_blocks(key: &KmKey, blocks: &mut [u8], count: usize
 // AES-128 (KM function code 18)
 
 /// AES-128 key for the KM (Cipher Message) instruction.
-#[derive(Clone)]
 #[repr(C, align(8))]
 pub(in crate::aead) struct Km128Key {
   /// Raw 16-byte AES-128 key, ready for the KM parameter block.

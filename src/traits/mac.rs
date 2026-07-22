@@ -1,7 +1,7 @@
 //! Message authentication code traits.
 //!
-//! This trait mirrors [`crate::Digest`]: keyed construction, streaming updates,
-//! idempotent finalize, and reset support.
+//! This trait provides keyed construction, streaming updates, idempotent
+//! finalize, and reset support without requiring keyed state to be cloneable.
 
 use core::fmt::Debug;
 
@@ -16,7 +16,11 @@ use crate::traits::VerificationError;
 /// until verification returns one success or failure result. External
 /// implementations must provide their own equivalent verification boundary;
 /// the trait cannot prove its timing behavior.
-pub trait Mac: Clone {
+///
+/// MAC state deliberately does not require [`Clone`]. Reuse one owner through
+/// [`reset`](Self::reset), or construct another state explicitly when an
+/// independent keyed owner is required.
+pub trait Mac: Sized {
   /// Tag size in bytes.
   const TAG_SIZE: usize;
 

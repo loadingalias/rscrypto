@@ -246,8 +246,12 @@ Generic secret wrappers deliberately do not implement equality. Fixed-size
 keys, shared secrets, authentication tags, and keyed outputs compare only
 through their concrete semantic owner types.
 
-Secret keys, shared secrets, keypairs, and AEAD cipher contexts do not implement
-`Clone`. Where duplication is necessary, call the concrete type's
-`duplicate_secret()` method so the additional secret lifetime is visible at the
-call site. RSA private-key DER exports return `SecretVec`; borrow the encoded
-bytes for parsers and writers whenever possible.
+Secret keys, shared secrets, keypairs, AEAD cipher contexts, and keyed
+HMAC/HKDF/KMAC/PBKDF2 states do not implement `Clone`. Where key duplication is
+necessary, call the concrete type's `duplicate_secret()` method so the
+additional secret lifetime is visible at the call site. RSA private-key DER
+exports return `SecretVec`; borrow the encoded bytes for parsers and writers
+whenever possible. See
+[`secret-ownership.md`](secret-ownership.md) for the complete Clone, Copy,
+Debug, serialization, and heap-ownership inventory, and
+[`secret-lifecycle.md`](secret-lifecycle.md) for cleanup and redaction evidence.

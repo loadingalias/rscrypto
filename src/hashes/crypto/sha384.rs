@@ -168,9 +168,13 @@ impl Sha384 {
   }
 
   #[inline]
-  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 48] {
+  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 48] {
     let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
-    let state = Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks);
+    let mut state = if ZEROIZE {
+      Sha512::finalize_state_words_secret(self.state, self.block, self.block_len, total_len, compress_blocks)
+    } else {
+      Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks)
+    };
 
     let mut out = [0u8; 48];
     out[0..8].copy_from_slice(&state[0].to_be_bytes());
@@ -179,7 +183,16 @@ impl Sha384 {
     out[24..32].copy_from_slice(&state[3].to_be_bytes());
     out[32..40].copy_from_slice(&state[4].to_be_bytes());
     out[40..48].copy_from_slice(&state[5].to_be_bytes());
+    if ZEROIZE {
+      crate::traits::ct::zeroize_words(&mut state);
+    }
     out
+  }
+
+  #[inline]
+  #[cfg(feature = "hmac")]
+  pub(crate) fn finalize_secret(&self) -> [u8; 48] {
+    self.finalize_inner_with::<true>(self.compress_blocks)
   }
 
   #[inline]
@@ -217,6 +230,24 @@ impl Sha384 {
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;
     self.dispatch = prefix.dispatch;
+  }
+
+  #[inline]
+  #[cfg(feature = "hmac")]
+  pub(crate) fn zeroize_secret_state(&mut self) {
+    crate::traits::ct::zeroize_words_no_fence(&mut self.state);
+    crate::traits::ct::zeroize_no_fence(&mut self.block);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+
+  #[inline]
+  #[cfg(feature = "hmac")]
+  pub(crate) fn digest_secret(data: &[u8]) -> [u8; 48] {
+    let mut state = Self::new();
+    state.update(data);
+    let digest = state.finalize_secret();
+    state.zeroize_secret_state();
+    digest
   }
 
   #[cfg(all(feature = "hmac", any(test, feature = "diag")))]
@@ -275,7 +306,7 @@ impl Digest for Sha384 {
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    self.finalize_inner_with(self.compress_blocks)
+    self.finalize_inner_with::<false>(self.compress_blocks)
   }
 
   #[inline]

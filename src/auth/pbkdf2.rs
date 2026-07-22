@@ -240,7 +240,6 @@ macro_rules! define_pbkdf2_sha2 {
     }
   ) => {
     $(#[$struct_meta])*
-    #[derive(Clone)]
     pub struct $name {
       inner_init: [$word_ty; 8],
       outer_init: [$word_ty; 8],
@@ -302,8 +301,9 @@ macro_rules! define_pbkdf2_sha2 {
 
         let mut key_block = [0u8; $block_size_const];
         if password.len() > $block_size_const {
-          let digest = <$digest_ty>::digest(password);
+          let mut digest = <$digest_ty>::digest_secret(password);
           key_block[..$output_size_const].copy_from_slice(&digest);
+          ct::zeroize(&mut digest);
         } else {
           key_block[..password.len()].copy_from_slice(password);
         }
@@ -610,7 +610,9 @@ macro_rules! define_pbkdf2_sha2 {
       pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
         let mut key_block = [0u8; $block_size_const];
         if password.len() > $block_size_const {
-          key_block[..$output_size_const].copy_from_slice(&$test_oneshot(password, compress));
+          let mut digest = $test_oneshot(password, compress);
+          key_block[..$output_size_const].copy_from_slice(&digest);
+          ct::zeroize(&mut digest);
         } else {
           key_block[..password.len()].copy_from_slice(password);
         }
@@ -713,6 +715,9 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
   for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
     chunk.copy_from_slice(&word.to_be_bytes());
   }
+  ct::zeroize_words_no_fence(&mut state);
+  ct::zeroize_no_fence(&mut block);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   out
 }
 
@@ -753,8 +758,9 @@ fn pbkdf2_sha256_new_fast_path(password: &[u8]) -> Option<Pbkdf2Sha256> {
 
   let mut key_block = [0u8; SHA256_BLOCK_SIZE];
   if password.len() > SHA256_BLOCK_SIZE {
-    let digest = Sha256::digest(password);
+    let mut digest = Sha256::digest_secret(password);
     key_block[..SHA256_OUTPUT_SIZE].copy_from_slice(&digest);
+    ct::zeroize(&mut digest);
   } else {
     key_block[..password.len()].copy_from_slice(password);
   }
@@ -770,6 +776,8 @@ fn pbkdf2_sha256_new_fast_path(password: &[u8]) -> Option<Pbkdf2Sha256> {
 
     let (inner_init, compress) = inner_prefix.pbkdf2_parts();
     let (outer_init, _) = outer_prefix.pbkdf2_parts();
+    inner.zeroize_secret_state();
+    outer.zeroize_secret_state();
     (inner_init, outer_init, compress)
   });
 
@@ -1143,6 +1151,9 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
   for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
     chunk.copy_from_slice(&word.to_be_bytes());
   }
+  ct::zeroize_words_no_fence(&mut state);
+  ct::zeroize_no_fence(&mut block);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   out
 }
 

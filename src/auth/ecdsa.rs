@@ -752,12 +752,21 @@ impl fmt::Display for EcdsaError {
 impl core::error::Error for EcdsaError {}
 
 /// Errors returned by fallible ECDSA key generation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum EcdsaKeyGenerationError<E> {
   /// The caller-provided random source failed.
   Random(E),
   /// Bounded scalar rejection exhausted its retry budget.
   InvalidSecretKey,
+}
+
+impl<E> fmt::Debug for EcdsaKeyGenerationError<E> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Random(_) => f.write_str("Random(..)"),
+      Self::InvalidSecretKey => f.write_str("InvalidSecretKey"),
+    }
+  }
 }
 
 impl<E> EcdsaKeyGenerationError<E> {
@@ -785,17 +794,7 @@ impl<E> fmt::Display for EcdsaKeyGenerationError<E> {
   }
 }
 
-impl<E> core::error::Error for EcdsaKeyGenerationError<E>
-where
-  E: core::error::Error + 'static,
-{
-  fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-    match self {
-      Self::Random(err) => Some(err),
-      Self::InvalidSecretKey => None,
-    }
-  }
-}
+impl<E> core::error::Error for EcdsaKeyGenerationError<E> where E: core::error::Error + 'static {}
 
 /// P-256 ECDSA secret scalar.
 pub struct EcdsaP256SecretKey([u8; Self::LENGTH]);

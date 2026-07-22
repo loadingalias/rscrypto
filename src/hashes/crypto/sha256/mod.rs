@@ -581,9 +581,19 @@ impl Sha256 {
   #[inline]
   fn finalize_impl(&self) -> [u8; 32] {
     if kernels::COMPILE_TIME_HW {
-      return self.finalize_inner_with(kernels::compile_time_best());
+      return self.finalize_inner_with::<false>(kernels::compile_time_best());
     }
-    self.finalize_inner_with(self.compress_blocks)
+    self.finalize_inner_with::<false>(self.compress_blocks)
+  }
+
+  #[cfg(feature = "hmac")]
+  #[cfg_attr(feature = "diag", inline(never))]
+  #[cfg_attr(not(feature = "diag"), inline)]
+  pub(crate) fn finalize_secret(&self) -> [u8; 32] {
+    if kernels::COMPILE_TIME_HW {
+      return self.finalize_inner_with::<true>(kernels::compile_time_best());
+    }
+    self.finalize_inner_with::<true>(self.compress_blocks)
   }
 
   #[inline(always)]
@@ -592,7 +602,7 @@ impl Sha256 {
   }
 
   #[inline]
-  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
+  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 32] {
     let mut state = self.state;
     let mut block = self.block;
     let mut block_len = self.block_len;
@@ -617,6 +627,11 @@ impl Sha256 {
     let mut out = [0u8; 32];
     for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
+    }
+    if ZEROIZE {
+      crate::traits::ct::zeroize_words_no_fence(&mut state);
+      crate::traits::ct::zeroize_no_fence(&mut block);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
     out
   }
@@ -661,6 +676,24 @@ impl Sha256 {
     self.compress_blocks = prefix.compress_blocks;
     self.dispatch = prefix.dispatch;
     self.reset_update_mode_to_aligned_prefix(prefix);
+  }
+
+  #[inline]
+  #[cfg(feature = "hmac")]
+  pub(crate) fn zeroize_secret_state(&mut self) {
+    crate::traits::ct::zeroize_words_no_fence(&mut self.state);
+    crate::traits::ct::zeroize_no_fence(&mut self.block);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+
+  #[inline]
+  #[cfg(feature = "hmac")]
+  pub(crate) fn digest_secret(data: &[u8]) -> [u8; 32] {
+    let mut state = Self::new();
+    state.update(data);
+    let digest = state.finalize_secret();
+    state.zeroize_secret_state();
+    digest
   }
 
   #[inline]

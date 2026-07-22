@@ -585,7 +585,8 @@ fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey
   let mut nonce_hasher = Sha512::new();
   nonce_hasher.update(expanded.nonce_prefix());
   nonce_hasher.update(message);
-  let mut nonce_digest = nonce_hasher.finalize();
+  let mut nonce_digest = nonce_hasher.finalize_secret();
+  nonce_hasher.zeroize_secret_state();
   let mut nonce_scalar = scalar::reduce_64_bytes_mod_order_secret(&nonce_digest);
   let mut nonce_bytes = scalar::to_bytes(&nonce_scalar);
   let r_encoded = basepoint_mul_encoded_dispatch(&nonce_bytes);

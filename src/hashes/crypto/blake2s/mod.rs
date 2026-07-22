@@ -616,7 +616,6 @@ impl Drop for Core {
 ///   .hash_256(b"message");
 /// assert_ne!(tag, other);
 /// ```
-#[derive(Clone)]
 pub struct Blake2sParams {
   key_buf: [u8; MAX_KEY_LEN],
   key_len: u8,

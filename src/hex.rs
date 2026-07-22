@@ -22,7 +22,7 @@
 use core::fmt;
 
 /// Hex decoding error.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum InvalidHexError {
   /// Input length is not exactly twice the expected byte count.
@@ -36,13 +36,23 @@ pub enum InvalidHexError {
   },
 }
 
+impl fmt::Debug for InvalidHexError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::InvalidLength => f.write_str("InvalidLength"),
+      Self::InvalidChar { index, .. } => f
+        .debug_struct("InvalidChar")
+        .field("index", index)
+        .finish_non_exhaustive(),
+    }
+  }
+}
+
 impl fmt::Display for InvalidHexError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Self::InvalidLength => f.write_str("invalid hex length"),
-      Self::InvalidChar { byte, index } => {
-        write!(f, "invalid hex character 0x{byte:02x} at index {index}")
-      }
+      Self::InvalidChar { index, .. } => write!(f, "invalid hex character at index {index}"),
     }
   }
 }
@@ -460,7 +470,11 @@ mod tests {
     );
     assert_eq!(
       alloc::format!("{}", InvalidHexError::InvalidChar { byte: b'z', index: 5 }),
-      "invalid hex character 0x7a at index 5"
+      "invalid hex character at index 5"
+    );
+    assert_eq!(
+      alloc::format!("{:?}", InvalidHexError::InvalidChar { byte: b'z', index: 5 }),
+      "InvalidChar { index: 5, .. }"
     );
   }
 }
