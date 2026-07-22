@@ -9,17 +9,17 @@ its caller.
 |--------|---------|
 | `check/check.sh`               | `just check` |
 | `check/check-all.sh`           | `just check-all` |
-| `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
+| `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh` |
 | `check/asm-ledger.sh`          | `scripts/check/check.sh` |
 | `check/zeroize-evidence.sh`    | `just check-zeroize-evidence`, `scripts/check/check-all.sh` |
-| `ci/ci-check.sh`               | `just ci-check`, `_ci-suite.yaml` (quality lane) |
-| `ci/native-check.sh`           | `_ci-suite.yaml` (native Linux/IBM lanes), `riscv.yaml` |
-| `test/test.sh`                 | `just test`, `just test-all`, `_ci-suite.yaml`, `riscv.yaml` |
-| `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `_ci-suite.yaml` |
-| `test/test-miri.sh`            | `just test-miri`, `weekly.yaml` |
-| `test/test-fuzz.sh`            | `just test-fuzz`, `weekly.yaml` |
-| `test/test-fuzz-asan.sh`       | `just test-fuzz-asan` |
-| `test/test-rsa-leakage.sh`     | `just test-rsa-leakage`, `rsa.yaml` |
+| `ci/ci-check.sh`               | `just ci-check`, `ci/run-rust-job.sh` |
+| `ci/native-check.sh`           | `ci/run-rust-job.sh` |
+| `test/test.sh`                 | `just test`, `just test-all`, `ci/run-rust-job.sh` |
+| `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh` |
+| `test/test-miri.sh`            | `just test-miri`, `ci/run-rust-job.sh` |
+| `test/test-fuzz.sh`            | `just test-fuzz`, `ci/run-rust-job.sh` |
+| `test/test-fuzz-asan.sh`       | `just test-fuzz-asan`, `ci/run-rust-job.sh` |
+| `test/test-rsa-leakage.sh`     | `just test-rsa-leakage`, `ci/run-rust-job.sh` |
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/check-action-pins.sh`      | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh` |
@@ -27,6 +27,7 @@ its caller.
 | `ci/dependabot-smoke-test.sh`  | `just check-actions` |
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
+| `ci/run-rust-job-test.sh`      | `just check-actions` |
 | `ci/emit-manual-matrix-test.sh`| `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
 | `ci/release-plan-check.sh`     | `just release-check` |
@@ -46,7 +47,7 @@ its caller.
 | `ci/pre-push.sh`               | `just push`, `just push-full` |
 | `ct/artifacts.sh`              | `just ct`, `just ct-artifacts`, `scripts/ct/full.py` |
 | `ct/dudect.sh`                 | `just ct-dudect`, `scripts/ct/full.py` |
-| `ct/python.sh`                 | CT recipes and Python-backed CT, check, and release scripts |
+| `ct/python.sh`                 | CT recipes, `ci/run-rust-job.sh`, and Python-backed CT, check, and release scripts |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
 The optimized secret-lifecycle inspection performed by
@@ -66,7 +67,7 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 
 | Script | Callers |
 |--------|---------|
-| `ci/run-bench.sh`            | `scripts/bench/bench.sh`, `bench.yaml`, `riscv.yaml` |
+| `ci/run-bench.sh`            | `scripts/bench/bench.sh`, `ci/mlkem-aarch64-gate.sh`, `ci/run-rust-job.sh` |
 | `bench/blake3-gap-gate.sh`   | `scripts/ci/run-bench.sh` |
 
 ## CI-only (not surfaced via `just`)
@@ -74,11 +75,12 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | Script | Callers |
 |--------|---------|
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
-| `ci/dependabot-smoke.sh`       | `ci.yaml` (Dependabot PR lane) |
+| `ci/run-rust-job.sh`           | `.github/workflows/_rust-job.yaml` |
+| `ci/dependabot-smoke.sh`       | `ci/run-rust-job.sh` |
 | `ci/emit-manual-matrix.sh`     | `bench.yaml`, `ct.yaml` |
-| `ci/mlkem-aarch64-gate.sh`     | `weekly.yaml` |
+| `ci/mlkem-aarch64-gate.sh`     | `ci/run-rust-job.sh` |
 | `ci/nostd-wasm-suite.sh`       | `ci/cross-targets.sh` |
-| `ci/cross-targets.sh`          | `_ci-suite.yaml` (consolidated cross-target lane) |
+| `ci/cross-targets.sh`          | `ci/run-rust-job.sh` |
 
 ## Shared Libraries (sourced, not invoked)
 

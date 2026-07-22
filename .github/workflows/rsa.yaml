@@ -29,14 +29,7 @@ jobs:
       toolchain_components: "miri, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: |
-        set -euo pipefail
-        mkdir -p ci-evidence
-        {
-          uname -a
-          lscpu
-          just test-miri --rsa
-        } 2>&1 | tee ci-evidence/rsa-miri-linux-x64.log
+      operation: rsa-miri
       artifact_name: rsa-miri-linux-x64
       artifact_path: ci-evidence/rsa-miri-linux-x64.log
       artifact_always: true
@@ -59,16 +52,8 @@ jobs:
       tools_mode: minimal
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: |
-        set -euo pipefail
-        mkdir -p ci-evidence
-        {
-          uname -a
-          lscpu
-          RSCRYPTO_RSA_LEAKAGE_SAMPLES="${RSCRYPTO_RSA_LEAKAGE_SAMPLES:-4000}" \
-          RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD="${RSCRYPTO_RSA_LEAKAGE_T_THRESHOLD:-8.0}" \
-            just test-rsa-leakage
-        } 2>&1 | tee "ci-evidence/rsa-leakage-${{ matrix.target.name }}.log"
+      operation: rsa-leakage
+      target: ${{ matrix.target.name }}
       artifact_name: rsa-leakage-${{ matrix.target.name }}
       artifact_path: ci-evidence/rsa-leakage-${{ matrix.target.name }}.log
       artifact_always: true

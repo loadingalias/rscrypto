@@ -72,9 +72,8 @@ jobs:
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
-      run_script: |
-        set -euo pipefail
-        GITHUB_BASE_SHA="${{ github.event.pull_request.base.sha }}" bash scripts/ci/dependabot-smoke.sh
+      operation: dependabot-smoke
+      base_sha: ${{ github.event.pull_request.base.sha }}
 
   suite:
     name: CI Suite

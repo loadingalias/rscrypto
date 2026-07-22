@@ -60,7 +60,7 @@ jobs:
       toolchain_components: "clippy, rustfmt, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: just ci-check
+      operation: quality
 
   cargo-graph:
     if: ${{ inputs.include_cargo_graph }}
@@ -74,12 +74,7 @@ jobs:
       toolchain_components: "rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: |
-        mkdir -p target/cargo-rail
-        cargo rail config validate --strict
-        cargo rail config migrate --check
-        cargo rail unify --check --explain --format json \
-          --output target/cargo-rail/unify-result.json
+      operation: cargo-graph
       artifact_name: cargo-graph-${{ inputs.cache_key_prefix }}
       artifact_path: target/cargo-rail/unify-result.json
       artifact_always: true
@@ -95,9 +90,7 @@ jobs:
       toolchain_components: "rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: |
-        just check-feature-matrix
-        just test-feature-matrix
+      operation: feature-contracts
 
   ci:
     name: CI (${{ matrix.target.name }})
@@ -115,25 +108,9 @@ jobs:
       toolchain_components: ${{ contains(matrix.target.name, 'windows-msvc') && 'clippy' || 'clippy, rustfmt, rust-src' }}
       enable_magic_cache: ${{ matrix.target.type == 'runson' }}
       enable_rust_cache: true
-      run_script: |
-        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        case "${{ matrix.target.name }}" in
-          x86_64-pc-windows-msvc)
-            echo "Windows x86_64 lane: compile smoke plus BLAKE3 ASM runtime vectors"
-            cargo clippy --workspace --lib --all-features -- -D warnings
-            cargo test --workspace --all-features --no-run
-            cargo test --workspace --features blake3 --test blake3_official_vectors --test blake3_differential
-            ;;
-          aarch64-pc-windows-msvc)
-            echo "Windows AArch64 lane: compile-only smoke"
-            cargo clippy --workspace --lib --all-features -- -D warnings
-            cargo test --workspace --all-features --no-run
-            ;;
-          *)
-            bash scripts/ci/native-check.sh --all-targets
-            bash scripts/test/test.sh --all
-            ;;
-        esac
+      operation: native
+      target: ${{ matrix.target.name }}
+      test_mode: ${{ inputs.test_mode }}
 
   ci-ibm-s390x:
     name: CI (IBM Z s390x)
@@ -146,14 +123,8 @@ jobs:
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
-      pre_script: |
-        uname -a
-        lscpu
-        sed -n '1,50p' /proc/cpuinfo
-      run_script: |
-        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        bash scripts/ci/native-check.sh
-        bash scripts/test/test.sh --all
+      operation: native-ibm
+      test_mode: ${{ inputs.test_mode }}
 
   ci-ibm-power10:
     name: CI (IBM POWER10 ppc64le)
@@ -166,14 +137,8 @@ jobs:
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
-      pre_script: |
-        uname -a
-        lscpu
-        sed -n '1,50p' /proc/cpuinfo
-      run_script: |
-        export RSCRYPTO_TEST_MODE="${{ inputs.test_mode }}"
-        bash scripts/ci/native-check.sh
-        bash scripts/test/test.sh --all
+      operation: native-ibm
+      test_mode: ${{ inputs.test_mode }}
 
   cross-targets:
     name: Cross Targets
@@ -186,7 +151,7 @@ jobs:
       toolchain_components: "clippy, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: bash scripts/ci/cross-targets.sh deep
+      operation: cross-targets
 
   supply-chain:
     name: Supply Chain (${{ inputs.supply_chain_mode }})
@@ -198,14 +163,5 @@ jobs:
       tools_mode: supply-chain
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: |
-        if [[ "${{ inputs.supply_chain_mode }}" == "full" ]]; then
-          cargo deny check all
-          # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production
-          # RSA verification is implemented in `src/auth/rsa.rs`; keep this
-          # scoped to the known Marvin advisory until the oracle dependency is
-          # removed or fixed.
-          cargo audit --ignore RUSTSEC-2023-0071
-        else
-          cargo deny check advisories
-        fi
+      operation: supply-chain
+      supply_chain_mode: ${{ inputs.supply_chain_mode }}

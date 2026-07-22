@@ -11,8 +11,8 @@ on:
       dudect_timeout:
         description: "Timeout in seconds for each per-case dudect command."
         required: false
-        type: string
-        default: "1800"
+        type: number
+        default: 1800
       dudect_filter:
         description: "Optional comma-separated DudeCT case/name/filter substrings. Empty = all cases in selected gate."
         required: false
@@ -26,8 +26,8 @@ on:
       binsec_timeout:
         description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
         required: false
-        type: string
-        default: "900"
+        type: number
+        default: 900
       upload_raw_artifacts:
         description: "Upload raw CT build/proof artifacts for debugging. Default uploads compact reports only."
         required: false
@@ -43,8 +43,8 @@ on:
       dudect_timeout:
         description: "Timeout in seconds for each per-case dudect command."
         required: false
-        type: string
-        default: "1800"
+        type: number
+        default: 1800
       dudect_filter:
         description: "Optional comma-separated DudeCT case/name/filter substrings. Empty = all cases in selected gate."
         required: false
@@ -62,8 +62,8 @@ on:
       binsec_timeout:
         description: "Timeout in seconds for each BINSEC kernel batch on Linux targets."
         required: false
-        type: string
-        default: "900"
+        type: number
+        default: 900
       upload_raw_artifacts:
         description: "Upload raw CT build/proof artifacts for debugging. Default uploads compact reports only."
         required: false
@@ -118,61 +118,14 @@ jobs:
       toolchain_components: ${{ matrix.toolchain_components }}
       enable_magic_cache: ${{ matrix.enable_magic_cache }}
       enable_rust_cache: ${{ matrix.enable_rust_cache }}
-      pre_script: |
-        set -euo pipefail
-        mkdir -p target/ct-evidence-package
-        {
-          echo "CT platform: ${{ matrix.platform }}"
-          echo "CT target: ${{ matrix.target }}"
-          echo "CT runner: ${{ matrix.runner }}"
-          uname -a || true
-          rustc -vV
-          cargo -V
-          lscpu || true
-          sed -n '1,80p' /proc/cpuinfo || true
-        } 2>&1 | tee "target/ct-evidence-package/host-${{ matrix.artifact_suffix }}.log"
-      run_script: |
-        set -euo pipefail
-        evidence_dir="target/ct-evidence-package"
-        mkdir -p "$evidence_dir"
-        status=0
-        raw_artifacts="${{ inputs.upload_raw_artifacts && 'true' || 'false' }}"
-        raw_dudect_filter="${{ inputs.dudect_filter || '' }}"
-        raw_dudect_gate="${{ inputs.dudect_gate || 'required' }}"
-        dudect_filter="$(printf '%s' "$raw_dudect_filter" | tr -d '[:space:]')"
-        dudect_gate="$(printf '%s' "$raw_dudect_gate" | tr -d '[:space:]')"
-        if [[ "$raw_dudect_filter" != "$dudect_filter" ]]; then
-          echo "Normalized whitespace in DudeCT filter input."
-        fi
-        case "$dudect_gate" in
-          required|diagnostic|all) ;;
-          *)
-            echo "Invalid DudeCT gate: $dudect_gate" >&2
-            exit 2
-            ;;
-        esac
-        args=(
-          --target "${{ matrix.target }}"
-          --dudect-timeout "${{ inputs.dudect_timeout || '1800' }}"
-          --binsec-timeout "${{ inputs.binsec_timeout || '900' }}"
-          --dudect-gate "$dudect_gate"
-        )
-        if [[ -n "$dudect_filter" ]]; then
-          args+=(--dudect-filter "$dudect_filter")
-        fi
-        package_args=(--target "${{ matrix.target }}" --suffix "${{ matrix.artifact_suffix }}" --out-dir "$evidence_dir")
-
-        {
-          echo "Running: scripts/ct/full.py ${args[*]}"
-          scripts/ct/full.py "${args[@]}"
-        } 2>&1 | tee "$evidence_dir/ct-full-${{ matrix.artifact_suffix }}.log" || status=$?
-
-        if [[ "$raw_artifacts" == "true" ]]; then
-          package_args+=(--raw)
-        fi
-        scripts/ct/python.sh scripts/ct/package_evidence.py "${package_args[@]}"
-
-        exit "$status"
+      operation: constant-time
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      dudect_timeout: ${{ inputs.dudect_timeout }}
+      dudect_filter: ${{ inputs.dudect_filter }}
+      dudect_gate: ${{ inputs.dudect_gate }}
+      binsec_timeout: ${{ inputs.binsec_timeout }}
+      upload_raw_artifacts: ${{ inputs.upload_raw_artifacts }}
       artifact_name: ct-${{ matrix.artifact_suffix }}
       artifact_path: target/ct-evidence-package/
       artifact_always: true

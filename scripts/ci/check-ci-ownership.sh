@@ -19,6 +19,7 @@ fi
 WORKFLOWS="$ROOT/.github/workflows"
 CI="$WORKFLOWS/ci.yaml"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
+RUST_JOB="$WORKFLOWS/_rust-job.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
 RISCV="$WORKFLOWS/riscv.yaml"
 RELEASE="$WORKFLOWS/release.yaml"
@@ -29,6 +30,7 @@ COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
 EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
+RUN_RUST_JOB="$ROOT/scripts/ci/run-rust-job.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
 RELEASE_SOURCE="$ROOT/scripts/ci/package-release-source.sh"
@@ -86,6 +88,7 @@ require_unique_feature_sets() {
 
 require_file "$CI"
 require_file "$SUITE"
+require_file "$RUST_JOB"
 require_file "$WEEKLY"
 require_file "$RISCV"
 require_file "$RELEASE"
@@ -96,6 +99,7 @@ require_file "$COMPILE_MATRIX"
 require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
+require_file "$RUN_RUST_JOB"
 require_file "$RELEASE_PREFLIGHT"
 require_file "$RELEASE_EVIDENCE"
 require_file "$RELEASE_SOURCE"
@@ -137,6 +141,41 @@ fi
   == $(yq eval '.jobs | length' "$CI") ]] \
   || fail "every CI job must defer draft pull requests"
 
+if grep -ERn '^[[:space:]]+(pre_script|run_script):' "$WORKFLOWS" >/dev/null; then
+  fail "reusable workflows must not accept executable shell fragments"
+fi
+rust_job_calls=$(count_matches 'uses:[[:space:]]+\./\.github/workflows/_rust-job\.yaml' "$WORKFLOWS")
+rust_job_operations=$(count_matches '^[[:space:]]+operation:[[:space:]]+[-[:alnum:]]+[[:space:]]*$' "$WORKFLOWS")
+[[ "$rust_job_calls" -eq "$rust_job_operations" ]] \
+  || fail "every reusable Rust job caller must select exactly one typed operation"
+while IFS= read -r operation; do
+  [[ -n "$operation" ]] || continue
+  grep -Eq "^[[:space:]]+$operation\\)" "$RUN_RUST_JOB" \
+    || fail "reusable Rust job caller selects unsupported operation: $operation"
+done < <(
+  awk '/^[[:space:]]+operation:[[:space:]]+[-[:alnum:]]+[[:space:]]*$/ { print $2 }' \
+    "$WORKFLOWS"/*.yaml | sort -u
+)
+[[ $(yq eval '.on.workflow_call.inputs.operation.required' "$RUST_JOB") == "true" ]] \
+  || fail "the reusable Rust job operation must be required"
+[[ $(yq eval '.on.workflow_call.inputs.operation.type' "$RUST_JOB") == "string" ]] \
+  || fail "the reusable Rust job operation must be typed as a string"
+[[ $(yq eval '[.jobs.run.steps[] | select(has("run"))] | length' "$RUST_JOB") -eq 1 ]] \
+  || fail "the reusable Rust job must expose one fixed command step"
+[[ $(yq eval '.jobs.run.steps[] | select(has("run")) | .run' "$RUST_JOB") == "scripts/ci/run-rust-job.sh" ]] \
+  || fail "the reusable Rust job must invoke the repository-owned dispatcher"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+grep -Fq 'RSCRYPTO_CI_OPERATION: ${{ inputs.operation }}' "$RUST_JOB" \
+  || fail "the reusable Rust job must pass its operation as environment data"
+if yq eval '.. | select(tag == "!!map" and has("run") and (.run | tag == "!!str")) | .run' \
+  "$WORKFLOWS"/*.yaml | grep -Eq '\$\{\{[[:space:]]*inputs\.'; then
+  fail "workflow inputs must not be interpolated into shell programs"
+fi
+if grep -En '(^|[[:space:]])eval[[:space:]]|(^|[[:space:]])(bash|sh)[[:space:]]+-c|<<<' \
+  "$RUN_RUST_JOB" >/dev/null; then
+  fail "the Rust job dispatcher must not invoke a dynamic shell interpreter"
+fi
+
 [[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
   || fail "compile feature matrix must retain all 29 profiles"
 [[ $(count_feature_sets "$EXECUTABLE_MATRIX") -eq 38 ]] \
@@ -147,9 +186,9 @@ require_unique_feature_sets "$EXECUTABLE_MATRIX"
 grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "local check-all must retain one explicit feature-matrix execution"
 
-[[ $(count_matches 'just test-feature-matrix' "$WORKFLOWS") -eq 1 ]] \
+[[ $(count_matches 'just test-feature-matrix' "$WORKFLOWS" "$RUN_RUST_JOB") -eq 1 ]] \
   || fail "ordinary workflows must have exactly one executable feature-matrix owner"
-[[ $(count_matches 'just check-feature-matrix' "$WORKFLOWS") -eq 1 ]] \
+[[ $(count_matches 'just check-feature-matrix' "$WORKFLOWS" "$RUN_RUST_JOB") -eq 1 ]] \
   || fail "ordinary workflows must have exactly one compile feature-matrix owner"
 # shellcheck disable=SC2016 # `$crate` is an intentional literal in the release-preflight contract regex.
 [[ $(count_matches 'cargo semver-checks --package "\$crate" --all-features' "$RELEASE_PREFLIGHT") -eq 1 ]] \
@@ -158,7 +197,7 @@ if grep -ERn 'cargo semver-checks' "$WORKFLOWS" >/dev/null; then
   fail "ordinary workflows must leave version-aware SemVer analysis to cargo-rail release planning"
 fi
 
-if grep -ERn 'just check --all|check-all\.sh' "$WORKFLOWS" >/dev/null; then
+if grep -ERn 'just check --all|check-all\.sh' "$WORKFLOWS" "$RUN_RUST_JOB" >/dev/null; then
   fail "native workflows must not invoke comprehensive cross-target checks"
 fi
 
@@ -166,12 +205,18 @@ if grep -En 'test-feature-matrix|check-feature-matrix' "$WEEKLY" >/dev/null; the
   fail "weekly must inherit feature contracts from the reusable suite"
 fi
 
-[[ $(count_matches 'scripts/ci/cross-targets\.sh' "$SUITE") -eq 1 ]] \
+[[ $(count_matches 'operation:[[:space:]]+cross-targets' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one cross-target owner"
-[[ $(count_matches 'scripts/ci/native-check\.sh' "$SUITE") -eq 3 ]] \
+[[ $(count_matches 'scripts/ci/cross-targets\.sh' "$RUN_RUST_JOB") -eq 1 ]] \
+  || fail "the Rust job dispatcher must define exactly one cross-target operation"
+[[ $(count_matches 'operation:[[:space:]]+native$' "$SUITE") -eq 1 ]] \
+  || fail "the reusable suite must own exactly one target-matrix native operation"
+[[ $(count_matches 'operation:[[:space:]]+native-ibm' "$SUITE") -eq 2 ]] \
   || fail "the reusable suite must own only Linux, IBM Z, and POWER10 native validation"
-[[ $(count_matches 'scripts/ci/native-check\.sh' "$RISCV") -eq 1 ]] \
+[[ $(count_matches 'operation:[[:space:]]+native-riscv' "$RISCV") -eq 1 ]] \
   || fail "the RISC-V workflow must own exactly one native validation lane"
+[[ $(count_matches 'scripts/ci/native-check\.sh' "$RUN_RUST_JOB") -eq 3 ]] \
+  || fail "the Rust job dispatcher must retain Linux, IBM, and RISC-V native operations"
 if grep -Ein 'riscv' "$SUITE" >/dev/null; then
   fail "the reusable CI suite must not own physical RISC-V work"
 fi
@@ -187,8 +232,10 @@ fi
   || fail "the RISC-V workflow must select only the RISE CT lane"
 [[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$RISCV") == "true" ]] \
   || fail "the RISC-V workflow must retain raw CT artifacts for release promotion"
-[[ $(count_matches 'cargo rail unify --check' "$SUITE") -eq 1 ]] \
+[[ $(count_matches 'operation:[[:space:]]+cargo-graph' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one Cargo graph assurance owner"
+[[ $(count_matches 'cargo rail unify --check' "$RUN_RUST_JOB") -eq 1 ]] \
+  || fail "the Rust job dispatcher must define exactly one Cargo graph assurance operation"
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
   fail "tag preflight must consume exact-commit Weekly graph assurance instead of repeating it"
 fi
