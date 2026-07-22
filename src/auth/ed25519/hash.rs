@@ -26,7 +26,7 @@ impl ExpandedSecret {
   /// Expand a 32-byte Ed25519 secret key into clamped scalar bytes and nonce prefix.
   #[must_use]
   pub(crate) fn from_secret_key(secret: &Ed25519SecretKey) -> Self {
-    let mut digest = Sha512::digest(secret.as_bytes());
+    let mut digest = Sha512::digest_secret(secret.as_bytes());
     let (scalar_source, prefix_source) = digest.as_slice().split_at(SECRET_KEY_LENGTH);
 
     let mut scalar_bytes = [0u8; SECRET_KEY_LENGTH];
@@ -42,10 +42,14 @@ impl ExpandedSecret {
     ct::zeroize(&mut digest);
     clamp_secret_scalar(&mut scalar_bytes);
 
-    Self {
+    let expanded = Self {
       scalar_bytes,
       nonce_prefix,
-    }
+    };
+    ct::zeroize_no_fence(&mut scalar_bytes);
+    ct::zeroize_no_fence(&mut nonce_prefix);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    expanded
   }
 
   /// Return the clamped scalar bytes.

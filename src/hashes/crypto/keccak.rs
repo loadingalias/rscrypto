@@ -1062,7 +1062,7 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
 
   pub(crate) fn finalize_into_fixed<const OUT: usize>(&self, ds: u8, out: &mut [u8; OUT]) {
     debug_assert!(OUT <= RATE);
-    let state = self.finalize_state(ds);
+    let mut state = self.finalize_state(ds);
 
     let (chunks, rem) = out.as_chunks_mut::<8>();
     for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
@@ -1071,6 +1071,9 @@ impl<const RATE: usize, P: Permuter, const ZEROIZE: bool> KeccakCoreImpl<RATE, P
     if !rem.is_empty() {
       let bytes = state[chunks.len()].to_le_bytes();
       rem.copy_from_slice(&bytes[..rem.len()]);
+    }
+    if ZEROIZE {
+      crate::traits::ct::zeroize_words(&mut state);
     }
   }
 

@@ -17,7 +17,6 @@ macro_rules! define_kmac {
     #[doc = concat!("KMAC", $bits, " keyed state.")]
     /// KMAC is a variable-output MAC/PRF. It intentionally does not implement
     /// [`crate::traits::Mac`], which assumes a fixed-size tag.
-    #[derive(Clone)]
     pub struct $name {
       state: $cshake,
       initial_state: $cshake,

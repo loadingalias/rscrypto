@@ -49,6 +49,10 @@ its caller.
 | `ct/python.sh`                 | CT recipes and Python-backed CT, check, and release scripts |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
+The optimized secret-lifecycle inspection performed by
+`check/zeroize-evidence.sh` is mapped to its source ownership and host-binary
+claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
+
 ## Cross-platform Check Helpers
 
 | Script | Callers |

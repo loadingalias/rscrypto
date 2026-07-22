@@ -221,7 +221,6 @@ fn hmac_sha3_prefix_state<const RATE: usize>(
 macro_rules! define_hmac_sha3 {
   ($name:ident, $tag:ident, $rate:expr, $tag_size:expr, $label:literal) => {
     #[doc = concat!("HMAC-", $label, " authentication state.")]
-    #[derive(Clone)]
     pub struct $name {
       inner: KeccakCore<$rate>,
       inner_init: KeccakCore<$rate>,
@@ -266,8 +265,9 @@ macro_rules! define_hmac_sha3 {
       fn new(key: &[u8]) -> Self {
         let mut key_block = [0u8; $rate];
         if key.len() > $rate {
-          let digest = sha3_digest::<$rate, $tag_size>(key);
+          let mut digest = sha3_digest::<$rate, $tag_size>(key);
           key_block[..$tag_size].copy_from_slice(&digest);
+          ct::zeroize(&mut digest);
         } else {
           key_block[..key.len()].copy_from_slice(key);
         }
@@ -288,9 +288,10 @@ macro_rules! define_hmac_sha3 {
 
       #[inline]
       fn finalize(&self) -> Self::Tag {
-        let inner_hash = sha3_finalize::<$rate, $tag_size>(&self.inner);
+        let mut inner_hash = sha3_finalize::<$rate, $tag_size>(&self.inner);
         let mut outer = self.outer_init.clone();
         outer.update(&inner_hash);
+        ct::zeroize(&mut inner_hash);
         $tag::from_bytes(sha3_finalize::<$rate, $tag_size>(&outer))
       }
 
@@ -318,6 +319,7 @@ define_hmac_sha3!(
   SHA3_224_TAG_SIZE,
   "SHA3-224"
 );
+
 define_hmac_sha3!(
   HmacSha3_256,
   HmacSha3_256Tag,
@@ -339,3 +341,14 @@ define_hmac_sha3!(
   SHA3_512_TAG_SIZE,
   "SHA3-512"
 );
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_hmac_sha3_finalize(mut key: [u8; SHA3_256_TAG_SIZE]) -> u8 {
+  let mut state = HmacSha3_256::new(&key);
+  ct::zeroize(&mut key);
+  state.update(b"zeroize-finalize");
+  core::hint::black_box(state.finalize().as_bytes()[0])
+}

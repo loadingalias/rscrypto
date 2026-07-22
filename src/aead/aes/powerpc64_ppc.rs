@@ -4,7 +4,6 @@ use core::{arch::asm, simd::i64x2};
 ///
 /// POWER8 vcipher expects round keys in big-endian byte order, which
 /// matches our portable key schedule (stored as big-endian u32 words).
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(in crate::aead) struct PpcRoundKeys {
   rk: [i64x2; 15],
@@ -354,7 +353,6 @@ pub(super) unsafe fn encrypt_block(keys: &PpcRoundKeys, block: &mut [u8; 16]) {
 // AES-128 (11 round keys, 10 rounds)
 
 /// AES-128 round keys stored as 11 × 128-bit vectors for POWER8 vcipher.
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(in crate::aead) struct Ppc128RoundKeys {
   rk: [i64x2; 11],

@@ -14,7 +14,6 @@ use super::{BLOCK_SIZE, KEY_SIZE, KEY_SIZE_128};
 
 type State = [u64; 8];
 
-#[derive(Clone)]
 pub(super) struct RvFixsliceRoundKeys {
   keys: [u64; 120],
 }
@@ -39,7 +38,6 @@ impl RvFixsliceRoundKeys {
 }
 
 /// Bitsliced AES-128 round keys (10 rounds → 11 round keys × 8 u64 per group).
-#[derive(Clone)]
 pub(super) struct RvFixslice128RoundKeys {
   keys: [u64; 88],
 }

@@ -4,7 +4,6 @@ use core::arch::asm;
 ///
 /// Round keys are loaded from memory into vector registers per call
 /// since RISC-V `vreg` is clobber-only (cannot be used as input/output).
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(super) struct RvRoundKeys {
   rk: [[u8; 16]; 15],
@@ -252,7 +251,6 @@ pub(super) unsafe fn encrypt_4blocks(keys: &RvRoundKeys, blocks: &mut [[u8; 16];
 // AES-128 (11 round keys, 10 rounds)
 
 /// AES-128 round keys stored as 11 × 16-byte arrays for Zvkned.
-#[derive(Clone)]
 #[repr(C, align(64))]
 pub(super) struct Rv128RoundKeys {
   rk: [[u8; 16]; 11],

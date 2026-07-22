@@ -359,6 +359,7 @@ impl Sha512 {
   }
 
   #[inline(always)]
+  #[cfg(any(feature = "ed25519", test))]
   fn finalize_state(
     state: [u64; 8],
     block: [u8; BLOCK_LEN],
@@ -372,6 +373,28 @@ impl Sha512 {
 
   #[inline(always)]
   pub(crate) fn finalize_state_words(
+    state: [u64; 8],
+    block: [u8; BLOCK_LEN],
+    block_len: usize,
+    total_len: u128,
+    compress_blocks: CompressBlocksFn,
+  ) -> [u64; 8] {
+    Self::finalize_state_words_impl::<false>(state, block, block_len, total_len, compress_blocks)
+  }
+
+  #[inline(always)]
+  pub(crate) fn finalize_state_words_secret(
+    state: [u64; 8],
+    block: [u8; BLOCK_LEN],
+    block_len: usize,
+    total_len: u128,
+    compress_blocks: CompressBlocksFn,
+  ) -> [u64; 8] {
+    Self::finalize_state_words_impl::<true>(state, block, block_len, total_len, compress_blocks)
+  }
+
+  #[inline(always)]
+  fn finalize_state_words_impl<const ZEROIZE_BLOCK: bool>(
     mut state: [u64; 8],
     mut block: [u8; BLOCK_LEN],
     mut block_len: usize,
@@ -394,13 +417,31 @@ impl Sha512 {
     block[112..128].copy_from_slice(&bit_len.to_be_bytes());
     compress_blocks(&mut state, &block);
 
+    if ZEROIZE_BLOCK {
+      crate::traits::ct::zeroize(&mut block);
+    }
     state
   }
 
   #[inline(always)]
-  fn finalize_inner_with(&self, compress_blocks: CompressBlocksFn) -> [u8; 64] {
+  fn finalize_inner_with<const ZEROIZE: bool>(&self, compress_blocks: CompressBlocksFn) -> [u8; 64] {
     let total_len = self.bytes_hashed.strict_add(self.block_len as u128);
-    Self::finalize_state(self.state, self.block, self.block_len, total_len, compress_blocks)
+    let mut state = if ZEROIZE {
+      Self::finalize_state_words_secret(self.state, self.block, self.block_len, total_len, compress_blocks)
+    } else {
+      Self::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks)
+    };
+    let digest = Self::state_to_digest(&state);
+    if ZEROIZE {
+      crate::traits::ct::zeroize_words(&mut state);
+    }
+    digest
+  }
+
+  #[inline]
+  #[cfg(any(feature = "hmac", feature = "ed25519"))]
+  pub(crate) fn finalize_secret(&self) -> [u8; 64] {
+    self.finalize_inner_with::<true>(self.compress_blocks)
   }
 
   #[inline(always)]
@@ -447,6 +488,24 @@ impl Sha512 {
     self.bytes_hashed = prefix.bytes_hashed;
     self.compress_blocks = prefix.compress_blocks;
     self.dispatch = prefix.dispatch;
+  }
+
+  #[inline]
+  #[cfg(any(feature = "hmac", feature = "ed25519"))]
+  pub(crate) fn zeroize_secret_state(&mut self) {
+    crate::traits::ct::zeroize_words_no_fence(&mut self.state);
+    crate::traits::ct::zeroize_no_fence(&mut self.block);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+
+  #[inline]
+  #[cfg(any(feature = "hmac", feature = "ed25519"))]
+  pub(crate) fn digest_secret(data: &[u8]) -> [u8; 64] {
+    let mut state = Self::new();
+    state.update(data);
+    let digest = state.finalize_secret();
+    state.zeroize_secret_state();
+    digest
   }
 
   #[cfg(all(feature = "hmac", any(test, feature = "diag")))]
@@ -768,7 +827,7 @@ impl Digest for Sha512 {
 
   #[inline]
   fn finalize(&self) -> Self::Output {
-    self.finalize_inner_with(self.compress_blocks)
+    self.finalize_inner_with::<false>(self.compress_blocks)
   }
 
   #[inline]

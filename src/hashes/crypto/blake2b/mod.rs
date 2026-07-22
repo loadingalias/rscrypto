@@ -690,7 +690,6 @@ impl Drop for Core {
 ///   .hash_256(b"message");
 /// assert_ne!(tag, other);
 /// ```
-#[derive(Clone)]
 pub struct Blake2bParams {
   key_buf: [u8; MAX_KEY_LEN],
   key_len: u8,
@@ -1160,7 +1159,6 @@ impl_std_io_write_for_digest!(Blake2b512);
 /// Constructors panic if `output_len` is `0` or greater than `64`.
 /// `finalize_into` panics if the supplied slice length does not match the
 /// hasher's configured output length.
-#[derive(Clone)]
 pub struct Blake2b {
   core: Core,
   output_len: u8,

@@ -329,7 +329,6 @@ fn hmac_outer_pad_words<const OUT_SIZE: usize, const BLOCK_SIZE: usize>(
 /// mac.update(b"message");
 /// assert!(mac.verify(&tag).is_ok());
 /// ```
-#[derive(Clone)]
 pub struct HmacSha256 {
   inner: Sha256,
   inner_init: Sha256Prefix,
@@ -374,8 +373,9 @@ impl HmacSha256 {
   ) -> Self {
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
     if key.len() > SHA256_BLOCK_SIZE {
-      let digest = Sha256::digest(key);
+      let mut digest = Sha256::digest_secret(key);
       key_block[..SHA256_TAG_SIZE].copy_from_slice(&digest);
+      ct::zeroize(&mut digest);
     } else if let Some(dst) = key_block.get_mut(..key.len()) {
       dst.copy_from_slice(key);
     }
@@ -388,6 +388,7 @@ impl HmacSha256 {
       let mut outer = Sha256::new_with_compress_for_test(compress);
       outer.update(opad);
       let outer_init = outer.aligned_prefix();
+      outer.zeroize_secret_state();
 
       (inner, inner_init, outer_init)
     });
@@ -424,6 +425,17 @@ pub fn diag_hmac_sha256_verify_portable(
   ct::fixed_eq(&tag, expected)
 }
 
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_hmac_sha256_finalize(mut key: [u8; SHA256_TAG_SIZE]) -> u8 {
+  let mut state = HmacSha256::new(&key);
+  ct::zeroize(&mut key);
+  state.update(b"zeroize-finalize");
+  core::hint::black_box(state.finalize().as_bytes()[0])
+}
+
 impl Mac for HmacSha256 {
   const TAG_SIZE: usize = SHA256_TAG_SIZE;
   type Tag = HmacSha256Tag;
@@ -431,10 +443,11 @@ impl Mac for HmacSha256 {
   fn new(key: &[u8]) -> Self {
     let mut key_block = [0u8; SHA256_BLOCK_SIZE];
     if key.len() > SHA256_BLOCK_SIZE {
-      let digest = Sha256::digest(key);
+      let mut digest = Sha256::digest_secret(key);
       for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
         *dst = *src;
       }
+      ct::zeroize(&mut digest);
     } else {
       for (dst, src) in key_block.iter_mut().zip(key.iter()) {
         *dst = *src;
@@ -450,6 +463,7 @@ impl Mac for HmacSha256 {
 
       let inner_init_prefix = inner_init.aligned_prefix();
       let outer_init_prefix = outer_init.aligned_prefix();
+      outer_init.zeroize_secret_state();
 
       (inner_init, inner_init_prefix, outer_init_prefix)
     });
@@ -468,14 +482,18 @@ impl Mac for HmacSha256 {
 
   #[inline]
   fn finalize(&self) -> Self::Tag {
-    let inner_hash = self.inner.finalize();
+    let mut inner_hash = self.inner.finalize_secret();
     let mut outer = Sha256::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
-    HmacSha256Tag::from_bytes(outer.finalize())
+    ct::zeroize(&mut inner_hash);
+    let tag = outer.finalize_secret();
+    outer.zeroize_secret_state();
+    HmacSha256Tag::from_bytes(tag)
   }
 
   #[inline]
   fn reset(&mut self) {
+    self.inner.zeroize_secret_state();
     self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
@@ -499,10 +517,11 @@ impl Mac for HmacSha256 {
 
     let mut ipad = [0x36u8; SHA256_BLOCK_SIZE];
     if key.len() > SHA256_BLOCK_SIZE {
-      let digest = Sha256::digest(key);
+      let mut digest = Sha256::digest_secret(key);
       for (ip, &kb) in ipad[..SHA256_TAG_SIZE].iter_mut().zip(digest.iter()) {
         *ip = kb ^ 0x36;
       }
+      ct::zeroize(&mut digest);
     } else {
       for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
         *ip = kb ^ 0x36;
@@ -602,6 +621,7 @@ impl Mac for HmacSha256 {
 
 impl Drop for HmacSha256 {
   fn drop(&mut self) {
+    self.inner.zeroize_secret_state();
     self.inner_init.zeroize();
     self.outer_init.zeroize();
   }
@@ -625,7 +645,6 @@ impl Drop for HmacSha256 {
 /// assert!(mac.verify(&tag).is_ok());
 /// assert!(HmacSha384::verify_tag(key, data, &tag).is_ok());
 /// ```
-#[derive(Clone)]
 pub struct HmacSha384 {
   inner: Sha384,
   inner_init: Sha384Prefix,
@@ -669,8 +688,9 @@ impl HmacSha384 {
   ) -> Self {
     let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let digest = Sha384::digest(key);
+      let mut digest = Sha384::digest_secret(key);
       key_block[..SHA384_TAG_SIZE].copy_from_slice(&digest);
+      ct::zeroize(&mut digest);
     } else if let Some(dst) = key_block.get_mut(..key.len()) {
       dst.copy_from_slice(key);
     }
@@ -683,6 +703,7 @@ impl HmacSha384 {
       let mut outer = Sha384::new_with_compress_for_test(compress);
       outer.update(opad);
       let outer_init = outer.aligned_prefix();
+      outer.zeroize_secret_state();
 
       (inner, inner_init, outer_init)
     });
@@ -725,10 +746,11 @@ impl Mac for HmacSha384 {
   fn new(key: &[u8]) -> Self {
     let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let digest = Sha384::digest(key);
+      let mut digest = Sha384::digest_secret(key);
       for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
         *dst = *src;
       }
+      ct::zeroize(&mut digest);
     } else {
       for (dst, src) in key_block.iter_mut().zip(key.iter()) {
         *dst = *src;
@@ -744,6 +766,7 @@ impl Mac for HmacSha384 {
 
       let inner_init_prefix = inner_init.aligned_prefix();
       let outer_init_prefix = outer_init.aligned_prefix();
+      outer_init.zeroize_secret_state();
 
       (inner_init, inner_init_prefix, outer_init_prefix)
     });
@@ -762,14 +785,18 @@ impl Mac for HmacSha384 {
 
   #[inline]
   fn finalize(&self) -> Self::Tag {
-    let inner_hash = self.inner.finalize();
+    let mut inner_hash = self.inner.finalize_secret();
     let mut outer = Sha384::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
-    HmacSha384Tag::from_bytes(outer.finalize())
+    ct::zeroize(&mut inner_hash);
+    let tag = outer.finalize_secret();
+    outer.zeroize_secret_state();
+    HmacSha384Tag::from_bytes(tag)
   }
 
   #[inline]
   fn reset(&mut self) {
+    self.inner.zeroize_secret_state();
     self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
@@ -780,10 +807,11 @@ impl Mac for HmacSha384 {
 
     let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let digest = Sha384::digest(key);
+      let mut digest = Sha384::digest_secret(key);
       for (ip, &kb) in ipad[..SHA384_TAG_SIZE].iter_mut().zip(digest.iter()) {
         *ip = kb ^ 0x36;
       }
+      ct::zeroize(&mut digest);
     } else {
       for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
         *ip = kb ^ 0x36;
@@ -879,6 +907,7 @@ impl Mac for HmacSha384 {
 
 impl Drop for HmacSha384 {
   fn drop(&mut self) {
+    self.inner.zeroize_secret_state();
     self.inner_init.zeroize();
     self.outer_init.zeroize();
   }
@@ -902,7 +931,6 @@ impl Drop for HmacSha384 {
 /// assert!(mac.verify(&tag).is_ok());
 /// assert!(HmacSha512::verify_tag(key, data, &tag).is_ok());
 /// ```
-#[derive(Clone)]
 pub struct HmacSha512 {
   inner: Sha512,
   inner_init: Sha512Prefix,
@@ -946,8 +974,9 @@ impl HmacSha512 {
   ) -> Self {
     let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let digest = Sha512::digest(key);
+      let mut digest = Sha512::digest_secret(key);
       key_block[..SHA512_TAG_SIZE].copy_from_slice(&digest);
+      ct::zeroize(&mut digest);
     } else if let Some(dst) = key_block.get_mut(..key.len()) {
       dst.copy_from_slice(key);
     }
@@ -960,6 +989,7 @@ impl HmacSha512 {
       let mut outer = Sha512::new_with_compress_for_test(compress);
       outer.update(opad);
       let outer_init = outer.aligned_prefix();
+      outer.zeroize_secret_state();
 
       (inner, inner_init, outer_init)
     });
@@ -1002,10 +1032,11 @@ impl Mac for HmacSha512 {
   fn new(key: &[u8]) -> Self {
     let mut key_block = [0u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let digest = Sha512::digest(key);
+      let mut digest = Sha512::digest_secret(key);
       for (dst, src) in key_block.iter_mut().zip(digest.iter()) {
         *dst = *src;
       }
+      ct::zeroize(&mut digest);
     } else {
       for (dst, src) in key_block.iter_mut().zip(key.iter()) {
         *dst = *src;
@@ -1021,6 +1052,7 @@ impl Mac for HmacSha512 {
 
       let inner_init_prefix = inner_init.aligned_prefix();
       let outer_init_prefix = outer_init.aligned_prefix();
+      outer_init.zeroize_secret_state();
 
       (inner_init, inner_init_prefix, outer_init_prefix)
     });
@@ -1039,14 +1071,18 @@ impl Mac for HmacSha512 {
 
   #[inline]
   fn finalize(&self) -> Self::Tag {
-    let inner_hash = self.inner.finalize();
+    let mut inner_hash = self.inner.finalize_secret();
     let mut outer = Sha512::from_aligned_prefix(self.outer_init);
     outer.update(&inner_hash);
-    HmacSha512Tag::from_bytes(outer.finalize())
+    ct::zeroize(&mut inner_hash);
+    let tag = outer.finalize_secret();
+    outer.zeroize_secret_state();
+    HmacSha512Tag::from_bytes(tag)
   }
 
   #[inline]
   fn reset(&mut self) {
+    self.inner.zeroize_secret_state();
     self.inner.reset_to_aligned_prefix(self.inner_init);
   }
 
@@ -1057,10 +1093,11 @@ impl Mac for HmacSha512 {
 
     let mut ipad = [0x36u8; SHA512_FAMILY_BLOCK_SIZE];
     if key.len() > SHA512_FAMILY_BLOCK_SIZE {
-      let digest = Sha512::digest(key);
+      let mut digest = Sha512::digest_secret(key);
       for (ip, &kb) in ipad[..SHA512_TAG_SIZE].iter_mut().zip(digest.iter()) {
         *ip = kb ^ 0x36;
       }
+      ct::zeroize(&mut digest);
     } else {
       for (ip, &kb) in ipad[..key.len()].iter_mut().zip(key.iter()) {
         *ip = kb ^ 0x36;
@@ -1156,6 +1193,7 @@ impl Mac for HmacSha512 {
 
 impl Drop for HmacSha512 {
   fn drop(&mut self) {
+    self.inner.zeroize_secret_state();
     self.inner_init.zeroize();
     self.outer_init.zeroize();
   }

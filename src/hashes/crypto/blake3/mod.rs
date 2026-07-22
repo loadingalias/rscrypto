@@ -222,7 +222,11 @@ fn run_parallel_task(task: impl FnOnce()) -> bool {
 
 #[cfg(feature = "parallel")]
 #[inline]
-fn with_subtree_scratch<R>(subtree_chunks: usize, f: impl FnOnce(&mut [[u32; 8]], &mut [[u32; 8]]) -> R) -> R {
+fn with_subtree_scratch<R>(
+  subtree_chunks: usize,
+  flags: u32,
+  f: impl FnOnce(&mut [[u32; 8]], &mut [[u32; 8]]) -> R,
+) -> R {
   BLAKE3_SUBTREE_SCRATCH0.with(|s0| {
     BLAKE3_SUBTREE_SCRATCH1.with(|s1| {
       let mut scratch0 = s0.borrow_mut();
@@ -233,9 +237,29 @@ fn with_subtree_scratch<R>(subtree_chunks: usize, f: impl FnOnce(&mut [[u32; 8]]
       if scratch1.len() != subtree_chunks {
         scratch1.resize(subtree_chunks, [0u32; 8]);
       }
-      f(scratch0.as_mut_slice(), scratch1.as_mut_slice())
+      let result = f(scratch0.as_mut_slice(), scratch1.as_mut_slice());
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(scratch0.as_flattened_mut());
+        ct::zeroize_words_no_fence(scratch1.as_flattened_mut());
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      result
     })
   })
+}
+
+#[cfg(all(feature = "parallel", feature = "diag"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_blake3_thread_scratch(mut input: [u32; 8]) -> u32 {
+  let output = with_subtree_scratch(1, KEYED_HASH, |scratch0, scratch1| {
+    scratch0[0] = input;
+    scratch1[0] = input;
+    core::hint::black_box(scratch0[0][0])
+  });
+  ct::zeroize_words(&mut input);
+  output
 }
 
 #[cfg(feature = "parallel")]
@@ -561,7 +585,7 @@ fn hash_power_of_two_subtree_roots_serial(
   debug_assert_ne!(subtree_chunks, 0);
   debug_assert_eq!(input.len(), out.len() * subtree_chunks * CHUNK_LEN);
 
-  with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+  with_subtree_scratch(subtree_chunks, flags, |scratch0, scratch1| {
     for (i, slot) in out.iter_mut().enumerate() {
       let chunk_base = base_counter.wrapping_add((i * subtree_chunks) as u64);
       let bytes = &input[i * subtree_chunks * CHUNK_LEN..(i + 1) * subtree_chunks * CHUNK_LEN];
@@ -624,7 +648,7 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
       s.spawn(move |_| {
         #[cfg(test)]
         let ok = run_parallel_task(|| {
-          with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+          with_subtree_scratch(subtree_chunks, flags, |scratch0, scratch1| {
             // SAFETY: `out_ptr` is valid for `out_len` outputs and this task's
             // range is disjoint from every other task.
             let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
@@ -643,7 +667,7 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
         #[cfg(not(test))]
         {
           run_parallel_task(|| {
-            with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+            with_subtree_scratch(subtree_chunks, flags, |scratch0, scratch1| {
               // SAFETY: `out_ptr` is valid for `out_len` outputs and this task's
               // range is disjoint from every other task.
               let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
@@ -662,7 +686,7 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
     let (start, end) = thread_range(0, threads_total, out_len);
     #[cfg(test)]
     let ok = run_parallel_task(|| {
-      with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+      with_subtree_scratch(subtree_chunks, flags, |scratch0, scratch1| {
         let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
         // SAFETY: disjoint partition for thread 0.
         let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
@@ -681,7 +705,7 @@ fn hash_power_of_two_subtree_roots_parallel_rayon(req: SubtreeRootsRequest<'_>) 
     #[cfg(not(test))]
     {
       run_parallel_task(|| {
-        with_subtree_scratch(subtree_chunks, |scratch0, scratch1| {
+        with_subtree_scratch(subtree_chunks, flags, |scratch0, scratch1| {
           let counter = base_counter.wrapping_add((start * subtree_chunks) as u64);
           // SAFETY: disjoint partition for thread 0.
           let out = unsafe { slice::from_raw_parts_mut(out_ptr.get().add(start), end - start) };
@@ -825,7 +849,13 @@ fn reduce_power_of_two_chunk_cvs(kernel: Kernel, key_words: [u32; 8], flags: u32
     cur_len = pairs;
   }
 
-  cur[0]
+  let result = cur[0];
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(cur.as_flattened_mut());
+    ct::zeroize_words_no_fence(next.as_flattened_mut());
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  result
 }
 
 #[cfg(not(target_endian = "little"))]
@@ -851,7 +881,13 @@ fn reduce_power_of_two_chunk_cvs_bytes(kernel: Kernel, key_words: [u32; 8], flag
     cur_len = pairs;
   }
 
-  cur[0]
+  let result = cur[0];
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(cur.as_flattened_mut());
+    ct::zeroize_no_fence(next.as_flattened_mut());
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  result
 }
 
 /// Reduce a power-of-2 slice of CVs down to exactly 2 using SIMD parent
@@ -892,7 +928,11 @@ fn reduce_subtree_to_pair(
     cur_len = pairs;
   }
 
-  if !in_next { (cvs[0], cvs[1]) } else { (next[0], next[1]) }
+  let result = if !in_next { (cvs[0], cvs[1]) } else { (next[0], next[1]) };
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words(next.as_flattened_mut());
+  }
+  result
 }
 
 #[cfg(feature = "parallel")]
@@ -928,7 +968,7 @@ fn reduce_power_of_two_chunk_cvs_any(
   let mut cur = Cur::Input(cvs);
   let mut cur_len = cvs.len();
 
-  loop {
+  let result = loop {
     let pairs = cur_len / 2;
     debug_assert!(pairs != 0);
 
@@ -982,10 +1022,17 @@ fn reduce_power_of_two_chunk_cvs_any(
     };
 
     if pairs == 1 {
-      return out0;
+      break out0;
     }
     cur_len = pairs;
+  };
+
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(buf0.as_flattened_mut());
+    ct::zeroize_words_no_fence(buf1.as_flattened_mut());
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
+  result
 }
 
 #[cfg(target_endian = "little")]
@@ -1252,7 +1299,7 @@ fn words8_to_le_bytes(words: &[u32; 8]) -> [u8; OUT_LEN] {
   out
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct OutputState {
   kernel_id: kernels::Blake3KernelId,
   input_chaining_value: [u32; 8],
@@ -1260,6 +1307,17 @@ struct OutputState {
   counter: u64,
   block_len: u32,
   flags: u32,
+}
+
+impl Drop for OutputState {
+  fn drop(&mut self) {
+    if self.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0 {
+      return;
+    }
+    ct::zeroize_words_no_fence(&mut self.input_chaining_value);
+    ct::zeroize_words_no_fence(&mut self.block_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
 }
 
 impl OutputState {
@@ -1289,7 +1347,12 @@ impl OutputState {
 
   #[inline]
   fn root_hash_bytes(&self) -> [u8; OUT_LEN] {
-    words8_to_le_bytes(&self.root_hash_words())
+    let mut words = self.root_hash_words();
+    let digest = words8_to_le_bytes(&words);
+    if self.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut words);
+    }
+    digest
   }
 
   #[inline]
@@ -1307,7 +1370,7 @@ impl OutputState {
   }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RootEmitState {
   input_chaining_value: [u32; 8],
   block_bytes: [u8; BLOCK_LEN],
@@ -1317,26 +1380,45 @@ struct RootEmitState {
   kernel_id: kernels::Blake3KernelId,
 }
 
+impl Drop for RootEmitState {
+  fn drop(&mut self) {
+    if u32::from(self.flags) & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0 {
+      return;
+    }
+    ct::zeroize_words_no_fence(&mut self.input_chaining_value);
+    ct::zeroize_no_fence(&mut self.block_bytes);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
 impl RootEmitState {
   #[inline]
   fn from_parent(
     kernel_id: kernels::Blake3KernelId,
-    left_child_cv: [u32; 8],
-    right_child_cv: [u32; 8],
-    key_words: [u32; 8],
+    mut left_child_cv: [u32; 8],
+    mut right_child_cv: [u32; 8],
+    mut key_words: [u32; 8],
     flags: u32,
   ) -> Self {
     let mut block_bytes = [0u8; BLOCK_LEN];
     block_bytes[..OUT_LEN].copy_from_slice(&words8_to_le_bytes(&left_child_cv));
     block_bytes[OUT_LEN..].copy_from_slice(&words8_to_le_bytes(&right_child_cv));
-    Self {
+    let state = Self {
       kernel_id,
       input_chaining_value: key_words,
       block_bytes,
       counter: 0,
       block_len: BLOCK_LEN as u8,
       flags: (PARENT | flags) as u8,
+    };
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words_no_fence(&mut left_child_cv);
+      ct::zeroize_words_no_fence(&mut right_child_cv);
+      ct::zeroize_words_no_fence(&mut key_words);
+      ct::zeroize_no_fence(&mut block_bytes);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
+    state
   }
 
   #[inline]
@@ -1364,6 +1446,9 @@ impl RootEmitState {
     let mut block = [0u8; OUTPUT_BLOCK_LEN];
     self.emit_one_block(&mut block);
     out.copy_from_slice(&block[offset..offset + out.len()]);
+    if u32::from(self.flags) & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize(&mut block);
+    }
   }
 
   #[inline]
@@ -1383,24 +1468,30 @@ impl RootEmitState {
 #[inline]
 fn compress_node_chaining_value(
   kernel_id: kernels::Blake3KernelId,
-  input_chaining_value: [u32; 8],
+  mut input_chaining_value: [u32; 8],
   block: &[u8; BLOCK_LEN],
   counter: u64,
   block_len: u32,
   flags: u32,
 ) -> [u32; 8] {
-  let block_words = words16_from_le_bytes_64(block);
-  first_8_words(kernels::compress_block_inline(
+  let mut block_words = words16_from_le_bytes_64(block);
+  let output = first_8_words(kernels::compress_block_inline(
     kernel_id,
     &input_chaining_value,
     &block_words,
     counter,
     block_len,
     flags,
-  ))
+  ));
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut input_chaining_value);
+    ct::zeroize_words_no_fence(&mut block_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ChunkState {
   kernel_id: kernels::Blake3KernelId,
   chaining_value: [u32; 8],
@@ -1411,10 +1502,21 @@ struct ChunkState {
   flags: u32,
 }
 
+impl Drop for ChunkState {
+  fn drop(&mut self) {
+    if self.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0 {
+      return;
+    }
+    ct::zeroize_words_no_fence(&mut self.chaining_value);
+    ct::zeroize_no_fence(&mut self.block);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
 impl ChunkState {
   #[inline]
-  fn new(key_words: [u32; 8], chunk_counter: u64, flags: u32, kernel_id: kernels::Blake3KernelId) -> Self {
-    Self {
+  fn new(mut key_words: [u32; 8], chunk_counter: u64, flags: u32, kernel_id: kernels::Blake3KernelId) -> Self {
+    let state = Self {
       kernel_id,
       chaining_value: key_words,
       chunk_counter,
@@ -1422,7 +1524,11 @@ impl ChunkState {
       block_len: 0,
       blocks_compressed: 0,
       flags,
+    };
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
     }
+    state
   }
 
   #[inline]
@@ -1481,7 +1587,8 @@ impl ChunkState {
 
       // Exact full-chunk fast path (only pristine state).
       if self.blocks_compressed == 0 && input.len() == CHUNK_LEN {
-        if should_use_exact_one_chunk_fast_path(self.kernel_id) {
+        if self.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0 && should_use_exact_one_chunk_fast_path(self.kernel_id)
+        {
           self.absorb_exact_one_chunk(input);
           return;
         }
@@ -1775,28 +1882,36 @@ fn should_use_exact_one_chunk_fast_path(_kernel_id: kernels::Blake3KernelId) -> 
 #[inline]
 fn parent_output(
   kernel_id: kernels::Blake3KernelId,
-  left_child_cv: [u32; 8],
-  right_child_cv: [u32; 8],
-  key_words: [u32; 8],
+  mut left_child_cv: [u32; 8],
+  mut right_child_cv: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
 ) -> OutputState {
   let mut block_words = [0u32; 16];
   block_words[..8].copy_from_slice(&left_child_cv);
   block_words[8..].copy_from_slice(&right_child_cv);
-  OutputState {
+  let output = OutputState {
     kernel_id,
     input_chaining_value: key_words,
     block_words,
     counter: 0,
     block_len: BLOCK_LEN as u32,
     flags: PARENT | flags,
+  };
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut left_child_cv);
+    ct::zeroize_words_no_fence(&mut right_child_cv);
+    ct::zeroize_words_no_fence(&mut key_words);
+    ct::zeroize_words_no_fence(&mut block_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
+  output
 }
 
 #[inline]
 fn single_chunk_output(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   chunk_counter: u64,
   flags: u32,
   input: &[u8],
@@ -1826,8 +1941,8 @@ fn single_chunk_output(
         );
       }
 
-      let block_words = words16_from_le_bytes_64(&last_block);
-      return OutputState {
+      let mut block_words = words16_from_le_bytes_64(&last_block);
+      let output = OutputState {
         kernel_id: kernel.id,
         input_chaining_value: cv_words,
         block_words,
@@ -1835,6 +1950,14 @@ fn single_chunk_output(
         block_len: BLOCK_LEN as u32,
         flags: flags | CHUNK_END,
       };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut cv_words);
+        ct::zeroize_no_fence(&mut last_block);
+        ct::zeroize_words_no_fence(&mut block_words);
+        ct::zeroize_words_no_fence(&mut key_words);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      return output;
     }
   }
 
@@ -1860,7 +1983,7 @@ fn single_chunk_output(
     &input[..full_bytes],
   );
 
-  let block_words = if cfg!(target_endian = "little") {
+  let mut block_words = if cfg!(target_endian = "little") {
     let mut out = [0u32; 16];
     if !input.is_empty() {
       let offset = full_blocks * BLOCK_LEN;
@@ -1876,31 +1999,46 @@ fn single_chunk_output(
       let offset = full_blocks * BLOCK_LEN;
       last_block[..last_len].copy_from_slice(&input[offset..offset + last_len]);
     }
-    words16_from_le_bytes_64(&last_block)
+    let block_words = words16_from_le_bytes_64(&last_block);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize(&mut last_block);
+    }
+    block_words
   };
   let start = if blocks_compressed == 0 { CHUNK_START } else { 0 };
 
-  OutputState {
+  let output = OutputState {
     kernel_id: kernel.id,
     input_chaining_value: chaining_value,
     block_words,
     counter: chunk_counter,
     block_len: last_len as u32,
     flags: flags | start | CHUNK_END,
+  };
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut chaining_value);
+    ct::zeroize_words_no_fence(&mut block_words);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
+  output
 }
 
 #[inline]
 fn root_output_oneshot(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   mode: ParallelPolicyKind,
   input: &[u8],
 ) -> OutputState {
   // Fast path for <= 1 chunk (root is the chunk itself).
   if input.len() <= CHUNK_LEN {
-    return single_chunk_output(kernel, key_words, 0, flags, input);
+    let output = single_chunk_output(kernel, key_words, 0, flags, input);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
+    }
+    return output;
   }
 
   let full_chunks = input.len() / CHUNK_LEN;
@@ -1921,7 +2059,11 @@ fn root_output_oneshot(
     if let Some(threads) =
       control::parallel_policy_threads_with_admission(mode, input.len(), full_chunks, commit_full_chunks)
     {
-      return parallel::root_output_oneshot_join_parallel(kernel, key_words, flags, input, threads);
+      let output = parallel::root_output_oneshot_join_parallel(kernel, key_words, flags, input, threads);
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut key_words);
+      }
+      return output;
     }
   }
 
@@ -1959,10 +2101,18 @@ fn root_output_oneshot(
           cur_is_cur = !cur_is_cur;
           cur_len = pairs;
         }
-        if cur_is_cur {
-          return parent_output(kernel.id, cur[0], cur[1], key_words, flags);
+        let output = if cur_is_cur {
+          parent_output(kernel.id, cur[0], cur[1], key_words, flags)
+        } else {
+          parent_output(kernel.id, next[0], next[1], key_words, flags)
+        };
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words_no_fence(cur.as_flattened_mut());
+          ct::zeroize_words_no_fence(next.as_flattened_mut());
+          ct::zeroize_words_no_fence(&mut key_words);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
-        return parent_output(kernel.id, next[0], next[1], key_words, flags);
+        return output;
       }
 
       #[cfg(not(target_endian = "little"))]
@@ -2008,9 +2158,20 @@ fn root_output_oneshot(
           cur_len = pairs;
         }
         let final_cvs: &[[u8; OUT_LEN]] = if cur_is_cur { &cur[..] } else { &next[..] };
-        let left = words8_from_le_bytes_32(&final_cvs[0]);
-        let right = words8_from_le_bytes_32(&final_cvs[1]);
-        return parent_output(kernel.id, left, right, key_words, flags);
+        let output = parent_output(
+          kernel.id,
+          words8_from_le_bytes_32(&final_cvs[0]),
+          words8_from_le_bytes_32(&final_cvs[1]),
+          key_words,
+          flags,
+        );
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_no_fence(cur.as_flattened_mut());
+          ct::zeroize_no_fence(next.as_flattened_mut());
+          ct::zeroize_words_no_fence(&mut key_words);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        return output;
       }
     }
 
@@ -2045,10 +2206,18 @@ fn root_output_oneshot(
           cur_is_cur = !cur_is_cur;
           cur_len = pairs;
         }
-        if cur_is_cur {
-          return parent_output(kernel.id, cur[0], cur[1], key_words, flags);
+        let output = if cur_is_cur {
+          parent_output(kernel.id, cur[0], cur[1], key_words, flags)
+        } else {
+          parent_output(kernel.id, next[0], next[1], key_words, flags)
+        };
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words_no_fence(cur.as_flattened_mut());
+          ct::zeroize_words_no_fence(next.as_flattened_mut());
+          ct::zeroize_words_no_fence(&mut key_words);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         }
-        return parent_output(kernel.id, next[0], next[1], key_words, flags);
+        return output;
       }
 
       #[cfg(not(target_endian = "little"))]
@@ -2094,9 +2263,20 @@ fn root_output_oneshot(
           cur_len = pairs;
         }
         let final_cvs: &[[u8; OUT_LEN]] = if cur_is_cur { &cur[..] } else { &next[..] };
-        let left = words8_from_le_bytes_32(&final_cvs[0]);
-        let right = words8_from_le_bytes_32(&final_cvs[1]);
-        return parent_output(kernel.id, left, right, key_words, flags);
+        let output = parent_output(
+          kernel.id,
+          words8_from_le_bytes_32(&final_cvs[0]),
+          words8_from_le_bytes_32(&final_cvs[1]),
+          key_words,
+          flags,
+        );
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_no_fence(cur.as_flattened_mut());
+          ct::zeroize_no_fence(next.as_flattened_mut());
+          ct::zeroize_words_no_fence(&mut key_words);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        return output;
       }
     }
   }
@@ -2104,7 +2284,7 @@ fn root_output_oneshot(
   // Local CV stack to avoid constructing a full streaming hasher.
   let mut cv_stack: [MaybeUninit<[u32; 8]>; CV_STACK_LEN] = uninit_cv_stack();
   let mut cv_stack_len = 0usize;
-  let right_cv = {
+  let mut right_cv = {
     #[cfg(target_endian = "little")]
     {
       let mut cvs = [[0u32; 8]; MAX_SIMD_DEGREE];
@@ -2152,12 +2332,23 @@ fn root_output_oneshot(
         offset = offset.strict_add(batch.strict_mul(CHUNK_LEN));
       }
 
-      if remainder != 0 {
+      let right_cv = if remainder != 0 {
         let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
         single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
       } else {
-        last_full_chunk_cv.unwrap_or_else(|| recompute_last_full_chunk_cv(kernel, key_words, flags, full_chunks, input))
+        last_full_chunk_cv
+          .as_ref()
+          .copied()
+          .unwrap_or_else(|| recompute_last_full_chunk_cv(kernel, key_words, flags, full_chunks, input))
+      };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        if let Some(cv) = last_full_chunk_cv.as_mut() {
+          ct::zeroize_words_no_fence(cv);
+        }
+        ct::zeroize_words_no_fence(cvs.as_flattened_mut());
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
       }
+      right_cv
     }
 
     #[cfg(not(target_endian = "little"))]
@@ -2206,21 +2397,22 @@ fn root_output_oneshot(
         offset = offset.strict_add(batch.strict_mul(CHUNK_LEN));
       }
 
-      if remainder != 0 {
+      let right_cv = if remainder != 0 {
         let chunk_bytes = &input[full_chunks * CHUNK_LEN..];
         single_chunk_output(kernel, key_words, full_chunks as u64, flags, chunk_bytes).chaining_value()
+      } else if let Some(cv) = last_full_chunk_cv.as_ref() {
+        words8_from_le_bytes_32(cv)
       } else {
-        let last_full_chunk_cv = last_full_chunk_cv.unwrap_or_else(|| {
-          words8_to_le_bytes(&recompute_last_full_chunk_cv(
-            kernel,
-            key_words,
-            flags,
-            full_chunks,
-            input,
-          ))
-        });
-        words8_from_le_bytes_32(&last_full_chunk_cv)
+        recompute_last_full_chunk_cv(kernel, key_words, flags, full_chunks, input)
+      };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        if let Some(cv) = last_full_chunk_cv.as_mut() {
+          ct::zeroize_no_fence(cv);
+        }
+        ct::zeroize_no_fence(cvs.as_flattened_mut());
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
       }
+      right_cv
     }
   };
 
@@ -2228,13 +2420,30 @@ fn root_output_oneshot(
   debug_assert!(parent_nodes_remaining > 0);
   parent_nodes_remaining -= 1;
   // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-  let left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
+  let mut left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
   let mut output = parent_output(kernel.id, left, right_cv, key_words, flags);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut left);
+    ct::zeroize_words_no_fence(&mut right_cv);
+  }
   while parent_nodes_remaining > 0 {
     parent_nodes_remaining -= 1;
     // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-    let left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
-    output = parent_output(kernel.id, left, output.chaining_value(), key_words, flags);
+    let mut left = unsafe { cv_stack[parent_nodes_remaining].assume_init_read() };
+    let mut right = output.chaining_value();
+    output = parent_output(kernel.id, left, right, key_words, flags);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words_no_fence(&mut left);
+      ct::zeroize_words_no_fence(&mut right);
+    }
+  }
+
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    for slot in &mut cv_stack {
+      ct::zeroize_words_no_fence(slot.write([0u32; 8]));
+    }
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 
   output
@@ -2243,7 +2452,7 @@ fn root_output_oneshot(
 #[inline]
 fn recompute_last_full_chunk_cv(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   full_chunks: usize,
   input: &[u8],
@@ -2253,14 +2462,18 @@ fn recompute_last_full_chunk_cv(
 
   let last_chunk_index = full_chunks.saturating_sub(1);
   let offset = input.len().saturating_sub(CHUNK_LEN);
-  single_chunk_output(kernel, key_words, last_chunk_index as u64, flags, &input[offset..]).chaining_value()
+  let cv = single_chunk_output(kernel, key_words, last_chunk_index as u64, flags, &input[offset..]).chaining_value();
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words(&mut key_words);
+  }
+  cv
 }
 
 #[cfg(feature = "parallel")]
 #[inline]
 fn hash_one_full_chunk_cv(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   chunk_counter: u64,
   chunk: &[u8],
@@ -2270,7 +2483,13 @@ fn hash_one_full_chunk_cv(
   let mut out = [0u8; OUT_LEN];
   // SAFETY: `chunk` is exactly one full chunk, and `out` is OUT_LEN bytes.
   unsafe { (kernel.hash_many_contiguous)(chunk.as_ptr(), 1, &key_words, chunk_counter, flags, out.as_mut_ptr()) };
-  words8_from_le_bytes_32(&out)
+  let cv = words8_from_le_bytes_32(&out);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut out);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  cv
 }
 
 #[cfg(feature = "parallel")]
@@ -2306,7 +2525,7 @@ fn hash_full_chunks_cvs_scoped(
 }
 
 #[inline]
-fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+fn digest_oneshot_words(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   // Fast path for single-chunk inputs (≤1024B): use platform-specific helpers.
   // On x86, this also handles tiny inputs (≤64B) so they benefit from assembly
   // compress instead of the generic intrinsics/function-pointer path.
@@ -2316,7 +2535,11 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
       match kernel.id {
         kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
           // SAFETY: x86 SIMD availability is validated by dispatch before selecting these kernels.
-          return unsafe { digest_one_chunk_root_hash_words_x86(kernel, key_words, flags, input) };
+          let output = unsafe { digest_one_chunk_root_hash_words_x86(kernel, key_words, flags, input) };
+          if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+            ct::zeroize_words(&mut key_words);
+          }
+          return output;
         }
         _ => {}
       }
@@ -2325,59 +2548,139 @@ fn digest_oneshot_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: 
 
   // Tiny inputs (≤64B) on non-x86 or portable kernel: unified helper.
   if input.len() <= BLOCK_LEN {
-    return hash_tiny_to_root_words(kernel, key_words, flags, input);
+    let output = hash_tiny_to_root_words(kernel, key_words, flags, input);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
+    }
+    return output;
   }
 
   #[cfg(target_arch = "aarch64")]
   {
     if input.len() <= CHUNK_LEN && kernel.id == kernels::Blake3KernelId::Aarch64Neon {
       // SAFETY: aarch64 NEON availability is validated by dispatch before selecting this kernel.
-      return unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, key_words, flags, input) };
+      let output = unsafe { digest_one_chunk_root_hash_words_aarch64(kernel, key_words, flags, input) };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut key_words);
+      }
+      return output;
     }
   }
 
   if input.len() <= CHUNK_LEN {
-    return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
+    let output = digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
+    }
+    return output;
   }
 
   // Fallback: keep the large-input path in a cold function to avoid
   // inflating short-input codegen in this hot entry point.
-  digest_oneshot_words_fallback(kernel, key_words, flags, input)
+  let output = digest_oneshot_words_fallback(kernel, key_words, flags, input);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words(&mut key_words);
+  }
+  output
 }
 
 #[cold]
 #[inline(never)]
-fn digest_oneshot_words_fallback(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+fn digest_oneshot_words_fallback(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   let mode = control::policy_kind_from_flags(flags, false);
   let output = root_output_oneshot(kernel, key_words, flags, mode, input);
-  output.root_hash_words()
+  let digest = output.root_hash_words();
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words(&mut key_words);
+  }
+  digest
 }
 
 #[inline]
-fn digest_oneshot(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+fn digest_oneshot(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
   #[cfg(target_arch = "aarch64")]
   {
-    if kernel.id == kernels::Blake3KernelId::Aarch64Neon && input.len() == CHUNK_LEN {
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) == 0
+      && kernel.id == kernels::Blake3KernelId::Aarch64Neon
+      && input.len() == CHUNK_LEN
+    {
       // SAFETY: aarch64 NEON is validated by dispatch before selecting this kernel.
       return unsafe { aarch64::root_hash_one_chunk_root_aarch64(input.as_ptr(), &key_words, flags) };
     }
   }
 
-  words8_to_le_bytes(&digest_oneshot_words(kernel, key_words, flags, input))
+  let mut words = digest_oneshot_words(kernel, key_words, flags, input);
+  let digest = words8_to_le_bytes(&words);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut words);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  digest
 }
 
 #[inline]
-fn digest_public_oneshot(key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
+fn digest_public_oneshot(mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u8; OUT_LEN] {
   let kernel = dispatch::hasher_dispatch().size_class_kernel(input.len());
-  digest_oneshot(kernel, key_words, flags, input)
+  let digest = digest_oneshot(kernel, key_words, flags, input);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words(&mut key_words);
+  }
+  digest
 }
 
 #[cfg(feature = "diag")]
 #[must_use]
 pub fn diag_blake3_keyed_digest_portable(key: &[u8; KEY_LEN]) -> Blake3KeyedHash {
-  let key_words = words8_from_le_bytes_32(key);
+  let mut key_words = words8_from_le_bytes_32(key);
   let kernel = kernels::kernel(kernels::Blake3KernelId::Portable);
-  Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, b"binsec"))
+  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, b"binsec"));
+  ct::zeroize_words(&mut key_words);
+  digest
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_blake3_drop(mut key: [u8; KEY_LEN]) -> u8 {
+  let mut state = Blake3::new_keyed(&key);
+  ct::zeroize(&mut key);
+  state.update(b"zeroize-drop");
+  core::hint::black_box(state.finalize()[0])
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_blake3_reuse(mut key: [u8; KEY_LEN]) -> u8 {
+  let mut state = Blake3::new_keyed(&key);
+  ct::zeroize(&mut key);
+  state.update(b"discarded keyed prefix");
+  state.reset();
+  state.update(b"reused keyed state");
+  core::hint::black_box(state.finalize()[0])
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_blake3_xof_move(mut key: [u8; KEY_LEN]) -> u8 {
+  let reader = Blake3::keyed_xof(&key, b"moved keyed XOF");
+  ct::zeroize(&mut key);
+  diag_zeroize_blake3_xof_consume(reader)
+}
+
+#[cfg(feature = "diag")]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_blake3_xof_consume(mut reader: Blake3XofReader) -> u8 {
+  let mut output = [0u8; 1];
+  reader.squeeze(&mut output);
+  core::hint::black_box(output[0])
 }
 
 #[cfg(feature = "diag")]
@@ -2583,10 +2886,10 @@ pub fn diag_blake3_keyed_digest_with_kernel(
   data: &[u8],
 ) -> Option<Blake3KeyedHash> {
   let kernel = diag_blake3_kernel(kernel)?;
-  let key_words = words8_from_le_bytes_32(key);
-  Some(Blake3KeyedHash::from_bytes(digest_oneshot(
-    kernel, key_words, KEYED_HASH, data,
-  )))
+  let mut key_words = words8_from_le_bytes_32(key);
+  let digest = Blake3KeyedHash::from_bytes(digest_oneshot(kernel, key_words, KEYED_HASH, data));
+  ct::zeroize_words(&mut key_words);
+  Some(digest)
 }
 
 #[cfg(feature = "diag")]
@@ -2766,8 +3069,10 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn keyed_digest(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3KeyedHash {
-    let key_words = words8_from_le_bytes_32(key);
-    Blake3KeyedHash::from_bytes(digest_public_oneshot(key_words, KEYED_HASH, data))
+    let mut key_words = words8_from_le_bytes_32(key);
+    let digest = Blake3KeyedHash::from_bytes(digest_public_oneshot(key_words, KEYED_HASH, data));
+    ct::zeroize_words(&mut key_words);
+    digest
   }
 
   /// Compute and verify the keyed hash through its sealed comparison decision.
@@ -2789,19 +3094,22 @@ impl Blake3 {
   #[inline]
   #[must_use]
   pub fn keyed_xof(key: &[u8; KEY_LEN], data: &[u8]) -> Blake3XofReader {
-    let key_words = words8_from_le_bytes_32(key);
+    let mut key_words = words8_from_le_bytes_32(key);
     let plan = dispatch::hasher_dispatch();
     let kernel = plan.size_class_kernel(data.len());
-    if data.len() <= CHUNK_LEN {
-      return xof_oneshot_single_chunk(kernel, key_words, KEYED_HASH, data);
-    }
-    Blake3XofReader::from_output(root_output_oneshot(
-      kernel,
-      key_words,
-      KEYED_HASH,
-      control::policy_kind_from_flags(KEYED_HASH, true),
-      data,
-    ))
+    let reader = if data.len() <= CHUNK_LEN {
+      xof_oneshot_single_chunk(kernel, key_words, KEYED_HASH, data)
+    } else {
+      Blake3XofReader::from_output(root_output_oneshot(
+        kernel,
+        key_words,
+        KEYED_HASH,
+        control::policy_kind_from_flags(KEYED_HASH, true),
+        data,
+      ))
+    };
+    ct::zeroize_words(&mut key_words);
+    reader
   }
 
   /// Compute the derived key for `key_material` under `context`, in one shot.
@@ -2823,23 +3131,30 @@ impl Blake3 {
       }
     };
 
-    digest_public_oneshot(context_key_words, DERIVE_KEY_MATERIAL, key_material)
+    let mut context_key_words = context_key_words;
+    let derived = digest_public_oneshot(context_key_words, DERIVE_KEY_MATERIAL, key_material);
+    ct::zeroize_words(&mut context_key_words);
+    derived
   }
 
   #[inline]
-  fn new_internal(key_words: [u32; 8], flags: u32) -> Self {
+  fn new_internal(mut key_words: [u32; 8], flags: u32) -> Self {
     let dispatch = dispatch::hasher_dispatch();
-    Self::new_internal_with_dispatch(key_words, flags, dispatch.stream_kernel().id, dispatch)
+    let state = Self::new_internal_with_dispatch(key_words, flags, dispatch.stream_kernel().id, dispatch);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
+    }
+    state
   }
 
   #[inline]
   fn new_internal_with_dispatch(
-    key_words: [u32; 8],
+    mut key_words: [u32; 8],
     flags: u32,
     kernel_id: kernels::Blake3KernelId,
     dispatch: dispatch::HasherDispatch,
   ) -> Self {
-    Self {
+    let state = Self {
       dispatch,
       bulk_kernel_id: kernel_id,
       #[cfg(feature = "parallel")]
@@ -2850,7 +3165,11 @@ impl Blake3 {
       key_words,
       cv_stack: uninit_cv_stack(),
       cv_stack_len: 0,
+    };
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
     }
+    state
   }
 
   /// Process the largest aligned power-of-2 subtree from the input using SIMD
@@ -2927,7 +3246,7 @@ impl Blake3 {
       // Reduce to 2 CVs so the final parent compression can be deferred to
       // finalize() for ROOT flag application.
       let half = (subtree_chunks / 2) as u64;
-      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, cvs);
+      let (mut left_cv, mut right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, cvs);
 
       // Push the left subtree onto the stack.
       self.add_subtree_cv(left_cv, half);
@@ -2937,11 +3256,26 @@ impl Blake3 {
       self.chunk_state = ChunkState::new(self.key_words, full_counter, flags, kernel_id);
       self.pending_chunk_cv = Some(right_cv);
       self.pending_cv_chunks = half;
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left_cv);
+        ct::zeroize_words_no_fence(&mut right_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
     } else {
       // Non-terminal: more input follows. Reduce to 1 CV and push.
-      let (left_cv, right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, cvs);
-      let subtree_cv = kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, flags);
+      let (mut left_cv, mut right_cv) = reduce_subtree_to_pair(kernel, self.key_words, flags, cvs);
+      let mut subtree_cv = kernels::parent_cv_inline(kernel.id, left_cv, right_cv, self.key_words, flags);
       self.add_subtree_cv(subtree_cv, subtree_chunks as u64);
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left_cv);
+        ct::zeroize_words_no_fence(&mut right_cv);
+        ct::zeroize_words_no_fence(&mut subtree_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+    }
+
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(cvs.as_flattened_mut());
     }
 
     Some(subtree_len)
@@ -3012,9 +3346,16 @@ impl Blake3 {
       let offset = batch.strict_sub(1).strict_mul(OUT_LEN);
       // SAFETY: `out_buf` is `OUT_LEN * MAX_SIMD_DEGREE`, and `offset`
       // is `(batch - 1) * OUT_LEN` with `batch <= MAX_SIMD_DEGREE`.
-      let cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
+      let mut cv = unsafe { words8_from_le_bytes_32(&*(out_buf.as_ptr().add(offset) as *const [u8; OUT_LEN])) };
       self.pending_chunk_cv = Some(cv);
       self.pending_cv_chunks = 1;
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut cv);
+      }
+    }
+
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize(&mut out_buf);
     }
 
     Some(batch.strict_mul(CHUNK_LEN))
@@ -3084,8 +3425,10 @@ impl Blake3 {
   #[must_use]
   #[inline]
   pub fn new_keyed(key: &[u8; KEY_LEN]) -> Self {
-    let key_words = words8_from_le_bytes_32(key);
-    Self::new_internal(key_words, KEYED_HASH)
+    let mut key_words = words8_from_le_bytes_32(key);
+    let state = Self::new_internal(key_words, KEYED_HASH);
+    ct::zeroize_words(&mut key_words);
+    state
   }
 
   /// Construct a new hasher for the key derivation function.
@@ -3096,34 +3439,59 @@ impl Blake3 {
     let key_words = control::derive_context_key_words_cached(context);
     #[cfg(not(feature = "std"))]
     let key_words = control::derive_context_key_words(context);
-    Self::new_internal(key_words, DERIVE_KEY_MATERIAL)
+    let mut key_words = key_words;
+    let state = Self::new_internal(key_words, DERIVE_KEY_MATERIAL);
+    ct::zeroize_words(&mut key_words);
+    state
   }
 
   #[inline]
-  fn push_stack(&mut self, cv: [u32; 8]) {
+  fn push_stack(&mut self, mut cv: [u32; 8]) {
     self.cv_stack[self.cv_stack_len as usize].write(cv);
     self.cv_stack_len = self.cv_stack_len.wrapping_add(1);
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut cv);
+    }
   }
 
   #[inline]
   fn pop_stack(&mut self) -> [u32; 8] {
     self.cv_stack_len = self.cv_stack_len.wrapping_sub(1);
     // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-    unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_read() }
+    let cv = unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_read() };
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      // SAFETY: the slot held the `Copy` CV read above and remains initialized
+      // until the next push overwrites it.
+      ct::zeroize_words(unsafe { self.cv_stack[self.cv_stack_len as usize].assume_init_mut() });
+    }
+    cv
   }
 
   fn add_chunk_chaining_value(&mut self, mut new_cv: [u32; 8], mut total_chunks: u64) {
     while total_chunks & 1 == 0 {
-      new_cv = kernels::parent_cv_inline(
+      let mut left = self.pop_stack();
+      let mut next_cv = kernels::parent_cv_inline(
         self.chunk_state.kernel_id,
-        self.pop_stack(),
+        left,
         new_cv,
         self.key_words,
         self.chunk_state.flags,
       );
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left);
+        ct::zeroize_words_no_fence(&mut new_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      core::mem::swap(&mut new_cv, &mut next_cv);
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut next_cv);
+      }
       total_chunks >>= 1;
     }
     self.push_stack(new_cv);
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut new_cv);
+    }
   }
 
   /// Merge a CV that represents `num_chunks` chunks into the CV stack.
@@ -3140,16 +3508,24 @@ impl Blake3 {
     let level = num_chunks.trailing_zeros();
     let mut total = self.chunk_state.chunk_counter >> level;
     while total & 1 == 0 {
-      cv = kernels::parent_cv_inline(
-        self.bulk_kernel_id,
-        self.pop_stack(),
-        cv,
-        self.key_words,
-        self.chunk_state.flags,
-      );
+      let mut left = self.pop_stack();
+      let mut next_cv =
+        kernels::parent_cv_inline(self.bulk_kernel_id, left, cv, self.key_words, self.chunk_state.flags);
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left);
+        ct::zeroize_words_no_fence(&mut cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      core::mem::swap(&mut cv, &mut next_cv);
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut next_cv);
+      }
       total >>= 1;
     }
     self.push_stack(cv);
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut cv);
+    }
   }
 
   /// Push a reduced subtree CV onto the stack at the correct tree level,
@@ -3158,7 +3534,7 @@ impl Blake3 {
   /// `subtree_chunks` must be a power of 2 and must be aligned with the
   /// current chunk counter (i.e. `chunk_counter % subtree_chunks == 0`).
   #[cfg(target_endian = "little")]
-  fn add_subtree_cv(&mut self, cv: [u32; 8], subtree_chunks: u64) {
+  fn add_subtree_cv(&mut self, mut cv: [u32; 8], subtree_chunks: u64) {
     debug_assert!(subtree_chunks.is_power_of_two());
     let new_counter = self.chunk_state.chunk_counter.strict_add(subtree_chunks);
     self.chunk_state = ChunkState::new(
@@ -3168,23 +3544,41 @@ impl Blake3 {
       self.chunk_state.kernel_id,
     );
     self.merge_cv_into_stack(cv, subtree_chunks);
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut cv);
+    }
   }
 
   #[inline]
   fn commit_pending_chunk_cv(&mut self) {
-    if let Some(cv) = self.pending_chunk_cv.take() {
-      let chunks = self.pending_cv_chunks;
-      self.pending_cv_chunks = 0;
-      self.merge_cv_into_stack(cv, chunks);
+    let Some(mut cv) = self.pending_chunk_cv else {
+      return;
+    };
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      // Clear the source payload before changing the discriminant. Assigning
+      // `None` alone is not required to overwrite an `Option`'s old payload.
+      if let Some(source) = self.pending_chunk_cv.as_mut() {
+        ct::zeroize_words(source);
+      }
+    }
+    self.pending_chunk_cv = None;
+    let chunks = self.pending_cv_chunks;
+    self.pending_cv_chunks = 0;
+    self.merge_cv_into_stack(cv, chunks);
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut cv);
     }
   }
 
   #[inline]
   fn advance_full_chunk(&mut self) {
     debug_assert_eq!(self.chunk_state.len(), CHUNK_LEN);
-    let chunk_cv = self.chunk_state.output().chaining_value();
+    let mut chunk_cv = self.chunk_state.output().chaining_value();
     let total_chunks = self.chunk_state.chunk_counter.strict_add(1);
     self.add_chunk_chaining_value(chunk_cv, total_chunks);
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut chunk_cv);
+    }
     self.chunk_state = ChunkState::new(
       self.key_words,
       total_chunks,
@@ -3213,20 +3607,26 @@ impl Blake3 {
 
   fn root_output(&self) -> OutputState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut output = if let Some(right_cv) = self.pending_chunk_cv {
+    let mut output = if let Some(mut right_cv) = self.pending_chunk_cv {
       let Some(left_index) = parent_nodes_remaining.checked_sub(1) else {
         return self.chunk_state.output();
       };
       parent_nodes_remaining = left_index;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[left_index].assume_init_ref() };
-      parent_output(
+      let mut left = unsafe { *self.cv_stack[left_index].assume_init_ref() };
+      let output = parent_output(
         self.chunk_state.kernel_id,
         left,
         right_cv,
         self.key_words,
         self.chunk_state.flags,
-      )
+      );
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left);
+        ct::zeroize_words_no_fence(&mut right_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      output
     } else {
       self.chunk_state.output()
     };
@@ -3234,14 +3634,20 @@ impl Blake3 {
     while parent_nodes_remaining > 0 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      let mut left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      let mut right = output.chaining_value();
       output = parent_output(
         self.chunk_state.kernel_id,
         left,
-        output.chaining_value(),
+        right,
         self.key_words,
         self.chunk_state.flags,
       );
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left);
+        ct::zeroize_words_no_fence(&mut right);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
     }
     output
   }
@@ -3258,29 +3664,41 @@ impl Blake3 {
   #[inline(never)]
   fn root_emit_state_slow(&self) -> RootEmitState {
     let mut parent_nodes_remaining = self.cv_stack_len as usize;
-    let mut current_cv = if let Some(right_cv) = self.pending_chunk_cv {
+    let mut current_cv = if let Some(mut right_cv) = self.pending_chunk_cv {
       let Some(left_index) = parent_nodes_remaining.checked_sub(1) else {
         return self.chunk_state.root_emit_state();
       };
       parent_nodes_remaining = left_index;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[left_index].assume_init_ref() };
+      let mut left = unsafe { *self.cv_stack[left_index].assume_init_ref() };
       if parent_nodes_remaining == 0 {
-        return RootEmitState::from_parent(
+        let state = RootEmitState::from_parent(
           self.chunk_state.kernel_id,
           left,
           right_cv,
           self.key_words,
           self.chunk_state.flags,
         );
+        if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words_no_fence(&mut left);
+          ct::zeroize_words_no_fence(&mut right_cv);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        return state;
       }
-      kernels::parent_cv_inline(
+      let cv = kernels::parent_cv_inline(
         self.chunk_state.kernel_id,
         left,
         right_cv,
         self.key_words,
         self.chunk_state.flags,
-      )
+      );
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left);
+        ct::zeroize_words_no_fence(&mut right_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      cv
     } else {
       self.chunk_state.output_chaining_value()
     };
@@ -3288,25 +3706,43 @@ impl Blake3 {
     while parent_nodes_remaining > 0 {
       parent_nodes_remaining -= 1;
       // SAFETY: `cv_stack_len` tracks the number of initialized entries.
-      let left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
+      let mut left = unsafe { *self.cv_stack[parent_nodes_remaining].assume_init_ref() };
       if parent_nodes_remaining == 0 {
-        return RootEmitState::from_parent(
+        let state = RootEmitState::from_parent(
           self.chunk_state.kernel_id,
           left,
           current_cv,
           self.key_words,
           self.chunk_state.flags,
         );
+        if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words_no_fence(&mut left);
+          ct::zeroize_words_no_fence(&mut current_cv);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        return state;
       }
-      current_cv = kernels::parent_cv_inline(
+      let mut next_cv = kernels::parent_cv_inline(
         self.chunk_state.kernel_id,
         left,
         current_cv,
         self.key_words,
         self.chunk_state.flags,
       );
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words_no_fence(&mut left);
+        ct::zeroize_words_no_fence(&mut current_cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      core::mem::swap(&mut current_cv, &mut next_cv);
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut next_cv);
+      }
     }
 
+    if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut current_cv);
+    }
     self.chunk_state.root_emit_state()
   }
 
@@ -3328,11 +3764,6 @@ impl Drop for Blake3 {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
       unsafe { core::ptr::write_volatile(word, 0) };
     }
-    for word in self.chunk_state.chaining_value.iter_mut() {
-      // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
-      unsafe { core::ptr::write_volatile(word, 0) };
-    }
-    crate::traits::ct::zeroize(&mut self.chunk_state.block);
     for slot in self.cv_stack[..self.cv_stack_len as usize].iter_mut() {
       // SAFETY: cv_stack[..cv_stack_len] entries are initialized.
       let words = unsafe { slot.assume_init_mut() };
@@ -3402,11 +3833,11 @@ impl Digest for Blake3 {
       let block_len = self.chunk_state.block_len as usize;
 
       let add_chunk_start = self.chunk_state.blocks_compressed == 0;
-      let cv = self.chunk_state.chaining_value;
+      let mut cv = self.chunk_state.chaining_value;
       let kernel = kernels::kernel(self.chunk_state.kernel_id);
 
       if block_len == BLOCK_LEN {
-        let out_words = compress_chunk_tail_to_root_words(
+        let mut out_words = compress_chunk_tail_to_root_words(
           kernel,
           cv,
           &self.chunk_state.block,
@@ -3414,14 +3845,27 @@ impl Digest for Blake3 {
           self.chunk_state.flags,
           add_chunk_start,
         );
-        return words8_to_le_bytes(&out_words);
+        let digest = words8_to_le_bytes(&out_words);
+        if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words_no_fence(&mut out_words);
+          ct::zeroize_words_no_fence(&mut cv);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        return digest;
       }
 
       let mut block = self.chunk_state.block;
       block[block_len..].fill(0);
-      let out_words =
+      let mut out_words =
         compress_chunk_tail_to_root_words(kernel, cv, &block, block_len, self.chunk_state.flags, add_chunk_start);
-      return words8_to_le_bytes(&out_words);
+      let digest = words8_to_le_bytes(&out_words);
+      if self.chunk_state.flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_no_fence(&mut block);
+        ct::zeroize_words_no_fence(&mut out_words);
+        ct::zeroize_words_no_fence(&mut cv);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+      }
+      return digest;
     }
 
     // If the caller never provided any input (or only provided empty updates),
@@ -3460,12 +3904,12 @@ impl_std_io_write_for_digest!(Blake3);
 /// For 65–1024B, full blocks are compressed directly via the kernel's compress
 /// function pointer, avoiding the indirect `chunk_compress_blocks` call.
 #[inline]
-fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> Blake3XofReader {
+fn xof_oneshot_single_chunk(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> Blake3XofReader {
   debug_assert!(input.len() <= CHUNK_LEN);
 
   // Tiny input (≤ 64B): zero-pad into the final block bytes, no compression needed.
   if input.len() <= BLOCK_LEN {
-    let block_bytes = {
+    let mut block_bytes = {
       let mut out = [0u8; BLOCK_LEN];
       if !input.is_empty() {
         out[..input.len()].copy_from_slice(input);
@@ -3473,7 +3917,7 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
       out
     };
 
-    return Blake3XofReader::new(RootEmitState {
+    let reader = Blake3XofReader::new(RootEmitState {
       kernel_id: kernel.id,
       input_chaining_value: key_words,
       block_bytes,
@@ -3481,6 +3925,12 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
       block_len: input.len() as u8,
       flags: (flags | CHUNK_START | CHUNK_END) as u8,
     });
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_no_fence(&mut block_bytes);
+      ct::zeroize_words_no_fence(&mut key_words);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+    return reader;
   }
 
   #[cfg(target_arch = "x86_64")]
@@ -3490,6 +3940,9 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
     // SAFETY: the helper revalidates the x86 kernel allowlist, exact-block
     // preconditions, and OS support before touching any target-specific path.
     if let Some(reader) = unsafe { xof_oneshot_single_chunk_x86_exact_blocks(kernel, key_words, flags, input) } {
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut key_words);
+      }
       return reader;
     }
   }
@@ -3511,8 +3964,11 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
     let offset = i * BLOCK_LEN;
     let block_flags = flags | if i == 0 { CHUNK_START } else { 0 };
     // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
-    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    let mut block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
     cv = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, block_flags));
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut block_words);
+    }
   }
 
   // Stage the final block bytes for the root-output reader.
@@ -3521,14 +3977,21 @@ fn xof_oneshot_single_chunk(kernel: Kernel, key_words: [u32; 8], flags: u32, inp
   let offset = full_blocks * BLOCK_LEN;
   block_bytes[..last_len].copy_from_slice(&input[offset..offset + last_len]);
 
-  Blake3XofReader::new(RootEmitState {
+  let reader = Blake3XofReader::new(RootEmitState {
     kernel_id: kernel.id,
     input_chaining_value: cv,
     block_bytes,
     counter: 0,
     block_len: last_len as u8,
     flags: (flags | start | CHUNK_END) as u8,
-  })
+  });
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut cv);
+    ct::zeroize_no_fence(&mut block_bytes);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  reader
 }
 
 /// BLAKE3 extendable-output reader.
@@ -3601,6 +4064,9 @@ impl Blake3XofReader {
     if self.position_within_block == OUTPUT_BLOCK_LEN as u8 {
       self.root.counter = self.root.counter.wrapping_add(1);
       self.position_within_block = 0;
+    }
+    if u32::from(self.root.flags) & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize(&mut block);
     }
     *out = &mut core::mem::take(out)[take..];
   }
@@ -3688,7 +4154,7 @@ impl_xof_read!(Blake3XofReader);
 #[must_use]
 fn compress_chunk_tail_to_root_words(
   kernel: Kernel,
-  cv: [u32; 8],
+  mut cv: [u32; 8],
   block: &[u8; BLOCK_LEN],
   block_len: usize,
   flags: u32,
@@ -3705,7 +4171,11 @@ fn compress_chunk_tail_to_root_words(
       kernels::Blake3KernelId::X86Sse41 | kernels::Blake3KernelId::X86Avx2 | kernels::Blake3KernelId::X86Avx512 => {
         // SAFETY: dispatch validates required CPU features before selecting
         // each x86 kernel; `block` is a readable 64-byte buffer.
-        return unsafe { (kernel.x86_compress_cv_bytes)(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
+        let output = unsafe { (kernel.x86_compress_cv_bytes)(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words(&mut cv);
+        }
+        return output;
       }
       _ => {}
     }
@@ -3715,13 +4185,23 @@ fn compress_chunk_tail_to_root_words(
   {
     if kernel.id == kernels::Blake3KernelId::Aarch64Neon {
       // SAFETY: NEON availability validated by dispatch
-      return unsafe { aarch64::compress_cv_neon_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
+      let output = unsafe { aarch64::compress_cv_neon_bytes(&cv, block.as_ptr(), 0, block_len as u32, final_flags) };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut cv);
+      }
+      return output;
     }
   }
 
   // Portable fallback
-  let block_words = words16_from_le_bytes_64(block);
-  first_8_words((kernel.compress)(&cv, &block_words, 0, block_len as u32, final_flags))
+  let mut block_words = words16_from_le_bytes_64(block);
+  let output = first_8_words((kernel.compress)(&cv, &block_words, 0, block_len as u32, final_flags));
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut cv);
+    ct::zeroize_words_no_fence(&mut block_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 /// Hash tiny input (≤64B) directly to the root hash bytes.
@@ -3730,13 +4210,19 @@ fn compress_chunk_tail_to_root_words(
 /// It handles input padding and dispatches to the appropriate kernel.
 #[inline]
 #[must_use]
-fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+fn hash_tiny_to_root_words(kernel: Kernel, mut key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
   debug_assert!(input.len() <= BLOCK_LEN);
 
   let mut block = [0u8; BLOCK_LEN];
   block[..input.len()].copy_from_slice(input);
 
-  compress_chunk_tail_to_root_words(kernel, key_words, &block, input.len(), flags, true)
+  let output = compress_chunk_tail_to_root_words(kernel, key_words, &block, input.len(), flags, true);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut block);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 /// Hash one chunk-or-less input directly to root words.
@@ -3745,7 +4231,12 @@ fn hash_tiny_to_root_words(kernel: Kernel, key_words: [u32; 8], flags: u32, inpu
 /// assembly/intrinsics helpers.
 #[inline]
 #[must_use]
-fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8], flags: u32, input: &[u8]) -> [u32; 8] {
+fn digest_one_chunk_root_hash_words_generic(
+  kernel: Kernel,
+  mut key_words: [u32; 8],
+  flags: u32,
+  input: &[u8],
+) -> [u32; 8] {
   debug_assert!(input.len() <= CHUNK_LEN);
 
   let (full_blocks, last_len) = if input.is_empty() {
@@ -3769,8 +4260,11 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
     let offset = i * BLOCK_LEN;
     let block_flags = flags | if i == 0 { CHUNK_START } else { 0 };
     // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
-    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    let mut block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
     cv = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, block_flags));
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut block_words);
+    }
   }
 
   let start = if full_blocks == 0 { CHUNK_START } else { 0 };
@@ -3779,8 +4273,15 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
   if last_len == BLOCK_LEN && !input.is_empty() {
     let offset = full_blocks * BLOCK_LEN;
     // SAFETY: `offset + BLOCK_LEN <= input.len()` by construction.
-    let block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
-    return first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, final_flags));
+    let mut block_words = unsafe { words16_from_le_bytes_64(&*input.as_ptr().add(offset).cast::<[u8; BLOCK_LEN]>()) };
+    let output = first_8_words((kernel.compress)(&cv, &block_words, 0, BLOCK_LEN as u32, final_flags));
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words_no_fence(&mut block_words);
+      ct::zeroize_words_no_fence(&mut cv);
+      ct::zeroize_words_no_fence(&mut key_words);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+    return output;
   }
 
   let mut final_block = [0u8; BLOCK_LEN];
@@ -3790,8 +4291,16 @@ fn digest_one_chunk_root_hash_words_generic(kernel: Kernel, key_words: [u32; 8],
     unsafe { ptr::copy_nonoverlapping(input.as_ptr().add(offset), final_block.as_mut_ptr(), last_len) };
   }
 
-  let final_words = words16_from_le_bytes_64(&final_block);
-  first_8_words((kernel.compress)(&cv, &final_words, 0, last_len as u32, final_flags))
+  let mut final_words = words16_from_le_bytes_64(&final_block);
+  let output = first_8_words((kernel.compress)(&cv, &final_words, 0, last_len as u32, final_flags));
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut final_block);
+    ct::zeroize_words_no_fence(&mut final_words);
+    ct::zeroize_words_no_fence(&mut cv);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 // x86_64 tiny one-shot helpers (keyed/derive sensitive)
@@ -3837,7 +4346,7 @@ fn use_x86_hash_many_exact_block_one_chunk_fast_path(kernel: Kernel, input_len: 
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn avx2_owned_exact_block_chain(
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   input: &[u8],
   final_extra_flags: u32,
@@ -3872,13 +4381,19 @@ unsafe fn avx2_owned_exact_block_chain(
       )
     };
   }
-  cv
+  let output = cv;
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_words_no_fence(&mut cv);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
 #[inline]
 unsafe fn avx512_owned_exact_block_hash_many(
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   input: &[u8],
   final_extra_flags: u32,
@@ -3912,14 +4427,21 @@ unsafe fn avx512_owned_exact_block_hash_many(
 
   let mut lane0 = [0u8; OUT_LEN];
   lane0.copy_from_slice(&out[..OUT_LEN]);
-  words8_from_le_bytes_32(&lane0)
+  let output = words8_from_le_bytes_32(&lane0);
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut out);
+    ct::zeroize_no_fence(&mut lane0);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   input: &[u8],
 ) -> Option<Blake3XofReader> {
@@ -3928,6 +4450,9 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
   debug_assert!(input.len().is_multiple_of(BLOCK_LEN));
 
   if !use_x86_hash_many_exact_block_one_chunk_fast_path(kernel, input.len()) {
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
+    }
     return None;
   }
 
@@ -3942,8 +4467,11 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
       let prefix_len = prefix_blocks * BLOCK_LEN;
       // SAFETY: AVX2 dispatch selected this kernel. `prefix_len` is non-zero,
       // exact-block aligned, and within `input`.
-      let cv = unsafe { avx2_owned_exact_block_chain(key_words, flags, &input[..prefix_len], 0) };
+      let mut cv = unsafe { avx2_owned_exact_block_chain(key_words, flags, &input[..prefix_len], 0) };
       cv_bytes = words8_to_le_bytes(&cv);
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut cv);
+      }
     }
     kernels::Blake3KernelId::X86Avx512 => {
       #[cfg(feature = "diag")]
@@ -3951,8 +4479,11 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
         let prefix_len = prefix_blocks * BLOCK_LEN;
         // SAFETY: Diagnostic availability checked the owned AVX-512 hash-many feature set, and the prefix
         // is exact-block aligned.
-        let cv = unsafe { avx512_owned_exact_block_hash_many(key_words, flags, &input[..prefix_len], 0) };
+        let mut cv = unsafe { avx512_owned_exact_block_hash_many(key_words, flags, &input[..prefix_len], 0) };
         cv_bytes = words8_to_le_bytes(&cv);
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_words(&mut cv);
+        }
       } else {
         let input_ptrs = [input.as_ptr()];
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -3973,7 +4504,12 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
           );
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        return None;
+        {
+          if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+            ct::zeroize_words(&mut key_words);
+          }
+          return None;
+        }
       }
       #[cfg(not(feature = "diag"))]
       {
@@ -3996,10 +4532,20 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
           );
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        return None;
+        {
+          if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+            ct::zeroize_words(&mut key_words);
+          }
+          return None;
+        }
       }
     }
-    _ => return None,
+    _ => {
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut key_words);
+      }
+      return None;
+    }
   }
 
   let mut block_bytes = [0u8; BLOCK_LEN];
@@ -4009,21 +4555,28 @@ unsafe fn xof_oneshot_single_chunk_x86_exact_blocks(
     ptr::copy_nonoverlapping(input.as_ptr().add(last_offset), block_bytes.as_mut_ptr(), BLOCK_LEN);
   }
 
-  Some(Blake3XofReader::new(RootEmitState {
+  let reader = Blake3XofReader::new(RootEmitState {
     kernel_id: kernel.id,
     input_chaining_value: words8_from_le_bytes_32(&cv_bytes),
     block_bytes,
     counter: 0,
     block_len: BLOCK_LEN as u8,
     flags: (flags | CHUNK_END) as u8,
-  }))
+  });
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut cv_bytes);
+    ct::zeroize_no_fence(&mut block_bytes);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  Some(reader)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn digest_one_chunk_root_hash_words_x86(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   input: &[u8],
 ) -> [u32; 8] {
@@ -4041,7 +4594,11 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     debug_assert!((flags | CHUNK_END | ROOT) <= u8::MAX as u32);
     // SAFETY: AVX2 dispatch selected this kernel, and this branch is restricted
     // to non-empty exact-block one-chunk input.
-    return unsafe { avx2_owned_exact_block_chain(key_words, flags, input, CHUNK_END | ROOT) };
+    let output = unsafe { avx2_owned_exact_block_chain(key_words, flags, input, CHUNK_END | ROOT) };
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words(&mut key_words);
+    }
+    return output;
   }
 
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -4059,7 +4616,11 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
     if kernel.owned_x86_hash_many {
       // SAFETY: Diagnostic availability checked the owned AVX-512 hash-many feature set, and `input` is
       // one exact-block chunk prefix no longer than CHUNK_LEN.
-      return unsafe { avx512_owned_exact_block_hash_many(key_words, flags, input, CHUNK_END | ROOT) };
+      let output = unsafe { avx512_owned_exact_block_hash_many(key_words, flags, input, CHUNK_END | ROOT) };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut key_words);
+      }
+      return output;
     }
     #[cfg(feature = "diag")]
     let force_avx512_exact_block_asm = kernel.force_x86_avx512_exact_block_asm;
@@ -4071,7 +4632,11 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
       // narrow so 64..1024B stay on the proven AVX-512 exact-block path.
       // SAFETY: this branch is only enabled when AVX2 is available per dispatch,
       // and input is one contiguous exact-block chunk.
-      return unsafe { avx2_owned_exact_block_chain(key_words, flags, input, CHUNK_END | ROOT) };
+      let output = unsafe { avx2_owned_exact_block_chain(key_words, flags, input, CHUNK_END | ROOT) };
+      if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+        ct::zeroize_words(&mut key_words);
+      }
+      return output;
     }
     let input_ptrs = [input.as_ptr()];
     let mut out = [0u8; OUT_LEN];
@@ -4091,7 +4656,13 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
         out.as_mut_ptr(),
       );
     }
-    return words8_from_le_bytes_32(&out);
+    let output = words8_from_le_bytes_32(&out);
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_no_fence(&mut out);
+      ct::zeroize_words_no_fence(&mut key_words);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+    return output;
   }
 
   // Keep one final block for CHUNK_END|ROOT. For aligned inputs we process
@@ -4127,7 +4698,15 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
         kernels::Blake3KernelId::X86Avx512 => {
           cv = (kernel.x86_compress_cv_bytes)(&cv, first_block_ptr, 0, BLOCK_LEN as u32, first_flags);
         }
-        _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
+        _ => {
+          let output = digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
+          if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+            ct::zeroize_words_no_fence(&mut cv);
+            ct::zeroize_words_no_fence(&mut key_words);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+          }
+          return output;
+        }
       }
     }
 
@@ -4155,10 +4734,24 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
         kernels::Blake3KernelId::X86Avx512 => {
           cv = (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, BLOCK_LEN as u32, final_flags);
         }
-        _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
+        _ => {
+          let output = digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
+          if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+            ct::zeroize_words_no_fence(&mut cv);
+            ct::zeroize_words_no_fence(&mut key_words);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+          }
+          return output;
+        }
       }
     }
-    return cv;
+    let output = cv;
+    if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+      ct::zeroize_words_no_fence(&mut cv);
+      ct::zeroize_words_no_fence(&mut key_words);
+      core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+    return output;
   }
 
   // Partial final block (including empty): pad to 64 bytes.
@@ -4182,10 +4775,26 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
       kernels::Blake3KernelId::X86Avx512 => {
         cv = (kernel.x86_compress_cv_bytes)(&cv, block_ptr, 0, last_len as u32, final_flags);
       }
-      _ => return digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input),
+      _ => {
+        let output = digest_one_chunk_root_hash_words_generic(kernel, key_words, flags, input);
+        if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+          ct::zeroize_no_fence(&mut padded);
+          ct::zeroize_words_no_fence(&mut cv);
+          ct::zeroize_words_no_fence(&mut key_words);
+          core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
+        return output;
+      }
     }
   }
-  cv
+  let output = cv;
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut padded);
+    ct::zeroize_words_no_fence(&mut cv);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 // aarch64 tiny one-shot helpers (keyed/derive sensitive)
@@ -4194,7 +4803,7 @@ unsafe fn digest_one_chunk_root_hash_words_x86(
 #[inline]
 unsafe fn digest_one_chunk_root_hash_words_aarch64(
   kernel: Kernel,
-  key_words: [u32; 8],
+  mut key_words: [u32; 8],
   flags: u32,
   input: &[u8],
 ) -> [u32; 8] {
@@ -4254,7 +4863,14 @@ unsafe fn digest_one_chunk_root_hash_words_aarch64(
 
   // SAFETY: `block_ptr` points to 64 bytes (either into `input` or `padded`),
   // and dispatch only selects NEON when the required CPU features are present.
-  unsafe { aarch64::compress_cv_neon_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) }
+  let output = unsafe { aarch64::compress_cv_neon_bytes(&cv, block_ptr, 0, last_len as u32, final_flags) };
+  if flags & (KEYED_HASH | DERIVE_KEY_MATERIAL) != 0 {
+    ct::zeroize_no_fence(&mut padded);
+    ct::zeroize_words_no_fence(&mut cv);
+    ct::zeroize_words_no_fence(&mut key_words);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+  output
 }
 
 #[cfg(test)]

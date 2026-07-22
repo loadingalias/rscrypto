@@ -922,10 +922,253 @@ assert!(left.ct_eq(&right).declassify());
 "#]
 pub struct __OwnerEqualityBoundaryAudit;
 
-// Compile-time trait assertions.
-//
-// Every public type must be Send + Sync + Debug.  Most must also be Clone.
-// These static assertions fail the build if any contract is broken.
+#[cfg(all(doctest, feature = "full"))]
+#[doc(hidden)]
+#[doc = r#"
+The secret-bearing owners below must not acquire a generic `Clone` capability.
+
+```compile_fail,E0277
+use rscrypto::HmacSha256;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha256>();
+```
+
+```compile_fail,E0277
+use rscrypto::HmacSha384;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha384>();
+```
+
+```compile_fail,E0277
+use rscrypto::HmacSha512;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha512>();
+```
+
+```compile_fail,E0277
+use rscrypto::HmacSha3_224;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha3_224>();
+```
+
+```compile_fail,E0277
+use rscrypto::HmacSha3_256;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha3_256>();
+```
+
+```compile_fail,E0277
+use rscrypto::HmacSha3_384;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha3_384>();
+```
+
+```compile_fail,E0277
+use rscrypto::HmacSha3_512;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HmacSha3_512>();
+```
+
+```compile_fail,E0277
+use rscrypto::HkdfSha256;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HkdfSha256>();
+```
+
+```compile_fail,E0277
+use rscrypto::HkdfSha384;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HkdfSha384>();
+```
+
+```compile_fail,E0277
+use rscrypto::HkdfSha512;
+
+fn require_clone<T: Clone>() {}
+require_clone::<HkdfSha512>();
+```
+
+```compile_fail,E0277
+use rscrypto::Kmac128;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Kmac128>();
+```
+
+```compile_fail,E0277
+use rscrypto::Kmac256;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Kmac256>();
+```
+
+```compile_fail,E0277
+use rscrypto::Pbkdf2Sha256;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Pbkdf2Sha256>();
+```
+
+```compile_fail,E0277
+use rscrypto::Pbkdf2Sha512;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Pbkdf2Sha512>();
+```
+
+```compile_fail,E0277
+use rscrypto::Blake2bParams;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Blake2bParams>();
+```
+
+```compile_fail,E0277
+use rscrypto::Blake2sParams;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Blake2sParams>();
+```
+
+```compile_fail,E0277
+use rscrypto::Blake2b;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Blake2b>();
+```
+
+```compile_fail,E0277
+use rscrypto::Poly1305OneTimeKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Poly1305OneTimeKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::Poly1305;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Poly1305>();
+```
+
+```compile_fail,E0277
+use rscrypto::EcdsaP256SecretKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<EcdsaP256SecretKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::EcdsaP256Keypair;
+
+fn require_clone<T: Clone>() {}
+require_clone::<EcdsaP256Keypair>();
+```
+
+```compile_fail,E0277
+use rscrypto::EcdsaP384SecretKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<EcdsaP384SecretKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::EcdsaP384Keypair;
+
+fn require_clone<T: Clone>() {}
+require_clone::<EcdsaP384Keypair>();
+```
+
+```compile_fail,E0277
+use rscrypto::Ed25519SecretKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Ed25519SecretKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::Ed25519Keypair;
+
+fn require_clone<T: Clone>() {}
+require_clone::<Ed25519Keypair>();
+```
+
+```compile_fail,E0277
+use rscrypto::X25519SecretKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<X25519SecretKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::MlKem512DecapsulationKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<MlKem512DecapsulationKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::MlKem768DecapsulationKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<MlKem768DecapsulationKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::MlKem1024DecapsulationKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<MlKem1024DecapsulationKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::MlKem512PreparedDecapsulationKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<MlKem512PreparedDecapsulationKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::MlKem768PreparedDecapsulationKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<MlKem768PreparedDecapsulationKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::MlKem1024PreparedDecapsulationKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<MlKem1024PreparedDecapsulationKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::RsaPrivateKey;
+
+fn require_clone<T: Clone>() {}
+require_clone::<RsaPrivateKey>();
+```
+
+```compile_fail,E0277
+use rscrypto::RsaPrivateScratch;
+
+fn require_clone<T: Clone>() {}
+require_clone::<RsaPrivateScratch>();
+```
+"#]
+pub struct __SecretCloneBoundaryAudit;
+
+// Positive compile-time trait assertions for public capability contracts.
+// Secret-bearing non-Clone contracts are compile-fail doctests above.
 
 #[cfg(all(test, miri))]
 mod miri_shadow_tests;

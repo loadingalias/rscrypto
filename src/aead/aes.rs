@@ -108,12 +108,10 @@ pub(crate) struct X86GcmTables<'a> {
 /// raw 32-byte key for the KM instruction; on powerpc64 with POWER8 crypto,
 /// stores round keys as 128-bit vectors. Otherwise stores 60 big-endian
 /// u32 words for the portable path. Zeroized on drop.
-#[derive(Clone)]
 pub(crate) struct Aes256EncKey {
   inner: KeyInner,
 }
 
-#[derive(Clone)]
 enum KeyInner {
   #[allow(dead_code)]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS]),
@@ -192,12 +190,10 @@ impl Drop for Aes256EncKey {
 ///
 /// Per-backend representation mirrors [`Aes256EncKey`] but stores 11 round
 /// keys (176 bytes) instead of 15. Zeroized on drop.
-#[derive(Clone)]
 pub(crate) struct Aes128EncKey {
   inner: Key128Inner,
 }
 
-#[derive(Clone)]
 enum Key128Inner {
   #[allow(dead_code)]
   PortableRoundKeys([u32; EXPANDED_KEY_WORDS_128]),

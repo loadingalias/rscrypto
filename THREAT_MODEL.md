@@ -5,8 +5,11 @@ crate defends, what the caller owns, and where an audit should focus.
 
 Related documents: [`SECURITY.md`](SECURITY.md) for vulnerability reporting,
 [`docs/constant-time.md`](docs/constant-time.md) for the exact constant-time
-claim model, [`docs/compliance.md`](docs/compliance.md) for regulatory
-positioning, and [`ct.toml`](ct.toml) for the machine-readable CT claim set.
+claim model, [`docs/secret-ownership.md`](docs/secret-ownership.md) for the
+secret-bearing type and heap inventory,
+[`docs/secret-lifecycle.md`](docs/secret-lifecycle.md) for cleanup and redaction
+evidence, [`docs/compliance.md`](docs/compliance.md) for regulatory positioning,
+and [`ct.toml`](ct.toml) for the machine-readable CT claim set.
 
 ## Audit Scope
 
@@ -114,17 +117,17 @@ Ordered by exposure to untrusted input:
 | Wrong output from accelerated kernels | Portable path is the byte-for-byte authority | Portable-vs-accelerated differential tests and native CI |
 | Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |
 | Oracle behavior | Opaque errors, failed-open output wipe, single-bit failure shape | AEAD and verification tests, fuzz targets |
-| Secret exposure at rest | Zeroize on drop, masked `Debug`, and sealed fixed-size comparison only on semantic secret owners | `src/secret.rs`, `ct.toml`, and per-owner tests |
+| Secret exposure at rest | Zeroize at the last owned use and on drop, masked `Debug` and errors, and sealed fixed-size comparison only on semantic secret owners | [`docs/secret-ownership.md`](docs/secret-ownership.md), [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md), `scripts/check/zeroize-evidence.sh`, and `tests/secret_redaction.rs` |
 | Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | `deny.toml`, `.github/workflows/release.yaml`, `docs/release.md` |
 
 ## Known Gaps
 
 - No third-party security audit yet.
-- Secret containers and parsing temporaries use volatile source-level wipes,
-  and `scripts/check/zeroize-evidence.sh` checks representative optimized MIR,
-  LLVM IR, and assembly paths. This does not prove that every compiler-created
-  register copy or spill is erased on every target. The crate does not lock
-  pages, prevent swapping, or replace hardware-backed key storage.
+- Named secret owners and explicit temporaries use volatile source-level wipes,
+  and `scripts/check/zeroize-evidence.sh` checks optimized lifecycle shapes in
+  MIR, LLVM IR, and host assembly. This does not prove that every
+  compiler-created register copy or spill is erased on every target. The crate
+  does not lock pages, prevent swapping, or replace hardware-backed key storage.
 - Miri covers portable paths only; sanitizer and interpreter coverage do not
   execute every native SIMD or assembly kernel.
 - Constant-time evidence is produced by CI and release workflows. Consumers
