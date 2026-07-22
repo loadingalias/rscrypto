@@ -54,7 +54,7 @@ for i in "${!LINUX_TARGETS[@]}"; do
   (
     # shellcheck disable=SC2086
     if ! CC="$ZIG_CC" RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-         cargo clippy $CRATE_FLAGS --lib --all-features --target "$target" -- -D warnings \
+         cargo clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" -- -D warnings \
          >"$log_file" 2>&1; then
       exit 1
     fi

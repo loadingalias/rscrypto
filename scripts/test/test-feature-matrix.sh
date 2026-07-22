@@ -77,11 +77,11 @@ STARTED_AT=$SECONDS
 # provided by the --all-features test job.
 ARCH=$(uname -m)
 if [[ "$ARCH" == "riscv64" ]]; then
-  CARGO_CMD="cargo check --workspace --lib --tests"
+  CARGO_CMD="cargo check --locked --workspace --lib --tests"
   COMMAND_CLASS="cargo check"
   echo "Compilation rscrypto feature matrix ($TOTAL profiles; riscv64: check-only)"
 else
-  CARGO_CMD="cargo test --workspace --lib --tests"
+  CARGO_CMD="cargo test --locked --workspace --lib --tests"
   COMMAND_CLASS="cargo test"
   echo "Executable rscrypto feature matrix ($TOTAL profiles)"
 fi

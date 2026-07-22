@@ -6,6 +6,7 @@ TARGET_DIR="$ROOT/target/zeroize-evidence"
 MANIFEST="$ROOT/Cargo.toml"
 
 RUSTC_WRAPPER="" CARGO_TARGET_DIR="$TARGET_DIR" cargo rustc \
+  --locked \
   --manifest-path "$MANIFEST" \
   --release \
   --lib \

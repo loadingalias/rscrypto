@@ -23,10 +23,12 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]') }}
     runs-on: ubuntu-latest
     outputs:
-      build: ${{ steps.rail.outputs.build || 'true' }}
-      test: ${{ steps.rail.outputs.test || 'true' }}
-      infra: ${{ steps.rail.outputs.infra || 'true' }}
-      cargo_graph: ${{ steps.graph.outputs.enabled || 'true' }}
+      build: ${{ steps.resolve.outputs.build }}
+      test: ${{ steps.resolve.outputs.test }}
+      infra: ${{ steps.resolve.outputs.infra }}
+      cargo_graph: ${{ steps.resolve.outputs.cargo_graph }}
+      plan_valid: ${{ steps.resolve.outputs.valid }}
+      plan_empty: ${{ steps.resolve.outputs.empty }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -41,24 +43,19 @@ jobs:
         with:
           version: "0.18.0"
 
+      - name: Resolve Build Plan
+        if: always()
+        id: resolve
+        env:
+          RAIL_PLAN_STEP_OUTCOME: ${{ steps.rail.outcome }}
+          RAIL_SCOPE_JSON: ${{ steps.rail.outputs.scope-json }}
+        run: scripts/ci/resolve-rail-plan.sh
+
       - name: Check Release Intent Coverage
         if: github.event_name == 'pull_request'
         env:
           RAIL_BASE_REF: ${{ steps.rail.outputs.base-ref }}
         run: cargo rail change check --since "$RAIL_BASE_REF" --required
-
-      - name: Resolve Cargo Graph Assurance
-        id: graph
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RAIL_SCOPE_JSON: ${{ steps.rail.outputs.scope-json }}
-        run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            enabled="$(jq -r '.surfaces["custom:cargo_graph"] // false' <<<"$RAIL_SCOPE_JSON")"
-          else
-            enabled=true
-          fi
-          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
 
   dependency-smoke:
     name: Dependency Smoke
@@ -78,7 +75,7 @@ jobs:
   suite:
     name: CI Suite
     needs: rail-plan
-    if: ${{ github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]' && (needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true')) }}
+    if: ${{ always() && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.actor != 'dependabot[bot]' && (needs.rail-plan.result != 'success' || needs.rail-plan.outputs.build == 'true' || needs.rail-plan.outputs.test == 'true' || needs.rail-plan.outputs.infra == 'true'))) }}
     uses: ./.github/workflows/_ci-suite.yaml
     with:
       cache_key_prefix: commit
@@ -97,7 +94,9 @@ jobs:
           ACTOR: ${{ github.actor }}
           DEPENDENCY_SMOKE_RESULT: ${{ needs.dependency-smoke.result }}
           EVENT_NAME: ${{ github.event_name }}
+          PLAN_EMPTY: ${{ needs.rail-plan.outputs.plan_empty }}
           PLAN_RESULT: ${{ needs.rail-plan.result }}
+          PLAN_VALID: ${{ needs.rail-plan.outputs.plan_valid }}
           SUITE_RESULT: ${{ needs.suite.result }}
         run: |
           if [[ "$EVENT_NAME" == "pull_request" && "$ACTOR" == "dependabot[bot]" ]]; then
@@ -114,7 +113,12 @@ jobs:
             exit 1
           fi
 
-          if [[ "$SUITE_RESULT" != "success" && "$SUITE_RESULT" != "skipped" ]]; then
+          if [[ "$SUITE_RESULT" == "skipped" ]]; then
+            if [[ "$PLAN_VALID" != "true" || "$PLAN_EMPTY" != "true" ]]; then
+              echo "CI suite skipped without a valid empty plan"
+              exit 1
+            fi
+          elif [[ "$SUITE_RESULT" != "success" ]]; then
             echo "CI suite result: $SUITE_RESULT"
             exit 1
           fi

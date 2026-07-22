@@ -90,6 +90,7 @@ run_constrained_check() {
     --no-default-features
     --target "$target"
     --lib
+    --locked
   )
 
   if [[ -n "$feature_set" ]]; then
@@ -146,7 +147,7 @@ run_constrained_target() {
     step "$target check (alloc)"
     for crate in "${alloc_crates[@]}"; do
       if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-        cargo check -p "$crate" --no-default-features --features alloc --target "$target" --lib \
+        cargo check --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib \
         >>"$log_file" 2>&1; then
         fail
         show_error "$log_file"
@@ -159,7 +160,7 @@ run_constrained_target() {
   step "$target build (no features)"
   for crate in "${CONSTRAINED_CRATES[@]}"; do
     if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-      cargo build -p "$crate" --no-default-features --target "$target" --lib --release \
+      cargo build --locked -p "$crate" --no-default-features --target "$target" --lib --release \
       >>"$log_file" 2>&1; then
       fail
       show_error "$log_file"
@@ -172,7 +173,7 @@ run_constrained_target() {
     step "$target build (alloc)"
     for crate in "${alloc_crates[@]}"; do
       if ! RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-        cargo build -p "$crate" --no-default-features --features alloc --target "$target" --lib --release \
+        cargo build --locked -p "$crate" --no-default-features --features alloc --target "$target" --lib --release \
         >>"$log_file" 2>&1; then
         fail
         show_error "$log_file"
@@ -188,7 +189,10 @@ run_constrained_checks() {
   log_dir=$(mktemp -d)
   trap 'rm -rf "$log_dir"' RETURN
 
-  local constrained_targets=("${NOSTD_TARGETS[@]}" "${WASM_TARGETS[@]}")
+  local constrained_targets=(
+    "${NOSTD_TARGETS[@]:+${NOSTD_TARGETS[@]}}"
+    "${WASM_TARGETS[@]:+${WASM_TARGETS[@]}}"
+  )
 
   echo ""
   echo "Constrained targets ${DIM}($CONSTRAINED_SCOPE)${RESET}"
@@ -246,7 +250,7 @@ done
 if [[ "$FEATURE_MODE_SET" == false ]]; then
   HOST_ARGS+=(--feature-matrix)
 fi
-select_constrained_crates "${SCOPE_ARGS[@]}"
+select_constrained_crates "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}"
 
 # Run host checks first (most likely to fail, fastest feedback)
 "$SCRIPT_DIR/check.sh" "${HOST_ARGS[@]}"
@@ -260,13 +264,13 @@ trap 'rm -rf "$log_dir"' EXIT
 jobs=(windows linux ibm constrained)
 pids=()
 
-("$SCRIPT_DIR/check-win.sh" "${SCOPE_ARGS[@]}") >"$log_dir/windows.log" 2>&1 &
+("$SCRIPT_DIR/check-win.sh" "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}") >"$log_dir/windows.log" 2>&1 &
 pids+=( "$!" )
 
-("$SCRIPT_DIR/check-linux.sh" "${SCOPE_ARGS[@]}") >"$log_dir/linux.log" 2>&1 &
+("$SCRIPT_DIR/check-linux.sh" "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}") >"$log_dir/linux.log" 2>&1 &
 pids+=( "$!" )
 
-("$SCRIPT_DIR/check-ibm.sh" "${SCOPE_ARGS[@]}") >"$log_dir/ibm.log" 2>&1 &
+("$SCRIPT_DIR/check-ibm.sh" "${SCOPE_ARGS[@]:+${SCOPE_ARGS[@]}}") >"$log_dir/ibm.log" 2>&1 &
 pids+=( "$!" )
 
 (run_constrained_checks) >"$log_dir/constrained.log" 2>&1 &

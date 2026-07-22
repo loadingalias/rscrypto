@@ -54,7 +54,7 @@ for i in "${!FEATURE_SETS[@]}"; do
   log_path="$LOG_DIR/${display//,/_}.log"
 
   step "[$profile/$TOTAL] cargo check --no-default-features --features $display"
-  args=(check -p rscrypto --no-default-features --lib)
+  args=(check --locked -p rscrypto --no-default-features --lib)
   if [[ -n "$feature_set" ]]; then
     args+=(--features "$feature_set")
   fi

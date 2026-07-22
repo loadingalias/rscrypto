@@ -245,6 +245,8 @@ check-actions:
     @scripts/ci/check-ci-ownership-test.sh
     @scripts/ci/run-rust-job-test.sh
     @scripts/ci/emit-manual-matrix-test.sh
+    @scripts/ci/changed-test-planning-test.sh
+    @scripts/ci/check-worktree-test.sh
     @scripts/ci/pre-push-test.sh
     @scripts/ci/release-evidence-check-test.sh
     @scripts/ci/repository-controls-evidence-test.sh

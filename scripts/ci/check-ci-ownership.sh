@@ -31,6 +31,7 @@ EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RUN_RUST_JOB="$ROOT/scripts/ci/run-rust-job.sh"
+RAIL_PLAN_RESOLVER="$ROOT/scripts/ci/resolve-rail-plan.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
 RELEASE_SOURCE="$ROOT/scripts/ci/package-release-source.sh"
@@ -100,6 +101,7 @@ require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
 require_file "$RUN_RUST_JOB"
+require_file "$RAIL_PLAN_RESOLVER"
 require_file "$RELEASE_PREFLIGHT"
 require_file "$RELEASE_EVIDENCE"
 require_file "$RELEASE_SOURCE"
@@ -140,6 +142,22 @@ fi
 [[ $(yq eval '[.jobs[] | select((.if // "") | contains("pull_request.draft"))] | length' "$CI") \
   == $(yq eval '.jobs | length' "$CI") ]] \
   || fail "every CI job must defer draft pull requests"
+
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .if' "$CI") == "always()" ]] \
+  || fail "CI must resolve a conservative plan after planner failure"
+suite_condition=$(yq eval '.jobs.suite."if"' "$CI")
+[[ "$suite_condition" == *"always()"* && "$suite_condition" == *"needs.rail-plan.result != 'success'"* ]] \
+  || fail "planner job failure must still run the CI suite"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+grep -Fq 'plan_valid: ${{ steps.resolve.outputs.valid }}' "$CI" \
+  || fail "CI must expose validated planner state"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+grep -Fq 'plan_empty: ${{ steps.resolve.outputs.empty }}' "$CI" \
+  || fail "CI must expose explicit empty planner state"
+grep -Fq 'if [[ "$PLAN_VALID" != "true" || "$PLAN_EMPTY" != "true" ]]' "$CI" \
+  || fail "Complete must reject an unvalidated suite skip"
+[[ $(count_matches 'scripts/ci/resolve-rail-plan\.sh' "$CI") -eq 1 ]] \
+  || fail "CI must use exactly one repository-owned plan resolver"
 
 if grep -ERn '^[[:space:]]+(pre_script|run_script):' "$WORKFLOWS" >/dev/null; then
   fail "reusable workflows must not accept executable shell fragments"

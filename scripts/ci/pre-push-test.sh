@@ -19,8 +19,12 @@ cat >"$fake_bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >>"$MOCK_LOG"
+if [[ "${1:-}" == "rail" && "${2:-}" == "plan" ]]; then
+  printf '%s' "${MOCK_PLAN_OUTPUT:-}"
+  exit "${MOCK_PLAN_STATUS:-0}"
+fi
 if [[ "$*" == "rail change check --merge-base --required" ]]; then
-  exit 42
+  exit "${MOCK_RELEASE_CHECK_STATUS:-42}"
 fi
 SH
 chmod +x "$fake_bin/cargo"
@@ -32,7 +36,10 @@ printf 'just %s\n' "$*" >>"$MOCK_LOG"
 SH
 chmod +x "$fake_bin/just"
 
-plan='{"result":"success","files":[{"path":"Cargo.toml"}],"scope":{"mode":"workspace","surfaces":{"build":true,"test":true}}}'
+workspace_scope='{"scope_contract_version":2,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"],"surfaces":{"bench":false,"build":true,"custom:cargo_graph":true,"docs":false,"infra":false,"test":true}}'
+empty_scope='{"scope_contract_version":2,"resolved_base":"base","resolved_head":"head","mode":"empty","crates":[],"cargo_args":[],"surfaces":{"bench":false,"build":false,"custom:cargo_graph":false,"docs":false,"infra":false,"test":false}}'
+plan="$(jq -cn --argjson scope "$workspace_scope" '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[{path:"Cargo.toml"}],scope:$scope}')"
+empty_plan="$(jq -cn --argjson scope "$empty_scope" '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[],scope:$scope}')"
 
 normal_output="$TMP_ROOT/normal.out"
 if (
@@ -49,6 +56,53 @@ if (
   exit 1
 fi
 grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
+
+run_pre_push_case() {
+  local name=$1
+  local cached_plan=$2
+  local planner_output=$3
+  local planner_status=$4
+  local expect_host=$5
+  local output="$TMP_ROOT/$name.out"
+  : >"$mock_log"
+
+  if ! (
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    if [[ -n "$cached_plan" ]]; then
+      export RAIL_PLAN_JSON_CACHE="$cached_plan"
+    fi
+    cd "$fixture"
+    HOME="$TMP_ROOT/home" \
+      PATH="$fake_bin:$PATH" \
+      MOCK_LOG="$mock_log" \
+      MOCK_PLAN_OUTPUT="$planner_output" \
+      MOCK_PLAN_STATUS="$planner_status" \
+      MOCK_RELEASE_CHECK_STATUS=0 \
+      scripts/ci/pre-push.sh --light
+  ) >"$output" 2>&1; then
+    cat "$output" >&2
+    echo "pre-push case failed: $name" >&2
+    exit 1
+  fi
+
+  if [[ "$expect_host" == true ]]; then
+    grep -Fq "just check" "$mock_log" || {
+      echo "pre-push did not select host checks for $name" >&2
+      exit 1
+    }
+    grep -Fq "cargo rail unify --check --explain" "$mock_log"
+    grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
+  elif grep -Fq "just check" "$mock_log"; then
+    echo "valid empty plan selected host checks" >&2
+    exit 1
+  fi
+}
+
+run_pre_push_case planner-failure '' '' 9 true
+run_pre_push_case empty-output '' '' 0 true
+run_pre_push_case malformed-plan '{' '' 0 true
+run_pre_push_case missing-scope "$(jq -c 'del(.scope)' <<<"$plan")" '' 0 true
+run_pre_push_case valid-empty "$empty_plan" '' 0 false
 
 plan_fixture="$TMP_ROOT/plan-repository"
 mkdir -p "$plan_fixture/.config" "$plan_fixture/scripts" "$plan_fixture/src"

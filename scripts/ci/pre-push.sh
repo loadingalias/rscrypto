@@ -72,16 +72,15 @@ TASK_PIDS=()
 TASK_LOGS=()
 
 RAIL_READY=false
-RAIL_PLAN_JSON_CACHE="$(rail_plan_json)"
-export RAIL_PLAN_JSON_CACHE
-
-if [[ -n "$RAIL_PLAN_JSON_CACHE" ]] \
-  && command -v jq >/dev/null 2>&1 \
-  && jq -e '.result == "success"' <<<"$RAIL_PLAN_JSON_CACHE" >/dev/null 2>&1; then
+if RAIL_PLAN_JSON_CACHE="$(rail_plan_json)" \
+  && rail_plan_is_valid "$RAIL_PLAN_JSON_CACHE"; then
   RAIL_READY=true
   RAIL_SCOPE_JSON="$(rail_scope_json)"
-  export RAIL_SCOPE_JSON
+else
+  RAIL_PLAN_JSON_CACHE=""
+  RAIL_SCOPE_JSON=""
 fi
+export RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON
 
 changed_files() {
   if [[ "$RAIL_READY" != true ]]; then
