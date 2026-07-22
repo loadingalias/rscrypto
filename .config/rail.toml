@@ -79,7 +79,6 @@ infrastructure = [
   ".changes/**",
   ".github/**",
   ".config/**",
-  "scripts/**",
   "justfile",
   "Cargo.lock",
   "rust-toolchain.toml",

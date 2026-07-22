@@ -50,4 +50,55 @@ if (
 fi
 grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
 
+plan_fixture="$TMP_ROOT/plan-repository"
+mkdir -p "$plan_fixture/.config" "$plan_fixture/scripts" "$plan_fixture/src"
+cp "$REPO_ROOT/.config/rail.toml" "$plan_fixture/.config/rail.toml"
+printf '%s\n' \
+  '[package]' \
+  'name = "rscrypto"' \
+  'version = "0.1.0"' \
+  'edition = "2024"' \
+  >"$plan_fixture/Cargo.toml"
+printf '%s\n' '#![no_std]' >"$plan_fixture/src/lib.rs"
+printf '%s\n' '# Scripts' >"$plan_fixture/scripts/README.md"
+
+git -C "$plan_fixture" init --quiet --initial-branch=main
+git -C "$plan_fixture" config user.email "ci@example.invalid"
+git -C "$plan_fixture" config user.name "CI"
+git -C "$plan_fixture" add .
+git -C "$plan_fixture" commit --quiet -m "baseline"
+
+printf '%s\n' '# Scripts' '' 'Documentation-only edit.' >"$plan_fixture/scripts/README.md"
+git -C "$plan_fixture" add scripts/README.md
+git -C "$plan_fixture" commit --quiet -m "edit script documentation"
+
+docs_plan=$(cd "$plan_fixture" && cargo rail plan --from HEAD~1 --to HEAD --json)
+jq -e '
+  .result == "success"
+    and (.files | length == 1)
+    and .files[0].path == "scripts/README.md"
+    and .files[0].kind == "docs"
+    and .scope.mode == "empty"
+    and .scope.surfaces.docs == true
+    and .scope.surfaces.infra == false
+    and .scope.surfaces.build == false
+    and .scope.surfaces.test == false
+    and .scope.surfaces["custom:cargo_graph"] == false
+' >/dev/null <<<"$docs_plan"
+
+printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' >"$plan_fixture/scripts/check.sh"
+git -C "$plan_fixture" add scripts/check.sh
+git -C "$plan_fixture" commit --quiet -m "add script"
+
+script_plan=$(cd "$plan_fixture" && cargo rail plan --from HEAD~1 --to HEAD --json)
+jq -e '
+  .result == "success"
+    and (.files | length == 1)
+    and .files[0].path == "scripts/check.sh"
+    and .files[0].kind == "script"
+    and .scope.surfaces.infra == true
+    and .scope.surfaces.build == false
+    and .scope.surfaces.test == false
+' >/dev/null <<<"$script_plan"
+
 echo "Pre-push regression tests passed"
