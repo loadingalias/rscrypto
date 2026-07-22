@@ -55,6 +55,32 @@ make_fixture "$draft_runs_suite"
 yq eval '.jobs.suite.if = "always()"' -i "$draft_runs_suite/.github/workflows/ci.yaml"
 expect_failure "$draft_runs_suite" "draft PR can run the expensive suite"
 
+shell_fragment_input="$TMP_ROOT/shell-fragment-input"
+make_fixture "$shell_fragment_input"
+printf '\n      run_script: echo caller-controlled\n' \
+  >>"$shell_fragment_input/.github/workflows/_ci-suite.yaml"
+expect_failure "$shell_fragment_input" "reusable workflow accepts executable shell fragments"
+
+missing_typed_operation="$TMP_ROOT/missing-typed-operation"
+make_fixture "$missing_typed_operation"
+sed -i.bak '/operation: quality/d' "$missing_typed_operation/.github/workflows/_ci-suite.yaml"
+rm -f "$missing_typed_operation/.github/workflows/_ci-suite.yaml.bak"
+expect_failure "$missing_typed_operation" "reusable Rust job caller omits its operation"
+
+unsupported_typed_operation="$TMP_ROOT/unsupported-typed-operation"
+make_fixture "$unsupported_typed_operation"
+sed -i.bak 's/operation: quality/operation: arbitrary-shell/' \
+  "$unsupported_typed_operation/.github/workflows/_ci-suite.yaml"
+rm -f "$unsupported_typed_operation/.github/workflows/_ci-suite.yaml.bak"
+expect_failure "$unsupported_typed_operation" "reusable Rust job caller selects an unsupported operation"
+
+evaluated_workflow_input="$TMP_ROOT/evaluated-workflow-input"
+make_fixture "$evaluated_workflow_input"
+sed -i.bak 's#run: scripts/ci/run-rust-job.sh#run: echo "${{ inputs.operation }}"#' \
+  "$evaluated_workflow_input/.github/workflows/_rust-job.yaml"
+rm -f "$evaluated_workflow_input/.github/workflows/_rust-job.yaml.bak"
+expect_failure "$evaluated_workflow_input" "workflow input is evaluated as shell code"
+
 duplicate_matrix="$TMP_ROOT/duplicate-matrix"
 make_fixture "$duplicate_matrix"
 printf '\n# duplicate owner\n      run: just test-feature-matrix\n' >>"$duplicate_matrix/.github/workflows/weekly.yaml"
@@ -74,13 +100,13 @@ expect_failure "$fake_musl" "MUSL label without a MUSL target invocation"
 
 missing_cross_owner="$TMP_ROOT/missing-cross-owner"
 make_fixture "$missing_cross_owner"
-sed -i.bak '/scripts\/ci\/cross-targets\.sh/d' "$missing_cross_owner/.github/workflows/_ci-suite.yaml"
+sed -i.bak '/operation: cross-targets/d' "$missing_cross_owner/.github/workflows/_ci-suite.yaml"
 rm -f "$missing_cross_owner/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$missing_cross_owner" "missing cross-target owner"
 
 missing_graph_owner="$TMP_ROOT/missing-graph-owner"
 make_fixture "$missing_graph_owner"
-sed -i.bak '/cargo rail unify --check/d' "$missing_graph_owner/.github/workflows/_ci-suite.yaml"
+sed -i.bak '/operation: cargo-graph/d' "$missing_graph_owner/.github/workflows/_ci-suite.yaml"
 rm -f "$missing_graph_owner/.github/workflows/_ci-suite.yaml.bak"
 expect_failure "$missing_graph_owner" "missing Cargo graph assurance owner"
 

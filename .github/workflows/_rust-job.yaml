@@ -3,6 +3,9 @@ name: _rust-job
 on:
   workflow_call:
     inputs:
+      operation:
+        required: true
+        type: string
       runner:
         required: true
         type: string
@@ -30,13 +33,62 @@ on:
         required: false
         type: boolean
         default: true
-      pre_script:
+      test_mode:
         required: false
         type: string
         default: ""
-      run_script:
-        required: true
+      target:
+        required: false
         type: string
+        default: ""
+      platform:
+        required: false
+        type: string
+        default: ""
+      supply_chain_mode:
+        required: false
+        type: string
+        default: ""
+      base_sha:
+        required: false
+        type: string
+        default: ""
+      miri_tree_borrows:
+        required: false
+        type: boolean
+        default: false
+      bench_targets:
+        required: false
+        type: string
+        default: all
+      bench_filter:
+        required: false
+        type: string
+        default: ""
+      bench_quick:
+        required: false
+        type: boolean
+        default: false
+      dudect_timeout:
+        required: false
+        type: number
+        default: 1800
+      dudect_filter:
+        required: false
+        type: string
+        default: ""
+      dudect_gate:
+        required: false
+        type: string
+        default: required
+      binsec_timeout:
+        required: false
+        type: number
+        default: 900
+      upload_raw_artifacts:
+        required: false
+        type: boolean
+        default: false
       artifact_name:
         required: false
         type: string
@@ -73,18 +125,26 @@ jobs:
           enable-magic-cache: ${{ inputs.enable_magic_cache }}
           enable-rust-cache: ${{ inputs.enable_rust_cache }}
 
-      - name: Pre Run
-        if: inputs.pre_script != ''
-        shell: bash
-        env:
-          PRE_SCRIPT: ${{ inputs.pre_script }}
-        run: bash -euo pipefail <<<"$PRE_SCRIPT"
-
       - name: Run
         shell: bash
         env:
-          RUN_SCRIPT: ${{ inputs.run_script }}
-        run: bash -euo pipefail <<<"$RUN_SCRIPT"
+          RSCRYPTO_CI_OPERATION: ${{ inputs.operation }}
+          RSCRYPTO_CI_RUNNER: ${{ inputs.runner }}
+          RSCRYPTO_CI_TEST_MODE: ${{ inputs.test_mode }}
+          RSCRYPTO_CI_TARGET: ${{ inputs.target }}
+          RSCRYPTO_CI_PLATFORM: ${{ inputs.platform }}
+          RSCRYPTO_CI_SUPPLY_CHAIN_MODE: ${{ inputs.supply_chain_mode }}
+          RSCRYPTO_CI_BASE_SHA: ${{ inputs.base_sha }}
+          RSCRYPTO_CI_MIRI_TREE_BORROWS: ${{ inputs.miri_tree_borrows && 'true' || 'false' }}
+          RSCRYPTO_CI_BENCH_TARGETS: ${{ inputs.bench_targets }}
+          RSCRYPTO_CI_BENCH_FILTER: ${{ inputs.bench_filter }}
+          RSCRYPTO_CI_BENCH_QUICK: ${{ inputs.bench_quick && 'true' || 'false' }}
+          RSCRYPTO_CI_DUDECT_TIMEOUT: ${{ inputs.dudect_timeout }}
+          RSCRYPTO_CI_DUDECT_FILTER: ${{ inputs.dudect_filter }}
+          RSCRYPTO_CI_DUDECT_GATE: ${{ inputs.dudect_gate }}
+          RSCRYPTO_CI_BINSEC_TIMEOUT: ${{ inputs.binsec_timeout }}
+          RSCRYPTO_CI_UPLOAD_RAW_ARTIFACTS: ${{ inputs.upload_raw_artifacts && 'true' || 'false' }}
+        run: scripts/ci/run-rust-job.sh
 
       - name: Upload Artifact (always)
         if: always() && inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always

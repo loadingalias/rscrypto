@@ -49,7 +49,7 @@ jobs:
       toolchain_components: "miri, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: just test-miri
+      operation: miri
 
   # ─── Miri memory-safety (tree borrows). ──
   miri-tree-borrows:
@@ -63,9 +63,8 @@ jobs:
       toolchain_components: "miri, rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: |
-        export MIRIFLAGS="-Zmiri-tree-borrows"
-        just test-miri
+      operation: miri
+      miri_tree_borrows: true
 
   # ─── Fuzzing (libFuzzer full + scoped packages). ──
   fuzzing:
@@ -86,23 +85,7 @@ jobs:
       tools_mode: fuzz
       enable_magic_cache: true
       enable_rust_cache: true
-      pre_script: |
-        echo "RSCRYPTO_FUZZ_DURATION_SECS=60" >> "$GITHUB_ENV"
-      run_script: |
-        just test-fuzz --all
-        rm -rf fuzz-output
-        mkdir -p fuzz-output
-        mapfile -t corpus_dirs < <(
-          {
-            [ -d fuzz/corpus ] && printf '%s\n' fuzz/corpus
-            find fuzz-packages -mindepth 2 -maxdepth 2 -type d -name corpus
-          } | sort
-        )
-        if [ "${#corpus_dirs[@]}" -eq 0 ]; then
-          tar -czf fuzz-output/corpus.tar.gz --files-from /dev/null
-        else
-          tar -czf fuzz-output/corpus.tar.gz "${corpus_dirs[@]}"
-        fi
+      operation: fuzz
       artifact_name: fuzz-output-weekly-${{ matrix.target.name }}
       artifact_path: |
         fuzz-output/corpus.tar.gz
@@ -129,7 +112,7 @@ jobs:
       toolchain_components: "rust-src"
       enable_magic_cache: true
       enable_rust_cache: true
-      run_script: just test-fuzz-asan --all
+      operation: fuzz-asan
 
   # --- Native ML-KEM promotion gate on the physical AWS targets. ---
   mlkem-graviton:
@@ -151,14 +134,8 @@ jobs:
       toolchain_components: "clippy, rustfmt, rust-src"
       enable_magic_cache: false
       enable_rust_cache: true
-      pre_script: |
-        echo "ML-KEM gate host: ${{ matrix.display_name }} (${{ matrix.platform }})"
-        uname -a
-        lscpu
-        sed -n '1,80p' /proc/cpuinfo
-      run_script: |
-        MLKEM_AARCH64_GATE_PLATFORM="${{ matrix.platform }}" \
-        bash scripts/ci/mlkem-aarch64-gate.sh
+      operation: mlkem-aarch64
+      platform: ${{ matrix.platform }}
       artifact_name: mlkem-aarch64-gate-${{ matrix.platform }}
       artifact_path: mlkem-aarch64-gate/
       artifact_always: true
@@ -169,8 +146,8 @@ jobs:
     uses: ./.github/workflows/ct.yaml
     with:
       platforms: all
-      dudect_timeout: "1800"
-      binsec_timeout: "900"
+      dudect_timeout: 1800
+      binsec_timeout: 900
       upload_raw_artifacts: true
 
   rsa:

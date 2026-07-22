@@ -55,16 +55,7 @@ jobs:
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
-      pre_script: |
-        uname -a
-        lscpu
-        sed -n '1,50p' /proc/cpuinfo
-      run_script: |
-        export RSCRYPTO_TEST_MODE=weekly
-        export RSCRYPTO_CI_RESOURCE_PROFILE=constrained
-        export RSCRYPTO_SKIP_DOCTESTS=1
-        bash scripts/ci/native-check.sh
-        bash scripts/test/test.sh --all
+      operation: native-riscv
 
   ct:
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'constant-time' || inputs.mode == 'all' }}
@@ -75,8 +66,8 @@ jobs:
     uses: ./.github/workflows/ct.yaml
     with:
       platforms: rise-riscv
-      dudect_timeout: "1800"
-      binsec_timeout: "900"
+      dudect_timeout: 1800
+      binsec_timeout: 900
       upload_raw_artifacts: true
 
   benchmark:
@@ -94,29 +85,11 @@ jobs:
       toolchain_components: "clippy, rustfmt"
       enable_magic_cache: false
       enable_rust_cache: true
-      pre_script: |
-        echo "Bench host: rise-riscv (linux)"
-        uname -a
-        lscpu
-        sed -n '1,50p' /proc/cpuinfo
-      run_script: |
-        RUN_DATE="$(date -u +"%Y-%m-%d")"
-        RUN_TIME="$(date -u +"%H_%M_%S")"
-        RUN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
-        BENCH_OUTPUT_DIR=benchmark-results \
-        BENCH_RESULTS_DIR=benchmark-results \
-        BENCH_RUN_DATE="$RUN_DATE" \
-        BENCH_RUN_TIME="$RUN_TIME" \
-        BENCH_RUN_OS=linux \
-        BENCH_RUN_ARCH=rise-riscv \
-        BENCH_RUN_COMMIT="$RUN_COMMIT" \
-        BENCH_RUN_MODE=ci \
-        BENCH_ONLY="${{ inputs.targets || 'all' }}" \
-        BENCH_FILTER="${{ inputs.filter }}" \
-        BENCH_QUICK=${{ inputs.quick && 'true' || 'false' }} \
-        BENCH_ALLOW_FULL_HASHES_COMP=true \
-        BENCH_PLATFORM=rise-riscv \
-        scripts/ci/run-bench.sh
+      operation: benchmark
+      platform: rise-riscv
+      bench_targets: ${{ inputs.targets || 'all' }}
+      bench_filter: ${{ inputs.filter }}
+      bench_quick: ${{ inputs.quick }}
       artifact_name: benchmark-rise-riscv
       artifact_path: benchmark-results/
 
