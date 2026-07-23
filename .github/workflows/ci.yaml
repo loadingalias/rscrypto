@@ -33,28 +33,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Build Plan (PR)
+      - name: Setup Planner (PR)
         if: github.event_name == 'pull_request'
-        id: rail
-        uses: loadingalias/cargo-rail-action@90f7f739028887508c6e8d8b7cc510dc612eb653  # v5.1.0
+        id: rail_setup
+        uses: ./.github/actions/setup
         with:
-          version: "0.18.0"
+          cache-key: rail-plan
+          tools-mode: rail
+          toolchain-components: ""
+          enable-magic-cache: false
+          enable-rust-cache: true
 
       - name: Resolve Build Plan
         if: always()
         id: resolve
         env:
-          RAIL_PLAN_STEP_OUTCOME: ${{ steps.rail.outcome }}
-          RAIL_SCOPE_JSON: ${{ steps.rail.outputs.scope-json }}
+          RAIL_PLAN_STEP_OUTCOME: ${{ steps.rail_setup.outcome }}
+          RAIL_SINCE: origin/${{ github.base_ref }}
         run: scripts/ci/resolve-rail-plan.sh
 
       - name: Check Release Intent Coverage
         if: github.event_name == 'pull_request'
         env:
-          RAIL_BASE_REF: ${{ steps.rail.outputs.base-ref }}
+          RAIL_BASE_REF: origin/${{ github.base_ref }}
         run: cargo rail change check --since "$RAIL_BASE_REF" --required
 
   dependency-smoke:
@@ -63,7 +67,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: ubuntu-latest
-      timeout_minutes: 20
+      timeout_minutes: 45
       cache_key: dependabot-smoke
       tools_mode: supply-chain
       toolchain_components: "clippy, rustfmt"

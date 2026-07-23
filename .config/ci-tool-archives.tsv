@@ -1,0 +1,7 @@
+# tool	version	os	architecture	filename	url	sha256
+wasmtime	v46.0.1	linux	x86_64	wasmtime-v46.0.1-x86_64-linux.tar.xz	https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-x86_64-linux.tar.xz	9ae0b17ea298bcc52277a8208d6ab7fae8e1a89579672f9d82f9d86c116edb62
+wasmtime	v46.0.1	linux	aarch64	wasmtime-v46.0.1-aarch64-linux.tar.xz	https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-aarch64-linux.tar.xz	071c4def2a08f0ebc95c52dfd4f2886eb697ba495804217cf76e13b09d70a1be
+wasmtime	v46.0.1	macos	x86_64	wasmtime-v46.0.1-x86_64-macos.tar.xz	https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-x86_64-macos.tar.xz	0513db67e7089c7e5f743a01427782bc4def83854222f4bc9b1d75f0b925240b
+wasmtime	v46.0.1	macos	aarch64	wasmtime-v46.0.1-aarch64-macos.tar.xz	https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-aarch64-macos.tar.xz	acee50be70dbe90b0ab2ac7db1321fc44715153a1b1cc58291c97b6d7cffc558
+zig	0.17.0-dev.1282+c0f9b51d8	linux	x86_64	zig-x86_64-linux-0.17.0-dev.1282+c0f9b51d8.tar.xz	https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1282+c0f9b51d8.tar.xz	6d81dec0152f6f11f8a12a84a73535b65070fe01b14a1ce75423870d65b3f270
+codecov	v11.3.1	linux	x86_64	codecov	https://cli.codecov.io/v11.3.1/linux/codecov	ca1d64196d2d34771084afe76ea657d581bf628e31d993ff8e52ea09cc88a56d

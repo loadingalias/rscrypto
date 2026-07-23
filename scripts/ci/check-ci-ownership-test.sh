@@ -9,14 +9,19 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 make_fixture() {
   local fixture=$1
-  mkdir -p "$fixture/.github" "$fixture/.config" "$fixture/scripts/check" "$fixture/scripts/test"
+  mkdir -p "$fixture/.github" "$fixture/.config" "$fixture/scripts/check" "$fixture/scripts/lib" "$fixture/scripts/test"
   cp -R "$REPO_ROOT/.github/workflows" "$fixture/.github/workflows"
+  cp -R "$REPO_ROOT/.github/actions" "$fixture/.github/actions"
   cp -R "$REPO_ROOT/.github/rulesets" "$fixture/.github/rulesets"
   cp -R "$REPO_ROOT/.github/repository-settings" "$fixture/.github/repository-settings"
   cp "$REPO_ROOT/.github/dependabot.yaml" "$fixture/.github/dependabot.yaml"
   cp "$REPO_ROOT/.config/target-matrix.json" "$fixture/.config/target-matrix.json"
+  cp "$REPO_ROOT/.config/ci-tool-archives.tsv" "$fixture/.config/ci-tool-archives.tsv"
   cp -R "$REPO_ROOT/scripts/ci" "$fixture/scripts/ci"
-  cp "$REPO_ROOT/scripts/check/check-all.sh" "$REPO_ROOT/scripts/check/check-feature-matrix.sh" "$fixture/scripts/check/"
+  cp "$REPO_ROOT/scripts/lib/ci-tool-integrity.sh" "$REPO_ROOT/scripts/lib/common.sh" \
+    "$fixture/scripts/lib/"
+  cp "$REPO_ROOT/scripts/check/check-all.sh" "$REPO_ROOT/scripts/check/check-feature-matrix.sh" \
+    "$REPO_ROOT/scripts/check/check.sh" "$fixture/scripts/check/"
   cp "$REPO_ROOT/scripts/test/test-feature-matrix.sh" "$fixture/scripts/test/"
 }
 
@@ -32,6 +37,85 @@ expect_failure() {
 baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
+
+invalid_tool_digest="$TMP_ROOT/invalid-tool-digest"
+make_fixture "$invalid_tool_digest"
+sed -i.bak 's/ca1d64196d2d34771084afe76ea657d581bf628e31d993ff8e52ea09cc88a56d/not-a-digest/' \
+  "$invalid_tool_digest/.config/ci-tool-archives.tsv"
+rm -f "$invalid_tool_digest/.config/ci-tool-archives.tsv.bak"
+expect_failure "$invalid_tool_digest" "direct tool digest is malformed"
+
+mutable_tool_url="$TMP_ROOT/mutable-tool-url"
+make_fixture "$mutable_tool_url"
+sed -i.bak 's#/download/v46\.0\.1/#/download/Latest/#' \
+  "$mutable_tool_url/.config/ci-tool-archives.tsv"
+rm -f "$mutable_tool_url/.config/ci-tool-archives.tsv.bak"
+expect_failure "$mutable_tool_url" "direct tool URL resolves a mutable release"
+
+unexpected_tool_filename="$TMP_ROOT/unexpected-tool-filename"
+make_fixture "$unexpected_tool_filename"
+awk -F '\t' -v OFS='\t' '$1 == "codecov" { $5 = "codecov-substitute" } { print }' \
+  "$unexpected_tool_filename/.config/ci-tool-archives.tsv" \
+  >"$unexpected_tool_filename/.config/ci-tool-archives.tsv.tmp"
+mv "$unexpected_tool_filename/.config/ci-tool-archives.tsv.tmp" \
+  "$unexpected_tool_filename/.config/ci-tool-archives.tsv"
+expect_failure "$unexpected_tool_filename" "direct tool URL and filename disagree"
+
+unauthenticated_cargo_installer="$TMP_ROOT/unauthenticated-cargo-installer"
+make_fixture "$unauthenticated_cargo_installer"
+printf '\ncargo binstall cargo-nextest\n' \
+  >>"$unauthenticated_cargo_installer/scripts/ci/install-tools.sh"
+expect_failure "$unauthenticated_cargo_installer" "Cargo-binstall bypasses package integrity"
+
+poisonable_tool_cache="$TMP_ROOT/poisonable-tool-cache"
+make_fixture "$poisonable_tool_cache"
+yq eval '.runs.steps += [{"name": "Restore poisonable tools", "uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with": {"path": "~/.cargo/bin", "key": "known"}}]' -i \
+  "$poisonable_tool_cache/.github/actions/setup/action.yaml"
+expect_failure "$poisonable_tool_cache" "CI tool executables can be restored from a poisonable cache"
+
+rust_cache_binaries="$TMP_ROOT/rust-cache-binaries"
+make_fixture "$rust_cache_binaries"
+yq eval '(.runs.steps[] | select(.name == "Setup Rust Cache") | .with."cache-bin") = true' -i \
+  "$rust_cache_binaries/.github/actions/setup/action.yaml"
+expect_failure "$rust_cache_binaries" "the Rust build cache can restore Cargo tool executables"
+
+unauthenticated_rustup="$TMP_ROOT/unauthenticated-rustup"
+make_fixture "$unauthenticated_rustup"
+printf '\n    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9\n' \
+  >>"$unauthenticated_rustup/.github/actions/setup-toolchain/action.yaml"
+expect_failure "$unauthenticated_rustup" "toolchain setup can run a network bootstrap installer"
+
+unpinned_scorecard="$TMP_ROOT/unpinned-scorecard"
+make_fixture "$unpinned_scorecard"
+sed -i.bak 's#@sha256:[0-9a-f]*#:v2.4.3#' \
+  "$unpinned_scorecard/.github/actions/scorecard/action.yaml"
+rm -f "$unpinned_scorecard/.github/actions/scorecard/action.yaml.bak"
+expect_failure "$unpinned_scorecard" "Scorecard container uses a mutable tag"
+
+floating_codecov="$TMP_ROOT/floating-codecov"
+make_fixture "$floating_codecov"
+sed -i.bak '/binary:.*steps\.codecov\.outputs\.binary/d' \
+  "$floating_codecov/.github/workflows/weekly.yaml"
+rm -f "$floating_codecov/.github/workflows/weekly.yaml.bak"
+expect_failure "$floating_codecov" "Codecov action can download its floating default CLI"
+
+unowned_download="$TMP_ROOT/unowned-download"
+make_fixture "$unowned_download"
+printf '\ncurl --output /tmp/tool https://example.invalid/tool\n' \
+  >>"$unowned_download/scripts/ci/run-rust-job.sh"
+expect_failure "$unowned_download" "a direct download exists outside the integrity owner"
+
+unowned_package_install="$TMP_ROOT/unowned-package-install"
+make_fixture "$unowned_package_install"
+printf '\ncargo install ripgrep\n' \
+  >>"$unowned_package_install/scripts/ci/run-rust-job.sh"
+expect_failure "$unowned_package_install" "a package-manager install exists outside the integrity owner"
+
+unowned_test_download="$TMP_ROOT/unowned-test-download"
+make_fixture "$unowned_test_download"
+printf '#!/usr/bin/env bash\ncurl --output /tmp/tool https://example.invalid/tool\n' \
+  >"$unowned_test_download/scripts/ci/unreviewed-test.sh"
+expect_failure "$unowned_test_download" "a test script bypasses downloader ownership"
 
 missing_action_updates="$TMP_ROOT/missing-action-updates"
 make_fixture "$missing_action_updates"
