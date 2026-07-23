@@ -240,6 +240,7 @@ update-check:
 check-actions:
     @scripts/ci/check-action-pins.sh
     @scripts/ci/check-action-pins-test.sh
+    @scripts/ci/tool-integrity-test.sh
     @scripts/ci/dependabot-smoke-test.sh
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh

@@ -5,9 +5,6 @@ set -euo pipefail
 # optional deny/audit, doc
 # Usage: check.sh [--feature-matrix] [--all] [crate1 crate2 ...]
 
-# Prefer cargo-installed tools over any preinstalled runner tools.
-export PATH="$HOME/.cargo/bin:$PATH"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"

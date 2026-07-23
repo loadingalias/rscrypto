@@ -158,7 +158,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 15
+      timeout_minutes: 45
       cache_key: ${{ inputs.cache_key_prefix }}-supply-chain
       tools_mode: supply-chain
       enable_magic_cache: true

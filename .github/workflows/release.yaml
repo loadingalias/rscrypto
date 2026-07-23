@@ -21,7 +21,7 @@ jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     outputs:
       crate_name: ${{ steps.preflight.outputs.crate_name }}
       crate_sha256: ${{ steps.preflight.outputs.crate_sha256 }}

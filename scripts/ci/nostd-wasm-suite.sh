@@ -12,52 +12,40 @@ set -euo pipefail
 
 TARGET="${1:?usage: nostd-wasm-suite.sh <target-triple> <depth>}"
 DEPTH="${2:-shallow}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/ci-tool-integrity.sh
+source "$SCRIPT_DIR/../lib/ci-tool-integrity.sh"
 
 rustup target add "$TARGET"
 
 install_wasmtime() {
-  if command -v wasmtime >/dev/null 2>&1; then
-    return
-  fi
-
-  local version="${WASMTIME_VERSION:-v46.0.1}"
-  local host_os host_arch platform archive_name archive_url tmpdir archive install_dir
-
-  case "$(uname -s)" in
-    Linux) host_os="linux" ;;
-    Darwin) host_os="macos" ;;
-    *)
-      echo "unsupported Wasmtime host OS: $(uname -s)" >&2
-      return 1
-      ;;
-  esac
-
-  case "$(uname -m)" in
-    x86_64 | amd64) host_arch="x86_64" ;;
-    aarch64 | arm64) host_arch="aarch64" ;;
-    *)
-      echo "unsupported Wasmtime host arch: $(uname -m)" >&2
-      return 1
-      ;;
-  esac
-
-  platform="${host_arch}-${host_os}"
-  archive_name="wasmtime-${version}-${platform}.tar.xz"
-  archive_url="https://github.com/bytecodealliance/wasmtime/releases/download/${version}/${archive_name}"
+  local platform tmpdir install_dir installed_version expected_version
   tmpdir="$(mktemp -d)"
-  archive="${tmpdir}/${archive_name}"
   install_dir="${WASMTIME_HOME:-$HOME/.wasmtime}"
 
-  echo "Installing Wasmtime ${version} for ${platform}"
-  curl --fail --location --show-error --silent --retry 3 --retry-delay 2 --output "$archive" "$archive_url"
-  tar -xJf "$archive" -C "$tmpdir"
+  ci_tool_download wasmtime "$tmpdir"
+  platform="${CI_TOOL_HOST_ARCH}-${CI_TOOL_HOST_OS}"
+  echo "Installing Wasmtime $CI_TOOL_VERSION for $platform"
+  tar -xJf "$CI_TOOL_ARCHIVE_PATH" -C "$tmpdir"
   mkdir -p "$install_dir/bin"
-  cp "$tmpdir/wasmtime-${version}-${platform}/wasmtime" "$install_dir/bin/wasmtime"
+  cp "$tmpdir/wasmtime-${CI_TOOL_VERSION}-${platform}/wasmtime" "$install_dir/bin/wasmtime"
   chmod +x "$install_dir/bin/wasmtime"
-  rm -rf "$tmpdir"
 
+  installed_version=$("$install_dir/bin/wasmtime" --version)
+  expected_version=${CI_TOOL_VERSION#v}
+  if [[ "$installed_version" =~ ([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+    installed_version=${BASH_REMATCH[1]}
+  else
+    echo "Wasmtime version mismatch: expected $expected_version, got $installed_version" >&2
+    return 1
+  fi
+  [[ "$installed_version" == "$expected_version" ]] || {
+    echo "Wasmtime version mismatch: expected $expected_version, got $installed_version" >&2
+    return 1
+  }
+
+  rm -rf "$tmpdir"
   export PATH="$install_dir/bin:$PATH"
-  wasmtime --version
 }
 
 run_wasm_runtime_vectors() {

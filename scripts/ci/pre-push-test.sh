@@ -104,6 +104,29 @@ run_pre_push_case malformed-plan '{' '' 0 true
 run_pre_push_case missing-scope "$(jq -c 'del(.scope)' <<<"$plan")" '' 0 true
 run_pre_push_case valid-empty "$empty_plan" '' 0 false
 
+installer_scope=$(jq -c '.surfaces.infra = true' <<<"$empty_scope")
+installer_plan=$(jq -cn --argjson scope "$installer_scope" \
+  '{schema_version:1,command:"plan",mode:"inspect",result:"success",exit_code:0,plan_contract_version:3,files:[{path:"scripts/ci/install-tools.sh"}],scope:$scope}')
+: >"$mock_log"
+if ! (
+  cd "$fixture"
+  HOME="$TMP_ROOT/home" \
+    PATH="$fake_bin:$PATH" \
+    MOCK_LOG="$mock_log" \
+    MOCK_RELEASE_CHECK_STATUS=0 \
+    RAIL_PLAN_JSON_CACHE="$installer_plan" \
+    RAIL_SCOPE_JSON='' \
+    RAIL_SCOPE_JSON_CACHE='' \
+    scripts/ci/pre-push.sh --light
+) >/dev/null 2>&1; then
+  echo "pre-push installer-integrity routing failed" >&2
+  exit 1
+fi
+grep -Fq 'just check-actions' "$mock_log" || {
+  echo "installer integrity changes did not select check-actions" >&2
+  exit 1
+}
+
 plan_fixture="$TMP_ROOT/plan-repository"
 mkdir -p "$plan_fixture/.config" "$plan_fixture/scripts" "$plan_fixture/src"
 cp "$REPO_ROOT/.config/rail.toml" "$plan_fixture/.config/rail.toml"

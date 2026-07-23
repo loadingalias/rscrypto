@@ -17,16 +17,28 @@ if [[ -z "$ROOT" ]]; then
 fi
 
 WORKFLOWS="$ROOT/.github/workflows"
+ACTIONS="$ROOT/.github/actions"
 CI="$WORKFLOWS/ci.yaml"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
 RUST_JOB="$WORKFLOWS/_rust-job.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
+SCORECARD="$WORKFLOWS/scorecard.yaml"
 RISCV="$WORKFLOWS/riscv.yaml"
 RELEASE="$WORKFLOWS/release.yaml"
 RSA="$WORKFLOWS/rsa.yaml"
+SETUP_ACTION="$ACTIONS/setup/action.yaml"
+TOOLCHAIN_ACTION="$ACTIONS/setup-toolchain/action.yaml"
+SCORECARD_ACTION="$ACTIONS/scorecard/action.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
+TOOL_ARCHIVES="$ROOT/.config/ci-tool-archives.tsv"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
+NOSTD_WASM="$ROOT/scripts/ci/nostd-wasm-suite.sh"
+INSTALL_TOOLS="$ROOT/scripts/ci/install-tools.sh"
+INSTALL_CODECOV="$ROOT/scripts/ci/install-codecov.sh"
+SETUP_TOOLCHAIN="$ROOT/scripts/ci/setup-toolchain.sh"
+TOOL_INTEGRITY="$ROOT/scripts/lib/ci-tool-integrity.sh"
 COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
+HOST_CHECK="$ROOT/scripts/check/check.sh"
 EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
@@ -91,12 +103,23 @@ require_file "$CI"
 require_file "$SUITE"
 require_file "$RUST_JOB"
 require_file "$WEEKLY"
+require_file "$SCORECARD"
 require_file "$RISCV"
 require_file "$RELEASE"
 require_file "$RSA"
+require_file "$SETUP_ACTION"
+require_file "$TOOLCHAIN_ACTION"
+require_file "$SCORECARD_ACTION"
 require_file "$MANIFEST"
+require_file "$TOOL_ARCHIVES"
 require_file "$CROSS_SCRIPT"
+require_file "$NOSTD_WASM"
+require_file "$INSTALL_TOOLS"
+require_file "$INSTALL_CODECOV"
+require_file "$SETUP_TOOLCHAIN"
+require_file "$TOOL_INTEGRITY"
 require_file "$COMPILE_MATRIX"
+require_file "$HOST_CHECK"
 require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
@@ -193,6 +216,115 @@ if grep -En '(^|[[:space:]])eval[[:space:]]|(^|[[:space:]])(bash|sh)[[:space:]]+
   "$RUN_RUST_JOB" >/dev/null; then
   fail "the Rust job dispatcher must not invoke a dynamic shell interpreter"
 fi
+
+bash -eu -o pipefail -c 'source "$1"; ci_tool_validate_manifest' _ "$TOOL_INTEGRITY" \
+  || fail "direct CI tool archive manifest is invalid"
+
+if grep -ERn 'uses:[[:space:]]+(dtolnay/rust-toolchain|loadingalias/cargo-rail-action|ossf/scorecard-action)@' \
+  "$WORKFLOWS" "$ACTIONS" >/dev/null; then
+  fail "CI must not delegate installation to an action with an unauthenticated executable fallback"
+fi
+if grep -En 'cargo[[:space:]]+binstall|cargo-binstall|releases/latest|/latest/|curl[^|]*\|[[:space:]]*(bash|sh)' \
+  "$INSTALL_TOOLS" "$SETUP_TOOLCHAIN" "$NOSTD_WASM" "$CROSS_SCRIPT" "$INSTALL_CODECOV" >/dev/null; then
+  fail "CI tool installers must reject Cargo-binstall, mutable URLs, and piped network installers"
+fi
+
+download_files=$(
+  {
+    grep -ERl --include='*.sh' --include='*.yaml' --include='*.yml' \
+      '(^|[[:space:]])(curl|wget|aria2c)([[:space:]]|$)|Invoke-(WebRequest|RestMethod)|Start-BitsTransfer|gh[[:space:]]+release[[:space:]]+download' \
+      "$ROOT/scripts" "$WORKFLOWS" "$ACTIONS" 2>/dev/null || true
+  } | while IFS= read -r file; do
+    case "$file" in
+      "$ROOT/scripts/ci/check-ci-ownership-test.sh" \
+        | "$ROOT/scripts/ci/tool-integrity-test.sh" \
+        | "$ROOT/scripts/ci/check-ci-ownership.sh") continue ;;
+    esac
+    printf '%s\n' "${file#"$ROOT"/}"
+  done | sort
+)
+expected_download_files=$(printf '%s\n' \
+  '.github/workflows/release.yaml' \
+  'scripts/ci/check-action-pins.sh' \
+  'scripts/lib/ci-tool-integrity.sh')
+[[ "$download_files" == "$expected_download_files" ]] \
+  || fail "network downloads exist outside the tool verifier or reviewed non-tool paths"
+
+installer_files=$(
+  {
+    grep -ERl --include='*.sh' --include='*.yaml' --include='*.yml' \
+      'cargo[[:space:]]+(binstall|install)|go[[:space:]]+install|apt(-get)?[[:space:]]+install|opam[[:space:]]+(init|install|reinstall|switch[[:space:]]+create)|rustup[[:space:]]+(toolchain[[:space:]]+install|component[[:space:]]+add|target[[:space:]]+add)|install_args=\(toolchain[[:space:]]+install|pipx?[[:space:]]+install|uv[[:space:]]+tool[[:space:]]+install|npm[[:space:]]+(install|ci)|pnpm[[:space:]]+install|yarn[[:space:]]+install|brew[[:space:]]+install' \
+      "$ROOT/scripts/ci" "$ROOT/scripts/lib" "$WORKFLOWS" "$ACTIONS" 2>/dev/null || true
+  } | while IFS= read -r file; do
+    case "$file" in
+      "$ROOT/scripts/ci/check-ci-ownership-test.sh" \
+        | "$ROOT/scripts/ci/tool-integrity-test.sh" \
+        | "$ROOT/scripts/ci/check-ci-ownership.sh") continue ;;
+    esac
+    printf '%s\n' "${file#"$ROOT"/}"
+  done | sort
+)
+expected_installer_files=$(printf '%s\n' \
+  'scripts/ci/install-tools.sh' \
+  'scripts/ci/nostd-wasm-suite.sh' \
+  'scripts/ci/setup-toolchain.sh' \
+  'scripts/lib/common.sh')
+[[ "$installer_files" == "$expected_installer_files" ]] \
+  || fail "package-manager installs exist outside the reviewed integrity boundaries"
+
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .uses' "$CI") \
+  == "./.github/actions/setup" ]] \
+  || fail "the PR planner must use the repository-owned authenticated setup"
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .with."tools-mode"' "$CI") \
+  == "rail" ]] \
+  || fail "the PR planner must select the exact Cargo Rail install mode"
+grep -Fq 'scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"' "$TOOLCHAIN_ACTION" \
+  || fail "toolchain setup must use the repository-owned rustup policy"
+if grep -Eq '[.]cargo/(bin|[.]crates)|[.]opam' "$SETUP_ACTION"; then
+  fail "CI tool executables and OPAM switches must not be restored from caches"
+fi
+[[ $(yq eval '.runs.steps[] | select(.name == "Setup Rust Cache") | .with."cache-bin"' "$SETUP_ACTION") \
+  == "false" ]] || fail "the Rust build cache must exclude Cargo tool executables"
+if grep -Fq 'export PATH="$HOME/.cargo/bin:$PATH"' "$CI_CHECK" "$HOST_CHECK"; then
+  fail "CI checks must not place unverified runner tools ahead of the authenticated tool root"
+fi
+grep -Fq 'RSCRYPTO_TOOL_ROOT=$(mktemp -d ' "$INSTALL_TOOLS" \
+  || fail "package-manager tools must install into a fresh per-run root"
+grep -Fq 'export CARGO_HOME="$RSCRYPTO_CARGO_HOME"' "$INSTALL_TOOLS" \
+  || fail "Cargo tool sources and executables must use the fresh per-run root"
+grep -Fq 'GOMODCACHE="$RSCRYPTO_TOOL_ROOT/go/pkg/mod"' "$INSTALL_TOOLS" \
+  || fail "Go tool sources must use the fresh per-run root"
+grep -Fq 'export OPAMROOT="$RSCRYPTO_TOOL_ROOT/opam"' "$INSTALL_TOOLS" \
+  || fail "OPAM tool sources and executables must use the fresh per-run root"
+grep -Fq 'cargo install --registry crates-io "$package" --locked --version "=$version" --force' "$INSTALL_TOOLS" \
+  || fail "Cargo tools must use exact authenticated crates.io installs"
+grep -Fq 'go install "github.com/rhysd/actionlint/cmd/actionlint@v$ACTIONLINT_VERSION"' "$INSTALL_TOOLS" \
+  || fail "Go tools must use exact checksum-database-backed module versions"
+opam_commit=$(sed -n 's/^OPAM_REPOSITORY_COMMIT=//p' "$INSTALL_TOOLS")
+[[ "$opam_commit" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "OPAM repository must use a full Git commit"
+grep -Fq 'actual=$(git -C "$repository" rev-parse HEAD)' "$INSTALL_TOOLS" \
+  || fail "OPAM metadata must be checked against its pinned commit"
+grep -Fq 'actual=$(dpkg-query -W -f=' "$INSTALL_TOOLS" \
+  || fail "APT packages must be validated against exact versions"
+grep -Fq 'ci_tool_download wasmtime' "$NOSTD_WASM" \
+  || fail "Wasmtime must use the direct archive integrity contract"
+grep -Fq 'ci_tool_download zig' "$CROSS_SCRIPT" \
+  || fail "Zig must use the direct archive integrity contract"
+grep -Fq 'ci_tool_download codecov' "$INSTALL_CODECOV" \
+  || fail "Codecov must use the direct executable integrity contract"
+[[ $(yq eval '.jobs.coverage.steps[] | select(.id == "codecov") | .run' "$WEEKLY") \
+  == "scripts/ci/install-codecov.sh" ]] \
+  || fail "Weekly coverage must install the authenticated Codecov CLI"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal contract.
+grep -Fq 'binary: ${{ steps.codecov.outputs.binary }}' "$WEEKLY" \
+  || fail "Codecov action must use the repository-verified CLI"
+[[ $(yq eval '.jobs.scorecard.steps[] | select(.name == "Run Scorecard") | .uses' "$SCORECARD") \
+  == "./.github/actions/scorecard" ]] \
+  || fail "Scorecard must use the repository-owned digest-pinned action"
+scorecard_image=$(yq eval -r '.runs.image' "$SCORECARD_ACTION")
+[[ "$scorecard_image" =~ ^docker://ghcr\.io/ossf/scorecard-action@sha256:[0-9a-f]{64}$ ]] \
+  || fail "Scorecard container must use an OCI digest"
 
 [[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
   || fail "compile feature matrix must retain all 29 profiles"

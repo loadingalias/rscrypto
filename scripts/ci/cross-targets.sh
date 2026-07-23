@@ -13,32 +13,20 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 # shellcheck source=../lib/targets.sh
 source "$SCRIPT_DIR/../lib/targets.sh"
+# shellcheck source=../lib/ci-tool-integrity.sh
+source "$SCRIPT_DIR/../lib/ci-tool-integrity.sh"
 
 maybe_disable_sccache
 
-ZIG_VERSION="0.17.0-dev.1282+c0f9b51d8"
-ZIG_SHA256="6d81dec0152f6f11f8a12a84a73535b65070fe01b14a1ce75423870d65b3f270"
+zig_temp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
+zig_root=$(mktemp -d "$zig_temp_root/rscrypto-zig.XXXXXX")
+trap 'rm -rf "$zig_root"' EXIT
+ci_tool_download zig "$zig_root"
+tar -xJf "$CI_TOOL_ARCHIVE_PATH" --strip-components=1 -C "$zig_root"
+export PATH="$zig_root:$PATH"
 
-if ! command -v zig >/dev/null 2>&1; then
-  if [[ "$(uname -s)-$(uname -m)" != "Linux-x86_64" ]]; then
-    echo "error: Zig $ZIG_VERSION is required for MUSL target validation" >&2
-    exit 1
-  fi
-
-  zig_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/zig-$ZIG_VERSION"
-  zig_archive="$(mktemp)"
-  trap 'rm -f "$zig_archive"' EXIT
-  curl -fsSL --proto '=https' --tlsv1.2 \
-    "https://ziglang.org/builds/zig-x86_64-linux-$ZIG_VERSION.tar.xz" \
-    -o "$zig_archive"
-  echo "$ZIG_SHA256  $zig_archive" | sha256sum --check --status
-  mkdir -p "$zig_root"
-  tar -xJf "$zig_archive" --strip-components=1 -C "$zig_root"
-  export PATH="$zig_root:$PATH"
-fi
-
-if [[ "$(zig version)" != "$ZIG_VERSION" ]]; then
-  echo "error: expected Zig $ZIG_VERSION, found $(zig version)" >&2
+if [[ "$(zig version)" != "$CI_TOOL_VERSION" ]]; then
+  echo "error: expected Zig $CI_TOOL_VERSION, found $(zig version)" >&2
   exit 1
 fi
 

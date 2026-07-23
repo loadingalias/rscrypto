@@ -28,11 +28,6 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Detect Host Architecture
-      id: host
-      shell: bash
-      run: echo "uname_m=$(uname -m)" >> "$GITHUB_OUTPUT"
-
     # runs-on.com S3-backed cache intercept. No-op on non-runs-on pools.
     - name: Setup MagicCache
       if: inputs.enable-magic-cache == 'true'
@@ -43,27 +38,10 @@ runs:
       with:
         components: ${{ inputs.toolchain-components }}
 
-    # Cargo tools cache — mode in the key so mode swaps don't contaminate a shared slot.
-    - name: Cache Cargo Tools
-      if: inputs.tools-mode != 'none'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-      with:
-        path: ~/.cargo/bin
-        key: cargo-tools-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-${{ inputs.tools-mode }}-v11
-
-    - name: Cache BINSEC OPAM Switch
-      if: inputs.tools-mode == 'ct-linux'
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-      with:
-        path: ~/.opam
-        key: binsec-opam-${{ runner.os }}-${{ steps.host.outputs.uname_m }}-v2
-
     - name: Install Cargo Tools
       if: inputs.tools-mode != 'none'
       shell: bash
       env:
-        CARGO_RAIL_VERSION: "0.18.0"
-        CARGO_SEMVER_CHECKS_VERSION: "0.48.0"
         TOOLS_MODE: ${{ inputs.tools-mode }}
       run: scripts/ci/install-tools.sh "$TOOLS_MODE"
 
@@ -73,6 +51,7 @@ runs:
       with:
         shared-key: "rscrypto-v1-${{ inputs.cache-key }}"
         cache-directories: ${{ inputs.tools-mode == 'rail' && 'target/cargo-rail/cache' || '' }}
+        cache-bin: false
         cache-on-failure: true
         # Populate cache on main, manual dispatch, and PRs (so slow platforms
         # like IBM/RISC-V warm their cache before merge).

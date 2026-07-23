@@ -199,9 +199,14 @@ jobs:
       - name: Total Coverage (nextest + fuzz corpus replay)
         run: just test-coverage
 
+      - name: Install authenticated Codecov CLI
+        id: codecov
+        run: scripts/ci/install-codecov.sh
+
       - name: Upload to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
         with:
+          binary: ${{ steps.codecov.outputs.binary }}
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/total.lcov
           flags: total

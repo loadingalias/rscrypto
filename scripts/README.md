@@ -24,6 +24,7 @@ its caller.
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/check-action-pins.sh`      | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh` |
 | `ci/check-action-pins-test.sh` | `just check-actions`, `ci/dependabot-smoke.sh` |
+| `ci/tool-integrity-test.sh`    | `just check-actions` |
 | `ci/dependabot-smoke-test.sh`  | `just check-actions` |
 | `ci/check-ci-ownership.sh`     | `just check-actions`, `ci/check-ci-ownership-test.sh` |
 | `ci/check-ci-ownership-test.sh`| `just check-actions` |
@@ -77,6 +78,8 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | Script | Callers |
 |--------|---------|
 | `ci/install-tools.sh`          | `.github/actions/setup/action.yaml` |
+| `ci/install-codecov.sh`        | `weekly.yaml` |
+| `ci/setup-toolchain.sh`        | `.github/actions/setup-toolchain/action.yaml` |
 | `ci/run-rust-job.sh`           | `.github/workflows/_rust-job.yaml` |
 | `ci/resolve-rail-plan.sh`       | `.github/workflows/ci.yaml` |
 | `ci/dependabot-smoke.sh`       | `ci/run-rust-job.sh` |
@@ -95,6 +98,27 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `lib/targets.sh`        | `scripts/check/check-all.sh`, `scripts/check/check-linux.sh`, `scripts/check/check-ibm.sh` |
 | `lib/target-matrix.sh`  | `scripts/lib/targets.sh`, `_ci-suite.yaml` (target-matrix job) |
 | `lib/toolchain.sh`      | `.github/actions/setup-toolchain/action.yaml` |
+| `lib/ci-tool-integrity.sh` | `ci/cross-targets.sh`, `ci/install-codecov.sh`, `ci/nostd-wasm-suite.sh` |
+
+## CI tool integrity
+
+Direct executable downloads are declared in
+`.config/ci-tool-archives.tsv`. Each supported host has one exact version,
+filename, HTTPS URL, and repository-owned SHA-256; the shared verifier checks
+the digest before extraction, installation, or execution. OCI tools use an
+image digest in their local action definition.
+
+Package-manager tools install into a fresh runner-temporary root; CI never
+restores Cargo binaries, Cargo install metadata, Go module state, or OPAM
+switches from a cache. Cargo installs exact crates from crates.io and
+authenticates crate contents against registry checksums. Go installs an exact
+module through the public checksum database. Ubuntu 24.04 APT packages are
+exact-versioned and authenticated by signed repository metadata. OPAM uses
+exact packages from a repository pinned to a full Git commit and verifies
+package source hashes from that immutable metadata. Rustup receives only the
+exact toolchain declared in `rust-toolchain.toml`; runner images must provide
+rustup, which verifies component downloads against the exact distribution
+manifest, because network bootstrap installers are rejected.
 
 ## Results layout
 
