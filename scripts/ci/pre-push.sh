@@ -117,7 +117,7 @@ describe_rail_plan() {
   local file_count scope surfaces
   file_count="$(jq -r '.files | length' <<<"$RAIL_PLAN_JSON_CACHE")"
   scope="$(jq -r '.scope.mode // "unknown"' <<<"$RAIL_PLAN_JSON_CACHE")"
-  surfaces="$(jq -r '[.scope.surfaces // {} | to_entries[] | select(.value == true) | .key] | join(",")' <<<"$RAIL_PLAN_JSON_CACHE")"
+  surfaces="$(jq -r '[.surfaces // {} | to_entries[] | select(.value == true) | .key] | join(",")' <<<"$RAIL_SCOPE_JSON")"
   [[ -n "$surfaces" ]] || surfaces="none"
 
   echo "cargo-rail: ${file_count} changed file(s), scope=${scope}, surfaces=${surfaces}"
