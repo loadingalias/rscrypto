@@ -106,6 +106,24 @@ mod x25519_rng {
   }
 }
 
+#[cfg(feature = "rapidhash")]
+mod rapidhash_rng {
+  use core::hash::BuildHasher;
+
+  use rscrypto::RapidRandomState;
+
+  #[test]
+  fn random_state_uses_platform_entropy() {
+    let first = RapidRandomState::try_new().unwrap();
+    let second = RapidRandomState::try_new().unwrap();
+    assert_ne!(
+      first.hash_one(b"collection key"),
+      second.hash_one(b"collection key"),
+      "successive randomized states produced the same hash"
+    );
+  }
+}
+
 #[cfg(feature = "ecdsa-p256")]
 mod ecdsa_p256_rng {
   use rscrypto::EcdsaP256SecretKey;

@@ -328,7 +328,7 @@ pub fn assert_mac_streaming<M: Mac>(key: &[u8], data: &[u8], split_byte: u8) {
   m.update(&[]);
   let got = m.finalize();
 
-  assert_eq!(expected, got, "mac: streaming mismatch");
+  assert_eq!(expected.as_ref(), got.as_ref(), "mac: streaming mismatch");
 }
 
 /// Assert that `reset()` restores the keyed initial state for a MAC.
@@ -342,7 +342,7 @@ pub fn assert_mac_reset<M: Mac>(key: &[u8], data: &[u8]) {
   m.reset();
   m.update(data);
   let second = m.finalize();
-  assert_eq!(first, second, "mac: changed after reset");
+  assert_eq!(first.as_ref(), second.as_ref(), "mac: changed after reset");
 }
 
 /// Compare a freshly-computed MAC tag against an oracle-produced tag.

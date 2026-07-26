@@ -125,4 +125,6 @@ Renames at the streaming layer:
 - **Custom secrets are not exposed.** Seeded XXH3 is covered; arbitrary borrowed secret buffers are not. Keep `xxhash-rust` when a stored or cross-language format requires exact custom-secret output.
 - **Trusted collection keys only.** `Xxh3BuildHasher` is deterministic and does not draw entropy. Retain the standard library's randomized map hasher when an attacker can choose keys.
 - **`xxh32` / `xxh64` legacy.** rscrypto ships only XXH3 (the modern variant). If you depend on the legacy XXH32 or XXH64 algorithms, keep `xxhash-rust` for those.
-- **No SIMD-acceleration trade-off.** Both crates ship SIMD backends; rscrypto runtime-dispatches with the same three-tier model used elsewhere (`std` enables runtime detection; the portable kernel is always present).
+- **Backend selection.** rscrypto uses runtime capability detection with `std`
+  and retains its portable XXH3 implementation as the fallback. Check
+  [`docs/platforms.md`](../platforms.md) for the maintained target matrix.

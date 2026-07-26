@@ -186,17 +186,6 @@ impl_hash_kernel_introspect!(
   crate::hashes::fast::xxh3::Xxh3_128,
   crate::hashes::fast::xxh3::dispatch::kernel_name_for_len
 );
-#[cfg(feature = "rapidhash")]
-impl_hash_kernel_introspect!(
-  crate::hashes::fast::rapidhash::RapidHash64,
-  crate::hashes::fast::rapidhash::dispatch::kernel_name_for_len
-);
-#[cfg(feature = "rapidhash")]
-impl_hash_kernel_introspect!(
-  crate::hashes::fast::rapidhash::RapidHash128,
-  crate::hashes::fast::rapidhash::dispatch::kernel_name_for_len
-);
-
 #[cfg(test)]
 mod tests {
 

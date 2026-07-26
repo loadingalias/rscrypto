@@ -6,7 +6,7 @@
 //! Run with: `cargo run --example introspect --features checksums,hashes,aead,diag`
 
 use rscrypto::{
-  Blake3, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, RapidHash, Sha256, Shake256, Xxh3,
+  Blake3, Crc16Ccitt, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme, Sha256, Shake256, Xxh3,
   aead::introspect::{
     aegis256_backend, aes256gcm_backend, aes256gcmsiv_backend, ascon_aead128_backend, chacha20poly1305_backend,
     xchacha20poly1305_backend,
@@ -111,7 +111,6 @@ fn hash_kernel_probes() {
   println!("SHAKE-256:         {}", hash_kernel_for::<Shake256>(1024));
   println!("BLAKE3:            {}", hash_kernel_for::<Blake3>(1024));
   println!("XXH3:              {}", hash_kernel_for::<Xxh3>(1024));
-  println!("RapidHash:         {}", hash_kernel_for::<RapidHash>(1024));
   println!();
 }
 

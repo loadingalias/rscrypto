@@ -7,7 +7,7 @@ use std::io::{Cursor, Read, Write};
 
 use rscrypto::{
   Aead, Blake3, ChaCha20Poly1305, ChaCha20Poly1305Key, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey,
-  FastHash, HkdfSha256, HmacSha256, Mac, RapidHash, Sha256, Shake256, Xof, Xxh3, aead::Nonce96,
+  FastHash, HkdfSha256, HmacSha256, Mac, RapidHash64, Sha256, Shake256, Xof, Xxh3, aead::Nonce96,
 };
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
@@ -202,8 +202,8 @@ fn fast_hash_api() {
   let xxh_seeded = Xxh3::hash_with_seed(7, data);
   assert_ne!(xxh_default, xxh_seeded);
 
-  let rapid_default = RapidHash::hash(data);
-  let rapid_seeded = RapidHash::hash_with_seed(7, data);
+  let rapid_default = RapidHash64::hash(data);
+  let rapid_seeded = RapidHash64::hash_with_seed(7, data);
   assert_ne!(rapid_default, rapid_seeded);
 
   println!("Xxh3(default)       = 0x{xxh_default:016X}");

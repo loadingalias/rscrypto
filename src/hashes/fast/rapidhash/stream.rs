@@ -1,67 +1,13 @@
 use core::hash::{BuildHasher, Hasher};
 
 use super::{
-  DEFAULT_SECRETS, likely, rapid_mix, rapid_mum, rapidhash_fast_core_medium, rapidhash_seed_cpp, read_u32_le,
-  read_u32_np, read_u64_le, read_u64_np,
+  DEFAULT_SECRETS, RapidSecrets, premix_seed, rapid_mix, rapid_mum, rapidhash_core, rapidhash_seed_cpp, read_u32_le,
+  read_u64_le,
 };
 
 const CHUNK_SIZE: usize = 112;
 const PREVIOUS_TAIL_SIZE: usize = 16;
 const BUFFER_SIZE: usize = PREVIOUS_TAIL_SIZE + CHUNK_SIZE;
-// Indirection avoids materializing seven 64-bit constants in each cold streaming call.
-static STREAM_SECRETS: [u64; 7] = DEFAULT_SECRETS;
-
-#[inline(always)]
-fn map_finish(mut a: u64, mut b: u64, seed: u64) -> u64 {
-  a ^= DEFAULT_SECRETS[0];
-  b ^= seed;
-  (a, b) = rapid_mum(a, b);
-  a ^ b
-}
-
-#[inline(always)]
-fn map_hash_bytes(data: &[u8], mut seed: u64) -> u64 {
-  if data.len() <= 16 {
-    let (mut a, mut b) = (0, 0);
-    if data.len() >= 8 {
-      a = read_u64_np(data, 0);
-      b = read_u64_np(data, data.len().strict_sub(8));
-    } else if data.len() >= 4 {
-      a = read_u32_np(data, 0) as u64;
-      b = read_u32_np(data, data.len().strict_sub(4)) as u64;
-    } else if !data.is_empty() {
-      a = ((data[0] as u64) << 45) | data[data.len().strict_sub(1)] as u64;
-      b = data[data.len() >> 1] as u64;
-    }
-    seed = seed.wrapping_add(data.len() as u64);
-    map_finish(a, b, seed)
-  } else {
-    map_hash_bytes_long(data, seed)
-  }
-}
-
-#[cold]
-#[inline(never)]
-fn map_hash_bytes_long(data: &[u8], mut seed: u64) -> u64 {
-  debug_assert!(data.len() > 16);
-  if data.len() <= 48 {
-    seed = rapid_mix(read_u64_np(data, 0) ^ DEFAULT_SECRETS[0], read_u64_np(data, 8) ^ seed);
-    if data.len() > 32 {
-      seed = rapid_mix(read_u64_np(data, 16) ^ DEFAULT_SECRETS[0], read_u64_np(data, 24) ^ seed);
-    }
-    seed = seed.wrapping_add(data.len() as u64);
-    map_finish(
-      read_u64_np(data, data.len().strict_sub(16)),
-      read_u64_np(data, data.len().strict_sub(8)),
-      seed,
-    )
-  } else {
-    // SAFETY: 1. This branch is reached only for inputs longer than 48 bytes, satisfying the
-    // kernel's `data.len() > 16` precondition.
-    unsafe { rapidhash_fast_core_medium(data, seed) }
-  }
-}
-
 /// Allocation-free streaming rapidhash V3 state.
 ///
 /// Incremental writes produce the same result as hashing their concatenation
@@ -69,7 +15,6 @@ fn map_hash_bytes_long(data: &[u8], mut seed: u64) -> u64 {
 #[derive(Clone)]
 pub struct RapidStreamHasher {
   initial_seed: u64,
-  secrets: &'static [u64; 7],
   lanes: Option<[u64; 7]>,
   buffer: [u8; BUFFER_SIZE],
   buffered: usize,
@@ -90,7 +35,6 @@ impl RapidStreamHasher {
     let initial_seed = rapidhash_seed_cpp(seed);
     Self {
       initial_seed,
-      secrets: &STREAM_SECRETS,
       lanes: None,
       buffer: [0; BUFFER_SIZE],
       buffered: 0,
@@ -128,7 +72,7 @@ impl RapidStreamHasher {
       let chunk_start = PREVIOUS_TAIL_SIZE.strict_add(self.buffered);
       self.buffer[chunk_start..BUFFER_SIZE].copy_from_slice(&data[..copy_len]);
       let chunk = &self.buffer[PREVIOUS_TAIL_SIZE..].as_chunks::<CHUNK_SIZE>().0[0];
-      Self::write_chunk(lanes, self.secrets, chunk);
+      Self::write_chunk(lanes, &DEFAULT_SECRETS, chunk);
       &data[copy_len..]
     };
 
@@ -138,7 +82,7 @@ impl RapidStreamHasher {
     while offset < stop {
       let end = offset.strict_add(CHUNK_SIZE);
       let chunk = &remaining[offset..end].as_chunks::<CHUNK_SIZE>().0[0];
-      Self::write_chunk(lanes, self.secrets, chunk);
+      Self::write_chunk(lanes, &DEFAULT_SECRETS, chunk);
       last_chunk = Some(chunk);
       offset = end;
     }
@@ -188,11 +132,11 @@ impl RapidStreamHasher {
 
       let tail = &self.buffer[PREVIOUS_TAIL_SIZE..PREVIOUS_TAIL_SIZE.strict_add(self.buffered)];
       if tail.len() > 16 {
-        seed = rapid_mix(read_u64_le(tail, 0) ^ self.secrets[2], read_u64_le(tail, 8) ^ seed);
+        seed = rapid_mix(read_u64_le(tail, 0) ^ DEFAULT_SECRETS[2], read_u64_le(tail, 8) ^ seed);
         for (offset, secret) in [(16usize, 2usize), (32, 1), (48, 1), (64, 2), (80, 1)] {
           if tail.len() > offset.strict_add(16) {
             seed = rapid_mix(
-              read_u64_le(tail, offset) ^ self.secrets[secret],
+              read_u64_le(tail, offset) ^ DEFAULT_SECRETS[secret],
               read_u64_le(tail, offset.strict_add(8)) ^ seed,
             );
           }
@@ -205,10 +149,10 @@ impl RapidStreamHasher {
       remainder = self.buffered as u64;
     }
 
-    a ^= self.secrets[1];
+    a ^= DEFAULT_SECRETS[1];
     b ^= seed;
     (a, b) = rapid_mum(a, b);
-    rapid_mix(a ^ 0xaaaa_aaaa_aaaa_aaaa, b ^ self.secrets[1] ^ remainder)
+    rapid_mix(a ^ 0xaaaa_aaaa_aaaa_aaaa, b ^ DEFAULT_SECRETS[1] ^ remainder)
   }
 }
 
@@ -247,35 +191,51 @@ impl Hasher for RapidStreamHasher {
   }
 }
 
-/// Compact allocation-free hasher for `HashMap` and `HashSet` keys.
+/// Allocation-free hasher for `HashMap` and `HashSet` keys.
 ///
-/// Unlike [`RapidStreamHasher`], this uses collection-oriented field mixing
-/// and omits the final avalanche. Its output is not a stable C++-compatible
-/// fingerprint. Use [`RapidStreamHasher`] when writes must equal hashing their
-/// concatenation.
+/// Unlike [`RapidStreamHasher`], separate writes need not equal hashing their
+/// concatenation. Its collection-oriented output is not a stable
+/// C++-compatible fingerprint.
+///
+/// Construct it through [`RapidSeededState`] for reproducible, trusted-key
+/// collections. [`RapidRandomState`] adds per-state randomization when
+/// RapidHash's limited HashDoS hardening is sufficient. It intentionally has no
+/// public constructor or deterministic default.
 #[derive(Clone, Copy)]
 pub struct RapidHasher {
   seed: u64,
+  random_word0: u64,
   sponge: u128,
   sponge_bits: u8,
 }
 
 impl RapidHasher {
-  /// Create an unseeded map hasher.
-  #[inline(always)]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self::with_seed(0)
-  }
-
-  /// Create a map hasher with `seed`.
-  #[inline(always)]
-  #[must_use]
-  pub const fn with_seed(seed: u64) -> Self {
+  #[inline]
+  const fn deterministic(seed: u64) -> Self {
     Self {
-      seed: rapidhash_seed_cpp(seed),
+      seed,
+      random_word0: 0,
       sponge: 0,
       sponge_bits: 0,
+    }
+  }
+
+  #[inline]
+  const fn randomized(seed: u64, random_word0: u64) -> Self {
+    Self {
+      seed,
+      random_word0,
+      sponge: 0,
+      sponge_bits: 0,
+    }
+  }
+
+  #[inline(always)]
+  const fn word0(&self) -> u64 {
+    if self.random_word0 == 0 {
+      DEFAULT_SECRETS[0]
+    } else {
+      self.random_word0
     }
   }
 
@@ -284,7 +244,7 @@ impl RapidHasher {
     if self.sponge_bits != 0 {
       self.seed = rapid_mix(
         self.sponge as u64 ^ self.seed,
-        (self.sponge >> 64) as u64 ^ DEFAULT_SECRETS[0],
+        (self.sponge >> 64) as u64 ^ self.word0(),
       );
       self.sponge = 0;
       self.sponge_bits = 0;
@@ -298,16 +258,9 @@ impl RapidHasher {
     } else {
       rapid_mix(
         self.sponge as u64 ^ self.seed,
-        (self.sponge >> 64) as u64 ^ DEFAULT_SECRETS[0],
+        (self.sponge >> 64) as u64 ^ self.word0(),
       )
     }
-  }
-}
-
-impl Default for RapidHasher {
-  #[inline(always)]
-  fn default() -> Self {
-    Self::new()
   }
 }
 
@@ -324,8 +277,8 @@ macro_rules! write_integer {
       fn $method(&mut self, value: $ty) {
         const BITS: u8 = core::mem::size_of::<$ty>() as u8 * 8;
         let value = (value as $unsigned) as u128;
-        let next_bits = self.sponge_bits.wrapping_add(BITS);
-        if likely(next_bits <= 128) {
+        let next_bits = self.sponge_bits.strict_add(BITS);
+        if next_bits <= 128 {
           self.sponge |= value << self.sponge_bits;
           self.sponge_bits = next_bits;
         } else {
@@ -345,7 +298,12 @@ impl Hasher for RapidHasher {
       return;
     }
     self.flush_sponge();
-    self.seed = map_hash_bytes(bytes, self.seed);
+    self.seed = if self.random_word0 == 0 {
+      rapidhash_core(bytes, self.seed, &DEFAULT_SECRETS)
+    } else {
+      let state = RapidSecrets::derived(self.seed, self.random_word0);
+      rapidhash_core(bytes, state.seed, &state.words)
+    };
   }
 
   #[inline(always)]
@@ -399,46 +357,75 @@ impl Hasher for RapidHasher {
   }
 }
 
-/// Deterministic [`BuildHasher`] producing allocation-free [`RapidHasher`]
-/// instances for trusted collection keys.
-///
-/// The default seed is fixed at zero. Do not use this builder when an attacker
-/// can choose keys; retain the standard library's randomized map hasher or use
-/// another randomized collision-resistant builder for adversarial input.
+/// Deterministic [`BuildHasher`] for reproducible, trusted collection keys.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RapidBuildHasher {
+pub struct RapidSeededState {
   seed: u64,
 }
 
-impl RapidBuildHasher {
-  /// Create a deterministic builder with seed zero.
-  #[inline(always)]
-  #[must_use]
-  pub const fn new() -> Self {
-    Self { seed: 0 }
-  }
-
+impl RapidSeededState {
   /// Create a deterministic builder with `seed`.
   #[inline(always)]
   #[must_use]
-  pub const fn with_seed(seed: u64) -> Self {
-    Self { seed }
+  pub const fn new(seed: u64) -> Self {
+    Self {
+      seed: rapidhash_seed_cpp(seed),
+    }
   }
 }
 
-impl Default for RapidBuildHasher {
-  #[inline(always)]
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl BuildHasher for RapidBuildHasher {
+impl BuildHasher for RapidSeededState {
   type Hasher = RapidHasher;
 
-  #[inline(always)]
+  #[inline]
   fn build_hasher(&self) -> Self::Hasher {
-    RapidHasher::with_seed(self.seed)
+    RapidHasher::deterministic(self.seed)
+  }
+}
+
+/// Fallible randomized [`BuildHasher`] with a per-state seed and secret schedule.
+///
+/// This changes collision behavior between states, but RapidHash remains
+/// non-cryptographic.
+#[derive(Clone)]
+pub struct RapidRandomState {
+  seed: u64,
+  word0: u64,
+}
+
+impl RapidRandomState {
+  /// Create a randomized state with caller-provided entropy.
+  ///
+  /// The callback must fill the entire supplied buffer before returning `Ok`.
+  pub fn try_new_with<E>(fill: impl FnOnce(&mut [u8]) -> Result<(), E>) -> Result<Self, E> {
+    let mut seed = [0u8; 8];
+    fill(&mut seed)?;
+    let seed = premix_seed(u64::from_le_bytes(seed), 0);
+    Ok(Self {
+      seed,
+      word0: premix_seed(seed, 0),
+    })
+  }
+
+  /// Create a randomized state from the platform entropy source.
+  #[cfg(feature = "getrandom")]
+  pub fn try_new() -> Result<Self, getrandom::Error> {
+    Self::try_new_with(getrandom::fill)
+  }
+}
+
+impl BuildHasher for RapidRandomState {
+  type Hasher = RapidHasher;
+
+  #[inline]
+  fn build_hasher(&self) -> Self::Hasher {
+    RapidHasher::randomized(self.seed, self.word0)
+  }
+}
+
+impl core::fmt::Debug for RapidRandomState {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.debug_struct("RapidRandomState").finish_non_exhaustive()
   }
 }
 
@@ -451,10 +438,13 @@ mod tests {
   use proptest::prelude::*;
 
   use super::*;
-  use crate::traits::FastHash;
 
   fn data(len: usize) -> Vec<u8> {
     (0..len).map(|i| i.wrapping_mul(131).wrapping_add(17) as u8).collect()
+  }
+
+  fn seeded_hasher(seed: u64) -> RapidHasher {
+    RapidSeededState::new(seed).build_hasher()
   }
 
   #[test]
@@ -511,7 +501,7 @@ mod tests {
 
   #[test]
   fn rapid_hasher_finish_is_repeatable_and_clone_preserves_state() {
-    let mut hasher = RapidHasher::with_seed(42);
+    let mut hasher = seeded_hasher(42);
     hasher.write_u64(0x0123_4567_89ab_cdef);
     hasher.write(b"field");
     let cloned = hasher;
@@ -533,11 +523,11 @@ mod tests {
 
   #[test]
   fn rapid_hasher_preserves_mixed_field_order() {
-    let mut integer_then_bytes = RapidHasher::new();
+    let mut integer_then_bytes = seeded_hasher(0);
     integer_then_bytes.write_u64(7);
     integer_then_bytes.write(b"field");
 
-    let mut bytes_then_integer = RapidHasher::new();
+    let mut bytes_then_integer = seeded_hasher(0);
     bytes_then_integer.write(b"field");
     bytes_then_integer.write_u64(7);
 
@@ -545,23 +535,45 @@ mod tests {
   }
 
   #[test]
-  fn rapid_hasher_nonempty_byte_writes_match_upstream_fast() {
+  fn seeded_states_are_reproducible_and_seed_separated() {
     for seed in [0, 1, u64::MAX, 0x243f_6a88_85a3_08d3] {
-      for len in 1..=512 {
-        let input = data(len);
-        let mut ours = RapidHasher::with_seed(seed);
-        ours.write(&input);
-        let mut upstream = rapidhash::fast::RapidHasher::new(seed);
-        upstream.write(&input);
-        assert_eq!(ours.finish(), upstream.finish(), "seed={seed:#x}, len={len}");
-      }
+      let state = RapidSeededState::new(seed);
+      assert_eq!(state.hash_one(b"collection key"), state.hash_one(b"collection key"));
     }
+    assert_ne!(
+      RapidSeededState::new(1).hash_one(b"collection key"),
+      RapidSeededState::new(2).hash_one(b"collection key")
+    );
   }
 
   #[test]
-  fn rapid_build_hasher_produces_rapid_hasher() {
+  fn rapid_states_produce_rapid_hasher() {
     fn assert_builder<B: BuildHasher<Hasher = RapidHasher>>() {}
-    assert_builder::<RapidBuildHasher>();
+    assert_builder::<RapidSeededState>();
+    assert_builder::<RapidRandomState>();
+  }
+
+  #[test]
+  fn random_state_uses_fallible_caller_entropy() {
+    let first = RapidRandomState::try_new_with(|seed| {
+      seed.copy_from_slice(&1u64.to_le_bytes());
+      Ok::<_, ()>(())
+    })
+    .unwrap();
+    let same = RapidRandomState::try_new_with(|seed| {
+      seed.copy_from_slice(&1u64.to_le_bytes());
+      Ok::<_, ()>(())
+    })
+    .unwrap();
+    let second = RapidRandomState::try_new_with(|seed| {
+      seed.copy_from_slice(&2u64.to_le_bytes());
+      Ok::<_, ()>(())
+    })
+    .unwrap();
+
+    assert_eq!(first.hash_one(b"collection key"), same.hash_one(b"collection key"));
+    assert_ne!(first.hash_one(b"collection key"), second.hash_one(b"collection key"));
+    assert!(RapidRandomState::try_new_with(|_| Err::<(), _>("entropy unavailable")).is_err());
   }
 
   #[test]
@@ -569,9 +581,9 @@ mod tests {
     macro_rules! assert_integer {
       ($method:ident, $value:expr) => {{
         let value = $value;
-        let mut direct = RapidHasher::with_seed(42);
+        let mut direct = seeded_hasher(42);
         direct.$method(value);
-        let mut via_hash = RapidHasher::with_seed(42);
+        let mut via_hash = seeded_hasher(42);
         value.hash(&mut via_hash);
         assert_eq!(direct.finish(), via_hash.finish(), stringify!($method));
       }};
@@ -595,19 +607,19 @@ mod tests {
   proptest! {
     #[test]
     fn rapid_hasher_integer_methods_match_primitive_hash(value in any::<u128>(), seed in any::<u64>()) {
-      let mut direct = RapidHasher::with_seed(seed);
+      let mut direct = seeded_hasher(seed);
       direct.write_u128(value);
-      let mut via_hash = RapidHasher::with_seed(seed);
+      let mut via_hash = seeded_hasher(seed);
       value.hash(&mut via_hash);
       prop_assert_eq!(direct.finish(), via_hash.finish());
     }
 
     #[test]
     fn rapid_hasher_mixed_fields_are_deterministic(value in any::<u64>(), bytes in proptest::collection::vec(any::<u8>(), 0..256), seed in any::<u64>()) {
-      let mut first = RapidHasher::with_seed(seed);
+      let mut first = seeded_hasher(seed);
       first.write_u64(value);
       first.write(&bytes);
-      let mut second = RapidHasher::with_seed(seed);
+      let mut second = seeded_hasher(seed);
       value.hash(&mut second);
       second.write(&bytes);
       prop_assert_eq!(first.finish(), second.finish());

@@ -41,7 +41,7 @@ The `hmac` feature implies `sha2`: no second dep to manage for SHA-2 HMAC. Use `
 | `Hmac<Sha3_256>` | `HmacSha3_256` | `HmacSha3_256Tag` |
 | `Hmac<Sha3_384>` | `HmacSha3_384` | `HmacSha3_384Tag` |
 | `Hmac<Sha3_512>` | `HmacSha3_512` | `HmacSha3_512Tag` |
-| `Hmac<Sha224>` / `Hmac<Sha512_224>` / `Hmac<Sha512_256>` | not currently mapped: file an issue |  |
+| `Hmac<Sha224>` / `Hmac<Sha512_224>` / `Hmac<Sha512_256>` | not mapped: keep RustCrypto HMAC |  |
 
 ## API patterns
 
@@ -110,10 +110,10 @@ Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verif
 
 ## Notes
 
-- **Generic parameter gone.** `Hmac<D>` becomes one of the named types (`HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha3_224`, `HmacSha3_256`, `HmacSha3_384`, `HmacSha3_512`). Replace any `where D: Digest + BlockSizeUser` bound with the concrete rscrypto type. If you genuinely need to be generic over the underlying hash, file an issue.
+- **Generic parameter gone.** `Hmac<D>` becomes one of the named types (`HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha3_224`, `HmacSha3_256`, `HmacSha3_384`, `HmacSha3_512`). Replace a generic bound only when the call site has a fixed algorithm; keep RustCrypto HMAC when digest-generic behavior is part of the API.
 - **`KeyInit` import not needed.** RustCrypto routes key construction through `KeyInit::new_from_slice`. rscrypto's `HmacSha256::new(&[u8])` is inherent: no extra trait import.
 - **`finalize` consumes vs. borrows.** Same pattern as `sha2` / `sha3` migrations, except HMAC returns a typed tag rather than a raw byte array.
-- **`Mac::chain_update` builder pattern.** RustCrypto's `chain_update(data) -> Self` lets you write `mac.chain_update(a).chain_update(b).finalize()`. rscrypto does not currently expose the chained variant; use `.update(a); .update(b);` then `.finalize()`. Same number of statements, no `Self` returns to thread.
+- **`Mac::chain_update` builder pattern.** rscrypto does not expose the chained variant; use `.update(a); .update(b);` then `.finalize()`.
 - **Long keys are pre-hashed (RFC 2104).** Both crates pre-hash any key longer than the underlying hash's block size (64 bytes for SHA-256, 128 bytes for SHA-384/SHA-512, and SHA-3 rates of 144/136/104/72 bytes for SHA3-224/256/384/512). Outputs are byte-identical regardless of key length.
 - **`MacError` → `VerificationError`.** RustCrypto's `MacError` is opaque (no detail). rscrypto's `VerificationError` is also opaque, so neither exposes an error-variant oracle. Error opacity alone does not prove identical timing. The names differ; the result contract is the same.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `mac_to_vec` / `finalize_to_vec` helpers are gated on `alloc`; the core fixed-array API works in pure `no_std`.

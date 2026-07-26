@@ -156,11 +156,11 @@ jq -e '
     and .files[0].path == "scripts/README.md"
     and .files[0].kind == "docs"
     and .scope.mode == "empty"
-    and .scope.surfaces.docs == true
-    and .scope.surfaces.infra == false
-    and .scope.surfaces.build == false
-    and .scope.surfaces.test == false
-    and .scope.surfaces["custom:cargo_graph"] == false
+    and .surfaces.docs.enabled == true
+    and .surfaces.infra.enabled == false
+    and .surfaces.build.enabled == false
+    and .surfaces.test.enabled == false
+    and .surfaces["custom:cargo_graph"].enabled == false
 ' >/dev/null <<<"$docs_plan"
 
 printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' >"$plan_fixture/scripts/check.sh"
@@ -173,9 +173,9 @@ jq -e '
     and (.files | length == 1)
     and .files[0].path == "scripts/check.sh"
     and .files[0].kind == "script"
-    and .scope.surfaces.infra == true
-    and .scope.surfaces.build == false
-    and .scope.surfaces.test == false
+    and .surfaces.infra.enabled == true
+    and .surfaces.build.enabled == false
+    and .surfaces.test.enabled == false
 ' >/dev/null <<<"$script_plan"
 
 echo "Pre-push regression tests passed"

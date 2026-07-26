@@ -37,7 +37,7 @@ rscrypto = { version = "0.7.8", features = ["sha2"] }
 | `sha2::Sha512` | `rscrypto::Sha512` | `[u8; 64]` |
 | `sha2::Sha512_256` | `rscrypto::Sha512_256` | `[u8; 32]` |
 
-`sha2::Sha512_224` is not currently mapped; if you need it, file an issue.
+`sha2::Sha512_224` is not mapped; keep RustCrypto SHA-2 for that variant.
 
 ## API patterns
 

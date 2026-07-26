@@ -1,48 +1,15 @@
-//! rapidhash V3 (**NOT CRYPTO**).
+//! RapidHash V3 (**NOT CRYPTO**).
 //!
-//! Portable scalar implementation.
-//!
-//! Two variants are provided:
-//!
-//! - **`RapidHash64` / `RapidHash128`** — the standard V3 algorithm with avalanche finisher (extra
-//!   `rapid_mix`). C++-compatible output. Use when you need stable, cross-language hash values.
-//!
-//! - **`RapidHashFast64` / `RapidHashFast128`** — upstream's native-endian in-memory fast
-//!   algorithm. Its output is implementation-defined and is not a portable V3 fingerprint.
+//! The portable, safe Rust implementation is the sole semantic authority.
 
-#![allow(clippy::indexing_slicing)] // Tight block parsing
+#![allow(clippy::indexing_slicing)]
 
 use crate::traits::FastHash;
 
 mod stream;
 
-pub use stream::{RapidBuildHasher, RapidHasher, RapidStreamHasher};
+pub use stream::{RapidHasher, RapidRandomState, RapidSeededState, RapidStreamHasher};
 
-#[doc(hidden)]
-pub(crate) mod dispatch;
-#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
-#[doc(hidden)]
-pub(crate) mod dispatch_tables;
-#[cfg(all(feature = "rapidhash", any(test, feature = "diag")))]
-pub(crate) mod kernels;
-
-/// Standard V3 rapidhash (64-bit) with avalanche finisher.
-#[derive(Clone, Debug, Default)]
-pub struct RapidHash64;
-
-/// Standard V3 rapidhash (128-bit) with avalanche finisher.
-#[derive(Clone, Debug, Default)]
-pub struct RapidHash128;
-
-/// Upstream-compatible native-endian in-memory fast hash (64-bit).
-#[derive(Clone, Debug, Default)]
-pub struct RapidHashFast64;
-
-/// Two seeded lanes of the native-endian in-memory fast hash (128-bit).
-#[derive(Clone, Debug, Default)]
-pub struct RapidHashFast128;
-
-// rapidhash v3 default secrets (C++ compatible).
 const DEFAULT_SECRETS: [u64; 7] = [
   0x2d35_8dcc_aa6c_78a5,
   0x8bb8_4b93_962e_acc9,
@@ -53,1134 +20,55 @@ const DEFAULT_SECRETS: [u64; 7] = [
   0x90ed_1765_281c_388c,
 ];
 
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-struct PrecomputedSecrets {
+struct RapidSecrets {
   seed: u64,
-  secrets: [u64; 7],
+  words: [u64; 7],
 }
 
-// Default paths use referenced precomputed state to match upstream's
-// `RapidSecrets` code shape on targets where materializing many 64-bit
-// constants is costly.
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-static V3_DEFAULT_SECRETS: PrecomputedSecrets = PrecomputedSecrets {
-  seed: PRECOMPUTED_SEED_0,
-  secrets: DEFAULT_SECRETS,
-};
-
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-static V3_DEFAULT_HI_SECRETS: PrecomputedSecrets = PrecomputedSecrets {
-  seed: PRECOMPUTED_SEED_HI,
-  secrets: DEFAULT_SECRETS,
-};
-
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-static FAST_DEFAULT_SECRETS: [u64; 7] = DEFAULT_SECRETS;
-
-#[inline(always)]
-fn default_fast_secret<const IDX: usize>() -> u64 {
-  debug_assert!(IDX < DEFAULT_SECRETS.len());
-
-  #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-  {
-    FAST_DEFAULT_SECRETS[IDX]
-  }
-
-  #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-  {
-    DEFAULT_SECRETS[IDX]
-  }
-}
-
-#[inline(always)]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-fn v3_secret<const IDX: usize>(secrets: &[u64; 7]) -> u64 {
-  debug_assert!(IDX < DEFAULT_SECRETS.len());
-  secrets[IDX]
-}
-
-#[inline(always)]
-fn read_u32_le(input: &[u8], offset: usize) -> u32 {
-  debug_assert!(offset + 4 <= input.len());
-  // SAFETY: caller ensures `offset + 4 <= input.len()`, and `read_unaligned` supports unaligned
-  // loads.
-  let v = unsafe { core::ptr::read_unaligned(input.as_ptr().add(offset) as *const u32) };
-  u32::from_le(v)
-}
-
-#[inline(always)]
-fn read_u64_le(input: &[u8], offset: usize) -> u64 {
-  debug_assert!(offset + 8 <= input.len());
-  // SAFETY: caller ensures `offset + 8 <= input.len()`, and `read_unaligned` supports unaligned
-  // loads.
-  let v = unsafe { core::ptr::read_unaligned(input.as_ptr().add(offset) as *const u64) };
-  u64::from_le(v)
-}
-
-/// Native-endian u32 read. Used by the Fast variant only — the Fast variant is
-/// for in-process hashing and does not need cross-platform byte-order consistency.
-/// Skipping the byte-swap eliminates LRVG overhead on big-endian platforms (s390x,
-/// POWER), matching the competitor's `read_u32_np`.
-#[inline(always)]
-fn read_u32_np(input: &[u8], offset: usize) -> u32 {
-  debug_assert!(offset + 4 <= input.len());
-  // SAFETY: caller ensures `offset + 4 <= input.len()`, and `read_unaligned` supports unaligned
-  // loads.
-  unsafe { core::ptr::read_unaligned(input.as_ptr().add(offset) as *const u32) }
-}
-
-/// Native-endian u64 read. Used by the Fast variant only — see `read_u32_np`.
-#[inline(always)]
-fn read_u64_np(input: &[u8], offset: usize) -> u64 {
-  debug_assert!(offset + 8 <= input.len());
-  // SAFETY: caller ensures `offset + 8 <= input.len()`, and `read_unaligned` supports unaligned
-  // loads.
-  unsafe { core::ptr::read_unaligned(input.as_ptr().add(offset) as *const u64) }
-}
-
-#[inline(always)]
-const fn rapid_mum(a: u64, b: u64) -> (u64, u64) {
-  let r = (a as u128).wrapping_mul(b as u128);
-  (r as u64, (r >> 64) as u64)
-}
-
-#[inline(always)]
-const fn rapid_mix(a: u64, b: u64) -> u64 {
-  let r = (a as u128).wrapping_mul(b as u128);
-  (r as u64) ^ ((r >> 64) as u64)
-}
-
-/// Hint that `cond` is likely true. Uses `#[cold]` to nudge branch layout.
-#[inline(always)]
-fn likely(cond: bool) -> bool {
-  if !cond {
-    cold_path();
-  }
-  cond
-}
-
-/// Hint that `cond` is likely false.
-#[inline(always)]
-fn unlikely(cond: bool) -> bool {
-  if cond {
-    cold_path();
-  }
-  cond
-}
-
-#[cold]
-#[inline(always)]
-fn cold_path() {}
-
-#[inline(always)]
-const fn rapidhash_seed_cpp(seed: u64) -> u64 {
-  seed ^ rapid_mix(seed ^ DEFAULT_SECRETS[2], DEFAULT_SECRETS[1])
-}
-
-const V3_HI_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
-
-/// Precomputed seed for the default case (seed = 0). Eliminates one 128-bit
-/// multiply per call when using `FastHash::hash()` (the common path).
-const PRECOMPUTED_SEED_0: u64 = rapidhash_seed_cpp(0);
-const PRECOMPUTED_SEED_HI: u64 = rapidhash_seed_cpp(V3_HI_SEED);
-
-#[inline(always)]
-const fn rapidhash_fast_default_empty(seed: u64) -> u64 {
-  rapid_mix(DEFAULT_SECRETS[0], seed)
-}
-
-const FAST_EMPTY_HASH_SEED_0: u64 = rapidhash_fast_default_empty(PRECOMPUTED_SEED_0);
-const FAST_EMPTY_HASH_SEED_HI: u64 = rapidhash_fast_default_empty(PRECOMPUTED_SEED_HI);
-
-#[inline(always)]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-fn rapidhash_finish(a: u64, b: u64, remainder: u64, secrets: &[u64; 7]) -> u64 {
-  rapid_mix(a ^ 0xaaaa_aaaa_aaaa_aaaa, b ^ v3_secret::<1>(secrets) ^ remainder)
-}
-
-#[inline(always)]
-#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-fn rapidhash_finish_default(a: u64, b: u64, remainder: u64) -> u64 {
-  rapid_mix(a ^ 0xaaaa_aaaa_aaaa_aaaa, b ^ DEFAULT_SECRETS[1] ^ remainder)
-}
-
-#[inline(always)]
-fn rapidhash_v3_with_seed(data: &[u8], seed: u64) -> u64 {
-  rapidhash_core_default::<true>(data, rapidhash_seed_cpp(seed))
-}
-
-#[inline(always)]
-fn rapidhash_fast_with_seed(data: &[u8], seed: u64) -> u64 {
-  rapidhash_fast_core(data, rapidhash_seed_cpp(seed))
-}
-
-#[inline(always)]
-fn rapidhash_fast_128_with_seed(data: &[u8], seed: u64) -> u128 {
-  let seed_lo = rapidhash_seed_cpp(seed);
-  let seed_hi = rapidhash_seed_cpp(seed ^ V3_HI_SEED);
-  rapidhash_fast_128_core(data, seed_lo, seed_hi)
-}
-
-#[inline(always)]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-fn rapidhash_core<const AVALANCHE: bool>(data: &[u8], mut seed: u64, secrets: &[u64; 7]) -> u64 {
-  let mut a = 0u64;
-  let mut b = 0u64;
-
-  if likely(data.len() <= 16) {
-    // Small path: 0-16 bytes. Fully inline for minimum overhead.
-    if data.len() >= 4 {
-      seed ^= data.len() as u64;
-      if data.len() >= 8 {
-        a = read_u64_le(data, 0);
-        b = read_u64_le(data, data.len() - 8);
-      } else {
-        a = read_u32_le(data, 0) as u64;
-        b = read_u32_le(data, data.len() - 4) as u64;
-      }
-    } else if !data.is_empty() {
-      a = ((data[0] as u64) << 45) | (data[data.len() - 1] as u64);
-      b = data[data.len() >> 1] as u64;
-    }
-  } else {
-    // Medium/large path: >16 bytes. Keep the 7-stream bulk loop out of the
-    // 17-112B path so fixed medium inputs don't pay large-handler setup.
-    // SAFETY: we just verified data.len() > 16.
-    unsafe {
-      if data.len() <= 112 {
-        return rapidhash_core_medium::<AVALANCHE>(data, seed, secrets);
-      }
-      return rapidhash_core_large::<AVALANCHE>(data, seed, secrets);
+impl RapidSecrets {
+  #[inline(always)]
+  const fn cpp(seed: u64) -> Self {
+    Self {
+      seed: rapidhash_seed_cpp(seed),
+      words: DEFAULT_SECRETS,
     }
   }
 
-  let remainder = data.len() as u64;
-  a ^= v3_secret::<1>(secrets);
-  b ^= seed;
-  (a, b) = rapid_mum(a, b);
-  rapidhash_final::<AVALANCHE>(a, b, remainder, secrets)
-}
-
-#[inline(always)]
-fn rapidhash_core_default<const AVALANCHE: bool>(data: &[u8], seed: u64) -> u64 {
-  #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-  {
-    rapidhash_core::<AVALANCHE>(data, seed, &V3_DEFAULT_SECRETS.secrets)
-  }
-
-  #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-  {
-    let mut seed = seed;
-    let mut a = 0u64;
-    let mut b = 0u64;
-
-    if likely(data.len() <= 16) {
-      if data.len() >= 4 {
-        seed ^= data.len() as u64;
-        if data.len() >= 8 {
-          a = read_u64_le(data, 0);
-          b = read_u64_le(data, data.len() - 8);
-        } else {
-          a = read_u32_le(data, 0) as u64;
-          b = read_u32_le(data, data.len() - 4) as u64;
-        }
-      } else if !data.is_empty() {
-        a = ((data[0] as u64) << 45) | (data[data.len() - 1] as u64);
-        b = data[data.len() >> 1] as u64;
-      }
-
-      let remainder = data.len() as u64;
-      a ^= DEFAULT_SECRETS[1];
-      b ^= seed;
-      (a, b) = rapid_mum(a, b);
-      return rapidhash_final_default::<AVALANCHE>(a, b, remainder);
-    }
-
-    // SAFETY: data.len() > 16 verified above.
-    unsafe {
-      if data.len() <= 112 {
-        return rapidhash_core_medium_default::<AVALANCHE>(data, seed);
-      }
-      rapidhash_core_large_default::<AVALANCHE>(data, seed)
-    }
+  #[inline]
+  const fn derived(seed: u64, word0: u64) -> Self {
+    let mut words = [0; 7];
+    words[0] = word0;
+    words[1] = premix_seed(words[0], 1);
+    words[2] = premix_seed(words[1], 2);
+    words[3] = premix_seed(words[2], 3);
+    words[4] = premix_seed(words[3], 4);
+    words[5] = premix_seed(words[4], 5);
+    words[6] = premix_seed(words[5], 6);
+    Self { seed, words }
   }
 }
 
-#[inline(always)]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-fn rapidhash_final<const AVALANCHE: bool>(a: u64, b: u64, remainder: u64, secrets: &[u64; 7]) -> u64 {
-  if AVALANCHE {
-    rapidhash_finish(a, b, remainder, secrets)
-  } else {
-    a ^ b
-  }
-}
+const DEFAULT_RAPID_SECRETS: RapidSecrets = RapidSecrets::cpp(0);
 
-#[inline(always)]
-#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-fn rapidhash_final_default<const AVALANCHE: bool>(a: u64, b: u64, remainder: u64) -> u64 {
-  if AVALANCHE {
-    rapidhash_finish_default(a, b, remainder)
-  } else {
-    a ^ b
-  }
-}
+/// Standard, portable RapidHash V3 with a 64-bit output.
+#[derive(Clone, Debug, Default)]
+pub struct RapidHash64;
 
-/// Handles inputs 17-112 bytes. This keeps fixed-size medium inputs out of the
-/// 7-stream large handler without changing V3 output.
-///
-/// # Safety
-///
-/// Caller must guarantee `16 < data.len() <= 112`.
-#[inline(always)]
-#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-unsafe fn rapidhash_core_medium_default<const AVALANCHE: bool>(data: &[u8], mut seed: u64) -> u64 {
-  // SAFETY: caller guarantees 16 < data.len() <= 112. This eliminates redundant
-  // bounds checks in the tail-read section below.
-  unsafe {
-    core::hint::assert_unchecked(data.len() > 16);
-    core::hint::assert_unchecked(data.len() <= 112);
+impl RapidHash64 {
+  /// Hash `data` with the C++-compatible default seed.
+  #[inline]
+  #[must_use]
+  pub const fn hash(data: &[u8]) -> u64 {
+    rapidhash_core(data, DEFAULT_RAPID_SECRETS.seed, &DEFAULT_RAPID_SECRETS.words)
   }
 
-  let mut a = 0u64;
-  let mut b = 0u64;
-
-  seed = rapid_mix(read_u64_le(data, 0) ^ DEFAULT_SECRETS[2], read_u64_le(data, 8) ^ seed);
-  if data.len() > 32 {
-    seed = rapid_mix(read_u64_le(data, 16) ^ DEFAULT_SECRETS[2], read_u64_le(data, 24) ^ seed);
-    if data.len() > 48 {
-      seed = rapid_mix(read_u64_le(data, 32) ^ DEFAULT_SECRETS[1], read_u64_le(data, 40) ^ seed);
-      if data.len() > 64 {
-        seed = rapid_mix(read_u64_le(data, 48) ^ DEFAULT_SECRETS[1], read_u64_le(data, 56) ^ seed);
-        if data.len() > 80 {
-          seed = rapid_mix(read_u64_le(data, 64) ^ DEFAULT_SECRETS[2], read_u64_le(data, 72) ^ seed);
-          if data.len() > 96 {
-            seed = rapid_mix(read_u64_le(data, 80) ^ DEFAULT_SECRETS[1], read_u64_le(data, 88) ^ seed);
-          }
-        }
-      }
-    }
+  /// Hash `data` with the C++-compatible V3 seed schedule.
+  #[inline]
+  #[must_use]
+  pub const fn hash_with_seed(seed: u64, data: &[u8]) -> u64 {
+    let state = RapidSecrets::cpp(seed);
+    rapidhash_core(data, state.seed, &state.words)
   }
-
-  let remainder = data.len() as u64;
-  a ^= read_u64_le(data, data.len() - 16) ^ remainder;
-  b ^= read_u64_le(data, data.len() - 8);
-
-  a ^= DEFAULT_SECRETS[1];
-  b ^= seed;
-
-  (a, b) = rapid_mum(a, b);
-  rapidhash_final_default::<AVALANCHE>(a, b, remainder)
-}
-
-/// Handles inputs >16 bytes. Kept as a separate function so the small-path
-/// entry point stays lean for inlining. LLVM decides whether to inline this.
-///
-/// # Safety
-///
-/// Caller must guarantee `data.len() > 16`.
-#[inline]
-#[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-unsafe fn rapidhash_core_large_default<const AVALANCHE: bool>(data: &[u8], mut seed: u64) -> u64 {
-  // SAFETY: caller guarantees data.len() > 16. This eliminates redundant
-  // bounds checks in the tail-read section below.
-  unsafe { core::hint::assert_unchecked(data.len() > 16) };
-
-  let mut a = 0u64;
-  let mut b = 0u64;
-  let mut slice = data;
-
-  if unlikely(slice.len() > 112) {
-    let mut see1 = seed;
-    let mut see2 = seed;
-    let mut see3 = seed;
-    let mut see4 = seed;
-    let mut see5 = seed;
-    let mut see6 = seed;
-
-    while slice.len() > 224 {
-      seed = rapid_mix(read_u64_le(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_le(slice, 8) ^ seed);
-      see1 = rapid_mix(
-        read_u64_le(slice, 16) ^ DEFAULT_SECRETS[1],
-        read_u64_le(slice, 24) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_le(slice, 32) ^ DEFAULT_SECRETS[2],
-        read_u64_le(slice, 40) ^ see2,
-      );
-      see3 = rapid_mix(
-        read_u64_le(slice, 48) ^ DEFAULT_SECRETS[3],
-        read_u64_le(slice, 56) ^ see3,
-      );
-      see4 = rapid_mix(
-        read_u64_le(slice, 64) ^ DEFAULT_SECRETS[4],
-        read_u64_le(slice, 72) ^ see4,
-      );
-      see5 = rapid_mix(
-        read_u64_le(slice, 80) ^ DEFAULT_SECRETS[5],
-        read_u64_le(slice, 88) ^ see5,
-      );
-      see6 = rapid_mix(
-        read_u64_le(slice, 96) ^ DEFAULT_SECRETS[6],
-        read_u64_le(slice, 104) ^ see6,
-      );
-
-      seed = rapid_mix(
-        read_u64_le(slice, 112) ^ DEFAULT_SECRETS[0],
-        read_u64_le(slice, 120) ^ seed,
-      );
-      see1 = rapid_mix(
-        read_u64_le(slice, 128) ^ DEFAULT_SECRETS[1],
-        read_u64_le(slice, 136) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_le(slice, 144) ^ DEFAULT_SECRETS[2],
-        read_u64_le(slice, 152) ^ see2,
-      );
-      see3 = rapid_mix(
-        read_u64_le(slice, 160) ^ DEFAULT_SECRETS[3],
-        read_u64_le(slice, 168) ^ see3,
-      );
-      see4 = rapid_mix(
-        read_u64_le(slice, 176) ^ DEFAULT_SECRETS[4],
-        read_u64_le(slice, 184) ^ see4,
-      );
-      see5 = rapid_mix(
-        read_u64_le(slice, 192) ^ DEFAULT_SECRETS[5],
-        read_u64_le(slice, 200) ^ see5,
-      );
-      see6 = rapid_mix(
-        read_u64_le(slice, 208) ^ DEFAULT_SECRETS[6],
-        read_u64_le(slice, 216) ^ see6,
-      );
-
-      let (_, rest) = slice.split_at(224);
-      slice = rest;
-    }
-
-    if slice.len() > 112 {
-      seed = rapid_mix(read_u64_le(slice, 0) ^ DEFAULT_SECRETS[0], read_u64_le(slice, 8) ^ seed);
-      see1 = rapid_mix(
-        read_u64_le(slice, 16) ^ DEFAULT_SECRETS[1],
-        read_u64_le(slice, 24) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_le(slice, 32) ^ DEFAULT_SECRETS[2],
-        read_u64_le(slice, 40) ^ see2,
-      );
-      see3 = rapid_mix(
-        read_u64_le(slice, 48) ^ DEFAULT_SECRETS[3],
-        read_u64_le(slice, 56) ^ see3,
-      );
-      see4 = rapid_mix(
-        read_u64_le(slice, 64) ^ DEFAULT_SECRETS[4],
-        read_u64_le(slice, 72) ^ see4,
-      );
-      see5 = rapid_mix(
-        read_u64_le(slice, 80) ^ DEFAULT_SECRETS[5],
-        read_u64_le(slice, 88) ^ see5,
-      );
-      see6 = rapid_mix(
-        read_u64_le(slice, 96) ^ DEFAULT_SECRETS[6],
-        read_u64_le(slice, 104) ^ see6,
-      );
-      let (_, rest) = slice.split_at(112);
-      slice = rest;
-    }
-
-    seed ^= see1;
-    see2 ^= see3;
-    see4 ^= see5;
-    seed ^= see6;
-    see2 ^= see4;
-    seed ^= see2;
-  }
-
-  if slice.len() > 16 {
-    seed = rapid_mix(read_u64_le(slice, 0) ^ DEFAULT_SECRETS[2], read_u64_le(slice, 8) ^ seed);
-    if slice.len() > 32 {
-      seed = rapid_mix(
-        read_u64_le(slice, 16) ^ DEFAULT_SECRETS[2],
-        read_u64_le(slice, 24) ^ seed,
-      );
-      if slice.len() > 48 {
-        seed = rapid_mix(
-          read_u64_le(slice, 32) ^ DEFAULT_SECRETS[1],
-          read_u64_le(slice, 40) ^ seed,
-        );
-        if slice.len() > 64 {
-          seed = rapid_mix(
-            read_u64_le(slice, 48) ^ DEFAULT_SECRETS[1],
-            read_u64_le(slice, 56) ^ seed,
-          );
-          if slice.len() > 80 {
-            seed = rapid_mix(
-              read_u64_le(slice, 64) ^ DEFAULT_SECRETS[2],
-              read_u64_le(slice, 72) ^ seed,
-            );
-            if slice.len() > 96 {
-              seed = rapid_mix(
-                read_u64_le(slice, 80) ^ DEFAULT_SECRETS[1],
-                read_u64_le(slice, 88) ^ seed,
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-
-  let remainder = slice.len() as u64;
-  a ^= read_u64_le(data, data.len() - 16) ^ remainder;
-  b ^= read_u64_le(data, data.len() - 8);
-
-  a ^= DEFAULT_SECRETS[1];
-  b ^= seed;
-
-  (a, b) = rapid_mum(a, b);
-  rapidhash_final_default::<AVALANCHE>(a, b, remainder)
-}
-/// Handles inputs 17-112 bytes. This keeps fixed-size medium inputs out of the
-/// 7-stream large handler without changing V3 output.
-///
-/// # Safety
-///
-/// Caller must guarantee `16 < data.len() <= 112`.
-#[inline(always)]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-unsafe fn rapidhash_core_medium<const AVALANCHE: bool>(data: &[u8], mut seed: u64, secrets: &[u64; 7]) -> u64 {
-  // SAFETY: caller guarantees 16 < data.len() <= 112. This eliminates redundant
-  // bounds checks in the tail-read section below.
-  unsafe {
-    core::hint::assert_unchecked(data.len() > 16);
-    core::hint::assert_unchecked(data.len() <= 112);
-  }
-
-  let mut a = 0u64;
-  let mut b = 0u64;
-
-  seed = rapid_mix(
-    read_u64_le(data, 0) ^ v3_secret::<2>(secrets),
-    read_u64_le(data, 8) ^ seed,
-  );
-  if data.len() > 32 {
-    seed = rapid_mix(
-      read_u64_le(data, 16) ^ v3_secret::<2>(secrets),
-      read_u64_le(data, 24) ^ seed,
-    );
-    if data.len() > 48 {
-      seed = rapid_mix(
-        read_u64_le(data, 32) ^ v3_secret::<1>(secrets),
-        read_u64_le(data, 40) ^ seed,
-      );
-      if data.len() > 64 {
-        seed = rapid_mix(
-          read_u64_le(data, 48) ^ v3_secret::<1>(secrets),
-          read_u64_le(data, 56) ^ seed,
-        );
-        if data.len() > 80 {
-          seed = rapid_mix(
-            read_u64_le(data, 64) ^ v3_secret::<2>(secrets),
-            read_u64_le(data, 72) ^ seed,
-          );
-          if data.len() > 96 {
-            seed = rapid_mix(
-              read_u64_le(data, 80) ^ v3_secret::<1>(secrets),
-              read_u64_le(data, 88) ^ seed,
-            );
-          }
-        }
-      }
-    }
-  }
-
-  let remainder = data.len() as u64;
-  a ^= read_u64_le(data, data.len() - 16) ^ remainder;
-  b ^= read_u64_le(data, data.len() - 8);
-
-  a ^= v3_secret::<1>(secrets);
-  b ^= seed;
-
-  (a, b) = rapid_mum(a, b);
-  rapidhash_final::<AVALANCHE>(a, b, remainder, secrets)
-}
-
-/// Handles inputs >16 bytes. Kept as a separate function so the small-path
-/// entry point stays lean for inlining. LLVM decides whether to inline this.
-///
-/// # Safety
-///
-/// Caller must guarantee `data.len() > 16`.
-#[inline]
-#[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-unsafe fn rapidhash_core_large<const AVALANCHE: bool>(data: &[u8], mut seed: u64, secrets: &[u64; 7]) -> u64 {
-  // SAFETY: caller guarantees data.len() > 16. This eliminates redundant
-  // bounds checks in the tail-read section below.
-  unsafe { core::hint::assert_unchecked(data.len() > 16) };
-
-  let mut a = 0u64;
-  let mut b = 0u64;
-  let mut slice = data;
-
-  if unlikely(slice.len() > 112) {
-    let mut see1 = seed;
-    let mut see2 = seed;
-    let mut see3 = seed;
-    let mut see4 = seed;
-    let mut see5 = seed;
-    let mut see6 = seed;
-
-    while slice.len() > 224 {
-      seed = rapid_mix(
-        read_u64_le(slice, 0) ^ v3_secret::<0>(secrets),
-        read_u64_le(slice, 8) ^ seed,
-      );
-      see1 = rapid_mix(
-        read_u64_le(slice, 16) ^ v3_secret::<1>(secrets),
-        read_u64_le(slice, 24) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_le(slice, 32) ^ v3_secret::<2>(secrets),
-        read_u64_le(slice, 40) ^ see2,
-      );
-      see3 = rapid_mix(
-        read_u64_le(slice, 48) ^ v3_secret::<3>(secrets),
-        read_u64_le(slice, 56) ^ see3,
-      );
-      see4 = rapid_mix(
-        read_u64_le(slice, 64) ^ v3_secret::<4>(secrets),
-        read_u64_le(slice, 72) ^ see4,
-      );
-      see5 = rapid_mix(
-        read_u64_le(slice, 80) ^ v3_secret::<5>(secrets),
-        read_u64_le(slice, 88) ^ see5,
-      );
-      see6 = rapid_mix(
-        read_u64_le(slice, 96) ^ v3_secret::<6>(secrets),
-        read_u64_le(slice, 104) ^ see6,
-      );
-
-      seed = rapid_mix(
-        read_u64_le(slice, 112) ^ v3_secret::<0>(secrets),
-        read_u64_le(slice, 120) ^ seed,
-      );
-      see1 = rapid_mix(
-        read_u64_le(slice, 128) ^ v3_secret::<1>(secrets),
-        read_u64_le(slice, 136) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_le(slice, 144) ^ v3_secret::<2>(secrets),
-        read_u64_le(slice, 152) ^ see2,
-      );
-      see3 = rapid_mix(
-        read_u64_le(slice, 160) ^ v3_secret::<3>(secrets),
-        read_u64_le(slice, 168) ^ see3,
-      );
-      see4 = rapid_mix(
-        read_u64_le(slice, 176) ^ v3_secret::<4>(secrets),
-        read_u64_le(slice, 184) ^ see4,
-      );
-      see5 = rapid_mix(
-        read_u64_le(slice, 192) ^ v3_secret::<5>(secrets),
-        read_u64_le(slice, 200) ^ see5,
-      );
-      see6 = rapid_mix(
-        read_u64_le(slice, 208) ^ v3_secret::<6>(secrets),
-        read_u64_le(slice, 216) ^ see6,
-      );
-
-      let (_, rest) = slice.split_at(224);
-      slice = rest;
-    }
-
-    if slice.len() > 112 {
-      seed = rapid_mix(
-        read_u64_le(slice, 0) ^ v3_secret::<0>(secrets),
-        read_u64_le(slice, 8) ^ seed,
-      );
-      see1 = rapid_mix(
-        read_u64_le(slice, 16) ^ v3_secret::<1>(secrets),
-        read_u64_le(slice, 24) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_le(slice, 32) ^ v3_secret::<2>(secrets),
-        read_u64_le(slice, 40) ^ see2,
-      );
-      see3 = rapid_mix(
-        read_u64_le(slice, 48) ^ v3_secret::<3>(secrets),
-        read_u64_le(slice, 56) ^ see3,
-      );
-      see4 = rapid_mix(
-        read_u64_le(slice, 64) ^ v3_secret::<4>(secrets),
-        read_u64_le(slice, 72) ^ see4,
-      );
-      see5 = rapid_mix(
-        read_u64_le(slice, 80) ^ v3_secret::<5>(secrets),
-        read_u64_le(slice, 88) ^ see5,
-      );
-      see6 = rapid_mix(
-        read_u64_le(slice, 96) ^ v3_secret::<6>(secrets),
-        read_u64_le(slice, 104) ^ see6,
-      );
-      let (_, rest) = slice.split_at(112);
-      slice = rest;
-    }
-
-    seed ^= see1;
-    see2 ^= see3;
-    see4 ^= see5;
-    seed ^= see6;
-    see2 ^= see4;
-    seed ^= see2;
-  }
-
-  if slice.len() > 16 {
-    seed = rapid_mix(
-      read_u64_le(slice, 0) ^ v3_secret::<2>(secrets),
-      read_u64_le(slice, 8) ^ seed,
-    );
-    if slice.len() > 32 {
-      seed = rapid_mix(
-        read_u64_le(slice, 16) ^ v3_secret::<2>(secrets),
-        read_u64_le(slice, 24) ^ seed,
-      );
-      if slice.len() > 48 {
-        seed = rapid_mix(
-          read_u64_le(slice, 32) ^ v3_secret::<1>(secrets),
-          read_u64_le(slice, 40) ^ seed,
-        );
-        if slice.len() > 64 {
-          seed = rapid_mix(
-            read_u64_le(slice, 48) ^ v3_secret::<1>(secrets),
-            read_u64_le(slice, 56) ^ seed,
-          );
-          if slice.len() > 80 {
-            seed = rapid_mix(
-              read_u64_le(slice, 64) ^ v3_secret::<2>(secrets),
-              read_u64_le(slice, 72) ^ seed,
-            );
-            if slice.len() > 96 {
-              seed = rapid_mix(
-                read_u64_le(slice, 80) ^ v3_secret::<1>(secrets),
-                read_u64_le(slice, 88) ^ seed,
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-
-  let remainder = slice.len() as u64;
-  a ^= read_u64_le(data, data.len() - 16) ^ remainder;
-  b ^= read_u64_le(data, data.len() - 8);
-
-  a ^= v3_secret::<1>(secrets);
-  b ^= seed;
-
-  (a, b) = rapid_mum(a, b);
-  rapidhash_final::<AVALANCHE>(a, b, remainder, secrets)
-}
-
-// Inner-algorithm core for RapidHashFast64 / RapidHashFast128
-//
-// Distinct from V3: size-tuned dispatch (3-stream mid-range, 7-stream large),
-// cold-path separation for codegen quality, and inner-module finalization.
-// Output is NOT V3-compatible — use RapidHash64/128 for cross-language hashes.
-
-/// Inputs above this use the 7-stream large kernel. Below it, the 3-stream
-/// mid-range loop has lower register pressure and avoids stack spills.
-const FAST_COLD_CUTOFF: usize = 400;
-
-#[inline(always)]
-fn rapidhash_fast_finish(a: u64, b: u64, seed: u64) -> u64 {
-  rapid_mix(a ^ default_fast_secret::<0>(), b ^ seed)
-}
-
-#[inline(always)]
-fn rapidhash_fast_small_parts(data: &[u8], mut seed: u64) -> (u64, u64, u64) {
-  let mut a = 0u64;
-  let mut b = 0u64;
-
-  if data.len() == 1 {
-    let byte = data[0] as u64;
-    return ((byte << 45) | byte, byte, seed.wrapping_add(1));
-  }
-
-  if likely(data.len() >= 8) {
-    a = read_u64_np(data, 0);
-    b = read_u64_np(data, data.len() - 8);
-  } else if likely(data.len() >= 4) {
-    a = read_u32_np(data, 0) as u64;
-    b = read_u32_np(data, data.len() - 4) as u64;
-  } else if !data.is_empty() {
-    a = ((data[0] as u64) << 45) | data[data.len() - 1] as u64;
-    b = data[data.len() >> 1] as u64;
-  }
-
-  seed = seed.wrapping_add(data.len() as u64);
-  (a, b, seed)
-}
-
-/// Inner-algorithm entry point for the Fast variants.
-///
-/// 0–16B path is always inlined. Larger inputs dispatch to `#[cold]` paths
-/// that are never inlined, keeping this entry point lean for the common case.
-///
-/// Uses native-endian reads (`read_u64_np` / `read_u32_np`) — the Fast
-/// variant is for in-process hashing only and does not need cross-platform
-/// byte-order consistency. This eliminates byte-swap overhead on big-endian
-/// platforms (s390x, POWER).
-#[inline(always)]
-fn rapidhash_fast_core(data: &[u8], mut seed: u64) -> u64 {
-  if likely(data.len() <= 16) {
-    let mut a = 0u64;
-    let mut b = 0u64;
-
-    if data.len() == 1 {
-      let byte = data[0] as u64;
-      return rapidhash_fast_finish((byte << 45) | byte, byte, seed.wrapping_add(1));
-    }
-
-    if likely(data.len() >= 8) {
-      a = read_u64_np(data, 0);
-      b = read_u64_np(data, data.len() - 8);
-    } else if likely(data.len() >= 4) {
-      a = read_u32_np(data, 0) as u64;
-      b = read_u32_np(data, data.len() - 4) as u64;
-    } else if !data.is_empty() {
-      a = ((data[0] as u64) << 45) | data[data.len() - 1] as u64;
-      b = data[data.len() >> 1] as u64;
-    }
-
-    seed = seed.wrapping_add(data.len() as u64);
-    rapidhash_fast_finish(a, b, seed)
-  } else {
-    // SAFETY: data.len() > 16 verified above.
-    unsafe { rapidhash_fast_core_medium(data, seed) }
-  }
-}
-
-#[inline(always)]
-fn rapidhash_fast_default_core(data: &[u8], seed: u64) -> u64 {
-  if likely(data.len() <= 16) {
-    let (a, b, seed) = rapidhash_fast_small_parts(data, seed);
-    rapidhash_fast_finish(a, b, seed)
-  } else if data.len() <= 96 {
-    // SAFETY: data.len() > 16 and <= 96 verified above.
-    unsafe { rapidhash_fast_core_inline_mid(data, seed) }
-  } else {
-    rapidhash_fast_core(data, seed)
-  }
-}
-
-#[inline(always)]
-fn rapidhash_fast_128_core(data: &[u8], seed_lo: u64, seed_hi: u64) -> u128 {
-  if likely(data.len() > 16) {
-    let lo = rapidhash_fast_default_core(data, seed_lo) as u128;
-    let hi = rapidhash_fast_default_core(data, seed_hi) as u128;
-    lo | (hi << 64)
-  } else {
-    let (a, b, seed_lo) = rapidhash_fast_small_parts(data, seed_lo);
-    let seed_hi = seed_hi.wrapping_add(data.len() as u64);
-    let lo = rapidhash_fast_finish(a, b, seed_lo) as u128;
-    let hi = rapidhash_fast_finish(a, b, seed_hi) as u128;
-    lo | (hi << 64)
-  }
-}
-
-#[inline(always)]
-unsafe fn rapidhash_fast_core_inline_mid(data: &[u8], mut seed: u64) -> u64 {
-  // SAFETY: caller guarantees 16 < data.len() <= 96.
-  unsafe {
-    core::hint::assert_unchecked(data.len() > 16);
-    core::hint::assert_unchecked(data.len() <= 96);
-  }
-
-  if data.len() <= 48 {
-    // SAFETY: data.len() > 16 guaranteed by caller.
-    return unsafe { rapidhash_fast_tail(seed, data, data) };
-  }
-
-  let mut slice = data;
-  let mut see1 = seed;
-  let mut see2 = seed;
-
-  while slice.len() >= 48 {
-    seed = rapid_mix(
-      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 8) ^ seed,
-    );
-    see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
-      read_u64_np(slice, 24) ^ see1,
-    );
-    see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
-      read_u64_np(slice, 40) ^ see2,
-    );
-    let (_, rest) = slice.split_at(48);
-    slice = rest;
-  }
-
-  seed ^= see1 ^ see2;
-
-  // SAFETY: data.len() > 16 guaranteed by caller.
-  unsafe { rapidhash_fast_tail(seed, slice, data) }
-}
-
-/// Final ≤48B tail processing shared by medium and large paths.
-///
-/// Reads up to two 16B pairs from `slice` (the unprocessed remainder), then
-/// reads the final 16B from `data` (the original input) for overlap handling.
-///
-/// # Safety
-///
-/// Caller must guarantee `data.len() > 16`.
-#[inline(always)]
-unsafe fn rapidhash_fast_tail(mut seed: u64, slice: &[u8], data: &[u8]) -> u64 {
-  // SAFETY: caller guarantees data.len() > 16.
-  unsafe { core::hint::assert_unchecked(data.len() > 16) };
-
-  if likely(slice.len() > 16) {
-    seed = rapid_mix(
-      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 8) ^ seed,
-    );
-    if likely(slice.len() > 32) {
-      seed = rapid_mix(
-        read_u64_np(slice, 16) ^ default_fast_secret::<0>(),
-        read_u64_np(slice, 24) ^ seed,
-      );
-    }
-  }
-
-  let a = read_u64_np(data, data.len() - 16);
-  let b = read_u64_np(data, data.len() - 8);
-  seed = seed.wrapping_add(data.len() as u64);
-  rapidhash_fast_finish(a, b, seed)
-}
-
-/// Cold medium path: 17B–~400B. 3-stream accumulation for 49B+.
-///
-/// `#[cold] #[inline(never)]` keeps the small-path entry point lean for
-/// inlining. The 17–48B range short-circuits to the tail handler to avoid
-/// 3-stream register setup/stack spill on all platforms.
-///
-/// # Safety
-///
-/// Caller must guarantee `data.len() > 16`.
-#[cold]
-#[inline(never)]
-unsafe fn rapidhash_fast_core_medium(data: &[u8], mut seed: u64) -> u64 {
-  // SAFETY: caller guarantees data.len() > 16.
-  unsafe { core::hint::assert_unchecked(data.len() > 16) };
-
-  let mut slice = data;
-
-  // Short-circuit 17–48B to the tail handler. This avoids the 3-stream
-  // register setup that causes stack spills.
-  if data.len() <= 48 {
-    // SAFETY: data.len() > 16 guaranteed by caller.
-    return unsafe { rapidhash_fast_tail(seed, data, data) };
-  }
-
-  if unlikely(data.len() > FAST_COLD_CUTOFF) {
-    // SAFETY: data.len() > FAST_COLD_CUTOFF > 16.
-    return unsafe { rapidhash_fast_core_large(data, seed) };
-  }
-
-  // 3-stream mid-range: 49–400B. Three independent accumulators allow
-  // out-of-order execution to overlap the multiply latency.
-  let mut see1 = seed;
-  let mut see2 = seed;
-
-  while slice.len() >= 48 {
-    seed = rapid_mix(
-      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 8) ^ seed,
-    );
-    see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
-      read_u64_np(slice, 24) ^ see1,
-    );
-    see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
-      read_u64_np(slice, 40) ^ see2,
-    );
-    let (_, rest) = slice.split_at(48);
-    slice = rest;
-  }
-
-  seed ^= see1 ^ see2;
-
-  // SAFETY: data.len() > 16 guaranteed by caller.
-  unsafe { rapidhash_fast_tail(seed, slice, data) }
-}
-
-/// Cold large path: >400B. 7-stream bulk with 3-stream residual.
-///
-/// # Safety
-///
-/// Caller must guarantee `data.len() > FAST_COLD_CUTOFF`.
-#[cold]
-#[inline(never)]
-unsafe fn rapidhash_fast_core_large(data: &[u8], mut seed: u64) -> u64 {
-  // SAFETY: caller guarantees data.len() > FAST_COLD_CUTOFF.
-  unsafe { core::hint::assert_unchecked(data.len() > FAST_COLD_CUTOFF) };
-
-  let mut slice = data;
-  let mut see1 = seed;
-  let mut see2 = seed;
-  let mut see3 = seed;
-  let mut see4 = seed;
-  let mut see5 = seed;
-  let mut see6 = seed;
-
-  // 7-stream bulk: 224B per iteration (2 × 112B half-blocks).
-  while slice.len() >= 224 {
-    seed = rapid_mix(
-      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 8) ^ seed,
-    );
-    see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
-      read_u64_np(slice, 24) ^ see1,
-    );
-    see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
-      read_u64_np(slice, 40) ^ see2,
-    );
-    see3 = rapid_mix(
-      read_u64_np(slice, 48) ^ default_fast_secret::<3>(),
-      read_u64_np(slice, 56) ^ see3,
-    );
-    see4 = rapid_mix(
-      read_u64_np(slice, 64) ^ default_fast_secret::<4>(),
-      read_u64_np(slice, 72) ^ see4,
-    );
-    see5 = rapid_mix(
-      read_u64_np(slice, 80) ^ default_fast_secret::<5>(),
-      read_u64_np(slice, 88) ^ see5,
-    );
-    see6 = rapid_mix(
-      read_u64_np(slice, 96) ^ default_fast_secret::<6>(),
-      read_u64_np(slice, 104) ^ see6,
-    );
-
-    seed = rapid_mix(
-      read_u64_np(slice, 112) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 120) ^ seed,
-    );
-    see1 = rapid_mix(
-      read_u64_np(slice, 128) ^ default_fast_secret::<1>(),
-      read_u64_np(slice, 136) ^ see1,
-    );
-    see2 = rapid_mix(
-      read_u64_np(slice, 144) ^ default_fast_secret::<2>(),
-      read_u64_np(slice, 152) ^ see2,
-    );
-    see3 = rapid_mix(
-      read_u64_np(slice, 160) ^ default_fast_secret::<3>(),
-      read_u64_np(slice, 168) ^ see3,
-    );
-    see4 = rapid_mix(
-      read_u64_np(slice, 176) ^ default_fast_secret::<4>(),
-      read_u64_np(slice, 184) ^ see4,
-    );
-    see5 = rapid_mix(
-      read_u64_np(slice, 192) ^ default_fast_secret::<5>(),
-      read_u64_np(slice, 200) ^ see5,
-    );
-    see6 = rapid_mix(
-      read_u64_np(slice, 208) ^ default_fast_secret::<6>(),
-      read_u64_np(slice, 216) ^ see6,
-    );
-
-    let (_, rest) = slice.split_at(224);
-    slice = rest;
-  }
-
-  // Single 112B half-block if enough remains.
-  if likely(slice.len() >= 112) {
-    seed = rapid_mix(
-      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 8) ^ seed,
-    );
-    see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
-      read_u64_np(slice, 24) ^ see1,
-    );
-    see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
-      read_u64_np(slice, 40) ^ see2,
-    );
-    see3 = rapid_mix(
-      read_u64_np(slice, 48) ^ default_fast_secret::<3>(),
-      read_u64_np(slice, 56) ^ see3,
-    );
-    see4 = rapid_mix(
-      read_u64_np(slice, 64) ^ default_fast_secret::<4>(),
-      read_u64_np(slice, 72) ^ see4,
-    );
-    see5 = rapid_mix(
-      read_u64_np(slice, 80) ^ default_fast_secret::<5>(),
-      read_u64_np(slice, 88) ^ see5,
-    );
-    see6 = rapid_mix(
-      read_u64_np(slice, 96) ^ default_fast_secret::<6>(),
-      read_u64_np(slice, 104) ^ see6,
-    );
-    let (_, rest) = slice.split_at(112);
-    slice = rest;
-  }
-
-  // 3-stream residual: up to 2 × 48B blocks drain the remainder before the
-  // tail, avoiding the serial dependency chain of the V3 nested-if tail.
-  if slice.len() >= 48 {
-    seed = rapid_mix(
-      read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-      read_u64_np(slice, 8) ^ seed,
-    );
-    see1 = rapid_mix(
-      read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
-      read_u64_np(slice, 24) ^ see1,
-    );
-    see2 = rapid_mix(
-      read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
-      read_u64_np(slice, 40) ^ see2,
-    );
-    let (_, rest) = slice.split_at(48);
-    slice = rest;
-
-    if slice.len() >= 48 {
-      seed = rapid_mix(
-        read_u64_np(slice, 0) ^ default_fast_secret::<0>(),
-        read_u64_np(slice, 8) ^ seed,
-      );
-      see1 = rapid_mix(
-        read_u64_np(slice, 16) ^ default_fast_secret::<1>(),
-        read_u64_np(slice, 24) ^ see1,
-      );
-      see2 = rapid_mix(
-        read_u64_np(slice, 32) ^ default_fast_secret::<2>(),
-        read_u64_np(slice, 40) ^ see2,
-      );
-      let (_, rest) = slice.split_at(48);
-      slice = rest;
-    }
-  }
-
-  // Merge all accumulators into seed.
-  see3 ^= see4;
-  see5 ^= see6;
-  seed ^= see1;
-  see3 ^= see2;
-  seed ^= see5;
-  seed ^= see3;
-
-  // SAFETY: data.len() > FAST_COLD_CUTOFF > 16.
-  unsafe { rapidhash_fast_tail(seed, slice, data) }
 }
 
 impl FastHash for RapidHash64 {
@@ -1188,99 +76,218 @@ impl FastHash for RapidHash64 {
   type Output = u64;
   type Seed = u64;
 
-  /// Hash with precomputed default seed — bypasses `rapidhash_seed_cpp(0)`,
-  /// saving one 128-bit multiply per call.
-  #[inline(always)]
+  #[inline]
   fn hash(data: &[u8]) -> Self::Output {
-    #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-    {
-      rapidhash_core::<true>(data, V3_DEFAULT_SECRETS.seed, &V3_DEFAULT_SECRETS.secrets)
-    }
-
-    #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-    {
-      rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_0)
-    }
+    Self::hash(data)
   }
 
   #[inline]
   fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    dispatch::hash64_with_seed(seed, data)
+    Self::hash_with_seed(seed, data)
   }
 }
 
-impl FastHash for RapidHash128 {
-  const OUTPUT_SIZE: usize = 16;
-  type Output = u128;
-  type Seed = u64;
-
-  /// Hash with precomputed default seeds — bypasses two seed-mixing multiplies
-  /// per call.
-  #[inline(always)]
-  fn hash(data: &[u8]) -> Self::Output {
-    #[cfg(any(target_arch = "s390x", target_arch = "powerpc64"))]
-    {
-      let lo = rapidhash_core::<true>(data, V3_DEFAULT_SECRETS.seed, &V3_DEFAULT_SECRETS.secrets) as u128;
-      let hi = rapidhash_core::<true>(data, V3_DEFAULT_HI_SECRETS.seed, &V3_DEFAULT_HI_SECRETS.secrets) as u128;
-      lo | (hi << 64)
-    }
-
-    #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-    {
-      let lo = rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_0) as u128;
-      let hi = rapidhash_core_default::<true>(data, PRECOMPUTED_SEED_HI) as u128;
-      lo | (hi << 64)
-    }
-  }
-
-  #[inline]
-  fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    dispatch::hash128_with_seed(seed, data)
-  }
+#[inline(always)]
+const fn read_u32_le(input: &[u8], offset: usize) -> u32 {
+  let (_, tail) = input.split_at(offset);
+  let Some(bytes) = tail.first_chunk::<4>() else {
+    panic!("RapidHash u32 read exceeds input");
+  };
+  u32::from_le_bytes(*bytes)
 }
 
-impl FastHash for RapidHashFast64 {
-  const OUTPUT_SIZE: usize = 8;
-  type Output = u64;
-  type Seed = u64;
-
-  /// Hash with precomputed default seed — bypasses `rapidhash_seed_cpp(0)`,
-  /// saving one 128-bit multiply per call.
-  #[inline(always)]
-  fn hash(data: &[u8]) -> Self::Output {
-    if data.is_empty() {
-      return FAST_EMPTY_HASH_SEED_0;
-    }
-
-    rapidhash_fast_default_core(data, PRECOMPUTED_SEED_0)
-  }
-
-  #[inline(always)]
-  fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    dispatch::hash64_fast_with_seed(seed, data)
-  }
+#[inline(always)]
+const fn read_u64_le(input: &[u8], offset: usize) -> u64 {
+  let (_, tail) = input.split_at(offset);
+  let Some(bytes) = tail.first_chunk::<8>() else {
+    panic!("RapidHash u64 read exceeds input");
+  };
+  u64::from_le_bytes(*bytes)
 }
 
-impl FastHash for RapidHashFast128 {
-  const OUTPUT_SIZE: usize = 16;
-  type Output = u128;
-  type Seed = u64;
+#[inline(always)]
+const fn rapid_mum(a: u64, b: u64) -> (u64, u64) {
+  let product = (a as u128).wrapping_mul(b as u128);
+  (product as u64, (product >> 64) as u64)
+}
 
-  /// Hash with precomputed default seed — bypasses `rapidhash_seed_cpp(0)`,
-  /// saving one 128-bit multiply per call.
-  #[inline(always)]
-  fn hash(data: &[u8]) -> Self::Output {
-    if data.is_empty() {
-      return (FAST_EMPTY_HASH_SEED_0 as u128) | ((FAST_EMPTY_HASH_SEED_HI as u128) << 64);
+#[inline(always)]
+const fn rapid_mix(a: u64, b: u64) -> u64 {
+  let product = (a as u128).wrapping_mul(b as u128);
+  (product as u64) ^ ((product >> 64) as u64)
+}
+
+#[inline(always)]
+const fn rapidhash_seed_cpp(seed: u64) -> u64 {
+  seed ^ rapid_mix(seed ^ DEFAULT_SECRETS[2], DEFAULT_SECRETS[1])
+}
+
+#[inline]
+const fn premix_seed(mut seed: u64, index: usize) -> u64 {
+  seed ^= rapid_mix(seed ^ DEFAULT_SECRETS[2], DEFAULT_SECRETS[index]);
+
+  if seed & (0xffff << 48) == 0 {
+    seed |= 1 << 63;
+  }
+  if seed & (0xffff << 24) == 0 {
+    seed |= 1 << 31;
+  }
+  if seed & 0xffff == 0 {
+    seed |= 1;
+  }
+  seed
+}
+
+#[inline(always)]
+const fn rapidhash_finish(a: u64, b: u64, remainder: u64, secrets: &[u64; 7]) -> u64 {
+  rapid_mix(a ^ 0xaaaa_aaaa_aaaa_aaaa, b ^ secrets[1] ^ remainder)
+}
+
+#[inline(always)]
+const fn rapidhash_core(data: &[u8], mut seed: u64, secrets: &[u64; 7]) -> u64 {
+  let mut a = 0u64;
+  let mut b = 0u64;
+
+  if data.len() <= 16 {
+    if data.len() >= 4 {
+      seed ^= data.len() as u64;
+      if data.len() >= 8 {
+        a = read_u64_le(data, 0);
+        b = read_u64_le(data, data.len().strict_sub(8));
+      } else {
+        a = read_u32_le(data, 0) as u64;
+        b = read_u32_le(data, data.len().strict_sub(4)) as u64;
+      }
+    } else if !data.is_empty() {
+      a = ((data[0] as u64) << 45) | data[data.len().strict_sub(1)] as u64;
+      b = data[data.len() >> 1] as u64;
     }
 
-    rapidhash_fast_128_core(data, PRECOMPUTED_SEED_0, PRECOMPUTED_SEED_HI)
+    a ^= secrets[1];
+    b ^= seed;
+    (a, b) = rapid_mum(a, b);
+    return rapidhash_finish(a, b, data.len() as u64, secrets);
   }
 
-  #[inline(always)]
-  fn hash_with_seed(seed: Self::Seed, data: &[u8]) -> Self::Output {
-    dispatch::hash128_fast_with_seed(seed, data)
+  if data.len() <= 112 {
+    return rapidhash_tail(data, 0, seed, secrets);
   }
+
+  rapidhash_core_large(data, seed, secrets)
+}
+
+// Keep the large-input schedule out of short-input callers.
+#[inline(never)]
+const fn rapidhash_core_large(data: &[u8], mut seed: u64, secrets: &[u64; 7]) -> u64 {
+  let mut offset = 0usize;
+  if data.len() > 112 {
+    let mut see1 = seed;
+    let mut see2 = seed;
+    let mut see3 = seed;
+    let mut see4 = seed;
+    let mut see5 = seed;
+    let mut see6 = seed;
+
+    while data.len().strict_sub(offset) > 224 {
+      // Validate the span once so the fixed-size safe reads need no per-load bounds checks.
+      let (_, remaining) = data.split_at(offset);
+      let (block, _) = remaining.split_at(224);
+      let Some(first) = block.first_chunk::<112>() else {
+        panic!("RapidHash block is shorter than 112 bytes");
+      };
+      let Some(second) = block.last_chunk::<112>() else {
+        panic!("RapidHash block is shorter than 224 bytes");
+      };
+      seed = rapid_mix(read_u64_le(first, 0) ^ secrets[0], read_u64_le(first, 8) ^ seed);
+      see1 = rapid_mix(read_u64_le(first, 16) ^ secrets[1], read_u64_le(first, 24) ^ see1);
+      see2 = rapid_mix(read_u64_le(first, 32) ^ secrets[2], read_u64_le(first, 40) ^ see2);
+      see3 = rapid_mix(read_u64_le(first, 48) ^ secrets[3], read_u64_le(first, 56) ^ see3);
+      see4 = rapid_mix(read_u64_le(first, 64) ^ secrets[4], read_u64_le(first, 72) ^ see4);
+      see5 = rapid_mix(read_u64_le(first, 80) ^ secrets[5], read_u64_le(first, 88) ^ see5);
+      see6 = rapid_mix(read_u64_le(first, 96) ^ secrets[6], read_u64_le(first, 104) ^ see6);
+
+      seed = rapid_mix(read_u64_le(second, 0) ^ secrets[0], read_u64_le(second, 8) ^ seed);
+      see1 = rapid_mix(read_u64_le(second, 16) ^ secrets[1], read_u64_le(second, 24) ^ see1);
+      see2 = rapid_mix(read_u64_le(second, 32) ^ secrets[2], read_u64_le(second, 40) ^ see2);
+      see3 = rapid_mix(read_u64_le(second, 48) ^ secrets[3], read_u64_le(second, 56) ^ see3);
+      see4 = rapid_mix(read_u64_le(second, 64) ^ secrets[4], read_u64_le(second, 72) ^ see4);
+      see5 = rapid_mix(read_u64_le(second, 80) ^ secrets[5], read_u64_le(second, 88) ^ see5);
+      see6 = rapid_mix(read_u64_le(second, 96) ^ secrets[6], read_u64_le(second, 104) ^ see6);
+      offset = offset.strict_add(224);
+    }
+
+    if data.len().strict_sub(offset) > 112 {
+      let (_, remaining) = data.split_at(offset);
+      let Some(block) = remaining.first_chunk::<112>() else {
+        panic!("RapidHash block is shorter than 112 bytes");
+      };
+      seed = rapid_mix(read_u64_le(block, 0) ^ secrets[0], read_u64_le(block, 8) ^ seed);
+      see1 = rapid_mix(read_u64_le(block, 16) ^ secrets[1], read_u64_le(block, 24) ^ see1);
+      see2 = rapid_mix(read_u64_le(block, 32) ^ secrets[2], read_u64_le(block, 40) ^ see2);
+      see3 = rapid_mix(read_u64_le(block, 48) ^ secrets[3], read_u64_le(block, 56) ^ see3);
+      see4 = rapid_mix(read_u64_le(block, 64) ^ secrets[4], read_u64_le(block, 72) ^ see4);
+      see5 = rapid_mix(read_u64_le(block, 80) ^ secrets[5], read_u64_le(block, 88) ^ see5);
+      see6 = rapid_mix(read_u64_le(block, 96) ^ secrets[6], read_u64_le(block, 104) ^ see6);
+      offset = offset.strict_add(112);
+    }
+
+    seed ^= see1;
+    see2 ^= see3;
+    see4 ^= see5;
+    seed ^= see6;
+    see2 ^= see4;
+    seed ^= see2;
+  }
+
+  rapidhash_tail(data, offset, seed, secrets)
+}
+
+#[inline(always)]
+const fn rapidhash_tail(data: &[u8], offset: usize, mut seed: u64, secrets: &[u64; 7]) -> u64 {
+  let remainder = data.len().strict_sub(offset);
+  if remainder > 16 {
+    seed = rapid_mix(
+      read_u64_le(data, offset) ^ secrets[2],
+      read_u64_le(data, offset.strict_add(8)) ^ seed,
+    );
+    if remainder > 32 {
+      seed = rapid_mix(
+        read_u64_le(data, offset.strict_add(16)) ^ secrets[2],
+        read_u64_le(data, offset.strict_add(24)) ^ seed,
+      );
+      if remainder > 48 {
+        seed = rapid_mix(
+          read_u64_le(data, offset.strict_add(32)) ^ secrets[1],
+          read_u64_le(data, offset.strict_add(40)) ^ seed,
+        );
+        if remainder > 64 {
+          seed = rapid_mix(
+            read_u64_le(data, offset.strict_add(48)) ^ secrets[1],
+            read_u64_le(data, offset.strict_add(56)) ^ seed,
+          );
+          if remainder > 80 {
+            seed = rapid_mix(
+              read_u64_le(data, offset.strict_add(64)) ^ secrets[2],
+              read_u64_le(data, offset.strict_add(72)) ^ seed,
+            );
+            if remainder > 96 {
+              seed = rapid_mix(
+                read_u64_le(data, offset.strict_add(80)) ^ secrets[1],
+                read_u64_le(data, offset.strict_add(88)) ^ seed,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  let mut a = read_u64_le(data, data.len().strict_sub(16)) ^ remainder as u64;
+  let mut b = read_u64_le(data, data.len().strict_sub(8));
+  a ^= secrets[1];
+  b ^= seed;
+  (a, b) = rapid_mum(a, b);
+  rapidhash_finish(a, b, remainder as u64, secrets)
 }
 
 #[cfg(test)]
@@ -1290,177 +297,50 @@ mod tests {
   #[cfg(not(miri))]
   use proptest::prelude::*;
 
-  use super::{RapidHash64, RapidHash128, RapidHashFast64, RapidHashFast128, V3_HI_SEED};
-  use crate::traits::FastHash;
+  use super::RapidHash64;
 
-  // -- V3 standard variant oracle (C++-compatible output) --
+  const CONST_EMPTY: u64 = RapidHash64::hash(b"");
+  const CONST_SEEDED: u64 = RapidHash64::hash_with_seed(42, b"const RapidHash");
 
-  #[test]
-  fn smoke_v3_empty_matches_oracle() {
-    let seed = 0u64;
-    let ours = <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed, b"");
-    let secrets = rapidhash::v3::RapidSecrets::seed_cpp(seed);
-    let theirs = rapidhash::v3::rapidhash_v3_seeded(b"", &secrets);
-    assert_eq!(ours, theirs);
+  fn data(len: usize) -> Vec<u8> {
+    (0..len).map(|i| i.wrapping_mul(131).wrapping_add(17) as u8).collect()
   }
 
-  // -- Fast variant oracle (competitor's inner module) --
+  fn reference(seed: u64, data: &[u8]) -> u64 {
+    let secrets = rapidhash::v3::RapidSecrets::seed_cpp(seed);
+    rapidhash::v3::rapidhash_v3_seeded(data, &secrets)
+  }
 
   #[test]
-  #[cfg(target_endian = "little")]
-  fn smoke_fast_empty_matches_oracle() {
-    use core::hash::Hasher;
-    let seed = 0u64;
-    let ours = <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, b"");
-    let mut h = rapidhash::fast::RapidHasher::new(seed);
-    h.write(b"");
-    let theirs = h.finish();
-    assert_eq!(ours, theirs);
+  fn const_hashes_match_runtime_and_reference() {
+    assert_eq!(CONST_EMPTY, reference(0, b""));
+    assert_eq!(CONST_SEEDED, reference(42, b"const RapidHash"));
+  }
+
+  #[test]
+  fn boundary_lengths_match_reference() {
+    #[cfg(not(miri))]
+    let lengths: Vec<usize> = (0..=512).collect();
+    #[cfg(miri)]
+    let lengths = [0, 1, 3, 4, 7, 8, 16, 17, 32, 48, 64, 80, 96, 112, 113, 224, 225, 512];
+
+    for seed in [0, 1, u64::MAX, 0x243f_6a88_85a3_08d3] {
+      for len in lengths.iter().copied() {
+        let input = data(len);
+        assert_eq!(
+          RapidHash64::hash_with_seed(seed, &input),
+          reference(seed, &input),
+          "seed={seed:#x}, len={len}"
+        );
+      }
+    }
   }
 
   #[cfg(not(miri))]
   proptest! {
     #[test]
-    fn rapidhash_v3_64_matches_oracle(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
-      let ours = <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-      let secrets = rapidhash::v3::RapidSecrets::seed_cpp(seed);
-      let theirs = rapidhash::v3::rapidhash_v3_seeded(&data, &secrets);
-      prop_assert_eq!(ours, theirs);
-    }
-
-    #[test]
-    fn rapidhash128_is_two_independent_64bit_hashes(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
-      let out = <RapidHash128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-      let lo = out as u64;
-      let hi = (out >> 64) as u64;
-
-      prop_assert_eq!(lo, <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed, &data));
-      prop_assert_eq!(hi, <RapidHash64 as FastHash>::hash_with_seed(seed ^ V3_HI_SEED, &data));
-    }
-
-    /// The fast variant uses the inner-algorithm core (3-stream mid-range,
-    /// inner finalization). Oracle: `rapidhash::fast::RapidHasher` (the
-    /// competitor's optimized inner module with AVALANCHE=false, SPONGE=true).
-    ///
-    /// LE-only: the competitor's inner module uses non-portable native-endian
-    /// reads (`read_u64_np`), while we use LE reads for consistent hashing
-    /// across platforms. On BE targets the outputs diverge by design.
-    #[test]
-    #[cfg(target_endian = "little")]
-    fn rapidhash_fast_64_matches_inner_oracle(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..8192)) {
-      use core::hash::Hasher;
-      let ours = <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-      let mut h = rapidhash::fast::RapidHasher::new(seed);
-      h.write(&data);
-      let theirs = h.finish();
-      prop_assert_eq!(ours, theirs);
-    }
-
-    #[test]
-    fn rapidhash_fast_128_is_two_independent_64bit_hashes(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..2048)) {
-      let out = <RapidHashFast128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-      let lo = out as u64;
-      let hi = (out >> 64) as u64;
-
-      prop_assert_eq!(lo, <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data));
-      prop_assert_eq!(hi, <RapidHashFast64 as FastHash>::hash_with_seed(seed ^ V3_HI_SEED, &data));
-    }
-  }
-
-  fn deterministic_bytes(len: usize) -> Vec<u8> {
-    let mut out = alloc::vec![0u8; len];
-    let mut x = 0x243f_6a88_85a3_08d3u64;
-    for (i, byte) in out.iter_mut().enumerate() {
-      x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-      *byte = (x >> 56) as u8 ^ ((i as u8).rotate_left((i & 7) as u32));
-    }
-    out
-  }
-
-  #[test]
-  fn default_hash_matches_seed_zero() {
-    let sizes = [
-      0usize, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64, 65, 127, 128, 129, 241, 399, 400, 401,
-      1024, 4096,
-    ];
-
-    for &len in &sizes {
-      let data = deterministic_bytes(len);
-
-      assert_eq!(
-        <RapidHash64 as FastHash>::hash(&data),
-        <RapidHash64 as FastHash>::hash_with_seed(0, &data)
-      );
-      assert_eq!(
-        <RapidHash128 as FastHash>::hash(&data),
-        <RapidHash128 as FastHash>::hash_with_seed(0, &data)
-      );
-      assert_eq!(
-        <RapidHashFast64 as FastHash>::hash(&data),
-        <RapidHashFast64 as FastHash>::hash_with_seed(0, &data)
-      );
-      assert_eq!(
-        <RapidHashFast128 as FastHash>::hash(&data),
-        <RapidHashFast128 as FastHash>::hash_with_seed(0, &data)
-      );
-    }
-  }
-
-  #[test]
-  fn rapidhash_boundary_paths_match_oracles() {
-    let sizes = [
-      0usize, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 241, 1024, 4096,
-    ];
-    let seeds = [0u64, 1u64, 0x0123_4567_89ab_cdef];
-
-    for &seed in &seeds {
-      for &len in &sizes {
-        let data = deterministic_bytes(len);
-
-        let ours_v3_64 = <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-        let secrets = rapidhash::v3::RapidSecrets::seed_cpp(seed);
-        let theirs_v3_64 = rapidhash::v3::rapidhash_v3_seeded(&data, &secrets);
-        assert_eq!(
-          ours_v3_64, theirs_v3_64,
-          "RapidHash64 mismatch (seed={seed}, len={len})"
-        );
-
-        let ours_v3_128 = <RapidHash128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-        assert_eq!(
-          ours_v3_128 as u64, ours_v3_64,
-          "RapidHash128 low lane mismatch (seed={seed}, len={len})"
-        );
-        assert_eq!(
-          (ours_v3_128 >> 64) as u64,
-          <RapidHash64 as crate::traits::FastHash>::hash_with_seed(seed ^ V3_HI_SEED, &data),
-          "RapidHash128 high lane mismatch (seed={seed}, len={len})"
-        );
-
-        #[cfg(target_endian = "little")]
-        {
-          use core::hash::Hasher;
-
-          let ours_fast_64 = <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-          let mut h = rapidhash::fast::RapidHasher::new(seed);
-          h.write(&data);
-          let theirs_fast_64 = h.finish();
-          assert_eq!(
-            ours_fast_64, theirs_fast_64,
-            "RapidHashFast64 mismatch (seed={seed}, len={len})"
-          );
-
-          let ours_fast_128 = <RapidHashFast128 as crate::traits::FastHash>::hash_with_seed(seed, &data);
-          assert_eq!(
-            ours_fast_128 as u64, ours_fast_64,
-            "RapidHashFast128 low lane mismatch (seed={seed}, len={len})"
-          );
-          assert_eq!(
-            (ours_fast_128 >> 64) as u64,
-            <RapidHashFast64 as crate::traits::FastHash>::hash_with_seed(seed ^ V3_HI_SEED, &data),
-            "RapidHashFast128 high lane mismatch (seed={seed}, len={len})"
-          );
-        }
-      }
+    fn matches_reference(seed in any::<u64>(), data in proptest::collection::vec(any::<u8>(), 0..8192)) {
+      prop_assert_eq!(RapidHash64::hash_with_seed(seed, &data), reference(seed, &data));
     }
   }
 }

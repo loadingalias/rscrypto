@@ -127,6 +127,11 @@ let value = reader.checksum();
 - **Return-type widening.** Every generic `crc-fast::checksum` returns `u64`. rscrypto preserves the algorithm's natural width (`u16` / `u32` / `u64`). Apply `as u32` at the boundary or drop it once the call site matches the new type.
 - **Combine length parameter.** `crc-fast::checksum_combine` takes `u64`; `rscrypto::Crc32::combine` takes `usize`. Drop the cast.
 - **Custom CRCs (`CrcParams`).** `crc-fast` accepts user-supplied polynomials; rscrypto's named types are a fixed set. Stay on `crc-fast` if you compute non-catalogue CRCs.
-- **`digest::DynDigest`.** `crc-fast`'s `Digest` implements `digest::DynDigest` behind the `digest` feature. rscrypto does not currently expose a `digest` crate impl. If you rely on dyn-dispatch through `digest::DynDigest`, file an issue before migrating.
+- **`digest::DynDigest`.** rscrypto does not expose a `digest` crate
+  implementation. Keep `crc-fast` for call sites that require
+  `digest::DynDigest`.
 - **`std::io::Write`.** `crc-fast::Digest: Write`. rscrypto exposes the same shape via `Crc32::writer(sink)` returning a `ChecksumWriter` that wraps an inner writer; the rscrypto hasher itself does not implement `Write` directly.
-- **Force a backend.** rscrypto honors `RSCRYPTO_CRC32_FORCE=portable` (std only) and the `portable-only` feature for audit / FIPS lanes: `crc-fast` has no equivalent.
+- **Force a backend.** `RSCRYPTO_CRC32_FORCE=portable` selects the portable
+  CRC-32 runtime backend in `std` builds. The `portable-only` feature makes
+  runtime capability detection ignore host acceleration; see
+  [`docs/features.md`](../features.md#portable-only) for its limits.

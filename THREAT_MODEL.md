@@ -45,7 +45,7 @@ Everything that crosses the boundary:
 
 | Input | Source | Trust |
 |---|---|---|
-| Keys, passwords, seeds | Caller | Trusted for secrecy, not for validity. Imports are validated. |
+| Keys, passwords, seeds | Caller | Trusted for secrecy, not validity. Individual imports enforce their documented shape and algorithm constraints. |
 | Messages, AAD, ciphertexts, tags, signatures, encoded keys | Caller, usually relayed from a network peer | Untrusted. |
 | Randomness | `getrandom` or caller-supplied fill closures | Trusted for entropy quality. Output lengths are fixed by the API. |
 | CPU capability reports | CPUID, auxv, sysctl, OS APIs | Trusted. Forced-backend overrides are validated before use. |
@@ -54,7 +54,8 @@ Everything that crosses the boundary:
 Outputs are digests, tags, ciphertexts, signatures, derived keys, and opaque
 errors. Direct comparison of fixed-size secret-bearing owners returns an opaque
 `CtDecision`; only explicit, consuming declassification exposes the equality
-bit. A failed verification returns one success/failure result and nothing else.
+bit. A failed verification exposes one public success/failure result; timing
+claims remain limited to the release-evidenced configurations.
 
 ## Assets
 
@@ -81,8 +82,8 @@ In scope:
    [`docs/constant-time.md`](docs/constant-time.md).
 3. **Caller mistakes.** Nonce reuse, dropped verification results, weak
    parameters. The API uses typed keys and nonces, `#[must_use]` verification
-   results, `NonceCounter` invocation budgets, opaque errors, and zeroize on
-   drop.
+   results, `NonceCounter` invocation budgets, opaque errors, and explicit drop
+   cleanup for the named secret owners.
 4. **Supply-chain attacker.** Targets the path between this repository and the
    artifact a downstream build consumes.
 
@@ -112,17 +113,17 @@ Ordered by exposure to untrusted input:
 
 | Risk | Mitigation | Evidence |
 |---|---|---|
-| Memory safety | Unsafe operations are lint-gated and require local `SAFETY` proofs; the safe portable path remains authoritative | Miri on portable paths in CI |
+| Memory safety | Unsafe operations are lint-gated and require local `SAFETY` proofs; the portable Rust path remains authoritative | Miri on portable paths in CI |
 | Parser abuse | Strict imports, `strict_*` arithmetic, release overflow checks | Fuzz targets, Wycheproof where mapped, official vectors |
 | Wrong output from accelerated kernels | Portable path is the byte-for-byte authority | Portable-vs-accelerated differential tests and native CI |
 | Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |
-| Oracle behavior | Opaque errors, failed-open output wipe, single-bit failure shape | AEAD and verification tests, fuzz targets |
+| Oracle behavior | Opaque errors, failed-open output clearing, single-bit failure shape | AEAD and verification tests, fuzz targets |
 | Secret exposure at rest | Zeroize at the last owned use and on drop, masked `Debug` and errors, and sealed fixed-size comparison only on semantic secret owners | [`docs/secret-ownership.md`](docs/secret-ownership.md), [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md), `scripts/check/zeroize-evidence.sh`, and `tests/secret_redaction.rs` |
 | Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | `deny.toml`, `.github/workflows/release.yaml`, `docs/release.md` |
 
 ## Known Gaps
 
-- No third-party security audit yet.
+- No third-party security audit is claimed.
 - Named secret owners and explicit temporaries use volatile source-level wipes,
   and `scripts/check/zeroize-evidence.sh` checks optimized lifecycle shapes in
   MIR, LLVM IR, and host assembly. This does not prove that every

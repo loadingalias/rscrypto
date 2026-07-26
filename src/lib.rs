@@ -538,9 +538,7 @@ pub use hashes::crypto::{
 #[cfg(feature = "sha2")]
 pub use hashes::crypto::{Sha224, Sha256, Sha384, Sha512, Sha512_256};
 #[cfg(feature = "rapidhash")]
-pub use hashes::fast::{RapidBuildHasher, RapidHasher, RapidStreamHasher};
-#[cfg(feature = "rapidhash")]
-pub use hashes::fast::{RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128};
+pub use hashes::fast::{RapidHash64, RapidHasher, RapidRandomState, RapidSeededState, RapidStreamHasher};
 #[cfg(feature = "xxh3")]
 pub use hashes::fast::{Xxh3, Xxh3_128};
 #[cfg(feature = "xxh3")]
@@ -671,7 +669,7 @@ use rscrypto::Xxh3_64;
 ```
 
 ```compile_fail
-use rscrypto::RapidHash64;
+use rscrypto::RapidHash;
 ```
 
 ```compile_fail
@@ -691,10 +689,10 @@ use rscrypto::checksum::config::Crc32Config;
 use rscrypto::checksum::buffered::BufferedCrc32C;
 use rscrypto::checksum::introspect::{DispatchInfo, kernel_for};
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
-use rscrypto::hashes::fast::{RapidHash64, RapidHashFast128, RapidHashFast64, Xxh3_64};
+use rscrypto::hashes::fast::{RapidHash64, Xxh3_64};
 use rscrypto::hashes::introspect::{KernelIntrospect, kernel_for as hash_kernel_for};
 use rscrypto::hashes::DigestReader;
-use rscrypto::{AsconXof, AsconXofReader, RapidHash, Xxh3};
+use rscrypto::{AsconXof, AsconXofReader, Xxh3};
 
 fn assert_hash_introspect<T: KernelIntrospect>() {}
 
@@ -708,8 +706,7 @@ let _ = (core::any::TypeId::of::<Crc32Ieee>(), core::any::TypeId::of::<Crc32Cast
 let _ = (core::any::TypeId::of::<AsconXof>(), core::any::TypeId::of::<AsconXofReader>());
 let _ = core::any::TypeId::of::<BufferedCrc32C>();
 let _ = (core::any::TypeId::of::<Xxh3>(), core::any::TypeId::of::<Xxh3_64>());
-let _ = (core::any::TypeId::of::<RapidHash>(), core::any::TypeId::of::<RapidHash64>());
-let _ = (core::any::TypeId::of::<RapidHashFast64>(), core::any::TypeId::of::<RapidHashFast128>());
+let _ = core::any::TypeId::of::<RapidHash64>();
 ```
 "#]
 pub struct __RootSurfaceAudit;
@@ -1334,15 +1331,13 @@ mod send_sync_assertions {
     // Fast hashes
     assert_send_sync::<Xxh3>();
     assert_send_sync::<Xxh3_128>();
-    assert_send_sync::<RapidHash>();
-    assert_send_sync::<RapidHash128>();
-    assert_send_sync::<hashes::fast::RapidHashFast64>();
-    assert_send_sync::<hashes::fast::RapidHashFast128>();
+    assert_send_sync::<RapidHash64>();
 
     assert_send_sync::<Xxh3BuildHasher>();
     assert_send_sync::<Xxh3Hasher>();
     assert_send_sync::<Xxh3_128Hasher>();
-    assert_send_sync::<RapidBuildHasher>();
+    assert_send_sync::<RapidSeededState>();
+    assert_send_sync::<RapidRandomState>();
     assert_send_sync::<RapidHasher>();
     assert_send_sync::<RapidStreamHasher>();
   }
@@ -1462,10 +1457,7 @@ mod send_sync_assertions {
     assert_clone::<Blake3XofReader>();
     assert_clone::<Xxh3>();
     assert_clone::<Xxh3_128>();
-    assert_clone::<RapidHash>();
-    assert_clone::<RapidHash128>();
-    assert_clone::<hashes::fast::RapidHashFast64>();
-    assert_clone::<hashes::fast::RapidHashFast128>();
+    assert_clone::<RapidHash64>();
 
     assert_debug::<Sha256>();
     assert_debug::<Sha224>();
@@ -1493,18 +1485,17 @@ mod send_sync_assertions {
     assert_debug::<Blake3XofReader>();
     assert_debug::<Xxh3>();
     assert_debug::<Xxh3_128>();
-    assert_debug::<RapidHash>();
-    assert_debug::<RapidHash128>();
-    assert_debug::<hashes::fast::RapidHashFast64>();
-    assert_debug::<hashes::fast::RapidHashFast128>();
+    assert_debug::<RapidHash64>();
 
     assert_clone::<Xxh3BuildHasher>();
-    assert_clone::<RapidBuildHasher>();
+    assert_clone::<RapidSeededState>();
+    assert_clone::<RapidRandomState>();
     assert_clone::<RapidStreamHasher>();
     assert_debug::<Xxh3BuildHasher>();
     assert_debug::<Xxh3Hasher>();
     assert_debug::<Xxh3_128Hasher>();
-    assert_debug::<RapidBuildHasher>();
+    assert_debug::<RapidSeededState>();
+    assert_debug::<RapidRandomState>();
     assert_debug::<RapidHasher>();
     assert_debug::<RapidStreamHasher>();
   }

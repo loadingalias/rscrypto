@@ -108,8 +108,11 @@ Both crates let you reuse the extracted PRK for multiple expansions with differe
 ## Notes
 
 - **`Option<&[u8]>` salt → plain `&[u8]`.** RFC 5869 §2.2 says an empty salt is treated as a string of `HashLen` zero bytes. RustCrypto encodes that as `None`; rscrypto encodes it as `b""` (or any zero-length slice). The output is byte-identical for all three.
-- **No `Hkdf::from_prk(prk)` constructor (yet).** RustCrypto exposes a way to skip the extract step when you already have a PRK from another source (e.g., a TLS exporter). rscrypto currently always extracts. If you need the "skip extract" path, file an issue.
-- **No `verify` method.** HKDF's output is intended to be used as key material, not compared. Both crates omit a `verify` helper; if you need to check that two parties derived the same key, route the comparison through HMAC over the derived key.
+- **No `Hkdf::from_prk(prk)` constructor.** rscrypto always performs extract.
+  Keep RustCrypto HKDF for call sites that must expand an existing PRK.
+- **No `verify` method.** HKDF output is key material. Use the
+  protocol-defined key-confirmation step when two parties must prove they
+  derived the same key; do not invent a raw-key comparison protocol.
 - **No reset.** Both crates require constructing a fresh `Hkdf` for each `(salt, ikm)` pair. The `expand` step is stateless once the PRK is computed.
 - **Output length cap.** RFC 5869 limits OKM length to `255 × HashLen` (8160 bytes for SHA-256, 12240 for SHA-384, 16320 for SHA-512). Both crates return an error on overflow: `hkdf::InvalidLength` upstream, `rscrypto::HkdfOutputLengthError` here. Same `Result` shape; rename the type.
 - **`no_std`.** Both crates work in `no_std`. rscrypto adds no `alloc`-only helpers for HKDF: every variant is fixed-array or user-supplied buffer.

@@ -57,7 +57,9 @@ let secret = Ed25519SecretKey::from_bytes([0x42u8; 32]);     // takes [u8; 32] b
 let public = secret.public_key();
 ```
 
-`Ed25519SecretKey::from_bytes` is a `const fn`: bake long-lived signing keys at compile time without runtime cost.
+`Ed25519SecretKey::from_bytes` is a `const fn` and can be used in const
+contexts. That does not make embedding a long-lived signing key in a binary
+safe.
 
 ### Random key generation
 
@@ -145,10 +147,20 @@ dalek_pk.verify(msg, &dalek_sig)?;
 
 ## Notes
 
-- **Strict verification is the default.** `ed25519-dalek::verify` (lax) accepts signatures using small-order public keys (which would let an attacker construct multi-key forgeries in some protocols). rscrypto removes this footgun: there is no lax verifier. If you previously called the lax `verify`, audit those call sites: they may be intentional (legacy compat) or a bug.
-- **No batch verification.** `ed25519-dalek` ships `verify_batch` (with the `batch` feature) for 2–3× speedup when verifying many signatures at once. rscrypto does not expose batch verification yet. If you depend on it for transaction-validation throughput, file an issue or stay on `ed25519-dalek` for that path.
-- **No prehashed (`Ed25519ph`) variant.** `ed25519-dalek` exposes the `Ed25519ph` prehashed variant for signing pre-hashed data. rscrypto only ships the standard `Ed25519` variant. If you need `Ed25519ph` for X.509 / TLS 1.3 hash-based signatures, file an issue.
+- **Strict verification is the only policy.** rscrypto has no counterpart to
+  `ed25519_dalek::VerifyingKey::verify`; it maps
+  `VerifyingKey::verify_strict` to `Ed25519PublicKey::verify`. If the old code
+  used `verify`, test existing signatures against the stricter acceptance
+  boundary before switching.
+- **No batch verification.** `ed25519-dalek` exposes `verify_batch` behind its
+  `batch` feature. Keep `ed25519-dalek` for call sites that require a batch API.
+- **No prehashed or contextual variant.** rscrypto exposes standard Ed25519,
+  not Ed25519ph or its context-bearing API. Keep `ed25519-dalek` when the
+  protocol specifically requires those RFC 8032 variants.
 - **`Signer` / `Verifier` trait imports not needed.** `ed25519-dalek` requires importing the `signature::Signer` and `Verifier` traits to call `sign` / `verify`. rscrypto's methods are inherent on the type: drop the trait imports.
-- **`Drop` zeroizes the secret.** `Ed25519SecretKey: Drop` calls `ct::zeroize()` on the inner bytes. If you store a `SigningKey` by value, that storage is now scrubbed at drop without any extra `zeroize` annotation.
+- **Secret drop behavior.** `Ed25519SecretKey::drop` overwrites its owned seed
+  through rscrypto's zeroization primitive. The claim is limited to that owned
+  storage and the evidence boundary in
+  [`docs/secret-lifecycle.md`](../../secret-lifecycle.md).
 - **Byte-identical signatures.** Both crates implement RFC 8032 deterministically. The same `(seed, message)` pair produces the same 64-byte signature in either crate: your existing on-disk signatures verify under both implementations without re-signing.
-- **`no_std`.** Both crates support `no_std`. rscrypto's Ed25519 path requires no `alloc`; signing and verification work on bare-metal targets with a stack-only allocator.
+- **`no_std`.** Both crates support `no_std`. rscrypto's Ed25519 signing and verification paths do not require `alloc`.

@@ -1,6 +1,9 @@
 # Migration: `tiny-keccak` → `rscrypto`
 
-> Replace `tiny_keccak::Kmac::v128` / `Kmac::v256` and `tiny_keccak::CShake::v128` / `CShake::v256` with `rscrypto::Kmac128` / `Kmac256` and `rscrypto::Cshake128` / `Cshake256`. Same SP 800-185 algorithms, byte-identical output, infallible construction, and `verify` helpers for KMAC tags.
+Replace fixed-output `tiny_keccak::Kmac::v128` / `Kmac::v256` and
+`tiny_keccak::CShake::v128` / `CShake::v256` with `rscrypto::Kmac128` /
+`Kmac256` and `rscrypto::Cshake128` / `Cshake256`. KMAC construction is
+infallible and adds verification helpers. `KmacXof` is not mapped.
 
 Verified against `tiny-keccak = "2.0.2"` (with `kmac` and `cshake` features) and the `rscrypto` 0.7.8 line.
 Evidence: `tests/kmac128_differential.rs`, `tests/kmac256_differential.rs`, `tests/cshake256_differential.rs`, `tests/cshake256_nist_vectors.rs`, and `tests/kmac_wycheproof.rs`.
@@ -39,11 +42,10 @@ If you only use cSHAKE and not KMAC, swap the feature for `sha3` alone. That exp
 |---|---|---|
 | `Kmac::v256(key, custom)` | `Kmac256` | NIST SP 800-185 §4.3 |
 | `Kmac::v128(key, custom)` | `Kmac128` | NIST SP 800-185 §4.3 |
-| `KmacXof::v256` (XOF mode) | `Kmac256` (variable-output via `mac_into` buffer length) | SP 800-185 §4.3 |
-| `KmacXof::v128` (XOF mode) | `Kmac128` (variable-output via `mac_into` buffer length) | SP 800-185 §4.3 |
+| `KmacXof::v128` / `KmacXof::v256` | not mapped | Keep `tiny-keccak` for KMACXOF |
 | `CShake::v256(name, custom)` | `Cshake256` | NIST SP 800-185 §3 |
 | `CShake::v128(name, custom)` | `Cshake128` | NIST SP 800-185 §3 |
-| `Sha3*`, `Keccak*`, `Shake*`, `ParallelHash*`, `TupleHash*` | covered by `RustCrypto/sha3.md` (Sha3/Shake) or not yet mapped (ParallelHash, TupleHash) | FIPS 202 / SP 800-185 |
+| `Sha3*`, `Keccak*`, `Shake*`, `ParallelHash*`, `TupleHash*` | covered by `RustCrypto/sha3.md` (SHA-3/SHAKE) or unsupported (Keccak, ParallelHash, TupleHash) | FIPS 202 / SP 800-185 |
 
 If you migrate from `tiny-keccak` for SHA-3 / SHAKE specifically (not KMAC / cSHAKE), follow `RustCrypto/sha3.md` instead: same destination types, slightly different upstream API.
 
@@ -173,8 +175,16 @@ Three changes from `tiny-keccak`:
 
 ## Notes
 
-- **`ParallelHash` and `TupleHash` (SP 800-185 §6 / §5) not yet mapped.** `tiny-keccak` ships these behind feature flags. rscrypto does not. If you depend on them, keep `tiny-keccak` for those primitives.
-- **Spec conformance verified.** Outputs are byte-identical at every parameter set tested in the harness (KMAC128/256 at multiple tag lengths; cSHAKE128/256 at 64-byte squeeze). For your specific lengths, run the harness yourself.
-- **Hand-rolled cSHAKE-based KMAC.** Some codebases implement KMAC by hand on top of `tiny_keccak::CShake`. The migration target is `rscrypto::Kmac128` or `rscrypto::Kmac256`, matching your security level. Verify that your hand-rolled padding matches the SP 800-185 spec, specifically the `bytepad(encode_string(K))` step and the trailing `right_encode(L)`. If your output diverges from rscrypto's, your hand-rolled implementation has a spec bug; fix it before migrating.
+- **Unsupported SP 800-185 functions.** rscrypto does not expose `ParallelHash`
+  or `TupleHash`. Keep `tiny-keccak` for those primitives.
+- **KMACXOF is not fixed-output KMAC with a longer buffer.** SP 800-185 KMAC
+  appends `right_encode(L)`; KMACXOF appends `right_encode(0)`. Keep
+  `tiny-keccak` for `KmacXof` until rscrypto exposes that mode.
+- **Differential coverage.** The harness compares KMAC128/256 at multiple
+  fixed output lengths and cSHAKE128/256 at a 64-byte squeeze. Add your
+  protocol's parameter set before removing the old dependency.
+- **Hand-rolled cSHAKE-based KMAC.** Verify `bytepad(encode_string(K))`, the
+  function-name/customization encoding, and the trailing `right_encode(L)`.
+  Treat divergent output as a mode, encoding, or implementation mismatch that
+  must be resolved before migration.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `mac_to_vec` style helpers are gated on `alloc`; the fixed-array and user-supplied-buffer paths are pure `no_std`.
-- **Performance.** Both crates use scalar Rust; SHA-3 / Keccak doesn't benefit from typical SIMD without dedicated SHA3-NI hardware (rare in 2026). rscrypto's portable kernel is the only kernel for this lane.

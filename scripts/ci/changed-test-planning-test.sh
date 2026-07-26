@@ -67,6 +67,33 @@ make_plan() {
       mode: "inspect",
       result: "success",
       exit_code: 0,
+      plan_contract_version: 5,
+      files: $files,
+      scope: (
+        $scope
+        | .scope_contract_version = 3
+        | del(.surfaces)
+      ),
+      surfaces: (
+        $scope.surfaces
+        | with_entries(.value = {enabled: .value})
+      )
+    }'
+}
+
+make_legacy_plan() {
+  local scope=$1
+  local files=${2:-'[]'}
+
+  jq -cn \
+    --argjson scope "$scope" \
+    --argjson files "$files" \
+    '{
+      schema_version: 1,
+      command: "plan",
+      mode: "inspect",
+      result: "success",
+      exit_code: 0,
       plan_contract_version: 3,
       files: $files,
       scope: $scope
@@ -79,6 +106,7 @@ CRATES_SCOPE="$(make_scope crates '["crate-a","crate-b"]' '["-p","crate-a","-p",
 EMPTY_PLAN="$(make_plan "$EMPTY_SCOPE")"
 WORKSPACE_PLAN="$(make_plan "$WORKSPACE_SCOPE")"
 CRATES_PLAN="$(make_plan "$CRATES_SCOPE")"
+LEGACY_WORKSPACE_PLAN="$(make_legacy_plan "$WORKSPACE_SCOPE")"
 
 planner_bin="$TMP_ROOT/planner-bin"
 mkdir -p "$planner_bin"
@@ -127,14 +155,19 @@ assert_eq workspace "$(scope_mode_for_cached_plan "$unsupported_mode")" "unsuppo
 
 empty_crate_selection="$(jq -c '.scope.mode = "crates" | .scope.cargo_args = []' <<<"$WORKSPACE_PLAN")"
 non_string_crate="$(jq -c '.scope.crates = [7] | .scope.mode = "crates" | .scope.cargo_args = ["-p", "7"]' <<<"$WORKSPACE_PLAN")"
-malformed_surface="$(jq -c '.scope.surfaces.test = "false"' <<<"$WORKSPACE_PLAN")"
+malformed_surface="$(jq -c '.surfaces.test.enabled = "false"' <<<"$WORKSPACE_PLAN")"
+unsupported_plan_contract="$(jq -c '.plan_contract_version = 4' <<<"$WORKSPACE_PLAN")"
+unsupported_scope_contract="$(jq -c '.scope.scope_contract_version = 2' <<<"$WORKSPACE_PLAN")"
 assert_eq workspace "$(scope_mode_for_cached_plan "$empty_crate_selection")" "empty crate selection to fail closed"
 assert_eq workspace "$(scope_mode_for_cached_plan "$non_string_crate")" "non-string crate selection to fail closed"
 assert_eq workspace "$(scope_mode_for_cached_plan "$malformed_surface")" "malformed surface to fail closed"
+assert_eq workspace "$(scope_mode_for_cached_plan "$unsupported_plan_contract")" "unknown plan contract to fail closed"
+assert_eq workspace "$(scope_mode_for_cached_plan "$unsupported_scope_contract")" "mismatched scope contract to fail closed"
 
 assert_eq empty "$(scope_mode_for_cached_plan "$EMPTY_PLAN")" "valid explicit empty scope"
 assert_eq workspace "$(scope_mode_for_cached_plan "$WORKSPACE_PLAN")" "valid workspace scope"
 assert_eq crates "$(scope_mode_for_cached_plan "$CRATES_PLAN")" "valid crate scope"
+assert_eq workspace "$(scope_mode_for_cached_plan "$LEGACY_WORKSPACE_PLAN")" "valid legacy workspace scope"
 
 crate_output="$(
   (
@@ -206,6 +239,7 @@ run_test_consumer malformed-surface "$malformed_surface" 0 "$workspace_test"
 run_test_consumer valid-empty "$EMPTY_PLAN" 0 ''
 run_test_consumer valid-workspace "$WORKSPACE_PLAN" 0 "$workspace_test"
 run_test_consumer valid-crates "$CRATES_PLAN" 0 $'cargo test -p crate-a --all-features --lib --tests\ncargo test -p crate-b --all-features --lib --tests'
+run_test_consumer valid-legacy-workspace "$LEGACY_WORKSPACE_PLAN" 0 "$workspace_test"
 
 check_fixture="$TMP_ROOT/check-repository"
 mkdir -p "$check_fixture/scripts/check" "$check_fixture/scripts/lib" "$check_fixture/scripts/ct" "$check_fixture/scripts/test"

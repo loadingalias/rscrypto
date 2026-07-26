@@ -7,7 +7,7 @@ use core::{
 };
 use std::{alloc::System, collections::HashMap};
 
-use rscrypto::{RapidBuildHasher, RapidStreamHasher, Xxh3_128Hasher, Xxh3BuildHasher};
+use rscrypto::{RapidSeededState, RapidStreamHasher, Xxh3_128Hasher, Xxh3BuildHasher};
 
 struct CountingAllocator;
 
@@ -89,7 +89,7 @@ fn measure_allocations(f: impl FnOnce()) -> usize {
 #[test]
 fn fast_hashers_and_preallocated_maps_hash_without_allocating() {
   let xxh3_builder = Xxh3BuildHasher::with_seed(42);
-  let rapid_builder = RapidBuildHasher::with_seed(42);
+  let rapid_builder = RapidSeededState::new(42);
   let mut xxh3_map = HashMap::with_capacity_and_hasher(8, xxh3_builder);
   let mut rapid_map = HashMap::with_capacity_and_hasher(8, rapid_builder);
   let long_input = [0x5au8; 4096];

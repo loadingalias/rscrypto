@@ -10,7 +10,7 @@ building your own module boundary and evidence package. Do not use it as a
 FIPS 140-3 answer by itself.
 
 External standards references in this page were checked against NIST CSRC on
-2026-07-21. Several linked publications have active revision or errata notes;
+2026-07-25. Several linked publications have active revision or errata notes;
 regulated deployments must review those notes, the current standard text, and
 their assessor's requirements before release.
 
@@ -18,7 +18,7 @@ their assessor's requirements before release.
 
 | User question | Answer |
 |---|---|
-| Do I get a FIPS 140-3 validated module by depending on `rscrypto`? | No. There is no CMVP certificate for this crate today. |
+| Do I get a FIPS 140-3 validated module by depending on `rscrypto`? | No. This crate claims no CMVP certificate. |
 | Can I use `rscrypto` inside a FIPS-oriented project? | Possibly, if your project owns the module boundary, operational environment, allowed algorithms, self-tests, documentation, and validation path. |
 | Which APIs are standards-aligned? | See the inventory below. It is an algorithm and API map, not a validation claim. |
 | Which evidence can I cite during review? | Start with [`constant-time.md`](constant-time.md), [`test-vector-coverage.md`](test-vector-coverage.md), [`features.md`](features.md), and [`platforms.md`](platforms.md). |
@@ -52,11 +52,11 @@ above unless your own compliance target explicitly allows them:
 | Area | Examples |
 |---|---|
 | Misuse-resistant or non-NIST AEADs | `Aes128GcmSiv`, `Aes256GcmSiv`, `ChaCha20Poly1305`, `XChaCha20Poly1305`, `Aegis256` |
-| Other hashes / XOFs | `Blake*`, `Blake3`, `Ascon*`, `Xxh3`, `RapidHash` |
+| Other hashes / XOFs | `Blake*`, `Blake3`, `Ascon*`, `Xxh3`, `RapidHash64` |
 | Other MACs | Standalone `Poly1305` |
 | Other public-key primitives | `Ed25519*`, `X25519*` |
 | Password hashing outside SP 800-132 | `Argon2*`, `Scrypt` |
-| Checksums and fast hashes | `Crc*`, `Xxh3`, `RapidHash` |
+| Checksums and fast hashes | `Crc*`, `Xxh3`, `RapidHash64` |
 
 This table is about compliance positioning, not engineering quality. For
 example, Argon2 and scrypt are appropriate password-hashing choices in many
@@ -96,9 +96,9 @@ If `rscrypto` is part of a regulated system, the integrator owns:
 toward portable backends. It does not remove SIMD code from the binary, create
 a constant-time proof, or create a FIPS validation boundary.
 
-## Suggested Wording
+## Accurate Downstream Wording
 
-Use wording like this in downstream docs:
+Use this boundary in downstream documentation:
 
 ```text
 This project uses rscrypto as a pure Rust cryptographic primitives crate.

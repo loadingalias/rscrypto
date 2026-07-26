@@ -10,9 +10,7 @@ pub mod rapidhash;
 pub mod xxh3;
 
 #[cfg(feature = "rapidhash")]
-pub use rapidhash::{RapidBuildHasher, RapidHasher, RapidStreamHasher};
-#[cfg(feature = "rapidhash")]
-pub use rapidhash::{RapidHash64, RapidHash64 as RapidHash, RapidHash128, RapidHashFast64, RapidHashFast128};
+pub use rapidhash::{RapidHash64, RapidHasher, RapidRandomState, RapidSeededState, RapidStreamHasher};
 #[cfg(feature = "xxh3")]
 pub use xxh3::{Xxh3_64, Xxh3_64 as Xxh3, Xxh3_128};
 #[cfg(feature = "xxh3")]

@@ -102,7 +102,7 @@ case "${1:-}" in
         mutate_lockfile
       fi
       rm -f "$MOCK_PREFLIGHT_MARKER"
-      printf '%s\n' '{"schema_version":1,"command":"plan","mode":"inspect","result":"success","exit_code":0,"plan_contract_version":3,"files":[{"path":"src/lib.rs"}],"scope":{"scope_contract_version":2,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"],"surfaces":{"bench":false,"build":true,"custom:cargo_graph":true,"docs":false,"infra":false,"test":true}}}'
+      printf '%s\n' '{"schema_version":1,"command":"plan","mode":"inspect","result":"success","exit_code":0,"plan_contract_version":5,"files":[{"path":"src/lib.rs"}],"scope":{"scope_contract_version":3,"resolved_base":"base","resolved_head":"head","mode":"workspace","crates":[],"cargo_args":["--workspace"]},"surfaces":{"bench":{"enabled":false},"build":{"enabled":true},"custom:cargo_graph":{"enabled":true},"docs":{"enabled":false},"infra":{"enabled":false},"test":{"enabled":true}}}'
     fi
     ;;
   check | clippy | doc | test | build | rustc)

@@ -40,7 +40,8 @@ result does not imply the same result on aarch64, Power, s390x, RISC-V, WASM, or
 
 ## Competitor Set
 
-The current public comparison set is Rust-focused and shape-compatible:
+The comparison set in the published snapshot is Rust-focused and
+shape-compatible:
 
 | Area | Compared against |
 |---|---|
@@ -59,7 +60,8 @@ Some common libraries are not primary benchmark baselines:
 
 - `openssl`, `libsodium-sys`, and `sodiumoxide` add C/FFI and system-library
   linkage that do not match the normal pure-Rust deployment shape.
-- `boring` currently overlaps with the `aws-lc-rs` comparison.
+- `boring` was not included because its covered primitive cases overlapped the
+  `aws-lc-rs` comparison.
 - Generic trait crates such as `digest` are not algorithms.
 
 ## Shape Notes

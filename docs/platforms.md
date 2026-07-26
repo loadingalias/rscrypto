@@ -54,9 +54,8 @@ The following `no_std` targets are built in CI:
 - `wasm32-unknown-unknown`
 - `wasm32-wasip1`
 
-Other `no_std` targets in the same families, such as `thumbv7em-*` and larger
-RISC-V profiles, generally work. Open an issue if a target you care about is
-missing.
+Targets outside this list are not part of the CI contract. Open an issue with
+the exact target triple and feature set when a required target is missing.
 
 ## Per-Platform Benchmark Scorecard
 
