@@ -6,18 +6,11 @@
 //! # Examples
 //!
 //! ```
-//! use rscrypto::checksum::{
-//!   Crc64,
-//!   introspect::{DispatchInfo, KernelIntrospect},
-//! };
+//! use rscrypto::checksum::introspect::DispatchInfo;
 //!
 //! // Platform-level info
 //! let info = DispatchInfo::current();
 //! assert!(!format!("{info}").is_empty());
-//!
-//! // Per-algorithm kernel selection
-//! assert!(!Crc64::kernel_name_for_len(1024).is_empty());
-//! assert!(!Crc64::kernel_name_for_len(4096).is_empty());
 //! ```
 
 pub use crate::{
@@ -32,13 +25,16 @@ pub use crate::{
 /// # Examples
 ///
 /// ```
-/// use rscrypto::checksum::{Crc64, introspect::kernel_for};
+/// # #[cfg(feature = "crc32")]
+/// # {
+/// use rscrypto::checksum::{Crc32, introspect::kernel_for};
 ///
 /// // Check kernel selection at different buffer sizes
-/// let small = kernel_for::<Crc64>(64);
-/// let large = kernel_for::<Crc64>(65536);
+/// let small = kernel_for::<Crc32>(64);
+/// let large = kernel_for::<Crc32>(65536);
 /// assert!(!small.is_empty());
 /// assert!(!large.is_empty());
+/// # }
 /// ```
 #[inline]
 #[must_use]

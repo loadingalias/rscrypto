@@ -18,6 +18,8 @@
 //! # Examples
 //!
 //! ```rust
+//! # #[cfg(feature = "crc32")]
+//! # {
 //! use rscrypto::checksum::{Checksum, ChecksumCombine, Crc32};
 //!
 //! // One-shot computation (fastest for complete data)
@@ -37,6 +39,7 @@
 //! let crc_b = Crc32::checksum(b);
 //! let combined = Crc32::combine(crc_a, crc_b, b.len());
 //! assert_eq!(combined, crc);
+//! # }
 //! ```
 //!
 //! # Feature Selection

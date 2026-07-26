@@ -13,6 +13,8 @@
 //! # Example
 //!
 //! ```rust
+//! # #[cfg(feature = "crc32")]
+//! # {
 //! use std::io::{Cursor, Read};
 //!
 //! use rscrypto::{
@@ -22,10 +24,10 @@
 //!
 //! let mut reader = Crc32C::reader(Cursor::new(b"hello world".to_vec()));
 //! let mut contents = Vec::new();
-//! reader.read_to_end(&mut contents)?;
+//! reader.read_to_end(&mut contents).unwrap();
 //! assert_eq!(contents, b"hello world");
 //! assert_eq!(reader.checksum(), Crc32C::checksum(&contents));
-//! # Ok::<(), std::io::Error>(())
+//! # }
 //! ```
 
 pub use crate::traits::io::{ChecksumReader, ChecksumWriter};
