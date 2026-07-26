@@ -28,7 +28,7 @@ use rscrypto::checksum::introspect::{DispatchInfo, KernelIntrospect, is_hardware
 #[cfg(feature = "checksums")]
 use rscrypto::checksum::{Crc32Castagnoli, Crc32Ieee, Crc64Xz};
 #[cfg(feature = "hashes")]
-use rscrypto::hashes::fast::{RapidHash64, RapidHashFast64, RapidHashFast128, Xxh3_64};
+use rscrypto::hashes::fast::Xxh3_64;
 #[cfg(all(feature = "hashes", feature = "diag"))]
 use rscrypto::hashes::introspect::{
   DispatchInfo as HashDispatchInfo, KernelIntrospect as HashKernelIntrospect, kernel_for as hash_kernel_for,
@@ -38,9 +38,9 @@ use rscrypto::hashes::{DigestReader, DigestWriter};
 #[cfg(feature = "hashes")]
 use rscrypto::{
   AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake128,
-  Cshake128XofReader, Cshake256, Cshake256XofReader, Digest, FastHash, RapidHash, RapidHash128, Sha3_224, Sha3_256,
-  Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512, Sha512_256, Shake128, Shake128XofReader, Shake256,
-  Shake256XofReader, Xof, Xxh3, Xxh3_128,
+  Cshake128XofReader, Cshake256, Cshake256XofReader, Digest, FastHash, RapidHash64, RapidHasher, RapidRandomState,
+  RapidSeededState, RapidStreamHasher, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512,
+  Sha512_256, Shake128, Shake128XofReader, Shake256, Shake256XofReader, Xof, Xxh3, Xxh3_128,
 };
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
@@ -859,6 +859,8 @@ fn buffered_checksum_constructors_compile() {
 #[test]
 #[cfg(feature = "hashes")]
 fn root_surface_hash_exports_compile() {
+  use core::hash::{BuildHasher, Hasher};
+
   let data = b"root-surface";
 
   let oneshot = Blake3::digest(data);
@@ -887,9 +889,22 @@ fn root_surface_hash_exports_compile() {
   cxof.squeeze(&mut out);
 
   assert_eq!(Xxh3::hash(data), Xxh3_64::hash(data));
-  assert_eq!(RapidHash::hash(data), RapidHash64::hash(data));
-  let _ = RapidHashFast64::hash(data);
-  let _ = RapidHashFast128::hash(data);
+  let _ = RapidHash64::hash(data);
+  let deterministic = RapidSeededState::new(42);
+  let mut collection = deterministic.build_hasher();
+  collection.write(data);
+  let _ = collection.finish();
+
+  let random = RapidRandomState::try_new_with(|seed| {
+    seed.copy_from_slice(&42u64.to_le_bytes());
+    Ok::<_, ()>(())
+  })
+  .unwrap();
+  let _ = random.hash_one(data);
+
+  let mut stream = RapidStreamHasher::new();
+  stream.write(data);
+  assert_eq!(stream.finish(), RapidHash64::hash(data));
   assert_ne!(Xxh3::hash(data), Xxh3::hash_with_seed(7, data));
 }
 
@@ -942,7 +957,6 @@ fn advanced_hash_modules_compile() {
   let _ = hash_kernel_for::<AsconXof>(64);
   let _ = hash_kernel_for::<AsconCxof128>(64);
   let _ = hash_kernel_for::<Xxh3>(64);
-  let _ = hash_kernel_for::<RapidHash128>(64);
 
   assert_hash_kernel_introspect::<Sha224>();
   assert_hash_kernel_introspect::<Sha256>();
@@ -963,6 +977,4 @@ fn advanced_hash_modules_compile() {
   assert_hash_kernel_introspect::<AsconXof>();
   assert_hash_kernel_introspect::<Xxh3>();
   assert_hash_kernel_introspect::<Xxh3_128>();
-  assert_hash_kernel_introspect::<RapidHash>();
-  assert_hash_kernel_introspect::<RapidHash128>();
 }
