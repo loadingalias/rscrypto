@@ -1987,14 +1987,6 @@ pub unsafe fn diag_mlkem_s390x_multiply_ntts_accumulate_k4_input_digest(
 #[doc(hidden)]
 #[inline]
 #[must_use]
-pub fn diag_mlkem_compress_decompress_digest(seed: u16) -> u16 {
-  portable::diag_compress_decompress_digest(seed)
-}
-
-#[cfg(feature = "diag")]
-#[doc(hidden)]
-#[inline]
-#[must_use]
 pub fn diag_mlkem_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
   portable::diag_compress_decompress_values_digest(values)
 }

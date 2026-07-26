@@ -1,14 +1,7 @@
-//! Blake2s kernel dispatch with `OnceCache` caching.
+//! Blake2s kernel dispatch.
 //!
-//! # Non-x86 SIMD policy
-//!
-//! The AArch64 NEON, POWER VSX, and s390x vector kernels are correct, but
-//! single-block SIMD loses to the portable scalar path in CI. The 2026-04-27
-//! Linux bench run confirmed AArch64 NEON loses to portable on Graviton3/4, so
-//! do not select those kernels in production dispatch.
-//!
-//! Regaining dominance on those platforms requires multi-block kernels
-//! (Blake3-style 2-way or 4-way), not more single-block shuffle tuning.
+//! The retired AArch64 NEON, POWER VSX, and s390x vector kernels lost to
+//! portable Rust in the 2026-04-27 target-native measurements.
 
 use super::kernels::{Blake2sKernelId, CompressBlocksFn, CompressFn, compress_blocks_fn, compress_fn};
 define_blake2_dispatch! {

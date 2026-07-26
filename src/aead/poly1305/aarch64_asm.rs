@@ -1,9 +1,9 @@
 //! rscrypto-owned aarch64 Poly1305 par4 assembly.
 //!
-//! This module is diagnostic-only while the owned assembly competes against the
-//! current Rust NEON backend. It mirrors the existing four-block Poly1305 AEAD
-//! updater: Rust handles padding/cached tails; assembly handles aligned par4
-//! accumulation over public-length 64-byte groups.
+//! This diagnostic-only kernel wins selected short inputs on Graviton 3 and 4
+//! but loses to the Rust NEON backend on sustained inputs. Rust handles
+//! padding and cached tails; assembly handles aligned four-block accumulation
+//! over public-length 64-byte groups.
 
 #![allow(unsafe_code)]
 

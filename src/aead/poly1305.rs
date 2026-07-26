@@ -897,6 +897,8 @@ fn authenticate_aead_with(
   Ok(tag)
 }
 
+// TODO(T7): Admit this diagnostic kernel to production dispatch only if a
+// stable short-input threshold wins across supported AArch64 targets.
 #[cfg(target_arch = "aarch64")]
 #[cfg(all(feature = "diag", any(target_os = "linux", target_os = "macos")))]
 #[path = "poly1305/aarch64_asm.rs"]

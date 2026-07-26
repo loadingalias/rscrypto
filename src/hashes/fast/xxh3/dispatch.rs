@@ -291,10 +291,8 @@ fn hash64_long(seed: u64, data: &[u8]) -> u64 {
     return super::aarch64_neon::xxh3_64_long(data, seed);
   }
 
-  // RISC-V: RVV kernel is slower than portable scalar at 256 B–64 KiB on
-  // in-order cores (SpacemiT K1).  Use the portable long path directly,
-  // bypassing OnceCache + indirect call overhead that the in-order pipeline
-  // pays dearly for (atomic acquire fence + unpredicted indirect branch).
+  // The retired RVV path lost to portable at 256 B–64 KiB on SpacemiT K1.
+  // Bypass runtime dispatch on RISC-V.
   #[cfg(target_arch = "riscv64")]
   {
     return super::xxh3_64_long(data, seed);

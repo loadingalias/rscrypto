@@ -2364,43 +2364,6 @@ pub(super) unsafe fn diag_s390x_multiply_ntts_accumulate_k4_input_digest(
 }
 
 #[cfg(feature = "diag")]
-pub(super) fn diag_compress_decompress_digest(seed: u16) -> u16 {
-  let values = [
-    seed % Q,
-    seed.wrapping_mul(17).wrapping_add(3) % Q,
-    seed.wrapping_mul(29).wrapping_add(11) % Q,
-    seed.wrapping_mul(43).wrapping_add(19) % Q,
-  ];
-  let compressed = compress_values_4::<10>(values);
-  let decompressed = decompress_values_4::<10>(compressed);
-  let compressed_11 = compress_values_4::<11>(values);
-  let decompressed_11 = decompress_values_4::<11>(compressed_11);
-  let compressed_5 = compress_values_4::<5>(values);
-  let decompressed_5 = decompress_values_4::<5>(compressed_5);
-
-  let mut digest = 0u16;
-  for value in compressed {
-    digest = digest.rotate_left(3) ^ value;
-  }
-  for value in decompressed {
-    digest = digest.rotate_left(5) ^ value;
-  }
-  for value in compressed_11 {
-    digest = digest.rotate_left(7) ^ value;
-  }
-  for value in decompressed_11 {
-    digest = digest.rotate_left(11) ^ value;
-  }
-  for value in compressed_5 {
-    digest = digest.rotate_left(13) ^ value;
-  }
-  for value in decompressed_5 {
-    digest = digest.rotate_left(2) ^ value;
-  }
-  digest
-}
-
-#[cfg(feature = "diag")]
 pub(super) fn diag_compress_decompress_values_digest(values: [u16; 4]) -> u16 {
   let compressed = compress_values_4::<10>(values);
   let decompressed = decompress_values_4::<10>(compressed);

@@ -437,13 +437,6 @@ pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) 
   out
 }
 
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "linux", target_os = "macos")
-))]
-#[path = "chacha20/aarch64_asm.rs"]
-mod aarch64_asm;
 #[cfg(target_arch = "aarch64")]
 #[path = "chacha20/aarch64_neon.rs"]
 mod aarch64_neon;
@@ -480,14 +473,7 @@ pub(crate) fn xor_keystream_aarch64_neon(
   aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
 }
 
-// ─── Forced-kernel diag entrypoints ────────────────────────────────────────
-//
-// Mirrors the `diag_compress_*` pattern in `src/auth/argon2/mod.rs`. Tests in
-// `tests/aead_kernel_equivalence.rs` invoke each backend's `xor_keystream`
-// directly to assert byte-identity with the portable oracle, regardless of
-// which backend the runtime dispatcher would otherwise pick. This is what
-// catches CRIT-1-class silent kernel divergence (e.g. POWER VSX rotation
-// inversion) on every CI runner that has the corresponding target feature.
+// Forced entry points let backend-equivalence tests bypass runtime dispatch.
 
 /// Run the **portable** ChaCha20 XOR-keystream regardless of host caps.
 #[cfg(feature = "diag")]
@@ -514,27 +500,6 @@ pub fn diag_chacha20_xor_keystream_aarch64_neon(
   buffer: &mut [u8],
 ) {
   aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
-}
-
-/// Run the rscrypto-owned aarch64 assembly ChaCha20 XOR-keystream.
-///
-/// # Safety
-///
-/// Caller must verify the host has `aarch64::NEON`. Compile-time gated to
-/// `target_arch = "aarch64"` and macOS/Linux because this uses platform
-/// assembly objects.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "linux", target_os = "macos")
-))]
-pub fn diag_chacha20_xor_keystream_aarch64_owned_asm(
-  key: &[u8; KEY_SIZE],
-  initial_counter: u32,
-  nonce: &[u8; NONCE_SIZE],
-  buffer: &mut [u8],
-) {
-  aarch64_asm::xor_keystream_8block(key, initial_counter, nonce, buffer);
 }
 
 /// Run the x86_64 AVX2 ChaCha20 XOR-keystream.

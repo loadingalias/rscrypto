@@ -1,49 +1,7 @@
-//! Generic kernel selection and dispatch infrastructure for CRC algorithms.
+//! Shared CRC kernel names and selection helpers.
 //!
-//! This module provides shared infrastructure for kernel selection that works
-//! across all CRC widths (16, 24, 32, 64). The patterns are identical:
-//!
-//! 1. Check if `len < small_threshold` → use portable
-//! 2. Check forced backend override
-//! 3. Check CPU capabilities and thresholds → select SIMD tier
-//!
-//! # Kernel Tier System
-//!
-//! CRC implementations follow a tiered kernel selection model. Higher tiers
-//! offer better performance but have stricter hardware requirements.
-//!
-//! | Tier | Name | Description |
-//! |------|------|-------------|
-//! | 0 | Reference | Bitwise implementation - always available, for verification |
-//! | 1 | Portable | Table-based slice-by-N - always available, production fallback |
-//! | 2 | HW CRC | Native CRC instructions - CRC-32/32C only on x86_64 (SSE4.2), aarch64 (CRC ext) |
-//! | 3 | Folding | PCLMUL/PMULL/VPMSUM/VGFM/Zbc - carryless multiply folding |
-//! | 4 | Wide | VPCLMUL/EOR3/SVE2/Zvbc - wide SIMD / advanced folding |
-//!
-//! ## Tier Availability by CRC Width
-//!
-//! | CRC Width | Tier 0 | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
-//! |-----------|--------|--------|--------|--------|--------|
-//! | CRC-16 | Yes | Yes | No | Yes | Yes* |
-//! | CRC-24 | Yes | Yes | No | Yes | Yes* |
-//! | CRC-32/32C | Yes | Yes | Yes | Yes | Yes |
-//! | CRC-64 | Yes | Yes | No | Yes | Yes |
-//!
-//! *CRC-16/CRC-24 Tier 4 is x86_64 VPCLMUL only.
-//!
-//! # Design Philosophy
-//!
-//! Rather than using traits (which add vtable overhead) or generics (which
-//! complicate the code), we provide:
-//!
-//! - Shared constants and stream-to-index mapping
-//! - Type aliases and dispatch macros for each CRC width
-//! - Name selection helpers that work with static arrays
-//!
-//! This keeps the code explicit and allows each CRC module to define its
-//! own kernel arrays and selection logic while reusing common patterns.
-
-// Common Constants
+//! Each CRC module owns its capability and threshold policy. This module keeps
+//! only the mechanics that are identical across widths.
 
 /// Reference (bitwise) kernel name - canonical implementation for verification.
 pub const REFERENCE: &str = "reference/bitwise";
@@ -56,31 +14,16 @@ pub const PORTABLE_SLICE16: &str = "portable/slice16";
 #[cfg(any(feature = "crc16", feature = "crc24"))]
 pub const PORTABLE_SLICE8: &str = "portable/slice8";
 
-// Stream Mapping
-
-// Stream Selection Helpers
-
-/// Calculate the maximum stream count supported for a given buffer length.
+// TODO(T7): Integrate this selector only after target-native, per-CRC
+// benchmarks prove the stream counts at every threshold; otherwise delete it.
+/// Select the highest allowed stream count whose byte threshold is met.
 ///
-/// Each additional stream level requires roughly 2× the minimum buffer size
-/// to amortize the merge overhead.
-///
-/// # Arguments
-///
-/// * `len` - Input buffer length
-/// * `max_streams` - Maximum streams allowed by config
-/// * `fold_bytes` - Bytes per fold block (e.g., 128 for CRC-64)
-/// * `stream_thresholds` - Array of `(min_streams, min_bytes)` pairs, ordered descending
-///
-/// # Returns
-///
-/// The stream count to use (1, 2, 4, or 7/8 depending on architecture).
-#[cfg(test)] // Will be used when CRC modules integrate stream selection
+/// `stream_thresholds` must be ordered from highest to lowest stream count.
+#[cfg(test)]
 #[inline]
 #[must_use]
 #[allow(clippy::indexing_slicing)] // Loop guard `i < len()` ensures index is in bounds
 pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stream_thresholds: &[(u8, usize)]) -> u8 {
-  // Check thresholds from highest to lowest
   let mut i = 0;
   while i < stream_thresholds.len() {
     let (streams, min_bytes) = stream_thresholds[i];
@@ -97,8 +40,6 @@ pub const fn select_streams(len: usize, max_streams: u8, fold_bytes: usize, stre
     0 // Use portable
   }
 }
-
-// Tests
 
 #[cfg(test)]
 mod tests {

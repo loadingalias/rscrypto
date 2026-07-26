@@ -1,22 +1,5 @@
-//! Forced-kernel ChaCha20 backend equivalence vs the portable oracle.
-//!
-//! Mirrors the `tests/argon2_kernels.rs` harness: drive every compiled SIMD
-//! backend (NEON / AVX2 / AVX-512 / VSX / z/Vector / RVV / simd128) with the
-//! same ChaCha20 inputs and assert byte-identical output against the portable
-//! kernel. Full AEAD algorithms are covered by oracle tests that run under both
-//! normal dispatch and `portable-only` feature-matrix lanes.
-//!
-//! This is the test that catches CRIT-1 class silent kernel divergence —
-//! the bug that shipped on POWER VSX and s390x z/Vector for ChaCha20 prior
-//! to commit `2631aefa` (rotate-left amounts inverted via `splat_ror(N) =
-//! splat(32 - N)`). With this harness in CI gating green on every target
-//! that compiles a SIMD backend, that class of regression cannot land
-//! silently again.
-//!
-//! The harness deliberately does NOT duplicate test logic per backend.
-//! A single generic loop iterates the static list of compiled backends,
-//! calls each diag entry point, and compares against the portable oracle.
-//! Adding a new backend requires only listing it in the `BACKENDS` table.
+//! Forces every compiled ChaCha20 backend and compares it with the portable
+//! oracle.
 
 #![cfg(all(feature = "diag", feature = "chacha20poly1305"))]
 
@@ -56,12 +39,6 @@ const BACKENDS: &[Backend] = &[
     name: "aarch64-neon",
     required: aarch64::NEON,
     xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_aarch64_neon,
-  },
-  #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
-  Backend {
-    name: "aarch64-owned-asm-8block",
-    required: aarch64::NEON,
-    xor_keystream: rscrypto::aead::diag_chacha20_xor_keystream_aarch64_owned_asm,
   },
   #[cfg(target_arch = "x86_64")]
   Backend {

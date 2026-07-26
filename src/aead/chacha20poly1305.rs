@@ -22,12 +22,6 @@ const AARCH64_INTERLEAVED_MIN: usize = 1024;
 #[cfg(target_arch = "aarch64")]
 const AARCH64_INTERLEAVED_CHUNK: usize = 1024 * 1024;
 #[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "linux", target_os = "macos")
-))]
-const AARCH64_OWNED_PAR4_DIAG_CHUNK: usize = chacha20::BLOCK_SIZE * 8;
-#[cfg(all(
   target_arch = "x86_64",
   target_os = "linux",
   any(test, all(not(debug_assertions), not(feature = "portable-only")))
@@ -588,45 +582,6 @@ impl ChaCha20Poly1305 {
     Some(Ok(()))
   }
 
-  #[cfg(all(
-    feature = "diag",
-    target_arch = "aarch64",
-    any(target_os = "linux", target_os = "macos")
-  ))]
-  fn encrypt_in_place_owned_par4_aarch64_diag(
-    &self,
-    nonce: &Nonce96,
-    aad: &[u8],
-    buffer: &mut [u8],
-  ) -> Result<ChaCha20Poly1305Tag, SealError> {
-    let lengths = super::AeadByteLengths::try_new(aad.len(), buffer.len()).map_err(|_| SealError::too_large())?;
-
-    let mut poly_key = chacha20::poly1305_key_gen(self.key.as_bytes(), nonce.as_bytes());
-    let mut authenticator = poly1305::aarch64_asm::AeadPar4Asm::new(&poly_key);
-    authenticator.update_padded_segment(aad);
-
-    let bulk_len = buffer
-      .len()
-      .strict_div(AARCH64_OWNED_PAR4_DIAG_CHUNK)
-      .strict_mul(AARCH64_OWNED_PAR4_DIAG_CHUNK);
-    let (bulk, remainder) = buffer.split_at_mut(bulk_len);
-    let mut counter = 1u32;
-    if !bulk.is_empty() {
-      chacha20::diag_chacha20_xor_keystream_aarch64_owned_asm(self.key.as_bytes(), counter, nonce.as_bytes(), bulk);
-      authenticator.update_padded_segment(bulk);
-      counter = counter.wrapping_add(bulk_len.strict_div(chacha20::BLOCK_SIZE) as u32);
-    }
-
-    if !remainder.is_empty() {
-      chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), remainder);
-      authenticator.update_padded_segment(remainder);
-    }
-
-    let tag = ChaCha20Poly1305Tag::from_bytes(authenticator.finalize(lengths));
-    ct::zeroize(&mut poly_key);
-    Ok(tag)
-  }
-
   fn encrypt_in_place_owned_unchecked(
     &self,
     nonce: &Nonce96,
@@ -697,21 +652,6 @@ pub fn diag_chacha20poly1305_encrypt_in_place_owned(
 ) -> Result<ChaCha20Poly1305Tag, SealError> {
   super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
   cipher.encrypt_in_place_owned_unchecked(nonce, aad, buffer)
-}
-
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "linux", target_os = "macos")
-))]
-pub fn diag_chacha20poly1305_encrypt_in_place_owned_par4_aarch64(
-  cipher: &ChaCha20Poly1305,
-  nonce: &Nonce96,
-  aad: &[u8],
-  buffer: &mut [u8],
-) -> Result<ChaCha20Poly1305Tag, SealError> {
-  super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
-  cipher.encrypt_in_place_owned_par4_aarch64_diag(nonce, aad, buffer)
 }
 
 #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]

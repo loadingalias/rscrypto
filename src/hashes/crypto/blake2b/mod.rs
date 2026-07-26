@@ -48,15 +48,9 @@
 
 pub(crate) mod kernels;
 
-#[cfg(target_arch = "aarch64")]
-mod aarch64;
 mod dispatch;
-#[cfg(target_arch = "powerpc64")]
-mod power;
 #[cfg(target_arch = "riscv64")]
 mod riscv64;
-#[cfg(target_arch = "s390x")]
-mod s390x;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 #[cfg(target_arch = "x86_64")]
@@ -79,62 +73,6 @@ const MAX_OUTPUT_LEN: usize = 64;
 pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
   dispatch::kernel_name_for_len(len)
 }
-
-#[cfg(feature = "diag")]
-#[inline]
-#[must_use]
-pub fn diag_init_state_unkeyed(output_len: u8) -> [u64; 8] {
-  init_state(output_len, 0)
-}
-
-#[cfg(feature = "diag")]
-#[inline]
-pub fn diag_compress_block(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  compress_direct(state, block, t, last);
-}
-
-#[cfg(feature = "diag")]
-#[inline]
-pub fn diag_compress_block_portable(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  kernels::compress(state, block, t, last);
-}
-
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-#[inline]
-pub fn diag_compress_block_x86_avx2(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX2));
-  // SAFETY: the runtime capability assertion above verifies AVX2 before
-  // calling the target-feature-specialized diagnostic kernel.
-  unsafe { x86_64::compress_avx2(state, block, t, last) }
-}
-
-#[cfg(all(feature = "diag", target_arch = "x86_64"))]
-#[inline]
-pub fn diag_compress_block_x86_avx512vl(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX512F));
-  assert!(crate::platform::caps().has(crate::platform::caps::x86::AVX512VL));
-  // SAFETY: the runtime capability assertions above verify AVX-512F+VL before
-  // calling the target-feature-specialized diagnostic kernel.
-  unsafe { x86_64::compress_avx512vl(state, block, t, last) }
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64"))]
-#[inline]
-pub fn diag_compress_block_aarch64_neon(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  // SAFETY: NEON is baseline on AArch64.
-  unsafe { aarch64::compress_neon(state, block, t, last) }
-}
-
-#[cfg(all(feature = "diag", target_arch = "riscv64"))]
-#[inline]
-pub fn diag_compress_block_riscv64_v(state: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  assert!(crate::platform::caps().has(crate::platform::caps::riscv::V));
-  // SAFETY: the runtime capability assertion above verifies V before calling
-  // the target-feature-specialized diagnostic kernel.
-  unsafe { riscv64::compress_rvv(state, block, t, last) }
-}
-
-// ─── Core state ─────────────────────────────────────────────────────────────
 
 /// Internal Blake2b state shared by `Blake2b256` and `Blake2b512`.
 ///
@@ -443,13 +381,6 @@ fn init_state_with_params(nn: u8, kk: u8, salt: &[u8; SALT_LEN], personal: &[u8;
   h[6] ^= u64::from_le_bytes(*p_lo);
   h[7] ^= u64::from_le_bytes(*p_hi);
   h
-}
-
-#[cfg(feature = "diag")]
-#[inline(always)]
-fn compress_direct(h: &mut [u64; 8], block: &[u8; BLOCK_SIZE], t: u128, last: bool) {
-  let compress = dispatch::compress_dispatch();
-  compress(h, block, t, last);
 }
 
 #[inline(always)]
@@ -959,7 +890,7 @@ pub fn diag_blake2b256_keyed_digest_portable(key: &[u8; 32]) -> [u8; 32] {
   out
 }
 
-#[cfg(feature = "diag")]
+#[cfg(any(test, all(feature = "diag", feature = "argon2")))]
 pub(crate) fn diag_hash_parts_portable(output_len: u8, parts: &[&[u8]], out: &mut [u8]) {
   assert_eq!(
     out.len(),

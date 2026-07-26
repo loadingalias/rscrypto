@@ -3,9 +3,8 @@
 //! SHA-NI, ARM SHA2 CE, and KIMD have negligible setup cost relative to the
 //! block work, so use HW accel for all size classes when available.
 //!
-//! POWER `vshasigmaw` is intentionally not selected automatically. The current
-//! POWER kernel still runs the scalar round structure and crosses through inline
-//! asm for the sigma primitives; on POWER10 that loses to the portable path.
+//! POWER uses portable compression because the retired hybrid `vshasigmaw`
+//! kernel lost to portable Rust on POWER10.
 
 pub use super::kernels::Sha256KernelId as KernelId;
 use crate::platform::Caps;

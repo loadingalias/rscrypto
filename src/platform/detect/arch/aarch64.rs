@@ -633,7 +633,9 @@ fn detect_apple_sme_features() -> Caps {
   caps
 }
 
-/// Detect SME tile size (SVL - Streaming Vector Length) on Apple platforms.
+// TODO(T7): Feed Apple SVL into production SME dispatch only after an
+// SVL-sensitive kernel wins representative target-native benchmarks.
+/// Detect SME streaming vector length in bytes on Apple platforms.
 ///
 /// Returns the maximum SVL in bytes, or 0 if SME is not supported or detection failed.
 ///
@@ -648,9 +650,8 @@ fn detect_apple_sme_features() -> Caps {
   feature = "std",
   any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
-#[allow(dead_code)] // Will be used when SME kernels are implemented
+#[allow(dead_code)]
 fn detect_apple_sme_tile_size() -> u16 {
-  // Helper to read a u32 sysctl value
   fn sysctl_u32(name: &[u8]) -> u32 {
     #[allow(unsafe_code)]
     unsafe extern "C" {
@@ -682,29 +683,26 @@ fn detect_apple_sme_tile_size() -> u16 {
     if ret == 0 { value } else { 0 }
   }
 
-  // Try to read the SVL from sysctl
   let svl_bytes = sysctl_u32(c"hw.optional.arm.sme_max_svl_b".to_bytes_with_nul());
   if svl_bytes > 0 {
     return svl_bytes as u16;
   }
 
-  // Fallback: Use chip generation to infer SVL
-  // Apple Silicon uses fixed 128-bit (16 byte) SVL for SME
   if let Some(AppleSiliconGen::M4 | AppleSiliconGen::M5) = detect_apple_silicon_gen() {
-    return 16; // 128 bits = 16 bytes
+    return 16;
   }
 
-  0 // SME not supported or unknown
+  0
 }
-// SVE Vector Length Detection (Linux aarch64)
 
+// TODO(T7): Feed SVE VL into production dispatch only after a length-sensitive
+// SVE kernel wins representative target-native benchmarks.
 /// Detect SVE vector length in bits via prctl(PR_SVE_GET_VL).
 ///
 /// Uses raw syscall to avoid libc dependency. Returns 0 if SVE is not supported.
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
-#[allow(dead_code)] // Reserved for capability diagnostics and future arch-specific heuristics.
+#[allow(dead_code)]
 fn detect_sve_vlen() -> u16 {
-  // prctl syscall number on aarch64-linux
   const SYS_PRCTL: u64 = 167;
   const PR_SVE_GET_VL: u64 = 51;
   const PR_SVE_VL_LEN_MASK: u64 = 0xFFFF;
@@ -729,12 +727,10 @@ fn detect_sve_vlen() -> u16 {
   }
 
   if result < 0 {
-    return 0; // SVE not supported
+    return 0;
   }
 
-  // Result is VL in bytes; convert to bits
   let vl_bytes = (result as u64) & PR_SVE_VL_LEN_MASK;
-  // Clamp to u16::MAX. Real SVE widths are far below this bound.
   let vl_bits = vl_bytes.strict_mul(8);
   if vl_bits > u16::MAX as u64 {
     u16::MAX
@@ -745,23 +741,20 @@ fn detect_sve_vlen() -> u16 {
 
 /// Fallback SVE vector length detection for non-Linux platforms.
 #[cfg(all(target_arch = "aarch64", not(all(target_os = "linux", feature = "std"))))]
-#[allow(dead_code)] // Reserved for capability diagnostics and future arch-specific heuristics.
+#[allow(dead_code)]
 fn detect_sve_vlen() -> u16 {
-  // On non-Linux platforms, we can't easily detect SVE VL.
-  // Return 0 to indicate unknown; tuning will use hardcoded defaults.
   0
 }
 
-// SME Vector Length Detection (Linux aarch64)
-
+// TODO(T7): Feed SME VL into production dispatch only after a length-sensitive
+// SME kernel wins representative target-native benchmarks.
 /// Detect SME streaming vector length in bits via prctl(PR_SME_GET_VL).
 ///
 /// Uses raw syscall to avoid libc dependency. Returns 0 if SME is not supported.
 /// The SME vector length determines the tile size (SVL × SVL bits).
 #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "std"))]
-#[allow(dead_code)] // Reserved for future Linux SME support (Grace Hopper, future Gravitons)
+#[allow(dead_code)]
 fn detect_sme_vlen() -> u16 {
-  // prctl syscall number on aarch64-linux
   const SYS_PRCTL: u64 = 167;
   const PR_SME_GET_VL: u64 = 63;
   const PR_SME_VL_LEN_MASK: u64 = 0xFFFF;
@@ -786,12 +779,10 @@ fn detect_sme_vlen() -> u16 {
   }
 
   if result < 0 {
-    return 0; // SME not supported
+    return 0;
   }
 
-  // Result is VL in bytes; convert to bits
   let vl_bytes = (result as u64) & PR_SME_VL_LEN_MASK;
-  // Clamp to u16::MAX. Real SME widths are far below this bound.
   let vl_bits = vl_bytes.strict_mul(8);
   if vl_bits > u16::MAX as u64 {
     u16::MAX
@@ -802,10 +793,8 @@ fn detect_sme_vlen() -> u16 {
 
 /// Fallback SME vector length detection for non-Linux platforms.
 #[cfg(all(target_arch = "aarch64", not(all(target_os = "linux", feature = "std"))))]
-#[allow(dead_code)] // May be unused on some aarch64 bare-metal configs
+#[allow(dead_code)]
 fn detect_sme_vlen() -> u16 {
-  // On non-Linux platforms, we can't easily detect SME VL.
-  // Return 0 to indicate unknown; tuning will use hardcoded defaults.
   0
 }
 

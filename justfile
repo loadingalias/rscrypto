@@ -54,6 +54,9 @@ ssh-aws-linux-amd-zen5-profile:
 ssh-aws-linux-amd-zen4-profile:
     @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-amd-zen4-profile
 
+ssh-aws-linux-arm64-graviton3-profile:
+    @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64-graviton3-profile
+
 ssh-aws-linux-arm64-graviton4-profile:
     @"$HOME/dev-machines/dev-machine" ssh rscrypto aws-linux-arm64-graviton4-profile
 
