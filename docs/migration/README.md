@@ -1,14 +1,13 @@
 # Migration Guides
 
-Switch crate-by-crate without hunting through the full API docs. This index
-covers 35 migration guides.
+This index covers 35 migration guides for individual crates and larger stacks.
 
-Each guide shows the smallest useful diff: dep change, import change,
-and call site change.
+Each guide identifies dependency, import, call-site, behavior, and unsupported
+surface changes.
 
 If you are evaluating `rscrypto`, start with the crate you already use.
-The guide will tell you whether the migration is a one-line replacement, a small
-API shape change, or not a good fit.
+The guide states whether the mapped surface is compatible and which upstream
+APIs must remain.
 
 ## Checksums
 
@@ -31,7 +30,7 @@ API shape change, or not a good fit.
 | [`ascon-hash`](RustCrypto/ascon-hash.md) (RustCrypto) | `AsconHash256`, `AsconXof`, `AsconCxof128` | Verified against `ascon-hash 0.4.0` |
 | [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.16` |
 | [`twox-hash`](twox-hash.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | API migration guidance; XXH3 output covered by `xxhash-rust` oracle tests |
-| [`rapidhash`](rapidhash.md) | `RapidHash`, `RapidHash128`, `RapidStreamHasher`, `RapidHasher`, `RapidBuildHasher` | Verified against `rapidhash 4.5.1` |
+| [`rapidhash`](rapidhash.md) | `RapidHash64`, `RapidStreamHasher`, `RapidHasher`, `RapidSeededState`, `RapidRandomState` | Verified against `rapidhash 4.5.1` |
 
 ## Auth (MAC + KDF)
 

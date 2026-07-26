@@ -98,5 +98,7 @@ The `customization-string` is bounded at 256 bytes by the spec: passing longer r
 - **`Output<D>` → `[u8; N]`.** Same as the rest of the RustCrypto migrations: drop `.as_slice()` / `.as_ref()`.
 - **`finalize` consumes vs. borrows.** Same as the rest: drop any `.clone()`.
 - **NIST LWC standard.** Ascon-Hash256 is the lightweight cryptography winner and standardised by NIST in SP 800-232. Both implementations track the final spec.
-- **No SIMD.** Ascon's permutation is small enough that SIMD is not the dominant cost. rscrypto ships a portable-only implementation; the `portable-only` feature is a no-op for this algorithm but does not break the build.
+- **Implementation boundary.** rscrypto currently exposes a portable
+  implementation for these Ascon hash and XOF types. `portable-only` does not
+  change their backend selection.
 - **`no_std`.** Both crates support `no_std`.

@@ -4,12 +4,12 @@
 style alone is not enough: the claim depends on the crate version, commit,
 compiler, target, CPU features, enabled features, and generated binary.
 
-Unlisted configurations are NOT covered by a constant-time release claim.
+Unlisted configurations are not covered by a constant-time release claim.
 
 The machine-readable source of truth is [`ct.toml`](../ct.toml). The sections
 below explain how to read that boundary.
 
-## What Do I Mean By Constant-Time?
+## Claim Definition
 
 For the declared secret inputs of a claimed primitive, the generated binary must
 not let those secrets influence:
@@ -71,7 +71,7 @@ otherwise:
 - Checksums and non-cryptographic hashes.
 - Public-key verification math.
 - Public key, signature, ciphertext-container, DER, PHC, and protocol parsing.
-- Key generation and OS randomness.
+- Unlisted key-generation paths and OS randomness.
 - Serialization and export of secret material.
 - Benchmark-only paths.
 - Unmeasured targets, compilers, linkers, target features, or crate feature sets.

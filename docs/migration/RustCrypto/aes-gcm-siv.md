@@ -85,7 +85,14 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 ## Notes
 
-- **Why GCM-SIV?** Per RFC 8452, AES-GCM-SIV is misuse-resistant: accidentally reusing a `(key, nonce)` pair across two different messages reveals only that the messages are equal. It does *not* leak the GHASH key, which would otherwise enable universal forgery. Both crates implement the full RFC 8452 spec including the nonce-derived key schedule. Use it when your nonce source could plausibly produce duplicates (random selection, distributed counters across crash-restart, etc.).
-- **All notes from `aes-gcm.md` apply.** `Payload { msg, aad }` collapses to positional args; `Nonce` becomes `Nonce96`; `Key<T>` becomes `Aes256GcmSivKey`; combined output is `[ciphertext || tag]` byte-identical to `aes-gcm-siv`'s `Vec<u8>`.
-- **Performance.** GCM-SIV is roughly 1.5–2x slower than AES-GCM at large message sizes due to the polynomial-evaluation step. Both crates use AES-NI / AES-CE for the AES core; rscrypto adds VAES on AVX-512 hosts.
+- **Why GCM-SIV?** Per RFC 8452, AES-GCM-SIV is nonce-misuse-resistant.
+  Reuse does not expose the authentication key as it does in AES-GCM, but it
+  still makes repeated plaintext/AAD under the same nonce observable and
+  weakens the construction's security bounds. Continue to prefer unique
+  nonces.
+- **The API-shape and failed-open notes from `aes-gcm.md` apply.**
+  `Payload { msg, aad }` collapses to positional arguments; `Nonce` becomes
+  `Nonce96`; `Key<T>` becomes `Aes256GcmSivKey`; and combined output is
+  `[ciphertext || tag]`, byte-identical to `aes-gcm-siv`'s `Vec<u8>`. The
+  AES-GCM nonce-reuse warning does not apply; use the GCM-SIV bounds above.
 - **`no_std`.** Both crates work in `no_std`.

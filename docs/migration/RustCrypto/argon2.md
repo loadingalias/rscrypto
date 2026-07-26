@@ -136,8 +136,11 @@ Common canonical RustCrypto Argon2id v1.3 records with 32-byte outputs remain ve
 
 ## Operational notes
 
-- `Argon2Params::default()` is `m=19_456 KiB, t=2, p=1`, the current [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) baseline.
+- `Argon2Params::default()` is `m=19_456 KiB, t=2, p=1`, matching the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) baseline as checked on 2026-07-25.
 - Argon2d and Argon2id use data-dependent memory access and are not local side-channel constant-time claims. Argon2i is the data-independent raw variant.
 - The memory matrix is zeroized on drop. Target-size overflow and allocation failure are distinct errors on raw derivation.
 - The `parallel` feature enables Rayon lane parallelism when the profile and workload justify it.
-- Argon2 requires `alloc` and is not FIPS 140-3 approved.
+- Argon2 requires `alloc` and is outside rscrypto's
+  [FIPS-oriented inventory](../../compliance.md). A validation effort must
+  determine whether and how it may appear within the module boundary and
+  approved mode.

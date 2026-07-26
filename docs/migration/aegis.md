@@ -106,10 +106,12 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 ## Notes
 
-- **One cipher, many messages.** `aegis::Aegis256::new(&key, &nonce)` baked the nonce into the cipher and required reconstruction per message. rscrypto's `Aegis256::new(&key)` returns a reusable cipher; pass a fresh `Nonce256` per call. This is a small clarity win and aligns AEGIS with the rest of the rscrypto AEAD family.
-- **Tag size fixed at 16 bytes.** `aegis` lets you pick `Aegis256<16>` or `Aegis256<32>`; rscrypto ships only the 16-byte-tag variant (the cfrg draft default). If you depend on 32-byte tags for a specific protocol, file an issue.
-- **`(ct, tag)` vs. `[ct || tag]` layout.** Both layouts are trivially convertible; the harness verifies they produce the same bytes. Pick whichever shape your downstream protocol expects.
-- **Hardware acceleration.** AEGIS uses AES round functions (not full AES). Both crates dispatch to AES-NI on x86_64 and AES-CE on aarch64. AEGIS is typically 2–3× faster than AES-GCM on hardware-accelerated targets. Keep the win after migrating.
-- **Random nonces are safe.** AEGIS-256 has a 256-bit nonce; random selection across `2^96` messages is safe.
+- **One cipher, many messages.** `aegis::Aegis256::new(&key, &nonce)` baked the nonce into the cipher and required reconstruction per message. rscrypto's `Aegis256::new(&key)` returns a reusable cipher; pass a fresh `Nonce256` per call.
+- **Tag size fixed at 16 bytes.** `aegis` lets you pick `Aegis256<16>` or
+  `Aegis256<32>`; rscrypto exposes only the 16-byte-tag variant. Keep `aegis`
+  for protocols that require a 32-byte tag.
+- **`(ct, tag)` vs. `[ct || tag]` layout.** The harness verifies that concatenating the upstream ciphertext and tag produces the rscrypto combined output. Keep the layout required by the protocol.
+- **Hardware acceleration.** AEGIS uses AES round functions rather than the full AES construction. Both crates dispatch to AES-NI on x86_64 and AES-CE on AArch64. Measure the migrated workload on its deployment target before making a performance claim.
+- **Random nonces still require a bound.** AEGIS-256 has a 256-bit nonce. For uniformly random nonces, `q = 2^96` encryptions gives about `2^-65` collision probability under the birthday approximation. Set the deployment limit from its own error budget.
 - **Not nonce-misuse-resistant.** `(key, nonce)` reuse leaks plaintext XORs. If you need misuse resistance, use AES-GCM-SIV instead.
 - **`no_std`.** Both crates support `no_std`.

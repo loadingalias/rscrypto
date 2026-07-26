@@ -1,6 +1,8 @@
 # Migration: `aes-gcm` (RustCrypto) → `rscrypto`
 
-> Replace the `Aes256Gcm` / `Key<Aes256Gcm>` / `Nonce` / `Payload { msg, aad }` builder with rscrypto's named types and a buffer-style `encrypt(&nonce, aad, plaintext, &mut out)`. Same algorithm, byte-identical ciphertext+tag, no `Vec` allocations on the hot path.
+Replace the `Aes256Gcm` / `Key<Aes256Gcm>` / `Nonce` /
+`Payload { msg, aad }` builder with rscrypto's named types and a caller-buffer
+API. The combined ciphertext-and-tag bytes remain interoperable.
 
 Verified against `aes-gcm = "0.11.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/aes128gcm_oracle.rs`, `tests/aes256gcm_oracle.rs`, and `tests/aead_wycheproof.rs`.
@@ -119,8 +121,8 @@ cipher
 ```rust
 // After
 cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
-// Returns Err(OpenError::Verification(_)) on tag mismatch; buffer state on
-// failure is unspecified: treat the buffer as garbage and discard.
+// On tag mismatch, rscrypto zeroes buffer before returning
+// Err(OpenError::Verification(_)).
 ```
 
 ## Notes
@@ -128,8 +130,22 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 - **`Key<T>` is gone, `Nonce` is gone.** Use the per-algorithm `Aes256GcmKey` and the size-specific `Nonce96`. No `KeyInit` trait import; `Aes256Gcm::new(&key)` is inherent.
 - **`Payload { msg, aad }` is gone.** Pass `aad` and `msg` (or `aad` and the in-place buffer) as positional args. AAD is a plain `&[u8]`; pass `b""` for "no AAD".
 - **Cipher reuse does not require cloning.** AEAD cipher values are reusable but do not implement `Clone`, because cloning would silently duplicate secret state. Keep one cipher value and supply a fresh nonce for each encryption.
-- **Nonce reuse is catastrophic for AES-GCM.** Both crates accept any `Nonce96`: there's no enforcement against duplicate nonces. If you migrated from `aes-gcm` because of a nonce-reuse incident, switch to `Aes256GcmSiv` (see `aes-gcm-siv.md`); it tolerates accidental reuse.
-- **Random nonces are unsafe at scale.** With 96-bit nonces, the collision probability after `2^32` messages is around `2^-32`. For random-nonce flows, switch to `XChaCha20Poly1305` (192-bit nonces): see `chacha20poly1305.md`.
+- **Nonce reuse is catastrophic for AES-GCM.** Both crates accept any
+  `Nonce96`; neither prevents duplicates. If the design cannot guarantee
+  uniqueness, evaluate `Aes256GcmSiv` and its misuse-resistance bounds in
+  `aes-gcm-siv.md`.
+- **Failed-open buffer semantics change.** RustCrypto's in-place AEAD contract
+  keeps the buffer unchanged on error. rscrypto clears the caller's in-place
+  buffer, and clears the combined-decrypt output buffer, on authentication
+  failure. Do not rely on preserving the ciphertext after a failed rscrypto
+  open.
+- **Quantify random-nonce collision risk.** For uniformly random `n`-bit
+  nonces and `q` encryptions, the birthday approximation is
+  `q(q-1) / 2^(n+1)`. At `q = 2^32` with a 96-bit nonce, that is about
+  `2^-33`. Prefer deterministic uniqueness for AES-GCM; if the protocol uses
+  random nonces, set a message limit from its collision budget. XChaCha20-
+  Poly1305 provides a 192-bit nonce space but is a different algorithm and wire
+  format.
 - **`AeadInPlace` trait import not needed.** RustCrypto requires importing `aead::AeadInPlace` separately to call the `_in_place_detached` methods. rscrypto exposes both shapes through the single `Aead` trait.
 - **`generic-array` is gone.** rscrypto does not return `GenericArray` from any AEAD method. Tags are typed newtypes (`Aes256GcmTag`) wrapping `[u8; 16]`; key/nonce types wrap `[u8; N]` directly.
 - **Hardware acceleration.** Both crates dispatch to AES-NI on x86_64 and AES-CE on aarch64. rscrypto adds VAES (AVX-512), s390x CPACF, and a portable bitsliced fallback that avoids secret-indexed tables. That source property is not a universal timing proof; constant-time coverage is limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md). Force the portable kernel via `RSCRYPTO_AES_GCM_FORCE=portable` (std only) or the crate's `portable-only` feature.

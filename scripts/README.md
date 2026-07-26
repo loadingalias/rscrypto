@@ -1,7 +1,8 @@
 # Scripts Map
 
-Caller map for `scripts/`. Every `.sh` under `scripts/` must appear here with
-its caller.
+Maintainer-owned caller and ownership map for `scripts/`. Keep every `.sh`
+listed with its direct entry point or sourcing site. User-facing commands remain
+the recipes reported by `just --list`.
 
 ## Entry Points (called from `justfile` or CI)
 

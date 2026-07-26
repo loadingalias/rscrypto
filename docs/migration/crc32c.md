@@ -1,6 +1,9 @@
 # Migration: `crc32c` → `rscrypto`
 
-> Replace the three free functions `crc32c::crc32c`, `crc32c_append`, `crc32c_combine` with `rscrypto::Crc32C`'s trait-method equivalents. Same Castagnoli polynomial, byte-identical output, hardware-accelerated dispatch on every supported target.
+Replace `crc32c`, `crc32c_append`, and `crc32c_combine` with `Crc32C`'s
+trait-method equivalents. The Castagnoli output remains byte-for-byte
+compatible; selected targets use accelerated backends and all supported targets
+retain the portable fallback.
 
 Output is covered by the CRC-32C oracle/property tests in `tests/crc32_properties.rs`.
 
@@ -26,7 +29,7 @@ crc32c = "0.6"
 rscrypto = { version = "0.7.8", features = ["crc32"] }
 ```
 
-The `crc32` feature enables both `Crc32` (IEEE) and `Crc32C` (Castagnoli) at no extra binary cost.
+The `crc32` feature exposes both `Crc32` (IEEE) and `Crc32C` (Castagnoli).
 
 ## API patterns
 
@@ -94,6 +97,9 @@ let crc = h.finalize();
 
 - **Single algorithm.** `crc32c` is CRC-32C (Castagnoli) only. If you also need CRC-32 IEEE, both crates would normally require separate dependencies: rscrypto's `crc32` feature covers both with one dep.
 - **Hardware acceleration parity.** Both crates dispatch to the SSE4.2 `crc32` instruction on x86_64 and the ARMv8 CRC extension on aarch64. rscrypto adds VPCLMULQDQ folding (large buffers on x86_64), SVE2-PMULL (aarch64), VPMSUMD (Power), VGFM (s390x), and Zbc/Zvbc (RISC-V).
-- **Force a backend.** rscrypto honors `RSCRYPTO_CRC32C_FORCE=portable` (std only) and the crate's `portable-only` feature for FIPS / DO-178C / IEC 62443 lanes. `crc32c` has no equivalent.
+- **Force a backend.** `RSCRYPTO_CRC32C_FORCE=portable` selects the portable
+  CRC-32C runtime backend in `std` builds. The crate's `portable-only` feature
+  makes runtime capability detection ignore host acceleration; see
+  [`docs/features.md`](../features.md#portable-only) for its limits.
 - **`no_std`.** Both crates support `no_std`. rscrypto's `Buffered*` wrappers and IO adapters require `alloc` / `std`; the core `Checksum` trait API is pure `no_std`.
 - **`Checksum` / `ChecksumCombine` trait imports.** Required at the call site so the trait methods (`::checksum`, `::combine`, etc.) are in scope. RustCrypto-style users will recognise the pattern.

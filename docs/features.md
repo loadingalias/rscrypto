@@ -1,6 +1,8 @@
 # Feature Flags
 
-Every primitive has its own leaf feature so size-conscious builds compile only what they use. Umbrella features compose the leaves into common bundles, and the `full` feature turns everything on.
+Each primitive family has a leaf feature so applications can select a narrow
+surface. Umbrella features compose common bundles; `full` enables the complete
+public primitive surface.
 
 ## Default
 
@@ -76,7 +78,7 @@ rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 | `blake3` | -- | BLAKE3 hash, keyed hash, and XOF |
 | `ascon-hash` | -- | Ascon-Hash256, Ascon-XOF128, Ascon-CXOF128 |
 | `xxh3` | -- | XXH3-64 and XXH3-128 |
-| `rapidhash` | -- | RapidHash-64 and RapidHash-128 |
+| `rapidhash` | -- | Portable RapidHash V3-64, streaming, and collection state |
 | `hmac` | `sha2` | HMAC-SHA256/384/512 |
 | `hmac-sha3` | `sha3` | HMAC-SHA3-224/256/384/512 |
 | `kmac` | `sha3` | KMAC128 and KMAC256 |
@@ -104,21 +106,19 @@ rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 
 | Feature | Effect |
 |---|---|
-| `getrandom` | Enables OS-RNG constructors such as `random()` / `try_random()`, canonical Argon2id/scrypt password-record generation, `try_generate()` for Ed25519/X25519/ECDSA, `Poly1305OneTimeKey::try_generate()`, ML-KEM `try_generate_keypair()` / `try_encapsulate()`, AEAD random sealing helpers, RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. Password-record salts are intentionally OS-owned; other APIs retain caller-supplied byte-filling closures where deterministic tests or constrained integrations need them. Deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
+| `getrandom` | Enables OS-RNG constructors such as `random()` / `try_random()`, `RapidRandomState::try_new()`, canonical Argon2id/scrypt password-record generation, `try_generate()` for Ed25519/X25519/ECDSA, `Poly1305OneTimeKey::try_generate()`, ML-KEM `try_generate_keypair()` / `try_encapsulate()`, AEAD random sealing helpers, RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. Password-record salts are intentionally OS-owned; other APIs retain caller-supplied byte-filling closures where deterministic tests or constrained integrations need them. Deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |
 | `diag` | Diagnostic introspection of dispatch decisions and selected benchmark-only component hooks. Requires `std`; hidden diagnostic symbols are not stable application API. |
 | `portable-only` | Makes runtime capability detection report no SIMD/ASM capabilities. See below. |
 
-Generation naming policy: keep existing `generate(...)`, `random()`, and
-`try_random()` compatibility names for the first release that exposes
-`try_generate()` / `try_generate_with(...)`. Decide on any actual deprecation
-only after that release.
-
 ## `portable-only`
 
-`portable-only` makes `platform::caps()` return the empty capability set. Dispatchers that select from runtime capabilities fall through to portable backends instead of invoking host SIMD/ASM kernels. Intended for FIPS, DO-178C, ISO 26262, IEC 62443, and similar deployments where the running code path must ignore host acceleration.
+`portable-only` makes `platform::caps()` return the empty capability set.
+Dispatchers that consult runtime capabilities therefore fall through to
+portable backends instead of invoking host SIMD/ASM kernels. Use it when a
+deployment requires runtime dispatch to ignore host acceleration.
 
 This flag does **not** change `platform::caps_static()`, remove SIMD code from the binary, or create a constant-time proof by itself. For binary-level exclusion, also restrict `target-feature` via `RUSTFLAGS`. For release evidence boundaries, use [`constant-time.md`](constant-time.md).
 

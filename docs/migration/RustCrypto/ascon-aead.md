@@ -81,9 +81,15 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 ## Notes
 
 - **NIST SP 800-232 finalised on 2025-08-13.** Both crates ship the final spec (the 16-byte key / 16-byte nonce / 16-byte tag layout). Outputs are bit-identical (verified in the harness).
-- **Why Ascon?** Designed for severely resource-constrained targets (ATmega, Cortex-M0+, RFID). Code size ~3 KB, no AES tables, and no `unsafe` / SIMD requirement. The portable source has fixed-work, table-free structure; generated-code constant-time claims are limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md). If you're embedded, prefer Ascon over AES-GCM where you can.
+- **Implementation boundary.** rscrypto currently uses a portable, table-free
+  implementation. That source structure is not a machine-code timing proof;
+  generated-code constant-time claims are limited to the compiler, target,
+  features, and binary in the matching
+  [release evidence](../../constant-time.md).
 - **128-bit key is the only key length.** Ascon-AEAD does not have a 256-bit variant; the 128-bit spec is what NIST standardised.
-- **Nonce reuse semantics.** Ascon-AEAD-128 is *not* nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Use a counter or a fresh random 128-bit nonce per message; the larger nonce space (128 bits vs. AES-GCM's 96) makes random nonces safer at high volume.
+- **Nonce reuse semantics.** Ascon-AEAD-128 is *not* nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Prefer deterministic uniqueness. A uniformly random 128-bit nonce has lower collision probability than a uniformly random 96-bit nonce at the same message count, but the deployment must still define a message limit.
 - **No `Payload`, no `KeyInit` import.** Same simplification as the rest of the AEAD lane.
-- **Performance.** Pure Rust, no SIMD path expected. rscrypto's portable kernel is the only kernel: `portable-only` feature is a no-op for Ascon but does not break the build.
-- **`no_std`.** Both crates support `no_std`. Ascon's tiny state (320 bits) plus the buffer-style rscrypto API works on the deepest-embedded targets without `alloc`.
+- **Failed-open buffer semantics change.** RustCrypto keeps the in-place buffer
+  unchanged on error. rscrypto clears it on authentication failure. Combined
+  rscrypto decrypt also clears its output buffer on authentication failure.
+- **`no_std`.** Both crates support `no_std`; rscrypto's caller-buffer API does not require `alloc`.

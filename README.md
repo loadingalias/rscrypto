@@ -7,13 +7,15 @@
 [![MSRV 1.91.0](https://img.shields.io/badge/MSRV-1.91.0-blue)](Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/crates/l/rscrypto)](#license)
 
-**Pure Rust Cryptography: RSA, ECDSA, Ed25519, X25519, ML-KEM, AEADs, crypto/fast hashes, KDFs, password hashing, CRCs, `no_std`/WASM, and hardware acceleration in one dependency.**
+`rscrypto` provides pure Rust cryptographic primitives, cryptographic and fast
+hashes, password hashing, and checksums behind one feature model.
 
-`rscrypto` is a single primitive stack for projects that care about binary size, deployment control, and speed without dragging in C/FFI, OpenSSL, or system library coupling.
+It has no production C/FFI, OpenSSL, or system-library dependency. Leaf features
+support narrow builds; umbrella features compose larger surfaces.
 
 Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
 
-**Current Benchmark Evidence:** `1.59x` geomean across the Linux runners vs the fastest-external competitors with `4,052 / 6,750` wins and `6,101 / 6,750` wins-or-ties.
+**Published benchmark snapshot:** `1.59x` geomean across the Linux runners vs the fastest-external competitors with `4,052 / 6,750` wins and `6,101 / 6,750` wins-or-ties.
 
 macOS Apple Silicon local evidence: `1.37x` geomean vs fastest-external competitors with `382 / 774` wins and `708 / 774` wins-or-ties.
 
@@ -44,7 +46,9 @@ Raw runs, methodology, and known losses are in
 - Public validation evidence covers vectors, differential tests, fuzz corpus
   replay, Miri, backend equivalence, and scoped constant-time release gates.
 
-`rscrypto` is a primitives crate. It is not a TLS stack, PKI toolkit, key store, or protocol implementation. It is not a FIPS 140-3 validated module, third-party audited, formally verified, or a whole-crate constant-time claim today.
+`rscrypto` is a primitives crate. It is not a TLS stack, PKI toolkit, key
+store, or protocol implementation. It does not claim FIPS 140-3 validation, a
+third-party audit, formal verification, or whole-crate constant-time behavior.
 
 ## Install
 
@@ -103,7 +107,7 @@ Use [`docs/types.md`](docs/types.md) when you need the full type map, and
 | Public-Key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `auth`, `signatures`, `key-exchange`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519`, `ml-kem` |
 | AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
-| Fast Hashes | XXH3-64/128, RapidHash 64/128 | `xxh3`, `rapidhash` |
+| Fast Hashes | XXH3-64/128, RapidHash V3-64 | `xxh3`, `rapidhash` |
 
 Flags are layered by use:
 
@@ -162,14 +166,16 @@ Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
 
 `rscrypto` makes scoped constant-time claims only when a matching release
 publishes the required evidence bundle, never for every API or build.
-Secret-bearing types zeroize on drop and
-mask `Debug`; verification failures use opaque errors; failed AEAD opens wipe
+The fixed-size secret owners named in
+[`docs/secret-ownership.md`](docs/secret-ownership.md) overwrite their owned
+bytes on drop and mask `Debug`; the claim does not extend to caller copies.
+Verification failures use opaque errors, and failed AEAD opens clear caller
 output buffers. Release artifacts are signed-tag gated, published through
 crates.io Trusted Publishing, and covered by GitHub build provenance
 attestations.
 
 No third-party audit, FIPS 140-3 certificate, or formal whole-crate proof is
-claimed today. Report vulnerabilities through
+claimed. Report vulnerabilities through
 [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new)
 or [`SECURITY.md`](SECURITY.md), not public issues.
 

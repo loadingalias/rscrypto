@@ -110,13 +110,20 @@ let secret = X25519SecretKey::try_generate_with(|buf| fill_csprng(buf))?;
 
 rscrypto unifies both into `X25519SecretKey`. `diffie_hellman` borrows `&self`, so you can call it many times. `X25519SecretKey: Drop` zeroizes on drop, and you can model "one DH per secret" by wrapping in an `Option<X25519SecretKey>` and `.take()`-ing it in the handshake step.
 
-If your protocol requires the ephemeral-only guarantee at the type level, file an issue requesting an `X25519EphemeralSecret` newtype.
+If the protocol requires one-use enforcement at the type level, keep
+`x25519-dalek::EphemeralSecret`; rscrypto does not encode that state transition
+in a public type.
 
 ## Notes
 
 - **Clamping semantics match.** Both crates apply RFC 7748 §5 clamping (clear bits 0/1/2 of byte 0; clear bit 7 of byte 31; set bit 6 of byte 31) before each scalar multiplication. Outputs are bit-identical for any 32-byte input.
-- **Low-order rejection: explicit vs implicit.** rscrypto's `Err(X25519Error)` on all-zero shared secret is the safer default because many protocols assume the shared secret is non-zero and skip the check, opening contributory-behaviour attacks. If you migrated *because* of an all-zero-shared-secret incident, the `?` propagation is exactly what you want.
-- **`SharedSecret` zeroizes on drop.** Both crates do this. rscrypto exposes `expose_secret() -> SecretBytes<32>` if you need to feed the raw bytes into a KDF (and want the zeroization-on-drop guarantee preserved).
+- **Low-order rejection becomes an error.** rscrypto returns
+  `Err(X25519Error)` for an all-zero shared secret. Replace any upstream
+  contributory-behavior or all-zero check with handling that result.
+- **Shared-secret ownership.** rscrypto's `X25519SharedSecret` and returned
+  `SecretBytes<32>` overwrite their owned bytes on drop. The claim does not
+  extend to caller-created copies; see
+  [`docs/secret-ownership.md`](../../secret-ownership.md).
 - **No HKDF integration.** Some protocols KDF the X25519 shared secret immediately (e.g., Noise, Signal). rscrypto's `HkdfSha256` (from `features = ["hkdf"]`) is the natural pairing; see `RustCrypto/hkdf.md`.
 - **Scalar-multiplication timing.** rscrypto's portable backend uses fixed-work field-arithmetic source structure, and accelerated paths are differential-tested against it. That source property does not prove every compiler/target binary; constant-time coverage is limited to the exact configurations in the matching [release evidence](../../constant-time.md).
 - **`no_std`.** Both crates support `no_std` with no `alloc` requirement. The `getrandom`-backed `try_generate()` requires `getrandom`; the closure form `try_generate_with(|buf| ...)` does not.

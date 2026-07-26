@@ -18,7 +18,12 @@ the new API shape.
 cargo run --example basic --features full,getrandom
 ```
 
-Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs (`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes (`Xxh3`, `RapidHash`), AEAD (`ChaCha20Poly1305` with a fresh random nonce), hex formatting, secret-key Debug masking, byte-array round-trips through `from_bytes` / `to_bytes` / `as_bytes`, and the `std::io::{Read, Write}` adapters for streaming digests and checksums. Every section asserts that one-shot equals streaming. That is the API contract every primitive in `rscrypto` follows.
+Walks through checksums (`Crc32C`), digests (`Sha256`, `Blake3`), MACs
+(`HmacSha256`), KDFs (`HkdfSha256`), XOFs (`Shake256`, `Blake3`), fast hashes
+(`Xxh3`, `RapidHash64`), AEAD (`ChaCha20Poly1305` with a fresh random nonce),
+hex formatting, secret-key `Debug` masking, byte-array round trips, and
+`std::io::{Read, Write}` adapters. The checksum and hash sections compare
+one-shot and streaming output.
 
 ### `password_hashing`: generated and bounded password records
 
@@ -37,7 +42,9 @@ both canonical PHC records so you can inspect their format.
 cargo run --example aead_seal_open --features chacha20poly1305,getrandom
 ```
 
-Generates a ChaCha20-Poly1305 key, seals a short payload with associated data and a fresh random nonce, then opens it back to the original plaintext. This is the smallest AEAD example for the common "encrypt then authenticate" workflow.
+Generates a ChaCha20-Poly1305 key, seals a short payload with associated data
+and a fresh random nonce, then opens it back to the original plaintext. This is
+the smallest authenticated-encryption example.
 
 ### `signatures`: Ed25519 and ECDSA P-256 signing
 
@@ -45,7 +52,9 @@ Generates a ChaCha20-Poly1305 key, seals a short payload with associated data an
 cargo run --example signatures --features ed25519,ecdsa-p256,getrandom
 ```
 
-Generates Ed25519 and ECDSA P-256 keypairs, signs one message with each, and verifies both signatures through the public-key API. Use this when choosing between deterministic Ed25519 and randomized ECDSA protocol surfaces.
+Generates Ed25519 and ECDSA P-256 keypairs, signs one message with each, and
+verifies both signatures through the public-key API. Both example signing paths
+are deterministic; the key generation draws from the operating system.
 
 ### `rsa_pss_verify`: RSA-PSS fixture verification
 
@@ -61,7 +70,9 @@ Loads a checked-in RSA-3072 SubjectPublicKeyInfo fixture and verifies a PSS/SHA-
 cargo run --example mlkem_encapsulation --features ml-kem,getrandom
 ```
 
-Generates an ML-KEM-768 keypair, encapsulates a shared secret to the public key, decapsulates with the private key, and asserts both sides derived the same bytes. This is the minimal KEM workflow for hybrid key-establishment prototypes.
+Generates an ML-KEM-768 keypair, encapsulates a shared secret to the public key,
+decapsulates with the private key, and asserts both sides derived the same
+bytes. The example does not define a hybrid key-establishment protocol.
 
 ### `parallel`: CRC chunk combining for large inputs
 
@@ -77,7 +88,10 @@ Shows how `rscrypto` combines CRC states: given `crc(A)` and `crc(B)`, you can c
 cargo run --example introspect --features checksums,hashes,aead,diag
 ```
 
-Prints the platform's detected CPU capabilities and reports which kernel the dispatcher selected for representative checksums, hashes, fast hashes, and AEAD backends at useful buffer sizes. Use this when you want to confirm hardware acceleration kicked in on a new platform, or when you're investigating a performance surprise. Requires the `diag` feature; introspection is opt-in to keep the default binary small.
+Prints detected CPU capabilities and the kernel selected for representative
+checksums, hashes, fast hashes, and AEADs at specific buffer sizes. Use it to
+inspect dispatch on a target or investigate a performance result. The diagnostic
+surface requires the opt-in `diag` feature.
 
 ## Pattern reference
 
@@ -90,7 +104,7 @@ Prints the platform's detected CPU capabilities and reports which kernel the dis
 | Encapsulate and decapsulate a KEM shared secret | `mlkem_encapsulation` |
 | Hash a password and verify safely | `password_hashing` |
 | Process a large file in parallel | `parallel` |
-| Confirm hardware acceleration is active | `introspect` |
+| Inspect runtime backend selection | `introspect` |
 | Stream a digest through `std::io::Read` | `basic` (I/O adapters section) |
 
 ## Beyond examples

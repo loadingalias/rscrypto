@@ -85,17 +85,18 @@ Features: `fast-hashes` or `xxh3` / `rapidhash`.
 | Type | Output |
 |------|--------|
 | `Xxh3` / `Xxh3_128` | `u64` / `u128` |
-| `RapidHash` / `RapidHash128` | `u64` / `u128` |
-| `RapidHashFast64` / `RapidHashFast128` | `u64` / `u128` |
+| `RapidHash64` | `u64` |
 | `Xxh3Hasher` / `Xxh3_128Hasher` | streaming `u64` / `u128` |
 | `RapidStreamHasher` | streaming `u64` |
 | `RapidHasher` | collection-key `u64` |
+| `RapidSeededState` / `RapidRandomState` | deterministic / randomized collection state |
 
-Aliases: `hashes::fast::Xxh3_64` and `hashes::fast::RapidHash64`.
+Alias: `hashes::fast::Xxh3_64`.
 
 All fast hashers use bounded inline state and do not allocate.
-`RapidStreamHasher` preserves concatenated-stream output; `RapidBuildHasher`
-produces `RapidHasher` for collections. Both builders work in pure `no_std`.
+`RapidStreamHasher` preserves concatenated-stream output. `RapidSeededState`
+is reproducible; `RapidRandomState` accepts a fallible entropy callback in
+pure `no_std` and adds `try_new()` when `getrandom` is enabled.
 
 ## MACs & KDFs
 
@@ -202,9 +203,9 @@ also has `seal_random_to_vec`.
 | `VerificationError` | MAC/AEAD/signature/password verification fails | Reject input without revealing failure detail |
 | `EcdsaKeyGenerationError` | ECDSA random source failure or bounded scalar rejection exhaustion | Fix entropy source; investigate deterministic fillers |
 | `AeadBufferError` | Output buffer wrong size | Fix buffer length |
-| `SealError` | AEAD combined encrypt failure | Buffer / nonce / counter |
-| `OpenError` | AEAD combined decrypt failure | Buffer or verification |
-| `NonceCounterSealError` | Deterministic-IV counter exhausted or buffer error | Rotate key / fix buffer |
+| `SealError` | Combined AEAD buffer length is wrong or input exceeds the algorithm limit | Correct the public buffer/input length |
+| `OpenError` | Combined AEAD buffer length is wrong, input is too large, or authentication fails | Correct public lengths; reject opaque verification failures |
+| `NonceCounterSealError` | AES-GCM nonce counter is exhausted or sealing fails | Rotate the key before counter reuse, or correct the sealing input |
 | `HkdfOutputLengthError` | HKDF expand exceeds max | Request less output |
 | `Pbkdf2Error` | PBKDF2 parameter validation | Adjust iterations / output length |
 | `Argon2Error` | Argon2 configuration, input, entropy, or resource failure | Fix the profile/input or restore resources |
@@ -237,10 +238,10 @@ also has `seal_random_to_vec`.
 
 | Item | Purpose |
 |------|---------|
-| `ct::zeroize` | Volatile-write buffer wipe |
+| `ct::zeroize` | Volatile source-level overwrite plus compiler fence; see `secret-lifecycle.md` for the evidence boundary |
 | `DisplaySecret` | Opt-in hex display for secret keys |
-| `SecretBytes<N>` | Fixed-size secret byte buffer that zeroizes on drop |
-| `SecretVec` | Variable-length secret allocation that zeroizes on drop; ordinary extraction requires `into_unprotected_vec()` |
+| `SecretBytes<N>` | Fixed-size secret owner that overwrites its owned bytes on drop |
+| `SecretVec` | Variable-length secret owner that overwrites initialized storage on drop; ordinary extraction requires `into_unprotected_vec()` |
 
 Generic secret wrappers deliberately do not implement equality. Fixed-size
 keys, shared secrets, authentication tags, and keyed outputs compare only

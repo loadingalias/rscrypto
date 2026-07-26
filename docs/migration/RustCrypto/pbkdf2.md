@@ -32,7 +32,7 @@ The `pbkdf2` feature implies `hmac` which implies `sha2`.
 
 ## Algorithm map
 
-| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-06-14 |
+| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-07-25 |
 |---|---|---|
 | `pbkdf2_hmac::<Sha256>` | `Pbkdf2Sha256` | `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` (600,000) |
 | `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512` | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (220,000) |
@@ -81,7 +81,9 @@ let k_enc: [u8; 32] = state.derive_array_with_params(enc_params)?;
 let k_mac: [u8; 32] = state.derive_array_with_params(mac_params)?;
 ```
 
-`pbkdf2 = "0.13"` does not expose the precompute as a public type: every `pbkdf2_hmac` call rebuilds the schedule. Migrating to `Pbkdf2Sha256::new(...)` is a free perf win for multi-key derivations.
+`pbkdf2 = "0.13"` does not expose this precomputed state as a public type.
+`Pbkdf2Sha256::new(...)` can reuse it across multiple derivations; measure the
+actual workload before treating that reuse as a performance improvement.
 
 ### Opaque password verification
 
@@ -106,10 +108,16 @@ Drop the `subtle` dependency for the verify path. The stateful form is `state.ve
 
 ## Notes
 
-- **No PHC string format.** Both crates compute raw bytes. If you store `$pbkdf2-sha256$i=600000$salt$hash`-style PHC strings, use `pbkdf2::password_hash` (RustCrypto) or rscrypto's `phc-strings` feature with `Pbkdf2*` (forthcoming integration). For now, the raw-bytes path is byte-equivalent and storing the parts separately works.
+- **No rscrypto PBKDF2 PHC record API.** The rscrypto `phc-strings` feature
+  covers the password-record formats listed in
+  [`docs/features.md`](../../features.md), not PBKDF2 records. Keep the
+  upstream parser or store separately reviewed algorithm, iteration, salt, and
+  derived-key fields.
 - **Password helpers reject weak parameters.** `derive_key`, `derive_key_array`, `verify_password`, and stateful `verify` enforce the type-specific minimum iteration count and a 16-byte salt by default. `Pbkdf2Sha256::derive_key_primitive` / `verify_password_primitive` preserve raw PBKDF2 behavior for test vectors and explicit migrations.
-- **Rejects zero iterations.** `pbkdf2 = "0.13"` will silently run zero rounds and return the salt-derived initial state. rscrypto returns `Err(Pbkdf2Error::InvalidIterations)`. If you have legacy callers that pass 0 (presumably as a typo), this is a hard catch: exactly what you want.
+- **Rejects zero iterations.** The upstream free function has no error channel
+  for rejecting a zero `u32` count. rscrypto's policy and primitive derivation
+  APIs return `Pbkdf2Error::InvalidIterations`; handle that new error path.
 - **Output length cap (RFC 8018 §5.2 step 1).** PBKDF2 limits output to `(2^32 - 1) * hLen`. `pbkdf2` does not check; rscrypto returns `Err(Pbkdf2Error::OutputTooLong)`. The cap is in the gigabytes: only relevant for adversarial inputs.
 - **Policy override.** Use `Pbkdf2VerifyPolicy` and `params_with_policy` only when you have a deliberate migration policy. This keeps legacy acceptance explicit instead of making low-cost password verification the default.
-- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-06-14. Bump these as the OWASP cheat sheet bumps; rscrypto will track.
+- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-07-25. Recheck that external policy before each release that changes these constants.
 - **`no_std`.** Both crates work in `no_std`.

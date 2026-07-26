@@ -9,6 +9,10 @@ Sources:
 
 Scope: the 2026-07-04 nine-runner Linux CI benchmark matrix for commit `596498f`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
 
+This is a historical snapshot of commit `596498f`, not an inventory of the
+current public API. Primitive rows remain as measured even when a later commit
+changes or removes that surface.
+
 Coverage note: this is a full Linux CI public benchmark pass. It includes checksum, hash, XOF, MAC, KDF, password-hashing, BLAKE2/BLAKE3, RSA import/verification, ECDSA P-256/P-384 signing and verification, Ed25519, X25519, AEAD, and ML-KEM-512/768/1024 keygen, encapsulation, and decapsulation rows. ML-KEM phase/arithmetic microbenches are present in the raw artifacts and intentionally excluded from release-level competitor claims.
 
 ## Headline
@@ -18,7 +22,7 @@ Coverage note: this is a full Linux CI public benchmark pass. It includes checks
 | Linux CI: all matched performance pairs | 10,781 | 7,542/2,470/769 | 70% | 1.76x | 1.22x |
 | Linux CI: fastest external per case | 6,750 | 4,052/2,049/649 | 60% | 1.59x | 1.11x |
 
-Shareable release summary:
+Snapshot summary:
 
 - **Headline:** 4,052 of 6,750 matched Linux CI fastest-external comparisons are wins; 6,101 are wins or ties. Linux CI fastest-external geomean is 1.59x.
 - **Checksums:** 5.18x geomean across 693 fastest-external rows; W/T/L is 517/115/61.

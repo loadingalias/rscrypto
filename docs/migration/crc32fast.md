@@ -26,7 +26,8 @@ crc32fast = "1.5"
 rscrypto = { version = "0.7.8", features = ["crc32"] }
 ```
 
-`features = ["crc32"]` enables both CRC-32/IEEE (`Crc32`) and CRC-32C/Castagnoli (`Crc32C`) at no extra build cost.
+`features = ["crc32"]` exposes both CRC-32/IEEE (`Crc32`) and
+CRC-32C/Castagnoli (`Crc32C`).
 
 ## API patterns
 
@@ -107,12 +108,18 @@ let crc_b = Crc32::checksum(right);
 let value = Crc32::combine(crc_a, crc_b, right.len());
 ```
 
-rscrypto's combine works on the finalized `u32` outputs and the right-hand length, not on hasher state. Two `u32` values are cheap to pass around and trivial to checkpoint to disk between phases.
+rscrypto's combine works on the finalized `u32` outputs and the right-hand
+length, not on hasher state. Store those values if the combination phases run
+at different times.
 
 ## Notes
 
 - **Single algorithm.** `crc32fast` is CRC-32/IEEE only. If you need Castagnoli, use rscrypto's `Crc32C` (same feature flag, no extra dependency).
 - **`finalize` consumes vs. borrows.** `crc32fast::Hasher::finalize(self)` consumes the hasher. rscrypto's `Crc32::finalize(&self)` borrows, so you can read the running CRC at any point and continue feeding bytes.
 - **`Hasher::new_with_initial(u32)`.** rscrypto's equivalent is `Crc32::with_initial(u32)` (resume from a raw initial state) and `Crc32::resume(prev_finalized)` (resume from a previously finalized CRC, which inverts the XOR-out). The former matches `crc32fast`'s semantics directly.
-- **`no_std`.** `crc32fast` requires `std` for runtime SIMD detection. rscrypto detects at runtime when `std` is enabled and falls back to compile-time `target_feature` selection in `no_std` builds. The `portable-only` feature pins to the portable kernel for FIPS / DO-178C / IEC 62443 lanes.
+- **`no_std`.** `crc32fast` requires `std` for runtime SIMD detection.
+  rscrypto detects capabilities at runtime with `std` and uses
+  target-appropriate compile-time paths without it. The `portable-only`
+  feature makes runtime capability detection ignore host acceleration; see
+  [`docs/features.md`](../features.md#portable-only) for its limits.
 - **`std::hash::Hasher`.** `crc32fast::Hasher` does not implement `core::hash::Hasher`. Neither does rscrypto's `Crc32`. If you need a `core::hash::Hasher` adapter, wrap manually.
