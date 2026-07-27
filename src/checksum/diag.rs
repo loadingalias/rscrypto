@@ -2,7 +2,21 @@
 //!
 //! This module is behind `cfg(feature = "diag")` and is intended for
 //! explainable/debuggable kernel selection without affecting normal builds.
+//!
+//! ```
+//! # #[cfg(feature = "crc32")]
+//! # {
+//! use rscrypto::checksum::diag::{self, Crc32Polynomial};
+//! assert_eq!(diag::crc32_ieee(1024).polynomial, Crc32Polynomial::Ieee);
+//! # }
+//! # #[cfg(feature = "crc64")]
+//! # {
+//! use rscrypto::checksum::diag::{self, Crc64Polynomial};
+//! assert_eq!(diag::crc64_xz(1024).polynomial, Crc64Polynomial::Xz);
+//! # }
+//! ```
 
+#[cfg(any(feature = "crc32", feature = "crc64"))]
 use crate::platform::Arch;
 
 /// High-level reason for a selection outcome.
@@ -20,6 +34,7 @@ pub enum SelectionReason {
 }
 
 /// CRC-32 polynomial variant (selection diagnostics).
+#[cfg(feature = "crc32")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Crc32Polynomial {
@@ -28,6 +43,7 @@ pub enum Crc32Polynomial {
 }
 
 /// CRC-64 polynomial variant (selection diagnostics).
+#[cfg(feature = "crc64")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Crc64Polynomial {
@@ -35,6 +51,7 @@ pub enum Crc64Polynomial {
   Nvme,
 }
 
+#[cfg(feature = "crc32")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc32SelectionDiag {
   pub polynomial: Crc32Polynomial,
@@ -59,6 +76,7 @@ pub struct Crc32SelectionDiag {
   pub has_sve2: bool,
 }
 
+#[cfg(feature = "crc64")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crc64SelectionDiag {
   pub polynomial: Crc64Polynomial,
@@ -77,6 +95,7 @@ pub struct Crc64SelectionDiag {
 }
 
 /// Diagnose CRC-32 (IEEE) selection for `len`.
+#[cfg(feature = "crc32")]
 #[inline]
 #[must_use]
 pub fn crc32_ieee(len: usize) -> Crc32SelectionDiag {
@@ -84,6 +103,7 @@ pub fn crc32_ieee(len: usize) -> Crc32SelectionDiag {
 }
 
 /// Diagnose CRC-32C (Castagnoli) selection for `len`.
+#[cfg(feature = "crc32")]
 #[inline]
 #[must_use]
 pub fn crc32c(len: usize) -> Crc32SelectionDiag {
@@ -91,6 +111,7 @@ pub fn crc32c(len: usize) -> Crc32SelectionDiag {
 }
 
 /// Diagnose CRC-64/XZ selection for `len`.
+#[cfg(feature = "crc64")]
 #[inline]
 #[must_use]
 pub fn crc64_xz(len: usize) -> Crc64SelectionDiag {
@@ -98,6 +119,7 @@ pub fn crc64_xz(len: usize) -> Crc64SelectionDiag {
 }
 
 /// Diagnose CRC-64/NVME selection for `len`.
+#[cfg(feature = "crc64")]
 #[inline]
 #[must_use]
 pub fn crc64_nvme(len: usize) -> Crc64SelectionDiag {

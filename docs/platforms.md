@@ -24,6 +24,11 @@ Backend availability depends on what the target CPU advertises and what
 `target-feature` permits. The portable Rust fallback is present on every target
 listed below.
 
+This is a crate-wide capability matrix, not a promise that every primitive has
+every listed backend. A target-specific candidate is eligible only when it wins
+representative target-native measurements. Otherwise dispatch uses a proven
+lower tier, including portable Rust.
+
 | Target family | Backends used (when CPU advertises them) |
 |---|---|
 | x86_64 | SSE4.2 CRC32; SSSE3 / PCLMULQDQ; AVX2; AES-NI; SHA-NI; AVX-512F / VL / BW / DQ; AVX-512IFMA; VPCLMULQDQ; VAES |

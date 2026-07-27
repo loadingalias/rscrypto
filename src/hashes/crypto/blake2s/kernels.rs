@@ -1,14 +1,8 @@
 //! Blake2s portable compression function and kernel dispatch (RFC 7693).
 
 use crate::platform::Caps;
-#[cfg(target_arch = "aarch64")]
-use crate::platform::caps::aarch64;
-#[cfg(target_arch = "powerpc64")]
-use crate::platform::caps::power;
 #[cfg(target_arch = "riscv64")]
 use crate::platform::caps::riscv;
-#[cfg(target_arch = "s390x")]
-use crate::platform::caps::s390x;
 #[cfg(target_arch = "wasm32")]
 use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
@@ -31,18 +25,6 @@ pub enum Blake2sKernelId {
   X86Avx2 = 1,
   #[cfg(target_arch = "x86_64")]
   X86Avx512vl = 2,
-  // Correct but not selected in production; portable is faster on current AArch64 CI.
-  #[allow(dead_code)]
-  #[cfg(target_arch = "aarch64")]
-  Aarch64Neon = 3,
-  // Correct but not selected in production; portable is faster on current s390x CI.
-  #[allow(dead_code)]
-  #[cfg(target_arch = "s390x")]
-  S390xVector = 4,
-  // Correct but not selected in production; portable is faster on current POWER CI.
-  #[allow(dead_code)]
-  #[cfg(target_arch = "powerpc64")]
-  PowerVsx = 5,
   #[cfg(target_arch = "riscv64")]
   Riscv64V = 6,
   #[cfg(target_arch = "wasm32")]
@@ -60,12 +42,6 @@ impl Blake2sKernelId {
       Self::X86Avx2 => "x86/avx2",
       #[cfg(target_arch = "x86_64")]
       Self::X86Avx512vl => "x86/avx512vl",
-      #[cfg(target_arch = "aarch64")]
-      Self::Aarch64Neon => "aarch64/neon",
-      #[cfg(target_arch = "s390x")]
-      Self::S390xVector => "s390x/vector",
-      #[cfg(target_arch = "powerpc64")]
-      Self::PowerVsx => "power/vsx",
       #[cfg(target_arch = "riscv64")]
       Self::Riscv64V => "riscv64/v",
       #[cfg(target_arch = "wasm32")]
@@ -74,31 +50,10 @@ impl Blake2sKernelId {
   }
 }
 
-// ─── Safe wrappers ───────────────────────────────────────────────────────────
-
-#[cfg(target_arch = "aarch64")]
-fn compress_aarch64_neon(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
-  // SAFETY: this wrapper is only compiled on AArch64, where `compress_neon`
-  // requires the baseline NEON feature guaranteed by the architecture.
-  unsafe { super::aarch64::compress_neon(h, block, t, last) }
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn compress_power_vsx(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
-  // SAFETY: runtime dispatch selects this only when VSX is available.
-  unsafe { super::power::compress_vsx(h, block, t, last) }
-}
-
 #[cfg(target_arch = "riscv64")]
 fn compress_riscv64_v(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
   // SAFETY: runtime dispatch selects this only when the V extension is available.
   unsafe { super::riscv64::compress_rvv(h, block, t, last) }
-}
-
-#[cfg(target_arch = "s390x")]
-fn compress_s390x_vector(h: &mut [u32; 8], block: &[u8; 64], t: u64, last: bool) {
-  // SAFETY: runtime dispatch selects this only when the vector facility is available.
-  unsafe { super::s390x::compress_vector(h, block, t, last) }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -136,24 +91,9 @@ fn compress_blocks_portable(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress);
 }
 
-#[cfg(target_arch = "aarch64")]
-fn compress_blocks_aarch64_neon(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
-  compress_blocks_with(h, blocks, t, compress_aarch64_neon);
-}
-
-#[cfg(target_arch = "powerpc64")]
-fn compress_blocks_power_vsx(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
-  compress_blocks_with(h, blocks, t, compress_power_vsx);
-}
-
 #[cfg(target_arch = "riscv64")]
 fn compress_blocks_riscv64_v(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
   compress_blocks_with(h, blocks, t, compress_riscv64_v);
-}
-
-#[cfg(target_arch = "s390x")]
-fn compress_blocks_s390x_vector(h: &mut [u32; 8], blocks: &[u8], t: &mut u64) {
-  compress_blocks_with(h, blocks, t, compress_s390x_vector);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -180,12 +120,6 @@ pub(crate) fn compress_fn(id: Blake2sKernelId) -> CompressFn {
     Blake2sKernelId::X86Avx2 => compress_x86_avx2,
     #[cfg(target_arch = "x86_64")]
     Blake2sKernelId::X86Avx512vl => compress_x86_avx512vl,
-    #[cfg(target_arch = "aarch64")]
-    Blake2sKernelId::Aarch64Neon => compress_aarch64_neon,
-    #[cfg(target_arch = "s390x")]
-    Blake2sKernelId::S390xVector => compress_s390x_vector,
-    #[cfg(target_arch = "powerpc64")]
-    Blake2sKernelId::PowerVsx => compress_power_vsx,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => compress_riscv64_v,
     #[cfg(target_arch = "wasm32")]
@@ -201,12 +135,6 @@ pub(crate) fn compress_blocks_fn(id: Blake2sKernelId) -> CompressBlocksFn {
     Blake2sKernelId::X86Avx2 => compress_blocks_x86_avx2,
     #[cfg(target_arch = "x86_64")]
     Blake2sKernelId::X86Avx512vl => compress_blocks_x86_avx512vl,
-    #[cfg(target_arch = "aarch64")]
-    Blake2sKernelId::Aarch64Neon => compress_blocks_aarch64_neon,
-    #[cfg(target_arch = "s390x")]
-    Blake2sKernelId::S390xVector => compress_blocks_s390x_vector,
-    #[cfg(target_arch = "powerpc64")]
-    Blake2sKernelId::PowerVsx => compress_blocks_power_vsx,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => compress_blocks_riscv64_v,
     #[cfg(target_arch = "wasm32")]
@@ -225,12 +153,6 @@ pub const fn required_caps(id: Blake2sKernelId) -> Caps {
     Blake2sKernelId::X86Avx2 => x86::AVX2,
     #[cfg(target_arch = "x86_64")]
     Blake2sKernelId::X86Avx512vl => x86::AVX512F.union(x86::AVX512VL),
-    #[cfg(target_arch = "aarch64")]
-    Blake2sKernelId::Aarch64Neon => aarch64::NEON,
-    #[cfg(target_arch = "s390x")]
-    Blake2sKernelId::S390xVector => s390x::VECTOR,
-    #[cfg(target_arch = "powerpc64")]
-    Blake2sKernelId::PowerVsx => power::VSX,
     #[cfg(target_arch = "riscv64")]
     Blake2sKernelId::Riscv64V => riscv::V,
     #[cfg(target_arch = "wasm32")]
@@ -246,19 +168,11 @@ pub const ALL: &[Blake2sKernelId] = &[
   Blake2sKernelId::X86Avx2,
   #[cfg(target_arch = "x86_64")]
   Blake2sKernelId::X86Avx512vl,
-  #[cfg(target_arch = "aarch64")]
-  Blake2sKernelId::Aarch64Neon,
-  #[cfg(target_arch = "s390x")]
-  Blake2sKernelId::S390xVector,
-  #[cfg(target_arch = "powerpc64")]
-  Blake2sKernelId::PowerVsx,
   #[cfg(target_arch = "riscv64")]
   Blake2sKernelId::Riscv64V,
   #[cfg(target_arch = "wasm32")]
   Blake2sKernelId::WasmSimd128,
 ];
-
-// ─── Compile-time dispatch bypass ────────────────────────────────────────────
 
 pub(crate) const COMPILE_TIME_HW: bool = cfg!(any(
   all(target_arch = "x86_64", target_feature = "avx2"),
@@ -304,8 +218,6 @@ pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
   #[allow(unreachable_code)]
   compress_blocks_portable
 }
-
-// ─── Portable implementation ─────────────────────────────────────────────────
 
 /// Blake2s initialization vectors (same as SHA-256 fractional parts).
 pub(crate) const IV: [u32; 8] = [
@@ -487,14 +399,7 @@ pub(crate) fn load_msg(block: &[u8; 64]) -> [u32; 16] {
 }
 
 /// Initialize the 16-word working vector.
-#[cfg(any(
-  target_arch = "x86_64",
-  target_arch = "aarch64",
-  target_arch = "wasm32",
-  target_arch = "riscv64",
-  target_arch = "s390x",
-  target_arch = "powerpc64"
-))]
+#[cfg(any(target_arch = "x86_64", target_arch = "wasm32", target_arch = "riscv64"))]
 #[inline(always)]
 pub(crate) fn init_v(h: &[u32; 8], t: u64, last: bool) -> [u32; 16] {
   let mut v = [0u32; 16];

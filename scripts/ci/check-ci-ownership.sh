@@ -326,8 +326,8 @@ scorecard_image=$(yq eval -r '.runs.image' "$SCORECARD_ACTION")
 [[ "$scorecard_image" =~ ^docker://ghcr\.io/ossf/scorecard-action@sha256:[0-9a-f]{64}$ ]] \
   || fail "Scorecard container must use an OCI digest"
 
-[[ $(count_feature_sets "$COMPILE_MATRIX") -eq 29 ]] \
-  || fail "compile feature matrix must retain all 29 profiles"
+[[ $(count_feature_sets "$COMPILE_MATRIX") -eq 32 ]] \
+  || fail "compile feature matrix must retain all 32 profiles"
 [[ $(count_feature_sets "$EXECUTABLE_MATRIX") -eq 38 ]] \
   || fail "executable feature matrix must retain all 38 profiles"
 require_unique_feature_sets "$COMPILE_MATRIX"
