@@ -353,6 +353,16 @@ mod tests {
       select_backend(AeadPrimitive::Aes128GcmSiv, Arch::Aarch64, aes_pmull_caps),
       AeadBackend::Aarch64AesPmull
     );
+
+    let sve2_without_sve2_pmull = aarch64::AES | aarch64::PMULL | aarch64::SVE2_AES;
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Aarch64, sve2_without_sve2_pmull),
+      AeadBackend::Aarch64AesPmull
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Aarch64, aarch64::AES),
+      AeadBackend::Portable
+    );
   }
 
   #[test]
@@ -441,6 +451,10 @@ mod tests {
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Power, power::POWER8_VECTOR),
       AeadBackend::PowerVector
     );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Power, power::POWER8_CRYPTO),
+      AeadBackend::Power8Crypto
+    );
   }
 
   #[test]
@@ -482,6 +496,10 @@ mod tests {
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aes128Gcm, Arch::Riscv64, riscv::V | riscv::ZBC),
+      AeadBackend::Portable
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::ZVKNED),
       AeadBackend::Portable
     );
 
@@ -533,10 +551,18 @@ mod tests {
   }
 
   #[test]
-  fn wasm_has_simd128_chacha_route() {
+  fn wasm_uses_simd128_only_for_chacha() {
     assert_eq!(
       select_backend(AeadPrimitive::ChaCha20Poly1305, Arch::Wasm64, wasm::SIMD128),
       AeadBackend::WasmSimd128
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aes256Gcm, Arch::Wasm32, wasm::SIMD128),
+      AeadBackend::WasmPortable
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::Wasm64, wasm::SIMD128),
+      AeadBackend::WasmPortable
     );
   }
 

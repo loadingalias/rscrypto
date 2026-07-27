@@ -14,6 +14,37 @@ fn fixture_cipher() -> ChaCha20Poly1305 {
   ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0x11; ChaCha20Poly1305::KEY_SIZE]))
 }
 
+#[cfg(feature = "aead")]
+struct DirtyRejectingAead;
+
+#[cfg(feature = "aead")]
+impl Aead for DirtyRejectingAead {
+  const KEY_SIZE: usize = 0;
+  const NONCE_SIZE: usize = Nonce96::LENGTH;
+  const TAG_SIZE: usize = 16;
+
+  type Key = ();
+  type Nonce = Nonce96;
+  type Tag = [u8; Self::TAG_SIZE];
+
+  fn new(_: &Self::Key) -> Self {
+    Self
+  }
+
+  fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
+    bytes.try_into().map_err(|_| AeadBufferError::new())
+  }
+
+  fn encrypt_in_place(&self, _: &Self::Nonce, _: &[u8], _: &mut [u8]) -> Result<Self::Tag, rscrypto::aead::SealError> {
+    Err(rscrypto::aead::SealError::buffer())
+  }
+
+  fn decrypt_in_place(&self, _: &Self::Nonce, _: &[u8], buffer: &mut [u8], _: &Self::Tag) -> Result<(), OpenError> {
+    buffer.fill(0xA5);
+    Err(OpenError::verification())
+  }
+}
+
 #[test]
 #[cfg(feature = "aead")]
 fn nonce96_round_trips() {
@@ -135,6 +166,32 @@ fn aead_open_reports_buffer_and_verification_failures() {
     opened, [0u8; 4],
     "combined decrypt must clear output on verification failure"
   );
+}
+
+#[test]
+#[cfg(feature = "aead")]
+fn aead_combined_open_accepts_empty_plaintext() {
+  let nonce = Nonce96::from_bytes([0x89; Nonce96::LENGTH]);
+  let aead = fixture_cipher();
+  let mut sealed = [0u8; ChaCha20Poly1305::TAG_SIZE];
+  let mut opened = [0u8; 0];
+
+  aead.encrypt(&nonce, b"aad", b"", &mut sealed).unwrap();
+  aead.decrypt(&nonce, b"aad", &sealed, &mut opened).unwrap();
+}
+
+#[test]
+#[cfg(feature = "aead")]
+fn aead_combined_open_clears_output_after_dirty_rejection() {
+  let nonce = Nonce96::from_bytes([0x8A; Nonce96::LENGTH]);
+  let ciphertext_and_tag = [0x11; 4 + DirtyRejectingAead::TAG_SIZE];
+  let mut opened = [0xCC; 4];
+
+  assert_eq!(
+    DirtyRejectingAead.decrypt(&nonce, b"aad", &ciphertext_and_tag, &mut opened),
+    Err(OpenError::verification())
+  );
+  assert_eq!(opened, [0u8; 4], "combined decrypt must clear dirty rejected output");
 }
 
 #[test]
