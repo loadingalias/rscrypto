@@ -14,7 +14,7 @@ pub fn run(data: &[u8]) {
   h.update(a);
   h.update(b);
   let got = Blake3KeyedHash::from_bytes(h.finalize());
-  assert_eq!(expected, got, "keyed blake3: chunk-split mismatch");
+  assert!(expected.ct_eq(&got).declassify(), "keyed blake3: chunk-split mismatch");
 
   // Property: reset preserves keyed mode
   let mut h2 = Blake3::new_keyed(&key);

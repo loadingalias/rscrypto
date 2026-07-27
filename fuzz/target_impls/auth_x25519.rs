@@ -1,4 +1,4 @@
-use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
+use rscrypto::{X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
 pub fn run(data: &[u8]) {
@@ -22,14 +22,14 @@ pub fn run(data: &[u8]) {
   let dalek_shared = dalek_secret.diffie_hellman(&dalek_peer).to_bytes();
   let ours_shared = secret.diffie_hellman(&peer);
   let helper_shared = X25519SharedSecret::diffie_hellman(&secret, &peer);
-  assert_eq!(ours_shared, helper_shared, "x25519 helper mismatch");
+  match (&ours_shared, &helper_shared) {
+    (Ok(ours), Ok(helper)) => assert!(ours.ct_eq(helper).declassify(), "x25519 helper mismatch"),
+    (Err(_), Err(_)) => {}
+    _ => panic!("x25519 helper result mismatch"),
+  }
 
   if dalek_shared.iter().all(|&byte| byte == 0) {
-    assert_eq!(
-      ours_shared,
-      Err(X25519Error::new()),
-      "x25519 low-order rejection mismatch"
-    );
+    assert!(ours_shared.is_err(), "x25519 low-order rejection mismatch");
   } else {
     assert_eq!(
       *ours_shared
