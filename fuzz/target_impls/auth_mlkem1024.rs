@@ -21,7 +21,10 @@ pub fn run(data: &[u8]) {
 
   let decapsulated =
     MlKem1024::decapsulate(&dk, &ciphertext).expect("generated ML-KEM decapsulation input must be valid");
-  assert_eq!(encapsulated, decapsulated, "ML-KEM-1024 round trip mismatch");
+  assert!(
+    encapsulated.ct_eq(&decapsulated).declassify(),
+    "ML-KEM-1024 round trip mismatch"
+  );
 
   let parse_material = input.rest();
   let _ = MlKem1024EncapsulationKey::try_from_slice(parse_material);
@@ -39,5 +42,8 @@ pub fn run(data: &[u8]) {
   modified[byte_idx as usize % MlKem1024::CIPHERTEXT_SIZE] ^= 1u8 << (bit_idx & 7);
   let rejected = MlKem1024::decapsulate(&dk, &MlKem1024Ciphertext::from_bytes(modified))
     .expect("ML-KEM implicit rejection returns a shared secret");
-  assert_ne!(encapsulated, rejected, "ML-KEM-1024 modified ciphertext accepted original secret");
+  assert!(
+    !encapsulated.ct_eq(&rejected).declassify(),
+    "ML-KEM-1024 modified ciphertext accepted original secret"
+  );
 }

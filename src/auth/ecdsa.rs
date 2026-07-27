@@ -4387,6 +4387,43 @@ mod tests {
 
   use super::*;
 
+  #[test]
+  fn der_reader_accepts_canonical_lengths() {
+    for len in [0, 1, 127] {
+      let encoded = [len];
+      let mut reader = DerReader::new(&encoded);
+      assert_eq!(reader.read_len(), Ok(usize::from(len)));
+      assert_eq!(reader.finish(), Ok(()));
+    }
+
+    for (encoded, expected) in [
+      (&[0x81, 0x80][..], 128),
+      (&[0x81, 0xff][..], 255),
+      (&[0x82, 0x01, 0x00][..], 256),
+    ] {
+      let mut reader = DerReader::new(encoded);
+      assert_eq!(reader.read_len(), Ok(expected));
+      assert_eq!(reader.finish(), Ok(()));
+    }
+  }
+
+  #[test]
+  fn der_reader_rejects_noncanonical_lengths() {
+    for encoded in [
+      &[0x80, 0x80][..],
+      &[0x81, 0x00][..],
+      &[0x81, 0x7f][..],
+      &[0x82, 0x00, 0x80][..],
+    ] {
+      let mut reader = DerReader::new(encoded);
+      assert_eq!(reader.read_len(), Err(EcdsaError::MalformedDer));
+    }
+
+    let oversized_len_len = [0x80 | (core::mem::size_of::<usize>() as u8 + 1)];
+    let mut reader = DerReader::new(&oversized_len_len);
+    assert_eq!(reader.read_len(), Err(EcdsaError::MalformedDer));
+  }
+
   fn p256_public_key() -> EcdsaP256PublicKey {
     let mut sec1 = [0u8; EcdsaP256PublicKey::SEC1_LENGTH];
     sec1[0] = 0x04;

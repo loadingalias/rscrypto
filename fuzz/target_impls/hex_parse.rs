@@ -49,23 +49,33 @@ where
   }
 }
 
-fn exercise_secret_parse<T>(value: T, lower: String, upper: String, candidate: &str)
-where
-  T: Eq + Debug + FromStr<Err = InvalidHexError>,
+fn exercise_sensitive_parse<T>(
+  value: T,
+  lower: String,
+  upper: String,
+  candidate: &str,
+  equivalent: impl Fn(&T, &T) -> bool,
+) where
+  T: Debug + FromStr<Err = InvalidHexError>,
 {
   let short = &lower[..lower.len().strict_sub(1)];
 
-  assert_eq!(lower.parse::<T>().unwrap(), value, "secret lower parse mismatch");
-  assert_eq!(upper.parse::<T>().unwrap(), value, "secret upper parse mismatch");
-  assert_eq!(
-    short.parse::<T>(),
-    Err(InvalidHexError::InvalidLength),
-    "secret invalid length mismatch"
+  assert!(
+    equivalent(&lower.parse::<T>().unwrap(), &value),
+    "sensitive lower parse mismatch"
+  );
+  assert!(
+    equivalent(&upper.parse::<T>().unwrap(), &value),
+    "sensitive upper parse mismatch"
+  );
+  assert!(
+    matches!(short.parse::<T>(), Err(InvalidHexError::InvalidLength)),
+    "sensitive invalid length mismatch"
   );
 
   if let Ok(parsed) = candidate.parse::<T>() {
     let rendered = format!("{parsed:?}");
-    assert!(!rendered.is_empty(), "secret debug output must exist");
+    assert!(!rendered.is_empty(), "sensitive debug output must exist");
   }
 }
 
@@ -93,25 +103,33 @@ pub fn run(data: &[u8]) {
   exercise_public_parse(nonce, &nonce_candidate);
 
   let tag = Aes256GcmTag::from_bytes(tag_bytes);
-  exercise_public_parse(tag, &tag_candidate);
+  exercise_sensitive_parse(
+    tag,
+    tag.to_string(),
+    format!("{tag:X}"),
+    &tag_candidate,
+    |left, right| left.ct_eq(right).declassify(),
+  );
 
   let key = Aes256GcmKey::from_bytes(key_bytes);
-  exercise_secret_parse(
+  exercise_sensitive_parse(
     key.duplicate_secret(),
     format!("{}", key.display_secret()),
     format!("{}", key.display_secret()).to_uppercase(),
     &key_candidate,
+    |left, right| left.ct_eq(right).declassify(),
   );
 
   let public = Ed25519PublicKey::from_bytes(public_bytes);
   exercise_public_parse(public, &public_candidate);
 
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
-  exercise_secret_parse(
+  exercise_sensitive_parse(
     secret.duplicate_secret(),
     format!("{}", secret.display_secret()),
     format!("{}", secret.display_secret()).to_uppercase(),
     &secret_candidate,
+    |left, right| left.ct_eq(right).declassify(),
   );
 
   let signature = Ed25519Signature::from_bytes(signature_bytes);
@@ -121,18 +139,20 @@ pub fn run(data: &[u8]) {
   exercise_public_parse(x25519_public, &x25519_public_candidate);
 
   let x25519_secret = X25519SecretKey::from_bytes(secret_bytes);
-  exercise_secret_parse(
+  exercise_sensitive_parse(
     x25519_secret.duplicate_secret(),
     format!("{}", x25519_secret.display_secret()),
     format!("{}", x25519_secret.display_secret()).to_uppercase(),
     &x25519_secret_candidate,
+    |left, right| left.ct_eq(right).declassify(),
   );
 
   let x25519_shared = X25519SharedSecret::from_bytes(key_bytes);
-  exercise_secret_parse(
+  exercise_sensitive_parse(
     x25519_shared.duplicate_secret(),
     format!("{}", x25519_shared.display_secret()),
     format!("{}", x25519_shared.display_secret()).to_uppercase(),
     &x25519_shared_candidate,
+    |left, right| left.ct_eq(right).declassify(),
   );
 }

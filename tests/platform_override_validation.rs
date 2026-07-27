@@ -14,6 +14,23 @@ fn safe_override_rejects_impossible_caps_and_still_allows_portable() {
     Err(OverrideError::InvalidCapabilities)
   );
 
-  platform::try_set_override(Some(Detected::portable())).unwrap();
-  platform::try_set_override(None).unwrap();
+  let portable = Detected::portable();
+  platform::try_set_override(Some(portable)).unwrap();
+  assert!(platform::has_override());
+  assert_eq!(platform::get(), portable);
+
+  #[cfg(not(miri))]
+  {
+    assert_eq!(platform::try_set_override(None), Err(OverrideError::AlreadyInitialized));
+    assert_eq!(
+      platform::try_set_override(Some(portable)),
+      Err(OverrideError::AlreadyInitialized)
+    );
+  }
+
+  #[cfg(miri)]
+  {
+    platform::try_set_override(None).unwrap();
+    assert!(!platform::has_override());
+  }
 }

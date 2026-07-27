@@ -1,4 +1,6 @@
-use rscrypto::{Kem as _, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKemError};
+use rscrypto::{
+  Kem as _, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKemError,
+};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
 pub fn run(data: &[u8]) {
@@ -17,8 +19,12 @@ pub fn run(data: &[u8]) {
   })
   .expect("generated ML-KEM encapsulation key must be valid");
 
-  let decapsulated = MlKem768::decapsulate(&dk, &ciphertext).expect("generated ML-KEM decapsulation input must be valid");
-  assert_eq!(encapsulated, decapsulated, "ML-KEM round trip mismatch");
+  let decapsulated =
+    MlKem768::decapsulate(&dk, &ciphertext).expect("generated ML-KEM decapsulation input must be valid");
+  assert!(
+    encapsulated.ct_eq(&decapsulated).declassify(),
+    "ML-KEM round trip mismatch"
+  );
 
   let parse_material = input.rest();
   let _ = MlKem768EncapsulationKey::try_from_slice(parse_material);
@@ -36,5 +42,8 @@ pub fn run(data: &[u8]) {
   modified[byte_idx as usize % MlKem768::CIPHERTEXT_SIZE] ^= 1u8 << (bit_idx & 7);
   let rejected = MlKem768::decapsulate(&dk, &MlKem768Ciphertext::from_bytes(modified))
     .expect("ML-KEM implicit rejection returns a shared secret");
-  assert_ne!(encapsulated, rejected, "ML-KEM modified ciphertext accepted original secret");
+  assert!(
+    !encapsulated.ct_eq(&rejected).declassify(),
+    "ML-KEM modified ciphertext accepted original secret"
+  );
 }

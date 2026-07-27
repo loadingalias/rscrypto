@@ -421,6 +421,27 @@ mod tests {
   }
 
   #[test]
+  fn aes_gcm_nonce_counters_report_resumed_state() {
+    let counter256 = NonceCounter::<Aes256Gcm>::with_counter(*b"r256", 37).unwrap();
+    assert_eq!(counter256.fixed_prefix(), *b"r256");
+    assert_eq!(counter256.next_counter(), 37);
+    assert_eq!(counter256.issued(), 37);
+    assert_eq!(
+      counter256.remaining(),
+      NonceCounter::<Aes256Gcm>::MAX_MESSAGES.strict_sub(37)
+    );
+
+    let counter128 = NonceCounter::<Aes128Gcm>::with_counter(*b"r128", 73).unwrap();
+    assert_eq!(counter128.fixed_prefix(), *b"r128");
+    assert_eq!(counter128.next_counter(), 73);
+    assert_eq!(counter128.issued(), 73);
+    assert_eq!(
+      counter128.remaining(),
+      NonceCounter::<Aes128Gcm>::MAX_MESSAGES.strict_sub(73)
+    );
+  }
+
+  #[test]
   fn aes128_gcm_nonce_counter_encrypt_round_trip() {
     let cipher = Aes128Gcm::new(&Aes128GcmKey::from_bytes([0x42; 16]));
     let mut counter = NonceCounter::<Aes128Gcm>::new(*b"sess");
