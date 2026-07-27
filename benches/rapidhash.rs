@@ -8,7 +8,34 @@ use core::{
 };
 use std::collections::HashMap;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+
+const COLLECTION_KEYS: usize = 4096;
+
+fn collection_key(index: u64) -> [u8; 32] {
+  let mut state = index;
+  let mut key = [0u8; 32];
+  for lane in key.chunks_exact_mut(8) {
+    state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut word = state;
+    word = (word ^ (word >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    word = (word ^ (word >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    lane.copy_from_slice(&(word ^ (word >> 31)).to_le_bytes());
+  }
+  key
+}
+
+fn collection_keys(start: u64) -> Vec<[u8; 32]> {
+  (0..COLLECTION_KEYS)
+    .map(|index| collection_key(start.wrapping_add(index as u64)))
+    .collect()
+}
+
+fn populated_map<S: BuildHasher>(keys: &[[u8; 32]], state: S) -> HashMap<[u8; 32], usize, S> {
+  let mut map = HashMap::with_capacity_and_hasher(keys.len(), state);
+  map.extend(keys.iter().copied().enumerate().map(|(value, key)| (key, value)));
+  map
+}
 
 fn rapidhash_v3_64(c: &mut Criterion) {
   let inputs = common::comp_sizes();
@@ -48,21 +75,110 @@ fn rapidhash_seeded_state(c: &mut Criterion) {
   group.finish();
 }
 
-fn rapidhash_hashmap_lookup(c: &mut Criterion) {
-  let key = common::random_bytes(32);
-  let mut ours = HashMap::with_capacity_and_hasher(1, rscrypto::RapidSeededState::new(0));
-  let mut upstream = HashMap::with_capacity_and_hasher(1, rapidhash::quality::SeedableState::fixed());
-  ours.insert(key.as_slice(), 1u8);
-  upstream.insert(key.as_slice(), 1u8);
+fn rapidhash_key_types(c: &mut Criterion) {
+  let ours = rscrypto::RapidSeededState::new(0);
+  let upstream = rapidhash::quality::SeedableState::fixed();
+  let integer = 0xa5c3_17e9_6b4d_2f01u64;
+  let bytes = collection_key(17);
+  let text = "collection-key";
 
-  let mut group = c.benchmark_group("rapidhash-hashmap/lookup-32");
-  group.bench_function("rscrypto", |b| {
-    b.iter(|| black_box(ours.get(black_box(key.as_slice()))))
+  let mut integer_group = c.benchmark_group("rapidhash-hash-one/u64");
+  integer_group.bench_function("rscrypto", |b| b.iter(|| black_box(ours.hash_one(black_box(integer)))));
+  integer_group.bench_function("rapidhash", |b| {
+    b.iter(|| black_box(upstream.hash_one(black_box(integer))))
   });
-  group.bench_function("rapidhash", |b| {
-    b.iter(|| black_box(upstream.get(black_box(key.as_slice()))))
+  integer_group.finish();
+
+  let mut bytes_group = c.benchmark_group("rapidhash-hash-one/array-32");
+  bytes_group.bench_function("rscrypto", |b| b.iter(|| black_box(ours.hash_one(black_box(bytes)))));
+  bytes_group.bench_function("rapidhash", |b| {
+    b.iter(|| black_box(upstream.hash_one(black_box(bytes))))
   });
-  group.finish();
+  bytes_group.finish();
+
+  let mut text_group = c.benchmark_group("rapidhash-hash-one/str-14");
+  text_group.bench_function("rscrypto", |b| b.iter(|| black_box(ours.hash_one(black_box(text)))));
+  text_group.bench_function("rapidhash", |b| {
+    b.iter(|| black_box(upstream.hash_one(black_box(text))))
+  });
+  text_group.finish();
+}
+
+fn rapidhash_hashmap_operations(c: &mut Criterion) {
+  let present = collection_keys(0);
+  let absent = collection_keys(COLLECTION_KEYS as u64);
+  let ours = populated_map(&present, rscrypto::RapidSeededState::new(0));
+  let upstream = populated_map(&present, rapidhash::quality::SeedableState::fixed());
+
+  let mut insert = c.benchmark_group("rapidhash-hashmap/insert-32");
+  insert.throughput(Throughput::Elements(COLLECTION_KEYS as u64));
+  insert.bench_function("rscrypto", |b| {
+    b.iter_batched_ref(
+      || HashMap::with_capacity_and_hasher(COLLECTION_KEYS, rscrypto::RapidSeededState::new(0)),
+      |map| {
+        for (value, key) in black_box(present.as_slice()).iter().copied().enumerate() {
+          black_box(map.insert(key, value));
+        }
+      },
+      BatchSize::LargeInput,
+    )
+  });
+  insert.bench_function("rapidhash", |b| {
+    b.iter_batched_ref(
+      || HashMap::with_capacity_and_hasher(COLLECTION_KEYS, rapidhash::quality::SeedableState::fixed()),
+      |map| {
+        for (value, key) in black_box(present.as_slice()).iter().copied().enumerate() {
+          black_box(map.insert(key, value));
+        }
+      },
+      BatchSize::LargeInput,
+    )
+  });
+  insert.finish();
+
+  let mut hit = c.benchmark_group("rapidhash-hashmap/hit-32");
+  hit.throughput(Throughput::Elements(COLLECTION_KEYS as u64));
+  hit.bench_function("rscrypto", |b| {
+    b.iter(|| {
+      let mut found = 0usize;
+      for key in black_box(present.as_slice()) {
+        found = found.wrapping_add(black_box(ours.get(black_box(key))).is_some() as usize);
+      }
+      black_box(found)
+    })
+  });
+  hit.bench_function("rapidhash", |b| {
+    b.iter(|| {
+      let mut found = 0usize;
+      for key in black_box(present.as_slice()) {
+        found = found.wrapping_add(black_box(upstream.get(black_box(key))).is_some() as usize);
+      }
+      black_box(found)
+    })
+  });
+  hit.finish();
+
+  let mut miss = c.benchmark_group("rapidhash-hashmap/miss-32");
+  miss.throughput(Throughput::Elements(COLLECTION_KEYS as u64));
+  miss.bench_function("rscrypto", |b| {
+    b.iter(|| {
+      let mut found = 0usize;
+      for key in black_box(absent.as_slice()) {
+        found = found.wrapping_add(black_box(ours.get(black_box(key))).is_some() as usize);
+      }
+      black_box(found)
+    })
+  });
+  miss.bench_function("rapidhash", |b| {
+    b.iter(|| {
+      let mut found = 0usize;
+      for key in black_box(absent.as_slice()) {
+        found = found.wrapping_add(black_box(upstream.get(black_box(key))).is_some() as usize);
+      }
+      black_box(found)
+    })
+  });
+  miss.finish();
 }
 
 fn rapidhash_streaming(c: &mut Criterion) {
@@ -113,7 +229,8 @@ criterion_group!(
   benches,
   rapidhash_v3_64,
   rapidhash_seeded_state,
-  rapidhash_hashmap_lookup,
+  rapidhash_key_types,
+  rapidhash_hashmap_operations,
   rapidhash_streaming
 );
 criterion_main!(benches);

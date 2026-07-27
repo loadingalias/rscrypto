@@ -270,6 +270,19 @@ impl core::fmt::Debug for RapidHasher {
   }
 }
 
+// Keep byte hashing out of fixed-size key callers; inlining either schedule bloats collection
+// paths.
+#[inline(never)]
+fn hash_randomized(bytes: &[u8], seed: u64, random_word0: u64) -> u64 {
+  let state = RapidSecrets::derived(seed, random_word0);
+  rapidhash_core(bytes, state.seed, &state.words)
+}
+
+#[inline(never)]
+fn hash_deterministic(bytes: &[u8], seed: u64) -> u64 {
+  rapidhash_core(bytes, seed, &DEFAULT_SECRETS)
+}
+
 macro_rules! write_integer {
   ($($method:ident, $ty:ty, $unsigned:ty),+ $(,)?) => {
     $(
@@ -299,10 +312,9 @@ impl Hasher for RapidHasher {
     }
     self.flush_sponge();
     self.seed = if self.random_word0 == 0 {
-      rapidhash_core(bytes, self.seed, &DEFAULT_SECRETS)
+      hash_deterministic(bytes, self.seed)
     } else {
-      let state = RapidSecrets::derived(self.seed, self.random_word0);
-      rapidhash_core(bytes, state.seed, &state.words)
+      hash_randomized(bytes, self.seed, self.random_word0)
     };
   }
 
