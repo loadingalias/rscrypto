@@ -97,9 +97,9 @@ const HASH_BYTES: usize = 32;
 const SHARED_SECRET_BYTES: usize = 32;
 const POLY_BYTES: usize = 384;
 const SHAKE128_RATE_BYTES: usize = 168;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 const SAMPLE_NTT_INITIAL_BLOCKS: usize = 3;
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 const SAMPLE_NTT_INITIAL_BYTES: usize = SHAKE128_RATE_BYTES * SAMPLE_NTT_INITIAL_BLOCKS;
 const ETA2_RANDOM_BYTES: usize = 128;
 const ETA3_RANDOM_BYTES: usize = 192;
@@ -116,7 +116,7 @@ type PolyVecMulCache<const K: usize> = [PolyMulCache; K];
 #[derive(Clone)]
 pub(super) struct PreparedEncapsulationArithmetic<const K: usize> {
   t_hat: PolyVec<K>,
-  #[cfg(any(test, feature = "diag"))]
+  #[cfg(test)]
   rho: [u8; SEED_BYTES],
   a_transpose_hat: PolyMatrix<K>,
 }
@@ -276,7 +276,7 @@ fn prepare_encapsulation_key<const K: usize, const EK_BYTES: usize>(
 
   PreparedEncapsulationArithmetic {
     t_hat,
-    #[cfg(any(test, feature = "diag"))]
+    #[cfg(test)]
     rho,
     a_transpose_hat,
   }
@@ -775,16 +775,6 @@ fn keygen_matrix_accumulate_materialized<const K: usize>(
   sample_matrix_ntt_mul_accumulate_materialized::<K>(rho, s_hat, t_hat, false);
 }
 
-#[cfg(feature = "diag")]
-#[inline(always)]
-fn keygen_matrix_accumulate_windowed<const K: usize>(
-  rho: &[u8; SEED_BYTES],
-  s_hat: &PolyVec<K>,
-  t_hat: &mut PolyVec<K>,
-) {
-  sample_matrix_ntt_mul_accumulate_windowed::<K>(rho, s_hat, t_hat, false);
-}
-
 #[inline(always)]
 fn keygen_from_product_domain<const K: usize>(t_hat: &mut PolyVec<K>) {
   for poly in t_hat.iter_mut() {
@@ -820,722 +810,6 @@ pub(super) fn keygen_1024(random: &[u8; 64]) -> ([u8; 1568], [u8; 3168]) {
 }
 
 #[cfg(feature = "diag")]
-pub(super) fn diag_keygen_expand_digest<const K_U8: u8>(d: &[u8; SEED_BYTES]) -> u16 {
-  let mut seed = [0u8; 33];
-  seed[..SEED_BYTES].copy_from_slice(d);
-  seed[SEED_BYTES] = K_U8;
-
-  let mut expanded = g(&seed);
-  let digest = diag_fold_bytes(&expanded);
-  ct::zeroize(&mut seed);
-  ct::zeroize(&mut expanded);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_noise_sample_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  let mut s_hat = [[0u16; N]; K];
-  let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
-
-  let digest = diag_fold_polyvec(&s_hat) ^ diag_fold_polyvec(&t_hat);
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_noise_ntt_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  let mut s_hat = [[0u16; N]; K];
-  let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
-  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
-
-  let digest = diag_fold_polyvec(&s_hat) ^ diag_fold_polyvec(&t_hat);
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_accumulate_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  diag_keygen_matrix_accumulate_with::<K, ETA1_RANDOM_BYTES>(rho, sigma, keygen_matrix_accumulate::<K>)
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_accumulate_fused_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  diag_keygen_matrix_accumulate_with::<K, ETA1_RANDOM_BYTES>(rho, sigma, keygen_matrix_accumulate_fused::<K>)
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_accumulate_materialized_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  diag_keygen_matrix_accumulate_with::<K, ETA1_RANDOM_BYTES>(rho, sigma, keygen_matrix_accumulate_materialized::<K>)
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_accumulate_windowed_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  diag_keygen_matrix_accumulate_with::<K, ETA1_RANDOM_BYTES>(rho, sigma, keygen_matrix_accumulate_windowed::<K>)
-}
-
-#[cfg(feature = "diag")]
-fn diag_keygen_matrix_accumulate_with<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-  accumulate: fn(&[u8; SEED_BYTES], &PolyVec<K>, &mut PolyVec<K>),
-) -> u16 {
-  let mut s_hat = [[0u16; N]; K];
-  let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
-  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
-  accumulate(rho, &s_hat, &mut t_hat);
-
-  let digest = diag_fold_polyvec(&t_hat);
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_multiply_digest<const K: usize>(seed: u16) -> u16 {
-  let mut matrix = [[[0u16; N]; K]; K];
-  let mut rhs = [[0u16; N]; K];
-  let mut acc = [[0u16; N]; K];
-  let mut next = seed;
-
-  for row in &mut matrix {
-    for poly in row {
-      *poly = diag_poly(next);
-      next = next.wrapping_add(1);
-    }
-  }
-  for poly in &mut rhs {
-    *poly = diag_poly(next);
-    next = next.wrapping_add(1);
-  }
-  for poly in &mut acc {
-    *poly = diag_poly(next);
-    next = next.wrapping_add(1);
-  }
-
-  keygen_matrix_row_multiply_materialized(&matrix, &rhs, &mut acc);
-
-  let digest = diag_fold_polyvec(&acc);
-  for row in &mut matrix {
-    zeroize_polyvec(row);
-  }
-  zeroize_polyvec(&mut rhs);
-  zeroize_polyvec(&mut acc);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k3_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 3];
-  let mut row1 = [[0u16; N]; 3];
-  let mut row2 = [[0u16; N]; 3];
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row0);
-    sample_ntt_triple_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row1);
-    sample_ntt_triple_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row2);
-    sample_ntt_triple_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
-  }
-
-  let digest = diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k3_initial_3blocks_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 3];
-  let mut row1 = [[0u16; N]; 3];
-  let mut row2 = [[0u16; N]; 3];
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row0);
-    sample_ntt_triple_initial_3blocks_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row1);
-    sample_ntt_triple_initial_3blocks_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row2);
-    sample_ntt_triple_initial_3blocks_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
-  }
-
-  let digest = diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k3_first3_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 3];
-  let mut row1 = [[0u16; N]; 3];
-  let mut row2 = [[0u16; N]; 3];
-
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row0);
-    sample_ntt_triple_first3_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row1);
-    sample_ntt_triple_first3_into(rho, [(0, 1), (1, 1), (2, 1)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2] = polyvec3_mut(&mut row2);
-    sample_ntt_triple_first3_into(rho, [(0, 2), (1, 2), (2, 2)], [a0, a1, a2]);
-  }
-
-  let digest = diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k4_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-
-  sample_matrix_ntt_materialized_k4_rows(rho, &mut row0, &mut row1, &mut row2, &mut row3);
-
-  let digest =
-    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k4_initial_3blocks_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-
-  sample_matrix_ntt_materialized_k4_rows_triple_initial_3blocks(rho, &mut row0, &mut row1, &mut row2, &mut row3);
-
-  let digest =
-    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k4_first3_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-
-  sample_matrix_ntt_materialized_k4_rows_first3(rho, &mut row0, &mut row1, &mut row2, &mut row3);
-
-  let digest =
-    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k4_triple_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-
-  sample_matrix_ntt_materialized_k4_rows_triple(rho, &mut row0, &mut row1, &mut row2, &mut row3);
-
-  let digest =
-    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_sample_k4_quad_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-
-  sample_matrix_ntt_materialized_k4_rows_quad(rho, &mut row0, &mut row1, &mut row2, &mut row3);
-
-  let digest =
-    diag_fold_polyvec(&row0) ^ diag_fold_polyvec(&row1) ^ diag_fold_polyvec(&row2) ^ diag_fold_polyvec(&row3);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_xof_setup_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
-  let mut digest = 0u16;
-
-  #[cfg(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  ))]
-  {
-    Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-      digest ^= diag_fold_keccak_state_prefix(state0, 0);
-      digest ^= diag_fold_keccak_state_prefix(state1, 1);
-      digest ^= diag_fold_keccak_state_prefix(state2, 2);
-    });
-  }
-
-  #[cfg(not(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  )))]
-  {
-    let mut buf0 = [0u8; SHAKE128_RATE_BYTES];
-    let mut buf1 = [0u8; SHAKE128_RATE_BYTES];
-    let mut buf2 = [0u8; SHAKE128_RATE_BYTES];
-    Shake128XofReader::squeeze_triple(
-      &mut reader0,
-      &mut reader1,
-      &mut reader2,
-      &mut buf0,
-      &mut buf1,
-      &mut buf2,
-    );
-    digest ^= diag_fold_bytes(&buf0);
-    digest ^= diag_fold_bytes(&buf1).rotate_left(1);
-    digest ^= diag_fold_bytes(&buf2).rotate_left(2);
-  }
-
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_squeeze_blocks_digest(rho: &[u8; SEED_BYTES], blocks: usize) -> u16 {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
-  let mut digest = 0u16;
-
-  for block in 0..blocks {
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))]
-    {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-        let domain = block as u16;
-        digest ^= diag_fold_keccak_state_prefix(state0, domain);
-        digest ^= diag_fold_keccak_state_prefix(state1, domain.wrapping_add(17));
-        digest ^= diag_fold_keccak_state_prefix(state2, domain.wrapping_add(34));
-      });
-    }
-
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    )))]
-    {
-      let mut buf0 = [0u8; SHAKE128_RATE_BYTES];
-      let mut buf1 = [0u8; SHAKE128_RATE_BYTES];
-      let mut buf2 = [0u8; SHAKE128_RATE_BYTES];
-      Shake128XofReader::squeeze_triple(
-        &mut reader0,
-        &mut reader1,
-        &mut reader2,
-        &mut buf0,
-        &mut buf1,
-        &mut buf2,
-      );
-      let domain = block as u16;
-      digest ^= diag_fold_bytes(&buf0).wrapping_add(domain);
-      digest ^= diag_fold_bytes(&buf1).wrapping_add(domain.wrapping_add(17));
-      digest ^= diag_fold_bytes(&buf2).wrapping_add(domain.wrapping_add(34));
-    }
-  }
-
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_parse_blocks_digest(seed: u16, blocks: usize) -> u16 {
-  let mut out0 = [0u16; N];
-  let mut out1 = [0u16; N];
-  let mut out2 = [0u16; N];
-  let mut filled = [0usize; 3];
-
-  for block in 0..blocks {
-    if filled.iter().all(|&n| n == N) {
-      break;
-    }
-    let bufs = diag_sampler_rate_blocks(seed, block as u16);
-    diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
-  }
-
-  let digest = diag_fold_poly(&out0)
-    ^ diag_fold_poly(&out1).rotate_left(1)
-    ^ diag_fold_poly(&out2).rotate_left(2)
-    ^ diag_fold_usize3(filled);
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_initial_3blocks_parse_digest(seed: u16) -> u16 {
-  let mut bufs = [[0u8; SAMPLE_NTT_INITIAL_BYTES]; 3];
-  for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
-    let rate_blocks = diag_sampler_rate_blocks(seed, block as u16);
-    let start = block.strict_mul(SHAKE128_RATE_BYTES);
-    let end = start.strict_add(SHAKE128_RATE_BYTES);
-    bufs[0][start..end].copy_from_slice(&rate_blocks[0]);
-    bufs[1][start..end].copy_from_slice(&rate_blocks[1]);
-    bufs[2][start..end].copy_from_slice(&rate_blocks[2]);
-  }
-
-  let mut out0 = [0u16; N];
-  let mut out1 = [0u16; N];
-  let mut out2 = [0u16; N];
-  let mut filled = [0usize; 3];
-  sample_ntt_initial_3blocks_public(&bufs[0], &mut out0, &mut filled[0]);
-  sample_ntt_initial_3blocks_public(&bufs[1], &mut out1, &mut filled[1]);
-  sample_ntt_initial_3blocks_public(&bufs[2], &mut out2, &mut filled[2]);
-
-  let digest = diag_fold_poly(&out0)
-    ^ diag_fold_poly(&out1).rotate_left(1)
-    ^ diag_fold_poly(&out2).rotate_left(2)
-    ^ diag_fold_usize3(filled);
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_initial_3blocks_seeded_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let lanes = [(0, 0), (1, 0), (2, 0)];
-  let mut out0 = [0u16; N];
-  let mut out1 = [0u16; N];
-  let mut out2 = [0u16; N];
-  let blocks = sample_ntt_triple_initial_3blocks_then_tail_into(rho, lanes, [&mut out0, &mut out1, &mut out2]);
-
-  let digest = diag_fold_poly(&out0)
-    ^ diag_fold_poly(&out1).rotate_left(1)
-    ^ diag_fold_poly(&out2).rotate_left(2)
-    ^ blocks[0]
-    ^ blocks[1].rotate_left(1)
-    ^ blocks[2].rotate_left(2);
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_first_two_blocks_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut out0 = [0u16; N];
-  let mut out1 = [0u16; N];
-  let mut out2 = [0u16; N];
-  let mut filled = [0usize; 3];
-
-  diag_sampler_triple_parse_seeded_blocks(rho, 2, [&mut out0, &mut out1, &mut out2], &mut filled);
-
-  let digest = diag_fold_poly(&out0)
-    ^ diag_fold_poly(&out1).rotate_left(1)
-    ^ diag_fold_poly(&out2).rotate_left(2)
-    ^ diag_fold_usize3(filled);
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_after_two_block_fills(rho: &[u8; SEED_BYTES]) -> [u16; 3] {
-  let mut out0 = [0u16; N];
-  let mut out1 = [0u16; N];
-  let mut out2 = [0u16; N];
-  let mut filled = [0usize; 3];
-
-  diag_sampler_triple_parse_seeded_blocks(rho, 2, [&mut out0, &mut out1, &mut out2], &mut filled);
-
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  debug_assert!(filled.iter().all(|&n| n <= N));
-  [filled[0] as u16, filled[1] as u16, filled[2] as u16]
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_tail_after_fill_digest(seed: u16, filled: [u16; 3]) -> u16 {
-  let mut out0 = diag_poly(seed);
-  let mut out1 = diag_poly(seed.wrapping_add(1));
-  let mut out2 = diag_poly(seed.wrapping_add(2));
-  let mut filled = [
-    usize::from(filled[0]).min(N),
-    usize::from(filled[1]).min(N),
-    usize::from(filled[2]).min(N),
-  ];
-  let bufs = diag_sampler_rate_blocks(seed.wrapping_add(5), 0);
-
-  diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
-
-  let digest = diag_fold_poly(&out0)
-    ^ diag_fold_poly(&out1).rotate_left(1)
-    ^ diag_fold_poly(&out2).rotate_left(2)
-    ^ diag_fold_usize3(filled);
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_triple_tail_block_digest(seed: u16) -> u16 {
-  let mut out0 = diag_poly(seed);
-  let mut out1 = diag_poly(seed.wrapping_add(1));
-  let mut out2 = diag_poly(seed.wrapping_add(2));
-  let mut filled = [220usize, 232usize, 244usize];
-  let bufs = diag_sampler_rate_blocks(seed.wrapping_add(3), 0);
-
-  diag_sample_ntt_triple_parse_block_from_bufs(&bufs, [&mut out0, &mut out1, &mut out2], &mut filled);
-
-  let digest = diag_fold_poly(&out0)
-    ^ diag_fold_poly(&out1).rotate_left(1)
-    ^ diag_fold_poly(&out2).rotate_left(2)
-    ^ diag_fold_usize3(filled);
-  zeroize_poly(&mut out0);
-  zeroize_poly(&mut out1);
-  zeroize_poly(&mut out2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_k4_row_sample_counted_digest(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-  let mut counts = [0u16; 16];
-
-  diag_sample_matrix_ntt_materialized_k4_rows_counted(rho, &mut row0, &mut row1, &mut row2, &mut row3, &mut counts);
-
-  let digest = diag_fold_polyvec(&row0)
-    ^ diag_fold_polyvec(&row1).rotate_left(1)
-    ^ diag_fold_polyvec(&row2).rotate_left(2)
-    ^ diag_fold_polyvec(&row3).rotate_left(3)
-    ^ diag_fold_u16s(&counts);
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_sampler_k4_row_sample_block_counts(rho: &[u8; SEED_BYTES]) -> [u16; 16] {
-  let mut row0 = [[0u16; N]; 4];
-  let mut row1 = [[0u16; N]; 4];
-  let mut row2 = [[0u16; N]; 4];
-  let mut row3 = [[0u16; N]; 4];
-  let mut counts = [0u16; 16];
-
-  diag_sample_matrix_ntt_materialized_k4_rows_counted(rho, &mut row0, &mut row1, &mut row2, &mut row3, &mut counts);
-
-  zeroize_polyvec(&mut row0);
-  zeroize_polyvec(&mut row1);
-  zeroize_polyvec(&mut row2);
-  zeroize_polyvec(&mut row3);
-  counts
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_matrix_row_multiply_default_input_digest<const K: usize>(
-  matrix: &PolyMatrix<K>,
-  rhs: &PolyVec<K>,
-  acc: &PolyVec<K>,
-) -> u16 {
-  let mut acc = *acc;
-  for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
-    multiply_ntts_accumulate(acc_i, row, rhs);
-  }
-
-  let digest = diag_fold_polyvec(&acc);
-  zeroize_polyvec(&mut acc);
-  digest
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-pub(super) fn diag_keygen_matrix_mulcache_input<const K: usize>(rhs: &PolyVec<K>) -> PolyVecMulCache<K> {
-  polyvec_mulcache(rhs)
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-pub(super) fn diag_keygen_matrix_mulcache_input_digest<const K: usize>(rhs: &PolyVec<K>) -> u16 {
-  let mut rhs_cache = polyvec_mulcache(rhs);
-  let digest = diag_fold_polyvec_mulcache(&rhs_cache);
-  zeroize_polyvec_mulcache(&mut rhs_cache);
-  digest
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-pub(super) fn diag_keygen_matrix_row_multiply_cached_input_digest<const K: usize>(
-  matrix: &PolyMatrix<K>,
-  rhs: &PolyVec<K>,
-  acc: &PolyVec<K>,
-) -> u16 {
-  let mut acc = *acc;
-  let mut rhs_cache = polyvec_mulcache(rhs);
-  keygen_matrix_row_multiply_cached(matrix, rhs, &rhs_cache, &mut acc);
-
-  let digest = diag_fold_polyvec(&acc);
-  zeroize_polyvec_mulcache(&mut rhs_cache);
-  zeroize_polyvec(&mut acc);
-  digest
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-pub(super) fn diag_keygen_matrix_row_multiply_cached_core_input_digest<const K: usize>(
-  matrix: &PolyMatrix<K>,
-  rhs: &PolyVec<K>,
-  rhs_cache: &PolyVecMulCache<K>,
-  acc: &PolyVec<K>,
-) -> u16 {
-  let mut acc = *acc;
-  keygen_matrix_row_multiply_cached(matrix, rhs, rhs_cache, &mut acc);
-
-  let digest = diag_fold_polyvec(&acc);
-  zeroize_polyvec(&mut acc);
-  digest
-}
-
-#[cfg(feature = "diag")]
-fn keygen_matrix_row_multiply_materialized<const K: usize>(
-  matrix: &PolyMatrix<K>,
-  rhs: &PolyVec<K>,
-  acc: &mut PolyVec<K>,
-) {
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  {
-    let mut rhs_cache = polyvec_mulcache(rhs);
-    keygen_matrix_row_multiply_cached(matrix, rhs, &rhs_cache, acc);
-    zeroize_polyvec_mulcache(&mut rhs_cache);
-  }
-  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-  {
-    for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
-      multiply_ntts_accumulate(acc_i, row, rhs);
-    }
-  }
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-fn keygen_matrix_row_multiply_cached<const K: usize>(
-  matrix: &PolyMatrix<K>,
-  rhs: &PolyVec<K>,
-  rhs_cache: &PolyVecMulCache<K>,
-  acc: &mut PolyVec<K>,
-) {
-  for (row, acc_i) in matrix.iter().zip(acc.iter_mut()) {
-    multiply_ntts_accumulate_cached(acc_i, row, rhs, rhs_cache);
-  }
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_from_product_domain_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  let mut s_hat = [[0u16; N]; K];
-  let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
-  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
-  keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
-  keygen_from_product_domain::<K>(&mut t_hat);
-
-  let digest = diag_fold_polyvec(&t_hat);
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_keygen_encode_digest<
-  const K: usize,
-  const ETA1_RANDOM_BYTES: usize,
-  const DK_PKE_BYTES: usize,
-  const EK_BYTES: usize,
->(
-  rho: &[u8; SEED_BYTES],
-  sigma: &[u8; SEED_BYTES],
-) -> u16 {
-  let mut s_hat = [[0u16; N]; K];
-  let mut t_hat = [[0u16; N]; K];
-  keygen_sample_noise::<K, ETA1_RANDOM_BYTES>(sigma, &mut s_hat, &mut t_hat);
-  keygen_ntt_noise::<K>(&mut s_hat, &mut t_hat);
-  keygen_matrix_accumulate::<K>(rho, &s_hat, &mut t_hat);
-  keygen_from_product_domain::<K>(&mut t_hat);
-
-  let (mut ek, mut dk_pke) = keygen_encode::<K, DK_PKE_BYTES, EK_BYTES>(rho, &s_hat, &t_hat);
-  let digest = diag_fold_bytes(&ek) ^ diag_fold_bytes(&dk_pke);
-  ct::zeroize(&mut ek);
-  ct::zeroize(&mut dk_pke);
-  zeroize_polyvec(&mut s_hat);
-  zeroize_polyvec(&mut t_hat);
-  digest
-}
-
-#[cfg(feature = "diag")]
 pub(super) fn diag_keygen_secret_noise_digest<
   const K: usize,
   const ETA1_RANDOM_BYTES: usize,
@@ -1554,317 +828,6 @@ pub(super) fn diag_keygen_secret_noise_digest<
 
   ct::zeroize(&mut ek);
   ct::zeroize(&mut dk_pke);
-  digest
-}
-
-#[cfg(feature = "diag")]
-#[inline(never)]
-fn diag_fold_polyvec<const K: usize>(polyvec: &PolyVec<K>) -> u16 {
-  let mut acc = 0u16;
-  for poly in polyvec {
-    acc ^= diag_fold_poly(poly);
-  }
-  acc
-}
-
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-#[inline(never)]
-fn diag_fold_polyvec_mulcache<const K: usize>(cache: &PolyVecMulCache<K>) -> u16 {
-  let mut acc = 0u16;
-  for (poly_index, cache_poly) in cache.iter().enumerate() {
-    for (coeff_index, &coeff) in cache_poly.iter().enumerate() {
-      let weight = poly_index.strict_mul(N / 2).strict_add(coeff_index).wrapping_add(1) as u16;
-      acc ^= coeff.wrapping_mul(weight);
-    }
-  }
-  acc
-}
-
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  target_endian = "little",
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[inline(never)]
-fn diag_fold_keccak_state_prefix(state: &[u64; 25], domain: u16) -> u16 {
-  let mut acc = domain;
-  for (i, &word) in state[..8].iter().enumerate() {
-    acc ^= (word as u16).wrapping_mul((i as u16).wrapping_add(1));
-    acc ^= ((word >> 16) as u16).wrapping_mul((i as u16).wrapping_add(9));
-    acc ^= ((word >> 32) as u16).wrapping_mul((i as u16).wrapping_add(17));
-    acc ^= ((word >> 48) as u16).wrapping_mul((i as u16).wrapping_add(25));
-  }
-  acc
-}
-
-#[cfg(feature = "diag")]
-#[inline(never)]
-fn diag_fold_usize3(values: [usize; 3]) -> u16 {
-  let mut acc = 0u16;
-  for (i, value) in values.iter().copied().enumerate() {
-    acc ^= (value as u16).wrapping_mul((i as u16).wrapping_add(1));
-  }
-  acc
-}
-
-#[cfg(feature = "diag")]
-#[inline(never)]
-fn diag_fold_u16s(values: &[u16]) -> u16 {
-  let mut acc = 0u16;
-  for (i, &value) in values.iter().enumerate() {
-    acc ^= value.wrapping_mul((i as u16).wrapping_add(1));
-  }
-  acc
-}
-
-#[cfg(feature = "diag")]
-fn diag_sampler_rate_blocks(seed: u16, block: u16) -> [[u8; SHAKE128_RATE_BYTES]; 3] {
-  [
-    diag_sampler_rate_block(seed, block, 0),
-    diag_sampler_rate_block(seed, block, 1),
-    diag_sampler_rate_block(seed, block, 2),
-  ]
-}
-
-#[cfg(feature = "diag")]
-fn diag_sampler_rate_block(seed: u16, block: u16, lane: u16) -> [u8; SHAKE128_RATE_BYTES] {
-  let mut out = [0u8; SHAKE128_RATE_BYTES];
-  let mut next = u32::from(seed) ^ (u32::from(block) << 8) ^ (u32::from(lane) << 16);
-
-  for (i, byte) in out.iter_mut().enumerate() {
-    next = next
-      .wrapping_mul(1_664_525)
-      .wrapping_add(1_013_904_223)
-      .wrapping_add(i as u32);
-    *byte = (next >> 16) as u8;
-  }
-  out
-}
-
-#[cfg(feature = "diag")]
-fn diag_sampler_triple_parse_seeded_blocks(
-  rho: &[u8; SEED_BYTES],
-  blocks: usize,
-  out: [&mut Poly; 3],
-  filled: &mut [usize; 3],
-) {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, (0, 0), (1, 0), (2, 0));
-  let [out0, out1, out2] = out;
-  #[cfg(not(all(
-    target_arch = "aarch64",
-    target_endian = "little",
-    not(miri),
-    not(feature = "portable-only")
-  )))]
-  let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
-
-  for _ in 0..blocks {
-    if filled.iter().all(|&n| n == N) {
-      break;
-    }
-
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))]
-    {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-        sample_ntt_triple_state_block([state0, state1, state2], [&mut *out0, &mut *out1, &mut *out2], filled);
-      });
-    }
-
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    )))]
-    {
-      let [buf0, buf1, buf2] = &mut bufs;
-      Shake128XofReader::squeeze_triple(&mut reader0, &mut reader1, &mut reader2, buf0, buf1, buf2);
-      sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
-      sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
-      sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
-    }
-  }
-}
-
-#[cfg(feature = "diag")]
-fn diag_sample_ntt_triple_parse_block_from_bufs(
-  bufs: &[[u8; SHAKE128_RATE_BYTES]; 3],
-  out: [&mut Poly; 3],
-  filled: &mut [usize; 3],
-) {
-  #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-  {
-    // SAFETY: diagnostic parser dispatch over fixed local rate blocks because:
-    // 1. Each pointer names one initialized SHAKE128-sized local buffer.
-    // 2. The destination polynomials and filled counters are distinct.
-    // 3. The helper preserves the same bounded parser behavior as production.
-    unsafe {
-      sample_ntt_triple_block_neon_ptrs([bufs[0].as_ptr(), bufs[1].as_ptr(), bufs[2].as_ptr()], out, filled);
-    }
-  }
-
-  #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
-  {
-    let [out0, out1, out2] = out;
-    sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
-    sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
-    sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
-  }
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_matrix_sample_scalar_digest<const K: usize>(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut digest = 0u16;
-  for i in 0..K {
-    for j in 0..K {
-      let mut poly = [0u16; N];
-      sample_ntt_into(rho, j as u8, i as u8, &mut poly);
-      digest ^= diag_fold_poly(&poly);
-      zeroize_poly(&mut poly);
-    }
-  }
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_matrix_sample_pair_digest<const K: usize>(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut digest = 0u16;
-  let mut entry = 0usize;
-  while entry.strict_add(1) < K.strict_mul(K) {
-    let (j0, i0) = matrix_sample_coord::<K>(entry);
-    let (j1, i1) = matrix_sample_coord::<K>(entry.strict_add(1));
-    let mut poly0 = [0u16; N];
-    let mut poly1 = [0u16; N];
-    sample_ntt_pair_into(rho, j0, i0, j1, i1, &mut poly0, &mut poly1);
-    digest ^= diag_fold_poly(&poly0);
-    digest ^= diag_fold_poly(&poly1);
-    zeroize_poly(&mut poly0);
-    zeroize_poly(&mut poly1);
-    entry = entry.strict_add(2);
-  }
-
-  if entry < K.strict_mul(K) {
-    let (j, i) = matrix_sample_coord::<K>(entry);
-    let mut poly = [0u16; N];
-    sample_ntt_into(rho, j, i, &mut poly);
-    digest ^= diag_fold_poly(&poly);
-    zeroize_poly(&mut poly);
-  }
-
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_matrix_sample_triple_digest<const K: usize>(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut digest = 0u16;
-  let mut entry = 0usize;
-  while entry.strict_add(2) < K.strict_mul(K) {
-    let coord0 = matrix_sample_coord::<K>(entry);
-    let coord1 = matrix_sample_coord::<K>(entry.strict_add(1));
-    let coord2 = matrix_sample_coord::<K>(entry.strict_add(2));
-    let mut poly0 = [0u16; N];
-    let mut poly1 = [0u16; N];
-    let mut poly2 = [0u16; N];
-    sample_ntt_triple_into(rho, [coord0, coord1, coord2], [&mut poly0, &mut poly1, &mut poly2]);
-    digest ^= diag_fold_poly(&poly0);
-    digest ^= diag_fold_poly(&poly1);
-    digest ^= diag_fold_poly(&poly2);
-    zeroize_poly(&mut poly0);
-    zeroize_poly(&mut poly1);
-    zeroize_poly(&mut poly2);
-    entry = entry.strict_add(3);
-  }
-
-  while entry.strict_add(1) < K.strict_mul(K) {
-    let (j0, i0) = matrix_sample_coord::<K>(entry);
-    let (j1, i1) = matrix_sample_coord::<K>(entry.strict_add(1));
-    let mut poly0 = [0u16; N];
-    let mut poly1 = [0u16; N];
-    sample_ntt_pair_into(rho, j0, i0, j1, i1, &mut poly0, &mut poly1);
-    digest ^= diag_fold_poly(&poly0);
-    digest ^= diag_fold_poly(&poly1);
-    zeroize_poly(&mut poly0);
-    zeroize_poly(&mut poly1);
-    entry = entry.strict_add(2);
-  }
-
-  if entry < K.strict_mul(K) {
-    let (j, i) = matrix_sample_coord::<K>(entry);
-    let mut poly = [0u16; N];
-    sample_ntt_into(rho, j, i, &mut poly);
-    digest ^= diag_fold_poly(&poly);
-    zeroize_poly(&mut poly);
-  }
-
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_matrix_sample_quad_digest<const K: usize>(rho: &[u8; SEED_BYTES]) -> u16 {
-  let mut digest = 0u16;
-  let mut entry = 0usize;
-  while entry.strict_add(3) < K.strict_mul(K) {
-    let coord0 = matrix_sample_coord::<K>(entry);
-    let coord1 = matrix_sample_coord::<K>(entry.strict_add(1));
-    let coord2 = matrix_sample_coord::<K>(entry.strict_add(2));
-    let coord3 = matrix_sample_coord::<K>(entry.strict_add(3));
-    let mut poly0 = [0u16; N];
-    let mut poly1 = [0u16; N];
-    let mut poly2 = [0u16; N];
-    let mut poly3 = [0u16; N];
-    sample_ntt_quad_into(
-      rho,
-      [coord0, coord1, coord2, coord3],
-      [&mut poly0, &mut poly1, &mut poly2, &mut poly3],
-    );
-    digest ^= diag_fold_poly(&poly0);
-    digest ^= diag_fold_poly(&poly1);
-    digest ^= diag_fold_poly(&poly2);
-    digest ^= diag_fold_poly(&poly3);
-    zeroize_poly(&mut poly0);
-    zeroize_poly(&mut poly1);
-    zeroize_poly(&mut poly2);
-    zeroize_poly(&mut poly3);
-    entry = entry.strict_add(4);
-  }
-
-  while entry.strict_add(1) < K.strict_mul(K) {
-    let (j0, i0) = matrix_sample_coord::<K>(entry);
-    let (j1, i1) = matrix_sample_coord::<K>(entry.strict_add(1));
-    let mut poly0 = [0u16; N];
-    let mut poly1 = [0u16; N];
-    sample_ntt_pair_into(rho, j0, i0, j1, i1, &mut poly0, &mut poly1);
-    digest ^= diag_fold_poly(&poly0);
-    digest ^= diag_fold_poly(&poly1);
-    zeroize_poly(&mut poly0);
-    zeroize_poly(&mut poly1);
-    entry = entry.strict_add(2);
-  }
-
-  if entry < K.strict_mul(K) {
-    let (j, i) = matrix_sample_coord::<K>(entry);
-    let mut poly = [0u16; N];
-    sample_ntt_into(rho, j, i, &mut poly);
-    digest ^= diag_fold_poly(&poly);
-    zeroize_poly(&mut poly);
-  }
-
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_ntt_digest(seed: u16) -> u16 {
-  let mut poly = diag_poly(seed);
-  ntt(&mut poly);
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
   digest
 }
 
@@ -1897,71 +860,9 @@ pub(super) unsafe fn diag_s390x_ntt_input_digest(mut poly: Poly) -> u16 {
   digest
 }
 
-/// Diagnostic digest for the aarch64 NEON NTT kernel.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 targets with baseline Advanced SIMD
-/// available.
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-pub(super) unsafe fn diag_aarch64_ntt_neon_digest(seed: u16) -> u16 {
-  let poly = diag_poly(seed);
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { diag_aarch64_ntt_neon_input_digest(poly) }
-}
-
-/// Diagnostic digest for the aarch64 NEON NTT kernel.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 targets with baseline Advanced SIMD
-/// available.
-#[cfg(all(feature = "diag", target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
-pub(super) unsafe fn diag_aarch64_ntt_neon_input_digest(mut poly: Poly) -> u16 {
-  // SAFETY: Direct NEON diagnostic call because:
-  // 1. The caller guarantees this runs only on an aarch64 CPU with Advanced SIMD.
-  // 2. `poly` is a fixed 256-coefficient polynomial matching the NEON kernel contract.
-  // 3. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
-  //    can inspect the aarch64 NEON candidate itself.
-  // 4. The NEON memory access schedule depends only on public ML-KEM dimensions.
-  unsafe {
-    ntt_neon(&mut poly);
-  }
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_inverse_ntt_montgomery_product_digest(seed: u16) -> u16 {
-  let mut poly = diag_poly(seed);
-  inverse_ntt_montgomery_product(&mut poly);
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
-  digest
-}
-
 #[cfg(feature = "diag")]
 pub(super) fn diag_inverse_ntt_montgomery_product_input_digest(mut poly: Poly) -> u16 {
   inverse_ntt_montgomery_product(&mut poly);
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_inverse_ntt_montgomery_product_add_assign_digest(seed: u16) -> u16 {
-  let mut poly = diag_poly(seed);
-  let addend = diag_poly(seed.wrapping_add(1));
-  inverse_ntt_montgomery_product_add_assign(&mut poly, &addend);
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_inverse_ntt_montgomery_product_add_assign_input_digest(mut poly: Poly, addend: Poly) -> u16 {
-  inverse_ntt_montgomery_product_add_assign(&mut poly, &addend);
   let digest = diag_fold_poly(&poly);
   zeroize_poly(&mut poly);
   digest
@@ -1990,80 +891,11 @@ pub(super) unsafe fn diag_s390x_inverse_ntt_montgomery_product_input_digest(mut 
 }
 
 #[cfg(feature = "diag")]
-pub(super) fn diag_multiply_ntts_add_assign_digest(seed: u16) -> u16 {
-  let a = diag_poly(seed);
-  let b = diag_poly(seed.wrapping_add(1));
-  let mut acc = diag_poly(seed.wrapping_add(2));
-  multiply_ntts_add_assign(&mut acc, &a, &b);
-  let digest = diag_fold_poly(&acc);
-  zeroize_poly(&mut acc);
-  digest
-}
-
-#[cfg(feature = "diag")]
 pub(super) fn diag_multiply_ntts_add_assign_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
   multiply_ntts_add_assign(&mut acc, &a, &b);
   let digest = diag_fold_poly(&acc);
   zeroize_poly(&mut acc);
   digest
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_multiply_ntts_add_assign_asm_digest(seed: u16) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_basemul_accumulate_asm_digest(seed) }
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_multiply_ntts_add_assign_asm_input_digest(a: Poly, b: Poly, acc: Poly) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_basemul_accumulate_asm_input_digest(a, b, acc) }
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_multiply_ntts_accumulate_k2_input_digest(
-  mut a: PolyVec<2>,
-  mut b: PolyVec<2>,
-  mut acc: Poly,
-) -> u16 {
-  multiply_ntts_accumulate(&mut acc, &a, &b);
-  let digest = diag_fold_poly(&acc);
-  zeroize_polyvec(&mut a);
-  zeroize_polyvec(&mut b);
-  zeroize_poly(&mut acc);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_multiply_ntts_accumulate_k2_digest(seed: u16) -> u16 {
-  let a = [diag_poly(seed), diag_poly(seed.wrapping_add(1))];
-  let b = [diag_poly(seed.wrapping_add(2)), diag_poly(seed.wrapping_add(3))];
-  let acc = diag_poly(seed.wrapping_add(4));
-  diag_multiply_ntts_accumulate_k2_input_digest(a, b, acc)
 }
 
 #[cfg(feature = "diag")]
@@ -2081,22 +913,6 @@ pub(super) fn diag_multiply_ntts_accumulate_k3_input_digest(
 }
 
 #[cfg(feature = "diag")]
-pub(super) fn diag_multiply_ntts_accumulate_k3_digest(seed: u16) -> u16 {
-  let a = [
-    diag_poly(seed),
-    diag_poly(seed.wrapping_add(1)),
-    diag_poly(seed.wrapping_add(2)),
-  ];
-  let b = [
-    diag_poly(seed.wrapping_add(3)),
-    diag_poly(seed.wrapping_add(4)),
-    diag_poly(seed.wrapping_add(5)),
-  ];
-  let acc = diag_poly(seed.wrapping_add(6));
-  diag_multiply_ntts_accumulate_k3_input_digest(a, b, acc)
-}
-
-#[cfg(feature = "diag")]
 pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
   mut a: PolyVec<4>,
   mut b: PolyVec<4>,
@@ -2111,124 +927,8 @@ pub(super) fn diag_multiply_ntts_accumulate_k4_input_digest(
 }
 
 #[cfg(feature = "diag")]
-pub(super) fn diag_multiply_ntts_accumulate_k4_digest(seed: u16) -> u16 {
-  let a = [
-    diag_poly(seed),
-    diag_poly(seed.wrapping_add(1)),
-    diag_poly(seed.wrapping_add(2)),
-    diag_poly(seed.wrapping_add(3)),
-  ];
-  let b = [
-    diag_poly(seed.wrapping_add(4)),
-    diag_poly(seed.wrapping_add(5)),
-    diag_poly(seed.wrapping_add(6)),
-    diag_poly(seed.wrapping_add(7)),
-  ];
-  let acc = diag_poly(seed.wrapping_add(8));
-  diag_multiply_ntts_accumulate_k4_input_digest(a, b, acc)
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k3_asm_digest(seed: u16) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_basemul_accumulate_k3_asm_digest(seed) }
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k4_asm_digest(seed: u16) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_basemul_accumulate_k4_asm_digest(seed) }
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k3_asm_input_digest(
-  a: PolyVec<3>,
-  b: PolyVec<3>,
-  acc: Poly,
-) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_basemul_accumulate_k3_asm_input_digest(a, b, acc) }
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available.
-#[cfg(all(
-  feature = "diag",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub(super) unsafe fn diag_aarch64_multiply_ntts_accumulate_k4_asm_input_digest(
-  a: PolyVec<4>,
-  b: PolyVec<4>,
-  acc: Poly,
-) -> u16 {
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { aarch64::diag_basemul_accumulate_k4_asm_input_digest(a, b, acc) }
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_to_montgomery_product_domain_digest(seed: u16) -> u16 {
-  let mut poly = diag_poly(seed);
-  poly_to_montgomery_product_domain(&mut poly);
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
-  digest
-}
-
-#[cfg(feature = "diag")]
 pub(super) fn diag_to_montgomery_product_domain_input_digest(mut poly: Poly) -> u16 {
   poly_to_montgomery_product_domain(&mut poly);
-  let digest = diag_fold_poly(&poly);
-  zeroize_poly(&mut poly);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_from_montgomery_product_domain_digest(seed: u16) -> u16 {
-  let mut poly = diag_poly(seed);
-  poly_from_montgomery_product_domain(&mut poly);
   let digest = diag_fold_poly(&poly);
   zeroize_poly(&mut poly);
   digest
@@ -2441,397 +1141,11 @@ pub(super) unsafe fn diag_s390x_compress_decompress_values_digest(values: [u16; 
   digest
 }
 
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_decrypt_digest<
-  const K: usize,
-  const CT_BYTES: usize,
-  const DU: usize,
-  const DV: usize,
-  const POLY_DU_BYTES: usize,
-  const POLY_DV_BYTES: usize,
->(
-  prepared: &PreparedDecapsulationArithmetic<K>,
-  c: &[u8; CT_BYTES],
-) -> u16 {
-  let mut message = pke_decrypt_prepared::<K, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(&prepared.s_hat, c);
-  let digest = diag_fold_bytes(&message);
-  ct::zeroize(&mut message);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_reencrypt_digest<
-  const K: usize,
-  const ETA1_RANDOM_BYTES: usize,
-  const CT_BYTES: usize,
-  const DU: usize,
-  const DV: usize,
-  const POLY_DU_BYTES: usize,
-  const POLY_DV_BYTES: usize,
->(
-  prepared: &PreparedDecapsulationArithmetic<K>,
-  seed: u8,
-) -> u16 {
-  let mut m = [0u8; SEED_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  for (i, byte) in m.iter_mut().enumerate() {
-    *byte = seed.wrapping_add(i as u8);
-  }
-  for (i, byte) in r.iter_mut().enumerate() {
-    *byte = seed.wrapping_add(0x80).wrapping_add(i as u8);
-  }
-
-  let mut ciphertext = pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
-    &prepared.encapsulation,
-    &m,
-    &r,
-  );
-  let digest = diag_fold_bytes(&ciphertext);
-  ct::zeroize(&mut m);
-  ct::zeroize(&mut r);
-  ct::zeroize(&mut ciphertext);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_reencrypt_ciphertext<
-  const K: usize,
-  const ETA1_RANDOM_BYTES: usize,
-  const CT_BYTES: usize,
-  const DU: usize,
-  const DV: usize,
-  const POLY_DU_BYTES: usize,
-  const POLY_DV_BYTES: usize,
->(
-  prepared: &PreparedDecapsulationArithmetic<K>,
-  seed: u8,
-) -> [u8; CT_BYTES] {
-  let mut m = [0u8; SEED_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  fill_diag_seed(&mut m, seed);
-  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
-
-  let ciphertext = pke_encrypt_prepared::<K, ETA1_RANDOM_BYTES, CT_BYTES, DU, DV, POLY_DU_BYTES, POLY_DV_BYTES>(
-    &prepared.encapsulation,
-    &m,
-    &r,
-  );
-  ct::zeroize(&mut m);
-  ct::zeroize(&mut r);
-  ciphertext
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_reencrypt_compare_512_digest(
-  prepared: &PreparedDecapsulationArithmetic<2>,
-  expected: &[u8; 768],
-  seed: u8,
-) -> u16 {
-  let mut m = [0u8; SEED_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  fill_diag_seed(&mut m, seed);
-  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
-
-  let mask = pke_encrypt_prepared_512_compare(&prepared.encapsulation, &m, &r, expected);
-  let digest = u16::from(mask) ^ u16::from(expected[0]);
-  ct::zeroize(&mut m);
-  ct::zeroize(&mut r);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_reencrypt_compare_768_digest(
-  prepared: &PreparedDecapsulationArithmetic<3>,
-  expected: &[u8; 1088],
-  seed: u8,
-) -> u16 {
-  let mut m = [0u8; SEED_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  fill_diag_seed(&mut m, seed);
-  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
-
-  let mask = pke_encrypt_prepared_768_compare(&prepared.encapsulation, &m, &r, expected);
-  let digest = u16::from(mask) ^ u16::from(expected[0]);
-  ct::zeroize(&mut m);
-  ct::zeroize(&mut r);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_reencrypt_compare_1024_digest(
-  prepared: &PreparedDecapsulationArithmetic<4>,
-  expected: &[u8; 1568],
-  seed: u8,
-) -> u16 {
-  let mut m = [0u8; SEED_BYTES];
-  let mut r = [0u8; SEED_BYTES];
-  fill_diag_seed(&mut m, seed);
-  fill_diag_seed(&mut r, seed.wrapping_add(0x80));
-
-  let mask = pke_encrypt_prepared_1024_compare(&prepared.encapsulation, &m, &r, expected);
-  let digest = u16::from(mask) ^ u16::from(expected[0]);
-  ct::zeroize(&mut m);
-  ct::zeroize(&mut r);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_decap_hash_select_digest<
-  const DK_PKE_BYTES: usize,
-  const EK_BYTES: usize,
-  const DK_BYTES: usize,
-  const CT_BYTES: usize,
->(
-  dk: &[u8; DK_BYTES],
-  c: &[u8; CT_BYTES],
-  seed: u8,
-) -> u16 {
-  let h_start = DK_PKE_BYTES.strict_add(EK_BYTES);
-  let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
-  let z = &dk[h_start.strict_add(HASH_BYTES)..];
-
-  let mut m_prime = [0u8; SEED_BYTES];
-  for (i, byte) in m_prime.iter_mut().enumerate() {
-    *byte = seed.wrapping_add(i as u8);
-  }
-
-  let mut input = [0u8; 64];
-  input[..SEED_BYTES].copy_from_slice(&m_prime);
-  input[SEED_BYTES..].copy_from_slice(h_stored);
-
-  let mut expanded = g(&input);
-  let mut k_prime = [0u8; SHARED_SECRET_BYTES];
-  let mut r_prime = [0u8; SEED_BYTES];
-  k_prime.copy_from_slice(&expanded[..SHARED_SECRET_BYTES]);
-  r_prime.copy_from_slice(&expanded[SHARED_SECRET_BYTES..]);
-
-  let mut k_bar = j(z, c);
-  let mut c_prime = *c;
-  c_prime[0] ^= seed & 1;
-  let mut match_mask = ct_eq_mask(c, &c_prime);
-  let reject_mask = !match_mask;
-
-  let mut shared = [0u8; SHARED_SECRET_BYTES];
-  for i in 0..SHARED_SECRET_BYTES {
-    shared[i] = (k_prime[i] & match_mask) | (k_bar[i] & reject_mask);
-  }
-
-  let digest = diag_fold_bytes(&shared) ^ u16::from(r_prime[0]);
-  ct::zeroize(&mut m_prime);
-  ct::zeroize(&mut input);
-  ct::zeroize(&mut expanded);
-  ct::zeroize(&mut k_prime);
-  ct::zeroize(&mut r_prime);
-  ct::zeroize(&mut k_bar);
-  ct::zeroize(&mut c_prime);
-  ct::zeroize(&mut shared);
-  ct::zeroize(core::slice::from_mut(&mut match_mask));
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_pke_noise_ntt_digest<const K: usize, const ETA1_RANDOM_BYTES: usize>(seed: u8) -> u16 {
-  let mut r = [0u8; SEED_BYTES];
-  fill_diag_seed(&mut r, seed);
-
-  let mut nonce = 0u8;
-  let mut y = [[0u16; N]; K];
-  let mut e1 = [[0u16; N]; K];
-  for poly in &mut y {
-    sample_noise::<ETA1_RANDOM_BYTES>(&r, nonce, poly);
-    nonce = nonce.wrapping_add(1);
-  }
-  for poly in &mut e1 {
-    sample_noise::<ETA2_RANDOM_BYTES>(&r, nonce, poly);
-    nonce = nonce.wrapping_add(1);
-  }
-  let mut e2 = [0u16; N];
-  sample_noise::<ETA2_RANDOM_BYTES>(&r, nonce, &mut e2);
-
-  for poly in &mut y {
-    ntt(poly);
-  }
-
-  let mut digest = diag_fold_poly(&e2);
-  for poly in &y {
-    digest ^= diag_fold_poly(poly);
-  }
-  for poly in &e1 {
-    digest ^= diag_fold_poly(poly);
-  }
-
-  ct::zeroize(&mut r);
-  zeroize_polyvec(&mut y);
-  zeroize_polyvec(&mut e1);
-  zeroize_poly(&mut e2);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_pke_matrix_u_digest<const K: usize>(ek: &PreparedEncapsulationArithmetic<K>, seed: u16) -> u16 {
-  let mut y_hat = [[0u16; N]; K];
-  for (i, poly) in y_hat.iter_mut().enumerate() {
-    *poly = diag_poly(seed.wrapping_add(i as u16));
-  }
-
-  let mut u = [[0u16; N]; K];
-  sample_matrix_ntt_mul_accumulate_materialized::<K>(&ek.rho, &y_hat, &mut u, true);
-
-  let mut digest = 0u16;
-  for poly in &u {
-    digest ^= diag_fold_poly(poly);
-  }
-
-  zeroize_polyvec(&mut y_hat);
-  zeroize_polyvec(&mut u);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_pke_matrix_u_fused_digest<const K: usize>(
-  ek: &PreparedEncapsulationArithmetic<K>,
-  seed: u16,
-) -> u16 {
-  let mut y_hat = [[0u16; N]; K];
-  for (i, poly) in y_hat.iter_mut().enumerate() {
-    *poly = diag_poly(seed.wrapping_add(i as u16));
-  }
-
-  let mut u = [[0u16; N]; K];
-  for (i, u_i) in u.iter_mut().enumerate() {
-    let mut acc = [0u16; N];
-    if K == 4 {
-      sample_ntt_quad_mul_accumulate(
-        &ek.rho,
-        [
-          (i as u8, 0, &y_hat[0]),
-          (i as u8, 1, &y_hat[1]),
-          (i as u8, 2, &y_hat[2]),
-          (i as u8, 3, &y_hat[3]),
-        ],
-        &mut acc,
-      );
-    } else {
-      let mut j = 0usize;
-      while j.strict_add(1) < K {
-        let next = j.strict_add(1);
-        sample_ntt_pair_mul_accumulate(
-          &ek.rho,
-          (i as u8, j as u8, &y_hat[j]),
-          (i as u8, next as u8, &y_hat[next]),
-          &mut acc,
-        );
-
-        j = j.strict_add(2);
-      }
-      if j < K {
-        sample_ntt_mul_accumulate(&ek.rho, i as u8, j as u8, &y_hat[j], &mut acc);
-      }
-    }
-    *u_i = acc;
-  }
-
-  let mut digest = 0u16;
-  for poly in &u {
-    digest ^= diag_fold_poly(poly);
-  }
-
-  zeroize_polyvec(&mut y_hat);
-  zeroize_polyvec(&mut u);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_pke_inverse_u_add_digest<const K: usize>(seed: u16) -> u16 {
-  let mut u = [[0u16; N]; K];
-  let mut e1 = [[0u16; N]; K];
-  for i in 0..K {
-    u[i] = diag_poly(seed.wrapping_add(i as u16));
-    e1[i] = diag_poly(seed.wrapping_add(0x40).wrapping_add(i as u16));
-  }
-
-  for i in 0..K {
-    inverse_ntt_montgomery_product_add_assign(&mut u[i], &e1[i]);
-  }
-
-  let mut digest = 0u16;
-  for poly in &u {
-    digest ^= diag_fold_poly(poly);
-  }
-
-  zeroize_polyvec(&mut u);
-  zeroize_polyvec(&mut e1);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_pke_v_digest<const K: usize>(ek: &PreparedEncapsulationArithmetic<K>, seed: u16) -> u16 {
-  let mut y_hat = [[0u16; N]; K];
-  for (i, poly) in y_hat.iter_mut().enumerate() {
-    *poly = diag_poly(seed.wrapping_add(i as u16));
-  }
-
-  let mut v = [0u16; N];
-  multiply_ntts_accumulate(&mut v, &ek.t_hat, &y_hat);
-  inverse_ntt_montgomery_product(&mut v);
-
-  let digest = diag_fold_poly(&v);
-  zeroize_polyvec(&mut y_hat);
-  zeroize_poly(&mut v);
-  digest
-}
-
-#[cfg(feature = "diag")]
-pub(super) fn diag_pke_encode_digest<
-  const K: usize,
-  const CT_BYTES: usize,
-  const DU: usize,
-  const DV: usize,
-  const POLY_DU_BYTES: usize,
->(
-  seed: u16,
-) -> u16 {
-  let mut u = [[0u16; N]; K];
-  for (i, poly) in u.iter_mut().enumerate() {
-    *poly = diag_poly(seed.wrapping_add(i as u16));
-  }
-  let v = diag_poly(seed.wrapping_add(0x80));
-
-  let mut ciphertext = [0u8; CT_BYTES];
-  for (i, poly) in u.iter().enumerate() {
-    let start = i.strict_mul(POLY_DU_BYTES);
-    compress_encode_poly::<DU>(poly, &mut ciphertext[start..start.strict_add(POLY_DU_BYTES)]);
-  }
-  compress_encode_poly::<DV>(&v, &mut ciphertext[POLY_DU_BYTES.strict_mul(K)..]);
-
-  let digest = diag_fold_bytes(&ciphertext);
-  zeroize_polyvec(&mut u);
-  ct::zeroize(&mut ciphertext);
-  digest
-}
-
-#[cfg(feature = "diag")]
-#[inline]
-fn matrix_sample_coord<const K: usize>(entry: usize) -> (u8, u8) {
-  ((entry % K) as u8, (entry / K) as u8)
-}
-
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
   for (i, byte) in out.iter_mut().enumerate() {
     *byte = seed.wrapping_add(i as u8);
   }
-}
-
-#[cfg(feature = "diag")]
-fn diag_poly(seed: u16) -> Poly {
-  let mut state = u32::from(seed).wrapping_mul(0x9E37).wrapping_add(0x7F4A_7C15);
-  let mut poly = [0u16; N];
-  for coeff in &mut poly {
-    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-    *coeff = (state % u32::from(Q)) as u16;
-  }
-  poly
 }
 
 #[cfg(feature = "diag")]
@@ -2840,16 +1154,6 @@ fn diag_fold_poly(poly: &Poly) -> u16 {
   let mut acc = 0u16;
   for (i, &coeff) in poly.iter().enumerate() {
     acc ^= coeff.wrapping_mul((i as u16).wrapping_add(1));
-  }
-  acc
-}
-
-#[cfg(feature = "diag")]
-#[inline(never)]
-fn diag_fold_bytes(bytes: &[u8]) -> u16 {
-  let mut acc = 0u16;
-  for (i, &byte) in bytes.iter().enumerate() {
-    acc ^= u16::from(byte).wrapping_mul((i as u16).wrapping_add(1));
   }
   acc
 }
@@ -3328,7 +1632,7 @@ fn sample_matrix_ntt_mul_accumulate_materialized<const K: usize>(
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 #[inline(always)]
 fn sample_matrix_ntt_mul_accumulate_windowed<const K: usize>(
   rho: &[u8; SEED_BYTES],
@@ -3515,7 +1819,7 @@ fn sample_matrix_ntt_materialized_k3_rows_quad(
   sample_ntt_into(rho, 2, 2, &mut row2[2]);
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 #[inline(always)]
 fn sample_matrix_ntt_mul_accumulate_windowed_k3<const K: usize>(
   rho: &[u8; SEED_BYTES],
@@ -3626,12 +1930,7 @@ fn sample_matrix_ntt_materialized_k4_rows(
   }
 }
 
-#[cfg(any(
-  test,
-  feature = "diag",
-  all(target_arch = "aarch64", target_os = "macos"),
-  target_arch = "x86_64"
-))]
+#[cfg(any(test, all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))]
 #[inline(always)]
 fn sample_matrix_ntt_materialized_k4_rows_quad(
   rho: &[u8; SEED_BYTES],
@@ -3660,7 +1959,6 @@ fn sample_matrix_ntt_materialized_k4_rows_quad(
 
 #[cfg(any(
   test,
-  feature = "diag",
   not(any(all(target_arch = "aarch64", target_os = "macos"), target_arch = "x86_64"))
 ))]
 #[inline(always)]
@@ -3694,195 +1992,6 @@ fn sample_matrix_ntt_materialized_k4_rows_triple(
     sample_ntt_triple_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
   }
   sample_ntt_into(rho, 3, 3, &mut row3[3]);
-}
-
-#[cfg(feature = "diag")]
-#[inline(always)]
-fn sample_matrix_ntt_materialized_k4_rows_triple_initial_3blocks(
-  rho: &[u8; SEED_BYTES],
-  row0: &mut PolyVec<4>,
-  row1: &mut PolyVec<4>,
-  row2: &mut PolyVec<4>,
-  row3: &mut PolyVec<4>,
-) {
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(row0);
-    sample_ntt_triple_initial_3blocks_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, _, a0] = polyvec4_mut(row0);
-    let [a1, a2, _, _] = polyvec4_mut(row1);
-    sample_ntt_triple_initial_3blocks_into(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, a0, a1] = polyvec4_mut(row1);
-    let [a2, _, _, _] = polyvec4_mut(row2);
-    sample_ntt_triple_initial_3blocks_into(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2]);
-  }
-  {
-    let [_, a0, a1, a2] = polyvec4_mut(row2);
-    sample_ntt_triple_initial_3blocks_into(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(row3);
-    sample_ntt_triple_initial_3blocks_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
-  }
-  sample_ntt_initial_3blocks_then_tail_into(rho, 3, 3, &mut row3[3]);
-}
-
-#[cfg(feature = "diag")]
-#[inline(always)]
-fn sample_matrix_ntt_materialized_k4_rows_first3(
-  rho: &[u8; SEED_BYTES],
-  row0: &mut PolyVec<4>,
-  row1: &mut PolyVec<4>,
-  row2: &mut PolyVec<4>,
-  row3: &mut PolyVec<4>,
-) {
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(row0);
-    sample_ntt_triple_first3_into(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, _, a0] = polyvec4_mut(row0);
-    let [a1, a2, _, _] = polyvec4_mut(row1);
-    sample_ntt_triple_first3_into(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2]);
-  }
-  {
-    let [_, _, a0, a1] = polyvec4_mut(row1);
-    let [a2, _, _, _] = polyvec4_mut(row2);
-    sample_ntt_triple_first3_into(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2]);
-  }
-  {
-    let [_, a0, a1, a2] = polyvec4_mut(row2);
-    sample_ntt_triple_first3_into(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2]);
-  }
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(row3);
-    sample_ntt_triple_first3_into(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2]);
-  }
-  sample_ntt_into(rho, 3, 3, &mut row3[3]);
-}
-
-#[cfg(feature = "diag")]
-fn diag_sample_matrix_ntt_materialized_k4_rows_counted(
-  rho: &[u8; SEED_BYTES],
-  row0: &mut PolyVec<4>,
-  row1: &mut PolyVec<4>,
-  row2: &mut PolyVec<4>,
-  row3: &mut PolyVec<4>,
-  counts: &mut [u16; 16],
-) {
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(row0);
-    diag_sample_ntt_triple_counted(rho, [(0, 0), (1, 0), (2, 0)], [a0, a1, a2], counts);
-  }
-  {
-    let [_, _, _, a0] = polyvec4_mut(row0);
-    let [a1, a2, _, _] = polyvec4_mut(row1);
-    diag_sample_ntt_triple_counted(rho, [(3, 0), (0, 1), (1, 1)], [a0, a1, a2], counts);
-  }
-  {
-    let [_, _, a0, a1] = polyvec4_mut(row1);
-    let [a2, _, _, _] = polyvec4_mut(row2);
-    diag_sample_ntt_triple_counted(rho, [(2, 1), (3, 1), (0, 2)], [a0, a1, a2], counts);
-  }
-  {
-    let [_, a0, a1, a2] = polyvec4_mut(row2);
-    diag_sample_ntt_triple_counted(rho, [(1, 2), (2, 2), (3, 2)], [a0, a1, a2], counts);
-  }
-  {
-    let [a0, a1, a2, _] = polyvec4_mut(row3);
-    diag_sample_ntt_triple_counted(rho, [(0, 3), (1, 3), (2, 3)], [a0, a1, a2], counts);
-  }
-  counts[diag_sampler_count_index(3, 3)] = diag_sample_ntt_counted(rho, 3, 3, &mut row3[3]);
-}
-
-#[cfg(feature = "diag")]
-fn diag_sample_ntt_counted(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> u16 {
-  let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
-  let mut filled = 0usize;
-  let mut blocks = 0u16;
-  let mut buf = [0u8; SHAKE128_RATE_BYTES];
-
-  while filled < N {
-    reader.squeeze(&mut buf);
-    blocks = blocks.wrapping_add(1);
-    sample_ntt_block_public(&buf, out, &mut filled);
-  }
-  blocks
-}
-
-#[cfg(feature = "diag")]
-fn diag_sample_ntt_triple_counted(
-  rho: &[u8; SEED_BYTES],
-  lanes: [(u8, u8); 3],
-  out: [&mut Poly; 3],
-  counts: &mut [u16; 16],
-) {
-  let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
-  let mut filled = [0usize; 3];
-  let mut blocks = [0u16; 3];
-  let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
-  let [out0, out1, out2] = out;
-
-  while filled[0] < N && filled[1] < N && filled[2] < N {
-    #[cfg(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    ))]
-    {
-      Shake128XofReader::with_triple_rate_block(&mut reader0, &mut reader1, &mut reader2, |state0, state1, state2| {
-        sample_ntt_triple_state_block([state0, state1, state2], [out0, out1, out2], &mut filled);
-      });
-    }
-
-    #[cfg(not(all(
-      target_arch = "aarch64",
-      target_endian = "little",
-      not(miri),
-      not(feature = "portable-only")
-    )))]
-    {
-      let [buf0, buf1, buf2] = &mut bufs;
-      Shake128XofReader::squeeze_triple(&mut reader0, &mut reader1, &mut reader2, buf0, buf1, buf2);
-      sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
-      sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
-      sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
-    }
-
-    blocks[0] = blocks[0].wrapping_add(1);
-    blocks[1] = blocks[1].wrapping_add(1);
-    blocks[2] = blocks[2].wrapping_add(1);
-  }
-
-  while filled[0] < N {
-    reader0.squeeze(&mut bufs[0]);
-    blocks[0] = blocks[0].wrapping_add(1);
-    sample_ntt_block_public(&bufs[0], out0, &mut filled[0]);
-  }
-  while filled[1] < N {
-    reader1.squeeze(&mut bufs[1]);
-    blocks[1] = blocks[1].wrapping_add(1);
-    sample_ntt_block_public(&bufs[1], out1, &mut filled[1]);
-  }
-  while filled[2] < N {
-    reader2.squeeze(&mut bufs[2]);
-    blocks[2] = blocks[2].wrapping_add(1);
-    sample_ntt_block_public(&bufs[2], out2, &mut filled[2]);
-  }
-
-  for (lane, block_count) in lanes.iter().copied().zip(blocks) {
-    counts[diag_sampler_count_index(lane.0, lane.1)] = block_count;
-  }
-}
-
-#[cfg(feature = "diag")]
-#[inline(always)]
-fn diag_sampler_count_index(j: u8, i: u8) -> usize {
-  usize::from(i).strict_mul(4).strict_add(usize::from(j))
 }
 
 #[inline(always)]
@@ -3923,7 +2032,7 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4<const K: usize>(
   zeroize_polyvec_mulcache(&mut rhs_cache);
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 #[inline(always)]
 fn sample_matrix_ntt_mul_accumulate_windowed_k4<const K: usize>(
   rho: &[u8; SEED_BYTES],
@@ -4274,7 +2383,7 @@ fn sample_ntt_initial_3blocks_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &m
   filled
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn sample_ntt_initial_3blocks_then_tail_into(rho: &[u8; SEED_BYTES], j: u8, i: u8, out: &mut Poly) -> u16 {
   let mut reader = Shake128::xof_seeded_32_2(rho, j, i);
   let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
@@ -4293,7 +2402,7 @@ fn sample_ntt_initial_3blocks_then_tail_into(rho: &[u8; SEED_BYTES], j: u8, i: u
   blocks
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn squeeze_sample_ntt_initial_blocks(reader: &mut impl Xof, out: &mut [u8; SAMPLE_NTT_INITIAL_BYTES]) {
   for block in 0..SAMPLE_NTT_INITIAL_BLOCKS {
     let start = block.strict_mul(SHAKE128_RATE_BYTES);
@@ -4302,7 +2411,7 @@ fn squeeze_sample_ntt_initial_blocks(reader: &mut impl Xof, out: &mut [u8; SAMPL
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn sample_ntt_triple_first3_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
   let (mut reader0, mut reader1, mut reader2) = Shake128::xof_seeded_32_2_triple(rho, lanes[0], lanes[1], lanes[2]);
   let [out0, out1, out2] = out;
@@ -4366,12 +2475,12 @@ fn sample_ntt_triple_first3_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], o
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn sample_ntt_triple_initial_3blocks_into(rho: &[u8; SEED_BYTES], lanes: [(u8, u8); 3], out: [&mut Poly; 3]) {
   let _ = sample_ntt_triple_initial_3blocks_then_tail_into(rho, lanes, out);
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn sample_ntt_triple_initial_3blocks_then_tail_into(
   rho: &[u8; SEED_BYTES],
   lanes: [(u8, u8); 3],
@@ -4482,7 +2591,7 @@ fn sample_ntt_triple_initial_3blocks_then_tail_into(
 }
 
 #[cfg(all(
-  any(test, feature = "diag"),
+  test,
   target_arch = "aarch64",
   target_endian = "little",
   not(miri),
@@ -4501,7 +2610,7 @@ fn copy_keccak_rate_block(state: &[u64; 25], out: &mut [u8]) {
   }
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 fn sample_ntt_initial_3blocks_public(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: &mut Poly, filled: &mut usize) {
   #[cfg(all(
     target_arch = "aarch64",
@@ -4526,7 +2635,7 @@ fn sample_ntt_initial_3blocks_public(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: 
   sample_ntt_initial_3blocks_scalar(buf, out, filled);
 }
 
-#[cfg(any(test, feature = "diag"))]
+#[cfg(test)]
 #[inline(always)]
 fn sample_ntt_initial_3blocks_scalar(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: &mut Poly, filled: &mut usize) {
   let mut n = *filled;
@@ -4556,7 +2665,7 @@ fn sample_ntt_initial_3blocks_scalar(buf: &[u8; SAMPLE_NTT_INITIAL_BYTES], out: 
 }
 
 #[cfg(all(
-  any(test, feature = "diag"),
+  test,
   target_arch = "aarch64",
   target_os = "linux",
   not(miri),

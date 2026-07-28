@@ -3,7 +3,7 @@
 
 use core::arch::global_asm;
 
-#[cfg(any(feature = "diag", all(test, target_os = "linux")))]
+#[cfg(all(test, target_os = "linux"))]
 use super::PolyVec;
 #[cfg(all(test, target_os = "linux"))]
 use super::SAMPLE_NTT_ACC_CHUNK_COEFFS;
@@ -249,15 +249,6 @@ pub(super) unsafe fn test_basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &P
   }
 }
 
-#[cfg(feature = "diag")]
-pub(super) unsafe fn diag_basemul_accumulate_asm_digest(seed: u16) -> u16 {
-  let a = super::diag_poly(seed);
-  let b = super::diag_poly(seed.wrapping_add(1));
-  let acc = super::diag_poly(seed.wrapping_add(2));
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { diag_basemul_accumulate_asm_input_digest(a, b, acc) }
-}
-
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
 pub(super) unsafe fn basemul_accumulate_k2_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
@@ -368,7 +359,7 @@ unsafe fn basemul_accumulate_k2_asm(acc: &mut Poly, a: &PolyVec<2>, b: &PolyVec<
 }
 
 #[inline]
-#[cfg(any(feature = "diag", all(test, target_os = "linux")))]
+#[cfg(all(test, target_os = "linux"))]
 unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<3>) {
   // SAFETY: forwards contiguous `PolyVec<3>` storage to the target K=3 pointer ABI.
   unsafe {
@@ -377,34 +368,12 @@ unsafe fn basemul_accumulate_k3_asm(acc: &mut Poly, a: &PolyVec<3>, b: &PolyVec<
 }
 
 #[inline]
-#[cfg(any(feature = "diag", all(test, target_os = "linux")))]
+#[cfg(all(test, target_os = "linux"))]
 unsafe fn basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<4>, b: &PolyVec<4>) {
   // SAFETY: forwards contiguous `PolyVec<4>` storage to the target K=4 pointer ABI.
   unsafe {
     basemul_accumulate_k4_asm_ptr(acc, a.as_ptr().cast::<u16>(), b.as_ptr().cast::<u16>());
   }
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available. The module cfg enforces the target/OS half of that contract.
-#[cfg(feature = "diag")]
-pub(super) unsafe fn diag_basemul_accumulate_asm_input_digest(a: Poly, b: Poly, mut acc: Poly) -> u16 {
-  // SAFETY: Direct owned-assembly diagnostic call because:
-  // 1. The caller guarantees the function runs only on an aarch64 CPU with Advanced SIMD.
-  // 2. `acc`, `a`, and `b` are fixed 256-coefficient polynomials matching the assembly ABI.
-  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
-  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
-  //    can inspect the owned aarch64 assembly kernel itself.
-  unsafe {
-    basemul_accumulate_asm(&mut acc, &a, &b);
-  }
-  let digest = super::diag_fold_poly(&acc);
-  super::zeroize_poly(&mut acc);
-  digest
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -438,98 +407,6 @@ pub(super) unsafe fn test_basemul_accumulate_k4_asm(acc: &mut Poly, a: &PolyVec<
   unsafe {
     basemul_accumulate_k4_asm(acc, a, b);
   }
-}
-
-#[cfg(feature = "diag")]
-pub(super) unsafe fn diag_basemul_accumulate_k3_asm_digest(seed: u16) -> u16 {
-  let a = [
-    super::diag_poly(seed),
-    super::diag_poly(seed.wrapping_add(1)),
-    super::diag_poly(seed.wrapping_add(2)),
-  ];
-  let b = [
-    super::diag_poly(seed.wrapping_add(3)),
-    super::diag_poly(seed.wrapping_add(4)),
-    super::diag_poly(seed.wrapping_add(5)),
-  ];
-  let acc = super::diag_poly(seed.wrapping_add(6));
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { diag_basemul_accumulate_k3_asm_input_digest(a, b, acc) }
-}
-
-#[cfg(feature = "diag")]
-pub(super) unsafe fn diag_basemul_accumulate_k4_asm_digest(seed: u16) -> u16 {
-  let a = [
-    super::diag_poly(seed),
-    super::diag_poly(seed.wrapping_add(1)),
-    super::diag_poly(seed.wrapping_add(2)),
-    super::diag_poly(seed.wrapping_add(3)),
-  ];
-  let b = [
-    super::diag_poly(seed.wrapping_add(4)),
-    super::diag_poly(seed.wrapping_add(5)),
-    super::diag_poly(seed.wrapping_add(6)),
-    super::diag_poly(seed.wrapping_add(7)),
-  ];
-  let acc = super::diag_poly(seed.wrapping_add(8));
-  // SAFETY: forwarded from this function's caller contract.
-  unsafe { diag_basemul_accumulate_k4_asm_input_digest(a, b, acc) }
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 K=3 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available. The module cfg enforces the target/OS half of that contract.
-#[cfg(feature = "diag")]
-pub(super) unsafe fn diag_basemul_accumulate_k3_asm_input_digest(
-  mut a: PolyVec<3>,
-  mut b: PolyVec<3>,
-  mut acc: Poly,
-) -> u16 {
-  // SAFETY: Direct owned-assembly diagnostic call because:
-  // 1. The caller guarantees the function runs only on an aarch64 CPU with Advanced SIMD.
-  // 2. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
-  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
-  //    can inspect the owned aarch64 assembly kernel itself.
-  unsafe {
-    basemul_accumulate_k3_asm(&mut acc, &a, &b);
-  }
-  let digest = super::diag_fold_poly(&acc);
-  super::zeroize_polyvec(&mut a);
-  super::zeroize_polyvec(&mut b);
-  super::zeroize_poly(&mut acc);
-  digest
-}
-
-/// Diagnostic digest for the rscrypto-owned aarch64 K=4 base-multiply accumulator.
-///
-/// # Safety
-///
-/// The caller must only execute this on supported aarch64 Linux/macOS targets with baseline
-/// Advanced SIMD available. The module cfg enforces the target/OS half of that contract.
-#[cfg(feature = "diag")]
-pub(super) unsafe fn diag_basemul_accumulate_k4_asm_input_digest(
-  mut a: PolyVec<4>,
-  mut b: PolyVec<4>,
-  mut acc: Poly,
-) -> u16 {
-  // SAFETY: Direct owned-assembly diagnostic call because:
-  // 1. The caller guarantees the function runs only on an aarch64 CPU with Advanced SIMD.
-  // 2. `acc`, `a`, and `b` are fixed-size ML-KEM polynomial arrays matching the assembly ABI.
-  // 3. The borrowed inputs are stack-owned in this function and cannot alias `acc`.
-  // 4. This diagnostic root intentionally bypasses production dispatch so benchmark and CT artifacts
-  //    can inspect the owned aarch64 assembly kernel itself.
-  unsafe {
-    basemul_accumulate_k4_asm(&mut acc, &a, &b);
-  }
-  let digest = super::diag_fold_poly(&acc);
-  super::zeroize_polyvec(&mut a);
-  super::zeroize_polyvec(&mut b);
-  super::zeroize_poly(&mut acc);
-  digest
 }
 
 #[cfg(all(test, target_os = "linux"))]

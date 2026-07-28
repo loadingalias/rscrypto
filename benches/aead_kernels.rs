@@ -77,20 +77,6 @@ fn poly1305_auth_kernel(c: &mut Criterion) {
         )
       })
     });
-
-    #[cfg(all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")))]
-    g.bench_with_input(BenchmarkId::new("aarch64-owned-par4-asm", len), data, |b, d| {
-      b.iter(|| {
-        black_box(
-          rscrypto::aead::diag_chacha20poly1305_authenticate_aead_aarch64_owned_par4(
-            black_box(AAD),
-            black_box(d),
-            black_box(&POLY_KEY),
-          )
-          .unwrap(),
-        )
-      })
-    });
   }
 
   g.finish();
