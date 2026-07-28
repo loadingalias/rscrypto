@@ -135,7 +135,10 @@ key.seal_in_place_append_tag(
 
 ```rust
 // After
-use rscrypto::{Aes256Gcm, Aes256GcmKey, aead::Nonce96};
+use rscrypto::{
+  Aes256Gcm, Aes256GcmKey,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
 
 let cipher = Aes256Gcm::new(&Aes256GcmKey::from_bytes(*key_bytes));
 let nonce = Nonce96::from_bytes(*nonce_bytes);

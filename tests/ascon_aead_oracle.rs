@@ -21,7 +21,10 @@ use ascon_aead::{
   AsconAead128 as Oracle,
   aead::{AeadInOut, KeyInit, array::Array},
 };
-use rscrypto::{AsconAead128, AsconAead128Key, AsconAead128Tag, aead::Nonce128};
+use rscrypto::{
+  AsconAead128, AsconAead128Key, AsconAead128Tag,
+  aead::{Nonce128, expert::AeadWithNonce},
+};
 
 fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8], plaintext: &[u8]) {
   let key = AsconAead128Key::from_bytes(*key_bytes);

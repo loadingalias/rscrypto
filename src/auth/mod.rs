@@ -296,4 +296,6 @@ pub use scrypt::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]
 pub use x25519::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 
+#[cfg(all(feature = "diag", feature = "x25519"))]
+pub use crate::backend::curve25519::diag_curve25519_conditional_swap;
 pub use crate::traits::Mac;

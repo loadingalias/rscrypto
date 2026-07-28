@@ -36,14 +36,14 @@
 // Core modules
 
 pub mod caps;
-pub mod detect;
+pub(crate) mod detect;
 #[cfg(not(miri))]
 mod target_matrix;
 
 // Public API - Types
 
 pub use caps::{Arch, Caps};
-pub use detect::{Detected, OverrideError};
+pub use detect::Detected;
 
 // Architecture-specific feature constants are available via submodules:
 // - `caps::x86` - x86/x86_64 features (SSE, AVX, AVX-512, etc.)
@@ -89,56 +89,12 @@ pub fn arch() -> Arch {
   detect::arch()
 }
 
-/// Set detection override.
+/// Explicit controls and uncached detection for tests and constrained runtimes.
 ///
-/// Call this **before** any call to [`get()`] to bypass runtime detection.
-/// Useful for bare-metal, embedded, or testing.
-///
-/// # Panics
-///
-/// Panics if detection has already been initialized or overrides are unsupported
-/// on the current target. Use [`try_set_override()`] for a fallible path.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::platform::Detected;
-///
-/// rscrypto::platform::set_override(Some(Detected::portable()));
-/// assert!(rscrypto::platform::has_override());
-/// rscrypto::platform::clear_override();
-/// ```
-#[inline]
-pub fn set_override(value: Option<Detected>) {
-  detect::set_override(value);
-}
-
-/// Try to set detection override.
-///
-/// Returns an explicit error if detection has already been initialized.
-#[inline]
-pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
-  detect::try_set_override(value)
-}
-
-/// Clear the detection override.
-///
-/// Equivalent to `set_override(None)`.
-///
-/// # Panics
-///
-/// Panics under the same conditions as [`set_override()`]. Use
-/// [`try_set_override(None)`](try_set_override) for a fallible path.
-#[inline]
-pub fn clear_override() {
-  detect::clear_override();
-}
-
-/// Check if an override is currently set.
-#[inline]
-#[must_use]
-pub fn has_override() -> bool {
-  detect::has_override()
+/// Normal callers should use [`get()`], [`caps()`], or [`arch()`]. Overrides
+/// must be configured before the first cached detection.
+pub mod expert {
+  pub use super::detect::{OverrideError, detect_uncached, has_override, try_set_override};
 }
 
 /// Get compile-time known capabilities.
@@ -146,7 +102,7 @@ pub fn has_override() -> bool {
 /// Returns capabilities that are known at compile time via `-C target-feature=...`
 /// or `-C target-cpu=native`. Use this for zero-overhead dispatch.
 ///
-/// See [`detect::caps_static`] for details.
+/// This is a compile-time constant and performs no runtime detection.
 #[inline(always)]
 #[must_use]
 pub const fn caps_static() -> Caps {

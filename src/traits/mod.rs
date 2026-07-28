@@ -36,7 +36,7 @@
   feature = "aegis256",
   feature = "ascon-aead"
 ))]
-mod aead;
+pub(crate) mod aead;
 mod checksum;
 pub mod ct;
 mod digest;

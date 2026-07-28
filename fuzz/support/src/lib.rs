@@ -6,6 +6,8 @@
 use std::{fs, path::Path};
 
 #[cfg(feature = "aead")]
+use rscrypto::aead::expert::AeadWithNonce;
+#[cfg(feature = "aead")]
 use rscrypto::traits::Aead;
 use rscrypto::traits::{Checksum, ChecksumCombine, Digest, Mac};
 

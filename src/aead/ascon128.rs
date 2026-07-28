@@ -149,17 +149,6 @@ impl AsconAead128 {
     <Self as Aead>::tag_from_slice(bytes)
   }
 
-  /// Encrypt `buffer` in place and return the detached authentication tag.
-  #[inline]
-  pub fn encrypt_in_place(
-    &self,
-    nonce: &Nonce128,
-    aad: &[u8],
-    buffer: &mut [u8],
-  ) -> Result<AsconAead128Tag, SealError> {
-    <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
-  }
-
   /// Decrypt `buffer` in place and verify the detached authentication tag.
   #[inline]
   pub fn decrypt_in_place(
@@ -170,12 +159,6 @@ impl AsconAead128 {
     tag: &AsconAead128Tag,
   ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
-  }
-
-  /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
-  #[inline]
-  pub fn encrypt(&self, nonce: &Nonce128, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
-    <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
   /// Decrypt a combined `ciphertext || tag` into `out`.
@@ -279,7 +262,13 @@ impl Aead for AsconAead128 {
     Ok(AsconAead128Tag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+  fn __encrypt_in_place_with_nonce(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+    _token: crate::traits::aead::SealToken,
+  ) -> Result<Self::Tag, SealError> {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
@@ -385,6 +374,7 @@ mod tests {
   use ascon_aead::aead::{Aead as _, KeyInit, Payload, array::Array};
 
   use super::*;
+  use crate::aead::expert::AeadWithNonce;
 
   fn assert_matches_oracle(key: [u8; 16], nonce: [u8; 16], aad: &[u8], plaintext: &[u8]) {
     let aead = AsconAead128::new(&AsconAead128Key::from_bytes(key));

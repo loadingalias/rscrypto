@@ -14,9 +14,10 @@ use std::format;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
   Aes256GcmSivKey, Argon2Params, Argon2d, Argon2i, Argon2id, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, Crc32, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256, HkdfSha384, HmacSha3_224Tag,
-  HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512,
+  Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256,
+  HkdfSha384, HmacSha3_224Tag, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag,
+  Kmac256, MlKem512,
   MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext,
   MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey,
   MlKem1024EncapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
@@ -1434,7 +1435,7 @@ pub extern "C" fn ct_entry_rsa_private_key_pkcs8_roundtrip(
 }
 
 macro_rules! blake2_keyed_entry {
-  ($name:ident, $ty:ty, $out_len:literal) => {
+  ($name:ident, $ty:ty, $key_ty:ty, $out_len:literal) => {
     #[unsafe(no_mangle)]
     pub extern "C" fn $name(key: *const u8, key_len: usize, data: *const u8, data_len: usize, out: *mut u8) -> u8 {
       // SAFETY: FFI input pointers are validated by slice helpers.
@@ -1446,6 +1447,9 @@ macro_rules! blake2_keyed_entry {
         return STATUS_ERR;
       };
 
+      let Ok(key) = <$key_ty>::new(key) else {
+        return STATUS_ERR;
+      };
       let digest = <$ty>::keyed_digest(key, data);
       // SAFETY: The output pointer must reference exactly `$out_len` writable bytes.
       if unsafe { write_array::<$out_len>(out, &digest) } {
@@ -1457,10 +1461,10 @@ macro_rules! blake2_keyed_entry {
   };
 }
 
-blake2_keyed_entry!(ct_entry_blake2b256_keyed_digest, Blake2b256, 32);
-blake2_keyed_entry!(ct_entry_blake2b512_keyed_digest, Blake2b512, 64);
-blake2_keyed_entry!(ct_entry_blake2s128_keyed_digest, Blake2s128, 16);
-blake2_keyed_entry!(ct_entry_blake2s256_keyed_digest, Blake2s256, 32);
+blake2_keyed_entry!(ct_entry_blake2b256_keyed_digest, Blake2b256, Blake2bKey, 32);
+blake2_keyed_entry!(ct_entry_blake2b512_keyed_digest, Blake2b512, Blake2bKey, 64);
+blake2_keyed_entry!(ct_entry_blake2s128_keyed_digest, Blake2s128, Blake2sKey, 16);
+blake2_keyed_entry!(ct_entry_blake2s256_keyed_digest, Blake2s256, Blake2sKey, 32);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_blake3_keyed_digest(key: *const u8, data: *const u8, data_len: usize, out: *mut u8) -> u8 {

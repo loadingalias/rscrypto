@@ -14,7 +14,8 @@ use core::num::NonZeroU32;
 use ring::{aead as ring_aead, digest as ring_digest, hkdf as ring_hkdf, hmac as ring_hmac, pbkdf2 as ring_pbkdf2};
 use rscrypto::{
   Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519SecretKey, HkdfSha256, HmacSha256,
-  Pbkdf2Sha256, RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, Sha256, aead::Nonce96,
+  Pbkdf2Sha256, RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, Sha256,
+  aead::{Nonce96, expert::AeadWithNonce},
 };
 
 const DATA: &[u8] = b"ring migration equivalence data";

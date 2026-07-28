@@ -14,7 +14,10 @@
 #![cfg(feature = "aead")]
 
 use aegis::aegis256::Aegis256 as Oracle;
-use rscrypto::{Aegis256, Aegis256Key, Aegis256Tag, aead::Nonce256};
+use rscrypto::{
+  Aegis256, Aegis256Key, Aegis256Tag,
+  aead::{Nonce256, expert::AeadWithNonce},
+};
 
 fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 32], aad: &[u8], plaintext: &[u8]) {
   let key = Aegis256Key::from_bytes(*key_bytes);

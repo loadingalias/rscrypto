@@ -1,4 +1,7 @@
-use rscrypto::{Aegis256, Aegis256Key, aead::Nonce256};
+use rscrypto::{
+    Aegis256, Aegis256Key,
+    aead::{Nonce256, expert::AeadWithNonce},
+};
 use rscrypto_fuzz::{FuzzInput, assert_aead_forgery, assert_aead_roundtrip, some_or_return};
 
 pub fn run(data: &[u8]) {

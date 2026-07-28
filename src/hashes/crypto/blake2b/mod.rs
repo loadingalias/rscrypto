@@ -24,11 +24,12 @@
 //! ## Keyed Hashing
 //!
 //! ```rust
-//! use rscrypto::{Blake2b256, Digest};
+//! use rscrypto::{Blake2b256, Blake2bKey, Digest};
 //!
-//! let key = b"secret-key-up-to-64-bytes";
+//! let key = Blake2bKey::new(b"secret-key-up-to-64-bytes")?;
 //! let tag = Blake2b256::keyed_digest(key, b"message");
 //! assert_ne!(tag, Blake2b256::digest(b"message"));
+//! # Ok::<(), rscrypto::Blake2Error>(())
 //! ```
 //!
 //! ## Variable Output Length
@@ -38,12 +39,13 @@
 //!
 //! // One-shot into a 48-byte buffer.
 //! let mut out = [0u8; 48];
-//! Blake2b::digest_into(48, b"hello", &mut out);
+//! Blake2b::digest_into(b"hello", &mut out)?;
 //! assert_ne!(out, [0u8; 48]);
 //!
 //! // Streaming with a const-generic output array.
 //! let tag = Blake2b::digest_array::<20>(b"message");
 //! assert_eq!(tag.len(), 20);
+//! # Ok::<(), rscrypto::Blake2Error>(())
 //! ```
 
 pub(crate) mod kernels;
@@ -60,11 +62,73 @@ use core::{fmt, mem::MaybeUninit};
 
 use kernels::{Blake2bCounter, IV};
 
+use super::Blake2Error;
 use crate::traits::{Digest, ct};
 
 const BLOCK_SIZE: usize = 128;
 const MAX_KEY_LEN: usize = 64;
 const MAX_OUTPUT_LEN: usize = 64;
+
+/// Validated 1–64 byte Blake2b key.
+///
+/// Construction validates the RFC 7693 key-length invariant. The wrapper then
+/// borrows the key without allocation or copying.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct Blake2bKey<'a>(&'a [u8]);
+
+impl<'a> Blake2bKey<'a> {
+  /// Validate and borrow a Blake2b key.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`Blake2Error::InvalidKeyLength`] for an empty key or a key
+  /// longer than 64 bytes.
+  #[inline]
+  pub fn new(key: &'a [u8]) -> Result<Self, Blake2Error> {
+    validate_key(key)?;
+    Ok(Self(key))
+  }
+
+  /// Borrow the validated key bytes.
+  #[must_use]
+  pub const fn as_bytes(self) -> &'a [u8] {
+    self.0
+  }
+}
+
+impl fmt::Debug for Blake2bKey<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("Blake2bKey")
+      .field("length", &self.0.len())
+      .finish_non_exhaustive()
+  }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Blake2bKey<'a> {
+  type Error = Blake2Error;
+
+  #[inline]
+  fn try_from(key: &'a [u8]) -> Result<Self, Self::Error> {
+    Self::new(key)
+  }
+}
+
+#[inline]
+fn validate_key(key: &[u8]) -> Result<(), Blake2Error> {
+  if key.is_empty() || key.len() > MAX_KEY_LEN {
+    return Err(Blake2Error::InvalidKeyLength);
+  }
+  Ok(())
+}
+
+#[inline]
+fn validate_output_len(output_len: usize) -> Result<u8, Blake2Error> {
+  if !(1..=MAX_OUTPUT_LEN).contains(&output_len) {
+    return Err(Blake2Error::InvalidOutputLength);
+  }
+  Ok(output_len as u8)
+}
 
 #[cfg(any(test, feature = "diag"))]
 #[allow(dead_code)]
@@ -111,11 +175,6 @@ impl Core {
     }
   }
 
-  /// Create a new Blake2b state with output length `nn` and optional `key`.
-  ///
-  /// # Panics
-  ///
-  /// Panics if `nn` is 0 or > 64, or if `key` is longer than 64 bytes.
   #[inline]
   fn new(nn: u8, key: &[u8]) -> Self {
     Self::new_with_params(nn, key, &[0u8; SALT_LEN], &[0u8; PERSONAL_LEN])
@@ -123,10 +182,6 @@ impl Core {
 
   /// Create a new Blake2b state with output length `nn`, optional `key`, and
   /// spec-defined `salt` + `personal` parameter-block values (RFC 7693 §2.5).
-  ///
-  /// # Panics
-  ///
-  /// Panics if `nn` is 0 or > 64, or if `key` is longer than 64 bytes.
   #[allow(clippy::indexing_slicing)]
   fn new_with_params(nn: u8, key: &[u8], salt: &[u8; SALT_LEN], personal: &[u8; PERSONAL_LEN]) -> Self {
     assert!(
@@ -594,32 +649,35 @@ impl Drop for Core {
 
 /// Builder for Blake2b hashers with optional key, salt, and personalization.
 ///
-/// Implements the sequential-mode parameter block from RFC 7693 §2.5. Salt
-/// (up to 16 bytes) and personalization (up to 16 bytes) are XORed into the
-/// initial chaining value words `h[4..8]`, giving the same hasher with a
-/// different domain.
+/// Implements the sequential-mode parameter block from RFC 7693 §2.5. The
+/// exact-size salt and personalization fields are XORed into the initial
+/// chaining value words `h[4..8]`, giving the same hasher with a different
+/// domain.
 ///
-/// Empty key produces an unkeyed hasher; non-empty key produces a Blake2b-MAC.
+/// Omitting [`key`](Self::key) produces an unkeyed hasher.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use rscrypto::Blake2bParams;
+/// use rscrypto::{Blake2bKey, Blake2bParams};
+///
+/// let key = Blake2bKey::new(b"my-secret-key")?;
 ///
 /// let tag = Blake2bParams::new()
-///   .key(b"my-secret-key")
-///   .salt(b"random-salt-1234")
-///   .personal(b"app-v1-tagging00")
+///   .key(key)
+///   .salt(*b"random-salt-1234")
+///   .personal(*b"app-v1-tagging00")
 ///   .hash_256(b"message");
 /// assert_eq!(tag.len(), 32);
 ///
 /// // Same input + different personalization → different output.
 /// let other = Blake2bParams::new()
-///   .key(b"my-secret-key")
-///   .salt(b"random-salt-1234")
-///   .personal(b"app-v2-tagging00")
+///   .key(key)
+///   .salt(*b"random-salt-1234")
+///   .personal(*b"app-v2-tagging00")
 ///   .hash_256(b"message");
 /// assert_ne!(tag, other);
+/// # Ok::<(), rscrypto::Blake2Error>(())
 /// ```
 pub struct Blake2bParams {
   key_buf: [u8; MAX_KEY_LEN],
@@ -647,55 +705,34 @@ impl Blake2bParams {
     }
   }
 
-  /// Set the MAC key (0–64 bytes; empty disables keying).
-  ///
-  /// # Panics
-  ///
-  /// Panics if `key.len() > 64`.
+  /// Set a validated MAC key. Omit this method for unkeyed hashing.
   #[must_use]
   #[allow(clippy::indexing_slicing)]
-  pub fn key(mut self, key: &[u8]) -> Self {
-    assert!(key.len() <= MAX_KEY_LEN, "Blake2b key must be at most 64 bytes");
+  pub fn key(mut self, key: Blake2bKey<'_>) -> Self {
+    let key = key.as_bytes();
     self.key_buf = [0u8; MAX_KEY_LEN];
     self.key_buf[..key.len()].copy_from_slice(key);
     self.key_len = key.len() as u8;
     self
   }
 
-  /// Set the salt (up to 16 bytes; shorter inputs are zero-padded per spec).
-  ///
-  /// # Panics
-  ///
-  /// Panics if `salt.len() > 16`.
+  /// Set the 16-byte RFC 7693 salt field.
   #[must_use]
-  #[allow(clippy::indexing_slicing)]
-  pub fn salt(mut self, salt: &[u8]) -> Self {
-    assert!(salt.len() <= SALT_LEN, "Blake2b salt must be at most 16 bytes");
-    self.salt = [0u8; SALT_LEN];
-    self.salt[..salt.len()].copy_from_slice(salt);
+  pub const fn salt(mut self, salt: [u8; SALT_LEN]) -> Self {
+    self.salt = salt;
     self
   }
 
-  /// Set the personalization tag (up to 16 bytes; shorter inputs are zero-padded).
-  ///
-  /// # Panics
-  ///
-  /// Panics if `personal.len() > 16`.
+  /// Set the 16-byte RFC 7693 personalization field.
   #[must_use]
-  #[allow(clippy::indexing_slicing)]
-  pub fn personal(mut self, personal: &[u8]) -> Self {
-    assert!(
-      personal.len() <= PERSONAL_LEN,
-      "Blake2b personalization must be at most 16 bytes"
-    );
-    self.personal = [0u8; PERSONAL_LEN];
-    self.personal[..personal.len()].copy_from_slice(personal);
+  pub const fn personal(mut self, personal: [u8; PERSONAL_LEN]) -> Self {
+    self.personal = personal;
     self
   }
 
+  #[allow(clippy::indexing_slicing)]
   fn key_slice(&self) -> &[u8] {
-    // key_len is set from a slice ≤ MAX_KEY_LEN in `key()`; fallback is unreachable.
-    self.key_buf.get(..self.key_len as usize).unwrap_or(&[])
+    &self.key_buf[..usize::from(self.key_len)]
   }
 
   /// Build a streaming Blake2b-256 hasher initialized with these parameters.
@@ -710,29 +747,33 @@ impl Blake2bParams {
     Blake2b512(Core::new_with_params(64, self.key_slice(), &self.salt, &self.personal))
   }
 
-  /// Build a streaming variable-output Blake2b hasher (`output_len` bytes, 1..=64).
+  /// Build a streaming variable-output Blake2b hasher.
   ///
-  /// # Panics
+  /// # Errors
   ///
-  /// Panics if `output_len == 0` or `output_len > 64`.
+  /// Returns [`Blake2Error::InvalidOutputLength`] unless `output_len` is in
+  /// `1..=64`.
   ///
   /// # Examples
   ///
   /// ```rust
   /// use rscrypto::Blake2bParams;
   ///
-  /// let mut hasher = Blake2bParams::new().salt(b"domain-salt").build(48);
+  /// let mut hasher = Blake2bParams::new()
+  ///   .salt(*b"domain-salt\0\0\0\0\0")
+  ///   .build(48)?;
   /// hasher.update(b"hello ");
   /// hasher.update(b"world");
   /// let mut out = [0u8; 48];
-  /// hasher.finalize_into(&mut out);
+  /// hasher.finalize_into(&mut out)?;
+  /// # Ok::<(), rscrypto::Blake2Error>(())
   /// ```
-  #[must_use]
-  pub fn build(&self, output_len: u8) -> Blake2b {
-    Blake2b {
+  pub fn build(&self, output_len: usize) -> Result<Blake2b, Blake2Error> {
+    let output_len = validate_output_len(output_len)?;
+    Ok(Blake2b {
       core: Core::new_with_params(output_len, self.key_slice(), &self.salt, &self.personal),
       output_len,
-    }
+    })
   }
 
   /// Compute a Blake2b-256 hash of `data` in one shot using these parameters.
@@ -750,9 +791,10 @@ impl Blake2bParams {
   /// Compute a variable-output Blake2b hash of `data` in one shot using these
   /// parameters. The output length is taken from `out.len()`.
   ///
-  /// # Panics
+  /// # Errors
   ///
-  /// Panics if `out.len() == 0` or `out.len() > 64`.
+  /// Returns [`Blake2Error::InvalidOutputLength`] unless `out.len()` is in
+  /// `1..=64`.
   ///
   /// # Examples
   ///
@@ -761,14 +803,15 @@ impl Blake2bParams {
   ///
   /// let mut out = [0u8; 24];
   /// Blake2bParams::new()
-  ///   .personal(b"app-v1")
-  ///   .hash_into(b"msg", &mut out);
+  ///   .personal(*b"app-v1\0\0\0\0\0\0\0\0\0\0")
+  ///   .hash_into(b"msg", &mut out)?;
   /// assert_ne!(out, [0u8; 24]);
+  /// # Ok::<(), rscrypto::Blake2Error>(())
   /// ```
-  pub fn hash_into(&self, data: &[u8], out: &mut [u8]) {
-    let nn = out.len();
-    assert!((1..=MAX_OUTPUT_LEN).contains(&nn), "Blake2b output length must be 1-64",);
-    oneshot_hash_into_with_params(nn as u8, self.key_slice(), &self.salt, &self.personal, data, out);
+  pub fn hash_into(&self, data: &[u8], out: &mut [u8]) -> Result<(), Blake2Error> {
+    let output_len = validate_output_len(out.len())?;
+    oneshot_hash_into_with_params(output_len, self.key_slice(), &self.salt, &self.personal, data, out);
+    Ok(())
   }
 }
 
@@ -831,24 +874,18 @@ impl Blake2b256 {
   }
 
   /// Create a keyed Blake2b-256 streaming hasher (Blake2b-MAC).
-  ///
-  /// # Panics
-  ///
-  /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn new_keyed(key: &[u8]) -> Self {
-    assert!(!key.is_empty(), "use Blake2b256::new() for unkeyed hashing");
+  pub fn new_keyed(key: Blake2bKey<'_>) -> Self {
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
     Self(Core::new(32, key))
   }
 
   /// Compute a keyed Blake2b-256 hash in one shot.
-  ///
-  /// # Panics
-  ///
-  /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn keyed_digest(key: &[u8], data: &[u8]) -> [u8; 32] {
-    assert!(!key.is_empty(), "use Blake2b256::digest() for unkeyed hashing");
+  pub fn keyed_digest(key: Blake2bKey<'_>, data: &[u8]) -> [u8; 32] {
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
     oneshot_hash_array::<32>(32, key, data)
   }
 }
@@ -982,24 +1019,18 @@ impl Blake2b512 {
   }
 
   /// Create a keyed Blake2b-512 streaming hasher (Blake2b-MAC).
-  ///
-  /// # Panics
-  ///
-  /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn new_keyed(key: &[u8]) -> Self {
-    assert!(!key.is_empty(), "use Blake2b512::new() for unkeyed hashing");
+  pub fn new_keyed(key: Blake2bKey<'_>) -> Self {
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
     Self(Core::new(64, key))
   }
 
   /// Compute a keyed Blake2b-512 hash in one shot.
-  ///
-  /// # Panics
-  ///
-  /// Panics if `key` is empty or longer than 64 bytes.
   #[must_use]
-  pub fn keyed_digest(key: &[u8], data: &[u8]) -> [u8; 64] {
-    assert!(!key.is_empty(), "use Blake2b512::digest() for unkeyed hashing");
+  pub fn keyed_digest(key: Blake2bKey<'_>, data: &[u8]) -> [u8; 64] {
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
     oneshot_hash_array::<64>(64, key, data)
   }
 }
@@ -1070,26 +1101,21 @@ impl_std_io_write_for_digest!(Blake2b512);
 ///
 /// // One-shot with a 48-byte output.
 /// let mut out = [0u8; 48];
-/// Blake2b::digest_into(48, b"hello world", &mut out);
+/// Blake2b::digest_into(b"hello world", &mut out)?;
 /// assert_ne!(out, [0u8; 48]);
 ///
 /// // Streaming with a 20-byte output.
-/// let mut hasher = Blake2b::new(20);
+/// let mut hasher = Blake2b::new(20)?;
 /// hasher.update(b"hello ");
 /// hasher.update(b"world");
 /// let mut tag = [0u8; 20];
-/// hasher.finalize_into(&mut tag);
+/// hasher.finalize_into(&mut tag)?;
 ///
 /// // Const-generic convenience.
 /// let tag2 = Blake2b::digest_array::<20>(b"hello world");
 /// assert_eq!(tag, tag2);
+/// # Ok::<(), rscrypto::Blake2Error>(())
 /// ```
-///
-/// # Panics
-///
-/// Constructors panic if `output_len` is `0` or greater than `64`.
-/// `finalize_into` panics if the supplied slice length does not match the
-/// hasher's configured output length.
 pub struct Blake2b {
   core: Core,
   output_len: u8,
@@ -1109,30 +1135,32 @@ impl Blake2b {
 
   /// Create an unkeyed Blake2b hasher with the given output length.
   ///
-  /// # Panics
+  /// # Errors
   ///
-  /// Panics if `output_len == 0` or `output_len > 64`.
-  #[must_use]
-  pub fn new(output_len: u8) -> Self {
-    Self {
+  /// Returns [`Blake2Error::InvalidOutputLength`] unless `output_len` is in
+  /// `1..=64`.
+  pub fn new(output_len: usize) -> Result<Self, Blake2Error> {
+    let output_len = validate_output_len(output_len)?;
+    Ok(Self {
       core: Core::new(output_len, &[]),
       output_len,
-    }
+    })
   }
 
   /// Create a keyed Blake2b hasher (Blake2b-MAC) with the given output length.
   ///
-  /// # Panics
+  /// # Errors
   ///
-  /// Panics if `output_len == 0`, `output_len > 64`, `key` is empty, or
-  /// `key.len() > 64`.
-  #[must_use]
-  pub fn new_keyed(output_len: u8, key: &[u8]) -> Self {
-    assert!(!key.is_empty(), "use Blake2b::new() for unkeyed hashing");
-    Self {
+  /// Returns [`Blake2Error::InvalidOutputLength`] unless `output_len` is in
+  /// `1..=64`.
+  pub fn new_keyed(output_len: usize, key: Blake2bKey<'_>) -> Result<Self, Blake2Error> {
+    let output_len = validate_output_len(output_len)?;
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
+    Ok(Self {
       core: Core::new(output_len, key),
       output_len,
-    }
+    })
   }
 
   /// Output length this hasher will produce, in bytes.
@@ -1150,16 +1178,16 @@ impl Blake2b {
 
   /// Write the hash into `out`.
   ///
-  /// # Panics
+  /// # Errors
   ///
-  /// Panics if `out.len() != self.output_size()`.
-  pub fn finalize_into(&self, out: &mut [u8]) {
-    assert_eq!(
-      out.len(),
-      self.output_len as usize,
-      "Blake2b::finalize_into output slice must be exactly the configured output length"
-    );
+  /// Returns [`Blake2Error::OutputLengthMismatch`] unless `out.len()` matches
+  /// [`output_size`](Self::output_size).
+  pub fn finalize_into(&self, out: &mut [u8]) -> Result<(), Blake2Error> {
+    if out.len() != self.output_len as usize {
+      return Err(Blake2Error::OutputLengthMismatch);
+    }
     self.core.finalize_into(out);
+    Ok(())
   }
 
   /// Reset to the initial state, preserving the configured output length and
@@ -1169,46 +1197,41 @@ impl Blake2b {
     self.core.reset();
   }
 
-  /// Compute an unkeyed Blake2b hash in one shot with `output_len` bytes
-  /// written to `out`.
+  /// Compute an unkeyed Blake2b hash in one shot.
   ///
-  /// # Panics
+  /// The output length is `out.len()`.
   ///
-  /// Panics if `output_len == 0`, `output_len > 64`, or
-  /// `out.len() != output_len as usize`.
-  pub fn digest_into(output_len: u8, data: &[u8], out: &mut [u8]) {
-    assert_eq!(
-      out.len(),
-      output_len as usize,
-      "Blake2b::digest_into output slice must be exactly output_len bytes"
-    );
+  /// # Errors
+  ///
+  /// Returns [`Blake2Error::InvalidOutputLength`] unless `out.len()` is in
+  /// `1..=64`.
+  pub fn digest_into(data: &[u8], out: &mut [u8]) -> Result<(), Blake2Error> {
+    let output_len = validate_output_len(out.len())?;
     oneshot_hash_into(output_len, &[], data, out);
+    Ok(())
   }
 
-  /// Compute a keyed Blake2b hash in one shot with `output_len` bytes
-  /// written to `out`.
+  /// Compute a keyed Blake2b hash in one shot.
   ///
-  /// # Panics
+  /// The output length is `out.len()`.
   ///
-  /// Panics if `output_len == 0`, `output_len > 64`, `key` is empty,
-  /// `key.len() > 64`, or `out.len() != output_len as usize`.
-  pub fn keyed_digest_into(output_len: u8, key: &[u8], data: &[u8], out: &mut [u8]) {
-    assert!(!key.is_empty(), "use Blake2b::digest_into() for unkeyed hashing");
-    assert_eq!(
-      out.len(),
-      output_len as usize,
-      "Blake2b::keyed_digest_into output slice must be exactly output_len bytes"
-    );
+  /// # Errors
+  ///
+  /// Returns [`Blake2Error::InvalidOutputLength`] unless `out.len()` is in
+  /// `1..=64`.
+  pub fn keyed_digest_into(key: Blake2bKey<'_>, data: &[u8], out: &mut [u8]) -> Result<(), Blake2Error> {
+    let output_len = validate_output_len(out.len())?;
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
     oneshot_hash_into(output_len, key, data, out);
+    Ok(())
   }
 
   /// Compute an unkeyed Blake2b hash in one shot, returning a fixed-size array.
   ///
   /// The output length `N` is enforced at monomorphization time.
   ///
-  /// # Panics
-  ///
-  /// Fails compilation (via inline const assertion) if `N == 0` or `N > 64`.
+  /// `N` must be in `1..=64`; invalid lengths fail during monomorphization.
   #[must_use]
   pub fn digest_array<const N: usize>(data: &[u8]) -> [u8; N] {
     const {
@@ -1219,17 +1242,37 @@ impl Blake2b {
 
   /// Compute a keyed Blake2b hash in one shot, returning a fixed-size array.
   ///
-  /// # Panics
-  ///
-  /// Fails compilation if `N == 0` or `N > 64`; panics at runtime if `key`
-  /// is empty or longer than 64 bytes.
+  /// `N` must be in `1..=64`; invalid lengths fail during monomorphization.
   #[must_use]
-  pub fn keyed_digest_array<const N: usize>(key: &[u8], data: &[u8]) -> [u8; N] {
+  pub fn keyed_digest_array<const N: usize>(key: Blake2bKey<'_>, data: &[u8]) -> [u8; N] {
     const {
       assert!(N >= 1 && N <= MAX_OUTPUT_LEN, "Blake2b output length N must be 1..=64");
     }
-    assert!(!key.is_empty(), "use Blake2b::digest_array() for unkeyed hashing");
+    let key = key.as_bytes();
+    assert!(!key.is_empty(), "validated Blake2b key must not be empty");
     oneshot_hash_array::<N>(N as u8, key, data)
+  }
+
+  #[cfg(feature = "argon2")]
+  #[inline]
+  pub(crate) fn new_validated(output_len: usize) -> Self {
+    debug_assert!((1..=MAX_OUTPUT_LEN).contains(&output_len));
+    let output_len = output_len as u8;
+    Self {
+      core: Core::new(output_len, &[]),
+      output_len,
+    }
+  }
+
+  #[cfg(feature = "argon2")]
+  #[inline]
+  pub(crate) fn finalize_into_validated(&self, out: &mut [u8]) {
+    assert_eq!(
+      out.len(),
+      self.output_len as usize,
+      "validated Blake2b output length must match the configured length"
+    );
+    self.core.finalize_into(out);
   }
 }
 
@@ -1254,6 +1297,10 @@ mod tests {
   type OracleBlake2b256 = OracleBlake2b<U32>;
   type OracleBlake2b512 = OracleBlake2b<U64>;
   type OracleBlake2bMac256 = Blake2bMac<U32>;
+
+  fn validated_key(key: &[u8]) -> Blake2bKey<'_> {
+    Blake2bKey::new(key).unwrap()
+  }
 
   fn oracle_hash_256(data: &[u8]) -> [u8; 32] {
     let mut h = OracleBlake2b256::new();
@@ -1395,7 +1442,7 @@ mod tests {
     hmac::Mac::update(&mut oracle, data);
     let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-    let actual = Blake2b256::keyed_digest(key, data);
+    let actual = Blake2b256::keyed_digest(validated_key(key), data);
     assert_eq!(actual, expected);
   }
 
@@ -1406,7 +1453,7 @@ mod tests {
     hmac::Mac::update(&mut oracle, b"");
     let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-    let actual = Blake2b256::keyed_digest(key, b"");
+    let actual = Blake2b256::keyed_digest(validated_key(key), b"");
     assert_eq!(actual, expected);
   }
 
@@ -1419,13 +1466,14 @@ mod tests {
     hmac::Mac::update(&mut oracle, data);
     let expected: [u8; 32] = hmac::Mac::finalize(oracle).into_bytes().into();
 
-    let actual = Blake2b256::keyed_digest(key, data);
+    let actual = Blake2b256::keyed_digest(validated_key(key), data);
     assert_eq!(actual, expected);
   }
 
   #[test]
   fn blake2b256_keyed_streaming_reset() {
     let key = b"my-key";
+    let key = validated_key(key);
     let tag1 = Blake2b256::keyed_digest(key, b"msg1");
     let tag2 = Blake2b256::keyed_digest(key, b"msg2");
 
@@ -1441,7 +1489,7 @@ mod tests {
   #[test]
   fn keyed_differs_from_unkeyed() {
     let hash = Blake2b256::digest(b"hello");
-    let tag = Blake2b256::keyed_digest(b"key", b"hello");
+    let tag = Blake2b256::keyed_digest(validated_key(b"key"), b"hello");
     assert_ne!(hash, tag);
   }
 
@@ -1450,7 +1498,7 @@ mod tests {
   #[test]
   fn variable_output_1_byte() {
     let mut out = [0u8; 1];
-    Blake2b::digest_into(1, b"test", &mut out);
+    Blake2b::digest_into(b"test", &mut out).unwrap();
     assert_ne!(out, [0u8; 1]);
   }
 
@@ -1458,13 +1506,13 @@ mod tests {
   fn variable_output_matches_fixed() {
     // 32-byte variable output should match Blake2b256
     let mut var_out = [0u8; 32];
-    Blake2b::digest_into(32, b"hello", &mut var_out);
+    Blake2b::digest_into(b"hello", &mut var_out).unwrap();
     let fixed_out = Blake2b256::digest(b"hello");
     assert_eq!(var_out, fixed_out);
 
     // 64-byte variable output should match Blake2b512
     let mut var_out = [0u8; 64];
-    Blake2b::digest_into(64, b"hello", &mut var_out);
+    Blake2b::digest_into(b"hello", &mut var_out).unwrap();
     let fixed_out = Blake2b512::digest(b"hello");
     assert_eq!(var_out, fixed_out);
   }
@@ -1478,7 +1526,7 @@ mod tests {
       let expected_arr: [u8; $nn] = oracle.finalize().into();
 
       let mut actual = [0u8; $nn];
-      Blake2b::digest_into($nn, data, &mut actual);
+      Blake2b::digest_into(data, &mut actual).unwrap();
       assert_eq!(actual, expected_arr, "Blake2b nn={} oracle mismatch", $nn);
     }};
   }
@@ -1516,22 +1564,22 @@ mod tests {
   fn variable_output_all_lengths_self_consistent() {
     // 1..=64 oneshot == streaming(single update) == streaming(chunked)
     let data: [u8; 200] = core::array::from_fn(|i| ((i * 31 + 17) & 0xff) as u8);
-    for nn in 1u8..=64 {
-      let mut oneshot = vec![0u8; nn as usize];
-      Blake2b::digest_into(nn, &data, &mut oneshot);
+    for nn in 1usize..=64 {
+      let mut oneshot = vec![0u8; nn];
+      Blake2b::digest_into(&data, &mut oneshot).unwrap();
 
-      let mut h = Blake2b::new(nn);
+      let mut h = Blake2b::new(nn).unwrap();
       h.update(&data);
-      let mut single_update = vec![0u8; nn as usize];
-      h.finalize_into(&mut single_update);
+      let mut single_update = vec![0u8; nn];
+      h.finalize_into(&mut single_update).unwrap();
       assert_eq!(oneshot, single_update, "single-update nn={nn}");
 
-      let mut h = Blake2b::new(nn);
+      let mut h = Blake2b::new(nn).unwrap();
       for chunk in data.chunks(37) {
         h.update(chunk);
       }
-      let mut chunked = vec![0u8; nn as usize];
-      h.finalize_into(&mut chunked);
+      let mut chunked = vec![0u8; nn];
+      h.finalize_into(&mut chunked).unwrap();
       assert_eq!(oneshot, chunked, "chunked nn={nn}");
     }
   }
@@ -1539,16 +1587,16 @@ mod tests {
   #[test]
   fn variable_output_streaming_matches_oneshot() {
     let data = [0x5Au8; 300];
-    for nn in [1u8, 16, 32, 48, 63, 64] {
-      let mut expected = vec![0u8; nn as usize];
-      Blake2b::digest_into(nn, &data, &mut expected);
+    for nn in [1usize, 16, 32, 48, 63, 64] {
+      let mut expected = vec![0u8; nn];
+      Blake2b::digest_into(&data, &mut expected).unwrap();
 
-      let mut h = Blake2b::new(nn);
+      let mut h = Blake2b::new(nn).unwrap();
       for chunk in data.chunks(37) {
         h.update(chunk);
       }
-      let mut actual = vec![0u8; nn as usize];
-      h.finalize_into(&mut actual);
+      let mut actual = vec![0u8; nn];
+      h.finalize_into(&mut actual).unwrap();
       assert_eq!(actual, expected, "streaming mismatch nn={nn}");
     }
   }
@@ -1560,11 +1608,12 @@ mod tests {
     let data: &[u8] = b"message";
 
     let mut actual_32 = [0u8; 32];
-    Blake2b::keyed_digest_into(32, key, data, &mut actual_32);
+    let key = validated_key(key);
+    Blake2b::keyed_digest_into(key, data, &mut actual_32).unwrap();
     assert_eq!(actual_32, Blake2b256::keyed_digest(key, data));
 
     let mut actual_64 = [0u8; 64];
-    Blake2b::keyed_digest_into(64, key, data, &mut actual_64);
+    Blake2b::keyed_digest_into(key, data, &mut actual_64).unwrap();
     assert_eq!(actual_64, Blake2b512::keyed_digest(key, data));
   }
 
@@ -1572,12 +1621,12 @@ mod tests {
   fn variable_output_keyed_differs_from_unkeyed() {
     let key = b"secret-key";
     let data = b"message";
-    for nn in [1u8, 16, 40, 48, 63] {
-      let mut keyed = vec![0u8; nn as usize];
-      Blake2b::keyed_digest_into(nn, key, data, &mut keyed);
+    for nn in [1usize, 16, 40, 48, 63] {
+      let mut keyed = vec![0u8; nn];
+      Blake2b::keyed_digest_into(validated_key(key), data, &mut keyed).unwrap();
 
-      let mut unkeyed = vec![0u8; nn as usize];
-      Blake2b::digest_into(nn, data, &mut unkeyed);
+      let mut unkeyed = vec![0u8; nn];
+      Blake2b::digest_into(data, &mut unkeyed).unwrap();
 
       assert_ne!(keyed, unkeyed, "keyed vs unkeyed nn={nn}");
     }
@@ -1587,29 +1636,30 @@ mod tests {
   fn variable_output_keyed_deterministic() {
     let key = b"secret-key";
     let data = b"message";
-    for nn in [1u8, 16, 40, 48, 63] {
-      let mut a = vec![0u8; nn as usize];
-      let mut b = vec![0u8; nn as usize];
-      Blake2b::keyed_digest_into(nn, key, data, &mut a);
-      Blake2b::keyed_digest_into(nn, key, data, &mut b);
+    for nn in [1usize, 16, 40, 48, 63] {
+      let mut a = vec![0u8; nn];
+      let mut b = vec![0u8; nn];
+      let key = validated_key(key);
+      Blake2b::keyed_digest_into(key, data, &mut a).unwrap();
+      Blake2b::keyed_digest_into(key, data, &mut b).unwrap();
       assert_eq!(a, b, "determinism nn={nn}");
     }
   }
 
   #[test]
   fn variable_output_reset_preserves_length() {
-    let mut h = Blake2b::new(40);
+    let mut h = Blake2b::new(40).unwrap();
     h.update(b"first");
     let mut first = [0u8; 40];
-    h.finalize_into(&mut first);
+    h.finalize_into(&mut first).unwrap();
 
     h.reset();
     h.update(b"second");
     let mut second = [0u8; 40];
-    h.finalize_into(&mut second);
+    h.finalize_into(&mut second).unwrap();
 
     let mut expected = [0u8; 40];
-    Blake2b::digest_into(40, b"second", &mut expected);
+    Blake2b::digest_into(b"second", &mut expected).unwrap();
     assert_eq!(second, expected);
     assert_ne!(first, second);
   }
@@ -1618,75 +1668,71 @@ mod tests {
   fn variable_output_digest_array_matches_into() {
     let arr = Blake2b::digest_array::<20>(b"hello world");
     let mut expected = [0u8; 20];
-    Blake2b::digest_into(20, b"hello world", &mut expected);
+    Blake2b::digest_into(b"hello world", &mut expected).unwrap();
     assert_eq!(arr, expected);
   }
 
   #[test]
   fn params_build_variable_matches_oneshot() {
-    let params = Blake2bParams::new().salt(b"domain-salt").personal(b"app-v1");
+    let params = Blake2bParams::new()
+      .salt(*b"domain-salt\0\0\0\0\0")
+      .personal(*b"app-v1\0\0\0\0\0\0\0\0\0\0");
     let mut oneshot = [0u8; 24];
-    params.hash_into(b"hello world", &mut oneshot);
+    params.hash_into(b"hello world", &mut oneshot).unwrap();
 
-    let mut h = params.build(24);
+    let mut h = params.build(24).unwrap();
     h.update(b"hello ");
     h.update(b"world");
     let mut streamed = [0u8; 24];
-    h.finalize_into(&mut streamed);
+    h.finalize_into(&mut streamed).unwrap();
     assert_eq!(oneshot, streamed);
   }
 
   #[test]
   fn params_hash_into_matches_plain_when_defaults() {
     // Empty key/salt/personal + variable length should match direct Blake2b.
-    for nn in [1u8, 17, 32, 48, 64] {
-      let mut via_params = vec![0u8; nn as usize];
-      Blake2bParams::new().hash_into(b"msg", &mut via_params);
+    for nn in [1usize, 17, 32, 48, 64] {
+      let mut via_params = vec![0u8; nn];
+      Blake2bParams::new().hash_into(b"msg", &mut via_params).unwrap();
 
-      let mut direct = vec![0u8; nn as usize];
-      Blake2b::digest_into(nn, b"msg", &mut direct);
+      let mut direct = vec![0u8; nn];
+      Blake2b::digest_into(b"msg", &mut direct).unwrap();
       assert_eq!(via_params, direct);
     }
   }
 
   #[test]
-  #[should_panic(expected = "Blake2b output length must be 1-64")]
   fn params_hash_into_rejects_wrapping_output_length() {
     let mut out = vec![0u8; 256];
-    Blake2bParams::new().hash_into(b"msg", &mut out);
+    assert_eq!(
+      Blake2bParams::new().hash_into(b"msg", &mut out),
+      Err(Blake2Error::InvalidOutputLength)
+    );
   }
 
   #[test]
-  #[should_panic]
-  fn variable_output_zero_panics() {
-    let _ = Blake2b::new(0);
+  fn variable_output_zero_is_rejected() {
+    assert_eq!(Blake2b::new(0).unwrap_err(), Blake2Error::InvalidOutputLength);
   }
 
   #[test]
-  #[should_panic]
-  fn variable_output_over_64_panics() {
-    let _ = Blake2b::new(65);
+  fn variable_output_over_64_is_rejected() {
+    assert_eq!(Blake2b::new(65).unwrap_err(), Blake2Error::InvalidOutputLength);
   }
 
   #[test]
-  #[should_panic]
-  fn variable_output_mismatch_slice_panics() {
-    let mut out = [0u8; 20];
-    Blake2b::digest_into(32, b"x", &mut out);
+  fn variable_output_empty_slice_is_rejected() {
+    assert_eq!(
+      Blake2b::digest_into(b"x", &mut []),
+      Err(Blake2Error::InvalidOutputLength)
+    );
   }
 
   #[test]
-  #[should_panic]
-  fn variable_output_finalize_wrong_len_panics() {
-    let h = Blake2b::new(32);
+  fn variable_output_finalize_wrong_len_is_rejected() {
+    let h = Blake2b::new(32).unwrap();
     let mut out = [0u8; 16];
-    h.finalize_into(&mut out);
-  }
-
-  #[test]
-  #[should_panic]
-  fn variable_output_keyed_empty_key_panics() {
-    let _ = Blake2b::new_keyed(32, b"");
+    assert_eq!(h.finalize_into(&mut out), Err(Blake2Error::OutputLengthMismatch));
   }
 
   // ── Edge cases ────────────────────────────────────────────────────────
@@ -1719,15 +1765,13 @@ mod tests {
   }
 
   #[test]
-  #[should_panic]
-  fn keyed_empty_key_panics() {
-    let _ = Blake2b256::new_keyed(b"");
+  fn keyed_empty_key_is_rejected() {
+    assert_eq!(Blake2bKey::new(b"").unwrap_err(), Blake2Error::InvalidKeyLength);
   }
 
   #[test]
-  #[should_panic]
-  fn keyed_overlength_key_panics() {
-    let _ = Blake2b256::new_keyed(&[0u8; 65]);
+  fn keyed_overlength_key_is_rejected() {
+    assert_eq!(Blake2bKey::new(&[0u8; 65]).unwrap_err(), Blake2Error::InvalidKeyLength);
   }
 
   // ── Finalize is non-destructive ───────────────────────────────────────
@@ -1762,6 +1806,7 @@ mod tests {
   fn params_key_matches_keyed_digest() {
     // Empty salt + empty personal + key should equal keyed_digest.
     let key = b"secret-key";
+    let key = validated_key(key);
     let plain = Blake2b256::keyed_digest(key, b"hello");
     let via_params = Blake2bParams::new().key(key).hash_256(b"hello");
     assert_eq!(plain, via_params);
@@ -1769,8 +1814,8 @@ mod tests {
 
   #[test]
   fn params_salt_changes_output() {
-    let a = Blake2bParams::new().salt(b"salt-a").hash_256(b"msg");
-    let b = Blake2bParams::new().salt(b"salt-b").hash_256(b"msg");
+    let a = Blake2bParams::new().salt([b'a'; 16]).hash_256(b"msg");
+    let b = Blake2bParams::new().salt([b'b'; 16]).hash_256(b"msg");
     let plain = Blake2b256::digest(b"msg");
     assert_ne!(a, b);
     assert_ne!(a, plain);
@@ -1779,8 +1824,8 @@ mod tests {
 
   #[test]
   fn params_personal_changes_output() {
-    let a = Blake2bParams::new().personal(b"ctx-a").hash_256(b"msg");
-    let b = Blake2bParams::new().personal(b"ctx-b").hash_256(b"msg");
+    let a = Blake2bParams::new().personal([b'a'; 16]).hash_256(b"msg");
+    let b = Blake2bParams::new().personal([b'b'; 16]).hash_256(b"msg");
     let plain = Blake2b256::digest(b"msg");
     assert_ne!(a, b);
     assert_ne!(a, plain);
@@ -1792,12 +1837,12 @@ mod tests {
     // Swapping which field carries the same bytes must change the output,
     // proving salt and personal XOR into different IV words.
     let both_a = Blake2bParams::new()
-      .salt(b"AAAAAAAAAAAAAAAA")
-      .personal(b"BBBBBBBBBBBBBBBB")
+      .salt(*b"AAAAAAAAAAAAAAAA")
+      .personal(*b"BBBBBBBBBBBBBBBB")
       .hash_256(b"msg");
     let swapped = Blake2bParams::new()
-      .salt(b"BBBBBBBBBBBBBBBB")
-      .personal(b"AAAAAAAAAAAAAAAA")
+      .salt(*b"BBBBBBBBBBBBBBBB")
+      .personal(*b"AAAAAAAAAAAAAAAA")
       .hash_256(b"msg");
     assert_ne!(both_a, swapped);
   }
@@ -1805,21 +1850,24 @@ mod tests {
   #[test]
   fn params_stable_under_repeat() {
     let a = Blake2bParams::new()
-      .key(b"k")
-      .salt(b"s")
-      .personal(b"p")
+      .key(validated_key(b"k"))
+      .salt([b's'; 16])
+      .personal([b'p'; 16])
       .hash_256(b"data");
     let b = Blake2bParams::new()
-      .key(b"k")
-      .salt(b"s")
-      .personal(b"p")
+      .key(validated_key(b"k"))
+      .salt([b's'; 16])
+      .personal([b'p'; 16])
       .hash_256(b"data");
     assert_eq!(a, b);
   }
 
   #[test]
   fn params_streaming_matches_oneshot() {
-    let params = Blake2bParams::new().key(b"k").salt(b"s").personal(b"p");
+    let params = Blake2bParams::new()
+      .key(validated_key(b"k"))
+      .salt([b's'; 16])
+      .personal([b'p'; 16]);
     let oneshot = params.hash_256(b"hello world");
 
     let mut h = params.build_256();
@@ -1831,18 +1879,18 @@ mod tests {
   }
 
   #[test]
-  fn params_short_salt_is_zero_padded() {
-    // Short salt zero-padded should match explicit zero-padded 16-byte salt.
-    let short = Blake2bParams::new().salt(b"abc").hash_256(b"msg");
+  fn params_exact_salt_is_preserved() {
     let mut padded = [0u8; 16];
     padded[..3].copy_from_slice(b"abc");
-    let full = Blake2bParams::new().salt(&padded).hash_256(b"msg");
-    assert_eq!(short, full);
+    let with_salt = Blake2bParams::new().salt(padded).hash_256(b"msg");
+    assert_ne!(with_salt, Blake2bParams::new().hash_256(b"msg"));
   }
 
   #[test]
   fn params_reset_preserves_salt_and_personal() {
-    let params = Blake2bParams::new().salt(b"salt").personal(b"personal");
+    let params = Blake2bParams::new()
+      .salt(*b"salt\0\0\0\0\0\0\0\0\0\0\0\0")
+      .personal(*b"personal\0\0\0\0\0\0\0\0");
     let mut h = params.build_256();
     h.update(b"first");
     let _ = h.finalize();
@@ -1853,24 +1901,6 @@ mod tests {
 
     let expected = params.hash_256(b"hello world");
     assert_eq!(after_reset, expected);
-  }
-
-  #[test]
-  #[should_panic]
-  fn params_overlong_salt_panics() {
-    let _ = Blake2bParams::new().salt(&[0u8; 17]);
-  }
-
-  #[test]
-  #[should_panic]
-  fn params_overlong_personal_panics() {
-    let _ = Blake2bParams::new().personal(&[0u8; 17]);
-  }
-
-  #[test]
-  #[should_panic]
-  fn params_overlong_key_panics() {
-    let _ = Blake2bParams::new().key(&[0u8; 65]);
   }
 
   // ── Per-kernel oracle tests ───────────────────────────────────────────

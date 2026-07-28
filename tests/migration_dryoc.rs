@@ -5,7 +5,7 @@ use dryoc::classic::{
   crypto_generichash::crypto_generichash,
   crypto_sign::{crypto_sign_detached, crypto_sign_seed_keypair, crypto_sign_verify_detached},
 };
-use rscrypto::{Blake2b256, Blake2b512, Ed25519SecretKey, X25519SecretKey};
+use rscrypto::{Blake2b256, Blake2b512, Blake2bKey, Ed25519SecretKey, X25519SecretKey};
 
 const DATA: &[u8] = b"dryoc migration equivalence data";
 const KEY_32: [u8; 32] = [0x42; 32];
@@ -23,11 +23,17 @@ fn test_dryoc_blake2b_migration_examples_are_byte_equivalent() {
 
   let mut dryoc_keyed_b256 = [0u8; 32];
   crypto_generichash(&mut dryoc_keyed_b256, DATA, Some(&KEY_32)).unwrap();
-  assert_eq!(Blake2b256::keyed_digest(&KEY_32, DATA), dryoc_keyed_b256);
+  assert_eq!(
+    Blake2b256::keyed_digest(Blake2bKey::new(&KEY_32).unwrap(), DATA),
+    dryoc_keyed_b256
+  );
 
   let mut dryoc_keyed_b512 = [0u8; 64];
   crypto_generichash(&mut dryoc_keyed_b512, DATA, Some(&KEY_64)).unwrap();
-  assert_eq!(Blake2b512::keyed_digest(&KEY_64, DATA), dryoc_keyed_b512);
+  assert_eq!(
+    Blake2b512::keyed_digest(Blake2bKey::new(&KEY_64).unwrap(), DATA),
+    dryoc_keyed_b512
+  );
 }
 
 #[test]

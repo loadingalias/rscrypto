@@ -10,7 +10,7 @@ Evidence: `tests/ascon_aead_oracle.rs`.
 | | Before (`ascon-aead` 0.6.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
 | Cargo dep | `ascon-aead = "0.6"` | `rscrypto = { version = "0.7.8", features = ["ascon-aead"] }` |
-| Import | `use ascon_aead::{AsconAead128, Key, Nonce, aead::{Aead, KeyInit, Payload}};` | `use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::Nonce128};` |
+| Import | `use ascon_aead::{AsconAead128, Key, Nonce, aead::{Aead, KeyInit, Payload}};` | `use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::{Nonce128, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
 ## Cargo.toml
@@ -52,7 +52,10 @@ let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
 
 ```rust
 // After
-use rscrypto::{Aead, AsconAead128, AsconAead128Key, aead::Nonce128};
+use rscrypto::{
+  Aead, AsconAead128, AsconAead128Key,
+  aead::{Nonce128, expert::AeadWithNonce},
+};
 
 let key = AsconAead128Key::from_bytes([0u8; 16]);
 let cipher = AsconAead128::new(&key);
@@ -60,6 +63,9 @@ let nonce = Nonce128::from_bytes([0u8; 16]);
 let mut ct = vec![0u8; plaintext.len() + 16];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
+
+The expert trait import preserves an existing caller-nonce protocol. Prefer
+`seal_random` when the protocol does not already define nonce derivation.
 
 ### Combined decrypt
 

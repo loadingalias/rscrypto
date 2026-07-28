@@ -257,8 +257,8 @@ mod macros;
 // Internal modules (not published as separate crates)
 // `hex` is an internal utility module for public byte newtypes that expose
 // hex formatting, parsing, or explicit secret display.
-// Public re-exports of `DisplaySecret` / `InvalidHexError` stay gated to the
-// features that surface them in the public API.
+// Public re-exports of `expert::DisplaySecret` / `InvalidHexError` stay gated
+// to the features that surface them in the public API.
 #[cfg(any(
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
@@ -380,27 +380,10 @@ pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 pub use auth::HkdfOutputLengthError;
 #[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
 pub use auth::PasswordStatus;
-#[cfg(all(feature = "diag", feature = "ed25519"))]
-pub use auth::diag_ed25519_select_basepoint_cached_limb_digest;
-#[cfg(all(
-  feature = "diag",
-  feature = "ed25519",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(feature = "portable-only"),
-  not(miri)
-))]
-pub use auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest;
 #[cfg(feature = "argon2")]
 pub use auth::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
 pub use auth::{Argon2VerificationLimits, Argon2idPassword};
-#[cfg(all(feature = "diag", feature = "ed25519"))]
-pub use auth::{
-  DiagEd25519VerifyScalars, diag_ed25519_verify_challenge_reduce_digest,
-  diag_ed25519_verify_portable_double_scalar_digest, diag_ed25519_verify_public_decode_digest,
-  diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
-};
 #[cfg(any(feature = "ecdsa-p256", feature = "ecdsa-p384"))]
 pub use auth::{EcdsaError, EcdsaKeyGenerationError};
 #[cfg(feature = "ecdsa-p256")]
@@ -446,65 +429,6 @@ pub use auth::{Scrypt, ScryptError, ScryptParams};
 pub use auth::{ScryptPassword, ScryptVerificationLimits};
 #[cfg(feature = "x25519")]
 pub use auth::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
-#[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
-pub use auth::{
-  diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
-  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
-  diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest, diag_ecdsa_p256_order_mul_fixed_r_limb_digest,
-  diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
-  diag_ecdsa_p256_select_signing_generator_affine_limb_digest,
-};
-#[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
-pub use auth::{
-  diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
-  diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
-  diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
-  diag_ecdsa_p384_reduce_wide_order_limb_digest, diag_ecdsa_p384_scalar_finish_limb_digest,
-  diag_ecdsa_p384_select_signing_generator_affine_limb_digest,
-};
-#[cfg(all(feature = "diag", feature = "ed25519", target_arch = "x86_64"))]
-pub use auth::{
-  diag_ed25519_select_basepoint_cached_avx2_limb_digest, diag_ed25519_select_basepoint_cached_ifma_limb_digest,
-};
-#[cfg(all(feature = "diag", feature = "hkdf"))]
-pub use auth::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portable, diag_hkdf_sha512_derive_portable};
-#[cfg(all(feature = "diag", feature = "hmac"))]
-pub use auth::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
-#[cfg(all(
-  feature = "diag",
-  feature = "ml-kem",
-  target_arch = "aarch64",
-  any(target_os = "macos", target_os = "linux"),
-  not(miri),
-  not(feature = "portable-only")
-))]
-pub use auth::{
-  diag_mlkem_aarch64_multiply_ntts_add_assign_asm_digest, diag_mlkem_aarch64_multiply_ntts_add_assign_asm_input_digest,
-  diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_digest,
-  diag_mlkem768_aarch64_multiply_ntts_accumulate_asm_input_digest,
-  diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_digest,
-  diag_mlkem1024_aarch64_multiply_ntts_accumulate_asm_input_digest,
-};
-#[cfg(all(feature = "diag", feature = "ml-kem"))]
-pub use auth::{
-  diag_mlkem_compress_decompress_values_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
-  diag_mlkem_inverse_ntt_montgomery_product_add_assign_input_digest,
-  diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
-  diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
-  diag_mlkem512_keygen_secret_noise_digest, diag_mlkem512_multiply_ntts_accumulate_digest,
-  diag_mlkem512_multiply_ntts_accumulate_input_digest, diag_mlkem768_keygen_secret_noise_digest,
-  diag_mlkem768_multiply_ntts_accumulate_digest, diag_mlkem1024_keygen_secret_noise_digest,
-  diag_mlkem1024_multiply_ntts_accumulate_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
-};
-#[cfg(all(feature = "diag", feature = "pbkdf2"))]
-pub use auth::{diag_pbkdf2_sha256_verify_portable, diag_pbkdf2_sha512_verify_portable};
-#[cfg(all(feature = "rsa", feature = "diag"))]
-pub use auth::{
-  diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_select_window_power_4,
-  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
-};
-#[cfg(all(feature = "diag", feature = "x25519"))]
-pub use backend::curve25519::diag_curve25519_conditional_swap;
 #[cfg(feature = "crc24")]
 pub use checksum::Crc24OpenPgp;
 #[cfg(feature = "crc16")]
@@ -513,15 +437,17 @@ pub use checksum::{Crc16Ccitt, Crc16Ibm};
 pub use checksum::{Crc32, Crc32C};
 #[cfg(feature = "crc64")]
 pub use checksum::{Crc64, Crc64Nvme};
+#[cfg(any(feature = "blake2b", feature = "blake2s"))]
+pub use hashes::crypto::Blake2Error;
 // Hash re-exports.
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::ascon::AsconCxofCustomizationError;
 #[cfg(feature = "ascon-hash")]
 pub use hashes::crypto::{AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader};
 #[cfg(feature = "blake2b")]
-pub use hashes::crypto::{Blake2b, Blake2b256, Blake2b512, Blake2bParams};
+pub use hashes::crypto::{Blake2b, Blake2b256, Blake2b512, Blake2bKey, Blake2bParams};
 #[cfg(feature = "blake2s")]
-pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sParams};
+pub use hashes::crypto::{Blake2s128, Blake2s256, Blake2sKey, Blake2sParams};
 #[cfg(feature = "blake3")]
 pub use hashes::crypto::{Blake3, Blake3KeyedHash, Blake3XofReader};
 #[cfg(feature = "sha3")]
@@ -551,7 +477,7 @@ pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
   feature = "ml-kem",
   feature = "x25519"
 ))]
-pub use hex::{DisplaySecret, InvalidHexError};
+pub use hex::InvalidHexError;
 pub use secret::SecretBytes;
 #[cfg(feature = "alloc")]
 pub use secret::SecretVec;
@@ -577,6 +503,26 @@ pub use traits::{Checksum, ChecksumCombine, Kem, Mac, TrySigner, TrySignerInto, 
   feature = "rapidhash"
 ))]
 pub use traits::{Digest, FastHash, Xof};
+
+/// Explicitly dangerous capabilities that normal application code does not need.
+///
+/// Their placement is an intentional opt-in, not an additional runtime layer.
+pub mod expert {
+  #[cfg(any(
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "chacha20poly1305",
+    feature = "xchacha20poly1305",
+    feature = "aegis256",
+    feature = "ascon-aead",
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519"
+  ))]
+  pub use crate::hex::DisplaySecret;
+}
 
 /// Trait-first imports for rscrypto user code.
 ///
@@ -678,6 +624,10 @@ use rscrypto::platform_describe;
 use rscrypto::DigestReader;
 ```
 
+```compile_fail
+use rscrypto::diag_hmac_sha256_verify_portable;
+```
+
 ```rust
 use rscrypto::checksum::config::Crc32Config;
 use rscrypto::checksum::buffered::BufferedCrc32C;
@@ -704,6 +654,59 @@ let _ = core::any::TypeId::of::<RapidHash64>();
 ```
 "#]
 pub struct __RootSurfaceAudit;
+
+#[cfg(all(doctest, feature = "full", feature = "getrandom"))]
+#[doc(hidden)]
+#[doc = r#"
+```compile_fail
+use rscrypto::DisplaySecret;
+```
+
+```compile_fail
+use rscrypto::platform::OverrideError;
+```
+
+```compile_fail
+use rscrypto::platform::try_set_override;
+```
+
+```compile_fail
+use rscrypto::aead::{ChaCha20Poly1305Key, Nonce96};
+
+let _ = ChaCha20Poly1305Key::random();
+let _ = Nonce96::random();
+```
+
+```compile_fail
+use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+
+let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0u8; 32]));
+let nonce = Nonce96::from_bytes([0u8; 12]);
+let mut out = [0u8; 16];
+cipher.encrypt(&nonce, b"", b"", &mut out)?;
+```
+
+```compile_fail
+let _ = rscrypto::aead::__SealToken(());
+```
+
+```rust
+use rscrypto::{
+  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
+
+let cipher = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes([0u8; 32]));
+let nonce = Nonce96::from_bytes([0u8; 12]);
+let mut out = [0u8; 16];
+cipher.encrypt(&nonce, b"", b"", &mut out)?;
+let display_key = ChaCha20Poly1305Key::from_bytes([0u8; 32]);
+let _: rscrypto::expert::DisplaySecret<'_> = display_key.display_secret();
+let _: Option<rscrypto::platform::expert::OverrideError> = None;
+# Ok::<(), rscrypto::aead::SealError>(())
+```
+"#]
+pub struct __MisuseResistantSurfaceAudit;
 
 #[cfg(all(doctest, feature = "full"))]
 #[doc(hidden)]
@@ -1234,7 +1237,7 @@ mod send_sync_assertions {
     assert_send_sync::<platform::Caps>();
     assert_send_sync::<platform::Arch>();
     assert_send_sync::<platform::Detected>();
-    assert_send_sync::<platform::OverrideError>();
+    assert_send_sync::<platform::expert::OverrideError>();
     assert_send_sync::<platform::Description>();
   }
 
@@ -1358,14 +1361,14 @@ mod send_sync_assertions {
     assert_clone::<platform::Caps>();
     assert_clone::<platform::Arch>();
     assert_clone::<platform::Detected>();
-    assert_clone::<platform::OverrideError>();
+    assert_clone::<platform::expert::OverrideError>();
     assert_clone::<platform::Description>();
     assert_clone::<traits::error::VerificationError>();
 
     assert_debug::<platform::Caps>();
     assert_debug::<platform::Arch>();
     assert_debug::<platform::Detected>();
-    assert_debug::<platform::OverrideError>();
+    assert_debug::<platform::expert::OverrideError>();
     assert_debug::<platform::Description>();
     assert_debug::<traits::error::VerificationError>();
   }

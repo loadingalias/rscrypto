@@ -17,7 +17,10 @@ use aes_gcm::{
   Aes128Gcm as Oracle,
   aead::{AeadInOut, KeyInit, array::Array},
 };
-use rscrypto::{Aes128Gcm, Aes128GcmKey, Aes128GcmTag, aead::Nonce96};
+use rscrypto::{
+  Aes128Gcm, Aes128GcmKey, Aes128GcmTag,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
 
 fn deterministic_bytes(seed: u8, len: usize) -> Vec<u8> {
   let mut out = Vec::with_capacity(len);

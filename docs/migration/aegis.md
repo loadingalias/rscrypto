@@ -10,7 +10,7 @@ Evidence: `tests/aegis256_oracle.rs` and `tests/aead_wycheproof.rs`.
 | | Before (`aegis` 0.9.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
 | Cargo dep | `aegis = "0.9"` | `rscrypto = { version = "0.7.8", features = ["aegis256"] }` |
-| Import | `use aegis::aegis256::Aegis256;` | `use rscrypto::{Aead, Aegis256, Aegis256Key, aead::Nonce256};` |
+| Import | `use aegis::aegis256::Aegis256;` | `use rscrypto::{Aead, Aegis256, Aegis256Key, aead::{Nonce256, expert::AeadWithNonce}};` |
 | Encrypt | `Aegis256::<16>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; 16])` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
 ## Cargo.toml
@@ -52,7 +52,10 @@ let (ciphertext, tag) = cipher.encrypt(plaintext, aad);     // separate (Vec<u8>
 
 ```rust
 // After
-use rscrypto::{Aead, Aegis256, Aegis256Key, aead::Nonce256};
+use rscrypto::{
+  Aead, Aegis256, Aegis256Key,
+  aead::{Nonce256, expert::AeadWithNonce},
+};
 
 let key = Aegis256Key::from_bytes([0u8; 32]);
 let cipher = Aegis256::new(&key);                            // key at construction
@@ -60,6 +63,9 @@ let nonce = Nonce256::from_bytes([0u8; 32]);                 // nonce at call
 let mut ct = vec![0u8; plaintext.len() + 16];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;            // appended tag
 ```
+
+The expert trait import is deliberate: this recipe preserves the upstream
+caller-supplied nonce. Prefer `seal_random` for new protocols.
 
 Three structural differences:
 

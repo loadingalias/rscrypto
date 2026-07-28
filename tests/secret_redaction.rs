@@ -136,7 +136,7 @@ fn keyed_hash_debug_snapshots_are_redacted() {
 
   #[cfg(feature = "blake2s")]
   {
-    let params = rscrypto::Blake2sParams::new().key(&KEY);
+    let params = rscrypto::Blake2sParams::new().key(rscrypto::Blake2sKey::new(&KEY).unwrap());
     assert_debug_snapshot(
       &params,
       "Blake2sParams { key_len: 32, salt: [0, 0, 0, 0, 0, 0, 0, 0], personal: [0, 0, 0, 0, 0, 0, 0, 0] }",
@@ -147,7 +147,7 @@ fn keyed_hash_debug_snapshots_are_redacted() {
 
   #[cfg(feature = "blake2b")]
   {
-    let params = rscrypto::Blake2bParams::new().key(&KEY);
+    let params = rscrypto::Blake2bParams::new().key(rscrypto::Blake2bKey::new(&KEY).unwrap());
     assert_debug_snapshot(
       &params,
       "Blake2bParams { key_len: 32, salt: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], personal: [0, 0, 0, 0, 0, \
@@ -155,7 +155,7 @@ fn keyed_hash_debug_snapshots_are_redacted() {
     );
     assert_debug_snapshot(&params.build_256(), "Blake2b256 { .. }");
     assert_debug_snapshot(&params.build_512(), "Blake2b512 { .. }");
-    assert_debug_snapshot(&params.build(32), "Blake2b { output_len: 32, .. }");
+    assert_debug_snapshot(&params.build(32).unwrap(), "Blake2b { output_len: 32, .. }");
   }
 
   #[cfg(feature = "blake3")]

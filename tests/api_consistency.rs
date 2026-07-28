@@ -8,6 +8,8 @@ use rscrypto::EcdsaKeyGenerationError;
 #[cfg(any(feature = "hmac", feature = "hmac-sha3"))]
 use rscrypto::Mac;
 #[cfg(feature = "aead")]
+use rscrypto::aead::expert::AeadWithNonce;
+#[cfg(feature = "aead")]
 use rscrypto::{
   Aead, Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
   Aes256GcmSiv, Aes256GcmSivKey, AsconAead128, AsconAead128Key, ChaCha20Poly1305, ChaCha20Poly1305Key,

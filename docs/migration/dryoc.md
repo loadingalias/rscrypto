@@ -52,8 +52,9 @@ dryoc::classic::crypto_generichash::crypto_generichash(&mut tag, data, Some(key)
 
 ```rust
 // After
-use rscrypto::Blake2b256;
+use rscrypto::{Blake2b256, Blake2bKey};
 
+let key = Blake2bKey::new(key)?;
 let tag = Blake2b256::keyed_digest(key, data);
 ```
 

@@ -16,7 +16,7 @@
 /// # Examples
 ///
 /// ```
-/// use rscrypto::platform::detect::caps_static;
+/// use rscrypto::platform::caps_static;
 ///
 /// // Evaluates at compile time—no runtime cost
 /// const CAPS: rscrypto::platform::Caps = caps_static();
@@ -41,7 +41,7 @@
 /// ```
 /// # #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 /// # fn example() {
-/// use rscrypto::platform::{caps::x86, detect::caps_static};
+/// use rscrypto::platform::{caps::x86, caps_static};
 ///
 /// const CAPS: rscrypto::platform::Caps = caps_static();
 /// // AVX-512 features are detected at compile time

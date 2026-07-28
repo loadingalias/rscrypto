@@ -2,7 +2,7 @@
 
 mod support;
 
-use rscrypto::{Blake2b512, Blake2s256, Digest};
+use rscrypto::{Blake2b512, Blake2bKey, Blake2s256, Blake2sKey, Digest};
 use support::blobby_compat::Blob3Iterator;
 
 fn run_blake2_vectors<const OUT: usize>(
@@ -48,14 +48,14 @@ fn blake2s_official_vectors() {
       if key.is_empty() {
         Blake2s256::digest(input)
       } else {
-        Blake2s256::keyed_digest(key, input)
+        Blake2s256::keyed_digest(Blake2sKey::new(key).unwrap(), input)
       }
     },
     |input, key| {
       let mut hasher = if key.is_empty() {
         Blake2s256::new()
       } else {
-        Blake2s256::new_keyed(key)
+        Blake2s256::new_keyed(Blake2sKey::new(key).unwrap())
       };
       for chunk in input.chunks(11) {
         hasher.update(chunk);
@@ -75,14 +75,14 @@ fn blake2b_official_vectors() {
       if key.is_empty() {
         Blake2b512::digest(input)
       } else {
-        Blake2b512::keyed_digest(key, input)
+        Blake2b512::keyed_digest(Blake2bKey::new(key).unwrap(), input)
       }
     },
     |input, key| {
       let mut hasher = if key.is_empty() {
         Blake2b512::new()
       } else {
-        Blake2b512::new_keyed(key)
+        Blake2b512::new_keyed(Blake2bKey::new(key).unwrap())
       };
       for chunk in input.chunks(17) {
         hasher.update(chunk);
