@@ -31,7 +31,7 @@ fn migration_docs_do_not_delegate_accuracy_to_a_validation_index() {
   let root = migration_root();
   let guide_count = migration_guides(&root).len();
   assert_eq!(
-    guide_count, 35,
+    guide_count, 36,
     "migration guide count drifted; update docs/migration/README.md"
   );
   assert!(

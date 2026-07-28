@@ -18,7 +18,10 @@ use aes_gcm_siv::{
   Aes128GcmSiv as Oracle, KeyInit,
   aead::{AeadInPlace, generic_array::GenericArray},
 };
-use rscrypto::{Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag, aead::Nonce96};
+use rscrypto::{
+  Aes128GcmSiv, Aes128GcmSivKey, Aes128GcmSivTag,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
 
 fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 12], aad: &[u8], plaintext: &[u8]) {
   let key = Aes128GcmSivKey::from_bytes(*key_bytes);

@@ -26,6 +26,7 @@
 use core::{fmt, marker::PhantomData};
 
 use super::{Aes128Gcm, Aes128GcmTag, Aes256Gcm, Aes256GcmTag, Nonce96, SealError};
+use crate::aead::expert::AeadWithNonce;
 
 const FIXED_PREFIX_LEN: usize = 4;
 const COUNTER_LEN: usize = 8;

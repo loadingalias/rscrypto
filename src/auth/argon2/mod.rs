@@ -871,13 +871,12 @@ fn h_prime(input_parts: &[&[u8]], out: &mut [u8]) {
     .to_le_bytes();
 
   if out_len <= 64 {
-    let mut hasher =
-      Blake2b::new(u8::try_from(out_len).unwrap_or_else(|_| unreachable!("guarded by `out_len <= 64` above")));
+    let mut hasher = Blake2b::new_validated(out_len);
     hasher.update(&len_le);
     for part in input_parts {
       hasher.update(part);
     }
-    hasher.finalize_into(out);
+    hasher.finalize_into_validated(out);
     return;
   }
 
@@ -906,12 +905,9 @@ fn h_prime(input_parts: &[&[u8]], out: &mut [u8]) {
   // V_{r+1} = Blake2b(V_r, out_len − 32·r)
   let tail_off = r.strict_mul(32);
   let tail_len = out_len.strict_sub(tail_off);
-  let mut hasher = Blake2b::new(
-    u8::try_from(tail_len)
-      .unwrap_or_else(|_| unreachable!("tail_len ∈ (32, 64] by construction (out_len > 64, r = ⌈out_len/32⌉ - 2)")),
-  );
+  let mut hasher = Blake2b::new_validated(tail_len);
   hasher.update(&v_prev);
-  hasher.finalize_into(&mut out[tail_off..]);
+  hasher.finalize_into_validated(&mut out[tail_off..]);
 
   ct::zeroize(&mut v_prev);
 }

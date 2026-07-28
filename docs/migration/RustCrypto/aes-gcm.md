@@ -12,7 +12,7 @@ Evidence: `tests/aes128gcm_oracle.rs`, `tests/aes256gcm_oracle.rs`, and `tests/a
 | | Before (`aes-gcm` 0.11.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
 | Cargo dep | `aes-gcm = "0.11"` | `rscrypto = { version = "0.7.8", features = ["aes-gcm"] }` |
-| Import | `use aes_gcm::{Aes256Gcm, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::Nonce96};` |
+| Import | `use aes_gcm::{Aes256Gcm, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::{Nonce96, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` (returns `Vec<u8>`) | `cipher.encrypt(&nonce, aad, msg, &mut out)?` (writes into caller buffer) |
 
 ## Cargo.toml
@@ -59,7 +59,10 @@ let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
 
 ```rust
 // After
-use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::Nonce96};
+use rscrypto::{
+  Aead, Aes256Gcm, Aes256GcmKey,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
 
 let key = Aes256GcmKey::from_bytes([0u8; 32]);
 let cipher = Aes256Gcm::new(&key);
@@ -70,6 +73,9 @@ cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
 The output layout is identical (`[ciphertext || tag]`), so on-the-wire compatibility is preserved. The shape change is who owns the buffer: `aes-gcm` allocates a `Vec`, rscrypto writes into a buffer you pre-sized.
+The expert trait import is required because this migration preserves the
+upstream caller-supplied nonce. New protocols should use `seal_random` or
+`NonceCounter<Aes256Gcm>` so nonce issuance is not a normal call-site choice.
 
 ### Combined decrypt
 
@@ -107,7 +113,7 @@ let tag = cipher.encrypt_in_place(&nonce, aad, &mut buffer)?;
 // buffer is now the ciphertext; tag: Aes256GcmTag (Copy).
 ```
 
-`encrypt_in_place` is the canonical name in rscrypto; `encrypt_in_place_detached` is also available as an alias matching RustCrypto's naming.
+Both names require the explicit `AeadWithNonce` import.
 
 ### Detached (in-place) decrypt
 

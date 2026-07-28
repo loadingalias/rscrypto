@@ -320,42 +320,11 @@ macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {};
 }
 
-/// Generate a `random()` constructor that fills `Self::LENGTH` bytes from
-/// the operating system CSPRNG via `getrandom`.
-///
-/// Compatibility policy: keep `random()` / `try_random()` for the first
-/// release that exposes newer key-generation names; decide any actual
-/// deprecation only after that release.
-///
-/// Invoke inside an `impl` block for a tuple-struct with `LENGTH` and
-/// `from_bytes`.
+/// Generate a fallible constructor that fills `Self::LENGTH` bytes from the
+/// operating system CSPRNG via `getrandom`.
 macro_rules! impl_getrandom {
   () => {
-    /// Generate a random instance using the operating system's CSPRNG.
-    ///
-    /// Compatibility name: prefer `try_generate()` where the concrete key type
-    /// exposes it. This method remains supported in the release that introduces
-    /// the newer generation names.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the platform entropy source is unavailable.
-    #[cfg(feature = "getrandom")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-    #[inline]
-    #[must_use]
-    pub fn random() -> Self {
-      match Self::try_random() {
-        Ok(value) => value,
-        Err(e) => panic!("getrandom failed: {e}"),
-      }
-    }
-
     /// Try to generate a random instance from the platform entropy source.
-    ///
-    /// Compatibility name: prefer `try_generate()` where the concrete key type
-    /// exposes it. This method remains supported in the release that introduces
-    /// the newer generation names.
     ///
     /// # Errors
     ///

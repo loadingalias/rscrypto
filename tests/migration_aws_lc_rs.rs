@@ -24,7 +24,7 @@ use aws_lc_rs::{
 use rscrypto::{
   Aes256Gcm, Aes256GcmKey, ChaCha20Poly1305, ChaCha20Poly1305Key, Ed25519SecretKey, HkdfSha256, HmacSha256,
   Pbkdf2Sha256, RsaPkcs1v15Profile, RsaPssProfile, RsaPublicKey, Sha256, X25519PublicKey, X25519SecretKey,
-  aead::Nonce96,
+  aead::{Nonce96, expert::AeadWithNonce},
 };
 
 const DATA: &[u8] = b"migration equivalence data";

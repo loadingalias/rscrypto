@@ -12,6 +12,17 @@ use core::fmt::Debug;
 use crate::aead::RandomSealError;
 use crate::aead::{AeadBufferError, AeadNonce, OpenError, SealError};
 
+/// Zero-sized capability proving that a call came through a crate-owned nonce
+/// issuer or the explicit expert extension.
+#[doc(hidden)]
+pub struct SealToken(());
+
+impl SealToken {
+  const fn new() -> Self {
+    Self(())
+  }
+}
+
 /// Authenticated encryption with associated data.
 ///
 /// The in-place methods mutate the payload buffer and return or consume the tag
@@ -68,6 +79,16 @@ pub trait Aead {
   /// [`TAG_SIZE`](Self::TAG_SIZE).
   fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError>;
 
+  /// Internal sealing primitive used by fresh-nonce and expert APIs.
+  #[doc(hidden)]
+  fn __encrypt_in_place_with_nonce(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+    token: SealToken,
+  ) -> Result<Self::Tag, SealError>;
+
   /// Encrypt `plaintext` into `out` as `ciphertext || tag` with a fresh random nonce.
   ///
   /// This is the default one-shot sealing API when the `getrandom` feature is
@@ -84,7 +105,7 @@ pub trait Aead {
   #[inline]
   fn seal_random(&self, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<Self::Nonce, RandomSealError> {
     let nonce = Self::Nonce::try_random()?;
-    self.encrypt(&nonce, aad, plaintext, out)?;
+    AeadWithNonce::encrypt(self, &nonce, aad, plaintext, out)?;
     Ok(nonce)
   }
 
@@ -129,19 +150,9 @@ pub trait Aead {
   #[inline]
   fn seal_random_in_place(&self, aad: &[u8], buffer: &mut [u8]) -> Result<(Self::Nonce, Self::Tag), RandomSealError> {
     let nonce = Self::Nonce::try_random()?;
-    let tag = self.encrypt_in_place(&nonce, aad, buffer)?;
+    let tag = self.__encrypt_in_place_with_nonce(&nonce, aad, buffer, SealToken::new())?;
     Ok((nonce, tag))
   }
-
-  /// Encrypt `buffer` in place with a caller-supplied nonce and return the detached authentication
-  /// tag.
-  ///
-  /// Prefer `seal_random_in_place` when OS
-  /// randomness is available, or a dedicated nonce stream such as
-  /// `NonceCounter` for high-volume AES-GCM.
-  /// Supplying a nonce directly is for protocols that already define nonce
-  /// derivation and for test vectors.
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError>;
 
   /// Decrypt `buffer` in place and verify the detached authentication tag.
   ///
@@ -156,17 +167,6 @@ pub trait Aead {
     buffer: &mut [u8],
     tag: &Self::Tag,
   ) -> Result<(), OpenError>;
-
-  /// Alias for [`encrypt_in_place`](Self::encrypt_in_place).
-  #[inline]
-  fn encrypt_in_place_detached(
-    &self,
-    nonce: &Self::Nonce,
-    aad: &[u8],
-    buffer: &mut [u8],
-  ) -> Result<Self::Tag, SealError> {
-    self.encrypt_in_place(nonce, aad, buffer)
-  }
 
   /// Alias for [`decrypt_in_place`](Self::decrypt_in_place).
   #[inline]
@@ -205,63 +205,6 @@ pub trait Aead {
     }
 
     Ok(ciphertext_and_tag_len.strict_sub(Self::TAG_SIZE))
-  }
-
-  /// Encrypt `plaintext` into `out` as `ciphertext || tag` with a caller-supplied nonce.
-  ///
-  /// Prefer `seal_random` when OS randomness is
-  /// available, or a dedicated nonce stream such as
-  /// `NonceCounter` for high-volume AES-GCM.
-  /// Supplying a nonce directly is for protocols that already define nonce
-  /// derivation and for test vectors.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`SealError`] if `out.len()` does not match `plaintext.len() +
-  /// TAG_SIZE`, that addition overflows, or the input exceeds the algorithm's
-  /// supported length bound.
-  #[inline]
-  fn encrypt(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
-    let expected = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
-    if out.len() != expected {
-      return Err(SealError::buffer());
-    }
-
-    let (ciphertext, tag_out) = out.split_at_mut(plaintext.len());
-    ciphertext.copy_from_slice(plaintext);
-    let tag = match self.encrypt_in_place(nonce, aad, ciphertext) {
-      Ok(tag) => tag,
-      Err(err) => {
-        super::ct::zeroize(out);
-        return Err(err);
-      }
-    };
-    tag_out.copy_from_slice(tag.as_ref());
-    Ok(())
-  }
-
-  /// Allocate `ciphertext || tag` and encrypt `plaintext` into it with a caller-supplied nonce.
-  ///
-  /// Prefer [`encrypt`](Self::encrypt) for allocation-free paths and
-  /// [`seal_random_to_vec`](Self::seal_random_to_vec) when the protocol does
-  /// not derive its own nonce.
-  ///
-  /// # Errors
-  ///
-  /// Returns [`SealError`] if length calculation fails or encryption fails.
-  #[cfg(feature = "alloc")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-  #[inline]
-  fn encrypt_to_vec(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
-    let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
-    let mut out = vec![0u8; len];
-    match self.encrypt(nonce, aad, plaintext, &mut out) {
-      Ok(()) => Ok(out),
-      Err(err) => {
-        super::ct::zeroize(&mut out);
-        Err(err)
-      }
-    }
   }
 
   /// Decrypt a combined `ciphertext || tag` into `out`.
@@ -314,3 +257,82 @@ pub trait Aead {
     }
   }
 }
+
+/// Expert extension for protocols that define their own nonce derivation.
+///
+/// Import this trait explicitly from `rscrypto::aead::expert` only when the
+/// protocol, persistent state, or test vector guarantees nonce uniqueness.
+/// Reusing a nonce with the same key can destroy confidentiality and
+/// authenticity.
+pub trait AeadWithNonce: Aead {
+  /// Encrypt `buffer` in place with a caller-supplied nonce.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`SealError`] if the input exceeds the algorithm's supported
+  /// length bound.
+  #[inline]
+  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+    self.__encrypt_in_place_with_nonce(nonce, aad, buffer, SealToken::new())
+  }
+
+  /// Alias for [`encrypt_in_place`](Self::encrypt_in_place).
+  #[inline]
+  fn encrypt_in_place_detached(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+  ) -> Result<Self::Tag, SealError> {
+    self.encrypt_in_place(nonce, aad, buffer)
+  }
+
+  /// Encrypt `plaintext` into `out` as `ciphertext || tag` with a caller-supplied nonce.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`SealError`] if `out.len()` does not match `plaintext.len() +
+  /// TAG_SIZE`, that addition overflows, or the input exceeds the algorithm's
+  /// supported length bound.
+  #[inline]
+  fn encrypt(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
+    let expected = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
+    if out.len() != expected {
+      return Err(SealError::buffer());
+    }
+
+    let (ciphertext, tag_out) = out.split_at_mut(plaintext.len());
+    ciphertext.copy_from_slice(plaintext);
+    let tag = match self.encrypt_in_place(nonce, aad, ciphertext) {
+      Ok(tag) => tag,
+      Err(err) => {
+        super::ct::zeroize(out);
+        return Err(err);
+      }
+    };
+    tag_out.copy_from_slice(tag.as_ref());
+    Ok(())
+  }
+
+  /// Allocate `ciphertext || tag` and encrypt with a caller-supplied nonce.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`SealError`] if length calculation fails or encryption fails.
+  #[cfg(feature = "alloc")]
+  #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+  #[inline]
+  fn encrypt_to_vec(&self, nonce: &Self::Nonce, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, SealError> {
+    let len = Self::ciphertext_len(plaintext.len()).map_err(SealError::from)?;
+    let mut out = vec![0u8; len];
+    match self.encrypt(nonce, aad, plaintext, &mut out) {
+      Ok(()) => Ok(out),
+      Err(err) => {
+        super::ct::zeroize(&mut out);
+        Err(err)
+      }
+    }
+  }
+}
+
+impl<T: Aead + ?Sized> AeadWithNonce for T {}

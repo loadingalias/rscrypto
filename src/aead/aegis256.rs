@@ -378,12 +378,6 @@ impl Aegis256 {
     <Self as Aead>::tag_from_slice(bytes)
   }
 
-  /// Encrypt `buffer` in place and return the detached authentication tag.
-  #[inline]
-  pub fn encrypt_in_place(&self, nonce: &Nonce256, aad: &[u8], buffer: &mut [u8]) -> Result<Aegis256Tag, SealError> {
-    <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
-  }
-
   /// Decrypt `buffer` in place and verify the detached authentication tag.
   #[inline]
   pub fn decrypt_in_place(
@@ -394,12 +388,6 @@ impl Aegis256 {
     tag: &Aegis256Tag,
   ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
-  }
-
-  /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
-  #[inline]
-  pub fn encrypt(&self, nonce: &Nonce256, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
-    <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
   /// Decrypt a combined `ciphertext || tag` into `out`.
@@ -526,7 +514,13 @@ impl Aead for Aegis256 {
     Ok(Aegis256Tag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+  fn __encrypt_in_place_with_nonce(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+    _token: crate::traits::aead::SealToken,
+  ) -> Result<Self::Tag, SealError> {
     super::seal_bit_lengths(aad.len(), buffer.len())?;
 
     let key = self.key.as_bytes();
@@ -684,6 +678,7 @@ mod tests {
   use std::eprintln;
 
   use super::*;
+  use crate::aead::expert::AeadWithNonce;
 
   #[cfg(not(target_arch = "s390x"))]
   #[inline(always)]

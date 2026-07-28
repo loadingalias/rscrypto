@@ -10,7 +10,7 @@ Evidence: `tests/chacha20poly1305.rs`, `tests/xchacha20poly1305.rs`, and `tests/
 | | Before (`chacha20poly1305` 0.11.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
 | Cargo dep | `chacha20poly1305 = "0.11"` | `rscrypto = { version = "0.7.8", features = ["chacha20poly1305", "xchacha20poly1305"] }` |
-| Import | `use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};` |
+| Import | `use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::{Nonce96, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
 Drop `xchacha20poly1305` from the feature list if you don't use the 192-bit-nonce variant.
@@ -54,7 +54,10 @@ let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
 
 ```rust
 // After
-use rscrypto::{Aead, ChaCha20Poly1305, ChaCha20Poly1305Key, aead::Nonce96};
+use rscrypto::{
+  Aead, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
 
 let key = ChaCha20Poly1305Key::from_bytes([0u8; 32]);
 let cipher = ChaCha20Poly1305::new(&key);
@@ -78,7 +81,10 @@ let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
 
 ```rust
 // After
-use rscrypto::{Aead, XChaCha20Poly1305, XChaCha20Poly1305Key, aead::Nonce192};
+use rscrypto::{
+  Aead, XChaCha20Poly1305, XChaCha20Poly1305Key,
+  aead::{Nonce192, expert::AeadWithNonce},
+};
 
 let key = XChaCha20Poly1305Key::from_bytes([0u8; 32]);
 let cipher = XChaCha20Poly1305::new(&key);
@@ -88,6 +94,8 @@ cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
 The XChaCha variant uses `Nonce192` (24 bytes). That is the only structural change from the IETF-nonce variant.
+The expert trait import is required because these examples preserve an
+existing caller-nonce protocol. Prefer `seal_random` for new protocols.
 
 ### Decrypt + tamper-detection
 
@@ -120,7 +128,9 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
   the deployment must still define a message limit and acceptable error
   probability.
 - **No `Payload`.** Same simplification as `aes-gcm.md`: positional `aad` and `msg`/`buffer` args.
-- **`AeadInPlace` import not needed.** rscrypto exposes both combined and in-place shapes through the single `Aead` trait.
+- **Explicit-nonce sealing is expert-only.** Import `AeadWithNonce` for
+  protocols that already prove nonce uniqueness. Decryption and fresh-random
+  sealing remain on `Aead`.
 - **Failed-open buffer semantics change.** RustCrypto keeps the in-place buffer
   unchanged on error. rscrypto clears it on authentication failure. Combined
   rscrypto decrypt also clears its output buffer on authentication failure.

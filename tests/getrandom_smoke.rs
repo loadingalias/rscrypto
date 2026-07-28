@@ -1,4 +1,4 @@
-//! Smoke tests for `getrandom`-backed `random()` methods.
+//! Smoke tests for `getrandom`-backed fallible constructors.
 //!
 //! Validates that the OS entropy source is reachable and that successive calls
 //! produce distinct output (ruling out an all-zero or constant return).
@@ -10,16 +10,16 @@ macro_rules! random_smoke {
   ($name:ident, $ty:ty) => {
     #[test]
     fn $name() {
-      let a = <$ty>::random();
-      let b = <$ty>::random();
+      let a = <$ty>::try_random().unwrap();
+      let b = <$ty>::try_random().unwrap();
 
       // Must not be all-zero (overwhelmingly unlikely from a CSPRNG).
-      assert!(a.as_bytes().iter().any(|&b| b != 0), "random() returned all zeros");
+      assert!(a.as_bytes().iter().any(|&b| b != 0), "try_random() returned all zeros");
       // Two calls must differ (probability of collision: 2^-256 for 32-byte types).
       assert_ne!(
         a.as_bytes(),
         b.as_bytes(),
-        "two random() calls returned identical output"
+        "two try_random() calls returned identical output"
       );
     }
   };

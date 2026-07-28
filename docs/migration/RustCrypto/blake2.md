@@ -77,7 +77,9 @@ use rscrypto::{Blake2b256, Digest};
 let out: [u8; 32] = Blake2b256::digest(b"123456789");
 ```
 
-For runtime-variable output, use `Blake2b::digest_into(out_len, data, &mut buf)`: see the `Blake2b` rustdoc.
+For runtime-variable output, size the destination and call
+`Blake2b::digest_into(data, &mut buf)?`. The buffer length selects the output
+length and invalid empty or oversized buffers return `Blake2Error`.
 
 ### Streaming
 
@@ -113,17 +115,29 @@ let tag = mac.finalize().into_bytes();             // GenericArray<u8, U64>
 
 ```rust
 // After
-use rscrypto::Blake2b512;
+use rscrypto::{Blake2b512, Blake2bKey};
 let key = [0x42u8; 32];
-let tag: [u8; 64] = Blake2b512::keyed_digest(&key, b"message");
+let key = Blake2bKey::new(&key)?;
+let tag: [u8; 64] = Blake2b512::keyed_digest(key, b"message");
 ```
 
-For streaming keyed mode, use `Blake2b512::new_keyed(&key)`. The MAC type and the hash type are unified: no separate `Blake2bMac` import.
+For streaming keyed mode, use `Blake2b512::new_keyed(key)`. `Blake2bKey::new`
+rejects empty or oversized keys at the caller boundary; the borrowed validated
+key can then be reused without allocation or copying. Omitting the keyed
+constructor selects unkeyed hashing. The MAC type and the hash type are
+unified: no separate `Blake2bMac` import.
 
 ## Notes
 
 - **Generic constants gone.** `Blake2b<U32>` and `Blake2s<U16>` style generics are replaced with named convenience types per output length. `generic-array` is no longer in your dependency tree if rscrypto is your only consumer.
-- **MAC unification.** RustCrypto separates `Blake2bMac` from `Blake2b` because the MAC and the hash use different parameter blocks. rscrypto exposes both modes from the same type via `keyed_digest` / `new_keyed`. Personalisation, salt, and tree-hashing parameters are reachable through `Blake2bParams` / `Blake2sParams`.
+- **MAC unification.** RustCrypto separates `Blake2bMac` from `Blake2b`
+  because the MAC and the hash use different parameter blocks. rscrypto
+  exposes both modes from the same type via `keyed_digest` / `new_keyed`.
+  Personalization and salt are available through `Blake2bParams` /
+  `Blake2sParams`; tree hashing is not exposed.
+- **Exact parameter fields.** `Blake2bParams` accepts `[u8; 16]` salt and
+  personalization fields; `Blake2sParams` accepts `[u8; 8]`. Pad deliberately
+  before the call when a protocol defines a shorter value.
 - **`finalize` consumes vs. borrows.** Same as `sha2` / `sha3`: drop `.clone()`.
 - **`Output<D>` → `[u8; N]`.** Same as `sha2` / `sha3`.
 - **No generic keyed-output comparison.** rscrypto's Blake2 keyed digest

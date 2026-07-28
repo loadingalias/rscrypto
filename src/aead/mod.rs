@@ -43,9 +43,9 @@
 //! # API Conventions
 //!
 //! - Every cipher uses a typed `*Key`, typed nonce wrapper, and typed `*Tag`.
-//! - Combined-buffer helpers use `encrypt` / `decrypt`.
-//! - Allocating combined helpers use `encrypt_to_vec` / `decrypt_to_vec`.
-//! - Detached helpers use `encrypt_in_place` / `decrypt_in_place`.
+//! - Normal sealing uses fresh random nonces or [`NonceCounter`] where available.
+//! - Decryption accepts the nonce transported with the ciphertext.
+//! - Protocol-defined caller-nonce sealing requires an explicit [`expert::AeadWithNonce`] import.
 //! - All AEADs implement the shared [`Aead`] trait with the same constructor and operation names.
 //!
 //! # Error Conventions
@@ -58,6 +58,13 @@ use core::fmt;
 
 pub use crate::traits::Aead;
 use crate::traits::VerificationError;
+#[doc(hidden)]
+pub use crate::traits::aead::SealToken as __SealToken;
+
+/// Explicit-nonce sealing for protocols that prove nonce uniqueness.
+pub mod expert {
+  pub use crate::traits::aead::AeadWithNonce;
+}
 #[cfg(feature = "aegis256")]
 mod aegis256;
 #[cfg(any(
@@ -304,22 +311,6 @@ macro_rules! define_nonce_type {
         let mut bytes = [0u8; $len];
         fill(&mut bytes);
         Self(bytes)
-      }
-
-      /// Generate a random nonce using the operating system's CSPRNG.
-      ///
-      /// # Panics
-      ///
-      /// Panics if the platform entropy source is unavailable.
-      #[cfg(feature = "getrandom")]
-      #[cfg_attr(docsrs, doc(cfg(feature = "getrandom")))]
-      #[inline]
-      #[must_use]
-      pub fn random() -> Self {
-        match Self::try_random() {
-          Ok(value) => value,
-          Err(e) => panic!("getrandom failed: {e}"),
-        }
       }
 
       /// Try to generate a random nonce from the platform entropy source.

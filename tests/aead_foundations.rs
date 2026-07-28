@@ -1,3 +1,5 @@
+#[cfg(feature = "aead")]
+use rscrypto::aead::expert::AeadWithNonce;
 #[cfg(all(feature = "aead", feature = "getrandom"))]
 use rscrypto::aead::{RandomSealError, SealError};
 #[cfg(feature = "aead")]
@@ -35,7 +37,13 @@ impl Aead for DirtyRejectingAead {
     bytes.try_into().map_err(|_| AeadBufferError::new())
   }
 
-  fn encrypt_in_place(&self, _: &Self::Nonce, _: &[u8], _: &mut [u8]) -> Result<Self::Tag, rscrypto::aead::SealError> {
+  fn __encrypt_in_place_with_nonce(
+    &self,
+    _: &Self::Nonce,
+    _: &[u8],
+    _: &mut [u8],
+    _: rscrypto::aead::__SealToken,
+  ) -> Result<Self::Tag, rscrypto::aead::SealError> {
     Err(rscrypto::aead::SealError::buffer())
   }
 

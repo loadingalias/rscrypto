@@ -6,27 +6,10 @@ use std::sync::OnceLock;
 #[cfg(all(feature = "std", not(miri)))]
 static STD_CACHE: OnceLock<Detected> = OnceLock::new();
 
-/// Set detection override.
-///
-/// Must be called **before** the first call to [`get()`]. After caching occurs,
-/// updates are rejected.
-///
-/// # Panics
-///
-/// Panics if detection has already been initialized or overrides are unsupported
-/// on the current target. Use [`try_set_override()`] for a fallible path.
-#[cold]
-#[track_caller]
-pub fn set_override(value: Option<Detected>) {
-  if let Err(err) = try_set_override(value) {
-    panic!("platform::set_override failed: {err}");
-  }
-}
-
 /// Try to set detection override.
 ///
-/// Contract: pre-init only. Once [`get()`] has initialized detection state,
-/// this returns [`OverrideError::AlreadyInitialized`].
+/// Contract: pre-init only. Once [`crate::platform::get`] has initialized
+/// detection state, this returns [`OverrideError::AlreadyInitialized`].
 #[cold]
 pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
   #[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
@@ -55,13 +38,6 @@ pub fn try_set_override(value: Option<Detected>) -> Result<(), OverrideError> {
     let _ = value;
     Err(OverrideError::Unsupported)
   }
-}
-
-/// Clear detection override.
-#[cold]
-#[track_caller]
-pub fn clear_override() {
-  set_override(None);
 }
 
 /// Check if an override is set.

@@ -1042,7 +1042,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 fn ecdsa_p384_internal(c: &mut Criterion) {
-  use rscrypto::{
+  use rscrypto::auth::{
     diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_basepoint_r_limb_digest,
     diag_ecdsa_p384_final_multiply_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
     diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_order_mul_fixed_r_limb_digest,
@@ -1281,7 +1281,7 @@ fn ed25519_verify(c: &mut Criterion) {
 
 #[cfg(feature = "diag")]
 fn ed25519_verify_phase(c: &mut Criterion) {
-  use rscrypto::{
+  use rscrypto::auth::{
     diag_ed25519_verify_challenge_reduce_digest, diag_ed25519_verify_portable_double_scalar_digest,
     diag_ed25519_verify_public_decode_digest, diag_ed25519_verify_r_decode_digest, diag_ed25519_verify_scalars,
   };
@@ -1339,7 +1339,7 @@ fn ed25519_verify_phase(c: &mut Criterion) {
     ))]
     g.bench_function(BenchmarkId::new("aarch64-asm-double-scalar", len), |b| {
       b.iter(|| {
-        black_box(rscrypto::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
+        black_box(rscrypto::auth::diag_ed25519_verify_aarch64_asm_double_scalar_digest(
           black_box(&scalars.s_canonical),
           black_box(&scalars.neg_challenge),
           black_box(&scalars.public_key),

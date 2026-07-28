@@ -5,7 +5,7 @@ use rscrypto::{
   Aes128GcmTag, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag, Aes256GcmTag,
   ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag, XChaCha20Poly1305, XChaCha20Poly1305Key,
   XChaCha20Poly1305Tag,
-  aead::{Nonce96, Nonce192, Nonce256},
+  aead::{Nonce96, Nonce192, Nonce256, expert::AeadWithNonce},
 };
 use serde_json::Value;
 

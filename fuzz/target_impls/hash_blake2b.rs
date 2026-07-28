@@ -1,7 +1,7 @@
 use blake2::{Blake2b256 as OracleBlake2b256, Blake2b512 as OracleBlake2b512, Blake2bMac, Digest as _};
 use digest::typenum::{U32, U64};
 use hmac::{Mac as _, digest::KeyInit};
-use rscrypto::{Blake2b256, Blake2b512, Digest};
+use rscrypto::{Blake2b256, Blake2b512, Blake2bKey, Digest};
 use rscrypto_fuzz::{FuzzInput, assert_digest_chunked, assert_digest_reset, some_or_return, split_at_ratio};
 
 type OracleBlake2bMac256 = Blake2bMac<U32>;
@@ -30,9 +30,10 @@ pub fn run(data: &[u8]) {
     let split_idx = split_at_ratio(data, key_ratio).0.len();
     let key_len = split_idx.clamp(1, 64);
     let (key, msg) = data.split_at(key_len);
+    let typed_key = Blake2bKey::new(key).unwrap();
     let (msg_a, msg_b) = split_at_ratio(msg, split);
 
-    let mut ours_256_stream = Blake2b256::new_keyed(key);
+    let mut ours_256_stream = Blake2b256::new_keyed(typed_key);
     ours_256_stream.update(msg_a);
     ours_256_stream.update(msg_b);
     let ours_256_keyed = ours_256_stream.finalize();
@@ -42,7 +43,7 @@ pub fn run(data: &[u8]) {
     let oracle_256_keyed = oracle_256_mac.finalize().into_bytes();
     assert_eq!(&ours_256_keyed[..], &oracle_256_keyed[..], "blake2b256 keyed mismatch");
 
-    let mut ours_512_stream = Blake2b512::new_keyed(key);
+    let mut ours_512_stream = Blake2b512::new_keyed(typed_key);
     ours_512_stream.update(msg_a);
     ours_512_stream.update(msg_b);
     let ours_512_keyed = ours_512_stream.finalize();

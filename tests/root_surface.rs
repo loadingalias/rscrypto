@@ -4,6 +4,8 @@
 use rscrypto::Aead;
 #[cfg(any(feature = "hmac", feature = "hmac-sha3", feature = "kmac"))]
 use rscrypto::Mac;
+#[cfg(feature = "aead")]
+use rscrypto::aead::expert::AeadWithNonce;
 #[cfg(all(feature = "aead", feature = "diag"))]
 use rscrypto::aead::introspect::{
   DispatchInfo as AeadDispatchInfo, aegis256_backend, aes256gcm_backend, aes256gcmsiv_backend, ascon_aead128_backend,
@@ -142,49 +144,7 @@ fn root_surface_aead_exports_compile() {
   }
 
   fn assert_aead_trait<T: Aead>() {}
-
-  #[derive(Clone)]
-  struct Marker;
-
-  impl Aead for Marker {
-    const KEY_SIZE: usize = 32;
-    const NONCE_SIZE: usize = Nonce96::LENGTH;
-    const TAG_SIZE: usize = 16;
-
-    type Key = [u8; 32];
-    type Nonce = Nonce96;
-    type Tag = [u8; 16];
-
-    fn new(_key: &Self::Key) -> Self {
-      Self
-    }
-
-    fn tag_from_slice(bytes: &[u8]) -> Result<Self::Tag, AeadBufferError> {
-      if bytes.len() != Self::TAG_SIZE {
-        return Err(AeadBufferError::new());
-      }
-
-      let mut tag = [0u8; Self::TAG_SIZE];
-      tag.copy_from_slice(bytes);
-      Ok(tag)
-    }
-
-    fn encrypt_in_place(&self, _nonce: &Self::Nonce, _aad: &[u8], _buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
-      Ok([0u8; Self::TAG_SIZE])
-    }
-
-    fn decrypt_in_place(
-      &self,
-      _nonce: &Self::Nonce,
-      _aad: &[u8],
-      _buffer: &mut [u8],
-      _tag: &Self::Tag,
-    ) -> Result<(), OpenError> {
-      Ok(())
-    }
-  }
-
-  assert_aead_trait::<Marker>();
+  assert_aead_trait::<ChaCha20Poly1305>();
 
   let key = XChaCha20Poly1305Key::from_bytes([0x44; XChaCha20Poly1305::KEY_SIZE]);
   let cipher = XChaCha20Poly1305::new(&key);

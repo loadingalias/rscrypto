@@ -77,6 +77,8 @@ XOF readers: `Shake128XofReader`, `Shake256XofReader`,
 
 Aliases: `hashes::crypto::AsconXof128` and `hashes::crypto::AsconXof128Reader`.
 `hashes::io::{DigestReader, DigestWriter}` provides `std::io` adapters.
+`Blake2bKey` and `Blake2sKey` make caller-facing key validation explicit while
+borrowing key bytes without allocation or copying.
 
 ## Fast Hashes
 
@@ -192,9 +194,12 @@ Nonce types: `Nonce96` (12B), `Nonce128` (16B), `Nonce192` (24B), `Nonce256` (32
 
 AEAD support types: `SealError`, `OpenError`, `AeadBufferError`,
 `NonceCounter`, `NonceCounterExhausted`, and `NonceCounterSealError`.
-Caller-buffer and detached APIs are allocation-free. With `alloc`, every AEAD
-also has `encrypt_to_vec` and `decrypt_to_vec`; with `alloc` + `getrandom`, it
-also has `seal_random_to_vec`.
+Fresh-random sealing and decryption live on `Aead`; deterministic AES-GCM
+sealing lives on `NonceCounter`. Protocols that already prove nonce uniqueness
+must explicitly import `aead::expert::AeadWithNonce` for caller-nonce
+`encrypt`, `encrypt_in_place`, and `encrypt_to_vec`. The caller-buffer and
+detached forms remain allocation-free. With `alloc`, decryption has
+`decrypt_to_vec`; with `alloc` + `getrandom`, sealing has `seal_random_to_vec`.
 
 ## Error Types
 
@@ -208,6 +213,7 @@ also has `seal_random_to_vec`.
 | `NonceCounterSealError` | AES-GCM nonce counter is exhausted or sealing fails | Rotate the key before counter reuse, or correct the sealing input |
 | `HkdfOutputLengthError` | HKDF expand exceeds max | Request less output |
 | `Pbkdf2Error` | PBKDF2 parameter validation | Adjust iterations / output length |
+| `Blake2Error` | Invalid BLAKE2 key or variable output length, or a mismatched streaming output buffer | Correct the public key/output length |
 | `Argon2Error` | Argon2 configuration, input, entropy, or resource failure | Fix the profile/input or restore resources |
 | `ScryptError` | scrypt configuration, entropy, or resource failure | Fix N/r/p or restore resources |
 | `X25519Error` | Low-order DH point | Reject peer key |
@@ -220,7 +226,7 @@ also has `seal_random_to_vec`.
 | `RsaProtocolAlgorithmError` | Unsupported/confused COSE/TLS/X.509 RSA selector | Reject algorithm mapping |
 | `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
 | `InvalidHexError` | Hex decode failure | Fix input |
-| `platform::OverrideError` | Override after detection init | Set before first call |
+| `platform::expert::OverrideError` | Invalid, unsupported, or late detection override | Configure through `platform::expert::try_set_override` before first detection |
 
 ## Platform And Dispatch
 
@@ -232,14 +238,14 @@ also has `seal_random_to_vec`.
 | `platform::Description` | Zero-allocation display wrapper for detected platform facts |
 | `platform::DispatchInfo` | Shared dispatch metadata used by introspection modules |
 | `platform::KernelIntrospect` | Trait for algorithms that can report selected kernels by input length |
-| `platform::OverrideError` | Detection override failure |
+| `platform::expert::OverrideError` | Expert detection override failure |
 
 ## Utility
 
 | Item | Purpose |
 |------|---------|
 | `ct::zeroize` | Volatile source-level overwrite plus compiler fence; see `secret-lifecycle.md` for the evidence boundary |
-| `DisplaySecret` | Opt-in hex display for secret keys |
+| `expert::DisplaySecret` | Explicitly dangerous hex display for secret keys |
 | `SecretBytes<N>` | Fixed-size secret owner that overwrites its owned bytes on drop |
 | `SecretVec` | Variable-length secret owner that overwrites initialized storage on drop; ordinary extraction requires `into_unprotected_vec()` |
 

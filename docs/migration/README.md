@@ -1,6 +1,7 @@
 # Migration Guides
 
-This index covers 35 migration guides for individual crates and larger stacks.
+This index covers 36 migration guides for API revisions, individual crates,
+and larger stacks.
 
 Each guide identifies dependency, import, call-site, behavior, and unsupported
 surface changes.
@@ -8,6 +9,9 @@ surface changes.
 If you are evaluating `rscrypto`, start with the crate you already use.
 The guide states whether the mapped surface is compatible and which upstream
 APIs must remain.
+
+For projects upgrading rscrypto itself, start with
+[`misuse-resistant API boundaries`](api-boundaries.md).
 
 ## Checksums
 

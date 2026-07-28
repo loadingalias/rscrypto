@@ -10,7 +10,7 @@ Evidence: `tests/aes128gcmsiv_oracle.rs`, `tests/aes256gcmsiv_oracle.rs`, and `t
 | | Before (`aes-gcm-siv` 0.11.x) | After (`rscrypto` 0.7.8) |
 |---|---|---|
 | Cargo dep | `aes-gcm-siv = "0.11"` | `rscrypto = { version = "0.7.8", features = ["aes-gcm-siv"] }` |
-| Import | `use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::Nonce96};` |
+| Import | `use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce, KeyInit, aead::{Aead, Payload}};` | `use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::{Nonce96, expert::AeadWithNonce}};` |
 | Encrypt | `cipher.encrypt(nonce, Payload { msg, aad })?` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
 ## Cargo.toml
@@ -56,7 +56,10 @@ let ct = cipher.encrypt(nonce, Payload { msg: plaintext, aad }).unwrap();
 
 ```rust
 // After
-use rscrypto::{Aead, Aes256GcmSiv, Aes256GcmSivKey, aead::Nonce96};
+use rscrypto::{
+  Aead, Aes256GcmSiv, Aes256GcmSivKey,
+  aead::{Nonce96, expert::AeadWithNonce},
+};
 
 let key = Aes256GcmSivKey::from_bytes([0u8; 32]);
 let cipher = Aes256GcmSiv::new(&key);
@@ -64,6 +67,10 @@ let nonce = Nonce96::from_bytes([0u8; 12]);
 let mut ct = vec![0u8; plaintext.len() + 16];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
+
+The expert trait import makes preservation of the upstream caller-nonce
+protocol explicit. Prefer `seal_random` when the protocol does not already
+define nonce derivation.
 
 ### Combined decrypt
 

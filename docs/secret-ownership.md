@@ -33,7 +33,7 @@ capability for permanent retention.
 |---|---|---|---|---|---|
 | `SecretBytes<N>` | Neither | Masked | Consuming `expose()` returns a plain array | Inline | Fixed-size integration boundary whose owned source is cleared on extraction |
 | `SecretVec` | Neither | Masked | Consuming `into_unprotected_vec()` returns an ordinary allocation | Heap `Vec<u8>` | Variable-size RSA private-key export and explicit transfer to APIs that cannot borrow |
-| `DisplaySecret<'a>` | Neither | Intentionally prints bytes through both `Display` and `Debug` | Hex formatting only | Borrowed | Explicit opt-in escape hatch for integrations that must render a key; never use it in logs |
+| `expert::DisplaySecret<'a>` | Neither | Intentionally prints bytes through both `Display` and `Debug` | Hex formatting only | Borrowed | Explicit opt-in escape hatch for integrations that must render a key; never use it in logs |
 | AEAD `*Key` types | Explicit duplicate; no `Clone` or `Copy` | Masked | `SecretBytes` export, hex opt-in, and `serde-secrets` | Inline | Lets an owned cipher context coexist with a caller-retained typed key while making the extra lifetime visible |
 | AEAD cipher contexts | Neither | Masked | None | Inline, except boxed RISC-V fixslice AES schedules | Reusable expanded key and authentication subkey state without exposing a generic duplication path |
 | ECDSA P-256/P-384 secret keys and keypairs | Explicit duplicate; no `Clone` or `Copy` | Secret keys are masked; keypairs show only the public half | `SecretBytes` export and hex opt-in; no Serde | Inline | Caller-controlled key/keypair duplication for independent signing owners |
@@ -91,7 +91,7 @@ and ordinary serialization therefore do not duplicate a confidential key.
 - `serde` alone covers protocol-visible values. `serde-secrets` is the explicit
   opt-in for AEAD keys, Ed25519/X25519 secrets, and ML-KEM decapsulation/shared
   secrets. ECDSA and RSA private keys do not implement Serde.
-- `DisplaySecret` is the only generic formatting wrapper that intentionally
+- `expert::DisplaySecret` is the only generic formatting wrapper that intentionally
   makes secret bytes visible through `Debug`; constructing it is the disclosure
   decision.
 - Heap-backed secret state is confined to `SecretVec`, RSA private-key import,

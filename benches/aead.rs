@@ -11,6 +11,7 @@ use core::hint::black_box;
 use aes_gcm::aead::{AeadInOut as _, KeyInit as _};
 use aes_gcm_siv::aead::{AeadInPlace as _, KeyInit as _};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use rscrypto::aead::expert::AeadWithNonce;
 
 #[cfg(all(
   any(unix, windows),

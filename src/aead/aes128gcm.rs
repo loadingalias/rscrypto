@@ -186,12 +186,6 @@ impl Aes128Gcm {
     }
   }
 
-  /// Encrypt `buffer` in place and return the detached authentication tag.
-  #[inline]
-  pub fn encrypt_in_place(&self, nonce: &Nonce96, aad: &[u8], buffer: &mut [u8]) -> Result<Aes128GcmTag, SealError> {
-    <Self as Aead>::encrypt_in_place(self, nonce, aad, buffer)
-  }
-
   /// Decrypt `buffer` in place and verify the detached authentication tag.
   #[inline]
   pub fn decrypt_in_place(
@@ -202,12 +196,6 @@ impl Aes128Gcm {
     tag: &Aes128GcmTag,
   ) -> Result<(), OpenError> {
     <Self as Aead>::decrypt_in_place(self, nonce, aad, buffer, tag)
-  }
-
-  /// Encrypt `plaintext` into `out` as `ciphertext || tag`.
-  #[inline]
-  pub fn encrypt(&self, nonce: &Nonce96, aad: &[u8], plaintext: &[u8], out: &mut [u8]) -> Result<(), SealError> {
-    <Self as Aead>::encrypt(self, nonce, aad, plaintext, out)
   }
 
   /// Decrypt a combined `ciphertext || tag` into `out`.
@@ -700,7 +688,13 @@ impl Aead for Aes128Gcm {
     Ok(Aes128GcmTag::from_bytes(tag))
   }
 
-  fn encrypt_in_place(&self, nonce: &Self::Nonce, aad: &[u8], buffer: &mut [u8]) -> Result<Self::Tag, SealError> {
+  fn __encrypt_in_place_with_nonce(
+    &self,
+    nonce: &Self::Nonce,
+    aad: &[u8],
+    buffer: &mut [u8],
+    _token: crate::traits::aead::SealToken,
+  ) -> Result<Self::Tag, SealError> {
     super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
     let length_block = super::seal_bit_lengths(aad.len(), buffer.len())?.to_be_bits_block();
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "powerpc64")))]
@@ -1073,6 +1067,7 @@ mod tests {
   use alloc::{vec, vec::Vec};
 
   use super::*;
+  use crate::aead::expert::AeadWithNonce;
 
   // NIST SP 800-38D Test Case 1: AES-128-GCM, empty plaintext, empty AAD.
   // Key:  00000000000000000000000000000000

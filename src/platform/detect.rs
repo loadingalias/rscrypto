@@ -12,9 +12,10 @@
 //! # Override Support
 //!
 //! ```
-//! use rscrypto::platform::Detected;
-//! rscrypto::platform::set_override(Some(Detected::portable()));
-//! rscrypto::platform::clear_override();
+//! use rscrypto::platform::{Detected, expert};
+//! expert::try_set_override(Some(Detected::portable()))?;
+//! expert::try_set_override(None)?;
+//! # Ok::<(), rscrypto::platform::expert::OverrideError>(())
 //! ```
 
 use crate::platform::caps::{Arch, Caps};
@@ -50,8 +51,8 @@ impl core::fmt::Display for OverrideError {
 /// - `caps`: Available CPU features (what instructions can run)
 /// - `arch`: Target architecture identifier
 ///
-/// Use [`get()`] to obtain a cached instance, or [`detect_uncached()`] for
-/// fresh detection (useful for testing/benchmarking).
+/// Use [`crate::platform::get`] to obtain a cached instance, or
+/// [`crate::platform::expert::detect_uncached`] for fresh detection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Detected {
   /// CPU feature capabilities bitset.
@@ -120,7 +121,7 @@ fn validate_override(value: Option<Detected>) -> Result<Option<Detected>, Overri
 /// # Examples
 ///
 /// ```
-/// let det = rscrypto::platform::detect::get();
+/// let det = rscrypto::platform::get();
 /// assert_eq!(det.arch, rscrypto::platform::Arch::current());
 /// ```
 #[inline]

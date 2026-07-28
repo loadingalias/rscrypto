@@ -1,9 +1,10 @@
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
+use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::{
   Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
   Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2s128, Blake2s256, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key, EcdsaP256SecretKey,
-  EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
+  Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
   HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512,
   MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024,
   MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile,
@@ -16,21 +17,22 @@ use rscrypto::{
     diag_aes256gcm_ghash, diag_aes256gcm_tag_aes, diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys,
     diag_aes256gcmsiv_raw_tag_aes,
   },
-  auth::diag_rsa_private_component_validation_32,
-  diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
-  diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest,
-  diag_ecdsa_p256_order_mul_fixed_r_limb_digest, diag_ecdsa_p256_reduce_wide_order_limb_digest,
-  diag_ecdsa_p256_scalar_finish_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
-  diag_ecdsa_p384_basepoint_blinded_limb_digest,
-  diag_ecdsa_p384_nonce_reduce_limb_digest, diag_ecdsa_p384_nonce_inverse_limb_digest,
-  diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
-  diag_ecdsa_p384_scalar_finish_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
-  diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
-  diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
-  diag_mlkem_from_montgomery_product_domain_input_digest, diag_mlkem_inverse_ntt_montgomery_product_input_digest,
-  diag_mlkem_multiply_ntts_add_assign_input_digest, diag_mlkem_ntt_input_digest,
-  diag_mlkem_to_montgomery_product_domain_input_digest, diag_rsa_import_pkcs8_private_key_der_stage,
-  diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+  auth::{
+    diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
+    diag_ecdsa_p256_nonce_inverse_limb_digest, diag_ecdsa_p256_nonce_reduce_limb_digest,
+    diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest, diag_ecdsa_p256_order_mul_fixed_r_limb_digest,
+    diag_ecdsa_p256_reduce_wide_order_limb_digest, diag_ecdsa_p256_scalar_finish_limb_digest,
+    diag_ecdsa_p384_basepoint_blinded_limb_digest, diag_ecdsa_p384_final_multiply_limb_digest,
+    diag_ecdsa_p384_nonce_inverse_limb_digest, diag_ecdsa_p384_nonce_reduce_limb_digest,
+    diag_ecdsa_p384_order_mul_fixed_r_limb_digest, diag_ecdsa_p384_reduce_wide_order_limb_digest,
+    diag_ecdsa_p384_scalar_finish_limb_digest, diag_mlkem_from_montgomery_product_domain_input_digest,
+    diag_mlkem_inverse_ntt_montgomery_product_input_digest, diag_mlkem_multiply_ntts_add_assign_input_digest,
+    diag_mlkem_ntt_input_digest, diag_mlkem_to_montgomery_product_domain_input_digest,
+    diag_mlkem512_keygen_secret_noise_digest, diag_mlkem768_keygen_secret_noise_digest,
+    diag_mlkem1024_keygen_secret_noise_digest, diag_mlkem1024_multiply_ntts_accumulate_input_digest,
+    diag_rsa_import_pkcs8_private_key_der_stage, diag_rsa_private_component_validation_32,
+    diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
+  },
   traits::Kem as _,
   RsaEncryptionError, RsaPublicKeyPolicy,
 };
@@ -1899,7 +1901,7 @@ aead_fixed_vs_random_key_seal!(
 );
 
 macro_rules! blake2_keyed_fixed_vs_random {
-  ($name:ident, $ty:ty) => {
+  ($name:ident, $ty:ty, $key_ty:ty) => {
     fn $name(runner: &mut CtRunner, rng: &mut BenchRng) {
       let mut inputs = Vec::with_capacity(samples());
       for _ in 0..samples() {
@@ -1913,16 +1915,17 @@ macro_rules! blake2_keyed_fixed_vs_random {
       }
 
       for (class, key) in inputs {
-        runner.run_one(class, || <$ty>::keyed_digest(&key, MESSAGE)[0]);
+        let key = <$key_ty>::new(&key).unwrap();
+        runner.run_one(class, || <$ty>::keyed_digest(key, MESSAGE)[0]);
       }
     }
   };
 }
 
-blake2_keyed_fixed_vs_random!(blake2b256_keyed_fixed_vs_random_key, Blake2b256);
-blake2_keyed_fixed_vs_random!(blake2b512_keyed_fixed_vs_random_key, Blake2b512);
-blake2_keyed_fixed_vs_random!(blake2s128_keyed_fixed_vs_random_key, Blake2s128);
-blake2_keyed_fixed_vs_random!(blake2s256_keyed_fixed_vs_random_key, Blake2s256);
+blake2_keyed_fixed_vs_random!(blake2b256_keyed_fixed_vs_random_key, Blake2b256, Blake2bKey);
+blake2_keyed_fixed_vs_random!(blake2b512_keyed_fixed_vs_random_key, Blake2b512, Blake2bKey);
+blake2_keyed_fixed_vs_random!(blake2s128_keyed_fixed_vs_random_key, Blake2s128, Blake2sKey);
+blake2_keyed_fixed_vs_random!(blake2s256_keyed_fixed_vs_random_key, Blake2s256, Blake2sKey);
 
 fn blake3_keyed_fixed_vs_random_key(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());

@@ -11,7 +11,9 @@ use blake2::{
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use digest::typenum::{U16, U32, U64};
 use hmac::{Mac as _, digest::KeyInit};
-use rscrypto::{Blake2b256, Blake2b512, Blake2bParams, Blake2s128, Blake2s256, Blake2sParams, Digest};
+use rscrypto::{
+  Blake2b256, Blake2b512, Blake2bKey, Blake2bParams, Blake2s128, Blake2s256, Blake2sKey, Blake2sParams, Digest,
+};
 
 type RustCryptoBlake2bMac256 = Blake2bMac<U32>;
 type RustCryptoBlake2bMac512 = Blake2bMac<U64>;
@@ -84,6 +86,8 @@ fn host_overhead(c: &mut Criterion) {
   let inputs = tiny_inputs();
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
+  let key_b_typed = Blake2bKey::new(black_box(&key_b[..32])).unwrap();
+  let key_s_typed = Blake2sKey::new(black_box(&key_s)).unwrap();
 
   let mut oneshot = c.benchmark_group("blake2/host-overhead");
   for (len, data) in &inputs {
@@ -110,7 +114,7 @@ fn host_overhead(c: &mut Criterion) {
     common::set_throughput(&mut keyed, *len);
 
     keyed.bench_with_input(BenchmarkId::new("rscrypto/blake2b256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b256::keyed_digest(black_box(&key_b[..32]), black_box(d))))
+      b.iter(|| black_box(Blake2b256::keyed_digest(key_b_typed, black_box(d))))
     });
     keyed.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| {
@@ -121,7 +125,7 @@ fn host_overhead(c: &mut Criterion) {
     });
 
     keyed.bench_with_input(BenchmarkId::new("rscrypto/blake2s256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s256::keyed_digest(black_box(&key_s), black_box(d))))
+      b.iter(|| black_box(Blake2s256::keyed_digest(key_s_typed, black_box(d))))
     });
     keyed.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
       b.iter(|| {
@@ -176,13 +180,17 @@ fn keyed(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
+  let key_b_256 = Blake2bKey::new(black_box(&key_b[..32])).unwrap();
+  let key_b_512 = Blake2bKey::new(black_box(&key_b)).unwrap();
+  let key_s_128 = Blake2sKey::new(black_box(&key_s[..16])).unwrap();
+  let key_s_256 = Blake2sKey::new(black_box(&key_s)).unwrap();
   let mut g = c.benchmark_group("blake2/keyed");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b256::keyed_digest(black_box(&key_b[..32]), black_box(d))))
+      b.iter(|| black_box(Blake2b256::keyed_digest(key_b_256, black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| {
@@ -200,7 +208,7 @@ fn keyed(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2b512", len), data, |b, d| {
-      b.iter(|| black_box(Blake2b512::keyed_digest(black_box(&key_b), black_box(d))))
+      b.iter(|| black_box(Blake2b512::keyed_digest(key_b_512, black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b512", len), data, |b, d| {
       b.iter(|| {
@@ -218,7 +226,7 @@ fn keyed(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2s128", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s128::keyed_digest(black_box(&key_s[..16]), black_box(d))))
+      b.iter(|| black_box(Blake2s128::keyed_digest(key_s_128, black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2s128", len), data, |b, d| {
       b.iter(|| {
@@ -229,7 +237,7 @@ fn keyed(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto/blake2s256", len), data, |b, d| {
-      b.iter(|| black_box(Blake2s256::keyed_digest(black_box(&key_s), black_box(d))))
+      b.iter(|| black_box(Blake2s256::keyed_digest(key_s_256, black_box(d))))
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
       b.iter(|| {
@@ -332,8 +340,8 @@ fn params(c: &mut Criterion) {
         b.iter(|| {
           black_box(
             Blake2bParams::new()
-              .salt(black_box(&salt_b))
-              .personal(black_box(&personal_b))
+              .salt(black_box(salt_b))
+              .personal(black_box(personal_b))
               .hash_256(black_box(d)),
           )
         })
@@ -350,8 +358,8 @@ fn params(c: &mut Criterion) {
         b.iter(|| {
           black_box(
             Blake2sParams::new()
-              .salt(black_box(&salt_s))
-              .personal(black_box(&personal_s))
+              .salt(black_box(salt_s))
+              .personal(black_box(personal_s))
               .hash_256(black_box(d)),
           )
         })

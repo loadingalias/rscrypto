@@ -4,7 +4,10 @@ use chacha20poly1305::{
   KeyInit, XChaCha20Poly1305 as Oracle,
   aead::{Aead as _, AeadInOut, Payload, array::Array},
 };
-use rscrypto::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag, aead::Nonce192};
+use rscrypto::{
+  XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag,
+  aead::{Nonce192, expert::AeadWithNonce},
+};
 
 mod common;
 use common::decode_hex_vec as decode_hex;

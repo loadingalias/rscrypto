@@ -99,7 +99,7 @@ standard error-source chain; callers can still recover it by explicitly
 matching the public `Random` variant. Other reviewed errors contain only
 discriminants, public sizes, or opaque verification failures.
 
-`DisplaySecret` is the deliberate exception: constructing it explicitly opts
+`expert::DisplaySecret` is the deliberate exception: constructing it explicitly opts
 into rendering borrowed secret bytes. Feature-gated diagnostic functions may
 return their declared result bytes, but they do not implicitly format owning
 keys, seeds, nonce material, intermediate state, or unmasked shares through

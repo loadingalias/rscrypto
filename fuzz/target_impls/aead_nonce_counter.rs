@@ -1,4 +1,7 @@
-use rscrypto::{Aes256Gcm, Aes256GcmKey, aead::NonceCounter};
+use rscrypto::{
+    Aes256Gcm, Aes256GcmKey,
+    aead::{NonceCounter, expert::AeadWithNonce},
+};
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
 // Bound the per-iteration nonce burst so the fuzz job stays fast even when
