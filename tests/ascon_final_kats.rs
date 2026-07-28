@@ -30,7 +30,10 @@ fn case_number(case: &str) -> usize {
 #[cfg(feature = "ascon-aead")]
 #[test]
 fn ascon_aead128_matches_final_reference_kats() {
-  use rscrypto::{AsconAead128, AsconAead128Key, AsconAead128Tag, aead::Nonce128};
+  use rscrypto::{
+    AsconAead128, AsconAead128Key, AsconAead128Tag,
+    aead::{Nonce128, expert::AeadWithNonce as _},
+  };
 
   let mut rows = 0;
   for case in cases(AEAD_VECTORS) {
