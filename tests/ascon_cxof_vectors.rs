@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "ascon-hash")]
 
 use rscrypto::{AsconCxof128, AsconCxof128Reader, traits::Xof as _};
 

@@ -76,6 +76,23 @@ define_aead_tag_type!(AsconAead128Tag, TAG_SIZE, "Ascon-AEAD128 128-bit authenti
 /// and 128-bit authentication tag. Built on the Ascon permutation with
 /// rate = 128 bits, PA = 12 rounds, PB = 8 rounds.
 ///
+/// # Per-key requirements
+///
+/// For conformance, SP 800-232 requires single-purpose keys generated
+/// according to SP 800-133 with an approved random bit generator supporting
+/// at least 128-bit security. It also requires a distinct nonce for every
+/// encryption under one key. Across all encryption and decryption operations
+/// under that key, including each nonce, no more than 2^54 bytes may be
+/// processed. With this type's full 128-bit tags, no more than 2^96 failed
+/// decryptions may occur under one key. Rotate the key at the data limit and
+/// when the failed-decryption limit is reached.
+///
+/// The caller must enforce these deployment-wide limits. This type does not
+/// keep counters because the same key may be used by multiple instances,
+/// processes, or devices. Randomly generated nonces are not recorded; a
+/// deployment that requires deterministic proof of uniqueness needs a
+/// protocol-owned nonce issuer.
+///
 /// # Examples
 ///
 /// ```

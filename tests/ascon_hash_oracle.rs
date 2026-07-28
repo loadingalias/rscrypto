@@ -12,7 +12,7 @@
 //! 2. Ascon-XOF128 matches `ascon-hash` oracle (multiple squeeze lengths)
 //! 3. Empty input, single byte, block boundaries, large inputs
 
-#![cfg(feature = "hashes")]
+#![cfg(feature = "ascon-hash")]
 
 use ascon_hash::{AsconHash256 as OracleHash, AsconXof128 as OracleXof};
 use digest::{Digest as OracleDigest, ExtendableOutput, Update as OracleUpdate, XofReader as OracleXofReader};

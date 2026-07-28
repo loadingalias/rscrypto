@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "ascon-hash")]
 
 use proptest::prelude::*;
 use rscrypto::{

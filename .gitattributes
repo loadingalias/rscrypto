@@ -7,3 +7,6 @@
 # Windows scripts use CRLF
 *.bat text eol=crlf
 *.ps1 text eol=crlf
+
+testdata/ascon/asconaead128.txt -diff
+testdata/ascon/asconcxof128.txt -diff
