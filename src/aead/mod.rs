@@ -202,17 +202,15 @@ pub use chacha20poly1305::{
 pub use ghash::diag_ghash_block_portable;
 #[cfg(feature = "aes-gcm")]
 pub use nonce_counter::{NonceCounter, NonceCounterExhausted, NonceCounterSealError};
-#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
-pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
 #[cfg(all(
   feature = "diag",
   target_arch = "aarch64",
   any(target_os = "linux", target_os = "macos"),
   any(feature = "chacha20poly1305", feature = "xchacha20poly1305")
 ))]
-pub use poly1305::{
-  diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4, diag_chacha20poly1305_authenticate_aead_aarch64_owned_par4,
-};
+pub use poly1305::diag_chacha20poly1305_authenticate_aead_aarch64_neon_par4;
+#[cfg(all(feature = "diag", any(feature = "chacha20poly1305", feature = "xchacha20poly1305")))]
+pub use poly1305::{diag_chacha20poly1305_authenticate_aead, diag_poly1305_block_portable_digest};
 #[cfg(all(feature = "diag", feature = "aes-gcm-siv"))]
 pub use polyval::diag_polyval_reduce_portable;
 #[cfg(feature = "xchacha20poly1305")]

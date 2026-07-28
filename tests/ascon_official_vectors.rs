@@ -1,4 +1,4 @@
-#![cfg(feature = "hashes")]
+#![cfg(feature = "ascon-hash")]
 
 mod support;
 

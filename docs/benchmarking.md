@@ -70,10 +70,7 @@ Some common libraries are not primary benchmark baselines:
   SHA-384.
 - ML-KEM end-to-end rows are split by parameter set and operation:
   key generation, encapsulation, and decapsulation for ML-KEM-512, ML-KEM-768,
-  and ML-KEM-1024. Phase rows use the `mlkem-matrix-sample`,
-  `mlkem-arithmetic`, `mlkem-pke-phases`, and `mlkem-decap-phases` groups to
-  attribute time to matrix sampling, polynomial arithmetic, public-key
-  encryption, and decapsulation subpaths.
+  and ML-KEM-1024.
 - RSA import rows measure more than raw ASN.1 parsing when the public API also
   validates key material or prepares arithmetic state.
 - `ring` X25519 is excluded from static-key Diffie-Hellman rows because its
@@ -91,8 +88,6 @@ just bench rsa
 just bench crate=rscrypto bench=auth filter='^ecdsa-p256/'
 just bench crate=rscrypto bench=auth filter='^ecdsa-p384/'
 just bench mlkem
-just bench mlkem-phases
-just bench mlkem-arithmetic
 ```
 
 Local runs are useful for capacity planning on your hardware. They should not be

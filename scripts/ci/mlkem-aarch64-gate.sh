@@ -87,7 +87,7 @@ RUN_TIME="$(date -u +"%H_%M_%S")"
 RUN_COMMIT="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
 BENCH_DIR="$ARTIFACT_DIR/bench"
 BENCH_RESULTS_DIR="$BENCH_DIR/results"
-BENCH_ONLY_VALUE="${MLKEM_AARCH64_GATE_BENCH_ONLY:-mlkem,mlkem-matrix-sample,mlkem-arithmetic,mlkem-pke-phases,mlkem-decap-phases}"
+BENCH_ONLY_VALUE="${MLKEM_AARCH64_GATE_BENCH_ONLY:-mlkem}"
 
 run_step "ML-KEM benchmark gate" \
   env \
@@ -110,7 +110,7 @@ if [[ ! -f "$RESULTS_PATH" ]]; then
   exit 1
 fi
 
-for required in "aws-lc-rs" "mlkem-arithmetic" "mlkem-matrix-sample" "mlkem-pke-phases" "mlkem-decap-phases"; do
+for required in "aws-lc-rs"; do
   if ! grep -q "$required" "$RESULTS_PATH"; then
     echo "error: benchmark gate results missing required marker: $required" | tee -a "$LOG_PATH" >&2
     exit 1

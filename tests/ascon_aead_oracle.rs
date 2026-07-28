@@ -15,7 +15,7 @@
 //! 4. Large multi-block inputs
 //! 5. Tag forgery / ciphertext / AAD tampering rejection
 
-#![cfg(feature = "aead")]
+#![cfg(feature = "ascon-aead")]
 
 use ascon_aead::{
   AsconAead128 as Oracle,
