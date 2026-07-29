@@ -1,4 +1,10 @@
-#![cfg(all(feature = "std", target_arch = "x86_64", target_os = "linux", not(miri)))]
+#![cfg(all(
+  feature = "std",
+  not(feature = "portable-only"),
+  target_arch = "x86_64",
+  target_os = "linux",
+  not(miri)
+))]
 #![allow(unsafe_code)]
 
 use rscrypto::platform::{self, caps::x86};
