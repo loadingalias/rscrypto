@@ -141,7 +141,9 @@ mod tests {
   // is enabled. With `portable-only`, runtime is intentionally `Caps::NONE`,
   // and `caps_static()` may be non-empty — they're allowed to disagree
   // because the override is the whole point of the feature.
-  #[cfg(not(feature = "portable-only"))]
+  // x86-64 also removes compile-time AMX and hybrid-unsafe AVX-512
+  // capabilities when process or CPU-topology safety checks fail.
+  #[cfg(all(not(feature = "portable-only"), not(target_arch = "x86_64")))]
   fn test_caps_static_subset_of_runtime() {
     // Compile-time detected features must be a subset of runtime detected features
     let static_caps = caps_static();

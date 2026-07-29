@@ -370,7 +370,7 @@ unsafe fn update_simd_width32_reflected_4way(
     acc[6] = s0[6].fold_16_reflected(c384, acc[6]);
     acc[7] = s0[7].fold_16_reflected(c384, acc[7]);
 
-    for block in &blocks[aligned..] {
+    for block in &blocks[quad_aligned..] {
       fold_block_128_reflected(&mut acc, block, coeff_128);
     }
 
