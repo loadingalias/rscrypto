@@ -12,6 +12,10 @@ the recipes reported by `just --list`.
 | `check/check-all.sh`           | `just check-all` |
 | `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh` |
 | `check/asm-ledger.sh`          | `scripts/check/check.sh` |
+| `check/rsa-asm-provenance.sh` | `check/asm-ledger.sh`; direct `--archive PATH` reconstructs the three pinned RSA snapshots offline |
+| `check/signature-asm-provenance.py` | `check/asm-ledger.sh`; direct `--upstream-repo PATH [--clang PATH]` reproduces the 36 pinned ECDSA, Ed25519, and X25519 snapshots |
+| `check/hash-vector-provenance.py` | `scripts/check/check.sh`; optional exact upstream checkouts reproduce hash-vector corpora |
+| `check/auth-vector-provenance.py` | `scripts/check/check.sh`; optional `--upstream-root PATH` reproduces the pinned C2SP/Wycheproof corpus |
 | `check/zeroize-evidence.sh`    | `just check-zeroize-evidence`, `scripts/check/check-all.sh` |
 | `ci/ci-check.sh`               | `just ci-check`, `ci/run-rust-job.sh` |
 | `ci/native-check.sh`           | `ci/run-rust-job.sh` |

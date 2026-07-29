@@ -38,6 +38,12 @@ pub(crate) const H0: [u64; 8] = [
 ///
 /// Standardized in FIPS 180-4.
 ///
+/// # Panics
+///
+/// [`Digest::update`] and its vectored variants panic before absorbing an
+/// update that would make the cumulative input exceed the FIPS 180-4 maximum
+/// of 2^125 − 1 bytes.
+///
 /// # Examples
 ///
 /// ```
@@ -125,10 +131,7 @@ impl Sha384 {
       }
     };
 
-    let total = self
-      .bytes_hashed
-      .strict_add(self.block_len as u128)
-      .strict_add(incoming_len as u128);
+    let total = Sha512::checked_total_len(self.bytes_hashed, self.block_len, incoming_len);
     let compress = dispatch.select(len_hint_from_u128(total));
     self.compress_blocks = compress;
     compress

@@ -899,9 +899,8 @@ mod rv_scalar_clmul {
 
   /// Combined 128×128 carryless multiply + Montgomery reduce using scalar Zbc.
   ///
-  /// Karatsuba decomposition with 3 × clmul/clmulh pairs (6 instructions),
-  /// then portable Montgomery reduction. ~100x faster than Pornin bmul64 on
-  /// hardware with Zbc (e.g. SpacemiT K1).
+  /// Karatsuba decomposition with 3 × clmul/clmulh pairs, followed by portable
+  /// Montgomery reduction.
   ///
   /// # Safety
   /// Caller must ensure Zbc or Zbkc scalar extension is available.

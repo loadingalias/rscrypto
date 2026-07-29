@@ -49,14 +49,14 @@ fn kmac256_no_customization_wycheproof_vectors() {
           Kmac256::mac_into(&key, b"", &msg, &mut actual);
           assert_eq!(actual, tag, "KMAC256 tcId {tc_id} tag mismatch");
           assert!(
-            Kmac256::verify_tag(&key, b"", &msg, &tag).is_ok(),
+            Kmac256::verify_tag_primitive(&key, b"", &msg, &tag).is_ok(),
             "KMAC256 tcId {tc_id} verify failed"
           );
         }
         "invalid" => {
           counts.invalid += 1;
           assert!(
-            Kmac256::verify_tag(&key, b"", &msg, &tag).is_err(),
+            Kmac256::verify_tag_primitive(&key, b"", &msg, &tag).is_err(),
             "KMAC256 tcId {tc_id} accepted an invalid tag"
           );
         }

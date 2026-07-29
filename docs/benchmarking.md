@@ -68,6 +68,9 @@ Some common libraries are not primary benchmark baselines:
 
 - ECDSA rows are split by curve and operation. P-256 uses SHA-256; P-384 uses
   SHA-384.
+- Ed25519 signing includes both retained-keypair signing and direct
+  `Ed25519SecretKey::sign` rows. The latter includes secret expansion and
+  public-key derivation on every call.
 - ML-KEM end-to-end rows are split by parameter set and operation:
   key generation, encapsulation, and decapsulation for ML-KEM-512, ML-KEM-768,
   and ML-KEM-1024.

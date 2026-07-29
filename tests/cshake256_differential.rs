@@ -19,6 +19,26 @@ fn cshake256_ref(function_name: &[u8], customization: &[u8], data: &[u8], out: &
   hasher.finalize(out);
 }
 
+fn encoded_string_len(len: usize) -> usize {
+  let bits = len * 8;
+  let width = ((usize::BITS - bits.leading_zeros()) as usize).div_ceil(8).max(1);
+  1 + width + len
+}
+
+fn bytepad_is_aligned(rate: usize, function_name_len: usize, customization_len: usize) -> bool {
+  (2 + encoded_string_len(function_name_len) + encoded_string_len(customization_len)).is_multiple_of(rate)
+}
+
+fn decode_hex_64(value: &str) -> [u8; 64] {
+  assert_eq!(value.len(), 128);
+  let mut out = [0u8; 64];
+  for (index, byte) in out.iter_mut().enumerate() {
+    let offset = index * 2;
+    *byte = u8::from_str_radix(&value[offset..offset + 2], 16).unwrap();
+  }
+  out
+}
+
 proptest! {
   #[test]
   fn cshake128_one_shot_matches_tiny_keccak(
@@ -27,6 +47,7 @@ proptest! {
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
+    prop_assume!(!bytepad_is_aligned(168, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake128_ref(&function_name, &customization, &data, &mut expected);
 
@@ -43,6 +64,7 @@ proptest! {
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
+    prop_assume!(!bytepad_is_aligned(168, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake128_ref(&function_name, &customization, &data, &mut expected);
 
@@ -67,6 +89,7 @@ proptest! {
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
+    prop_assume!(!bytepad_is_aligned(136, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake256_ref(&function_name, &customization, &data, &mut expected);
 
@@ -83,6 +106,7 @@ proptest! {
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
+    prop_assume!(!bytepad_is_aligned(136, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake256_ref(&function_name, &customization, &data, &mut expected);
 
@@ -102,39 +126,46 @@ proptest! {
 }
 
 #[test]
-fn cshake128_exact_rate_prefix_matches_tiny_keccak() {
-  use tiny_keccak::{Hasher as _, Xof as _};
+fn cshake_bytepad_rate_boundaries_match_go_crypto_sha3() {
+  // Generated independently with Go 1.26.5's standard-library
+  // crypto/sha3.NewCSHAKE128 and NewCSHAKE256.
+  let cases128 = [
+    (
+      160,
+      "99aba19b4ac53e5df9aa569831ee87fc3cb063731b03abd73f3ac54d6b93a437dd17fab8c0961be98b036179f212bba251f8ec0000a3ed1fb5121e9ac1c564bc",
+    ),
+    (
+      161,
+      "957923a2379d6fde510a97f8d53af1131f543e8080fcb1a5db4acbb15bea189f6f81a0986827ce523673d9947dec1c0b99edaa443cc492cfbabeccfd951c1299",
+    ),
+    (
+      162,
+      "092ddeceaa1c4d98c91bbae1de6c971988f000c257c4c4ed89792698be2145347b9bc3589c8317c9654207f3b8fb543630c91ce227312a48429841161dcac583",
+    ),
+  ];
+  for (name_len, expected) in cases128 {
+    let mut actual = [0u8; 64];
+    Cshake128::hash_into(&vec![0xff; name_len], b"", b"", &mut actual);
+    assert_eq!(actual, decode_hex_64(expected), "cSHAKE128 N={name_len}");
+  }
 
-  let function_name = [0xff; 161];
-  let mut expected = [0u8; 255];
-  let mut oracle = tiny_keccak::CShake::v128(&function_name, b"");
-  oracle.update(b"");
-  oracle.squeeze(&mut expected[..167]);
-  oracle.squeeze(&mut expected[167..]);
-
-  let mut actual = [0u8; 255];
-  let mut reader = Cshake128::new(&function_name, b"").finalize_xof();
-  reader.squeeze(&mut actual[..167]);
-  reader.squeeze(&mut actual[167..]);
-
-  assert_eq!(actual, expected);
-}
-
-#[test]
-fn cshake256_exact_rate_prefix_matches_tiny_keccak() {
-  use tiny_keccak::{Hasher as _, Xof as _};
-
-  let function_name = [0xff; 129];
-  let mut expected = [0u8; 255];
-  let mut oracle = tiny_keccak::CShake::v256(&function_name, b"");
-  oracle.update(b"");
-  oracle.squeeze(&mut expected[..137]);
-  oracle.squeeze(&mut expected[137..]);
-
-  let mut actual = [0u8; 255];
-  let mut reader = Cshake256::new(&function_name, b"").finalize_xof();
-  reader.squeeze(&mut actual[..137]);
-  reader.squeeze(&mut actual[137..]);
-
-  assert_eq!(actual, expected);
+  let cases256 = [
+    (
+      128,
+      "a85b94a121902b2e16fad687bbbc27698f6cb9517f49567d0b925abd93f794408ad99a30c61e626cbd216525505aac7c3cbcbd9fe02ad0381eb2bccf60e8e989",
+    ),
+    (
+      129,
+      "495d281b373f64e33ea5e96efc3e13a6da5897397e02cc9f6e5c9f9e03312ff116185a092f41ed5f9bbaf18db0d31d6135cad43308400a07f70d446a630263fe",
+    ),
+    (
+      130,
+      "39887e69a44f8e722f6597285f78841ae51ec3c65447f8f7471be1a257003fdf3d550afa356e323c561fb7eb8e9ff25720cf99458734d8bb245376d79f9533a6",
+    ),
+  ];
+  for (name_len, expected) in cases256 {
+    let mut actual = [0u8; 64];
+    Cshake256::hash_into(&vec![0xff; name_len], b"", b"", &mut actual);
+    assert_eq!(actual, decode_hex_64(expected), "cSHAKE256 N={name_len}");
+  }
 }

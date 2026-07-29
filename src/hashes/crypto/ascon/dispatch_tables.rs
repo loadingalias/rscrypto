@@ -45,11 +45,9 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
 #[cfg(target_arch = "aarch64")]
 pub static AARCH64_NEON_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  // Scalar is faster than NEON for single-state Ascon: the 320-bit state
-  // (5 × u64) fits in 5 GPRs with native 1-cycle `ROR`, while NEON has no
-  // 64-bit vector rotate and must simulate each with SHR+SHL+OR (3 ops).
-  // The duplicated-lane single-state kernel doubles work for no benefit.
-  // NEON x2 batch path (used by `digest_many`) is wired separately.
+  // The single-state policy stays scalar: duplicating each of the five state
+  // words across NEON lanes does not add independent work. The NEON x2 batch
+  // path is wired separately.
   xs: KernelId::Portable,
   s: KernelId::Portable,
   m: KernelId::Portable,
@@ -59,11 +57,9 @@ pub static AARCH64_NEON_TABLE: DispatchTable = DispatchTable {
 #[cfg(target_arch = "x86_64")]
 pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  // Scalar is faster than AVX2 for single-state Ascon: the 320-bit state
-  // (5 × u64) fits in 5 GPRs with native 1-cycle `ROR`, while the
-  // duplicated-lane AVX2 kernel broadcasts each word across 4 lanes (4×
-  // the work). The broadcast + extract overhead dominates for a single
-  // state. AVX2 x4 batch path (used by `digest_many`) is wired separately.
+  // The single-state policy stays scalar: broadcasting each state word across
+  // four AVX2 lanes does not add independent work. The AVX2 x4 batch path is
+  // wired separately.
   xs: KernelId::Portable,
   s: KernelId::Portable,
   m: KernelId::Portable,
@@ -73,12 +69,9 @@ pub static X86_AVX2_TABLE: DispatchTable = DispatchTable {
 #[cfg(target_arch = "x86_64")]
 pub static X86_AVX512_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,
-  // Scalar is faster than AVX-512 for single-state Ascon: the 320-bit
-  // state (5 × u64) fits in 5 GPRs with native 1-cycle `ROR`, while the
-  // duplicated-lane AVX-512 kernel broadcasts each word across 8 lanes
-  // (8× the work). Even with VPTERNLOGQ and VPROLQ, the broadcast +
-  // extract overhead dominates for a single state. AVX-512 x8 batch path
-  // (used by `digest_many`) is wired separately.
+  // The single-state policy stays scalar: broadcasting each state word across
+  // eight AVX-512 lanes does not add independent work. The AVX-512 x8 batch
+  // path is wired separately.
   xs: KernelId::Portable,
   s: KernelId::Portable,
   m: KernelId::Portable,

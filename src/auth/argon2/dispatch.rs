@@ -1,7 +1,7 @@
 //! Argon2 BlaMka compression kernel dispatch.
 //!
 //! Exposes the [`KernelId`] enum and the runtime selector that picks the
-//! highest-throughput kernel whose required caps are present on the host.
+//! first configured kernel whose required caps are present on the host.
 //!
 //! The dispatcher is invoked once per [`super::argon2_hash`] call and the
 //! resulting [`kernels::CompressFn`] pointer is threaded down through the
@@ -177,9 +177,9 @@ static ACTIVE_KERNEL: OnceCache<KernelId> = OnceCache::new();
 /// on one 128-byte block. Argon2 BlaMka is a *different* shape — each
 /// compression is 1024 bytes with 16 P-rounds of 4 independent GBs, so
 /// a 4-way SIMD kernel has real parallelism to extract even on M-series.
-/// The gate on this primitive is measured, not inherited: the NEON kernel
-/// is the active one on all aarch64 targets unless a future measurement
-/// flips the polarity for a specific host.
+/// Current policy selects the NEON kernel on all AArch64 targets. Changing that
+/// policy requires representative target-native evidence for this Argon2
+/// workload rather than inference from a different primitive.
 ///
 /// # Gate: x86_64
 ///
@@ -275,7 +275,7 @@ mod tests {
   fn x86_kernels_ordered_avx512_then_avx2_then_portable() {
     // The dispatcher walks ALL_KERNELS in order and picks the first whose
     // caps are present on the host. AVX-512 must precede AVX2 must precede
-    // portable so the highest-throughput available kernel wins.
+    // portable so the configured preference order is preserved.
     let avx512_pos = ALL_KERNELS
       .iter()
       .position(|&k| k == KernelId::X86Avx512)

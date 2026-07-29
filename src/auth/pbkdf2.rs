@@ -123,6 +123,8 @@ pub enum Pbkdf2Error {
   SaltTooShort,
   /// The requested output length exceeds `(2^32 − 1) × hLen`.
   OutputTooLong,
+  /// The iteration count exceeds the selected password-verification work limit.
+  ExcessiveIterations,
 }
 
 impl fmt::Display for Pbkdf2Error {
@@ -130,6 +132,7 @@ impl fmt::Display for Pbkdf2Error {
     match self {
       Self::InvalidIterations => f.write_str("PBKDF2 iteration count must be at least 1"),
       Self::WeakIterations => f.write_str("PBKDF2 iteration count is below the password policy minimum"),
+      Self::ExcessiveIterations => f.write_str("PBKDF2 iteration count exceeds the password policy maximum"),
       Self::SaltTooShort => f.write_str("PBKDF2 salt is below the password policy minimum"),
       Self::OutputTooLong => f.write_str("PBKDF2 output length exceeds algorithm maximum"),
     }
@@ -183,8 +186,10 @@ impl<'a> Pbkdf2Params<'a> {
 ///
 /// PBKDF2 has legitimate low-iteration test vectors, but password storage
 /// should reject those values. The default one-shot password APIs use the
-/// type-specific policy constants; use explicit policies only for migrations
-/// or deployments with stricter local requirements.
+/// type-specific policy constants and a type-specific verification work limit.
+/// Use explicit lower-bound policies only for migrations or deployments with
+/// stricter local requirements; use the bounded policy methods when an
+/// attacker can select the stored iteration count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pbkdf2VerifyPolicy {
   /// Minimum accepted iteration count.
@@ -209,12 +214,27 @@ impl Pbkdf2VerifyPolicy {
     params.iterations() >= self.min_iterations && params.salt().len() >= self.min_salt_len
   }
 
+  /// Return `true` when `params` satisfies this policy and the explicit
+  /// verification work limit.
+  #[must_use]
+  pub const fn allows_bounded(&self, params: &Pbkdf2Params<'_>, max_iterations: u32) -> bool {
+    self.allows(params) && params.iterations() <= max_iterations
+  }
+
   fn check(&self, params: &Pbkdf2Params<'_>) -> Result<(), Pbkdf2Error> {
     if params.iterations() < self.min_iterations {
       return Err(Pbkdf2Error::WeakIterations);
     }
     if params.salt().len() < self.min_salt_len {
       return Err(Pbkdf2Error::SaltTooShort);
+    }
+    Ok(())
+  }
+
+  fn check_bounded(&self, params: &Pbkdf2Params<'_>, max_iterations: u32) -> Result<(), Pbkdf2Error> {
+    self.check(params)?;
+    if params.iterations() > max_iterations {
+      return Err(Pbkdf2Error::ExcessiveIterations);
     }
     Ok(())
   }
@@ -257,6 +277,12 @@ macro_rules! define_pbkdf2_sha2 {
       pub const OUTPUT_SIZE: usize = $output_size_const;
       /// Minimum iteration count recommended for compliance-sensitive deployments.
       pub const MIN_RECOMMENDED_ITERATIONS: u32 = $recommended_iterations;
+      /// Maximum iteration count accepted by default password-verification APIs.
+      ///
+      /// Raw PBKDF2 derivation and primitive verification remain unbounded for
+      /// protocol compatibility. Stored-password verification rejects larger
+      /// attacker-controlled work before constructing HMAC state.
+      pub const MAX_VERIFY_ITERATIONS: u32 = $recommended_iterations * 10;
       /// Minimum salt length (bytes) recommended for compliance-sensitive deployments.
       pub const MIN_SALT_LEN: usize = 16;
       /// Default password-hashing verification policy for this PBKDF2 variant.
@@ -273,7 +299,11 @@ macro_rules! define_pbkdf2_sha2 {
         Self::params_with_policy(salt, iterations, &Self::DEFAULT_VERIFY_POLICY)
       }
 
-      /// Build PBKDF2 password parameters under an explicit policy.
+      /// Build PBKDF2 password parameters under an explicit lower-bound policy.
+      ///
+      /// This constructor does not impose an upper work limit. Use
+      /// [`params_with_policy_bounded`](Self::params_with_policy_bounded) when
+      /// the iteration count comes from an untrusted password record.
       ///
       /// # Errors
       ///
@@ -286,6 +316,24 @@ macro_rules! define_pbkdf2_sha2 {
       ) -> Result<Pbkdf2Params<'a>, Pbkdf2Error> {
         let params = Pbkdf2Params::new_primitive(salt, iterations)?;
         policy.check(&params)?;
+        Ok(params)
+      }
+
+      /// Build PBKDF2 password parameters under an explicit lower-bound policy
+      /// and verification work limit.
+      ///
+      /// # Errors
+      ///
+      /// Returns [`Pbkdf2Error`] when the iteration count is zero, the supplied
+      /// policy rejects the parameters, or `iterations > max_iterations`.
+      pub fn params_with_policy_bounded<'a>(
+        salt: &'a [u8],
+        iterations: u32,
+        policy: &Pbkdf2VerifyPolicy,
+        max_iterations: u32,
+      ) -> Result<Pbkdf2Params<'a>, Pbkdf2Error> {
+        let params = Pbkdf2Params::new_primitive(salt, iterations)?;
+        policy.check_bounded(&params, max_iterations)?;
         Ok(params)
       }
 
@@ -425,11 +473,21 @@ macro_rules! define_pbkdf2_sha2 {
       #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
-        self.verify_with_policy(salt, iterations, expected, &Self::DEFAULT_VERIFY_POLICY)
+        self.verify_with_policy_bounded(
+          salt,
+          iterations,
+          expected,
+          &Self::DEFAULT_VERIFY_POLICY,
+          Self::MAX_VERIFY_ITERATIONS,
+        )
       }
 
       /// Verify `expected` after a full public-length comparison using an
-      /// explicit password policy.
+      /// explicit lower-bound password policy.
+      ///
+      /// This compatibility method does not impose an upper work limit. Use
+      /// [`verify_with_policy_bounded`](Self::verify_with_policy_bounded) when
+      /// the iteration count comes from an untrusted password record.
       ///
       /// Generated-code timing claims are configuration- and release-evidence-bound;
       /// see `ct.toml`.
@@ -442,10 +500,34 @@ macro_rules! define_pbkdf2_sha2 {
         expected: &[u8],
         policy: &Pbkdf2VerifyPolicy,
       ) -> Result<(), VerificationError> {
-        let Ok(params) = Self::params_with_policy(salt, iterations, policy) else {
-          return Err(VerificationError::new());
-        };
+        let params = Self::params_with_policy(salt, iterations, policy).map_err(|_| VerificationError::new())?;
         self.verify_primitive(params.salt(), params.iterations(), expected)
+      }
+
+      /// Verify `expected` under an explicit lower-bound policy and
+      /// caller-selected verification work limit.
+      #[allow(clippy::indexing_slicing)]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_with_policy_bounded(
+        &self,
+        salt: &[u8],
+        iterations: u32,
+        expected: &[u8],
+        policy: &Pbkdf2VerifyPolicy,
+        max_iterations: u32,
+      ) -> Result<(), VerificationError> {
+        let params = Self::verification_params_bounded(salt, iterations, policy, max_iterations)?;
+        self.verify_primitive(params.salt(), params.iterations(), expected)
+      }
+
+      fn verification_params_bounded<'a>(
+        salt: &'a [u8],
+        iterations: u32,
+        policy: &Pbkdf2VerifyPolicy,
+        max_iterations: u32,
+      ) -> Result<Pbkdf2Params<'a>, VerificationError> {
+        Self::params_with_policy_bounded(salt, iterations, policy, max_iterations)
+          .map_err(|_| VerificationError::new())
       }
 
       /// Verify `expected` against the derived key without password policy checks.
@@ -571,10 +653,22 @@ macro_rules! define_pbkdf2_sha2 {
         iterations: u32,
         expected: &[u8],
       ) -> Result<(), VerificationError> {
-        Self::verify_password_with_policy(password, salt, iterations, expected, &Self::DEFAULT_VERIFY_POLICY)
+        Self::verify_password_with_policy_bounded(
+          password,
+          salt,
+          iterations,
+          expected,
+          &Self::DEFAULT_VERIFY_POLICY,
+          Self::MAX_VERIFY_ITERATIONS,
+        )
       }
 
-      /// Verify a password in one shot using an explicit password policy.
+      /// Verify a password in one shot using an explicit lower-bound password
+      /// policy.
+      ///
+      /// This compatibility method does not impose an upper work limit. Use
+      /// [`verify_password_with_policy_bounded`](Self::verify_password_with_policy_bounded)
+      /// when the iteration count comes from an untrusted password record.
       #[inline]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_password_with_policy(
@@ -584,7 +678,24 @@ macro_rules! define_pbkdf2_sha2 {
         expected: &[u8],
         policy: &Pbkdf2VerifyPolicy,
       ) -> Result<(), VerificationError> {
-        Self::new(password).verify_with_policy(salt, iterations, expected, policy)
+        let params = Self::params_with_policy(salt, iterations, policy).map_err(|_| VerificationError::new())?;
+        Self::new(password).verify_primitive(params.salt(), params.iterations(), expected)
+      }
+
+      /// Verify a password in one shot under an explicit lower-bound policy
+      /// and caller-selected verification work limit.
+      #[inline]
+      #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
+      pub fn verify_password_with_policy_bounded(
+        password: &[u8],
+        salt: &[u8],
+        iterations: u32,
+        expected: &[u8],
+        policy: &Pbkdf2VerifyPolicy,
+        max_iterations: u32,
+      ) -> Result<(), VerificationError> {
+        let params = Self::verification_params_bounded(salt, iterations, policy, max_iterations)?;
+        Self::new(password).verify_primitive(params.salt(), params.iterations(), expected)
       }
 
       /// Verify a password in one shot without password policy checks.
@@ -1646,6 +1757,77 @@ mod tests {
 
     let mut empty = [];
     assert!(Pbkdf2Sha256::derive_key_with_params(b"pw", params, &mut empty).is_ok());
+  }
+
+  #[test]
+  fn password_verification_limits_attacker_controlled_iterations_before_hmac_work() {
+    let policy = Pbkdf2VerifyPolicy::new(1, 0);
+
+    for iterations in [
+      Pbkdf2Sha256::MAX_VERIFY_ITERATIONS.strict_sub(1),
+      Pbkdf2Sha256::MAX_VERIFY_ITERATIONS,
+    ] {
+      let params =
+        Pbkdf2Sha256::params_with_policy_bounded(b"", iterations, &policy, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS)
+          .unwrap();
+      assert!(policy.allows_bounded(&params, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS));
+    }
+    let excessive_sha256 = Pbkdf2Sha256::MAX_VERIFY_ITERATIONS.strict_add(1);
+    let lower_bound_only = Pbkdf2Sha256::params_with_policy(b"", excessive_sha256, &policy).unwrap();
+    assert!(policy.allows(&lower_bound_only));
+    assert!(!policy.allows_bounded(&lower_bound_only, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS));
+    assert_eq!(
+      Pbkdf2Sha256::params_with_policy_bounded(b"", excessive_sha256, &policy, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS,),
+      Err(Pbkdf2Error::ExcessiveIterations)
+    );
+
+    let sha256 = Pbkdf2Sha256::new_with_compress_for_test(b"pw", counting_sha256_compress);
+    SHA256_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
+    assert!(
+      sha256
+        .verify_with_policy_bounded(
+          b"",
+          excessive_sha256,
+          &[0],
+          &policy,
+          Pbkdf2Sha256::MAX_VERIFY_ITERATIONS,
+        )
+        .is_err()
+    );
+    assert_eq!(SHA256_VERIFY_BLOCKS.load(Ordering::Relaxed), 0);
+
+    for iterations in [
+      Pbkdf2Sha512::MAX_VERIFY_ITERATIONS.strict_sub(1),
+      Pbkdf2Sha512::MAX_VERIFY_ITERATIONS,
+    ] {
+      let params =
+        Pbkdf2Sha512::params_with_policy_bounded(b"", iterations, &policy, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS)
+          .unwrap();
+      assert!(policy.allows_bounded(&params, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS));
+    }
+    let excessive_sha512 = Pbkdf2Sha512::MAX_VERIFY_ITERATIONS.strict_add(1);
+    let lower_bound_only = Pbkdf2Sha512::params_with_policy(b"", excessive_sha512, &policy).unwrap();
+    assert!(policy.allows(&lower_bound_only));
+    assert!(!policy.allows_bounded(&lower_bound_only, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS));
+    assert_eq!(
+      Pbkdf2Sha512::params_with_policy_bounded(b"", excessive_sha512, &policy, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS,),
+      Err(Pbkdf2Error::ExcessiveIterations)
+    );
+
+    let sha512 = Pbkdf2Sha512::new_with_compress_for_test(b"pw", counting_sha512_compress);
+    SHA512_VERIFY_BLOCKS.store(0, Ordering::Relaxed);
+    assert!(
+      sha512
+        .verify_with_policy_bounded(
+          b"",
+          excessive_sha512,
+          &[0],
+          &policy,
+          Pbkdf2Sha512::MAX_VERIFY_ITERATIONS,
+        )
+        .is_err()
+    );
+    assert_eq!(SHA512_VERIFY_BLOCKS.load(Ordering::Relaxed), 0);
   }
 
   #[test]

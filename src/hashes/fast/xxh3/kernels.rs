@@ -2,7 +2,7 @@ use super::{ACC_NB, DEFAULT_SECRET_SIZE};
 use crate::platform::Caps;
 
 pub type StreamAccumulateFn =
-  fn([u64; ACC_NB], &[u8], usize, &[u8; DEFAULT_SECRET_SIZE], usize, usize, bool) -> [u64; ACC_NB];
+  unsafe fn([u64; ACC_NB], &[u8], usize, &[u8; DEFAULT_SECRET_SIZE], usize, usize, bool) -> [u64; ACC_NB];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -38,24 +38,6 @@ impl Xxh3KernelId {
       #[cfg(target_arch = "s390x")]
       Self::Vector => "zvector",
     }
-  }
-}
-
-#[cfg(any(test, feature = "diag"))]
-#[must_use]
-pub fn hash64_fn(id: Xxh3KernelId) -> fn(&[u8], u64) -> u64 {
-  match id {
-    Xxh3KernelId::Portable => super::xxh3_64_with_seed,
-    #[cfg(target_arch = "x86_64")]
-    Xxh3KernelId::Avx2 => super::x86_64_avx2::xxh3_64_with_seed,
-    #[cfg(target_arch = "aarch64")]
-    Xxh3KernelId::Neon => super::aarch64_neon::xxh3_64_with_seed,
-    #[cfg(target_arch = "x86_64")]
-    Xxh3KernelId::Avx512 => super::x86_64_avx512::xxh3_64_with_seed,
-    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-    Xxh3KernelId::Vsx => super::power::xxh3_64_with_seed,
-    #[cfg(target_arch = "s390x")]
-    Xxh3KernelId::Vector => super::s390x::xxh3_64_with_seed,
   }
 }
 
@@ -124,7 +106,9 @@ pub const fn required_caps(id: Xxh3KernelId) -> Caps {
     #[cfg(target_arch = "x86_64")]
     Xxh3KernelId::Avx512 => crate::platform::caps::x86::AVX512F,
     #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-    Xxh3KernelId::Vsx => crate::platform::caps::power::POWER8_VECTOR,
+    Xxh3KernelId::Vsx => crate::platform::caps::power::ALTIVEC
+      .union(crate::platform::caps::power::VSX)
+      .union(crate::platform::caps::power::POWER8_VECTOR),
     #[cfg(target_arch = "s390x")]
     Xxh3KernelId::Vector => crate::platform::caps::s390x::VECTOR,
   }

@@ -163,6 +163,9 @@ pub const fn caps_static() -> Caps {
     if cfg!(target_feature = "sm4") {
       result = result.union(aarch64::SM3).union(aarch64::SM4);
     }
+    if cfg!(target_feature = "sve2-aes") {
+      result = result.union(aarch64::SVE2_AES).union(aarch64::SVE2_PMULL);
+    }
 
     detect!(result;
       // Crypto extensions (single-cap)
@@ -178,7 +181,6 @@ pub const fn caps_static() -> Caps {
       // SVE family
       "sve" => aarch64::SVE,
       "sve2" => aarch64::SVE2,
-      "sve2-aes" => aarch64::SVE2_AES,
       "sve2-sha3" => aarch64::SVE2_SHA3,
       "sve2-sm4" => aarch64::SVE2_SM4,
       "sve2-bitperm" => aarch64::SVE2_BITPERM,
@@ -298,6 +300,8 @@ pub const fn caps_static() -> Caps {
       "power8-crypto" => power::POWER8_CRYPTO,
       "power9-vector" => power::POWER9_VECTOR,
       "power10-vector" => power::POWER10_VECTOR,
+      "quadword-atomics" => power::QUADWORD_ATOMICS,
+      "partword-atomics" => power::PARTWORD_ATOMICS,
     );
   }
 

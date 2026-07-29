@@ -47,10 +47,10 @@
 //! ```toml
 //! [dependencies]
 //! # Smallest CRC-32-only build
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["crc32"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["crc32"] }
 //!
 //! # All checksum families
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["checksums"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["checksums"] }
 //! ```
 //!
 //! # API Conventions
@@ -76,7 +76,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["crc32"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["crc32"] }
 //! ```
 
 mod common;

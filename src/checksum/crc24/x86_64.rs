@@ -1689,3 +1689,69 @@ pub fn crc24_openpgp_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
   };
   from_reflected_state(state)
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u32] = &[0, 0x00b7_04ce, 0x005a_a5a5, 0x00ff_ffff];
+
+  fn assert_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32) {
+    let input: Vec<u8> = (0..4111)
+      .map(|i| (i as u8).wrapping_mul(61).wrapping_add((i >> 8) as u8))
+      .collect();
+    for &state in STATES {
+      for &offset in OFFSETS {
+        for &len in LENS {
+          let slice = &input[offset..offset + len];
+          assert_eq!(
+            kernel(state, slice),
+            super::super::portable::crc24_openpgp_slice8(state, slice),
+            "{name} state={state:#010x} offset={offset} len={len}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn pclmul_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("openpgp/pclmul", crc24_openpgp_pclmul_safe as fn(u32, &[u8]) -> u32),
+      ("openpgp/pclmul-small", crc24_openpgp_pclmul_small_safe),
+      ("openpgp/pclmul-2way", crc24_openpgp_pclmul_2way_safe),
+      ("openpgp/pclmul-4way", crc24_openpgp_pclmul_4way_safe),
+      ("openpgp/pclmul-7way", crc24_openpgp_pclmul_7way_safe),
+      ("openpgp/pclmul-8way", crc24_openpgp_pclmul_8way_safe),
+    ] {
+      assert_kernel(name, kernel);
+    }
+  }
+
+  #[test]
+  fn vpclmul_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("openpgp/vpclmul", crc24_openpgp_vpclmul_safe as fn(u32, &[u8]) -> u32),
+      ("openpgp/vpclmul-2way", crc24_openpgp_vpclmul_2way_safe),
+      ("openpgp/vpclmul-4way", crc24_openpgp_vpclmul_4way_safe),
+      ("openpgp/vpclmul-7way", crc24_openpgp_vpclmul_7way_safe),
+      ("openpgp/vpclmul-8way", crc24_openpgp_vpclmul_8way_safe),
+    ] {
+      assert_kernel(name, kernel);
+    }
+  }
+}

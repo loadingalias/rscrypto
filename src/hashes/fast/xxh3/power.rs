@@ -269,7 +269,12 @@ unsafe fn stream_accumulate_inner(
   }
 }
 
-pub(crate) fn stream_accumulate(
+/// # Safety
+///
+/// The caller must verify AltiVec, VSX, and POWER8-vector support, pass
+/// `stripes > 0`, and keep every requested input and secret stripe within its
+/// slice.
+pub(crate) unsafe fn stream_accumulate(
   initial: [u64; ACC_NB],
   input: &[u8],
   input_offset: usize,
@@ -278,9 +283,8 @@ pub(crate) fn stream_accumulate(
   stripes: usize,
   scramble_after: bool,
 ) -> [u64; ACC_NB] {
-  // SAFETY: Calling the POWER8 vector streaming kernel because:
-  // 1. Runtime dispatch selects this wrapper only after POWER8 vector capability detection.
-  // 2. `stream_accumulate_inner` validates all slice offsets before pointer arithmetic.
+  // SAFETY: The caller contract provides the required POWER vector features
+  // and proves every raw input and secret load is in bounds.
   unsafe {
     stream_accumulate_inner(
       initial,
@@ -366,23 +370,6 @@ pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
       (input.len() as u64).wrapping_mul(PRIME64_1),
     )
   }
-}
-
-/// XXH3 64-bit hash — POWER VSX kernel.
-///
-/// Delegates ≤240 B to portable scalar paths; >240 B uses VSX accumulator.
-#[cfg(any(test, feature = "diag"))]
-pub fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
-  if input.len() <= 16 {
-    return super::xxh3_64_0to16(input, seed, &DEFAULT_SECRET);
-  }
-  if input.len() <= 128 {
-    return super::xxh3_64_7to128(input, seed, &DEFAULT_SECRET);
-  }
-  if input.len() <= super::MID_SIZE_MAX {
-    return super::xxh3_64_129to240(input, seed, &DEFAULT_SECRET);
-  }
-  xxh3_64_long(input, seed)
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.

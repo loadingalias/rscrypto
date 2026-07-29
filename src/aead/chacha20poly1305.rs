@@ -269,11 +269,8 @@ impl ChaCha20Poly1305 {
       return false;
     }
 
-    // Measured on the 2026-07-01 x86_64 Linux bench run:
-    // - Sapphire Rapids regresses beyond 256 bytes.
-    // - AMD Zen5 regresses beyond 1024 bytes.
-    // - The remaining measured AVX2+BMI2 lanes, Zen4 and Ice Lake, benefit from the integrated pass
-    //   shape across the sampled non-empty sizes.
+    // The manually maintained x86 policy bounds the integrated assembly path
+    // on the two microarchitecture classes with explicit crossover limits.
     if caps.has(x86::INTEL_SAPPHIRE_RAPIDS) {
       plaintext_len <= X86_64_ASM_SPR_MAX
     } else if caps.has(x86::AMD_ZEN5) {
@@ -296,10 +293,9 @@ impl ChaCha20Poly1305 {
       return false;
     }
 
-    // Measured on the 2026-07-01 decrypt bench:
-    // - all sampled x86_64 CPUs lose 1..=256 bytes on the generic split open path.
-    // - AMD Zen4 loses through the full sampled matrix; the repo only has a Zen5-specific AMD
-    //   discriminator, so AMD without Zen5 takes integrated open for every non-empty size.
+    // AMD without the Zen5 discriminator keeps the integrated open path for
+    // every non-empty size; other x86 classes use the configured short-input
+    // boundary.
     if caps.has(x86::AMD) && !caps.has(x86::AMD_ZEN5) {
       true
     } else {
@@ -846,7 +842,7 @@ mod tests {
 
   #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
   #[test]
-  fn x86_64_asm_policy_matches_measured_thresholds() {
+  fn x86_64_asm_policy_matches_configured_thresholds() {
     use crate::platform::{Caps, caps::x86};
 
     let avx2_bmi2 = x86::AVX2 | x86::BMI2;
@@ -917,13 +913,13 @@ mod tests {
       if aad_len > SMALL_AAD_FAST_MAX {
         assert!(
           actual.is_none(),
-          "empty decrypt fast path applied outside its measured gate: aad_len={aad_len}"
+          "empty decrypt fast path applied outside its configured gate: aad_len={aad_len}"
         );
         continue;
       }
 
       actual
-        .expect("empty decrypt fast path must apply inside its measured gate")
+        .expect("empty decrypt fast path must apply inside its configured gate")
         .unwrap();
 
       let mut bad_tag = expected_tag.to_bytes();
@@ -931,7 +927,7 @@ mod tests {
       assert_eq!(
         cipher
           .decrypt_empty_text_fast(&nonce, &aad, &ChaCha20Poly1305Tag::from_bytes(bad_tag))
-          .expect("empty decrypt fast path must apply inside its measured gate"),
+          .expect("empty decrypt fast path must apply inside its configured gate"),
         Err(OpenError::verification())
       );
     }
@@ -1002,7 +998,8 @@ mod tests {
         if plaintext_len == 0 || plaintext_len > POWER_SHORT_FAST_MAX || aad_len > SMALL_AAD_FAST_MAX {
           assert!(
             actual_tag.is_none(),
-            "Power short fast path applied outside its measured gate: plaintext_len={plaintext_len} aad_len={aad_len}"
+            "Power short fast path applied outside its configured gate: plaintext_len={plaintext_len} \
+             aad_len={aad_len}"
           );
           assert_eq!(actual, plaintext);
           continue;
@@ -1013,7 +1010,7 @@ mod tests {
           .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut expected)
           .unwrap();
         let actual_tag = actual_tag
-          .expect("Power short fast path must apply inside its measured gate")
+          .expect("Power short fast path must apply inside its configured gate")
           .unwrap();
 
         assert_eq!(
@@ -1055,7 +1052,7 @@ mod tests {
         if plaintext_len == 0 || plaintext_len > POWER_SHORT_FAST_MAX || aad_len > SMALL_AAD_FAST_MAX {
           assert!(
             actual_result.is_none(),
-            "Power short decrypt fast path applied outside its measured gate: plaintext_len={plaintext_len} \
+            "Power short decrypt fast path applied outside its configured gate: plaintext_len={plaintext_len} \
              aad_len={aad_len}"
           );
           assert_eq!(actual, ciphertext);
@@ -1063,7 +1060,7 @@ mod tests {
         }
 
         actual_result
-          .expect("Power short decrypt fast path must apply inside its measured gate")
+          .expect("Power short decrypt fast path must apply inside its configured gate")
           .unwrap();
         assert_eq!(
           actual, plaintext,
@@ -1076,7 +1073,7 @@ mod tests {
         assert_eq!(
           cipher
             .decrypt_short_text_power_fast(&nonce, &aad, &mut rejected, &ChaCha20Poly1305Tag::from_bytes(bad_tag),)
-            .expect("Power short decrypt fast path must apply inside its measured gate"),
+            .expect("Power short decrypt fast path must apply inside its configured gate"),
           Err(OpenError::verification())
         );
         assert!(

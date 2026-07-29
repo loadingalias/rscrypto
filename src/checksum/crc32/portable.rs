@@ -14,8 +14,7 @@ pub(crate) const BYTEWISE_KERNEL_NAME: &str = "portable/bytewise";
 
 /// CRC-32 (IEEE) byte-at-a-time lookup computation.
 ///
-/// This is typically faster than slice-by-16 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-16 table set.
 #[inline(always)]
 pub fn crc32_bytewise_ieee(crc: u32, data: &[u8]) -> u32 {
   crc32_bytewise(crc, data, &kernel_tables::IEEE_TABLES_16[0])
@@ -23,8 +22,7 @@ pub fn crc32_bytewise_ieee(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-32C (Castagnoli) byte-at-a-time lookup computation.
 ///
-/// This is typically faster than slice-by-16 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-16 table set.
 #[inline(always)]
 pub fn crc32c_bytewise(crc: u32, data: &[u8]) -> u32 {
   crc32_bytewise(crc, data, &kernel_tables::CRC32C_TABLES_16[0])

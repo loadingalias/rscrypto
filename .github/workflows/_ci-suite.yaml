@@ -140,6 +140,19 @@ jobs:
       operation: native-ibm
       test_mode: ${{ inputs.test_mode }}
 
+  platform-amx:
+    name: Platform (Linux x64 AMX permission)
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=intel-spr
+      timeout_minutes: 30
+      cache_key: ${{ inputs.cache_key_prefix }}-platform-amx
+      tools_mode: none
+      toolchain_components: "rustfmt"
+      enable_magic_cache: true
+      enable_rust_cache: true
+      operation: platform-amx
+
   cross-targets:
     name: Cross Targets
     uses: ./.github/workflows/_rust-job.yaml

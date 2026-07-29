@@ -108,7 +108,7 @@ Features: `macs` / `kdfs` or `hmac` / `hmac-sha3` / `hkdf` / `pbkdf2` / `kmac` /
 |------|------------|----------|
 | `HmacSha256` / `HmacSha384` / `HmacSha512`; `HmacSha256Tag` / `HmacSha384Tag` / `HmacSha512Tag` | 32-64B | RFC 2104 |
 | `HmacSha3_224` / `HmacSha3_256` / `HmacSha3_384` / `HmacSha3_512`; matching `HmacSha3_*Tag` types | 28-64B | RFC 2104 over FIPS 202 SHA-3 |
-| `Kmac128` / `Kmac256` | variable | SP 800-185 |
+| `Kmac128` / `Kmac256` | variable; authentication verification requires 16 / 32 bytes | SP 800-185 |
 | `Poly1305`, `Poly1305OneTimeKey`, `Poly1305Tag` | 16B tag | RFC 8439 |
 | `HkdfSha256` / `HkdfSha384` / `HkdfSha512` | 32-64B PRK | RFC 5869 |
 | `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
@@ -165,7 +165,9 @@ RSA public-key verification, import, and caller-filled public encryption require
 randomized encryption wrappers require `getrandom`. Key generation seeds a
 key-generation HMAC_DRBG from OS entropy; deterministic caller-supplied
 salt/blinding APIs remain available for constrained private-operation
-integrations that own their entropy boundary.
+integrations that own their entropy boundary. Private-key import requires two
+conventional half-modulus-width factors that pass trial division and a 32-base
+Miller-Rabin probable-prime screen.
 
 ML-KEM supports key generation, encapsulation, decapsulation, validated prepared
 encapsulation keys, and validated prepared decapsulation keys. The core API

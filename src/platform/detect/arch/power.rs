@@ -28,20 +28,9 @@ fn detect_power() -> Detected {
 fn runtime_power() -> Caps {
   use std::{fs::File, io::Read};
 
-  use crate::platform::caps::power;
-
   // ELF auxiliary vector entry types
   const AT_HWCAP: u64 = 16;
   const AT_HWCAP2: u64 = 26;
-
-  // HWCAP masks (from linux/arch/powerpc/include/uapi/asm/cputable.h)
-  const PPC_FEATURE_HAS_ALTIVEC: u64 = 0x1000_0000;
-  const PPC_FEATURE_HAS_VSX: u64 = 0x0000_0080;
-
-  // HWCAP2 masks
-  const PPC_FEATURE2_ARCH_2_07: u64 = 0x8000_0000; // POWER8 ISA (v2.07)
-  const PPC_FEATURE2_ARCH_3_00: u64 = 0x0080_0000; // POWER9 ISA (v3.00)
-  const PPC_FEATURE2_ARCH_3_1: u64 = 0x0004_0000; // POWER10 ISA (v3.1)
 
   let (hwcap, hwcap2) = (|| -> Option<(u64, u64)> {
     let mut file = File::open("/proc/self/auxv").ok()?;
@@ -68,6 +57,24 @@ fn runtime_power() -> Caps {
   })()
   .unwrap_or((0, 0));
 
+  decode_power_hwcap(hwcap, hwcap2)
+}
+
+#[cfg(all(
+  target_arch = "powerpc64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android")
+))]
+fn decode_power_hwcap(hwcap: u64, hwcap2: u64) -> Caps {
+  use crate::platform::caps::power;
+
+  // linux/arch/powerpc/include/uapi/asm/cputable.h
+  const PPC_FEATURE_HAS_ALTIVEC: u64 = 0x1000_0000;
+  const PPC_FEATURE_HAS_VSX: u64 = 0x0000_0080;
+  const PPC_FEATURE2_ARCH_2_07: u64 = 0x8000_0000;
+  const PPC_FEATURE2_ARCH_3_00: u64 = 0x0080_0000;
+  const PPC_FEATURE2_ARCH_3_1: u64 = 0x0004_0000;
+
   let mut caps = Caps::NONE;
 
   if hwcap & PPC_FEATURE_HAS_ALTIVEC != 0 {
@@ -86,7 +93,48 @@ fn runtime_power() -> Caps {
     caps |= power::POWER8_VECTOR | power::POWER8_CRYPTO;
   }
 
+  if hwcap2 & (PPC_FEATURE2_ARCH_2_07 | PPC_FEATURE2_ARCH_3_00 | PPC_FEATURE2_ARCH_3_1) != 0 {
+    caps |= power::QUADWORD_ATOMICS | power::PARTWORD_ATOMICS;
+  }
+
   caps
+}
+
+#[cfg(all(
+  test,
+  target_arch = "powerpc64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android")
+))]
+mod tests {
+  use super::*;
+  use crate::platform::caps::power;
+
+  #[test]
+  fn power_isa_levels_include_their_predecessors_and_atomics() {
+    const ARCH_2_07: u64 = 0x8000_0000;
+    const ARCH_3_00: u64 = 0x0080_0000;
+    const ARCH_3_1: u64 = 0x0004_0000;
+    const ATOMICS: Caps = power::QUADWORD_ATOMICS.union(power::PARTWORD_ATOMICS);
+
+    assert_eq!(decode_power_hwcap(0, 0), Caps::NONE);
+    assert_eq!(
+      decode_power_hwcap(0, ARCH_2_07),
+      power::POWER8_VECTOR | power::POWER8_CRYPTO | ATOMICS
+    );
+    assert_eq!(
+      decode_power_hwcap(0, ARCH_3_00),
+      power::POWER9_VECTOR | power::POWER8_VECTOR | power::POWER8_CRYPTO | ATOMICS
+    );
+    assert_eq!(
+      decode_power_hwcap(0, ARCH_3_1),
+      power::POWER10_VECTOR
+        | power::POWER9_VECTOR
+        | power::POWER8_VECTOR
+        | power::POWER8_CRYPTO
+        | ATOMICS
+    );
+  }
 }
 
 /// Runtime Power detection for other platforms.

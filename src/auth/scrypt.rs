@@ -304,7 +304,6 @@ pub const fn required_caps(kernel: KernelId) -> crate::platform::Caps {
 
 /// Runtime dispatch for the active scrypt BlockMix backend.
 #[inline]
-#[allow(dead_code)] // Reserved for Phase 4 dispatch; referenced by tests to pin the contract.
 fn active_kernel() -> KernelId {
   #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
   {

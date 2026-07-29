@@ -46,6 +46,7 @@ const AEAD_PLAINTEXT: [u8; 44] = *b"constant-time seal buffer for key validation
 const RSA_PKCS1_2048: &str = include_str!("../../../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
 const RSA_CT_KEY_A_INDEX: usize = 0;
 const RSA_CT_KEY_B_SAME_SHAPE_INDEX: usize = 2;
+const RSA_CT_KEY_SHORT_CRT_EXPONENT_INDEX: usize = 21;
 
 fn samples() -> usize {
   std::env::var("RSCRYPTO_CT_DUDECT_SAMPLES")
@@ -1460,6 +1461,34 @@ fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
   }
 }
 
+fn rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let full_width_key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
+  let short_exponent_key = rsa_ct_fixture_key(RSA_CT_KEY_SHORT_CRT_EXPONENT_INDEX);
+  let full_width_blinding = rsa_blinding_pair(&full_width_key);
+  let short_exponent_blinding = rsa_blinding_pair(&short_exponent_key);
+  let message = [0x42; 32];
+
+  for class in balanced_classes(rng, samples()) {
+    let (key, (blinding_factor, blinding_inverse)) = if matches!(class, Class::Left) {
+      (&full_width_key, &full_width_blinding)
+    } else {
+      (&short_exponent_key, &short_exponent_blinding)
+    };
+    runner.run_one(class, || {
+      let mut out = vec![0u8; key.signature_len()];
+      key
+        .sign_pkcs1v15_with_blinding_factor(
+          RsaPkcs1v15Profile::Sha256,
+          &message,
+          blinding_factor,
+          blinding_inverse,
+          &mut out,
+        )
+        .is_ok()
+    });
+  }
+}
+
 fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut BenchRng) {
   let key = rsa_ct_fixture_key(RSA_CT_KEY_A_INDEX);
   let sig_len = key.signature_len();
@@ -2062,6 +2091,10 @@ ctbench_main_with_seeds!(
   (ecdsa_p384_diag_final_multiply_fixed_vs_random_secret, Some(0x703338346d756c73)),
   (rsa_pkcs1v15_fixed_vs_random_message, Some(0x7273615f7369676e)),
   (rsa_pss_fixed_vs_random_message, Some(0x7273615f70737373)),
+  (
+    rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent,
+    Some(0x7273615f6372746c)
+  ),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
   (rsa_private_component_validation_fixed_vs_random_component, Some(0x7273615f636f6d70)),

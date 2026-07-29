@@ -61,6 +61,9 @@ evidence gate. This is intent, not a standalone public claim:
 
 Symmetric encryption, polynomial authenticators, KDF internals, and
 password-hashing internals are CT-relevant when key or password material is live.
+Validated RSA keys retain each CRT exponent at its corresponding factor width
+before steady-state private arithmetic. DER import and export remain
+variable-shape operations outside that steady-state boundary.
 
 ## Not Blanket Claims
 

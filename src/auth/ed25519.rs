@@ -174,8 +174,9 @@ impl Ed25519SecretKey {
   /// Sign a message with this secret key.
   #[must_use]
   pub fn sign(&self, message: &[u8]) -> Ed25519Signature {
-    let public = self.public_key();
-    sign_with_secret(self, &public, message)
+    let expanded = hash::ExpandedSecret::from_secret_key(self);
+    let public = public_key_from_scalar(expanded.scalar_bytes());
+    sign_with_expanded(&expanded, &public, message)
   }
 }
 
@@ -573,12 +574,6 @@ pub fn verify(
 }
 
 #[must_use]
-fn sign_with_secret(secret: &Ed25519SecretKey, public: &Ed25519PublicKey, message: &[u8]) -> Ed25519Signature {
-  let expanded = hash::ExpandedSecret::from_secret_key(secret);
-  sign_with_expanded(&expanded, public, message)
-}
-
-#[must_use]
 fn sign_with_expanded(expanded: &hash::ExpandedSecret, public: &Ed25519PublicKey, message: &[u8]) -> Ed25519Signature {
   let mut secret_scalar = expanded.scalar_words();
 
@@ -896,8 +891,7 @@ fn public_key_from_scalar(scalar_bytes: &[u8; SECRET_KEY_LENGTH]) -> Ed25519Publ
 /// available path.
 ///
 /// Uses wNAF-based Straus on IFMA platforms: wNAF(8) for the basepoint
-/// scalar (~28 additions) + wNAF(5) for the public-key scalar (~43
-/// additions) = ~71 total, vs ~128 with the old radix-16 approach.
+/// scalar and wNAF(5) for the public-key scalar.
 ///
 /// AVX2 wNAF Straus remains as the fallback for pre-IFMA hardware.
 #[must_use]
@@ -908,7 +902,7 @@ fn straus_dispatch(s: &[u8; 32], h: &[u8; 32], a: &point::ExtendedPoint) -> poin
 
     let caps = crate::platform::caps();
 
-    // IFMA + wNAF path: ~45% fewer additions than radix-16.
+    // IFMA + wNAF path.
     if caps.has(x86::AVX512IFMA) && caps.has(x86::AVX512VL) && caps.has(x86::AVX2) {
       // SAFETY: AVX-512 IFMA + VL + AVX2 confirmed by runtime detection.
       return unsafe { point_avx2::straus_wnaf_vartime_ifma(s, h, a) };
@@ -1034,10 +1028,11 @@ mod tests {
   #[test]
   fn keypair_signs_and_public_key_verifies() {
     let secret = Ed25519SecretKey::from_bytes([0x55; Ed25519SecretKey::LENGTH]);
-    let keypair = Ed25519Keypair::from_secret_key(secret);
+    let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
     let message = b"rscrypto-ed25519";
     let signature = keypair.sign(message);
 
+    assert_eq!(secret.sign(message), signature);
     assert!(keypair.public_key().verify(message, &signature).is_ok());
     assert!(verify(message, &keypair.public_key(), &signature).is_ok());
   }

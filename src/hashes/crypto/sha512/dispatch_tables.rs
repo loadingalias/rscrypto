@@ -100,18 +100,11 @@ pub static S390X_KIMD_TABLE: DispatchTable = DispatchTable {
 #[inline]
 #[must_use]
 pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static DispatchTable {
-  // x86_64 cascade: SHA-512 NI > vendor-aware AVX2/AVX-512VL > Portable
+  // x86_64 cascade: SHA-512 NI, then vendor-aware AVX2/AVX-512VL, then portable.
   //
-  // The stitched AVX2+BMI2 dual-block kernel beats AVX-512VL in raw
-  // compression throughput on both AMD and Intel. However, the AVX2 kernel
-  // falls back to portable for odd-block-count inputs (the common case for
-  // small inputs: 0-64 B = 1 block). On Intel, AVX-512VL handles single
-  // blocks natively, so it wins at small sizes and breaks even at scale.
-  //
-  // AMD: AVX2 decoupled > AVX-512VL.
-  // Intel: AVX-512VL decoupled > AVX2 decoupled.
-  //
-  // Measured: sha512-compress/raw CI 2026-03-23.
+  // The AVX2 kernel falls back to portable for odd block counts, while
+  // AVX-512VL handles a trailing single block. Vendor-specific ordering is a
+  // manually maintained dispatch policy.
   #[cfg(target_arch = "x86_64")]
   {
     use crate::platform::caps::x86;
@@ -123,7 +116,6 @@ pub fn select_runtime_table(#[allow(unused_variables)] caps: Caps) -> &'static D
       // serialises schedule → extract → round within each iteration, limiting
       // IPC on wide pipelines. The decoupled pattern gives the OOO engine
       // 16 independent scalar rounds to overlap with SIMD schedule latency.
-      // Measured: stitched Zen4→Zen5 scaling 1.32x vs sha2 crate 1.71x.
       if caps.has(x86::AVX2) {
         return &X86_AVX2_DECOUPLED_TABLE;
       }

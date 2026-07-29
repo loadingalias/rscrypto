@@ -508,8 +508,8 @@ impl Mac for HmacSha256 {
   #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
     if hmac_sha256_oneshot_should_stream() {
-      // Sapphire Rapids regresses badly on the fused stack-buffer shape; the
-      // public streaming path keeps the same semantics with the measured fast call shape.
+      // The Sapphire Rapids policy uses the public streaming path instead of
+      // the fused stack-buffer shape.
       let mut mac = Self::new(key);
       mac.update(data);
       return mac.finalize();

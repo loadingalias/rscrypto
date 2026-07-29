@@ -558,3 +558,57 @@ pub fn crc16_ibm_vgfm_4way_safe(crc: u16, data: &[u8]) -> u16 {
     )
   }
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u16] = &[0, 0x1d0f, 0xa5a5, u16::MAX];
+
+  fn assert_kernel(name: &str, kernel: fn(u16, &[u8]) -> u16, portable: fn(u16, &[u8]) -> u16) {
+    let input: Vec<u8> = (0..4111)
+      .map(|i| (i as u8).wrapping_mul(43).wrapping_add((i >> 8) as u8))
+      .collect();
+    for &state in STATES {
+      for &offset in OFFSETS {
+        for &len in LENS {
+          let slice = &input[offset..offset + len];
+          assert_eq!(
+            kernel(state, slice),
+            portable(state, slice),
+            "{name} state={state:#06x} offset={offset} len={len}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn vgfm_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("ccitt/vgfm", crc16_ccitt_vgfm_safe as fn(u16, &[u8]) -> u16),
+      ("ccitt/vgfm-2way", crc16_ccitt_vgfm_2way_safe),
+      ("ccitt/vgfm-4way", crc16_ccitt_vgfm_4way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ccitt_slice8);
+    }
+
+    for (name, kernel) in [
+      ("ibm/vgfm", crc16_ibm_vgfm_safe as fn(u16, &[u8]) -> u16),
+      ("ibm/vgfm-2way", crc16_ibm_vgfm_2way_safe),
+      ("ibm/vgfm-4way", crc16_ibm_vgfm_4way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ibm_slice8);
+    }
+  }
+}

@@ -648,3 +648,57 @@ pub fn crc64_nvme_vgfm_4way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies VECTOR facility before selecting this kernel.
   unsafe { crc64_nvme_vgfm_4way(crc, data) }
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u64] = &[0, 0x0123_4567_89ab_cdef, 0xa5a5_5a5a_dead_beef, u64::MAX];
+
+  fn assert_kernel(name: &str, kernel: fn(u64, &[u8]) -> u64, portable: fn(u64, &[u8]) -> u64) {
+    let input: Vec<u8> = (0..4111)
+      .map(|i| (i as u8).wrapping_mul(53).wrapping_add((i >> 8) as u8))
+      .collect();
+    for &state in STATES {
+      for &offset in OFFSETS {
+        for &len in LENS {
+          let slice = &input[offset..offset + len];
+          assert_eq!(
+            kernel(state, slice),
+            portable(state, slice),
+            "{name} state={state:#018x} offset={offset} len={len}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn vgfm_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("xz/vgfm", crc64_xz_vgfm_safe as fn(u64, &[u8]) -> u64),
+      ("xz/vgfm-2way", crc64_xz_vgfm_2way_safe),
+      ("xz/vgfm-4way", crc64_xz_vgfm_4way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc64_slice16_xz);
+    }
+
+    for (name, kernel) in [
+      ("nvme/vgfm", crc64_nvme_vgfm_safe as fn(u64, &[u8]) -> u64),
+      ("nvme/vgfm-2way", crc64_nvme_vgfm_2way_safe),
+      ("nvme/vgfm-4way", crc64_nvme_vgfm_4way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc64_slice16_nvme);
+    }
+  }
+}

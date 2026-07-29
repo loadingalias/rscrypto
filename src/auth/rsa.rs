@@ -118,6 +118,10 @@ const PRIVATE_FIXED_WINDOW_TABLE_ENTRIES: usize = 16;
 const RSA_KEYGEN_PUBLIC_EXPONENT: u64 = 65_537;
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_MILLER_RABIN_ROUNDS: usize = 32;
+const RSA_IMPORT_MILLER_RABIN_BASES: [u16; 32] = [
+  2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109,
+  113, 127, 131,
+];
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_PAIR_ATTEMPTS: usize = 64;
 #[cfg(feature = "getrandom")]
@@ -136,8 +140,7 @@ const RSA_KEYGEN_DRBG_HMAC_BLOCK_BYTES: usize = 64;
 const RSA_KEYGEN_DRBG_PERSONALIZATION: &[u8] = b"rscrypto RSA FIPS 186-5 A.1.3 HMAC_DRBG";
 #[cfg(feature = "getrandom")]
 const RSA_KEYGEN_SQRT2_HALF_TOP64: [u8; 8] = [0xb5, 0x04, 0xf3, 0x33, 0xf9, 0xde, 0x64, 0x84];
-#[cfg(feature = "getrandom")]
-const RSA_KEYGEN_SMALL_PRIMES: &[u16] = &[
+const RSA_SMALL_PRIMES: &[u16] = &[
   3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113,
   127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241,
   251, 257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313, 317, 331, 337, 347, 349, 353, 359, 367, 373, 379, 383,
@@ -1187,6 +1190,11 @@ pub struct RsaPublicKey {
 
 /// Validated RSA private key.
 ///
+/// Imports require two conventional half-modulus-width factors that pass
+/// trial division and a 32-base Miller-Rabin probable-prime screen. The
+/// screening detects weak factor shapes and compositeness evidence; it is not
+/// a mathematical proof of primality.
+///
 /// Private operations use either OS-backed blinding through the `getrandom`
 /// feature or an explicit caller-supplied blinding factor and modular inverse
 /// for deterministic tests and constrained integrations.
@@ -1212,8 +1220,7 @@ pub struct RsaPrivateScratch {
   one: SecretBigEndianBuffer,
   public_scratch: RsaPublicScratch,
   mul_scratch: RsaPrivateMulScratch,
-  exponent_p_scratch: RsaPrivateExponentScratch,
-  exponent_q_scratch: RsaPrivateExponentScratch,
+  exponent_scratch: RsaPrivateExponentScratch,
 }
 
 /// RSA signer bound to a concrete signature profile.
@@ -1245,7 +1252,9 @@ pub struct RsaJwtVerifier<'a> {
 /// Borrowed RSA private-key CRT components.
 ///
 /// These fields contain private key material. Keep values canonical unsigned
-/// big-endian, without leading zero padding.
+/// big-endian, without leading zero padding. Both factors must have the
+/// conventional half-modulus bit length and pass the private-import
+/// probable-prime screen.
 #[derive(Clone, Copy)]
 pub struct RsaPrivateKeyParts<'a> {
   /// RSA modulus `n`.
@@ -1326,7 +1335,8 @@ impl RsaPrivateKey {
   /// # Errors
   ///
   /// Returns [`RsaKeyError`] if the DER is malformed or the key components are
-  /// inconsistent with RSA private-key policy.
+  /// inconsistent with RSA private-key policy, including factor width or
+  /// probable-prime validation.
   pub fn from_pkcs1_der(der: &[u8]) -> Result<Self, RsaKeyError> {
     Self::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::default())
   }
@@ -1335,7 +1345,8 @@ impl RsaPrivateKey {
   ///
   /// # Errors
   ///
-  /// Returns [`RsaKeyError`] if parsing or validation fails.
+  /// Returns [`RsaKeyError`] if parsing, factor-strength validation, or
+  /// component consistency validation fails.
   pub fn from_pkcs1_der_with_policy(der: &[u8], policy: &RsaPublicKeyPolicy) -> Result<Self, RsaKeyError> {
     parse_pkcs1_private_key_der_with_policy(der, policy).map(|components| Self { components })
   }
@@ -1350,7 +1361,8 @@ impl RsaPrivateKey {
   /// # Errors
   ///
   /// Returns [`RsaKeyError`] if the DER is malformed, not an RSA private key,
-  /// or the embedded PKCS #1 private key is invalid.
+  /// or the embedded PKCS #1 private key fails factor-strength or consistency
+  /// validation.
   pub fn from_pkcs8_der(der: &[u8]) -> Result<Self, RsaKeyError> {
     Self::from_pkcs8_der_with_policy(der, &RsaPublicKeyPolicy::default())
   }
@@ -1359,7 +1371,8 @@ impl RsaPrivateKey {
   ///
   /// # Errors
   ///
-  /// Returns [`RsaKeyError`] if parsing or validation fails.
+  /// Returns [`RsaKeyError`] if parsing, factor-strength validation, or
+  /// component consistency validation fails.
   pub fn from_pkcs8_der_with_policy(der: &[u8], policy: &RsaPublicKeyPolicy) -> Result<Self, RsaKeyError> {
     parse_pkcs8_private_key_der_with_policy(der, policy).map(|components| Self { components })
   }
@@ -1369,7 +1382,7 @@ impl RsaPrivateKey {
   /// # Errors
   ///
   /// Returns [`RsaKeyError`] if the components violate RSA private-key policy
-  /// or fail consistency checks.
+  /// or fail factor-strength or consistency checks.
   pub fn from_components(parts: RsaPrivateKeyParts<'_>) -> Result<Self, RsaKeyError> {
     Self::from_components_with_policy(parts, &RsaPublicKeyPolicy::default())
   }
@@ -1379,7 +1392,7 @@ impl RsaPrivateKey {
   /// # Errors
   ///
   /// Returns [`RsaKeyError`] if the components violate `policy` or fail
-  /// consistency checks.
+  /// factor-strength or consistency checks.
   pub fn from_components_with_policy(
     parts: RsaPrivateKeyParts<'_>,
     policy: &RsaPublicKeyPolicy,
@@ -2533,8 +2546,7 @@ impl RsaPrivateScratch {
       one,
       public_scratch: components.public.public_scratch(),
       mul_scratch: RsaPrivateMulScratch::new(components.public.modulus.limbs.len()),
-      exponent_p_scratch: RsaPrivateExponentScratch::new(components.prime_p_modulus.limbs.len()),
-      exponent_q_scratch: RsaPrivateExponentScratch::new(components.prime_q_modulus.limbs.len()),
+      exponent_scratch: RsaPrivateExponentScratch::new(components.public.modulus.limbs.len()),
     }
   }
 
@@ -2577,8 +2589,7 @@ impl RsaPrivateScratch {
     ct::zeroize_words(&mut self.public_scratch.limbs[..]);
     ct::zeroize(&mut self.public_scratch.bytes[..]);
     self.mul_scratch.clear();
-    self.exponent_p_scratch.clear();
-    self.exponent_q_scratch.clear();
+    self.exponent_scratch.clear();
   }
 }
 
@@ -2778,7 +2789,7 @@ impl RsaPrivateKeyComponents {
         scratch.blinding_factor.as_slice(),
         modulus_p,
         factor_p,
-        &mut scratch.exponent_p_scratch,
+        &mut scratch.exponent_scratch,
       )?;
       if is_zero_unsigned_be(factor_p) {
         return Err(RsaPrivateOpError::InvalidBlindingFactor);
@@ -2794,7 +2805,7 @@ impl RsaPrivateKeyComponents {
         scratch.blinding_factor.as_slice(),
         modulus_q,
         factor_q,
-        &mut scratch.exponent_q_scratch,
+        &mut scratch.exponent_scratch,
       )?;
       if is_zero_unsigned_be(factor_q) {
         return Err(RsaPrivateOpError::InvalidBlindingFactor);
@@ -2837,7 +2848,7 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_p.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_p_scratch,
+      &mut scratch.exponent_scratch,
     )?;
     private_exponentiate_representative_with_scratch(
       modulus_q,
@@ -2856,7 +2867,7 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_q.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_q_scratch,
+      &mut scratch.exponent_scratch,
     )?;
 
     private_import_unsigned_be_mod_to_fixed(
@@ -2871,7 +2882,7 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_p.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_p_scratch,
+      &mut scratch.exponent_scratch,
     )?;
     private_sub_mod_unsigned_be_to_fixed(
       scratch
@@ -3516,8 +3527,9 @@ impl RsaPrivateKeyComponents {
     let prime_q = self.prime_q.as_bytes();
     let modulus_p = &self.prime_p_modulus;
     let modulus_q = &self.prime_q_modulus;
-    scratch.exponent_p_scratch.ensure_limb_count(modulus_p.limbs.len())?;
-    scratch.exponent_q_scratch.ensure_limb_count(modulus_q.limbs.len())?;
+    scratch
+      .exponent_scratch
+      .ensure_limb_count(core::cmp::max(modulus_p.limbs.len(), modulus_q.limbs.len()))?;
 
     {
       let representative_p = scratch
@@ -3529,7 +3541,7 @@ impl RsaPrivateKeyComponents {
         scratch.blinded.as_slice(),
         modulus_p,
         representative_p,
-        &mut scratch.exponent_p_scratch,
+        &mut scratch.exponent_scratch,
       )?;
     }
     {
@@ -3542,7 +3554,7 @@ impl RsaPrivateKeyComponents {
         scratch.blinded.as_slice(),
         modulus_q,
         representative_q,
-        &mut scratch.exponent_q_scratch,
+        &mut scratch.exponent_scratch,
       )?;
     }
 
@@ -3559,7 +3571,7 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_p.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_p_scratch,
+      &mut scratch.exponent_scratch,
     )?;
     private_exponentiate_representative_with_scratch(
       modulus_q,
@@ -3574,7 +3586,7 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_q.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_q_scratch,
+      &mut scratch.exponent_scratch,
     )?;
 
     private_import_unsigned_be_mod_to_fixed(
@@ -3589,7 +3601,7 @@ impl RsaPrivateKeyComponents {
         .as_mut_slice()
         .get_mut(..prime_p.len())
         .ok_or(RsaPrivateOpError::InvalidScratch)?,
-      &mut scratch.exponent_p_scratch,
+      &mut scratch.exponent_scratch,
     )?;
     private_sub_mod_unsigned_be_to_fixed(
       scratch
@@ -3701,6 +3713,21 @@ impl SecretBigEndianInteger {
     }
     Ok(Self {
       bytes: bytes.into_boxed_slice(),
+    })
+  }
+
+  fn new_fixed_width(bytes: &[u8], width: usize) -> Result<Self, RsaKeyError> {
+    if is_zero_unsigned_be(bytes) || bytes.len() > width {
+      return Err(RsaKeyError::InvalidModulus);
+    }
+    let mut fixed = vec![0u8; width];
+    let offset = width.strict_sub(bytes.len());
+    let Some(dst) = fixed.get_mut(offset..) else {
+      return Err(RsaKeyError::InvalidModulus);
+    };
+    dst.copy_from_slice(bytes);
+    Ok(Self {
+      bytes: fixed.into_boxed_slice(),
     })
   }
 
@@ -3899,43 +3926,74 @@ struct RsaPrivateExponentScratch {
   selected: SecretLimbs,
   reduced: SecretLimbs,
   table: SecretLimbs,
-  limb_count: usize,
+  max_limb_count: usize,
+}
+
+struct RsaPrivateExponentWorkspace<'a> {
+  t: &'a mut [u64],
+  representative: &'a mut [u64],
+  one: &'a mut [u64],
+  base: &'a mut [u64],
+  acc: &'a mut [u64],
+  squared: &'a mut [u64],
+  multiplied: &'a mut [u64],
+  selected: &'a mut [u64],
+  reduced: &'a mut [u64],
+  table: &'a mut [u64],
 }
 
 impl RsaPrivateExponentScratch {
-  fn new(limb_count: usize) -> Self {
+  fn new(max_limb_count: usize) -> Self {
     Self {
-      t: SecretLimbs::zeroed(limb_count.strict_mul(2).strict_add(2)),
-      representative: SecretLimbs::zeroed(limb_count),
-      one: SecretLimbs::zeroed(limb_count),
-      base: SecretLimbs::zeroed(limb_count),
-      acc: SecretLimbs::zeroed(limb_count),
-      squared: SecretLimbs::zeroed(limb_count),
-      multiplied: SecretLimbs::zeroed(limb_count),
-      selected: SecretLimbs::zeroed(limb_count),
-      reduced: SecretLimbs::zeroed(limb_count),
-      table: SecretLimbs::zeroed(limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)),
-      limb_count,
+      t: SecretLimbs::zeroed(max_limb_count.strict_mul(2).strict_add(2)),
+      representative: SecretLimbs::zeroed(max_limb_count),
+      one: SecretLimbs::zeroed(max_limb_count),
+      base: SecretLimbs::zeroed(max_limb_count),
+      acc: SecretLimbs::zeroed(max_limb_count),
+      squared: SecretLimbs::zeroed(max_limb_count),
+      multiplied: SecretLimbs::zeroed(max_limb_count),
+      selected: SecretLimbs::zeroed(max_limb_count),
+      reduced: SecretLimbs::zeroed(max_limb_count),
+      table: SecretLimbs::zeroed(max_limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)),
+      max_limb_count,
     }
   }
 
   fn ensure_limb_count(&self, limb_count: usize) -> Result<(), RsaPrivateOpError> {
-    if self.limb_count == limb_count
-      && self.t.as_slice().len() == limb_count.strict_mul(2).strict_add(2)
-      && self.representative.as_slice().len() == limb_count
-      && self.one.as_slice().len() == limb_count
-      && self.base.as_slice().len() == limb_count
-      && self.acc.as_slice().len() == limb_count
-      && self.squared.as_slice().len() == limb_count
-      && self.multiplied.as_slice().len() == limb_count
-      && self.selected.as_slice().len() == limb_count
-      && self.reduced.as_slice().len() == limb_count
-      && self.table.as_slice().len() == limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)
+    if limb_count <= self.max_limb_count
+      && self.t.as_slice().len() >= limb_count.strict_mul(2).strict_add(2)
+      && self.representative.as_slice().len() >= limb_count
+      && self.one.as_slice().len() >= limb_count
+      && self.base.as_slice().len() >= limb_count
+      && self.acc.as_slice().len() >= limb_count
+      && self.squared.as_slice().len() >= limb_count
+      && self.multiplied.as_slice().len() >= limb_count
+      && self.selected.as_slice().len() >= limb_count
+      && self.reduced.as_slice().len() >= limb_count
+      && self.table.as_slice().len() >= limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)
     {
       Ok(())
     } else {
       Err(RsaPrivateOpError::InvalidScratch)
     }
+  }
+
+  fn workspace(&mut self, limb_count: usize) -> Result<RsaPrivateExponentWorkspace<'_>, RsaPrivateOpError> {
+    self.ensure_limb_count(limb_count)?;
+    let t_len = limb_count.strict_mul(2).strict_add(2);
+    let table_len = limb_count.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES);
+    Ok(RsaPrivateExponentWorkspace {
+      t: private_scratch_prefix(&mut self.t, t_len)?,
+      representative: private_scratch_prefix(&mut self.representative, limb_count)?,
+      one: private_scratch_prefix(&mut self.one, limb_count)?,
+      base: private_scratch_prefix(&mut self.base, limb_count)?,
+      acc: private_scratch_prefix(&mut self.acc, limb_count)?,
+      squared: private_scratch_prefix(&mut self.squared, limb_count)?,
+      multiplied: private_scratch_prefix(&mut self.multiplied, limb_count)?,
+      selected: private_scratch_prefix(&mut self.selected, limb_count)?,
+      reduced: private_scratch_prefix(&mut self.reduced, limb_count)?,
+      table: private_scratch_prefix(&mut self.table, table_len)?,
+    })
   }
 
   fn clear(&mut self) {
@@ -3950,6 +4008,13 @@ impl RsaPrivateExponentScratch {
     ct::zeroize_words(self.reduced.as_mut_slice());
     ct::zeroize_words(self.table.as_mut_slice());
   }
+}
+
+fn private_scratch_prefix(limbs: &mut SecretLimbs, len: usize) -> Result<&mut [u64], RsaPrivateOpError> {
+  limbs
+    .as_mut_slice()
+    .get_mut(..len)
+    .ok_or(RsaPrivateOpError::InvalidScratch)
 }
 
 /// X.509 RSA public-key algorithm constraints.
@@ -5559,7 +5624,7 @@ impl fmt::Debug for RsaPublicKey {
 
 /// Caller-owned scratch for RSA public operations.
 pub struct RsaPublicScratch {
-  r2: Box<[u64]>,
+  montgomery: Box<[u64]>,
   limbs: Box<[u64]>,
   bytes: Box<[u8]>,
   limb_count: usize,
@@ -5567,7 +5632,8 @@ pub struct RsaPublicScratch {
 }
 
 struct RsaPublicArithmeticScratch<'a> {
-  r2: &'a [u64],
+  modulus: &'a mut [u64],
+  r2: &'a mut [u64],
   t: &'a mut [u64],
   x: &'a mut [u64],
   tmp: &'a mut [u64],
@@ -5581,8 +5647,14 @@ impl RsaPublicScratch {
   pub fn new(key: &RsaPublicKey) -> Self {
     let limbs = key.modulus.limbs.len();
     let bytes = key.modulus.bytes.len();
+    let mut montgomery = Vec::with_capacity(limbs.strict_mul(2));
+    montgomery.extend_from_slice(&key.modulus.limbs);
+    montgomery.resize(limbs.strict_mul(2), 0);
+    let mut montgomery = montgomery.into_boxed_slice();
+    let (_, r2) = montgomery.split_at_mut(limbs);
+    public_montgomery_r2_into(r2, &key.modulus.limbs);
     Self {
-      r2: public_montgomery_r2(&key.modulus.limbs),
+      montgomery,
       limbs: vec![0u64; limbs.strict_mul(6).strict_add(2)].into_boxed_slice(),
       bytes: vec![0u8; bytes.strict_mul(3)].into_boxed_slice(),
       limb_count: limbs,
@@ -5591,11 +5663,11 @@ impl RsaPublicScratch {
   }
 
   fn arithmetic_scratch(&mut self) -> RsaPublicArithmeticScratch<'_> {
-    split_limb_scratch(&mut self.limbs, self.limb_count, &self.r2)
+    split_limb_scratch(&mut self.limbs, self.limb_count, &mut self.montgomery)
   }
 
   fn split_all(&mut self) -> (RsaPublicArithmeticScratch<'_>, &mut [u8], &mut [u8], &mut [u8]) {
-    let arithmetic_scratch = split_limb_scratch(&mut self.limbs, self.limb_count, &self.r2);
+    let arithmetic_scratch = split_limb_scratch(&mut self.limbs, self.limb_count, &mut self.montgomery);
     let (encoded, db, db_mask) = split_byte_scratch(&mut self.bytes, self.byte_count);
     (arithmetic_scratch, encoded, db, db_mask)
   }
@@ -5609,7 +5681,12 @@ impl fmt::Debug for RsaPublicScratch {
   }
 }
 
-fn split_limb_scratch<'a>(limbs: &'a mut [u64], limb_count: usize, r2: &'a [u64]) -> RsaPublicArithmeticScratch<'a> {
+fn split_limb_scratch<'a>(
+  limbs: &'a mut [u64],
+  limb_count: usize,
+  montgomery: &'a mut [u64],
+) -> RsaPublicArithmeticScratch<'a> {
+  let (modulus, r2) = montgomery.split_at_mut(limb_count);
   let t_len = limb_count.strict_mul(2).strict_add(2);
   let (t, rest) = limbs.split_at_mut(t_len);
   let (x, rest) = rest.split_at_mut(limb_count);
@@ -5617,6 +5694,7 @@ fn split_limb_scratch<'a>(limbs: &'a mut [u64], limb_count: usize, r2: &'a [u64]
   let (base, rest) = rest.split_at_mut(limb_count);
   let (acc, _) = rest.split_at_mut(limb_count);
   RsaPublicArithmeticScratch {
+    modulus,
     r2,
     t,
     x,
@@ -5712,9 +5790,11 @@ impl RsaPublicModulus {
     exponent: RsaPublicExponent,
     input: &[u8],
     out: &mut [u8],
-    scratch: RsaPublicArithmeticScratch<'_>,
+    mut scratch: RsaPublicArithmeticScratch<'_>,
   ) -> Result<(), RsaPublicOpError> {
+    self.bind_public_arithmetic_scratch(&mut scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
@@ -5842,6 +5922,21 @@ impl RsaPublicModulus {
     Ok(())
   }
 
+  fn bind_public_arithmetic_scratch(
+    &self,
+    scratch: &mut RsaPublicArithmeticScratch<'_>,
+  ) -> Result<(), RsaPublicOpError> {
+    let limbs = self.limbs.len();
+    if scratch.modulus.len() != limbs || scratch.r2.len() != limbs {
+      return Err(RsaPublicOpError::InvalidScratch);
+    }
+    if scratch.modulus != self.limbs.as_ref() {
+      public_montgomery_r2_into(scratch.r2, &self.limbs);
+      scratch.modulus.copy_from_slice(&self.limbs);
+    }
+    Ok(())
+  }
+
   #[cfg(feature = "diag")]
   fn public_operation_bitserial(
     &self,
@@ -5885,14 +5980,17 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
+    let mut arithmetic_scratch = scratch.arithmetic_scratch();
+    self.bind_public_arithmetic_scratch(&mut arithmetic_scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
       tmp,
       base,
       acc,
-    } = scratch.arithmetic_scratch();
+    } = arithmetic_scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -5936,14 +6034,17 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
+    let mut arithmetic_scratch = scratch.arithmetic_scratch();
+    self.bind_public_arithmetic_scratch(&mut arithmetic_scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
       tmp,
       base,
       acc,
-    } = scratch.arithmetic_scratch();
+    } = arithmetic_scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -6000,14 +6101,17 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
+    let mut arithmetic_scratch = scratch.arithmetic_scratch();
+    self.bind_public_arithmetic_scratch(&mut arithmetic_scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
       tmp,
       base,
       acc,
-    } = scratch.arithmetic_scratch();
+    } = arithmetic_scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -6070,14 +6174,17 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
+    let mut arithmetic_scratch = scratch.arithmetic_scratch();
+    self.bind_public_arithmetic_scratch(&mut arithmetic_scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
       tmp,
       base,
       acc,
-    } = scratch.arithmetic_scratch();
+    } = arithmetic_scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -6140,14 +6247,17 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
+    let mut arithmetic_scratch = scratch.arithmetic_scratch();
+    self.bind_public_arithmetic_scratch(&mut arithmetic_scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
       tmp,
       base,
       acc,
-    } = scratch.arithmetic_scratch();
+    } = arithmetic_scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -6210,14 +6320,17 @@ impl RsaPublicModulus {
     out: &mut [u8],
     scratch: &mut RsaPublicScratch,
   ) -> Result<(), RsaPublicOpError> {
+    let mut arithmetic_scratch = scratch.arithmetic_scratch();
+    self.bind_public_arithmetic_scratch(&mut arithmetic_scratch)?;
     let RsaPublicArithmeticScratch {
+      modulus: _,
       r2,
       t,
       x,
       tmp,
       base,
       acc,
-    } = scratch.arithmetic_scratch();
+    } = arithmetic_scratch;
     let limbs = self.limbs.len();
     if input.len() != self.bytes.len() || out.len() != self.bytes.len() {
       return Err(RsaPublicOpError::InvalidLength);
@@ -6451,8 +6564,7 @@ fn parse_pkcs1_private_key_der_parts_with_policy<'a>(
 #[doc(hidden)]
 pub fn diag_rsa_validate_pkcs8_private_key_der(der: &[u8], policy: &RsaPublicKeyPolicy) -> Result<usize, RsaKeyError> {
   let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
-  validate_modulus(components.modulus, policy)?;
-  validate_private_key_components(&components)?;
+  validate_private_key_import(&components, policy)?;
   Ok(components.modulus.len())
 }
 
@@ -6477,8 +6589,7 @@ pub fn diag_rsa_import_pkcs8_private_key_der_stage(
   stage: u8,
 ) -> Result<usize, RsaKeyError> {
   let components = parse_pkcs8_private_key_der_parts_with_policy(der, policy)?;
-  let modulus_bits = validate_modulus(components.modulus, policy)?;
-  validate_private_key_components(&components)?;
+  let modulus_bits = validate_private_key_import(&components, policy)?;
   if stage == 50 {
     return Ok(components.modulus.len());
   }
@@ -6507,8 +6618,8 @@ pub fn diag_rsa_import_pkcs8_private_key_der_stage(
   let private_exponent = SecretBigEndianInteger::new(components.private_exponent)?;
   let prime_p = SecretBigEndianInteger::new(components.prime_p)?;
   let prime_q = SecretBigEndianInteger::new(components.prime_q)?;
-  let exponent_p = SecretBigEndianInteger::new(components.exponent_p)?;
-  let exponent_q = SecretBigEndianInteger::new(components.exponent_q)?;
+  let exponent_p = SecretBigEndianInteger::new_fixed_width(components.exponent_p, prime_p_modulus.bytes.len())?;
+  let exponent_q = SecretBigEndianInteger::new_fixed_width(components.exponent_q, prime_q_modulus.bytes.len())?;
   let coefficient = SecretBigEndianInteger::new(components.coefficient)?;
   observed ^= private_exponent.bytes.len();
   observed ^= prime_p.bytes.len();
@@ -6527,8 +6638,7 @@ fn private_key_components_from_parts(
     return Err(RsaKeyError::InvalidModulus);
   }
 
-  let modulus_bits = validate_modulus(components.modulus, policy)?;
-  validate_private_key_components(components)?;
+  let modulus_bits = validate_private_key_import(components, policy)?;
   let public = RsaPublicKey {
     modulus: RsaPublicModulus::new_with_montgomery_r2(components.modulus, modulus_bits),
     exponent: components.public_exponent,
@@ -6543,8 +6653,8 @@ fn private_key_components_from_parts(
     prime_q: SecretBigEndianInteger::new(components.prime_q)?,
     prime_p_modulus,
     prime_q_modulus,
-    exponent_p: SecretBigEndianInteger::new(components.exponent_p)?,
-    exponent_q: SecretBigEndianInteger::new(components.exponent_q)?,
+    exponent_p: SecretBigEndianInteger::new_fixed_width(components.exponent_p, components.prime_p.len())?,
+    exponent_q: SecretBigEndianInteger::new_fixed_width(components.exponent_q, components.prime_q.len())?,
     coefficient: SecretBigEndianInteger::new(components.coefficient)?,
   })
 }
@@ -6600,6 +6710,26 @@ struct RsaPrivateKeyDerComponents<'a> {
   coefficient: &'a [u8],
 }
 
+fn validate_private_key_import(
+  components: &RsaPrivateKeyDerComponents<'_>,
+  policy: &RsaPublicKeyPolicy,
+) -> Result<usize, RsaKeyError> {
+  let modulus_bits = validate_modulus(components.modulus, policy)?;
+  validate_private_prime_factor(components.prime_p)?;
+  validate_private_prime_factor(components.prime_q)?;
+
+  let factor_bits = modulus_bits.strict_add(1) / 2;
+  if unsigned_be_bit_len(components.prime_p) != factor_bits || unsigned_be_bit_len(components.prime_q) != factor_bits {
+    return Err(RsaKeyError::InvalidModulus);
+  }
+
+  validate_private_key_components(components)?;
+  if !private_import_is_probable_prime(components.prime_p)? || !private_import_is_probable_prime(components.prime_q)? {
+    return Err(RsaKeyError::InvalidModulus);
+  }
+  Ok(modulus_bits)
+}
+
 fn read_zero_version(bytes: &[u8]) -> Result<(), RsaKeyError> {
   let version = read_positive_integer(bytes)?;
   if version == [0] {
@@ -6650,50 +6780,66 @@ fn validate_private_key_components_through_stage(
     return Ok(());
   }
 
-  let mut p_minus_one = vec![0u8; prime_p.len()];
-  let mut q_minus_one = vec![0u8; prime_q.len()];
-  private_import_decrement_unsigned_be_to_fixed(prime_p, &mut p_minus_one)?;
-  private_import_decrement_unsigned_be_to_fixed(prime_q, &mut q_minus_one)?;
+  let mut p_minus_one = SecretBigEndianBuffer::zeroed(prime_p.len());
+  let mut q_minus_one = SecretBigEndianBuffer::zeroed(prime_q.len());
+  private_import_decrement_unsigned_be_to_fixed(prime_p, p_minus_one.as_mut_slice())?;
+  private_import_decrement_unsigned_be_to_fixed(prime_q, q_minus_one.as_mut_slice())?;
   if stage == 30 {
     return Ok(());
   }
 
-  let mut d_mod_p_minus_one = vec![0u8; p_minus_one.len()];
-  private_import_unsigned_be_mod_to_len(private_exponent, &p_minus_one, &mut d_mod_p_minus_one)?;
+  let mut d_mod_p_minus_one = SecretBigEndianBuffer::zeroed(p_minus_one.as_slice().len());
+  private_import_unsigned_be_mod_to_len(
+    private_exponent,
+    p_minus_one.as_slice(),
+    d_mod_p_minus_one.as_mut_slice(),
+  )?;
   if stage == 32 {
     return Ok(());
   }
-  if !ct_eq_left_padded_unsigned_be(exponent_p, &d_mod_p_minus_one) {
+  if !ct_eq_left_padded_unsigned_be(exponent_p, d_mod_p_minus_one.as_slice()) {
     return Err(RsaKeyError::InvalidModulus);
   }
   if stage == 31 {
     return Ok(());
   }
-  let mut d_mod_q_minus_one = vec![0u8; q_minus_one.len()];
-  private_import_unsigned_be_mod_to_len(private_exponent, &q_minus_one, &mut d_mod_q_minus_one)?;
-  if !ct_eq_left_padded_unsigned_be(exponent_q, &d_mod_q_minus_one) {
+  let mut d_mod_q_minus_one = SecretBigEndianBuffer::zeroed(q_minus_one.as_slice().len());
+  private_import_unsigned_be_mod_to_len(
+    private_exponent,
+    q_minus_one.as_slice(),
+    d_mod_q_minus_one.as_mut_slice(),
+  )?;
+  if !ct_eq_left_padded_unsigned_be(exponent_q, d_mod_q_minus_one.as_slice()) {
     return Err(RsaKeyError::InvalidModulus);
   }
   if stage == 3 {
     return Ok(());
   }
   let public_exponent = public_exponent.as_u64().to_be_bytes();
-  let mut e_times_d = vec![0u8; public_exponent.len().strict_add(private_exponent.len())];
-  private_import_product_unsigned_be_to_fixed(&public_exponent, private_exponent, &mut e_times_d)?;
+  let mut e_times_d = SecretBigEndianBuffer::zeroed(public_exponent.len().strict_add(private_exponent.len()));
+  private_import_product_unsigned_be_to_fixed(&public_exponent, private_exponent, e_times_d.as_mut_slice())?;
   if stage == 40 {
     return Ok(());
   }
-  let mut e_times_d_mod_p_minus_one = vec![0u8; p_minus_one.len()];
-  private_import_unsigned_be_mod_to_len(&e_times_d, &p_minus_one, &mut e_times_d_mod_p_minus_one)?;
-  if !ct_eq_left_padded_unsigned_be(&[1], &e_times_d_mod_p_minus_one) {
+  let mut e_times_d_mod_p_minus_one = SecretBigEndianBuffer::zeroed(p_minus_one.as_slice().len());
+  private_import_unsigned_be_mod_to_len(
+    e_times_d.as_slice(),
+    p_minus_one.as_slice(),
+    e_times_d_mod_p_minus_one.as_mut_slice(),
+  )?;
+  if !ct_eq_left_padded_unsigned_be(&[1], e_times_d_mod_p_minus_one.as_slice()) {
     return Err(RsaKeyError::InvalidModulus);
   }
   if stage == 41 {
     return Ok(());
   }
-  let mut e_times_d_mod_q_minus_one = vec![0u8; q_minus_one.len()];
-  private_import_unsigned_be_mod_to_len(&e_times_d, &q_minus_one, &mut e_times_d_mod_q_minus_one)?;
-  if !ct_eq_left_padded_unsigned_be(&[1], &e_times_d_mod_q_minus_one) {
+  let mut e_times_d_mod_q_minus_one = SecretBigEndianBuffer::zeroed(q_minus_one.as_slice().len());
+  private_import_unsigned_be_mod_to_len(
+    e_times_d.as_slice(),
+    q_minus_one.as_slice(),
+    e_times_d_mod_q_minus_one.as_mut_slice(),
+  )?;
+  if !ct_eq_left_padded_unsigned_be(&[1], e_times_d_mod_q_minus_one.as_slice()) {
     return Err(RsaKeyError::InvalidModulus);
   }
   if stage == 42 {
@@ -6703,23 +6849,17 @@ fn validate_private_key_components_through_stage(
     return Ok(());
   }
 
-  let mut q_times_coefficient = vec![0u8; prime_q.len().strict_add(coefficient.len())];
-  private_import_product_unsigned_be_to_fixed(prime_q, coefficient, &mut q_times_coefficient)?;
-  let mut q_times_coefficient_mod_p = vec![0u8; prime_p.len()];
-  private_import_unsigned_be_mod_to_len(&q_times_coefficient, prime_p, &mut q_times_coefficient_mod_p)?;
-  if !ct_eq_left_padded_unsigned_be(&[1], &q_times_coefficient_mod_p) {
+  let mut q_times_coefficient = SecretBigEndianBuffer::zeroed(prime_q.len().strict_add(coefficient.len()));
+  private_import_product_unsigned_be_to_fixed(prime_q, coefficient, q_times_coefficient.as_mut_slice())?;
+  let mut q_times_coefficient_mod_p = SecretBigEndianBuffer::zeroed(prime_p.len());
+  private_import_unsigned_be_mod_to_len(
+    q_times_coefficient.as_slice(),
+    prime_p,
+    q_times_coefficient_mod_p.as_mut_slice(),
+  )?;
+  if !ct_eq_left_padded_unsigned_be(&[1], q_times_coefficient_mod_p.as_slice()) {
     return Err(RsaKeyError::InvalidModulus);
   }
-
-  ct::zeroize(&mut p_minus_one);
-  ct::zeroize(&mut q_minus_one);
-  ct::zeroize(&mut d_mod_p_minus_one);
-  ct::zeroize(&mut d_mod_q_minus_one);
-  ct::zeroize(&mut e_times_d);
-  ct::zeroize(&mut e_times_d_mod_p_minus_one);
-  ct::zeroize(&mut e_times_d_mod_q_minus_one);
-  ct::zeroize(&mut q_times_coefficient);
-  ct::zeroize(&mut q_times_coefficient_mod_p);
 
   Ok(())
 }
@@ -6732,6 +6872,56 @@ fn validate_private_prime_factor(bytes: &[u8]) -> Result<(), RsaKeyError> {
     return Err(RsaKeyError::InvalidModulus);
   }
   Ok(())
+}
+
+fn private_import_is_probable_prime(candidate: &[u8]) -> Result<bool, RsaKeyError> {
+  if has_small_prime_factor(candidate) {
+    return Ok(false);
+  }
+
+  let mut n_minus_one = SecretBigEndianBuffer::zeroed(candidate.len());
+  private_import_decrement_unsigned_be_to_fixed(candidate, n_minus_one.as_mut_slice())?;
+  let mut odd_part = SecretBigEndianBuffer::zeroed(candidate.len());
+  odd_part.as_mut_slice().copy_from_slice(n_minus_one.as_slice());
+  let mut powers_of_two = 0usize;
+  while odd_part.as_slice().last().is_some_and(|byte| byte & 1 == 0) {
+    shift_right_one_unsigned_be(odd_part.as_mut_slice());
+    powers_of_two = powers_of_two.strict_add(1);
+  }
+
+  let modulus = private_component_modulus(candidate).map_err(|_| RsaKeyError::InvalidModulus)?;
+  for base_value in RSA_IMPORT_MILLER_RABIN_BASES {
+    let mut base = vec![0u8; candidate.len()];
+    let base_bytes = base_value.to_be_bytes();
+    let offset = base.len().strict_sub(base_bytes.len());
+    let Some(base_suffix) = base.get_mut(offset..) else {
+      return Err(RsaKeyError::InvalidModulus);
+    };
+    base_suffix.copy_from_slice(&base_bytes);
+    let accepted = miller_rabin_accepts_base(
+      &modulus,
+      odd_part.as_slice(),
+      powers_of_two,
+      n_minus_one.as_slice(),
+      &base,
+    )
+    .map_err(|_| RsaKeyError::InvalidModulus)?;
+    ct::zeroize(&mut base);
+    if !accepted {
+      return Ok(false);
+    }
+  }
+
+  Ok(true)
+}
+
+fn shift_right_one_unsigned_be(bytes: &mut [u8]) {
+  let mut carry = 0u8;
+  for byte in bytes {
+    let next_carry = *byte & 1;
+    *byte = (*byte >> 1) | (carry << 7);
+    carry = next_carry;
+  }
 }
 
 fn validate_private_crt_component(component: &[u8], upper_bound: &[u8]) -> Result<(), RsaKeyError> {
@@ -6977,6 +7167,8 @@ fn keygen_build_private_key_from_primes(
     private_component_modulus(prime_p.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
   let prime_q_modulus =
     private_component_modulus(prime_q.as_slice()).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
+  let prime_p_bytes = prime_p_modulus.bytes.len();
+  let prime_q_bytes = prime_q_modulus.bytes.len();
 
   Ok(Some(RsaPrivateKeyComponents {
     public,
@@ -6988,9 +7180,9 @@ fn keygen_build_private_key_from_primes(
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
     prime_p_modulus,
     prime_q_modulus,
-    exponent_p: SecretBigEndianInteger::from_vec(exponent_p.into_vec())
+    exponent_p: SecretBigEndianInteger::new_fixed_width(exponent_p.as_slice(), prime_p_bytes)
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
-    exponent_q: SecretBigEndianInteger::from_vec(exponent_q.into_vec())
+    exponent_q: SecretBigEndianInteger::new_fixed_width(exponent_q.as_slice(), prime_q_bytes)
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
     coefficient: SecretBigEndianInteger::from_vec(coefficient.into_vec())
       .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?,
@@ -7022,7 +7214,7 @@ fn keygen_generate_prime(
 
     tested_candidates = tested_candidates.strict_add(1);
     // Trial division rejects obvious composites before the expensive B.3 Miller-Rabin work.
-    if keygen_has_small_prime_factor(&candidate) || keygen_conflicts_with_public_exponent(&candidate) {
+    if has_small_prime_factor(&candidate) || keygen_conflicts_with_public_exponent(&candidate) {
       let mut candidate = candidate;
       ct::zeroize(&mut candidate);
       continue;
@@ -7117,9 +7309,8 @@ fn keygen_bit_is_set(bytes: &[u8], bit: usize) -> bool {
   bytes.get(byte_index).is_some_and(|byte| byte & (1u8 << (bit % 8)) != 0)
 }
 
-#[cfg(feature = "getrandom")]
-fn keygen_has_small_prime_factor(candidate: &[u8]) -> bool {
-  RSA_KEYGEN_SMALL_PRIMES
+fn has_small_prime_factor(candidate: &[u8]) -> bool {
+  RSA_SMALL_PRIMES
     .iter()
     .any(|&prime| unsigned_be_mod_u64(candidate, u64::from(prime)) == 0)
 }
@@ -7160,16 +7351,28 @@ fn keygen_is_probable_prime(drbg: &mut RsaKeygenDrbg, candidate: &[u8]) -> Resul
   let mut odd_part = n_minus_one.as_slice().to_vec();
   let mut powers_of_two = 0usize;
   while odd_part.last().is_some_and(|byte| byte & 1 == 0) {
-    keygen_shift_right_one(&mut odd_part);
+    shift_right_one_unsigned_be(&mut odd_part);
     odd_part = keygen_canonical_vec(odd_part);
     powers_of_two = powers_of_two.strict_add(1);
+  }
+  let odd_part = SecretBigEndianBuffer::new(odd_part);
+  let mut odd_part_fixed = SecretBigEndianBuffer::zeroed(candidate.len());
+  if let Err(err) = keygen_left_pad(odd_part.as_slice(), odd_part_fixed.as_mut_slice()) {
+    ct::zeroize(&mut n_minus_one_fixed);
+    return Err(err);
   }
 
   let result = (|| {
     let modulus = private_component_modulus(candidate).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
     for _ in 0..keygen_miller_rabin_rounds(unsigned_be_bit_len(candidate)) {
       let mut base = keygen_random_miller_rabin_base(drbg, candidate, &n_minus_one_fixed)?;
-      let accepted = keygen_miller_rabin_accepts_base(&modulus, &odd_part, powers_of_two, &n_minus_one_fixed, &base);
+      let accepted = keygen_miller_rabin_accepts_base(
+        &modulus,
+        odd_part_fixed.as_slice(),
+        powers_of_two,
+        &n_minus_one_fixed,
+        &base,
+      );
       ct::zeroize(&mut base);
       if !accepted? {
         return Ok(false);
@@ -7179,7 +7382,6 @@ fn keygen_is_probable_prime(drbg: &mut RsaKeygenDrbg, candidate: &[u8]) -> Resul
   })();
 
   ct::zeroize(&mut n_minus_one_fixed);
-  ct::zeroize(&mut odd_part);
   result
 }
 
@@ -7223,22 +7425,33 @@ fn keygen_miller_rabin_accepts_base(
   n_minus_one_fixed: &[u8],
   base: &[u8],
 ) -> Result<bool, RsaKeyGenerationError> {
+  miller_rabin_accepts_base(modulus, odd_part, powers_of_two, n_minus_one_fixed, base)
+    .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)
+}
+
+fn miller_rabin_accepts_base(
+  modulus: &RsaPublicModulus,
+  odd_part: &[u8],
+  powers_of_two: usize,
+  n_minus_one_fixed: &[u8],
+  base: &[u8],
+) -> Result<bool, RsaPrivateOpError> {
   let mut x = vec![0u8; modulus.bytes.len()];
-  if private_exponentiate_representative(modulus, odd_part, base, &mut x).is_err() {
+  if let Err(err) = private_exponentiate_representative(modulus, odd_part, base, &mut x) {
     ct::zeroize(&mut x);
-    return Err(RsaKeyGenerationError::ArithmeticFailure);
+    return Err(err);
   }
 
-  let mut accepted = keygen_is_one_fixed(&x) || ct::public_len_eq(&x, n_minus_one_fixed).declassify();
+  let mut accepted = is_one_fixed(&x) || ct::public_len_eq(&x, n_minus_one_fixed).declassify();
   for _ in 1..powers_of_two {
     if accepted {
       break;
     }
     let mut squared = vec![0u8; modulus.bytes.len()];
-    if mod_mul_representatives(modulus, &x, &x, &mut squared).is_err() {
+    if let Err(err) = mod_mul_representatives(modulus, &x, &x, &mut squared) {
       ct::zeroize(&mut squared);
       ct::zeroize(&mut x);
-      return Err(RsaKeyGenerationError::ArithmeticFailure);
+      return Err(err);
     }
     x.copy_from_slice(&squared);
     ct::zeroize(&mut squared);
@@ -7259,10 +7472,9 @@ fn keygen_prime_mod_inverse(value: &[u8], prime_modulus: &[u8]) -> Result<Vec<u8
     return Err(err);
   }
 
-  let p_minus_one =
-    private_import_decrement_unsigned_be(prime_modulus).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
-  let p_minus_two = private_import_decrement_unsigned_be(p_minus_one.as_slice())
-    .map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?;
+  let mut p_minus_two = SecretBigEndianBuffer::new(prime_modulus.to_vec());
+  keygen_sub_one_fixed(p_minus_two.as_mut_slice())?;
+  keygen_sub_one_fixed(p_minus_two.as_mut_slice())?;
   let mut inverse = vec![0u8; prime_modulus.len()];
   let result =
     if private_exponentiate_representative(&modulus, p_minus_two.as_slice(), &value_fixed, &mut inverse).is_ok() {
@@ -7422,16 +7634,6 @@ fn keygen_mul_u64_add_one_div_u64(
 }
 
 #[cfg(feature = "getrandom")]
-fn keygen_shift_right_one(bytes: &mut [u8]) {
-  let mut carry = 0u8;
-  for byte in bytes {
-    let next_carry = *byte & 1;
-    *byte = (*byte >> 1) | (carry << 7);
-    carry = next_carry;
-  }
-}
-
-#[cfg(feature = "getrandom")]
 fn keygen_sub_one_fixed(bytes: &mut [u8]) -> Result<(), RsaKeyGenerationError> {
   for byte in bytes.iter_mut().rev() {
     if *byte == 0 {
@@ -7444,8 +7646,7 @@ fn keygen_sub_one_fixed(bytes: &mut [u8]) -> Result<(), RsaKeyGenerationError> {
   Err(RsaKeyGenerationError::ArithmeticFailure)
 }
 
-#[cfg(feature = "getrandom")]
-fn keygen_is_one_fixed(bytes: &[u8]) -> bool {
+fn is_one_fixed(bytes: &[u8]) -> bool {
   bytes.last() == Some(&1)
     && bytes
       .get(..bytes.len().saturating_sub(1))
@@ -7472,7 +7673,6 @@ fn keygen_canonical_vec(bytes: Vec<u8>) -> Vec<u8> {
   canonical.as_slice().to_vec()
 }
 
-#[cfg(feature = "getrandom")]
 fn unsigned_be_bit_len(bytes: &[u8]) -> usize {
   let Some(first_nonzero) = bytes.iter().position(|&byte| byte != 0) else {
     return 0;
@@ -7488,7 +7688,6 @@ fn unsigned_be_bit_len(bytes: &[u8]) -> usize {
     .strict_add(8usize.strict_sub(first.leading_zeros() as usize))
 }
 
-#[cfg(feature = "getrandom")]
 fn unsigned_be_mod_u64(bytes: &[u8], modulus: u64) -> u64 {
   let mut remainder = 0u128;
   let modulus = u128::from(modulus);
@@ -8639,7 +8838,6 @@ fn private_sub_unsigned_be_to_len(
 }
 
 #[allow(clippy::indexing_slicing)]
-#[cfg(feature = "getrandom")]
 fn private_exponentiate_representative(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -8648,7 +8846,7 @@ fn private_exponentiate_representative(
 ) -> Result<(), RsaPrivateOpError> {
   let bytes = modulus.bytes.len();
   let limbs = modulus.limbs.len();
-  if input.len() != bytes || out.len() != bytes || exponent.len() > bytes {
+  if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
     return Err(RsaPrivateOpError::InvalidLength);
   }
 
@@ -8684,13 +8882,9 @@ fn private_exponentiate_representative(
   );
 
   let mut table = private_fixed_window_table(base.as_slice(), acc.as_slice(), modulus, t.as_mut_slice());
-  let leading_zero_bytes = bytes.strict_sub(exponent.len());
-  for index in 0..bytes {
-    let exponent_byte = if index < leading_zero_bytes {
-      0
-    } else {
-      exponent[index.strict_sub(leading_zero_bytes)]
-    };
+  let mut index = 0;
+  while index < bytes {
+    let exponent_byte = exponent[index];
     private_exponentiate_window(
       &table,
       exponent_byte >> 4,
@@ -8711,6 +8905,7 @@ fn private_exponentiate_representative(
       multiplied.as_mut_slice(),
       selected.as_mut_slice(),
     );
+    index += 1;
   }
 
   ct::zeroize_words(table.as_mut_slice());
@@ -8729,81 +8924,65 @@ fn private_exponentiate_representative_with_scratch(
 ) -> Result<(), RsaPrivateOpError> {
   let bytes = modulus.bytes.len();
   let limbs = modulus.limbs.len();
-  if input.len() != bytes || out.len() != bytes || exponent.len() > bytes {
+  if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
     return Err(RsaPrivateOpError::InvalidLength);
   }
-  scratch.ensure_limb_count(limbs)?;
+  let RsaPrivateExponentWorkspace {
+    t,
+    representative,
+    one,
+    base,
+    acc,
+    squared,
+    multiplied,
+    selected,
+    reduced,
+    table,
+  } = scratch.workspace(limbs)?;
 
-  limbs_from_be_into(input, scratch.representative.as_mut_slice());
-  if !ct_limbs_lt(scratch.representative.as_slice(), &modulus.limbs) {
+  limbs_from_be_into(input, representative);
+  if !ct_limbs_lt(representative, &modulus.limbs) {
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
-  scratch.one.as_mut_slice().fill(0);
-  scratch.one.as_mut_slice()[0] = 1;
-  private_mont_mul(
-    scratch.base.as_mut_slice(),
-    scratch.representative.as_slice(),
-    modulus.montgomery_r2(),
-    modulus,
-    scratch.t.as_mut_slice(),
-  );
-  private_mont_mul(
-    scratch.acc.as_mut_slice(),
-    scratch.one.as_slice(),
-    modulus.montgomery_r2(),
-    modulus,
-    scratch.t.as_mut_slice(),
-  );
+  one.fill(0);
+  one[0] = 1;
+  private_mont_mul(base, representative, modulus.montgomery_r2(), modulus, t);
+  private_mont_mul(acc, one, modulus.montgomery_r2(), modulus, t);
 
-  private_fixed_window_table_into(
-    scratch.table.as_mut_slice(),
-    scratch.base.as_slice(),
-    scratch.acc.as_slice(),
-    modulus,
-    scratch.t.as_mut_slice(),
-  );
-  let leading_zero_bytes = bytes.strict_sub(exponent.len());
-  for index in 0..bytes {
-    let exponent_byte = if index < leading_zero_bytes {
-      0
-    } else {
-      exponent[index.strict_sub(leading_zero_bytes)]
-    };
+  private_fixed_window_table_into(table, base, acc, modulus, t);
+  let mut index = 0;
+  while index < bytes {
+    let exponent_byte = exponent[index];
     private_exponentiate_window(
-      scratch.table.as_slice(),
+      table,
       exponent_byte >> 4,
       modulus,
-      scratch.t.as_mut_slice(),
-      scratch.acc.as_mut_slice(),
-      scratch.squared.as_mut_slice(),
-      scratch.multiplied.as_mut_slice(),
-      scratch.selected.as_mut_slice(),
+      t,
+      acc,
+      squared,
+      multiplied,
+      selected,
     );
     private_exponentiate_window(
-      scratch.table.as_slice(),
+      table,
       exponent_byte & 0x0f,
       modulus,
-      scratch.t.as_mut_slice(),
-      scratch.acc.as_mut_slice(),
-      scratch.squared.as_mut_slice(),
-      scratch.multiplied.as_mut_slice(),
-      scratch.selected.as_mut_slice(),
+      t,
+      acc,
+      squared,
+      multiplied,
+      selected,
     );
+    index += 1;
   }
 
-  private_mont_reduce(
-    scratch.reduced.as_mut_slice(),
-    scratch.acc.as_slice(),
-    modulus,
-    scratch.t.as_mut_slice(),
-  );
-  limbs_to_be(scratch.reduced.as_slice(), out);
+  private_mont_reduce(reduced, acc, modulus, t);
+  limbs_to_be(reduced, out);
   Ok(())
 }
 
 #[allow(clippy::indexing_slicing)]
-#[cfg(feature = "getrandom")]
 fn private_fixed_window_table(
   base: &[u64],
   one_montgomery: &[u64],
@@ -8905,7 +9084,6 @@ fn private_choice_eq_mask_u8(left: u8, right: u8) -> u64 {
   0u64.wrapping_sub(is_zero)
 }
 
-#[cfg(feature = "getrandom")]
 fn mod_mul_representatives(
   modulus: &RsaPublicModulus,
   left: &[u8],
@@ -9327,9 +9505,9 @@ fn private_import_unsigned_be_mod_to_fixed(
   if out.len() != modulus.bytes.len() {
     return Err(RsaPrivateOpError::InvalidLength);
   }
-  scratch.ensure_limb_count(modulus.limbs.len())?;
+  let workspace = scratch.workspace(modulus.limbs.len())?;
 
-  let remainder = scratch.representative.as_mut_slice();
+  let remainder = workspace.representative;
   remainder.fill(0);
   for &byte in value {
     for bit in (0..8).rev() {
@@ -9412,8 +9590,14 @@ fn limb_bit_len(limbs: &[u64]) -> usize {
 
 fn public_montgomery_r2(limbs: &[u64]) -> Box<[u64]> {
   let mut r2 = vec![0u64; limbs.len()];
-  pow2_mod_into(&mut r2, limbs.len().strict_mul(128), limbs);
+  public_montgomery_r2_into(&mut r2, limbs);
   r2.into_boxed_slice()
+}
+
+fn public_montgomery_r2_into(r2: &mut [u64], limbs: &[u64]) {
+  debug_assert_eq!(r2.len(), limbs.len());
+  r2.fill(0);
+  pow2_mod_into(r2, limbs.len().strict_mul(128), limbs);
 }
 
 fn private_montgomery_r2(modulus: &[u8]) -> Result<Box<[u64]>, RsaKeyError> {
@@ -10279,6 +10463,7 @@ mod tests {
   use alloc::format;
 
   use proptest::prelude::*;
+  use rsa::traits::{PrivateKeyParts as _, PublicKeyParts as _};
   #[cfg(feature = "getrandom")]
   use serde_json::Value;
 
@@ -10772,8 +10957,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       one: SecretBigEndianBuffer::zeroed(wrong_len),
       public_scratch: key.public_key().public_scratch(),
       mul_scratch: RsaPrivateMulScratch::new(key.components.public.modulus.limbs.len()),
-      exponent_p_scratch: RsaPrivateExponentScratch::new(key.components.prime_p_modulus.limbs.len()),
-      exponent_q_scratch: RsaPrivateExponentScratch::new(key.components.prime_q_modulus.limbs.len()),
+      exponent_scratch: RsaPrivateExponentScratch::new(key.components.public.modulus.limbs.len()),
     }
   }
 
@@ -10787,9 +10971,182 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(key.private_exponent.as_bytes(), rsa_private_exponent());
     assert_eq!(key.prime_p.as_bytes(), rsa_private_prime_p());
     assert_eq!(key.prime_q.as_bytes(), rsa_private_prime_q());
-    assert_eq!(key.exponent_p.as_bytes(), rsa_private_exponent_p());
-    assert_eq!(key.exponent_q.as_bytes(), rsa_private_exponent_q());
+    let exponent_p = rsa_private_exponent_p();
+    let exponent_q = rsa_private_exponent_q();
+    assert_eq!(key.exponent_p.as_bytes().len(), key.prime_p.as_bytes().len());
+    assert_eq!(key.exponent_q.as_bytes().len(), key.prime_q.as_bytes().len());
+    assert!(key.exponent_p.as_bytes().ends_with(&exponent_p));
+    assert!(key.exponent_q.as_bytes().ends_with(&exponent_q));
+    assert!(
+      key.exponent_p.as_bytes()[..key.exponent_p.as_bytes().len().strict_sub(exponent_p.len())]
+        .iter()
+        .all(|&byte| byte == 0)
+    );
+    assert!(
+      key.exponent_q.as_bytes()[..key.exponent_q.as_bytes().len().strict_sub(exponent_q.len())]
+        .iter()
+        .all(|&byte| byte == 0)
+    );
     assert_eq!(key.coefficient.as_bytes(), rsa_private_coefficient());
+  }
+
+  #[test]
+  fn private_key_import_normalizes_crt_exponents_to_factor_width() {
+    let prime_p = rsa::BigUint::from_bytes_be(&rsa_private_prime_p());
+    let prime_q = rsa::BigUint::from_bytes_be(&rsa_private_prime_q());
+    let public_exponent = 883;
+    let oracle = rsa::RsaPrivateKey::from_p_q(prime_p, prime_q, rsa::BigUint::from(public_exponent))
+      .expect("fixture factors and exponent form an algebraically valid key");
+    let modulus = oracle.n().to_bytes_be();
+    let private_exponent = oracle.d().to_bytes_be();
+    let prime_p = oracle.primes()[0].to_bytes_be();
+    let prime_q = oracle.primes()[1].to_bytes_be();
+    let exponent_p = oracle.dp().expect("RustCrypto CRT exponent").to_bytes_be();
+    let exponent_q = oracle.dq().expect("RustCrypto CRT exponent").to_bytes_be();
+    assert!(exponent_p.len() < prime_p.len() || exponent_q.len() < prime_q.len());
+    let coefficient = oracle
+      .qinv()
+      .and_then(|value| value.to_biguint())
+      .expect("positive RustCrypto CRT coefficient")
+      .to_bytes_be();
+
+    let key = RsaPrivateKey::from_components_with_policy(
+      RsaPrivateKeyParts {
+        modulus: &modulus,
+        public_exponent,
+        private_exponent: &private_exponent,
+        prime_p: &prime_p,
+        prime_q: &prime_q,
+        exponent_p: &exponent_p,
+        exponent_q: &exponent_q,
+        coefficient: &coefficient,
+      },
+      &RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents(),
+    )
+    .expect("algebraically valid components");
+
+    assert_eq!(key.components.exponent_p.as_bytes().len(), prime_p.len());
+    assert_eq!(key.components.exponent_q.as_bytes().len(), prime_q.len());
+    assert!(key.components.exponent_p.as_bytes().ends_with(&exponent_p));
+    assert!(key.components.exponent_q.as_bytes().ends_with(&exponent_q));
+    assert!(
+      key.components.exponent_p.as_bytes()[..prime_p.len().strict_sub(exponent_p.len())]
+        .iter()
+        .all(|&byte| byte == 0)
+    );
+    assert!(
+      key.components.exponent_q.as_bytes()[..prime_q.len().strict_sub(exponent_q.len())]
+        .iter()
+        .all(|&byte| byte == 0)
+    );
+  }
+
+  #[test]
+  fn private_key_import_rejects_balanced_composite_factor_in_every_format() {
+    let one = rsa::BigUint::from(1u8);
+    let prime_q = rsa::BigUint::from_bytes_be(&rsa_private_prime_q());
+    let (oracle, composite_p) = (1u64..4096)
+      .step_by(2)
+      .find_map(|offset| {
+        let left = (&one << 512usize) + rsa::BigUint::from(offset);
+        let right = (&one << 512usize) - rsa::BigUint::from(offset);
+        let composite_p = left * right;
+        let composite_bytes = composite_p.to_bytes_be();
+        if unsigned_be_bit_len(&composite_bytes) != 1024 || has_small_prime_factor(&composite_bytes) {
+          return None;
+        }
+        rsa::RsaPrivateKey::from_p_q(composite_p.clone(), prime_q.clone(), rsa::BigUint::from(65_537u32))
+          .ok()
+          .map(|oracle| (oracle, composite_p))
+      })
+      .expect("construct a balanced composite without a small prime divisor");
+    let modulus = oracle.n().to_bytes_be();
+    let private_exponent = oracle.d().to_bytes_be();
+    let prime_p = oracle.primes()[0].to_bytes_be();
+    let prime_q = oracle.primes()[1].to_bytes_be();
+    let exponent_p = oracle.dp().expect("RustCrypto CRT exponent").to_bytes_be();
+    let exponent_q = oracle.dq().expect("RustCrypto CRT exponent").to_bytes_be();
+    let coefficient = oracle
+      .qinv()
+      .and_then(|value| value.to_biguint())
+      .expect("positive RustCrypto CRT coefficient")
+      .to_bytes_be();
+    assert_eq!(unsigned_be_bit_len(&modulus), 2048);
+    assert_eq!(unsigned_be_bit_len(&prime_p), 1024);
+    assert_eq!(unsigned_be_bit_len(&prime_q), 1024);
+    assert_eq!(prime_p, composite_p.to_bytes_be());
+    assert!(!has_small_prime_factor(&prime_p));
+    assert!(!private_import_is_probable_prime(&prime_p).unwrap());
+
+    assert_eq!(
+      RsaPrivateKey::from_components_with_policy(
+        RsaPrivateKeyParts {
+          modulus: &modulus,
+          public_exponent: 65_537,
+          private_exponent: &private_exponent,
+          prime_p: &prime_p,
+          prime_q: &prime_q,
+          exponent_p: &exponent_p,
+          exponent_q: &exponent_q,
+          coefficient: &coefficient,
+        },
+        &RsaPublicKeyPolicy::legacy_verification(),
+      )
+      .err(),
+      Some(RsaKeyError::InvalidModulus)
+    );
+
+    let pkcs1 = rsa::pkcs1::EncodeRsaPrivateKey::to_pkcs1_der(&oracle).expect("RustCrypto PKCS #1 encoding");
+    assert_eq!(
+      RsaPrivateKey::from_pkcs1_der_with_policy(pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification()).err(),
+      Some(RsaKeyError::InvalidModulus)
+    );
+    let pkcs8 = rsa::pkcs8::EncodePrivateKey::to_pkcs8_der(&oracle).expect("RustCrypto PKCS #8 encoding");
+    assert_eq!(
+      RsaPrivateKey::from_pkcs8_der_with_policy(pkcs8.as_bytes(), &RsaPublicKeyPolicy::legacy_verification()).err(),
+      Some(RsaKeyError::InvalidModulus)
+    );
+  }
+
+  #[test]
+  fn private_key_import_rejects_grossly_unbalanced_factors() {
+    let one = rsa::BigUint::from(1u8);
+    let oversized_composite = (&one << 3008usize) - &one;
+    let small_prime = rsa::BigUint::from(18_446_744_073_709_551_557u64);
+    let oracle = rsa::RsaPrivateKey::from_p_q(oversized_composite, small_prime, rsa::BigUint::from(65_537u32))
+      .expect("algebraically valid two-factor key");
+    let modulus = oracle.n().to_bytes_be();
+    let private_exponent = oracle.d().to_bytes_be();
+    let prime_p = oracle.primes()[0].to_bytes_be();
+    let prime_q = oracle.primes()[1].to_bytes_be();
+    let exponent_p = oracle.dp().expect("RustCrypto CRT exponent").to_bytes_be();
+    let exponent_q = oracle.dq().expect("RustCrypto CRT exponent").to_bytes_be();
+    let coefficient = oracle
+      .qinv()
+      .and_then(|value| value.to_biguint())
+      .expect("positive RustCrypto CRT coefficient")
+      .to_bytes_be();
+    assert_eq!(unsigned_be_bit_len(&modulus), 3072);
+    assert_eq!(unsigned_be_bit_len(&prime_p), 3008);
+    assert_eq!(unsigned_be_bit_len(&prime_q), 64);
+
+    assert_eq!(
+      RsaPrivateKey::from_components_with_policy(
+        RsaPrivateKeyParts {
+          modulus: &modulus,
+          public_exponent: 65_537,
+          private_exponent: &private_exponent,
+          prime_p: &prime_p,
+          prime_q: &prime_q,
+          exponent_p: &exponent_p,
+          exponent_q: &exponent_q,
+          coefficient: &coefficient,
+        },
+        &RsaPublicKeyPolicy::modern_verification(),
+      )
+      .err(),
+      Some(RsaKeyError::InvalidModulus)
+    );
   }
 
   #[test]
@@ -12298,7 +12655,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     assert!(keygen_probable_prime_meets_fips_lower_bound(&prime, 128));
     assert_eq!(prime.last().copied().unwrap_or_default() & 1, 1);
-    assert!(!keygen_has_small_prime_factor(&prime));
+    assert!(!has_small_prime_factor(&prime));
     assert!(!keygen_conflicts_with_public_exponent(&prime));
     assert!(keygen_is_probable_prime(&mut drbg, &prime).unwrap());
   }
@@ -12343,8 +12700,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn keygen_prefilter_rejects_small_prime_factors_without_rejecting_larger_prime() {
-    assert!(keygen_has_small_prime_factor(&999u16.to_be_bytes()));
-    assert!(!keygen_has_small_prime_factor(&1009u16.to_be_bytes()));
+    assert!(has_small_prime_factor(&999u16.to_be_bytes()));
+    assert!(!has_small_prime_factor(&1009u16.to_be_bytes()));
   }
 
   #[cfg(feature = "getrandom")]
@@ -12375,14 +12732,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let prime = 1009u16.to_be_bytes();
     let prime_modulus = private_component_modulus(&prime).unwrap();
     assert!(
-      keygen_miller_rabin_accepts_base(&prime_modulus, &[63], 4, &1008u16.to_be_bytes(), &[0, 11]).unwrap(),
+      keygen_miller_rabin_accepts_base(&prime_modulus, &[0, 63], 4, &1008u16.to_be_bytes(), &[0, 11]).unwrap(),
       "1009 must pass a direct Miller-Rabin round for base 11"
     );
 
     let composite = 341u16.to_be_bytes();
     let composite_modulus = private_component_modulus(&composite).unwrap();
     assert!(
-      !keygen_miller_rabin_accepts_base(&composite_modulus, &[85], 2, &340u16.to_be_bytes(), &[0, 2]).unwrap(),
+      !keygen_miller_rabin_accepts_base(&composite_modulus, &[0, 85], 2, &340u16.to_be_bytes(), &[0, 2]).unwrap(),
       "341 must fail a direct Miller-Rabin round for base 2"
     );
   }
@@ -12824,7 +13181,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     assert_eq!(unsigned_be_bit_len(&prime), 128);
     assert_eq!(prime.last().copied().unwrap_or_default() & 1, 1);
-    assert!(!keygen_has_small_prime_factor(&prime));
+    assert!(!has_small_prime_factor(&prime));
     assert!(!keygen_conflicts_with_public_exponent(&prime));
     assert!(keygen_probable_prime_meets_fips_lower_bound(&prime, 128));
     assert!(keygen_is_probable_prime(&mut drbg, &prime).unwrap());
@@ -12866,6 +13223,23 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       parse_pkcs8_private_key_der_with_policy(&wrong_algorithm, &RsaPublicKeyPolicy::legacy_verification()).err(),
       Some(RsaKeyError::UnsupportedAlgorithm)
     );
+  }
+
+  #[cfg(feature = "diag")]
+  #[test]
+  fn pkcs8_private_key_validation_stages_preserve_valid_result() {
+    let pkcs1 = test_pkcs1_private_key();
+    let rsa_algorithm = algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null()));
+    let der = test_pkcs8_private_key(&pkcs1, &rsa_algorithm);
+    let policy = RsaPublicKeyPolicy::legacy_verification();
+
+    for stage in [0, 1, 2, 30, 32, 31, 3, 40, 41, 42, 4, u8::MAX] {
+      assert_eq!(
+        diag_rsa_validate_pkcs8_private_key_der_stage(&der, &policy, stage),
+        Ok(rsa_private_modulus().len()),
+        "stage {stage}"
+      );
+    }
   }
 
   #[test]
@@ -13365,12 +13739,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
+    any(
+      all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
+      all(target_arch = "x86_64", target_os = "linux")
+    ),
     not(feature = "portable-only"),
     not(miri)
   ))]
-  fn aarch64_linux_rsa_test_modulus(words: usize) -> RsaPublicModulus {
+  fn rsa_montgomery_test_modulus(words: usize) -> RsaPublicModulus {
     let mut bytes = vec![0u8; words.strict_mul(8)];
     for (i, byte) in bytes.iter_mut().enumerate() {
       *byte = 0xa5u8
@@ -13383,12 +13759,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
+    any(
+      all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
+      all(target_arch = "x86_64", target_os = "linux")
+    ),
     not(feature = "portable-only"),
     not(miri)
   ))]
-  fn aarch64_linux_rsa_test_limbs(words: usize, seed: u64) -> Vec<u64> {
+  fn rsa_montgomery_test_limbs(words: usize, seed: u64) -> Vec<u64> {
     let mut state = seed ^ (words as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     let mut limbs = vec![0u64; words];
     for limb in &mut limbs {
@@ -13403,8 +13781,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
+    any(
+      all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
+      all(target_arch = "x86_64", target_os = "linux")
+    ),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -13417,8 +13797,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   #[cfg(all(
-    target_arch = "aarch64",
-    target_os = "linux",
+    any(
+      all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
+      all(target_arch = "x86_64", target_os = "linux")
+    ),
     not(feature = "portable-only"),
     not(miri)
   ))]
@@ -13445,45 +13827,134 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[cfg(all(
     target_arch = "aarch64",
+    any(target_os = "linux", target_os = "macos"),
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  macro_rules! assert_aarch64_rsa_montgomery_backend_matches_portable {
+    ($backend:ident) => {
+      for words in [32usize, 48, 64, 128] {
+        assert!($backend::supports_bignum_mont_words(words));
+        let modulus = rsa_montgomery_test_modulus(words);
+        let a = rsa_montgomery_test_limbs(words, 0x243f_6a88_85a3_08d3);
+        let b = rsa_montgomery_test_limbs(words, 0x1319_8a2e_0370_7344);
+        let r2 = public_montgomery_r2(&modulus.limbs);
+        let scratch_words = $backend::bignum_mont_scratch_words(words);
+        let mut asm_t = vec![0u64; scratch_words];
+        let mut portable_t = vec![0u64; words.strict_mul(2).strict_add(2)];
+        let mut asm_out = vec![0u64; words];
+        let mut portable_out = vec![0u64; words];
+
+        $backend::mont_mul_cios_words(&mut asm_out, &a, &b, &modulus.limbs, modulus.n0, words, &mut asm_t);
+        mont_mul_cios_portable(&mut portable_out, &a, &b, &modulus, &mut portable_t);
+        assert_limbs_match_as_bytes("mont_mul", words, &asm_out, &portable_out);
+
+        asm_t.fill(0);
+        portable_t.fill(0);
+        let mut asm_square = a.clone();
+        $backend::mont_square_cios_words_in_place(&mut asm_square, &modulus.limbs, modulus.n0, words, &mut asm_t);
+        mont_mul_cios_portable(&mut portable_out, &a, &a, &modulus, &mut portable_t);
+        assert_limbs_match_as_bytes("mont_square_in_place", words, &asm_square, &portable_out);
+
+        asm_t.fill(0);
+        portable_t.fill(0);
+        let mut asm_left = a.clone();
+        $backend::mont_mul_cios_words_in_place_left(&mut asm_left, &b, &modulus.limbs, modulus.n0, words, &mut asm_t);
+        mont_mul_cios_portable(&mut portable_out, &a, &b, &modulus, &mut portable_t);
+        assert_limbs_match_as_bytes("mont_mul_in_place_left", words, &asm_left, &portable_out);
+
+        asm_t.fill(0);
+        portable_t.fill(0);
+        if words == 32 {
+          $backend::mont_reduce_cios_32(&mut asm_out, &a, &modulus.limbs, modulus.n0, &mut asm_t);
+        } else {
+          $backend::mont_reduce_cios_words(&mut asm_out, &a, &modulus.limbs, modulus.n0, words, &mut asm_t);
+        }
+        mont_reduce_cios_portable(&mut portable_out, &a, &modulus, &mut portable_t);
+        assert_limbs_match_as_bytes("mont_reduce", words, &asm_out, &portable_out);
+
+        asm_t.fill(0);
+        portable_t.fill(0);
+        let mut asm_acc = vec![0u64; words];
+        let mut portable_acc = vec![0u64; words];
+        $backend::public_e65537_mont_words(
+          &mut asm_out,
+          &a,
+          &r2,
+          &mut asm_acc,
+          &modulus.limbs,
+          modulus.n0,
+          words,
+          &mut asm_t,
+        );
+        public_e65537_cios_portable(&mut portable_out, &a, &r2, &mut portable_acc, &modulus, &mut portable_t);
+        assert_limbs_match_as_bytes("public_e65537", words, &asm_out, &portable_out);
+      }
+    };
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
     target_os = "linux",
     not(feature = "portable-only"),
     not(miri)
   ))]
   #[test]
   fn aarch64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths() {
+    assert_aarch64_rsa_montgomery_backend_matches_portable!(rsa_aarch64_linux_asm);
+  }
+
+  #[cfg(all(
+    target_arch = "aarch64",
+    target_os = "macos",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths() {
+    assert_aarch64_rsa_montgomery_backend_matches_portable!(rsa_aarch64_asm);
+  }
+
+  #[cfg(all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(feature = "portable-only"),
+    not(miri)
+  ))]
+  #[test]
+  fn x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths() {
     for words in [32usize, 48, 64, 128] {
-      assert!(rsa_aarch64_linux_asm::supports_bignum_mont_words(words));
-      let modulus = aarch64_linux_rsa_test_modulus(words);
-      let a = aarch64_linux_rsa_test_limbs(words, 0x243f_6a88_85a3_08d3);
-      let b = aarch64_linux_rsa_test_limbs(words, 0x1319_8a2e_0370_7344);
+      assert!(
+        rsa_x86_64_asm::supports_bignum_mont_words(words),
+        "RSA x86-64 assembly evidence requires BMI2 and ADX"
+      );
+      assert!(rsa_x86_64_asm::supports_bignum_mont_square_words(words));
+
+      let modulus = rsa_montgomery_test_modulus(words);
+      let a = rsa_montgomery_test_limbs(words, 0x243f_6a88_85a3_08d3);
+      let b = rsa_montgomery_test_limbs(words, 0x1319_8a2e_0370_7344);
       let r2 = public_montgomery_r2(&modulus.limbs);
-      let scratch_words = rsa_aarch64_linux_asm::bignum_mont_scratch_words(words);
+      let scratch_words = rsa_x86_64_asm::bignum_mont_scratch_words(words);
       let mut asm_t = vec![0u64; scratch_words];
       let mut portable_t = vec![0u64; words.strict_mul(2).strict_add(2)];
       let mut asm_out = vec![0u64; words];
       let mut portable_out = vec![0u64; words];
 
-      rsa_aarch64_linux_asm::mont_mul_cios_words(&mut asm_out, &a, &b, &modulus.limbs, modulus.n0, words, &mut asm_t);
+      rsa_x86_64_asm::mont_mul_cios_words(&mut asm_out, &a, &b, &modulus.limbs, modulus.n0, words, &mut asm_t);
       mont_mul_cios_portable(&mut portable_out, &a, &b, &modulus, &mut portable_t);
       assert_limbs_match_as_bytes("mont_mul", words, &asm_out, &portable_out);
 
       asm_t.fill(0);
       portable_t.fill(0);
       let mut asm_square = a.clone();
-      rsa_aarch64_linux_asm::mont_square_cios_words_in_place(
-        &mut asm_square,
-        &modulus.limbs,
-        modulus.n0,
-        words,
-        &mut asm_t,
-      );
+      rsa_x86_64_asm::mont_square_cios_words_in_place(&mut asm_square, &modulus.limbs, modulus.n0, words, &mut asm_t);
       mont_mul_cios_portable(&mut portable_out, &a, &a, &modulus, &mut portable_t);
       assert_limbs_match_as_bytes("mont_square_in_place", words, &asm_square, &portable_out);
 
       asm_t.fill(0);
       portable_t.fill(0);
       let mut asm_left = a.clone();
-      rsa_aarch64_linux_asm::mont_mul_cios_words_in_place_left(
+      rsa_x86_64_asm::mont_mul_cios_words_in_place_left(
         &mut asm_left,
         &b,
         &modulus.limbs,
@@ -13496,28 +13967,22 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
       asm_t.fill(0);
       portable_t.fill(0);
-      if words == 32 {
-        rsa_aarch64_linux_asm::mont_reduce_cios_32(&mut asm_out, &a, &modulus.limbs, modulus.n0, &mut asm_t);
-      } else {
-        rsa_aarch64_linux_asm::mont_reduce_cios_words(&mut asm_out, &a, &modulus.limbs, modulus.n0, words, &mut asm_t);
+      rsa_x86_64_asm::mont_mul_cios_words(&mut asm_out, &a, &r2, &modulus.limbs, modulus.n0, words, &mut asm_t);
+      let mut asm_acc = asm_out.clone();
+      for _ in 0..16 {
+        rsa_x86_64_asm::mont_square_cios_words_in_place(&mut asm_acc, &modulus.limbs, modulus.n0, words, &mut asm_t);
       }
-      mont_reduce_cios_portable(&mut portable_out, &a, &modulus, &mut portable_t);
-      assert_limbs_match_as_bytes("mont_reduce", words, &asm_out, &portable_out);
-
-      asm_t.fill(0);
-      portable_t.fill(0);
-      let mut asm_acc = vec![0u64; words];
-      let mut portable_acc = vec![0u64; words];
-      rsa_aarch64_linux_asm::public_e65537_mont_words(
-        &mut asm_out,
-        &a,
-        &r2,
+      rsa_x86_64_asm::mont_mul_cios_words_in_place_left(
         &mut asm_acc,
+        &asm_out,
         &modulus.limbs,
         modulus.n0,
         words,
         &mut asm_t,
       );
+      mont_reduce_cios_portable(&mut asm_out, &asm_acc, &modulus, &mut asm_t);
+
+      let mut portable_acc = vec![0u64; words];
       public_e65537_cios_portable(&mut portable_out, &a, &r2, &mut portable_acc, &modulus, &mut portable_t);
       assert_limbs_match_as_bytes("public_e65537", words, &asm_out, &portable_out);
     }
@@ -13620,10 +14085,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
     let key = RsaPublicKey::from_spki_der(spki).unwrap();
     let scratch = key.public_scratch();
+    let (_, scratch_r2) = scratch.montgomery.split_at(scratch.limb_count);
 
     assert_eq!(
       diag_rsa_precompute_public_montgomery_r2(key.modulus()),
-      Ok(limb_checksum(&scratch.r2))
+      Ok(limb_checksum(scratch_r2))
     );
   }
 

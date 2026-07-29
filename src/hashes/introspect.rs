@@ -179,12 +179,12 @@ impl_hash_kernel_introspect!(
 #[cfg(feature = "xxh3")]
 impl_hash_kernel_introspect!(
   crate::hashes::fast::xxh3::Xxh3_64,
-  crate::hashes::fast::xxh3::dispatch::kernel_name_for_len
+  crate::hashes::fast::xxh3::dispatch::kernel_name64_for_len
 );
 #[cfg(feature = "xxh3")]
 impl_hash_kernel_introspect!(
   crate::hashes::fast::xxh3::Xxh3_128,
-  crate::hashes::fast::xxh3::dispatch::kernel_name_for_len
+  crate::hashes::fast::xxh3::dispatch::kernel_name128_for_len
 );
 #[cfg(test)]
 mod tests {

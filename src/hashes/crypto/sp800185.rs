@@ -56,6 +56,7 @@ pub(crate) fn absorb_bytepad<const RATE: usize>(core: &mut KeccakCore<RATE>, seg
 
   let total_len = prefix_len.strict_add(payload_len);
   let rem = total_len % RATE;
-  let pad_len = if rem == 0 { RATE } else { RATE.strict_sub(rem) };
-  core.update(&[0u8; RATE][..pad_len]);
+  if rem != 0 {
+    core.update(&[0u8; RATE][..RATE.strict_sub(rem)]);
+  }
 }

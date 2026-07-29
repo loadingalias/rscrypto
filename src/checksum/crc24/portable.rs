@@ -13,8 +13,7 @@ pub fn crc24_openpgp_slice8(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OpenPGP byte-at-a-time lookup computation (MSB-first).
 ///
-/// This is typically faster than slice-by-8 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-8 table set.
 #[inline(always)]
 #[allow(clippy::indexing_slicing)] // index is 0..=255 by byte cast, table is [u32; 256]
 pub fn crc24_openpgp_bytewise(crc: u32, data: &[u8]) -> u32 {

@@ -2,10 +2,8 @@
 
 //! AEGIS-256 authenticated encryption (draft-irtf-cfrg-aegis-aead).
 //!
-//! High-performance AES-based AEAD with a 256-bit key, 256-bit nonce,
-//! and 128-bit authentication tag. Uses raw AES round functions (not full
-//! AES encryption), achieving ~2-3x the throughput of AES-256-GCM on
-//! hardware with AES-NI or AES-CE.
+//! AES-round-based AEAD with a 256-bit key, 256-bit nonce, and 128-bit
+//! authentication tag.
 
 use core::fmt;
 
@@ -212,6 +210,7 @@ fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
   tag = xor_block(&tag, &s[3]);
   tag = xor_block(&tag, &s[4]);
   tag = xor_block(&tag, &s[5]);
+  ct::zeroize(&mut t);
   tag
 }
 
@@ -283,10 +282,8 @@ define_aead_tag_type!(Aegis256Tag, TAG_SIZE, "AEGIS-256 128-bit authentication t
 
 /// AEGIS-256 authenticated encryption with associated data.
 ///
-/// High-performance AES-based AEAD with a 256-bit key, 256-bit nonce,
-/// and 128-bit authentication tag. On hardware with AES round instructions
-/// (AES-NI, AES-CE, POWER8 vcipher), AEGIS-256 achieves
-/// ~2-3x the throughput of AES-256-GCM.
+/// AES-round-based AEAD with a 256-bit key, 256-bit nonce, and 128-bit
+/// authentication tag.
 ///
 /// # Security
 ///
@@ -432,10 +429,14 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
     buffer[offset..].copy_from_slice(&ct[..tail_len]);
   }
 
-  finalize(&mut s, aad.len(), msg_len)
+  let tag = finalize(&mut s, aad.len(), msg_len);
+  ct::zeroize(s.as_flattened_mut());
+  tag
 }
 
 #[cfg(feature = "diag")]
+#[unsafe(no_mangle)]
+#[inline(never)]
 #[must_use]
 pub fn diag_aegis256_update_portable(
   key: &[u8; KEY_SIZE],
@@ -444,7 +445,9 @@ pub fn diag_aegis256_update_portable(
 ) -> [u8; TAG_SIZE] {
   let mut s = init(key, nonce);
   update(&mut s, block);
-  finalize(&mut s, 0, BLOCK_SIZE)
+  let tag = finalize(&mut s, 0, BLOCK_SIZE);
+  ct::zeroize(s.as_flattened_mut());
+  tag
 }
 
 fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], buffer: &mut [u8]) -> [u8; TAG_SIZE] {
@@ -479,7 +482,9 @@ fn decrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
     buffer[offset..].copy_from_slice(&pt_pad[..tail_len]);
   }
 
-  finalize(&mut s, aad.len(), ct_len)
+  let tag = finalize(&mut s, aad.len(), ct_len);
+  ct::zeroize(s.as_flattened_mut());
+  tag
 }
 
 impl Aead for Aegis256 {
@@ -526,13 +531,9 @@ impl Aead for Aegis256 {
     let key = self.key.as_bytes();
     let nonce = nonce.as_bytes();
 
-    // NOTE: VAES-256 (`ni_wide`) is intentionally NOT dispatched here.
-    // AEGIS-256's update is a serial chain of 6 AES rounds reading old state.
-    // VAES-256 packs into 3 YMM registers but requires 3 cross-lane shuffles
-    // (`vperm2i128`, 3-cycle latency) before each set of 3 VAESENC, adding
-    // ~3 cycles to the critical path. On Zen4 with 2 AES ports: AES-NI steady-
-    // state is ~5 cyc/block; VAES-256 is ~8 cyc/block. AES-NI wins for serial
-    // update chains (unlike AES-GCM where blocks are independent).
+    // AEGIS-256 updates six dependent state lanes. The wide VAES kernel packs
+    // them into three YMM registers and needs cross-lane shuffles between
+    // updates; this path keeps the serial state in XMM registers.
     #[cfg(target_arch = "x86_64")]
     if self.backend == AeadBackend::X86Aesni {
       // SAFETY: backend resolution confirmed AES-NI + AVX are available.

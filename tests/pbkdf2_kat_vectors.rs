@@ -1,17 +1,18 @@
 //! PBKDF2-HMAC-SHA256 / SHA-512 known-answer vectors.
 //!
 //! RFC 6070 only covers PBKDF2-HMAC-SHA1. rscrypto ships SHA-256 and SHA-512
-//! variants, so this file pins them against widely-published test vectors
-//! that predate any one vendor:
+//! variants, so this file pins them against the vectors in
+//! `ring 0.16.20/tests/pbkdf2_tests.txt`:
 //!
-//! - SHA-256: IETF draft-josefsson-scrypt-kdf-01 §10 / Stack Overflow's canonical
-//!   PBKDF2-HMAC-SHA256 vectors (also reproduced by RustCrypto `pbkdf2` crate tests).
-//! - SHA-512: RFC 7914 companion values (and the RustCrypto test fixtures).
+//! - SHA-256 source cited there: <https://stackoverflow.com/questions/5130513/pbkdf2-hmac-sha2-test-vectors>
+//! - SHA-512 source cited there: <https://stackoverflow.com/questions/15593184/pbkdf2-hmac-sha-512-test-vectors>
 //!
-//! The differential suite in `tests/pbkdf2_differential.rs` already pins
-//! rscrypto against the RustCrypto `pbkdf2` crate across many parameter
-//! triples; this file adds a frozen, reviewer-friendly KAT surface that
-//! does not depend on any external oracle.
+//! RFC 7914 specifies scrypt; it is not the provenance of the SHA-512 values.
+//! The shared cases are also present in RustCrypto `pbkdf2 0.13.0`, and
+//! `tests/pbkdf2_differential.rs` compares rscrypto against that independent
+//! implementation across generated parameter triples. This file keeps a
+//! frozen, reviewer-friendly KAT surface that does not invoke an external
+//! oracle at test time.
 #![cfg(feature = "pbkdf2")]
 
 use rscrypto::{Pbkdf2Sha256, Pbkdf2Sha512};

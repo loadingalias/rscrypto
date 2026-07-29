@@ -56,7 +56,15 @@ cat >"$fixture/scripts/check/zeroize-evidence.sh" <<'EOF'
 exit 0
 EOF
 
-chmod +x "$fixture/scripts/ct/python.sh" "$fixture/scripts/check/zeroize-evidence.sh"
+cat >"$fixture/scripts/check/rsa-asm-provenance.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+chmod +x \
+  "$fixture/scripts/ct/python.sh" \
+  "$fixture/scripts/check/rsa-asm-provenance.sh" \
+  "$fixture/scripts/check/zeroize-evidence.sh"
 
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash

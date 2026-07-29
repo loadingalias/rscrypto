@@ -2,7 +2,7 @@
 //!
 //! Traits for checksum algorithms like CRC32, CRC64, and non-cryptographic hashes.
 //!
-//! - **Performance**: Zero-cost abstractions, inline-friendly
+//! - **Performance**: Inline-friendly state updates
 //! - **Streaming**: Incremental updates for large data
 //! - **Parallelism**: Combine operation for parallel chunk processing
 

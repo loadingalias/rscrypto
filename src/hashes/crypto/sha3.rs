@@ -4,15 +4,164 @@
 
 #[cfg(all(test, feature = "ml-kem"))]
 use super::keccak::xof_quad;
-use super::keccak::{PublicKeccakCore, PublicKeccakXof};
 #[cfg(feature = "ml-kem")]
 use super::keccak::{
-  xof_seeded_32_1 as keccak_xof_seeded_32_1, xof_seeded_32_1_pair as keccak_xof_seeded_32_1_pair,
-  xof_seeded_32_1_quad as keccak_xof_seeded_32_1_quad, xof_seeded_32_2 as keccak_xof_seeded_32_2,
+  KeccakCore, KeccakXof, xof_seeded_32_1_pair_secret as keccak_xof_seeded_32_1_pair_secret,
+  xof_seeded_32_1_quad_secret as keccak_xof_seeded_32_1_quad_secret,
+  xof_seeded_32_1_secret as keccak_xof_seeded_32_1_secret, xof_seeded_32_2 as keccak_xof_seeded_32_2,
   xof_seeded_32_2_pair as keccak_xof_seeded_32_2_pair, xof_seeded_32_2_quad as keccak_xof_seeded_32_2_quad,
   xof_seeded_32_2_triple as keccak_xof_seeded_32_2_triple,
 };
+use super::keccak::{PublicKeccakCore, PublicKeccakXof};
 use crate::traits::{Digest, Xof};
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn mlkem_sha3_512_digest(input: &[u8]) -> [u8; 64] {
+  let mut core = KeccakCore::<72>::default();
+  core.update(input);
+  let mut out = [0u8; 64];
+  core.finalize_into_fixed(0x06, &mut out);
+  out
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) fn mlkem_shake256_two_part_into(a: &[u8], b: &[u8], out: &mut [u8]) {
+  let mut core = KeccakCore::<136>::default();
+  core.update(a);
+  core.update(b);
+  let mut reader = core.finalize_xof(0x1F);
+  reader.squeeze_into(out);
+}
+
+#[cfg(feature = "ml-kem")]
+pub(crate) struct MlKemShake256XofReader {
+  inner: KeccakXof<136>,
+}
+
+#[cfg(feature = "ml-kem")]
+impl MlKemShake256XofReader {
+  #[inline]
+  pub(crate) fn seeded_32_1(seed: &[u8; 32], nonce: u8) -> Self {
+    Self {
+      inner: keccak_xof_seeded_32_1_secret::<136>(0x1F, seed, nonce),
+    }
+  }
+
+  #[inline]
+  pub(crate) fn seeded_32_1_pair(seed: &[u8; 32], a: u8, b: u8) -> (Self, Self) {
+    let (a, b) = keccak_xof_seeded_32_1_pair_secret::<136>(0x1F, seed, a, b);
+    (Self { inner: a }, Self { inner: b })
+  }
+
+  #[inline]
+  pub(crate) fn seeded_32_1_quad(seed: &[u8; 32], a: u8, b: u8, c: u8, d: u8) -> (Self, Self, Self, Self) {
+    let (a, b, c, d) = keccak_xof_seeded_32_1_quad_secret::<136>(0x1F, seed, a, b, c, d);
+    (
+      Self { inner: a },
+      Self { inner: b },
+      Self { inner: c },
+      Self { inner: d },
+    )
+  }
+
+  #[inline]
+  pub(crate) fn squeeze(&mut self, out: &mut [u8]) {
+    self.inner.squeeze_into(out);
+  }
+
+  #[inline]
+  pub(crate) fn squeeze_pair(a: &mut Self, b: &mut Self, out_a: &mut [u8], out_b: &mut [u8]) {
+    KeccakXof::<136>::squeeze_pair_into(&mut a.inner, &mut b.inner, out_a, out_b);
+  }
+
+  #[inline]
+  #[allow(clippy::too_many_arguments)]
+  pub(crate) fn squeeze_quad(
+    a: &mut Self,
+    b: &mut Self,
+    c: &mut Self,
+    d: &mut Self,
+    out_a: &mut [u8],
+    out_b: &mut [u8],
+    out_c: &mut [u8],
+    out_d: &mut [u8],
+  ) {
+    KeccakXof::<136>::squeeze_quad_into(
+      &mut a.inner,
+      &mut b.inner,
+      &mut c.inner,
+      &mut d.inner,
+      out_a,
+      out_b,
+      out_c,
+      out_d,
+    );
+  }
+}
+
+#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_mlkem_sha3_512(mut seed: [u8; 32]) -> u8 {
+  let mut digest = mlkem_sha3_512_digest(&seed);
+  crate::traits::ct::zeroize(&mut seed);
+  let observed = digest[0];
+  crate::traits::ct::zeroize(&mut digest);
+  core::hint::black_box(observed)
+}
+
+#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_mlkem_shake256_scalar(mut seed: [u8; 32]) -> u8 {
+  let mut reader = MlKemShake256XofReader::seeded_32_1(&seed, 1);
+  crate::traits::ct::zeroize(&mut seed);
+  let mut out = [0u8; 192];
+  reader.squeeze(&mut out);
+  let observed = out[0];
+  crate::traits::ct::zeroize(&mut out);
+  core::hint::black_box(observed)
+}
+
+#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_mlkem_shake256_pair(mut seed: [u8; 32]) -> u8 {
+  let (mut a, mut b) = MlKemShake256XofReader::seeded_32_1_pair(&seed, 1, 2);
+  crate::traits::ct::zeroize(&mut seed);
+  let mut out_a = [0u8; 192];
+  let mut out_b = [0u8; 192];
+  MlKemShake256XofReader::squeeze_pair(&mut a, &mut b, &mut out_a, &mut out_b);
+  let observed = out_a[0] ^ out_b[0];
+  crate::traits::ct::zeroize(&mut out_a);
+  crate::traits::ct::zeroize(&mut out_b);
+  core::hint::black_box(observed)
+}
+
+#[cfg(all(feature = "diag", feature = "ml-kem"))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub fn diag_zeroize_mlkem_shake256_quad(mut seed: [u8; 32]) -> u8 {
+  let (mut a, mut b, mut c, mut d) = MlKemShake256XofReader::seeded_32_1_quad(&seed, 1, 2, 3, 4);
+  crate::traits::ct::zeroize(&mut seed);
+  let mut out_a = [0u8; 192];
+  let mut out_b = [0u8; 192];
+  let mut out_c = [0u8; 192];
+  let mut out_d = [0u8; 192];
+  MlKemShake256XofReader::squeeze_quad(
+    &mut a, &mut b, &mut c, &mut d, &mut out_a, &mut out_b, &mut out_c, &mut out_d,
+  );
+  let observed = out_a[0] ^ out_b[0] ^ out_c[0] ^ out_d[0];
+  crate::traits::ct::zeroize(&mut out_a);
+  crate::traits::ct::zeroize(&mut out_b);
+  crate::traits::ct::zeroize(&mut out_c);
+  crate::traits::ct::zeroize(&mut out_d);
+  core::hint::black_box(observed)
+}
 
 /// SHA3-256 digest state.
 ///
@@ -99,9 +248,8 @@ impl Digest for Sha3_224 {
 impl Sha3_224 {
   /// Hash two independent messages in parallel, returning both 28-byte digests.
   ///
-  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
-  /// throughput of two sequential [`digest`](Digest::digest) calls by using
-  /// 2-state NEON interleaving.
+  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
+  /// states.
   #[inline]
   #[must_use]
   pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 28], [u8; 28]) {
@@ -144,9 +292,8 @@ impl Digest for Sha3_256 {
 impl Sha3_256 {
   /// Hash two independent messages in parallel, returning both 32-byte digests.
   ///
-  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
-  /// throughput of two sequential [`digest`](Digest::digest) calls by using
-  /// 2-state NEON interleaving.
+  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
+  /// states.
   #[inline]
   #[must_use]
   pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 32], [u8; 32]) {
@@ -239,9 +386,8 @@ impl Digest for Sha3_384 {
 impl Sha3_384 {
   /// Hash two independent messages in parallel, returning both 48-byte digests.
   ///
-  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
-  /// throughput of two sequential [`digest`](Digest::digest) calls by using
-  /// 2-state NEON interleaving.
+  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
+  /// states.
   #[inline]
   #[must_use]
   pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 48], [u8; 48]) {
@@ -284,9 +430,8 @@ impl Digest for Sha3_512 {
 impl Sha3_512 {
   /// Hash two independent messages in parallel, returning both 64-byte digests.
   ///
-  /// On aarch64 with SHA3 Crypto Extensions, this achieves ~2× the aggregate
-  /// throughput of two sequential [`digest`](Digest::digest) calls by using
-  /// 2-state NEON interleaving.
+  /// The aarch64 SHA3 Crypto Extensions backend interleaves the two independent
+  /// states.
   #[inline]
   #[must_use]
   pub fn digest_pair(a: &[u8], b: &[u8]) -> ([u8; 64], [u8; 64]) {
@@ -628,44 +773,6 @@ impl Shake256 {
   }
 
   #[inline]
-  #[cfg(feature = "ml-kem")]
-  pub(crate) fn xof_seeded_32_1(seed: &[u8; 32], x: u8) -> Shake256XofReader {
-    Shake256XofReader {
-      inner: keccak_xof_seeded_32_1::<136>(0x1F, seed, x),
-    }
-  }
-
-  #[inline]
-  #[cfg(feature = "ml-kem")]
-  pub(crate) fn xof_seeded_32_1_pair(seed: &[u8; 32], a: u8, b: u8) -> (Shake256XofReader, Shake256XofReader) {
-    let (a, b) = keccak_xof_seeded_32_1_pair::<136>(0x1F, seed, a, b);
-    (Shake256XofReader { inner: a }, Shake256XofReader { inner: b })
-  }
-
-  #[inline]
-  #[cfg(feature = "ml-kem")]
-  pub(crate) fn xof_seeded_32_1_quad(
-    seed: &[u8; 32],
-    a: u8,
-    b: u8,
-    c: u8,
-    d: u8,
-  ) -> (
-    Shake256XofReader,
-    Shake256XofReader,
-    Shake256XofReader,
-    Shake256XofReader,
-  ) {
-    let (a, b, c, d) = keccak_xof_seeded_32_1_quad::<136>(0x1F, seed, a, b, c, d);
-    (
-      Shake256XofReader { inner: a },
-      Shake256XofReader { inner: b },
-      Shake256XofReader { inner: c },
-      Shake256XofReader { inner: d },
-    )
-  }
-
-  #[inline]
   /// Convenience one-shot XOF output for callers that only need bytes.
   ///
   /// The canonical one-shot API is [`Self::xof`]. Use [`Self::new`],
@@ -693,44 +800,13 @@ impl Xof for Shake256XofReader {
   }
 }
 
-impl Shake256XofReader {
-  #[inline]
-  #[cfg(feature = "ml-kem")]
-  pub(crate) fn squeeze_pair(a: &mut Self, b: &mut Self, out_a: &mut [u8], out_b: &mut [u8]) {
-    PublicKeccakXof::<136>::squeeze_pair_into(&mut a.inner, &mut b.inner, out_a, out_b);
-  }
-
-  #[inline]
-  #[cfg(feature = "ml-kem")]
-  #[allow(clippy::too_many_arguments)]
-  pub(crate) fn squeeze_quad(
-    a: &mut Self,
-    b: &mut Self,
-    c: &mut Self,
-    d: &mut Self,
-    out_a: &mut [u8],
-    out_b: &mut [u8],
-    out_c: &mut [u8],
-    out_d: &mut [u8],
-  ) {
-    PublicKeccakXof::<136>::squeeze_quad_into(
-      &mut a.inner,
-      &mut b.inner,
-      &mut c.inner,
-      &mut d.inner,
-      out_a,
-      out_b,
-      out_c,
-      out_d,
-    );
-  }
-}
-
 impl_xof_read!(Shake256XofReader);
 
 #[cfg(test)]
 mod tests {
-  use super::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake128XofReader, Shake256};
+  #[cfg(feature = "ml-kem")]
+  use super::Shake128XofReader;
+  use super::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
   use crate::traits::{Digest, Xof};
 
   fn hex(bytes: &[u8]) -> alloc::string::String {

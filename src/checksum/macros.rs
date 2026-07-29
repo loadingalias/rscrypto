@@ -3,7 +3,7 @@
 //! These macros eliminate boilerplate when defining buffered CRC wrappers
 //! and vectored (multi-buffer) dispatch.
 
-/// Run a CRC kernel across multiple buffers, re-selecting the optimal kernel
+/// Run a CRC kernel across multiple buffers, re-selecting the active kernel
 /// when the buffer size class changes.
 ///
 /// This is the shared core of every `*_vectored` / `*_io_slices` API and the
@@ -152,7 +152,6 @@ macro_rules! define_crc_dispatch {
 /// - The struct definition with `inner`, `buffer`, and `len` fields
 /// - `new()`, `update()`, `finalize()`, and `reset()` methods
 /// - `Default` trait implementation
-/// - `Drop` implementation that zeroizes the buffer via [`crate::traits::ct::zeroize`]
 ///
 /// # Arguments
 ///
@@ -283,13 +282,5 @@ macro_rules! define_buffered_crc {
       }
     }
 
-    impl Drop for $name {
-      fn drop(&mut self) {
-        $crate::traits::ct::zeroize(&mut self.buffer[..]);
-        // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-        unsafe { core::ptr::write_volatile(&mut self.len, 0) };
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-      }
-    }
   };
 }

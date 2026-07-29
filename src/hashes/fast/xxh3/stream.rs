@@ -23,7 +23,8 @@ fn consume_stripes(
   input: &[u8],
   secret: &[u8; DEFAULT_SECRET_SIZE],
 ) -> ([u64; ACC_NB], usize) {
-  debug_assert!(count.strict_mul(STRIPE_LEN) <= input.len());
+  assert!(count.strict_mul(STRIPE_LEN) <= input.len());
+  assert!(accumulated < STRIPES_PER_BLOCK);
   let mut input_offset = 0usize;
   while count != 0 {
     let to_block_end = STRIPES_PER_BLOCK.strict_sub(accumulated);
@@ -34,15 +35,22 @@ fn consume_stripes(
     } else {
       stream_accumulate
     };
-    acc = kernel(
-      acc,
-      input,
-      input_offset,
-      secret,
-      accumulated.strict_mul(SECRET_CONSUME_RATE),
-      stripes,
-      scramble_after,
-    );
+    // SAFETY: `count * STRIPE_LEN <= input.len()` is checked above and
+    // `input_offset` advances by exactly the consumed stripes. `accumulated`
+    // stays below `STRIPES_PER_BLOCK`, so the selected stripe range remains
+    // within the fixed secret. Dispatch selected `kernel` only after verifying
+    // its target-feature capability.
+    acc = unsafe {
+      kernel(
+        acc,
+        input,
+        input_offset,
+        secret,
+        accumulated.strict_mul(SECRET_CONSUME_RATE),
+        stripes,
+        scramble_after,
+      )
+    };
     input_offset = input_offset.strict_add(stripes.strict_mul(STRIPE_LEN));
     count = count.strict_sub(stripes);
     if scramble_after {
@@ -542,9 +550,8 @@ mod tests {
   fn streaming_simd_kernels_match_portable_accumulator() {
     use super::super::kernels::{Xxh3KernelId, required_caps, stream_accumulate_fn};
 
-    let input = data(INTERNAL_BUFFER_SIZE);
+    let input = data(INTERNAL_BUFFER_SIZE * 4 + 64);
     let secret = custom_default_secret(42);
-    let expected = stream_accumulate_fn(Xxh3KernelId::Portable)(INITIAL_ACC, &input, 0, &secret, 8, 4, true);
     #[cfg(target_arch = "x86_64")]
     let kernels = &[Xxh3KernelId::Avx2, Xxh3KernelId::Avx512][..];
     #[cfg(target_arch = "aarch64")]
@@ -564,11 +571,122 @@ mod tests {
     let caps = crate::platform::caps();
     for &kernel in kernels {
       if caps.has(required_caps(kernel)) {
-        assert_eq!(
-          stream_accumulate_fn(kernel)(INITIAL_ACC, &input, 0, &secret, 8, 4, true),
-          expected
-        );
+        for offset in 0..64 {
+          for scramble_after in [false, true] {
+            // SAFETY: One stripe starting at `offset` is inside `input`; the
+            // zero secret offset leaves a full stripe inside `secret`; runtime
+            // capabilities satisfy the selected kernel's target features.
+            let expected = unsafe {
+              stream_accumulate_fn(Xxh3KernelId::Portable)(INITIAL_ACC, &input, offset, &secret, 0, 1, scramble_after)
+            };
+            // SAFETY: Same bounds as the portable call above, and
+            // `required_caps(kernel)` was checked before entering the loop.
+            let actual =
+              unsafe { stream_accumulate_fn(kernel)(INITIAL_ACC, &input, offset, &secret, 0, 1, scramble_after) };
+            assert_eq!(actual, expected, "kernel={kernel:?} offset={offset}");
+          }
+        }
+
+        for (input_offset, secret_offset, stripes, scramble_after) in
+          [(0, 0, 16, true), (1, 8, 4, false), (31, 120, 1, true)]
+        {
+          // SAFETY: Every table row keeps all input stripes within `input` and
+          // all secret stripes within `secret`.
+          let expected = unsafe {
+            stream_accumulate_fn(Xxh3KernelId::Portable)(
+              INITIAL_ACC,
+              &input,
+              input_offset,
+              &secret,
+              secret_offset,
+              stripes,
+              scramble_after,
+            )
+          };
+          // SAFETY: The table bounds are proved above and runtime capabilities
+          // satisfy the selected kernel's target features.
+          let actual = unsafe {
+            stream_accumulate_fn(kernel)(
+              INITIAL_ACC,
+              &input,
+              input_offset,
+              &secret,
+              secret_offset,
+              stripes,
+              scramble_after,
+            )
+          };
+          assert_eq!(
+            actual, expected,
+            "kernel={kernel:?} input_offset={input_offset} secret_offset={secret_offset} stripes={stripes}"
+          );
+        }
       }
     }
+  }
+
+  #[test]
+  #[cfg(not(miri))]
+  fn available_long_kernels_match_independent_oracle_across_alignments_and_tails() {
+    use super::super::kernels::{Xxh3KernelId, hash64_long_fn, hash128_long_fn, required_caps};
+
+    #[cfg(target_arch = "x86_64")]
+    let kernels = &[Xxh3KernelId::Avx2, Xxh3KernelId::Avx512][..];
+    #[cfg(target_arch = "aarch64")]
+    let kernels = &[Xxh3KernelId::Neon][..];
+    #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+    let kernels = &[Xxh3KernelId::Vsx][..];
+    #[cfg(target_arch = "s390x")]
+    let kernels = &[Xxh3KernelId::Vector][..];
+    #[cfg(not(any(
+      target_arch = "x86_64",
+      target_arch = "aarch64",
+      all(target_arch = "powerpc64", target_endian = "little"),
+      target_arch = "s390x"
+    )))]
+    let kernels = &[][..];
+
+    let input = data(2113);
+    let caps = crate::platform::caps();
+    for &kernel in kernels {
+      if !caps.has(required_caps(kernel)) {
+        continue;
+      }
+      let hash64 = hash64_long_fn(kernel);
+      let hash128 = hash128_long_fn(kernel);
+      for seed in [0, 0x243f_6a88_85a3_08d3] {
+        for offset in 0..64 {
+          for len in [241, 255, 256, 257, 1023, 1024, 1025, 2047, 2048, 2049] {
+            let data = &input[offset..offset + len];
+            assert_eq!(
+              hash64(data, seed),
+              xxhash_rust::xxh3::xxh3_64_with_seed(data, seed),
+              "64-bit kernel={kernel:?} seed={seed:#x} offset={offset} len={len}"
+            );
+            assert_eq!(
+              hash128(data, seed),
+              xxhash_rust::xxh3::xxh3_128_with_seed(data, seed),
+              "128-bit kernel={kernel:?} seed={seed:#x} offset={offset} len={len}"
+            );
+          }
+        }
+      }
+    }
+  }
+
+  #[test]
+  #[should_panic]
+  fn consume_stripes_rejects_short_input_before_kernel_call() {
+    use super::super::kernels::{Xxh3KernelId, stream_accumulate_fn};
+
+    let secret = custom_default_secret(0);
+    consume_stripes(
+      stream_accumulate_fn(Xxh3KernelId::Portable),
+      INITIAL_ACC,
+      1,
+      0,
+      &[],
+      &secret,
+    );
   }
 }

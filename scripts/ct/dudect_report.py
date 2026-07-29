@@ -335,6 +335,11 @@ CASE_METADATA = {
     "left_class": "fixed message",
     "right_class": "random same-length message",
   },
+  "rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent": {
+    "primitive": "rsa.private_ops",
+    "left_class": "valid RSA-2048 key with 128-byte canonical CRT exponents",
+    "right_class": "valid same-factor-width RSA-2048 key with a 127-byte canonical dQ",
+  },
   "rsa_oaep_decrypt_fixed_vs_random_plaintext": {
     "primitive": "rsa.private_ops",
     "left_class": "valid OAEP ciphertext for fixed plaintext",

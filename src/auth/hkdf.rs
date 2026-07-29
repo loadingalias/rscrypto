@@ -184,15 +184,14 @@ impl HkdfSha256 {
     }
 
     let compress = self.compress;
-    let inner_init = self.inner_init;
-    let outer_init = self.outer_init;
 
+    let mut inner_block = [0u8; SHA256_BLOCK_SIZE];
     let mut outer_block = [0u8; SHA256_BLOCK_SIZE];
     outer_block[SHA256_OUTPUT_SIZE] = 0x80;
     outer_block[56..SHA256_BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
 
     let mut inner_hash = [0u8; SHA256_OUTPUT_SIZE];
-    let mut state = [0u32; 8];
+    let mut state = self.inner_init;
     let mut counter: u8 = 1;
 
     let mut prev_tag = [0u8; SHA256_OUTPUT_SIZE];
@@ -201,10 +200,18 @@ impl HkdfSha256 {
       return Ok(());
     };
 
-    expand_hmac_sha256_inner(compress, &inner_init, None, info, counter, &mut state, &mut inner_hash);
+    expand_hmac_sha256_inner(
+      compress,
+      None,
+      info,
+      counter,
+      &mut state,
+      &mut inner_hash,
+      &mut inner_block,
+    );
     expand_hmac_sha256_outer(
       compress,
-      &outer_init,
+      &self.outer_init,
       &inner_hash,
       &mut state,
       &mut outer_block,
@@ -214,18 +221,19 @@ impl HkdfSha256 {
     counter = counter.wrapping_add(1);
 
     for chunk in chunks {
+      state = self.inner_init;
       expand_hmac_sha256_inner(
         compress,
-        &inner_init,
         Some(&prev_tag),
         info,
         counter,
         &mut state,
         &mut inner_hash,
+        &mut inner_block,
       );
       expand_hmac_sha256_outer(
         compress,
-        &outer_init,
+        &self.outer_init,
         &inner_hash,
         &mut state,
         &mut outer_block,
@@ -237,6 +245,7 @@ impl HkdfSha256 {
 
     ct::zeroize_no_fence(&mut prev_tag);
     ct::zeroize_no_fence(&mut inner_hash);
+    ct::zeroize_no_fence(&mut inner_block);
     ct::zeroize_no_fence(&mut outer_block);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -315,6 +324,8 @@ impl HkdfSha256 {
 }
 
 #[cfg(feature = "diag")]
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub fn diag_hkdf_sha256_derive_portable(input_key_material: &[u8; SHA256_OUTPUT_SIZE]) -> [u8; SHA256_OUTPUT_SIZE] {
   let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
@@ -428,14 +439,13 @@ impl HkdfSha384 {
     }
 
     let compress = self.compress;
-    let inner_init = self.inner_init;
-    let outer_init = self.outer_init;
 
+    let mut inner_block = [0u8; SHA384_BLOCK_SIZE];
     let mut outer_block = [0u8; SHA384_BLOCK_SIZE];
     outer_block[SHA384_OUTPUT_SIZE] = 0x80;
     outer_block[112..SHA384_BLOCK_SIZE].copy_from_slice(&1408u128.to_be_bytes());
 
-    let mut state = [0u64; 8];
+    let mut state = self.inner_init;
     let mut counter: u8 = 1;
 
     let mut prev_tag = [0u8; SHA384_OUTPUT_SIZE];
@@ -444,27 +454,37 @@ impl HkdfSha384 {
       return Ok(());
     };
 
-    expand_hmac_sha384_inner(compress, &inner_init, None, info, counter, &mut state, &mut outer_block);
-    expand_hmac_sha384_outer(compress, &outer_init, &mut state, &mut outer_block, &mut prev_tag);
+    expand_hmac_sha384_inner(
+      compress,
+      None,
+      info,
+      counter,
+      &mut state,
+      &mut outer_block,
+      &mut inner_block,
+    );
+    expand_hmac_sha384_outer(compress, &self.outer_init, &mut state, &mut outer_block, &mut prev_tag);
     first.copy_from_slice(&prev_tag[..first.len()]);
     counter = counter.wrapping_add(1);
 
     for chunk in chunks {
+      state = self.inner_init;
       expand_hmac_sha384_inner(
         compress,
-        &inner_init,
         Some(&prev_tag),
         info,
         counter,
         &mut state,
         &mut outer_block,
+        &mut inner_block,
       );
-      expand_hmac_sha384_outer(compress, &outer_init, &mut state, &mut outer_block, &mut prev_tag);
+      expand_hmac_sha384_outer(compress, &self.outer_init, &mut state, &mut outer_block, &mut prev_tag);
       chunk.copy_from_slice(&prev_tag[..chunk.len()]);
       counter = counter.wrapping_add(1);
     }
 
     ct::zeroize_no_fence(&mut prev_tag);
+    ct::zeroize_no_fence(&mut inner_block);
     ct::zeroize_no_fence(&mut outer_block);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -543,6 +563,8 @@ impl HkdfSha384 {
 }
 
 #[cfg(feature = "diag")]
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub fn diag_hkdf_sha384_derive_portable(input_key_material: &[u8; SHA384_OUTPUT_SIZE]) -> [u8; SHA384_OUTPUT_SIZE] {
   let compress = crate::hashes::crypto::sha384::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha384::kernels::Sha384KernelId::Portable,
@@ -637,14 +659,13 @@ impl HkdfSha512 {
     }
 
     let compress = self.compress;
-    let inner_init = self.inner_init;
-    let outer_init = self.outer_init;
 
+    let mut inner_block = [0u8; SHA512_BLOCK_SIZE];
     let mut outer_block = [0u8; SHA512_BLOCK_SIZE];
     outer_block[SHA512_OUTPUT_SIZE] = 0x80;
     outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
 
-    let mut state = [0u64; 8];
+    let mut state = self.inner_init;
     let mut counter: u8 = 1;
 
     let mut prev_tag = [0u8; SHA512_OUTPUT_SIZE];
@@ -653,27 +674,37 @@ impl HkdfSha512 {
       return Ok(());
     };
 
-    expand_hmac_sha512_inner(compress, &inner_init, None, info, counter, &mut state, &mut outer_block);
-    expand_hmac_sha512_outer(compress, &outer_init, &mut state, &mut outer_block, &mut prev_tag);
+    expand_hmac_sha512_inner(
+      compress,
+      None,
+      info,
+      counter,
+      &mut state,
+      &mut outer_block,
+      &mut inner_block,
+    );
+    expand_hmac_sha512_outer(compress, &self.outer_init, &mut state, &mut outer_block, &mut prev_tag);
     first.copy_from_slice(&prev_tag[..first.len()]);
     counter = counter.wrapping_add(1);
 
     for chunk in chunks {
+      state = self.inner_init;
       expand_hmac_sha512_inner(
         compress,
-        &inner_init,
         Some(&prev_tag),
         info,
         counter,
         &mut state,
         &mut outer_block,
+        &mut inner_block,
       );
-      expand_hmac_sha512_outer(compress, &outer_init, &mut state, &mut outer_block, &mut prev_tag);
+      expand_hmac_sha512_outer(compress, &self.outer_init, &mut state, &mut outer_block, &mut prev_tag);
       chunk.copy_from_slice(&prev_tag[..chunk.len()]);
       counter = counter.wrapping_add(1);
     }
 
     ct::zeroize_no_fence(&mut prev_tag);
+    ct::zeroize_no_fence(&mut inner_block);
     ct::zeroize_no_fence(&mut outer_block);
     for word in state.iter_mut() {
       // SAFETY: word is a valid, aligned, dereferenceable pointer to initialized memory.
@@ -752,6 +783,8 @@ impl HkdfSha512 {
 }
 
 #[cfg(feature = "diag")]
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub fn diag_hkdf_sha512_derive_portable(input_key_material: &[u8; SHA512_OUTPUT_SIZE]) -> [u8; SHA512_OUTPUT_SIZE] {
   let compress = crate::hashes::crypto::sha512::kernels::compress_blocks_fn(
     crate::hashes::crypto::sha512::kernels::Sha512KernelId::Portable,
@@ -776,20 +809,18 @@ impl Drop for HkdfSha512 {
 #[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha256_inner(
   compress: Sha256CompressBlocksFn,
-  inner_init: &[u32; 8],
   prev: Option<&[u8; SHA256_OUTPUT_SIZE]>,
   info: &[u8],
   counter: u8,
   state: &mut [u32; 8],
   out: &mut [u8; SHA256_OUTPUT_SIZE],
+  block: &mut [u8; SHA256_BLOCK_SIZE],
 ) {
-  *state = *inner_init;
-
   let prev_len = if prev.is_some() { SHA256_OUTPUT_SIZE } else { 0 };
   let msg_len = prev_len.strict_add(info.len()).strict_add(1);
   let total_bytes = (SHA256_BLOCK_SIZE as u64).strict_add(msg_len as u64);
 
-  let mut block = [0u8; SHA256_BLOCK_SIZE];
+  block.fill(0);
   let mut pos = 0usize;
 
   if let Some(prev) = prev {
@@ -806,8 +837,8 @@ fn expand_hmac_sha256_inner(
     pos = pos.strict_add(take);
     info_off = info_off.strict_add(take);
     if pos == SHA256_BLOCK_SIZE {
-      compress_hkdf_sha256_block(compress, state, &block);
-      block = [0u8; SHA256_BLOCK_SIZE];
+      compress_hkdf_sha256_block(compress, state, block);
+      block.fill(0);
       pos = 0;
     }
   }
@@ -815,18 +846,18 @@ fn expand_hmac_sha256_inner(
   block[pos] = counter;
   pos = pos.strict_add(1);
   if pos == SHA256_BLOCK_SIZE {
-    compress_hkdf_sha256_block(compress, state, &block);
-    block = [0u8; SHA256_BLOCK_SIZE];
+    compress_hkdf_sha256_block(compress, state, block);
+    block.fill(0);
     pos = 0;
   }
 
   block[pos] = 0x80;
   if pos.strict_add(1) > 56 {
-    compress_hkdf_sha256_block(compress, state, &block);
-    block = [0u8; SHA256_BLOCK_SIZE];
+    compress_hkdf_sha256_block(compress, state, block);
+    block.fill(0);
   }
   block[56..SHA256_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
-  compress_hkdf_sha256_block(compress, state, &block);
+  compress_hkdf_sha256_block(compress, state, block);
 
   write_u32x8_be(out, state);
 }
@@ -852,20 +883,18 @@ fn expand_hmac_sha256_outer(
 #[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha384_inner(
   compress: Sha384CompressBlocksFn,
-  inner_init: &[u64; 8],
   prev: Option<&[u8; SHA384_OUTPUT_SIZE]>,
   info: &[u8],
   counter: u8,
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA384_BLOCK_SIZE],
+  block: &mut [u8; SHA384_BLOCK_SIZE],
 ) {
-  *state = *inner_init;
-
   let prev_len = if prev.is_some() { SHA384_OUTPUT_SIZE } else { 0 };
   let msg_len = prev_len.strict_add(info.len()).strict_add(1);
   let total_bytes = (SHA384_BLOCK_SIZE as u128).strict_add(msg_len as u128);
 
-  let mut block = [0u8; SHA384_BLOCK_SIZE];
+  block.fill(0);
   let mut pos = 0usize;
 
   if let Some(prev) = prev {
@@ -882,8 +911,8 @@ fn expand_hmac_sha384_inner(
     pos = pos.strict_add(take);
     info_off = info_off.strict_add(take);
     if pos == SHA384_BLOCK_SIZE {
-      compress(state, &block);
-      block = [0u8; SHA384_BLOCK_SIZE];
+      compress(state, block);
+      block.fill(0);
       pos = 0;
     }
   }
@@ -891,18 +920,18 @@ fn expand_hmac_sha384_inner(
   block[pos] = counter;
   pos = pos.strict_add(1);
   if pos == SHA384_BLOCK_SIZE {
-    compress(state, &block);
-    block = [0u8; SHA384_BLOCK_SIZE];
+    compress(state, block);
+    block.fill(0);
     pos = 0;
   }
 
   block[pos] = 0x80;
   if pos.strict_add(1) > 112 {
-    compress(state, &block);
-    block = [0u8; SHA384_BLOCK_SIZE];
+    compress(state, block);
+    block.fill(0);
   }
   block[112..SHA384_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
-  compress(state, &block);
+  compress(state, block);
 
   write_u64x6_be(&mut outer_block[..SHA384_OUTPUT_SIZE], state);
 }
@@ -926,20 +955,18 @@ fn expand_hmac_sha384_outer(
 #[allow(clippy::indexing_slicing)]
 fn expand_hmac_sha512_inner(
   compress: Sha512CompressBlocksFn,
-  inner_init: &[u64; 8],
   prev: Option<&[u8; SHA512_OUTPUT_SIZE]>,
   info: &[u8],
   counter: u8,
   state: &mut [u64; 8],
   outer_block: &mut [u8; SHA512_BLOCK_SIZE],
+  block: &mut [u8; SHA512_BLOCK_SIZE],
 ) {
-  *state = *inner_init;
-
   let prev_len = if prev.is_some() { SHA512_OUTPUT_SIZE } else { 0 };
   let msg_len = prev_len.strict_add(info.len()).strict_add(1);
   let total_bytes = (SHA512_BLOCK_SIZE as u128).strict_add(msg_len as u128);
 
-  let mut block = [0u8; SHA512_BLOCK_SIZE];
+  block.fill(0);
   let mut pos = 0usize;
 
   if let Some(prev) = prev {
@@ -956,8 +983,8 @@ fn expand_hmac_sha512_inner(
     pos = pos.strict_add(take);
     info_off = info_off.strict_add(take);
     if pos == SHA512_BLOCK_SIZE {
-      compress(state, &block);
-      block = [0u8; SHA512_BLOCK_SIZE];
+      compress(state, block);
+      block.fill(0);
       pos = 0;
     }
   }
@@ -965,18 +992,18 @@ fn expand_hmac_sha512_inner(
   block[pos] = counter;
   pos = pos.strict_add(1);
   if pos == SHA512_BLOCK_SIZE {
-    compress(state, &block);
-    block = [0u8; SHA512_BLOCK_SIZE];
+    compress(state, block);
+    block.fill(0);
     pos = 0;
   }
 
   block[pos] = 0x80;
   if pos.strict_add(1) > 112 {
-    compress(state, &block);
-    block = [0u8; SHA512_BLOCK_SIZE];
+    compress(state, block);
+    block.fill(0);
   }
   block[112..SHA512_BLOCK_SIZE].copy_from_slice(&total_bytes.strict_mul(8).to_be_bytes());
-  compress(state, &block);
+  compress(state, block);
 
   write_u64x8_be(&mut outer_block[..SHA512_OUTPUT_SIZE], state);
 }

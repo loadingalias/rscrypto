@@ -1712,3 +1712,90 @@ pub fn crc16_ibm_vpclmul_8way_safe(crc: u16, data: &[u8]) -> u16 {
     )
   }
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u16] = &[0, 0x1d0f, 0xa5a5, u16::MAX];
+
+  fn assert_kernel(name: &str, kernel: fn(u16, &[u8]) -> u16, portable: fn(u16, &[u8]) -> u16) {
+    let input: Vec<u8> = (0..4111)
+      .map(|i| (i as u8).wrapping_mul(59).wrapping_add((i >> 8) as u8))
+      .collect();
+    for &state in STATES {
+      for &offset in OFFSETS {
+        for &len in LENS {
+          let slice = &input[offset..offset + len];
+          assert_eq!(
+            kernel(state, slice),
+            portable(state, slice),
+            "{name} state={state:#06x} offset={offset} len={len}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn pclmul_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("ccitt/pclmul", crc16_ccitt_pclmul_safe as fn(u16, &[u8]) -> u16),
+      ("ccitt/pclmul-small", crc16_ccitt_pclmul_small_safe),
+      ("ccitt/pclmul-2way", crc16_ccitt_pclmul_2way_safe),
+      ("ccitt/pclmul-4way", crc16_ccitt_pclmul_4way_safe),
+      ("ccitt/pclmul-7way", crc16_ccitt_pclmul_7way_safe),
+      ("ccitt/pclmul-8way", crc16_ccitt_pclmul_8way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ccitt_slice8);
+    }
+
+    for (name, kernel) in [
+      ("ibm/pclmul", crc16_ibm_pclmul_safe as fn(u16, &[u8]) -> u16),
+      ("ibm/pclmul-small", crc16_ibm_pclmul_small_safe),
+      ("ibm/pclmul-2way", crc16_ibm_pclmul_2way_safe),
+      ("ibm/pclmul-4way", crc16_ibm_pclmul_4way_safe),
+      ("ibm/pclmul-7way", crc16_ibm_pclmul_7way_safe),
+      ("ibm/pclmul-8way", crc16_ibm_pclmul_8way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ibm_slice8);
+    }
+  }
+
+  #[test]
+  fn vpclmul_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("ccitt/vpclmul", crc16_ccitt_vpclmul_safe as fn(u16, &[u8]) -> u16),
+      ("ccitt/vpclmul-2way", crc16_ccitt_vpclmul_2way_safe),
+      ("ccitt/vpclmul-4way", crc16_ccitt_vpclmul_4way_safe),
+      ("ccitt/vpclmul-7way", crc16_ccitt_vpclmul_7way_safe),
+      ("ccitt/vpclmul-8way", crc16_ccitt_vpclmul_8way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ccitt_slice8);
+    }
+
+    for (name, kernel) in [
+      ("ibm/vpclmul", crc16_ibm_vpclmul_safe as fn(u16, &[u8]) -> u16),
+      ("ibm/vpclmul-2way", crc16_ibm_vpclmul_2way_safe),
+      ("ibm/vpclmul-4way", crc16_ibm_vpclmul_4way_safe),
+      ("ibm/vpclmul-7way", crc16_ibm_vpclmul_7way_safe),
+      ("ibm/vpclmul-8way", crc16_ibm_vpclmul_8way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ibm_slice8);
+    }
+  }
+}

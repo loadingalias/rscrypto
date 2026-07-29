@@ -666,8 +666,8 @@ impl ExtendedPointIfma {
 
   /// Double this point using HWCD'08 parallel doubling.
   ///
-  /// Uses the reduced-input `square()` + `mul()` path: reduces before each
-  /// multiply to eliminate overflow corrections (~40% fewer ops per double).
+  /// Uses the reduced-input `square()` + `mul()` path, reducing before each
+  /// multiply so the multiply need not handle overflow corrections.
   ///
   /// # Safety
   ///
@@ -1019,10 +1019,8 @@ unsafe fn add_wnaf_digit_ifma_raw(acc: ExtendedPointIfma, table: &[[[i64; 4]; 5]
 
 /// wNAF-based Straus/Shamir: `[s]B + [h]A`.
 ///
-/// Uses wNAF(8) for the basepoint scalar `s` (64-entry odd-multiples table,
-/// ~28 additions) and wNAF(5) for the public-key scalar `h` (8-entry
-/// odd-multiples table, ~43 additions). Total ~71 additions vs ~128 with
-/// the radix-16 approach — a ~45% reduction in point additions.
+/// Uses wNAF(8) for the basepoint scalar `s` (64-entry odd-multiples table)
+/// and wNAF(5) for the public-key scalar `h` (8-entry odd-multiples table).
 ///
 /// The loop scans 256 bit positions with 1 double per bit (same 256 total
 /// doublings), but additions are much sparser due to the wNAF non-adjacency
@@ -1043,8 +1041,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 
   // wNAF(8) basepoint table: [B, 3B, 5B, ..., 127B] (64 entries).
   // Static compile-time data in .rodata — zero build cost, zero copy.
-  // Entries loaded on demand via _mm256_loadu_si256 (~5 loads per access,
-  // only ~28 entries touched per verify due to wNAF sparsity).
+  // Entries are loaded on demand; wNAF sparsity avoids scanning the table.
   let base_table = &basepoint_table_ifma::BASEPOINT_WNAF8_IFMA_RAW;
 
   // Build wNAF(5) public-key table: [A, 3A, 5A, ..., 15A] (8 entries).

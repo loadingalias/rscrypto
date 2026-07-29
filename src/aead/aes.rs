@@ -500,7 +500,7 @@ pub(crate) fn aes256_expand_key(key: &[u8; KEY_SIZE]) -> Aes256EncKey {
     if crate::platform::caps().has(crate::platform::caps::aarch64::AES) {
       return Aes256EncKey {
         // SAFETY: AES-CE availability verified via HWCAP above.
-        // Uses AESE for SubWord — ~750x faster than the algebraic GF(2^8) S-box.
+        // Uses AESE rather than the portable algebraic S-box for SubWord.
         inner: KeyInner::Aarch64Aes(unsafe { ce::expand_key(key) }),
       };
     }
@@ -4182,8 +4182,8 @@ pub(crate) unsafe fn aes128_ctr32_encrypt_be_aarch64_ghash(
     ]);
     let mut offset = 0usize;
 
-    // Short messages are faster if GHASH consumes ciphertext registers immediately. The lagged
-    // pipeline below wins once there is enough work to hide GHASH behind the next AES chunk.
+    // The configured short-input path feeds ciphertext registers directly to
+    // GHASH; longer inputs use the lagged AES/GHASH pipeline.
     if data.len() <= 256 {
       while offset.strict_add(128) <= data.len() {
         let end = offset.strict_add(128);

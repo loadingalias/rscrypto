@@ -53,8 +53,8 @@ pub enum AeadBackend {
   Riscv64VectorCrypto,
   Riscv64Vector,
   /// Hamburg vperm AES via register-only `vrgather.vv` operations.
-  /// Kept as an explicit backend, but not selected for V-only RISC-V until
-  /// it beats the scalar portable path on benchmark hardware.
+  /// Kept as an explicit backend, but not selected for V-only RISC-V without
+  /// target-native evidence supporting that dispatch policy.
   Riscv64Vperm,
 }
 
@@ -89,11 +89,10 @@ impl AeadBackend {
   }
 }
 
-/// Select the best backend class allowed by the detected architecture and caps.
+/// Select the backend class allowed by the detected architecture, capabilities,
+/// and current dispatch policy.
 ///
-/// This function encodes current dispatch policy, not benchmark fantasy.
-/// Unmeasured or unimplemented SIMD classes deliberately resolve to `portable`
-/// instead of lying.
+/// SIMD classes without accepted target-native evidence resolve to `portable`.
 #[allow(dead_code)] // Some leaf AEAD builds compile target policy without live dispatch on the host.
 #[must_use]
 pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
@@ -205,9 +204,8 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
       } else if caps.has(riscv::ZKNE) && (caps.has(riscv::ZBC) || caps.has(riscv::ZBKC)) {
         AeadBackend::Riscv64ScalarCrypto
       } else {
-        // Table-free scalar fallback. V-only Hamburg vperm is currently
-        // much slower than the portable path on RISE benchmark hardware, so
-        // do not select it automatically.
+        // V-only Hamburg vperm remains available for forced diagnostics but
+        // lacks accepted target-native evidence for automatic selection.
         AeadBackend::Portable
       }
     }
@@ -228,9 +226,9 @@ const fn select_ascon_backend(arch: Arch) -> AeadBackend {
 #[inline]
 #[allow(dead_code)] // Only used when AEGIS-256 needs target-policy dispatch on this target.
 fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
-  // VAES-256 is intentionally not used for AEGIS-256. The serial update chain
-  // (6 dependent AES rounds per block) makes cross-lane shuffle overhead in
-  // the VAES-256 path slower than straight AES-NI. See aegis256.rs encrypt_in_place.
+  // VAES-256 is intentionally not used for AEGIS-256. Its six dependent state
+  // lanes require cross-lane shuffles in the packed representation; see the
+  // XMM-state path in aegis256.rs.
   match arch {
     Arch::X86_64 => {
       if caps.has(x86::AESNI) {
@@ -268,9 +266,8 @@ fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
       } else if caps.has(riscv::ZKNE) {
         AeadBackend::Riscv64ScalarCrypto
       } else {
-        // Table-free scalar fallback. V-only Hamburg vperm is currently
-        // much slower than the portable path on RISE benchmark hardware, so
-        // do not select it automatically.
+        // V-only Hamburg vperm remains available for forced diagnostics but
+        // lacks accepted target-native evidence for automatic selection.
         AeadBackend::Portable
       }
     }
@@ -484,8 +481,8 @@ mod tests {
       AeadBackend::Riscv64ScalarCrypto
     );
 
-    // Tier 3: V-only falls back to portable until the vperm AES backend is
-    // measured faster than the scalar portable path on benchmark hardware.
+    // Tier 3: V-only falls back to portable until target-native evidence
+    // supports automatic vperm selection.
     assert_eq!(
       select_backend(AeadPrimitive::Aes256Gcm, Arch::Riscv64, riscv::V | riscv::ZBC),
       AeadBackend::Portable
@@ -567,7 +564,7 @@ mod tests {
   }
 
   #[test]
-  fn ascon_stays_portable_until_measured_simd_is_proven() {
+  fn ascon_stays_portable_until_simd_policy_is_accepted() {
     assert_eq!(
       select_backend(AeadPrimitive::AsconAead128, Arch::X86_64, x86::AVX2 | x86::VAES_READY),
       AeadBackend::Portable

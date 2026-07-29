@@ -646,8 +646,8 @@ unsafe fn crc64_pclmul_8way(
 
 /// Small-buffer CLMUL path: fold one 16-byte lane at a time.
 ///
-/// This targets the regime where full 128-byte folding has too much setup cost,
-/// but CLMUL still outperforms table CRC (typically ~16..127 bytes depending on CPU).
+/// This avoids constructing the full 128-byte fold state when only complete
+/// 16-byte lanes are available.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn crc64_pclmul_small(
   mut state: u64,
@@ -1443,12 +1443,11 @@ unsafe fn finalize_4x512_state(
 
 /// 4×512-bit VPCLMUL kernel with double-unrolling and software prefetch.
 ///
-/// Processes 512 bytes per iteration (2 × 4 × 64-byte __m512i registers),
-/// folding at 2048-bit distance for maximum throughput on Ice Lake+/Zen4+.
+/// Processes 512 bytes per iteration (2 × 4 × 64-byte `__m512i` registers)
+/// and folds each stream at 2,048-bit distance.
 ///
-/// The double-unroll reduces loop overhead by 50% and improves instruction-level
-/// parallelism. Software prefetch hints ensure data arrives in L1 cache before
-/// the CPU needs it, hiding memory latency.
+/// The double-unroll halves the number of loop-control steps. Software
+/// prefetch remains a target-dependent hint.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_4x512(
   mut state: u64,
@@ -1883,8 +1882,7 @@ pub(crate) unsafe fn crc64_xz_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ using VPCLMULQDQ (4×512-bit variant).
 ///
-/// High-throughput path processing 256 bytes per iteration.
-/// Optimal for large buffers (≥256 bytes) on Ice Lake+/Zen4+ CPUs.
+/// Processes 512 bytes per main-loop iteration across four fold streams.
 ///
 /// # Safety
 ///
@@ -2135,8 +2133,7 @@ pub(crate) unsafe fn crc64_nvme_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME using VPCLMULQDQ (4×512-bit variant).
 ///
-/// High-throughput path processing 256 bytes per iteration.
-/// Optimal for large buffers (≥256 bytes) on Ice Lake+/Zen4+ CPUs.
+/// Processes 512 bytes per main-loop iteration across four fold streams.
 ///
 /// # Safety
 ///

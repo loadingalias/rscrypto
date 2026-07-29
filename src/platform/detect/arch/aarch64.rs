@@ -17,7 +17,6 @@ fn detect_aarch64() -> Detected {
 /// Batch extraction of aarch64 features from /proc/self/auxv.
 ///
 /// Reads AT_HWCAP and AT_HWCAP2 once from the ELF auxiliary vector.
-/// This is faster than calling is_aarch64_feature_detected! 20+ times.
 /// Pure Rust - no libc dependency.
 ///
 /// Works on Linux and Android (both use procfs with ELF auxv format).
@@ -610,24 +609,6 @@ fn detect_apple_sme_features() -> Caps {
   }
   if sysctl_u32(c"hw.optional.arm.FEAT_SME_F16F16".to_bytes_with_nul()) != 0 {
     caps |= aarch64::SME_F16F16;
-  }
-
-  // ─── Fallback: Infer SME from chip generation if sysctl unavailable ───
-  // This handles cases where the OS doesn't expose SME sysctl keys yet.
-  // M4 has SME, M5 has SME2p1 + additional features.
-  if caps.is_empty()
-    && let Some(chip_gen) = detect_apple_silicon_gen()
-  {
-    match chip_gen {
-      AppleSiliconGen::M4 => {
-        caps |= aarch64::SME;
-      }
-      AppleSiliconGen::M5 => {
-        // M5 has SME2p1, SMEB16B16, SMEF16F16 per LLVM
-        caps |= aarch64::SME | aarch64::SME2 | aarch64::SME2P1 | aarch64::SME_B16B16 | aarch64::SME_F16F16;
-      }
-      _ => {}
-    }
   }
 
   caps

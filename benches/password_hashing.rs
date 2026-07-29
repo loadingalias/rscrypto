@@ -320,17 +320,10 @@ fn argon2id_phc_roundtrip(_c: &mut Criterion) {
   // Stub when the PHC feature is disabled.
 }
 
-/// CI-friendly lane parallelism scaling curve. With `parallel` enabled,
-/// `p > 1` triggers the `rayon::scope`-driven slice driver; `p == 1`
-/// takes the fast-path that skips rayon entirely. Same memory cost
-/// across every `p`, so the per-iteration work is identical (Argon2's
-/// matrix size depends on `m`, not `p`); only the scheduling differs.
-///
-/// At 4 MiB the rayon task-dispatch overhead per slice is a measurable
-/// fraction of the per-lane compute, which caps the observed efficiency
-/// around 50 % at `p=4`. The overhead-to-work ratio improves with
-/// larger matrices — see [`argon2id_parallel_owasp`] for the realistic
-/// deployment-scale scaling curve.
+/// CI-friendly lane-parallel scaling curve. With `parallel` enabled,
+/// `p > 1` uses the `rayon::scope` slice driver; `p == 1` skips Rayon.
+/// Every row holds total memory and time cost constant while varying the
+/// lane count.
 #[cfg(feature = "parallel")]
 fn argon2id_parallel_scaling(c: &mut Criterion) {
   let mut g = c.benchmark_group("argon2id-parallel");
@@ -362,11 +355,8 @@ fn argon2id_parallel_scaling(c: &mut Criterion) {
   g.finish();
 }
 
-/// OWASP-scale lane parallelism scaling curve. Memory budget large
-/// enough that the rayon task-dispatch overhead fades into noise and
-/// the measurement reflects true compute parallelism. Sample size and
-/// measurement window match [`argon2id_owasp`] so the group stays
-/// comparable.
+/// OWASP-scale lane-parallel scaling curve. Sample size and measurement
+/// window match [`argon2id_owasp`] so the raw rows are comparable.
 #[cfg(feature = "parallel")]
 fn argon2id_parallel_owasp(c: &mut Criterion) {
   let mut g = c.benchmark_group("argon2id-parallel-owasp");

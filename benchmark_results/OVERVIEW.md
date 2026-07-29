@@ -6,6 +6,7 @@ Sources:
 - Linux commit: `596498f0e07e869eac71fd31c157aa1b22186239`.
 - Linux artifacts: nine successful `benchmark-*` artifacts extracted into `benchmark_results/2026-07-04/linux/*/results.txt`.
 - Local macOS run: `benchmark_results/2026-07-04/macos/aarch64/results.txt` at commit `596498f0e07e869eac71fd31c157aa1b22186239`.
+- Local Ed25519 direct-secret before/after diagnostic, recorded below.
 
 Scope: the 2026-07-04 nine-runner Linux CI benchmark matrix for commit `596498f`. Ratios are `external_crate_time / rscrypto_time`; higher is better. Wins are `>1.05x`, ties are `0.95x..1.05x`, and losses are `<0.95x`. Fastest-external comparisons keep only the fastest external implementation for each platform, primitive, operation, and input shape. Internal kernel, scratch-buffer, padding-only, cold-path, PHC roundtrip, parallel-scaling, threshold-selection, public-overhead, and phase-attribution microbenches are parsed as raw rows but excluded from external win/loss claims. The macOS local run is listed separately and is not mixed into Linux CI claims.
 
@@ -13,7 +14,47 @@ This is a historical snapshot of commit `596498f`, not an inventory of the
 current public API. Primitive rows remain as measured even when a later commit
 changes or removes that surface.
 
+Equivalence correction: the historical RustCrypto HMAC-SHA-256 rows include
+key setup inside the timed loop, while rscrypto, ring, and AWS-LC use reusable
+keyed state. Consequently, the HMAC-SHA-256 row and aggregate statistics that
+include it are archival measurements, not equivalent-work performance claims.
+The current benchmark source precomputes the RustCrypto state; publish new
+HMAC-SHA-256 and aggregate ratios only after a complete benchmark artifact is
+regenerated.
+
 Coverage note: this is a full Linux CI public benchmark pass. It includes checksum, hash, XOF, MAC, KDF, password-hashing, BLAKE2/BLAKE3, RSA import/verification, ECDSA P-256/P-384 signing and verification, Ed25519, X25519, AEAD, and ML-KEM-512/768/1024 keygen, encapsulation, and decapsulation rows. ML-KEM phase/arithmetic microbenches are present in the raw artifacts and intentionally excluded from release-level competitor claims.
+
+## 2026-07-28 Ed25519 Direct-Secret Diagnostic
+
+This local diagnostic compares the exact 1 KiB
+`ed25519/sign/rscrypto-direct-secret/1024` Criterion case before and after the
+maintenance remediation that removed duplicate secret expansion. The baseline
+source is repository commit `c7338116bf8155566f9a028db1b28b5f0665e370`
+with only the identical benchmark row added. The current source is that commit
+plus the maintenance working-tree diff.
+
+Both runs used the pinned `rustc 1.97.0-nightly (ca9a134e0 2026-04-26)`
+toolchain on the same Apple Silicon macOS host. Criterion used 50 samples, a
+1-second warm-up, and a 3-second measurement window.
+
+| Source | Median | 95% confidence interval | Mean |
+|---|---:|---:|---:|
+| Baseline | 21.892 µs | 21.874–21.919 µs | 21.885 µs |
+| Current | 21.754 µs | 21.704–21.799 µs | 21.757 µs |
+
+The observed current/baseline median ratio is 0.9937. This check found no
+regression. It was not an interleaved release benchmark, so it does not support
+a speedup claim.
+
+The repository policy retains only this curated overview. The local Criterion
+metadata, estimates, and raw 50-sample files were distinct and hashed before
+curation:
+
+| Artifact | Baseline SHA-256 | Current SHA-256 |
+|---|---|---|
+| `benchmark.json` | `6d27e19fd2a9563ecea5328345420c12b79f9924d3ecde179bc0166f5a62e6dd` | `6d27e19fd2a9563ecea5328345420c12b79f9924d3ecde179bc0166f5a62e6dd` |
+| `estimates.json` | `728945652c3ec804ec064e9888fc431a5fa3528e885edf76e350392ae95ea2fc` | `3b987405f949847972740cb549826d46f2529caa1187bc13786f7d662ca63e03` |
+| `sample.json` | `f36052bcf65362d6203a6be768e251822dc3182ce8fab75dd9bba20097db30f9` | `a92a7e9fcc1af048c2bb5dcfd8782d07b8727e46477a27bc7948cd02c7a8a6bc` |
 
 ## Headline
 

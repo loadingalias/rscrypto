@@ -1464,3 +1464,84 @@ pub fn crc64_nvme_zvbc_4way_safe(crc: u64, data: &[u8]) -> u64 {
   // buffers and register-only operands are established before this block.
   unsafe { crc64_nvme_zvbc_4way(crc, data) }
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u64] = &[0, 0x0123_4567_89ab_cdef, 0xa5a5_5a5a_dead_beef, u64::MAX];
+
+  fn assert_kernel(name: &str, kernel: fn(u64, &[u8]) -> u64, portable: fn(u64, &[u8]) -> u64) {
+    let input: Vec<u8> = (0..4111)
+      .map(|i| (i as u8).wrapping_mul(41).wrapping_add((i >> 8) as u8))
+      .collect();
+    for &state in STATES {
+      for &offset in OFFSETS {
+        for &len in LENS {
+          let slice = &input[offset..offset + len];
+          assert_eq!(
+            kernel(state, slice),
+            portable(state, slice),
+            "{name} state={state:#018x} offset={offset} len={len}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn zbc_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::riscv::ZBC) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("xz/zbc", crc64_xz_zbc_safe as fn(u64, &[u8]) -> u64),
+      ("xz/zbc-2way", crc64_xz_zbc_2way_safe),
+      ("xz/zbc-4way", crc64_xz_zbc_4way_safe),
+      ("xz/zbc-8way", crc64_xz_zbc_8way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc64_slice16_xz);
+    }
+
+    for (name, kernel) in [
+      ("nvme/zbc", crc64_nvme_zbc_safe as fn(u64, &[u8]) -> u64),
+      ("nvme/zbc-2way", crc64_nvme_zbc_2way_safe),
+      ("nvme/zbc-4way", crc64_nvme_zbc_4way_safe),
+      ("nvme/zbc-8way", crc64_nvme_zbc_8way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc64_slice16_nvme);
+    }
+  }
+
+  #[test]
+  fn zvbc_kernels_match_portable() {
+    use crate::platform::caps::riscv;
+
+    if !crate::platform::caps().has(riscv::V.union(riscv::ZVBC)) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("xz/zvbc", crc64_xz_zvbc_safe as fn(u64, &[u8]) -> u64),
+      ("xz/zvbc-2way", crc64_xz_zvbc_2way_safe),
+      ("xz/zvbc-4way", crc64_xz_zvbc_4way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc64_slice16_xz);
+    }
+
+    for (name, kernel) in [
+      ("nvme/zvbc", crc64_nvme_zvbc_safe as fn(u64, &[u8]) -> u64),
+      ("nvme/zvbc-2way", crc64_nvme_zvbc_2way_safe),
+      ("nvme/zvbc-4way", crc64_nvme_zvbc_4way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc64_slice16_nvme);
+    }
+  }
+}

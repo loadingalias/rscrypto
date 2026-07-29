@@ -4,11 +4,9 @@
 //! [`std::io::Read`] and [`std::io::Write`] implementations to compute digests
 //! transparently during I/O operations.
 //!
-//! # Performance
-//!
-//! - Zero-cost abstraction: All methods are `#[inline]`
-//! - Vectored I/O support: Uses the `update_vectored` method when available
-//! - Correctness: Only hashes bytes actually transferred (handles short reads/writes)
+//! Vectored adapters update the digest once for each transferred slice. All
+//! adapters hash only bytes actually transferred, including short reads and
+//! writes.
 //!
 //! # Example
 //!

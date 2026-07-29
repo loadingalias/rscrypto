@@ -21,13 +21,9 @@ unsafe fn store(v: uint8x16_t, out: &mut [u8; BLOCK_SIZE]) {
 // ── Register-based helpers ──────────────────────────────────────────────
 //
 // ARM AESE applies AddRoundKey before SubBytes, so both operand forms below
-// compute the same AESENC-compatible round. Apple cores benchmark faster with
-// the state as AESE's destructive data operand; non-Apple targets use the
-// libaegis operand form, preserving old state registers for the next pipeline
-// assignments on Neoverse-class cores.
-//
-// Neoverse V1/V2 has 2 crypto pipelines; register-based code gives the
-// OOO engine maximum scheduling freedom across both pipes.
+// compute the same AESENC-compatible round. Apple targets use the state as
+// AESE's destructive data operand; non-Apple targets use the libaegis operand
+// form, preserving old state registers for the next pipeline assignments.
 
 #[target_feature(enable = "aes,neon")]
 #[inline]

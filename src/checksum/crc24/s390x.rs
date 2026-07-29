@@ -494,3 +494,45 @@ pub fn crc24_openpgp_vgfm_4way_safe(crc: u32, data: &[u8]) -> u32 {
   state = unsafe { crc24_width32_vgfm_bitrev_4way(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
   from_reflected_state(state)
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u32] = &[0, 0x00b7_04ce, 0x005a_a5a5, 0x00ff_ffff];
+
+  #[test]
+  fn vgfm_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::s390x::VECTOR) {
+      return;
+    }
+
+    let input: Vec<u8> = (0..4111)
+      .map(|i| (i as u8).wrapping_mul(47).wrapping_add((i >> 8) as u8))
+      .collect();
+    for (name, kernel) in [
+      ("openpgp/vgfm", crc24_openpgp_vgfm_safe as fn(u32, &[u8]) -> u32),
+      ("openpgp/vgfm-2way", crc24_openpgp_vgfm_2way_safe),
+      ("openpgp/vgfm-4way", crc24_openpgp_vgfm_4way_safe),
+    ] {
+      for &state in STATES {
+        for &offset in OFFSETS {
+          for &len in LENS {
+            let slice = &input[offset..offset + len];
+            assert_eq!(
+              kernel(state, slice),
+              super::super::portable::crc24_openpgp_slice8(state, slice),
+              "{name} state={state:#010x} offset={offset} len={len}"
+            );
+          }
+        }
+      }
+    }
+  }
+}

@@ -57,6 +57,11 @@ modern policy: RSA-3072 through RSA-8192 with exponent `65537`. For deployed
 RSA-2048 compatibility keys, import with
 `RsaPublicKeyPolicy::legacy_verification()` and the `*_with_policy` parser.
 
+Private-key import additionally requires two conventional half-modulus-width
+factors that pass trial division and a 32-base Miller-Rabin probable-prime
+screen. Algebraically consistent keys with grossly unbalanced factors or
+factors that fail this screen are rejected as `RsaKeyError::InvalidModulus`.
+
 ## Generate Keys
 
 ```rust

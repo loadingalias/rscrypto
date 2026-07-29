@@ -321,6 +321,80 @@ fn nist_cavp_sha2_siggen_private_operations_match_expected_signatures() {
   assert_eq!(coverage, expected_siggen_coverage());
 }
 
+#[test]
+fn nist_cavp_same_width_public_scratch_rebinds_between_keys() {
+  let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
+  let tests = cavp_tests(&suite);
+  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let key_a = private_key_from_cavp_siggen(&tests[0], &policy);
+  let key_b = private_key_from_cavp_siggen(&tests[6], &policy);
+  assert_eq!(key_a.public_key().modulus().len(), key_b.public_key().modulus().len());
+  assert_ne!(key_a.public_key().modulus(), key_b.public_key().modulus());
+
+  let representative_b = hex_to_vec(field(&tests[6], "sig"));
+  let mut expected_b = vec![0u8; key_b.public_key().modulus().len()];
+  key_b
+    .public_key()
+    .public_operation(&representative_b, &mut expected_b)
+    .expect("key-B public operation must succeed");
+
+  let mut scratch = key_a.public_key().public_scratch();
+  let mut actual_b = vec![0u8; expected_b.len()];
+  key_b
+    .public_key()
+    .public_operation_with_scratch(&representative_b, &mut actual_b, &mut scratch)
+    .expect("same-width scratch must rebind from key A to key B");
+  assert_eq!(actual_b, expected_b);
+
+  let mut representative_a = vec![0u8; key_a.public_key().modulus().len()];
+  *representative_a.last_mut().expect("non-empty RSA modulus") = 2;
+  let mut expected_a = vec![0u8; representative_a.len()];
+  key_a
+    .public_key()
+    .public_operation(&representative_a, &mut expected_a)
+    .expect("key-A public operation must succeed");
+
+  let mut actual_a = vec![0u8; expected_a.len()];
+  key_a
+    .public_key()
+    .public_operation_with_scratch(&representative_a, &mut actual_a, &mut scratch)
+    .expect("same-width scratch must rebind from key B back to key A");
+  assert_eq!(actual_a, expected_a);
+}
+
+#[test]
+fn nist_cavp_same_width_private_scratch_rebinds_between_keys() {
+  let suite: Value = serde_json::from_str(CAVP_SIGGEN_186_3_PRIVATE).expect("CAVP SigGen JSON must parse");
+  let tests = cavp_tests(&suite);
+  let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_odd_exponents();
+  let key_a = private_key_from_cavp_siggen(&tests[0], &policy);
+  let test_b = &tests[6];
+  let key_b = private_key_from_cavp_siggen(test_b, &policy);
+  assert_eq!(key_a.public_key().modulus().len(), key_b.public_key().modulus().len());
+  assert_ne!(key_a.public_key().modulus(), key_b.public_key().modulus());
+
+  let message = hex_to_vec(field(test_b, "msg"));
+  let salt = hex_to_vec(field(test_b, "salt"));
+  let expected_signature = hex_to_vec(field(test_b, "sig"));
+  let blinding_factor = fixed_width_one(key_b.public_key().modulus().len());
+  let blinding_factor_inverse = fixed_width_one(key_b.public_key().modulus().len());
+  let mut signature = vec![0u8; expected_signature.len()];
+  let mut scratch = key_a.private_scratch();
+
+  key_b
+    .sign_pss_with_salt_and_blinding_factor_and_scratch(
+      pss_profile(field(test_b, "sha")),
+      &message,
+      &salt,
+      &blinding_factor,
+      &blinding_factor_inverse,
+      &mut signature,
+      &mut scratch,
+    )
+    .expect("same-width private scratch must rebind from key A to key B");
+  assert_eq!(signature, expected_signature);
+}
+
 #[cfg(feature = "getrandom")]
 #[test]
 fn nist_cavp_sha2_siggen_profile_signing_matches_expected_results() {

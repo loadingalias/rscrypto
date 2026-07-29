@@ -1,10 +1,9 @@
 //! POWER VSX BlaMka compression kernel for Argon2.
 //!
 //! Uses `core::simd::u64x2` row pairs and `simd_swizzle!` for cross-pair
-//! lane exchange. This stays on the portable-simd surface so the kernel
-//! is endian-clean on both POWER8/9/10 little-endian and historical
-//! big-endian deployments — VSX intrinsics differ subtly between
-//! endianness modes, but the `core::simd` lowering is unambiguous.
+//! lane exchange. The portable-simd expression keeps the source independent
+//! of VSX intrinsic endianness conventions. Exact compiler lowering remains
+//! target- and toolchain-specific generated-code evidence.
 //!
 //! # Vectorisation topology
 //!
@@ -20,18 +19,16 @@
 //!
 //! # BlaMka multiply
 //!
-//! `2 · lsb(a) · lsb(b)` lane-wise via masked `u64x2` multiply. POWER's
-//! VPMULUDQ-equivalent is `vmulouw` / `vmuleuw` — `core::simd` lowers
-//! the masked-multiply pattern to those instructions when it can prove
-//! the upper 32 bits are zero, which the explicit `& 0xffffffff` mask
-//! makes plain.
+//! `2 · lsb(a) · lsb(b)` is expressed lane-wise through masked `u64x2`
+//! multiplication. The explicit `& 0xffffffff` mask proves the algorithmic
+//! 32-bit operand bound without promising a particular VSX instruction
+//! sequence.
 //!
 //! # Rotations
 //!
-//! Lane-wise u64 rotate via shift-right + shift-left + OR vector
-//! sequence. POWER's `vec_rl` is the native u64 rotate instruction;
-//! `core::simd` lowers shift-or pairs to it directly under
-//! `target_feature = "vsx"`.
+//! Lane-wise u64 rotate is expressed as a shift-right + shift-left + OR
+//! vector sequence. Whether the compiler selects a native rotate instruction
+//! is a generated-code property, not a source contract.
 
 #![cfg(target_arch = "powerpc64")]
 #![allow(clippy::cast_possible_truncation)]
@@ -236,9 +233,7 @@ fn gb(a: &mut Pair, b: &mut Pair, c: &mut Pair, d: &mut Pair) {
 
 // ─── Micro-ops ─────────────────────────────────────────────────────────────
 
-/// Lane-wise u64 right-rotate. `core::simd` lowers `(x >> n) | (x << (64-n))`
-/// to a single VSX `vrld`-pattern rotate when the shift count is a
-/// compile-time constant.
+/// Lane-wise u64 right-rotate with a compile-time shift count.
 #[inline(always)]
 fn ror<const N: u32>(v: u64x2) -> u64x2 {
   const { assert!(N > 0 && N < 64) }

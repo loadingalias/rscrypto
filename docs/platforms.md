@@ -34,7 +34,7 @@ lower tier, including portable Rust.
 | x86_64 | SSE4.2 CRC32; SSSE3 / PCLMULQDQ; AVX2; AES-NI; SHA-NI; AVX-512F / VL / BW / DQ; AVX-512IFMA; VPCLMULQDQ; VAES |
 | aarch64 / Apple Silicon | NEON; AES; PMULL; CRC; SHA2; SHA3 / EOR3; SHA512; SVE2-PMULL where available |
 | s390x (IBM Z) | z/Vector; vector enhancements; CPACF / MSA; VGFM; fixed-work ML-KEM arithmetic |
-| ppc64le (POWER) | AltiVec; VSX; POWER8 vector / crypto; POWER9 / POWER10 vector; VPMSUMD |
+| ppc64le (POWER) | AltiVec; VSX; POWER8 vector / crypto and atomics; POWER9 / POWER10 vector; VPMSUMD |
 | riscv64 | V / RVV; Zbc; Zvbc; Zbkc; Zkne / Zknd; Zvkned; Zkt / Zvkt |
 | wasm32 | SIMD128 where enabled |
 

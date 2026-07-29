@@ -56,6 +56,38 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_arch = "x86_64")]
+  fn x86_64_amx_caps_require_process_permission() {
+    use crate::platform::caps::x86;
+
+    let caps = x86::SSE2 | X86_ALL_AMX;
+    assert_eq!(gate_x86_amx_permission(caps, true), caps);
+    assert_eq!(
+      gate_x86_amx_permission(caps, false),
+      x86::SSE2,
+      "denied process permission must remove every AMX capability"
+    );
+  }
+
+  #[test]
+  #[cfg(all(
+    target_arch = "x86_64",
+    not(feature = "std"),
+    any(target_os = "linux", target_os = "android"),
+    target_feature = "amx-tile",
+    not(miri)
+  ))]
+  fn no_std_linux_x86_64_masks_compile_time_amx_without_a_permission_probe() {
+    use crate::platform::caps::x86;
+
+    assert!(caps_static().has(x86::AMX_TILE));
+    assert!(
+      detect_uncached().caps.intersection(X86_ALL_AMX).is_empty(),
+      "no_std Linux/Android cannot publish AMX without an xcomp permission probe"
+    );
+  }
+
+  #[test]
   #[cfg(all(target_arch = "aarch64", not(miri)))]
   fn test_aarch64_baseline() {
     use crate::platform::caps::aarch64;
@@ -215,7 +247,11 @@ mod tests {
       // Verify the generation is valid
       assert!(matches!(
         detected,
-        AppleSiliconGen::M1 | AppleSiliconGen::M2 | AppleSiliconGen::M3 | AppleSiliconGen::M4
+        AppleSiliconGen::M1
+          | AppleSiliconGen::M2
+          | AppleSiliconGen::M3
+          | AppleSiliconGen::M4
+          | AppleSiliconGen::M5
       ));
     }
   }
@@ -274,17 +310,14 @@ mod tests {
   }
 
   #[test]
-  #[allow(unsafe_code)]
   #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
-  fn test_hybrid_avx512_override_default() {
-    // Without env var set, override should be false
-    // Note: We can't easily test with env var set due to test isolation
-    // but we verify the default behavior
-    // SAFETY: This test runs in isolation and doesn't rely on this env var being
-    // present for other threads. The remove_var is unsafe due to potential data
-    // races with other threads reading env vars, but test isolation mitigates this.
-    unsafe { std::env::remove_var("RSCRYPTO_FORCE_AVX512") };
-    assert!(!hybrid_avx512_override());
+  fn test_hybrid_avx512_override_parser() {
+    for value in [None, Some(""), Some("0"), Some("false"), Some("yes"), Some("2")] {
+      assert!(!parse_hybrid_avx512_override(value), "accepted {value:?}");
+    }
+    for value in [Some("1"), Some("true"), Some("TRUE"), Some("TrUe")] {
+      assert!(parse_hybrid_avx512_override(value), "rejected {value:?}");
+    }
   }
 
   #[test]
@@ -294,6 +327,284 @@ mod tests {
     let det = detect_uncached();
     assert_eq!(det.arch, Arch::X86_64);
     assert!(det.caps.count() >= 1);
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn cpuid_feature_snapshot() -> CpuidSnapshot {
+    CpuidSnapshot {
+      leaf0: CpuidRegisters {
+        eax: 0x24,
+        ..CpuidRegisters::default()
+      },
+      leaf1: CpuidRegisters {
+        ecx: 1 << 27,
+        ..CpuidRegisters::default()
+      },
+      leaf7_0: CpuidRegisters {
+        eax: 1,
+        ..CpuidRegisters::default()
+      },
+      extended_leaf0: CpuidRegisters {
+        eax: 0x8000_0001,
+        ..CpuidRegisters::default()
+      },
+      xcr0: 0x6 | 0xe0 | (1 << 17) | (1 << 18) | (1 << 19),
+      amx_permission: true,
+      ..CpuidSnapshot::default()
+    }
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn enable_avx(snapshot: &mut CpuidSnapshot) {
+    snapshot.leaf1.ecx |= 1 << 28;
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn enable_avx512(snapshot: &mut CpuidSnapshot) {
+    enable_avx(snapshot);
+    snapshot.leaf1.ecx |= (1 << 12) | (1 << 29);
+    snapshot.leaf7_0.ebx |= 1 << 16;
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn avx_caps() -> Caps {
+    use crate::platform::caps::x86;
+
+    x86::AVX
+  }
+
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn avx512_caps() -> Caps {
+    use crate::platform::caps::x86;
+
+    x86::AVX | x86::FMA | x86::F16C | x86::AVX512F
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn x86_cpuid_feature_bits_decode_from_their_architectural_registers() {
+    use crate::platform::caps::x86;
+
+    fn assert_feature(expected: Caps, configure: impl FnOnce(&mut CpuidSnapshot)) {
+      let mut snapshot = cpuid_feature_snapshot();
+      configure(&mut snapshot);
+      assert_eq!(decode_cpuid_x86_64(snapshot).caps, expected);
+    }
+
+    macro_rules! feature_case {
+      ($expected:expr, $leaf:ident, $register:ident, $bit:expr) => {
+        assert_feature($expected, |snapshot| snapshot.$leaf.$register |= 1 << $bit);
+      };
+    }
+
+    feature_case!(x86::SSE3, leaf1, ecx, 0);
+    feature_case!(x86::PCLMULQDQ, leaf1, ecx, 1);
+    feature_case!(x86::SSSE3, leaf1, ecx, 9);
+    feature_case!(x86::SSE41, leaf1, ecx, 19);
+    feature_case!(x86::SSE42, leaf1, ecx, 20);
+    feature_case!(x86::POPCNT, leaf1, ecx, 23);
+    feature_case!(x86::AESNI, leaf1, ecx, 25);
+    feature_case!(x86::RDRAND, leaf1, ecx, 30);
+
+    feature_case!(x86::BMI1, leaf7_0, ebx, 3);
+    feature_case!(x86::BMI2, leaf7_0, ebx, 8);
+    feature_case!(x86::RDSEED, leaf7_0, ebx, 18);
+    feature_case!(x86::ADX, leaf7_0, ebx, 19);
+    feature_case!(x86::SHA, leaf7_0, ebx, 29);
+
+    feature_case!(x86::GFNI, leaf7_0, ecx, 8);
+    feature_case!(x86::AMX_BF16, leaf7_0, edx, 22);
+    feature_case!(x86::AMX_TILE, leaf7_0, edx, 24);
+    feature_case!(x86::AMX_INT8, leaf7_0, edx, 25);
+    feature_case!(x86::SHA512, leaf7_1, eax, 0);
+    feature_case!(x86::AMX_FP16, leaf7_1, eax, 21);
+    feature_case!(x86::AMX_COMPLEX, leaf7_1, edx, 8);
+    feature_case!(x86::MOVDIRI, leaf7_0, ecx, 27);
+    feature_case!(x86::MOVDIR64B, leaf7_0, ecx, 28);
+    feature_case!(x86::SERIALIZE, leaf7_0, edx, 14);
+
+    feature_case!(x86::LZCNT, extended_leaf1, ecx, 5);
+    feature_case!(x86::SSE4A, extended_leaf1, ecx, 6);
+
+    assert_feature(avx_caps(), enable_avx);
+    assert_feature(x86::AVX | x86::FMA, |snapshot| {
+      enable_avx(snapshot);
+      snapshot.leaf1.ecx |= 1 << 12;
+    });
+    assert_feature(x86::AVX | x86::F16C, |snapshot| {
+      enable_avx(snapshot);
+      snapshot.leaf1.ecx |= 1 << 29;
+    });
+    assert_feature(x86::AVX | x86::AVX2, |snapshot| {
+      enable_avx(snapshot);
+      snapshot.leaf7_0.ebx |= 1 << 5;
+    });
+
+    let avx512_cases = [
+      (x86::AVX512DQ, "ebx", 17),
+      (x86::AVX512IFMA, "ebx", 21),
+      (x86::AVX512CD, "ebx", 28),
+      (x86::AVX512BW, "ebx", 30),
+      (x86::AVX512VL, "ebx", 31),
+      (x86::AVX512VBMI, "ecx", 1),
+      (x86::AVX512VBMI2, "ecx", 6),
+      (x86::AVX512VNNI, "ecx", 11),
+      (x86::AVX512BITALG, "ecx", 12),
+      (x86::AVX512VPOPCNTDQ, "ecx", 14),
+      (x86::AVX512VP2INTERSECT, "edx", 8),
+    ];
+    for (feature, register, bit) in avx512_cases {
+      assert_feature(avx512_caps() | feature, |snapshot| {
+        enable_avx512(snapshot);
+        match register {
+          "ebx" => snapshot.leaf7_0.ebx |= 1 << bit,
+          "ecx" => snapshot.leaf7_0.ecx |= 1 << bit,
+          "edx" => snapshot.leaf7_0.edx |= 1 << bit,
+          _ => unreachable!(),
+        }
+      });
+    }
+    assert_feature(avx512_caps(), enable_avx512);
+
+    let avx512_bw_caps = avx512_caps() | x86::AVX512BW;
+    assert_feature(avx512_bw_caps | x86::AVX512FP16, |snapshot| {
+      enable_avx512(snapshot);
+      snapshot.leaf7_0.ebx |= 1 << 30;
+      snapshot.leaf7_0.edx |= 1 << 23;
+    });
+    assert_feature(avx512_bw_caps | x86::AVX512BF16, |snapshot| {
+      enable_avx512(snapshot);
+      snapshot.leaf7_0.ebx |= 1 << 30;
+      snapshot.leaf7_1.eax |= 1 << 5;
+    });
+
+    assert_feature(x86::AVX | x86::AVX2 | x86::AESNI | x86::VAES, |snapshot| {
+      enable_avx(snapshot);
+      snapshot.leaf1.ecx |= 1 << 25;
+      snapshot.leaf7_0.ebx |= 1 << 5;
+      snapshot.leaf7_0.ecx |= 1 << 9;
+    });
+    assert_feature(x86::AVX | x86::PCLMULQDQ | x86::VPCLMULQDQ, |snapshot| {
+      enable_avx(snapshot);
+      snapshot.leaf1.ecx |= 1 << 1;
+      snapshot.leaf7_0.ecx |= 1 << 10;
+    });
+    assert_feature(x86::APX, |snapshot| snapshot.leaf7_1.edx |= 1 << 21);
+    assert_feature(avx512_caps() | x86::AVX10_1, |snapshot| {
+      enable_avx512(snapshot);
+      snapshot.leaf7_1.edx |= 1 << 19;
+      snapshot.leaf24_0.ebx = 1;
+    });
+    assert_feature(avx512_caps() | x86::AVX10_1, |snapshot| {
+      enable_avx512(snapshot);
+      snapshot.leaf7_1.edx |= 1 << 19;
+      snapshot.leaf24_0.ebx = 2;
+    });
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "x86_64", feature = "std"))]
+  fn x86_cpuid_decoder_rejects_unsupported_leaves_and_missing_os_state() {
+    use crate::platform::caps::x86;
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.leaf0.eax = 6;
+    snapshot.leaf7_0 = CpuidRegisters {
+      eax: u32::MAX,
+      ebx: u32::MAX,
+      ecx: u32::MAX,
+      edx: u32::MAX,
+    };
+    snapshot.leaf7_1 = snapshot.leaf7_0;
+    snapshot.leaf24_0 = snapshot.leaf7_0;
+    assert!(decode_cpuid_x86_64(snapshot).caps.is_empty());
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.extended_leaf0.eax = 0x8000_0000;
+    snapshot.extended_leaf1.ecx = (1 << 5) | (1 << 6);
+    assert!(
+      decode_cpuid_x86_64(snapshot)
+        .caps
+        .intersection(x86::LZCNT.union(x86::SSE4A))
+        .is_empty()
+    );
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.leaf7_0.eax = 0;
+    snapshot.leaf7_1.eax = (1 << 0) | (1 << 4) | (1 << 5) | (1 << 21);
+    snapshot.leaf7_1.edx = 1 << 8;
+    assert!(decode_cpuid_x86_64(snapshot).caps.is_empty());
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.xcr0 = 0;
+    snapshot.leaf7_0.edx = (1 << 22) | (1 << 24) | (1 << 25);
+    snapshot.leaf7_1.eax = 1 << 21;
+    snapshot.leaf7_1.edx = 1 << 8;
+    let amx = x86::AMX_TILE | x86::AMX_BF16 | x86::AMX_INT8 | x86::AMX_FP16 | x86::AMX_COMPLEX;
+    assert!(decode_cpuid_x86_64(snapshot).caps.intersection(amx).is_empty());
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.amx_permission = false;
+    snapshot.leaf7_0.edx = (1 << 22) | (1 << 24) | (1 << 25);
+    snapshot.leaf7_1.eax = 1 << 21;
+    snapshot.leaf7_1.edx = 1 << 8;
+    assert!(decode_cpuid_x86_64(snapshot).caps.intersection(amx).is_empty());
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.leaf7_0.edx = 1 << 18;
+    snapshot.leaf7_1.eax = 1 << 8;
+    assert!(
+      decode_cpuid_x86_64(snapshot)
+        .caps
+        .intersection(x86::RDSEED | x86::AMX_COMPLEX)
+        .is_empty()
+    );
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.leaf7_0.ebx = 1 << 16;
+    assert!(decode_cpuid_x86_64(snapshot).caps.intersection(avx512_caps()).is_empty());
+
+    let mut snapshot = cpuid_feature_snapshot();
+    snapshot.xcr0 &= !(1 << 19);
+    snapshot.leaf7_1.edx = 1 << 21;
+    assert!(!decode_cpuid_x86_64(snapshot).caps.has(x86::APX));
+
+    let mut snapshot = cpuid_feature_snapshot();
+    enable_avx512(&mut snapshot);
+    snapshot.leaf24_0.ebx = 2;
+    assert!(
+      decode_cpuid_x86_64(snapshot)
+        .caps
+        .intersection(x86::AVX10_1 | x86::AVX10_2)
+        .is_empty()
+    );
+
+    for configure in [
+      |snapshot: &mut CpuidSnapshot| snapshot.leaf7_0.ecx |= 1 << 9,
+      |snapshot: &mut CpuidSnapshot| snapshot.leaf7_0.ecx |= 1 << 10,
+      |snapshot: &mut CpuidSnapshot| snapshot.leaf7_0.ebx |= 1 << 5,
+    ] {
+      let mut snapshot = cpuid_feature_snapshot();
+      configure(&mut snapshot);
+      assert!(
+        decode_cpuid_x86_64(snapshot)
+          .caps
+          .intersection(x86::VAES | x86::VPCLMULQDQ | x86::AVX2)
+          .is_empty()
+      );
+    }
+
+    let mut snapshot = cpuid_feature_snapshot();
+    enable_avx512(&mut snapshot);
+    snapshot.leaf7_0.ebx |= 1 << 30;
+    snapshot.leaf7_1.eax |= 1 << 4;
+    assert!(!decode_cpuid_x86_64(snapshot).caps.has(x86::AVX512BF16));
+
+    let mut snapshot = cpuid_feature_snapshot();
+    enable_avx512(&mut snapshot);
+    snapshot.leaf7_0.ebx |= 1 << 30;
+    snapshot.leaf7_1.eax |= 1 << 5;
+    assert!(!decode_cpuid_x86_64(snapshot).caps.has(x86::AVX512FP16));
   }
 
   #[test]
@@ -366,108 +677,6 @@ mod tests {
     } else {
       std::eprintln!("Unknown or A-series chip detected");
     }
-  }
-
-  // Arch Round-Trip Tests
-
-  // Mirror of the arch_to_u8 mapping used in atomic_cache (no_std).
-  // Note: Arch doesn't have #[repr(u8)], so this is a custom mapping
-  // where Other=0 (the uninitialized/fallback value).
-  fn test_arch_to_u8(arch: Arch) -> u8 {
-    match arch {
-      Arch::X86_64 => 1,
-      Arch::X86 => 2,
-      Arch::Aarch64 => 3,
-      Arch::Arm => 4,
-      Arch::Riscv64 => 5,
-      Arch::Riscv32 => 6,
-      Arch::Power => 7,
-      Arch::S390x => 8,
-      Arch::Wasm32 => 10,
-      Arch::Wasm64 => 11,
-      Arch::Other => 0,
-    }
-  }
-
-  fn test_arch_from_u8(v: u8) -> Arch {
-    match v {
-      1 => Arch::X86_64,
-      2 => Arch::X86,
-      3 => Arch::Aarch64,
-      4 => Arch::Arm,
-      5 => Arch::Riscv64,
-      6 => Arch::Riscv32,
-      7 => Arch::Power,
-      8 => Arch::S390x,
-      10 => Arch::Wasm32,
-      11 => Arch::Wasm64,
-      _ => Arch::Other,
-    }
-  }
-
-  /// Verify arch_to_u8 and arch_from_u8 are inverses.
-  #[test]
-  fn test_arch_round_trip() {
-    let variants: &[Arch] = &[
-      Arch::Other,
-      Arch::X86_64,
-      Arch::X86,
-      Arch::Aarch64,
-      Arch::Arm,
-      Arch::Riscv64,
-      Arch::Riscv32,
-      Arch::Power,
-      Arch::S390x,
-      Arch::Wasm32,
-      Arch::Wasm64,
-    ];
-
-    for &arch in variants {
-      let encoded = test_arch_to_u8(arch);
-      let decoded = test_arch_from_u8(encoded);
-      assert_eq!(
-        arch, decoded,
-        "Arch round-trip failed: {:?} -> {} -> {:?}",
-        arch, encoded, decoded
-      );
-    }
-
-    // Verify out-of-range values map to Other
-    assert_eq!(test_arch_from_u8(12), Arch::Other);
-    assert_eq!(test_arch_from_u8(255), Arch::Other);
-  }
-
-  /// Verify all Arch variants have distinct encoded u8 values.
-  #[test]
-  fn test_arch_no_collisions() {
-    use alloc::collections::BTreeSet;
-
-    let variants: &[Arch] = &[
-      Arch::Other,
-      Arch::X86_64,
-      Arch::X86,
-      Arch::Aarch64,
-      Arch::Arm,
-      Arch::Riscv64,
-      Arch::Riscv32,
-      Arch::Power,
-      Arch::S390x,
-      Arch::Wasm32,
-      Arch::Wasm64,
-    ];
-
-    let mut seen = BTreeSet::new();
-    for &arch in variants {
-      let val = test_arch_to_u8(arch);
-      assert!(
-        seen.insert(val),
-        "Arch::{:?} has duplicate encoded u8 value {}",
-        arch,
-        val
-      );
-    }
-
-    assert_eq!(seen.len(), 11, "Expected 11 Arch variants with unique encodings");
   }
 
   // Override Mechanism Tests

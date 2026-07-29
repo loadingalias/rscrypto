@@ -546,8 +546,8 @@ impl FieldElement51x4 {
   /// This is the key optimization for IFMA point operations: `diff_sum()`
   /// produces limbs up to 53 bits (51-bit reduced + 2-bit bias from add/sub),
   /// but IFMA's `vpmadd52luq` truncates inputs to 52 bits. The standard
-  /// `mul()` therefore requires a `reduce()` call (17 insns, ~18 cycle
-  /// latency) before each multiply after `diff_sum()`.
+  /// `mul()` therefore requires a `reduce()` call before each multiply after
+  /// `diff_sum()`.
   ///
   /// `mul_unreduced()` handles the 53rd bit by decomposing each operand
   /// into a 52-bit low part (suitable for IFMA) and a 0/1 high bit, then
@@ -1217,8 +1217,8 @@ impl FieldElement51x4 {
   ///
   /// The Hamburg scaling constants `(d2, d2, 2·d2, 2·d1)` fit in 18 bits,
   /// so their radix-51 representation has non-zero content only in limb 0.
-  /// This needs only 10 IFMA ops (5 lo + 5 hi) instead of the full 50-op
-  /// schoolbook, saving ~40 IFMA ops per constant multiply.
+  /// This uses 5 low and 5 high IFMA operations instead of the full
+  /// schoolbook multiplication.
   ///
   /// # Precondition
   ///
