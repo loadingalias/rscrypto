@@ -106,7 +106,7 @@ fn decode_power_hwcap(hwcap: u64, hwcap2: u64) -> Caps {
   feature = "std",
   any(target_os = "linux", target_os = "android")
 ))]
-mod tests {
+mod power_tests {
   use super::*;
   use crate::platform::caps::power;
 
