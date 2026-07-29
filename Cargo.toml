@@ -72,6 +72,7 @@ indexing_slicing = "allow"
 
 undocumented_unsafe_blocks = "deny"
 missing_safety_doc = "deny"
+chunks_exact_to_as_chunks = "allow"
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"
