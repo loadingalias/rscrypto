@@ -32,7 +32,7 @@ The `pbkdf2` feature implies `hmac` which implies `sha2`.
 
 ## Algorithm map
 
-| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-07-25 |
+| `pbkdf2` instantiation | rscrypto type | OWASP Password Storage Cheat Sheet minimum, checked 2026-07-29 |
 |---|---|---|
 | `pbkdf2_hmac::<Sha256>` | `Pbkdf2Sha256` | `Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS` (600,000) |
 | `pbkdf2_hmac::<Sha512>` | `Pbkdf2Sha512` | `Pbkdf2Sha512::MIN_RECOMMENDED_ITERATIONS` (220,000) |
@@ -104,7 +104,11 @@ Pbkdf2Sha256::verify_password(submitted_password, &stored_salt, stored_iters, &s
 // Ok(()) on match, Err(VerificationError) on mismatch after full tag comparison
 ```
 
-Drop the `subtle` dependency for the verify path. The stateful form is `state.verify(salt, iters, &expected)`, which applies the same default policy. The comparison has content-independent source structure for a public output length, but generated-code constant-time claims remain limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md).
+Drop the `subtle` dependency for this verification path. The stateful form,
+`state.verify(salt, iters, &expected)`, applies the same default policy. The
+comparison traverses the public output length at the source level; generated
+code claims remain limited to the matching
+[release evidence](../../constant-time.md).
 
 ## Notes
 
@@ -130,5 +134,9 @@ Drop the `subtle` dependency for the verify path. The stateful form is `state.ve
   `params_with_policy` enforce lower bounds; `allows_bounded` and
   `params_with_policy_bounded` add the caller-selected upper work limit. This
   keeps legacy acceptance explicit without hiding a second policy ceiling.
-- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants (600,000 for SHA-256, 220,000 for SHA-512) reflect the OWASP Password Storage Cheat Sheet as checked on 2026-07-25. Recheck that external policy before each release that changes these constants.
+- **Iteration recommendation.** `MIN_RECOMMENDED_ITERATIONS` constants
+  (600,000 for SHA-256 and 220,000 for SHA-512) reflect the
+  [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+  as checked on 2026-07-29. Recheck that external policy before changing these
+  constants.
 - **`no_std`.** Both crates work in `no_std`.

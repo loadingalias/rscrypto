@@ -1,6 +1,8 @@
 # Migration: `aes-gcm-siv` (RustCrypto) → `rscrypto`
 
-> Same algorithm (RFC 8452), same nonce-misuse-resistant guarantees. Replace `Aes256GcmSiv` / `Key<Aes256GcmSiv>` / `Nonce` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API.
+> Replace `Aes256GcmSiv` / `Key<Aes256GcmSiv>` / `Nonce` /
+> `Payload { msg, aad }` with rscrypto's named types and a caller-buffer API.
+> The RFC 8452 construction and combined ciphertext-and-tag bytes are unchanged.
 
 Verified against `aes-gcm-siv = "0.11.1"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/aes128gcmsiv_oracle.rs`, `tests/aes256gcmsiv_oracle.rs`, and `tests/aead_wycheproof.rs`.
@@ -64,7 +66,7 @@ use rscrypto::{
 let key = Aes256GcmSivKey::from_bytes([0u8; 32]);
 let cipher = Aes256GcmSiv::new(&key);
 let nonce = Nonce96::from_bytes([0u8; 12]);
-let mut ct = vec![0u8; plaintext.len() + 16];
+let mut ct = vec![0u8; Aes256GcmSiv::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
@@ -76,7 +78,7 @@ define nonce derivation.
 
 ```rust
 // After
-let mut plaintext = vec![0u8; ct.len() - 16];
+let mut plaintext = vec![0u8; Aes256GcmSiv::plaintext_len(ct.len())?];
 cipher.decrypt(&nonce, aad, &ct, &mut plaintext)?;
 ```
 

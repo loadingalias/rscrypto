@@ -106,7 +106,9 @@ Common canonical RustCrypto scrypt records with 32-byte outputs remain verifiabl
 
 ## Operational notes
 
-- `ScryptParams::default()` is `log_n=17, r=8, p=1`, matching the [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) baseline for deployments that cannot use Argon2id, as checked on 2026-07-25.
+- `ScryptParams::default()` is `log_n=17, r=8, p=1`, matching the
+  [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+  baseline for deployments that cannot use Argon2id, as checked on 2026-07-29.
 - The raw algorithm accepts arbitrary salt lengths; generated password records use 16 bytes.
 - Working buffers are zeroized on drop. Target-size overflow and allocation failure are distinct errors.
 - scrypt ROMix uses password-derived, data-dependent memory access and is not a local side-channel constant-time claim. The final verifier traverses all expected bytes before returning one opaque result; any generated-code timing claim is limited to the exact configuration in the matching [release evidence](../../constant-time.md).

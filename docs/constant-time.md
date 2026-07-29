@@ -4,12 +4,12 @@
 style alone is not enough: the claim depends on the crate version, commit,
 compiler, target, CPU features, enabled features, and generated binary.
 
-Unlisted configurations are not covered by a constant-time release claim.
+An unlisted configuration has no constant-time release claim.
 
 The machine-readable source of truth is [`ct.toml`](../ct.toml). The sections
 below explain how to read that boundary.
 
-## Claim Definition
+## Claim definition
 
 For the declared secret inputs of a claimed primitive, the generated binary must
 not let those secrets influence:
@@ -26,7 +26,7 @@ not let those secrets influence:
 Public inputs may still affect control flow, lengths, allocation size, backend
 selection, and public error handling.
 
-## Threat Model
+## Threat model
 
 The policy targets software-observable timing leakage from secret data through
 control flow, memory access, dispatch, allocation, failure shape, and generated
@@ -40,7 +40,7 @@ Speculation is handled by avoiding secret-dependent branches and addresses in
 claimed code paths. This is not a blanket Spectre-class guarantee for a whole
 process.
 
-## Candidate Surfaces
+## Candidate surfaces
 
 `ct.toml` places the following highest-sensitivity surfaces inside the release
 evidence gate. This is intent, not a standalone public claim:
@@ -65,7 +65,7 @@ Validated RSA keys retain each CRT exponent at its corresponding factor width
 before steady-state private arithmetic. DER import and export remain
 variable-shape operations outside that steady-state boundary.
 
-## Not Blanket Claims
+## Excluded unless listed
 
 The following are not constant-time claims unless a specific manifest entry says
 otherwise:
@@ -82,7 +82,7 @@ otherwise:
 Public length may leak. Public algorithm/profile selection may leak. A single
 opaque authentication success/failure result may leak.
 
-## Source-Level Decision Boundary
+## Source-level decision boundary
 
 Secret-bearing fixed-size keys, shared secrets, authentication tags, keypairs,
 and keyed outputs do not implement `PartialEq` or `Eq`. Their inherent `ct_eq`
@@ -95,12 +95,14 @@ Verification APIs keep that boundary inside the primitive and return one opaque
 `Result`. Public keys, nonces, signatures, and ciphertext containers are public
 data and retain ordinary equality where useful.
 
-This API prevents accidental source-level branching during comparison. It does
-not prove the generated machine code. A constant-time claim still requires the
-exact compiler, target, CPU features, crate features, profile, linker, and
-binary recorded by the matching release evidence.
+This API removes ordinary equality and implicit Boolean conversion from the
+secret-bearing owner type. Callers can still export bytes or explicitly
+declassify a decision. The API boundary does not prove the generated machine
+code. A constant-time claim still requires the exact compiler, target, CPU
+features, crate features, profile, linker, and binary recorded by the matching
+release evidence.
 
-## Target Scope
+## Target scope
 
 A target is not claimed because it builds. It is claimed only when the release
 has evidence for the exact compiler, codegen backend, linker, target
@@ -144,11 +146,11 @@ for audit-constrained builds, but it is not a proof by itself.
 
 ## Evidence
 
-Source inspection and `ct.toml` are not sufficient to establish a release claim. The matching signed GitHub release
-must contain all of:
+Source inspection and `ct.toml` do not establish a release claim. The matching
+signed GitHub release must contain all of:
 
-- The attested release manifest, source archive, crate, and `SHA256SUMS` binding the release tag, commit, toolchain,
-  and artifacts.
+- The attested release manifest, source archive, crate, and `SHA256SUMS`
+  binding the release tag, commit, toolchain, and artifacts.
 - An attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` built from the same release
   commit.
 - `CT-EVIDENCE-BUNDLE.json`, naming the version, full commit, release profile,
@@ -216,10 +218,11 @@ No leakage detected for this configuration.
 
 They are evidence, not a formal proof.
 
-## Consumer Verification
+## Verify a release
 
 For release `vX.Y.Z`, download the crate, CT bundle, and checksums from that
-exact GitHub release, then verify both attestations and hashes:
+exact GitHub release. Replace `X.Y.Z` consistently, then verify the release
+attestation, asset attestations, checksums, and internal CT manifest:
 
 ```bash
 gh release download vX.Y.Z --repo loadingalias/rscrypto \
@@ -238,8 +241,9 @@ gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscr
 gh attestation verify rscrypto-X.Y.Z-repository-controls.json --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-release-manifest.json --repo loadingalias/rscrypto
 gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
-mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
-(cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
+ct_evidence_dir=$(mktemp -d)
+tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C "$ct_evidence_dir"
+(cd "$ct_evidence_dir" && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
 ```
 
 Inspect `CT-EVIDENCE-BUNDLE.json` and use only lanes whose exact target,

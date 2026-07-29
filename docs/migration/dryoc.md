@@ -1,4 +1,4 @@
-# Migration: `dryoc` -> `rscrypto`
+# Migration: `dryoc` → `rscrypto`
 
 `dryoc` follows libsodium's API shape. Migrate the primitive calls directly and
 keep `dryoc` for libsodium protocol helpers such as `secretbox`, `box`, sealed

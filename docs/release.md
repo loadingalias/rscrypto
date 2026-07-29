@@ -157,7 +157,7 @@ This is the only routine local check that reads live GitHub settings. It writes
 the captured JSON to `target/repository-controls.json`; normal checks and
 pre-push validation remain offline.
 
-## What the tag workflow proves
+## What the tag workflow verifies
 
 Pushing a `vX.Y.Z` tag starts the `Release` workflow. Before crates.io can
 receive anything, the workflow:
@@ -183,10 +183,12 @@ constant-time claim.
 
 ## Recovery
 
-Re-running the workflow is safe after a partial failure. If crates.io already has the version, the workflow downloads
-it and compares SHA-256 before touching the GitHub Release. A draft release can be repaired and then published. A
-published immutable release is never overwritten; the workflow verifies its release attestation and stable crate and
-source assets before publishing to crates.io. A mismatch is a hard stop.
+After a partial failure, rerun the workflow on the same tag and commit. If
+crates.io already contains the version, the workflow downloads it and compares
+its SHA-256 before touching the GitHub Release. The workflow can repair and
+publish a draft release. It never overwrites a published immutable release; it
+verifies the release attestation and stable crate and source assets before
+publishing to crates.io. Any mismatch stops the release.
 
 If the signed-tag key changes, update `.github/allowed-signers` in a reviewed
 commit before creating the next release tag.
@@ -213,13 +215,16 @@ gh attestation verify rscrypto-X.Y.Z-ct-evidence.tar.gz --repo loadingalias/rscr
 gh attestation verify rscrypto-X.Y.Z-repository-controls.json --repo loadingalias/rscrypto
 gh attestation verify rscrypto-X.Y.Z-release-manifest.json --repo loadingalias/rscrypto
 gh attestation verify SHA256SUMS --repo loadingalias/rscrypto
-mkdir ct-evidence && tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C ct-evidence
-(cd ct-evidence && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
+ct_evidence_dir=$(mktemp -d)
+tar -xzf rscrypto-X.Y.Z-ct-evidence.tar.gz -C "$ct_evidence_dir"
+(cd "$ct_evidence_dir" && sha256sum --check CT-EVIDENCE-MANIFEST.txt)
 ```
 
-The crate downloaded from crates.io should have the same SHA-256 as the attested release artifact. The release
-identity manifest is the machine-readable join between the release's source, artifacts, evidence, and toolchain. The
-repository controls JSON records the expected policies, immutable-release setting, live branch and tag rulesets,
-effective rules on the default branch, capture time, and release commit. Its validation fields state whether each
-bypass list and the immutable-release setting were visible to the capturing token. The JSON is evidence of the
-release-time configuration, not a claim that GitHub settings cannot change later.
+The crate downloaded from crates.io must have the same SHA-256 as the attested
+release artifact. The release identity manifest joins the release source,
+artifacts, evidence, and toolchain. The repository-controls JSON records the
+expected policies, immutable-release setting, live branch and tag rulesets,
+effective default-branch rules, capture time, and release commit. Its
+validation fields state whether the capturing token could inspect each bypass
+list and the immutable-release setting. The JSON records release-time
+configuration; GitHub settings can change afterward.

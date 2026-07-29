@@ -1,6 +1,8 @@
 # Migration: `ed25519-dalek` → `rscrypto`
 
-> Replace `SigningKey` / `VerifyingKey` / `Signature` with `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature`. Same RFC 8032 algorithm, byte-identical signatures (Ed25519 is deterministic), strict verification on by default.
+> Replace `SigningKey` / `VerifyingKey` / `Signature` with
+> `Ed25519SecretKey` / `Ed25519PublicKey` / `Ed25519Signature`. Signing
+> preserves RFC 8032 output bytes, and the rscrypto verifier is always strict.
 
 Verified against `ed25519-dalek = "2.2.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/ed25519_rfc8032_vectors.rs`, `tests/ed25519_oracle.rs`, and `tests/ed25519_wycheproof.rs`.

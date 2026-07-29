@@ -1,13 +1,19 @@
 # Benchmarking
 
-`rscrypto` publishes benchmarks so users can see where it wins, ties, or loses
-in shape-compatible comparisons.
+Use these benchmarks to compare a specific primitive, operation, input shape,
+and target. Do not treat a crate-wide aggregate as a deployment result.
 
 Benchmark numbers are only meaningful with their platform, commit, feature set,
 and comparison shape. Treat every headline number as a pointer to the raw
 results in [`benchmark_results/`](../benchmark_results/).
 
-## Reading The Numbers
+The published 2026-07-04 aggregate is archival, not an equivalent-work
+performance claim. Its RustCrypto HMAC-SHA-256 rows include key setup inside
+the timed loop while the rscrypto, `ring`, and AWS-LC rows reuse keyed state.
+The current benchmark source corrects that mismatch; publish a new aggregate
+only after regenerating the complete artifact.
+
+## Read the numbers
 
 Speedup is reported as:
 
@@ -18,10 +24,12 @@ external_crate_time / rscrypto_time
 Values above `1.00x` mean `rscrypto` was faster for that row. Values below
 `1.00x` mean the comparison crate was faster.
 
-Use the geomean summaries for broad shape. Use individual rows when a specific
-primitive or message size matters to your deployment.
+The published W/T/L summaries classify ratios above `1.05x` as wins, ratios
+from `0.95x` through `1.05x` as ties, and ratios below `0.95x` as losses. Use
+individual equivalent-work rows—not the archival aggregate—when a primitive or
+message size matters to a deployment.
 
-## Published Sources
+## Published sources
 
 Raw Criterion output lives under:
 
@@ -38,7 +46,7 @@ Platform-specific claims need platform-specific raw results. A strong x86_64
 result does not imply the same result on aarch64, Power, s390x, RISC-V, WASM, or
 `no_std`.
 
-## Competitor Set
+## Competitor set
 
 The comparison set in the published snapshot is Rust-focused and
 shape-compatible:
@@ -64,7 +72,7 @@ Some common libraries are not primary benchmark baselines:
   `aws-lc-rs` comparison.
 - Generic trait crates such as `digest` are not algorithms.
 
-## Shape Notes
+## Shape notes
 
 - ECDSA rows are split by curve and operation. P-256 uses SHA-256; P-384 uses
   SHA-384.
@@ -81,7 +89,7 @@ Some common libraries are not primary benchmark baselines:
 - `dryoc` XChaCha20-Poly1305 is excluded from one-shot AEAD rows because the
   exposed benchmark shape is libsodium secretstream, not detached one-shot AEAD.
 
-## Reproducing Locally
+## Reproduce locally
 
 Use the `just bench` recipes when you want local numbers:
 

@@ -1,15 +1,15 @@
-# Test Vector Coverage Ledger
+# Test vector coverage ledger
 
-This ledger makes negative-vector coverage visible per primitive instead of
-relying on broad claims like "covered by oracles". It is built from the actual
-`tests/` and `testdata/` files.
+This ledger maps each primitive to its positive oracle, negative behavior
+coverage, and known gaps. The entries come from the current `tests/` and
+`testdata/` files.
 
 Wycheproof suites are vendored from `C2SP/wycheproof` `testvectors_v1/`. The
 upstream project describes the JSON suites as implementation-agnostic test
 vectors for known attacks and edge cases, and recommends mapping the vectors to
 the concrete inputs and outputs of each cryptography API.
 
-## Negative Coverage Policy
+## Coverage rules
 
 - Prefer Wycheproof when its current JSON suite maps directly to a public
   rscrypto API.
@@ -21,7 +21,7 @@ the concrete inputs and outputs of each cryptography API.
   negative coverage is limited to parser/format boundaries and dispatch
   equivalence.
 
-## Coverage Table
+## Coverage table
 
 | Primitive | Positive vector / oracle coverage | Negative behavior coverage | Gaps / notes |
 | --- | --- | --- | --- |

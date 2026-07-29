@@ -1,4 +1,4 @@
-# Migration: `openssl` -> `rscrypto`
+# Migration: `openssl` → `rscrypto`
 
 `openssl` is a binding to a full system cryptography, TLS, X.509, and provider
 toolkit. rscrypto can replace selected primitive operations. It does not replace
@@ -33,10 +33,15 @@ rscrypto = { version = "0.7.8", default-features = false, features = ["sha2", "h
 
 1. Separate primitive calls from platform calls.
 2. Move primitive calls to the matching focused guide:
-   - hashes: `RustCrypto/sha2.md`, `RustCrypto/sha3.md`, `RustCrypto/blake2.md`
-   - MAC/KDF: `RustCrypto/hmac.md`, `RustCrypto/hkdf.md`, `RustCrypto/pbkdf2.md`
-   - AEAD: `RustCrypto/aes-gcm.md`, `RustCrypto/chacha20poly1305.md`
-   - signatures/RSA: `RustCrypto/ed25519-dalek.md`, `RustCrypto/rsa.md`
+   - hashes: [`sha2`](RustCrypto/sha2.md), [`sha3`](RustCrypto/sha3.md), and
+     [`blake2`](RustCrypto/blake2.md);
+   - MACs and KDFs: [`hmac`](RustCrypto/hmac.md),
+     [`hkdf`](RustCrypto/hkdf.md), and [`pbkdf2`](RustCrypto/pbkdf2.md);
+   - AEAD: [`aes-gcm`](RustCrypto/aes-gcm.md) and
+     [`chacha20poly1305`](RustCrypto/chacha20poly1305.md);
+   - signatures and RSA:
+     [`ed25519-dalek`](RustCrypto/ed25519-dalek.md) and
+     [`rsa`](RustCrypto/rsa.md).
 3. Keep OpenSSL for TLS, PKI, provider, engine, and FIPS-provider behavior.
 
 ## RSA Boundary
@@ -46,6 +51,6 @@ RSAES-PKCS1-v1_5 for the implemented SHA-2 profiles. The RSA test lane checks
 interoperability against RustCrypto `rsa`, `ring`, AWS-LC, CAVP/Wycheproof
 vectors, and OpenSSL CLI when it is installed.
 
-Use `RustCrypto/rsa.md` for concrete rscrypto RSA call-site examples. Keep
-OpenSSL if you need certificate validation, provider configuration, engine
-integration, or OpenSSL FIPS provider semantics.
+Use the [`rsa` migration guide](RustCrypto/rsa.md) for concrete rscrypto RSA
+call-site examples. Keep OpenSSL if you need certificate validation, provider
+configuration, engine integration, or OpenSSL FIPS provider semantics.

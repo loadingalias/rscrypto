@@ -10,29 +10,12 @@
 `rscrypto` provides pure Rust cryptographic primitives, cryptographic and fast
 hashes, password hashing, and checksums behind one feature model.
 
-It has no production C/FFI, OpenSSL, or system-library dependency. Leaf features
-support narrow builds; umbrella features compose larger surfaces.
+It has no production C/FFI, OpenSSL, or system-library dependency. Enable one
+leaf feature for one primitive, an umbrella feature for a family, or `full` for
+the complete primitive surface. Every supported target retains the portable
+Rust backend; SIMD and assembly only accelerate it.
 
-Use one leaf feature for one primitive, a group for a subset of primitives, or `full` for the full crate surface. The portable Rust backend is always present. SIMD and ASM are only accelerators.
-
-**Published benchmark snapshot:** `1.59x` geomean across the Linux runners vs the fastest-external competitors with `4,052 / 6,750` wins and `6,101 / 6,750` wins-or-ties.
-
-macOS Apple Silicon local evidence: `1.37x` geomean vs fastest-external competitors with `382 / 774` wins and `708 / 774` wins-or-ties.
-
-Raw runs, methodology, and known losses are in
-[`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md).
-
-<p align="center">
-  <img alt="rscrypto benchmark chart: 1.59x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 5.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
-       src="assets/readme/perf.svg"
-       width="640">
-</p>
-
-<p align="center">
-  <i>Chart: benchmark scorecard. Values above <code>1.00x</code> mean <code>rscrypto</code> is faster than the fastest matched external implementation.</i>
-</p>
-
-## Why rscrypto?
+## Scope
 
 - One feature model for hashes, MACs, KDFs, password hashing, AEADs,
   signatures, key exchange, ML-KEM, RSA, and checksums.
@@ -50,7 +33,7 @@ Raw runs, methodology, and known losses are in
 store, or protocol implementation. It does not claim FIPS 140-3 validation, a
 third-party audit, formal verification, or whole-crate constant-time behavior.
 
-## Install
+## Choose features
 
 Minimal `no_std` SHA-2 build:
 
@@ -66,9 +49,12 @@ Full primitive stack with OS randomness enabled:
 rscrypto = { version = "0.7.8", features = ["full", "getrandom"] }
 ```
 
-Use `default-features = false` for `no_std` builds. Enable `getrandom` only when you need APIs that generate salts, keys, nonces, or RSA key-gen entropy from the operating system.
+Use `default-features = false` for `no_std` builds. Enable `getrandom` only for
+APIs that obtain salts, keys, nonces, or RSA key-generation entropy from the
+operating system. See [`docs/features.md`](docs/features.md) for exact feature
+dependencies and deployment controls.
 
-## Quick Start
+## Quick start
 
 ```rust
 use rscrypto::Sha256;
@@ -84,48 +70,50 @@ assert_eq!(h.finalize(), one_shot);
 
 The common API shape is one-shot when convenient and streaming when needed.
 
-## Common Workflows
+## Common workflows
 
-| Task | Feature | Start Here |
+| Task | Features | Start here |
 |---|---|---|
-| AEAD seal/open | `chacha20poly1305,getrandom` | [`examples/aead_seal_open.rs`](examples/aead_seal_open.rs) |
-| Ed25519 and ECDSA signatures | `ed25519,ecdsa-p256,getrandom` | [`examples/signatures.rs`](examples/signatures.rs) |
+| AEAD seal/open | `chacha20poly1305`, `getrandom` | [`examples/aead_seal_open.rs`](examples/aead_seal_open.rs) |
+| Ed25519 and ECDSA signatures | `ed25519`, `ecdsa-p256`, `getrandom` | [`examples/signatures.rs`](examples/signatures.rs) |
 | RSA-PSS verification | `rsa` | [`examples/rsa_pss_verify.rs`](examples/rsa_pss_verify.rs) |
-| ML-KEM shared secret | `ml-kem,getrandom` | [`examples/mlkem_encapsulation.rs`](examples/mlkem_encapsulation.rs) |
-| Argon2id and scrypt password hashing | `password-hashing,getrandom` | [`examples/password_hashing.rs`](examples/password_hashing.rs) |
+| ML-KEM shared secret | `ml-kem`, `getrandom` | [`examples/mlkem_encapsulation.rs`](examples/mlkem_encapsulation.rs) |
+| Argon2id and scrypt password hashing | `password-hashing`, `getrandom` | [`examples/password_hashing.rs`](examples/password_hashing.rs) |
 
 Use [`docs/types.md`](docs/types.md) when you need the full type map, and
 [`docs/features.md`](docs/features.md) when you need the smallest feature set.
 
-## What You Get
+## Capabilities
 
-| Need | Included | Feature Path |
+| Need | Included | Feature path |
 |---|---|---|
-| Cryptographic Hashes | SHA-2, SHA-3, SHAKE, cSHAKE128/256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
-| MACs & KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, standalone Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `auth` or leaf features |
-| Password Hashing | Raw Argon2d/i/id and scrypt KDFs; generated, bounded PHC password records | `auth`, `argon2`, `scrypt`, `phc-strings` |
-| Public-Key Primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `auth`, `signatures`, `key-exchange`, `ecdsa`, `ecdsa-p256`, `ecdsa-p384`, `ed25519`, `rsa`, `x25519`, `ml-kem` |
-| AEAD Encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
+| Cryptographic hashes | SHA-2, SHA-3, SHAKE, cSHAKE128/256, BLAKE2, BLAKE3, Ascon-Hash/XOF/CXOF | `hashes` or leaf features |
+| MACs and KDFs | HMAC-SHA-2/SHA-3, KMAC128/256, standalone Poly1305, HKDF-SHA-2, PBKDF2-HMAC-SHA-2 | `macs`, `kdfs`, or leaf features |
+| Password hashing | Raw Argon2d/i/id and scrypt KDFs; generated, bounded PHC password records | `password-hashing` or leaf features |
+| Public-key primitives | ECDSA P-256/P-384 signing/verification, Ed25519 signatures, RSA signing/verification/OAEP/RSAES-PKCS1-v1_5/key generation, X25519 key exchange, ML-KEM-512/768/1024 KEMs | `signatures`, `key-exchange`, or leaf features |
+| AEAD encryption | AES-128/256-GCM, AES-128/256-GCM-SIV, ChaCha20-Poly1305, XChaCha20-Poly1305, AEGIS-256, Ascon-AEAD128 | `aead` or leaf features |
 | Checksums | CRC-16, CRC-24, CRC-32, CRC-32C, CRC-64/XZ, CRC-64/NVMe | `checksums` or leaf features |
-| Fast Hashes | XXH3-64/128, RapidHash V3-64 | `xxh3`, `rapidhash` |
+| Fast hashes | XXH3-64/128, RapidHash V3-64 | `xxh3`, `rapidhash` |
 
-Flags are layered by use:
+Feature layers:
 
-- **Leaf Primitives:** `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`, `ml-kem`, `crc32`, etc.
-- **Families/Groups:** `hashes`, `checksums`, `macs`, `kdfs`, `password-hashing`, `aead`, `signatures`, `key-exchange`.
-- **Deployment Controls:** `std`, `alloc`, `getrandom`, `parallel`, `serde`, `portable-only`; `serde-secrets` explicitly opts secret material into `serde`.
+- Leaf primitives: `sha2`, `blake3`, `aes-gcm`, `ed25519`, `x25519`,
+  `ml-kem`, `crc32`, and the other algorithm features.
+- Families: `hashes`, `checksums`, `macs`, `kdfs`, `password-hashing`,
+  `aead`, `signatures`, and `key-exchange`.
+- Deployment controls: `std`, `alloc`, `getrandom`, `parallel`, `serde`, and
+  `portable-only`. `serde-secrets` explicitly opts secret material into Serde.
 
-Full Feature Inventory: [`docs/features.md`](docs/features.md).
-Public Type Inventory: [`docs/types.md`](docs/types.md).
+See the complete [`feature inventory`](docs/features.md) and
+[`public type inventory`](docs/types.md).
 
-## Constant-Time Boundaries
+## Security
 
-`rscrypto` makes only release-bound, scoped constant-time claims for
-secret-bearing operations, not for every function in the crate. `ct.toml`
-records the candidate primitive/configuration set; it does not create a public
-claim by itself. A claim exists only where the matching signed GitHub release
-includes an attested `rscrypto-X.Y.Z-ct-evidence.tar.gz` bundle that passes all
-required gates for that exact version, commit, target, profile, and feature set.
+Constant-time claims are release-bound and configuration-specific. A claim
+exists only when the matching signed GitHub release includes an attested
+`rscrypto-X.Y.Z-ct-evidence.tar.gz` bundle whose required gates pass for the
+exact version, commit, target, profile, and feature set. [`ct.toml`](ct.toml)
+records candidate surfaces; it does not establish a claim by itself.
 
 Secret-bearing fixed-size owners do not implement `PartialEq` or `Eq`. Their
 `ct_eq` methods return an opaque `CtDecision`; callers must explicitly consume
@@ -133,39 +121,11 @@ it with `declassify()` to obtain a branchable bit. Verification APIs keep that
 boundary internal and return one opaque `Result`. This is misuse resistance at
 the Rust API boundary, not proof about downstream machine code.
 
-The main candidate secret-bearing surfaces in [`ct.toml`](ct.toml) are
-MAC/tag verification, AEAD authentication failure shape, X25519 scalar
-multiplication, Ed25519 signing and secret public-key derivation, ECDSA
-P-256/P-384 blinded signing, ML-KEM-512/768/1024 key gen,
-encapsulation, decapsulation secret surfaces, RSA private sign/decrypt leaves,
-and selected password-verification comparisons.
-
 Public parsing, unlisted key gen, OS randomness, raw hashes, checksums,
 non-cryptographic hashes, benchmark paths, and public-key verification math are
-not blanket constant-time claims. See [`docs/constant-time.md`](docs/constant-time.md)
-for the exact claim and verification model and [`docs/compliance.md`](docs/compliance.md)
-for review boundaries. Releases through `v0.6.4` do not contain this bundle and
-therefore carry no release-bound constant-time claim.
+outside that claim. Releases through `v0.6.4` contain no CT evidence bundle and
+carry no release-bound constant-time claim.
 
-## Portability & Accel
-
-`rscrypto` keeps the portable Rust path as the byte-for-byte authority. ISA kernels are selected only when the target and runtime CPU support them.
-
-| Target family | Acceleration examples |
-|---|---|
-| x86 / x86_64 | SSE4.2, AVX2, AVX-512, AES-NI, SHA-NI, VAES, VPCLMULQDQ |
-| Arm / AArch64 / Apple Silicon | NEON, AES, PMULL, SHA2, SHA3, SVE2-PMULL |
-| IBM Z | CPACF, MSA, VGFM, z/Vector ML-KEM arithmetic |
-| POWER / ppc64le | POWER8/9/10 vector and crypto extensions |
-| RISC-V | RVV, Zbc, Zvkned, Zvbc |
-| WASM | SIMD128 where available, portable fallback everywhere |
-
-Full platform matrix: [`docs/platforms.md`](docs/platforms.md).
-
-## Security
-
-`rscrypto` makes scoped constant-time claims only when a matching release
-publishes the required evidence bundle, never for every API or build.
 The fixed-size secret owners named in
 [`docs/secret-ownership.md`](docs/secret-ownership.md) overwrite their owned
 bytes on drop and mask `Debug`; the claim does not extend to caller copies.
@@ -175,9 +135,47 @@ crates.io Trusted Publishing, and covered by GitHub build provenance
 attestations.
 
 No third-party audit, FIPS 140-3 certificate, or formal whole-crate proof is
-claimed. Report vulnerabilities through
+claimed. Read the exact [constant-time model](docs/constant-time.md),
+[threat model](THREAT_MODEL.md), and [compliance boundary](docs/compliance.md)
+before making a security or assurance claim. Report vulnerabilities through
 [GitHub Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new)
 or [`SECURITY.md`](SECURITY.md), not public issues.
+
+## Platforms
+
+The portable Rust implementation is the byte-for-byte authority. Compile-time
+target support and, with `std`, detected runtime CPU capabilities select
+eligible SIMD or assembly kernels. Unsupported acceleration falls back to
+portable Rust.
+
+See [`docs/platforms.md`](docs/platforms.md) for the dispatch model, target
+matrix, and `no_std` coverage. See
+[`docs/features.md#portable-only`](docs/features.md#portable-only) before using
+`portable-only`; it constrains runtime dispatch but does not remove accelerated
+code from a binary.
+
+## Performance
+
+The published 2026-07-04 benchmark snapshot is historical. Its aggregate
+geomeans are not equivalent-work performance claims because the historical
+RustCrypto HMAC-SHA-256 rows included key setup while the compared rscrypto,
+`ring`, and AWS-LC rows reused keyed state. The benchmark source now aligns
+that setup, but a new aggregate requires a complete regenerated artifact.
+
+<details>
+<summary>Historical 2026-07-04 scorecard (not an equivalent-work aggregate)</summary>
+<p align="center">
+  <img alt="rscrypto benchmark chart: 1.59x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 5.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
+       src="assets/readme/perf.svg"
+       width="640">
+</p>
+</details>
+
+Use individual shape-compatible rows for investigation and benchmark the
+deployment workload on its target hardware. The correction, raw results,
+methodology, and known losses are in
+[`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) and
+[`docs/benchmarking.md`](docs/benchmarking.md).
 
 ## Docs
 
@@ -195,9 +193,11 @@ or [`SECURITY.md`](SECURITY.md), not public issues.
 
 ## MSRV
 
-Rust **1.91.0**.
+The minimum supported Rust version is **1.91.0**.
 
-The pinned nightly in [`rust-toolchain.toml`](rust-toolchain.toml) is used for Miri, fuzzing, and exotic-architecture checks.
+The pinned development nightly in
+[`rust-toolchain.toml`](rust-toolchain.toml) is separate from the MSRV and is
+used for Miri, fuzzing, and architecture-specific checks.
 
 ## License
 

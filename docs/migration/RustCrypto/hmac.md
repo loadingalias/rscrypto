@@ -106,7 +106,15 @@ let expected_tag = HmacSha256Tag::from_bytes(expected_tag_bytes);
 HmacSha256::verify_tag(key, data, &expected_tag)?;   // Result<(), VerificationError>
 ```
 
-Streaming form: `let mut mac = HmacSha256::new(key); mac.update(data); mac.verify(&expected_tag)?;`. Tags are typed (`HmacSha256Tag`, `HmacSha384Tag`, `HmacSha512Tag`, and the `HmacSha3_*Tag` family) and deliberately do not implement `PartialEq` or `Eq`. Prefer `verify` / `verify_tag` for authentication decisions. Direct tag comparison is explicit: `left.ct_eq(&right)` returns an opaque `CtDecision`, and only `.declassify()` exposes a branchable bit. This source-level boundary is not a universal timing proof; constant-time claims remain limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md). Use `as_bytes()` / `to_bytes()` only at protocol serialization boundaries.
+For streaming verification, construct `HmacSha256`, call `update`, then call
+`verify(&expected_tag)`. HMAC tags are typed and do not implement `PartialEq`
+or `Eq`. Prefer `verify` or `verify_tag` for authentication decisions.
+
+Direct comparison is explicit: `left.ct_eq(&right)` returns an opaque
+`CtDecision`, and only `declassify()` exposes a branchable bit. This
+source-level boundary is not a machine-code timing proof; claims remain limited
+to the matching [release evidence](../../constant-time.md). Use `as_bytes()` or
+`to_bytes()` only at protocol serialization boundaries.
 
 ## Notes
 

@@ -1,6 +1,8 @@
 # Migration: `aegis` (jedisct1) → `rscrypto`
 
-> Covers AEGIS-256 from the `aegis` crate. Replace `Aegis256::<TAG>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; TAG])` with rscrypto's `Aead`-trait-style `encrypt(&nonce, aad, msg, &mut out)`. Same algorithm (draft-irtf-cfrg-aegis-aead), byte-identical ciphertext+tag.
+> Replace `Aegis256::<TAG>::new(&key, &nonce).encrypt(msg, aad)` with
+> rscrypto's caller-buffer `encrypt(&nonce, aad, msg, &mut out)`. The mapped
+> AEGIS-256 operation preserves ciphertext and tag bytes.
 
 Verified against `aegis = "0.9.12"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/aegis256_oracle.rs` and `tests/aead_wycheproof.rs`.
@@ -60,7 +62,7 @@ use rscrypto::{
 let key = Aegis256Key::from_bytes([0u8; 32]);
 let cipher = Aegis256::new(&key);                            // key at construction
 let nonce = Nonce256::from_bytes([0u8; 32]);                 // nonce at call
-let mut ct = vec![0u8; plaintext.len() + 16];
+let mut ct = vec![0u8; Aegis256::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;            // appended tag
 ```
 
@@ -101,7 +103,7 @@ let plaintext = cipher.decrypt(&ciphertext, &tag, aad)?;     // returns Result<V
 
 ```rust
 // After (combined; ct already includes tag)
-let mut plaintext = vec![0u8; ct.len() - 16];
+let mut plaintext = vec![0u8; Aegis256::plaintext_len(ct.len())?];
 cipher.decrypt(&nonce, aad, &ct, &mut plaintext)?;
 
 // Or detached (matches aegis's separate ct + tag inputs):
@@ -112,6 +114,10 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 ## Notes
 
+- **Specification status.** The AEGIS family is defined by the active
+  [IRTF CFRG Internet-Draft](https://datatracker.ietf.org/doc/draft-irtf-cfrg-aegis-aead/),
+  not an IETF standard. Review the current revision when the protocol contract
+  depends on that status.
 - **One cipher, many messages.** `aegis::Aegis256::new(&key, &nonce)` baked the nonce into the cipher and required reconstruction per message. rscrypto's `Aegis256::new(&key)` returns a reusable cipher; pass a fresh `Nonce256` per call.
 - **Tag size fixed at 16 bytes.** `aegis` lets you pick `Aegis256<16>` or
   `Aegis256<32>`; rscrypto exposes only the 16-byte-tag variant. Keep `aegis`

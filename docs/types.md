@@ -1,10 +1,10 @@
-# Public Type Inventory
+# Public type inventory
 
-Index of the public `rscrypto` types needed to choose imports, features, and
-migration targets. The README keeps the top-level API map; this file carries
-the root re-exports and documented module helper types.
+Use this inventory to choose imports, feature flags, and migration targets. It
+lists root re-exports and documented module helper types; use rustdoc for
+method-level details.
 
-Use rustdoc for exhaustive API details. This inventory excludes `diag_*`
+This inventory excludes `diag_*`
 functions, doc-hidden bench hooks, architecture feature constants, and private
 impl types.
 
@@ -25,7 +25,7 @@ Prelude: `rscrypto::prelude` re-exports `Aead`, `Checksum`,
 `ChecksumCombine`, `Digest`, `FastHash`, `Kem`, `Mac`,
 `VerificationError`, and `Xof`.
 
-## Native API Conventions
+## API conventions
 
 - Prefer caller-provided output buffers and scratch buffers when both forms exist.
 - Use `alloc` helpers such as `*_to_vec` only when an owned allocation is the right boundary.
@@ -56,7 +56,7 @@ Crc24Force, Crc32Config, Crc32Force, Crc64Config, Crc64Force}`,
 BufferedCrc24OpenPgp, BufferedCrc32, BufferedCrc32C, BufferedCrc64,
 BufferedCrc64Nvme}`, and `checksum::io::{ChecksumReader, ChecksumWriter}`.
 
-## Cryptographic Hashes
+## Cryptographic hashes
 
 Features: `crypto-hashes` or `sha2` / `sha3` / `blake2b` / `blake2s` / `blake3` / `ascon-hash`.
 
@@ -80,7 +80,7 @@ Aliases: `hashes::crypto::AsconXof128` and `hashes::crypto::AsconXof128Reader`.
 `Blake2bKey` and `Blake2sKey` make caller-facing key validation explicit while
 borrowing key bytes without allocation or copying.
 
-## Fast Hashes
+## Fast hashes
 
 Features: `fast-hashes` or `xxh3` / `rapidhash`.
 
@@ -100,7 +100,7 @@ All fast hashers use bounded inline state and do not allocate.
 is reproducible; `RapidRandomState` accepts a fallible entropy callback in
 pure `no_std` and adds `try_new()` when `getrandom` is enabled.
 
-## MACs & KDFs
+## MACs and KDFs
 
 Features: `macs` / `kdfs` or `hmac` / `hmac-sha3` / `hkdf` / `pbkdf2` / `kmac` / `poly1305`.
 
@@ -113,7 +113,7 @@ Features: `macs` / `kdfs` or `hmac` / `hmac-sha3` / `hkdf` / `pbkdf2` / `kmac` /
 | `HkdfSha256` / `HkdfSha384` / `HkdfSha512` | 32-64B PRK | RFC 5869 |
 | `Pbkdf2Sha256` / `Pbkdf2Sha512` | variable | RFC 2898 / SP 800-132 |
 
-## Password Hashing
+## Password hashing
 
 Features: `password-hashing` or `argon2` / `scrypt` / `phc-strings`.
 
@@ -130,7 +130,7 @@ Password-record operations require `phc-strings`; OS-salted generation also requ
 PHC parsing and encoding are intentionally internal so attacker-controlled costs cannot bypass the
 algorithm-specific verification limits.
 
-## Signatures & Key Exchange
+## Signatures and key exchange
 
 Features: `signatures` / `key-exchange` or `ecdsa` / `ed25519` / `rsa` / `x25519` / `ml-kem`.
 
@@ -203,7 +203,7 @@ must explicitly import `aead::expert::AeadWithNonce` for caller-nonce
 detached forms remain allocation-free. With `alloc`, decryption has
 `decrypt_to_vec`; with `alloc` + `getrandom`, sealing has `seal_random_to_vec`.
 
-## Error Types
+## Error types
 
 | Error | When | Recovery |
 |-------|------|----------|
@@ -214,23 +214,23 @@ detached forms remain allocation-free. With `alloc`, decryption has
 | `OpenError` | Combined AEAD buffer length is wrong, input is too large, or authentication fails | Correct public lengths; reject opaque verification failures |
 | `NonceCounterSealError` | AES-GCM nonce counter is exhausted or sealing fails | Rotate the key before counter reuse, or correct the sealing input |
 | `HkdfOutputLengthError` | HKDF expand exceeds max | Request less output |
-| `Pbkdf2Error` | PBKDF2 parameter validation | Adjust iterations / output length |
+| `Pbkdf2Error` | PBKDF2 parameter validation fails | Adjust the iteration count, salt, policy, or output length |
 | `Blake2Error` | Invalid BLAKE2 key or variable output length, or a mismatched streaming output buffer | Correct the public key/output length |
 | `Argon2Error` | Argon2 configuration, input, entropy, or resource failure | Fix the profile/input or restore resources |
 | `ScryptError` | scrypt configuration, entropy, or resource failure | Fix N/r/p or restore resources |
 | `X25519Error` | Low-order DH point | Reject peer key |
 | `MlKemError` | ML-KEM random source, key, or ciphertext validation failure | Reject input or fix entropy source |
-| `RsaKeyError` | RSA DER or component validation failure | Reject key / tighten import policy |
+| `RsaKeyError` | RSA DER or component validation fails | Reject the key or tighten the import policy |
 | `RsaPublicOpError` | RSA public operation input shape/range failure | Fix representative length or reject input |
 | `RsaPrivateOpError` | RSA private operation, padding, entropy, or fault-check failure | Reject input; do not expose reason to peer |
-| `RsaEncryptionError` | RSA public encryption shape, padding, or entropy failure | Fix input / entropy source |
-| `RsaKeyGenerationError` | RSA key generation policy or entropy failure | Adjust key size/policy or entropy source |
+| `RsaEncryptionError` | RSA public encryption shape, padding, or entropy fails | Fix the input or entropy source |
+| `RsaKeyGenerationError` | RSA key-generation policy or entropy fails | Adjust the key size or policy, or fix the entropy source |
 | `RsaProtocolAlgorithmError` | Unsupported/confused COSE/TLS/X.509 RSA selector | Reject algorithm mapping |
 | `AsconCxofCustomizationError` | Customization > 256 bytes | Shorten string |
 | `InvalidHexError` | Hex decode failure | Fix input |
 | `platform::expert::OverrideError` | Invalid, unsupported, or late detection override | Configure through `platform::expert::try_set_override` before first detection |
 
-## Platform And Dispatch
+## Platform and dispatch
 
 | Item | Purpose |
 |------|---------|

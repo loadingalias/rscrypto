@@ -1,4 +1,4 @@
-# Migration: `rsa` (RustCrypto) -> `rscrypto`
+# Migration: `rsa` (RustCrypto) → `rscrypto`
 
 rscrypto supports RSA key import/export, key generation, RSA-PSS,
 RSASSA-PKCS1-v1_5, OAEP, RSAES-PKCS1-v1_5, and protocol profile helpers. This

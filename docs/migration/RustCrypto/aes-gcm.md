@@ -67,12 +67,15 @@ use rscrypto::{
 let key = Aes256GcmKey::from_bytes([0u8; 32]);
 let cipher = Aes256Gcm::new(&key);
 let nonce = Nonce96::from_bytes([0u8; 12]);
-let mut ct = vec![0u8; plaintext.len() + 16];
+let mut ct = vec![0u8; Aes256Gcm::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 // ct[..plaintext.len()] is ciphertext, ct[plaintext.len()..] is the 16-byte tag.
 ```
 
 The output layout is identical (`[ciphertext || tag]`), so on-the-wire compatibility is preserved. The shape change is who owns the buffer: `aes-gcm` allocates a `Vec`, rscrypto writes into a buffer you pre-sized.
+Use `Aes256Gcm::ciphertext_len` and `Aes256Gcm::plaintext_len` before
+allocation; they reject length overflow and combined inputs shorter than the
+tag.
 The expert trait import is required because this migration preserves the
 upstream caller-supplied nonce. New protocols should use `seal_random` or
 `NonceCounter<Aes256Gcm>` so nonce issuance is not a normal call-site choice.
@@ -88,7 +91,7 @@ let plaintext = cipher
 
 ```rust
 // After
-let mut plaintext = vec![0u8; ct.len() - 16];
+let mut plaintext = vec![0u8; Aes256Gcm::plaintext_len(ct.len())?];
 cipher.decrypt(&nonce, aad, &ct, &mut plaintext)?;
 ```
 
@@ -154,5 +157,13 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
   format.
 - **`AeadInPlace` trait import not needed.** RustCrypto requires importing `aead::AeadInPlace` separately to call the `_in_place_detached` methods. rscrypto exposes both shapes through the single `Aead` trait.
 - **`generic-array` is gone.** rscrypto does not return `GenericArray` from any AEAD method. Tags are typed newtypes (`Aes256GcmTag`) wrapping `[u8; 16]`; key/nonce types wrap `[u8; N]` directly.
-- **Hardware acceleration.** Both crates dispatch to AES-NI on x86_64 and AES-CE on aarch64. rscrypto adds VAES (AVX-512), s390x CPACF, and a portable bitsliced fallback that avoids secret-indexed tables. That source property is not a universal timing proof; constant-time coverage is limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md). Force the portable kernel via `RSCRYPTO_AES_GCM_FORCE=portable` (std only) or the crate's `portable-only` feature.
+- **Hardware acceleration.** Both crates dispatch to AES-NI on x86_64 and
+  AES-CE on aarch64. rscrypto adds VAES (AVX-512), s390x CPACF, and a portable
+  bitsliced fallback that avoids secret-indexed tables. That source property is
+  not a universal timing proof; constant-time coverage is limited to the
+  compiler, target, features, and binary in the matching
+  [release evidence](../../constant-time.md). The crate's `portable-only`
+  feature makes runtime capability detection ignore host acceleration but does
+  not override a compile-time backend; see
+  [`docs/features.md`](../../features.md#portable-only).
 - **`no_std`.** Both crates support `no_std`. rscrypto's combined API requires the caller to provide an output buffer, which fits stack-only embedded use. The `vec!` calls in the examples above are for std convenience; in `no_std` they become fixed-size arrays.
