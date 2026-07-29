@@ -50,6 +50,7 @@ if (
     RAIL_PLAN_JSON_CACHE="$plan" \
     RAIL_SCOPE_JSON='' \
     RAIL_SCOPE_JSON_CACHE='' \
+    RAIL_SURFACES_JSON='' \
     scripts/ci/pre-push.sh --light
 ) >"$normal_output" 2>&1; then
   echo "ordinary pushes must fail when release intent coverage fails" >&2
@@ -67,7 +68,7 @@ run_pre_push_case() {
   : >"$mock_log"
 
   if ! (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     if [[ -n "$cached_plan" ]]; then
       export RAIL_PLAN_JSON_CACHE="$cached_plan"
     fi
@@ -117,6 +118,7 @@ if ! (
     RAIL_PLAN_JSON_CACHE="$installer_plan" \
     RAIL_SCOPE_JSON='' \
     RAIL_SCOPE_JSON_CACHE='' \
+    RAIL_SURFACES_JSON='' \
     scripts/ci/pre-push.sh --light
 ) >/dev/null 2>&1; then
   echo "pre-push installer-integrity routing failed" >&2

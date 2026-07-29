@@ -212,7 +212,7 @@ run_recipe() {
   snapshot_worktree "$before"
 
   (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     export HOME="$fake_home"
     export PATH="$fake_bin:$PATH"
     export MOCK_FORMAT_DRIFT="$format_drift"

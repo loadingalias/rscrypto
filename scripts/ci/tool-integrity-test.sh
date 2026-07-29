@@ -350,7 +350,7 @@ SH
 
 cat >"$package_bin/rustc" <<'SH'
 #!/usr/bin/env bash
-printf 'rustc 1.97.0-nightly\ncommit-date: 2026-04-26\n'
+printf 'rustc 1.99.0-nightly\ncommit-date: 2026-07-16\n'
 SH
 
 cp "$direct_bin/uname" "$package_bin/uname"
@@ -477,7 +477,7 @@ for contract in \
   'cargo-nextest =0.9.140' \
   'cargo-deny =0.20.2' \
   'cargo-audit =0.22.2' \
-  'cargo-rail =0.18.0' \
+  'cargo-rail =0.20.0' \
   'cargo-semver-checks =0.48.0' \
   'just =1.57.0' \
   'zizmor =1.26.1' \
@@ -537,11 +537,11 @@ esac
 : >"$package_log"
 MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" \
-  nightly-2026-04-27 'clippy, rustfmt' >/dev/null
+  nightly-2026-07-17 'clippy, rustfmt' >/dev/null
 grep -Fq \
-  'rustup toolchain install nightly-2026-04-27 --profile minimal --no-self-update --component clippy --component rustfmt' \
+  'rustup toolchain install nightly-2026-07-17 --profile minimal --no-self-update --component clippy --component rustfmt' \
   "$package_log" || fail "rustup toolchain command was not exact"
-grep -Fq 'rustup default nightly-2026-04-27' "$package_log" \
+grep -Fq 'rustup default nightly-2026-07-17' "$package_log" \
   || fail "rustup did not select the exact toolchain"
 if MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" nightly clippy >/dev/null 2>&1; then

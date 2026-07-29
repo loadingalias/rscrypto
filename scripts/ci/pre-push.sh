@@ -71,6 +71,7 @@ TASK_NAMES=()
 TASK_PIDS=()
 TASK_LOGS=()
 
+unset RAIL_SURFACES_JSON
 RAIL_READY=false
 if RAIL_PLAN_JSON_CACHE="$(rail_plan_json)" \
   && rail_plan_is_valid "$RAIL_PLAN_JSON_CACHE"; then

@@ -160,6 +160,19 @@ rail_scope_json() {
 
   if [[ -n "${RAIL_SCOPE_JSON:-}" ]]; then
     scope_output="$RAIL_SCOPE_JSON"
+    if [[ -n "${RAIL_SURFACES_JSON:-}" ]]; then
+      if ! scope_output="$(
+        jq -ce --argjson surfaces "$RAIL_SURFACES_JSON" '
+          if has("surfaces") and .surfaces != $surfaces then
+            empty
+          else
+            . + { surfaces: $surfaces }
+          end
+        ' <<<"$scope_output" 2>/dev/null
+      )"; then
+        return 1
+      fi
+    fi
   elif [[ -n "${RAIL_SCOPE_JSON_CACHE:-}" ]]; then
     scope_output="$RAIL_SCOPE_JSON_CACHE"
   else

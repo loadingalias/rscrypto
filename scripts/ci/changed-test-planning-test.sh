@@ -103,6 +103,8 @@ make_legacy_plan() {
 EMPTY_SCOPE="$(make_scope empty '[]' '[]')"
 WORKSPACE_SCOPE="$(make_scope workspace '[]' '["--workspace"]' true true false)"
 CRATES_SCOPE="$(make_scope crates '["crate-a","crate-b"]' '["-p","crate-a","-p","crate-b"]' true true false)"
+ACTION_WORKSPACE_SCOPE="$(jq -c '.scope_contract_version = 3 | del(.surfaces)' <<<"$WORKSPACE_SCOPE")"
+ACTION_WORKSPACE_SURFACES="$(jq -c '.surfaces' <<<"$WORKSPACE_SCOPE")"
 EMPTY_PLAN="$(make_plan "$EMPTY_SCOPE")"
 WORKSPACE_PLAN="$(make_plan "$WORKSPACE_SCOPE")"
 CRATES_PLAN="$(make_plan "$CRATES_SCOPE")"
@@ -122,7 +124,7 @@ EOF
 chmod +x "$planner_bin/cargo"
 
 scope_mode_for_cached_plan() (
-  unset RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+  unset RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
   export RAIL_PLAN_JSON_CACHE=$1
   # shellcheck source=../lib/rail-plan.sh
   source "$REPO_ROOT/scripts/lib/rail-plan.sh"
@@ -130,7 +132,7 @@ scope_mode_for_cached_plan() (
 )
 
 scope_mode_for_planner() (
-  unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+  unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
   export PATH="$planner_bin:$PATH"
   export MOCK_PLAN_OUTPUT=$1
   export MOCK_PLAN_STATUS=$2
@@ -172,7 +174,7 @@ assert_eq workspace "$(scope_mode_for_cached_plan "$LEGACY_WORKSPACE_PLAN")" "va
 crate_output="$(
   (
     export RAIL_PLAN_JSON_CACHE="$CRATES_PLAN"
-    unset RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     # shellcheck source=../lib/rail-plan.sh
     source "$REPO_ROOT/scripts/lib/rail-plan.sh"
     rail_plan_crates
@@ -207,7 +209,7 @@ run_test_consumer() {
   : >"$command_log"
 
   if ! (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     export HOME="$command_home"
     export PATH="$command_bin:$jq_dir:/usr/bin:/bin"
     export MOCK_LOG="$command_log"
@@ -265,7 +267,7 @@ run_check_consumer() {
   : >"$command_log"
 
   if ! (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     export HOME="$command_home"
     export PATH="$command_bin:$jq_dir:/usr/bin:/bin"
     export MOCK_LOG="$command_log"
@@ -325,7 +327,7 @@ run_check_all_consumer() {
   : >"$command_log"
 
   if ! (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     export HOME="$command_home"
     export PATH="$command_bin:$jq_dir:/usr/bin:/bin"
     export MOCK_LOG="$command_log"
@@ -352,12 +354,14 @@ run_workflow_resolver() {
   local outcome=$2
   local scope=$3
   local expected=$4
+  local surfaces=${5:-}
   local output="$TMP_ROOT/resolver-$name.outputs"
 
   : >"$output"
   if ! GITHUB_OUTPUT="$output" \
     RAIL_PLAN_STEP_OUTCOME="$outcome" \
     RAIL_SCOPE_JSON="$scope" \
+    RAIL_SURFACES_JSON="$surfaces" \
     bash "$REPO_ROOT/scripts/ci/resolve-rail-plan.sh"; then
     fail "workflow resolver failed for $name"
   fi
@@ -370,5 +374,12 @@ run_workflow_resolver malformed-scope success '{' "$fallback_outputs"
 run_workflow_resolver valid-empty success "$EMPTY_SCOPE" $'valid=true\nempty=true\nbuild=false\ntest=false\ninfra=false\ncargo_graph=false'
 run_workflow_resolver valid-workspace success "$WORKSPACE_SCOPE" $'valid=true\nempty=false\nbuild=true\ntest=true\ninfra=false\ncargo_graph=false'
 run_workflow_resolver valid-crates success "$CRATES_SCOPE" $'valid=true\nempty=false\nbuild=true\ntest=true\ninfra=false\ncargo_graph=false'
+run_workflow_resolver action-workspace success "$ACTION_WORKSPACE_SCOPE" \
+  $'valid=true\nempty=false\nbuild=true\ntest=true\ninfra=false\ncargo_graph=false' \
+  "$ACTION_WORKSPACE_SURFACES"
+run_workflow_resolver action-missing-surfaces success "$ACTION_WORKSPACE_SCOPE" "$fallback_outputs"
+run_workflow_resolver action-malformed-surfaces success "$ACTION_WORKSPACE_SCOPE" "$fallback_outputs" '{'
+run_workflow_resolver action-mismatched-surfaces success "$WORKSPACE_SCOPE" "$fallback_outputs" \
+  "$(jq -c '.test = false' <<<"$ACTION_WORKSPACE_SURFACES")"
 
 echo "Changed-test planning regression tests passed"
