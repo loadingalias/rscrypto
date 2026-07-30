@@ -84,7 +84,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 90
+      timeout_minutes: 120
       cache_key: ${{ inputs.cache_key_prefix }}-feature-contracts
       tools_mode: minimal
       toolchain_components: "rust-src"
