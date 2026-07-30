@@ -926,13 +926,13 @@ fn wycheproof_rsaes_pkcs1v15_4096_cases_1_to_35_match_expected_results() {
 }
 
 #[test]
-fn wycheproof_rsaes_pkcs1v15_4096_cases_36_to_51_match_expected_results() {
+fn wycheproof_rsaes_pkcs1v15_4096_cases_36_to_39_match_expected_results() {
   assert_rsaes_pkcs1v15_wycheproof_vectors(
     RSAES_PKCS1_4096,
     4096,
-    1..17,
+    1..5,
     ExpectedCounts {
-      valid: 16,
+      valid: 4,
       acceptable: 0,
       invalid: 0,
     },
@@ -940,15 +940,99 @@ fn wycheproof_rsaes_pkcs1v15_4096_cases_36_to_51_match_expected_results() {
 }
 
 #[test]
-fn wycheproof_rsaes_pkcs1v15_4096_cases_52_to_67_match_expected_results() {
+fn wycheproof_rsaes_pkcs1v15_4096_cases_40_to_43_match_expected_results() {
   assert_rsaes_pkcs1v15_wycheproof_vectors(
     RSAES_PKCS1_4096,
     4096,
-    17..RSAES_PKCS1_GROUP_COUNT,
+    5..9,
     ExpectedCounts {
-      valid: 15,
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_44_to_47_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    9..13,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_48_to_51_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    13..17,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_52_to_55_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    17..21,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_56_to_59_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    21..25,
+    ExpectedCounts {
+      valid: 3,
       acceptable: 0,
       invalid: 1,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_60_to_63_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    25..29,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_64_to_67_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    29..RSAES_PKCS1_GROUP_COUNT,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
     },
   );
 }
