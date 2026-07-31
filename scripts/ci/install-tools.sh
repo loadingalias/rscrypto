@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install exact CI tools through authenticated package-manager boundaries.
+# Install CI tools through authenticated package-manager boundaries.
 # Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
@@ -27,16 +27,16 @@ BINSEC_DECODER_PACKAGE=unisim_archisec.0.0.14
 BINSEC_SOLVER_PACKAGES=(bitwuzla.1.0.6 bitwuzla-cxx.0.9.0)
 
 BINSEC_APT_PACKAGES=(
-  build-essential=12.10ubuntu1
-  git=1:2.43.0-1ubuntu7.3
-  libgmp-dev=2:6.3.0+dfsg-2ubuntu6
-  libmpfr-dev=4.2.1-1build1
-  m4=1.4.19-4build1
-  opam=2.1.5-1
-  pkg-config=1.8.1-2build1
-  zlib1g-dev=1:1.3.dfsg-3.1ubuntu2
+  build-essential
+  git
+  libgmp-dev
+  libmpfr-dev
+  m4
+  opam
+  pkg-config
+  zlib1g-dev
 )
-MUSL_APT_PACKAGE=musl-tools=1.2.4-2
+MUSL_APT_PACKAGE=musl-tools
 
 RSCRYPTO_TOOL_TEMP=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 [[ -d "$RSCRYPTO_TOOL_TEMP" ]] || {
@@ -153,19 +153,32 @@ require_ubuntu_24_04() {
   os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')
   os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"')
   [[ "$os_id" == ubuntu && "$os_version" == 24.04 ]] \
-    || fail "exact APT pins support Ubuntu 24.04, found $os_id $os_version"
+    || fail "APT package installation supports Ubuntu 24.04, found $os_id $os_version"
 }
 
-apt_install_exact() {
+apt_install_authenticated_candidates() {
   require_ubuntu_24_04
   command -v apt-get >/dev/null 2>&1 || fail "apt-get is required"
+  command -v apt-cache >/dev/null 2>&1 || fail "apt-cache is required"
   command -v dpkg-query >/dev/null 2>&1 || fail "dpkg-query is required"
 
-  sudo apt-get update
-  sudo apt-get install -y --no-install-recommends --allow-downgrades "$@"
+  sudo apt-get --no-allow-insecure-repositories --error-on=any update
 
-  local specification package expected actual
-  for specification in "$@"; do
+  local -a specifications=()
+  local package candidate
+  for package in "$@"; do
+    candidate=$(LC_ALL=C apt-cache policy "$package" | sed -n 's/^[[:space:]]*Candidate:[[:space:]]*//p')
+    [[ -n "$candidate" && "$candidate" != "(none)" ]] \
+      || fail "signed APT metadata has no candidate for $package"
+    specifications+=("$package=$candidate")
+  done
+
+  sudo apt-get install -y --no-install-recommends \
+    --no-allow-unauthenticated --no-allow-downgrades --no-remove \
+    "${specifications[@]}"
+
+  local specification expected actual
+  for specification in "${specifications[@]}"; do
     package=${specification%%=*}
     expected=${specification#*=}
     actual=$(dpkg-query -W -f='${Version}' "$package") \
@@ -182,7 +195,7 @@ install_binsec_system_packages() {
   if [[ "${BINSEC_SYSTEM_PACKAGES_READY:-}" == 1 ]]; then
     return 0
   fi
-  apt_install_exact "${BINSEC_APT_PACKAGES[@]}"
+  apt_install_authenticated_candidates "${BINSEC_APT_PACKAGES[@]}"
   BINSEC_SYSTEM_PACKAGES_READY=1
 }
 
@@ -253,7 +266,7 @@ install_binsec() {
 }
 
 install_ct_linux_packages() {
-  apt_install_exact "${BINSEC_APT_PACKAGES[@]}" "$MUSL_APT_PACKAGE"
+  apt_install_authenticated_candidates "${BINSEC_APT_PACKAGES[@]}" "$MUSL_APT_PACKAGE"
   BINSEC_SYSTEM_PACKAGES_READY=1
 }
 

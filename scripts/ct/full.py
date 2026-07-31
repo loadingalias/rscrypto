@@ -1249,6 +1249,7 @@ def main() -> int:
           "harness_elf_type": report.get("harness_elf_type"),
           "load_sections": report.get("load_sections"),
           "binsec_version": report.get("binsec_version"),
+          "binsec_sha256": report.get("binsec_sha256"),
           "artifacts": report.get("artifacts", {}),
           "artifact_dir": str(report_path.parent.relative_to(out_dir)),
         }

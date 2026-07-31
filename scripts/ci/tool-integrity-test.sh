@@ -382,18 +382,37 @@ set -euo pipefail
 printf 'apt-get %s\n' "$*" >>"$MOCK_PACKAGE_LOG"
 SH
 
+cat >"$package_bin/apt-cache" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == policy && $# == 2 ]]
+case "$2" in
+  build-essential) candidate=12.10ubuntu1 ;;
+  git) candidate=1:2.54.0-0ppa1~ubuntu24.04.1 ;;
+  libgmp-dev) candidate=2:6.3.0+dfsg-2ubuntu6.1 ;;
+  libmpfr-dev) candidate=4.2.1-1build1.1 ;;
+  m4) candidate=1.4.19-4build1 ;;
+  opam) candidate=2.1.5-1 ;;
+  pkg-config) candidate=1.8.1-2build1 ;;
+  zlib1g-dev) candidate=1:1.3.dfsg-3.1ubuntu2.1 ;;
+  musl-tools) candidate=1.2.4-2 ;;
+  *) candidate='(none)' ;;
+esac
+printf '%s:\n  Candidate: %s\n' "$2" "$candidate"
+SH
+
 cat >"$package_bin/dpkg-query" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${*: -1}" in
   build-essential) printf '12.10ubuntu1' ;;
-  git) printf '1:2.43.0-1ubuntu7.3' ;;
-  libgmp-dev) printf '2:6.3.0+dfsg-2ubuntu6' ;;
-  libmpfr-dev) printf '4.2.1-1build1' ;;
+  git) printf '1:2.54.0-0ppa1~ubuntu24.04.1' ;;
+  libgmp-dev) printf '2:6.3.0+dfsg-2ubuntu6.1' ;;
+  libmpfr-dev) printf '4.2.1-1build1.1' ;;
   m4) printf '1.4.19-4build1' ;;
   opam) printf '2.1.5-1' ;;
   pkg-config) printf '1.8.1-2build1' ;;
-  zlib1g-dev) printf '1:1.3.dfsg-3.1ubuntu2' ;;
+  zlib1g-dev) printf '1:1.3.dfsg-3.1ubuntu2.1' ;;
   musl-tools) printf '1.2.4-2' ;;
   *) exit 96 ;;
 esac
@@ -442,7 +461,7 @@ EOF
   *) exit 97 ;;
 esac
 SH
-chmod +x "$package_bin/sudo" "$package_bin/apt-get" \
+chmod +x "$package_bin/sudo" "$package_bin/apt-get" "$package_bin/apt-cache" \
   "$package_bin/dpkg-query" "$package_bin/git" "$package_bin/opam"
 
 ct_home="$TMP_ROOT/ct-home"
@@ -465,8 +484,14 @@ HOME="$ct_home" \
   MOCK_CARGO_STATE="$ct_state" \
   "$ct_installer" ct-linux >/dev/null
 grep -Fq \
-  'apt-get install -y --no-install-recommends --allow-downgrades build-essential=12.10ubuntu1 git=1:2.43.0-1ubuntu7.3' \
-  "$ct_log" || fail "ct-linux did not select exact Ubuntu package versions"
+  'apt-get --no-allow-insecure-repositories --error-on=any update' \
+  "$ct_log" || fail "ct-linux did not require authenticated APT metadata"
+grep -Fq \
+  'apt-get install -y --no-install-recommends --no-allow-unauthenticated --no-allow-downgrades --no-remove build-essential=12.10ubuntu1 git=1:2.54.0-0ppa1~ubuntu24.04.1 libgmp-dev=2:6.3.0+dfsg-2ubuntu6.1' \
+  "$ct_log" || fail "ct-linux did not install signed Ubuntu package candidates exactly"
+if grep -Fq -- '--allow-downgrades' "$ct_log"; then
+  fail "ct-linux permits APT package downgrades"
+fi
 grep -Fq \
   'opam init --bare --disable-sandboxing --no-setup --no-opamrc -y default git+https://github.com/ocaml/opam-repository.git#49f6d620cf20ae0168cfcbeb2c33932e06cb4b74' \
   "$ct_log" || fail "ct-linux did not select the commit-pinned OPAM repository"

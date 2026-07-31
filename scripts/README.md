@@ -117,13 +117,16 @@ Package-manager tools install into a fresh runner-temporary root; CI never
 restores Cargo binaries, Cargo install metadata, Go module state, or OPAM
 switches from a cache. Cargo installs exact crates from crates.io and
 authenticates crate contents against registry checksums. Go installs an exact
-module through the public checksum database. Ubuntu 24.04 APT packages are
-exact-versioned and authenticated by signed repository metadata. OPAM uses
-exact packages from a repository pinned to a full Git commit and verifies
-package source hashes from that immutable metadata. Rustup receives only the
-exact toolchain declared in `rust-toolchain.toml`; runner images must provide
-rustup, which verifies component downloads against the exact distribution
-manifest, because network bootstrap installers are rejected.
+module through the public checksum database. Ubuntu 24.04 APT dependencies
+resolve from signed repository metadata; installation pins each signed
+candidate selected after the metadata refresh, verifies the installed version,
+and refuses downgrades. OPAM uses exact packages from a repository pinned to a
+full Git commit and verifies package source hashes from that immutable metadata.
+CT formal reports bind the resulting BINSEC executable by SHA-256. Rustup
+receives only the exact toolchain declared in `rust-toolchain.toml`; runner
+images must provide rustup, which verifies component downloads against the
+exact distribution manifest, because network bootstrap installers are
+rejected.
 
 ## Results layout
 

@@ -2601,8 +2601,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2213
-compiler_api_sha256 = "fb59896b61abe49775660d719c8a1ca4e59fcc92a3916761bbee638c3ca48a63"
+compiler_api_item_count = 2221
+compiler_api_sha256 = "7a10185323957d7666b51b29cfab3969036f5551b2d5bd8345a8c1830610aed6"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2613,8 +2613,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2207
-compiler_api_sha256 = "08cc01250a413b6a22ad4452929729402c0e75d7116e0764530d5d15e3c01dc0"
+compiler_api_item_count = 2215
+compiler_api_sha256 = "44d494189799045ed6e0ffcb3e2c7453868d62f39f9a069c31ede5d28a65f7b5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2673,8 +2673,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2207
-compiler_api_sha256 = "08cc01250a413b6a22ad4452929729402c0e75d7116e0764530d5d15e3c01dc0"
+compiler_api_item_count = 2215
+compiler_api_sha256 = "44d494189799045ed6e0ffcb3e2c7453868d62f39f9a069c31ede5d28a65f7b5"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2698,8 +2698,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2206
-compiler_api_sha256 = "b1c300ed5569669efe1726fca9f1fc03b11793de5880f5a33d0493ad2fcf2eb7"
+compiler_api_item_count = 2214
+compiler_api_sha256 = "1f23434a153550dc9ada6bff47a9c7c89adc1763629827e940f4ad69e3be074c"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2711,8 +2711,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2206
-compiler_api_sha256 = "2bc05f66966a8b7e30e717a6b285e6b99bff8e0022852b0533fc7b2cc19d8381"
+compiler_api_item_count = 2214
+compiler_api_sha256 = "37793296770a82d75102f92a8630a9b3f9d90b59de36939ff3505554d6f66b92"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2724,8 +2724,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2206
-compiler_api_sha256 = "ee4ede7e88fa2e22d936693badd3e0b95e40d622394e6ab9991804f10b4871df"
+compiler_api_item_count = 2214
+compiler_api_sha256 = "8f5377e62133152ba74f5623313079a862b2632fe69efd8a7535d69d2b0aef78"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3047,16 +3047,24 @@ limitation = "HKDF-SHA512 has source, vector, differential, and optimized zeroiz
 
 [[operation]]
 id = "kdf.pbkdf2_derive_and_verify"
-api = ["rscrypto::Pbkdf2Sha{256,512}::{derive,verify,verify_password}", "rscrypto::Pbkdf2Params::*", "rscrypto::Pbkdf2VerifyPolicy::*"]
+api = [
+  "rscrypto::Pbkdf2Sha{256,512}::{new,params,params_with_policy,params_with_policy_bounded}",
+  "rscrypto::Pbkdf2Sha{256,512}::{derive,derive_with_params,derive_array,derive_array_with_params}",
+  "rscrypto::Pbkdf2Sha{256,512}::{derive_key,derive_key_with_params,derive_key_primitive,derive_key_array,derive_key_array_with_params,derive_key_array_primitive}",
+  "rscrypto::Pbkdf2Sha{256,512}::{verify,verify_with_policy,verify_with_policy_bounded,verify_primitive}",
+  "rscrypto::Pbkdf2Sha{256,512}::{verify_password,verify_password_with_policy,verify_password_with_policy_bounded,verify_password_primitive}",
+  "rscrypto::Pbkdf2Params::*",
+  "rscrypto::Pbkdf2VerifyPolicy::*",
+]
 features = ["pbkdf2", "alloc", "phc-strings"]
 targets = ["all-supported"]
 secret_inputs = ["password", "derived key", "computed verifier"]
-public_inputs = ["salt", "iteration count", "output length", "PHC string", "verification policy"]
-variable_time_components = ["public iteration count", "public output-length loops", "PHC parsing and policy rejection", "public-length full-content comparison"]
-permitted_leakage = ["parameters", "salt", "lengths", "policy decision", "opaque verification result"]
+public_inputs = ["salt", "iteration count", "caller-selected maximum iteration count", "output length", "PHC string", "verification policy"]
+variable_time_components = ["public iteration count", "public output-length loops", "PHC parsing and public work-policy rejection", "public-length full-content comparison"]
+permitted_leakage = ["parameters", "salt", "lengths", "public work-policy decision", "opaque verification result"]
 claim = "ct-intended"
 evidence = ["primitive:kdf.pbkdf2", "unit:kdf.pbkdf2.sha256", "unit:kdf.pbkdf2.sha512"]
-limitation = "Primitive verify accepts a caller-selected public output length; PHC helpers pin and approve resource bounds before deriving."
+limitation = "Iteration count, policy minima, and max_iterations are public. Bounded verification rejects excessive public work before constructing password-derived HMAC state; primitive and compatibility methods deliberately do not cap it."
 
 [[operation]]
 id = "password.argon2i"

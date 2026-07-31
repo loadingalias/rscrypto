@@ -207,8 +207,9 @@ date. Source or disassembly movement invalidates it.
 BINSEC is required on the GNU Linux targets supported by the workflow. Every
 manifest-required kernel must report `secure`. Other target reports record
 BINSEC as `not_applicable` with the target policy reason; that status is not
-binary proof. Each formal result is bound to its hashed proof driver,
-disassembly, configuration, solver log, candidate identity, and toolchain.
+binary proof. Each formal result is bound to the exact BINSEC executable hash,
+hashed proof driver, disassembly, configuration, solver log, candidate
+identity, and toolchain.
 
 Statistical timing checks must be described precisely:
 
