@@ -31,6 +31,7 @@ TOOLCHAIN_ACTION="$ACTIONS/setup-toolchain/action.yaml"
 SCORECARD_ACTION="$ACTIONS/scorecard/action.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
 TOOL_ARCHIVES="$ROOT/.config/ci-tool-archives.tsv"
+CARGO_CONFIG="$ROOT/.cargo/config.toml"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
 NOSTD_WASM="$ROOT/scripts/ci/nostd-wasm-suite.sh"
 INSTALL_TOOLS="$ROOT/scripts/ci/install-tools.sh"
@@ -112,6 +113,7 @@ require_file "$TOOLCHAIN_ACTION"
 require_file "$SCORECARD_ACTION"
 require_file "$MANIFEST"
 require_file "$TOOL_ARCHIVES"
+require_file "$CARGO_CONFIG"
 require_file "$CROSS_SCRIPT"
 require_file "$NOSTD_WASM"
 require_file "$INSTALL_TOOLS"
@@ -184,6 +186,20 @@ grep -Fq 'if [[ "$PLAN_VALID" != "true" || "$PLAN_EMPTY" != "true" ]]' "$CI" \
 
 if grep -ERn '^[[:space:]]+(pre_script|run_script):' "$WORKFLOWS" >/dev/null; then
   fail "reusable workflows must not accept executable shell fragments"
+fi
+if grep -ERin '(^|[^[:alnum:]_])(macos|darwin|apple)([^[:alnum:]_]|$)' "$WORKFLOWS" >/dev/null; then
+  fail "Apple platform testing must remain local and must not appear in CI workflows"
+fi
+if awk '
+  /^\[target\./ {
+    apple_target = tolower($0) ~ /(apple-darwin|target_os[[:space:]]*=[[:space:]]*"macos")/
+    next
+  }
+  /^\[/ { apple_target = 0 }
+  apple_target && /^[[:space:]]*rustflags[[:space:]]*=/ { found = 1 }
+  END { exit !found }
+' "$CARGO_CONFIG"; then
+  fail "Apple targets must not receive implicit rustflags from .cargo/config.toml"
 fi
 rust_job_calls=$(count_matches 'uses:[[:space:]]+\./\.github/workflows/_rust-job\.yaml' "$WORKFLOWS")
 rust_job_operations=$(count_matches '^[[:space:]]+operation:[[:space:]]+[-[:alnum:]]+[[:space:]]*$' "$WORKFLOWS")
@@ -347,8 +363,15 @@ grep -Fq 'go install "github.com/rhysd/actionlint/cmd/actionlint@v$ACTIONLINT_VE
 opam_commit=$(sed -n 's/^OPAM_REPOSITORY_COMMIT=//p' "$INSTALL_TOOLS")
 [[ "$opam_commit" =~ ^[0-9a-f]{40}$ ]] \
   || fail "OPAM repository must use a full Git commit"
+[[ $(sed -n 's/^OPAM_REPOSITORY_REMOTE=//p' "$INSTALL_TOOLS") \
+  == "https://github.com/ocaml/opam-repository.git" ]] \
+  || fail "OPAM repository must use the reviewed HTTPS remote"
+grep -Fq 'git -C "$repository" fetch --depth=1 --no-tags' "$INSTALL_TOOLS" \
+  || fail "OPAM repository must fetch only the pinned commit"
 grep -Fq 'actual=$(git -C "$repository" rev-parse HEAD)' "$INSTALL_TOOLS" \
   || fail "OPAM metadata must be checked against its pinned commit"
+grep -Fq 'status=$(git -C "$repository" status --short --untracked-files=all)' "$INSTALL_TOOLS" \
+  || fail "OPAM metadata must match the pinned commit exactly"
 grep -Fq 'actual=$(dpkg-query -W -f=' "$INSTALL_TOOLS" \
   || fail "APT packages must be validated against exact versions"
 grep -Fq 'ci_tool_download wasmtime' "$NOSTD_WASM" \

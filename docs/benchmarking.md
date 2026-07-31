@@ -103,3 +103,5 @@ just bench mlkem
 
 Local runs are useful for capacity planning on your hardware. They should not be
 mixed with published claims unless the run metadata and raw results are kept.
+On macOS, the local benchmark entry point selects the host CPU unless the caller
+provides `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS`; normal builds remain portable.

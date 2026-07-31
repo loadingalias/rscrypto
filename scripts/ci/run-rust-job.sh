@@ -390,52 +390,6 @@ run_rsa_leakage() {
   } 2>&1 | tee "ci-evidence/rsa-leakage-$target.log"
 }
 
-run_rsa_darwin_aarch64_asm() {
-  mkdir -p ci-evidence
-  {
-    uname -a
-    [[ "$(uname -s)" == Darwin ]] || die "RSA Darwin assembly evidence requires macOS"
-    [[ "$(uname -m)" == arm64 ]] || die "RSA Darwin assembly evidence requires Arm64"
-    [[ "$(rustc -vV | sed -n 's/^host: //p')" == aarch64-apple-darwin ]] \
-      || die "RSA Darwin assembly evidence requires the aarch64-apple-darwin Rust host"
-    sysctl -n machdep.cpu.brand_string
-
-    assert_single_libtest \
-      auth::rsa::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths \
-      cargo test --locked --features rsa,diag,getrandom --lib --
-    cargo test --locked --features rsa,diag,getrandom --lib \
-      auth::rsa::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths \
-      -- --exact --nocapture
-    assert_single_libtest \
-      auth::rsa::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths \
-      cargo test --locked --release --features rsa,diag,getrandom --lib --
-    cargo test --locked --release --features rsa,diag,getrandom --lib \
-      auth::rsa::tests::aarch64_macos_rsa_montgomery_asm_matches_portable_across_supported_widths \
-      -- --exact --nocapture
-
-    local build_output binary
-    build_output=$(cargo test --locked --release --features rsa,diag \
-      --test rsa_public_key --no-run --message-format=json)
-    binary=$(printf '%s\n' "$build_output" \
-      | sed -n 's/.*"executable":"\([^"]*rsa_public_key-[^"]*\)".*/\1/p' \
-      | tail -n 1)
-    [[ -n "$binary" && -x "$binary" ]] \
-      || die "unable to resolve the optimized rsa_public_key test binary"
-    printf 'Optimized RSA test binary: %s\n' "$binary"
-    assert_single_libtest public_operation_montgomery_candidates_match_current_path "$binary"
-    "$binary" public_operation_montgomery_candidates_match_current_path --exact --nocapture
-
-    file "$binary" | grep -Fq 'Mach-O 64-bit executable arm64' \
-      || die "optimized rsa_public_key test binary is not Arm64 Mach-O"
-    nm -m "$binary" | grep -Fq '_rscrypto_rsa_bn_mul_mont_words_apple' \
-      || die "optimized rsa_public_key test binary lacks the Apple Montgomery multiply"
-    nm -m "$binary" | grep -Fq '_rscrypto_rsa_mont_reduce_cios_32_aarch64_apple_darwin' \
-      || die "optimized rsa_public_key test binary lacks the Apple 32-word Montgomery reduction"
-    nm -m "$binary" | grep -Fq '_rscrypto_rsa_mont_reduce_cios_words_aarch64_apple_darwin' \
-      || die "optimized rsa_public_key test binary lacks the Apple generic Montgomery reduction"
-  } 2>&1 | tee ci-evidence/rsa-darwin-aarch64-asm.log
-}
-
 run_rsa_linux_x86_64_asm() {
   mkdir -p ci-evidence
   {
@@ -476,11 +430,14 @@ run_rsa_linux_x86_64_asm() {
     assert_single_libtest public_operation_montgomery_candidates_match_current_path "$binary"
     "$binary" public_operation_montgomery_candidates_match_current_path --exact --nocapture
 
-    file "$binary" | grep -Fq 'ELF 64-bit LSB pie executable, x86-64' \
+    local binary_description binary_symbols
+    binary_description=$(file "$binary") || die "unable to inspect the optimized rsa_public_key test binary"
+    [[ "$binary_description" == *"ELF 64-bit LSB pie executable, x86-64"* ]] \
       || die "optimized rsa_public_key test binary is not x86-64 ELF"
-    nm "$binary" | grep -Fq 'rscrypto_rsa_bn_mulx4x_mont_x86_64_elf' \
+    binary_symbols=$(nm "$binary") || die "unable to read the optimized rsa_public_key symbol table"
+    [[ "$binary_symbols" == *"rscrypto_rsa_bn_mulx4x_mont_x86_64_elf"* ]] \
       || die "optimized rsa_public_key test binary lacks the x86-64 Montgomery multiply"
-    nm "$binary" | grep -Fq 'rscrypto_rsa_bn_sqr8x_mont_x86_64_elf' \
+    [[ "$binary_symbols" == *"rscrypto_rsa_bn_sqr8x_mont_x86_64_elf"* ]] \
       || die "optimized rsa_public_key test binary lacks the x86-64 Montgomery square"
   } 2>&1 | tee ci-evidence/rsa-linux-x86_64-asm.log
 }
@@ -511,7 +468,6 @@ main() {
     constant-time) run_constant_time ;;
     rsa-miri) run_rsa_miri ;;
     rsa-leakage) run_rsa_leakage ;;
-    rsa-darwin-aarch64-asm) run_rsa_darwin_aarch64_asm ;;
     rsa-linux-x64-asm) run_rsa_linux_x86_64_asm ;;
     *) die "unsupported operation: $operation" ;;
   esac

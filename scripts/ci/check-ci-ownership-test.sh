@@ -9,7 +9,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 make_fixture() {
   local fixture=$1
-  mkdir -p "$fixture/.github" "$fixture/.config" "$fixture/scripts/check" "$fixture/scripts/lib" "$fixture/scripts/test"
+  mkdir -p "$fixture/.cargo" "$fixture/.github" "$fixture/.config" \
+    "$fixture/scripts/check" "$fixture/scripts/lib" "$fixture/scripts/test"
+  cp "$REPO_ROOT/.cargo/config.toml" "$fixture/.cargo/config.toml"
   cp -R "$REPO_ROOT/.github/workflows" "$fixture/.github/workflows"
   cp -R "$REPO_ROOT/.github/actions" "$fixture/.github/actions"
   cp -R "$REPO_ROOT/.github/rulesets" "$fixture/.github/rulesets"
@@ -37,6 +39,24 @@ expect_failure() {
 baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
+
+hosted_macos="$TMP_ROOT/hosted-macos"
+make_fixture "$hosted_macos"
+yq eval '.jobs.hosted_macos = {"runs-on": "macos-15", "steps": [{"run": "true"}]}' -i \
+  "$hosted_macos/.github/workflows/rsa.yaml"
+expect_failure "$hosted_macos" "macOS testing is delegated to a hosted runner"
+
+apple_runner_alias="$TMP_ROOT/apple-runner-alias"
+make_fixture "$apple_runner_alias"
+yq eval '.jobs.apple_runner = {"uses": "./.github/workflows/_rust-job.yaml", "with": {"runner": "darwin", "operation": "check"}}' -i \
+  "$apple_runner_alias/.github/workflows/rsa.yaml"
+expect_failure "$apple_runner_alias" "Apple testing is delegated through a custom runner label"
+
+apple_rustflags="$TMP_ROOT/apple-rustflags"
+make_fixture "$apple_rustflags"
+printf '\n[target.aarch64-apple-darwin]\nrustflags = ["-C", "target-cpu=native"]\n' \
+  >>"$apple_rustflags/.cargo/config.toml"
+expect_failure "$apple_rustflags" "normal Apple builds inherit host-specific rustflags"
 
 invalid_tool_digest="$TMP_ROOT/invalid-tool-digest"
 make_fixture "$invalid_tool_digest"

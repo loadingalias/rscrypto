@@ -422,8 +422,39 @@ cat >"$package_bin/git" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'git %s\n' "$*" >>"$MOCK_PACKAGE_LOG"
-[[ "$1" == -C && "$3" == rev-parse && "$4" == HEAD ]]
-printf '49f6d620cf20ae0168cfcbeb2c33932e06cb4b74\n'
+case "$1" in
+  init)
+    [[ "$2" == --quiet ]]
+    mkdir -p "$3/.git"
+    ;;
+  -C)
+    repository=$2
+    shift 2
+    case "$1" in
+      fetch)
+        [[ "$2" == --depth=1 && "$3" == --no-tags ]]
+        [[ "$4" == https://github.com/ocaml/opam-repository.git ]]
+        [[ "$5" == 49f6d620cf20ae0168cfcbeb2c33932e06cb4b74 ]]
+        ;;
+      checkout)
+        [[ "$2" == --quiet && "$3" == --detach && "$4" == FETCH_HEAD ]]
+        ;;
+      rev-parse)
+        [[ "$2" == HEAD ]]
+        printf '%s\n' "${MOCK_GIT_HEAD:-49f6d620cf20ae0168cfcbeb2c33932e06cb4b74}"
+        ;;
+      status)
+        [[ "$2" == --short && "$3" == --untracked-files=all ]]
+        if [[ "${MOCK_GIT_DIRTY:-0}" == 1 ]]; then
+          printf ' M packages/binsec/binsec.0.11.1/opam\n'
+        fi
+        ;;
+      *) exit 95 ;;
+    esac
+    [[ -d "$repository/.git" ]]
+    ;;
+  *) exit 94 ;;
+esac
 SH
 
 cat >"$package_bin/opam" <<'SH'
@@ -431,9 +462,7 @@ cat >"$package_bin/opam" <<'SH'
 set -euo pipefail
 printf 'opamroot=%s opam %s\n' "$OPAMROOT" "$*" >>"$MOCK_PACKAGE_LOG"
 case "$1" in
-  init)
-    mkdir -p "$OPAMROOT/repo/default/.git"
-    ;;
+  init) ;;
   switch)
     [[ "$2" == create ]]
     ;;
@@ -492,11 +521,38 @@ grep -Fq \
 if grep -Fq -- '--allow-downgrades' "$ct_log"; then
   fail "ct-linux permits APT package downgrades"
 fi
-grep -Fq \
-  'opam init --bare --disable-sandboxing --no-setup --no-opamrc -y default git+https://github.com/ocaml/opam-repository.git#49f6d620cf20ae0168cfcbeb2c33932e06cb4b74' \
-  "$ct_log" || fail "ct-linux did not select the commit-pinned OPAM repository"
+grep -Eq \
+  '^git -C .*/ct-temp/rscrypto-ci-tools\.[^/]+/opam-repository fetch --depth=1 --no-tags https://github.com/ocaml/opam-repository\.git 49f6d620cf20ae0168cfcbeb2c33932e06cb4b74$' \
+  "$ct_log" || fail "ct-linux did not fetch the exact OPAM repository commit"
+grep -Eq \
+  '^opamroot=.*/ct-temp/rscrypto-ci-tools\.[^/]+/opam opam init --bare --disable-sandboxing --no-setup --no-opamrc -y default .*/ct-temp/rscrypto-ci-tools\.[^/]+/opam-repository$' \
+  "$ct_log" || fail "ct-linux did not initialize OPAM from the verified checkout"
 grep -Eq '^opamroot=.*/ct-temp/rscrypto-ci-tools\.[^/]+/opam opam switch create rscrypto-ct ocaml-base-compiler\.5\.2\.1 ' \
   "$ct_log" || fail "ct-linux did not use a fresh exact OPAM switch"
+
+bad_commit_temp="$TMP_ROOT/ct-bad-commit"
+mkdir -p "$bad_commit_temp"
+if HOME="$ct_home" \
+  RUNNER_TEMP="$bad_commit_temp" \
+  PATH="$package_bin:$PATH" \
+  MOCK_PACKAGE_LOG="$TMP_ROOT/ct-bad-commit.log" \
+  MOCK_CARGO_STATE="$ct_state" \
+  MOCK_GIT_HEAD=0000000000000000000000000000000000000000 \
+  "$ct_installer" ct-linux >/dev/null 2>&1; then
+  fail "ct-linux accepted the wrong OPAM repository commit"
+fi
+
+dirty_repository_temp="$TMP_ROOT/ct-dirty-repository"
+mkdir -p "$dirty_repository_temp"
+if HOME="$ct_home" \
+  RUNNER_TEMP="$dirty_repository_temp" \
+  PATH="$package_bin:$PATH" \
+  MOCK_PACKAGE_LOG="$TMP_ROOT/ct-dirty-repository.log" \
+  MOCK_CARGO_STATE="$ct_state" \
+  MOCK_GIT_DIRTY=1 \
+  "$ct_installer" ct-linux >/dev/null 2>&1; then
+  fail "ct-linux accepted modified OPAM repository metadata"
+fi
 
 for contract in \
   'cargo-nextest =0.9.140' \

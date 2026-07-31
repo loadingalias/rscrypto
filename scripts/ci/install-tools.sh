@@ -20,7 +20,7 @@ CARGO_LLVM_COV_VERSION=0.8.7
 ACTIONLINT_VERSION=1.7.12
 
 OPAM_REPOSITORY_COMMIT=49f6d620cf20ae0168cfcbeb2c33932e06cb4b74
-OPAM_REPOSITORY_URL="git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY_COMMIT"
+OPAM_REPOSITORY_REMOTE=https://github.com/ocaml/opam-repository.git
 OCAML_COMPILER_PACKAGE=ocaml-base-compiler.5.2.1
 BINSEC_PACKAGE=binsec.0.11.1
 BINSEC_DECODER_PACKAGE=unisim_archisec.0.0.14
@@ -200,13 +200,25 @@ install_binsec_system_packages() {
 }
 
 verify_opam_repository() {
-  local repository="$OPAMROOT/repo/default"
-  [[ -d "$repository/.git" ]] \
-    || fail "OPAM repository is not the pinned Git checkout"
-  local actual
-  actual=$(git -C "$repository" rev-parse HEAD)
+  local repository=$1
+  local actual status
+  actual=$(git -C "$repository" rev-parse HEAD) \
+    || fail "unable to read the OPAM repository commit"
   [[ "$actual" == "$OPAM_REPOSITORY_COMMIT" ]] \
     || fail "OPAM repository is $actual, expected $OPAM_REPOSITORY_COMMIT"
+  status=$(git -C "$repository" status --short --untracked-files=all) \
+    || fail "unable to verify the OPAM repository worktree"
+  [[ -z "$status" ]] \
+    || fail "OPAM repository differs from its pinned commit"
+}
+
+checkout_opam_repository() {
+  local repository=$1
+  git init --quiet "$repository"
+  git -C "$repository" fetch --depth=1 --no-tags \
+    "$OPAM_REPOSITORY_REMOTE" "$OPAM_REPOSITORY_COMMIT"
+  git -C "$repository" checkout --quiet --detach FETCH_HEAD
+  verify_opam_repository "$repository"
 }
 
 opam_package_is_installed() {
@@ -232,9 +244,11 @@ install_binsec() {
   export OPAMROOT="$RSCRYPTO_TOOL_ROOT/opam"
   export OPAMSWITCH=rscrypto-ct
 
+  local repository="$RSCRYPTO_TOOL_ROOT/opam-repository"
+  checkout_opam_repository "$repository"
   opam init --bare --disable-sandboxing --no-setup --no-opamrc -y \
-    default "$OPAM_REPOSITORY_URL"
-  verify_opam_repository
+    default "$repository"
+  verify_opam_repository "$repository"
 
   opam switch create "$OPAMSWITCH" "$OCAML_COMPILER_PACKAGE" \
     --repositories=default -y
@@ -246,6 +260,7 @@ install_binsec() {
   )
   opam install --switch="$OPAMSWITCH" "${required_packages[@]}" -y
   opam reinstall --switch="$OPAMSWITCH" "$BINSEC_PACKAGE" -y
+  verify_opam_repository "$repository"
   verify_opam_packages
 
   local switch_bin

@@ -169,6 +169,11 @@ RUN_ARCH="$(detect_bench_arch)"
 RUN_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 RUN_MODE="${RSCRYPTO_BENCH_MODE:-local}"
 
+if [[ "$RUN_MODE" == "local" && "$RUN_OS" == "macos" \
+  && -z "${RUSTFLAGS+x}" && -z "${CARGO_ENCODED_RUSTFLAGS+x}" ]]; then
+  export RUSTFLAGS="-C target-cpu=native"
+fi
+
 if [[ "$RUN_MODE" == "local" ]]; then
   RUN_DATE="$(date +"%Y-%m-%d")"
   RUN_TIME="$(date +"%H_%M_%S")"

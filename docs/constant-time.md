@@ -137,9 +137,11 @@ unreviewed hand-written assembly.
 
 Linux MUSL, macOS `x86_64`, Windows MSVC, bare-metal `no_std`, and WASM builds
 may compile and may follow the same coding rules, but physical timing evidence
-is explicitly deferred. Apple Silicon macOS evidence is local rather than part
-of the release bundle. Artifact and heuristic analysis for a deferred target
-must never be represented as native physical timing evidence.
+is explicitly deferred. Apple Silicon macOS evidence is collected on a physical
+local Mac rather than included in the release bundle; `just test-rsa-macos-asm`
+records the RSA assembly equivalence and binary-presence checks. Artifact and
+heuristic analysis for a deferred target must never be represented as native
+physical timing evidence.
 
 `portable-only` constrains runtime dispatch to portable backends. It is useful
 for audit-constrained builds, but it is not a proof by itself.

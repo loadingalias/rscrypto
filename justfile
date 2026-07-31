@@ -142,6 +142,9 @@ test-miri *crates="":
 test-rsa-leakage:
     @scripts/test/test-rsa-leakage.sh
 
+test-rsa-macos-asm:
+    @scripts/test/test-rsa-macos-asm.sh
+
 test-fuzz *args="":
     @scripts/test/test-fuzz.sh {{ args }}
 

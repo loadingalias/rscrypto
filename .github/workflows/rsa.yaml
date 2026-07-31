@@ -58,22 +58,6 @@ jobs:
       artifact_path: ci-evidence/rsa-leakage-${{ matrix.target.name }}.log
       artifact_always: true
 
-  rsa-darwin-aarch64-asm:
-    name: RSA Assembly (macOS Arm64)
-    uses: ./.github/workflows/_rust-job.yaml
-    with:
-      runner: macos-15
-      timeout_minutes: 45
-      cache_key: rsa-darwin-aarch64-asm
-      tools_mode: none
-      toolchain_components: ""
-      enable_magic_cache: false
-      enable_rust_cache: true
-      operation: rsa-darwin-aarch64-asm
-      artifact_name: rsa-darwin-aarch64-asm
-      artifact_path: ci-evidence/rsa-darwin-aarch64-asm.log
-      artifact_always: true
-
   rsa-linux-x86_64-asm:
     name: RSA Assembly (Linux x86-64)
     uses: ./.github/workflows/_rust-job.yaml
@@ -92,7 +76,7 @@ jobs:
 
   complete:
     name: Complete (RSA)
-    needs: [rsa-miri, rsa-leakage, rsa-darwin-aarch64-asm, rsa-linux-x86_64-asm]
+    needs: [rsa-miri, rsa-leakage, rsa-linux-x86_64-asm]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -102,7 +86,6 @@ jobs:
           for lane in \
             "rsa-miri=${{ needs.rsa-miri.result }}" \
             "rsa-leakage=${{ needs.rsa-leakage.result }}" \
-            "rsa-darwin-aarch64-asm=${{ needs.rsa-darwin-aarch64-asm.result }}" \
             "rsa-linux-x86_64-asm=${{ needs.rsa-linux-x86_64-asm.result }}"
           do
             name="${lane%%=*}"

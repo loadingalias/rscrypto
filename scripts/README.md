@@ -25,6 +25,7 @@ the recipes reported by `just --list`.
 | `test/test-fuzz.sh`            | `just test-fuzz`, `ci/run-rust-job.sh` |
 | `test/test-fuzz-asan.sh`       | `just test-fuzz-asan`, `ci/run-rust-job.sh` |
 | `test/test-rsa-leakage.sh`     | `just test-rsa-leakage`, `ci/run-rust-job.sh` |
+| `test/test-rsa-macos-asm.sh`   | `just test-rsa-macos-asm` on a physical local Apple Silicon Mac |
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/check-action-pins.sh`      | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh` |
@@ -55,6 +56,7 @@ the recipes reported by `just --list`.
 | `ci/pre-push.sh`               | `just push`, `just push-full` |
 | `ct/artifacts.sh`              | `just ct`, `just ct-artifacts`, `scripts/ct/full.py` |
 | `ct/dudect.sh`                 | `just ct-dudect`, `scripts/ct/full.py` |
+| `ct/dudect_report_test.py`     | `scripts/check/check.sh` |
 | `ct/python.sh`                 | CT recipes, `ci/run-rust-job.sh`, and Python-backed CT, check, and release scripts |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 

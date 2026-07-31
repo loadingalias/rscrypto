@@ -69,6 +69,7 @@ Use deeper checks where the risk requires them:
 | `unsafe`, SIMD, ASM, or dispatch | Backend equivalence tests and `just test-fuzz-asan --all` where the target runs natively |
 | Portable unsafe path | `just test-miri` |
 | Constant-time claim boundary | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence |
+| Apple Silicon RSA assembly | `just test-rsa-macos-asm` on a physical local Arm64 Mac; GitHub Actions intentionally has no macOS runner |
 | Public API change | `cargo semver-checks --package rscrypto --all-features` |
 | Dependency or release change | `cargo deny check all` and `cargo audit --ignore RUSTSEC-2023-0071` |
 

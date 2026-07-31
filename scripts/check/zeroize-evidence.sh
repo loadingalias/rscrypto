@@ -198,7 +198,7 @@ if [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHAKE_QUAD_IR" || true)" -lt 
 fi
 
 BLAKE3_DROP_WRAPPER="$(sed -n '/define .*@diag_zeroize_blake3_drop(/,/^}/p' "$LLVM_IR")"
-BLAKE3_DROP_SYMBOL="$(sed -n 's/.*call .*@\([^ (]*drop_in_place[^ (]*Blake3[^ (]*\).*/\1/p' \
+BLAKE3_DROP_SYMBOL="$(sed -En 's/.*call .*@([^ (]*drop_(in_place|glue)[^ (]*Blake3[^ (]*).*/\1/p' \
   <<<"$BLAKE3_DROP_WRAPPER" | head -n 1)"
 if [[ -z "$BLAKE3_DROP_SYMBOL" ]]; then
   echo "zeroize LLVM evidence does not route BLAKE3 cleanup through its production Drop" >&2
@@ -213,7 +213,7 @@ if [[ "$BLAKE3_DROP_STORES" -lt 8 ]] || ! grep -q "$BLAKE3_DROP_SYMBOL" "$ASSEMB
 fi
 
 BLAKE3_REUSE_IR="$(sed -n '/define .*@diag_zeroize_blake3_reuse(/,/^}/p' "$LLVM_IR")"
-BLAKE3_REUSE_DROPS="$(grep -c '^[[:space:]]*call .*drop_in_place.*Blake3' <<<"$BLAKE3_REUSE_IR" || true)"
+BLAKE3_REUSE_DROPS="$(grep -Ec '^[[:space:]]*call .*drop_(in_place|glue).*Blake3' <<<"$BLAKE3_REUSE_IR" || true)"
 if [[ "$BLAKE3_REUSE_DROPS" -lt 2 ]]; then
   echo "zeroize release evidence does not wipe both replaced and final BLAKE3 state" >&2
   exit 1
@@ -360,22 +360,22 @@ RSA_SECRET_OWNER_CONSTRUCTION_CALLS="$(
   llvm_calls 'SecretBigEndianBuffer.*zeroed' <<<"$RSA_VALIDATION_IR"
 )"
 RSA_SECRET_OWNER_DROP_CALLS="$(
-  llvm_calls 'drop_in_place.*SecretBigEndianBuffer' <<<"$RSA_VALIDATION_IR"
+  llvm_calls 'drop_(in_place|glue).*SecretBigEndianBuffer' <<<"$RSA_VALIDATION_IR"
 )"
-RSA_SECRET_OWNER_CONSTRUCTIONS="$(grep -c . <<<"$RSA_SECRET_OWNER_CONSTRUCTION_CALLS")"
-RSA_SECRET_OWNER_DROPS="$(grep -c . <<<"$RSA_SECRET_OWNER_DROP_CALLS")"
+RSA_SECRET_OWNER_CONSTRUCTIONS="$(grep -c . <<<"$RSA_SECRET_OWNER_CONSTRUCTION_CALLS" || true)"
+RSA_SECRET_OWNER_DROPS="$(grep -c . <<<"$RSA_SECRET_OWNER_DROP_CALLS" || true)"
 RSA_SECRET_CONSTRUCTION_OPERANDS="$(
   sed -n 's/.*(ptr [^%]*\(%[^,)]*\).*/\1/p' <<<"$RSA_SECRET_OWNER_CONSTRUCTION_CALLS" |
     sort -u |
-    grep -c .
+    grep -c . || true
 )"
 RSA_SECRET_DROP_OPERANDS="$(
   sed -n 's/.*(ptr [^%]*\(%[^,)]*\).*/\1/p' <<<"$RSA_SECRET_OWNER_DROP_CALLS" |
     sort -u |
-    grep -c .
+    grep -c . || true
 )"
 RSA_SECRET_DROP_SYMBOL="$(
-  sed -n 's/.*@\([^ (]*drop_in_place[^ (]*SecretBigEndianBuffer[^ (]*\).*/\1/p' \
+  sed -En 's/.*@([^ (]*drop_(in_place|glue)[^ (]*SecretBigEndianBuffer[^ (]*).*/\1/p' \
     <<<"$RSA_SECRET_OWNER_DROP_CALLS" | head -n 1
 )"
 if [[ "$RSA_SECRET_OWNER_CONSTRUCTIONS" -ne 9 || "$RSA_SECRET_OWNER_DROPS" -ne 9 || \
@@ -401,7 +401,7 @@ RSA_VALIDATION_WITHOUT_ONE_DROP="$(
   awk '
     !removed &&
       /^[[:space:]]*(%[^=]+=[[:space:]]*)?((musttail|tail|notail)[[:space:]]+)?call[[:space:]]/ &&
-      /drop_in_place.*SecretBigEndianBuffer/ {
+      /drop_(in_place|glue).*SecretBigEndianBuffer/ {
         removed = 1
         next
       }
@@ -410,7 +410,7 @@ RSA_VALIDATION_WITHOUT_ONE_DROP="$(
 )"
 if [[ "$(llvm_calls 'SecretBigEndianBuffer.*zeroed' \
   <<<"$RSA_VALIDATION_WITHOUT_ONE_CONSTRUCTION" | grep -c .)" -ne 8 ]] || \
-  [[ "$(llvm_calls 'drop_in_place.*SecretBigEndianBuffer' \
+  [[ "$(llvm_calls 'drop_(in_place|glue).*SecretBigEndianBuffer' \
     <<<"$RSA_VALIDATION_WITHOUT_ONE_DROP" | grep -c .)" -ne 8 ]]; then
   echo "zeroize RSA private-key validation call parser does not reject a missing owner" >&2
   exit 1
