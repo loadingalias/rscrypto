@@ -162,7 +162,7 @@ for tool in "$LLVM_OBJDUMP" "$LLVM_NM"; do
     exit 1
   fi
 done
-"$LLVM_OBJDUMP" --disassemble --reloc --demangle "$BINARY_PATH" > "$BINARY_DISASM_PATH"
+"$LLVM_OBJDUMP" --disassemble --reloc --dynamic-reloc --demangle "$BINARY_PATH" > "$BINARY_DISASM_PATH"
 "$LLVM_NM" --defined-only --demangle "$BINARY_PATH" > "$BINARY_SYMBOLS_PATH"
 
 RUNNER_ARGS=(--out "$CSV_PATH")

@@ -309,15 +309,27 @@ def public_operand_rules(root: Path) -> list[dict[str, Any]]:
 
 
 def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[dict[str, Any]]) -> list[str]:
-  required = {"primitive", "root", "symbol", "kind", "max_count", "source", "rationale"}
+  required = {"primitives", "roots", "symbol", "kind", "max_count", "source", "rationale"}
   errors: list[str] = []
   match_counts = [0] * len(configured)
   for index, rule in enumerate(configured):
     if set(rule) != required:
       errors.append(f"asm_public_operand[{index}] must contain exactly: {', '.join(sorted(required))}")
       continue
-    if any(not isinstance(rule.get(field), str) or not rule.get(field, "").strip() for field in required - {"max_count"}):
+    if any(
+      not isinstance(rule.get(field), str) or not rule.get(field, "").strip()
+      for field in required - {"max_count", "primitives", "roots"}
+    ):
       errors.append(f"asm_public_operand[{index}] string fields must be non-empty")
+    for field in ("primitives", "roots"):
+      values = rule.get(field)
+      if (
+        not isinstance(values, list)
+        or not values
+        or any(not isinstance(value, str) or not value.strip() for value in values)
+        or len(values) != len(set(values))
+      ):
+        errors.append(f"asm_public_operand[{index}] {field} must be a non-empty list of unique strings")
     max_count = rule.get("max_count")
     if isinstance(max_count, bool) or not isinstance(max_count, int) or max_count <= 0:
       errors.append(f"asm_public_operand[{index}] max_count must be a positive integer")
@@ -331,8 +343,8 @@ def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[
       for index, rule in enumerate(configured)
       if rule["symbol"] == finding["symbol"]
       and rule["kind"] == finding["kind"]
-      and rule["primitive"] in finding.get("primitive_ids", [])
-      and rule["root"] in finding.get("roots", [])
+      and set(rule["primitives"]).issubset(finding.get("primitive_ids", []))
+      and set(finding.get("roots", [])).issubset(rule["roots"])
     ]
     if len(matches) > 1:
       errors.append(f"multiple asm_public_operand rules match {finding['locator']}")
@@ -345,8 +357,8 @@ def apply_public_operand_rules(findings: list[dict[str, Any]], configured: list[
     finding["operand_class"] = "public"
     finding["disposition"] = "accepted"
     finding["public_classification"] = {
-      "primitive": rule["primitive"],
-      "root": rule["root"],
+      "primitives": rule["primitives"],
+      "roots": rule["roots"],
       "source": rule["source"],
       "rationale": rule["rationale"],
     }
@@ -428,9 +440,9 @@ def apply_waivers(findings: list[dict[str, Any]], configured: list[dict[str, Any
     accepted_primitives = {row["primitive"] for row in accepted}
     public_classification = finding.get("public_classification")
     public_primitives = (
-      {public_classification["primitive"]}
+      set(public_classification["primitives"])
       if isinstance(public_classification, dict)
-      and public_classification.get("primitive") in finding.get("primitive_ids", [])
+      and isinstance(public_classification.get("primitives"), list)
       else set()
     )
     resolved_primitives = accepted_primitives | public_primitives

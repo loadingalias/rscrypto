@@ -581,6 +581,14 @@ def owner_call_site_counts(
   symbols_by_address: dict[int, str],
 ) -> dict[str, int]:
   counts = {symbol: 0 for symbol in sorted(expected_symbols)}
+  relative_relocations: dict[int, int] = {}
+  relative_relocation = re.compile(
+    r"^\s*([0-9a-fA-F]+)\s+R_[A-Z0-9_]+_RELATIVE\s+\*ABS\*\+0x([0-9a-fA-F]+)\s*$"
+  )
+  for line in disassembly_text.splitlines():
+    if match := relative_relocation.match(line):
+      relative_relocations[int(match.group(1), 16)] = int(match.group(2), 16)
+
   current_symbol = ""
   function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
   instruction_pattern = re.compile(r"\b(?:bl|brasl|call|callq|jal)\b")
@@ -599,6 +607,10 @@ def owner_call_site_counts(
     if target := re.search(r"\b0x([0-9a-fA-F]+)\b", line[instruction.end() :]):
       if symbol := symbols_by_address.get(int(target.group(1), 16)):
         called.add(symbol)
+    if slot := re.search(r"\*[^#]*#\s*0x([0-9a-fA-F]+)\b", line[instruction.end() :]):
+      if target_address := relative_relocations.get(int(slot.group(1), 16)):
+        if symbol := symbols_by_address.get(target_address):
+          called.add(symbol)
     for symbol in called:
       if current_symbol != symbol:
         counts[symbol] += 1

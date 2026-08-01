@@ -46,22 +46,120 @@ formal_limitation = "BINSEC owner kernels cover the representative 16-, 32-, 48-
 downstream_limitation = "Evidence binds this final linked harness executable and its exact compiler/linker configuration. It does not claim constant-time behavior for arbitrary downstream binaries that rebuild or inline rscrypto differently. Production owner comparisons return an opaque CtDecision and the evidence ABI declassifies only at its retained entrypoints."
 
 [[asm_public_operand]]
-primitive = "password.argon2i"
-root = "ct_entry_argon2i_verify"
+primitives = ["password.argon2i"]
+roots = ["ct_entry_argon2i_verify"]
 symbol = "rscrypto::auth::argon2::argon2_hash_with_kernel_inner"
 kind = "variable_latency_division"
-max_count = 2
+max_count = 3
 source = "src/auth/argon2/mod.rs:1751"
-rationale = "The divisions derive matrix dimensions and iteration bounds from validated public Argon2Params and the caller-visible output length. Password and salt contents do not feed the divisors."
+rationale = "The divisions derive matrix dimensions and iteration bounds from validated public Argon2Params, the caller-visible output length, and the target's public vector length. Password and salt contents do not feed the divisors."
 
 [[asm_public_operand]]
-primitive = "password.argon2i"
-root = "ct_entry_argon2i_verify"
+primitives = ["password.argon2i"]
+roots = ["ct_entry_argon2i_verify"]
 symbol = "rscrypto::auth::argon2::fill_segment_inner"
 kind = "variable_latency_division"
 max_count = 2
 source = "src/auth/argon2/mod.rs:1434"
 rationale = "For the Argon2i retained root, address generation and segment positions are data-independent; these divisions use public lane, segment, and matrix dimensions rather than password-derived contents."
+
+[[asm_public_operand]]
+primitives = ["mac.kmac256_verify"]
+roots = ["ct_entry_kmac256_verify"]
+symbol = "<rscrypto::auth::kmac::Kmac256>::verify_tag"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/kmac.rs:149"
+rationale = "LLVM's scalable-vector loop partition divides the caller-visible expected-tag length by the target's public vector length. Tag contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_key_material", "rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::mont_mul_cios_portable"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/rsa.rs:10000"
+rationale = "LLVM's scalable-vector loop partition divides the public modulus-width iteration count by the target's public vector length. Private limb contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_key_material", "rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::mont_reduce_cios"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/rsa.rs:10049"
+rationale = "LLVM's scalable-vector loop partition divides the public modulus-width iteration count by the target's public vector length. Private limb contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_key_material", "rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::private_import_is_probable_prime"
+kind = "variable_latency_division"
+max_count = 2
+source = "src/auth/rsa.rs:6877"
+rationale = "LLVM's scalable-vector loop partitions divide the caller-visible private-component byte width and its derived fixed limb width by the target's public vector length. Candidate contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::private_import_unsigned_be_mod_to_fixed"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/rsa.rs:9499"
+rationale = "LLVM's scalable-vector loop partition divides the public modulus limb width by the target's public vector length. The private representative contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_key_material", "rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::private_import_unsigned_be_mod_to_len"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/rsa.rs:9481"
+rationale = "LLVM's scalable-vector loop partition divides the public component/modulus byte width by the target's public vector length. Private component contents do not feed the operands."
+
+[[asm_public_operand]]
+primitives = ["rsa.private_key_material", "rsa.private_ops"]
+roots = [
+  "ct_entry_rsa_oaep_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding",
+  "ct_entry_rsa_pkcs1v15_sign_fixed_blinding",
+  "ct_entry_rsa_private_key_pkcs8_roundtrip",
+  "ct_entry_rsa_pss_sign_fixed_blinding",
+]
+symbol = "rscrypto::auth::rsa::public_montgomery_r2_into"
+kind = "variable_latency_division"
+max_count = 1
+source = "src/auth/rsa.rs:9597"
+rationale = "LLVM's scalable-vector loop partition divides the public modulus limb width by the target's public vector length. No private value feeds the operands."
 
 [operation_inventory]
 schema_version = 1
