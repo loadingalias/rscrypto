@@ -91,7 +91,7 @@ jobs:
         fuzz-output/corpus.tar.gz
         fuzz/artifacts/
         fuzz-packages/*/artifacts/
-      artifact_always: false
+      artifact_always: true
 
   asan-fuzzing:
     name: ASan Fuzz Corpus (${{ matrix.target.name }})

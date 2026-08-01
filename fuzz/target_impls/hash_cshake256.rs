@@ -19,14 +19,18 @@ pub fn run(data: &[u8]) {
     out_len.strict_mul(squeeze_split as usize) / 255
   };
 
-  // Differential: rscrypto ↔ tiny-keccak
+  // Differential: rscrypto ↔ RustCrypto cshake
   let mut expected = vec![0u8; out_len];
-  use tiny_keccak::{CShake, Hasher, Xof as _};
+  use cshake::{
+    CShake256 as OracleCshake256,
+    digest::{ExtendableOutput as _, Update as _, XofReader as _},
+  };
 
-  let mut oracle = CShake::v256(name, custom);
+  let mut oracle = OracleCshake256::new_with_function_name(name, custom);
   oracle.update(message);
-  oracle.squeeze(&mut expected[..split_out]);
-  oracle.squeeze(&mut expected[split_out..]);
+  let mut oracle_reader = oracle.finalize_xof();
+  oracle_reader.read(&mut expected[..split_out]);
+  oracle_reader.read(&mut expected[split_out..]);
 
   let (a, b) = split_at_ratio(message, message_split);
   let mut h2 = Cshake256::new(name, custom);

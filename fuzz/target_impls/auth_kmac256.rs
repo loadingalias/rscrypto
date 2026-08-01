@@ -1,6 +1,20 @@
 use rscrypto::Kmac256;
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
+fn encoded_string_len(len: usize) -> usize {
+  let bits = len.strict_mul(8);
+  let width = ((usize::BITS - bits.leading_zeros()) as usize).div_ceil(8).max(1);
+  1usize.strict_add(width).strict_add(len)
+}
+
+fn bytepad_is_aligned(rate: usize, segments: &[usize]) -> bool {
+  let encoded_len = segments
+    .iter()
+    .map(|&len| encoded_string_len(len))
+    .fold(2usize, usize::strict_add);
+  encoded_len.is_multiple_of(rate)
+}
+
 pub fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
@@ -31,11 +45,30 @@ pub fn run(data: &[u8]) {
   kmac.finalize_into(&mut reset_out);
   assert_eq!(expected, reset_out, "kmac changed after reset");
 
-  // Property: verify accepts correct tag
-  Kmac256::verify_tag(key, custom, message, &expected).expect("verify must accept correct tag");
+  // Property: the authentication API enforces its documented strength floor,
+  // while the primitive API accepts every nonempty KMAC output.
+  assert_eq!(
+    Kmac256::verify_tag(key, custom, message, &expected).is_ok(),
+    out_len >= Kmac256::MIN_AUTH_TAG_SIZE,
+    "kmac256 authentication policy mismatch"
+  );
+  Kmac256::verify_tag_primitive(key, custom, message, &expected)
+    .expect("primitive verification must accept a correct nonempty output");
 
-  // Differential: rscrypto ↔ tiny-keccak
-  {
+  let mut corrupted = expected.clone();
+  corrupted[out_len / 2] ^= 1;
+  assert!(
+    Kmac256::verify_tag_primitive(key, custom, message, &corrupted).is_err(),
+    "primitive verification accepted a corrupted output"
+  );
+  assert!(
+    Kmac256::verify_tag(key, custom, message, &corrupted).is_err(),
+    "authentication verification accepted a corrupted tag"
+  );
+
+  // tiny-keccak 2.0.2 mishandles an exactly full SP 800-185 bytepad block.
+  // Independent fixed vectors cover those boundaries in the integration tests.
+  if !bytepad_is_aligned(136, &[4, custom.len()]) && !bytepad_is_aligned(136, &[key.len()]) {
     use tiny_keccak::{Hasher, Kmac as OracleKmac};
 
     let mut oracle = OracleKmac::v256(key, custom);

@@ -205,7 +205,8 @@ run_miri() {
 
 run_fuzz() {
   export RSCRYPTO_FUZZ_DURATION_SECS=60
-  just test-fuzz --all
+  local fuzz_status=0
+  just test-fuzz --all || fuzz_status=$?
 
   rm -rf -- fuzz-output
   mkdir -p fuzz-output
@@ -220,6 +221,8 @@ run_fuzz() {
   else
     tar -czf fuzz-output/corpus.tar.gz "${corpus_dirs[@]}"
   fi
+
+  return "$fuzz_status"
 }
 
 run_fuzz_asan() {

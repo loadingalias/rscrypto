@@ -47,10 +47,11 @@ x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
 ascon-hash = "0.4"
 blake2 = "0.11.0-rc.6"
 blake3 = "1.8"
+cshake = { version = "0.2.1", default-features = false }
 digest = "0.11"
 sha2 = "0.11"
 sha3 = "0.12"
-tiny-keccak = { version = "2.0", features = ["cshake", "kmac", "shake"] }
+tiny-keccak = { version = "2.0", features = ["kmac", "shake"] }
 
 # Fast hashes
 rapidhash = "=4.5.1"

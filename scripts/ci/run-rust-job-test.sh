@@ -28,6 +28,7 @@ cat >"$BIN/just" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >"$RSCRYPTO_CI_CAPTURE_DIR/just.args"
+exit "${RSCRYPTO_MOCK_JUST_STATUS:-0}"
 EOF
 
 for command in uname lscpu sed rustc cargo; do
@@ -140,6 +141,36 @@ RUNNER=(env PATH="$TEST_PATH" RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" bash "$FIXTURE/
 
 RSCRYPTO_CI_OPERATION=quality "${RUNNER[@]}"
 [[ $(<"$CAPTURE/just.args") == "ci-check" ]] || fail "quality selected the wrong command"
+
+mkdir -p \
+  "$FIXTURE/fuzz/corpus/hash_cshake256" \
+  "$FIXTURE/fuzz/artifacts/hash_cshake256" \
+  "$FIXTURE/fuzz-packages/hash-sha3/corpus/hash_cshake256" \
+  "$FIXTURE/fuzz-packages/hash-sha3/artifacts/hash_cshake256"
+printf '%s' full-corpus >"$FIXTURE/fuzz/corpus/hash_cshake256/seed"
+printf '%s' scoped-corpus >"$FIXTURE/fuzz-packages/hash-sha3/corpus/hash_cshake256/seed"
+printf '%s' full-crash >"$FIXTURE/fuzz/artifacts/hash_cshake256/crash-fixture"
+printf '%s' scoped-crash >"$FIXTURE/fuzz-packages/hash-sha3/artifacts/hash_cshake256/crash-fixture"
+
+fuzz_status=0
+env \
+  PATH="$TEST_PATH" \
+  RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" \
+  RSCRYPTO_CI_OPERATION=fuzz \
+  RSCRYPTO_MOCK_JUST_STATUS=23 \
+  bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null 2>&1 \
+  || fuzz_status=$?
+[[ "$fuzz_status" -eq 23 ]] || fail "fuzz operation did not preserve the fuzz command's failure status"
+[[ -f "$FIXTURE/fuzz-output/corpus.tar.gz" ]] || fail "fuzz failure did not produce a corpus archive"
+tar -tzf "$FIXTURE/fuzz-output/corpus.tar.gz" >"$CAPTURE/fuzz-archive.entries"
+grep -Fxq 'fuzz/corpus/hash_cshake256/seed' "$CAPTURE/fuzz-archive.entries" \
+  || fail "fuzz failure archive omitted the full-workspace corpus"
+grep -Fxq 'fuzz-packages/hash-sha3/corpus/hash_cshake256/seed' "$CAPTURE/fuzz-archive.entries" \
+  || fail "fuzz failure archive omitted the scoped corpus"
+[[ -f "$FIXTURE/fuzz/artifacts/hash_cshake256/crash-fixture" ]] \
+  || fail "fuzz failure removed the full-workspace crash artifact"
+[[ -f "$FIXTURE/fuzz-packages/hash-sha3/artifacts/hash_cshake256/crash-fixture" ]] \
+  || fail "fuzz failure removed the scoped crash artifact"
 
 sentinel="$TMP_ROOT/injected"
 # shellcheck disable=SC2016 # Command substitution is an intentional literal injection payload.

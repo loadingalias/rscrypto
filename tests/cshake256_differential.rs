@@ -1,32 +1,22 @@
 #![cfg(feature = "hashes")]
 
+use cshake::{
+  CShake128 as OracleCshake128, CShake256 as OracleCshake256,
+  digest::{ExtendableOutput as _, Update as _, XofReader as _},
+};
 use proptest::prelude::*;
 use rscrypto::{Cshake128, Cshake256, traits::Xof as _};
 
 fn cshake128_ref(function_name: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-  use tiny_keccak::{CShake, Hasher as _};
-
-  let mut hasher = CShake::v128(function_name, customization);
+  let mut hasher = OracleCshake128::new_with_function_name(function_name, customization);
   hasher.update(data);
-  hasher.finalize(out);
+  hasher.finalize_xof().read(out);
 }
 
 fn cshake256_ref(function_name: &[u8], customization: &[u8], data: &[u8], out: &mut [u8]) {
-  use tiny_keccak::{CShake, Hasher as _};
-
-  let mut hasher = CShake::v256(function_name, customization);
+  let mut hasher = OracleCshake256::new_with_function_name(function_name, customization);
   hasher.update(data);
-  hasher.finalize(out);
-}
-
-fn encoded_string_len(len: usize) -> usize {
-  let bits = len * 8;
-  let width = ((usize::BITS - bits.leading_zeros()) as usize).div_ceil(8).max(1);
-  1 + width + len
-}
-
-fn bytepad_is_aligned(rate: usize, function_name_len: usize, customization_len: usize) -> bool {
-  (2 + encoded_string_len(function_name_len) + encoded_string_len(customization_len)).is_multiple_of(rate)
+  hasher.finalize_xof().read(out);
 }
 
 fn decode_hex_64(value: &str) -> [u8; 64] {
@@ -41,13 +31,12 @@ fn decode_hex_64(value: &str) -> [u8; 64] {
 
 proptest! {
   #[test]
-  fn cshake128_one_shot_matches_tiny_keccak(
+  fn cshake128_one_shot_matches_rustcrypto(
     function_name in proptest::collection::vec(any::<u8>(), 0..192),
     customization in proptest::collection::vec(any::<u8>(), 0..192),
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
-    prop_assume!(!bytepad_is_aligned(168, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake128_ref(&function_name, &customization, &data, &mut expected);
 
@@ -58,13 +47,12 @@ proptest! {
   }
 
   #[test]
-  fn cshake128_streaming_matches_tiny_keccak(
+  fn cshake128_streaming_matches_rustcrypto(
     function_name in proptest::collection::vec(any::<u8>(), 0..192),
     customization in proptest::collection::vec(any::<u8>(), 0..192),
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
-    prop_assume!(!bytepad_is_aligned(168, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake128_ref(&function_name, &customization, &data, &mut expected);
 
@@ -83,13 +71,12 @@ proptest! {
   }
 
   #[test]
-  fn cshake256_one_shot_matches_tiny_keccak(
+  fn cshake256_one_shot_matches_rustcrypto(
     function_name in proptest::collection::vec(any::<u8>(), 0..192),
     customization in proptest::collection::vec(any::<u8>(), 0..192),
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
-    prop_assume!(!bytepad_is_aligned(136, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake256_ref(&function_name, &customization, &data, &mut expected);
 
@@ -100,13 +87,12 @@ proptest! {
   }
 
   #[test]
-  fn cshake256_streaming_matches_tiny_keccak(
+  fn cshake256_streaming_matches_rustcrypto(
     function_name in proptest::collection::vec(any::<u8>(), 0..192),
     customization in proptest::collection::vec(any::<u8>(), 0..192),
     data in proptest::collection::vec(any::<u8>(), 0..4096),
     out_len in 0usize..1024,
   ) {
-    prop_assume!(!bytepad_is_aligned(136, function_name.len(), customization.len()));
     let mut expected = vec![0u8; out_len];
     cshake256_ref(&function_name, &customization, &data, &mut expected);
 
