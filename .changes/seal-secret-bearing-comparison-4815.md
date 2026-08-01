@@ -1,5 +1,5 @@
 ---
-"rscrypto" = "minor"
+"rscrypto" = "major"
 ---
 
 Secret-bearing fixed-size keys, shared secrets, keypairs, authentication tags,
