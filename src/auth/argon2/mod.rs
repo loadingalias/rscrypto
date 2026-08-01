@@ -216,13 +216,13 @@ pub enum Argon2Error {
   SecretTooLong,
   /// Optional associated-data length exceeds 2^32-1 bytes.
   AssociatedDataTooLong,
+  /// The platform entropy source failed while generating a PHC salt.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  EntropyUnavailable,
   /// The requested memory matrix exceeds the target's address space.
   ResourceOverflow,
   /// The allocator refused to provide the memory matrix.
   AllocationFailed,
-  /// The platform entropy source failed while generating a PHC salt.
-  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
-  EntropyUnavailable,
   /// Password generation parameters exceed the verifier's resource limits.
   #[cfg(feature = "phc-strings")]
   VerificationLimitTooLow,
