@@ -6639,6 +6639,13 @@ fn private_key_components_from_parts(
   }
 
   let modulus_bits = validate_private_key_import(components, policy)?;
+  private_key_components_from_prevalidated_parts(components, modulus_bits)
+}
+
+fn private_key_components_from_prevalidated_parts(
+  components: &RsaPrivateKeyDerComponents<'_>,
+  modulus_bits: usize,
+) -> Result<RsaPrivateKeyComponents, RsaKeyError> {
   let public = RsaPublicKey {
     modulus: RsaPublicModulus::new_with_montgomery_r2(components.modulus, modulus_bits),
     exponent: components.public_exponent,
@@ -10507,6 +10514,160 @@ mod tests {
     RsaKeygenDrbg::new(&seed, label)
   }
 
+  fn rsa_miri_private_limb_widths() -> core::ops::RangeInclusive<usize> {
+    let min_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.min_modulus_bits.strict_add(1) / 2;
+    let max_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.max_modulus_bits.strict_add(1) / 2;
+    let bits_per_limb = u64::BITS as usize;
+    let min_limbs = min_factor_bits.strict_add(bits_per_limb.strict_sub(1)) / bits_per_limb;
+    let max_limbs = max_factor_bits.strict_add(bits_per_limb.strict_sub(1)) / bits_per_limb;
+    min_limbs..=max_limbs
+  }
+
+  fn rsa_miri_table_limb(limbs: usize, window: usize, limb: usize) -> u64 {
+    0xd6e8_feb8_6659_fd93
+      ^ (limbs as u64).rotate_left(11)
+      ^ (window as u64).rotate_left(29)
+      ^ (limb as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
+  }
+
+  fn rsa_miri_fill_exponent_scratch(scratch: &mut RsaPrivateExponentScratch, value: u64) {
+    scratch.t.as_mut_slice().fill(value);
+    scratch.representative.as_mut_slice().fill(value);
+    scratch.one.as_mut_slice().fill(value);
+    scratch.base.as_mut_slice().fill(value);
+    scratch.acc.as_mut_slice().fill(value);
+    scratch.squared.as_mut_slice().fill(value);
+    scratch.multiplied.as_mut_slice().fill(value);
+    scratch.selected.as_mut_slice().fill(value);
+    scratch.reduced.as_mut_slice().fill(value);
+    scratch.table.as_mut_slice().fill(value);
+  }
+
+  fn rsa_miri_assert_exponent_scratch_zeroed(scratch: &RsaPrivateExponentScratch) {
+    for (name, limbs) in [
+      ("t", scratch.t.as_slice()),
+      ("representative", scratch.representative.as_slice()),
+      ("one", scratch.one.as_slice()),
+      ("base", scratch.base.as_slice()),
+      ("acc", scratch.acc.as_slice()),
+      ("squared", scratch.squared.as_slice()),
+      ("multiplied", scratch.multiplied.as_slice()),
+      ("selected", scratch.selected.as_slice()),
+      ("reduced", scratch.reduced.as_slice()),
+      ("table", scratch.table.as_slice()),
+    ] {
+      assert!(limbs.iter().all(|&limb| limb == 0), "{name} was not cleared");
+    }
+  }
+
+  #[test]
+  fn rsa_miri_proof_selects_every_window_across_private_limb_and_scratch_layouts() {
+    const MARKER: u64 = 0xa5a5_5a5a_c3c3_3c3c;
+
+    for limbs in rsa_miri_private_limb_widths() {
+      for capacity in [limbs, limbs.strict_mul(2)] {
+        let mut scratch = RsaPrivateExponentScratch::new(capacity);
+        rsa_miri_fill_exponent_scratch(&mut scratch, MARKER);
+
+        {
+          let workspace = scratch.workspace(limbs).unwrap();
+          assert_eq!(workspace.t.len(), limbs.strict_mul(2).strict_add(2));
+          assert_eq!(workspace.representative.len(), limbs);
+          assert_eq!(workspace.one.len(), limbs);
+          assert_eq!(workspace.base.len(), limbs);
+          assert_eq!(workspace.acc.len(), limbs);
+          assert_eq!(workspace.squared.len(), limbs);
+          assert_eq!(workspace.multiplied.len(), limbs);
+          assert_eq!(workspace.selected.len(), limbs);
+          assert_eq!(workspace.reduced.len(), limbs);
+          assert_eq!(
+            workspace.table.len(),
+            limbs.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)
+          );
+
+          for window in 0..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES {
+            let start = window.strict_mul(limbs);
+            for (limb, slot) in workspace.table[start..start.strict_add(limbs)].iter_mut().enumerate() {
+              *slot = rsa_miri_table_limb(limbs, window, limb);
+            }
+          }
+
+          for window in 0..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES as u8 {
+            workspace.selected.fill(MARKER);
+            private_select_window_power(workspace.selected, workspace.table, window);
+            let start = usize::from(window).strict_mul(limbs);
+            assert_eq!(
+              workspace.selected,
+              &workspace.table[start..start.strict_add(limbs)],
+              "wrong fixed-window row for {limbs} limbs, capacity {capacity}, window {window}"
+            );
+          }
+        }
+
+        assert!(scratch.selected.as_slice()[limbs..].iter().all(|&limb| limb == MARKER));
+        let active_table_len = limbs.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES);
+        assert!(
+          scratch.table.as_slice()[active_table_len..]
+            .iter()
+            .all(|&limb| limb == MARKER)
+        );
+
+        scratch.clear();
+        rsa_miri_assert_exponent_scratch_zeroed(&scratch);
+      }
+
+      let mut undersized = RsaPrivateExponentScratch::new(limbs.strict_sub(1));
+      assert!(matches!(
+        undersized.workspace(limbs),
+        Err(RsaPrivateOpError::InvalidScratch)
+      ));
+
+      let mut short_table = RsaPrivateExponentScratch::new(limbs);
+      let _ = short_table.table.limbs.pop();
+      assert!(matches!(
+        short_table.workspace(limbs),
+        Err(RsaPrivateOpError::InvalidScratch)
+      ));
+    }
+  }
+
+  #[test]
+  fn rsa_miri_proof_zeroizes_private_storage_at_every_word_alignment() {
+    const GUARD: u8 = 0x3c;
+    const SECRET: u8 = 0xa5;
+    const LENGTHS: [usize; 11] = [0, 1, 7, 8, 9, 15, 16, 17, 127, 128, 129];
+    let word_bytes = core::mem::size_of::<u64>();
+
+    for offset in 0..word_bytes {
+      for len in LENGTHS {
+        let end = offset.strict_add(len);
+        let mut storage = vec![GUARD; end.strict_add(word_bytes)];
+        storage[offset..end].fill(SECRET);
+
+        ct::zeroize(&mut storage[offset..end]);
+
+        assert!(storage[..offset].iter().all(|&byte| byte == GUARD));
+        assert!(storage[offset..end].iter().all(|&byte| byte == 0));
+        assert!(storage[end..].iter().all(|&byte| byte == GUARD));
+      }
+    }
+  }
+
+  #[test]
+  fn rsa_miri_proof_miller_rabin_covers_small_prime_and_composite_paths() {
+    let prime = 1009u16.to_be_bytes();
+    assert!(!has_small_prime_factor(&prime));
+    assert!(private_import_is_probable_prime(&prime).unwrap());
+
+    let composite = [0x0f, 0x98, 0xa5];
+    assert_eq!(
+      u32::from_be_bytes([0, composite[0], composite[1], composite[2]]),
+      1009 * 1013
+    );
+    assert!(!has_small_prime_factor(&composite));
+    assert!(!private_import_is_probable_prime(&composite).unwrap());
+  }
+
   #[test]
   fn private_mod_subtraction_handles_borrow_equal_and_no_borrow() {
     for (left, right, modulus, expected) in [
@@ -10662,6 +10823,30 @@ ca5b455045218c7e196209c1c651702ece090a15e3cbcc265971300023a86fe9d34ad527e9ef03b7
 
   fn test_pkcs1_private_key() -> Vec<u8> {
     test_pkcs1_private_key_with_public_exponent(&[0x01, 0x00, 0x01])
+  }
+
+  fn prevalidated_test_private_key() -> RsaPrivateKey {
+    let modulus = rsa_private_modulus();
+    let private_exponent = rsa_private_exponent();
+    let prime_p = rsa_private_prime_p();
+    let prime_q = rsa_private_prime_q();
+    let exponent_p = rsa_private_exponent_p();
+    let exponent_q = rsa_private_exponent_q();
+    let coefficient = rsa_private_coefficient();
+    let components = RsaPrivateKeyDerComponents {
+      modulus: &modulus,
+      public_exponent: RsaPublicExponent(65_537),
+      private_exponent: &private_exponent,
+      prime_p: &prime_p,
+      prime_q: &prime_q,
+      exponent_p: &exponent_p,
+      exponent_q: &exponent_q,
+      coefficient: &coefficient,
+    };
+
+    RsaPrivateKey {
+      components: private_key_components_from_prevalidated_parts(&components, unsigned_be_bit_len(&modulus)).unwrap(),
+    }
   }
 
   fn test_pkcs1_private_key_with_public_exponent(public_exponent: &[u8]) -> Vec<u8> {
@@ -10966,6 +11151,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let der = test_pkcs1_private_key();
     let key = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
 
+    assert_eq!(prevalidated_test_private_key().to_pkcs1_der().as_bytes(), der);
+
     assert_eq!(key.public_key().modulus(), rsa_private_modulus());
     assert_eq!(key.public_key().public_exponent().as_u64(), 65_537);
     assert_eq!(key.private_exponent.as_bytes(), rsa_private_exponent());
@@ -11151,9 +11338,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_components_debug_redacts_secret_material() {
-    let der = test_pkcs1_private_key();
-    let components = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
-    let debug = format!("{components:?}");
+    let key = prevalidated_test_private_key();
+    let debug = format!("{:?}", key.components);
 
     assert!(debug.contains("modulus_bits"));
     assert!(debug.contains("public_exponent"));
@@ -11172,7 +11358,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       assert!(!debug.contains(&format!("{secret:?}")));
     }
 
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
     assert_eq!(
       format!("{key:?}"),
       format!(
@@ -11188,8 +11373,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_signs_pkcs1v15_and_pss_end_to_end() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let message = b"rscrypto RSA private signing roundtrip";
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
 
@@ -11315,8 +11499,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn public_encryption_random_fill_failures_clear_output() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let public_key = key.public_key();
     let label = b"rsa random-fill failure label";
     let plaintext = b"rsa random-fill failure plaintext";
@@ -11349,8 +11532,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_invalid_blinding_clears_signing_and_decryption_outputs() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let message = b"rscrypto RSA invalid blinding output clearing";
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
     let mut bad_blinding_inverse = blinding_factor_inverse.clone();
@@ -11580,8 +11762,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn oaep_decrypt_api_rejects_same_width_oracle_classes_opaquely() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
     let label = b"rscrypto-oaep-label";
     let plaintext = b"oaep decrypt oracle regression";
@@ -11776,8 +11957,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn pkcs1v15_encrypt_decrypt_rejects_oracle_classes_opaquely() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
     let plaintext = b"rsaes-pkcs1v15 legacy roundtrip";
     let seed = vec![0xb6; key.signature_len().strict_sub(plaintext.len()).strict_sub(3)];
@@ -12128,8 +12308,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn private_key_getrandom_signs_and_decrypts_end_to_end() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let message = b"rscrypto RSA getrandom signing roundtrip";
     let mut scratch = key.private_scratch();
 
@@ -12211,8 +12390,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn private_key_sign_signature_profile_and_explicit_pss_salt_len_roundtrip() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let message = b"rscrypto RSA typed signing profile roundtrip";
 
     let pkcs1_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384);
@@ -12274,8 +12452,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn private_key_protocol_signing_helpers_roundtrip_and_reject_confusion() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let message = b"rscrypto RSA primitive protocol signing helper roundtrip";
     let mut signature = vec![0u8; key.signature_len()];
     let mut scratch = key.private_scratch();
@@ -12459,8 +12636,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn private_key_random_blinding_factor_has_valid_crt_inverse() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let blinding = key.components.random_blinding_factor().unwrap();
 
     let mut check = vec![0u8; key.signature_len()];
@@ -12479,8 +12655,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn private_key_blinding_inverse_rejects_non_invertible_factor() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let mut factor = vec![0u8; key.signature_len()];
     left_pad_be(&rsa_private_prime_p(), &mut factor).unwrap();
     let mut inverse = vec![0u8; key.signature_len()];
@@ -12493,8 +12668,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_caller_scratch_covers_signing_and_decryption() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
     let mut scratch = key.private_scratch();
     let message = b"rscrypto RSA private scratch path";
@@ -12588,8 +12762,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   #[test]
   fn private_key_caller_scratch_rejects_wrong_width_before_operation() {
-    let der = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = prevalidated_test_private_key();
     let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
     let message = b"rscrypto RSA private scratch shape";
     let mut signature = vec![0xa5; key.signature_len()];

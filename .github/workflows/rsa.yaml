@@ -2,7 +2,19 @@ name: RSA
 
 on:
   workflow_call:
+    inputs:
+      artifact_retention_days:
+        description: "Retention for RSA evidence artifacts."
+        required: false
+        type: number
+        default: 90
   workflow_dispatch:
+    inputs:
+      artifact_retention_days:
+        description: "Retention for RSA evidence artifacts."
+        required: false
+        type: number
+        default: 90
 
 concurrency:
   group: rsa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -23,7 +35,7 @@ jobs:
     uses: ./.github/workflows/_rust-job.yaml
     with:
       runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
-      timeout_minutes: 360
+      timeout_minutes: 60
       cache_key: rsa-miri-linux-x64
       tools_mode: minimal
       toolchain_components: "miri, rust-src"
@@ -33,6 +45,7 @@ jobs:
       artifact_name: rsa-miri-linux-x64
       artifact_path: ci-evidence/rsa-miri-linux-x64.log
       artifact_always: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
 
   rsa-leakage:
     name: RSA Leakage (${{ matrix.target.name }})
@@ -57,6 +70,7 @@ jobs:
       artifact_name: rsa-leakage-${{ matrix.target.name }}
       artifact_path: ci-evidence/rsa-leakage-${{ matrix.target.name }}.log
       artifact_always: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
 
   rsa-linux-x86_64-asm:
     name: RSA Assembly (Linux x86-64)
@@ -73,6 +87,7 @@ jobs:
       artifact_name: rsa-linux-x86_64-asm
       artifact_path: ci-evidence/rsa-linux-x86_64-asm.log
       artifact_always: true
+      artifact_retention_days: ${{ inputs.artifact_retention_days }}
 
   complete:
     name: Complete (RSA)

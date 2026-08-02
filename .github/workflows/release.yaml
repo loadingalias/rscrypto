@@ -166,8 +166,8 @@ jobs:
       - name: Download RISC-V CT evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          name: ct-rise-riscv
-          path: ct-release-artifacts/ct-rise-riscv
+          name: ct-raw-rise-riscv
+          path: ct-release-artifacts/ct-raw-rise-riscv
           github-token: ${{ github.token }}
           run-id: ${{ needs.evidence-gate.outputs.riscv_run_id }}
 

@@ -147,6 +147,10 @@ run_platform_amx() {
   flags=$(sed -n 's/^flags[[:space:]]*: //p' /proc/cpuinfo | head -n 1)
   [[ " $flags " == *" amx_tile "* ]] || die "intel-spr runner does not expose AMX-TILE"
 
+  # This proof lane never consumes symbols; omitting them keeps both test
+  # codegen artifact sets proportional to the work.
+  export CARGO_PROFILE_TEST_DEBUG=0
+
   RSCRYPTO_REQUIRE_AMX=1 \
     assert_single_libtest \
       linux_x86_64_amx_permission_and_cache_are_process_scoped \
@@ -205,6 +209,8 @@ run_miri() {
 
 run_fuzz() {
   export RSCRYPTO_FUZZ_DURATION_SECS=60
+  export RSCRYPTO_FUZZ_JOBS=1
+  export RSCRYPTO_FUZZ_TARGET_CONCURRENCY=2
   local fuzz_status=0
   just test-fuzz --all || fuzz_status=$?
 

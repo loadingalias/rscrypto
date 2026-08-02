@@ -4,9 +4,18 @@ on:
   schedule:
     - cron: "0 3 * * 0"
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Assurance is routine coverage; release adds release-grade evidence."
+        required: true
+        type: choice
+        options:
+          - assurance
+          - release
+        default: assurance
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' && 'release' || 'assurance' }}
   cancel-in-progress: true
 
 env:
@@ -19,15 +28,50 @@ permissions:
   contents: read
 
 jobs:
-  # ─── Full CI suite: all platforms, deep cross-compile sweep, full supply chain. ──
+  mode:
+    name: Resolve Weekly Mode
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - name: Resolve mode
+        id: mode
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            schedule)
+              mode=assurance
+              ;;
+            workflow_dispatch)
+              case "$REQUESTED_MODE" in
+                assurance | release) mode="$REQUESTED_MODE" ;;
+                *) echo "Unknown Weekly mode: $REQUESTED_MODE" >&2; exit 2 ;;
+              esac
+              ;;
+            *)
+              echo "Unsupported Weekly event: $EVENT_NAME" >&2
+              exit 2
+              ;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Weekly mode: $mode"
+
+  # Both modes run the full platform and feature suite. Release mode adds the
+  # exhaustive Cargo graph and full supply-chain policy.
   suite:
-    name: CI Suite (weekly)
+    name: CI Suite (${{ needs.mode.outputs.mode }})
+    needs: mode
     uses: ./.github/workflows/_ci-suite.yaml
     with:
       cache_key_prefix: weekly
-      supply_chain_mode: full
+      supply_chain_mode: ${{ needs.mode.outputs.mode == 'release' && 'full' || 'light' }}
       test_mode: weekly
-      include_cargo_graph: true
+      include_cargo_graph: ${{ needs.mode.outputs.mode == 'release' }}
+      artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
 
   # ─── Miri memory-safety (stacked borrows). ──
   miri:
@@ -69,6 +113,7 @@ jobs:
   # ─── Fuzzing (libFuzzer full + scoped packages). ──
   fuzzing:
     name: Fuzzing (${{ matrix.target.name }})
+    needs: mode
     strategy:
       fail-fast: false
       matrix:
@@ -92,6 +137,7 @@ jobs:
         fuzz/artifacts/
         fuzz-packages/*/artifacts/
       artifact_always: true
+      artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
 
   asan-fuzzing:
     name: ASan Fuzz Corpus (${{ matrix.target.name }})
@@ -117,6 +163,7 @@ jobs:
   # --- Native ML-KEM promotion gate on the physical AWS targets. ---
   mlkem-graviton:
     name: ML-KEM Graviton Gate (${{ matrix.display_name }})
+    needs: mode
     strategy:
       fail-fast: false
       matrix:
@@ -139,25 +186,31 @@ jobs:
       artifact_name: mlkem-aarch64-gate-${{ matrix.platform }}
       artifact_path: mlkem-aarch64-gate/
       artifact_always: true
+      artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
 
   # ─── Constant-time evidence on benchmark-published physical lanes. ──
   ct:
-    name: Constant-Time Evidence (weekly)
+    name: Constant-Time Evidence (${{ needs.mode.outputs.mode }})
+    needs: mode
     uses: ./.github/workflows/ct.yaml
     with:
       platforms: all
       dudect_timeout: 1800
       binsec_timeout: 900
-      upload_raw_artifacts: true
+      upload_raw_artifacts: ${{ needs.mode.outputs.mode == 'release' }}
+      artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
 
   rsa:
-    name: RSA Evidence (weekly)
+    name: RSA Evidence (${{ needs.mode.outputs.mode }})
+    needs: mode
     uses: ./.github/workflows/rsa.yaml
+    with:
+      artifact_retention_days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
 
   # ─── Coverage (nextest + fuzz corpus → codecov). ──
   coverage:
     name: Coverage
-    needs: [suite, fuzzing]
+    needs: [mode, suite, fuzzing]
     runs-on: runs-on=${{ github.run_id }}/runner=linux-x64-ci
     timeout-minutes: 120
     steps:
@@ -220,13 +273,13 @@ jobs:
           path: |
             coverage/total.lcov
             coverage/SUMMARY.md
-          retention-days: 90
+          retention-days: ${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}
           if-no-files-found: warn
 
-  # ─── Gate: every required lane must pass. ──
+  # The mode-specific terminal name is part of the release qualification contract.
   complete:
-    name: Complete (weekly)
-    needs: [suite, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
+    name: Complete (${{ needs.mode.outputs.mode }})
+    needs: [mode, suite, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -234,6 +287,7 @@ jobs:
         run: |
           failed=0
           for lane in \
+            "mode=${{ needs.mode.result }}" \
             "suite=${{ needs.suite.result }}" \
             "miri=${{ needs.miri.result }}" \
             "miri-tree-borrows=${{ needs.miri-tree-borrows.result }}" \

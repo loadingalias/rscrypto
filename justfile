@@ -251,6 +251,7 @@ check-actions:
     @scripts/ci/check-ci-ownership.sh
     @scripts/ci/check-ci-ownership-test.sh
     @scripts/ci/run-rust-job-test.sh
+    @scripts/test/test-fuzz-scheduler-test.sh
     @scripts/ci/emit-manual-matrix-test.sh
     @scripts/ci/changed-test-planning-test.sh
     @scripts/ci/check-worktree-test.sh

@@ -21,6 +21,7 @@ make_fixture() {
   cp "$REPO_ROOT/.config/ci-tool-archives.tsv" "$fixture/.config/ci-tool-archives.tsv"
   cp -R "$REPO_ROOT/scripts/ci" "$fixture/scripts/ci"
   cp "$REPO_ROOT/scripts/lib/ci-tool-integrity.sh" "$REPO_ROOT/scripts/lib/common.sh" \
+    "$REPO_ROOT/scripts/lib/feature-profiles.sh" \
     "$fixture/scripts/lib/"
   cp "$REPO_ROOT/scripts/check/check-all.sh" "$REPO_ROOT/scripts/check/check-feature-matrix.sh" \
     "$REPO_ROOT/scripts/check/check.sh" "$fixture/scripts/check/"
@@ -281,10 +282,34 @@ expect_failure "$duplicate_release_graph" "duplicate release Cargo graph assuran
 
 missing_release_graph_gate="$TMP_ROOT/missing-release-graph-gate"
 make_fixture "$missing_release_graph_gate"
-sed -i.bak '/CI Suite (weekly) \/ Cargo Graph Assurance \/ run/d' \
+sed -i.bak '/CI Suite (release) \/ Cargo Graph Assurance \/ run/d' \
   "$missing_release_graph_gate/scripts/ci/release-evidence-check.sh"
 rm -f "$missing_release_graph_gate/scripts/ci/release-evidence-check.sh.bak"
 expect_failure "$missing_release_graph_gate" "missing release Cargo graph assurance gate"
+
+scheduled_release_mode="$TMP_ROOT/scheduled-release-mode"
+make_fixture "$scheduled_release_mode"
+yq eval '(.jobs.mode.steps[] | select(.id == "mode") | .run) |= sub("mode=assurance"; "mode=release")' -i \
+  "$scheduled_release_mode/.github/workflows/weekly.yaml"
+expect_failure "$scheduled_release_mode" "scheduled Weekly run resolves to release mode"
+
+release_by_default="$TMP_ROOT/release-by-default"
+make_fixture "$release_by_default"
+yq eval '.on.workflow_dispatch.inputs.mode.default = "release"' -i \
+  "$release_by_default/.github/workflows/weekly.yaml"
+expect_failure "$release_by_default" "manual Weekly run defaults to release evidence"
+
+generic_weekly_gate="$TMP_ROOT/generic-weekly-gate"
+make_fixture "$generic_weekly_gate"
+yq eval '.jobs.complete.name = "Complete (weekly)"' -i \
+  "$generic_weekly_gate/.github/workflows/weekly.yaml"
+expect_failure "$generic_weekly_gate" "Weekly terminal gate omits the resolved mode"
+
+fixed_weekly_retention="$TMP_ROOT/fixed-weekly-retention"
+make_fixture "$fixed_weekly_retention"
+yq eval '.jobs.ct.with.artifact_retention_days = 90' -i \
+  "$fixed_weekly_retention/.github/workflows/weekly.yaml"
+expect_failure "$fixed_weekly_retention" "assurance CT artifacts retain release lifetime"
 
 colliding_rsa_concurrency="$TMP_ROOT/colliding-rsa-concurrency"
 make_fixture "$colliding_rsa_concurrency"
@@ -345,15 +370,13 @@ expect_failure "$missing_riscv_release_artifact" "release without validated RISC
 
 compact_weekly_ct="$TMP_ROOT/compact-weekly-ct"
 make_fixture "$compact_weekly_ct"
-sed -i.bak 's/upload_raw_artifacts: true/upload_raw_artifacts: false/' "$compact_weekly_ct/.github/workflows/weekly.yaml"
-rm -f "$compact_weekly_ct/.github/workflows/weekly.yaml.bak"
+yq eval '.jobs.ct.with.upload_raw_artifacts = false' -i "$compact_weekly_ct/.github/workflows/weekly.yaml"
 expect_failure "$compact_weekly_ct" "Weekly without raw release CT evidence"
 
 compact_riscv_ct="$TMP_ROOT/compact-riscv-ct"
 make_fixture "$compact_riscv_ct"
-sed -i.bak 's/upload_raw_artifacts: true/upload_raw_artifacts: false/' \
+yq eval '.jobs.ct.with.upload_raw_artifacts = false' -i \
   "$compact_riscv_ct/.github/workflows/riscv.yaml"
-rm -f "$compact_riscv_ct/.github/workflows/riscv.yaml.bak"
 expect_failure "$compact_riscv_ct" "RISC-V without raw release CT evidence"
 
 riscv_leaked_into_weekly="$TMP_ROOT/riscv-leaked-into-weekly"
@@ -389,8 +412,21 @@ expect_failure "$duplicate_semver_owner" "duplicate SemVer owner"
 
 shrunk_matrix="$TMP_ROOT/shrunk-matrix"
 make_fixture "$shrunk_matrix"
-sed -i.bak '/  "crc16"/d' "$shrunk_matrix/scripts/test/test-feature-matrix.sh"
-rm -f "$shrunk_matrix/scripts/test/test-feature-matrix.sh.bak"
-expect_failure "$shrunk_matrix" "removed executable feature profile"
+sed -i.bak '/  "crc16"/d' "$shrunk_matrix/scripts/lib/feature-profiles.sh"
+rm -f "$shrunk_matrix/scripts/lib/feature-profiles.sh.bak"
+expect_failure "$shrunk_matrix" "removed historical compile feature profile"
+
+uncompiled_execution="$TMP_ROOT/uncompiled-execution"
+make_fixture "$uncompiled_execution"
+sed -i.bak '/EXECUTABLE_FEATURE_SETS=(/,/^)/ s/  "full"/  "std,full,uncompiled-fixture"/' \
+  "$uncompiled_execution/scripts/lib/feature-profiles.sh"
+rm -f "$uncompiled_execution/scripts/lib/feature-profiles.sh.bak"
+expect_failure "$uncompiled_execution" "executable feature profile without compile coverage"
+
+stale_amx_cache="$TMP_ROOT/stale-amx-cache"
+make_fixture "$stale_amx_cache"
+yq eval '.jobs.platform-amx.with.cache_key = "${{ inputs.cache_key_prefix }}-platform-amx"' -i \
+  "$stale_amx_cache/.github/workflows/_ci-suite.yaml"
+expect_failure "$stale_amx_cache" "AMX cache identity omits its reduced-debug test profile"
 
 echo "CI ownership regression tests passed"

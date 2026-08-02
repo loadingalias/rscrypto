@@ -23,6 +23,7 @@ the recipes reported by `just --list`.
 | `test/test-feature-matrix.sh`  | `just test-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh` |
 | `test/test-miri.sh`            | `just test-miri`, `ci/run-rust-job.sh` |
 | `test/test-fuzz.sh`            | `just test-fuzz`, `ci/run-rust-job.sh` |
+| `test/test-fuzz-scheduler-test.sh` | `just check-actions` |
 | `test/test-fuzz-asan.sh`       | `just test-fuzz-asan`, `ci/run-rust-job.sh` |
 | `test/test-rsa-leakage.sh`     | `just test-rsa-leakage`, `ci/run-rust-job.sh` |
 | `test/test-rsa-macos-asm.sh`   | `just test-rsa-macos-asm` on a physical local Apple Silicon Mac |
@@ -102,6 +103,7 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `lib/common.sh`         | `scripts/check/*.sh`, `scripts/test/*.sh`, `scripts/ci/ci-check.sh` |
 | `lib/rail-plan.sh`      | `scripts/lib/common.sh` |
 | `lib/fuzz-packages.sh`  | `scripts/test/test-fuzz.sh`, `scripts/test/test-coverage.sh` |
+| `lib/feature-profiles.sh` | `scripts/check/check-feature-matrix.sh`, `scripts/test/test-feature-matrix.sh` |
 | `lib/targets.sh`        | `scripts/check/check-all.sh`, `scripts/check/check-linux.sh`, `scripts/check/check-ibm.sh` |
 | `lib/target-matrix.sh`  | `scripts/lib/targets.sh`, `_ci-suite.yaml` (target-matrix job) |
 | `lib/toolchain.sh`      | `.github/actions/setup-toolchain/action.yaml` |

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -15,11 +17,16 @@ from asm_heuristics import (
   summarize_closure,
 )
 from provenance import codegen_value
-from symbolize_linked_binary import Symbol, parse_indirect_symbols, parse_link_map, symbolize
+from symbolize_linked_binary import (
+  Symbol,
+  parse_indirect_symbols,
+  parse_link_map,
+  symbolize,
+)
 from validate_release_evidence import (
   parse_hashes,
-  records_by_path,
   records_by_name,
+  records_by_path,
   validate_equality_index,
   validate_exact_candidate,
   validate_heuristics,
@@ -209,6 +216,30 @@ def main() -> None:
     assert "0x1010 <rscrypto::fixed_eq>" in output
     assert "Owner" not in output
     expect_failure(lambda: symbolize(raw_disassembly, symbolized, [Symbol(0x1020, 1, "missing")]))
+
+  with tempfile.TemporaryDirectory() as temporary:
+    temporary_path = Path(temporary)
+    package_script = Path(__file__).resolve().with_name("package_evidence.py")
+    package_args = [
+      sys.executable,
+      str(package_script),
+      "--target",
+      "fixture-target",
+      "--suffix",
+      "fixture",
+      "--out-dir",
+      "package",
+      "--raw",
+    ]
+    missing_raw = subprocess.run(package_args, cwd=temporary_path, capture_output=True, text=True, check=False)
+    assert missing_raw.returncode != 0
+    assert "raw CT artifact directory missing" in missing_raw.stderr
+
+    raw_dir = temporary_path / "target" / "ct" / "fixture-target" / "release"
+    raw_dir.mkdir(parents=True)
+    (raw_dir / "marker").write_text("raw evidence\n")
+    subprocess.run(package_args, cwd=temporary_path, check=True)
+    assert (temporary_path / "package" / "target-ct-raw-fixture.tar.gz").is_file()
 
   ct, evidence, heuristics = equality_fixture()
   validate_equality_index(evidence, "fixture", ct)

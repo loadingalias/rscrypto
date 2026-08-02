@@ -44,7 +44,7 @@ jobs:
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'native' || inputs.mode == 'all' }}
     name: Native CI
     concurrency:
-      group: riscv-native-${{ github.ref }}
+      group: riscv-native-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}
       cancel-in-progress: true
     uses: ./.github/workflows/_rust-job.yaml
     with:
@@ -61,14 +61,15 @@ jobs:
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'evidence' || inputs.mode == 'constant-time' || inputs.mode == 'all' }}
     name: Constant-Time Evidence (RISC-V)
     concurrency:
-      group: riscv-ct-${{ github.ref }}
+      group: riscv-ct-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}
       cancel-in-progress: true
     uses: ./.github/workflows/ct.yaml
     with:
       platforms: rise-riscv
       dudect_timeout: 1800
       binsec_timeout: 900
-      upload_raw_artifacts: true
+      upload_raw_artifacts: ${{ github.event_name == 'workflow_dispatch' }}
+      artifact_retention_days: ${{ github.event_name == 'workflow_dispatch' && 90 || 14 }}
 
   benchmark:
     if: ${{ github.event_name == 'workflow_dispatch' && (inputs.mode == 'benchmark' || inputs.mode == 'all') }}

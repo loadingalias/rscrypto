@@ -123,9 +123,15 @@ def main() -> int:
       for path in sorted(logs_dir.glob("*.txt")):
         copy_file(path, destination / "logs" / path.name)
 
-  if args.raw and target_dir.exists():
+  if args.raw and not target_dir.is_dir():
+    raise SystemExit(f"raw CT artifact directory missing: {target_dir}")
+  if args.raw:
     archive_base = destination / f"target-ct-raw-{args.suffix}"
-    shutil.make_archive(str(archive_base), "gztar", root_dir=root, base_dir=target_dir.relative_to(root))
+    archive_path = Path(
+      shutil.make_archive(str(archive_base), "gztar", root_dir=root, base_dir=target_dir.relative_to(root))
+    )
+    if not archive_path.is_file():
+      raise SystemExit(f"raw CT artifact archive missing: {archive_path}")
 
   write_readme(destination, args.suffix, report, args.raw)
   return 0

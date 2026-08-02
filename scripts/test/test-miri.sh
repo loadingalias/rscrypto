@@ -24,7 +24,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 #
 # Usage:
 #   ./scripts/test/test-miri.sh           # Run focused Miri surface
-#   ./scripts/test/test-miri.sh --rsa     # Run RSA release-evidence Miri surface
+#   ./scripts/test/test-miri.sh --rsa     # Run the focused RSA Miri proof surface
 #   ./scripts/test/test-miri.sh --all     # Run exhaustive lib tests under Miri
 #   RSCRYPTO_MIRI_SCOPE=exhaustive ./scripts/test/test-miri.sh
 
@@ -94,9 +94,19 @@ run_miri_lib_filter_features() {
   local label="$1"
   local filter="$2"
   local features="$3"
+  local expected_count="$4"
+  local listing
+  local count
 
   echo ""
   echo "━━━ $label ━━━"
+  listing=$(cargo miri test --lib --features "$features" "$filter" -- --list)
+  printf '%s\n' "$listing"
+  count=$(printf '%s\n' "$listing" | awk '/: test$/ { count++ } END { print count + 0 }')
+  if [ "$count" -ne "$expected_count" ]; then
+    echo "Expected $expected_count Miri tests matching '$filter'; found $count" >&2
+    return 1
+  fi
   cargo miri test --lib --features "$features" "$filter"
 }
 
@@ -127,27 +137,18 @@ case "$MIRI_SCOPE" in
     run_miri_lib_filter "X25519 portable path under Miri" "auth::x25519::tests::miri_uses_portable_x25519_path"
     run_miri_lib_filter_features "ML-KEM portable round trip and rejection under Miri" \
       "auth::mlkem::portable::tests::miri_mlkem512_portable_round_trip_and_rejection" \
-      "ml-kem,diag"
+      "ml-kem,diag" \
+      1
     run_miri_test_target "Argon2 MatrixView/portable kernel under Miri" "argon2_miri" "argon2"
     ;;
   rsa)
-    echo "Scope: RSA release-evidence parser, private-operation, padding-reject, scratch, and deterministic keygen paths"
+    echo "Scope: RSA volatile fixed-window reads, private scratch/clearing layouts, and small-number Miller-Rabin"
+    echo "Full-size import, private operations, rejection, keygen, vectors, leakage, and assembly stay in native lanes"
 
-    run_miri_lib_filter_features "RSA private parser/import under Miri" \
-      "auth::rsa::tests::pkcs1_private_key_parser_preserves_components_and_public_key" \
-      "rsa,diag"
-    run_miri_lib_filter_features "RSA private sign/decrypt/oracle surface under Miri" \
-      "auth::rsa::tests::private_key_signs_pkcs1v15_and_pss_end_to_end" \
-      "rsa,diag"
-    run_miri_lib_filter_features "RSA OAEP same-width reject surface under Miri" \
-      "auth::rsa::tests::oaep_decrypt_api_rejects_same_width_oracle_classes_opaquely" \
-      "rsa,diag"
-    run_miri_lib_filter_features "RSA PKCS1v1.5 same-width reject surface under Miri" \
-      "auth::rsa::tests::pkcs1v15_encrypt_decrypt_rejects_oracle_classes_opaquely" \
-      "rsa,diag"
-    run_miri_lib_filter_features "RSA deterministic key-generation helpers under Miri" \
-      "auth::rsa::tests::keygen_derives_private_components_from_fixture_primes_end_to_end" \
-      "rsa,diag,getrandom"
+    run_miri_lib_filter_features "RSA focused unsafe-boundary proofs under Miri" \
+      "auth::rsa::tests::rsa_miri_proof_" \
+      "rsa,diag" \
+      3
     ;;
   exhaustive)
     echo "Scope: exhaustive lib tests under Miri"

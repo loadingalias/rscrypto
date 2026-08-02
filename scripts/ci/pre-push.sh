@@ -181,7 +181,7 @@ needs_actions_check() {
     return 0
   fi
 
-  changed_file_matches '^\.config/(ci-tool-archives\.tsv|target-matrix\.json)$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/check/check\.sh$|^scripts/ci/(check-action-pins|check-action-pins-test|check-ci-ownership|check-ci-ownership-test|ci-check|cross-targets|install-codecov|install-tools|nostd-wasm-suite|setup-toolchain|tool-integrity-test|release-evidence-check|release-evidence-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$|^scripts/lib/ci-tool-integrity\.sh$'
+  changed_file_matches '^\.config/(ci-tool-archives\.tsv|target-matrix\.json)$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/check/check\.sh$|^scripts/ci/(check-action-pins|check-action-pins-test|check-ci-ownership|check-ci-ownership-test|ci-check|cross-targets|install-codecov|install-tools|nostd-wasm-suite|setup-toolchain|tool-integrity-test|release-evidence-check|release-evidence-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$|^scripts/lib/ci-tool-integrity\.sh$|^scripts/test/test-fuzz(-scheduler-test)?\.sh$'
 }
 
 needs_host_checks() {
@@ -193,7 +193,7 @@ needs_host_checks() {
     return 0
   fi
 
-  changed_file_matches '^scripts/check/|^scripts/lib/(common|rail-plan)\.sh$|^scripts/test/test-feature-matrix\.sh$'
+  changed_file_matches '^scripts/check/|^scripts/lib/(common|rail-plan|feature-profiles)\.sh$|^scripts/test/(test-feature-matrix|test-fuzz)\.sh$'
 }
 
 run_actions_check() {
