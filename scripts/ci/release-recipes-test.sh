@@ -6,7 +6,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 prepare_recipe=$(cd "$REPO_ROOT" && just --show release-prepare)
 tag_recipe=$(cd "$REPO_ROOT" && just --show release-tag)
-controls_recipe=$(cd "$REPO_ROOT" && just --show check-repository-controls)
 push_recipe=$(cd "$REPO_ROOT" && just --dry-run push 2>&1)
 push_full_recipe=$(cd "$REPO_ROOT" && just --dry-run push-full 2>&1)
 
@@ -16,14 +15,13 @@ grep -Fq "git push" <<<"$prepare_recipe"
 grep -Fq "cargo rail release finalize rscrypto --yes --skip-publish" <<<"$tag_recipe"
 # shellcheck disable=SC2016 # Match the literal command rendered by just.
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"' <<<"$tag_recipe"
-grep -Fq 'just check-repository-controls' <<<"$tag_recipe"
-grep -Fq 'scripts/ci/repository-controls-evidence.sh' <<<"$controls_recipe"
-if grep -Fq -- '--allow-redacted-bypass' <<<"$controls_recipe"; then
+grep -Fq 'scripts/ci/repository-controls-evidence.sh' <<<"$tag_recipe"
+if grep -Fq -- '--allow-redacted-bypass' <<<"$tag_recipe"; then
   echo "the pre-tag repository controls gate must require full bypass visibility" >&2
   exit 1
 fi
 
-controls_line=$(grep -nF 'just check-repository-controls' <<<"$tag_recipe" | cut -d: -f1)
+controls_line=$(grep -nF 'scripts/ci/repository-controls-evidence.sh' <<<"$tag_recipe" | cut -d: -f1)
 evidence_line=$(grep -nF 'scripts/ci/release-evidence-check.sh' <<<"$tag_recipe" | cut -d: -f1)
 finalize_line=$(grep -nF 'cargo rail release finalize' <<<"$tag_recipe" | cut -d: -f1)
 if (( controls_line >= evidence_line || evidence_line >= finalize_line )); then
@@ -31,8 +29,8 @@ if (( controls_line >= evidence_line || evidence_line >= finalize_line )); then
   exit 1
 fi
 
-if grep -Fq "cargo rail release check" <<<"$tag_recipe"; then
-  echo "release-tag must not require consumed change files" >&2
+if grep -Fq "cargo rail release check" <<<"$tag_recipe" || grep -Fq "cargo rail unify" <<<"$tag_recipe"; then
+  echo "release-tag must consume exact-commit evidence instead of repeating release preparation" >&2
   exit 1
 fi
 

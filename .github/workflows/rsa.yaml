@@ -92,7 +92,7 @@ jobs:
   complete:
     name: Complete (RSA)
     needs: [rsa-miri, rsa-leakage, rsa-linux-x86_64-asm]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Assert RSA lanes passed

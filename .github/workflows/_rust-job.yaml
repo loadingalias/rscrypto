@@ -150,8 +150,8 @@ jobs:
           RSCRYPTO_CI_UPLOAD_RAW_ARTIFACTS: ${{ inputs.upload_raw_artifacts && 'true' || 'false' }}
         run: scripts/ci/run-rust-job.sh
 
-      - name: Upload Artifact (always)
-        if: always() && inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always
+      - name: Upload Artifact after completion
+        if: ${{ !cancelled() && inputs.artifact_name != '' && inputs.artifact_path != '' && inputs.artifact_always }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ inputs.artifact_name }}

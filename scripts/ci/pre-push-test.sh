@@ -14,6 +14,12 @@ cp "$REPO_ROOT/scripts/ci/pre-push.sh" "$fixture/scripts/ci/pre-push.sh"
 cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" "$fixture/scripts/lib/"
 
 git -C "$fixture" init --quiet
+git -C "$fixture" config user.email "ci@example.invalid"
+git -C "$fixture" config user.name "CI"
+git -C "$fixture" add .
+git -C "$fixture" commit --quiet -m "baseline"
+git -C "$fixture" update-ref refs/remotes/origin/main HEAD
+base_branch="$(git -C "$fixture" branch --show-current)"
 
 cat >"$fake_bin/cargo" <<'SH'
 #!/usr/bin/env bash
@@ -57,6 +63,35 @@ if (
   exit 1
 fi
 grep -Fq "cargo rail change check --merge-base --required" "$mock_log"
+
+git -C "$fixture" switch --quiet -c rail/release-test
+git -C "$fixture" commit --quiet --allow-empty \
+  -m "chore(release): prepare rail/release-test" \
+  -m "Rail-Release-Mode: prepare"
+: >"$mock_log"
+release_output="$TMP_ROOT/release.out"
+if ! (
+  cd "$fixture"
+  HOME="$TMP_ROOT/home" \
+    PATH="$fake_bin:$PATH" \
+    MOCK_LOG="$mock_log" \
+    MOCK_RELEASE_CHECK_STATUS=42 \
+    RAIL_PLAN_JSON_CACHE="$plan" \
+    RAIL_SCOPE_JSON='' \
+    RAIL_SCOPE_JSON_CACHE='' \
+    RAIL_SURFACES_JSON='' \
+    scripts/ci/pre-push.sh --light
+) >"$release_output" 2>&1; then
+  cat "$release_output" >&2
+  echo "Cargo Rail release branches must not require consumed intent" >&2
+  exit 1
+fi
+if grep -Fq "cargo rail change check --merge-base --required" "$mock_log"; then
+  echo "Cargo Rail release branch reran consumed intent coverage" >&2
+  exit 1
+fi
+grep -Fq "Cargo Rail release branch has consumed its reviewed intent" "$release_output"
+git -C "$fixture" switch --quiet "$base_branch"
 
 run_pre_push_case() {
   local name=$1

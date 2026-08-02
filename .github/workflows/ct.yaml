@@ -144,7 +144,7 @@ jobs:
   complete:
     name: Complete (CT)
     needs: [plan, ct]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Assert CT lanes passed

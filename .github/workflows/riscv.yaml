@@ -97,7 +97,7 @@ jobs:
   complete:
     name: Complete (RISC-V)
     needs: [native, ct, benchmark]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Assert selected lanes passed

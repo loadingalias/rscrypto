@@ -280,7 +280,7 @@ jobs:
   complete:
     name: Complete (${{ needs.mode.outputs.mode }})
     needs: [mode, suite, miri, miri-tree-borrows, fuzzing, asan-fuzzing, mlkem-graviton, ct, rsa, coverage]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Assert all lanes passed

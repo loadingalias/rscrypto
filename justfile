@@ -113,11 +113,6 @@ check-feature-matrix:
 check-zeroize-evidence:
     @scripts/check/zeroize-evidence.sh
 
-check-unify:
-    cargo rail config validate --strict
-    cargo rail config migrate --check
-    cargo rail unify --check --explain
-
 ci-check:
     @scripts/ci/ci-check.sh
 
@@ -201,26 +196,8 @@ bench-quick *args="":
 
 # Maintenance
 
-# Release
-release-change bump message:
-    cargo rail change add rscrypto --bump "{{ bump }}" --message "{{ message }}"
-
-release-status:
-    cargo rail change status
-
-release-check:
-    just check-unify
-    cargo rail change status
-    cargo rail release check rscrypto --extended
-    scripts/ci/release-plan-check.sh rscrypto
-
-check-repository-controls:
-    @scripts/ci/repository-controls-evidence.sh \
-      --commit "$(git rev-parse HEAD)" \
-      --output target/repository-controls.json
-
+# Release adapters not yet expressible as typed Cargo Rail release policy.
 release-prepare:
-    just check-unify
     cargo rail release check rscrypto --extended
     cargo rail release run rscrypto --bump auto --yes --pr
     cargo update --manifest-path tools/ct-harness/Cargo.toml -p rscrypto
@@ -231,8 +208,9 @@ release-prepare:
     git push
 
 release-tag:
-    just check-unify
-    just check-repository-controls
+    scripts/ci/repository-controls-evidence.sh \
+      --commit "$(git rev-parse HEAD)" \
+      --output target/repository-controls.json
     scripts/ci/release-evidence-check.sh --commit "$(git rev-parse HEAD)"
     cargo rail release finalize rscrypto --yes --skip-publish
 
