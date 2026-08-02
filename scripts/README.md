@@ -40,10 +40,9 @@ the recipes reported by `just --list`.
 | `ci/changed-test-planning-test.sh` | `just check-actions` |
 | `ci/check-worktree-test.sh`    | `just check-actions` |
 | `ci/pre-push-test.sh`          | `just check-actions` |
-| `ci/release-plan-check.sh`     | `just release-check` |
 | `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |
 | `ci/release-evidence-check-test.sh` | `just check-actions` |
-| `ci/repository-controls-evidence.sh` | `just check-repository-controls`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |
+| `ci/repository-controls-evidence.sh` | `just release-tag`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |
 | `ci/repository-controls-evidence-test.sh` | `just check-actions` |
 | `ci/package-release-source.sh` | `release.yaml`, `ci/release-identity-test.sh` |
 | `ci/package-release-ct-evidence.sh` | `release.yaml` |
@@ -89,7 +88,6 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `ci/install-codecov.sh`        | `weekly.yaml` |
 | `ci/setup-toolchain.sh`        | `.github/actions/setup-toolchain/action.yaml` |
 | `ci/run-rust-job.sh`           | `.github/workflows/_rust-job.yaml` |
-| `ci/resolve-rail-plan.sh`       | `.github/workflows/ci.yaml` |
 | `ci/dependabot-smoke.sh`       | `ci/run-rust-job.sh` |
 | `ci/emit-manual-matrix.sh`     | `bench.yaml`, `ct.yaml` |
 | `ci/mlkem-aarch64-gate.sh`     | `ci/run-rust-job.sh` |

@@ -181,7 +181,7 @@ needs_actions_check() {
     return 0
   fi
 
-  changed_file_matches '^\.config/(ci-tool-archives\.tsv|target-matrix\.json)$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/check/check\.sh$|^scripts/ci/(check-action-pins|check-action-pins-test|check-ci-ownership|check-ci-ownership-test|ci-check|cross-targets|install-codecov|install-tools|nostd-wasm-suite|setup-toolchain|tool-integrity-test|release-evidence-check|release-evidence-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$|^scripts/lib/ci-tool-integrity\.sh$|^scripts/test/test-fuzz(-scheduler-test)?\.sh$'
+  changed_file_matches '^\.config/(ci-tool-archives\.tsv|target-matrix\.json)$|^\.github/(workflows|actions)/.*\.ya?ml$|^\.github/(rulesets|repository-settings)/.*\.json$|^scripts/check/check\.sh$|^scripts/ci/(check-action-pins|check-action-pins-test|check-ci-ownership|check-ci-ownership-test|ci-check|cross-targets|install-codecov|install-tools|nostd-wasm-suite|pre-push|pre-push-test|setup-toolchain|tool-integrity-test|release-evidence-check|release-evidence-check-test|repository-controls-evidence|repository-controls-evidence-test|package-release-source|write-release-manifest|release-identity-test|publish-immutable-release|publish-immutable-release-test|release-recipes-test)\.sh$|^scripts/lib/ci-tool-integrity\.sh$|^scripts/test/test-fuzz(-scheduler-test)?\.sh$'
 }
 
 needs_host_checks() {
@@ -211,6 +211,15 @@ run_rail_unify_check() {
 
 run_rail_change_check() {
   cargo rail change check --merge-base --required
+}
+
+is_cargo_rail_release_branch() {
+  local branch
+  branch="$(git branch --show-current)"
+  [[ "$branch" == rail/release-* ]] || return 1
+  git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null || return 1
+  git log --format=%B refs/remotes/origin/main..HEAD \
+    | grep -Fxq 'Rail-Release-Mode: prepare'
 }
 
 run_host_checks() {
@@ -267,7 +276,11 @@ fi
 
 if [[ "$RAIL_READY" != true ]] || rail_surface_is_enabled build || rail_surface_is_enabled test; then
   start_task "cargo-rail unify" run_rail_unify_check
-  start_task "release intent coverage" run_rail_change_check
+  if is_cargo_rail_release_branch; then
+    skip "Release intent coverage" "Cargo Rail release branch has consumed its reviewed intent"
+  else
+    start_task "release intent coverage" run_rail_change_check
+  fi
 else
   skip "Cargo-rail unify" "no build/test surface"
   skip "Release intent coverage" "no build/test surface"

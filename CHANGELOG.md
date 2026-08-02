@@ -1,5 +1,135 @@
 # Changelog
 
+
+## [0.8.0](https://github.com/loadingalias/rscrypto/compare/v0.7.8...v0.8.0) - 2026-08-02
+
+- Authenticate CI tool downloads and package-manager installs.
+
+- Avoid duplicate Ed25519 secret expansion and repeated HKDF prefix-state copies without changing outputs.
+
+- Bound default password-record PBKDF2 verification work while keeping raw
+  derivation and compatibility policies unbounded. Custom record policies can
+  set an explicit ceiling with `verify_with_policy_bounded` or
+  `verify_password_with_policy_bounded`.
+
+- Argon2 and scrypt password verification now reject noncanonical or over-budget
+  PHC records before decoding, allocating, or running a KDF. The pre-1.0 API is
+  split into verifier-owned `Argon2idPassword` and `ScryptPassword` records and
+  raw `derive` operations with valid-by-construction parameters; legacy public
+  PHC parsing, unbounded verification, builder, version-selection, and
+  caller-supplied-salt password helpers have been removed.
+
+- Changed-test planning now runs the workspace test suite when planner output is
+  unavailable, invalid, or ambiguous; only a valid explicit empty scope skips
+  tests.
+
+- Clear ECDSA accelerated reduction and inversion scratch after use.
+
+- Clear ML-KEM secret SHA-3 and SHAKE state after use.
+
+- Clear portable AEAD authentication state after use.
+
+- Clear RSA private-key validation buffers on every return path.
+
+- Collapse RapidHash to portable `RapidHash64`, `RapidStreamHasher`,
+  `RapidHasher`, `RapidSeededState`, and fallible `RapidRandomState`. Remove the
+  `RapidHash` alias, 128-bit/native-endian variants, `RapidBuildHasher`, duplicate
+  cores, placeholder dispatch, and direct/default `RapidHasher` construction;
+  collection hashers now come from an explicit state.
+
+- Constant-time release evidence now inspects production equality paths in final
+  linked binaries and binds disassembly, symbols, timing, formal results,
+  provenance, and hashes to the exact release commit and build configuration.
+
+- Correct AES-GCM-SIV RFC input bounds.
+
+- Correct cSHAKE and KMAC byte padding at exact rate boundaries.
+
+- Correct x86 CRC-16 and CRC-24 four-way tails, x86 and POWER capability detection, and cached initialization after a
+  panic.
+
+- Document Ascon-AEAD128 per-key nonce, data, and failed-decryption limits from final SP 800-232.
+
+- Fix `diag` builds when CRC-32 and CRC-64 are enabled independently.
+
+- Immutable releases now bind a protected tag and exact commit to a deterministic
+  source archive, crate, evidence, checksums, and pinned toolchain in an attested
+  manifest.
+
+- Reduce RapidHash overhead for fixed-size collection keys without changing hash outputs or allocation behavior.
+
+- Development and CI now use libcrux ML-KEM 0.0.10, removing vulnerable
+  libcrux-secrets and libcrux-sha3 releases from the locked oracle graph.
+
+- Make cryptographic boundaries misuse-resistant: keyed BLAKE2 uses validated borrowed key types and variable outputs fail with typed errors, normal AEAD sealing owns nonce issuance while caller nonces require an expert import, entropy and platform override failures no longer panic, and diagnostic or dangerous capabilities no longer clutter the crate root.
+
+- Normalize RSA CRT exponents before private operations.
+
+- Secret comparison is now owned by fixed-size cryptographic key, tag, and
+  shared-secret types. The public generic `ConstantTimeEq` trait, arbitrary-slice
+  comparison helper, and slice/array implementations have been removed;
+  `SecretBytes` and `SecretVec` no longer provide equality.
+
+- Preserve a scalar declassification boundary for fixed-size secret-owner equality so optimized x86 builds remain covered by constant-time binary proofs.
+
+- Rebind reusable RSA scratch state when switching between same-width keys.
+
+- Panic before absorbing SHA-384, SHA-512, or SHA-512/256 input that would
+  exceed the FIPS 180-4 length field instead of wrapping the encoded bit length.
+
+- Reject RSA private-key imports with nonstandard-width factors or factors that fail probable-prime screening.
+
+- Release validation now separates routine assurance from exact-commit evidence, completes focused RSA Miri proofs within the gate, and avoids redundant feature and fuzz execution.
+
+- Remove the unselected diagnostic-only AArch64 Poly1305 kernel and unused ML-KEM phase benchmarks. Production
+  dispatch, portable fallbacks, retained constant-time probes, FIPS 203 behavior, and cryptographic outputs are
+  unchanged.
+
+- Remove unselected architecture kernels and unused diagnostic hooks. Production dispatch and portable fallbacks are
+  unchanged.
+
+- Releases now include an attested snapshot of the enforced default-branch
+  controls, and maintainers can detect live ruleset drift before tagging with
+  `just check-repository-controls`.
+
+- Require security-strength KMAC tags in default verification APIs and provide explicit primitive verification for protocol-defined shorter tags.
+
+- Release notes now contain only reviewed user-facing entries from `.changes/`;
+  commit history is no longer appended as generated changelog noise.
+
+- Secret-bearing fixed-size keys, shared secrets, keypairs, authentication tags,
+  and keyed BLAKE3 outputs no longer implement `PartialEq` or `Eq`. Their inherent
+  `ct_eq` methods return an opaque `CtDecision`; callers must explicitly consume
+  it with `declassify()` when revealing equality is intended. Verification APIs
+  continue to return an opaque `Result`. Diagnostic HMAC and Ascon tag-comparison
+  helpers now return `CtDecision` instead of `bool`. Custom `Mac` implementations
+  must now provide `verify`; `Mac::Tag` no longer requires `Eq`.
+
+- Secret-bearing HMAC, HKDF, KMAC, and PBKDF2 states no longer implement
+  `Clone`. Keyed BLAKE2 parameter builders and the variable-output Blake2b state
+  also no longer do, because they can retain a MAC key. The `Mac` trait no longer
+  requires `Clone`; reuse or share one owner, or construct another keyed state
+  explicitly.
+  
+  Secret-bearing SHA/HMAC, Ed25519, Keccak, BLAKE2, and BLAKE3 temporaries now
+  clear at their actual finalization, reset, transfer, or drop boundary, including
+  keyed XOF and parallel heap scratch. The optimized zeroization gate covers
+  success, error, early-return, move, reuse, and drop shapes. Secret-key hex and
+  generic ECDSA random-source errors no longer echo input or payload bytes through
+  `Debug`, `Display`, or the standard error-source chain. Their public fields and
+  variants still allow explicit recovery when callers deliberately inspect them.
+
+- The `check` and `check-all` recipes now report formatting and lockfile drift
+  without modifying pre-existing source or `Cargo.lock` changes.
+
+- RSA JWT/JWS verification is now bound to one verifier-owned
+  `RsaJwtAlgorithm`. Peer-controlled `alg` metadata can only match that fixed
+  policy; string-to-profile helpers and runtime algorithm-name signing and
+  verification APIs have been removed.
+
+- Verify imported assembly and cryptographic test vectors against immutable upstream sources and deterministic transforms.
+
+
 ## [0.7.8](https://github.com/loadingalias/rscrypto/compare/v0.6.4...v0.7.8) - 2026-07-15
 
 ### Security and compatibility

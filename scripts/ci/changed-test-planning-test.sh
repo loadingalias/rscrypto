@@ -103,8 +103,6 @@ make_legacy_plan() {
 EMPTY_SCOPE="$(make_scope empty '[]' '[]')"
 WORKSPACE_SCOPE="$(make_scope workspace '[]' '["--workspace"]' true true false)"
 CRATES_SCOPE="$(make_scope crates '["crate-a","crate-b"]' '["-p","crate-a","-p","crate-b"]' true true false)"
-ACTION_WORKSPACE_SCOPE="$(jq -c '.scope_contract_version = 3 | del(.surfaces)' <<<"$WORKSPACE_SCOPE")"
-ACTION_WORKSPACE_SURFACES="$(jq -c '.surfaces' <<<"$WORKSPACE_SCOPE")"
 EMPTY_PLAN="$(make_plan "$EMPTY_SCOPE")"
 WORKSPACE_PLAN="$(make_plan "$WORKSPACE_SCOPE")"
 CRATES_PLAN="$(make_plan "$CRATES_SCOPE")"
@@ -348,38 +346,5 @@ run_check_all_consumer planner-failure '' 9 rscrypto
 run_check_all_consumer valid-empty "$EMPTY_PLAN" 0 rscrypto
 run_check_all_consumer valid-workspace "$WORKSPACE_PLAN" 0 rscrypto
 run_check_all_consumer valid-crates "$CRATES_PLAN" 0 crate-a
-
-run_workflow_resolver() {
-  local name=$1
-  local outcome=$2
-  local scope=$3
-  local expected=$4
-  local surfaces=${5:-}
-  local output="$TMP_ROOT/resolver-$name.outputs"
-
-  : >"$output"
-  if ! GITHUB_OUTPUT="$output" \
-    RAIL_PLAN_STEP_OUTCOME="$outcome" \
-    RAIL_SCOPE_JSON="$scope" \
-    RAIL_SURFACES_JSON="$surfaces" \
-    bash "$REPO_ROOT/scripts/ci/resolve-rail-plan.sh"; then
-    fail "workflow resolver failed for $name"
-  fi
-  assert_eq "$expected" "$(<"$output")" "workflow outputs for $name"
-}
-
-fallback_outputs=$'valid=false\nempty=false\nbuild=true\ntest=true\ninfra=true\ncargo_graph=true'
-run_workflow_resolver planner-failure failure '' "$fallback_outputs"
-run_workflow_resolver malformed-scope success '{' "$fallback_outputs"
-run_workflow_resolver valid-empty success "$EMPTY_SCOPE" $'valid=true\nempty=true\nbuild=false\ntest=false\ninfra=false\ncargo_graph=false'
-run_workflow_resolver valid-workspace success "$WORKSPACE_SCOPE" $'valid=true\nempty=false\nbuild=true\ntest=true\ninfra=false\ncargo_graph=false'
-run_workflow_resolver valid-crates success "$CRATES_SCOPE" $'valid=true\nempty=false\nbuild=true\ntest=true\ninfra=false\ncargo_graph=false'
-run_workflow_resolver action-workspace success "$ACTION_WORKSPACE_SCOPE" \
-  $'valid=true\nempty=false\nbuild=true\ntest=true\ninfra=false\ncargo_graph=false' \
-  "$ACTION_WORKSPACE_SURFACES"
-run_workflow_resolver action-missing-surfaces success "$ACTION_WORKSPACE_SCOPE" "$fallback_outputs"
-run_workflow_resolver action-malformed-surfaces success "$ACTION_WORKSPACE_SCOPE" "$fallback_outputs" '{'
-run_workflow_resolver action-mismatched-surfaces success "$WORKSPACE_SCOPE" "$fallback_outputs" \
-  "$(jq -c '.test = false' <<<"$ACTION_WORKSPACE_SURFACES")"
 
 echo "Changed-test planning regression tests passed"

@@ -38,7 +38,7 @@ security, performance, compatibility, or release-artifact change. Internal
 tooling and maintainer-only documentation normally do not need one.
 
 ```bash
-just release-change patch "Describe the user-visible result."
+cargo rail change add rscrypto --bump patch --message "Describe the user-visible result."
 ```
 
 Use `minor` or `major` instead of `patch` when the compatibility impact

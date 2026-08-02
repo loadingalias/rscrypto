@@ -46,7 +46,6 @@ EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
 CHECK_ALL="$ROOT/scripts/check/check-all.sh"
 CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RUN_RUST_JOB="$ROOT/scripts/ci/run-rust-job.sh"
-RAIL_PLAN_RESOLVER="$ROOT/scripts/ci/resolve-rail-plan.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
 RELEASE_SOURCE="$ROOT/scripts/ci/package-release-source.sh"
@@ -145,7 +144,6 @@ require_file "$EXECUTABLE_MATRIX"
 require_file "$CHECK_ALL"
 require_file "$CI_CHECK"
 require_file "$RUN_RUST_JOB"
-require_file "$RAIL_PLAN_RESOLVER"
 require_file "$RELEASE_PREFLIGHT"
 require_file "$RELEASE_EVIDENCE"
 require_file "$RELEASE_SOURCE"
@@ -187,21 +185,21 @@ fi
   == $(yq eval '.jobs | length' "$CI") ]] \
   || fail "every CI job must defer draft pull requests"
 
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .if' "$CI") == "always()" ]] \
-  || fail "CI must resolve a conservative plan after planner failure"
 suite_condition=$(yq eval '.jobs.suite."if"' "$CI")
-[[ "$suite_condition" == *"always()"* && "$suite_condition" == *"needs.rail-plan.result != 'success'"* ]] \
+[[ "$suite_condition" == *"!cancelled()"* && "$suite_condition" == *"needs.rail-plan.result != 'success'"* ]] \
   || fail "planner job failure must still run the CI suite"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-grep -Fq 'plan_valid: ${{ steps.resolve.outputs.valid }}' "$CI" \
-  || fail "CI must expose validated planner state"
+grep -Fq 'build: ${{ steps.rail.outputs.build }}' "$CI" \
+  || fail "CI must consume cargo-rail-action build output directly"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-grep -Fq 'plan_empty: ${{ steps.resolve.outputs.empty }}' "$CI" \
-  || fail "CI must expose explicit empty planner state"
-grep -Fq 'if [[ "$PLAN_VALID" != "true" || "$PLAN_EMPTY" != "true" ]]' "$CI" \
-  || fail "Complete must reject an unvalidated suite skip"
-[[ $(count_matches 'scripts/ci/resolve-rail-plan\.sh' "$CI") -eq 1 ]] \
-  || fail "CI must use exactly one repository-owned plan resolver"
+grep -Fq 'surfaces_json: ${{ steps.rail.outputs.surfaces-json }}' "$CI" \
+  || fail "CI must consume cargo-rail-action surfaces directly"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+grep -Fq 'include_cargo_graph: ${{ contains(needs.rail-plan.outputs.surfaces_json, '\''"custom:cargo_graph":true'\'') }}' "$CI" \
+  || fail "CI must derive Cargo graph assurance from cargo-rail-action surfaces"
+if grep -ERn 'always\(\)' "$WORKFLOWS" >/dev/null; then
+  fail "workflow cancellation must not start or prolong cleanup and aggregate jobs"
+fi
 
 if grep -ERn '^[[:space:]]+(pre_script|run_script):' "$WORKFLOWS" >/dev/null; then
   fail "reusable workflows must not accept executable shell fragments"
@@ -307,14 +305,6 @@ expected_installer_files=$(printf '%s\n' \
 [[ "$installer_files" == "$expected_installer_files" ]] \
   || fail "package-manager installs exist outside the reviewed integrity boundaries"
 
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .uses' "$CI") \
-  == "./.github/actions/setup" ]] \
-  || fail "the PR planner must use the repository-owned authenticated setup"
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .with."tools-mode"' "$CI") \
-  == "rail" ]] \
-  || fail "the PR planner must select the exact Cargo Rail install mode"
-# The action must discover the exact package-manager install from the preceding
-# step so none of its download or cargo-binstall fallbacks are reachable.
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .uses' "$CI") \
   == "loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f" ]] \
   || fail "the PR planner must use commit-pinned cargo-rail-action v6.1.0"
@@ -331,32 +321,17 @@ rail_version=$(sed -n 's/^CARGO_RAIL_VERSION=//p' "$INSTALL_TOOLS")
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since' "$CI") \
   == '${{ github.event.pull_request.base.sha }}' ]] \
   || fail "cargo-rail-action must plan from the immutable pull-request base"
-rail_setup_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .if' "$CI")
 rail_action_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .if' "$CI")
-[[ "$rail_setup_condition" == "github.event_name == 'pull_request'" \
-  && "$rail_action_condition" == "$rail_setup_condition" ]] \
-  || fail "cargo-rail-action and its authenticated install must share the PR condition"
-rail_setup_index=$(yq eval '.jobs."rail-plan".steps | to_entries | .[] | select(.value.id == "rail_setup") | .key' "$CI")
-rail_action_index=$(yq eval '.jobs."rail-plan".steps | to_entries | .[] | select(.value.id == "rail") | .key' "$CI")
-[[ "$rail_setup_index" =~ ^[0-9]+$ && "$rail_action_index" =~ ^[0-9]+$ \
-  && "$rail_setup_index" -lt "$rail_action_index" ]] \
-  || fail "the authenticated Cargo Rail install must precede cargo-rail-action"
-# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .env.RAIL_PLAN_STEP_OUTCOME' "$CI") \
-  == '${{ steps.rail.outcome }}' ]] \
-  || fail "the plan resolver must fail closed on cargo-rail-action outcome"
-# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .env.RAIL_SCOPE_JSON' "$CI") \
-  == '${{ steps.rail.outputs.scope-json }}' ]] \
-  || fail "the plan resolver must validate cargo-rail-action scope"
-# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .env.RAIL_SURFACES_JSON' "$CI") \
-  == '${{ steps.rail.outputs.surfaces-json }}' ]] \
-  || fail "the plan resolver must validate cargo-rail-action surfaces"
+[[ "$rail_action_condition" == "github.event_name == 'pull_request'" ]] \
+  || fail "cargo-rail-action must run only for pull requests"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .env.RAIL_BASE_REF' "$CI") \
   == '${{ steps.rail.outputs.base-ref }}' ]] \
   || fail "release intent coverage must use cargo-rail-action's resolved base"
+release_intent_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .if' "$CI")
+[[ "$release_intent_condition" == *"startsWith(github.head_ref, 'rail/release-')"* \
+  && "$release_intent_condition" == *"github.event.pull_request.head.repo.full_name == github.repository"* ]] \
+  || fail "only repository-owned Cargo Rail release PRs may consume change intent"
 grep -Fq 'scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"' "$TOOLCHAIN_ACTION" \
   || fail "toolchain setup must use the repository-owned rustup policy"
 if grep -Eq '[.]cargo/(bin|[.]crates)|[.]opam' "$SETUP_ACTION"; then
@@ -532,9 +507,12 @@ ct_artifact_name="ct-\${{ inputs.upload_raw_artifacts && 'raw-' || '' }}\${{ mat
   || fail "raw CT artifact names must be distinguishable before release"
 [[ $(yq eval '.on.workflow_call.inputs.artifact_retention_days.default' "$RUST_JOB") == "90" ]] \
   || fail "reusable Rust artifacts must preserve long retention by default"
-[[ $(yq eval '[.jobs.run.steps[] | select(.name == "Upload Artifact (always)" or .name == "Upload Artifact (success)") | .with."retention-days" == "${{ inputs.artifact_retention_days }}"] | all' "$RUST_JOB") == "true" ]] \
+artifact_steps='[.jobs.run.steps[] | select(.name == "Upload Artifact after completion" or .name == "Upload Artifact (success)")]'
+[[ $(yq eval "$artifact_steps | length" "$RUST_JOB") -eq 2 ]] \
+  || fail "reusable Rust job must retain both artifact upload paths"
+[[ $(yq eval "$artifact_steps | map(.with.\"retention-days\" == \"\${{ inputs.artifact_retention_days }}\") | all" "$RUST_JOB") == "true" ]] \
   || fail "reusable Rust artifact retention must be caller-controlled"
-[[ $(yq eval '[.jobs.run.steps[] | select(.name == "Upload Artifact (always)" or .name == "Upload Artifact (success)") | .with."if-no-files-found" == "error"] | all' "$RUST_JOB") == "true" ]] \
+[[ $(yq eval "$artifact_steps | map(.with.\"if-no-files-found\" == \"error\") | all" "$RUST_JOB") == "true" ]] \
   || fail "declared Rust evidence artifacts must fail closed when absent"
 grep -Fq 'CI Suite (release) / Cargo Graph Assurance / run' "$RELEASE_EVIDENCE" \
   || fail "release evidence must require release-mode Cargo Graph Assurance"
@@ -618,17 +596,21 @@ grep -Fq 'repos/$repo/immutable-releases' "$REPOSITORY_CONTROLS" \
   || fail "repository controls evidence must validate immutable releases before tagging"
 grep -Fq 'current_user_can_bypass == "never"' "$REPOSITORY_CONTROLS" \
   || fail "repository controls evidence must reject bypass access"
-grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}' "$RELEASE" \
+[[ $(yq eval '.jobs | length' "$RELEASE") -eq 2 ]] \
+  || fail "release must use one preflight and one publish job"
+[[ $(yq eval '.concurrency.cancel-in-progress' "$RELEASE") == "false" ]] \
+  || fail "release publication must not be canceled after side effects begin"
+evidence_step=$(yq eval '.jobs.preflight.steps | to_entries | .[] | select(.value.id == "evidence") | .key' "$RELEASE")
+setup_step=$(yq eval '.jobs.preflight.steps | to_entries | .[] | select(.value.name == "Setup") | .key' "$RELEASE")
+[[ "$evidence_step" =~ ^[0-9]+$ && "$setup_step" =~ ^[0-9]+$ && "$evidence_step" -lt "$setup_step" ]] \
+  || fail "release evidence must fail before expensive preflight setup"
+grep -Fq 'run-id: ${{ needs.preflight.outputs.weekly_run_id }}' "$RELEASE" \
   || fail "release must consume non-RISC-V CT artifacts from the validated Weekly run"
-grep -Fq 'run-id: ${{ needs.evidence-gate.outputs.riscv_run_id }}' "$RELEASE" \
+grep -Fq 'run-id: ${{ needs.preflight.outputs.riscv_run_id }}' "$RELEASE" \
   || fail "release must consume RISC-V CT artifacts from the validated RISC-V run"
 if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then
   fail "tag workflow must promote exact-commit evidence instead of rerunning CT or RSA"
 fi
-if grep -n 'check-unify' "$CI_CHECK" >/dev/null; then
-  fail "the fast quality lane must not own exhaustive Cargo graph assurance"
-fi
-
 ci_musl=$(jq '[.ci[] | select(.name | contains("musl"))] | length' "$MANIFEST")
 [[ "$ci_musl" -eq 0 ]] || fail "MUSL targets must not masquerade as native host jobs"
 

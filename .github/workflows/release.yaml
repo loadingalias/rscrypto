@@ -15,25 +15,41 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   preflight:
     name: Preflight
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
     outputs:
       crate_name: ${{ steps.preflight.outputs.crate_name }}
       crate_sha256: ${{ steps.preflight.outputs.crate_sha256 }}
       crate_version: ${{ steps.preflight.outputs.crate_version }}
       source_name: ${{ steps.preflight.outputs.source_name }}
       source_sha256: ${{ steps.preflight.outputs.source_sha256 }}
+      weekly_run_id: ${{ steps.evidence.outputs.weekly_run_id }}
+      weekly_run_url: ${{ steps.evidence.outputs.weekly_run_url }}
+      riscv_run_id: ${{ steps.evidence.outputs.riscv_run_id }}
+      riscv_run_url: ${{ steps.evidence.outputs.riscv_run_url }}
+      weekly_commit: ${{ steps.evidence.outputs.weekly_commit }}
+      weekly_version: ${{ steps.evidence.outputs.weekly_version }}
+      weekly_evidence_mode: ${{ steps.evidence.outputs.weekly_evidence_mode }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Verify CT and RSA release evidence
+        id: evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -61,7 +77,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: [preflight, evidence-gate]
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: crates-io
@@ -161,7 +177,7 @@ jobs:
           pattern: ct-*
           path: ct-release-artifacts
           github-token: ${{ github.token }}
-          run-id: ${{ needs.evidence-gate.outputs.weekly_run_id }}
+          run-id: ${{ needs.preflight.outputs.weekly_run_id }}
 
       - name: Download RISC-V CT evidence
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
@@ -169,14 +185,14 @@ jobs:
           name: ct-raw-rise-riscv
           path: ct-release-artifacts/ct-raw-rise-riscv
           github-token: ${{ github.token }}
-          run-id: ${{ needs.evidence-gate.outputs.riscv_run_id }}
+          run-id: ${{ needs.preflight.outputs.riscv_run_id }}
 
       - name: Package CT release evidence
         id: ct_evidence
         env:
           CRATE_VERSION: ${{ steps.package.outputs.crate_version }}
-          EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
-          EVIDENCE_VERSION: ${{ needs.evidence-gate.outputs.weekly_version }}
+          EVIDENCE_COMMIT: ${{ needs.preflight.outputs.weekly_commit }}
+          EVIDENCE_VERSION: ${{ needs.preflight.outputs.weekly_version }}
         run: |
           scripts/ci/package-release-ct-evidence.sh \
             --version "$CRATE_VERSION" \
@@ -197,8 +213,8 @@ jobs:
           SOURCE_PATH: ${{ steps.package.outputs.source_path }}
           CT_EVIDENCE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
           REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
-          EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
-          EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
+          EVIDENCE_COMMIT: ${{ needs.preflight.outputs.weekly_commit }}
+          EVIDENCE_MODE: ${{ needs.preflight.outputs.weekly_evidence_mode }}
         run: |
           scripts/ci/write-release-manifest.sh \
             --version "$CRATE_VERSION" \
@@ -277,10 +293,10 @@ jobs:
           CT_BUNDLE_NAME: ${{ steps.ct_evidence.outputs.bundle_name }}
           CT_BUNDLE_PATH: ${{ steps.ct_evidence.outputs.bundle_path }}
           CT_BUNDLE_SHA256: ${{ steps.ct_evidence.outputs.bundle_sha256 }}
-          CT_EVIDENCE_COMMIT: ${{ needs.evidence-gate.outputs.weekly_commit }}
-          CT_EVIDENCE_MODE: ${{ needs.evidence-gate.outputs.weekly_evidence_mode }}
-          CT_EVIDENCE_WEEKLY_RUN: ${{ needs.evidence-gate.outputs.weekly_run_url }}
-          CT_EVIDENCE_RISCV_RUN: ${{ needs.evidence-gate.outputs.riscv_run_url }}
+          CT_EVIDENCE_COMMIT: ${{ needs.preflight.outputs.weekly_commit }}
+          CT_EVIDENCE_MODE: ${{ needs.preflight.outputs.weekly_evidence_mode }}
+          CT_EVIDENCE_WEEKLY_RUN: ${{ needs.preflight.outputs.weekly_run_url }}
+          CT_EVIDENCE_RISCV_RUN: ${{ needs.preflight.outputs.riscv_run_url }}
           REPOSITORY_CONTROLS_NAME: ${{ steps.repository_controls.outputs.evidence_name }}
           REPOSITORY_CONTROLS_PATH: ${{ steps.repository_controls.outputs.evidence_path }}
           REPOSITORY_CONTROLS_SHA256: ${{ steps.repository_controls.outputs.evidence_sha256 }}
@@ -386,31 +402,3 @@ jobs:
           done
           echo "timed out waiting for rscrypto ${CRATE_VERSION} on crates.io" >&2
           exit 1
-
-  evidence-gate:
-    name: Release Evidence Gate
-    needs: preflight
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      weekly_run_id: ${{ steps.evidence.outputs.weekly_run_id }}
-      weekly_run_url: ${{ steps.evidence.outputs.weekly_run_url }}
-      riscv_run_id: ${{ steps.evidence.outputs.riscv_run_id }}
-      riscv_run_url: ${{ steps.evidence.outputs.riscv_run_url }}
-      weekly_commit: ${{ steps.evidence.outputs.weekly_commit }}
-      weekly_version: ${{ steps.evidence.outputs.weekly_version }}
-      weekly_evidence_mode: ${{ steps.evidence.outputs.weekly_evidence_mode }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Verify CT and RSA release evidence
-        id: evidence
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"

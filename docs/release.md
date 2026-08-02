@@ -15,7 +15,8 @@ never run `cargo publish` locally.
    git switch main
    git pull --ff-only
    git status --short
-   just release-check
+   cargo rail change status
+   cargo rail release check rscrypto --extended
    ```
 
 2. Prepare the release:
@@ -27,6 +28,10 @@ never run `cargo publish` locally.
    This creates a `rail/release-*` branch, commits the generated version and
    changelog, opens a pull request, refreshes the standalone constant-time tool
    lockfiles, and pushes that follow-up commit. It does not tag or publish.
+   The adapter is required because Cargo Rail does not yet include auxiliary
+   workspace lockfiles in its release mutation. Running `cargo rail release
+   run rscrypto --bump auto --yes --pr` directly would leave the CT workspaces
+   stale under `--locked`.
 
 3. Wait for the release pull request's required `Complete` check. Review the
    version, changelog, and lockfile diff, then merge it in the GitHub UI.
@@ -134,28 +139,32 @@ Change files live in `.changes/`; their reviewed bodies become the changelog.
 Commit subjects remain engineering history, not release notes.
 
 ```bash
-just release-change patch "Describe the user-visible result."
-just release-status
+cargo rail change add rscrypto --bump patch --message "Describe the user-visible result."
+cargo rail change status
 ```
 
 Use `minor` or `major` when compatibility requires it. Before preparing a
-release, `just release-check` validates configuration, dependency unification,
-pending intent, SemVer advice, and the generated release plan.
+release, `cargo rail release check rscrypto --extended` validates the pending
+release and its SemVer contract.
 
 Pull-request CI uses cargo-rail's planner to select checks from the actual
 changed surfaces. Weekly release mode runs the full Cargo graph proof for an
 exact release candidate; scheduled assurance does not. Release preflight
 consumes the release-mode result instead of recompiling it.
 
-`release-prepare` consumes the change files. After its pull request merges,
-`release-tag` deliberately does not rerun the pending-intent check. Instead, it
-validates the materialized release and uses `cargo rail release finalize
+`release-prepare` delegates the version, changelog, branch, commit, and pull
+request to Cargo Rail, then synchronizes the three standalone CT lockfiles.
+After that pull request merges, `release-tag` deliberately does not rerun the
+consumed pending-intent check. It proves live repository controls and
+exact-commit release evidence before using `cargo rail release finalize
 --skip-publish` to create and push the signed tag.
 
 To inspect live repository controls without starting a release:
 
 ```bash
-just check-repository-controls
+scripts/ci/repository-controls-evidence.sh \
+  --commit "$(git rev-parse HEAD)" \
+  --output target/repository-controls.json
 ```
 
 This is the only routine local check that reads live GitHub settings. It writes

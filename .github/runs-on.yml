@@ -5,7 +5,7 @@ runners:
   intel-spr:
     cpu: 4
     ram: 8
-    family: ["c7i", "m7i", "r7iz"]
+    family: ["c7i"]
     image: ubuntu24-full-x64
     spot: false
     retry: when-interrupted
@@ -20,7 +20,7 @@ runners:
   intel-icl:
     cpu: 4
     ram: 8
-    family: ["c6i", "m6i", "r6i"]
+    family: ["c6i"]
     image: ubuntu24-full-x64
     spot: false
     retry: when-interrupted
@@ -35,7 +35,7 @@ runners:
   amd-zen5:
     cpu: 4
     ram: 8
-    family: ["m8a", "c8a", "r8a"]
+    family: ["c8a"]
     image: ubuntu24-full-x64
     spot: false
     retry: when-interrupted
@@ -50,7 +50,7 @@ runners:
   amd-zen4:
     cpu: 4
     ram: 8
-    family: ["m7a", "c7a", "r7a"]
+    family: ["c7a"]
     image: ubuntu24-full-x64
     spot: false
     retry: when-interrupted
@@ -65,7 +65,7 @@ runners:
   graviton3:
     cpu: 4
     ram: 8
-    family: ["c7g", "m7g", "r7g"]
+    family: ["c7g"]
     image: ubuntu24-full-arm64
     spot: false
     retry: when-interrupted
@@ -80,7 +80,7 @@ runners:
   graviton4:
     cpu: 4
     ram: 8
-    family: ["c8g", "m8g", "r8g"]
+    family: ["c8g"]
     image: ubuntu24-full-arm64
     spot: false
     retry: when-interrupted

@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "rscrypto"
-version = "0.7.8"
+version = "0.8.0"
 dependencies = [
  "aegis",
  "aes-gcm",

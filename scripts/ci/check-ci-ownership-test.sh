@@ -132,21 +132,6 @@ yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since) = "or
   "$mutable_rail_base/.github/workflows/ci.yaml"
 expect_failure "$mutable_rail_base" "cargo-rail-action plans from a mutable base"
 
-rail_before_authenticated_setup="$TMP_ROOT/rail-before-authenticated-setup"
-make_fixture "$rail_before_authenticated_setup"
-yq eval '.jobs."rail-plan".steps[1] as $setup |
-  .jobs."rail-plan".steps[2] as $rail |
-  .jobs."rail-plan".steps[1] = $rail |
-  .jobs."rail-plan".steps[2] = $setup' -i \
-  "$rail_before_authenticated_setup/.github/workflows/ci.yaml"
-expect_failure "$rail_before_authenticated_setup" "cargo-rail-action can run before authenticated installation"
-
-unmatched_rail_condition="$TMP_ROOT/unmatched-rail-condition"
-make_fixture "$unmatched_rail_condition"
-yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .if) = "always()"' -i \
-  "$unmatched_rail_condition/.github/workflows/ci.yaml"
-expect_failure "$unmatched_rail_condition" "cargo-rail-action can run without authenticated installation"
-
 unpinned_scorecard="$TMP_ROOT/unpinned-scorecard"
 make_fixture "$unpinned_scorecard"
 sed -i.bak 's#@sha256:[0-9a-f]*#:v2.4.3#' \
@@ -207,17 +192,17 @@ yq eval '.jobs.suite."if" = "github.event_name != '\''pull_request'\'' || !githu
   "$planner_failure_skips_suite/.github/workflows/ci.yaml"
 expect_failure "$planner_failure_skips_suite" "planner failure can skip the CI suite"
 
-missing_plan_resolver="$TMP_ROOT/missing-plan-resolver"
-make_fixture "$missing_plan_resolver"
-rm "$missing_plan_resolver/scripts/ci/resolve-rail-plan.sh"
-expect_failure "$missing_plan_resolver" "workflow plan outputs bypass repository validation"
+cancelled_suite_runs="$TMP_ROOT/cancelled-suite-runs"
+make_fixture "$cancelled_suite_runs"
+yq eval '.jobs.suite."if" |= sub("!cancelled\\(\\)"; "always()")' -i \
+  "$cancelled_suite_runs/.github/workflows/ci.yaml"
+expect_failure "$cancelled_suite_runs" "workflow cancellation can start the expensive suite"
 
-unchecked_suite_skip="$TMP_ROOT/unchecked-suite-skip"
-make_fixture "$unchecked_suite_skip"
-sed -i.bak '/if \[\[ "\$PLAN_VALID" != "true" || "\$PLAN_EMPTY" != "true" \]\]/d' \
-  "$unchecked_suite_skip/.github/workflows/ci.yaml"
-rm -f "$unchecked_suite_skip/.github/workflows/ci.yaml.bak"
-expect_failure "$unchecked_suite_skip" "Complete accepts an unvalidated suite skip"
+fork_release_bypasses_intent="$TMP_ROOT/fork-release-bypasses-intent"
+make_fixture "$fork_release_bypasses_intent"
+yq eval '(.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .if) |= sub(" && github.event.pull_request.head.repo.full_name == github.repository"; "")' -i \
+  "$fork_release_bypasses_intent/.github/workflows/ci.yaml"
+expect_failure "$fork_release_bypasses_intent" "a fork can bypass release intent with a branch name"
 
 shell_fragment_input="$TMP_ROOT/shell-fragment-input"
 make_fixture "$shell_fragment_input"
@@ -363,7 +348,7 @@ expect_failure "$missing_riscv_workflow" "missing independent RISC-V workflow"
 
 missing_riscv_release_artifact="$TMP_ROOT/missing-riscv-release-artifact"
 make_fixture "$missing_riscv_release_artifact"
-sed -i.bak '/needs\.evidence-gate\.outputs\.riscv_run_id/d' \
+sed -i.bak '/needs\.preflight\.outputs\.riscv_run_id/d' \
   "$missing_riscv_release_artifact/.github/workflows/release.yaml"
 rm -f "$missing_riscv_release_artifact/.github/workflows/release.yaml.bak"
 expect_failure "$missing_riscv_release_artifact" "release without validated RISC-V artifacts"
