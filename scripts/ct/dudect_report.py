@@ -591,7 +591,7 @@ def owner_call_site_counts(
 
   current_symbol = ""
   function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
-  instruction_pattern = re.compile(r"\b(?:bl|brasl|call|callq|jal)\b")
+  instruction_pattern = re.compile(r"\b(?:bl|brasl|call|callq|jal|jalr)\b")
   for line in disassembly_text.splitlines():
     if match := function_label.match(line.strip()):
       current_symbol = match.group(1).removeprefix("_")
@@ -604,7 +604,9 @@ def owner_call_site_counts(
     for symbol in expected_symbols:
       if re.search(rf"<_?{re.escape(symbol)}(?:\+[^>]*)?>", line):
         called.add(symbol)
-    if target := re.search(r"\b0x([0-9a-fA-F]+)\b", line[instruction.end() :]):
+    if instruction.group(0) != "jalr" and (
+      target := re.search(r"\b0x([0-9a-fA-F]+)\b", line[instruction.end() :])
+    ):
       if symbol := symbols_by_address.get(int(target.group(1), 16)):
         called.add(symbol)
     if slot := re.search(r"\*[^#]*#\s*0x([0-9a-fA-F]+)\b", line[instruction.end() :]):
