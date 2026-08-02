@@ -40,17 +40,20 @@ never run `cargo publish` locally.
    ```
 
 5. Dispatch the expensive release evidence on that commit. Do this before
-   another pull request merges into `main`. Weekly reruns the complete CI suite,
-   including compiler-backed Cargo graph assurance, on the exact candidate.
+   another pull request merges into `main`. Release mode reruns the complete CI
+   suite, including compiler-backed Cargo graph assurance, and retains raw CT
+   evidence for 90 days.
 
    ```bash
-   gh workflow run weekly.yaml --ref main
+   gh workflow run weekly.yaml --ref main -f mode=release
    gh workflow run riscv.yaml --ref main -f mode=evidence
    ```
 
    Confirm that both runs report `$candidate` as their head SHA. If code,
    dependencies, features, build inputs, or test policy change afterward, rerun
-   both workflows.
+   both workflows. Do not substitute a scheduled Weekly or RISC-V run, or an
+   assurance-mode Weekly dispatch: those produce compact reports with 14-day
+   retention and cannot satisfy the release evidence gate.
 
 6. After both exact-commit evidence workflows are green, create and push the
    signed tag:
@@ -75,16 +78,17 @@ never run `cargo publish` locally.
 | Gate | What it prevents |
 |---|---|
 | Release pull request | An unreviewed version or changelog mutation reaching protected `main`. |
-| Exact-commit Weekly suite | Tagging a candidate without full tests and compiler-backed Cargo graph assurance. |
+| Exact-commit Weekly release mode | Tagging a candidate without an explicitly requested full suite, compiler-backed Cargo graph assurance, raw CT artifacts, and complete CT/RSA gates. |
 | Weekly and RISC-V evidence | Publishing cryptographic claims without the required platform and timing evidence. |
 | Signed immutable tag | Moving a released version to different source later. |
 | Immutable, attested GitHub Release | Publishing artifacts that cannot be tied back to the tag and build. |
 | Environment approval | A tag or compromised workflow publishing to crates.io without a final human decision. |
 | Trusted Publishing | Long-lived crates.io credentials becoming a repository secret. |
 
-Pull-request CI answers "may this change merge?" once. The exact-commit Weekly
-suite and RISC-V evidence answer "may this protected-branch commit become a
-release?" only for a release candidate.
+Pull-request CI answers "may this change merge?" once. Scheduled Weekly assurance
+keeps routine safety coverage current with compact, short-lived reports. Only a
+manually dispatched exact-commit Weekly release run and RISC-V evidence answer
+"may this protected-branch commit become a release?"
 
 ## One-time setup
 
@@ -139,8 +143,9 @@ release, `just release-check` validates configuration, dependency unification,
 pending intent, SemVer advice, and the generated release plan.
 
 Pull-request CI uses cargo-rail's planner to select checks from the actual
-changed surfaces. Weekly runs the full Cargo graph proof for an exact release
-candidate; release preflight consumes that result instead of recompiling it.
+changed surfaces. Weekly release mode runs the full Cargo graph proof for an
+exact release candidate; scheduled assurance does not. Release preflight
+consumes the release-mode result instead of recompiling it.
 
 `release-prepare` consumes the change files. After its pull request merges,
 `release-tag` deliberately does not rerun the pending-intent check. Instead, it
@@ -165,9 +170,10 @@ receive anything, the workflow:
 1. Verifies the annotated SSH signature, tag target, crate version, and
    changelog version.
 2. Revalidates configuration, dependency policy, audit results, SemVer, and the
-   exact-commit Weekly Cargo graph result.
-3. Requires complete Weekly CT/RSA and RISC-V native/CT evidence from that
-   exact commit and crate version.
+   exact-commit Weekly release-mode Cargo graph result.
+3. Requires the Weekly release gate, live raw CT artifacts, complete Weekly
+   CT/RSA, and manually dispatched RISC-V native/CT evidence from that exact
+   commit and crate version.
 4. Builds the `.crate` once, reproduces the source archive from the tag, and
    rejects dirty, private, local-only, or mismatched package contents.
 5. Captures repository controls and writes provenance attestations, an identity

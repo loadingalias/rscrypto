@@ -101,6 +101,10 @@ on:
         required: false
         type: boolean
         default: true
+      artifact_retention_days:
+        required: false
+        type: number
+        default: 90
 
 permissions:
   contents: read
@@ -152,7 +156,8 @@ jobs:
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.artifact_path }}
-          retention-days: 90
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error
 
       - name: Upload Artifact (success)
         if: inputs.artifact_name != '' && inputs.artifact_path != '' && !inputs.artifact_always
@@ -160,4 +165,5 @@ jobs:
         with:
           name: ${{ inputs.artifact_name }}
           path: ${{ inputs.artifact_path }}
-          retention-days: 90
+          retention-days: ${{ inputs.artifact_retention_days }}
+          if-no-files-found: error

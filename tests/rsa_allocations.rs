@@ -516,16 +516,16 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   assert_eq!(allocation_count(), 0);
 
   assert_one_shot_protocol_rejects_fail_before_scratch_allocation();
+  let private_key = private_key();
   #[cfg(feature = "getrandom")]
-  assert_private_protocol_signing_rejects_fail_before_entropy_allocation();
-  assert_private_scratch_operations_do_not_allocate();
+  assert_private_protocol_signing_rejects_fail_before_entropy_allocation(&private_key);
+  assert_private_scratch_operations_do_not_allocate(&private_key);
   #[cfg(feature = "getrandom")]
-  assert_rng_private_scratch_operations_do_not_allocate();
+  assert_rng_private_scratch_operations_do_not_allocate(&private_key);
 }
 
 #[cfg(feature = "getrandom")]
-fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation() {
-  let key = private_key();
+fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation(key: &RsaPrivateKey) {
   let mut scratch = key.private_scratch();
   let mut signature = vec![0xa5; key.signature_len()];
   let message = b"private protocol signing allocation reject";
@@ -640,8 +640,7 @@ fn assert_private_protocol_signing_rejects_fail_before_entropy_allocation() {
   assert!(signature.iter().all(|&byte| byte == 0));
 }
 
-fn assert_private_scratch_operations_do_not_allocate() {
-  let key = private_key();
+fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
   let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
   let mut scratch = key.private_scratch();
   let mut signature = vec![0u8; key.signature_len()];
@@ -726,8 +725,7 @@ fn assert_private_scratch_operations_do_not_allocate() {
 }
 
 #[cfg(feature = "getrandom")]
-fn assert_rng_private_scratch_operations_do_not_allocate() {
-  let key = private_key();
+fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
   let mut scratch = key.private_scratch();
   let mut signature = vec![0u8; key.signature_len()];
   let mut decrypted = vec![0u8; key.signature_len()];

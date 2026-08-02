@@ -17,20 +17,36 @@ if [[ "$1 $2" == "run list" ]]; then
     *" --workflow weekly.yaml "*)
       if [[ ${FAKE_GH_MODE:-success} == missing-weekly ]]; then
         echo '[]'
+      elif [[ ${FAKE_GH_MODE:-success} == scheduled-weekly ]]; then
+        cat <<JSON
+[{"databaseId":4246,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4246","createdAt":"2026-07-14T03:00:00Z","event":"schedule"}]
+JSON
+      elif [[ ${FAKE_GH_MODE:-success} == assurance-dispatch ]]; then
+        cat <<JSON
+[{"databaseId":4245,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4245","createdAt":"2026-07-14T02:00:00Z","event":"workflow_dispatch"}]
+JSON
       else
         cat <<JSON
-[{"databaseId":4242,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4242","createdAt":"2026-07-14T00:00:00Z"}]
+[
+  {"databaseId":4242,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4242","createdAt":"2026-07-14T00:00:00Z","event":"workflow_dispatch"},
+  {"databaseId":4245,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4245","createdAt":"2026-07-14T02:00:00Z","event":"workflow_dispatch"},
+  {"databaseId":4246,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4246","createdAt":"2026-07-14T03:00:00Z","event":"schedule"}
+]
 JSON
       fi
       ;;
     *" --workflow riscv.yaml "*)
       if [[ ${FAKE_GH_MODE:-success} == missing-riscv ]]; then
         echo '[]'
+      elif [[ ${FAKE_GH_MODE:-success} == scheduled-riscv ]]; then
+        cat <<JSON
+[{"databaseId":4343,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4343","createdAt":"2026-07-14T00:00:00Z","event":"schedule"}]
+JSON
       else
         cat <<JSON
 [
-  {"databaseId":4343,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4343","createdAt":"2026-07-14T00:00:00Z"},
-  {"databaseId":4344,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4344","createdAt":"2026-07-14T01:00:00Z"}
+  {"databaseId":4343,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4343","createdAt":"2026-07-14T00:00:00Z","event":"workflow_dispatch"},
+  {"databaseId":4344,"headSha":"${EXPECTED_SHA}","status":"completed","conclusion":"success","url":"https://example.invalid/runs/4344","createdAt":"2026-07-14T01:00:00Z","event":"workflow_dispatch"}
 ]
 JSON
       fi
@@ -46,20 +62,48 @@ fi
 if [[ "$1 $2" == "run view" ]]; then
   case "$3" in
     4242)
+      ct_conclusion=success
       rsa_conclusion=success
       graph_conclusion=success
+      release_conclusion=success
+      if [[ ${FAKE_GH_MODE:-success} == failed-weekly-ct ]]; then
+        ct_conclusion=failure
+      fi
       if [[ ${FAKE_GH_MODE:-success} == failed-rsa ]]; then
         rsa_conclusion=failure
       fi
       if [[ ${FAKE_GH_MODE:-success} == failed-cargo-graph ]]; then
         graph_conclusion=failure
       fi
+      if [[ ${FAKE_GH_MODE:-success} == failed-release-gate ]]; then
+        release_conclusion=failure
+      fi
       cat <<JSON
 {"jobs":[
-  {"name":"Constant-Time Evidence (weekly) / Complete (CT)","conclusion":"success"},
-  {"name":"RSA Evidence (weekly) / Complete (RSA)","conclusion":"${rsa_conclusion}"},
-  {"name":"CI Suite (weekly) / Cargo Graph Assurance / run","conclusion":"${graph_conclusion}"},
-  {"name":"Complete (weekly)","conclusion":"success"}
+  {"name":"Constant-Time Evidence (release) / CT Full (AMD Zen4) / run","conclusion":"${ct_conclusion}"},
+  {"name":"Constant-Time Evidence (release) / CT Full (AWS Graviton4) / run","conclusion":"success"},
+  {"name":"Constant-Time Evidence (release) / Complete (CT)","conclusion":"${ct_conclusion}"},
+  {"name":"RSA Evidence (release) / Complete (RSA)","conclusion":"${rsa_conclusion}"},
+  {"name":"CI Suite (release) / Cargo Graph Assurance / run","conclusion":"${graph_conclusion}"},
+  {"name":"Complete (release)","conclusion":"${release_conclusion}"}
+]}
+JSON
+      ;;
+    4245)
+      cat <<JSON
+{"jobs":[
+  {"name":"Constant-Time Evidence (assurance) / Complete (CT)","conclusion":"success"},
+  {"name":"RSA Evidence (assurance) / Complete (RSA)","conclusion":"success"},
+  {"name":"Complete (assurance)","conclusion":"success"}
+]}
+JSON
+      ;;
+    4246)
+      cat <<JSON
+{"jobs":[
+  {"name":"Constant-Time Evidence (assurance) / Complete (CT)","conclusion":"success"},
+  {"name":"RSA Evidence (assurance) / Complete (RSA)","conclusion":"success"},
+  {"name":"Complete (assurance)","conclusion":"success"}
 ]}
 JSON
       ;;
@@ -91,6 +135,51 @@ JSON
       ;;
     *)
       echo "unexpected run view id: $3" >&2
+      exit 2
+      ;;
+  esac
+  exit 0
+fi
+
+if [[ "$1" == "api" ]]; then
+  case " $* " in
+    *" repos/loadingalias/rscrypto/actions/runs/4242/artifacts?per_page=100 "*)
+      if [[ ${FAKE_GH_MODE:-success} == missing-weekly-raw ]]; then
+        cat <<'JSON'
+{"total_count":1,"artifacts":[
+  {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096}
+]}
+JSON
+      elif [[ ${FAKE_GH_MODE:-success} == expired-weekly-raw ]]; then
+        cat <<'JSON'
+{"total_count":2,"artifacts":[
+  {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096},
+  {"name":"ct-raw-graviton4","expired":true,"size_in_bytes":4096}
+]}
+JSON
+      else
+        cat <<'JSON'
+{"total_count":3,"artifacts":[
+  {"name":"ct-raw-amd-zen4","expired":false,"size_in_bytes":4096},
+  {"name":"ct-raw-graviton4","expired":false,"size_in_bytes":4096},
+  {"name":"rsa-miri-linux-x64","expired":false,"size_in_bytes":512}
+]}
+JSON
+      fi
+      ;;
+    *" repos/loadingalias/rscrypto/actions/runs/4343/artifacts?per_page=100 "*)
+      if [[ ${FAKE_GH_MODE:-success} == missing-riscv-raw ]]; then
+        echo '{"total_count":0,"artifacts":[]}'
+      else
+        cat <<'JSON'
+{"total_count":1,"artifacts":[
+  {"name":"ct-raw-rise-riscv","expired":false,"size_in_bytes":4096}
+]}
+JSON
+      fi
+      ;;
+    *)
+      echo "unexpected gh api request: $*" >&2
       exit 2
       ;;
   esac
@@ -158,6 +247,31 @@ if FAKE_GH_MODE=missing-riscv "$CHECKER" --root "$fixture" --commit "$evidence_s
   exit 1
 fi
 
+if FAKE_GH_MODE=scheduled-weekly "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check promoted a scheduled Weekly assurance run" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=assurance-dispatch "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check promoted a manually dispatched assurance run" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=scheduled-riscv "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check promoted a scheduled RISC-V run" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=failed-release-gate "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted a failed release-mode gate" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=failed-weekly-ct "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted failed CT evidence" >&2
+  exit 1
+fi
+
 if FAKE_GH_MODE=failed-rsa "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
   echo "release evidence check accepted failed RSA evidence" >&2
   exit 1
@@ -165,6 +279,21 @@ fi
 
 if FAKE_GH_MODE=failed-cargo-graph "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
   echo "release evidence check accepted failed exact-commit Cargo Graph Assurance" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=missing-weekly-raw "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted missing Weekly raw CT artifacts" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=expired-weekly-raw "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted expired Weekly raw CT artifacts" >&2
+  exit 1
+fi
+
+if FAKE_GH_MODE=missing-riscv-raw "$CHECKER" --root "$fixture" --commit "$evidence_sha" --repo loadingalias/rscrypto >/dev/null 2>&1; then
+  echo "release evidence check accepted missing RISC-V raw CT artifacts" >&2
   exit 1
 fi
 

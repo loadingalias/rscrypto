@@ -28,6 +28,9 @@ cat >"$BIN/just" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >"$RSCRYPTO_CI_CAPTURE_DIR/just.args"
+printf 'jobs=%s concurrency=%s\n' \
+  "${RSCRYPTO_FUZZ_JOBS:-}" "${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-}" \
+  >"$RSCRYPTO_CI_CAPTURE_DIR/just.env"
 exit "${RSCRYPTO_MOCK_JUST_STATUS:-0}"
 EOF
 
@@ -108,8 +111,8 @@ EOF
 cat >"$AMX_BIN/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'RUSTFLAGS=%s RSCRYPTO_REQUIRE_AMX=%s :: %s\n' \
-  "${RUSTFLAGS:-}" "${RSCRYPTO_REQUIRE_AMX:-}" "$*" \
+printf 'CARGO_PROFILE_TEST_DEBUG=%s RUSTFLAGS=%s RSCRYPTO_REQUIRE_AMX=%s :: %s\n' \
+  "${CARGO_PROFILE_TEST_DEBUG:-}" "${RUSTFLAGS:-}" "${RSCRYPTO_REQUIRE_AMX:-}" "$*" \
   >>"$RSCRYPTO_CI_CAPTURE_DIR/amx-cargo.args"
 
 if [[ " $* " != *" --list "* ]]; then
@@ -161,6 +164,8 @@ env \
   bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null 2>&1 \
   || fuzz_status=$?
 [[ "$fuzz_status" -eq 23 ]] || fail "fuzz operation did not preserve the fuzz command's failure status"
+[[ $(<"$CAPTURE/just.env") == "jobs=1 concurrency=2" ]] \
+  || fail "fuzz operation did not reserve both runner cores for independent targets"
 [[ -f "$FIXTURE/fuzz-output/corpus.tar.gz" ]] || fail "fuzz failure did not produce a corpus archive"
 tar -tzf "$FIXTURE/fuzz-output/corpus.tar.gz" >"$CAPTURE/fuzz-archive.entries"
 grep -Fxq 'fuzz/corpus/hash_cshake256/seed' "$CAPTURE/fuzz-archive.entries" \
@@ -221,7 +226,24 @@ env \
   RSCRYPTO_CI_UPLOAD_RAW_ARTIFACTS=false \
   bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null
 grep -Fxq -- "$ct_payload" "$CAPTURE/ct.args" || fail "DudeCT filter was not passed as one literal argument"
+if grep -Fxq -- '--raw' "$CAPTURE/ct-package.args"; then
+  fail "compact CT packaging included raw artifacts"
+fi
 [[ ! -e "$sentinel" ]] || fail "DudeCT filter was evaluated as shell code"
+
+env \
+  PATH="$TEST_PATH" \
+  RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" \
+  RSCRYPTO_CI_OPERATION=constant-time \
+  RSCRYPTO_CI_RUNNER=test-runner \
+  RSCRYPTO_CI_PLATFORM=amd-zen4 \
+  RSCRYPTO_CI_TARGET=x86_64-unknown-linux-gnu \
+  RSCRYPTO_CI_DUDECT_TIMEOUT=1800 \
+  RSCRYPTO_CI_DUDECT_GATE=required \
+  RSCRYPTO_CI_BINSEC_TIMEOUT=900 \
+  RSCRYPTO_CI_UPLOAD_RAW_ARTIFACTS=true \
+  bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null
+grep -Fxq -- '--raw' "$CAPTURE/ct-package.args" || fail "release CT packaging omitted raw artifacts"
 
 expect_failure env \
   PATH="$TEST_PATH" \
@@ -262,6 +284,9 @@ env \
   bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null
 [[ "$(wc -l <"$CAPTURE/amx-cargo.args" | tr -d ' ')" == 4 ]] \
   || fail "AMX operation did not list and run both exact tests"
+if grep -Fvq 'CARGO_PROFILE_TEST_DEBUG=0' "$CAPTURE/amx-cargo.args"; then
+  fail "AMX operation retained full test-profile debug artifacts"
+fi
 grep -Fq \
   'RSCRYPTO_REQUIRE_AMX=1 :: test --locked --test platform_amx_permission -- --list' \
   "$CAPTURE/amx-cargo.args" \

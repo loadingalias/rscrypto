@@ -36,6 +36,7 @@ TIMEOUT=${RSCRYPTO_FUZZ_TIMEOUT_SECS:-10}
 RSS_LIMIT=${RSCRYPTO_FUZZ_RSS_LIMIT_MB:-2048}
 MAX_LEN=${RSCRYPTO_FUZZ_MAX_LEN:-65536}
 JOBS=${RSCRYPTO_FUZZ_JOBS:-1}
+TARGET_CONCURRENCY=${RSCRYPTO_FUZZ_TARGET_CONCURRENCY:-2}
 
 # Skip if commit mode (fuzzing takes too long)
 if [ "$RSCRYPTO_TEST_MODE" = "commit" ]; then
@@ -62,7 +63,8 @@ show_help() {
   echo "  RSCRYPTO_FUZZ_TIMEOUT_SECS   Timeout per test case (default: 10)"
   echo "  RSCRYPTO_FUZZ_RSS_LIMIT_MB   Memory limit in MB (default: 2048)"
   echo "  RSCRYPTO_FUZZ_MAX_LEN        Max input length (default: 65536)"
-  echo "  RSCRYPTO_FUZZ_JOBS           Parallel jobs (default: 1)"
+  echo "  RSCRYPTO_FUZZ_JOBS           LibFuzzer workers per target (default: 1)"
+  echo "  RSCRYPTO_FUZZ_TARGET_CONCURRENCY  Independent targets to run concurrently (default: 2)"
   echo "  RSCRYPTO_FUZZ_TARGET_DIR     Shared cargo target dir (default: fuzz/target)"
 }
 
@@ -228,13 +230,13 @@ run_scope() {
   local scope="$1"
   local duration="$2"
   local package_dir
-  local total=0
   local failed=0
   local crashed=""
 
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "Fuzz Testing ($scope)"
   echo "Duration: ${duration}s per target"
+  echo "Concurrent targets: $TARGET_CONCURRENCY"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
@@ -244,17 +246,59 @@ run_scope() {
     return 0
   fi
 
+  local package_dirs=()
+  local targets=()
   local target
   for package_dir in "${SELECTED_FUZZ_PACKAGES[@]}"; do
     while IFS= read -r target; do
       [ -z "$target" ] && continue
-      total=$((total + 1))
-      if ! run_target_in_package "$package_dir" "$target" "$duration"; then
-        failed=$((failed + 1))
-        crashed="${crashed}  $(fuzz_package_label "$package_dir")/${target}\n"
-      fi
+      package_dirs+=("$package_dir")
+      targets+=("$target")
     done < <(fuzz_list_targets "$package_dir")
   done
+
+  local total=${#targets[@]}
+  local run_log_dir
+  run_log_dir=$(mktemp -d)
+  local batch_start=0
+  local batch_end
+  local index
+  while [ "$batch_start" -lt "$total" ]; do
+    batch_end=$((batch_start + TARGET_CONCURRENCY))
+    if [ "$batch_end" -gt "$total" ]; then
+      batch_end=$total
+    fi
+
+    local pids=()
+    local logs=()
+    for ((index = batch_start; index < batch_end; index++)); do
+      local log_path="$run_log_dir/$index.log"
+      run_target_in_package "${package_dirs[$index]}" "${targets[$index]}" "$duration" >"$log_path" 2>&1 &
+      pids+=("$!")
+      logs+=("$log_path")
+    done
+
+    local batch_index
+    local fuzz_status
+    for batch_index in "${!pids[@]}"; do
+      index=$((batch_start + batch_index))
+      fuzz_status=0
+      if wait "${pids[$batch_index]}"; then
+        fuzz_status=0
+      else
+        fuzz_status=$?
+      fi
+      cat "${logs[$batch_index]}"
+      rm -f "${logs[$batch_index]}"
+      if [ "$fuzz_status" -ne 0 ]; then
+        failed=$((failed + 1))
+        crashed="${crashed}  $(fuzz_package_label "${package_dirs[$index]}")/${targets[$index]}\n"
+      fi
+    done
+
+    batch_start=$batch_end
+  done
+  rm -rf "$run_log_dir"
 
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -320,6 +364,13 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+case "$TARGET_CONCURRENCY" in
+  ''|*[!0-9]*|0)
+    echo "RSCRYPTO_FUZZ_TARGET_CONCURRENCY must be a positive integer" >&2
+    exit 2
+    ;;
+esac
 
 check_requirements
 

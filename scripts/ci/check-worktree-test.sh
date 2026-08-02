@@ -35,7 +35,8 @@ cp \
   "$REPO_ROOT/scripts/check/check.sh" \
   "$REPO_ROOT/scripts/check/zig-cc.sh" \
   "$fixture/scripts/check/"
-cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" "$fixture/scripts/lib/"
+cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" \
+  "$REPO_ROOT/scripts/lib/feature-profiles.sh" "$fixture/scripts/lib/"
 cp "$REPO_ROOT/scripts/test/test-feature-matrix.sh" "$fixture/scripts/test/test-feature-matrix.sh"
 
 cat >"$fixture/scripts/lib/targets.sh" <<'EOF'

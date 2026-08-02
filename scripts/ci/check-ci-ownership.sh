@@ -22,6 +22,7 @@ CI="$WORKFLOWS/ci.yaml"
 SUITE="$WORKFLOWS/_ci-suite.yaml"
 RUST_JOB="$WORKFLOWS/_rust-job.yaml"
 WEEKLY="$WORKFLOWS/weekly.yaml"
+CT="$WORKFLOWS/ct.yaml"
 SCORECARD="$WORKFLOWS/scorecard.yaml"
 RISCV="$WORKFLOWS/riscv.yaml"
 RELEASE="$WORKFLOWS/release.yaml"
@@ -38,6 +39,7 @@ INSTALL_TOOLS="$ROOT/scripts/ci/install-tools.sh"
 INSTALL_CODECOV="$ROOT/scripts/ci/install-codecov.sh"
 SETUP_TOOLCHAIN="$ROOT/scripts/ci/setup-toolchain.sh"
 TOOL_INTEGRITY="$ROOT/scripts/lib/ci-tool-integrity.sh"
+FEATURE_PROFILES="$ROOT/scripts/lib/feature-profiles.sh"
 COMPILE_MATRIX="$ROOT/scripts/check/check-feature-matrix.sh"
 HOST_CHECK="$ROOT/scripts/check/check.sh"
 EXECUTABLE_MATRIX="$ROOT/scripts/test/test-feature-matrix.sh"
@@ -76,19 +78,11 @@ count_matches() {
   echo "$count"
 }
 
-count_feature_sets() {
-  awk '
-    /^FEATURE_SETS=\($/ { in_array = 1; next }
-    in_array && /^\)$/ { exit }
-    in_array && /^[[:space:]]+"/ { count += 1 }
-    END { print count + 0 }
-  ' "$1"
-}
-
-require_unique_feature_sets() {
-  local duplicate
-  duplicate=$(awk '
-    /^FEATURE_SETS=\($/ { in_array = 1; next }
+feature_sets() {
+  local file=$1
+  local array=$2
+  awk -v array="$array" '
+    $0 == array "=(" { in_array = 1; next }
     in_array && /^\)$/ { exit }
     in_array && /^[[:space:]]+"/ {
       value = $0
@@ -96,14 +90,38 @@ require_unique_feature_sets() {
       sub(/"$/, "", value)
       print value
     }
-  ' "$1" | sort | uniq -d | head -1)
-  [[ -z "$duplicate" ]] || fail "duplicate feature profile in $1: $duplicate"
+  ' "$file"
+}
+
+count_feature_sets() {
+  feature_sets "$1" "$2" | awk 'END { print NR + 0 }'
+}
+
+require_unique_feature_sets() {
+  local file=$1
+  local array=$2
+  local duplicate
+  duplicate=$(feature_sets "$file" "$array" | sort | uniq -d | head -1)
+  [[ -z "$duplicate" ]] || fail "duplicate feature profile in $array: $duplicate"
+}
+
+require_feature_subset() {
+  local child_file=$1
+  local child_array=$2
+  local parent_file=$3
+  local parent_array=$4
+  local missing
+  missing=$(comm -23 \
+    <(feature_sets "$child_file" "$child_array" | sort) \
+    <(feature_sets "$parent_file" "$parent_array" | sort) | head -1)
+  [[ -z "$missing" ]] || fail "executable feature profile lacks compile coverage: $missing"
 }
 
 require_file "$CI"
 require_file "$SUITE"
 require_file "$RUST_JOB"
 require_file "$WEEKLY"
+require_file "$CT"
 require_file "$SCORECARD"
 require_file "$RISCV"
 require_file "$RELEASE"
@@ -120,6 +138,7 @@ require_file "$INSTALL_TOOLS"
 require_file "$INSTALL_CODECOV"
 require_file "$SETUP_TOOLCHAIN"
 require_file "$TOOL_INTEGRITY"
+require_file "$FEATURE_PROFILES"
 require_file "$COMPILE_MATRIX"
 require_file "$HOST_CHECK"
 require_file "$EXECUTABLE_MATRIX"
@@ -393,12 +412,20 @@ scorecard_image=$(yq eval -r '.runs.image' "$SCORECARD_ACTION")
 [[ "$scorecard_image" =~ ^docker://ghcr\.io/ossf/scorecard-action@sha256:[0-9a-f]{64}$ ]] \
   || fail "Scorecard container must use an OCI digest"
 
-[[ $(count_feature_sets "$COMPILE_MATRIX") -eq 32 ]] \
-  || fail "compile feature matrix must retain all 32 profiles"
-[[ $(count_feature_sets "$EXECUTABLE_MATRIX") -eq 38 ]] \
-  || fail "executable feature matrix must retain all 38 profiles"
-require_unique_feature_sets "$COMPILE_MATRIX"
-require_unique_feature_sets "$EXECUTABLE_MATRIX"
+[[ $(count_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS) -eq 58 ]] \
+  || fail "compile feature matrix must retain all 58 profiles"
+[[ $(count_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS) -eq 8 ]] \
+  || fail "executable feature matrix must contain the eight behavior transitions"
+require_unique_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS
+require_unique_feature_sets "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS
+require_feature_subset "$FEATURE_PROFILES" EXECUTABLE_FEATURE_SETS "$FEATURE_PROFILES" COMPILE_FEATURE_SETS
+grep -Fq 'COMPILE_FEATURE_SETS' "$COMPILE_MATRIX" \
+  || fail "compile feature matrix must consume the shared profile authority"
+grep -Fq 'EXECUTABLE_FEATURE_SETS' "$EXECUTABLE_MATRIX" \
+  || fail "executable feature matrix must consume the shared profile authority"
+[[ $(yq eval '.jobs.platform-amx.with.cache_key' "$SUITE") == \
+  '${{ inputs.cache_key_prefix }}-platform-amx-test-nodebug' ]] \
+  || fail "AMX cache identity must track its reduced-debug test profile"
 
 grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "local check-all must retain one explicit feature-matrix execution"
@@ -447,8 +474,18 @@ fi
   || fail "the RISC-V workflow must own the RISE native runner"
 [[ $(yq eval '.jobs.ct.with.platforms' "$RISCV") == "rise-riscv" ]] \
   || fail "the RISC-V workflow must select only the RISE CT lane"
-[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$RISCV") == "true" ]] \
-  || fail "the RISC-V workflow must retain raw CT artifacts for release promotion"
+[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$RISCV") == \
+  "\${{ github.event_name == 'workflow_dispatch' }}" ]] \
+  || fail "only manually dispatched RISC-V runs may upload raw CT artifacts"
+[[ $(yq eval '.jobs.ct.with.artifact_retention_days' "$RISCV") == \
+  "\${{ github.event_name == 'workflow_dispatch' && 90 || 14 }}" ]] \
+  || fail "RISC-V CT retention must distinguish scheduled assurance from manual evidence"
+[[ $(yq eval '.jobs.native.concurrency.group' "$RISCV") == \
+  "riscv-native-\${{ github.ref }}-\${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}" ]] \
+  || fail "scheduled RISC-V native assurance must not cancel manual evidence"
+[[ $(yq eval '.jobs.ct.concurrency.group' "$RISCV") == \
+  "riscv-ct-\${{ github.ref }}-\${{ github.event_name == 'workflow_dispatch' && 'manual' || 'assurance' }}" ]] \
+  || fail "scheduled RISC-V CT assurance must not cancel manual evidence"
 [[ $(count_matches 'operation:[[:space:]]+cargo-graph' "$SUITE") -eq 1 ]] \
   || fail "the reusable suite must have exactly one Cargo graph assurance owner"
 [[ $(count_matches 'cargo rail unify --check' "$RUN_RUST_JOB") -eq 1 ]] \
@@ -456,12 +493,65 @@ fi
 if grep -En 'cargo rail unify --check' "$RELEASE_PREFLIGHT" >/dev/null; then
   fail "tag preflight must consume exact-commit Weekly graph assurance instead of repeating it"
 fi
-grep -Fq 'CI Suite (weekly) / Cargo Graph Assurance / run' "$RELEASE_EVIDENCE" \
-  || fail "release evidence must require exact-commit Weekly Cargo Graph Assurance"
+[[ $(yq -o=json -I=0 '.on.workflow_dispatch.inputs.mode.options' "$WEEKLY") == '["assurance","release"]' ]] \
+  || fail "Weekly must expose only assurance and release modes"
+[[ $(yq eval '.on.workflow_dispatch.inputs.mode.default' "$WEEKLY") == "assurance" ]] \
+  || fail "manually dispatched Weekly runs must default to assurance"
+[[ $(yq eval '.concurrency.group' "$WEEKLY") == \
+  "\${{ github.workflow }}-\${{ github.ref }}-\${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'release' && 'release' || 'assurance' }}" ]] \
+  || fail "Weekly assurance must not cancel release evidence"
+weekly_mode_script=$(yq eval '.jobs.mode.steps[] | select(.id == "mode") | .run' "$WEEKLY")
+[[ "$weekly_mode_script" == *$'schedule)\n    mode=assurance'* ]] \
+  || fail "scheduled Weekly runs must resolve to assurance"
+[[ $(yq eval '.jobs.suite.with.supply_chain_mode' "$WEEKLY") == \
+  "\${{ needs.mode.outputs.mode == 'release' && 'full' || 'light' }}" ]] \
+  || fail "Weekly supply-chain depth must derive from the resolved mode"
+[[ $(yq eval '.jobs.suite.with.include_cargo_graph' "$WEEKLY") == \
+  "\${{ needs.mode.outputs.mode == 'release' }}" ]] \
+  || fail "only release-mode Weekly may run Cargo Graph Assurance"
+[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == \
+  "\${{ needs.mode.outputs.mode == 'release' }}" ]] \
+  || fail "only release-mode Weekly may upload raw CT artifacts"
+retention_expression="\${{ needs.mode.outputs.mode == 'release' && 90 || 14 }}"
+[[ $(yq eval '.jobs.suite.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Weekly Cargo graph retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.fuzzing.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Weekly fuzz retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.mlkem-graviton.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Weekly ML-KEM retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.ct.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Weekly CT retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.rsa.with.artifact_retention_days' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Weekly RSA retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.coverage.steps[] | select(.name == "Upload Coverage Artifacts") | .with."retention-days"' "$WEEKLY") == "$retention_expression" ]] \
+  || fail "Weekly coverage retention must derive from the resolved mode"
+[[ $(yq eval '.jobs.complete.name' "$WEEKLY") == 'Complete (${{ needs.mode.outputs.mode }})' ]] \
+  || fail "Weekly must expose a mode-specific terminal gate"
+ct_artifact_name="ct-\${{ inputs.upload_raw_artifacts && 'raw-' || '' }}\${{ matrix.artifact_suffix }}"
+[[ $(yq eval '.jobs.ct.with.artifact_name' "$CT") == "$ct_artifact_name" ]] \
+  || fail "raw CT artifact names must be distinguishable before release"
+[[ $(yq eval '.on.workflow_call.inputs.artifact_retention_days.default' "$RUST_JOB") == "90" ]] \
+  || fail "reusable Rust artifacts must preserve long retention by default"
+[[ $(yq eval '[.jobs.run.steps[] | select(.name == "Upload Artifact (always)" or .name == "Upload Artifact (success)") | .with."retention-days" == "${{ inputs.artifact_retention_days }}"] | all' "$RUST_JOB") == "true" ]] \
+  || fail "reusable Rust artifact retention must be caller-controlled"
+[[ $(yq eval '[.jobs.run.steps[] | select(.name == "Upload Artifact (always)" or .name == "Upload Artifact (success)") | .with."if-no-files-found" == "error"] | all' "$RUST_JOB") == "true" ]] \
+  || fail "declared Rust evidence artifacts must fail closed when absent"
+grep -Fq 'CI Suite (release) / Cargo Graph Assurance / run' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require release-mode Cargo Graph Assurance"
+grep -Fq 'Constant-Time Evidence (release) / Complete (CT)' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require release-mode CT completion"
+grep -Fq 'RSA Evidence (release) / Complete (RSA)' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require release-mode RSA completion"
+grep -Fq 'Complete (release)' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require the release-mode terminal gate"
+grep -Fq '.event == "workflow_dispatch"' "$RELEASE_EVIDENCE" \
+  || fail "scheduled runs must be ineligible for release evidence"
+grep -Fq 'ct-raw-' "$RELEASE_EVIDENCE" \
+  || fail "release evidence must require live raw CT artifacts"
 [[ $(yq eval '.concurrency.group' "$RSA") == 'rsa-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}' ]] \
   || fail "reusable RSA workflow concurrency must not collide with its caller"
-[[ $(yq eval '.jobs.ct.with.upload_raw_artifacts' "$WEEKLY") == "true" ]] \
-  || fail "Weekly must preserve raw CT artifacts for exact-commit release promotion"
+grep -Fq 'name: ct-raw-rise-riscv' "$RELEASE" \
+  || fail "release must download the explicitly raw RISC-V CT artifact"
 grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE" \
   || fail "release must require paired Weekly and RISC-V evidence from one valid commit"
 grep -Fq 'scripts/ci/repository-controls-evidence.sh' "$RELEASE" \

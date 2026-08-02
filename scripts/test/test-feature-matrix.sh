@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck source=../lib/common.sh
 source "$SCRIPT_DIR/../lib/common.sh"
+# shellcheck source=../lib/feature-profiles.sh
+source "$SCRIPT_DIR/../lib/feature-profiles.sh"
 
 maybe_disable_sccache
 
@@ -27,48 +29,7 @@ show_feature_matrix_disk() {
   fi
 }
 
-FEATURE_SETS=(
-  "crc16"
-  "crc24"
-  "crc32"
-  "crc64"
-  "blake2b"
-  "blake2s"
-  "pbkdf2"
-  "checksums"
-  "alloc,checksums"
-  "std,checksums"
-  "std,checksums,diag"
-  "hashes"
-  "alloc,hashes"
-  "std,hashes"
-  "std,hashes,diag"
-  "macs"
-  "kdfs"
-  "rsa"
-  "rsa,getrandom"
-  "signatures"
-  "key-exchange"
-  "auth"
-  "aegis256"
-  "alloc,auth"
-  "std,auth"
-  "std,password-hashing,getrandom"
-  "aead"
-  "alloc,aead"
-  "std,aead"
-  "std,aead,diag"
-  "std,checksums,hashes"
-  "std,checksums,aead"
-  "std,hashes,aead"
-  "std,full"
-  "std,full,serde"
-  "std,full,serde-secrets"
-  "std,parallel"
-  "std,full,portable-only"
-)
-
-TOTAL=${#FEATURE_SETS[@]}
+TOTAL=${#EXECUTABLE_FEATURE_SETS[@]}
 STARTED_AT=$SECONDS
 
 # RISC-V: nightly rustc crashes (SIGABRT in glibc allocator) when linking
@@ -86,8 +47,8 @@ else
   echo "Executable rscrypto feature matrix ($TOTAL profiles)"
 fi
 
-for i in "${!FEATURE_SETS[@]}"; do
-  feature_set=${FEATURE_SETS[$i]}
+for i in "${!EXECUTABLE_FEATURE_SETS[@]}"; do
+  feature_set=${EXECUTABLE_FEATURE_SETS[$i]}
   profile=$((i + 1))
   profile_started_at=$SECONDS
   log_path="$LOG_DIR/$(echo "$feature_set" | tr ',' '_').log"
