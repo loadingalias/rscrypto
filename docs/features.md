@@ -6,9 +6,11 @@ public primitive surface.
 
 ## Default
 
-`default = ["std"]`, which implies `alloc`. With `default-features = false`, you get a strict `no_std` build and must opt in to leaf features explicitly.
+The default feature set is `["std"]`; `std` implies `alloc`. Set
+`default-features = false` for a `no_std` build, then enable every required
+algorithm feature explicitly.
 
-## Quick Picks
+## Quick picks
 
 ```toml
 # One algorithm, no_std.
@@ -36,9 +38,9 @@ rscrypto = { version = "0.7.8", features = ["full", "parallel", "getrandom"] }
 rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 ```
 
-## Complete Feature Index
+## Complete feature index
 
-### Core Features
+### Core features
 
 | Feature | Pulls in | Use |
 |---|---|---|
@@ -46,7 +48,7 @@ rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 | `std` | `alloc` | Runtime CPU detection and `std::io` adapters. |
 | `alloc` | -- | Allocating APIs such as PHC string encoding and `Vec`-returning digest, MAC, AEAD, and signature helpers. |
 
-### Umbrella Features
+### Umbrella features
 
 | Feature | Pulls in |
 |---|---|
@@ -63,7 +65,7 @@ rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 | `key-exchange` | `x25519`, `ml-kem` |
 | `aead` | `aes-gcm`, `aes-gcm-siv`, `chacha20poly1305`, `xchacha20poly1305`, `aegis256`, `ascon-aead` |
 
-### Algorithm Leaf Features
+### Algorithm leaf features
 
 | Feature | Pulls in | Enables |
 |---|---|---|
@@ -102,16 +104,31 @@ rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 | `aegis256` | -- | AEGIS-256 |
 | `ascon-aead` | -- | Ascon-AEAD128 |
 
-### Auxiliary Features
+### Auxiliary features
 
 | Feature | Effect |
 |---|---|
-| `getrandom` | Enables fallible OS-RNG constructors such as `try_random()` / `try_generate()`, `RapidRandomState::try_new()`, canonical Argon2id/scrypt password-record generation, ML-KEM `try_generate_keypair()` / `try_encapsulate()`, AEAD random sealing helpers, RSA key generation, signing salt/blinding, encryption randomness, and private-operation blinding. Password-record salts are intentionally OS-owned; other APIs retain caller-supplied byte-filling closures where deterministic tests or constrained integrations need them. Deterministic ECDSA signing does not use OS randomness. RSA key generation uses OS entropy to seed its key-generation HMAC_DRBG; no separate DRBG feature is required. |
+| `getrandom` | Adds OS-backed random generation; see below. |
 | `serde` | Serde for non-secret byte wrappers (nonces, tags, public keys, signatures). |
 | `serde-secrets` | Serde for secret-key and shared-secret bytes. Implies `serde`. Use only for controlled key-material storage, not logs or DTOs. |
 | `parallel` | Rayon-backed BLAKE3 and Argon2 lane parallelism. Requires `std`, `blake3`, `argon2`. |
 | `diag` | Diagnostic introspection of dispatch decisions and selected benchmark-only component hooks. Requires `std`; hidden diagnostic symbols are not stable application API. |
 | `portable-only` | Makes runtime capability detection report no SIMD/ASM capabilities. See below. |
+
+## `getrandom`
+
+`getrandom` enables fallible OS-backed constructors such as `try_random()` and
+`try_generate()`. It also enables `RapidRandomState::try_new()`, canonical
+Argon2id and scrypt password-record generation, ML-KEM
+`try_generate_keypair()` and `try_encapsulate()`, AEAD random sealing, and RSA
+key generation, signing salt and blinding, encryption randomness, and
+private-operation blinding.
+
+Password-record salts are always OS-generated. Other APIs retain
+caller-supplied byte-filling closures for deterministic tests and constrained
+integrations. Deterministic ECDSA signing does not use OS randomness. RSA key
+generation uses OS entropy to seed its HMAC_DRBG; no separate DRBG feature is
+required.
 
 ## `portable-only`
 
@@ -120,6 +137,10 @@ Dispatchers that consult runtime capabilities therefore fall through to
 portable backends instead of invoking host SIMD/ASM kernels. Use it when a
 deployment requires runtime dispatch to ignore host acceleration.
 
-This flag does **not** change `platform::caps_static()`, remove SIMD code from the binary, or create a constant-time proof by itself. For binary-level exclusion, also restrict `target-feature` via `RUSTFLAGS`. For release evidence boundaries, use [`constant-time.md`](constant-time.md).
+This flag does **not** change `platform::caps_static()`, override a backend
+selected at compile time, remove accelerated code from the binary, or create a
+constant-time proof. Restrict `target-feature` through `RUSTFLAGS` when the
+binary must exclude compile-time accelerated paths. Use
+[`constant-time.md`](constant-time.md) for release evidence boundaries.
 
-See [`compliance.md`](compliance.md) for framework-by-framework deployment posture.
+See [`compliance.md`](compliance.md) for the FIPS-oriented deployment boundary.

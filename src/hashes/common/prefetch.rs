@@ -1,6 +1,6 @@
 //! Software prefetch helpers for hash algorithm kernels.
 //!
-//! Provides platform-specific `prefetch_read_l1` for optimal memory access
+//! Provides the platform-specific `prefetch_read_l1` hint
 //! patterns in multi-chunk hash computation (e.g., Blake3 NEON hot loops).
 //!
 //! Prefetch instructions are CPU hints — invalid addresses are silently ignored.

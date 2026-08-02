@@ -11,7 +11,7 @@
 //!   step — each saving 1–2 instructions vs the scalar equivalent. The ρ+π step uses scalar
 //!   `rotate_left` which compiles to a single `ROR` instruction.
 //! - **2-state interleaved**: lane 0 = state A, lane 1 = state B. Processes two independent Keccak
-//!   states in parallel for ~2× aggregate throughput using full-width NEON SHA3 CE.
+//!   states together using full-width NEON SHA3 CE.
 //!
 //! # Safety
 //!

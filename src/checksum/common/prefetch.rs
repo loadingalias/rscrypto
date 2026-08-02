@@ -12,30 +12,15 @@
   ),
   allow(dead_code, unused_imports)
 )]
-//! This module provides platform-tuned prefetch constants and inline helpers
-//! for optimal memory access patterns in large-buffer CRC computation.
+//! This module provides architecture-specific prefetch distances and inline
+//! helpers for large-buffer CRC computation.
 //!
 //! # Background
 //!
-//! Modern CPUs have hardware prefetchers that work well for sequential access,
-//! but software prefetch hints can still provide 5-15% gains in tight loops by:
-//! - Reducing cache miss stalls when hardware prefetch falls behind
-//! - Ensuring data arrives in L1 before the CPU needs it
-//! - Working better with double-unrolled loops that process larger chunks
-//!
-//! # Prefetch Distance Tuning
-//!
-//! The optimal prefetch distance depends on:
-//! - Memory latency (~70-100 cycles on modern x86, ~60-80 cycles on ARM)
-//! - Loop iteration time (cycles per block processed)
-//! - Cache line size (64 bytes on all modern platforms)
-//!
-//! Formula: `prefetch_distance = (memory_latency / cycles_per_block) * block_size`
-//!
-//! For a kernel processing 256B blocks at ~80 GiB/s on a 4GHz CPU:
-//! - Time per block: 256B / 80GiB/s ≈ 3ns ≈ 12 cycles
-//! - With 80-cycle memory latency: 80/12 * 256B ≈ 1.7KB
-//! - Practical value: 512B-1KB (2-4 blocks ahead)
+//! Software prefetch is only a hint. Whether it helps depends on the
+//! microarchitecture, cache state, loop body, and input size. These distances
+//! are manually maintained implementation choices, not portable performance
+//! guarantees.
 //!
 //! # Usage Pattern
 //!
@@ -61,26 +46,13 @@
 
 /// Prefetch distance for large buffer kernels (xl size, 1MB+).
 ///
-/// Tuned for double-unrolled loops processing 512B per iteration.
-/// Value: 1024 bytes (2 iterations ahead).
-///
-/// # Rationale
-/// - At 80 GiB/s, 512B takes ~6ns ≈ 24 cycles at 4GHz
-/// - Memory latency ~80-100 cycles on Zen4/Ice Lake
-/// - 100 cycles / 24 cycles ≈ 4 blocks, but 2 blocks (1KB) is practical sweet spot
-/// - Prefetching too far ahead wastes L1 cache space
+/// The x86-64 folding loops use this 1,024-byte lookahead.
 #[cfg(target_arch = "x86_64")]
 pub const LARGE_BLOCK_DISTANCE: usize = 1024;
 
 /// Prefetch distance for large buffer kernels on ARM64.
 ///
-/// Tuned for Graviton2/3 and Apple Silicon.
-/// Value: 768 bytes (~2-3 iterations ahead for 256B blocks).
-///
-/// # Rationale
-/// - Graviton2: ~60-70 cycle memory latency, narrower memory bus than x86
-/// - Apple M1-M3: Excellent hardware prefetch, but software hints still help
-/// - ARM NEON processes 128B blocks, so 768B = 6 blocks ahead
+/// The AArch64 folding loops use this 768-byte lookahead.
 #[cfg(target_arch = "aarch64")]
 pub const LARGE_BLOCK_DISTANCE: usize = 768;
 

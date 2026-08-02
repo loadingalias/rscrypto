@@ -313,7 +313,9 @@ impl Aead for AsconAead128 {
       tail.copy_from_slice(&s[sidx].to_le_bytes()[..tail.len()]);
     }
 
-    Ok(AsconAead128Tag::from_bytes(self.finalize(&mut s)))
+    let tag = self.finalize(&mut s);
+    ct::zeroize_words(&mut s);
+    Ok(AsconAead128Tag::from_bytes(tag))
   }
 
   fn decrypt_in_place(
@@ -356,6 +358,7 @@ impl Aead for AsconAead128 {
     }
 
     let expected = self.finalize(&mut s);
+    ct::zeroize_words(&mut s);
     if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
       ct::zeroize(buffer);
       return Err(OpenError::verification());
@@ -366,6 +369,8 @@ impl Aead for AsconAead128 {
 }
 
 #[cfg(feature = "diag")]
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub fn diag_ascon_aead128_tag_portable(
   key: &[u8; KEY_SIZE],
   nonce: &[u8; NONCE_SIZE],
@@ -381,6 +386,7 @@ pub fn diag_ascon_aead128_tag_portable(
   s[1] ^= load_bytes(&block[8..]);
   permute_8_portable(&mut s);
   let tag = cipher.finalize(&mut s);
+  ct::zeroize_words(&mut s);
   ct::fixed_eq(&tag, expected)
 }
 

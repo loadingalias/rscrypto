@@ -129,7 +129,16 @@ use rscrypto::Kmac256;
 Kmac256::verify_tag(key, custom, data, &expected)?;   // Result<(), VerificationError>
 ```
 
-Streaming form: `let mut k = Kmac256::new(key, custom); k.update(data); k.verify(&expected)?;`. Drop the `subtle` dependency. Verification traverses the public-length expected tag before returning one opaque result; generated-code constant-time claims remain limited to the exact configuration in the matching [release evidence](../constant-time.md).
+For streaming verification, construct `Kmac256`, call `update`, then call
+`verify(&expected)`. The authentication helpers require at least 16 bytes for
+KMAC128 and 32 bytes for KMAC256, preserving the named security strength.
+
+Use `verify_primitive` or `verify_tag_primitive` only when a protocol specifies
+a shorter output and defines its forgery budget and failed-attempt limit.
+Arbitrary-length `finalize_into` and `mac_into` remain available for PRF or KDF
+use. Verification traverses the public-length expected tag before returning one
+opaque result. Generated-code timing claims remain limited to the matching
+[release evidence](../constant-time.md).
 
 ## Notes
 

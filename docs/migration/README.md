@@ -1,14 +1,16 @@
 # Migration Guides
 
-This index covers 36 migration guides for API revisions, individual crates,
-and larger stacks.
+This index covers 36 migration guides. Start with the crate or API you already
+use. Each guide identifies dependency, import, call-site, semantic, error, and
+unsupported-surface changes.
 
-Each guide identifies dependency, import, call-site, behavior, and unsupported
-surface changes.
+“Verified against” means the repository tests the mapped operation against the
+named version or an independent oracle. It does not mean that rscrypto replaces
+the upstream crate's complete API.
 
-If you are evaluating `rscrypto`, start with the crate you already use.
-The guide states whether the mapped surface is compatible and which upstream
-APIs must remain.
+Code blocks are migration fragments unless a guide says otherwise. Names such
+as `data`, `key`, `password`, and `plaintext` stand for values already present
+at the call site.
 
 For projects upgrading rscrypto itself, start with
 [`misuse-resistant API boundaries`](api-boundaries.md).
@@ -36,7 +38,7 @@ For projects upgrading rscrypto itself, start with
 | [`twox-hash`](twox-hash.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | API migration guidance; XXH3 output covered by `xxhash-rust` oracle tests |
 | [`rapidhash`](rapidhash.md) | `RapidHash64`, `RapidStreamHasher`, `RapidHasher`, `RapidSeededState`, `RapidRandomState` | Verified against `rapidhash 4.5.1` |
 
-## Auth (MAC + KDF)
+## Authentication, MACs, and KDFs
 
 | From | To | Status |
 |---|---|---|
@@ -56,7 +58,7 @@ For projects upgrading rscrypto itself, start with
 | [`ascon-aead`](RustCrypto/ascon-aead.md) (RustCrypto) | `AsconAead128` | Verified against `ascon-aead 0.6.0` |
 | [`aegis`](aegis.md) | `Aegis256` | Verified against `aegis 0.9.12` |
 
-## Signatures + Key Exchange
+## Signatures and key exchange
 
 | From | To | Status |
 |---|---|---|
@@ -65,14 +67,14 @@ For projects upgrading rscrypto itself, start with
 | [`rsa`](RustCrypto/rsa.md) (RustCrypto) | `RsaPublicKey`, `RsaPrivateKey`, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP | Partial; verified through CAVP, Wycheproof, and RustCrypto/ring/OpenSSL oracles |
 | [`x25519-dalek`](RustCrypto/x25519-dalek.md) | `X25519SecretKey`, `X25519PublicKey`, `X25519SharedSecret` | Verified against `x25519-dalek 2.0.1` |
 
-## Password Hashing
+## Password hashing
 
 | From | To | Status |
 |---|---|---|
 | [`argon2`](RustCrypto/argon2.md) (RustCrypto) | Raw `Argon2{d,i,id}` KDFs; bounded `Argon2idPassword` records | Verified against `argon2 0.6.0-rc.8` |
 | [`scrypt`](RustCrypto/scrypt.md) (RustCrypto) | Raw `Scrypt` KDF; bounded `ScryptPassword` records | Verified against `scrypt 0.12.0` |
 
-## Stack Migrations
+## Stack migrations
 
 | From | To | Status |
 |---|---|---|

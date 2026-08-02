@@ -7,15 +7,34 @@ fn detect_x86_64() -> Detected {
 
   // Runtime detection extracts features + vendor/family/model in batch
   #[cfg(feature = "std")]
-  let (runtime_caps, is_amd, family, model) = {
+  let (runtime_caps, is_amd, family, model, amx_permission) = {
     let batch = cpuid_batch_x86_64();
-    (batch.caps, batch.is_amd, batch.family, batch.model)
+    (
+      batch.caps,
+      batch.is_amd,
+      batch.family,
+      batch.model,
+      batch.amx_permission,
+    )
   };
 
   #[cfg(feature = "std")]
   let mut caps = caps_static.union(runtime_caps);
   #[cfg(not(feature = "std"))]
-  let caps = caps_static;
+  let mut caps = caps_static;
+
+  #[cfg(feature = "std")]
+  {
+    caps = gate_x86_amx_permission(caps, amx_permission);
+  }
+
+  #[cfg(all(
+    not(feature = "std"),
+    any(target_os = "linux", target_os = "android")
+  ))]
+  {
+    caps = gate_x86_amx_permission(caps, false);
+  }
 
   // Hybrid Intel AVX-512 Safety: Clear AVX-512 caps on hybrid CPUs
   // On hybrid Intel CPUs (Alder Lake, Raptor Lake, etc.), the P-cores have
@@ -43,9 +62,7 @@ fn detect_x86_64() -> Detected {
         .difference(x86::AVX512VPOPCNTDQ)
         .difference(x86::AVX512BF16)
         .difference(x86::AVX512FP16)
-        .difference(x86::VPCLMULQDQ)
-        .difference(x86::VAES)
-        .difference(x86::GFNI)
+        .difference(x86::AVX512VP2INTERSECT)
         .difference(x86::AVX10_1)
         .difference(x86::AVX10_2);
     }
@@ -54,6 +71,23 @@ fn detect_x86_64() -> Detected {
   Detected {
     caps,
     arch: Arch::X86_64,
+  }
+}
+
+#[cfg(target_arch = "x86_64")]
+const X86_ALL_AMX: Caps = crate::platform::caps::x86::AMX_TILE
+  .union(crate::platform::caps::x86::AMX_BF16)
+  .union(crate::platform::caps::x86::AMX_INT8)
+  .union(crate::platform::caps::x86::AMX_FP16)
+  .union(crate::platform::caps::x86::AMX_COMPLEX);
+
+#[cfg(target_arch = "x86_64")]
+#[inline]
+const fn gate_x86_amx_permission(caps: Caps, permitted: bool) -> Caps {
+  if permitted {
+    caps
+  } else {
+    caps.difference(X86_ALL_AMX)
   }
 }
 
@@ -128,6 +162,42 @@ struct CpuidBatch {
   is_amd: bool,
   family: u32,
   model: u32,
+  amx_permission: bool,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[derive(Clone, Copy, Default)]
+struct CpuidRegisters {
+  eax: u32,
+  ebx: u32,
+  ecx: u32,
+  edx: u32,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl From<core::arch::x86_64::CpuidResult> for CpuidRegisters {
+  fn from(result: core::arch::x86_64::CpuidResult) -> Self {
+    Self {
+      eax: result.eax,
+      ebx: result.ebx,
+      ecx: result.ecx,
+      edx: result.edx,
+    }
+  }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+#[derive(Clone, Copy, Default)]
+struct CpuidSnapshot {
+  leaf0: CpuidRegisters,
+  leaf1: CpuidRegisters,
+  leaf7_0: CpuidRegisters,
+  leaf7_1: CpuidRegisters,
+  leaf24_0: CpuidRegisters,
+  extended_leaf0: CpuidRegisters,
+  extended_leaf1: CpuidRegisters,
+  xcr0: u64,
+  amx_permission: bool,
 }
 
 /// Batch CPUID extraction - extracts all features and CPU info in minimal CPUID calls.
@@ -137,8 +207,7 @@ struct CpuidBatch {
 /// - Leaf 1: processor info + basic features
 /// - Leaf 7.0: extended features
 /// - Leaf 7.1: more extended features
-/// - Leaf 0x24: AVX10 detection (if max leaf >= 0x24)
-/// - Leaf 0x29: APX detection (if max leaf >= 0x29)
+/// - Leaf 0x24: AVX10 version (if leaf 7 reports AVX10 and max leaf permits it)
 /// - Leaf 0x80000001: AMD-specific features
 ///
 /// **Critical**: This function properly gates AVX/AVX-512 features by checking
@@ -152,25 +221,139 @@ struct CpuidBatch {
 fn cpuid_batch_x86_64() -> CpuidBatch {
   use core::arch::x86_64::_xgetbv;
 
+  let leaf0 = CpuidRegisters::from(cpuid_leaf(0));
+  let leaf1 = if leaf0.eax >= 1 {
+    CpuidRegisters::from(cpuid_leaf(1))
+  } else {
+    CpuidRegisters::default()
+  };
+  let leaf7_0 = if leaf0.eax >= 7 {
+    CpuidRegisters::from(cpuid_leaf_count(7, 0))
+  } else {
+    CpuidRegisters::default()
+  };
+  let leaf7_1 = if leaf0.eax >= 7 && leaf7_0.eax >= 1 {
+    CpuidRegisters::from(cpuid_leaf_count(7, 1))
+  } else {
+    CpuidRegisters::default()
+  };
+  let leaf24_0 = if leaf0.eax >= 0x24 && leaf7_1.edx & (1 << 19) != 0 {
+    CpuidRegisters::from(cpuid_leaf_count(0x24, 0))
+  } else {
+    CpuidRegisters::default()
+  };
+  let extended_leaf0 = CpuidRegisters::from(cpuid_leaf(0x8000_0000));
+  let extended_leaf1 = if extended_leaf0.eax >= 0x8000_0001 {
+    CpuidRegisters::from(cpuid_leaf(0x8000_0001))
+  } else {
+    CpuidRegisters::default()
+  };
+  let xcr0 = if leaf1.ecx & (1 << 27) != 0 {
+    // SAFETY: leaf 1 reported OSXSAVE, so XGETBV is enabled; index zero reads
+    // the architectural extended-state mask without accessing Rust memory.
+    unsafe { _xgetbv(0) }
+  } else {
+    0
+  };
+
+  decode_cpuid_x86_64(CpuidSnapshot {
+    leaf0,
+    leaf1,
+    leaf7_0,
+    leaf7_1,
+    leaf24_0,
+    extended_leaf0,
+    extended_leaf1,
+    xcr0,
+    amx_permission: amx_xstate_permission_x86_64(),
+  })
+}
+
+#[cfg(all(
+  target_arch = "x86_64",
+  feature = "std",
+  any(target_os = "linux", target_os = "android")
+))]
+#[allow(unsafe_code)]
+fn amx_xstate_permission_x86_64() -> bool {
+  const SYS_ARCH_PRCTL: isize = 158;
+  const ARCH_GET_XCOMP_PERM: usize = 0x1022;
+  const XCOMP_TILE_MASK: u64 = (1 << 17) | (1 << 18);
+
+  let mut permissions = 0u64;
+  let mut result = SYS_ARCH_PRCTL;
+
+  // SAFETY: Linux x86_64 syscall ABI invocation because:
+  // 1. syscall 158 is arch_prctl on the x86_64 Linux ABI.
+  // 2. ARCH_GET_XCOMP_PERM writes one u64 through the valid exclusive pointer
+  //    in RSI and does not retain it.
+  // 3. syscall clobbers RAX, RCX, and R11; all are declared, and no Rust
+  //    reference is live across an undeclared register or stack mutation.
+  unsafe {
+    core::arch::asm!(
+      "syscall",
+      inlateout("rax") result,
+      in("rdi") ARCH_GET_XCOMP_PERM,
+      in("rsi") &mut permissions,
+      lateout("rcx") _,
+      lateout("r11") _,
+      options(nostack),
+    );
+  }
+
+  result == 0 && permissions & XCOMP_TILE_MASK == XCOMP_TILE_MASK
+}
+
+#[cfg(all(
+  target_arch = "x86_64",
+  feature = "std",
+  not(any(target_os = "linux", target_os = "android"))
+))]
+const fn amx_xstate_permission_x86_64() -> bool {
+  true
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
   use crate::platform::caps::x86;
 
-  // XCR0 bit masks for OS support verification
-  // Bits 1-2: XMM (SSE) + YMM (AVX) state - must be set for AVX
   const XCR0_AVX_MASK: u64 = 0x6;
-  // Bits 5-7: opmask + ZMM_Hi256 + Hi16_ZMM state - must be set for AVX-512
   const XCR0_AVX512_MASK: u64 = 0xE0;
+  const XCR0_AMX_MASK: u64 = (1 << 17) | (1 << 18);
+  const XCR0_APX_MASK: u64 = 1 << 19;
 
   let mut caps = Caps::NONE;
+  let cpuid0 = snapshot.leaf0;
+  let cpuid1 = if cpuid0.eax >= 1 {
+    snapshot.leaf1
+  } else {
+    CpuidRegisters::default()
+  };
+  let cpuid7 = if cpuid0.eax >= 7 {
+    snapshot.leaf7_0
+  } else {
+    CpuidRegisters::default()
+  };
+  let cpuid7_1 = if cpuid0.eax >= 7 && cpuid7.eax >= 1 {
+    snapshot.leaf7_1
+  } else {
+    CpuidRegisters::default()
+  };
+  let cpuid24 = if cpuid0.eax >= 0x24 {
+    snapshot.leaf24_0
+  } else {
+    CpuidRegisters::default()
+  };
+  let cpuid_ext = if snapshot.extended_leaf0.eax >= 0x8000_0001 {
+    snapshot.extended_leaf1
+  } else {
+    CpuidRegisters::default()
+  };
 
-  // CPUID leaf 0: vendor string
-  let cpuid0 = cpuid_leaf(0);
   // "GenuineIntel" has EBX/EDX/ECX = "Genu" / "ineI" / "ntel".
   let is_intel = cpuid0.ebx == 0x756e_6547 && cpuid0.edx == 0x4965_6e69 && cpuid0.ecx == 0x6c65_746e;
   // "AuthenticAMD" has ebx = 0x68747541 ("Auth")
   let is_amd = cpuid0.ebx == 0x6874_7541;
-
-  // CPUID leaf 1: processor info and feature bits
-  let cpuid1 = cpuid_leaf(1);
 
   // Extract extended family (bits 27:20) + base family (bits 11:8)
   let base_family = (cpuid1.eax >> 8) & 0xF;
@@ -195,20 +378,23 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   // OSXSAVE (bit 27): OS has set CR4.OSXSAVE and supports XSAVE/XGETBV
   let osxsave = cpuid1.ecx & (1 << 27) != 0;
 
-  // Read XCR0 if OSXSAVE is enabled, otherwise assume no extended state support
-  let xcr0 = if osxsave {
-    // SAFETY: XGETBV reads XCR0 safely here because:
-    // 1. CPUID leaf 1 reported OSXSAVE, so the OS enabled XGETBV.
-    // 2. Index 0 reads XCR0, the architectural extended-state mask.
-    // 3. The intrinsic returns register state and does not access Rust memory.
-    unsafe { _xgetbv(0) }
-  } else {
-    0
-  };
-
   // Determine OS support for AVX and AVX-512 register state
-  let os_avx = (xcr0 & XCR0_AVX_MASK) == XCR0_AVX_MASK;
-  let os_avx512 = os_avx && (xcr0 & XCR0_AVX512_MASK) == XCR0_AVX512_MASK;
+  let os_avx = osxsave && (snapshot.xcr0 & XCR0_AVX_MASK) == XCR0_AVX_MASK;
+  let os_avx512 = os_avx && (snapshot.xcr0 & XCR0_AVX512_MASK) == XCR0_AVX512_MASK;
+  let os_amx =
+    osxsave && (snapshot.xcr0 & XCR0_AMX_MASK) == XCR0_AMX_MASK && snapshot.amx_permission;
+  let os_apx = osxsave && (snapshot.xcr0 & XCR0_APX_MASK) == XCR0_APX_MASK;
+
+  let has_avx = cpuid1.ecx & (1 << 28) != 0;
+  let has_avx2 = cpuid7.ebx & (1 << 5) != 0;
+  let has_avx512f = cpuid7.ebx & (1 << 16) != 0;
+  let has_avx512bw = cpuid7.ebx & (1 << 30) != 0;
+  let has_fma = cpuid1.ecx & (1 << 12) != 0;
+  let has_f16c = cpuid1.ecx & (1 << 29) != 0;
+  let has_aes = cpuid1.ecx & (1 << 25) != 0;
+  let has_pclmul = cpuid1.ecx & (1 << 1) != 0;
+  let rust_avx = os_avx && has_avx;
+  let rust_avx512 = os_avx512 && rust_avx && has_avx512f && has_fma && has_f16c;
 
   // ECX features (leaf 1) - SSE/basic features (no OS gating needed)
   if cpuid1.ecx & (1 << 0) != 0 {
@@ -226,10 +412,10 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   if cpuid1.ecx & (1 << 23) != 0 {
     caps |= x86::POPCNT;
   }
-  if cpuid1.ecx & (1 << 25) != 0 {
+  if has_aes {
     caps |= x86::AESNI;
   }
-  if cpuid1.ecx & (1 << 1) != 0 {
+  if has_pclmul {
     caps |= x86::PCLMULQDQ;
   }
   if cpuid1.ecx & (1 << 30) != 0 {
@@ -237,20 +423,15 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // AVX-class features (require OS AVX support via XCR0)
-  if os_avx {
-    if cpuid1.ecx & (1 << 28) != 0 {
-      caps |= x86::AVX;
-    }
-    if cpuid1.ecx & (1 << 12) != 0 {
+  if rust_avx {
+    caps |= x86::AVX;
+    if has_fma {
       caps |= x86::FMA;
     }
-    if cpuid1.ecx & (1 << 29) != 0 {
+    if has_f16c {
       caps |= x86::F16C;
     }
   }
-
-  // Extended feature flags (leaf 7, subleaf 0)
-  let cpuid7 = cpuid_leaf_count(7, 0);
 
   // EBX features (leaf 7) - non-AVX features (no OS gating needed)
   if cpuid7.ebx & (1 << 3) != 0 {
@@ -267,15 +448,13 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   }
 
   // AVX2 (requires OS AVX support for YMM registers)
-  if os_avx && cpuid7.ebx & (1 << 5) != 0 {
+  if rust_avx && has_avx2 {
     caps |= x86::AVX2;
   }
 
-  // AVX-512 features (require OS AVX-512 support for ZMM/opmask registers)
-  if os_avx512 {
-    if cpuid7.ebx & (1 << 16) != 0 {
-      caps |= x86::AVX512F;
-    }
+  // Rust AVX-512 target features also imply FMA and F16C.
+  if rust_avx512 {
+    caps |= x86::AVX512F;
     if cpuid7.ebx & (1 << 17) != 0 {
       caps |= x86::AVX512DQ;
     }
@@ -308,87 +487,79 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     if cpuid7.ecx & (1 << 14) != 0 {
       caps |= x86::AVX512VPOPCNTDQ;
     }
+    if cpuid7.edx & (1 << 8) != 0 {
+      caps |= x86::AVX512VP2INTERSECT;
+    }
+    if has_avx512bw && cpuid7.edx & (1 << 23) != 0 {
+      caps |= x86::AVX512FP16;
+    }
+    if has_avx512bw && cpuid7_1.eax & (1 << 5) != 0 {
+      caps |= x86::AVX512BF16;
+    }
 
-    // Vector extensions that use 512-bit registers (gate with AVX-512 OS support)
-    if cpuid7.ecx & (1 << 8) != 0 {
-      caps |= x86::GFNI;
-    }
-    if cpuid7.ecx & (1 << 9) != 0 {
-      caps |= x86::VAES;
-    }
-    if cpuid7.ecx & (1 << 10) != 0 {
-      caps |= x86::VPCLMULQDQ;
+    if cpuid7_1.edx & (1 << 19) != 0 {
+      let avx10_version = cpuid24.ebx & 0xFF;
+      if avx10_version >= 1 {
+        caps |= x86::AVX10_1;
+      }
+      // Rust's AVX10.2 feature also implies AVX-VNNI, AVX-VNNI-INT8, and
+      // AVX-VNNI-INT16. Caps does not model that prerequisite set, so runtime
+      // detection deliberately under-reports AVX10_2.
     }
   }
 
-  // EDX features (leaf 7) - non-AVX features
-  if cpuid7.edx & (1 << 18) != 0 {
+  if cpuid7.ecx & (1 << 8) != 0 {
+    caps |= x86::GFNI;
+  }
+  if rust_avx && has_avx2 && has_aes && cpuid7.ecx & (1 << 9) != 0 {
+    caps |= x86::VAES;
+  }
+  if rust_avx && has_pclmul && cpuid7.ecx & (1 << 10) != 0 {
+    caps |= x86::VPCLMULQDQ;
+  }
+
+  // EBX/ECX/EDX features (leaf 7)
+  if cpuid7.ebx & (1 << 18) != 0 {
     caps |= x86::RDSEED;
   }
-  if cpuid7.edx & (1 << 24) != 0 {
+  if cpuid7.ecx & (1 << 27) != 0 {
+    caps |= x86::MOVDIRI;
+  }
+  if cpuid7.ecx & (1 << 28) != 0 {
+    caps |= x86::MOVDIR64B;
+  }
+  if cpuid7.edx & (1 << 14) != 0 {
+    caps |= x86::SERIALIZE;
+  }
+  if os_amx && cpuid7.edx & (1 << 24) != 0 {
     caps |= x86::AMX_TILE;
   }
-  if cpuid7.edx & (1 << 22) != 0 {
+  if os_amx && cpuid7.edx & (1 << 22) != 0 {
     caps |= x86::AMX_BF16;
   }
-  if cpuid7.edx & (1 << 25) != 0 {
+  if os_amx && cpuid7.edx & (1 << 25) != 0 {
     caps |= x86::AMX_INT8;
   }
 
-  // Extended feature flags (leaf 7, subleaf 1)
-  let cpuid7_1 = cpuid_leaf_count(7, 1);
-
   // EAX features (leaf 7, subleaf 1)
-  // SHA512 doesn't require AVX-512 (uses XMM registers)
+  // SHA512 doesn't require AVX-512 (uses XMM registers).
   if cpuid7_1.eax & (1 << 0) != 0 {
     caps |= x86::SHA512;
   }
 
-  // AVX-512 extensions (require OS AVX-512 support)
-  if os_avx512 {
-    if cpuid7_1.eax & (1 << 4) != 0 {
-      caps |= x86::AVX512BF16;
-    }
-    if cpuid7_1.eax & (1 << 5) != 0 {
-      caps |= x86::AVX512FP16;
-    }
-  }
-
-  // AMX extensions (Granite Rapids and newer) - separate state component
-  // Note: AMX has its own XCR0 bits (17-18), but for now we don't gate these
-  // as they're not used for crypto kernels
-  if cpuid7_1.eax & (1 << 21) != 0 {
+  // AMX extensions require both architectural tile-state components.
+  if os_amx && cpuid7_1.eax & (1 << 21) != 0 {
     caps |= x86::AMX_FP16;
   }
-  if cpuid7_1.eax & (1 << 8) != 0 {
+  if os_amx && cpuid7_1.edx & (1 << 8) != 0 {
     caps |= x86::AMX_COMPLEX;
   }
 
-  // AVX10 detection via CPUID leaf 0x24 (requires OS AVX-512 support)
-  // AVX10 is Intel's unified vector ISA that subsumes AVX-512
-  if os_avx512 && cpuid0.eax >= 0x24 {
-    let cpuid24 = cpuid_leaf_count(0x24, 0);
-    let avx10_version = cpuid24.ebx & 0xFF;
-    if avx10_version >= 1 {
-      caps |= x86::AVX10_1;
-    }
-    if avx10_version >= 2 {
-      caps |= x86::AVX10_2;
-    }
+  if os_apx && cpuid7_1.edx & (1 << 21) != 0 {
+    caps |= x86::APX;
   }
 
-  // APX detection via CPUID leaf 0x29
-  // APX doubles GPRs from 16 to 32 (R16-R31) on Granite Rapids+
-  if cpuid0.eax >= 0x29 {
-    let cpuid29 = cpuid_leaf_count(0x29, 0);
-    // APX_NCI_NDD_NF is bit 0 of EBX
-    if cpuid29.ebx & 1 != 0 {
-      caps |= x86::APX;
-    }
-  }
-
-  // Extended CPUID (leaf 0x80000001) for AMD-specific features
-  let cpuid_ext = cpuid_leaf(0x8000_0001);
+  // Extended CPUID (leaf 0x80000001) features
   if cpuid_ext.ecx & (1 << 5) != 0 {
     caps |= x86::LZCNT;
   }
@@ -416,6 +587,7 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
     is_amd,
     family,
     model,
+    amx_permission: snapshot.amx_permission,
   }
 }
 
@@ -468,10 +640,13 @@ fn runtime_x86_32() -> Caps {
 /// `RSCRYPTO_FORCE_AVX512=1` enables AVX-512 on hybrid Intel CPUs.
 #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
 fn hybrid_avx512_override() -> bool {
-  // Check environment variable for explicit opt-in
-  std::env::var("RSCRYPTO_FORCE_AVX512")
-    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    .unwrap_or(false)
+  let value = std::env::var("RSCRYPTO_FORCE_AVX512").ok();
+  parse_hybrid_avx512_override(value.as_deref())
+}
+
+#[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]
+fn parse_hybrid_avx512_override(value: Option<&str>) -> bool {
+  matches!(value, Some("1")) || value.is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
 #[cfg(all(any(target_arch = "x86_64", target_arch = "x86"), feature = "std"))]

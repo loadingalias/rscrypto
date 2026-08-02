@@ -19,8 +19,7 @@ pub fn crc16_ibm_slice8(crc: u16, data: &[u8]) -> u16 {
 
 /// CRC-16/CCITT byte-at-a-time lookup computation.
 ///
-/// This is typically faster than slice-by-8 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-8 table set.
 #[inline(always)]
 pub fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
   crc16_bytewise(crc, data, &kernel_tables::CCITT_TABLES_8[0])
@@ -28,8 +27,7 @@ pub fn crc16_ccitt_bytewise(crc: u16, data: &[u8]) -> u16 {
 
 /// CRC-16/IBM byte-at-a-time lookup computation.
 ///
-/// This is typically faster than slice-by-8 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-8 table set.
 #[inline(always)]
 pub fn crc16_ibm_bytewise(crc: u16, data: &[u8]) -> u16 {
   crc16_bytewise(crc, data, &kernel_tables::IBM_TABLES_8[0])

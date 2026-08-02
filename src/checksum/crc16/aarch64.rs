@@ -1180,3 +1180,87 @@ pub fn crc16_ibm_pmull_eor3_3way_safe(crc: u16, data: &[u8]) -> u16 {
     )
   }
 }
+
+#[cfg(test)]
+mod tests {
+  extern crate std;
+
+  use alloc::vec::Vec;
+
+  use super::*;
+
+  const LENS: &[usize] = &[0, 1, 7, 15, 16, 31, 63, 64, 127, 128, 255, 256, 1023, 1024, 4096];
+  const OFFSETS: &[usize] = &[0, 1, 7, 15];
+  const STATES: &[u16] = &[0, 0x1d0f, 0xa5a5, u16::MAX];
+
+  fn data() -> Vec<u8> {
+    (0..4111)
+      .map(|i| (i as u8).wrapping_mul(29).wrapping_add((i >> 8) as u8))
+      .collect()
+  }
+
+  fn assert_kernel(name: &str, kernel: fn(u16, &[u8]) -> u16, portable: fn(u16, &[u8]) -> u16) {
+    let input = data();
+    for &state in STATES {
+      for &offset in OFFSETS {
+        for &len in LENS {
+          let slice = &input[offset..offset + len];
+          assert_eq!(
+            kernel(state, slice),
+            portable(state, slice),
+            "{name} state={state:#06x} offset={offset} len={len}"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn pmull_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_READY) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("ccitt/pmull", crc16_ccitt_pmull_safe as fn(u16, &[u8]) -> u16),
+      ("ccitt/pmull-small", crc16_ccitt_pmull_small_safe),
+      ("ccitt/pmull-2way", crc16_ccitt_pmull_2way_safe),
+      ("ccitt/pmull-3way", crc16_ccitt_pmull_3way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ccitt_slice8);
+    }
+
+    for (name, kernel) in [
+      ("ibm/pmull", crc16_ibm_pmull_safe as fn(u16, &[u8]) -> u16),
+      ("ibm/pmull-small", crc16_ibm_pmull_small_safe),
+      ("ibm/pmull-2way", crc16_ibm_pmull_2way_safe),
+      ("ibm/pmull-3way", crc16_ibm_pmull_3way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ibm_slice8);
+    }
+  }
+
+  #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
+  #[test]
+  fn pmull_eor3_kernels_match_portable() {
+    if !crate::platform::caps().has(crate::platform::caps::aarch64::PMULL_EOR3_READY) {
+      return;
+    }
+
+    for (name, kernel) in [
+      ("ccitt/pmull-eor3", crc16_ccitt_pmull_eor3_safe as fn(u16, &[u8]) -> u16),
+      ("ccitt/pmull-eor3-2way", crc16_ccitt_pmull_eor3_2way_safe),
+      ("ccitt/pmull-eor3-3way", crc16_ccitt_pmull_eor3_3way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ccitt_slice8);
+    }
+
+    for (name, kernel) in [
+      ("ibm/pmull-eor3", crc16_ibm_pmull_eor3_safe as fn(u16, &[u8]) -> u16),
+      ("ibm/pmull-eor3-2way", crc16_ibm_pmull_eor3_2way_safe),
+      ("ibm/pmull-eor3-3way", crc16_ibm_pmull_eor3_3way_safe),
+    ] {
+      assert_kernel(name, kernel, super::super::portable::crc16_ibm_slice8);
+    }
+  }
+}

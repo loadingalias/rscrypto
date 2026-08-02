@@ -3,7 +3,7 @@
 Use a short-lived feature branch for every change. `main` is the protected,
 releasable history; it is not a working branch.
 
-## What the gates do
+## Gate model
 
 | Action | Purpose |
 |---|---|
@@ -17,20 +17,25 @@ actors, so merged commits do not repeat the pull-request suite. Release
 candidates get a separate exact-commit Weekly run with the complete CI suite,
 Cargo graph assurance, and release evidence.
 
-## Daily branch workflow
+## Create a branch
 
-Start from current `main`:
+Start from a clean worktree and current `main`:
 
 ```bash
+git status --short
 git switch main
 git pull --ff-only
 git switch -c <short-feature-name>
 ```
 
-Make one focused change. Add a `.changes/*.md` file when crate users will
-observe the result: an API, behavior, security, performance, compatibility, or
-release-artifact change. Internal-only tooling and maintainer-documentation
-changes normally do not need one.
+Do not discard unrelated local changes to run this sequence. Preserve them or
+move them to their own branch first.
+
+## Record release intent
+
+Add a `.changes/*.md` file when crate users will observe an API, behavior,
+security, performance, compatibility, or release-artifact change. Internal
+tooling and maintainer-only documentation normally do not need one.
 
 ```bash
 just release-change patch "Describe the user-visible result."
@@ -39,6 +44,8 @@ just release-change patch "Describe the user-visible result."
 Use `minor` or `major` instead of `patch` when the compatibility impact
 requires it. The pre-push check is the final authority on whether release
 intent is missing.
+
+## Validate the change
 
 Run checks proportional to the change. Common starting points are:
 
@@ -62,8 +69,11 @@ Use deeper checks where the risk requires them:
 | `unsafe`, SIMD, ASM, or dispatch | Backend equivalence tests and `just test-fuzz-asan --all` where the target runs natively |
 | Portable unsafe path | `just test-miri` |
 | Constant-time claim boundary | `just ct-full --target <triple>`; update `ct.toml` only with matching evidence |
+| Apple Silicon RSA assembly | `just test-rsa-macos-asm` on a physical local Arm64 Mac; GitHub Actions intentionally has no macOS runner |
 | Public API change | `cargo semver-checks --package rscrypto --all-features` |
 | Dependency or release change | `cargo deny check all` and `cargo audit --ignore RUSTSEC-2023-0071` |
+
+## Review and commit
 
 Inspect and commit only the intended files:
 
@@ -75,6 +85,8 @@ git diff --cached
 git commit -m "module: imperative outcome"
 ```
 
+## Push and open a pull request
+
 Push the current branch with its upstream. No extra Git flags are needed:
 
 ```bash
@@ -85,18 +97,20 @@ just push
 current branch. No rscrypto Git-hook installation is required. Use `just
 push-full` when the change is unusually broad or release-sensitive.
 
-Open a draft pull request while work is still changing; expensive jobs wait
-until the pull request is ready for review. A branch push alone does not start
-the normal PR suite:
+Open a draft pull request while the change is still in progress. Expensive jobs
+wait until the pull request is ready for review; a branch push alone does not
+start the normal pull-request suite:
 
 ```bash
 gh pr create --base main --fill --draft
 ```
 
 Mark the pull request ready only when its head is ready for CI, then wait for
-the required `Complete` check. Because the repository currently has one
-maintainer, no second approval is required; review the final diff yourself,
-resolve any open threads, and merge in the GitHub UI.
+the required `Complete` check. Resolve every open review thread and review the
+final diff before merging in the GitHub UI. GitHub enforces the current
+approval policy.
+
+## Clean up after merge
 
 After GitHub reports the pull request merged:
 

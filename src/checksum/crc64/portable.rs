@@ -40,8 +40,7 @@ pub fn crc64_slice16_nvme(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ byte-at-a-time lookup computation.
 ///
-/// This is typically faster than slice-by-16 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-16 table set.
 #[inline(always)]
 pub fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
   crc64_bytewise(crc, data, &kernel_tables::XZ_TABLES_16[0])
@@ -49,8 +48,7 @@ pub fn crc64_xz_bytewise(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME byte-at-a-time lookup computation.
 ///
-/// This is typically faster than slice-by-16 for tiny buffers because it uses a
-/// single 256-entry table.
+/// Uses one 256-entry table rather than the slice-by-16 table set.
 #[inline(always)]
 pub fn crc64_nvme_bytewise(crc: u64, data: &[u8]) -> u64 {
   crc64_bytewise(crc, data, &kernel_tables::NVME_TABLES_16[0])

@@ -1,5 +1,5 @@
 ---
-"rscrypto" = "minor"
+"rscrypto" = "major"
 ---
 
 Secret-bearing HMAC, HKDF, KMAC, and PBKDF2 states no longer implement

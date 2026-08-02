@@ -56,7 +56,15 @@ cat >"$fixture/scripts/check/zeroize-evidence.sh" <<'EOF'
 exit 0
 EOF
 
-chmod +x "$fixture/scripts/ct/python.sh" "$fixture/scripts/check/zeroize-evidence.sh"
+cat >"$fixture/scripts/check/rsa-asm-provenance.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+chmod +x \
+  "$fixture/scripts/ct/python.sh" \
+  "$fixture/scripts/check/rsa-asm-provenance.sh" \
+  "$fixture/scripts/check/zeroize-evidence.sh"
 
 cat >"$fake_bin/cargo" <<'EOF'
 #!/usr/bin/env bash
@@ -204,7 +212,7 @@ run_recipe() {
   snapshot_worktree "$before"
 
   (
-    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE
+    unset RAIL_PLAN_JSON_CACHE RAIL_SCOPE_JSON RAIL_SCOPE_JSON_CACHE RAIL_SURFACES_JSON
     export HOME="$fake_home"
     export PATH="$fake_bin:$PATH"
     export MOCK_FORMAT_DRIFT="$format_drift"

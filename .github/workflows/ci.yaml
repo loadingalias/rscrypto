@@ -47,18 +47,28 @@ jobs:
           enable-magic-cache: false
           enable-rust-cache: true
 
+      - name: Build Plan (PR)
+        if: github.event_name == 'pull_request'
+        id: rail
+        uses: loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f  # v6.1.0
+        with:
+          version: "0.20.0"
+          checksum: required
+          since: ${{ github.event.pull_request.base.sha }}
+
       - name: Resolve Build Plan
         if: always()
         id: resolve
         env:
-          RAIL_PLAN_STEP_OUTCOME: ${{ steps.rail_setup.outcome }}
-          RAIL_SINCE: origin/${{ github.base_ref }}
+          RAIL_PLAN_STEP_OUTCOME: ${{ steps.rail.outcome }}
+          RAIL_SCOPE_JSON: ${{ steps.rail.outputs.scope-json }}
+          RAIL_SURFACES_JSON: ${{ steps.rail.outputs.surfaces-json }}
         run: scripts/ci/resolve-rail-plan.sh
 
       - name: Check Release Intent Coverage
         if: github.event_name == 'pull_request'
         env:
-          RAIL_BASE_REF: origin/${{ github.base_ref }}
+          RAIL_BASE_REF: ${{ steps.rail.outputs.base-ref }}
         run: cargo rail change check --since "$RAIL_BASE_REF" --required
 
   dependency-smoke:

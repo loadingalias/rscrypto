@@ -213,6 +213,14 @@ impl Aes128Gcm {
 
 // GCM construction internals (NIST SP 800-38D)
 
+struct GhashAccumulator(u128);
+
+impl Drop for GhashAccumulator {
+  fn drop(&mut self) {
+    ct::zeroize_words(core::slice::from_mut(&mut self.0));
+  }
+}
+
 /// Build the initial counter block J0 and first CTR block for a 96-bit IV.
 ///
 /// J0 = IV || 0x00000001 (NIST SP 800-38D § 7.1, when len(IV) = 96).
@@ -237,15 +245,15 @@ fn compute_tag(
   aad: &[u8],
   ciphertext: &[u8],
 ) -> Result<[u8; TAG_SIZE], LengthOverflow> {
-  let mut acc = 0u128;
-  acc = ghash_update_padded(acc, h_polyval, aad);
-  acc = ghash_update_padded(acc, h_polyval, ciphertext);
+  let mut acc = GhashAccumulator(0);
+  acc.0 = ghash_update_padded(acc.0, h_polyval, aad);
+  acc.0 = ghash_update_padded(acc.0, h_polyval, ciphertext);
 
   let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
-  acc ^= u128::from_be_bytes(length_block);
-  acc = polyval::clmul128_reduce(acc, h_polyval);
+  acc.0 ^= u128::from_be_bytes(length_block);
+  acc.0 = polyval::clmul128_reduce(acc.0, h_polyval);
 
-  Ok(encrypt_j0_tag(ek, j0, acc))
+  Ok(encrypt_j0_tag(ek, j0, acc.0))
 }
 
 #[inline]
@@ -358,8 +366,8 @@ fn compute_tag_short_wide(
   let mut blocks = [0u128; 4];
   let start = 4usize.strict_sub(block_count);
   blocks[start..].copy_from_slice(&sequence[..block_count]);
-  let acc = polyval::accumulate_4blocks(0, h_polyval, h_powers_rev, &blocks);
-  Ok(Some(encrypt_j0_tag(ek, j0, acc)))
+  let acc = GhashAccumulator(polyval::accumulate_4blocks(0, h_polyval, h_powers_rev, &blocks));
+  Ok(Some(encrypt_j0_tag(ek, j0, acc.0)))
 }
 
 #[inline(always)]
@@ -381,24 +389,26 @@ pub fn diag_aes128gcm_ctr32_be(cipher: &Aes128Gcm, nonce: &Nonce96, plaintext: &
 }
 
 #[cfg(feature = "diag")]
+#[unsafe(no_mangle)]
+#[inline(never)]
 #[must_use]
 pub fn diag_aes128gcm_ghash(cipher: &Aes128Gcm, aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
   let h_polyval = cipher.h_powers_rev[3];
-  let mut acc = 0u128;
+  let mut acc = GhashAccumulator(0);
   if should_use_wide_ghash(cipher.backend, aad.len(), ciphertext.len()) {
-    acc = ghash_update_padded_wide(acc, h_polyval, &cipher.h_powers_rev, aad);
-    acc = ghash_update_padded_wide(acc, h_polyval, &cipher.h_powers_rev, ciphertext);
+    acc.0 = ghash_update_padded_wide(acc.0, h_polyval, &cipher.h_powers_rev, aad);
+    acc.0 = ghash_update_padded_wide(acc.0, h_polyval, &cipher.h_powers_rev, ciphertext);
   } else {
-    acc = ghash_update_padded(acc, h_polyval, aad);
-    acc = ghash_update_padded(acc, h_polyval, ciphertext);
+    acc.0 = ghash_update_padded(acc.0, h_polyval, aad);
+    acc.0 = ghash_update_padded(acc.0, h_polyval, ciphertext);
   }
   let length_block = match super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len()) {
     Ok(lengths) => lengths.to_be_bits_block(),
     Err(_) => return [0u8; 16],
   };
-  acc ^= u128::from_be_bytes(length_block);
-  acc = polyval::clmul128_reduce(acc, h_polyval);
-  acc.to_be_bytes()
+  acc.0 ^= u128::from_be_bytes(length_block);
+  acc.0 = polyval::clmul128_reduce(acc.0, h_polyval);
+  acc.0.to_be_bytes()
 }
 
 #[cfg(feature = "diag")]
@@ -433,16 +443,16 @@ fn compute_tag_wide(
   aad: &[u8],
   ciphertext: &[u8],
 ) -> Result<[u8; TAG_SIZE], LengthOverflow> {
-  let mut acc = 0u128;
-  acc = ghash_update_padded_wide(acc, h_polyval, h_powers_rev, aad);
-  acc = ghash_update_padded_wide(acc, h_polyval, h_powers_rev, ciphertext);
+  let mut acc = GhashAccumulator(0);
+  acc.0 = ghash_update_padded_wide(acc.0, h_polyval, h_powers_rev, aad);
+  acc.0 = ghash_update_padded_wide(acc.0, h_polyval, h_powers_rev, ciphertext);
 
   // Length block.
   let length_block = super::AeadByteLengths::try_new_bit_lengths(aad.len(), ciphertext.len())?.to_be_bits_block();
-  acc ^= u128::from_be_bytes(length_block);
-  acc = polyval::clmul128_reduce(acc, h_polyval);
+  acc.0 ^= u128::from_be_bytes(length_block);
+  acc.0 = polyval::clmul128_reduce(acc.0, h_polyval);
 
-  Ok(encrypt_j0_tag(ek, j0, acc))
+  Ok(encrypt_j0_tag(ek, j0, acc.0))
 }
 
 /// Update GHASH using VPCLMUL without scalar block packing.
@@ -710,18 +720,18 @@ impl Aead for Aes128Gcm {
       // SAFETY: x86 GHASH AAD path because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) };
+      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) });
       // SAFETY: fused x86 AES-GCM sealing because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
       //    AES-NI.
       // 2. The helper encrypts `buffer` in place and folds the resulting ciphertext into GHASH.
-      acc = unsafe { aes::aes128_ctr32_encrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, tables) };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 = unsafe { aes::aes128_ctr32_encrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc.0, tables) };
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
       // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
-      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc.0);
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
 
@@ -731,25 +741,25 @@ impl Aead for Aes128Gcm {
       && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
     {
       let h_polyval = self.h_powers_rev[3];
-      let mut acc = ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad);
+      let mut acc = GhashAccumulator(ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad));
       // SAFETY: fused x86 AES-NI/PCLMUL sealing because:
       // 1. Backend resolution selected X86AesniPclmul only after CPUID confirmed AES-NI and PCLMULQDQ.
       // 2. The extra PCLMUL_READY check confirms SSSE3 for in-register GHASH byte reversal.
       // 3. The helper encrypts `buffer` in place and folds ciphertext into GHASH.
-      acc = unsafe {
+      acc.0 = unsafe {
         aes::aes128_ctr32_encrypt_be_aesni_pclmul_ghash(
           &self.ek,
           &ctr_block,
           buffer,
-          acc,
+          acc.0,
           h_polyval,
           &self.h_powers_rev,
         )
       };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because PCLMUL_READY was checked above.
-      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
-      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc.0);
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
 
@@ -763,7 +773,8 @@ impl Aead for Aes128Gcm {
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
       //    and PMULL.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) };
+      let mut acc =
+        GhashAccumulator(unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) });
       // SAFETY: fused intrinsic AArch64 AES-GCM sealing because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
       //    and PMULL.
@@ -781,13 +792,13 @@ impl Aead for Aes128Gcm {
       };
       // SAFETY: backend selection confirmed AES-CE/PMULL, and the helper encrypts the valid buffer
       // in place while folding ciphertext into GHASH.
-      acc = unsafe { aes::aes128_ctr32_encrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc, &tables) };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 = unsafe { aes::aes128_ctr32_encrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc.0, &tables) };
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: aarch64 GHASH final multiply because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
       // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
-      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::aarch64_clmul128_reduce_inline(acc.0, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc.0);
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
 
@@ -798,18 +809,18 @@ impl Aead for Aes128Gcm {
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) };
+      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) });
       // SAFETY: fused POWER AES-GCM sealing because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
       // 2. The helper encrypts `buffer` in place and folds ciphertext into GHASH.
-      acc = unsafe {
-        aes::aes128_ctr32_encrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+      acc.0 = unsafe {
+        aes::aes128_ctr32_encrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc.0, h_polyval, &self.h_powers_rev)
       };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
-      acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
-      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::ppc_clmul128_reduce_inline(acc.0, h_polyval) };
+      let tag_bytes = encrypt_j0_tag(&self.ek, &j0, acc.0);
       return Ok(Aes128GcmTag::from_bytes(tag_bytes));
     }
 
@@ -855,18 +866,18 @@ impl Aead for Aes128Gcm {
       // SAFETY: x86 GHASH AAD path because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VPCLMULQDQ.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) };
+      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_x86(0, h_polyval, tables.h_powers_rev, aad) });
       // SAFETY: fused x86 AES-GCM open because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed VAES, VPCLMULQDQ, and
       //    AES-NI.
       // 2. The helper GHASHes ciphertext bytes before decrypting each chunk in place.
-      acc = unsafe { aes::aes128_ctr32_decrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc, tables) };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 = unsafe { aes::aes128_ctr32_decrypt_be_wide_ghash(&self.ek, &ctr_block, buffer, acc.0, tables) };
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because:
       // 1. Backend resolution selected X86VaesVpclmul only after CPUID confirmed PCLMULQDQ.
       // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
-      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc.0);
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
@@ -880,25 +891,25 @@ impl Aead for Aes128Gcm {
       && crate::platform::caps().has(crate::platform::caps::x86::PCLMUL_READY)
     {
       let h_polyval = self.h_powers_rev[3];
-      let mut acc = ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad);
+      let mut acc = GhashAccumulator(ghash_update_padded_wide(0, h_polyval, &self.h_powers_rev, aad));
       // SAFETY: fused x86 AES-NI/PCLMUL open because:
       // 1. Backend resolution selected X86AesniPclmul only after CPUID confirmed AES-NI and PCLMULQDQ.
       // 2. The extra PCLMUL_READY check confirms SSSE3 for in-register GHASH byte reversal.
       // 3. The helper GHASHes ciphertext before decrypting each chunk in place.
-      acc = unsafe {
+      acc.0 = unsafe {
         aes::aes128_ctr32_decrypt_be_aesni_pclmul_ghash(
           &self.ek,
           &ctr_block,
           buffer,
-          acc,
+          acc.0,
           h_polyval,
           &self.h_powers_rev,
         )
       };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: x86 GHASH final multiply because PCLMUL_READY was checked above.
-      acc = unsafe { polyval::x86_clmul128_reduce_inline(acc, h_polyval) };
-      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::x86_clmul128_reduce_inline(acc.0, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc.0);
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
@@ -916,7 +927,8 @@ impl Aead for Aes128Gcm {
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
       //    and PMULL.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) };
+      let mut acc =
+        GhashAccumulator(unsafe { ghash_update_padded_wide_aarch64(0, h_polyval, &self.h_powers_rev, aad) });
       // SAFETY: fused intrinsic AArch64 AES-GCM open because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed AES-CE
       //    and PMULL.
@@ -934,13 +946,13 @@ impl Aead for Aes128Gcm {
       };
       // SAFETY: backend selection confirmed AES-CE/PMULL, and the helper GHASHes ciphertext before
       // decrypting the valid buffer in place.
-      acc = unsafe { aes::aes128_ctr32_decrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc, &tables) };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 = unsafe { aes::aes128_ctr32_decrypt_be_aarch64_ghash(&self.ek, &ctr_block, buffer, acc.0, &tables) };
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: aarch64 GHASH final multiply because:
       // 1. Backend resolution selected an AES/PMULL backend only after runtime detection confirmed PMULL.
       // 2. `acc` and `h_polyval` are initialized GHASH field elements.
-      acc = unsafe { polyval::aarch64_clmul128_reduce_inline(acc, h_polyval) };
-      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::aarch64_clmul128_reduce_inline(acc.0, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc.0);
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());
@@ -955,18 +967,18 @@ impl Aead for Aes128Gcm {
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
       // 2. `aad` is a valid byte slice; padding is handled inside the helper.
-      let mut acc = unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) };
+      let mut acc = GhashAccumulator(unsafe { ghash_update_padded_wide_ppc(0, h_polyval, &self.h_powers_rev, aad) });
       // SAFETY: fused POWER AES-GCM open because:
       // 1. Backend resolution selected `Power8Crypto` only after runtime detection confirmed POWER8
       //    crypto.
       // 2. The helper GHASHes ciphertext before decrypting the valid buffer in place.
-      acc = unsafe {
-        aes::aes128_ctr32_decrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc, h_polyval, &self.h_powers_rev)
+      acc.0 = unsafe {
+        aes::aes128_ctr32_decrypt_be_ppc_ghash(&self.ek, &ctr_block, buffer, acc.0, h_polyval, &self.h_powers_rev)
       };
-      acc ^= u128::from_be_bytes(length_block);
+      acc.0 ^= u128::from_be_bytes(length_block);
       // SAFETY: POWER8 carryless multiply because backend resolution confirmed POWER8 crypto.
-      acc = unsafe { polyval::ppc_clmul128_reduce_inline(acc, h_polyval) };
-      let expected = encrypt_j0_tag(&self.ek, &j0, acc);
+      acc.0 = unsafe { polyval::ppc_clmul128_reduce_inline(acc.0, h_polyval) };
+      let expected = encrypt_j0_tag(&self.ek, &j0, acc.0);
       if !ct::fixed_eq(&expected, tag.as_bytes()).declassify() {
         ct::zeroize(buffer);
         return Err(OpenError::verification());

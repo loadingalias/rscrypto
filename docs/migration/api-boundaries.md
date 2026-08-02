@@ -1,8 +1,8 @@
 # Migration: misuse-resistant API boundaries
 
-This release makes invalid lengths and caller-controlled expert operations
-explicit. Cryptographic kernels, output bytes, buffer layouts, and dispatch
-behavior are unchanged.
+These API changes move invalid lengths and caller-controlled expert operations
+to explicit boundaries. They do not change cryptographic outputs, buffer
+layouts, or backend dispatch.
 
 ## BLAKE2
 
@@ -74,5 +74,4 @@ nonce uniqueness for the key.
 - Diagnostic hooks remain under their owning modules such as `auth`, `aead`,
   and `hashes`; they are no longer re-exported from the crate root.
 
-These are namespace changes only. They add no allocation, dynamic dispatch,
-registry, lock, or extra cryptographic work.
+These namespace changes do not add a registry, lock, or dynamic dispatch.

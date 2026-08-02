@@ -20,13 +20,15 @@ expect_failure() {
 FIXTURE="$TMP_ROOT/repo"
 CAPTURE="$TMP_ROOT/capture"
 BIN="$TMP_ROOT/bin"
-mkdir -p "$FIXTURE/scripts/ci" "$FIXTURE/scripts/ct" "$CAPTURE" "$BIN"
+AMX_BIN="$TMP_ROOT/amx-bin"
+mkdir -p "$FIXTURE/scripts/ci" "$FIXTURE/scripts/ct" "$CAPTURE" "$BIN" "$AMX_BIN"
 cp "$DISPATCHER" "$FIXTURE/scripts/ci/run-rust-job.sh"
 
 cat >"$BIN/just" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$@" >"$RSCRYPTO_CI_CAPTURE_DIR/just.args"
+exit "${RSCRYPTO_MOCK_JUST_STATUS:-0}"
 EOF
 
 for command in uname lscpu sed rustc cargo; do
@@ -67,11 +69,108 @@ chmod +x \
   "$FIXTURE/scripts/ct/full.py" \
   "$FIXTURE/scripts/ct/python.sh"
 
+cat >"$AMX_BIN/uname" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  -s) echo Linux ;;
+  -m) echo x86_64 ;;
+  *) echo "Linux AMX fixture" ;;
+esac
+EOF
+
+cat >"$AMX_BIN/lscpu" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "Architecture: x86_64"
+EOF
+
+cat >"$AMX_BIN/rustc" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "host: x86_64-unknown-linux-gnu"
+EOF
+
+cat >"$AMX_BIN/sed" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${*: -1}" == /proc/cpuinfo ]]; then
+  if [[ "$*" == *'s/^flags'* ]]; then
+    echo "amx_tile"
+  else
+    echo "flags : amx_tile"
+  fi
+else
+  /usr/bin/sed "$@"
+fi
+EOF
+
+cat >"$AMX_BIN/cargo" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'RUSTFLAGS=%s RSCRYPTO_REQUIRE_AMX=%s :: %s\n' \
+  "${RUSTFLAGS:-}" "${RSCRYPTO_REQUIRE_AMX:-}" "$*" \
+  >>"$RSCRYPTO_CI_CAPTURE_DIR/amx-cargo.args"
+
+if [[ " $* " != *" --list "* ]]; then
+  exit 0
+fi
+
+case "${RSCRYPTO_MOCK_AMX_LIST:-none}" in
+  all)
+    if [[ " $* " == *" --test platform_amx_permission "* ]]; then
+      echo "linux_x86_64_amx_permission_and_cache_are_process_scoped: test"
+    elif [[ " $* " == *" --lib "* ]]; then
+      echo "platform::detect::tests::no_std_linux_x86_64_masks_compile_time_amx_without_a_permission_probe: test"
+    fi
+    ;;
+  integration-only)
+    if [[ " $* " == *" --test platform_amx_permission "* ]]; then
+      echo "linux_x86_64_amx_permission_and_cache_are_process_scoped: test"
+    fi
+    ;;
+  none) ;;
+  *) exit 91 ;;
+esac
+EOF
+
+chmod +x "$AMX_BIN/uname" "$AMX_BIN/lscpu" "$AMX_BIN/rustc" "$AMX_BIN/sed" "$AMX_BIN/cargo"
+
 TEST_PATH="$BIN:$PATH"
 RUNNER=(env PATH="$TEST_PATH" RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" bash "$FIXTURE/scripts/ci/run-rust-job.sh")
 
 RSCRYPTO_CI_OPERATION=quality "${RUNNER[@]}"
 [[ $(<"$CAPTURE/just.args") == "ci-check" ]] || fail "quality selected the wrong command"
+
+mkdir -p \
+  "$FIXTURE/fuzz/corpus/hash_cshake256" \
+  "$FIXTURE/fuzz/artifacts/hash_cshake256" \
+  "$FIXTURE/fuzz-packages/hash-sha3/corpus/hash_cshake256" \
+  "$FIXTURE/fuzz-packages/hash-sha3/artifacts/hash_cshake256"
+printf '%s' full-corpus >"$FIXTURE/fuzz/corpus/hash_cshake256/seed"
+printf '%s' scoped-corpus >"$FIXTURE/fuzz-packages/hash-sha3/corpus/hash_cshake256/seed"
+printf '%s' full-crash >"$FIXTURE/fuzz/artifacts/hash_cshake256/crash-fixture"
+printf '%s' scoped-crash >"$FIXTURE/fuzz-packages/hash-sha3/artifacts/hash_cshake256/crash-fixture"
+
+fuzz_status=0
+env \
+  PATH="$TEST_PATH" \
+  RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" \
+  RSCRYPTO_CI_OPERATION=fuzz \
+  RSCRYPTO_MOCK_JUST_STATUS=23 \
+  bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null 2>&1 \
+  || fuzz_status=$?
+[[ "$fuzz_status" -eq 23 ]] || fail "fuzz operation did not preserve the fuzz command's failure status"
+[[ -f "$FIXTURE/fuzz-output/corpus.tar.gz" ]] || fail "fuzz failure did not produce a corpus archive"
+tar -tzf "$FIXTURE/fuzz-output/corpus.tar.gz" >"$CAPTURE/fuzz-archive.entries"
+grep -Fxq 'fuzz/corpus/hash_cshake256/seed' "$CAPTURE/fuzz-archive.entries" \
+  || fail "fuzz failure archive omitted the full-workspace corpus"
+grep -Fxq 'fuzz-packages/hash-sha3/corpus/hash_cshake256/seed' "$CAPTURE/fuzz-archive.entries" \
+  || fail "fuzz failure archive omitted the scoped corpus"
+[[ -f "$FIXTURE/fuzz/artifacts/hash_cshake256/crash-fixture" ]] \
+  || fail "fuzz failure removed the full-workspace crash artifact"
+[[ -f "$FIXTURE/fuzz-packages/hash-sha3/artifacts/hash_cshake256/crash-fixture" ]] \
+  || fail "fuzz failure removed the scoped crash artifact"
 
 sentinel="$TMP_ROOT/injected"
 # shellcheck disable=SC2016 # Command substitution is an intentional literal injection payload.
@@ -135,6 +234,42 @@ expect_failure env \
   RSCRYPTO_CI_UPLOAD_RAW_ARTIFACTS=false \
   bash "$FIXTURE/scripts/ci/run-rust-job.sh"
 [[ ! -e "$sentinel" ]] || fail "numeric input was evaluated as shell code"
+
+AMX_PATH="$AMX_BIN:$PATH"
+expect_failure env \
+  PATH="$AMX_PATH" \
+  RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" \
+  RSCRYPTO_CI_OPERATION=platform-amx \
+  RSCRYPTO_CI_RUNNER=intel-spr \
+  RSCRYPTO_MOCK_AMX_LIST=none \
+  bash "$FIXTURE/scripts/ci/run-rust-job.sh"
+
+expect_failure env \
+  PATH="$AMX_PATH" \
+  RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" \
+  RSCRYPTO_CI_OPERATION=platform-amx \
+  RSCRYPTO_CI_RUNNER=intel-spr \
+  RSCRYPTO_MOCK_AMX_LIST=integration-only \
+  bash "$FIXTURE/scripts/ci/run-rust-job.sh"
+
+: >"$CAPTURE/amx-cargo.args"
+env \
+  PATH="$AMX_PATH" \
+  RSCRYPTO_CI_CAPTURE_DIR="$CAPTURE" \
+  RSCRYPTO_CI_OPERATION=platform-amx \
+  RSCRYPTO_CI_RUNNER=intel-spr \
+  RSCRYPTO_MOCK_AMX_LIST=all \
+  bash "$FIXTURE/scripts/ci/run-rust-job.sh" >/dev/null
+[[ "$(wc -l <"$CAPTURE/amx-cargo.args" | tr -d ' ')" == 4 ]] \
+  || fail "AMX operation did not list and run both exact tests"
+grep -Fq \
+  'RSCRYPTO_REQUIRE_AMX=1 :: test --locked --test platform_amx_permission -- --list' \
+  "$CAPTURE/amx-cargo.args" \
+  || fail "AMX integration test existence was not checked under the required permission contract"
+grep -Fq \
+  'RUSTFLAGS=-A unstable-features -C target-feature=+amx-tile,+amx-bf16,+amx-int8' \
+  "$CAPTURE/amx-cargo.args" \
+  || fail "AMX no_std test existence was not checked with forced AMX target features"
 
 if grep -En '(^|[[:space:]])eval[[:space:]]|(^|[[:space:]])(bash|sh)[[:space:]]+-c|<<<' "$DISPATCHER" >/dev/null; then
   fail "dispatcher contains a dynamic shell interpreter"

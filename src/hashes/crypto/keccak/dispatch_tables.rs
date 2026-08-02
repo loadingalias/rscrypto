@@ -27,10 +27,9 @@ pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
   l: KernelId::Portable,
 };
 
-// The SHA3 CE kernel for single-state is slower than portable on both
-// Apple Silicon and Neoverse V1/V2 due to FMOV domain-crossing overhead
-// between GPR↔NEON per SHA3 CE instruction. SHA3 CE only wins for the
-// 2-state interleaved path (permute_x2) where both NEON lanes carry work.
+// The single-state policy stays portable because it duplicates one state
+// across both NEON lanes. SHA3 CE is used by the two-state interleaved path,
+// where each lane carries an independent state.
 #[cfg(target_arch = "aarch64")]
 pub static AARCH64_SHA3_TABLE: DispatchTable = DispatchTable {
   boundaries: DEFAULT_BOUNDARIES,

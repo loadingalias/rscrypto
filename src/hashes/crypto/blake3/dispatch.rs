@@ -22,24 +22,16 @@ use crate::{backend::cache::OnceCache, hashes::crypto::dispatch_util::SizeClassD
 #[inline]
 #[must_use]
 fn allow_avx2_hash_many_one_chunk_fast_path(caps: Caps) -> bool {
-  caps.has(x86::AVX512_READY)
-    && !caps.has(x86::AMX_TILE)
-    && !caps.has(x86::AMX_INT8)
-    && !caps.has(x86::AMX_BF16)
-    && !caps.has(x86::AMX_FP16)
-    && !caps.has(x86::AMX_COMPLEX)
+  caps.has(x86::AVX512_READY) && !caps.has(x86::INTEL_SAPPHIRE_RAPIDS)
 }
 
-/// True on wide-pipeline CPUs (Zen 5+, Intel non-AMX) where hash_many's SIMD
-/// setup cost is not amortized at ≤ 4 blocks. On narrow-pipeline AMD (Zen 4),
-/// hash_many is beneficial even at 4 blocks.
+/// Return the configured four-block policy class for x86-64.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 #[must_use]
 fn is_wide_pipeline_for_hash_many(caps: Caps) -> bool {
-  // Zen 5+: 6-wide dispatch, hash_many overhead > sequential at 4 blocks.
-  // Intel ICL-class (AVX-512, no AMX): same pattern.
-  // Zen 4 (AMD, not Zen5): 4-wide, hash_many amortizes at 4 blocks.
+  // Zen 5 and Intel AVX-512 use the wide-pipeline policy; earlier AMD uses
+  // the alternate four-block policy.
   if caps.has(x86::AMD) {
     caps.has(x86::AMD_ZEN5)
   } else {
@@ -373,4 +365,25 @@ pub(crate) fn hash_many_wide_pipeline() -> bool {
 #[must_use]
 pub(crate) fn avx2_available() -> bool {
   resolved().avx2_available
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+  use super::*;
+
+  const ALL_AMX: Caps = x86::AMX_TILE
+    .union(x86::AMX_BF16)
+    .union(x86::AMX_INT8)
+    .union(x86::AMX_FP16)
+    .union(x86::AMX_COMPLEX);
+
+  #[test]
+  fn sapphire_rapids_shortcut_policy_does_not_depend_on_amx_permission() {
+    let sapphire_rapids = x86::AVX512_READY | x86::INTEL_SAPPHIRE_RAPIDS;
+    assert!(!allow_avx2_hash_many_one_chunk_fast_path(sapphire_rapids));
+    assert!(!allow_avx2_hash_many_one_chunk_fast_path(sapphire_rapids | ALL_AMX));
+
+    assert!(allow_avx2_hash_many_one_chunk_fast_path(x86::AVX512_READY));
+    assert!(allow_avx2_hash_many_one_chunk_fast_path(x86::AVX512_READY | ALL_AMX));
+  }
 }

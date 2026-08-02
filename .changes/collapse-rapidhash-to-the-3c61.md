@@ -1,5 +1,5 @@
 ---
-"rscrypto" = "minor"
+"rscrypto" = "major"
 ---
 
 Collapse RapidHash to portable `RapidHash64`, `RapidStreamHasher`,

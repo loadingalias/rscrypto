@@ -1,6 +1,8 @@
 # Migration: `ascon-aead` (RustCrypto) → `rscrypto`
 
-> NIST SP 800-232 lightweight AEAD. Replace `AsconAead128` / `Key<T>` / `Nonce<T>` / `Payload { msg, aad }` with rscrypto's named types and a buffer-style API. 128-bit key, 128-bit nonce, 128-bit tag: all the bytes are 16.
+> Replace `AsconAead128` / `Key<T>` / `Nonce<T>` /
+> `Payload { msg, aad }` with rscrypto's named types and a caller-buffer API.
+> NIST SP 800-232 specifies a 16-byte key, nonce, and tag.
 
 Verified against `ascon-aead = "0.6.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/ascon_aead_oracle.rs`.
@@ -60,7 +62,7 @@ use rscrypto::{
 let key = AsconAead128Key::from_bytes([0u8; 16]);
 let cipher = AsconAead128::new(&key);
 let nonce = Nonce128::from_bytes([0u8; 16]);
-let mut ct = vec![0u8; plaintext.len() + 16];
+let mut ct = vec![0u8; AsconAead128::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
@@ -71,7 +73,7 @@ The expert trait import preserves an existing caller-nonce protocol. Prefer
 
 ```rust
 // After
-let mut plaintext = vec![0u8; ct.len() - 16];
+let mut plaintext = vec![0u8; AsconAead128::plaintext_len(ct.len())?];
 cipher.decrypt(&nonce, aad, &ct, &mut plaintext)?;
 ```
 
@@ -86,13 +88,16 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 
 ## Notes
 
-- **NIST SP 800-232 finalised on 2025-08-13.** Both crates ship the final spec (the 16-byte key / 16-byte nonce / 16-byte tag layout). Outputs are bit-identical (verified in the harness).
+- **NIST SP 800-232.** NIST published the final standard on 2025-08-13.
+  The harness verifies byte-identical output for the final Ascon-AEAD128
+  parameter set.
 - **Implementation boundary.** rscrypto currently uses a portable, table-free
   implementation. That source structure is not a machine-code timing proof;
   generated-code constant-time claims are limited to the compiler, target,
   features, and binary in the matching
   [release evidence](../../constant-time.md).
-- **128-bit key is the only key length.** Ascon-AEAD does not have a 256-bit variant; the 128-bit spec is what NIST standardised.
+- **128-bit key is the only key length.** Ascon-AEAD does not have a 256-bit
+  variant; SP 800-232 specifies the 128-bit parameter set.
 - **Nonce reuse semantics.** Ascon-AEAD-128 is *not* nonce-misuse-resistant. Reusing `(key, nonce)` reveals plaintext XORs. Prefer deterministic uniqueness. A uniformly random 128-bit nonce has lower collision probability than a uniformly random 96-bit nonce at the same message count, but the deployment must still define a message limit.
 - **No `Payload`, no `KeyInit` import.** Same simplification as the rest of the AEAD lane.
 - **Failed-open buffer semantics change.** RustCrypto keeps the in-place buffer

@@ -1,4 +1,4 @@
-# Migration: `ring` -> `rscrypto`
+# Migration: `ring` → `rscrypto`
 
 `ring` mixes primitive APIs with protocol-shaped helpers. Migrate the primitive
 surfaces directly; keep `ring` where you need ECDH P-256/P-384, random, or
@@ -131,14 +131,15 @@ key.seal_in_place_append_tag(
 ```rust
 // After
 use rscrypto::{
-  Aes256Gcm, Aes256GcmKey,
+  Aead, Aes256Gcm, Aes256GcmKey,
   aead::{Nonce96, expert::AeadWithNonce},
 };
 
 let cipher = Aes256Gcm::new(&Aes256GcmKey::from_bytes(*key_bytes));
 let nonce = Nonce96::from_bytes(*nonce_bytes);
 
-let mut ciphertext_and_tag = vec![0u8; plaintext.len() + 16];
+let mut ciphertext_and_tag =
+  vec![0u8; Aes256Gcm::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ciphertext_and_tag)?;
 ```
 

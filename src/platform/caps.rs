@@ -406,7 +406,7 @@ pub mod x86 {
 
   // ─── Vendor Identification ───
   /// AMD CPU vendor flag (set when CPUID reports "AuthenticAMD").
-  /// Used for vendor-aware dispatch where optimal kernel differs by vendor.
+  /// Used for vendor-aware dispatch policy.
   pub const AMD: Caps = Caps::bit(49);
 
   /// AMD Zen 5+ (CPUID family ≥ 0x1A). The 6-wide dispatch pipeline favors
@@ -414,8 +414,8 @@ pub mod x86 {
   pub const AMD_ZEN5: Caps = Caps::bit(50);
 
   /// Intel Sapphire Rapids Xeon (CPUID family 6, model 0x8F).
-  /// Used for microarchitecture-specific dispatch fixes when feature bits alone
-  /// do not explain a measured regression.
+  /// Used when dispatch policy needs a microarchitecture discriminator beyond
+  /// architectural feature bits.
   pub const INTEL_SAPPHIRE_RAPIDS: Caps = Caps::bit(51);
 
   // ─── Combined Capability Masks ───
@@ -451,12 +451,6 @@ pub mod x86 {
   ///
   /// The SSE4.2 `crc32` instruction is polynomial-locked to CRC-32C (Castagnoli,
   /// 0x1EDC6F41). It cannot compute CRC-32 IEEE (0x04C11DB7).
-  ///
-  /// # Performance
-  ///
-  /// - Throughput: ~20 GB/s (faster than PCLMULQDQ for small buffers)
-  /// - Latency: 3 cycles
-  /// - Available on all modern x86_64 CPUs since Nehalem (2008)
   ///
   /// For CRC-32 IEEE, use PCLMULQDQ-based algorithms instead.
   pub const CRC32C_READY: Caps = Caps([SSE42.0[0], 0, 0, 0]);
@@ -550,7 +544,7 @@ pub mod aarch64 {
   /// PMULL-ready: polynomial multiply long (PMULL).
   pub const PMULL_READY: Caps = PMULL;
 
-  /// PMULL+EOR3-ready: PMULL + SHA3 (SHA3 provides EOR3 for faster GHASH).
+  /// PMULL+EOR3-ready: PMULL + SHA3 (SHA3 provides three-operand EOR3).
   pub const PMULL_EOR3_READY: Caps = PMULL.union(SHA3);
 
   /// CRC32C-ready: CRC extension

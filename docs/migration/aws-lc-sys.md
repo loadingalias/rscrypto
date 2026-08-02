@@ -1,9 +1,9 @@
-# Migration: `aws-lc-sys` -> `rscrypto`
+# Migration: `aws-lc-sys` → `rscrypto`
 
 There is no direct `aws-lc-sys` migration. `aws-lc-sys` exposes the low-level C
 FFI surface for AWS-LC; rscrypto exposes safe Rust primitive APIs.
 
-## What To Do Instead
+## What to do instead
 
 If your code uses `aws-lc-sys` directly, first identify the safe operation you
 need:

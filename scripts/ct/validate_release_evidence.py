@@ -343,6 +343,7 @@ def validate_binsec(
       "harness_manifest_sha256": sha256_git_file(root, commit, harness_manifest_path),
       "harness_lockfile_sha256": sha256_git_file(root, commit, harness_lockfile_path),
     }
+    binsec_hashes: set[str] = set()
     for row in required_kernel_rows:
       for key, expected in {
         "backend": "llvm",
@@ -366,6 +367,11 @@ def validate_binsec(
         fail(f"{suffix} BINSEC {row.get('kernel')} does not use a static executable proof driver")
       if not isinstance(row.get("binsec_version"), str) or not row.get("binsec_version"):
         fail(f"{suffix} BINSEC {row.get('kernel')} lacks the BINSEC version")
+      binsec_sha256 = row.get("binsec_sha256")
+      if not isinstance(binsec_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", binsec_sha256) is None:
+        fail(f"{suffix} BINSEC {row.get('kernel')} lacks the BINSEC executable hash")
+      else:
+        binsec_hashes.add(binsec_sha256)
       if ".text" not in row.get("load_sections", []):
         fail(f"{suffix} BINSEC {row.get('kernel')} does not load the proof driver's text section")
       component_artifacts = row.get("artifacts", {})
@@ -375,6 +381,8 @@ def validate_binsec(
         record = report_artifacts.get(path)
         if not isinstance(digest, str) or record is None or record.get("sha256") != digest:
           fail(f"{suffix} BINSEC {row.get('kernel')} does not bind {required_name}")
+    if len(binsec_hashes) != 1:
+      fail(f"{suffix} required BINSEC kernels do not bind one exact analyzer executable")
   else:
     require_equal(binsec.get("enabled"), False, f"{suffix} BINSEC enabled")
     require_equal(binsec.get("policy"), "unsupported", f"{suffix} BINSEC policy")

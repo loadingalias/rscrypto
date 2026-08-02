@@ -335,6 +335,11 @@ CASE_METADATA = {
     "left_class": "fixed message",
     "right_class": "random same-length message",
   },
+  "rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent": {
+    "primitive": "rsa.private_ops",
+    "left_class": "valid RSA-2048 key with 128-byte canonical CRT exponents",
+    "right_class": "valid same-factor-width RSA-2048 key with a 127-byte canonical dQ",
+  },
   "rsa_oaep_decrypt_fixed_vs_random_plaintext": {
     "primitive": "rsa.private_ops",
     "left_class": "valid OAEP ciphertext for fixed plaintext",
@@ -554,6 +559,75 @@ def raw_csv_rows(path: Path) -> dict[str, dict]:
   return rows
 
 
+def owner_symbol_evidence(
+  symbols_text: str,
+  expected_symbols: set[str],
+) -> tuple[dict[str, int], dict[int, str]]:
+  counts = {symbol: 0 for symbol in sorted(expected_symbols)}
+  addresses: dict[int, str] = {}
+  definition = re.compile(r"^\s*([0-9a-fA-F]+)\s+\S\s+_?(ct_entry_owner_eq_[0-9]+)\s*$")
+  for line in symbols_text.splitlines():
+    if match := definition.match(line):
+      symbol = match.group(2)
+      if symbol in expected_symbols:
+        counts[symbol] += 1
+        addresses[int(match.group(1), 16)] = symbol
+  return counts, addresses
+
+
+def owner_call_site_counts(
+  disassembly_text: str,
+  expected_symbols: set[str],
+  symbols_by_address: dict[int, str],
+) -> dict[str, int]:
+  counts = {symbol: 0 for symbol in sorted(expected_symbols)}
+  relative_relocations: dict[int, int] = {}
+  relative_relocation = re.compile(
+    r"^\s*([0-9a-fA-F]+)\s+R_[A-Z0-9_]+_RELATIVE\s+\*ABS\*\+0x([0-9a-fA-F]+)\s*$"
+  )
+  for line in disassembly_text.splitlines():
+    if match := relative_relocation.match(line):
+      relative_relocations[int(match.group(1), 16)] = int(match.group(2), 16)
+
+  current_symbol = ""
+  function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
+  instruction_pattern = re.compile(r"\b(?:bl|brasl|call|callq|jal)\b")
+  for line in disassembly_text.splitlines():
+    if match := function_label.match(line.strip()):
+      current_symbol = match.group(1).removeprefix("_")
+      continue
+    instruction = instruction_pattern.search(line)
+    if instruction is None:
+      continue
+
+    called: set[str] = set()
+    for symbol in expected_symbols:
+      if re.search(rf"<_?{re.escape(symbol)}(?:\+[^>]*)?>", line):
+        called.add(symbol)
+    if target := re.search(r"\b0x([0-9a-fA-F]+)\b", line[instruction.end() :]):
+      if symbol := symbols_by_address.get(int(target.group(1), 16)):
+        called.add(symbol)
+    if slot := re.search(r"\*[^#]*#\s*0x([0-9a-fA-F]+)\b", line[instruction.end() :]):
+      if target_address := relative_relocations.get(int(slot.group(1), 16)):
+        if symbol := symbols_by_address.get(target_address):
+          called.add(symbol)
+    for symbol in called:
+      if current_symbol != symbol:
+        counts[symbol] += 1
+  return counts
+
+
+def linker_driver(command: str) -> str:
+  assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+  for token in shlex.split(command):
+    if assignment.fullmatch(token):
+      continue
+    if token.startswith("-"):
+      break
+    return token
+  raise ValueError("DudeCT linker command does not identify the linker driver")
+
+
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--stdout", required=True, type=Path)
@@ -593,27 +667,18 @@ def main() -> int:
     if not path.is_file():
       raise ValueError(f"DudeCT evidence artifact missing: {path}")
 
-  symbol_counts = {symbol: 0 for symbol in expected_owner_symbols}
-  for line in args.binary_symbols.read_text().splitlines():
-    if match := re.search(r"\b_?(ct_entry_owner_eq_[0-9]+)\b", line):
-      if match.group(1) in symbol_counts:
-        symbol_counts[match.group(1)] += 1
+  symbol_counts, owner_symbols_by_address = owner_symbol_evidence(
+    args.binary_symbols.read_text(),
+    expected_owner_symbols,
+  )
   wrong_symbol_counts = {symbol: count for symbol, count in symbol_counts.items() if count != 1}
   if wrong_symbol_counts:
     raise ValueError(f"DudeCT binary owner equality symbols must occur exactly once: {wrong_symbol_counts}")
-  owner_call_sites = {symbol: 0 for symbol in expected_owner_symbols}
-  current_symbol = ""
-  function_label = re.compile(r"^[0-9a-fA-F]+ <(.+)>:$")
-  for line in args.binary_disassembly.read_text(errors="replace").splitlines():
-    if match := function_label.match(line.strip()):
-      current_symbol = match.group(1).removeprefix("_")
-      continue
-    instruction = re.search(r"\b(?:bl|brasl|call|callq|jal)\b", line)
-    if instruction is None:
-      continue
-    for symbol in expected_owner_symbols:
-      if current_symbol != symbol and re.search(rf"<_?{re.escape(symbol)}(?:\+[^>]*)?>", line):
-        owner_call_sites[symbol] += 1
+  owner_call_sites = owner_call_site_counts(
+    args.binary_disassembly.read_text(errors="replace"),
+    expected_owner_symbols,
+    owner_symbols_by_address,
+  )
   missing_call_sites = {symbol: count for symbol, count in owner_call_sites.items() if count < 1}
   if missing_call_sites:
     raise ValueError(f"DudeCT binary does not call every owner equality symbol: {missing_call_sites}")
@@ -622,11 +687,7 @@ def main() -> int:
     (line for line in args.linker_command_log.read_text().splitlines() if '"-o"' in line),
     "",
   )
-  linker_tokens = shlex.split(linker_command)
-  first_object = next((index for index, token in enumerate(linker_tokens) if token.endswith((".o", ".obj"))), None)
-  if first_object is None or first_object == 0:
-    raise ValueError("DudeCT linker command does not identify the linker driver")
-  linker = linker_tokens[first_object - 1]
+  linker = linker_driver(linker_command)
   linker_path_text = shutil.which(linker)
   if linker_path_text is None:
     raise ValueError(f"DudeCT linker driver is not resolvable: {linker}")

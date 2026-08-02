@@ -47,6 +47,18 @@ require_commit_sha() {
     || die "base_sha must be a full commit ID"
 }
 
+assert_single_libtest() {
+  local test_name=$1
+  shift
+
+  local listing count
+  if ! listing=$("$@" --list); then
+    die "unable to list the test harness containing $test_name"
+  fi
+  count=$(printf '%s\n' "$listing" | awk -v expected="$test_name: test" '$0 == expected { count++ } END { print count + 0 }')
+  [[ "$count" -eq 1 ]] || die "expected exactly one libtest named $test_name; found $count"
+}
+
 host_diagnostics() {
   local cpuinfo_lines=$1
   uname -a
@@ -122,6 +134,40 @@ run_native_riscv() {
   bash scripts/test/test.sh --all
 }
 
+run_platform_amx() {
+  local runner=${RSCRYPTO_CI_RUNNER:-}
+  [[ "$runner" == *"intel-spr"* ]] || die "AMX permission evidence requires the intel-spr runner"
+  [[ "$(uname -s)" == Linux ]] || die "AMX permission evidence requires Linux"
+  [[ "$(uname -m)" == x86_64 ]] || die "AMX permission evidence requires x86-64"
+  [[ "$(rustc -vV | sed -n 's/^host: //p')" == x86_64-unknown-linux-gnu ]] \
+    || die "AMX permission evidence requires the x86_64-unknown-linux-gnu Rust host"
+
+  host_diagnostics 80
+  local flags
+  flags=$(sed -n 's/^flags[[:space:]]*: //p' /proc/cpuinfo | head -n 1)
+  [[ " $flags " == *" amx_tile "* ]] || die "intel-spr runner does not expose AMX-TILE"
+
+  RSCRYPTO_REQUIRE_AMX=1 \
+    assert_single_libtest \
+      linux_x86_64_amx_permission_and_cache_are_process_scoped \
+      cargo test --locked --test platform_amx_permission --
+  RSCRYPTO_REQUIRE_AMX=1 \
+    cargo test --locked --test platform_amx_permission \
+      linux_x86_64_amx_permission_and_cache_are_process_scoped -- --exact --nocapture
+
+  # NIGHTLY: Rust target-feature names for AMX remain unstable. This lane
+  # deliberately forces them so the no_std permission gate is executable.
+  local amx_rustflags="-A unstable-features -C target-feature=+amx-tile,+amx-bf16,+amx-int8"
+  RUSTFLAGS="$amx_rustflags" \
+    assert_single_libtest \
+      platform::detect::tests::no_std_linux_x86_64_masks_compile_time_amx_without_a_permission_probe \
+      cargo test --locked --no-default-features --lib --
+  RUSTFLAGS="$amx_rustflags" \
+    cargo test --locked --no-default-features --lib \
+      platform::detect::tests::no_std_linux_x86_64_masks_compile_time_amx_without_a_permission_probe \
+      -- --exact --nocapture
+}
+
 run_cross_targets() {
   bash scripts/ci/cross-targets.sh deep
 }
@@ -159,7 +205,8 @@ run_miri() {
 
 run_fuzz() {
   export RSCRYPTO_FUZZ_DURATION_SECS=60
-  just test-fuzz --all
+  local fuzz_status=0
+  just test-fuzz --all || fuzz_status=$?
 
   rm -rf -- fuzz-output
   mkdir -p fuzz-output
@@ -174,6 +221,8 @@ run_fuzz() {
   else
     tar -czf fuzz-output/corpus.tar.gz "${corpus_dirs[@]}"
   fi
+
+  return "$fuzz_status"
 }
 
 run_fuzz_asan() {
@@ -344,6 +393,58 @@ run_rsa_leakage() {
   } 2>&1 | tee "ci-evidence/rsa-leakage-$target.log"
 }
 
+run_rsa_linux_x86_64_asm() {
+  mkdir -p ci-evidence
+  {
+    uname -a
+    [[ "$(uname -s)" == Linux ]] || die "RSA x86-64 assembly evidence requires Linux"
+    [[ "$(uname -m)" == x86_64 ]] || die "RSA x86-64 assembly evidence requires x86-64"
+    [[ "$(rustc -vV | sed -n 's/^host: //p')" == x86_64-unknown-linux-gnu ]] \
+      || die "RSA x86-64 assembly evidence requires the x86_64-unknown-linux-gnu Rust host"
+
+    local flags
+    flags=$(sed -n 's/^flags[[:space:]]*: //p' /proc/cpuinfo | head -n 1)
+    [[ " $flags " == *" bmi2 "* ]] || die "RSA x86-64 assembly evidence requires BMI2"
+    [[ " $flags " == *" adx "* ]] || die "RSA x86-64 assembly evidence requires ADX"
+    lscpu
+
+    assert_single_libtest \
+      auth::rsa::tests::x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths \
+      cargo test --locked --features rsa,diag,getrandom --lib --
+    cargo test --locked --features rsa,diag,getrandom --lib \
+      auth::rsa::tests::x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths \
+      -- --exact --nocapture
+    assert_single_libtest \
+      auth::rsa::tests::x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths \
+      cargo test --locked --release --features rsa,diag,getrandom --lib --
+    cargo test --locked --release --features rsa,diag,getrandom --lib \
+      auth::rsa::tests::x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths \
+      -- --exact --nocapture
+
+    local build_output binary
+    build_output=$(cargo test --locked --release --features rsa,diag \
+      --test rsa_public_key --no-run --message-format=json)
+    binary=$(printf '%s\n' "$build_output" \
+      | sed -n 's/.*"executable":"\([^"]*rsa_public_key-[^"]*\)".*/\1/p' \
+      | tail -n 1)
+    [[ -n "$binary" && -x "$binary" ]] \
+      || die "unable to resolve the optimized rsa_public_key test binary"
+    printf 'Optimized RSA test binary: %s\n' "$binary"
+    assert_single_libtest public_operation_montgomery_candidates_match_current_path "$binary"
+    "$binary" public_operation_montgomery_candidates_match_current_path --exact --nocapture
+
+    local binary_description binary_symbols
+    binary_description=$(file "$binary") || die "unable to inspect the optimized rsa_public_key test binary"
+    [[ "$binary_description" == *"ELF 64-bit LSB pie executable, x86-64"* ]] \
+      || die "optimized rsa_public_key test binary is not x86-64 ELF"
+    binary_symbols=$(nm "$binary") || die "unable to read the optimized rsa_public_key symbol table"
+    [[ "$binary_symbols" == *"rscrypto_rsa_bn_mulx4x_mont_x86_64_elf"* ]] \
+      || die "optimized rsa_public_key test binary lacks the x86-64 Montgomery multiply"
+    [[ "$binary_symbols" == *"rscrypto_rsa_bn_sqr8x_mont_x86_64_elf"* ]] \
+      || die "optimized rsa_public_key test binary lacks the x86-64 Montgomery square"
+  } 2>&1 | tee ci-evidence/rsa-linux-x86_64-asm.log
+}
+
 main() {
   if [[ $# -ne 0 ]]; then
     die "usage: scripts/ci/run-rust-job.sh"
@@ -358,6 +459,7 @@ main() {
     native) run_native ;;
     native-ibm) run_native_ibm ;;
     native-riscv) run_native_riscv ;;
+    platform-amx) run_platform_amx ;;
     cross-targets) run_cross_targets ;;
     supply-chain) run_supply_chain ;;
     dependabot-smoke) run_dependabot_smoke ;;
@@ -369,6 +471,7 @@ main() {
     constant-time) run_constant_time ;;
     rsa-miri) run_rsa_miri ;;
     rsa-leakage) run_rsa_leakage ;;
+    rsa-linux-x64-asm) run_rsa_linux_x86_64_asm ;;
     *) die "unsupported operation: $operation" ;;
   esac
 }

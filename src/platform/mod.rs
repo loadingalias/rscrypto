@@ -9,11 +9,13 @@
 //! let runtime = rscrypto::platform::caps();
 //! let compile_time = rscrypto::platform::caps_static();
 //!
-//! // `caps_static()` reports compile-time facts. `caps()` reports runtime
-//! // facts. With the default feature set, `caps()` ⊇ `caps_static()`. The
-//! // optional `portable-only` feature collapses `caps()` to `Caps::NONE`
-//! // for FIPS / DO-178C deployment modes; that override does not change
-//! // `caps_static()`. Both functions return `Caps`, a 256-bit bitset.
+//! // `caps_static()` reports compile-time facts. `caps()` reports instructions
+//! // legal for this process at runtime. Runtime results normally include the
+//! // static set, but process-authorized state such as Linux AMX can remove a
+//! // static capability. The optional `portable-only` feature collapses
+//! // `caps()` to `Caps::NONE` for FIPS / DO-178C deployment modes; that
+//! // override does not change `caps_static()`. Both functions return `Caps`,
+//! // a 256-bit bitset.
 //! let _ = (runtime, compile_time);
 //! ```
 //!
@@ -28,11 +30,9 @@
 //! a mix of both for their own planners. This module does not own dispatch
 //! policy.
 //!
-//! # Performance
-//!
-//! - Compile-time capability query: **0ns** after optimization
-//! - Cached runtime capability query: **~3ns**
-//! - First runtime detection: **~1μs** (CPUID/sysctl, once per process)
+//! Compile-time capability queries are constant-foldable. Runtime detection is
+//! cached where the target provides the required synchronization; the uncached
+//! cost depends on the architecture and operating-system probe.
 // Core modules
 
 pub mod caps;
@@ -58,6 +58,11 @@ pub use detect::Detected;
 /// Get detected CPU capabilities and architecture.
 ///
 /// Results are cached after first call.
+///
+/// On Linux and Android x86_64, AMX capabilities are reported only when the
+/// process already has permission for tile state. Detection does not request
+/// permission. Request it before the first cached detection if the process
+/// intends to use AMX.
 ///
 /// # Examples
 ///

@@ -15,8 +15,8 @@
 //! - **Single-block** (odd trailing): 128-bit schedule (`__m128i` ring buffer, VPRORQ) stitched
 //!   with scalar rounds. No portable fallback — fully self-contained.
 //!
-//! VPRORQ (`_mm256_ror_epi64` / `_mm_ror_epi64`) provides 1-instruction 64-bit rotates vs
-//! 3-instruction shift-shift-or on AVX2, yielding ~40% fewer SIMD schedule instructions.
+//! VPRORQ (`_mm256_ror_epi64` / `_mm_ror_epi64`) provides native 64-bit
+//! rotates instead of shift/shift/or emulation.
 //! 256-bit register width avoids frequency throttling on Intel.
 //!
 //! BMI2 (`bmi2` target feature) enables `RORX` for scalar rotations.
@@ -452,8 +452,8 @@ unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
 ///
 /// Uses VPRORQ native rotates for sigma functions, eliminating the 3-op
 /// shift-shift-or of the AVX2 path. Combined with array rotation, this also
-/// eliminates `_mm256_permute2x128_si256` (3-cycle latency on SPR) that the
-/// ring-buffer schedule uses for cross-lane extraction.
+/// eliminates `_mm256_permute2x128_si256`, which the ring-buffer schedule uses
+/// for cross-lane extraction.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
@@ -471,7 +471,6 @@ unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
     );
 
     // Rotate: x[0] (newest) → x[7], shift everything left.
-    // Zero-cost on modern x86 via register renaming.
     let new_val = x[0];
     x[0] = x[1];
     x[1] = x[2];
@@ -499,11 +498,10 @@ unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
 ///
 /// 2. **Rotation-based schedule** — the `w[]` array is physically rotated after each schedule
 ///    update so adjacent words stay in adjacent registers. This lets `_mm256_alignr_epi8` extract
-///    cross-register values directly, eliminating `_mm256_permute2x128_si256` (3-cycle latency on
-///    SPR). The 7 register moves from rotation are zero-cost (register renaming).
+///    cross-register values directly, eliminating `_mm256_permute2x128_si256`.
 ///
-/// 3. **VPRORQ native rotates** — single-instruction 64-bit vector rotates for sigma functions (1
-///    instruction vs 3-op shift-shift-or on AVX2), yielding ~40% fewer SIMD schedule instructions.
+/// 3. **VPRORQ native rotates** — native 64-bit vector rotates for sigma functions instead of
+///    shift/shift/or emulation.
 ///
 /// Uses the **standard round** (Σ0 and Σ1 computed independently within
 /// each round for maximum within-round parallelism).

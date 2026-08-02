@@ -12,6 +12,10 @@ the recipes reported by `just --list`.
 | `check/check-all.sh`           | `just check-all` |
 | `check/check-feature-matrix.sh`| `just check-feature-matrix`, `scripts/check/check.sh`, `ci/run-rust-job.sh` |
 | `check/asm-ledger.sh`          | `scripts/check/check.sh` |
+| `check/rsa-asm-provenance.sh` | `check/asm-ledger.sh`; direct `--archive PATH` reconstructs the three pinned RSA snapshots offline |
+| `check/signature-asm-provenance.py` | `check/asm-ledger.sh`; direct `--upstream-repo PATH [--clang PATH]` reproduces the 36 pinned ECDSA, Ed25519, and X25519 snapshots |
+| `check/hash-vector-provenance.py` | `scripts/check/check.sh`; optional exact upstream checkouts reproduce hash-vector corpora |
+| `check/auth-vector-provenance.py` | `scripts/check/check.sh`; optional `--upstream-root PATH` reproduces the pinned C2SP/Wycheproof corpus |
 | `check/zeroize-evidence.sh`    | `just check-zeroize-evidence`, `scripts/check/check-all.sh` |
 | `ci/ci-check.sh`               | `just ci-check`, `ci/run-rust-job.sh` |
 | `ci/native-check.sh`           | `ci/run-rust-job.sh` |
@@ -21,6 +25,7 @@ the recipes reported by `just --list`.
 | `test/test-fuzz.sh`            | `just test-fuzz`, `ci/run-rust-job.sh` |
 | `test/test-fuzz-asan.sh`       | `just test-fuzz-asan`, `ci/run-rust-job.sh` |
 | `test/test-rsa-leakage.sh`     | `just test-rsa-leakage`, `ci/run-rust-job.sh` |
+| `test/test-rsa-macos-asm.sh`   | `just test-rsa-macos-asm` on a physical local Apple Silicon Mac |
 | `test/test-coverage.sh`        | `just test-coverage`, `just test-fuzz-coverage`, `weekly.yaml` |
 | `bench/bench.sh`               | `just bench`, `just bench-quick` |
 | `ci/check-action-pins.sh`      | `just check-actions`, `ci/ci-check.sh`, `ci/dependabot-smoke.sh` |
@@ -51,6 +56,7 @@ the recipes reported by `just --list`.
 | `ci/pre-push.sh`               | `just push`, `just push-full` |
 | `ct/artifacts.sh`              | `just ct`, `just ct-artifacts`, `scripts/ct/full.py` |
 | `ct/dudect.sh`                 | `just ct-dudect`, `scripts/ct/full.py` |
+| `ct/dudect_report_test.py`     | `scripts/check/check.sh` |
 | `ct/python.sh`                 | CT recipes, `ci/run-rust-job.sh`, and Python-backed CT, check, and release scripts |
 | `update/update-all.sh`         | `just update`, `just update-check` |
 
@@ -113,13 +119,16 @@ Package-manager tools install into a fresh runner-temporary root; CI never
 restores Cargo binaries, Cargo install metadata, Go module state, or OPAM
 switches from a cache. Cargo installs exact crates from crates.io and
 authenticates crate contents against registry checksums. Go installs an exact
-module through the public checksum database. Ubuntu 24.04 APT packages are
-exact-versioned and authenticated by signed repository metadata. OPAM uses
-exact packages from a repository pinned to a full Git commit and verifies
-package source hashes from that immutable metadata. Rustup receives only the
-exact toolchain declared in `rust-toolchain.toml`; runner images must provide
-rustup, which verifies component downloads against the exact distribution
-manifest, because network bootstrap installers are rejected.
+module through the public checksum database. Ubuntu 24.04 APT dependencies
+resolve from signed repository metadata; installation pins each signed
+candidate selected after the metadata refresh, verifies the installed version,
+and refuses downgrades. OPAM uses exact packages from a repository pinned to a
+full Git commit and verifies package source hashes from that immutable metadata.
+CT formal reports bind the resulting BINSEC executable by SHA-256. Rustup
+receives only the exact toolchain declared in `rust-toolchain.toml`; runner
+images must provide rustup, which verifies component downloads against the
+exact distribution manifest, because network bootstrap installers are
+rejected.
 
 ## Results layout
 

@@ -517,6 +517,15 @@ struct State {
   pad: [u32; 4],
 }
 
+impl Drop for State {
+  fn drop(&mut self) {
+    ct::zeroize_words_no_fence(&mut self.r);
+    ct::zeroize_words_no_fence(&mut self.h);
+    ct::zeroize_words_no_fence(&mut self.pad);
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  }
+}
+
 impl State {
   #[inline]
   fn new(key: &[u8; 32]) -> Self {
@@ -839,7 +848,8 @@ pub fn diag_chacha20poly1305_authenticate_aead(aad: &[u8], ciphertext: &[u8], ke
 }
 
 #[cfg(feature = "diag")]
-#[inline(always)]
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub fn diag_poly1305_block_portable_digest(key: &[u8; 32], block: &[u8; 16], partial: bool) -> [u8; 16] {
   let mut state = State::new(key);
   state.compute_block_portable(block, partial);

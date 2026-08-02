@@ -457,9 +457,8 @@ unsafe fn update_simd_3way(
 
 /// 2-way striping with EOR3 folding.
 ///
-/// Combines the ILP benefit of 2-way striping (major) with EOR3's reduced
-/// XOR dependency chain (minor). This is the optimal path on Apple M1+ and
-/// AWS Graviton3+ for large buffers.
+/// Maintains two independent fold streams and uses EOR3 when merging each
+/// polynomial product with input data.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3_2way(
   state: u64,
@@ -545,9 +544,8 @@ unsafe fn update_simd_eor3_2way(
 
 /// 3-way striping with EOR3 folding.
 ///
-/// Combines the ILP benefit of 3-way striping (major) with EOR3's reduced
-/// XOR dependency chain (minor). This is the optimal path on Apple M1+ and
-/// AWS Graviton3+ for very large buffers (32KB+).
+/// Maintains three independent fold streams and uses EOR3 when merging each
+/// polynomial product with input data.
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3_3way(
   state: u64,
@@ -753,7 +751,7 @@ unsafe fn crc64_pmull(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants
   }
 }
 
-/// PMULL+EOR3 path: uses 3-way XOR for faster folding.
+/// PMULL+EOR3 path: uses EOR3 to combine three XOR operands.
 ///
 /// Available on ARMv8.2+ with SHA3 extension (Apple M1+, AWS Graviton3+).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
@@ -778,8 +776,8 @@ unsafe fn crc64_pmull_eor3(
 
 /// Small-buffer PMULL path: fold one 16-byte lane at a time.
 ///
-/// This targets the regime where full 128-byte folding has too much setup cost,
-/// but PMULL still outperforms table CRC (typically ~16..127 bytes depending on CPU).
+/// This avoids constructing the full 128-byte fold state when only complete
+/// 16-byte lanes are available.
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull_small(
   mut state: u64,
@@ -859,8 +857,8 @@ pub(crate) unsafe fn crc64_xz_pmull_small(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ using a tuned "SVE2 PMULL" tier (2-way striping).
 ///
-/// This is still implemented with NEON+PMULL intrinsics, but is intended for
-/// high-throughput Armv9/SVE2-class CPUs where additional ILP helps.
+/// This is implemented with NEON+PMULL intrinsics and exposes two independent
+/// fold streams for the SVE2-class dispatch tier.
 ///
 /// # Safety
 ///
@@ -874,8 +872,8 @@ pub(crate) unsafe fn crc64_xz_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ using a tuned "SVE2 PMULL" tier (3-way striping).
 ///
-/// This is still implemented with NEON+PMULL intrinsics, but is intended for
-/// high-throughput Armv9/SVE2-class CPUs where additional ILP helps.
+/// This is implemented with NEON+PMULL intrinsics and exposes three independent
+/// fold streams for the SVE2-class dispatch tier.
 ///
 /// # Safety
 ///
@@ -929,8 +927,8 @@ pub(crate) unsafe fn crc64_nvme_pmull_small(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME using a tuned "SVE2 PMULL" tier (2-way striping).
 ///
-/// This is still implemented with NEON+PMULL intrinsics, but is intended for
-/// high-throughput Armv9/SVE2-class CPUs where additional ILP helps.
+/// This is implemented with NEON+PMULL intrinsics and exposes two independent
+/// fold streams for the SVE2-class dispatch tier.
 ///
 /// # Safety
 ///
@@ -944,8 +942,8 @@ pub(crate) unsafe fn crc64_nvme_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME using a tuned "SVE2 PMULL" tier (3-way striping).
 ///
-/// This is still implemented with NEON+PMULL intrinsics, but is intended for
-/// high-throughput Armv9/SVE2-class CPUs where additional ILP helps.
+/// This is implemented with NEON+PMULL intrinsics and exposes three independent
+/// fold streams for the SVE2-class dispatch tier.
 ///
 /// # Safety
 ///
@@ -1009,9 +1007,7 @@ pub(crate) unsafe fn crc64_nvme_pmull_eor3(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ using PMULL+EOR3 folding with 2-way striping.
 ///
-/// Combines the ILP benefit of 2-way striping with EOR3's reduced
-/// XOR dependency chain. This is optimal for Apple M1+ and AWS Graviton3+
-/// for large buffers.
+/// Maintains two independent fold streams and uses EOR3 for three-operand XORs.
 ///
 /// # Safety
 ///
@@ -1034,9 +1030,7 @@ pub(crate) unsafe fn crc64_xz_pmull_eor3_2way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-XZ using PMULL+EOR3 folding with 3-way striping.
 ///
-/// Combines the ILP benefit of 3-way striping with EOR3's reduced
-/// XOR dependency chain. This is optimal for Apple M1+ and AWS Graviton3+
-/// for very large buffers (32KB+).
+/// Maintains three independent fold streams and uses EOR3 for three-operand XORs.
 ///
 /// # Safety
 ///
@@ -1060,9 +1054,7 @@ pub(crate) unsafe fn crc64_xz_pmull_eor3_3way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME using PMULL+EOR3 folding with 2-way striping.
 ///
-/// Combines the ILP benefit of 2-way striping with EOR3's reduced
-/// XOR dependency chain. This is optimal for Apple M1+ and AWS Graviton3+
-/// for large buffers.
+/// Maintains two independent fold streams and uses EOR3 for three-operand XORs.
 ///
 /// # Safety
 ///
@@ -1085,9 +1077,7 @@ pub(crate) unsafe fn crc64_nvme_pmull_eor3_2way(crc: u64, data: &[u8]) -> u64 {
 
 /// CRC-64-NVME using PMULL+EOR3 folding with 3-way striping.
 ///
-/// Combines the ILP benefit of 3-way striping with EOR3's reduced
-/// XOR dependency chain. This is optimal for Apple M1+ and AWS Graviton3+
-/// for very large buffers (32KB+).
+/// Maintains three independent fold streams and uses EOR3 for three-operand XORs.
 ///
 /// # Safety
 ///
@@ -1658,7 +1648,7 @@ mod tests {
       return;
     }
 
-    // EOR3 should produce identical results to standard PMULL - just faster
+    // EOR3 changes only the three-operand XOR lowering.
     for len in [128, 256, 512, 1024, 4096] {
       let data = make_data(len);
       let pmull = crc64_xz_pmull_safe(!0, &data);
@@ -1673,7 +1663,7 @@ mod tests {
       return;
     }
 
-    // EOR3 should produce identical results to standard PMULL - just faster
+    // EOR3 changes only the three-operand XOR lowering.
     for len in [128, 256, 512, 1024, 4096] {
       let data = make_data(len);
       let pmull = crc64_nvme_pmull_safe(!0, &data);

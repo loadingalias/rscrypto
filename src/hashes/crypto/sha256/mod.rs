@@ -79,11 +79,10 @@ fn small_sigma1(x: u32) -> u32 {
 /// Read SHA-256 round constant K[i].
 ///
 /// On x86/x86_64, 32-bit constants can be encoded as immediate operands in
-/// `add r32, imm32`, so inlining is optimal. On all other architectures
+/// `add r32, imm32`. On all other architectures
 /// (POWER, aarch64 portable, s390x, RISC-V), materializing a 32-bit
 /// immediate requires 2+ instructions (`lis`+`ori` on POWER, `movz`+`movk`
-/// on ARM), so loading from the static K array via a single load instruction
-/// is faster.
+/// on ARM), so this path retains a load from the static K array.
 ///
 /// We use `core::hint::black_box` on the table base pointer instead of
 /// `core::ptr::read_volatile`. Both force the compiler to emit a memory
@@ -96,8 +95,7 @@ fn small_sigma1(x: u32) -> u32 {
 /// `black_box`-based path generates the same single-load codegen on
 /// every target without `volatile`'s sharp edges.
 ///
-/// This matches the `sha2` crate's `rk()` strategy and closes the 15-20%
-/// gap on POWER10.
+/// This matches the `sha2` crate's `rk()` strategy.
 #[inline(always)]
 fn rk(i: usize) -> u32 {
   #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -133,8 +131,7 @@ pub(crate) fn compress_block_with(
   small_s0: fn(u32) -> u32,
   small_s1: fn(u32) -> u32,
 ) {
-  // 16-word ring buffer message schedule (lower memory traffic than a full
-  // 64-word schedule, and typically faster in practice).
+  // 16-word ring-buffer schedule instead of a full 64-word schedule.
   //
   // Fully unrolled to avoid bounds checks and allow better instruction
   // scheduling in the scalar core.

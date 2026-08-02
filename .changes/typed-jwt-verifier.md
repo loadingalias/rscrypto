@@ -1,5 +1,5 @@
 ---
-"rscrypto" = "minor"
+"rscrypto" = "major"
 ---
 
 RSA JWT/JWS verification is now bound to one verifier-owned

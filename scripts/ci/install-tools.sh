@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install exact CI tools through authenticated package-manager boundaries.
+# Install CI tools through authenticated package-manager boundaries.
 # Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
@@ -9,7 +9,7 @@ MODE=${1:-standard}
 CARGO_NEXTEST_VERSION=0.9.140
 CARGO_DENY_VERSION=0.20.2
 CARGO_AUDIT_VERSION=0.22.2
-CARGO_RAIL_VERSION=0.18.0
+CARGO_RAIL_VERSION=0.20.0
 CARGO_SEMVER_CHECKS_VERSION=0.48.0
 JUST_VERSION=1.57.0
 ZIZMOR_VERSION=1.26.1
@@ -20,23 +20,23 @@ CARGO_LLVM_COV_VERSION=0.8.7
 ACTIONLINT_VERSION=1.7.12
 
 OPAM_REPOSITORY_COMMIT=49f6d620cf20ae0168cfcbeb2c33932e06cb4b74
-OPAM_REPOSITORY_URL="git+https://github.com/ocaml/opam-repository.git#$OPAM_REPOSITORY_COMMIT"
+OPAM_REPOSITORY_REMOTE=https://github.com/ocaml/opam-repository.git
 OCAML_COMPILER_PACKAGE=ocaml-base-compiler.5.2.1
 BINSEC_PACKAGE=binsec.0.11.1
 BINSEC_DECODER_PACKAGE=unisim_archisec.0.0.14
 BINSEC_SOLVER_PACKAGES=(bitwuzla.1.0.6 bitwuzla-cxx.0.9.0)
 
 BINSEC_APT_PACKAGES=(
-  build-essential=12.10ubuntu1
-  git=1:2.43.0-1ubuntu7.3
-  libgmp-dev=2:6.3.0+dfsg-2ubuntu6
-  libmpfr-dev=4.2.1-1build1
-  m4=1.4.19-4build1
-  opam=2.1.5-1
-  pkg-config=1.8.1-2build1
-  zlib1g-dev=1:1.3.dfsg-3.1ubuntu2
+  build-essential
+  git
+  libgmp-dev
+  libmpfr-dev
+  m4
+  opam
+  pkg-config
+  zlib1g-dev
 )
-MUSL_APT_PACKAGE=musl-tools=1.2.4-2
+MUSL_APT_PACKAGE=musl-tools
 
 RSCRYPTO_TOOL_TEMP=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 [[ -d "$RSCRYPTO_TOOL_TEMP" ]] || {
@@ -153,19 +153,32 @@ require_ubuntu_24_04() {
   os_id=$(sed -n 's/^ID=//p' /etc/os-release | tr -d '"')
   os_version=$(sed -n 's/^VERSION_ID=//p' /etc/os-release | tr -d '"')
   [[ "$os_id" == ubuntu && "$os_version" == 24.04 ]] \
-    || fail "exact APT pins support Ubuntu 24.04, found $os_id $os_version"
+    || fail "APT package installation supports Ubuntu 24.04, found $os_id $os_version"
 }
 
-apt_install_exact() {
+apt_install_authenticated_candidates() {
   require_ubuntu_24_04
   command -v apt-get >/dev/null 2>&1 || fail "apt-get is required"
+  command -v apt-cache >/dev/null 2>&1 || fail "apt-cache is required"
   command -v dpkg-query >/dev/null 2>&1 || fail "dpkg-query is required"
 
-  sudo apt-get update
-  sudo apt-get install -y --no-install-recommends --allow-downgrades "$@"
+  sudo apt-get --no-allow-insecure-repositories --error-on=any update
 
-  local specification package expected actual
-  for specification in "$@"; do
+  local -a specifications=()
+  local package candidate
+  for package in "$@"; do
+    candidate=$(LC_ALL=C apt-cache policy "$package" | sed -n 's/^[[:space:]]*Candidate:[[:space:]]*//p')
+    [[ -n "$candidate" && "$candidate" != "(none)" ]] \
+      || fail "signed APT metadata has no candidate for $package"
+    specifications+=("$package=$candidate")
+  done
+
+  sudo apt-get install -y --no-install-recommends \
+    --no-allow-unauthenticated --no-allow-downgrades --no-remove \
+    "${specifications[@]}"
+
+  local specification expected actual
+  for specification in "${specifications[@]}"; do
     package=${specification%%=*}
     expected=${specification#*=}
     actual=$(dpkg-query -W -f='${Version}' "$package") \
@@ -182,18 +195,30 @@ install_binsec_system_packages() {
   if [[ "${BINSEC_SYSTEM_PACKAGES_READY:-}" == 1 ]]; then
     return 0
   fi
-  apt_install_exact "${BINSEC_APT_PACKAGES[@]}"
+  apt_install_authenticated_candidates "${BINSEC_APT_PACKAGES[@]}"
   BINSEC_SYSTEM_PACKAGES_READY=1
 }
 
 verify_opam_repository() {
-  local repository="$OPAMROOT/repo/default"
-  [[ -d "$repository/.git" ]] \
-    || fail "OPAM repository is not the pinned Git checkout"
-  local actual
-  actual=$(git -C "$repository" rev-parse HEAD)
+  local repository=$1
+  local actual status
+  actual=$(git -C "$repository" rev-parse HEAD) \
+    || fail "unable to read the OPAM repository commit"
   [[ "$actual" == "$OPAM_REPOSITORY_COMMIT" ]] \
     || fail "OPAM repository is $actual, expected $OPAM_REPOSITORY_COMMIT"
+  status=$(git -C "$repository" status --short --untracked-files=all) \
+    || fail "unable to verify the OPAM repository worktree"
+  [[ -z "$status" ]] \
+    || fail "OPAM repository differs from its pinned commit"
+}
+
+checkout_opam_repository() {
+  local repository=$1
+  git init --quiet "$repository"
+  git -C "$repository" fetch --depth=1 --no-tags \
+    "$OPAM_REPOSITORY_REMOTE" "$OPAM_REPOSITORY_COMMIT"
+  git -C "$repository" checkout --quiet --detach FETCH_HEAD
+  verify_opam_repository "$repository"
 }
 
 opam_package_is_installed() {
@@ -219,9 +244,11 @@ install_binsec() {
   export OPAMROOT="$RSCRYPTO_TOOL_ROOT/opam"
   export OPAMSWITCH=rscrypto-ct
 
+  local repository="$RSCRYPTO_TOOL_ROOT/opam-repository"
+  checkout_opam_repository "$repository"
   opam init --bare --disable-sandboxing --no-setup --no-opamrc -y \
-    default "$OPAM_REPOSITORY_URL"
-  verify_opam_repository
+    default "$repository"
+  verify_opam_repository "$repository"
 
   opam switch create "$OPAMSWITCH" "$OCAML_COMPILER_PACKAGE" \
     --repositories=default -y
@@ -233,6 +260,7 @@ install_binsec() {
   )
   opam install --switch="$OPAMSWITCH" "${required_packages[@]}" -y
   opam reinstall --switch="$OPAMSWITCH" "$BINSEC_PACKAGE" -y
+  verify_opam_repository "$repository"
   verify_opam_packages
 
   local switch_bin
@@ -253,7 +281,7 @@ install_binsec() {
 }
 
 install_ct_linux_packages() {
-  apt_install_exact "${BINSEC_APT_PACKAGES[@]}" "$MUSL_APT_PACKAGE"
+  apt_install_authenticated_candidates "${BINSEC_APT_PACKAGES[@]}" "$MUSL_APT_PACKAGE"
   BINSEC_SYSTEM_PACKAGES_READY=1
 }
 

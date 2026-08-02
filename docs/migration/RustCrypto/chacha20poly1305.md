@@ -1,6 +1,9 @@
 # Migration: `chacha20poly1305` (RustCrypto) → `rscrypto`
 
-> Covers both `ChaCha20Poly1305` (96-bit nonce, RFC 8439) and `XChaCha20Poly1305` (192-bit nonce). Same algorithm, byte-identical ciphertext+tag; replace `Key<T>` / `Nonce` / `XNonce` / `Payload { msg, aad }` with `ChaCha20Poly1305Key` + `Nonce96` / `Nonce192` and a buffer-style API.
+> Replace `Key<T>` / `Nonce` / `XNonce` / `Payload { msg, aad }` with named
+> keys, `Nonce96` or `Nonce192`, and a caller-buffer API. The mapped
+> ChaCha20-Poly1305 and XChaCha20-Poly1305 operations preserve ciphertext and
+> tag bytes.
 
 Verified against `chacha20poly1305 = "0.11.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/chacha20poly1305.rs`, `tests/xchacha20poly1305.rs`, and `tests/aead_wycheproof.rs`.
@@ -62,7 +65,7 @@ use rscrypto::{
 let key = ChaCha20Poly1305Key::from_bytes([0u8; 32]);
 let cipher = ChaCha20Poly1305::new(&key);
 let nonce = Nonce96::from_bytes([0u8; 12]);
-let mut ct = vec![0u8; plaintext.len() + 16];
+let mut ct = vec![0u8; ChaCha20Poly1305::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
@@ -89,7 +92,7 @@ use rscrypto::{
 let key = XChaCha20Poly1305Key::from_bytes([0u8; 32]);
 let cipher = XChaCha20Poly1305::new(&key);
 let nonce = Nonce192::from_bytes([0u8; 24]);
-let mut ct = vec![0u8; plaintext.len() + 16];
+let mut ct = vec![0u8; XChaCha20Poly1305::ciphertext_len(plaintext.len())?];
 cipher.encrypt(&nonce, aad, plaintext, &mut ct)?;
 ```
 
@@ -97,14 +100,16 @@ The XChaCha variant uses `Nonce192` (24 bytes). That is the only structural chan
 The expert trait import is required because these examples preserve an
 existing caller-nonce protocol. Prefer `seal_random` for new protocols.
 
-### Decrypt + tamper-detection
+### ChaCha20-Poly1305 decrypt and tamper detection
 
 ```rust
 // After
-let mut plaintext = vec![0u8; ct.len() - 16];
+let mut plaintext = vec![0u8; ChaCha20Poly1305::plaintext_len(ct.len())?];
 cipher.decrypt(&nonce, aad, &ct, &mut plaintext)?;
 // Err(OpenError::Verification(_)) on tag mismatch.
 ```
+
+Use `XChaCha20Poly1305::plaintext_len` for the XChaCha variant.
 
 ### Detached (in-place)
 
@@ -134,5 +139,11 @@ cipher.decrypt_in_place(&nonce, aad, &mut buffer, &tag)?;
 - **Failed-open buffer semantics change.** RustCrypto keeps the in-place buffer
   unchanged on error. rscrypto clears it on authentication failure. Combined
   rscrypto decrypt also clears its output buffer on authentication failure.
-- **Software-only acceleration.** ChaCha20 has no hardware AES; both crates use SIMD ChaCha20 implementations. rscrypto runtime-dispatches between SSE2/AVX2/AVX-512 on x86_64 and NEON on aarch64. The always-available portable scalar fallback has fixed-work source structure, but generated-code constant-time coverage is limited to the compiler, target, features, and binary in the matching [release evidence](../../constant-time.md). Force portable via `RSCRYPTO_CHACHA20_POLY1305_FORCE=portable` (std only).
+- **Acceleration.** rscrypto selects eligible vector or assembly backends from
+  detected CPU capabilities and retains a portable scalar fallback. The
+  fallback has fixed-work source structure, but generated-code constant-time
+  coverage is limited to the compiler, target, features, and binary in the
+  matching [release evidence](../../constant-time.md). The `portable-only`
+  feature constrains runtime dispatch as documented in
+  [`docs/features.md`](../../features.md#portable-only).
 - **`no_std`.** Both crates support `no_std`.

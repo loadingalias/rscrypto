@@ -97,7 +97,7 @@ let crc = h.finalize();
 
 - **Single algorithm.** `crc32c` is CRC-32C (Castagnoli) only. If you also need CRC-32 IEEE, both crates would normally require separate dependencies: rscrypto's `crc32` feature covers both with one dep.
 - **Hardware acceleration parity.** Both crates dispatch to the SSE4.2 `crc32` instruction on x86_64 and the ARMv8 CRC extension on aarch64. rscrypto adds VPCLMULQDQ folding (large buffers on x86_64), SVE2-PMULL (aarch64), VPMSUMD (Power), VGFM (s390x), and Zbc/Zvbc (RISC-V).
-- **Force a backend.** `RSCRYPTO_CRC32C_FORCE=portable` selects the portable
+- **Force a backend.** `RSCRYPTO_CRC32_FORCE=portable` selects the portable
   CRC-32C runtime backend in `std` builds. The crate's `portable-only` feature
   makes runtime capability detection ignore host acceleration; see
   [`docs/features.md`](../features.md#portable-only) for its limits.

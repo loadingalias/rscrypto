@@ -1,0 +1,6 @@
+---
+"rscrypto" = "patch"
+---
+
+Correct x86 CRC-16 and CRC-24 four-way tails, x86 and POWER capability detection, and cached initialization after a
+panic.

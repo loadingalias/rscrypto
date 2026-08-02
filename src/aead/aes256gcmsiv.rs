@@ -16,9 +16,8 @@ const KEY_SIZE: usize = 32;
 const TAG_SIZE: usize = 16;
 const NONCE_SIZE: usize = Nonce96::LENGTH;
 
-/// Maximum plaintext length: 2^36 - 32 bytes (per RFC 8452 §5).
-/// Beyond this the 32-bit CTR counter wraps, causing keystream reuse.
-const MAX_PLAINTEXT_LEN: u64 = (1u64 << 36).strict_sub(32);
+/// Maximum plaintext and additional-data length: 2^36 bytes (RFC 8452 §6).
+const MAX_INPUT_LEN: u64 = 1u64 << 36;
 
 define_aead_key_type!(Aes256GcmSivKey, KEY_SIZE, "AES-256-GCM-SIV secret key (32 bytes).");
 
@@ -1471,7 +1470,8 @@ impl Aead for Aes256GcmSiv {
     buffer: &mut [u8],
     _token: crate::traits::aead::SealToken,
   ) -> Result<Self::Tag, SealError> {
-    super::seal_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+    super::seal_bounded_length_as_u64(aad.len(), MAX_INPUT_LEN)?;
+    super::seal_bounded_length_as_u64(buffer.len(), MAX_INPUT_LEN)?;
     super::seal_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VPCLMULQDQ POLYVAL + VAES-512 CTR when available.
@@ -1559,7 +1559,8 @@ impl Aead for Aes256GcmSiv {
     buffer: &mut [u8],
     tag: &Self::Tag,
   ) -> Result<(), OpenError> {
-    super::open_bounded_length_as_u64(buffer.len(), MAX_PLAINTEXT_LEN)?;
+    super::open_bounded_length_as_u64(aad.len(), MAX_INPUT_LEN)?;
+    super::open_bounded_length_as_u64(buffer.len(), MAX_INPUT_LEN)?;
     super::open_bit_lengths(aad.len(), buffer.len())?;
 
     // Wide path: VAES-512 CTR + VPCLMULQDQ POLYVAL when available.
@@ -1851,6 +1852,15 @@ mod tests {
     assert!(Aes256GcmSiv::tag_from_slice(&[0u8; 17]).is_err());
     assert!(Aes256GcmSiv::tag_from_slice(&[0u8; 0]).is_err());
     assert!(Aes256GcmSiv::tag_from_slice(&[0u8; 16]).is_ok());
+  }
+
+  #[test]
+  #[cfg(target_pointer_width = "64")]
+  fn aes256gcmsiv_input_limit_matches_rfc8452() {
+    for len in [MAX_INPUT_LEN.strict_sub(1), MAX_INPUT_LEN] {
+      assert!(super::super::try_bounded_length_as_u64(len as usize, MAX_INPUT_LEN).is_ok());
+    }
+    assert!(super::super::try_bounded_length_as_u64(MAX_INPUT_LEN.strict_add(1) as usize, MAX_INPUT_LEN).is_err());
   }
 
   /// RFC 8452 Appendix C.2 vector with a different key (empty PT+AAD).

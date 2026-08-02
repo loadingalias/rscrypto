@@ -45,16 +45,16 @@
 //! ```toml
 //! [dependencies]
 //! # Smallest SHA-2-only build
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["sha2"] }
 //!
 //! # All cryptographic hashes
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["crypto-hashes"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["crypto-hashes"] }
 //!
 //! # Fast non-cryptographic hashes only
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["fast-hashes"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["fast-hashes"] }
 //!
 //! # Everything hash-related
-//! rscrypto = { version = "0.5.0", default-features = false, features = ["hashes"] }
+//! rscrypto = { version = "0.7", default-features = false, features = ["hashes"] }
 //! ```
 //!
 //! # API Conventions
@@ -62,7 +62,8 @@
 //! - Fixed-output digests use `Type::digest(data)` for one-shot and `new` / `update` / `finalize` /
 //!   `reset` for streaming.
 //! - XOFs use `Type::xof(data)` for one-shot and `finalize_xof()` for streaming squeeze readers.
-//! - Fast hashes are one-shot only and implement [`crate::traits::FastHash`].
+//! - Fast hashes implement the one-shot [`crate::traits::FastHash`] trait and also expose
+//!   algorithm-specific streaming hashers.
 //!
 //! # Modules
 //!

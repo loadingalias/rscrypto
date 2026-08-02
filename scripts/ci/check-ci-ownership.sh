@@ -31,6 +31,7 @@ TOOLCHAIN_ACTION="$ACTIONS/setup-toolchain/action.yaml"
 SCORECARD_ACTION="$ACTIONS/scorecard/action.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
 TOOL_ARCHIVES="$ROOT/.config/ci-tool-archives.tsv"
+CARGO_CONFIG="$ROOT/.cargo/config.toml"
 CROSS_SCRIPT="$ROOT/scripts/ci/cross-targets.sh"
 NOSTD_WASM="$ROOT/scripts/ci/nostd-wasm-suite.sh"
 INSTALL_TOOLS="$ROOT/scripts/ci/install-tools.sh"
@@ -112,6 +113,7 @@ require_file "$TOOLCHAIN_ACTION"
 require_file "$SCORECARD_ACTION"
 require_file "$MANIFEST"
 require_file "$TOOL_ARCHIVES"
+require_file "$CARGO_CONFIG"
 require_file "$CROSS_SCRIPT"
 require_file "$NOSTD_WASM"
 require_file "$INSTALL_TOOLS"
@@ -185,6 +187,20 @@ grep -Fq 'if [[ "$PLAN_VALID" != "true" || "$PLAN_EMPTY" != "true" ]]' "$CI" \
 if grep -ERn '^[[:space:]]+(pre_script|run_script):' "$WORKFLOWS" >/dev/null; then
   fail "reusable workflows must not accept executable shell fragments"
 fi
+if grep -ERin '(^|[^[:alnum:]_])(macos|darwin|apple)([^[:alnum:]_]|$)' "$WORKFLOWS" >/dev/null; then
+  fail "Apple platform testing must remain local and must not appear in CI workflows"
+fi
+if awk '
+  /^\[target\./ {
+    apple_target = tolower($0) ~ /(apple-darwin|target_os[[:space:]]*=[[:space:]]*"macos")/
+    next
+  }
+  /^\[/ { apple_target = 0 }
+  apple_target && /^[[:space:]]*rustflags[[:space:]]*=/ { found = 1 }
+  END { exit !found }
+' "$CARGO_CONFIG"; then
+  fail "Apple targets must not receive implicit rustflags from .cargo/config.toml"
+fi
 rust_job_calls=$(count_matches 'uses:[[:space:]]+\./\.github/workflows/_rust-job\.yaml' "$WORKFLOWS")
 rust_job_operations=$(count_matches '^[[:space:]]+operation:[[:space:]]+[-[:alnum:]]+[[:space:]]*$' "$WORKFLOWS")
 [[ "$rust_job_calls" -eq "$rust_job_operations" ]] \
@@ -220,7 +236,7 @@ fi
 bash -eu -o pipefail -c 'source "$1"; ci_tool_validate_manifest' _ "$TOOL_INTEGRITY" \
   || fail "direct CI tool archive manifest is invalid"
 
-if grep -ERn 'uses:[[:space:]]+(dtolnay/rust-toolchain|loadingalias/cargo-rail-action|ossf/scorecard-action)@' \
+if grep -ERn 'uses:[[:space:]]+(dtolnay/rust-toolchain|ossf/scorecard-action)@' \
   "$WORKFLOWS" "$ACTIONS" >/dev/null; then
   fail "CI must not delegate installation to an action with an unauthenticated executable fallback"
 fi
@@ -278,6 +294,50 @@ expected_installer_files=$(printf '%s\n' \
 [[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .with."tools-mode"' "$CI") \
   == "rail" ]] \
   || fail "the PR planner must select the exact Cargo Rail install mode"
+# The action must discover the exact package-manager install from the preceding
+# step so none of its download or cargo-binstall fallbacks are reachable.
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .uses' "$CI") \
+  == "loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f" ]] \
+  || fail "the PR planner must use commit-pinned cargo-rail-action v6.1.0"
+rail_version=$(sed -n 's/^CARGO_RAIL_VERSION=//p' "$INSTALL_TOOLS")
+[[ "$rail_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+  || fail "the Cargo Rail installer version must be exact"
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.version' "$CI") \
+  == "$rail_version" ]] \
+  || fail "cargo-rail-action must use the authenticated Cargo Rail version"
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.checksum' "$CI") \
+  == "required" ]] \
+  || fail "cargo-rail-action must require release checksums"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since' "$CI") \
+  == '${{ github.event.pull_request.base.sha }}' ]] \
+  || fail "cargo-rail-action must plan from the immutable pull-request base"
+rail_setup_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail_setup") | .if' "$CI")
+rail_action_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .if' "$CI")
+[[ "$rail_setup_condition" == "github.event_name == 'pull_request'" \
+  && "$rail_action_condition" == "$rail_setup_condition" ]] \
+  || fail "cargo-rail-action and its authenticated install must share the PR condition"
+rail_setup_index=$(yq eval '.jobs."rail-plan".steps | to_entries | .[] | select(.value.id == "rail_setup") | .key' "$CI")
+rail_action_index=$(yq eval '.jobs."rail-plan".steps | to_entries | .[] | select(.value.id == "rail") | .key' "$CI")
+[[ "$rail_setup_index" =~ ^[0-9]+$ && "$rail_action_index" =~ ^[0-9]+$ \
+  && "$rail_setup_index" -lt "$rail_action_index" ]] \
+  || fail "the authenticated Cargo Rail install must precede cargo-rail-action"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .env.RAIL_PLAN_STEP_OUTCOME' "$CI") \
+  == '${{ steps.rail.outcome }}' ]] \
+  || fail "the plan resolver must fail closed on cargo-rail-action outcome"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .env.RAIL_SCOPE_JSON' "$CI") \
+  == '${{ steps.rail.outputs.scope-json }}' ]] \
+  || fail "the plan resolver must validate cargo-rail-action scope"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "resolve") | .env.RAIL_SURFACES_JSON' "$CI") \
+  == '${{ steps.rail.outputs.surfaces-json }}' ]] \
+  || fail "the plan resolver must validate cargo-rail-action surfaces"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs."rail-plan".steps[] | select(.name == "Check Release Intent Coverage") | .env.RAIL_BASE_REF' "$CI") \
+  == '${{ steps.rail.outputs.base-ref }}' ]] \
+  || fail "release intent coverage must use cargo-rail-action's resolved base"
 grep -Fq 'scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"' "$TOOLCHAIN_ACTION" \
   || fail "toolchain setup must use the repository-owned rustup policy"
 if grep -Eq '[.]cargo/(bin|[.]crates)|[.]opam' "$SETUP_ACTION"; then
@@ -303,8 +363,15 @@ grep -Fq 'go install "github.com/rhysd/actionlint/cmd/actionlint@v$ACTIONLINT_VE
 opam_commit=$(sed -n 's/^OPAM_REPOSITORY_COMMIT=//p' "$INSTALL_TOOLS")
 [[ "$opam_commit" =~ ^[0-9a-f]{40}$ ]] \
   || fail "OPAM repository must use a full Git commit"
+[[ $(sed -n 's/^OPAM_REPOSITORY_REMOTE=//p' "$INSTALL_TOOLS") \
+  == "https://github.com/ocaml/opam-repository.git" ]] \
+  || fail "OPAM repository must use the reviewed HTTPS remote"
+grep -Fq 'git -C "$repository" fetch --depth=1 --no-tags' "$INSTALL_TOOLS" \
+  || fail "OPAM repository must fetch only the pinned commit"
 grep -Fq 'actual=$(git -C "$repository" rev-parse HEAD)' "$INSTALL_TOOLS" \
   || fail "OPAM metadata must be checked against its pinned commit"
+grep -Fq 'status=$(git -C "$repository" status --short --untracked-files=all)' "$INSTALL_TOOLS" \
+  || fail "OPAM metadata must match the pinned commit exactly"
 grep -Fq 'actual=$(dpkg-query -W -f=' "$INSTALL_TOOLS" \
   || fail "APT packages must be validated against exact versions"
 grep -Fq 'ci_tool_download wasmtime' "$NOSTD_WASM" \

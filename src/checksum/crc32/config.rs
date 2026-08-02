@@ -1,7 +1,7 @@
 //! CRC-32 runtime configuration.
 //!
 //! This module handles force mode selection for CRC-32. The dispatch module
-//! handles optimal kernel selection automatically; this module only provides
+//! handles kernel selection automatically; this module only provides
 //! the ability to force specific backends for testing/debugging.
 
 use crate::platform::Caps;

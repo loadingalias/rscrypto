@@ -11,20 +11,10 @@
 //! Each table contains 256 entries representing the CRC contribution of a single
 //! byte at a specific position in the input stream.
 //!
-//! The algorithm XORs the current CRC with N input bytes, then combines
-//! N table lookups (one per byte position) using XOR. This achieves ~N×
-//! throughput compared to byte-at-a-time processing.
-//!
-//! # Performance Characteristics
-//!
-//! | Width | Algorithm | Bytes/iter | Tables | Throughput |
-//! |-------|-----------|------------|--------|------------|
-//! | 16-bit | slice-by-4 | 4 | 4×256×u16 | ~1.5 GB/s |
-//! | 16-bit | slice-by-8 | 8 | 8×256×u16 | ~2.5 GB/s |
-//! | 32-bit | slice-by-8 | 8 | 8×256×u32 | ~4.0 GB/s |
-//! | 32-bit | slice-by-16 | 16 | 16×256×u32 | ~5.0 GB/s |
-//! | 64-bit | slice-by-8 | 8 | 8×256×u64 | ~2.0 GB/s |
-//! | 64-bit | slice-by-16 | 16 | 16×256×u64 | ~3.0 GB/s |
+//! The algorithm XORs the current CRC with N input bytes, then combines N
+//! table lookups (one per byte position) using XOR. Each iteration consumes N
+//! bytes at the cost of N tables; actual throughput depends on the target,
+//! cache state, and input size.
 
 // SAFETY: All array indexing in this module uses bounded indices:
 // - chunks_exact guarantees chunk sizes
@@ -423,7 +413,6 @@ pub fn slice8_64(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 8]) -> u64 {
 /// Update CRC-64 state using slice-by-16 algorithm.
 ///
 /// Processes 16 bytes per iteration (2× the CRC width in bytes).
-/// Optimal for larger buffers where cache is warm.
 ///
 /// # Arguments
 ///
@@ -478,7 +467,6 @@ fn slice16_64_scalar(mut crc: u64, data: &[u8], tables: &[[u64; 256]; 16]) -> u6
 /// Update CRC-64 state using slice-by-16 algorithm.
 ///
 /// Processes 16 bytes per iteration (2× the CRC width in bytes).
-/// Optimal for larger buffers where cache is warm.
 ///
 /// # Arguments
 ///

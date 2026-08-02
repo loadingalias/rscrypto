@@ -31,8 +31,8 @@ impl Drop for CeRoundKeys {
 /// The AESE instruction applies SubBytes to all 16 bytes. By broadcasting
 /// a 32-bit word to all 4 columns of the AES state, ShiftRows becomes a
 /// no-op (all columns identical), so `AESE(broadcast(w), 0)` = `SubWord(w)`.
-/// This replaces ~1560 GF(2^8) field operations per SubWord call with a
-/// single AESE instruction (~1 cycle on Neoverse V1/V2).
+/// This replaces the portable algebraic S-box evaluation with one AESE
+/// instruction per SubWord operation.
 #[target_feature(enable = "aes,neon")]
 #[inline]
 /// # Safety

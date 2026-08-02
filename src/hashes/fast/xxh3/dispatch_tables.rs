@@ -5,105 +5,36 @@
 pub use super::kernels::Xxh3KernelId as KernelId;
 use crate::platform::Caps;
 
-#[cfg(any(test, feature = "diag"))]
-pub const DEFAULT_BOUNDARIES: [usize; 3] = [64, 256, 4096];
-
 #[derive(Clone, Copy, Debug)]
 pub struct DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  pub boundaries: [usize; 3],
-  #[cfg(any(test, feature = "diag"))]
-  pub xs: KernelId,
-  #[cfg(any(test, feature = "diag"))]
-  pub s: KernelId,
-  #[cfg(any(test, feature = "diag"))]
-  pub m: KernelId,
-  pub l: KernelId,
+  pub long: KernelId,
 }
 
 pub static DEFAULT_TABLE: DispatchTable = DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  boundaries: DEFAULT_BOUNDARIES,
-  #[cfg(any(test, feature = "diag"))]
-  xs: KernelId::Portable,
-  #[cfg(any(test, feature = "diag"))]
-  s: KernelId::Portable,
-  #[cfg(any(test, feature = "diag"))]
-  m: KernelId::Portable,
-  l: KernelId::Portable,
+  long: KernelId::Portable,
 };
 
 // Platform-specific tables
 
 /// x86-64 with AVX-512F: single-iteration per stripe.
 #[cfg(target_arch = "x86_64")]
-pub static AVX512_TABLE: DispatchTable = DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  boundaries: DEFAULT_BOUNDARIES,
-  #[cfg(any(test, feature = "diag"))]
-  xs: KernelId::Avx512,
-  #[cfg(any(test, feature = "diag"))]
-  s: KernelId::Avx512,
-  #[cfg(any(test, feature = "diag"))]
-  m: KernelId::Avx512,
-  l: KernelId::Avx512,
-};
+pub static AVX512_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx512 };
 
 /// x86-64 with AVX2 (no AVX-512): two iterations per stripe.
 #[cfg(target_arch = "x86_64")]
-pub static AVX2_TABLE: DispatchTable = DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  boundaries: DEFAULT_BOUNDARIES,
-  #[cfg(any(test, feature = "diag"))]
-  xs: KernelId::Avx2,
-  #[cfg(any(test, feature = "diag"))]
-  s: KernelId::Avx2,
-  #[cfg(any(test, feature = "diag"))]
-  m: KernelId::Avx2,
-  l: KernelId::Avx2,
-};
+pub static AVX2_TABLE: DispatchTable = DispatchTable { long: KernelId::Avx2 };
 
 /// aarch64 with NEON: four iterations per stripe.
 #[cfg(target_arch = "aarch64")]
-pub static NEON_TABLE: DispatchTable = DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  boundaries: DEFAULT_BOUNDARIES,
-  #[cfg(any(test, feature = "diag"))]
-  xs: KernelId::Neon,
-  #[cfg(any(test, feature = "diag"))]
-  s: KernelId::Neon,
-  #[cfg(any(test, feature = "diag"))]
-  m: KernelId::Neon,
-  l: KernelId::Neon,
-};
+pub static NEON_TABLE: DispatchTable = DispatchTable { long: KernelId::Neon };
 
 /// POWER8+ with VSX: four iterations per stripe (128-bit vectors).
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-pub static VSX_TABLE: DispatchTable = DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  boundaries: DEFAULT_BOUNDARIES,
-  #[cfg(any(test, feature = "diag"))]
-  xs: KernelId::Vsx,
-  #[cfg(any(test, feature = "diag"))]
-  s: KernelId::Vsx,
-  #[cfg(any(test, feature = "diag"))]
-  m: KernelId::Vsx,
-  l: KernelId::Vsx,
-};
+pub static VSX_TABLE: DispatchTable = DispatchTable { long: KernelId::Vsx };
 
 /// s390x z13+ with z/Vector: four iterations per stripe (128-bit vectors).
 #[cfg(target_arch = "s390x")]
-pub static ZVECTOR_TABLE: DispatchTable = DispatchTable {
-  #[cfg(any(test, feature = "diag"))]
-  boundaries: DEFAULT_BOUNDARIES,
-  #[cfg(any(test, feature = "diag"))]
-  xs: KernelId::Vector,
-  #[cfg(any(test, feature = "diag"))]
-  s: KernelId::Vector,
-  #[cfg(any(test, feature = "diag"))]
-  m: KernelId::Vector,
-  l: KernelId::Vector,
-};
+pub static ZVECTOR_TABLE: DispatchTable = DispatchTable { long: KernelId::Vector };
 
 #[inline]
 #[must_use]
@@ -130,7 +61,7 @@ pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
 
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
   {
-    if caps.has(crate::platform::caps::power::POWER8_VECTOR) {
+    if caps.has(super::kernels::required_caps(KernelId::Vsx)) {
       return &VSX_TABLE;
     }
   }
@@ -146,4 +77,22 @@ pub fn select_runtime_table(caps: Caps) -> &'static DispatchTable {
   // on SpacemiT K1.
 
   &DEFAULT_TABLE
+}
+
+#[cfg(all(test, target_arch = "powerpc64", target_endian = "little"))]
+mod tests {
+  use super::*;
+  use crate::platform::caps::power;
+
+  #[test]
+  fn power_table_requires_every_target_feature() {
+    let required = power::ALTIVEC | power::VSX | power::POWER8_VECTOR;
+    assert_eq!(select_runtime_table(required).long, KernelId::Vsx);
+    for missing in [power::ALTIVEC, power::VSX, power::POWER8_VECTOR] {
+      assert_eq!(
+        select_runtime_table(required.difference(missing)).long,
+        KernelId::Portable
+      );
+    }
+  }
 }

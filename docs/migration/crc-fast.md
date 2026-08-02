@@ -1,9 +1,12 @@
 # Migration: `crc-fast` → `rscrypto`
 
-> Replace `crc-fast`'s enum-driven `checksum(CrcAlgorithm::*, data)` calls with rscrypto's named CRC types. SIMD coverage is comparable on x86_64 and aarch64; rscrypto adds Power, s390x, and RISC-V kernels and removes the `u64`-everywhere return type.
+Replace `crc-fast`'s enum-driven `checksum(CrcAlgorithm::*, data)` calls with
+rscrypto's named CRC types. The mapped algorithms keep the same CRC parameters,
+but rscrypto returns each algorithm's natural integer width instead of `u64`.
 
 Verified against `crc-fast = "1.10.0"` and the `rscrypto` 0.7.8 line.
-Evidence: `tests/crc16_properties.rs`, `tests/crc32_properties.rs`, and `tests/crc64_properties.rs`.
+Evidence: `tests/crc16_properties.rs`, `tests/crc32_properties.rs`, and
+`tests/crc64_properties.rs`.
 
 ## TL;DR
 
@@ -27,7 +30,8 @@ crc-fast = "1.10"
 rscrypto = { version = "0.7.8", features = ["crc32", "crc64"] }
 ```
 
-Drop `crc16` / `crc24` from the feature list if you don't use them. `features = ["checksums"]` is the umbrella shortcut.
+Add `crc16` or `crc24` only when you migrate a mapped variant from those
+families. Use `features = ["checksums"]` to enable every CRC family.
 
 ## Algorithm map
 
@@ -83,7 +87,9 @@ hasher.update(b"bar");
 let value = hasher.finalize();        // borrows &self, returns u32
 ```
 
-`Digest::finalize` consumes `self` in `crc-fast`; `Checksum::finalize` borrows in rscrypto. Drop the rebuild if you were rebuilding a `Digest` per chunk only to keep ownership.
+`Digest::finalize` consumes `self` in `crc-fast`; `Checksum::finalize` borrows
+in rscrypto. You can read an intermediate finalized value and continue updating
+the same rscrypto hasher.
 
 ### Combine (parallel chunks)
 

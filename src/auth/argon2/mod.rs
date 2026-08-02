@@ -2,9 +2,8 @@
 //!
 //! Ships all three variants:
 //!
-//! - [`Argon2d`] — data-dependent indexing, highest throughput, vulnerable to side-channel timing
-//!   attacks. Useful for non-interactive, trusted- hardware settings (e.g. cryptocurrency
-//!   proof-of-work).
+//! - [`Argon2d`] — data-dependent indexing with corresponding cache-timing leakage. Useful for
+//!   non-interactive, trusted-hardware settings (e.g. cryptocurrency proof-of-work).
 //! - [`Argon2i`] — data-independent indexing: memory-access patterns do not depend on the password.
 //!   Useful when the adversary can observe cache or memory-access timing.
 //! - [`Argon2id`] — hybrid: first half of the first pass runs Argon2i, the rest runs Argon2d.
@@ -13,9 +12,9 @@
 //!
 //! The implementation uses the BlaMka compression function from RFC 9106
 //! §3.6 layered on top of [`crate::Blake2b`]. A runtime-cached [`KernelId`]
-//! dispatcher picks the highest-throughput BlaMka kernel for the host: a
-//! 4-way NEON kernel on aarch64 ships today, with per-arch x86_64 / VSX /
-//! s390x / RVV / simd128 kernels rolling in behind the same contract.
+//! dispatcher selects among the portable implementation and the compiled
+//! x86_64, aarch64, POWER, s390x, RISC-V, or wasm32 backends when their
+//! required capabilities are available.
 //!
 //! # Examples
 //!
@@ -217,13 +216,13 @@ pub enum Argon2Error {
   SecretTooLong,
   /// Optional associated-data length exceeds 2^32-1 bytes.
   AssociatedDataTooLong,
+  /// The platform entropy source failed while generating a PHC salt.
+  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
+  EntropyUnavailable,
   /// The requested memory matrix exceeds the target's address space.
   ResourceOverflow,
   /// The allocator refused to provide the memory matrix.
   AllocationFailed,
-  /// The platform entropy source failed while generating a PHC salt.
-  #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
-  EntropyUnavailable,
   /// Password generation parameters exceed the verifier's resource limits.
   #[cfg(feature = "phc-strings")]
   VerificationLimitTooLow,
@@ -1212,10 +1211,10 @@ impl Drop for Matrix {
 ///   borrow, the matrix is single-threaded for the call's duration, and the view is dropped before
 ///   control returns to `argon2_hash`. Exclusivity is trivial.
 /// - **Parallel path** (`fill_slice_parallel`): the view is shared across `rayon::scope` tasks.
-///   Disjointness across tasks is upheld by the Argon2 reference-index function (RFC 9106 §3.4),
-///   which guarantees that within a single slice every lane writes only to its own segment range
-///   and reads only from blocks in already-completed slices (or strictly earlier columns of the
-///   same segment, which are this task's own writes).
+///   Within a slice, every task writes only its own lane's current segment. Cross-lane references
+///   exclude the current slice, while same-lane references may read stable blocks written earlier
+///   by the same task. The previous and reference inputs may name the same immutable block, but
+///   neither may name the current mutable output block.
 ///
 /// `Send + Sync` are required to cross rayon thread boundaries; both are
 /// `unsafe impl`d on the assumption that callers honour the discipline
@@ -1229,10 +1228,10 @@ struct MatrixView {
 
 #[cfg(feature = "parallel")]
 // SAFETY: `MatrixView` is `Send + Sync` only because the parallel filler
-// (`fill_slice_parallel`) honours the RFC 9106 §3.4 disjointness discipline:
-//   1. Within one slice, lane `i` writes exclusively to its own segment and reads only from (a)
-//      blocks in already-completed slices, or (b) earlier columns of the in-progress segment which
-//      the same task wrote.
+// (`fill_slice_parallel`) honours the RFC 9106 §3.4 access discipline:
+//   1. Within one slice, lane `i` writes exclusively to its own segment. Cross-lane reads exclude
+//      the current slice; same-lane reads may target stable blocks written earlier by this task.
+//      The two immutable inputs may alias each other, but neither aliases the mutable output.
 //   2. `rayon::scope` synchronises all per-lane tasks before advancing to the next slice — no
 //      read-write race can cross slice boundaries.
 //   3. Sequential callers (`fill_segment`) hold an exclusive `&mut Matrix` borrow for the duration
@@ -1418,10 +1417,10 @@ fn fill_segment(
 /// Callers must guarantee that, for the indices touched by this call:
 ///
 /// - The current segment range `[lane * lane_len + slice * segment_len .. lane * lane_len + (slice
-///   + 1) * segment_len]` is exclusively writeable by this task (no other task may read or write
-///   within this range while this call runs).
-/// - All read indices are stable: blocks at any flat index outside this task's segment range must
-///   not be mutated by any other task while this call runs.
+///   + 1) * segment_len]` is exclusively writeable by this task. Same-task reads may target
+///   already-written positions in that range.
+/// - Every immutable input remains stable for the duration of `compress`. The previous and
+///   reference inputs may alias each other, but neither may alias the current mutable output.
 ///
 /// Both conditions are upheld by:
 /// - The sequential path's exclusive `&mut Matrix` borrow, OR
@@ -1527,14 +1526,13 @@ unsafe fn fill_segment_inner(
     // SAFETY:
     // - `prev_idx` is either the previous iteration's `cur_idx` or (on the segment boundary) `lane_base
     //   + lane_len - 1` — both within this task's own lane, never concurrently written.
-    // - `(ref_lane, ref_index)` per RFC 9106 §3.4 lives in a completed region, never within the current
-    //   slice's still-being-written range. Not concurrently written.
+    // - `(ref_lane, ref_index)` per RFC 9106 §3.4 is stable for this operation: a cross-lane reference
+    //   excludes the current slice, while a same-lane reference may target only a block already written
+    //   by this task.
     // - `cur_idx = lane_base + col` is in this task's exclusive segment write range per
     //   `fill_segment_inner`'s safety contract.
-    // - `prev_idx` and `cur_idx` differ by design (`cur_idx` is the block being written this iteration,
-    //   `prev_idx` is one position earlier or wrapped around to the lane's last block). `ref_idx` is in
-    //   a completed region outside the current segment, never the write target. The three block
-    //   locations are pairwise disjoint.
+    // - `prev_idx` and `cur_idx` differ by design. `ref_idx` also differs from `cur_idx`; it may equal
+    //   `prev_idx`, which is valid because both are borrowed immutably.
     // - `compress` was resolved by `active_compress`, so its `required_caps` are a subset of the host's
     //   caps.
     unsafe {
@@ -1570,11 +1568,12 @@ fn fill_slice_sequential(
 
 /// Drive one slice's segment fills in parallel: one rayon task per lane.
 ///
-/// Within a slice, every lane writes only to its own segment range and
-/// reads only from already-completed regions (RFC 9106 §3.4). The shared
-/// [`MatrixView`] therefore carries no aliasing hazard across the
-/// `rayon::scope` tasks — see the `MatrixView` and `fill_segment_inner`
-/// doc-comments for the full safety argument.
+/// Within a slice, every lane writes only to its own segment range. Cross-lane
+/// references exclude the current slice; same-lane references may read stable
+/// earlier writes from that task (RFC 9106 §3.4). The shared [`MatrixView`]
+/// therefore carries no read-write race across the `rayon::scope` tasks — see
+/// the `MatrixView` and `fill_segment_inner` doc-comments for the full safety
+/// argument.
 ///
 /// `rayon::scope` joins all spawned tasks before returning, so the
 /// `&mut Matrix` borrow is released only after every lane has finished
@@ -1611,9 +1610,8 @@ fn fill_slice_parallel(
         // - Lane `lane`'s write range is `[lane*lane_len + slice*segment_len .. lane*lane_len +
         //   (slice+1)*segment_len]`. This range is pairwise disjoint across lanes, so concurrent tasks
         //   never write the same index.
-        // - Cross-lane reads (the `(ref_lane, ref_index)` fetch in `fill_segment_inner`) only target blocks
-        //   in completed slices — never the current slice's still-being-written range. Same-lane reads of
-        //   the previous column are within this task's own write range, accessed sequentially.
+        // - Cross-lane reads (the `(ref_lane, ref_index)` fetch in `fill_segment_inner`) exclude the
+        //   current slice. Same-lane reads may target stable earlier writes from this task.
         //
         // No two tasks ever access the same block when at least one is
         // a writer. The Send/Sync impls on `MatrixView` are sound under
@@ -1659,9 +1657,8 @@ fn fill_slice_parallel(
 
 /// Dispatch one slice fill: parallel when `parallel` is on and `lanes > 1`,
 /// and each lane segment has enough work to amortize Rayon scheduling;
-/// sequential otherwise. Tiny segments are common in test / benchmark
-/// cost shapes (`m=64,p=2` means only 8 blocks per spawned task), where
-/// Rayon overhead dominates the actual Argon2 fill on Apple Silicon.
+/// sequential otherwise. For example, `m=64,p=2` gives only eight blocks per
+/// spawned task, so it remains below the parallel admission threshold.
 #[inline]
 fn fill_slice(
   matrix: &mut Matrix,
@@ -1760,7 +1757,13 @@ fn argon2_hash_with_kernel_inner(
     return Err(Argon2Error::InvalidOutputLen);
   }
 
-  // Compute H0.
+  // Allocate the matrix before deriving H0 so allocation failure cannot leave
+  // a password-derived digest in an unwinding stack frame.
+  let mut matrix = Matrix::new(*params)?;
+  let lane_len = matrix.lane_len;
+  let lanes = matrix.lanes;
+
+  // Compute H0 only after all fallible resource acquisition is complete.
   let mut h0 = {
     #[cfg(feature = "diag")]
     {
@@ -1775,11 +1778,6 @@ fn argon2_hash_with_kernel_inner(
       compute_h0(params, context, password, salt, variant, out.len())
     }
   };
-
-  // Allocate the memory matrix.
-  let mut matrix = Matrix::new(*params)?;
-  let lane_len = matrix.lane_len;
-  let lanes = matrix.lanes;
 
   // Initialise first two blocks per lane.
   for lane in 0..lanes {
@@ -1951,9 +1949,8 @@ define_argon2_variant! {
   /// Argon2i — data-independent indexing variant of Argon2 (RFC 9106).
   ///
   /// Memory-access patterns do not depend on the password, closing the
-  /// cache-timing channel Argon2d accepts. Slower than Argon2d and Argon2id;
-  /// prefer Argon2id for password hashing unless you specifically need
-  /// data-independent access patterns throughout.
+  /// cache-timing channel Argon2d accepts. Prefer Argon2id for password hashing
+  /// unless you specifically need data-independent access patterns throughout.
   ///
   /// # Examples
   ///

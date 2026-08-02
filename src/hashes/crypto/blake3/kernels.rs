@@ -614,10 +614,8 @@ fn root_output_block_words_inline(
 
   #[cfg(target_arch = "aarch64")]
   if id == Blake3KernelId::Aarch64Neon {
-    // Use portable compress for single-block XOF emit: NEON register load/store
-    // overhead is not worth it for a single 64-byte compress. The official blake3
-    // crate makes the same choice (portable::compress_xof for NEON).
-    // Bulk emit (root_output_blocks4_neon) still uses NEON.
+    // Single-block XOF emit follows upstream BLAKE3's portable NEON policy.
+    // Bulk emit remains on root_output_blocks4_neon.
     let words = super::compress(chaining_value, block_words, counter, block_len, flags);
     write_root_output_words(out, &words);
     return;
@@ -664,8 +662,7 @@ fn root_output_block_bytes_inline(
   {
     match id {
       Blake3KernelId::X86Avx512 => {
-        // For AVX-512 dispatch, the word-form path is faster than the SSE4.1
-        // byte helper even after decoding this one block.
+        // The AVX-512 policy uses the word-form path after decoding this block.
         let block_words = super::words16_from_le_bytes_64(block_bytes);
         root_output_block_words_inline(id, chaining_value, &block_words, counter, block_len, flags, out);
         return;
@@ -1481,9 +1478,8 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           // 2. `children` has exactly four OUT_LEN-byte child CVs, so `parents` points to two packed 64-byte
           //    parent blocks.
           // 3. `out` has exactly two contiguous OUT_LEN-byte parent CV slots.
-          // 4. The direct two-parent pair route was measured faster than the AVX2 assembly tail on Sapphire
-          //    Rapids. Routing it through the generic reducer was slower, so this path is intentionally
-          //    exact.
+          // 4. The manually maintained AVX2 tail policy routes exactly two parents through the owned pair
+          //    kernel.
           unsafe {
             super::x86_64::avx2::parent_cv2_owned(&parents, &key_words, flags, out[0].as_mut_ptr());
           }
@@ -1500,8 +1496,8 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           //    blocks for the pair reducer, and `children[4]` starts the final packed parent block.
           // 3. `out[0..2]` is contiguous for the pair output, and `out[2]` is writable for the final serial
           //    parent CV.
-          // 4. The direct pair-plus-serial route was measured faster than the AVX2 assembly tail on Sapphire
-          //    Rapids. Larger reductions keep 2/3 remainders on assembly until separately measured.
+          // 4. The manually maintained AVX2 tail policy routes exactly three parents through one pair plus
+          //    one serial parent.
           unsafe {
             super::x86_64::avx2::parent_cv2_owned(&parents, &key_words, flags, out[0].as_mut_ptr());
             parent_one_avx2_owned_serial_from_block(
@@ -1525,8 +1521,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
           // 2. `ptrs` points to four readable packed 64-byte parent blocks.
           // 3. `out` is writable for four contiguous OUT_LEN-byte parent CV outputs.
-          // 4. Direct output avoids the generic reducer's temporary copy and measured faster on Sapphire
-          //    Rapids.
+          // 4. Direct output avoids the generic reducer's temporary copy.
           unsafe {
             super::x86_64::asm::hash_many_avx2(
               ptrs.as_ptr(),
@@ -1554,8 +1549,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
           // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
           // 2. `ptrs` contains 8 readable packed 64-byte parent block pointers.
           // 3. `out` is writable for 8 contiguous OUT_LEN-byte parent CV outputs.
-          // 4. Direct output avoids the generic reducer's temporary copy and measured faster on Sapphire
-          //    Rapids.
+          // 4. Direct output avoids the generic reducer's temporary copy.
           unsafe {
             super::x86_64::avx2::hash8_owned(&ptrs, 1, &key_words, 0, false, parent_flags, 0, 0, out[0].as_mut_ptr());
           }
@@ -1576,8 +1570,7 @@ pub(crate) fn parent_cvs_many_from_bytes_inline(
               // 1. Dispatch selected the AVX2 kernel, so AVX2 is available.
               // 2. `ptrs[0]` points to one packed 64-byte parent block.
               // 3. `tmp[0]` is writable for one OUT_LEN-byte parent CV.
-              // 4. The one-parent serial route was measured faster than the AVX2 assembly tail on Sapphire
-              //    Rapids.
+              // 4. The manually maintained AVX2 tail policy routes one parent through the serial owned kernel.
               unsafe {
                 parent_one_avx2_owned_serial_from_block(ptrs[0], key_words, flags, &mut tmp[0]);
               }
@@ -2310,10 +2303,8 @@ unsafe fn chunk_compress_blocks_s390x_vector(
 ) {
   debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
 
-  // On IBM Z, the vector per-block wrapper has measurable fixed overhead on
-  // short one-chunk bodies (e.g. 256B/1024B inputs). Route those
-  // small batches through the portable scalar loop and keep the vector path
-  // for larger batches where it clearly wins.
+  // The IBM Z policy routes incomplete one-chunk bodies through the portable
+  // loop and reserves the vector wrapper for a complete chunk.
   const SHORT_BATCH_PORTABLE_MAX_BLOCKS: usize = (CHUNK_LEN / BLOCK_LEN) - 1; // 15
   let num_blocks = blocks.len() / BLOCK_LEN;
   if num_blocks <= SHORT_BATCH_PORTABLE_MAX_BLOCKS {
@@ -3403,7 +3394,7 @@ unsafe fn hash_many_contiguous_avx2_inner(
     // 1. Dispatch selects this wrapper only after AVX2 support is available.
     // 2. `ptrs` point to `DEGREE` in-bounds full-chunk inputs.
     // 3. `out` is valid for `DEGREE * OUT_LEN` bytes.
-    // 4. Sub-degree tails are handled below by measured per-degree routing.
+    // 4. Sub-degree tails are handled below by the explicit per-degree policy.
     unsafe {
       super::x86_64::avx2::hash8_owned(
         &ptrs,
@@ -3454,8 +3445,7 @@ unsafe fn hash_many_contiguous_avx2_inner(
         // 1. This wrapper is only selected after AVX2 dispatch.
         // 2. `input` is readable for one full chunk.
         // 3. `out` is writable for one OUT_LEN-byte CV.
-        // 4. The one-chunk tail was measured faster than the remaining AVX2 assembly tail on Sapphire
-        //    Rapids.
+        // 4. The manually maintained AVX2 tail policy routes one chunk through the serial owned kernel.
         unsafe {
           hash_one_chunk_avx2_owned_serial(input, key, counter, flags, out);
         }
@@ -3466,20 +3456,20 @@ unsafe fn hash_many_contiguous_avx2_inner(
         // 1. This wrapper is only selected after AVX2 dispatch.
         // 2. `input` is readable for two full chunks.
         // 3. `out` is writable for two OUT_LEN-byte CVs.
-        // 4. The two-chunk pair route was measured faster than the AVX2 assembly tail on Sapphire Rapids.
+        // 4. The manually maintained AVX2 tail policy routes two chunks through the owned pair kernel.
         unsafe {
           super::x86_64::avx2::hash2_chunks_owned(input, key, counter, flags, out);
         }
         return;
       }
       if matches!(num_chunks, 3 | 5..=7) {
-        // The owned duplicate-lane tail wins for 3/5/6/7 contiguous chunk tails
-        // on Sapphire Rapids. Keep 4 on assembly; it was measured faster.
-        // SAFETY: Routing this measured AVX2 tail because:
+        // The manually maintained tail policy uses duplicate lanes for
+        // 3/5/6/7 contiguous chunks and keeps four on assembly.
+        // SAFETY: Routing this shape-specific AVX2 tail because:
         // 1. This wrapper is only selected after AVX2 dispatch.
         // 2. `input` is readable for `num_chunks * CHUNK_LEN`.
         // 3. `out` is writable for `num_chunks * OUT_LEN`.
-        // 4. The `matches!` guard restricts `num_chunks` to sub-degree values that won in benchmarks.
+        // 4. The `matches!` guard restricts `num_chunks` to the configured duplicate-lane shapes.
         unsafe {
           hash_many_avx2_owned_duplicate_tail(input, num_chunks, key, counter, flags, out);
         }
@@ -3488,7 +3478,7 @@ unsafe fn hash_many_contiguous_avx2_inner(
 
       // Use the upstream-grade AVX2 asm `hash_many` backend for the remaining
       // sub-degree tails. Passing `num_inputs = num_chunks` avoids wasting lanes
-      // for the 4 case where assembly is still faster.
+      // for the four-chunk shape assigned to assembly by the tail policy.
       // SAFETY: This wrapper is only selected when AVX2 is available (checked
       // by dispatch). `input` is valid for `num_chunks * CHUNK_LEN` bytes, so
       // each `input.add(i * CHUNK_LEN)` stays in-bounds. `out` is valid for
@@ -3709,15 +3699,13 @@ unsafe fn hash_many_contiguous_avx512_wrapper(
       debug_assert!(num_chunks < super::x86_64::avx512::DEGREE);
       debug_assert!(flags <= u8::MAX as u32);
       // Use the AVX-512 asm `hash_many` backend for the sub-degree tail
-      // (1–15 chunks). The assembly has efficient internal cascade with lane
-      // masking — Rust-side cascades to SSE4.1/AVX2 were benchmarked and
-      // regressed 11–36% on all x86_64 platforms.
+      // (1–15 chunks). The assembly performs its internal cascade with lane
+      // masking.
       //
       // The exception is the 15-chunk contiguous tail on AVX512DQ CPUs: the
-      // owned duplicate-lane 16-way batch is faster than the assembly cascade
-      // there, while every smaller measured tail remains slower.
+      // owned duplicate-lane 16-way batch is the configured exception.
       if num_chunks == 15 && avx512_owned_hash_many_available() {
-        // SAFETY: Routing this measured AVX-512 tail because:
+        // SAFETY: Routing this shape-specific AVX-512 tail because:
         // 1. Dispatch selected the AVX-512 kernel.
         // 2. `avx512_owned_hash_many_available()` checked the additional AVX512DQ requirement.
         // 3. `input` is readable for `15 * CHUNK_LEN` bytes.

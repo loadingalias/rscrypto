@@ -154,7 +154,7 @@ pub(crate) fn diag_crc64_xz(len: usize) -> Crc64SelectionDiag {
     effective_force: cfg.effective_force,
     policy_family: "dispatch",
     selected_kernel,
-    selected_streams: 1,                         // Dispatch uses pre-computed optimal kernel
+    selected_streams: 1,
     portable_to_clmul: table.boundaries[0],      // xs_max boundary
     pclmul_to_vpclmul: table.boundaries[2],      // m_max boundary
     small_kernel_max_bytes: table.boundaries[1], // s_max boundary
@@ -251,8 +251,7 @@ fn crc64_nvme_reference(crc: u64, data: &[u8]) -> u64 {
 /// Default SIMD threshold for buffered CRC.
 ///
 /// Buffered CRC uses this to decide when to flush accumulated small updates.
-/// The dispatch system handles optimal kernel selection; this is a conservative
-/// threshold for buffer flush decisions.
+/// Kernel selection remains the dispatch table's responsibility.
 #[cfg(feature = "alloc")]
 const CRC64_BUFFERED_THRESHOLD: usize = 64;
 
@@ -557,22 +556,9 @@ define_crc_dispatch! {
 /// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
 /// - **Reflect input/output**: Yes
 ///
-/// # Performance Notes
-///
-/// For optimal throughput, prefer larger updates when possible:
-///
-/// | Update Size | Path | Notes |
-/// |-------------|------|-------|
-/// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
-/// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
-///
-/// The exact threshold is microarchitecture-specific:
-/// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
-/// - Intel SPR: 128 bytes (ZMM warmup overhead)
-/// - Apple M1-M5: 48 bytes (efficient PMULL)
-///
-/// For streaming many small chunks, consider using [`Crc64::buffered`] which
-/// accumulates data internally until reaching the SIMD threshold.
+/// Runtime dispatch selects a kernel from the current platform table. For
+/// streaming many short fragments, [`Crc64::buffered`] coalesces updates before
+/// dispatch; measure the actual workload before assuming that buffering helps.
 ///
 /// # Examples
 ///
@@ -734,22 +720,10 @@ impl Crc64 {
 /// - **Final XOR**: 0xFFFFFFFFFFFFFFFF
 /// - **Reflect input/output**: Yes
 ///
-/// # Performance Notes
-///
-/// For optimal throughput, prefer larger updates when possible:
-///
-/// | Update Size | Path | Notes |
-/// |-------------|------|-------|
-/// | < 32-128 bytes | Portable slice-by-8 | Threshold varies by CPU |
-/// | ≥ 32-128 bytes | SIMD (PCLMULQDQ/PMULL) | Hardware accelerated |
-///
-/// The exact threshold is microarchitecture-specific:
-/// - AMD Zen 4/5: 32 bytes (fast SIMD setup)
-/// - Intel SPR: 128 bytes (ZMM warmup overhead)
-/// - Apple M1-M5: 48 bytes (efficient PMULL)
-///
-/// For streaming many small chunks, consider using [`Crc64Nvme::buffered`] which
-/// accumulates data internally until reaching the SIMD threshold.
+/// Runtime dispatch selects a kernel from the current platform table. For
+/// streaming many short fragments, [`Crc64Nvme::buffered`] coalesces updates
+/// before dispatch; measure the actual workload before assuming that buffering
+/// helps.
 ///
 /// # Examples
 ///
@@ -896,7 +870,7 @@ define_buffered_crc! {
   ///
   /// Use when you expect many small updates (< 64 bytes). This wrapper
   /// accumulates data internally until reaching the SIMD threshold, then
-  /// flushes in batches for optimal throughput.
+  /// flushes in batches before calling the active kernel.
   ///
   /// # When to Use
   ///
@@ -934,7 +908,7 @@ define_buffered_crc! {
   ///
   /// Use when you expect many small updates (< 64 bytes). This wrapper
   /// accumulates data internally until reaching the SIMD threshold, then
-  /// flushes in batches for optimal throughput.
+  /// flushes in batches before calling the active kernel.
   ///
   /// # When to Use
   ///

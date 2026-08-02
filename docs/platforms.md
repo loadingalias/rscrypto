@@ -1,10 +1,10 @@
 # Platforms
 
-`rscrypto` uses a three-tier dispatch model. The same source builds with a
-portable Rust path on every supported target and uses hardware backends only
-when the target and CPU support them.
+Every supported target retains a portable Rust implementation. Compile-time
+configuration and, with `std`, runtime CPU detection may select an eligible
+accelerated backend.
 
-## Dispatch Model
+## Dispatch model
 
 1. **Compile-time**: `#[cfg(target_feature = "...")]` selects the strongest backend permitted by `RUSTFLAGS` / `target-feature`.
 2. **Runtime detection** (`std` only): cached `platform::caps()` probes CPU features once via detection intrinsics and, on supported Linux/Android targets, OS capability files such as `/proc/self/auxv`; it then dispatches to the strongest available kernel.
@@ -18,7 +18,7 @@ through to portable backends. It does not remove SIMD code from the binary or
 override compile-time `target_feature` selection. See
 [`features.md`](features.md#portable-only).
 
-## Acceleration Matrix
+## Acceleration matrix
 
 Backend availability depends on what the target CPU advertises and what
 `target-feature` permits. The portable Rust fallback is present on every target
@@ -34,7 +34,7 @@ lower tier, including portable Rust.
 | x86_64 | SSE4.2 CRC32; SSSE3 / PCLMULQDQ; AVX2; AES-NI; SHA-NI; AVX-512F / VL / BW / DQ; AVX-512IFMA; VPCLMULQDQ; VAES |
 | aarch64 / Apple Silicon | NEON; AES; PMULL; CRC; SHA2; SHA3 / EOR3; SHA512; SVE2-PMULL where available |
 | s390x (IBM Z) | z/Vector; vector enhancements; CPACF / MSA; VGFM; fixed-work ML-KEM arithmetic |
-| ppc64le (POWER) | AltiVec; VSX; POWER8 vector / crypto; POWER9 / POWER10 vector; VPMSUMD |
+| ppc64le (POWER) | AltiVec; VSX; POWER8 vector / crypto and atomics; POWER9 / POWER10 vector; VPMSUMD |
 | riscv64 | V / RVV; Zbc; Zvbc; Zbkc; Zkne / Zknd; Zvkned; Zkt / Zvkt |
 | wasm32 | SIMD128 where enabled |
 
@@ -48,7 +48,7 @@ ML-KEM arithmetic uses fixed-work z/Vector kernels where those kernels are
 compiled and selected. The implementation does not replace constant-time
 hardening with native scalar multiply or divide on secret-fed arithmetic.
 
-## `no_std` Targets
+## `no_std` targets
 
 The following `no_std` targets are built in CI:
 
@@ -61,9 +61,13 @@ The following `no_std` targets are built in CI:
 
 Targets outside this list are not part of the CI contract. Open an issue with
 the exact target triple and feature set when a required target is missing.
+Build coverage does not establish a constant-time claim; use
+[`constant-time.md`](constant-time.md) for release-evidenced configurations.
 
-## Per-Platform Benchmark Scorecard
+## Per-platform benchmark evidence
 
-Current geomean speedups by platform live in
+The historical 2026-07-04 per-platform results live in
 [`benchmark_results/OVERVIEW.md`](../benchmark_results/OVERVIEW.md#coverage-matrix).
-The current public set is the 2026-07-04 nine-runner Linux CI matrix.
+Its aggregate includes the equivalent-work limitation documented in
+[`benchmarking.md`](benchmarking.md). Benchmark the deployment workload on its
+target CPU before choosing a performance-sensitive backend or feature set.

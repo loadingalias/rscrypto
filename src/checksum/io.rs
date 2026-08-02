@@ -6,7 +6,7 @@
 //!
 //! # Performance
 //!
-//! - Zero-cost abstraction: All methods are `#[inline]`
+//! - Inline-friendly methods over the checksum traits
 //! - Vectored I/O support: Uses the `update_vectored` method when available
 //! - Correctness: Only hashes bytes actually transferred (handles short reads/writes)
 //!

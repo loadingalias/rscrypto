@@ -1,8 +1,7 @@
 //! XXH3 (**NOT CRYPTO**).
 //!
 //! Hardware-accelerated on x86-64 (AVX2, AVX-512), aarch64 (NEON), POWER
-//! (VSX), s390x (z/Vector), and WASM (SIMD128), with a portable scalar
-//! fallback.
+//! (VSX), and s390x (z/Vector), with a portable scalar fallback.
 
 #![allow(clippy::indexing_slicing)] // Tight block parsing + fixed-size arrays
 
@@ -114,8 +113,7 @@ unsafe fn read_u64_le(input: &[u8], offset: usize) -> u64 {
 
 /// Extract a pair of 8-byte arrays at `offset` from a byte slice.
 ///
-/// Matches xxhash-rust's `get_aligned_chunk_ref::<[[u8; 8]; 2]>` pattern
-/// for optimal codegen: `from_ne_bytes(chunk[0])` compiles to a single `ldr`.
+/// Matches xxhash-rust's `get_aligned_chunk_ref::<[[u8; 8]; 2]>` call shape.
 ///
 /// # Safety
 ///
@@ -576,25 +574,6 @@ pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   } else {
     let secret = custom_default_secret(seed);
     xxh3_64_long_impl(input, &secret)
-  }
-}
-
-#[cfg(any(test, feature = "diag"))]
-#[inline(always)]
-fn xxh3_64_with_seed(input: &[u8], seed: u64) -> u64 {
-  let len = input.len();
-  if len <= 16 {
-    xxh3_64_0to16(input, seed, &DEFAULT_SECRET)
-  } else if len == 32 {
-    xxh3_64_32(input, seed, &DEFAULT_SECRET)
-  } else if len == 64 {
-    xxh3_64_64(input, seed, &DEFAULT_SECRET)
-  } else if len <= 128 {
-    xxh3_64_7to128(input, seed, &DEFAULT_SECRET)
-  } else if len <= MID_SIZE_MAX {
-    xxh3_64_129to240(input, seed, &DEFAULT_SECRET)
-  } else {
-    xxh3_64_long(input, seed)
   }
 }
 

@@ -1,8 +1,7 @@
 //! Internal CRC kernel tables and one-shot helpers.
 //!
 //! The public `checksum::dispatch` API was removed. What remains here is the
-//! internal table-driven selector that the CRC implementations use after the
-//! tuning work was collapsed into static, benchmark-backed kernel tables.
+//! internal table-driven selector and its manually maintained kernel choices.
 
 #[cfg(feature = "crc16")]
 use crate::checksum::dispatchers::Crc16Fn;
@@ -47,15 +46,11 @@ pub(crate) fn active_crc64_table() -> &'static KernelTable {
 /// Maximum input size for the inline bytewise fast-path.
 ///
 /// Inputs at or below this size bypass all dispatch machinery and use a simple
-/// byte-at-a-time table lookup. This eliminates `active_table()` + `select_fns()`
-/// + indirect fn ptr overhead (~7-10 ns) that dominates at tiny sizes.
-///
-/// Set to 7 (not 64) because at 8+ bytes the dispatch path's slice-by-N or
-/// hardware-accelerated kernels outperform the bytewise loop.
+/// byte-at-a-time table lookup. Larger inputs use normal table dispatch.
 const FAST_PATH_MAX: usize = 7;
 
-// `core::hint::cold_path` is 1.95+; a `#[cold]` empty fn produces identical
-// LLVM branch-weight metadata and keeps MSRV at 1.93.
+// `core::hint::cold_path` is newer than the crate's supported Rust baseline;
+// a `#[cold]` empty function produces the same branch-weight metadata.
 #[cold]
 #[inline]
 fn cold_path() {}
@@ -111,8 +106,7 @@ pub(crate) fn crc32_ieee(data: &[u8]) -> u32 {
   // - Medium (128–1024 B): PMULL v12e_v1 fold — 12-lane carryless multiply amortizes setup cost.
   //   Inlined to eliminate indirect-call barrier.
   // - Large (>1024 B + EOR3): v9s3x2e_s3 EOR3 fusion — 9 PMULL lanes interleaved with 3 scalar CRC
-  //   streams for ILP overlap; `veor3q_u64` reduces XOR chains. Significantly faster than v12e_v1 at
-  //   scale.
+  //   streams for ILP overlap; `veor3q_u64` reduces the XOR chains.
   #[cfg(target_arch = "aarch64")]
   {
     use crate::platform::caps::aarch64;
@@ -380,7 +374,7 @@ impl KernelSet {
 
 /// Complete kernel table for one platform.
 ///
-/// Contains pre-selected optimal kernels for each (variant, size_class) pair.
+/// Contains the selected kernels for each `(variant, size_class)` pair.
 /// Size class boundaries define when to transition between kernel tiers.
 ///
 /// Hot-path function pointers ([`KernelFnSet`]) are stored separately from
@@ -780,26 +774,9 @@ mod aarch64_tables {
     }
   }
 
-  // Apple M1-M3 Table
+  // Apple M1-M3 table.
   //
-  // Benchmark source: macOS local (2026-01-20)
   // Features: PMULL + SHA3 (EOR3)
-  // Peak throughputs: CRC-16 ~60 GiB/s, CRC-32 ~75 GiB/s, CRC-64 ~62 GiB/s
-  //
-  // Optimal kernels per (variant, peak):
-  //   crc16/ccitt: pmull, streams=3, 60.15 GiB/s
-  //   crc16/ibm:   pmull, streams=3, 58.77 GiB/s
-  //   crc24/openpgp: pmull, streams=3, 44.70 GiB/s
-  //   crc32/ieee:  pmull-eor3-v9s3x2e-s3, streams=1, 74.32 GiB/s
-  //   crc32c:      pmull-eor3-v9s3x2e-s3, streams=1, 75.32 GiB/s
-  //   crc64/xz:    pmull, streams=3, 62.58 GiB/s
-  //   crc64/nvme:  pmull-eor3, streams=3, 62.57 GiB/s
-  // AppleM1M3 Table
-  //
-  // Generated from benchmark-derived dispatch data. Do not edit manually.
-  // AppleM1M3 Table
-  //
-  // Generated from benchmark-derived dispatch data. Do not edit manually.
   pub static APPLE_M1M3_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY
       .union(crate::platform::caps::aarch64::PMULL_EOR3_READY)
@@ -931,24 +908,9 @@ mod aarch64_tables {
     },
   };
 
-  // Graviton2 Table
+  // Graviton2 table.
   //
-  // Benchmark source: Namespace linux-arm64 runner (2026-01-20)
   // Features: PMULL (no EOR3/SHA3)
-  // Peak throughputs: CRC-16 ~33 GiB/s, CRC-32 ~40 GiB/s, CRC-64 ~33 GiB/s
-  //
-  // Optimal kernels per (variant, peak):
-  //   crc16/ccitt: pmull, streams=1, 33.42 GiB/s
-  //   crc16/ibm:   pmull, streams=1, 33.45 GiB/s
-  //   crc24/openpgp: pmull, streams=1, 24.85 GiB/s
-  //   crc32/ieee:  pmull-eor3-v9s3x2e-s3, streams=1, 40.31 GiB/s
-  //   crc32c:      pmull-eor3-v9s3x2e-s3, streams=1, 40.11 GiB/s
-  //   crc64/xz:    pmull-eor3, streams=1, 33.49 GiB/s
-  //   crc64/nvme:  pmull, streams=1, 33.33 GiB/s
-  //
-  // Note: Graviton2 benchmark shows pmull-eor3 winning for CRC-64/XZ even
-  // without SHA3 feature flag - the EOR3 instruction is available through
-  // a different path on this hardware.
   #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   pub static GRAVITON2_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::aarch64::CRC_READY.union(crate::platform::caps::aarch64::PMULL_EOR3_READY),
@@ -968,11 +930,11 @@ mod aarch64_tables {
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull-small",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.53 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small beats hwcrc @ 9.54 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
       #[cfg(feature = "crc64")]
@@ -995,127 +957,121 @@ mod aarch64_tables {
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull-small",
       #[cfg(feature = "crc24")]
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 11.08 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 13.30 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 13.60 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 13.58 GiB/s (bench: pmull beats pmull-eor3)
+      crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     m: KernelSet {
       #[cfg(feature = "crc16")]
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 29.19 GiB/s
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
       #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
       #[cfg(feature = "crc16")]
-      crc16_ibm: crc16_k::IBM_PMULL[0], // 1-way @ 29.20 GiB/s
+      crc16_ibm: crc16_k::IBM_PMULL[0],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
       #[cfg(feature = "crc24")]
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 19.95 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 28.62 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-small",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 28.68 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-small",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 30.39 GiB/s (pmull-eor3 slower here)
+      crc64_xz: crc64_k::XZ_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 30.45 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
 
     l: KernelSet {
       #[cfg(feature = "crc16")]
-      crc16_ccitt: crc16_k::CCITT_PMULL[0], // 1-way @ 33.01 GiB/s
+      crc16_ccitt: crc16_k::CCITT_PMULL[0],
       #[cfg(feature = "crc16")]
       crc16_ccitt_name: "aarch64/pmull",
       #[cfg(feature = "crc16")]
-      crc16_ibm: crc16_k::IBM_PMULL[0], // 1-way @ 32.78 GiB/s
+      crc16_ibm: crc16_k::IBM_PMULL[0],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "aarch64/pmull",
       #[cfg(feature = "crc24")]
-      crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // 1-way @ 24.88 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "aarch64/pmull",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.82 GiB/s
+      crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0],
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 39.93 GiB/s
+      crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
       #[cfg(feature = "crc32")]
       crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 33.07 GiB/s
+      crc64_xz: crc64_k::XZ_PMULL_EOR3[0],
       #[cfg(feature = "crc64")]
       crc64_xz_name: "aarch64/pmull-eor3",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 33.08 GiB/s
+      crc64_nvme: crc64_k::NVME_PMULL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "aarch64/pmull",
     },
   };
 
-  // Graviton3 Table
+  // Graviton3 table.
   //
-  // Benchmark source: `src/checksum/bench_baseline/linux_arm64_graviton3_kernels.txt`
   // Features: PMULL + SHA3/EOR3
-  // Peak throughputs: CRC-16 ~38 GiB/s, CRC-32 ~46 GiB/s, CRC-64 ~38 GiB/s
-  //
-  // Key differences vs Graviton2:
-  // - Higher throughput (~25% faster across the board)
-  // - Different optimal kernel choices for CRC16@s and CRC64/NVME
   #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_XS: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
-    crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL, // pmull-small @ 8.01 GiB/s
+    crc16_ccitt: crc16_k::CCITT_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc16")]
     crc16_ccitt_name: "aarch64/pmull-small",
     #[cfg(feature = "crc16")]
-    crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL, // pmull-small @ 7.85 GiB/s
+    crc16_ibm: crc16_k::IBM_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull-small",
     #[cfg(feature = "crc24")]
-    crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL, // pmull-small @ 6.81 GiB/s
+    crc24_openpgp: crc24_k::OPENPGP_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull-small",
     #[cfg(feature = "crc32")]
-    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 10.30 GiB/s
+    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-small",
     #[cfg(feature = "crc32")]
-    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 12.49 GiB/s
+    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-small",
     #[cfg(feature = "crc64")]
-    crc64_xz: crc64_k::XZ_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+    crc64_xz: crc64_k::XZ_PMULL_SMALL,
     #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull-small",
     #[cfg(feature = "crc64")]
-    crc64_nvme: crc64_k::NVME_PMULL_SMALL, // pmull-small @ 7.06 GiB/s
+    crc64_nvme: crc64_k::NVME_PMULL_SMALL,
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-small",
   };
@@ -1123,31 +1079,31 @@ mod aarch64_tables {
   #[cfg(all(not(miri), any(target_os = "linux", target_os = "android")))]
   const G3_S: KernelSet = KernelSet {
     #[cfg(feature = "crc16")]
-    crc16_ccitt: crc16_k::CCITT_PMULL[0], // pmull @ 11.97 GiB/s (G3: pmull beats pmull-small)
+    crc16_ccitt: crc16_k::CCITT_PMULL[0],
     #[cfg(feature = "crc16")]
     crc16_ccitt_name: "aarch64/pmull",
     #[cfg(feature = "crc16")]
-    crc16_ibm: crc16_k::IBM_PMULL[0], // pmull @ 12.01 GiB/s (G3: pmull beats pmull-small)
+    crc16_ibm: crc16_k::IBM_PMULL[0],
     #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull",
     #[cfg(feature = "crc24")]
-    crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 14.12 GiB/s
+    crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
     #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull",
     #[cfg(feature = "crc32")]
-    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 8.66 GiB/s
+    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-small",
     #[cfg(feature = "crc32")]
-    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 8.79 GiB/s
+    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-small",
     #[cfg(feature = "crc64")]
-    crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 18.05 GiB/s
+    crc64_xz: crc64_k::XZ_PMULL[0],
     #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull",
     #[cfg(feature = "crc64")]
-    crc64_nvme: crc64_k::NVME_PMULL[0], // pmull @ 18.01 GiB/s
+    crc64_nvme: crc64_k::NVME_PMULL[0],
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull",
   };
@@ -1163,23 +1119,23 @@ mod aarch64_tables {
     #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull-eor3",
     #[cfg(feature = "crc24")]
-    crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 32.78 GiB/s
+    crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
     #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull",
     #[cfg(feature = "crc32")]
-    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL, // pmull-small @ 31.76 GiB/s
+    crc32_ieee: crc32_k::CRC32_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-small",
     #[cfg(feature = "crc32")]
-    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL, // pmull-small @ 32.26 GiB/s
+    crc32c: crc32_k::CRC32C_PMULL_SMALL_KERNEL,
     #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-small",
     #[cfg(feature = "crc64")]
-    crc64_xz: crc64_k::XZ_PMULL[0], // pmull @ 35.34 GiB/s
+    crc64_xz: crc64_k::XZ_PMULL[0],
     #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull",
     #[cfg(feature = "crc64")]
-    crc64_nvme: crc64_k::NVME_PMULL[1], // pmull-2way @ 34.60 GiB/s (G3: 2way beats 1way)
+    crc64_nvme: crc64_k::NVME_PMULL[1],
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-2way",
   };
@@ -1195,23 +1151,23 @@ mod aarch64_tables {
     #[cfg(feature = "crc16")]
     crc16_ibm_name: "aarch64/pmull-eor3-g3-ibm-hybrid",
     #[cfg(feature = "crc24")]
-    crc24_openpgp: crc24_k::OPENPGP_PMULL[0], // pmull @ 37.90 GiB/s
+    crc24_openpgp: crc24_k::OPENPGP_PMULL[0],
     #[cfg(feature = "crc24")]
     crc24_openpgp_name: "aarch64/pmull",
     #[cfg(feature = "crc32")]
-    crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.29 GiB/s
+    crc32_ieee: crc32_k::CRC32_PMULL_EOR3[0],
     #[cfg(feature = "crc32")]
     crc32_ieee_name: "aarch64/pmull-eor3-v9s3x2e-s3",
     #[cfg(feature = "crc32")]
-    crc32c: crc32_k::CRC32C_PMULL_EOR3[0], // pmull-eor3-v9s3x2e-s3 @ 46.08 GiB/s
+    crc32c: crc32_k::CRC32C_PMULL_EOR3[0],
     #[cfg(feature = "crc32")]
     crc32c_name: "aarch64/pmull-eor3-v9s3x2e-s3",
     #[cfg(feature = "crc64")]
-    crc64_xz: crc64_k::XZ_PMULL_EOR3[0], // pmull-eor3 @ 38.04 GiB/s
+    crc64_xz: crc64_k::XZ_PMULL_EOR3[0],
     #[cfg(feature = "crc64")]
     crc64_xz_name: "aarch64/pmull-eor3",
     #[cfg(feature = "crc64")]
-    crc64_nvme: crc64_k::NVME_PMULL_EOR3[0], // pmull-eor3 @ 38.05 GiB/s (G3: eor3 beats pmull)
+    crc64_nvme: crc64_k::NVME_PMULL_EOR3[0],
     #[cfg(feature = "crc64")]
     crc64_nvme_name: "aarch64/pmull-eor3",
   };
@@ -1677,8 +1633,8 @@ mod x86_64_tables {
 
   /// Zen4 CRC64/XZ large-path hybrid.
   ///
-  /// 2-way is strongest around lower "large" sizes, while 8-way closes the
-  /// remaining gap at xl-scale buffers.
+  /// Uses the 2-way kernel below the table threshold and the 8-way kernel
+  /// above it.
   #[cfg(feature = "crc64")]
   #[inline]
   fn zen4_crc64_xz_l_hybrid(crc: u64, data: &[u8]) -> u64 {
@@ -1689,28 +1645,9 @@ mod x86_64_tables {
     }
   }
 
-  // Zen5 Table
+  // Zen4 table.
   //
-  // Benchmark source: `src/checksum/bench_baseline/linux_x86-64_zen5_kernels.txt`
   // Features: VPCLMULQDQ + AVX-512
-  //
-  // Key differences vs Zen4:
-  // - Different optimal multi-stream counts for CRC16/24 kernels
-  // - CRC64 (large) prefers VPCLMUL-2way over the 4×512 kernel
-  // Zen4 Table
-  //
-  // Benchmark source: Namespace linux-x86 runner (2026-01-20)
-  // Features: VPCLMULQDQ + AVX-512
-  // Peak throughputs: CRC-16 ~80 GiB/s, CRC-32 ~78 GiB/s, CRC-64 ~75 GiB/s
-  //
-  // Optimal kernels per (variant, peak):
-  //   crc16/ccitt: vpclmul, streams=4, 79.87 GiB/s
-  //   crc16/ibm:   vpclmul, streams=4, 77.96 GiB/s
-  //   crc24/openpgp: vpclmul, streams=7, 42.96 GiB/s
-  //   crc32/ieee:  vpclmul, streams=2, 78.29 GiB/s
-  //   crc32c:      fusion-vpclmul-v3x2, streams=1, 72.53 GiB/s
-  //   crc64/xz:    vpclmul, streams=2, 71.56 GiB/s
-  //   crc64/nvme:  vpclmul, streams=2, 75.18 GiB/s
   pub static ZEN4_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::VPCLMUL_READY
       .union(crate::platform::caps::x86::PCLMUL_READY)
@@ -1731,11 +1668,11 @@ mod x86_64_tables {
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/pclmul-small",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL, // pclmul-small @ 9.30 GiB/s
+      crc32_ieee: crc32_k::CRC32_PCLMUL_SMALL_KERNEL,
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/pclmul-small",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 27.73 GiB/s
+      crc32c: crc32_k::CRC32C_HWCRC[0],
       #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
       #[cfg(feature = "crc64")]
@@ -1750,81 +1687,81 @@ mod x86_64_tables {
 
     s: KernelSet {
       #[cfg(feature = "crc16")]
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // 2-way @ 18.12 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
       #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc16")]
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 19.90 GiB/s
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc24")]
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3], // 7-way @ 17.28 GiB/s
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[3],
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-7way",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[0], // 1-way @ 19.15 GiB/s
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[0],
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_HWCRC[0], // hwcrc @ 23.59 GiB/s
+      crc32c: crc32_k::CRC32C_HWCRC[0],
       #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/hwcrc",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_VPCLMUL[0], // 1-way @ 19.48 GiB/s
+      crc64_xz: crc64_k::XZ_VPCLMUL[0],
       #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_VPCLMUL[0], // 1-way @ 20.70 GiB/s
+      crc64_nvme: crc64_k::NVME_VPCLMUL[0],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul",
     },
 
     m: KernelSet {
       #[cfg(feature = "crc16")]
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1], // 2-way @ 61.24 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[1],
       #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc16")]
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 64.84 GiB/s
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc24")]
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way @ 34.72 GiB/s (bench: 4way beats 8way)
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2],
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-4way",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 64.13 GiB/s
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc32")]
-      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0], // fusion-vpclmul-v3x2 @ 58.96 GiB/s
+      crc32c: crc32_k::CRC32C_FUSION_VPCLMUL[0],
       #[cfg(feature = "crc32")]
       crc32c_name: "x86_64/fusion-vpclmul-v3x2",
       #[cfg(feature = "crc64")]
-      crc64_xz: crc64_k::XZ_VPCLMUL[1], // 2-way @ 66.51 GiB/s
+      crc64_xz: crc64_k::XZ_VPCLMUL[1],
       #[cfg(feature = "crc64")]
       crc64_xz_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc64")]
-      crc64_nvme: crc64_k::NVME_VPCLMUL[1], // 2-way @ 66.51 GiB/s
+      crc64_nvme: crc64_k::NVME_VPCLMUL[1],
       #[cfg(feature = "crc64")]
       crc64_nvme_name: "x86_64/vpclmul-2way",
     },
 
     l: KernelSet {
       #[cfg(feature = "crc16")]
-      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2], // 4-way @ 73.97 GiB/s
+      crc16_ccitt: crc16_k::CCITT_VPCLMUL[2],
       #[cfg(feature = "crc16")]
       crc16_ccitt_name: "x86_64/vpclmul-4way",
       #[cfg(feature = "crc16")]
-      crc16_ibm: crc16_k::IBM_VPCLMUL[1], // 2-way @ 78.09 GiB/s
+      crc16_ibm: crc16_k::IBM_VPCLMUL[1],
       #[cfg(feature = "crc16")]
       crc16_ibm_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc24")]
-      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2], // 4-way @ 71.94 GiB/s (bench: 4way beats 2way)
+      crc24_openpgp: crc24_k::OPENPGP_VPCLMUL[2],
       #[cfg(feature = "crc24")]
       crc24_openpgp_name: "x86_64/vpclmul-4way",
       #[cfg(feature = "crc32")]
-      crc32_ieee: crc32_k::CRC32_VPCLMUL[1], // 2-way @ 72.57 GiB/s
+      crc32_ieee: crc32_k::CRC32_VPCLMUL[1],
       #[cfg(feature = "crc32")]
       crc32_ieee_name: "x86_64/vpclmul-2way",
       #[cfg(feature = "crc32")]
@@ -1982,18 +1919,7 @@ mod x86_64_tables {
 
   // Generic x86-64 PCLMUL Table (conservative)
   //
-  // Benchmark source: historical Windows "Default" baseline (no AVX-512).
-  // Note: Windows benchmark baselines are no longer tracked in-tree.
   // Features: PCLMULQDQ only
-  //
-  // Optimal kernels per (variant, size_class):
-  //   crc16/ccitt: xs=pclmul-small, s=pclmul, m=pclmul-7way, l=pclmul
-  //   crc16/ibm:   xs=pclmul-small, s=pclmul-4way, m=pclmul, l=pclmul-2way
-  //   crc24/openpgp: xs=pclmul-small, s=pclmul, m=pclmul-2way, l=pclmul-2way
-  //   crc32/ieee:  xs=pclmul-small, s=pclmul-4way, m=pclmul, l=pclmul-2way
-  //   crc32c:      xs=hwcrc, s=hwcrc, m=hwcrc-2way, l=fusion-sse-v4s3x3-2way
-  //   crc64/xz:    xs=pclmul-small, s=pclmul-small, m=pclmul-4way, l=pclmul
-  //   crc64/nvme:  xs=pclmul-small, s=pclmul-small, m=pclmul-2way, l=pclmul-2way
   pub static GENERIC_X86_PCLMUL_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::x86::PCLMUL_READY.union(crate::platform::caps::x86::CRC32C_READY),
     boundaries: [64, 256, 4096],
@@ -3039,13 +2965,8 @@ mod riscv64_tables {
   #[cfg(feature = "crc64")]
   // Keep CRC64 auto on portable slice-by-16 for now.
   //
-  // The repo already learned this lesson once on in-order RISC-V cores: the
-  // dedicated Zbc folds can look attractive on paper but still lose badly to
-  // slice16 once the dependency chains and merge overhead hit real hardware.
-  //
-  // The current RISE benchmark data still shows broad CRC64 losses across
-  // 32B..1MiB, so until we add the planned RISE hwprobe snapshot / per-runner
-  // tuning proof, the release-grade auto policy should stay conservative.
+  // No tracked target evidence currently justifies selecting the accelerated
+  // CRC64 kernels by default.
   #[cfg(feature = "crc64")]
   pub static RISCV64_CRC64_ZBC_TABLE: KernelTable = kernel_table! {
     requires: crate::platform::caps::riscv::ZBC,

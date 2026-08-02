@@ -58,9 +58,25 @@ jobs:
       artifact_path: ci-evidence/rsa-leakage-${{ matrix.target.name }}.log
       artifact_always: true
 
+  rsa-linux-x86_64-asm:
+    name: RSA Assembly (Linux x86-64)
+    uses: ./.github/workflows/_rust-job.yaml
+    with:
+      runner: runs-on=${{ github.run_id }}/runner=linux-x64-ci
+      timeout_minutes: 45
+      cache_key: rsa-linux-x86_64-asm
+      tools_mode: none
+      toolchain_components: ""
+      enable_magic_cache: true
+      enable_rust_cache: true
+      operation: rsa-linux-x64-asm
+      artifact_name: rsa-linux-x86_64-asm
+      artifact_path: ci-evidence/rsa-linux-x86_64-asm.log
+      artifact_always: true
+
   complete:
     name: Complete (RSA)
-    needs: [rsa-miri, rsa-leakage]
+    needs: [rsa-miri, rsa-leakage, rsa-linux-x86_64-asm]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -69,7 +85,8 @@ jobs:
           failed=0
           for lane in \
             "rsa-miri=${{ needs.rsa-miri.result }}" \
-            "rsa-leakage=${{ needs.rsa-leakage.result }}"
+            "rsa-leakage=${{ needs.rsa-leakage.result }}" \
+            "rsa-linux-x86_64-asm=${{ needs.rsa-linux-x86_64-asm.result }}"
           do
             name="${lane%%=*}"
             result="${lane#*=}"

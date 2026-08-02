@@ -1,15 +1,15 @@
-# Test Vector Coverage Ledger
+# Test vector coverage ledger
 
-This ledger makes negative-vector coverage visible per primitive instead of
-relying on broad claims like "covered by oracles". It is built from the actual
-`tests/` and `testdata/` files.
+This ledger maps each primitive to its positive oracle, negative behavior
+coverage, and known gaps. The entries come from the current `tests/` and
+`testdata/` files.
 
 Wycheproof suites are vendored from `C2SP/wycheproof` `testvectors_v1/`. The
 upstream project describes the JSON suites as implementation-agnostic test
 vectors for known attacks and edge cases, and recommends mapping the vectors to
 the concrete inputs and outputs of each cryptography API.
 
-## Negative Coverage Policy
+## Coverage rules
 
 - Prefer Wycheproof when its current JSON suite maps directly to a public
   rscrypto API.
@@ -21,7 +21,7 @@ the concrete inputs and outputs of each cryptography API.
   negative coverage is limited to parser/format boundaries and dispatch
   equivalence.
 
-## Coverage Table
+## Coverage table
 
 | Primitive | Positive vector / oracle coverage | Negative behavior coverage | Gaps / notes |
 | --- | --- | --- | --- |
@@ -31,9 +31,9 @@ the concrete inputs and outputs of each cryptography API.
 | CRC-64 family | `tests/crc64_properties.rs`; `crc64fast` and `crc-fast` oracles | Property tests cover combine/reset/streaming boundaries | No Wycheproof suite applies |
 | SHA-224 | `tests/sha2_official_vectors.rs`, `tests/sha256_official_vectors.rs`, `testdata/sha2/sha224.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |
 | SHA-256 | `tests/sha2_official_vectors.rs`, `tests/sha256_official_vectors.rs`, `tests/sha256_differential.rs`, `testdata/sha2/sha256.blb` | Streaming/oneshot and dispatch equivalence | Wycheproof has HMAC/HKDF/PBKDF2 SHA-256 suites, not raw SHA-256 |
-| SHA-384 | `tests/sha2_official_vectors.rs`, `testdata/sha2/sha384.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |
-| SHA-512 | `tests/sha2_official_vectors.rs`, `tests/sha512_differential.rs`, `testdata/sha2/sha512.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |
-| SHA-512/256 | `tests/sha2_official_vectors.rs`, `testdata/sha2/sha512_256.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |
+| SHA-384 | `tests/sha2_official_vectors.rs`, `testdata/sha2/sha384.blb` | Streaming/oneshot and dispatch equivalence; shared SHA-512-family boundary test panics before overlength absorption | Inputs beyond the FIPS 180-4 length field panic |
+| SHA-512 | `tests/sha2_official_vectors.rs`, `tests/sha512_differential.rs`, `testdata/sha2/sha512.blb` | Streaming/oneshot and dispatch equivalence; `message_length_above_boundary_panics` covers the encoded-length boundary | Inputs beyond the FIPS 180-4 length field panic |
+| SHA-512/256 | `tests/sha2_official_vectors.rs`, `testdata/sha2/sha512_256.blb` | Streaming/oneshot and dispatch equivalence; shared SHA-512-family boundary test panics before overlength absorption | Inputs beyond the FIPS 180-4 length field panic |
 | SHA3-224/256/384/512 | `tests/sha3_official_vectors.rs`, `tests/sha3_differential.rs`, `testdata/sha3/sha3_*.blb` | Streaming/oneshot and dispatch equivalence | No invalid input class |
 | SHAKE128 | `tests/sha3_official_vectors.rs`, `tests/shake128_differential.rs`, `testdata/sha3/shake128.blb` | XOF output-length boundaries | No invalid input class |
 | SHAKE256 | `tests/sha3_official_vectors.rs`, `tests/shake256_differential.rs`, `testdata/sha3/shake256.blb` | XOF output-length boundaries | No invalid input class |
@@ -44,7 +44,7 @@ the concrete inputs and outputs of each cryptography API.
 | BLAKE2s | `tests/blake2_official_vectors.rs`, `tests/blake2_differential.rs`, `testdata/blake2/blake2s.blb` | Keyed/unkeyed differential coverage | No invalid input class |
 | BLAKE3 | `tests/blake3_official_vectors.rs`, `tests/blake3_differential.rs`, `testdata/blake3/test_vectors.*` | XOF/keyed/derive-key differential coverage | No invalid input class |
 | Ascon hash/XOF/CXOF | Final SP 800-232 reference corpora in `tests/ascon_official_vectors.rs`, `tests/ascon_final_kats.rs`, and `testdata/ascon/`; independent coverage in `tests/ascon_hash_oracle.rs` and `tests/ascon_differential.rs` | XOF output and CXOF customization boundaries, streaming, and reset coverage | No invalid input class |
-| XXH3 | `tests/xxh3_differential.rs` | Seeded/streaming/property-style differential coverage | Non-cryptographic; no Wycheproof suite applies |
+| XXH3 | `tests/xxh3_differential.rs`, `src/hashes/fast/xxh3/stream.rs` unit tests, `fuzz/fuzz_targets/fast_xxh3.rs` | Seeded one-shot properties, streaming oracle/state coverage, and fuzzed partitions | Non-cryptographic; no Wycheproof suite applies |
 | RapidHash | `tests/rapidhash_differential.rs`; `src/hashes/fast/rapidhash/stream.rs` unit tests | Seeded one-shot property and collection-state schedule differentials; streaming chunk and reset equivalence | Non-cryptographic; no Wycheproof suite applies |
 | HMAC-SHA-256 | `tests/hmac_sha256_vectors.rs`, `tests/hmac_sha256_proptest.rs`, `tests/hmac_sha2_family_vectors.rs` | `tests/hmac_wycheproof.rs` covers full-tag Wycheproof valid/invalid tags; proptests/family vectors cover mismatch behavior | Truncated-tag Wycheproof groups are out of API scope: `verify_tag` accepts only `[u8; 32]` full tags |
 | HMAC-SHA-384 | `tests/hmac_sha384_proptest.rs`, `tests/hmac_sha2_family_vectors.rs` | `tests/hmac_wycheproof.rs` covers full-tag Wycheproof valid/invalid tags; proptests/family vectors cover mismatch behavior | Truncated-tag Wycheproof groups are out of API scope: `verify_tag` accepts only `[u8; 48]` full tags |

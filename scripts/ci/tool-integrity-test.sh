@@ -350,7 +350,7 @@ SH
 
 cat >"$package_bin/rustc" <<'SH'
 #!/usr/bin/env bash
-printf 'rustc 1.97.0-nightly\ncommit-date: 2026-04-26\n'
+printf 'rustc 1.99.0-nightly\ncommit-date: 2026-07-16\n'
 SH
 
 cp "$direct_bin/uname" "$package_bin/uname"
@@ -382,18 +382,37 @@ set -euo pipefail
 printf 'apt-get %s\n' "$*" >>"$MOCK_PACKAGE_LOG"
 SH
 
+cat >"$package_bin/apt-cache" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == policy && $# == 2 ]]
+case "$2" in
+  build-essential) candidate=12.10ubuntu1 ;;
+  git) candidate=1:2.54.0-0ppa1~ubuntu24.04.1 ;;
+  libgmp-dev) candidate=2:6.3.0+dfsg-2ubuntu6.1 ;;
+  libmpfr-dev) candidate=4.2.1-1build1.1 ;;
+  m4) candidate=1.4.19-4build1 ;;
+  opam) candidate=2.1.5-1 ;;
+  pkg-config) candidate=1.8.1-2build1 ;;
+  zlib1g-dev) candidate=1:1.3.dfsg-3.1ubuntu2.1 ;;
+  musl-tools) candidate=1.2.4-2 ;;
+  *) candidate='(none)' ;;
+esac
+printf '%s:\n  Candidate: %s\n' "$2" "$candidate"
+SH
+
 cat >"$package_bin/dpkg-query" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${*: -1}" in
   build-essential) printf '12.10ubuntu1' ;;
-  git) printf '1:2.43.0-1ubuntu7.3' ;;
-  libgmp-dev) printf '2:6.3.0+dfsg-2ubuntu6' ;;
-  libmpfr-dev) printf '4.2.1-1build1' ;;
+  git) printf '1:2.54.0-0ppa1~ubuntu24.04.1' ;;
+  libgmp-dev) printf '2:6.3.0+dfsg-2ubuntu6.1' ;;
+  libmpfr-dev) printf '4.2.1-1build1.1' ;;
   m4) printf '1.4.19-4build1' ;;
   opam) printf '2.1.5-1' ;;
   pkg-config) printf '1.8.1-2build1' ;;
-  zlib1g-dev) printf '1:1.3.dfsg-3.1ubuntu2' ;;
+  zlib1g-dev) printf '1:1.3.dfsg-3.1ubuntu2.1' ;;
   musl-tools) printf '1.2.4-2' ;;
   *) exit 96 ;;
 esac
@@ -403,8 +422,39 @@ cat >"$package_bin/git" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'git %s\n' "$*" >>"$MOCK_PACKAGE_LOG"
-[[ "$1" == -C && "$3" == rev-parse && "$4" == HEAD ]]
-printf '49f6d620cf20ae0168cfcbeb2c33932e06cb4b74\n'
+case "$1" in
+  init)
+    [[ "$2" == --quiet ]]
+    mkdir -p "$3/.git"
+    ;;
+  -C)
+    repository=$2
+    shift 2
+    case "$1" in
+      fetch)
+        [[ "$2" == --depth=1 && "$3" == --no-tags ]]
+        [[ "$4" == https://github.com/ocaml/opam-repository.git ]]
+        [[ "$5" == 49f6d620cf20ae0168cfcbeb2c33932e06cb4b74 ]]
+        ;;
+      checkout)
+        [[ "$2" == --quiet && "$3" == --detach && "$4" == FETCH_HEAD ]]
+        ;;
+      rev-parse)
+        [[ "$2" == HEAD ]]
+        printf '%s\n' "${MOCK_GIT_HEAD:-49f6d620cf20ae0168cfcbeb2c33932e06cb4b74}"
+        ;;
+      status)
+        [[ "$2" == --short && "$3" == --untracked-files=all ]]
+        if [[ "${MOCK_GIT_DIRTY:-0}" == 1 ]]; then
+          printf ' M packages/binsec/binsec.0.11.1/opam\n'
+        fi
+        ;;
+      *) exit 95 ;;
+    esac
+    [[ -d "$repository/.git" ]]
+    ;;
+  *) exit 94 ;;
+esac
 SH
 
 cat >"$package_bin/opam" <<'SH'
@@ -412,9 +462,7 @@ cat >"$package_bin/opam" <<'SH'
 set -euo pipefail
 printf 'opamroot=%s opam %s\n' "$OPAMROOT" "$*" >>"$MOCK_PACKAGE_LOG"
 case "$1" in
-  init)
-    mkdir -p "$OPAMROOT/repo/default/.git"
-    ;;
+  init) ;;
   switch)
     [[ "$2" == create ]]
     ;;
@@ -442,7 +490,7 @@ EOF
   *) exit 97 ;;
 esac
 SH
-chmod +x "$package_bin/sudo" "$package_bin/apt-get" \
+chmod +x "$package_bin/sudo" "$package_bin/apt-get" "$package_bin/apt-cache" \
   "$package_bin/dpkg-query" "$package_bin/git" "$package_bin/opam"
 
 ct_home="$TMP_ROOT/ct-home"
@@ -465,19 +513,52 @@ HOME="$ct_home" \
   MOCK_CARGO_STATE="$ct_state" \
   "$ct_installer" ct-linux >/dev/null
 grep -Fq \
-  'apt-get install -y --no-install-recommends --allow-downgrades build-essential=12.10ubuntu1 git=1:2.43.0-1ubuntu7.3' \
-  "$ct_log" || fail "ct-linux did not select exact Ubuntu package versions"
+  'apt-get --no-allow-insecure-repositories --error-on=any update' \
+  "$ct_log" || fail "ct-linux did not require authenticated APT metadata"
 grep -Fq \
-  'opam init --bare --disable-sandboxing --no-setup --no-opamrc -y default git+https://github.com/ocaml/opam-repository.git#49f6d620cf20ae0168cfcbeb2c33932e06cb4b74' \
-  "$ct_log" || fail "ct-linux did not select the commit-pinned OPAM repository"
+  'apt-get install -y --no-install-recommends --no-allow-unauthenticated --no-allow-downgrades --no-remove build-essential=12.10ubuntu1 git=1:2.54.0-0ppa1~ubuntu24.04.1 libgmp-dev=2:6.3.0+dfsg-2ubuntu6.1' \
+  "$ct_log" || fail "ct-linux did not install signed Ubuntu package candidates exactly"
+if grep -Fq -- '--allow-downgrades' "$ct_log"; then
+  fail "ct-linux permits APT package downgrades"
+fi
+grep -Eq \
+  '^git -C .*/ct-temp/rscrypto-ci-tools\.[^/]+/opam-repository fetch --depth=1 --no-tags https://github.com/ocaml/opam-repository\.git 49f6d620cf20ae0168cfcbeb2c33932e06cb4b74$' \
+  "$ct_log" || fail "ct-linux did not fetch the exact OPAM repository commit"
+grep -Eq \
+  '^opamroot=.*/ct-temp/rscrypto-ci-tools\.[^/]+/opam opam init --bare --disable-sandboxing --no-setup --no-opamrc -y default .*/ct-temp/rscrypto-ci-tools\.[^/]+/opam-repository$' \
+  "$ct_log" || fail "ct-linux did not initialize OPAM from the verified checkout"
 grep -Eq '^opamroot=.*/ct-temp/rscrypto-ci-tools\.[^/]+/opam opam switch create rscrypto-ct ocaml-base-compiler\.5\.2\.1 ' \
   "$ct_log" || fail "ct-linux did not use a fresh exact OPAM switch"
+
+bad_commit_temp="$TMP_ROOT/ct-bad-commit"
+mkdir -p "$bad_commit_temp"
+if HOME="$ct_home" \
+  RUNNER_TEMP="$bad_commit_temp" \
+  PATH="$package_bin:$PATH" \
+  MOCK_PACKAGE_LOG="$TMP_ROOT/ct-bad-commit.log" \
+  MOCK_CARGO_STATE="$ct_state" \
+  MOCK_GIT_HEAD=0000000000000000000000000000000000000000 \
+  "$ct_installer" ct-linux >/dev/null 2>&1; then
+  fail "ct-linux accepted the wrong OPAM repository commit"
+fi
+
+dirty_repository_temp="$TMP_ROOT/ct-dirty-repository"
+mkdir -p "$dirty_repository_temp"
+if HOME="$ct_home" \
+  RUNNER_TEMP="$dirty_repository_temp" \
+  PATH="$package_bin:$PATH" \
+  MOCK_PACKAGE_LOG="$TMP_ROOT/ct-dirty-repository.log" \
+  MOCK_CARGO_STATE="$ct_state" \
+  MOCK_GIT_DIRTY=1 \
+  "$ct_installer" ct-linux >/dev/null 2>&1; then
+  fail "ct-linux accepted modified OPAM repository metadata"
+fi
 
 for contract in \
   'cargo-nextest =0.9.140' \
   'cargo-deny =0.20.2' \
   'cargo-audit =0.22.2' \
-  'cargo-rail =0.18.0' \
+  'cargo-rail =0.20.0' \
   'cargo-semver-checks =0.48.0' \
   'just =1.57.0' \
   'zizmor =1.26.1' \
@@ -537,11 +618,11 @@ esac
 : >"$package_log"
 MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" \
-  nightly-2026-04-27 'clippy, rustfmt' >/dev/null
+  nightly-2026-07-17 'clippy, rustfmt' >/dev/null
 grep -Fq \
-  'rustup toolchain install nightly-2026-04-27 --profile minimal --no-self-update --component clippy --component rustfmt' \
+  'rustup toolchain install nightly-2026-07-17 --profile minimal --no-self-update --component clippy --component rustfmt' \
   "$package_log" || fail "rustup toolchain command was not exact"
-grep -Fq 'rustup default nightly-2026-04-27' "$package_log" \
+grep -Fq 'rustup default nightly-2026-07-17' "$package_log" \
   || fail "rustup did not select the exact toolchain"
 if MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" nightly clippy >/dev/null 2>&1; then

@@ -36,6 +36,9 @@ pub(crate) mod x86_64_avx512vl;
 
 const BLOCK_LEN: usize = 128;
 
+/// Maximum SHA-512-family message length in bytes under the 128-bit bit-length field.
+pub(crate) const MAX_MESSAGE_LEN: u128 = u128::MAX / 8;
+
 pub(crate) const H0: [u64; 8] = [
   0x6a09_e667_f3bc_c908,
   0xbb67_ae85_84ca_a73b,
@@ -169,6 +172,12 @@ fn small_sigma1(x: u64) -> u64 {
 ///
 /// Standardized in FIPS 180-4.
 ///
+/// # Panics
+///
+/// [`Digest::update`] and its vectored variants panic before absorbing an
+/// update that would make the cumulative input exceed the FIPS 180-4 maximum
+/// of 2^125 − 1 bytes.
+///
 /// # Examples
 ///
 /// ```
@@ -233,6 +242,18 @@ impl Default for Sha512 {
 }
 
 impl Sha512 {
+  #[inline]
+  pub(crate) fn checked_total_len(bytes_hashed: u128, block_len: usize, incoming_len: usize) -> u128 {
+    let total = bytes_hashed
+      .strict_add(block_len as u128)
+      .strict_add(incoming_len as u128);
+    assert!(
+      total <= MAX_MESSAGE_LEN,
+      "SHA-512 family: total input exceeds FIPS 180-4 maximum of 2^125 − 1 bytes"
+    );
+    total
+  }
+
   /// Compute the digest of `data` in one shot.
   ///
   /// This selects the best available kernel for the current platform and input
@@ -280,10 +301,7 @@ impl Sha512 {
       }
     };
 
-    let total = self
-      .bytes_hashed
-      .strict_add(self.block_len as u128)
-      .strict_add(incoming_len as u128);
+    let total = Self::checked_total_len(self.bytes_hashed, self.block_len, incoming_len);
     let compress = dispatch.select(len_hint_from_u128(total));
     self.compress_blocks = compress;
     compress
@@ -401,7 +419,7 @@ impl Sha512 {
     total_len: u128,
     compress_blocks: CompressBlocksFn,
   ) -> [u64; 8] {
-    let bit_len = total_len << 3;
+    let bit_len = total_len.strict_mul(8);
 
     block[block_len] = 0x80;
     block_len = block_len.strict_add(1);
@@ -846,7 +864,7 @@ impl_std_io_write_for_digest!(Sha512);
 #[cfg(test)]
 mod tests {
 
-  use super::Sha512;
+  use super::{MAX_MESSAGE_LEN, Sha512};
 
   fn hex64(bytes: &[u8; 64]) -> alloc::string::String {
     use alloc::string::String;
@@ -869,5 +887,16 @@ mod tests {
       hex64(&Sha512::digest(b"abc")),
       "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
     );
+  }
+
+  #[test]
+  fn message_length_boundary_is_checked_before_absorption() {
+    assert_eq!(Sha512::checked_total_len(MAX_MESSAGE_LEN, 0, 0), MAX_MESSAGE_LEN);
+  }
+
+  #[test]
+  #[should_panic(expected = "total input exceeds FIPS 180-4 maximum")]
+  fn message_length_above_boundary_panics() {
+    let _ = Sha512::checked_total_len(MAX_MESSAGE_LEN, 0, 1);
   }
 }

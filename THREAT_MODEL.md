@@ -1,7 +1,8 @@
 # Threat Model
 
-This is the security-review entry point for `rscrypto`. It defines what the
-crate defends, what the caller owns, and where an audit should focus.
+Use this document to scope a security review of `rscrypto`. It defines the
+crate boundary, protected assets, caller responsibilities, threat assumptions,
+evidence, and review priorities.
 
 Related documents: [`SECURITY.md`](SECURITY.md) for vulnerability reporting,
 [`docs/constant-time.md`](docs/constant-time.md) for the exact constant-time
@@ -11,9 +12,9 @@ secret-bearing type and heap inventory,
 evidence, [`docs/compliance.md`](docs/compliance.md) for regulatory positioning,
 and [`ct.toml`](ct.toml) for the machine-readable CT claim set.
 
-## Audit Scope
+## Audit scope
 
-Review the `ct-intended` candidate core before the rest of the repository:
+Review the `ct_intended` candidate core before the rest of the repository:
 
 1. X25519 scalar multiplication.
 2. Ed25519 signing and secret-key public derivation.
@@ -25,11 +26,13 @@ Review the `ct-intended` candidate core before the rest of the repository:
 7. MAC/tag verification, fixed-size owner comparison/declassification, and selected
    password-verification comparisons.
 
-Public parsing, raw hashes, checksums, non-cryptographic hashes, public-key
-verification math, benchmark paths, unlisted targets, unlisted feature sets, and
-unlisted build configurations are not blanket constant-time claims.
+This order prioritizes secret-dependent computation; it does not remove public
+parsers, dispatch, or unsafe kernels from the security boundary. Public parsing,
+raw hashes, checksums, non-cryptographic hashes, public-key verification math,
+benchmark paths, and unlisted build configurations carry no blanket
+constant-time claim.
 
-## System Boundary
+## System boundary
 
 `rscrypto` is a primitives library. It computes hashes, MACs, KDFs, password
 hashes, AEADs, signatures, key exchanges, and checksums on caller-provided
@@ -37,19 +40,19 @@ inputs. It does not open sockets, read the clock, or spawn production threads
 outside the opt-in `parallel` feature. With `std`, runtime CPU detection may
 read OS-exposed capability data such as `/proc/self/auxv`, `/proc/cpuinfo`, and
 sysfs; `getrandom` constructors obtain randomness from the operating system.
-The crate does not read application data or manage keys on disk. Protocol
-design, key storage, key rotation, and transport are the caller's
-responsibility.
+The crate does not read application data or manage keys on disk. The caller
+owns protocol design, key storage and rotation, entropy policy, nonce
+lifecycle, transport, and access control.
 
-Everything that crosses the boundary:
+Inputs crossing the boundary:
 
-| Input | Source | Trust |
+| Input | Source | Assumption |
 |---|---|---|
-| Keys, passwords, seeds | Caller | Trusted for secrecy, not validity. Individual imports enforce their documented shape and algorithm constraints. |
+| Keys, passwords, seeds | Caller | The caller protects confidentiality and supplies the required entropy. Imports enforce documented shape and algorithm constraints, not key quality. |
 | Messages, AAD, ciphertexts, tags, signatures, encoded keys | Caller, usually relayed from a network peer | Untrusted. |
-| Randomness | `getrandom` or caller-supplied fill closures | Trusted for entropy quality. Output lengths are fixed by the API. |
-| CPU capability reports | CPUID, auxv, sysctl, OS APIs | Trusted. Forced-backend overrides are validated before use. |
-| Build configuration | Cargo features, target features | Trusted. |
+| Randomness | `getrandom` or caller-supplied fill closures | The operating system or caller provides the required entropy quality. Output lengths are fixed by the API. |
+| CPU capability reports | CPUID, auxv, sysctl, OS APIs | The host reports capabilities correctly. Forced-backend overrides are validated before use. |
+| Build configuration | Cargo features, target features | The builder selects and records the intended configuration. |
 
 Outputs are digests, tags, ciphertexts, signatures, derived keys, and opaque
 errors. Direct comparison of fixed-size secret-bearing owners returns an opaque
@@ -67,9 +70,7 @@ claims remain limited to the release-evidenced configurations.
 4. Plaintext inside AEAD seal and open calls.
 5. Integrity of the published crate artifacts.
 
-## Adversaries
-
-In scope:
+## Threats in scope
 
 1. **Network attacker.** Supplies malformed ciphertexts, signatures, tags, and
    encoded keys. Goals: memory corruption, reachable panics, oracle behavior
@@ -80,14 +81,14 @@ In scope:
    configuration enters the release claim only when every required gate passes
    in the matching attested release bundle, under the model in
    [`docs/constant-time.md`](docs/constant-time.md).
-3. **Caller mistakes.** Nonce reuse, dropped verification results, weak
+3. **Caller misuse.** Reuses nonces, drops verification results, or selects weak
    parameters. The API uses typed keys and nonces, `#[must_use]` verification
    results, `NonceCounter` invocation budgets, opaque errors, and explicit drop
    cleanup for the named secret owners.
 4. **Supply-chain attacker.** Targets the path between this repository and the
    artifact a downstream build consumes.
 
-Out of scope:
+The following threats are out of scope:
 
 - Physical side channels: power, electromagnetic, acoustic, fault injection,
   rowhammer.
@@ -97,7 +98,7 @@ Out of scope:
 - Entropy failure in the OS or in caller-supplied randomness.
 - Protocol composition errors in downstream code.
 
-## Attack Surface
+## Attack surface
 
 Ordered by exposure to untrusted input:
 
@@ -109,7 +110,7 @@ Ordered by exposure to untrusted input:
 | `unsafe` low-level code | SIMD/assembly kernels, raw buffer helpers, zeroization, and dispatch | Undefined behavior, divergence from the portable authority |
 | Dispatch | `src/platform`, `src/backend` | Selecting a kernel the CPU cannot run, or one that produces wrong output |
 
-## Mitigations And Evidence
+## Mitigations and evidence
 
 | Risk | Mitigation | Evidence |
 |---|---|---|
@@ -119,9 +120,9 @@ Ordered by exposure to untrusted input:
 | Timing leakage | Constant-time coding rules on claimed paths | `ct.toml` evidence gate: timing tests, generated-code review, binary checks where supported |
 | Oracle behavior | Opaque errors, failed-open output clearing, single-bit failure shape | AEAD and verification tests, fuzz targets |
 | Secret exposure at rest | Zeroize at the last owned use and on drop, masked `Debug` and errors, and sealed fixed-size comparison only on semantic secret owners | [`docs/secret-ownership.md`](docs/secret-ownership.md), [`docs/secret-lifecycle.md`](docs/secret-lifecycle.md), `scripts/check/zeroize-evidence.sh`, and `tests/secret_redaction.rs` |
-| Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | `deny.toml`, `.github/workflows/release.yaml`, `docs/release.md` |
+| Supply chain | Minimal optional runtime dependencies, `cargo deny`, `cargo audit`, signed tags, Trusted Publishing, release attestations | [`deny.toml`](deny.toml), [`.github/workflows/release.yaml`](.github/workflows/release.yaml), [`docs/release.md`](docs/release.md) |
 
-## Known Gaps
+## Known gaps
 
 - No third-party security audit is claimed.
 - Named secret owners and explicit temporaries use volatile source-level wipes,
@@ -137,9 +138,9 @@ Ordered by exposure to untrusted input:
   claim. Windows, Linux MUSL, Intel macOS, bare-metal, and WASM physical timing
   evidence remains explicitly deferred.
 
-## Review Priorities
+## Review priorities
 
-Where an external review buys the most, in order:
+Prioritize external review in this order:
 
 1. The candidate constant-time core listed above.
 2. RSA DER import and the PKCS#1 v1.5, PSS, and OAEP padding checks.

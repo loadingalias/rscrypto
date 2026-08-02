@@ -147,10 +147,11 @@ fn hmac_sha256(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
+      let base_mac = RustCryptoHmacSha256::new_from_slice(&key).unwrap();
       b.iter(|| {
         use hmac::Mac as _;
 
-        let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key)).unwrap();
+        let mut mac = base_mac.clone();
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -1114,7 +1115,7 @@ fn ed25519_sign(c: &mut Criterion) {
 
   let secret_bytes = [9u8; 32];
   let secret = Ed25519SecretKey::from_bytes(secret_bytes);
-  let keypair = Ed25519Keypair::from_secret_key(secret);
+  let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   aws_lc_bench! {
     let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
@@ -1130,6 +1131,10 @@ fn ed25519_sign(c: &mut Criterion) {
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
+
+    g.bench_with_input(BenchmarkId::new("rscrypto-direct-secret", len), data, |b, d| {
+      b.iter(|| black_box(black_box(&secret).sign(black_box(d))))
+    });
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| black_box(black_box(&keypair).sign(black_box(d))))

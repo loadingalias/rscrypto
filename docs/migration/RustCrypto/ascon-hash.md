@@ -1,6 +1,8 @@
 # Migration: `ascon-hash` (RustCrypto) → `rscrypto`
 
-> Same algorithm (NIST LWC Ascon-Hash256). `ascon_hash::AsconHash256` becomes `rscrypto::AsconHash256`; everything else (trait shape, `update`, `finalize`) carries over.
+> Replace `ascon_hash::AsconHash256` with `rscrypto::AsconHash256`. Both map to
+> the SP 800-232 Ascon-Hash256 parameter set; the output bytes, `update`, and
+> `finalize` flow are unchanged.
 
 Verified against `ascon-hash = "0.4.0"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/ascon_official_vectors.rs`, `tests/ascon_hash_oracle.rs`, `tests/ascon_cxof_vectors.rs`, and `tests/ascon_differential.rs`.
@@ -86,18 +88,23 @@ reader.squeeze(&mut out);
 ```rust
 // After (rscrypto)
 use rscrypto::{AsconCxof128, Xof};
-let mut reader = AsconCxof128::xof(b"customization-string", b"data");
+let mut reader = AsconCxof128::xof(b"customization-string", b"data")?;
 let mut out = [0u8; 64];
 reader.squeeze(&mut out);
 ```
 
-The `customization-string` is bounded at 256 bytes by the spec: passing longer returns an `AsconCxofCustomizationError` (use `try_xof` if you need fallible construction).
+The spec limits the customization string to 256 bytes.
+`AsconCxof128::new`, `AsconCxof128::xof`, and
+`AsconCxof128::hash_into` return `AsconCxofCustomizationError` when that limit
+is exceeded.
 
 ## Notes
 
 - **`Output<D>` → `[u8; N]`.** Same as the rest of the RustCrypto migrations: drop `.as_slice()` / `.as_ref()`.
 - **`finalize` consumes vs. borrows.** Same as the rest: drop any `.clone()`.
-- **NIST LWC standard.** Ascon-Hash256 is the lightweight cryptography winner and standardised by NIST in SP 800-232. Both implementations track the final spec.
+- **NIST standard.** NIST published Ascon-Hash256, Ascon-XOF128, and
+  Ascon-CXOF128 in SP 800-232 on 2025-08-13. The differential tests compare
+  both implementations against the final parameter set.
 - **Implementation boundary.** rscrypto currently exposes a portable
   implementation for these Ascon hash and XOF types. `portable-only` does not
   change their backend selection.

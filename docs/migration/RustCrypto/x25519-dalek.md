@@ -1,6 +1,9 @@
 # Migration: `x25519-dalek` → `rscrypto`
 
-> Replace `StaticSecret` / `EphemeralSecret` / `PublicKey` / `SharedSecret` with rscrypto's unified `X25519SecretKey` / `X25519PublicKey` / `X25519SharedSecret`. Same RFC 7748 algorithm, byte-identical shared secrets, plus an explicit error on low-order peer input.
+> Replace `StaticSecret` / `EphemeralSecret` / `PublicKey` / `SharedSecret`
+> with rscrypto's unified `X25519SecretKey` / `X25519PublicKey` /
+> `X25519SharedSecret`. Valid RFC 7748 inputs produce the same shared-secret
+> bytes; rscrypto returns an explicit error for an all-zero result.
 
 Verified against `x25519-dalek = "2.0.1"` and the `rscrypto` 0.7.8 line.
 Evidence: `tests/x25519_vectors.rs`, `tests/x25519_oracle.rs`, and `tests/x25519_wycheproof.rs`.
@@ -84,7 +87,11 @@ let shared = secret.diffie_hellman(&peer_public)?;           // Result<X25519Sha
 let bytes: &[u8; 32] = shared.as_bytes();
 ```
 
-rscrypto returns `Err(X25519Error)` if the computed shared secret is the all-zero point (RFC 7748 §6.1: indicates a low-order peer public key, often an attempted contributory-behaviour attack). `x25519-dalek` returns the all-zero `SharedSecret` and leaves the check to the caller. Re-audit your code for unchecked all-zero outputs and replace them with the `?`.
+rscrypto returns `Err(X25519Error)` if the computed shared secret is the
+all-zero point (RFC 7748 §6.1: indicates a low-order peer public key, often an
+attempted contributory-behavior attack). `x25519-dalek` returns the all-zero
+`SharedSecret` and leaves the check to the caller. Re-audit your code for
+unchecked all-zero outputs and propagate the rscrypto result with `?`.
 
 ### Random key generation
 
@@ -124,6 +131,9 @@ in a public type.
   `SecretBytes<32>` overwrite their owned bytes on drop. The claim does not
   extend to caller-created copies; see
   [`docs/secret-ownership.md`](../../secret-ownership.md).
-- **No HKDF integration.** Some protocols KDF the X25519 shared secret immediately (e.g., Noise, Signal). rscrypto's `HkdfSha256` (from `features = ["hkdf"]`) is the natural pairing; see `RustCrypto/hkdf.md`.
+- **No HKDF integration.** Some protocols immediately pass the X25519 shared
+  secret to a KDF. `HkdfSha256` is available through `features = ["hkdf"]`;
+  the protocol must define the KDF and transcript binding. See the
+  [`hkdf` migration guide](hkdf.md).
 - **Scalar-multiplication timing.** rscrypto's portable backend uses fixed-work field-arithmetic source structure, and accelerated paths are differential-tested against it. That source property does not prove every compiler/target binary; constant-time coverage is limited to the exact configurations in the matching [release evidence](../../constant-time.md).
 - **`no_std`.** Both crates support `no_std` with no `alloc` requirement. The `getrandom`-backed `try_generate()` requires `getrandom`; the closure form `try_generate_with(|buf| ...)` does not.

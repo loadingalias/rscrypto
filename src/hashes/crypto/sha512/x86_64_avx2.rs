@@ -137,8 +137,7 @@ unsafe fn extract_128(v: __m128i) -> (u64, u64) {
 ///
 /// Same approach as [`schedule_rotate_256`] but for 128-bit registers.
 /// Eliminates ring-buffer index computation (`wrapping_sub`, `& 7`) in favour
-/// of fixed-offset array accesses + physical rotation. The 7 register moves
-/// are zero-cost on modern x86 (register renaming).
+/// of fixed-offset array accesses and physical rotation.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
@@ -173,9 +172,7 @@ unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
 ///
 /// Physically rotates the `x[]` array so that adjacent schedule words are
 /// always in adjacent registers. This lets `_mm256_alignr_epi8` extract
-/// cross-register values without `_mm256_permute2x128_si256` (3-cycle latency
-/// on Zen 5). The 7 register moves from rotation are zero-cost on modern x86
-/// (register renaming).
+/// cross-register values without `_mm256_permute2x128_si256`.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
@@ -193,7 +190,7 @@ unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
     );
 
     // Rotate: x[0] (newest) → x[7], shift everything left.
-    // Zero-cost on modern x86 via register renaming.
+    // Rotate the logical ring to keep adjacent words in adjacent registers.
     let new_val = x[0];
     x[0] = x[1];
     x[1] = x[2];
@@ -221,8 +218,7 @@ unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {
 ///
 /// 2. **Rotation-based schedule** — the `w[]` array is physically rotated after each schedule
 ///    update so adjacent words stay in adjacent registers. This lets `_mm256_alignr_epi8` extract
-///    cross-register values directly, eliminating `_mm256_permute2x128_si256` (3-cycle latency on
-///    Zen 5). The 7 register moves from rotation are zero-cost (register renaming).
+///    cross-register values directly, eliminating `_mm256_permute2x128_si256`.
 ///
 /// Uses the **standard round** (Σ0 and Σ1 computed independently within
 /// each round for maximum within-round parallelism).

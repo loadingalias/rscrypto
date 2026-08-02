@@ -3402,6 +3402,28 @@ pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) ->
   out
 }
 
+#[cfg(all(
+  feature = "diag",
+  feature = "ecdsa-p256",
+  any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  )
+))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p256_platform_scratch(wide: [u8; 64]) -> u64 {
+  let wide = ZeroizingBytes::new(wide);
+  let reduced = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P256_ORDER_MODULUS));
+  let inverse = SecretScalar::new(
+    reduced
+      .value()
+      .inv_mod_ct_montgomery(&P256_ORDER_MODULUS, P256_ORDER_MINUS_TWO),
+  );
+  core::hint::black_box(inverse.value().0[0])
+}
+
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
@@ -3521,6 +3543,26 @@ pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) ->
   out[..6].copy_from_slice(&selected.x.value.0);
   out[6..].copy_from_slice(&selected.y.value.0);
   out
+}
+
+#[cfg(all(
+  feature = "diag",
+  feature = "ecdsa-p384",
+  target_arch = "aarch64",
+  any(target_os = "macos", target_os = "linux")
+))]
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub(crate) fn diag_zeroize_ecdsa_p384_platform_scratch(wide: [u8; 96]) -> u64 {
+  let wide = ZeroizingBytes::new(wide);
+  let reduced = SecretScalar::new(reduce_wide_order_nonzero(wide.as_array(), &P384_ORDER_MODULUS));
+  let inverse = SecretScalar::new(
+    reduced
+      .value()
+      .inv_mod_ct_montgomery(&P384_ORDER_MODULUS, P384_ORDER_MINUS_TWO),
+  );
+  core::hint::black_box(inverse.value().0[0])
 }
 
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]

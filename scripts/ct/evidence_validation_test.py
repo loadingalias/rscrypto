@@ -144,6 +144,14 @@ def main() -> None:
     in manifest_errors(required_target_without_snapshot)
   )
 
+  def public_operand_primitive_without_root(manifest) -> None:
+    manifest["asm_public_operand"][0]["primitives"].append("owner_equality.fixed")
+
+  assert (
+    "asm_public_operand[0] has no root owned by primitive owner_equality.fixed"
+    in manifest_errors(public_operand_primitive_without_root)
+  )
+
   with tempfile.TemporaryDirectory() as temporary:
     temporary_path = Path(temporary)
     hashes = temporary_path / "hashes.txt"
@@ -227,8 +235,8 @@ def main() -> None:
     "waived": False,
   }
   rule = {
-    "primitive": "password.argon2i",
-    "root": "ct_entry_argon2i_verify",
+    "primitives": ["password.argon2i"],
+    "roots": ["ct_entry_argon2i_verify"],
     "symbol": finding["symbol"],
     "kind": finding["kind"],
     "max_count": 1,
@@ -242,20 +250,20 @@ def main() -> None:
 
   functions = {
     finding["symbol"]: FunctionBody(finding["symbol"], Path("fixture"), 0, []),
-    rule["root"]: FunctionBody(rule["root"], Path("fixture"), 0, []),
+    rule["roots"][0]: FunctionBody(rule["roots"][0], Path("fixture"), 0, []),
   }
   symbol_summary = summarize(set(functions), functions, [finding])[finding["symbol"]]
   assert symbol_summary["unwaived_fail_count"] == 0
   assert symbol_summary["accepted_count"] == 1
 
-  closures = {rule["primitive"]: {rule["root"]: set(functions)}}
-  primitive_summary = summarize_closure(closures, functions, [finding])[rule["primitive"]]
+  closures = {rule["primitives"][0]: {rule["roots"][0]: set(functions)}}
+  primitive_summary = summarize_closure(closures, functions, [finding])[rule["primitives"][0]]
   assert primitive_summary["unwaived_fail_count"] == 0
   assert primitive_summary["accepted_count"] == 1
 
   mixed = dict(
     finding,
-    primitive_ids=[rule["primitive"], "fixture.unresolved"],
+    primitive_ids=[rule["primitives"][0], "fixture.unresolved"],
     operand_class="unproven",
     disposition="needs-fix",
     waived=False,
@@ -266,12 +274,12 @@ def main() -> None:
   assert mixed["operand_class"] == "unproven" and mixed["disposition"] == "needs-fix"
 
   mixed_closures = {
-    rule["primitive"]: {rule["root"]: set(functions)},
-    "fixture.unresolved": {rule["root"]: set(functions)},
+    rule["primitives"][0]: {rule["roots"][0]: set(functions)},
+    "fixture.unresolved": {rule["roots"][0]: set(functions)},
   }
   mixed_summary = summarize_closure(mixed_closures, functions, [mixed])
-  assert mixed_summary[rule["primitive"]]["unwaived_fail_count"] == 0
-  assert mixed_summary[rule["primitive"]]["accepted_count"] == 1
+  assert mixed_summary[rule["primitives"][0]]["unwaived_fail_count"] == 0
+  assert mixed_summary[rule["primitives"][0]]["accepted_count"] == 1
   assert mixed_summary["fixture.unresolved"]["unwaived_fail_count"] == 1
   assert mixed_summary["fixture.unresolved"]["accepted_count"] == 0
 

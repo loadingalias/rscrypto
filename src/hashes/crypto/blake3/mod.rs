@@ -950,7 +950,7 @@ fn reduce_power_of_two_chunk_cvs_any(
     return cvs[0];
   }
   if cvs.len() <= 16 {
-    // Small subtrees are faster to fold serially (and avoid allocation / thread coordination).
+    // The configured small-tree path avoids allocation and thread coordination.
     return reduce_power_of_two_chunk_cvs(kernel, key_words, flags, cvs);
   }
 
@@ -972,15 +972,13 @@ fn reduce_power_of_two_chunk_cvs_any(
     let pairs = cur_len / 2;
     debug_assert!(pairs != 0);
 
-    // For large levels, parallelize parent folding. For small levels, the SIMD
-    // parent kernel is faster than coordinating threads.
+    // Parallelize only levels admitted by the explicit parent-fold threshold.
     //
     // Note: at 1 MiB (1024 chunks), the first reduction level is 512 pairs. If
     // we require a huge minimum here, we'd never parallelize parent folding on
     // common “large input” sizes.
     //
-    // 256 pairs = 512 child CVs. That's enough work (and memory traffic) to
-    // amortize Rayon scheduling overhead on typical desktop/server CPUs.
+    // The threshold is a manually maintained scheduling policy.
     const MIN_PAIRS_FOR_PARALLEL: usize = 256;
 
     // Helper: fold one reduction level, parallel (rayon) or serial.
@@ -2067,8 +2065,8 @@ fn root_output_oneshot(
     }
   }
 
-  // Small exact trees are common in oneshot benchmarks (4KiB/16KiB). For these,
-  // bypass the generic CV-stack builder and reduce the leaves directly.
+  // Small exact trees can bypass the generic CV-stack builder and reduce the
+  // leaves directly.
   if remainder == 0 && full_chunks.is_power_of_two() {
     if full_chunks <= MAX_SIMD_DEGREE {
       #[cfg(target_endian = "little")]

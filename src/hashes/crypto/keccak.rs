@@ -58,13 +58,11 @@ const RC: [u64; KECCAKF_ROUNDS] = [
 // State stays as `&mut [u64; 25]` so LLVM generates uniform `[rsp + const]`
 // spill patterns. A 5-element buffer is reused for θ and χ. Serial ρ+π chain
 // with hardcoded PI/RHO indices. Max ~8 simultaneous live locals.
-// Measured: +28% Zen5, +30% SPR, +9% Zen4/ICL vs the named-variable version.
 //
 // **aarch64 / register-rich targets (≥30 GPRs):** named-variable state.
 // All 25 lanes live in registers with good ILP. The 25 `b` temporaries for
 // ρ+π also fit without spilling. Avoids load/store traffic that the array
 // version introduces.
-// Measured: 8% faster than array-based on Graviton4.
 
 /// x86-64 / s390x / generic: array-based Keccak-f[1600].
 ///
@@ -422,8 +420,8 @@ pub(crate) fn keccakf_portable(state: &mut [u64; 25]) {
 ///
 /// Loads `state[i] ^ block_lane_i` directly into named register variables for
 /// rate lanes, and `state[i]` for capacity lanes. This eliminates the
-/// write-then-reload round-trip that separate `xor_block_into` + `keccakf_portable`
-/// incurs (~34 memory ops saved per SHA3-256 block).
+/// write-then-reload round-trip incurred by separate `xor_block_into` and
+/// `keccakf_portable` calls.
 ///
 /// Since `RATE` is a const generic, `RATE / 8` is compile-time known and LLVM
 /// eliminates all `if lane < lanes` branches — the result is straight-line code.
@@ -518,22 +516,16 @@ fn keccakf_absorb_portable<const RATE: usize>(state: &mut [u64; 25], block: &[u8
 //
 // Direct-call permuters replace the old function-pointer dispatch. Each
 // platform gets a concrete `Permuter` that calls the best kernel directly,
-// allowing LLVM to inline the permutation into the absorb loop. This is the
-// single most impactful change for SHA-3 throughput.
+// allowing LLVM to inline the permutation into the absorb loop.
 //
 // - x86_64: `X86Permuter` → `keccakf_portable` for single-state, AVX-512VL two-state `permute_x2`
-//   when available. SIMD evaluation for single-state Keccak remains negative:
-//   * AVX-512 χ-only: 9-38% SLOWER on Zen4/5, ICL, SPR (GPR↔SIMD crossing > VPTERNLOG savings)
-//   * AVX2: worse than AVX-512 (no VPTERNLOG, 3 ops for χ vs 1)
-//   * BMI2: LLVM already emits RORX; ANDN saves <5 ops/round after lane-complementing chi
-//   * Full SIMD: 25 u64 lanes need 13+ YMM registers; θ/ρ/π have no efficient SIMD mapping
-//   The two-state path has different economics: each vector lane carries an
-//   independent public XOF stream, so VPROLQ/VPTERNLOGQ reduce the paired
+//   when available. A single state does not fill both lanes, while the paired path maps one
+//   independent public XOF stream to each lane. The two-state path has different economics: each
+//   vector lane carries an independent public XOF stream, so VPROLQ/VPTERNLOGQ reduce the paired
 //   permutation work instead of duplicating one state.
 // - generic: `InlinePermuter` → `keccakf_portable`.
-// - aarch64: `Aarch64Permuter` → portable for single-state (the 1-state SHA3 CE kernel is ~1.9×
-//   slower on Neoverse V1/V2). SHA3 CE is used only for the 2-state interleaved path
-//   (`digest_pair`).
+// - aarch64: `Aarch64Permuter` uses the selected scalar single-state path and SHA3 CE for the
+//   2-state interleaved path (`digest_pair`).
 // - s390x: `S390xPermuter` → portable permutation + KIMD batch-absorb.
 
 pub(crate) trait Permuter: Copy {
@@ -669,13 +661,9 @@ impl Permuter for X86Permuter {
 /// keeps the portable scalar path for single-state and SHA3 CE for 2-state
 /// interleaved (`permute_x2`) when available.
 ///
-/// The single-state SHA3 CE kernel is ~1.8× slower than portable on Neoverse
-/// V1/V2 (Graviton3/4) — duplicating each u64 into both lanes of uint64x2_t
-/// wastes half the SIMD bandwidth and incurs GPR↔NEON crossing penalties. On
-/// Apple Silicon the SHA3 CE path is faster than the scalar named-register
-/// permutation. The 2-state kernel packs two independent states lane-wise for
-/// ~2× aggregate throughput, making SHA3 CE worthwhile on all aarch64 SHA3 CE
-/// targets for parallel operations.
+/// The single-state SHA3 CE kernel duplicates each `u64` across both vector
+/// lanes. The 2-state kernel instead maps one independent state to each lane,
+/// so parallel operations use the full vector width.
 #[cfg(all(target_arch = "aarch64", target_feature = "sha3", not(miri)))]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Aarch64Permuter;
@@ -824,8 +812,7 @@ impl Permuter for Aarch64Permuter {
   #[inline(always)]
   fn permute_x2(self, state_a: &mut [u64; 25], state_b: &mut [u64; 25], len_hint: usize) {
     if self.has_sha3 {
-      // The 2-state kernel uses both NEON lanes meaningfully (state_a in
-      // lane 0, state_b in lane 1), achieving ~2× aggregate throughput.
+      // The 2-state kernel maps state_a to lane 0 and state_b to lane 1.
       aarch64::keccakf_aarch64_sha3_x2(state_a, state_b);
     } else {
       self.permute(state_a, len_hint);
@@ -1265,8 +1252,7 @@ fn extract_output<const OUT: usize>(state: &[u64; 25], out: &mut [u8; OUT]) {
 /// Hash two independent messages in parallel using 2-state interleaved
 /// permutation (aarch64 SHA3 CE) or sequential fallback.
 ///
-/// On aarch64 with SHA3 CE, this achieves ~2× the aggregate throughput of
-/// two sequential hash computations.
+/// On AArch64 with SHA3 CE, one independent state occupies each vector lane.
 pub(crate) fn oneshot_pair<const RATE: usize, const OUT: usize>(
   ds: u8,
   data_a: &[u8],
@@ -1362,30 +1348,32 @@ fn xof_seeded_32_1_state<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> [
 }
 
 #[cfg(feature = "ml-kem")]
-pub(crate) fn xof_seeded_32_1<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> PublicKeccakXof<RATE> {
+pub(crate) fn xof_seeded_32_1_secret<const RATE: usize>(ds: u8, seed: &[u8; 32], x: u8) -> KeccakXof<RATE> {
   let permuter = PlatformPermuter::default();
   let mut state = xof_seeded_32_1_state::<RATE>(ds, seed, x);
   permuter.permute(&mut state, 0);
-  KeccakXofImpl {
+  let reader = KeccakXofImpl {
     state,
     pos: 0,
     permuter,
-  }
+  };
+  crate::traits::ct::zeroize_words(&mut state);
+  reader
 }
 
 #[cfg(feature = "ml-kem")]
-pub(crate) fn xof_seeded_32_1_pair<const RATE: usize>(
+pub(crate) fn xof_seeded_32_1_pair_secret<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
   a: u8,
   b: u8,
-) -> (PublicKeccakXof<RATE>, PublicKeccakXof<RATE>) {
+) -> (KeccakXof<RATE>, KeccakXof<RATE>) {
   let permuter = PlatformPermuter::default();
   let mut state_a = xof_seeded_32_1_state::<RATE>(ds, seed, a);
   let mut state_b = xof_seeded_32_1_state::<RATE>(ds, seed, b);
   permuter.permute_x2(&mut state_a, &mut state_b, 0);
 
-  (
+  let readers = (
     KeccakXofImpl {
       state: state_a,
       pos: 0,
@@ -1396,23 +1384,22 @@ pub(crate) fn xof_seeded_32_1_pair<const RATE: usize>(
       pos: 0,
       permuter,
     },
-  )
+  );
+  crate::traits::ct::zeroize_words_no_fence(&mut state_a);
+  crate::traits::ct::zeroize_words_no_fence(&mut state_b);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  readers
 }
 
 #[cfg(feature = "ml-kem")]
-pub(crate) fn xof_seeded_32_1_quad<const RATE: usize>(
+pub(crate) fn xof_seeded_32_1_quad_secret<const RATE: usize>(
   ds: u8,
   seed: &[u8; 32],
   a: u8,
   b: u8,
   c: u8,
   d: u8,
-) -> (
-  PublicKeccakXof<RATE>,
-  PublicKeccakXof<RATE>,
-  PublicKeccakXof<RATE>,
-  PublicKeccakXof<RATE>,
-) {
+) -> (KeccakXof<RATE>, KeccakXof<RATE>, KeccakXof<RATE>, KeccakXof<RATE>) {
   let permuter = PlatformPermuter::default();
   let mut state_a = xof_seeded_32_1_state::<RATE>(ds, seed, a);
   let mut state_b = xof_seeded_32_1_state::<RATE>(ds, seed, b);
@@ -1420,7 +1407,7 @@ pub(crate) fn xof_seeded_32_1_quad<const RATE: usize>(
   let mut state_d = xof_seeded_32_1_state::<RATE>(ds, seed, d);
   permuter.permute_x4(&mut state_a, &mut state_b, &mut state_c, &mut state_d, 0);
 
-  (
+  let readers = (
     KeccakXofImpl {
       state: state_a,
       pos: 0,
@@ -1441,7 +1428,13 @@ pub(crate) fn xof_seeded_32_1_quad<const RATE: usize>(
       pos: 0,
       permuter,
     },
-  )
+  );
+  crate::traits::ct::zeroize_words_no_fence(&mut state_a);
+  crate::traits::ct::zeroize_words_no_fence(&mut state_b);
+  crate::traits::ct::zeroize_words_no_fence(&mut state_c);
+  crate::traits::ct::zeroize_words_no_fence(&mut state_d);
+  core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+  readers
 }
 
 #[cfg(feature = "ml-kem")]

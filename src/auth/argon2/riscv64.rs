@@ -1,9 +1,9 @@
 //! RISC-V Vector (RVV) BlaMka compression kernel for Argon2.
 //!
-//! 2-u64 scalar pairs that the compiler auto-lowers to RVV at
-//! `VL=2 / SEW=64` when the V extension is active. This is the same
-//! contract the Blake2b RVV kernel uses; on cores without RVV the
-//! sequence still inlines to plain scalar 64-bit ops.
+//! Uses two-u64 pairs to expose independent operations to the optimizer while
+//! preserving ordinary scalar Rust semantics. Dispatch requires the RISC-V V
+//! extension for this backend, but exact RVV lowering is target- and
+//! toolchain-specific generated-code evidence.
 //!
 //! # Vectorisation topology
 //!
@@ -18,8 +18,7 @@
 //! per row (a/b/c/d × {lo, hi}).
 //!
 //! Diagonal step: rotate `b` by 1, `c` by 2, `d` by 3 within each
-//! 4-lane row. Implemented as plain index swaps; the compiler keeps
-//! these in registers under `-O2`.
+//! 4-lane row. Implemented as plain index swaps.
 //!
 //! # BlaMka multiply
 //!
@@ -29,10 +28,8 @@
 //!
 //! # Rotations
 //!
-//! All four (32, 24, 16, 63) use scalar `u64::rotate_right`. On RVV
-//! Zvbb-equipped cores these vectorise to native vector rotates; on
-//! older cores they expand to shift+or pairs that the engine
-//! pipelines independently per lane.
+//! All four (32, 24, 16, 63) use scalar `u64::rotate_right`; instruction
+//! selection is left to the target compiler.
 
 #![cfg(target_arch = "riscv64")]
 #![allow(clippy::cast_possible_truncation)]

@@ -516,17 +516,50 @@ def validate_manifest(root: Path, selected_target: str, errors: list[str], warni
         fail(errors, f"harness {harness.get('name', '<unnamed>')} covers unknown primitive {covered}")
 
   for index, rule in enumerate(ct.get("asm_public_operand", [])):
-    required_fields = {"primitive", "root", "symbol", "kind", "max_count", "source", "rationale"}
+    required_fields = {"primitives", "roots", "symbol", "kind", "max_count", "source", "rationale"}
     if set(rule) != required_fields:
       fail(errors, f"asm_public_operand[{index}] has incomplete or unknown fields")
       continue
-    primitive_id = rule.get("primitive")
-    if primitive_id not in primitive_ids:
-      fail(errors, f"asm_public_operand[{index}] references unknown primitive {primitive_id!r}")
+    rule_primitives = rule.get("primitives")
+    rule_roots = rule.get("roots")
+    if (
+      not isinstance(rule_primitives, list)
+      or not rule_primitives
+      or any(not isinstance(value, str) or not value for value in rule_primitives)
+      or len(rule_primitives) != len(set(rule_primitives))
+    ):
+      fail(errors, f"asm_public_operand[{index}] primitives must be a non-empty list of unique strings")
       continue
-    primitive = next(row for row in ct.get("primitive", []) if row.get("id") == primitive_id)
-    if rule.get("root") not in primitive.get("harness", {}).get("symbols", []):
-      fail(errors, f"asm_public_operand[{index}] root is not owned by primitive {primitive_id}")
+    if (
+      not isinstance(rule_roots, list)
+      or not rule_roots
+      or any(not isinstance(value, str) or not value for value in rule_roots)
+      or len(rule_roots) != len(set(rule_roots))
+    ):
+      fail(errors, f"asm_public_operand[{index}] roots must be a non-empty list of unique strings")
+      continue
+    unknown_primitives = sorted(set(rule_primitives) - primitive_ids)
+    if unknown_primitives:
+      fail(errors, f"asm_public_operand[{index}] references unknown primitives: {', '.join(unknown_primitives)}")
+      continue
+    owned_roots = {
+      symbol
+      for primitive in ct.get("primitive", [])
+      if primitive.get("id") in rule_primitives
+      for symbol in primitive.get("harness", {}).get("symbols", [])
+    }
+    unknown_roots = sorted(set(rule_roots) - owned_roots)
+    if unknown_roots:
+      fail(errors, f"asm_public_operand[{index}] roots are not owned by its primitives: {', '.join(unknown_roots)}")
+    for primitive_id in rule_primitives:
+      primitive_roots = {
+        symbol
+        for primitive in ct.get("primitive", [])
+        if primitive.get("id") == primitive_id
+        for symbol in primitive.get("harness", {}).get("symbols", [])
+      }
+      if set(rule_roots).isdisjoint(primitive_roots):
+        fail(errors, f"asm_public_operand[{index}] has no root owned by primitive {primitive_id}")
     if rule.get("kind") not in {"variable_latency_division", "variable_latency_multiply"}:
       fail(errors, f"asm_public_operand[{index}] kind is not a public-operand-classifiable instruction")
     max_count = rule.get("max_count")

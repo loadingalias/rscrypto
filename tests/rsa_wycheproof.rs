@@ -1,5 +1,7 @@
 #![cfg(feature = "rsa")]
 
+use core::ops::Range;
+
 use rscrypto::{RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy};
 use serde_json::Value;
 
@@ -43,6 +45,8 @@ const OAEP_4096_SHA512_MGF1SHA1: &str =
 const RSAES_PKCS1_2048: &str = include_str!("../testdata/rsa/wycheproof/rsa_pkcs1_2048_test.json");
 const RSAES_PKCS1_3072: &str = include_str!("../testdata/rsa/wycheproof/rsa_pkcs1_3072_test.json");
 const RSAES_PKCS1_4096: &str = include_str!("../testdata/rsa/wycheproof/rsa_pkcs1_4096_test.json");
+const RSAES_PKCS1_GROUP_COUNT: usize = 33;
+const RSAES_PKCS1_TEST_COUNT: u64 = 67;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ExpectedCounts {
@@ -525,18 +529,39 @@ fn assert_oaep_mgf1sha1_vectors_are_rejected(
   );
 }
 
-fn assert_rsaes_pkcs1v15_wycheproof_vectors(json: &str, expected_key_size: u64, expected: ExpectedCounts) {
+fn assert_rsaes_pkcs1v15_wycheproof_vectors(
+  json: &str,
+  expected_key_size: u64,
+  group_range: Range<usize>,
+  expected: ExpectedCounts,
+) {
   let suite: Value = serde_json::from_str(json).expect("Wycheproof RSAES-PKCS1-v1_5 JSON must parse");
   assert_eq!(suite["algorithm"].as_str(), Some("RSAES-PKCS1-v1_5"));
+  let all_groups = groups(&suite, "RSAES-PKCS1-v1_5");
+  assert_eq!(all_groups.len(), RSAES_PKCS1_GROUP_COUNT);
+  assert_eq!(suite["numberOfTests"].as_u64(), Some(RSAES_PKCS1_TEST_COUNT));
   assert_eq!(
-    suite["numberOfTests"].as_u64(),
-    Some(expected.valid.strict_add(expected.invalid) as u64)
+    all_groups.iter().map(|group| test_cases(group).len()).sum::<usize>() as u64,
+    RSAES_PKCS1_TEST_COUNT
+  );
+  let selected_groups = all_groups
+    .get(group_range)
+    .expect("Wycheproof RSAES-PKCS1-v1_5 group range must exist");
+  assert_eq!(
+    selected_groups
+      .iter()
+      .map(|group| test_cases(group).len())
+      .sum::<usize>(),
+    expected
+      .valid
+      .strict_add(expected.acceptable)
+      .strict_add(expected.invalid)
   );
   let mut valid = 0usize;
   let mut invalid = 0usize;
   let mut acceptable = 0usize;
 
-  for group in groups(&suite, "RSAES-PKCS1-v1_5") {
+  for group in selected_groups {
     assert_eq!(group["type"].as_str(), Some("RsaesPkcs1Decrypt"));
     assert_eq!(group["keySize"].as_u64(), Some(expected_key_size));
     let private_key_der = hex_to_vec(field(group, "privateKeyPkcs8"));
@@ -859,32 +884,155 @@ fn wycheproof_pkcs1v15_sha2_sig_gen_vectors_match_expected_signatures() {
 }
 
 #[test]
-fn wycheproof_rsaes_pkcs1v15_decrypt_vectors_match_expected_results() {
+fn wycheproof_rsaes_pkcs1v15_2048_decrypt_vectors_match_expected_results() {
   assert_rsaes_pkcs1v15_wycheproof_vectors(
     RSAES_PKCS1_2048,
     2048,
+    0..RSAES_PKCS1_GROUP_COUNT,
     ExpectedCounts {
       valid: 42,
       acceptable: 0,
       invalid: 25,
     },
   );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_3072_decrypt_vectors_match_expected_results() {
   assert_rsaes_pkcs1v15_wycheproof_vectors(
     RSAES_PKCS1_3072,
     3072,
+    0..RSAES_PKCS1_GROUP_COUNT,
     ExpectedCounts {
       valid: 41,
       acceptable: 0,
       invalid: 26,
     },
   );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_1_to_35_match_expected_results() {
   assert_rsaes_pkcs1v15_wycheproof_vectors(
     RSAES_PKCS1_4096,
     4096,
+    0..1,
     ExpectedCounts {
-      valid: 41,
+      valid: 10,
       acceptable: 0,
-      invalid: 26,
+      invalid: 25,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_36_to_39_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    1..5,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_40_to_43_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    5..9,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_44_to_47_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    9..13,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_48_to_51_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    13..17,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_52_to_55_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    17..21,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_56_to_59_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    21..25,
+    ExpectedCounts {
+      valid: 3,
+      acceptable: 0,
+      invalid: 1,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_60_to_63_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    25..29,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
+    },
+  );
+}
+
+#[test]
+fn wycheproof_rsaes_pkcs1v15_4096_cases_64_to_67_match_expected_results() {
+  assert_rsaes_pkcs1v15_wycheproof_vectors(
+    RSAES_PKCS1_4096,
+    4096,
+    29..RSAES_PKCS1_GROUP_COUNT,
+    ExpectedCounts {
+      valid: 4,
+      acceptable: 0,
+      invalid: 0,
     },
   );
 }

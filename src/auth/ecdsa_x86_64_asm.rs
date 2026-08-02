@@ -9,6 +9,7 @@
 
 use core::arch::global_asm;
 
+use super::ZeroizingWords;
 use crate::platform::{self, caps::x86};
 
 #[path = "ecdsa_aarch64_tables.rs"]
@@ -112,7 +113,7 @@ pub(super) fn p256_scalarmulbase_generator(scalar: &[u64; 4]) -> [u64; 8] {
 
 #[inline]
 pub(super) fn p256_reduce_order_64(bytes: &[u8; 64]) -> [u64; 4] {
-  let input = words_from_be_bytes_reversed::<8, 64>(bytes);
+  let input = ZeroizingWords::new(words_from_be_bytes_reversed::<8, 64>(bytes));
   let mut out = [0u64; 4];
   // SAFETY: P-256 order reduction call because:
   // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
@@ -120,7 +121,7 @@ pub(super) fn p256_reduce_order_64(bytes: &[u8; 64]) -> [u64; 4] {
   // 3. `input` has eight `u64` limbs and `len` is 8, so the assembly reads exactly the provided
   //    input.
   // 4. The routine runs a fixed-size reduction for public length 8; the reduced value may be secret.
-  unsafe { rscrypto_bignum_mod_n256(out.as_mut_ptr(), 8, input.as_ptr()) };
+  unsafe { rscrypto_bignum_mod_n256(out.as_mut_ptr(), 8, input.as_array().as_ptr()) };
   out
 }
 
@@ -193,7 +194,7 @@ pub(super) fn p384_field_inverse(value: &[u64; 6]) -> [u64; 6] {
 #[inline]
 pub(super) fn scalar_inverse<const L: usize>(value: &[u64; L], modulus: &[u64; L]) -> [u64; L] {
   let mut out = [0u64; L];
-  let mut tmp = [0u64; 18];
+  let mut tmp = ZeroizingWords::<18>::zeroed();
   debug_assert!(L == 4 || L == 6);
   // SAFETY: scalar-order inverse call because:
   // 1. This module is compiled only for Linux x86-64 System V, matching the embedded assembly ABI.
@@ -207,7 +208,7 @@ pub(super) fn scalar_inverse<const L: usize>(value: &[u64; L], modulus: &[u64; L
       out.as_mut_ptr(),
       value.as_ptr(),
       modulus.as_ptr(),
-      tmp.as_mut_ptr(),
+      tmp.as_mut_array().as_mut_ptr(),
     )
   };
   out

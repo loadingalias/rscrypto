@@ -248,8 +248,7 @@ pub(crate) unsafe fn compress_blocks_aarch64_sha2(state: &mut [u32; 8], blocks: 
 
       // Rounds 16-63: compact loop (3 iterations × 16 rounds each).
       //
-      // Keep the message schedule interleaved with the hash rounds. That
-      // matches the faster sha2 crate kernel on Graviton3/4 and avoids
+      // Keep the message schedule interleaved with the hash rounds rather than
       // lengthening the schedule dependency chain ahead of the hash work.
       for t in (16..64).step_by(16) {
         s0 = vsha256su1q_u32(vsha256su0q_u32(s0, s1), s2, s3);

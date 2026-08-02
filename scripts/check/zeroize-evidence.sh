@@ -11,7 +11,7 @@ RUSTC_WRAPPER="" CARGO_TARGET_DIR="$TARGET_DIR" cargo rustc \
   --release \
   --lib \
   --no-default-features \
-  --features alloc,aes-gcm,blake3,hmac,hmac-sha3,parallel,diag \
+  --features alloc,aegis256,aes-gcm,ascon-aead,blake3,chacha20poly1305,ecdsa-p256,ecdsa-p384,hkdf,hmac,hmac-sha3,ml-kem,parallel,rsa,diag \
   -- \
   -Ccodegen-units=1 \
   --emit=mir,llvm-ir,asm
@@ -53,7 +53,19 @@ for symbol in \
   diag_zeroize_blake3_thread_scratch \
   diag_zeroize_blake3_parallel_scratch \
   diag_zeroize_hmac_sha256_finalize \
-  diag_zeroize_hmac_sha3_finalize; do
+  diag_zeroize_hmac_sha3_finalize \
+  diag_hkdf_sha256_derive_portable \
+  diag_hkdf_sha384_derive_portable \
+  diag_hkdf_sha512_derive_portable \
+  diag_poly1305_block_portable_digest \
+  diag_ascon_aead128_tag_portable \
+  diag_aegis256_update_portable \
+  diag_aes128gcm_ghash \
+  diag_aes256gcm_ghash \
+  diag_zeroize_mlkem_sha3_512 \
+  diag_zeroize_mlkem_shake256_scalar \
+  diag_zeroize_mlkem_shake256_pair \
+  diag_zeroize_mlkem_shake256_quad; do
   if ! grep -q "@$symbol" "$LLVM_IR"; then
     echo "zeroize LLVM evidence missing symbol: $symbol" >&2
     exit 1
@@ -82,7 +94,19 @@ for symbol in \
   diag_zeroize_blake3_thread_scratch \
   diag_zeroize_blake3_parallel_scratch \
   diag_zeroize_hmac_sha256_finalize \
-  diag_zeroize_hmac_sha3_finalize; do
+  diag_zeroize_hmac_sha3_finalize \
+  diag_hkdf_sha256_derive_portable \
+  diag_hkdf_sha384_derive_portable \
+  diag_hkdf_sha512_derive_portable \
+  diag_poly1305_block_portable_digest \
+  diag_ascon_aead128_tag_portable \
+  diag_aegis256_update_portable \
+  diag_aes128gcm_ghash \
+  diag_aes256gcm_ghash \
+  diag_zeroize_mlkem_sha3_512 \
+  diag_zeroize_mlkem_shake256_scalar \
+  diag_zeroize_mlkem_shake256_pair \
+  diag_zeroize_mlkem_shake256_quad; do
   FUNCTION_IR="$(sed -n "/define .*@$symbol(/,/^}/p" "$LLVM_IR")"
   VOLATILE_STORES="$(grep -c 'store volatile .* 0' <<<"$FUNCTION_IR" || true)"
   if [[ "$VOLATILE_STORES" -lt 1 ]]; then
@@ -91,8 +115,90 @@ for symbol in \
   fi
 done
 
+POLY1305_IR="$(sed -n '/define .*@diag_poly1305_block_portable_digest(/,/^}/p' "$LLVM_IR")"
+if [[ "$(grep -c 'store volatile i32 0' <<<"$POLY1305_IR" || true)" -lt 14 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$POLY1305_IR"; then
+  echo "zeroize release evidence does not clear the complete portable Poly1305 state" >&2
+  exit 1
+fi
+
+ASCON_IR="$(sed -n '/define .*@diag_ascon_aead128_tag_portable(/,/^}/p' "$LLVM_IR")"
+ASCON_STATE_CLEANUP="$(sed -n '1,/fence syncscope("singlethread") seq_cst/p' <<<"$ASCON_IR")"
+if [[ "$(grep -c 'store volatile i64 0' <<<"$ASCON_STATE_CLEANUP" || true)" -lt 5 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$ASCON_IR"; then
+  echo "zeroize release evidence does not clear the complete portable Ascon-AEAD state" >&2
+  exit 1
+fi
+
+AEGIS_IR="$(sed -n '/define .*@diag_aegis256_update_portable(/,/^}/p' "$LLVM_IR")"
+if [[ "$(grep -c 'store volatile .* 0' <<<"$AEGIS_IR" || true)" -lt 3 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$AEGIS_IR"; then
+  echo "zeroize release evidence does not retain the portable AEGIS-256 state wipe" >&2
+  exit 1
+fi
+
+for symbol in diag_aes128gcm_ghash diag_aes256gcm_ghash; do
+  FUNCTION_IR="$(sed -n "/define .*@$symbol(/,/^}/p" "$LLVM_IR")"
+  if ! grep -q 'store volatile i128 0' <<<"$FUNCTION_IR" || \
+    ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$FUNCTION_IR"; then
+    echo "zeroize release evidence does not retain the GCM authentication-state wipe in $symbol" >&2
+    exit 1
+  fi
+done
+
+MLKEM_SHA3_IR="$(sed -n '/define .*@diag_zeroize_mlkem_sha3_512(/,/^}/p' "$LLVM_IR")"
+MLKEM_SHA3_FINALIZE_SYMBOL="$(
+  sed -n 's/.*call .*@\([^ (]*KeccakCoreImpl[^ (]*finalize_into_fixed[^ (]*\).*/\1/p' \
+    <<<"$MLKEM_SHA3_IR" | head -n 1
+)"
+MLKEM_SHA3_FINALIZE_IR="$(sed -n "/define .*@$MLKEM_SHA3_FINALIZE_SYMBOL(/,/^}/p" "$LLVM_IR")"
+if [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHA3_IR" || true)" -lt 25 ]] || \
+  [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHA3_FINALIZE_IR" || true)" -lt 25 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHA3_IR" || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHA3_FINALIZE_IR"; then
+  echo "zeroize release evidence does not clear ML-KEM SHA3-512 owner and finalization states" >&2
+  exit 1
+fi
+
+MLKEM_SHAKE_SCALAR_IR="$(sed -n '/define .*@diag_zeroize_mlkem_shake256_scalar(/,/^}/p' "$LLVM_IR")"
+MLKEM_SHAKE_SCALAR_SEED_SYMBOL="$(
+  grep 'call .*MlKemShake256XofReader.*seeded_32_1' <<<"$MLKEM_SHAKE_SCALAR_IR" |
+    grep -v 'quad' |
+    sed -n 's/.*@\([^ (]*\).*/\1/p' |
+    head -n 1
+)"
+MLKEM_SHAKE_SCALAR_SEED_IR="$(sed -n "/define .*@$MLKEM_SHAKE_SCALAR_SEED_SYMBOL(/,/^}/p" "$LLVM_IR")"
+if [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHAKE_SCALAR_IR" || true)" -lt 25 ]] || \
+  [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHAKE_SCALAR_SEED_IR" || true)" -lt 25 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHAKE_SCALAR_IR" || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHAKE_SCALAR_SEED_IR"; then
+  echo "zeroize release evidence does not clear ML-KEM scalar SHAKE owner and seeded state" >&2
+  exit 1
+fi
+
+MLKEM_SHAKE_PAIR_IR="$(sed -n '/define .*@diag_zeroize_mlkem_shake256_pair(/,/^}/p' "$LLVM_IR")"
+if [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHAKE_PAIR_IR" || true)" -lt 100 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHAKE_PAIR_IR"; then
+  echo "zeroize release evidence does not clear both ML-KEM pair owners and seeded states" >&2
+  exit 1
+fi
+
+MLKEM_SHAKE_QUAD_IR="$(sed -n '/define .*@diag_zeroize_mlkem_shake256_quad(/,/^}/p' "$LLVM_IR")"
+MLKEM_SHAKE_QUAD_SEED_SYMBOL="$(
+  sed -n 's/.*call .*@\([^ (]*MlKemShake256XofReader[^ (]*seeded_32_1_quad[^ (]*\).*/\1/p' \
+    <<<"$MLKEM_SHAKE_QUAD_IR" | head -n 1
+)"
+MLKEM_SHAKE_QUAD_SEED_IR="$(sed -n "/define .*@$MLKEM_SHAKE_QUAD_SEED_SYMBOL(/,/^}/p" "$LLVM_IR")"
+if [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHAKE_QUAD_IR" || true)" -lt 100 ]] || \
+  [[ "$(grep -c 'store volatile i64 0' <<<"$MLKEM_SHAKE_QUAD_SEED_IR" || true)" -lt 100 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHAKE_QUAD_IR" || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$MLKEM_SHAKE_QUAD_SEED_IR"; then
+  echo "zeroize release evidence does not clear all ML-KEM quad owners and seeded states" >&2
+  exit 1
+fi
+
 BLAKE3_DROP_WRAPPER="$(sed -n '/define .*@diag_zeroize_blake3_drop(/,/^}/p' "$LLVM_IR")"
-BLAKE3_DROP_SYMBOL="$(sed -n 's/.*call .*@\([^ (]*drop_in_place[^ (]*Blake3[^ (]*\).*/\1/p' \
+BLAKE3_DROP_SYMBOL="$(sed -En 's/.*call .*@([^ (]*drop_(in_place|glue)[^ (]*Blake3[^ (]*).*/\1/p' \
   <<<"$BLAKE3_DROP_WRAPPER" | head -n 1)"
 if [[ -z "$BLAKE3_DROP_SYMBOL" ]]; then
   echo "zeroize LLVM evidence does not route BLAKE3 cleanup through its production Drop" >&2
@@ -107,7 +213,7 @@ if [[ "$BLAKE3_DROP_STORES" -lt 8 ]] || ! grep -q "$BLAKE3_DROP_SYMBOL" "$ASSEMB
 fi
 
 BLAKE3_REUSE_IR="$(sed -n '/define .*@diag_zeroize_blake3_reuse(/,/^}/p' "$LLVM_IR")"
-BLAKE3_REUSE_DROPS="$(grep -c '^[[:space:]]*call .*drop_in_place.*Blake3' <<<"$BLAKE3_REUSE_IR" || true)"
+BLAKE3_REUSE_DROPS="$(grep -Ec '^[[:space:]]*call .*drop_(in_place|glue).*Blake3' <<<"$BLAKE3_REUSE_IR" || true)"
 if [[ "$BLAKE3_REUSE_DROPS" -lt 2 ]]; then
   echo "zeroize release evidence does not wipe both replaced and final BLAKE3 state" >&2
   exit 1
@@ -161,6 +267,56 @@ if [[ "$(grep -c 'store volatile .* 0' <<<"$HMAC_SHA256_SECRET_FINALIZE_IR" || t
   exit 1
 fi
 
+for symbol in \
+  diag_hkdf_sha256_derive_portable \
+  diag_hkdf_sha384_derive_portable \
+  diag_hkdf_sha512_derive_portable; do
+  FUNCTION_IR="$(sed -n "/define .*@$symbol(/,/^}/p" "$LLVM_IR")"
+  if [[ "$(grep -c 'store volatile .* 0' <<<"$FUNCTION_IR" || true)" -lt 8 ]] || \
+    ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$FUNCTION_IR"; then
+    echo "zeroize release evidence does not retain HKDF prefix and expansion-scratch cleanup in $symbol" >&2
+    exit 1
+  fi
+done
+
+ECDSA_P256_IR="$(sed -n '/define .*@diag_zeroize_ecdsa_p256_platform_scratch(/,/^}/p' "$LLVM_IR")"
+if [[ -z "$ECDSA_P256_IR" ]] || \
+  ! grep -q 'diag_zeroize_ecdsa_p256_platform_scratch' "$MIR" || \
+  ! grep -q 'diag_zeroize_ecdsa_p256_platform_scratch' "$ASSEMBLY" || \
+  [[ "$(grep -c 'store volatile i64 0' <<<"$ECDSA_P256_IR" || true)" -lt 26 ]] || \
+  ! grep -q 'fence syncscope("singlethread") seq_cst' <<<"$ECDSA_P256_IR"; then
+  echo "zeroize release evidence does not clear P-256 accelerated reduction and inversion scratch" >&2
+  exit 1
+fi
+
+if [[ "$(rustc -vV | sed -n 's/^host: //p')" == aarch64-* ]]; then
+  ECDSA_P384_IR="$(sed -n '/define .*@diag_zeroize_ecdsa_p384_platform_scratch(/,/^}/p' "$LLVM_IR")"
+  ECDSA_P384_INVERSE_CLEANUP="$(
+    awk '/fence syncscope\("singlethread"\) seq_cst/{fences++; next} fences == 0' \
+      <<<"$ECDSA_P384_IR"
+  )"
+  ECDSA_P384_REDUCED_CLEANUP="$(
+    awk '/fence syncscope\("singlethread"\) seq_cst/{fences++; next} fences == 1' \
+      <<<"$ECDSA_P384_IR"
+  )"
+  ECDSA_P384_WIDE_CLEANUP="$(
+    awk '/fence syncscope\("singlethread"\) seq_cst/{fences++; next} fences >= 2' \
+      <<<"$ECDSA_P384_IR"
+  )"
+  if [[ -z "$ECDSA_P384_IR" ]] || \
+    ! grep -q 'diag_zeroize_ecdsa_p384_platform_scratch' "$MIR" || \
+    ! grep -q 'diag_zeroize_ecdsa_p384_platform_scratch' "$ASSEMBLY" || \
+    [[ "$(grep -c 'store volatile i64 0' <<<"$ECDSA_P384_INVERSE_CLEANUP" || true)" -lt 6 ]] || \
+    [[ "$(grep -c 'store volatile i64 0' <<<"$ECDSA_P384_REDUCED_CLEANUP" || true)" -lt 6 ]] || \
+    ! grep -q 'sub nuw nsw i64 96' <<<"$ECDSA_P384_WIDE_CLEANUP" || \
+    ! grep -q 'store volatile i64 0' <<<"$ECDSA_P384_WIDE_CLEANUP" || \
+    ! grep -q 'store volatile i8 0' <<<"$ECDSA_P384_WIDE_CLEANUP" || \
+    [[ "$(grep -c 'fence syncscope("singlethread") seq_cst' <<<"$ECDSA_P384_IR" || true)" -lt 3 ]]; then
+    echo "zeroize release evidence does not clear P-384 accelerated input, reduction, and inversion scratch" >&2
+    exit 1
+  fi
+fi
+
 HEX_ERROR_IR="$(sed -n '/define .*@diag_zeroize_hex_error(/,/^}/p' "$LLVM_IR")"
 HEX_SUCCESS_IR="$(sed -n '/define .*@diag_zeroize_hex_success(/,/^}/p' "$LLVM_IR")"
 HEX_FROM_STR="$(sed -n 's/.*call .*@\([^ (]*FromStr8from_str\).*/\1/p' <<<"$HEX_ERROR_IR" | head -n 1)"
@@ -176,22 +332,203 @@ if [[ "$HEX_VOLATILE_STORES" -lt 2 ]]; then
   exit 1
 fi
 
+RSA_VALIDATION_WRAPPER_IR="$(
+  sed -n '/define .*diag_rsa_validate_pkcs8_private_key_der_stage(/,/^}/p' "$LLVM_IR"
+)"
+llvm_calls() {
+  local symbol_pattern="$1"
+  grep -E \
+    "^[[:space:]]*(%[^=]+=[[:space:]]*)?((musttail|tail|notail)[[:space:]]+)?call[[:space:]].*$symbol_pattern" ||
+    true
+}
+
+RSA_VALIDATION_SYMBOL="$(
+  llvm_calls 'validate_private_key_components_through_stage' \
+    <<<"$RSA_VALIDATION_WRAPPER_IR" |
+    sed -n 's/.*@\([^ (]*validate_private_key_components_through_stage[^ (]*\).*/\1/p' |
+    head -n 1
+)"
+if [[ -z "$RSA_VALIDATION_SYMBOL" ]] || \
+  ! grep -q 'diag_rsa_validate_pkcs8_private_key_der_stage' "$MIR" || \
+  ! grep -q 'diag_rsa_validate_pkcs8_private_key_der_stage' "$ASSEMBLY"; then
+  echo "zeroize RSA private-key validation evidence is missing" >&2
+  exit 1
+fi
+
+RSA_VALIDATION_IR="$(sed -n "/define .*@$RSA_VALIDATION_SYMBOL(/,/^}/p" "$LLVM_IR")"
+RSA_SECRET_OWNER_CONSTRUCTION_CALLS="$(
+  llvm_calls 'SecretBigEndianBuffer.*zeroed' <<<"$RSA_VALIDATION_IR"
+)"
+RSA_SECRET_OWNER_DROP_CALLS="$(
+  llvm_calls 'drop_(in_place|glue).*SecretBigEndianBuffer' <<<"$RSA_VALIDATION_IR"
+)"
+RSA_SECRET_OWNER_CONSTRUCTIONS="$(grep -c . <<<"$RSA_SECRET_OWNER_CONSTRUCTION_CALLS" || true)"
+RSA_SECRET_OWNER_DROPS="$(grep -c . <<<"$RSA_SECRET_OWNER_DROP_CALLS" || true)"
+RSA_SECRET_CONSTRUCTION_OPERANDS="$(
+  sed -n 's/.*(ptr [^%]*\(%[^,)]*\).*/\1/p' <<<"$RSA_SECRET_OWNER_CONSTRUCTION_CALLS" |
+    sort -u |
+    grep -c . || true
+)"
+RSA_SECRET_DROP_OPERANDS="$(
+  sed -n 's/.*(ptr [^%]*\(%[^,)]*\).*/\1/p' <<<"$RSA_SECRET_OWNER_DROP_CALLS" |
+    sort -u |
+    grep -c . || true
+)"
+RSA_SECRET_DROP_SYMBOL="$(
+  sed -En 's/.*@([^ (]*drop_(in_place|glue)[^ (]*SecretBigEndianBuffer[^ (]*).*/\1/p' \
+    <<<"$RSA_SECRET_OWNER_DROP_CALLS" | head -n 1
+)"
+if [[ "$RSA_SECRET_OWNER_CONSTRUCTIONS" -ne 9 || "$RSA_SECRET_OWNER_DROPS" -ne 9 || \
+  "$RSA_SECRET_CONSTRUCTION_OPERANDS" -ne 9 || "$RSA_SECRET_DROP_OPERANDS" -ne 9 || \
+  -z "$RSA_SECRET_DROP_SYMBOL" ]] || \
+  llvm_calls '__rust_dealloc' <<<"$RSA_VALIDATION_IR" | grep -q .; then
+  echo "zeroize RSA private-key validation does not retain all RAII cleanup paths" >&2
+  exit 1
+fi
+
+RSA_VALIDATION_WITHOUT_ONE_CONSTRUCTION="$(
+  awk '
+    !removed &&
+      /^[[:space:]]*(%[^=]+=[[:space:]]*)?((musttail|tail|notail)[[:space:]]+)?call[[:space:]]/ &&
+      /SecretBigEndianBuffer.*zeroed/ {
+        removed = 1
+        next
+      }
+    { print }
+  ' <<<"$RSA_VALIDATION_IR"
+)"
+RSA_VALIDATION_WITHOUT_ONE_DROP="$(
+  awk '
+    !removed &&
+      /^[[:space:]]*(%[^=]+=[[:space:]]*)?((musttail|tail|notail)[[:space:]]+)?call[[:space:]]/ &&
+      /drop_(in_place|glue).*SecretBigEndianBuffer/ {
+        removed = 1
+        next
+      }
+    { print }
+  ' <<<"$RSA_VALIDATION_IR"
+)"
+if [[ "$(llvm_calls 'SecretBigEndianBuffer.*zeroed' \
+  <<<"$RSA_VALIDATION_WITHOUT_ONE_CONSTRUCTION" | grep -c .)" -ne 8 ]] || \
+  [[ "$(llvm_calls 'drop_(in_place|glue).*SecretBigEndianBuffer' \
+    <<<"$RSA_VALIDATION_WITHOUT_ONE_DROP" | grep -c .)" -ne 8 ]]; then
+  echo "zeroize RSA private-key validation call parser does not reject a missing owner" >&2
+  exit 1
+fi
+
+RSA_SECRET_DROP_IR="$(sed -n "/define .*@$RSA_SECRET_DROP_SYMBOL(/,/^}/p" "$LLVM_IR")"
+RSA_SECRET_LAST_ZERO_LINE="$(
+  grep -n '^[[:space:]]*store volatile .* 0' <<<"$RSA_SECRET_DROP_IR" |
+    tail -n 1 |
+    cut -d: -f1
+)"
+RSA_SECRET_FENCE_LINE="$(
+  grep -n '^[[:space:]]*fence[[:space:]]' <<<"$RSA_SECRET_DROP_IR" |
+    head -n 1 |
+    cut -d: -f1
+)"
+RSA_SECRET_DEALLOC_LINE="$(
+  grep -nE \
+    '^[[:space:]]*(%[^=]+=[[:space:]]*)?((musttail|tail|notail)[[:space:]]+)?call[[:space:]].*__rust_dealloc' \
+    <<<"$RSA_SECRET_DROP_IR" |
+    head -n 1 |
+    cut -d: -f1
+)"
+if [[ "$(grep -c '^[[:space:]]*store volatile .* 0' <<<"$RSA_SECRET_DROP_IR" || true)" -lt 3 || \
+  -z "$RSA_SECRET_LAST_ZERO_LINE" || -z "$RSA_SECRET_FENCE_LINE" || -z "$RSA_SECRET_DEALLOC_LINE" || \
+  "$RSA_SECRET_LAST_ZERO_LINE" -ge "$RSA_SECRET_FENCE_LINE" || \
+  "$RSA_SECRET_FENCE_LINE" -ge "$RSA_SECRET_DEALLOC_LINE" ]]; then
+  echo "zeroize RSA private-key validation owner does not wipe before deallocation" >&2
+  exit 1
+fi
+
 function_assembly() {
   local symbol="$1"
   awk -v plain="$symbol:" -v apple="_$symbol:" '
     $0 == plain || $0 == apple { found = 1 }
-    found && emitted && $0 ~ /^[[:space:]]*\.globl[[:space:]]/ { exit }
+    found && emitted && $0 ~ /^[^[:space:].Ll][^:]*:$/ { exit }
     found { print }
     found { emitted = 1 }
-  ' "$ASSEMBLY"
+  '
 }
 
-FIXED_ASSEMBLY="$(function_assembly diag_zeroize_fixed_stack)"
+AARCH64_ZERO_MEMORY_PATTERN='^[[:space:]]*st(p|u?r)(b|h)?[[:space:]]+(wzr|xzr)(,[[:space:]]*(wzr|xzr))?,[[:space:]]*\[[^]]+\]'
+X86_ZERO_MEMORY_PATTERN='^[[:space:]]*mov[bql]?[[:space:]]+\$0,[[:space:]]*[[:alnum:]_+.-]*\([^)]*%[^)]*\)'
+
+ordered_assembly_cleanup() {
+  local body="$1"
+  local zero_pattern="$2"
+  local zero_line
+  local barrier_line
+  local dealloc_line
+
+  zero_line="$(grep -nE "$zero_pattern" <<<"$body" | tail -n 1 | cut -d: -f1)"
+  barrier_line="$(grep -n 'MEMBARRIER' <<<"$body" | head -n 1 | cut -d: -f1)"
+  dealloc_line="$(
+    grep -nE '^[[:space:]]*(b|bl|call|callq|jmp|jmpq)[[:space:]].*__rust_dealloc' <<<"$body" |
+      head -n 1 |
+      cut -d: -f1
+  )"
+
+  [[ -n "$zero_line" && -n "$barrier_line" && -n "$dealloc_line" &&
+    "$zero_line" -lt "$barrier_line" && "$barrier_line" -lt "$dealloc_line" ]]
+}
+
+FIXED_ASSEMBLY="$(function_assembly diag_zeroize_fixed_stack <"$ASSEMBLY")"
+RSA_VALIDATION_ASSEMBLY="$(function_assembly "$RSA_VALIDATION_SYMBOL" <"$ASSEMBLY")"
+RSA_SECRET_DROP_ASSEMBLY="$(function_assembly "$RSA_SECRET_DROP_SYMBOL" <"$ASSEMBLY")"
+if [[ "$RSA_VALIDATION_ASSEMBLY" != *"$RSA_SECRET_DROP_SYMBOL"* || -z "$RSA_SECRET_DROP_ASSEMBLY" ]]; then
+  echo "zeroize RSA private-key validation assembly does not retain owner cleanup" >&2
+  exit 1
+fi
+
+RSA_ASSEMBLY_NEGATIVE_FIXTURE="$(
+  printf '%s\n' \
+    "$RSA_SECRET_DROP_SYMBOL:" \
+    $'\tret' \
+    '_later_zeroizing_function:' \
+    $'\tstrb\twzr, [x0]' \
+    $'\t;MEMBARRIER' \
+    $'\tb\t__rust_dealloc'
+)"
+RSA_ASSEMBLY_NEGATIVE_BODY="$(
+  function_assembly "$RSA_SECRET_DROP_SYMBOL" <<<"$RSA_ASSEMBLY_NEGATIVE_FIXTURE"
+)"
+if [[ "$RSA_ASSEMBLY_NEGATIVE_BODY" == *'_later_zeroizing_function'* ]] || \
+  ordered_assembly_cleanup "$RSA_ASSEMBLY_NEGATIVE_BODY" "$AARCH64_ZERO_MEMORY_PATTERN"; then
+  echo "zeroize assembly function parser does not reject a later function's cleanup" >&2
+  exit 1
+fi
+
+for fixture in \
+  $'; strb wzr, [x0]\n;MEMBARRIER\nb __rust_dealloc' \
+  $'# movq $0, (%rax)\n#MEMBARRIER\njmp __rust_dealloc' \
+  $'movl $0, %eax\n#MEMBARRIER\njmp __rust_dealloc'; do
+  if ordered_assembly_cleanup "$fixture" "$AARCH64_ZERO_MEMORY_PATTERN" || \
+    ordered_assembly_cleanup "$fixture" "$X86_ZERO_MEMORY_PATTERN"; then
+    echo "zeroize assembly parser accepts a comment or register-only zero" >&2
+    exit 1
+  fi
+done
+if ! ordered_assembly_cleanup \
+  $'strb wzr, [x0]\n;MEMBARRIER\nb __rust_dealloc' "$AARCH64_ZERO_MEMORY_PATTERN" || \
+  ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<< $'stur xzr, [x0, #-8]' || \
+  ! ordered_assembly_cleanup \
+    $'movq $0, 8(%rax)\n#MEMBARRIER\njmp __rust_dealloc' "$X86_ZERO_MEMORY_PATTERN"; then
+  echo "zeroize assembly parser rejects a valid ordered memory wipe" >&2
+  exit 1
+fi
+
 HOST_ARCH="$(rustc -vV | sed -n 's/^host: \([^-]*\).*/\1/p')"
 case "$HOST_ARCH" in
   aarch64)
+    if ! ordered_assembly_cleanup \
+      "$RSA_SECRET_DROP_ASSEMBLY" "$AARCH64_ZERO_MEMORY_PATTERN"; then
+      echo "zeroize RSA private-key validation assembly does not wipe before deallocation" >&2
+      exit 1
+    fi
     if ! grep -Eq 'st(p|r)[[:space:]].*\[sp' <<<"$FIXED_ASSEMBLY" || \
-       ! grep -Eq 'str(b|h)?[[:space:]].*(wzr|xzr)' <<<"$FIXED_ASSEMBLY"; then
+       ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<<"$FIXED_ASSEMBLY"; then
       echo "zeroize assembly evidence does not show the fixed-size stack spill and wipe" >&2
       exit 1
     fi
@@ -205,16 +542,36 @@ case "$HOST_ARCH" in
       diag_zeroize_blake3_thread_scratch \
       diag_zeroize_blake3_parallel_scratch \
       diag_zeroize_hmac_sha256_finalize \
-      diag_zeroize_hmac_sha3_finalize; do
-      FUNCTION_ASSEMBLY="$(function_assembly "$symbol")"
-      if ! grep -Eq 'st(p|r)(b|h)?[[:space:]].*(wzr|xzr)' <<<"$FUNCTION_ASSEMBLY"; then
+      diag_zeroize_hmac_sha3_finalize \
+      diag_hkdf_sha256_derive_portable \
+      diag_hkdf_sha384_derive_portable \
+      diag_hkdf_sha512_derive_portable \
+      diag_poly1305_block_portable_digest \
+      diag_ascon_aead128_tag_portable \
+      diag_aegis256_update_portable \
+      diag_aes128gcm_ghash \
+      diag_aes256gcm_ghash \
+      diag_zeroize_mlkem_sha3_512 \
+      diag_zeroize_mlkem_shake256_scalar \
+      diag_zeroize_mlkem_shake256_pair \
+      diag_zeroize_mlkem_shake256_quad \
+      diag_zeroize_ecdsa_p256_platform_scratch \
+      diag_zeroize_ecdsa_p384_platform_scratch; do
+      FUNCTION_ASSEMBLY="$(function_assembly "$symbol" <"$ASSEMBLY")"
+      if ! grep -Eq "$AARCH64_ZERO_MEMORY_PATTERN" <<<"$FUNCTION_ASSEMBLY"; then
         echo "zeroize assembly evidence has no zero store in $symbol" >&2
         exit 1
       fi
     done
     ;;
   x86_64)
-    if ! grep -Eq '%rsp' <<<"$FIXED_ASSEMBLY" || ! grep -Eq "mov[bql]?[[:space:]]+\\\$0" <<<"$FIXED_ASSEMBLY"; then
+    if ! ordered_assembly_cleanup \
+      "$RSA_SECRET_DROP_ASSEMBLY" "$X86_ZERO_MEMORY_PATTERN"; then
+      echo "zeroize RSA private-key validation assembly does not wipe before deallocation" >&2
+      exit 1
+    fi
+    if ! grep -Eq '%rsp' <<<"$FIXED_ASSEMBLY" || \
+      ! grep -Eq "$X86_ZERO_MEMORY_PATTERN" <<<"$FIXED_ASSEMBLY"; then
       echo "zeroize assembly evidence does not show the fixed-size stack spill and wipe" >&2
       exit 1
     fi
@@ -228,9 +585,22 @@ case "$HOST_ARCH" in
       diag_zeroize_blake3_thread_scratch \
       diag_zeroize_blake3_parallel_scratch \
       diag_zeroize_hmac_sha256_finalize \
-      diag_zeroize_hmac_sha3_finalize; do
-      FUNCTION_ASSEMBLY="$(function_assembly "$symbol")"
-      if ! grep -Eq "mov[bql]?[[:space:]]+\\\$0" <<<"$FUNCTION_ASSEMBLY"; then
+      diag_zeroize_hmac_sha3_finalize \
+      diag_hkdf_sha256_derive_portable \
+      diag_hkdf_sha384_derive_portable \
+      diag_hkdf_sha512_derive_portable \
+      diag_poly1305_block_portable_digest \
+      diag_ascon_aead128_tag_portable \
+      diag_aegis256_update_portable \
+      diag_aes128gcm_ghash \
+      diag_aes256gcm_ghash \
+      diag_zeroize_mlkem_sha3_512 \
+      diag_zeroize_mlkem_shake256_scalar \
+      diag_zeroize_mlkem_shake256_pair \
+      diag_zeroize_mlkem_shake256_quad \
+      diag_zeroize_ecdsa_p256_platform_scratch; do
+      FUNCTION_ASSEMBLY="$(function_assembly "$symbol" <"$ASSEMBLY")"
+      if ! grep -Eq "$X86_ZERO_MEMORY_PATTERN" <<<"$FUNCTION_ASSEMBLY"; then
         echo "zeroize assembly evidence has no zero store in $symbol" >&2
         exit 1
       fi

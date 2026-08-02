@@ -80,12 +80,14 @@ impl Detected {
 
   #[inline]
   #[must_use]
+  #[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
   const fn is_portable(self) -> bool {
     self.caps.is_empty() && matches!(self.arch, Arch::Other)
   }
 }
 
 #[cold]
+#[cfg(any(feature = "std", all(not(feature = "std"), target_has_atomic = "64")))]
 fn validate_override(value: Option<Detected>) -> Result<Option<Detected>, OverrideError> {
   let Some(det) = value else {
     return Ok(None);

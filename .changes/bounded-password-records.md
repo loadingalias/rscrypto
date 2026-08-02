@@ -1,5 +1,5 @@
 ---
-"rscrypto" = "minor"
+"rscrypto" = "major"
 ---
 
 Argon2 and scrypt password verification now reject noncanonical or over-budget

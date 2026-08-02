@@ -72,10 +72,34 @@ if ! "$SCRIPT_DIR/asm-ledger.sh" >"$LOG_DIR/asm-ledger.log" 2>&1; then
 fi
 ok
 
+step "Checking hash vector provenance"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/hash-vector-provenance.py" >"$LOG_DIR/hash-vectors.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/hash-vectors.log"
+  exit 1
+fi
+ok
+
+step "Checking authentication vector provenance"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/auth-vector-provenance.py" >"$LOG_DIR/auth-vectors.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/auth-vectors.log"
+  exit 1
+fi
+ok
+
 step "Checking CT assembly scanner"
 if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/asm_heuristics_test.py" >"$LOG_DIR/ct-asm-scanner.log" 2>&1; then
   fail
   show_error "$LOG_DIR/ct-asm-scanner.log"
+  exit 1
+fi
+ok
+
+step "Checking DudeCT evidence parsing"
+if ! "$SCRIPT_DIR/../ct/python.sh" "$SCRIPT_DIR/../ct/dudect_report_test.py" >"$LOG_DIR/ct-dudect-report.log" 2>&1; then
+  fail
+  show_error "$LOG_DIR/ct-dudect-report.log"
   exit 1
 fi
 ok

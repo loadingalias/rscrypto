@@ -1,11 +1,10 @@
 # Security Policy
 
-## Reporting A Vulnerability
+## Report a vulnerability
 
-Please do not report real-world vulnerabilities through public GitHub issues.
-
-Use GitHub's
+Report real-world vulnerabilities through GitHub
 [Private Vulnerability Reporting](https://github.com/loadingalias/rscrypto/security/advisories/new).
+Do not open a public issue.
 
 Include:
 
@@ -15,6 +14,9 @@ Include:
 - Relevant platform and CPU details.
 - Whether exploitability depends on features such as `std`, `alloc`,
   `getrandom`, `serde`, `serde-secrets`, or hardware acceleration.
+
+Do not include live keys, credentials, personal data, or other secrets. Replace
+them with a minimal synthetic reproducer.
 
 You should receive an acknowledgment within 72 hours. If you do not, follow up
 on the private advisory thread.
@@ -45,33 +47,34 @@ Out of scope:
 - Bugs caused by downstream crates using `rscrypto` outside its documented
   contract.
 
-## Supported Versions
+## Supported versions
 
 | Version | Supported |
 | ------- | --------- |
 | `0.7.x` | Yes |
 
-Only the latest published minor release receives security patches. Users should
-stay current.
+Only the latest patch release in the current minor line receives security
+fixes. Upgrade to the latest published `0.7.x` release before reporting an issue
+that may already be fixed.
 
-## Security Posture
+## Security posture
 
 `rscrypto` is a pure Rust primitive crate with no mandatory production C/FFI
 dependency. External crypto crates used for testing, fuzzing, migration checks,
 or benchmarks are not production dependencies.
 
-Constant-time claims are scoped. They apply only to named secret-bearing
-operations and target configurations, not to every API or every build. The
-README carries the public security summary; [`docs/constant-time.md`](docs/constant-time.md)
-is the exact claim model. The security boundary, adversary model, and review
-priorities are documented in [`THREAT_MODEL.md`](THREAT_MODEL.md).
+Constant-time claims apply only to named secret-bearing operations and exact
+release configurations. They do not cover every API or build. Read
+[`docs/constant-time.md`](docs/constant-time.md) for the claim model and
+[`THREAT_MODEL.md`](THREAT_MODEL.md) for the security boundary, adversaries,
+and review priorities.
 
 No third-party security audit, FIPS 140-3 validation, or formal proof is
 claimed.
 
-## Advisory Packet
+## Advisory contents
 
-For a valid vulnerability, the advisory should include:
+When a report is valid, the project advisory records:
 
 - Affected `rscrypto` versions and feature flags.
 - Impacted primitives or parsing surfaces.
@@ -80,14 +83,14 @@ For a valid vulnerability, the advisory should include:
 - Severity, patched version, and credit preference.
 - CVSS and CWE when they are clear enough to be useful.
 
-## AI-Assisted Reports
+## AI-assisted reports
 
 AI-assisted reports are welcome when they are reproducible. If AI or automated
 analysis helped produce the report, disclose the tool or model used and include
 the concrete inputs, outputs, traces, or reproduction steps that support the
 finding.
 
-## Response Process
+## Response process
 
 1. Triage within 72 hours.
 2. Reproduce the issue and assess severity.
@@ -97,14 +100,15 @@ finding.
 The default disclosure window is 30 days from the initial report unless a
 different timeline is agreed on in the private advisory.
 
-## Safe Harbor
+## Safe harbor
 
 Good-faith research is welcome when it avoids privacy violations, data
 destruction, service interruption, and access to third-party systems. Do not
 exploit a vulnerability beyond what is necessary to demonstrate impact.
 
-Researchers who follow this policy will not face legal action from this project
-for the reported activity.
+The project does not intend to pursue legal action for research conducted and
+reported in accordance with this policy. This statement cannot bind third
+parties.
 
 ## Acknowledgments
 

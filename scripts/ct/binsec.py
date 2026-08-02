@@ -380,6 +380,7 @@ def write_report(
   reason: str,
   artifacts: dict[str, str],
   binsec_version: str | None,
+  binsec_sha256: str | None,
   timeout_seconds: int | None,
   smt_timeout_seconds: int | None,
   smt_solver: str | None,
@@ -410,6 +411,7 @@ def write_report(
     "load_sections": load_sections or [],
     "sse_depth": kernel.get("sse_depth"),
     "binsec_version": binsec_version,
+    "binsec_sha256": binsec_sha256,
     "artifacts": artifacts,
   }
   path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -454,9 +456,11 @@ def main() -> int:
 
   binsec = find_binsec()
   binsec_version = None
+  binsec_sha256 = None
   if binsec is not None:
     version = run([binsec, "-version"])
     binsec_version = (version.stdout or version.stderr).strip() or None
+    binsec_sha256 = sha256_file(Path(binsec).resolve())
 
   if binsec is None and not args.allow_missing_binsec:
     print(
@@ -490,6 +494,7 @@ def main() -> int:
         reason="binsec not found",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        binsec_sha256=binsec_sha256,
         timeout_seconds=None,
         smt_timeout_seconds=None,
         smt_solver=args.smt_solver,
@@ -519,6 +524,7 @@ def main() -> int:
         reason=f"missing symbol {kernel['symbol']}",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        binsec_sha256=binsec_sha256,
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
         smt_solver=args.smt_solver,
@@ -538,6 +544,7 @@ def main() -> int:
         reason="missing symbol ct_binsec_done",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        binsec_sha256=binsec_sha256,
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
         smt_solver=args.smt_solver,
@@ -557,6 +564,7 @@ def main() -> int:
         reason="BINSEC harness is PIE; static ELF proof binary required",
         artifacts=artifacts,
         binsec_version=binsec_version,
+        binsec_sha256=binsec_sha256,
         timeout_seconds=kernel_timeout,
         smt_timeout_seconds=kernel_smt_timeout,
         smt_solver=args.smt_solver,
@@ -618,6 +626,7 @@ def main() -> int:
       reason=reason,
       artifacts=artifacts,
       binsec_version=binsec_version,
+      binsec_sha256=binsec_sha256,
       timeout_seconds=kernel_timeout,
       smt_timeout_seconds=kernel_smt_timeout,
       smt_solver=args.smt_solver,

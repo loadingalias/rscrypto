@@ -486,14 +486,13 @@ pub static PROFILE_DEFAULT_KIND: FamilyProfile = default_kind_profile();
 #[cfg(not(target_arch = "x86_64"))]
 pub static PROFILE_PORTABLE: FamilyProfile = portable_profile();
 
-// Family Profile: X86_AVX512_AMX
+// Family Profile: INTEL_SAPPHIRE_RAPIDS
 #[cfg(target_arch = "x86_64")]
-pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
+pub static PROFILE_INTEL_SAPPHIRE_RAPIDS: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
-    // AVX-512 compress uses native `vprord` (1 µop) vs SSE4.1/AVX2 shift+or
-    // emulation (3 instructions). For single-block compress in the one-chunk
-    // path, AVX-512 is strictly faster regardless of input size.
+    // This profile uses AVX-512 for every size class; its selector has no
+    // single-block crossover to another x86 kernel.
     xs: KernelId::X86Avx512,
     s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
@@ -534,9 +533,8 @@ pub static PROFILE_X86_AVX512_AMX: FamilyProfile = FamilyProfile {
 pub static PROFILE_X86_AVX512: FamilyProfile = FamilyProfile {
   dispatch: DispatchTable {
     boundaries: [64, 1024, 4096],
-    // AVX-512 compress uses native `vprord` (1 µop) vs SSE4.1/AVX2 shift+or
-    // emulation (3 instructions). For single-block compress in the one-chunk
-    // path, AVX-512 is strictly faster regardless of input size.
+    // This profile uses AVX-512 for every size class; its selector has no
+    // single-block crossover to another x86 kernel.
     xs: KernelId::X86Avx512,
     s: KernelId::X86Avx512,
     m: KernelId::X86Avx512,
@@ -764,23 +762,12 @@ pub static PROFILE_POWER10: FamilyProfile = FamilyProfile {
 
 #[inline]
 #[must_use]
-#[cfg(target_arch = "x86_64")]
-fn has_any_amx(caps: Caps) -> bool {
-  caps.has(x86::AMX_TILE)
-    || caps.has(x86::AMX_INT8)
-    || caps.has(x86::AMX_BF16)
-    || caps.has(x86::AMX_FP16)
-    || caps.has(x86::AMX_COMPLEX)
-}
-
-#[inline]
-#[must_use]
 pub fn select_profile_for_caps(caps: Caps) -> &'static FamilyProfile {
   #[cfg(target_arch = "x86_64")]
   {
     if caps.has(x86::AVX512_READY) {
-      return if has_any_amx(caps) {
-        &PROFILE_X86_AVX512_AMX
+      return if caps.has(x86::INTEL_SAPPHIRE_RAPIDS) {
+        &PROFILE_INTEL_SAPPHIRE_RAPIDS
       } else {
         &PROFILE_X86_AVX512
       };
@@ -872,4 +859,36 @@ pub fn select_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
 #[must_use]
 pub fn select_streaming_parallel_table_for_caps(caps: Caps) -> &'static ParallelTable {
   &select_profile_for_caps(caps).streaming_parallel
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+  use super::*;
+
+  const ALL_AMX: Caps = x86::AMX_TILE
+    .union(x86::AMX_BF16)
+    .union(x86::AMX_INT8)
+    .union(x86::AMX_FP16)
+    .union(x86::AMX_COMPLEX);
+
+  #[test]
+  fn profile_selection_uses_processor_identity_not_amx_permission() {
+    let sapphire_rapids = x86::AVX512_READY | x86::INTEL_SAPPHIRE_RAPIDS;
+    assert!(core::ptr::eq(
+      select_profile_for_caps(sapphire_rapids),
+      &PROFILE_INTEL_SAPPHIRE_RAPIDS
+    ));
+    assert!(core::ptr::eq(
+      select_profile_for_caps(sapphire_rapids | ALL_AMX),
+      &PROFILE_INTEL_SAPPHIRE_RAPIDS
+    ));
+    assert!(core::ptr::eq(
+      select_profile_for_caps(x86::AVX512_READY),
+      &PROFILE_X86_AVX512
+    ));
+    assert!(core::ptr::eq(
+      select_profile_for_caps(x86::AVX512_READY | ALL_AMX),
+      &PROFILE_X86_AVX512
+    ));
+  }
 }

@@ -1,0 +1,15 @@
+# rscrypto RSA assembly provenance manifest v1
+schema	1
+transform	rsa-aws-lc-sys-0.41.0-transform-v1
+archive	aws-lc-sys-0.41.0	1a2f9779ce85b93ab6170dd940ad0169b5766ff848247aff13bb788b832fe3f4	44766fa7daa88e5afc7fc6de3311c48eeeb02f39
+member	aws-lc-sys-0.41.0/aws-lc/generated-src/ios-aarch64/crypto/fipsmodule/armv8-mont.S	b090cede310cb9911b668fa1a1c8561d3bb1d650b0fb89e62168fd9d8093d1e9
+member	aws-lc-sys-0.41.0/aws-lc/generated-src/linux-x86_64/crypto/fipsmodule/x86_64-mont.S	97164bd82dbbd52b5a2b2cd839223b942d703209fad63174a4c75505d693e2cc
+member	aws-lc-sys-0.41.0/aws-lc/generated-src/linux-x86_64/crypto/fipsmodule/x86_64-mont5.S	0d3d1e4dc0db6822d087c1e2b91a68056eaf7d07d63725f65c45744b7c3e7d11
+member	aws-lc-sys-0.41.0/aws-lc/crypto/fipsmodule/bn/asm/armv8-mont.pl	f1b84fceebcfd32d1f5e106ad3123204c7f3b0d0b226265d87dd819e43ec46b8
+member	aws-lc-sys-0.41.0/aws-lc/crypto/fipsmodule/bn/asm/x86_64-mont.pl	0a010a6176e9568358d816ea0acd62e4f9a1a88763a5963f638b56f55230044e
+member	aws-lc-sys-0.41.0/aws-lc/crypto/fipsmodule/bn/asm/x86_64-mont5.pl	2e02dc6d7e8727502db6c61bbd6d554ae13621b630364f954ce6c23e5333d63b
+member	aws-lc-sys-0.41.0/aws-lc/crypto/perlasm/arm-xlate.pl	cf58ab9cf9c02c849aca10a83c0e640178bf6ff0bb98a34de54c56d5c2856f80
+member	aws-lc-sys-0.41.0/aws-lc/crypto/perlasm/x86_64-xlate.pl	2745d9400c9a5d2385da57eceb94b4c1ba8991cfe4ee90ba017fba7b361fe5b7
+output	src/auth/asm/rscrypto_rsa_bignum_mont_apple.s	1439	32065	3e723bd775c6e216d9525d470d6d082a83e989f7988db0355c0ad9cd5bfa5072
+output	src/auth/asm/rscrypto_rsa_bignum_mont_aarch64_elf.s	1439	32095	f28fa8f4f02e0427288c717fc5666b7c07f0f8fc0c7ea5bb21721b1ffe3dc4dc
+output	src/auth/asm/rscrypto_rsa_x86_64_elf.S	2530	42855	1b59e82724d10b06decbc8a9fbc88f9e04cefdee0524ef752c37ccf422f729a3

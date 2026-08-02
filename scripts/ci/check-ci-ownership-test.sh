@@ -9,7 +9,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 
 make_fixture() {
   local fixture=$1
-  mkdir -p "$fixture/.github" "$fixture/.config" "$fixture/scripts/check" "$fixture/scripts/lib" "$fixture/scripts/test"
+  mkdir -p "$fixture/.cargo" "$fixture/.github" "$fixture/.config" \
+    "$fixture/scripts/check" "$fixture/scripts/lib" "$fixture/scripts/test"
+  cp "$REPO_ROOT/.cargo/config.toml" "$fixture/.cargo/config.toml"
   cp -R "$REPO_ROOT/.github/workflows" "$fixture/.github/workflows"
   cp -R "$REPO_ROOT/.github/actions" "$fixture/.github/actions"
   cp -R "$REPO_ROOT/.github/rulesets" "$fixture/.github/rulesets"
@@ -37,6 +39,24 @@ expect_failure() {
 baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
+
+hosted_macos="$TMP_ROOT/hosted-macos"
+make_fixture "$hosted_macos"
+yq eval '.jobs.hosted_macos = {"runs-on": "macos-15", "steps": [{"run": "true"}]}' -i \
+  "$hosted_macos/.github/workflows/rsa.yaml"
+expect_failure "$hosted_macos" "macOS testing is delegated to a hosted runner"
+
+apple_runner_alias="$TMP_ROOT/apple-runner-alias"
+make_fixture "$apple_runner_alias"
+yq eval '.jobs.apple_runner = {"uses": "./.github/workflows/_rust-job.yaml", "with": {"runner": "darwin", "operation": "check"}}' -i \
+  "$apple_runner_alias/.github/workflows/rsa.yaml"
+expect_failure "$apple_runner_alias" "Apple testing is delegated through a custom runner label"
+
+apple_rustflags="$TMP_ROOT/apple-rustflags"
+make_fixture "$apple_rustflags"
+printf '\n[target.aarch64-apple-darwin]\nrustflags = ["-C", "target-cpu=native"]\n' \
+  >>"$apple_rustflags/.cargo/config.toml"
+expect_failure "$apple_rustflags" "normal Apple builds inherit host-specific rustflags"
 
 invalid_tool_digest="$TMP_ROOT/invalid-tool-digest"
 make_fixture "$invalid_tool_digest"
@@ -84,6 +104,47 @@ make_fixture "$unauthenticated_rustup"
 printf '\n    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9\n' \
   >>"$unauthenticated_rustup/.github/actions/setup-toolchain/action.yaml"
 expect_failure "$unauthenticated_rustup" "toolchain setup can run a network bootstrap installer"
+
+floating_rail_action="$TMP_ROOT/floating-rail-action"
+make_fixture "$floating_rail_action"
+sed -i.bak \
+  's#loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f#loadingalias/cargo-rail-action@v6#' \
+  "$floating_rail_action/.github/workflows/ci.yaml"
+rm -f "$floating_rail_action/.github/workflows/ci.yaml.bak"
+expect_failure "$floating_rail_action" "cargo-rail-action is not commit-pinned"
+
+mismatched_rail_version="$TMP_ROOT/mismatched-rail-version"
+make_fixture "$mismatched_rail_version"
+yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.version) = "0.19.1"' -i \
+  "$mismatched_rail_version/.github/workflows/ci.yaml"
+expect_failure "$mismatched_rail_version" "cargo-rail-action bypasses the authenticated Cargo Rail version"
+
+missing_rail_checksum="$TMP_ROOT/missing-rail-checksum"
+make_fixture "$missing_rail_checksum"
+yq eval 'del(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.checksum)' -i \
+  "$missing_rail_checksum/.github/workflows/ci.yaml"
+expect_failure "$missing_rail_checksum" "cargo-rail-action does not require release checksums"
+
+mutable_rail_base="$TMP_ROOT/mutable-rail-base"
+make_fixture "$mutable_rail_base"
+yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since) = "origin/main"' -i \
+  "$mutable_rail_base/.github/workflows/ci.yaml"
+expect_failure "$mutable_rail_base" "cargo-rail-action plans from a mutable base"
+
+rail_before_authenticated_setup="$TMP_ROOT/rail-before-authenticated-setup"
+make_fixture "$rail_before_authenticated_setup"
+yq eval '.jobs."rail-plan".steps[1] as $setup |
+  .jobs."rail-plan".steps[2] as $rail |
+  .jobs."rail-plan".steps[1] = $rail |
+  .jobs."rail-plan".steps[2] = $setup' -i \
+  "$rail_before_authenticated_setup/.github/workflows/ci.yaml"
+expect_failure "$rail_before_authenticated_setup" "cargo-rail-action can run before authenticated installation"
+
+unmatched_rail_condition="$TMP_ROOT/unmatched-rail-condition"
+make_fixture "$unmatched_rail_condition"
+yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .if) = "always()"' -i \
+  "$unmatched_rail_condition/.github/workflows/ci.yaml"
+expect_failure "$unmatched_rail_condition" "cargo-rail-action can run without authenticated installation"
 
 unpinned_scorecard="$TMP_ROOT/unpinned-scorecard"
 make_fixture "$unpinned_scorecard"

@@ -1,4 +1,4 @@
-# Secret Ownership And Generic Capabilities
+# Secret ownership and generic capabilities
 
 This inventory identifies named types that retain secret material or
 secret-derived state, then records where generic capabilities can duplicate,
@@ -18,8 +18,8 @@ ciphertexts, PHC records, password-hash parameters, and public RSA scratch are
 not semantic secret owners. They can still receive sensitive caller data.
 Operation-local arrays, scalars, limbs, plaintext buffers, and individual
 backend transfer records are grouped here only where their type-level
-`Clone`/`Copy` capability affects ownership. Their complete data flow belongs
-to the temporary-flow review.
+`Clone`/`Copy` capability affects ownership. This inventory does not enumerate
+every operation-local temporary.
 
 In the tables below, “explicit duplicate” means a method named
 `duplicate_secret()` rather than `Clone`. “Masked” means `Debug` can identify
@@ -27,7 +27,7 @@ the type or show public metadata but does not print the owned secret bytes.
 The use column explains why a capability exists; it does not pre-approve that
 capability for permanent retention.
 
-## Confidential Public Owners And Views
+## Confidential public owners and views
 
 | Type or family | Clone / Copy | Debug | Serialization or export | Storage | Capability use |
 |---|---|---|---|---|---|
@@ -56,11 +56,13 @@ capability for permanent retention.
 | `Blake3` | `Clone` | Masked | None | Inline, plus `Vec` scratch with `parallel` | Fork a streamed common prefix in keyed or derive-key mode; cloning also duplicates initialized parallel scratch |
 | `Blake3XofReader` | `Clone` | Masked | None | Inline | Checkpoint or fork an output cursor; the reader is secret-bearing when created from keyed or derive-key state |
 
-## Protocol-Visible Authentication Owners
+## Protocol-visible authentication owners
 
-These owners provide constant-work comparison semantics, but their bytes are
-normally transmitted or stored with the protected message. Copying, rendering,
-and ordinary serialization therefore do not duplicate a confidential key.
+These owners use fixed-length, full-traversal comparison at the source level.
+Their bytes are normally transmitted or stored with the protected message, so
+copying, rendering, and ordinary serialization do not duplicate a confidential
+key. Generated-code timing claims remain limited by
+[`constant-time.md`](constant-time.md).
 
 | Type or family | Clone / Copy | Debug | Serialization | Storage | Capability use |
 |---|---|---|---|---|---|
@@ -69,7 +71,7 @@ and ordinary serialization therefore do not duplicate a confidential key.
 | `Poly1305Tag` | `Clone + Copy` | Raw hex | None | Inline | Detached one-time authenticator transport and verification |
 | `Blake3KeyedHash` | `Clone + Copy` | Raw hex | None | Inline | Protocol-visible keyed output with sealed `ct_eq` verification |
 
-## Internal And Operation-Scoped Owners
+## Internal and operation-scoped owners
 
 | Owner | Clone / Copy | Debug / serialization | Storage | Capability use |
 |---|---|---|---|---|
@@ -86,7 +88,7 @@ and ordinary serialization therefore do not duplicate a confidential key.
 | BLAKE3 parallel scratch | Cloned with `Blake3` | Neither | Per-state vectors plus thread-local vectors | Avoid repeated allocation during parallel subtree reduction; keyed modes make stored chaining values secret-derived |
 | Private-key and AEAD backend transfer records | Private `Clone`/`Copy` only where passed by value or snapshotted by a consuming kernel | Neither | Inline | Fixed-layout, call-scoped handoff to portable, SIMD, or assembly code; no public capability |
 
-## Review Consequences
+## Review consequences
 
 - `serde` alone covers protocol-visible values. `serde-secrets` is the explicit
   opt-in for AEAD keys, Ed25519/X25519 secrets, and ML-KEM decapsulation/shared

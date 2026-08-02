@@ -1,5 +1,5 @@
 ---
-"rscrypto" = "minor"
+"rscrypto" = "major"
 ---
 
 Secret comparison is now owned by fixed-size cryptographic key, tag, and

@@ -113,7 +113,10 @@ fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
 #[inline(always)]
 #[allow(dead_code)]
 pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> CtDecision {
-  CtDecision::from_difference(byte_difference(left, right))
+  // SECURITY: Keep the accumulated word opaque before declassification. LLVM can otherwise fold
+  // equality into target-specific vector reductions; exact binary evidence still owns the
+  // constant-time claim.
+  CtDecision::from_difference(core::hint::black_box(byte_difference(left, right)))
 }
 
 /// Compare two byte slices whose lengths are public protocol inputs.
