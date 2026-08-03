@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install CI tools through authenticated package-manager boundaries.
-# Usage: install-tools.sh [standard|quality|release|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
+# Usage: install-tools.sh [standard|quality|release|semver|rail|ci|supply-chain|bench|ibm|fuzz|coverage|ct-linux|minimal|none]
 
 set -euo pipefail
 
@@ -10,7 +10,7 @@ CARGO_NEXTEST_VERSION=0.9.140
 CARGO_DENY_VERSION=0.20.2
 CARGO_AUDIT_VERSION=0.22.2
 CARGO_RAIL_VERSION=0.20.0
-CARGO_SEMVER_CHECKS_VERSION=0.48.0
+CARGO_SEMVER_CHECKS_VERSION=0.50.0
 JUST_VERSION=1.57.0
 ZIZMOR_VERSION=1.26.1
 CARGO_CRITERION_VERSION=1.1.0
@@ -306,6 +306,9 @@ case "$MODE" in
     install_cargo_tool cargo-semver-checks "$CARGO_SEMVER_CHECKS_VERSION"
     install_cargo_tool cargo-deny "$CARGO_DENY_VERSION"
     install_cargo_tool cargo-audit "$CARGO_AUDIT_VERSION"
+    ;;
+  semver)
+    install_cargo_tool cargo-semver-checks "$CARGO_SEMVER_CHECKS_VERSION"
     ;;
   rail)
     install_cargo_tool cargo-rail "$CARGO_RAIL_VERSION"

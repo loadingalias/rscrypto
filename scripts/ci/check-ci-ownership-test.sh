@@ -41,6 +41,25 @@ baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
 
+missing_recovery_tag="$TMP_ROOT/missing-recovery-tag"
+make_fixture "$missing_recovery_tag"
+yq eval 'del(.on.workflow_dispatch.inputs.tag)' -i \
+  "$missing_recovery_tag/.github/workflows/release.yaml"
+expect_failure "$missing_recovery_tag" "release recovery has no explicit tag identity"
+
+unprotected_recovery="$TMP_ROOT/unprotected-recovery"
+make_fixture "$unprotected_recovery"
+sed -i.bak 's#refs/heads/main#refs/heads/recovery#' \
+  "$unprotected_recovery/.github/workflows/release.yaml"
+rm -f "$unprotected_recovery/.github/workflows/release.yaml.bak"
+expect_failure "$unprotected_recovery" "release recovery accepts unprotected workflow code"
+
+mutable_publish_checkout="$TMP_ROOT/mutable-publish-checkout"
+make_fixture "$mutable_publish_checkout"
+yq eval '(.jobs.publish.steps[] | select(.name == "Checkout") | .with.ref) = "${{ github.ref }}"' -i \
+  "$mutable_publish_checkout/.github/workflows/release.yaml"
+expect_failure "$mutable_publish_checkout" "release publication ignores the preflight-verified tag"
+
 hosted_macos="$TMP_ROOT/hosted-macos"
 make_fixture "$hosted_macos"
 yq eval '.jobs.hosted_macos = {"runs-on": "macos-15", "steps": [{"run": "true"}]}' -i \

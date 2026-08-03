@@ -409,6 +409,24 @@ grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "ordinary workflows must have exactly one executable feature-matrix owner"
 [[ $(count_matches 'just check-feature-matrix' "$WORKFLOWS" "$RUN_RUST_JOB") -eq 1 ]] \
   || fail "ordinary workflows must have exactly one compile feature-matrix owner"
+[[ $(yq eval '.on.workflow_dispatch.inputs.tag.required' "$RELEASE") == "true" ]] \
+  || fail "release recovery must require an explicit existing tag"
+[[ $(yq eval '.on.workflow_dispatch.inputs.tag.type' "$RELEASE") == "string" ]] \
+  || fail "release recovery tag input must be a string"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.preflight.steps[] | select(.name == "Checkout") | .with.ref' "$RELEASE") \
+  == '${{ github.event_name == '\''workflow_dispatch'\'' && inputs.tag || github.ref }}' ]] \
+  || fail "release preflight must check out the requested recovery tag"
+# shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
+[[ $(yq eval '.jobs.publish.steps[] | select(.name == "Checkout") | .with.ref' "$RELEASE") \
+  == '${{ needs.preflight.outputs.release_tag }}' ]] \
+  || fail "release publication must check out the preflight-verified tag"
+identity_step=$(yq eval '.jobs.preflight.steps[] | select(.id == "identity") | .run' "$RELEASE")
+grep -Fq 'refs/heads/main' <<<"$identity_step" \
+  || fail "release recovery must reject workflow code outside protected main"
+recovery_tool_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Install recovery SemVer checker") | .run' "$RELEASE")
+grep -Fq 'install-tools.sh" semver' <<<"$recovery_tool_step" \
+  || fail "release recovery must use the authenticated SemVer tool installer"
 # shellcheck disable=SC2016 # `$crate` is an intentional literal in the release-preflight contract regex.
 [[ $(count_matches 'cargo semver-checks --package "\$crate" --all-features' "$RELEASE_PREFLIGHT") -eq 1 ]] \
   || fail "tag preflight must have exactly one final-version SemVer owner"
@@ -530,7 +548,7 @@ grep -Fq 'ct-raw-' "$RELEASE_EVIDENCE" \
   || fail "reusable RSA workflow concurrency must not collide with its caller"
 grep -Fq 'name: ct-raw-rise-riscv' "$RELEASE" \
   || fail "release must download the explicitly raw RISC-V CT artifact"
-grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$GITHUB_SHA"' "$RELEASE" \
+grep -Fq 'scripts/ci/release-evidence-check.sh --commit "$RELEASE_COMMIT"' "$RELEASE" \
   || fail "release must require paired Weekly and RISC-V evidence from one valid commit"
 grep -Fq 'scripts/ci/repository-controls-evidence.sh' "$RELEASE" \
   || fail "release must capture the live repository controls"
