@@ -361,7 +361,7 @@ package_temp="$TMP_ROOT/package-temp"
 mkdir -p "$package_home/.cargo/bin"
 mkdir -p "$package_temp"
 : >"$package_log"
-for mode in standard quality release rail ci supply-chain ibm bench fuzz coverage minimal none; do
+for mode in standard quality release semver rail ci supply-chain ibm bench fuzz coverage minimal none; do
   HOME="$package_home" \
     RUNNER_TEMP="$package_temp" \
     PATH="$package_bin:$PATH" \
@@ -559,7 +559,7 @@ for contract in \
   'cargo-deny =0.20.2' \
   'cargo-audit =0.22.2' \
   'cargo-rail =0.20.0' \
-  'cargo-semver-checks =0.48.0' \
+  'cargo-semver-checks =0.50.0' \
   'just =1.57.0' \
   'zizmor =1.26.1' \
   'cargo-criterion =1.1.0' \

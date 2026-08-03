@@ -191,18 +191,37 @@ receive anything, the workflow:
    crates.io token through OIDC, publishes the same crate, then downloads it
    from crates.io and verifies its SHA-256.
 
-Any change after the evidence run—including a version-only or release-tooling
-change—creates a new release candidate and requires fresh paired Weekly and
-RISC-V evidence. Ancestor binaries are never promoted into an exact-commit
-constant-time claim.
+Any change to the candidate after the evidence run—including a version-only,
+dependency, build-input, or test-policy change—creates a new release candidate
+and requires fresh paired Weekly and RISC-V evidence. Ancestor binaries are
+never promoted into an exact-commit constant-time claim.
 
 ## Recovery
 
-After a partial failure, rerun the workflow on the same tag and commit. If
-crates.io already contains the version, the workflow downloads it and compares
-its SHA-256 before touching the GitHub Release. The workflow can repair and
-publish a draft release. It never overwrites a published immutable release; it
-verifies the release attestation and stable crate and source assets before
+Rerun a transient or partial failure on the same tag and commit:
+
+```bash
+gh run rerun RUN_ID --failed
+```
+
+If the committed workflow or one of its pinned tools cannot complete, merge the
+smallest repair through the required `Complete` check, then dispatch the
+reviewed recovery path from `main`:
+
+```bash
+gh workflow run release.yaml --ref main -f tag=vX.Y.Z
+```
+
+Recovery checks out the existing annotated tag, verifies its allowed signature,
+and binds the package, evidence, release manifest, and release notes to the
+tag's commit rather than the newer workflow commit. Confirm that Preflight
+reports the intended tag commit before approving the `crates-io` environment.
+The recovery path cannot run from an unprotected branch.
+
+If crates.io already contains the version, the workflow downloads it and
+compares its SHA-256 before touching the GitHub Release. The workflow can repair
+and publish a draft release. It never overwrites a published immutable release;
+it verifies the release attestation and stable crate and source assets before
 publishing to crates.io. Any mismatch stops the release.
 
 If the signed-tag key changes, update `.github/allowed-signers` in a reviewed
