@@ -38,6 +38,11 @@ on:
         required: false
         type: number
         default: 90
+      release_tag:
+        description: "Existing release tag whose s390x CT lane must be regenerated."
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       platforms:
@@ -79,6 +84,11 @@ on:
         required: false
         type: number
         default: 90
+      release_tag:
+        description: "Existing release tag whose s390x CT lane must be regenerated."
+        required: false
+        type: string
+        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -94,14 +104,53 @@ jobs:
     name: Resolve CT Matrix
     runs-on: ubuntu-latest
     outputs:
+      checkout_ref: ${{ steps.source.outputs.checkout_ref }}
       has_targets: ${{ steps.plan.outputs.has_targets }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Resolve CT source
+        id: source
+        shell: bash
+        env:
+          ARTIFACT_RETENTION_DAYS: ${{ inputs.artifact_retention_days }}
+          BINSEC_TIMEOUT: ${{ inputs.binsec_timeout }}
+          DUDECT_FILTER: ${{ inputs.dudect_filter }}
+          DUDECT_GATE: ${{ inputs.dudect_gate }}
+          DUDECT_TIMEOUT: ${{ inputs.dudect_timeout }}
+          EVENT_NAME: ${{ github.event_name }}
+          PLATFORMS: ${{ inputs.platforms }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          UPLOAD_RAW_ARTIFACTS: ${{ inputs.upload_raw_artifacts }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RELEASE_TAG" ]]; then
+            echo "checkout_ref=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT_NAME" != "workflow_dispatch" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "release CT recovery must run from protected main" >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release CT recovery tag is invalid: $RELEASE_TAG" >&2
+            exit 1
+          fi
+          git rev-parse -q --verify "${RELEASE_TAG}^{tag}" >/dev/null \
+            || { echo "release CT recovery requires an annotated tag" >&2; exit 1; }
+          if [[ "$PLATFORMS" != "ibm-s390x" || "$DUDECT_GATE" != "required" \
+            || -n "$DUDECT_FILTER" || "$UPLOAD_RAW_ARTIFACTS" != "true" \
+            || "$ARTIFACT_RETENTION_DAYS" != "90" || "$DUDECT_TIMEOUT" != "1800" \
+            || "$BINSEC_TIMEOUT" != "900" ]]; then
+            echo "release CT recovery must run the complete raw ibm-s390x lane with release timeouts and 90-day retention" >&2
+            exit 1
+          fi
+          echo "checkout_ref=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build CT Matrix
         id: plan
@@ -121,6 +170,7 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     uses: ./.github/workflows/_rust-job.yaml
     with:
+      checkout_ref: ${{ needs.plan.outputs.checkout_ref }}
       runner: ${{ matrix.runner }}
       timeout_minutes: ${{ matrix.timeout_minutes }}
       cache_key: ct-${{ matrix.artifact_suffix }}

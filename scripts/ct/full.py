@@ -61,6 +61,14 @@ def is_host_executable_target(target: str, host: str) -> bool:
   return target in compatible_linux_musl.get(host, set())
 
 
+def configure_target_environment(target: str, environment: dict[str, str]) -> None:
+  if target == "s390x-unknown-linux-gnu":
+    environment.setdefault(
+      "CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS",
+      "-C target-feature=+vector",
+    )
+
+
 def now_utc() -> str:
   return datetime.now(UTC).isoformat()
 
@@ -1042,6 +1050,7 @@ def main() -> int:
       file=sys.stderr,
     )
     return 2
+  configure_target_environment(target, os.environ)
 
   profile = args.profile
   out_dir = root / "target" / "ct" / target / profile

@@ -16,6 +16,7 @@ from asm_heuristics import (
   summarize,
   summarize_closure,
 )
+from full import configure_target_environment
 from provenance import codegen_value
 from symbolize_linked_binary import (
   Symbol,
@@ -128,6 +129,18 @@ def manifest_errors(mutate) -> list[str]:
 
 def main() -> None:
   assert codegen_value(["-C", "target-cpu=native", "-C", "target-cpu=x86-64"], "target-cpu") == "x86-64"
+
+  target_environment: dict[str, str] = {}
+  configure_target_environment("s390x-unknown-linux-gnu", target_environment)
+  assert target_environment == {
+    "CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS": "-C target-feature=+vector"
+  }
+  target_environment["CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS"] = "-C target-cpu=z16"
+  configure_target_environment("s390x-unknown-linux-gnu", target_environment)
+  assert target_environment["CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS"] == "-C target-cpu=z16"
+  unrelated_environment: dict[str, str] = {}
+  configure_target_environment("powerpc64le-unknown-linux-gnu", unrelated_environment)
+  assert unrelated_environment == {}
 
   commit = "a" * 40
   validate_exact_candidate("1.2.3", commit, "1.2.3", commit)
