@@ -48,6 +48,8 @@ CI_CHECK="$ROOT/scripts/ci/ci-check.sh"
 RUN_RUST_JOB="$ROOT/scripts/ci/run-rust-job.sh"
 RELEASE_PREFLIGHT="$ROOT/scripts/ci/release-preflight.sh"
 RELEASE_EVIDENCE="$ROOT/scripts/ci/release-evidence-check.sh"
+RELEASE_CT_RECOVERY="$ROOT/scripts/ci/release-ct-recovery-check.sh"
+RELEASE_CT_RECOVERY_TEST="$ROOT/scripts/ci/release-ct-recovery-check-test.sh"
 RELEASE_SOURCE="$ROOT/scripts/ci/package-release-source.sh"
 RELEASE_MANIFEST="$ROOT/scripts/ci/write-release-manifest.sh"
 RELEASE_IDENTITY_TEST="$ROOT/scripts/ci/release-identity-test.sh"
@@ -146,6 +148,8 @@ require_file "$CI_CHECK"
 require_file "$RUN_RUST_JOB"
 require_file "$RELEASE_PREFLIGHT"
 require_file "$RELEASE_EVIDENCE"
+require_file "$RELEASE_CT_RECOVERY"
+require_file "$RELEASE_CT_RECOVERY_TEST"
 require_file "$RELEASE_SOURCE"
 require_file "$RELEASE_MANIFEST"
 require_file "$RELEASE_IDENTITY_TEST"
@@ -234,6 +238,16 @@ done < <(
   || fail "the reusable Rust job operation must be required"
 [[ $(yq eval '.on.workflow_call.inputs.operation.type' "$RUST_JOB") == "string" ]] \
   || fail "the reusable Rust job operation must be typed as a string"
+[[ $(yq eval '.on.workflow_call.inputs.checkout_ref.type' "$RUST_JOB") == "string" ]] \
+  || fail "the reusable Rust job checkout ref must be typed as a string"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Checkout") | .with.ref' "$RUST_JOB") \
+  == '${{ inputs.checkout_ref || github.sha }}' ]] \
+  || fail "the reusable Rust job must bind an explicit source ref before execution"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.run.steps[] | select(.name == "Run") | .env.CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS' "$RUST_JOB") \
+  == '${{ inputs.target == '\''s390x-unknown-linux-gnu'\'' && '\''-C target-feature=+vector'\'' || '\'''\'' }}' ]] \
+  || fail "s390x CT jobs must share one explicit vector target environment"
 [[ $(yq eval '[.jobs.run.steps[] | select(has("run"))] | length' "$RUST_JOB") -eq 1 ]] \
   || fail "the reusable Rust job must expose one fixed command step"
 [[ $(yq eval '.jobs.run.steps[] | select(has("run")) | .run' "$RUST_JOB") == "scripts/ci/run-rust-job.sh" ]] \
@@ -413,6 +427,8 @@ grep -Eq 'HOST_ARGS\+=\(--feature-matrix\)' "$CHECK_ALL" \
   || fail "release recovery must require an explicit existing tag"
 [[ $(yq eval '.on.workflow_dispatch.inputs.tag.type' "$RELEASE") == "string" ]] \
   || fail "release recovery tag input must be a string"
+[[ $(yq eval '.on.workflow_dispatch.inputs.s390x_ct_run.type' "$RELEASE") == "string" ]] \
+  || fail "release recovery s390x CT run input must be a string"
 # shellcheck disable=SC2016 # GitHub expressions are intentional literal workflow contracts.
 [[ $(yq eval '.jobs.preflight.steps[] | select(.name == "Checkout") | .with.ref' "$RELEASE") \
   == '${{ github.event_name == '\''workflow_dispatch'\'' && inputs.tag || github.ref }}' ]] \
@@ -427,6 +443,11 @@ grep -Fq 'refs/heads/main' <<<"$identity_step" \
 recovery_tool_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Install recovery SemVer checker") | .run' "$RELEASE")
 grep -Fq 'install-tools.sh" semver' <<<"$recovery_tool_step" \
   || fail "release recovery must use the authenticated SemVer tool installer"
+ct_recovery_step=$(yq eval '.jobs.preflight.steps[] | select(.name == "Verify s390x CT recovery evidence") | .run' "$RELEASE")
+grep -Fq 'release-ct-recovery-check.sh' <<<"$ct_recovery_step" \
+  || fail "release recovery must validate replacement s390x CT evidence"
+grep -Fq -- '--workflow-commit "$WORKFLOW_COMMIT"' <<<"$ct_recovery_step" \
+  || fail "replacement s390x CT evidence must come from the reviewed workflow commit"
 # shellcheck disable=SC2016 # `$crate` is an intentional literal in the release-preflight contract regex.
 [[ $(count_matches 'cargo semver-checks --package "\$crate" --all-features' "$RELEASE_PREFLIGHT") -eq 1 ]] \
   || fail "tag preflight must have exactly one final-version SemVer owner"
@@ -626,6 +647,28 @@ grep -Fq 'run-id: ${{ needs.preflight.outputs.weekly_run_id }}' "$RELEASE" \
   || fail "release must consume non-RISC-V CT artifacts from the validated Weekly run"
 grep -Fq 'run-id: ${{ needs.preflight.outputs.riscv_run_id }}' "$RELEASE" \
   || fail "release must consume RISC-V CT artifacts from the validated RISC-V run"
+grep -Fq 'run-id: ${{ needs.preflight.outputs.s390x_ct_run_id }}' "$RELEASE" \
+  || fail "release must consume recovered s390x CT artifacts from the validated recovery run"
+[[ $(yq eval '.on.workflow_dispatch.inputs.release_tag.type' "$CT") == "string" ]] \
+  || fail "CT recovery release tag input must be a string"
+ct_source_step=$(yq eval '.jobs.plan.steps[] | select(.name == "Resolve CT source") | .run' "$CT")
+grep -Fq 'refs/heads/main' <<<"$ct_source_step" \
+  || fail "release CT recovery must reject workflow code outside protected main"
+grep -Fq 'checkout_ref=$RELEASE_TAG' <<<"$ct_source_step" \
+  || fail "release CT recovery must bind execution to the immutable tag"
+grep -Fq 'PLATFORMS" != "ibm-s390x' <<<"$ct_source_step" \
+  || fail "release CT recovery must be limited to the s390x lane"
+grep -Fq 'DUDECT_TIMEOUT" != "1800"' <<<"$ct_source_step" \
+  || fail "release CT recovery must preserve the release DudeCT timeout"
+grep -Fq 'BINSEC_TIMEOUT" != "900"' <<<"$ct_source_step" \
+  || fail "release CT recovery must preserve the release BINSEC timeout"
+grep -Fq 'UPLOAD_RAW_ARTIFACTS" != "true"' <<<"$ct_source_step" \
+  || fail "release CT recovery must retain raw evidence"
+grep -Fq 'ARTIFACT_RETENTION_DAYS" != "90"' <<<"$ct_source_step" \
+  || fail "release CT recovery must retain evidence for the release lifetime"
+# shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
+[[ $(yq eval '.jobs.ct.with.checkout_ref' "$CT") == '${{ needs.plan.outputs.checkout_ref }}' ]] \
+  || fail "release CT recovery must execute the resolved immutable tag source"
 if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then
   fail "tag workflow must promote exact-commit evidence instead of rerunning CT or RSA"
 fi

@@ -42,6 +42,8 @@ the recipes reported by `just --list`.
 | `ci/pre-push-test.sh`          | `just check-actions` |
 | `ci/release-evidence-check.sh` | `just release-tag`, `release.yaml`, `ci/release-evidence-check-test.sh` |
 | `ci/release-evidence-check-test.sh` | `just check-actions` |
+| `ci/release-ct-recovery-check.sh` | `release.yaml`, `ci/release-ct-recovery-check-test.sh` |
+| `ci/release-ct-recovery-check-test.sh` | `just check-actions` |
 | `ci/repository-controls-evidence.sh` | `just release-tag`, `release.yaml`, `ci/repository-controls-evidence-test.sh` |
 | `ci/repository-controls-evidence-test.sh` | `just check-actions` |
 | `ci/package-release-source.sh` | `release.yaml`, `ci/release-identity-test.sh` |

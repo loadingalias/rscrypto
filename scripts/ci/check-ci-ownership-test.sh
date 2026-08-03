@@ -54,6 +54,36 @@ sed -i.bak 's#refs/heads/main#refs/heads/recovery#' \
 rm -f "$unprotected_recovery/.github/workflows/release.yaml.bak"
 expect_failure "$unprotected_recovery" "release recovery accepts unprotected workflow code"
 
+missing_ct_recovery_tag="$TMP_ROOT/missing-ct-recovery-tag"
+make_fixture "$missing_ct_recovery_tag"
+yq eval 'del(.on.workflow_dispatch.inputs.release_tag)' -i \
+  "$missing_ct_recovery_tag/.github/workflows/ct.yaml"
+expect_failure "$missing_ct_recovery_tag" "CT recovery has no immutable tag identity"
+
+unprotected_ct_recovery="$TMP_ROOT/unprotected-ct-recovery"
+make_fixture "$unprotected_ct_recovery"
+yq eval '(.jobs.plan.steps[] | select(.name == "Resolve CT source") | .run) |= sub("refs/heads/main"; "refs/heads/recovery")' -i \
+  "$unprotected_ct_recovery/.github/workflows/ct.yaml"
+expect_failure "$unprotected_ct_recovery" "CT recovery accepts unprotected workflow code"
+
+mutable_ct_recovery_checkout="$TMP_ROOT/mutable-ct-recovery-checkout"
+make_fixture "$mutable_ct_recovery_checkout"
+yq eval '(.jobs.ct.with.checkout_ref) = "${{ github.sha }}"' -i \
+  "$mutable_ct_recovery_checkout/.github/workflows/ct.yaml"
+expect_failure "$mutable_ct_recovery_checkout" "CT recovery ignores the immutable tag source"
+
+missing_s390x_vector_environment="$TMP_ROOT/missing-s390x-vector-environment"
+make_fixture "$missing_s390x_vector_environment"
+yq eval 'del(.jobs.run.steps[] | select(.name == "Run") | .env.CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS)' -i \
+  "$missing_s390x_vector_environment/.github/workflows/_rust-job.yaml"
+expect_failure "$missing_s390x_vector_environment" "s390x sibling CT processes lose the vector target environment"
+
+unvalidated_s390x_recovery="$TMP_ROOT/unvalidated-s390x-recovery"
+make_fixture "$unvalidated_s390x_recovery"
+yq eval '(.jobs.preflight.steps[] | select(.name == "Verify s390x CT recovery evidence") | .run) = "true"' -i \
+  "$unvalidated_s390x_recovery/.github/workflows/release.yaml"
+expect_failure "$unvalidated_s390x_recovery" "release accepts unvalidated replacement s390x evidence"
+
 mutable_publish_checkout="$TMP_ROOT/mutable-publish-checkout"
 make_fixture "$mutable_publish_checkout"
 yq eval '(.jobs.publish.steps[] | select(.name == "Checkout") | .with.ref) = "${{ github.ref }}"' -i \

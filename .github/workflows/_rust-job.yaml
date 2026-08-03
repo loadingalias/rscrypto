@@ -9,6 +9,10 @@ on:
       runner:
         required: true
         type: string
+      checkout_ref:
+        required: false
+        type: string
+        default: ""
       timeout_minutes:
         required: false
         type: number
@@ -119,6 +123,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -132,6 +137,7 @@ jobs:
       - name: Run
         shell: bash
         env:
+          CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS: ${{ inputs.target == 's390x-unknown-linux-gnu' && '-C target-feature=+vector' || '' }}
           RSCRYPTO_CI_OPERATION: ${{ inputs.operation }}
           RSCRYPTO_CI_RUNNER: ${{ inputs.runner }}
           RSCRYPTO_CI_TEST_MODE: ${{ inputs.test_mode }}

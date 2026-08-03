@@ -212,6 +212,29 @@ reviewed recovery path from `main`:
 gh workflow run release.yaml --ref main -f tag=vX.Y.Z
 ```
 
+If release packaging rejects only the s390x CT artifact, regenerate that lane
+against the existing tag before dispatching recovery:
+
+```bash
+gh workflow run ct.yaml --ref main \
+  -f platforms=ibm-s390x \
+  -f dudect_gate=required \
+  -f upload_raw_artifacts=true \
+  -f artifact_retention_days=90 \
+  -f release_tag=vX.Y.Z
+
+gh workflow run release.yaml --ref main \
+  -f tag=vX.Y.Z \
+  -f s390x_ct_run=RUN_ID
+```
+
+Run both dispatches from the same reviewed `main` commit. The CT recovery is
+limited to the complete native s390x lane and checks out the immutable tag;
+the release preflight rejects any replacement run from another workflow,
+branch, repository, or commit. The normal release evidence packager then
+validates the replacement artifact's tag commit, crate version, cases, hashes,
+and target provenance before publication.
+
 Recovery checks out the existing annotated tag, verifies its allowed signature,
 and binds the package, evidence, release manifest, and release notes to the
 tag's commit rather than the newer workflow commit. Confirm that Preflight
