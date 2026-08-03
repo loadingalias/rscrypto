@@ -68,6 +68,33 @@ def main() -> None:
   symbolic_counts = owner_call_site_counts(symbolic_disassembly, expected, {})
   assert symbolic_counts["ct_entry_owner_eq_16"] == 1
 
+  riscv_disassembly = """\
+0000000000029000 <rscrypto_ct_dudect::main>:
+   292f2: 0015b097      auipc ra, 0x15b
+   292f6: 47a080e7      jalr 0x47a(ra) <ct_entry_owner_eq_16>
+   299be: 0015b097      auipc ra, 0x15b
+   299c2: f2c080e7      jalr -0xd4(ra) <ct_entry_owner_eq_32>
+   2a2f6: 0015b097      auipc ra, 0x15b
+   2a2fa: 8ee080e7      jalr -0x712(ra) <ct_entry_owner_eq_48>
+   2abcc: 0015a097      auipc ra, 0x15a
+   2abd0: 446080e7      jalr 0x446(ra) <ct_entry_owner_eq_64>
+   2abd4: 8082          ret
+"""
+  assert owner_call_site_counts(riscv_disassembly, expected, symbols_by_address) == {
+    symbol: 1 for symbol in sorted(expected)
+  }
+
+  unresolved_riscv = riscv_disassembly.replace(
+    "<ct_entry_owner_eq_16>",
+    "<unresolved_indirect_target>",
+  )
+  unresolved_riscv_counts = owner_call_site_counts(
+    unresolved_riscv,
+    expected,
+    {0x47A: "ct_entry_owner_eq_16"},
+  )
+  assert unresolved_riscv_counts["ct_entry_owner_eq_16"] == 0
+
   x86_got_disassembly = """\
 DYNAMIC RELOCATION RECORDS
 00000000003733a0 R_X86_64_RELATIVE        *ABS*+0x1dad60
