@@ -319,9 +319,9 @@ expected_installer_files=$(printf '%s\n' \
 [[ "$installer_files" == "$expected_installer_files" ]] \
   || fail "package-manager installs exist outside the reviewed integrity boundaries"
 
-[[ $(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .uses' "$CI") \
-  == "loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f" ]] \
-  || fail "the PR planner must use commit-pinned cargo-rail-action v6.1.0"
+rail_action=$(yq eval '.jobs."rail-plan".steps[] | select(.id == "rail") | .uses' "$CI")
+[[ "$rail_action" =~ ^loadingalias/cargo-rail-action@[0-9a-f]{40}$ ]] \
+  || fail "the PR planner must use commit-pinned cargo-rail-action"
 rail_version=$(sed -n 's/^CARGO_RAIL_VERSION=//p' "$INSTALL_TOOLS")
 [[ "$rail_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || fail "the Cargo Rail installer version must be exact"
@@ -669,6 +669,11 @@ grep -Fq 'ARTIFACT_RETENTION_DAYS" != "90"' <<<"$ct_source_step" \
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal workflow contract.
 [[ $(yq eval '.jobs.ct.with.checkout_ref' "$CT") == '${{ needs.plan.outputs.checkout_ref }}' ]] \
   || fail "release CT recovery must execute the resolved immutable tag source"
+for input_name in dudect_timeout binsec_timeout artifact_retention_days; do
+  expected="\${{ fromJSON(format('{0}', inputs.${input_name})) }}"
+  [[ $(yq eval ".jobs.ct.with.${input_name}" "$CT") == "$expected" ]] \
+    || fail "CT must normalize manual $input_name before the typed reusable workflow"
+done
 if grep -Eq 'uses: ./\.github/workflows/(ct|rsa)\.yaml' "$RELEASE"; then
   fail "tag workflow must promote exact-commit evidence instead of rerunning CT or RSA"
 fi

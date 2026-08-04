@@ -72,6 +72,12 @@ yq eval '(.jobs.ct.with.checkout_ref) = "${{ github.sha }}"' -i \
   "$mutable_ct_recovery_checkout/.github/workflows/ct.yaml"
 expect_failure "$mutable_ct_recovery_checkout" "CT recovery ignores the immutable tag source"
 
+untyped_ct_dispatch_numbers="$TMP_ROOT/untyped-ct-dispatch-numbers"
+make_fixture "$untyped_ct_dispatch_numbers"
+yq eval '(.jobs.ct.with.dudect_timeout) = "${{ inputs.dudect_timeout }}"' -i \
+  "$untyped_ct_dispatch_numbers/.github/workflows/ct.yaml"
+expect_failure "$untyped_ct_dispatch_numbers" "manual CT timeout bypasses typed normalization"
+
 missing_s390x_vector_environment="$TMP_ROOT/missing-s390x-vector-environment"
 make_fixture "$missing_s390x_vector_environment"
 yq eval 'del(.jobs.run.steps[] | select(.name == "Run") | .env.CARGO_TARGET_S390X_UNKNOWN_LINUX_GNU_RUSTFLAGS)' -i \
@@ -157,10 +163,8 @@ expect_failure "$unauthenticated_rustup" "toolchain setup can run a network boot
 
 floating_rail_action="$TMP_ROOT/floating-rail-action"
 make_fixture "$floating_rail_action"
-sed -i.bak \
-  's#loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f#loadingalias/cargo-rail-action@v6#' \
+yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .uses) = "loadingalias/cargo-rail-action@v6"' -i \
   "$floating_rail_action/.github/workflows/ci.yaml"
-rm -f "$floating_rail_action/.github/workflows/ci.yaml.bak"
 expect_failure "$floating_rail_action" "cargo-rail-action is not commit-pinned"
 
 mismatched_rail_version="$TMP_ROOT/mismatched-rail-version"

@@ -181,15 +181,15 @@ jobs:
       operation: constant-time
       platform: ${{ matrix.platform }}
       target: ${{ matrix.target }}
-      dudect_timeout: ${{ inputs.dudect_timeout }}
+      dudect_timeout: ${{ fromJSON(format('{0}', inputs.dudect_timeout)) }}
       dudect_filter: ${{ inputs.dudect_filter }}
       dudect_gate: ${{ inputs.dudect_gate }}
-      binsec_timeout: ${{ inputs.binsec_timeout }}
+      binsec_timeout: ${{ fromJSON(format('{0}', inputs.binsec_timeout)) }}
       upload_raw_artifacts: ${{ inputs.upload_raw_artifacts }}
       artifact_name: ct-${{ inputs.upload_raw_artifacts && 'raw-' || '' }}${{ matrix.artifact_suffix }}
       artifact_path: target/ct-evidence-package/
       artifact_always: true
-      artifact_retention_days: ${{ inputs.artifact_retention_days }}
+      artifact_retention_days: ${{ fromJSON(format('{0}', inputs.artifact_retention_days)) }}
 
   complete:
     name: Complete (CT)
