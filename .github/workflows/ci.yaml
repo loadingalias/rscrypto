@@ -37,7 +37,7 @@ jobs:
       - name: Build Plan (PR)
         if: github.event_name == 'pull_request'
         id: rail
-        uses: loadingalias/cargo-rail-action@f622a3936a231fe78a772292c6892d71e8c57f9f  # v6.1.0
+        uses: loadingalias/cargo-rail-action@ebc8ef2740efefe2cd5c42826344a8f1213113ae  # v6.1.2
         with:
           version: "0.20.0"
           checksum: required
