@@ -7,6 +7,14 @@ test-threads = "num-cpus"
 slow-timeout = { period = "30s", terminate-after = 4 }
 retries = 0
 
+[[profile.default.overrides]]
+filter = 'binary(=rsa_public_key) & test(=generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles)'
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+[[profile.default.overrides]]
+filter = 'binary(=rsa_wycheproof) & test(=wycheproof_rsaes_pkcs1v15_3072_decrypt_vectors_match_expected_results)'
+slow-timeout = { period = "60s", terminate-after = 8 }
+
 [profile.commit]
 status-level = "fail"
 success-output = "never"

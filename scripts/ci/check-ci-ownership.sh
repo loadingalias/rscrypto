@@ -29,7 +29,6 @@ RELEASE="$WORKFLOWS/release.yaml"
 RSA="$WORKFLOWS/rsa.yaml"
 SETUP_ACTION="$ACTIONS/setup/action.yaml"
 TOOLCHAIN_ACTION="$ACTIONS/setup-toolchain/action.yaml"
-SCORECARD_ACTION="$ACTIONS/scorecard/action.yaml"
 MANIFEST="$ROOT/.config/target-matrix.json"
 TOOL_ARCHIVES="$ROOT/.config/ci-tool-archives.tsv"
 CARGO_CONFIG="$ROOT/.cargo/config.toml"
@@ -129,7 +128,6 @@ require_file "$RELEASE"
 require_file "$RSA"
 require_file "$SETUP_ACTION"
 require_file "$TOOLCHAIN_ACTION"
-require_file "$SCORECARD_ACTION"
 require_file "$MANIFEST"
 require_file "$TOOL_ARCHIVES"
 require_file "$CARGO_CONFIG"
@@ -267,7 +265,7 @@ fi
 bash -eu -o pipefail -c 'source "$1"; ci_tool_validate_manifest' _ "$TOOL_INTEGRITY" \
   || fail "direct CI tool archive manifest is invalid"
 
-if grep -ERn 'uses:[[:space:]]+(dtolnay/rust-toolchain|ossf/scorecard-action)@' \
+if grep -ERn 'uses:[[:space:]]+dtolnay/rust-toolchain@' \
   "$WORKFLOWS" "$ACTIONS" >/dev/null; then
   fail "CI must not delegate installation to an action with an unauthenticated executable fallback"
 fi
@@ -394,12 +392,12 @@ grep -Fq 'ci_tool_download codecov' "$INSTALL_CODECOV" \
 # shellcheck disable=SC2016 # GitHub expression is an intentional literal contract.
 grep -Fq 'binary: ${{ steps.codecov.outputs.binary }}' "$WEEKLY" \
   || fail "Codecov action must use the repository-verified CLI"
-[[ $(yq eval '.jobs.scorecard.steps[] | select(.name == "Run Scorecard") | .uses' "$SCORECARD") \
-  == "./.github/actions/scorecard" ]] \
-  || fail "Scorecard must use the repository-owned digest-pinned action"
-scorecard_image=$(yq eval -r '.runs.image' "$SCORECARD_ACTION")
-[[ "$scorecard_image" =~ ^docker://ghcr\.io/ossf/scorecard-action@sha256:[0-9a-f]{64}$ ]] \
-  || fail "Scorecard container must use an OCI digest"
+scorecard_action=$(yq eval '.jobs.scorecard.steps[] | select(.name == "Run Scorecard") | .uses' "$SCORECARD")
+[[ "$scorecard_action" =~ ^ossf/scorecard-action@[0-9a-f]{40}$ ]] \
+  || fail "Scorecard publication must call the official action at an immutable commit"
+[[ $(yq eval '.jobs.scorecard.steps[] | select(.name == "Run Scorecard") | .with.publish_results' "$SCORECARD") \
+  == "true" ]] \
+  || fail "Scorecard must publish results"
 
 [[ $(count_feature_sets "$FEATURE_PROFILES" COMPILE_FEATURE_SETS) -eq 58 ]] \
   || fail "compile feature matrix must retain all 58 profiles"

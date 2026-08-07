@@ -185,12 +185,11 @@ yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .with.since) = "or
   "$mutable_rail_base/.github/workflows/ci.yaml"
 expect_failure "$mutable_rail_base" "cargo-rail-action plans from a mutable base"
 
-unpinned_scorecard="$TMP_ROOT/unpinned-scorecard"
-make_fixture "$unpinned_scorecard"
-sed -i.bak 's#@sha256:[0-9a-f]*#:v2.4.3#' \
-  "$unpinned_scorecard/.github/actions/scorecard/action.yaml"
-rm -f "$unpinned_scorecard/.github/actions/scorecard/action.yaml.bak"
-expect_failure "$unpinned_scorecard" "Scorecard container uses a mutable tag"
+indirect_scorecard="$TMP_ROOT/indirect-scorecard"
+make_fixture "$indirect_scorecard"
+yq eval '(.jobs.scorecard.steps[] | select(.name == "Run Scorecard") | .uses) = "./.github/actions/scorecard"' -i \
+  "$indirect_scorecard/.github/workflows/scorecard.yaml"
+expect_failure "$indirect_scorecard" "Scorecard publication does not call the official action directly"
 
 floating_codecov="$TMP_ROOT/floating-codecov"
 make_fixture "$floating_codecov"
