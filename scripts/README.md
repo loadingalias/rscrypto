@@ -107,7 +107,7 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `lib/targets.sh`        | `scripts/check/check-all.sh`, `scripts/check/check-linux.sh`, `scripts/check/check-ibm.sh` |
 | `lib/target-matrix.sh`  | `scripts/lib/targets.sh`, `_ci-suite.yaml` (target-matrix job) |
 | `lib/toolchain.sh`      | `.github/actions/setup-toolchain/action.yaml` |
-| `lib/ci-tool-integrity.sh` | `ci/cross-targets.sh`, `ci/install-codecov.sh`, `ci/nostd-wasm-suite.sh` |
+| `lib/ci-tool-integrity.sh` | `ci/install-codecov.sh`, `ci/nostd-wasm-suite.sh` |
 
 ## CI tool integrity
 

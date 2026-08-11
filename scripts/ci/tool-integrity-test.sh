@@ -249,24 +249,6 @@ if grep -Fq 'tar ' "$direct_log"; then
 fi
 [[ ! -e "$bad_wasmtime_exec" ]] || fail "invalid Wasmtime archive reached execution"
 
-zig_artifact="$TMP_ROOT/zig.tar.xz"
-printf 'authenticated mock Zig archive\n' >"$zig_artifact"
-zig_digest=$(sha256_file "$zig_artifact")
-set_manifest_digest "$direct_fixture" zig linux x86_64 "$zig_digest"
-zig_download="$TMP_ROOT/zig-download"
-mkdir -p "$zig_download"
-(
-  cd "$direct_fixture"
-  export PATH="$direct_bin:$PATH"
-  export MOCK_COMMAND_LOG="$direct_log"
-  export MOCK_DOWNLOAD_FILE="$zig_artifact"
-  source scripts/lib/ci-tool-integrity.sh
-  ci_tool_download zig "$zig_download"
-)
-cmp "$zig_artifact" \
-  "$zig_download/zig-x86_64-linux-0.17.0-dev.1282+c0f9b51d8.tar.xz" \
-  || fail "verified Zig artifact did not match the authenticated download"
-
 package_bin="$TMP_ROOT/package-bin"
 package_log="$TMP_ROOT/package.log"
 package_state="$TMP_ROOT/package.state"
