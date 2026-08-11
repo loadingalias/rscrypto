@@ -1043,14 +1043,45 @@ impl ScryptPassword {
     Ok(Self { generation, limits })
   }
 
+  /// Hash a password with a salt filled by the caller's entropy source.
+  ///
+  /// rscrypto owns the 16-byte salt buffer and invokes `fill_entropy` exactly
+  /// once. The callback must fill the entire buffer with fresh, unpredictable
+  /// bytes or return an error. rscrypto never exposes a caller-supplied salt
+  /// parameter or returns the salt buffer separately from the PHC record.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`crate::PasswordHashError::Entropy`] if `fill_entropy` fails, or
+  /// [`crate::PasswordHashError::Hash`] if scrypt derivation fails.
+  pub fn hash_password_with<E>(
+    &self,
+    password: &[u8],
+    fill_entropy: impl FnOnce(&mut [u8]) -> Result<(), E>,
+  ) -> Result<alloc::string::String, crate::auth::PasswordHashError<E, ScryptError>> {
+    let mut salt = [0u8; PASSWORD_SALT_LEN];
+    fill_entropy(&mut salt).map_err(crate::auth::PasswordHashError::Entropy)?;
+    self
+      .hash_password_with_salt(password, &salt)
+      .map_err(crate::auth::PasswordHashError::Hash)
+  }
+
   /// Hash a password with an OS-generated salt and canonical scrypt PHC encoding.
   #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
   pub fn hash_password(&self, password: &[u8]) -> Result<alloc::string::String, ScryptError> {
     let mut salt = [0u8; PASSWORD_SALT_LEN];
     getrandom::fill(&mut salt).map_err(|_| ScryptError::EntropyUnavailable)?;
+    self.hash_password_with_salt(password, &salt)
+  }
+
+  fn hash_password_with_salt(
+    &self,
+    password: &[u8],
+    salt: &[u8; PASSWORD_SALT_LEN],
+  ) -> Result<alloc::string::String, ScryptError> {
     let mut verifier = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
-    Scrypt::derive(&self.generation, password, &salt, verifier.as_mut_array())?;
-    Ok(password_phc::encode(self.generation, &salt, verifier.as_array()))
+    Scrypt::derive(&self.generation, password, salt, verifier.as_mut_array())?;
+    Ok(password_phc::encode(self.generation, salt, verifier.as_array()))
   }
 
   /// Verify a password after approving all encoded resource requests.
@@ -1088,7 +1119,6 @@ const PASSWORD_OUTPUT_LEN: usize = DEFAULT_OUTPUT_LEN;
 
 #[cfg(feature = "phc-strings")]
 mod password_phc {
-  #[cfg(any(feature = "getrandom", test))]
   use alloc::string::String;
 
   use super::{
@@ -1173,7 +1203,6 @@ mod password_phc {
     })
   }
 
-  #[cfg(any(feature = "getrandom", test))]
   pub(super) fn encode(params: ScryptParams, salt: &[u8], verifier: &[u8; PASSWORD_OUTPUT_LEN]) -> String {
     let mut out = String::with_capacity(112);
     out.push_str("$scrypt$ln=");

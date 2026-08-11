@@ -195,6 +195,13 @@ fn hmac_sha256_oneshot_should_stream() -> bool {
   return false;
 }
 
+#[inline(always)]
+fn hmac_sha256_truncate_64(tag: &[u8; SHA256_TAG_SIZE]) -> [u8; 8] {
+  let mut truncated = [0u8; 8];
+  truncated.copy_from_slice(&tag[..8]);
+  truncated
+}
+
 #[inline]
 pub(crate) fn hmac_prefix_state<const BLOCK_SIZE: usize, T>(
   key_block: &mut [u8; BLOCK_SIZE],
@@ -365,6 +372,26 @@ impl HmacSha256 {
     <Self as Mac>::verify_tag(key, data, expected)
   }
 
+  /// Verify the leading 64 bits of the HMAC-SHA256 tag of `data`.
+  ///
+  /// Use this only when an existing protocol fixes an eight-byte truncated
+  /// tag and independently bounds failed forgery attempts. Prefer
+  /// [`Self::verify_tag`] for new protocols.
+  ///
+  /// Generated-code timing claims are configuration- and release-evidence-bound;
+  /// see `ct.toml`.
+  #[inline]
+  #[must_use = "HMAC verification must be checked; a dropped Result silently accepts a forged tag"]
+  pub fn verify_truncated_tag_64(key: &[u8], data: &[u8], expected: &[u8; 8]) -> Result<(), VerificationError> {
+    let actual = Self::mac(key, data);
+    let actual = hmac_sha256_truncate_64(actual.as_bytes());
+    if ct::fixed_eq(&actual, expected).declassify() {
+      Ok(())
+    } else {
+      Err(VerificationError::new())
+    }
+  }
+
   #[cfg(any(test, feature = "diag"))]
   #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(
@@ -422,6 +449,19 @@ pub fn diag_hmac_sha256_verify_portable(
     crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
   );
   let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
+  ct::fixed_eq(&tag, expected)
+}
+
+#[cfg(feature = "diag")]
+pub fn diag_hmac_sha256_verify_truncated_64_portable(
+  key: &[u8; SHA256_TAG_SIZE],
+  expected: &[u8; 8],
+) -> ct::CtDecision {
+  let compress = crate::hashes::crypto::sha256::kernels::compress_blocks_fn(
+    crate::hashes::crypto::sha256::kernels::Sha256KernelId::Portable,
+  );
+  let tag = HmacSha256::mac_with_compress_for_test(key, b"binsec", compress);
+  let tag = hmac_sha256_truncate_64(&tag);
   ct::fixed_eq(&tag, expected)
 }
 

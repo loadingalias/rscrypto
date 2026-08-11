@@ -100,10 +100,11 @@ their internal fixtures are available.
 
 Secret-key hex errors retain the public offending-byte field for programmatic
 inspection but omit that byte from both `Debug` and `Display`. Generic ECDSA
-random-source errors omit the caller's payload from `Debug`, `Display`, and the
-standard error-source chain; callers can still recover it by explicitly
-matching the public `Random` variant. Other reviewed errors contain only
-discriminants, public sizes, or opaque verification failures.
+and password-record entropy errors omit the caller's payload from `Debug`,
+`Display`, and the standard error-source chain; callers can still recover it by
+explicitly matching the public `Random` or `Entropy` variant. Other reviewed
+errors contain only discriminants, public sizes, or opaque verification
+failures.
 
 `expert::DisplaySecret` is the deliberate exception: constructing it
 explicitly opts into rendering borrowed secret bytes. Feature-gated diagnostic

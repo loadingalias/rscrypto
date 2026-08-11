@@ -378,8 +378,6 @@ pub use aead::{ChaCha20Poly1305, ChaCha20Poly1305Key, ChaCha20Poly1305Tag};
 pub use aead::{XChaCha20Poly1305, XChaCha20Poly1305Key, XChaCha20Poly1305Tag};
 #[cfg(feature = "hkdf")]
 pub use auth::HkdfOutputLengthError;
-#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
-pub use auth::PasswordStatus;
 #[cfg(feature = "argon2")]
 pub use auth::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
@@ -411,6 +409,8 @@ pub use auth::{
   MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKem1024EncapsulationKey,
   MlKem1024PreparedDecapsulationKey, MlKem1024PreparedEncapsulationKey, MlKem1024SharedSecret, MlKemError,
 };
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+pub use auth::{PasswordHashError, PasswordStatus};
 #[cfg(feature = "pbkdf2")]
 pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2VerifyPolicy};
 #[cfg(feature = "poly1305")]

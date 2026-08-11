@@ -2029,6 +2029,29 @@ impl Argon2idPassword {
     Ok(Self { generation, limits })
   }
 
+  /// Hash a password with a salt filled by the caller's entropy source.
+  ///
+  /// rscrypto owns the 16-byte salt buffer and invokes `fill_entropy` exactly
+  /// once. The callback must fill the entire buffer with fresh, unpredictable
+  /// bytes or return an error. rscrypto never exposes a caller-supplied salt
+  /// parameter or returns the salt buffer separately from the PHC record.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`crate::PasswordHashError::Entropy`] if `fill_entropy` fails, or
+  /// [`crate::PasswordHashError::Hash`] if Argon2 derivation fails.
+  pub fn hash_password_with<E>(
+    &self,
+    password: &[u8],
+    fill_entropy: impl FnOnce(&mut [u8]) -> Result<(), E>,
+  ) -> Result<alloc::string::String, crate::auth::PasswordHashError<E, Argon2Error>> {
+    let mut salt = [0u8; PASSWORD_SALT_LEN];
+    fill_entropy(&mut salt).map_err(crate::auth::PasswordHashError::Entropy)?;
+    self
+      .hash_password_with_salt(password, Argon2Context::default(), &salt)
+      .map_err(crate::auth::PasswordHashError::Hash)
+  }
+
   /// Hash a password with an OS-generated salt and canonical Argon2id PHC encoding.
   #[cfg(all(feature = "phc-strings", feature = "getrandom"))]
   pub fn hash_password(&self, password: &[u8]) -> Result<alloc::string::String, Argon2Error> {
@@ -2044,9 +2067,18 @@ impl Argon2idPassword {
   ) -> Result<alloc::string::String, Argon2Error> {
     let mut salt = [0u8; PASSWORD_SALT_LEN];
     getrandom::fill(&mut salt).map_err(|_| Argon2Error::EntropyUnavailable)?;
+    self.hash_password_with_salt(password, context, &salt)
+  }
+
+  fn hash_password_with_salt(
+    &self,
+    password: &[u8],
+    context: Argon2Context<'_>,
+    salt: &[u8; PASSWORD_SALT_LEN],
+  ) -> Result<alloc::string::String, Argon2Error> {
     let mut verifier = crate::secret::ZeroizingBytes::<PASSWORD_OUTPUT_LEN>::zeroed();
-    Argon2id::derive_with_context(&self.generation, context, password, &salt, verifier.as_mut_array())?;
-    Ok(password_phc::encode(self.generation, &salt, verifier.as_array()))
+    Argon2id::derive_with_context(&self.generation, context, password, salt, verifier.as_mut_array())?;
+    Ok(password_phc::encode(self.generation, salt, verifier.as_array()))
   }
 
   /// Verify a password after approving all encoded resource requests.
@@ -2100,13 +2132,11 @@ const PASSWORD_OUTPUT_LEN: usize = DEFAULT_OUTPUT_LEN;
 
 #[cfg(feature = "phc-strings")]
 mod password_phc {
-  #[cfg(any(feature = "getrandom", test))]
   use alloc::string::String;
 
-  #[cfg(any(feature = "getrandom", test))]
-  use super::ARGON2_VERSION;
   use super::{
-    Argon2Params, Argon2VerificationLimits, MAX_PHC_SALT_LEN, MIN_SALT_LEN, PASSWORD_OUTPUT_LEN, argon2_shape,
+    ARGON2_VERSION, Argon2Params, Argon2VerificationLimits, MAX_PHC_SALT_LEN, MIN_SALT_LEN, PASSWORD_OUTPUT_LEN,
+    argon2_shape,
   };
   use crate::auth::phc::{self, PhcError};
 
@@ -2184,7 +2214,6 @@ mod password_phc {
     })
   }
 
-  #[cfg(any(feature = "getrandom", test))]
   pub(super) fn encode(params: Argon2Params, salt: &[u8], verifier: &[u8; PASSWORD_OUTPUT_LEN]) -> String {
     let mut out = String::with_capacity(128);
     out.push_str("$argon2id$v=");

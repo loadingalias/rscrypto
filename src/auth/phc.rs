@@ -21,7 +21,6 @@
   allow(dead_code)
 )]
 
-#[cfg(any(feature = "getrandom", test))]
 use alloc::string::String;
 use core::fmt;
 
@@ -45,7 +44,6 @@ const B64_DECODE_TABLE: [u8; 256] = {
 ///
 /// Appends to `out` — callers managing multi-segment PHC strings reuse the
 /// same `String` buffer without intermediate allocation.
-#[cfg(any(feature = "getrandom", test))]
 pub(crate) fn base64_encode_into(bytes: &[u8], out: &mut String) {
   let full_triples = bytes.len() / 3;
   let tail = bytes.len() % 3;
@@ -180,7 +178,6 @@ pub(crate) fn base64_decode_into(s: &str, out: &mut [u8]) -> Result<usize, PhcEr
 /// Shared decimal writer used by Argon2 and scrypt PHC encoders for cost
 /// parameters. Produces exactly the canonical form `PhcParamIter` +
 /// `parse_param_u32` accept on round-trip.
-#[cfg(any(feature = "getrandom", test))]
 pub(crate) fn push_u32_decimal(out: &mut String, n: u32) {
   if n == 0 {
     out.push('0');

@@ -124,10 +124,13 @@ Features: `password-hashing` or `argon2` / `scrypt` / `phc-strings`.
 | `Argon2idPassword`, `Argon2VerificationLimits` | 32B verifier | Bounded canonical Argon2id PHC records |
 | `Scrypt`, `ScryptParams` | variable | RFC 7914 raw KDF |
 | `ScryptPassword`, `ScryptVerificationLimits` | 32B verifier | Bounded canonical scrypt PHC records |
+| `PasswordHashError` | -- | Caller entropy / password-hash failure boundary |
 | `PasswordStatus` | -- | Current-profile / rehash decision |
 
-Password-record operations require `phc-strings`; OS-salted generation also requires `getrandom`.
-PHC parsing and encoding are intentionally internal so attacker-controlled costs cannot bypass the
+Password-record operations require `phc-strings`. `hash_password_with` accepts
+a caller-owned entropy source without another feature; OS-salted
+`hash_password` also requires `getrandom`. PHC parsing and encoding are
+intentionally internal so attacker-controlled costs cannot bypass the
 algorithm-specific verification limits.
 
 ## Signatures and key exchange
@@ -208,6 +211,7 @@ detached forms remain allocation-free. With `alloc`, decryption has
 | Error | When | Recovery |
 |-------|------|----------|
 | `VerificationError` | MAC/AEAD/signature/password verification fails | Reject input without revealing failure detail |
+| `PasswordHashError` | Caller entropy or password-record hashing fails | Match the variant; repair the entropy source or handle the algorithm error |
 | `EcdsaKeyGenerationError` | ECDSA random source failure or bounded scalar rejection exhaustion | Fix entropy source; investigate deterministic fillers |
 | `AeadBufferError` | Output buffer wrong size | Fix buffer length |
 | `SealError` | Combined AEAD buffer length is wrong or input exceeds the algorithm limit | Correct the public buffer/input length |

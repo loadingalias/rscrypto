@@ -320,6 +320,20 @@ pub extern "C" fn ct_binsec_hmac_sha256_verify() -> ! {
 
 #[unsafe(no_mangle)]
 #[inline(never)]
+pub extern "C" fn ct_binsec_hmac_sha256_verify_truncated_64() -> ! {
+  // SAFETY: These pointers reference fixed harness globals with static storage.
+  let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_32)) };
+  // SAFETY: This pointer references a fixed harness global with static storage.
+  let expected = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_TAG_32)) };
+  let expected = expected
+    .first_chunk::<8>()
+    .expect("HMAC-SHA256 tags contain eight bytes");
+  let ok = rscrypto::auth::diag_hmac_sha256_verify_truncated_64_portable(&key, expected);
+  ct_binsec_done(u8::from(ok.declassify()))
+}
+
+#[unsafe(no_mangle)]
+#[inline(never)]
 pub extern "C" fn ct_binsec_hmac_sha384_verify() -> ! {
   // SAFETY: These pointers reference fixed harness globals with static storage.
   let key = unsafe { array_from_global(ptr::addr_of!(CT_BINSEC_KEY_48)) };
@@ -824,12 +838,13 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
 
 #[unsafe(no_mangle)]
 #[used]
-pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 44] = [
+pub static CT_BINSEC_ENTRYPOINTS: [extern "C" fn() -> !; 45] = [
   ct_binsec_owner_eq_16,
   ct_binsec_owner_eq_32,
   ct_binsec_owner_eq_48,
   ct_binsec_owner_eq_64,
   ct_binsec_hmac_sha256_verify,
+  ct_binsec_hmac_sha256_verify_truncated_64,
   ct_binsec_hmac_sha384_verify,
   ct_binsec_hmac_sha512_verify,
   ct_binsec_kmac256_verify,

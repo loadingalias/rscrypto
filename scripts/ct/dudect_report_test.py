@@ -21,8 +21,15 @@ def main() -> None:
   )
   assert linker_driver(power_linker_command) == "cc"
   assert linker_driver('LC_ALL="C" "/usr/bin/clang" "input.o" "-o" "output"') == "/usr/bin/clang"
+  darwin_linker_command = (
+    'LC_ALL="C" "/usr/bin/env" "-u" "IPHONEOS_DEPLOYMENT_TARGET" '
+    '"-u" "TVOS_DEPLOYMENT_TARGET" ZERO_AR_DATE="1" "/usr/bin/cc" '
+    '"input.o" "-o" "output"'
+  )
+  assert linker_driver(darwin_linker_command) == "/usr/bin/cc"
   expect_failure(lambda: linker_driver(""))
   expect_failure(lambda: linker_driver('LC_ALL="C" "-m64" "input.o"'))
+  expect_failure(lambda: linker_driver('"/usr/bin/env" "-u"'))
 
   expected = {
     "ct_entry_owner_eq_16",

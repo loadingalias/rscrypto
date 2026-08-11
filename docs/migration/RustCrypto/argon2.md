@@ -13,15 +13,18 @@ The raw implementations are checked against RFC 9106 vectors and the RustCrypto 
 # Raw Argon2 KDF
 rscrypto = { version = "0.7.8", default-features = false, features = ["argon2"] }
 
-# Password-record generation and verification
+# Password-record generation and verification with caller-owned entropy
 rscrypto = { version = "0.7.8", default-features = false, features = [
   "argon2",
   "phc-strings",
-  "getrandom",
 ] }
+
+# Add "getrandom" for hash_password() with OS entropy.
 ```
 
-`getrandom` is needed only to generate password records. Verification needs `argon2` and `phc-strings`.
+`argon2` and `phc-strings` provide bounded verification and
+`hash_password_with`. The `getrandom` feature adds OS-backed `hash_password`
+and `hash_password_with_context`.
 
 ## Raw KDF
 
@@ -84,7 +87,19 @@ match passwords.verify_password(password, &record)? {
 }
 ```
 
-Generation always uses Argon2id v1.3, a fresh 16-byte OS-random salt, a 32-byte verifier, and canonical `$argon2id$v=19$m=...,t=...,p=...$...$...` encoding. There is no caller-salt password helper.
+Generation always uses Argon2id v1.3, a fresh 16-byte salt, a 32-byte verifier,
+and canonical `$argon2id$v=19$m=...,t=...,p=...$...$...` encoding. There is no
+caller-salt password helper. Without `getrandom`, pass the deployment's entropy
+authority as a fallible filling closure:
+
+```rust
+let record = passwords.hash_password_with(password, |salt| system_rng.fill(salt))?;
+```
+
+rscrypto allocates the salt and invokes the callback exactly once. The callback
+must fill the complete buffer with fresh, unpredictable bytes or return an
+error. `PasswordHashError` keeps that entropy error distinct from an
+`Argon2Error` raised after filling.
 
 For a custom generation profile:
 

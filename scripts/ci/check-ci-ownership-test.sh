@@ -41,6 +41,11 @@ baseline="$TMP_ROOT/baseline"
 make_fixture "$baseline"
 "$CHECKER" --root "$baseline" >/dev/null
 
+zig_dependent_cross_targets="$TMP_ROOT/zig-dependent-cross-targets"
+make_fixture "$zig_dependent_cross_targets"
+printf '\nzig version\n' >>"$zig_dependent_cross_targets/scripts/ci/cross-targets.sh"
+expect_failure "$zig_dependent_cross_targets" "cross-target CI depends on Zig"
+
 missing_recovery_tag="$TMP_ROOT/missing-recovery-tag"
 make_fixture "$missing_recovery_tag"
 yq eval 'del(.on.workflow_dispatch.inputs.tag)' -i \

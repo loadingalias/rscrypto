@@ -182,6 +182,8 @@ fn root_surface_mac_exports_compile() {
   mac.update(data);
   assert!(tag.ct_eq(&mac.finalize()).declassify());
   assert!(mac.verify(&tag).is_ok());
+  let prefix = *tag.as_bytes().first_chunk::<8>().unwrap();
+  assert!(HmacSha256::verify_truncated_tag_64(key, data, &prefix).is_ok());
 
   let mut mac384 = HmacSha384::new(key);
   mac384.update(data);

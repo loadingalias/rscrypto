@@ -299,6 +299,7 @@ symbols = [
   "ct_entry_owner_eq_3168",
   "ct_entry_secret_bytes32_debug_masked",
   "ct_entry_hmac_sha256_verify",
+  "ct_entry_hmac_sha256_verify_truncated_64",
   "ct_entry_hmac_sha384_verify",
   "ct_entry_hmac_sha512_verify",
   "ct_entry_kmac256_verify",
@@ -441,6 +442,15 @@ primitive = "mac.hmac_verify"
 filter = "hmac_sha256_valid_vs_invalid_tag"
 left_class = "valid tag"
 right_class = "invalid first tag byte"
+samples = 20000
+smoke_samples = 2000
+
+[[dudect_case]]
+name = "hmac_sha256_truncated_64_valid_vs_invalid_tag"
+primitive = "mac.hmac_verify"
+filter = "hmac_sha256_truncated_64_valid_vs_invalid_tag"
+left_class = "valid 64-bit truncated tag"
+right_class = "invalid first truncated-tag byte"
 samples = 20000
 smoke_samples = 2000
 
@@ -1559,6 +1569,13 @@ dudect = ["hmac_sha256_valid_vs_invalid_tag"]
 binsec = ["mac.hmac_verify.sha256.portable.all"]
 
 [[evidence_unit]]
+id = "mac.hmac_verify.sha256_truncated_64"
+primitive = "mac.hmac_verify"
+variant = "HmacSha256Truncated64"
+dudect = ["hmac_sha256_truncated_64_valid_vs_invalid_tag"]
+binsec = ["mac.hmac_verify.sha256_truncated_64.portable.all"]
+
+[[evidence_unit]]
 id = "mac.hmac_verify.sha384"
 primitive = "mac.hmac_verify"
 variant = "HmacSha384"
@@ -2239,6 +2256,27 @@ notes = "Bounded production HMAC-SHA256 verify leaf with fixed public message le
 claim = "ct-intended"
 
 [[binsec_kernel]]
+id = "mac.hmac_verify.sha256_truncated_64.portable.all"
+primitive = "mac.hmac_verify"
+symbol = "ct_binsec_hmac_sha256_verify_truncated_64"
+tier = "A"
+required = true
+targets = ["*"]
+rustflags = []
+sse_depth = 30000
+secrets = [
+  { name = "CT_BINSEC_KEY_32", kind = "global", bytes = 32 },
+  { name = "CT_BINSEC_TAG_32", kind = "global", bytes = 32 },
+]
+public = [
+  { name = "MESSAGE_LEN", kind = "const", value = 6 },
+  { name = "TRUNCATED_TAG_LEN", kind = "const", value = 8 },
+]
+assumptions = []
+notes = "Bounded production HMAC-SHA256 64-bit truncated verify leaf with fixed public message and tag lengths."
+claim = "ct-intended"
+
+[[binsec_kernel]]
 id = "mac.hmac_verify.sha384.portable.all"
 primitive = "mac.hmac_verify"
 symbol = "ct_binsec_hmac_sha384_verify"
@@ -2699,8 +2737,8 @@ name = "x86_64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2221
-compiler_api_sha256 = "7a10185323957d7666b51b29cfab3969036f5551b2d5bd8345a8c1830610aed6"
+compiler_api_item_count = 2230
+compiler_api_sha256 = "671da8ccb1855d450418dc6fc3e79c9b9a2d50c518f98761d8c0fda6abb7c3b3"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2711,8 +2749,8 @@ name = "aarch64-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2215
-compiler_api_sha256 = "44d494189799045ed6e0ffcb3e2c7453868d62f39f9a069c31ede5d28a65f7b5"
+compiler_api_item_count = 2224
+compiler_api_sha256 = "2bc45c4c1aa47db7c9786ca5aae449cfc7e4370899841c96efbaeb7b67a909ae"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "required"
@@ -2771,8 +2809,8 @@ name = "aarch64-apple-darwin"
 group = "macos"
 backend = "llvm"
 linker = "apple-ld-unpinned"
-compiler_api_item_count = 2215
-compiler_api_sha256 = "44d494189799045ed6e0ffcb3e2c7453868d62f39f9a069c31ede5d28a65f7b5"
+compiler_api_item_count = 2224
+compiler_api_sha256 = "2bc45c4c1aa47db7c9786ca5aae449cfc7e4370899841c96efbaeb7b67a909ae"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2796,8 +2834,8 @@ name = "s390x-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2214
-compiler_api_sha256 = "1f23434a153550dc9ada6bff47a9c7c89adc1763629827e940f4ad69e3be074c"
+compiler_api_item_count = 2223
+compiler_api_sha256 = "e54c2a119d506935fda2279f7d7f9f75506ce86fe5b0b6fc72fd08a7e8090883"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2809,8 +2847,8 @@ name = "powerpc64le-unknown-linux-gnu"
 group = "ibm"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2214
-compiler_api_sha256 = "37793296770a82d75102f92a8630a9b3f9d90b59de36939ff3505554d6f66b92"
+compiler_api_item_count = 2223
+compiler_api_sha256 = "e85c77d60d67a4648efd50cda101b8248026eb57d9008ceaae2511e319b502d9"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -2822,8 +2860,8 @@ name = "riscv64gc-unknown-linux-gnu"
 group = "linux"
 backend = "llvm"
 linker = "platform-default-unpinned"
-compiler_api_item_count = 2214
-compiler_api_sha256 = "8f5377e62133152ba74f5623313079a862b2632fe69efd8a7535d69d2b0aef78"
+compiler_api_item_count = 2223
+compiler_api_sha256 = "119e6aef49beac534d7155cba8b15a7774c7a4fb6990c9e304b07998844a0858"
 claim = "ct-intended"
 physical_timing = "required"
 binsec = "unsupported"
@@ -3432,9 +3470,10 @@ id = "mac.hmac_verify"
 tier = "A"
 claim = "ct-intended"
 features = ["hmac"]
-variants = ["HmacSha256", "HmacSha384", "HmacSha512"]
+variants = ["HmacSha256", "HmacSha256Truncated64", "HmacSha384", "HmacSha512"]
 entrypoints = [
   "HmacSha256::verify_tag",
+  "HmacSha256::verify_truncated_tag_64",
   "HmacSha384::verify_tag",
   "HmacSha512::verify_tag",
   "Mac::verify",
@@ -3449,6 +3488,7 @@ required = ["tier_a"]
 status = "covered"
 symbols = [
   "ct_entry_hmac_sha256_verify",
+  "ct_entry_hmac_sha256_verify_truncated_64",
   "ct_entry_hmac_sha384_verify",
   "ct_entry_hmac_sha512_verify",
 ]

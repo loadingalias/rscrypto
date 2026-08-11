@@ -116,6 +116,18 @@ source-level boundary is not a machine-code timing proof; claims remain limited
 to the matching [release evidence](../../constant-time.md). Use `as_bytes()` or
 `to_bytes()` only at protocol serialization boundaries.
 
+An existing protocol that fixes HMAC-SHA256 to its leading 64 bits can use the
+exact-width verification seam without restoring generic slice comparison:
+
+```rust
+let expected_tag: [u8; 8] = packet_tag;
+HmacSha256::verify_truncated_tag_64(key, data, &expected_tag)?;
+```
+
+This API accepts exactly eight bytes. Prefer full `HmacSha256Tag` verification
+for new protocols; a 64-bit tag requires a protocol-level forgery budget and a
+bound on failed attempts.
+
 ## Notes
 
 - **Generic parameter gone.** `Hmac<D>` becomes one of the named types (`HmacSha256`, `HmacSha384`, `HmacSha512`, `HmacSha3_224`, `HmacSha3_256`, `HmacSha3_384`, `HmacSha3_512`). Replace a generic bound only when the call site has a fixed algorithm; keep RustCrypto HMAC when digest-generic behavior is part of the API.

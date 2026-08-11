@@ -382,8 +382,9 @@ grep -Fq 'actual=$(dpkg-query -W -f=' "$INSTALL_TOOLS" \
   || fail "APT packages must be validated against exact versions"
 grep -Fq 'ci_tool_download wasmtime' "$NOSTD_WASM" \
   || fail "Wasmtime must use the direct archive integrity contract"
-grep -Fq 'ci_tool_download zig' "$CROSS_SCRIPT" \
-  || fail "Zig must use the direct archive integrity contract"
+if grep -Eiq '(^|[^[:alnum:]_])zig([^[:alnum:]_]|$)' "$CROSS_SCRIPT"; then
+  fail "cross-target CI must not depend on Zig"
+fi
 grep -Fq 'ci_tool_download codecov' "$INSTALL_CODECOV" \
   || fail "Codecov must use the direct executable integrity contract"
 [[ $(yq eval '.jobs.coverage.steps[] | select(.id == "codecov") | .run' "$WEEKLY") \
