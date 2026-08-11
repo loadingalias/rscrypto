@@ -234,12 +234,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Attest crate provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.crate_path }}
 
       - name: Attest source archive provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: ${{ steps.package.outputs.source_path }}
 
@@ -256,7 +256,7 @@ jobs:
             --allow-redacted-bypass
 
       - name: Attest repository controls
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: ${{ steps.repository_controls.outputs.evidence_path }}
 
@@ -304,7 +304,7 @@ jobs:
             --evidence-commit "$EVIDENCE_COMMIT"
 
       - name: Attest CT evidence provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: ${{ steps.ct_evidence.outputs.bundle_path }}
 
@@ -334,7 +334,7 @@ jobs:
             --output "release-artifacts/rscrypto-${CRATE_VERSION}-release-manifest.json"
 
       - name: Attest release identity manifest
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: ${{ steps.release_manifest.outputs.manifest_path }}
 
@@ -382,7 +382,7 @@ jobs:
           } > SHA256SUMS
 
       - name: Attest release checksums
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373  # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
         with:
           subject-path: SHA256SUMS
 
