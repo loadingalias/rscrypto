@@ -118,17 +118,19 @@ rscrypto = { version = "0.7.8", features = ["full", "portable-only"] }
 ## `getrandom`
 
 `getrandom` enables fallible OS-backed constructors such as `try_random()` and
-`try_generate()`. It also enables `RapidRandomState::try_new()`, canonical
+`try_generate()`. It also enables `RapidRandomState::try_new()`, OS-salted
 Argon2id and scrypt password-record generation, ML-KEM
 `try_generate_keypair()` and `try_encapsulate()`, AEAD random sealing, and RSA
 key generation, signing salt and blinding, encryption randomness, and
 private-operation blinding.
 
-Password-record salts are always OS-generated. Other APIs retain
-caller-supplied byte-filling closures for deterministic tests and constrained
-integrations. Deterministic ECDSA signing does not use OS randomness. RSA key
-generation uses OS entropy to seed its HMAC_DRBG; no separate DRBG feature is
-required.
+`Argon2idPassword::hash_password_with` and
+`ScryptPassword::hash_password_with` accept a fallible entropy-filling closure
+without enabling `getrandom`; rscrypto still owns the fixed salt buffer and PHC
+encoding. Other random-generation APIs retain equivalent byte-filling closures
+for constrained integrations and deterministic tests. Deterministic ECDSA
+signing does not use OS randomness. RSA key generation uses OS entropy to seed
+its HMAC_DRBG; no separate DRBG feature is required.
 
 ## `portable-only`
 

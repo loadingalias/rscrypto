@@ -163,6 +163,48 @@ impl PasswordStatus {
   }
 }
 
+/// Error from password-record generation with caller-provided entropy.
+///
+/// The entropy error is preserved for explicit recovery but omitted from
+/// `Debug`, `Display`, and the standard error-source chain because entropy
+/// providers may attach sensitive state to their errors.
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PasswordHashError<E, H> {
+  /// The caller-provided entropy source failed.
+  Entropy(E),
+  /// Password derivation or record encoding failed.
+  Hash(H),
+}
+
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+impl<E, H> core::fmt::Debug for PasswordHashError<E, H> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str(match self {
+      Self::Entropy(_) => "Entropy(..)",
+      Self::Hash(_) => "Hash(..)",
+    })
+  }
+}
+
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+impl<E, H> core::fmt::Display for PasswordHashError<E, H> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str(match self {
+      Self::Entropy(_) => "password-record entropy source failed",
+      Self::Hash(_) => "password-record hashing failed",
+    })
+  }
+}
+
+#[cfg(all(feature = "phc-strings", any(feature = "argon2", feature = "scrypt")))]
+impl<E, H> core::error::Error for PasswordHashError<E, H>
+where
+  E: core::error::Error + 'static,
+  H: core::error::Error + 'static,
+{
+}
+
 #[cfg(feature = "argon2")]
 pub use argon2::{Argon2Context, Argon2Error, Argon2Params, Argon2d, Argon2i, Argon2id};
 #[cfg(all(feature = "argon2", feature = "phc-strings"))]
@@ -219,7 +261,10 @@ pub use hkdf::{diag_hkdf_sha256_derive_portable, diag_hkdf_sha384_derive_portabl
 #[cfg(feature = "hmac")]
 pub use hmac::{HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag};
 #[cfg(all(feature = "diag", feature = "hmac"))]
-pub use hmac::{diag_hmac_sha256_verify_portable, diag_hmac_sha384_verify_portable, diag_hmac_sha512_verify_portable};
+pub use hmac::{
+  diag_hmac_sha256_verify_portable, diag_hmac_sha256_verify_truncated_64_portable, diag_hmac_sha384_verify_portable,
+  diag_hmac_sha512_verify_portable,
+};
 #[cfg(feature = "hmac-sha3")]
 pub use hmac_sha3::{
   HmacSha3_224, HmacSha3_224Tag, HmacSha3_256, HmacSha3_256Tag, HmacSha3_384, HmacSha3_384Tag, HmacSha3_512,

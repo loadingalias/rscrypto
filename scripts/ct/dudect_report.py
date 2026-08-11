@@ -45,6 +45,11 @@ CASE_METADATA = {
     "left_class": "valid tag",
     "right_class": "invalid first tag byte",
   },
+  "hmac_sha256_truncated_64_valid_vs_invalid_tag": {
+    "primitive": "mac.hmac_verify",
+    "left_class": "valid 64-bit truncated tag",
+    "right_class": "invalid first truncated-tag byte",
+  },
   "kmac256_valid_vs_invalid_tag": {
     "primitive": "mac.kmac256_verify",
     "left_class": "valid tag",
@@ -621,7 +626,31 @@ def owner_call_site_counts(
 
 def linker_driver(command: str) -> str:
   assignment = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
-  for token in shlex.split(command):
+  tokens = shlex.split(command)
+  index = 0
+  while index < len(tokens) and assignment.fullmatch(tokens[index]):
+    index += 1
+  if index == len(tokens):
+    raise ValueError("DudeCT linker command does not identify the linker driver")
+
+  if Path(tokens[index]).name == "env":
+    index += 1
+    while index < len(tokens):
+      token = tokens[index]
+      if assignment.fullmatch(token) or token in ("-i", "--ignore-environment"):
+        index += 1
+        continue
+      if token in ("-u", "--unset", "-C", "--chdir"):
+        index += 2
+        continue
+      if token.startswith(("--unset=", "--chdir=")):
+        index += 1
+        continue
+      if token == "--":
+        index += 1
+      break
+
+  for token in tokens[index:]:
     if assignment.fullmatch(token):
       continue
     if token.startswith("-"):

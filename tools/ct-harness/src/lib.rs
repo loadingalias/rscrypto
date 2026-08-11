@@ -184,6 +184,33 @@ pub extern "C" fn ct_entry_hmac_sha256_verify(
     .unwrap_or(STATUS_ERR)
 }
 
+/// HMAC-SHA256 64-bit truncated-tag verification harness.
+#[unsafe(no_mangle)]
+pub extern "C" fn ct_entry_hmac_sha256_verify_truncated_64(
+  key: *const u8,
+  key_len: usize,
+  data: *const u8,
+  data_len: usize,
+  expected_tag: *const u8,
+) -> u8 {
+  // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+  let Some(key) = (unsafe { input_slice(key, key_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+  let Some(data) = (unsafe { input_slice(data, data_len) }) else {
+    return STATUS_ERR;
+  };
+  // SAFETY: The expected tag pointer must reference exactly 8 readable bytes.
+  let Some(expected_tag) = (unsafe { read_array::<8>(expected_tag) }) else {
+    return STATUS_ERR;
+  };
+
+  HmacSha256::verify_truncated_tag_64(key, data, &expected_tag)
+    .map(|()| STATUS_OK)
+    .unwrap_or(STATUS_ERR)
+}
+
 /// BLAKE3 keyed-tag verification harness.
 #[unsafe(no_mangle)]
 pub extern "C" fn ct_entry_blake3_verify_keyed(

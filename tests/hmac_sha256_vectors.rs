@@ -58,6 +58,23 @@ fn hmac_sha256_verify_rejects_corrupted_tag() {
   }
 }
 
+#[test]
+fn hmac_sha256_verifies_rfc4231_tag_truncated_to_64_bits() {
+  let key = [0x0b; 20];
+  let data = b"Hi There";
+  let expected = decode_hex::<8>("b0344c61d8db3853");
+
+  assert!(HmacSha256::verify_truncated_tag_64(&key, data, &expected).is_ok());
+  for index in 0..expected.len() {
+    let mut corrupted = expected;
+    corrupted[index] ^= 0x80;
+    assert!(
+      HmacSha256::verify_truncated_tag_64(&key, data, &corrupted).is_err(),
+      "HMAC-SHA256 accepted a 64-bit tag corrupted at byte {index}"
+    );
+  }
+}
+
 /// Verify the oneshot path matches the streaming path across padding boundaries.
 ///
 /// The inner hash pads data after the 64-byte ipad block, so the critical

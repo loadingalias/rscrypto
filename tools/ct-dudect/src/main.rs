@@ -297,6 +297,24 @@ hmac_valid_vs_invalid_tag!(hmac_sha256_valid_vs_invalid_tag, HmacSha256, HmacSha
 hmac_valid_vs_invalid_tag!(hmac_sha384_valid_vs_invalid_tag, HmacSha384, HmacSha384Tag, 48);
 hmac_valid_vs_invalid_tag!(hmac_sha512_valid_vs_invalid_tag, HmacSha512, HmacSha512Tag, 64);
 
+fn hmac_sha256_truncated_64_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mut BenchRng) {
+  let mut inputs = Vec::with_capacity(samples());
+  for _ in 0..samples() {
+    let class = random_class(rng);
+    let key = rand_array::<32>(rng);
+    let full_tag = HmacSha256::mac(&key, MESSAGE);
+    let mut expected = *full_tag.as_bytes().first_chunk::<8>().unwrap();
+    if matches!(class, Class::Right) {
+      expected[0] ^= 1;
+    }
+    inputs.push((class, key, expected));
+  }
+
+  for (class, key, expected) in inputs {
+    runner.run_one(class, || HmacSha256::verify_truncated_tag_64(&key, MESSAGE, &expected).is_ok());
+  }
+}
+
 fn kmac256_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mut BenchRng) {
   let mut inputs = Vec::with_capacity(samples());
   for _ in 0..samples() {
@@ -2022,6 +2040,10 @@ ctbench_main_with_seeds!(
   (owner_eq_64_equal_vs_first_diff, Some(0x6f776e657236345f)),
   (secret_wrappers_debug_fixed_vs_random, Some(0x7365637265745f77)),
   (hmac_sha256_valid_vs_invalid_tag, Some(0x686d61635f736861)),
+  (
+    hmac_sha256_truncated_64_valid_vs_invalid_tag,
+    Some(0x686d61635f743634)
+  ),
   (hmac_sha384_valid_vs_invalid_tag, Some(0x686d61633338345f)),
   (hmac_sha512_valid_vs_invalid_tag, Some(0x686d61633531325f)),
   (kmac256_valid_vs_invalid_tag, Some(0x6b6d61633235365f)),

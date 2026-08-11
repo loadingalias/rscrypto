@@ -279,6 +279,34 @@ fn secret_input_error_snapshots_do_not_echo_input_bytes() {
     assert_eq!(error.to_string(), "invalid hex character at index 31");
   }
 
+  #[cfg(all(feature = "argon2", feature = "phc-strings"))]
+  {
+    struct EntropyStateError;
+
+    impl Debug for EntropyStateError {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("EntropyStateError(53535353)")
+      }
+    }
+
+    impl core::fmt::Display for EntropyStateError {
+      fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("entropy state error: 53535353")
+      }
+    }
+
+    impl core::error::Error for EntropyStateError {}
+
+    let passwords = rscrypto::Argon2idPassword::new(rscrypto::Argon2Params::new(32, 2, 1).unwrap()).unwrap();
+    let error = passwords
+      .hash_password_with(b"password", |_| Err(EntropyStateError))
+      .expect_err("entropy-source failure must be preserved as an opaque error");
+    assert_debug_snapshot(&error, "Entropy(..)");
+    assert_eq!(error.to_string(), "password-record entropy source failed");
+    assert!(core::error::Error::source(&error).is_none());
+    assert!(matches!(error, rscrypto::PasswordHashError::Entropy(_)));
+  }
+
   #[cfg(feature = "ecdsa-p256")]
   {
     let error = rscrypto::EcdsaP256SecretKey::from_bytes([0u8; 32]).expect_err("zero scalar must fail");
