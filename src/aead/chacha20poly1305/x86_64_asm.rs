@@ -4,8 +4,6 @@
 //! ChaCha20-Poly1305 assembly. This Rust module owns the ABI boundary and
 //! keeps runtime feature dispatch in the parent AEAD implementation.
 
-#![allow(unsafe_code)]
-
 use core::{arch::global_asm, mem};
 
 use super::KEY_SIZE;
@@ -76,8 +74,14 @@ unsafe extern "C" {
   );
 }
 
+/// Seal one nonempty buffer with the integrated x86-64 assembly kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 and BMI2 are available and that `buffer` is nonempty and within ChaCha20's
+/// 2³²-block limit.
 #[inline]
-pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], buffer: &mut [u8]) -> [u8; 16] {
+pub(super) unsafe fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], buffer: &mut [u8]) -> [u8; 16] {
   debug_assert!(!buffer.is_empty());
 
   let extra_ciphertext = [0u8; 16];
@@ -99,7 +103,11 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   //    empty slices because the length is zero.
   // 4. `extra_ciphertext` points at 16 initialized bytes and `extra_ciphertext_len` is zero, matching
   //    the AWS-LC seal ABI for callers without extra trailing ciphertext.
-  // 5. `data` is 16-byte aligned and matches the assembly input/output union layout.
+  // 5. `data` is 16-byte aligned and matches the assembly input/output union layout; `from_mut` preserves that
+  //    allocation's provenance and exclusive writability for the call, which initializes all 16 tag bytes before
+  //    the union output is read.
+  // 6. The tag replaces the first 16 copied key bytes; the second half remains initialized key material and is
+  //    volatile-zeroed before the stack allocation expires.
   unsafe {
     rscrypto_chacha20_poly1305_seal_x86_64(
       buffer.as_mut_ptr(),
@@ -107,14 +115,21 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.len(),
       aad.as_ptr(),
       aad.len(),
-      &mut data,
+      core::ptr::from_mut(&mut data),
     );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
     data.out.tag
   }
 }
 
+/// Open one nonempty buffer with the integrated x86-64 assembly kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 and BMI2 are available and that `buffer` is nonempty and within ChaCha20's
+/// 2³²-block limit.
 #[inline]
-pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], buffer: &mut [u8]) -> [u8; 16] {
+pub(super) unsafe fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], buffer: &mut [u8]) -> [u8; 16] {
   debug_assert!(!buffer.is_empty());
 
   let mut data = OpenData {
@@ -131,7 +146,11 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   //    the assembly routine supports in-place open, matching the AWS-LC ABI.
   // 3. `aad.as_ptr()` is valid for `aad.len()` bytes, including the conventional dangling pointer for
   //    empty slices because the length is zero.
-  // 4. `data` is 16-byte aligned and matches the assembly input/output union layout.
+  // 4. `data` is 16-byte aligned and matches the assembly input/output union layout; `from_mut` preserves that
+  //    allocation's provenance and exclusive writability for the call, which initializes all 16 tag bytes before
+  //    the union output is read.
+  // 5. The tag replaces the first 16 copied key bytes; the second half remains initialized key material and is
+  //    volatile-zeroed before the stack allocation expires.
   unsafe {
     rscrypto_chacha20_poly1305_open_x86_64(
       buffer.as_mut_ptr(),
@@ -139,8 +158,9 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.len(),
       aad.as_ptr(),
       aad.len(),
-      &mut data,
+      core::ptr::from_mut(&mut data),
     );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
     data.out.tag
   }
 }

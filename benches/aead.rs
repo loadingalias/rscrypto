@@ -9,7 +9,6 @@ mod common;
 use core::hint::black_box;
 
 use aes_gcm::aead::{AeadInOut as _, KeyInit as _};
-use aes_gcm_siv::aead::{AeadInPlace as _, KeyInit as _};
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rscrypto::aead::expert::AeadWithNonce;
 
@@ -78,7 +77,7 @@ fn xchacha20_poly1305_encrypt(c: &mut Criterion) {
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .unwrap(),
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -100,13 +99,15 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
 
     // Pre-encrypt with rscrypto to get valid ciphertext + tag.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     // Pre-encrypt with RustCrypto to get its tag format.
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
       .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut buf = ciphertext.clone();
 
@@ -120,7 +121,7 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -137,7 +138,7 @@ fn xchacha20_poly1305_decrypt(c: &mut Criterion) {
             black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_rc);
       })
     });
@@ -161,10 +162,12 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
   let nonce_rc = chacha20poly1305::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
-      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
+      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
-  let ring_key =
-    ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32)
+      .expect("valid AEAD benchmark operation must succeed"),
+  );
   let mut g = c.benchmark_group("chacha20-poly1305/encrypt");
 
   for (len, data) in &inputs {
@@ -174,7 +177,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
     let mut buf_owned = data.clone();
     #[cfg(all(feature = "diag", target_arch = "x86_64", target_os = "linux"))]
     let mut buf_x86_asm = data.clone();
-    let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len() + 16);
+    let mut buf_combined: Vec<u8> = Vec::with_capacity(data.len().strict_add(16));
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
@@ -224,7 +227,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .unwrap(),
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -240,7 +243,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_combined),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_combined);
         })
       });
@@ -256,7 +259,7 @@ fn chacha20_poly1305_encrypt(c: &mut Criterion) {
             ring_aead::Aad::from(AAD),
             black_box(&mut buf_combined),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_combined);
       })
     });
@@ -278,22 +281,26 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
   let nonce_rc = chacha20poly1305::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
-      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
+      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::CHACHA20_POLY1305, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
-  let ring_key =
-    ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(&ring_aead::CHACHA20_POLY1305, &KEY_32)
+      .expect("valid AEAD benchmark operation must succeed"),
+  );
   let mut g = c.benchmark_group("chacha20-poly1305/decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
       .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     aws_lc_bench! {
       let mut ct_aws: Vec<u8> = data.clone();
@@ -303,7 +310,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
           aws_aead::Aad::from(AAD),
           &mut ct_aws,
         )
-        .unwrap();
+        .expect("valid AEAD benchmark operation must succeed");
     }
 
     let mut ct_ring: Vec<u8> = data.clone();
@@ -313,7 +320,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
         ring_aead::Aad::from(AAD),
         &mut ct_ring,
       )
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut buf = ciphertext.clone();
     #[cfg(feature = "diag")]
@@ -331,7 +338,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -347,7 +354,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
           black_box(&mut buf_owned),
           black_box(&tag_rs),
         )
-        .unwrap();
+        .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_owned);
       })
     });
@@ -365,7 +372,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
             black_box(&tag_rs),
           )
           .expect("x86 asm path must apply to benchmarked non-empty sizes")
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_x86_asm);
         })
       });
@@ -383,7 +390,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
             black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_rc);
       })
     });
@@ -400,7 +407,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_aws);
         })
       });
@@ -417,7 +424,7 @@ fn chacha20_poly1305_decrypt(c: &mut Criterion) {
             ring_aead::Aad::from(AAD),
             black_box(&mut buf_ring),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_ring);
       })
     });
@@ -437,10 +444,10 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256GcmSiv::new(&rscrypto::Aes256GcmSivKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm_siv::Aes256GcmSiv::new(&KEY_32.into());
-  let nonce_rc = aes_gcm_siv::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm_siv::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
-      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM_SIV, &KEY_32).unwrap());
+      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM_SIV, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
   let mut g = c.benchmark_group("aes-256-gcm-siv/encrypt");
 
@@ -460,8 +467,12 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_rc
-            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
-            .unwrap(),
+            .encrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice()).into(),
+            )
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -477,7 +488,7 @@ fn aes256_gcm_siv_encrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(tag.as_ref());
           black_box(&buf_aws);
         })
@@ -497,10 +508,10 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes256GcmSiv::new(&rscrypto::Aes256GcmSivKey::from_bytes(KEY_32));
   let cipher_rc = aes_gcm_siv::Aes256GcmSiv::new(&KEY_32.into());
-  let nonce_rc = aes_gcm_siv::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm_siv::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
-      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM_SIV, &KEY_32).unwrap());
+      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM_SIV, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
   let mut g = c.benchmark_group("aes-256-gcm-siv/decrypt");
 
@@ -508,10 +519,14 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut ct_rc = data.clone();
-    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
 
     aws_lc_bench! {
       let mut ct_aws = data.clone();
@@ -521,7 +536,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
           aws_aead::Aad::from(AAD),
           &mut ct_aws,
         )
-        .unwrap();
+        .expect("valid AEAD benchmark operation must succeed");
       // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
       ct_aws.extend_from_slice(tag_aws.as_ref());
     }
@@ -538,7 +553,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -549,13 +564,13 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_rc.copy_from_slice(ct);
         cipher_rc
-          .decrypt_in_place_detached(
-            black_box(nonce_rc),
+          .decrypt_inout_detached(
+            black_box(&nonce_rc),
             black_box(AAD),
-            black_box(&mut buf_rc),
+            black_box(buf_rc.as_mut_slice()).into(),
             black_box(&tag_rc),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_rc);
       })
     });
@@ -572,7 +587,7 @@ fn aes256_gcm_siv_decrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_aws);
         })
       });
@@ -593,10 +608,10 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128GcmSiv::new(&rscrypto::Aes128GcmSivKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm_siv::Aes128GcmSiv::new(&KEY_16.into());
-  let nonce_rc = aes_gcm_siv::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm_siv::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
-      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM_SIV, &KEY_16).unwrap());
+      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM_SIV, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
   }
   let mut g = c.benchmark_group("aes-128-gcm-siv/encrypt");
 
@@ -616,8 +631,12 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
         buf.copy_from_slice(d);
         black_box(
           cipher_rc
-            .encrypt_in_place_detached(black_box(nonce_rc), black_box(AAD), black_box(&mut buf))
-            .unwrap(),
+            .encrypt_inout_detached(
+              black_box(&nonce_rc),
+              black_box(AAD),
+              black_box(buf.as_mut_slice()).into(),
+            )
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -633,7 +652,7 @@ fn aes128_gcm_siv_encrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(tag.as_ref());
           black_box(&buf_aws);
         })
@@ -653,10 +672,10 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
   let nonce_rs = rscrypto::aead::Nonce96::from_bytes(NONCE_12);
   let cipher_rs = rscrypto::Aes128GcmSiv::new(&rscrypto::Aes128GcmSivKey::from_bytes(KEY_16));
   let cipher_rc = aes_gcm_siv::Aes128GcmSiv::new(&KEY_16.into());
-  let nonce_rc = aes_gcm_siv::Nonce::from_slice(&NONCE_12);
+  let nonce_rc = aes_gcm_siv::Nonce::from(NONCE_12);
   aws_lc_bench! {
     let aws_key =
-      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM_SIV, &KEY_16).unwrap());
+      aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM_SIV, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
   }
   let mut g = c.benchmark_group("aes-128-gcm-siv/decrypt");
 
@@ -664,10 +683,14 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut ct_rc = data.clone();
-    let tag_rc = cipher_rc.encrypt_in_place_detached(nonce_rc, AAD, &mut ct_rc).unwrap();
+    let tag_rc = cipher_rc
+      .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
+      .expect("valid AEAD benchmark operation must succeed");
 
     aws_lc_bench! {
       let mut ct_aws = data.clone();
@@ -677,7 +700,7 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
           aws_aead::Aad::from(AAD),
           &mut ct_aws,
         )
-        .unwrap();
+        .expect("valid AEAD benchmark operation must succeed");
       // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
       ct_aws.extend_from_slice(tag_aws.as_ref());
     }
@@ -694,7 +717,7 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -705,13 +728,13 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
       b.iter(|| {
         buf_rc.copy_from_slice(ct);
         cipher_rc
-          .decrypt_in_place_detached(
-            black_box(nonce_rc),
+          .decrypt_inout_detached(
+            black_box(&nonce_rc),
             black_box(AAD),
-            black_box(&mut buf_rc),
+            black_box(buf_rc.as_mut_slice()).into(),
             black_box(&tag_rc),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_rc);
       })
     });
@@ -728,7 +751,7 @@ fn aes128_gcm_siv_decrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_aws);
         })
       });
@@ -752,9 +775,11 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
   let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
   let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
-    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).unwrap());
+    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
-  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"),
+  );
   let mut g = c.benchmark_group("aes-256-gcm/encrypt");
 
   for (len, data) in &inputs {
@@ -778,7 +803,7 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .unwrap(),
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -794,7 +819,7 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(tag.as_ref());
           black_box(&buf_aws);
         })
@@ -811,7 +836,7 @@ fn aes256_gcm_encrypt(c: &mut Criterion) {
             ring_aead::Aad::from(AAD),
             black_box(&mut buf_ring),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(tag.as_ref());
         black_box(&buf_ring);
       })
@@ -833,21 +858,25 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
   let cipher_rc = aes_gcm::Aes256Gcm::new(&KEY_32.into());
   let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
-    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).unwrap());
+    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"));
   }
-  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(&ring_aead::AES_256_GCM, &KEY_32).expect("valid AEAD benchmark operation must succeed"),
+  );
   let mut g = c.benchmark_group("aes-256-gcm/decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
       .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     aws_lc_bench! {
       let mut ct_aws = data.clone();
@@ -857,7 +886,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
           aws_aead::Aad::from(AAD),
           &mut ct_aws,
         )
-        .unwrap();
+        .expect("valid AEAD benchmark operation must succeed");
       // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
       ct_aws.extend_from_slice(tag_aws.as_ref());
     }
@@ -869,7 +898,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
         ring_aead::Aad::from(AAD),
         &mut ct_ring,
       )
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut buf = ciphertext.clone();
 
@@ -883,7 +912,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -900,7 +929,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
             black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_rc);
       })
     });
@@ -917,7 +946,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_aws);
         })
       });
@@ -936,7 +965,7 @@ fn aes256_gcm_decrypt(c: &mut Criterion) {
             black_box(&mut buf_ring),
             0..,
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_ring);
       })
     });
@@ -959,9 +988,11 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
   let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
   let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
-    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).unwrap());
+    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
   }
-  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"),
+  );
   let mut g = c.benchmark_group("aes-128-gcm/encrypt");
 
   for (len, data) in &inputs {
@@ -985,7 +1016,7 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .unwrap(),
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -1001,7 +1032,7 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(tag.as_ref());
           black_box(&buf_aws);
         })
@@ -1018,7 +1049,7 @@ fn aes128_gcm_encrypt(c: &mut Criterion) {
             ring_aead::Aad::from(AAD),
             black_box(&mut buf_ring),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(tag.as_ref());
         black_box(&buf_ring);
       })
@@ -1040,21 +1071,25 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
   let cipher_rc = aes_gcm::Aes128Gcm::new(&KEY_16.into());
   let nonce_rc = aes_gcm::Nonce::from(NONCE_12);
   aws_lc_bench! {
-    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).unwrap());
+    let aws_key = aws_aead::LessSafeKey::new(aws_aead::UnboundKey::new(&aws_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"));
   }
-  let ring_key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).unwrap());
+  let ring_key = ring_aead::LessSafeKey::new(
+    ring_aead::UnboundKey::new(&ring_aead::AES_128_GCM, &KEY_16).expect("valid AEAD benchmark operation must succeed"),
+  );
   let mut g = c.benchmark_group("aes-128-gcm/decrypt");
 
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut ct_rc = data.clone();
     let tag_rc = cipher_rc
       .encrypt_inout_detached(&nonce_rc, AAD, ct_rc.as_mut_slice().into())
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     aws_lc_bench! {
       let mut ct_aws = data.clone();
@@ -1064,7 +1099,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
           aws_aead::Aad::from(AAD),
           &mut ct_aws,
         )
-        .unwrap();
+        .expect("valid AEAD benchmark operation must succeed");
       // AWS-LC exposes detached tags for seal, but its in-place open API takes ct||tag.
       ct_aws.extend_from_slice(tag_aws.as_ref());
     }
@@ -1076,7 +1111,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
         ring_aead::Aad::from(AAD),
         &mut ct_ring,
       )
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut buf = ciphertext.clone();
 
@@ -1090,7 +1125,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -1107,7 +1142,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
             black_box(buf_rc.as_mut_slice().into()),
             black_box(&tag_rc),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_rc);
       })
     });
@@ -1124,7 +1159,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
               aws_aead::Aad::from(AAD),
               black_box(&mut buf_aws),
             )
-            .unwrap();
+            .expect("valid AEAD benchmark operation must succeed");
           black_box(&buf_aws);
         })
       });
@@ -1143,7 +1178,7 @@ fn aes128_gcm_decrypt(c: &mut Criterion) {
             black_box(&mut buf_ring),
             0..,
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_ring);
       })
     });
@@ -1194,7 +1229,9 @@ fn aegis256_decrypt(c: &mut Criterion) {
 
     // Pre-encrypt with rscrypto to get valid ciphertext + tag.
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     // Pre-encrypt with aegis crate to get its tag format.
     let mut ct_ac = data.clone();
@@ -1213,7 +1250,7 @@ fn aegis256_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -1225,7 +1262,7 @@ fn aegis256_decrypt(c: &mut Criterion) {
         buf_ac.copy_from_slice(ct);
         cipher_ac
           .decrypt_in_place(black_box(&mut buf_ac), black_box(&tag_ac), black_box(AAD))
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_ac);
       })
     });
@@ -1267,7 +1304,7 @@ fn ascon_aead128_encrypt(c: &mut Criterion) {
               black_box(AAD),
               black_box(buf.as_mut_slice().into()),
             )
-            .unwrap(),
+            .expect("valid AEAD benchmark operation must succeed"),
         )
       })
     });
@@ -1290,12 +1327,14 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     let mut ciphertext = data.clone();
-    let tag_rs = cipher_rs.encrypt_in_place(&nonce_rs, AAD, &mut ciphertext).unwrap();
+    let tag_rs = cipher_rs
+      .encrypt_in_place(&nonce_rs, AAD, &mut ciphertext)
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut ct_ac = data.clone();
     let tag_ac = cipher_ac
       .encrypt_inout_detached(&nonce_ac, AAD, ct_ac.as_mut_slice().into())
-      .unwrap();
+      .expect("valid AEAD benchmark operation must succeed");
 
     let mut buf = ciphertext.clone();
 
@@ -1309,7 +1348,7 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
             black_box(&mut buf),
             black_box(&tag_rs),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf);
       })
     });
@@ -1326,7 +1365,7 @@ fn ascon_aead128_decrypt(c: &mut Criterion) {
             black_box(buf_ac.as_mut_slice().into()),
             black_box(&tag_ac),
           )
-          .unwrap();
+          .expect("valid AEAD benchmark operation must succeed");
         black_box(&buf_ac);
       })
     });

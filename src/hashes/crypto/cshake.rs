@@ -1,7 +1,5 @@
 //! cSHAKE128 and cSHAKE256 (SP 800-185).
 
-#![allow(clippy::indexing_slicing)] // Fixed-width prefix encodings and rate-sized zero padding.
-
 use super::{
   keccak::{KeccakCore, KeccakXof},
   sp800185::{RATE_128, RATE_256, absorb_bytepad, encoded_string_len, left_encode},
@@ -151,7 +149,7 @@ mod tests {
 
     let mut hex = String::new();
     for byte in out {
-      write!(&mut hex, "{byte:02x}").unwrap();
+      write!(&mut hex, "{byte:02x}").expect("writing hexadecimal to String must succeed");
     }
     hex
   }

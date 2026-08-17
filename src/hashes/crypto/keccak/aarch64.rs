@@ -17,13 +17,10 @@
 //!
 //! All functions require the `sha3` target feature (ARMv8.2-SHA3).
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-
 #[cfg(target_arch = "aarch64")]
 use core::arch::aarch64::*;
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri), feature = "ml-kem"))]
 core::arch::global_asm!(include_str!("aarch64_sve2_sha3.S"), options(raw));
 
 // Shared NEON round macro (used by both 1-state and 2-state kernels)
@@ -130,7 +127,7 @@ macro_rules! keccakf_sha3_neon_round {
   }};
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem"))]
 macro_rules! keccakf_scalar_round {
   ($a0:ident, $a1:ident, $a2:ident, $a3:ident, $a4:ident,
    $a5:ident, $a6:ident, $a7:ident, $a8:ident, $a9:ident,
@@ -329,6 +326,10 @@ pub(crate) fn keccakf_aarch64_sha3_single(state: &mut [u64; 25]) {
 /// a separate state read/write pass before the permutation.
 ///
 /// Requires `aarch64::SHA3` capability (verified by dispatch before calling).
+///
+/// # Safety
+///
+/// The caller must ensure the current CPU supports the AArch64 SHA3 extension.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_absorb_single_impl<const RATE: usize>(state: &mut [u64; 25], block: &[u8; RATE]) {
@@ -431,7 +432,7 @@ pub(crate) fn keccakf_aarch64_sha3_absorb_single<const RATE: usize>(state: &mut 
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_absorb_blocks_impl<const RATE: usize>(state: &mut [u64; 25], blocks: &[u8]) {
   debug_assert_eq!(RATE % 8, 0);
-  debug_assert_eq!(blocks.len() % RATE, 0);
+  debug_assert!(blocks.len().is_multiple_of(RATE));
   let lanes = RATE / 8;
   let z = vcreate_u64(0);
 
@@ -545,7 +546,17 @@ unsafe fn keccakf_sha3_absorb_blocks_impl<const RATE: usize>(state: &mut [u64; 2
 #[cfg(target_arch = "aarch64")]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_absorb_blocks<const RATE: usize>(state: &mut [u64; 25], blocks: &[u8]) {
-  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling.
+  assert!(
+    RATE != 0 && RATE.is_multiple_of(8),
+    "Keccak rate must be a positive whole number of lanes"
+  );
+  assert!(
+    blocks.len().is_multiple_of(RATE),
+    "Keccak batch must contain complete rate blocks"
+  );
+
+  // SAFETY: Dispatch verifies aarch64::SHA3 capability before calling. The assertions above establish the nonzero,
+  // whole-lane rate and complete-block partition required by the pointer loop.
   unsafe { keccakf_sha3_absorb_blocks_impl::<RATE>(state, blocks) }
 }
 
@@ -553,6 +564,10 @@ pub(crate) fn keccakf_aarch64_sha3_absorb_blocks<const RATE: usize>(state: &mut 
 
 /// Combine lane 0 from `state_a[i]` and lane 1 from `state_b[i]` into one
 /// uint64x2_t register.
+///
+/// # Safety
+///
+/// The caller must ensure the current CPU supports NEON.
 #[cfg(target_arch = "aarch64")]
 #[inline(always)]
 unsafe fn combine_lanes(a: u64, b: u64) -> uint64x2_t {
@@ -689,7 +704,7 @@ pub(crate) fn keccakf_aarch64_sha3_x2(state_a: &mut [u64; 25], state_b: &mut [u6
 /// # Safety
 ///
 /// Caller must ensure `sha3` target feature is available.
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem"))]
 #[target_feature(enable = "sha3")]
 unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u64; 25], state_c: &mut [u64; 25]) {
   // SAFETY: NEON + SHA3 CE intrinsics are available because:
@@ -840,7 +855,7 @@ unsafe fn keccakf_sha3_x3_hybrid_impl(state_a: &mut [u64; 25], state_b: &mut [u6
   }
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem"))]
 #[inline]
 pub(crate) fn keccakf_aarch64_sha3_x3_hybrid(
   state_a: &mut [u64; 25],
@@ -853,7 +868,7 @@ pub(crate) fn keccakf_aarch64_sha3_x3_hybrid(
   unsafe { keccakf_sha3_x3_hybrid_impl(state_a, state_b, state_c) }
 }
 
-#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri), feature = "ml-kem"))]
 unsafe extern "C" {
   fn rscrypto_keccakf1600_aarch64_sve2_sha3_x4(
     state_a: *mut u64,
@@ -867,7 +882,7 @@ unsafe extern "C" {
 ///
 /// Returns `false` when the runtime SVE vector length is too small for four
 /// 64-bit lanes. Callers must still gate this on `aarch64::SVE2_SHA3`.
-#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+#[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri), feature = "ml-kem"))]
 #[inline]
 pub(crate) fn keccakf_aarch64_sve2_sha3_x4(
   state_a: &mut [u64; 25],

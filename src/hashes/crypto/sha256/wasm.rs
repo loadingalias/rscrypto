@@ -3,8 +3,6 @@
 //! Vectorizes the message schedule computation using 128-bit SIMD (4 × u32
 //! lanes). Compression rounds remain scalar (sequential data dependency).
 
-#![allow(clippy::indexing_slicing)] // Fixed-size arrays + compression schedule
-
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
@@ -12,12 +10,20 @@ use super::{BLOCK_LEN, K, ch, maj};
 use crate::hashes::util::rotr32;
 
 /// Load 4 big-endian message words from `ptr` into a v128, byte-swapping each.
+///
+/// # Safety
+///
+/// `ptr` must be valid for an unaligned 16-byte read. The caller must execute
+/// this function only when WebAssembly SIMD128 is enabled.
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 unsafe fn load_be(ptr: *const u8) -> v128 {
-  // SAFETY: caller guarantees `ptr` is valid for a 16-byte aligned read
-  // and the simd128 target feature is enabled.
-  let raw = unsafe { v128_load(ptr as *const v128) };
+  // SAFETY: the caller guarantees that `ptr..ptr+16` is readable. The byte
+  // array has alignment one, and `read_unaligned` accepts any address.
+  let bytes = unsafe { ptr.cast::<[u8; 16]>().read_unaligned() };
+  // SAFETY: `[u8; 16]` and `v128` have the same size, and every SIMD bit
+  // pattern is valid.
+  let raw = unsafe { core::mem::transmute::<[u8; 16], v128>(bytes) };
   i8x16_shuffle::<3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12>(raw, raw)
 }
 
@@ -68,36 +74,36 @@ fn schedule_4(w: &mut [v128; 16], i: usize) {
   let t = i << 2;
   let mut slot = u32x4_splat(0);
 
-  let w16_0 = schedule_word(w, t - 16);
-  let w15_0 = schedule_word(w, t - 15);
-  let w7_0 = schedule_word(w, t - 7);
-  let w2_0 = schedule_word(w, t - 2);
+  let w16_0 = schedule_word(w, t.strict_sub(16));
+  let w15_0 = schedule_word(w, t.strict_sub(15));
+  let w7_0 = schedule_word(w, t.strict_sub(7));
+  let w2_0 = schedule_word(w, t.strict_sub(2));
   let w0 = small_sigma1(w2_0)
     .wrapping_add(w7_0)
     .wrapping_add(small_sigma0(w15_0))
     .wrapping_add(w16_0);
 
-  let w16_1 = schedule_word(w, t - 15);
-  let w15_1 = schedule_word(w, t - 14);
-  let w7_1 = schedule_word(w, t - 6);
-  let w2_1 = schedule_word(w, t - 1);
+  let w16_1 = schedule_word(w, t.strict_sub(15));
+  let w15_1 = schedule_word(w, t.strict_sub(14));
+  let w7_1 = schedule_word(w, t.strict_sub(6));
+  let w2_1 = schedule_word(w, t.strict_sub(1));
   let w1 = small_sigma1(w2_1)
     .wrapping_add(w7_1)
     .wrapping_add(small_sigma0(w15_1))
     .wrapping_add(w16_1);
 
-  let w16_2 = schedule_word(w, t - 14);
-  let w15_2 = schedule_word(w, t - 13);
-  let w7_2 = schedule_word(w, t - 5);
+  let w16_2 = schedule_word(w, t.strict_sub(14));
+  let w15_2 = schedule_word(w, t.strict_sub(13));
+  let w7_2 = schedule_word(w, t.strict_sub(5));
   let w2_2 = w0;
   let w2 = small_sigma1(w2_2)
     .wrapping_add(w7_2)
     .wrapping_add(small_sigma0(w15_2))
     .wrapping_add(w16_2);
 
-  let w16_3 = schedule_word(w, t - 13);
-  let w15_3 = schedule_word(w, t - 12);
-  let w7_3 = schedule_word(w, t - 4);
+  let w16_3 = schedule_word(w, t.strict_sub(13));
+  let w15_3 = schedule_word(w, t.strict_sub(12));
+  let w7_3 = schedule_word(w, t.strict_sub(4));
   let w2_3 = w1;
   let w3 = small_sigma1(w2_3)
     .wrapping_add(w7_3)
@@ -117,6 +123,11 @@ fn schedule_4(w: &mut [v128; 16], i: usize) {
 ///
 /// The message schedule is computed with SIMD (4 words per v128).
 /// Compression rounds are scalar (sequential dependency chain).
+///
+/// # Safety
+///
+/// The caller must ensure WebAssembly SIMD128 is available and `blocks`
+/// contains only complete SHA-256 blocks.
 #[cfg(target_arch = "wasm32")]
 #[target_feature(enable = "simd128")]
 pub(crate) unsafe fn compress_blocks_wasm_simd(state: &mut [u32; 8], blocks: &[u8]) {
@@ -202,9 +213,9 @@ pub(crate) unsafe fn compress_blocks_wasm_simd(state: &mut [u32; 8], blocks: &[u
       schedule_4(&mut wv, r / 4);
       let sched = wv[(r / 4) & 0xF];
       sha_round!(K[r], u32x4_extract_lane::<0>(sched));
-      sha_round!(K[r + 1], u32x4_extract_lane::<1>(sched));
-      sha_round!(K[r + 2], u32x4_extract_lane::<2>(sched));
-      sha_round!(K[r + 3], u32x4_extract_lane::<3>(sched));
+      sha_round!(K[r.strict_add(1)], u32x4_extract_lane::<1>(sched));
+      sha_round!(K[r.strict_add(2)], u32x4_extract_lane::<2>(sched));
+      sha_round!(K[r.strict_add(3)], u32x4_extract_lane::<3>(sched));
     }
 
     state[0] = state[0].wrapping_add(a);

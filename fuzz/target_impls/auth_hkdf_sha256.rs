@@ -1,7 +1,7 @@
 use rscrypto::HkdfSha256;
 use rscrypto_fuzz::{FuzzInput, assert_hkdf_against_oracle, some_or_return, split_at_ratio};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let salt_split: u8 = some_or_return!(input.byte());
   let ikm_split: u8 = some_or_return!(input.byte());
@@ -14,7 +14,7 @@ pub fn run(data: &[u8]) {
 
   // Exercise both valid and over-length expand requests without allocating
   // unbounded buffers.
-  let out_len = usize::from(u16::from_le_bytes(out_len_bytes)) % HkdfSha256::MAX_OUTPUT_SIZE.strict_add(33);
+  let out_len = usize::from(u16::from_le_bytes(out_len_bytes)).rem_euclid(HkdfSha256::MAX_OUTPUT_SIZE.strict_add(33));
 
   let hk = HkdfSha256::new(salt, ikm);
   let mut okm = vec![0u8; out_len];

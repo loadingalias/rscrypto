@@ -14,21 +14,21 @@
 //! - Tier 4 (Wide): VPCLMUL (x86_64), PMULL+EOR3/SVE2 (aarch64), Zvbc (riscv64)
 
 /// Portable fallback kernel name.
-pub use kernels::PORTABLE_SLICE16 as PORTABLE;
+pub(in crate::checksum) use kernels::PORTABLE_SLICE16 as PORTABLE;
 /// Reference (bitwise) kernel name - always available for force mode.
-pub use kernels::REFERENCE;
+pub(in crate::checksum) use kernels::REFERENCE;
 
 use crate::checksum::common::kernels;
 
 // Kernel Name Tables (per architecture)
 
 #[cfg(target_arch = "x86_64")]
-pub mod x86_64 {
+pub(in crate::checksum) mod x86_64 {
   use super::super::x86_64 as arch;
   use crate::checksum::dispatchers::Crc32Fn;
 
   /// CRC-32 (IEEE) PCLMUL kernels.
-  pub const CRC32_PCLMUL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_PCLMUL: [Crc32Fn; 5] = [
     arch::crc32_ieee_pclmul_safe,
     arch::crc32_ieee_pclmul_2way_safe,
     arch::crc32_ieee_pclmul_4way_safe,
@@ -36,10 +36,10 @@ pub mod x86_64 {
     arch::crc32_ieee_pclmul_8way_safe,
   ];
   /// CRC-32 (IEEE) PCLMUL small-buffer kernel.
-  pub const CRC32_PCLMUL_SMALL_KERNEL: Crc32Fn = arch::crc32_ieee_pclmul_small_safe;
+  pub(in crate::checksum) const CRC32_PCLMUL_SMALL_KERNEL: Crc32Fn = arch::crc32_ieee_pclmul_small_safe;
 
   /// CRC-32 (IEEE) VPCLMUL kernels.
-  pub const CRC32_VPCLMUL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_VPCLMUL: [Crc32Fn; 5] = [
     arch::crc32_ieee_vpclmul_safe,
     arch::crc32_ieee_vpclmul_2way_safe,
     arch::crc32_ieee_vpclmul_4way_safe,
@@ -47,7 +47,7 @@ pub mod x86_64 {
     arch::crc32_ieee_vpclmul_8way_safe,
   ];
   /// CRC-32C SSE4.2 kernel function array.
-  pub const CRC32C_HWCRC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_HWCRC: [Crc32Fn; 5] = [
     arch::crc32c_sse42_safe,
     arch::crc32c_sse42_2way_safe,
     arch::crc32c_sse42_4way_safe,
@@ -56,7 +56,7 @@ pub mod x86_64 {
   ];
 
   /// CRC-32C fusion (SSE4.2 + PCLMULQDQ) kernels.
-  pub const CRC32C_FUSION_SSE: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_FUSION_SSE: [Crc32Fn; 5] = [
     arch::crc32c_iscsi_sse_v4s3x3_safe,
     arch::crc32c_iscsi_sse_v4s3x3_2way_safe,
     arch::crc32c_iscsi_sse_v4s3x3_4way_safe,
@@ -65,7 +65,7 @@ pub mod x86_64 {
   ];
 
   /// CRC-32C fusion (AVX-512 + VPCLMULQDQ) kernels.
-  pub const CRC32C_FUSION_VPCLMUL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_FUSION_VPCLMUL: [Crc32Fn; 5] = [
     arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_safe,
     arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_2way_safe,
     arch::crc32c_iscsi_avx512_vpclmulqdq_v3x2_4way_safe,
@@ -75,14 +75,13 @@ pub mod x86_64 {
 }
 
 #[cfg(target_arch = "aarch64")]
-pub mod aarch64 {
-  #![cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
+pub(in crate::checksum) mod aarch64 {
 
   use super::super::aarch64 as arch;
   use crate::checksum::dispatchers::Crc32Fn;
 
   /// CRC-32 (IEEE) CRC-extension kernel function array.
-  pub const CRC32_HWCRC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_HWCRC: [Crc32Fn; 5] = [
     arch::crc32_armv8_safe,
     arch::crc32_armv8_2way_safe,
     arch::crc32_armv8_3way_safe,
@@ -91,7 +90,7 @@ pub mod aarch64 {
   ];
 
   /// CRC-32C (Castagnoli) CRC-extension kernel function array.
-  pub const CRC32C_HWCRC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_HWCRC: [Crc32Fn; 5] = [
     arch::crc32c_armv8_safe,
     arch::crc32c_armv8_2way_safe,
     arch::crc32c_armv8_3way_safe,
@@ -100,7 +99,7 @@ pub mod aarch64 {
   ];
 
   /// CRC-32 (IEEE) PMULL fusion kernels.
-  pub const CRC32_PMULL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_PMULL: [Crc32Fn; 5] = [
     arch::crc32_iso_hdlc_pmull_v9s3x2e_s3_safe,
     arch::crc32_iso_hdlc_pmull_2way_safe,
     arch::crc32_iso_hdlc_pmull_3way_safe,
@@ -108,10 +107,10 @@ pub mod aarch64 {
     arch::crc32_iso_hdlc_pmull_3way_safe, // dup for index consistency
   ];
   /// CRC-32 (IEEE) PMULL small-buffer kernel.
-  pub const CRC32_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_pmull_small_safe;
+  pub(in crate::checksum) const CRC32_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_pmull_small_safe;
 
   /// CRC-32 (IEEE) PMULL+EOR3 fusion kernels.
-  pub const CRC32_PMULL_EOR3: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_PMULL_EOR3: [Crc32Fn; 5] = [
     arch::crc32_iso_hdlc_pmull_eor3_v9s3x2e_s3_safe,
     arch::crc32_iso_hdlc_pmull_eor3_2way_safe,
     arch::crc32_iso_hdlc_pmull_eor3_3way_safe,
@@ -120,7 +119,7 @@ pub mod aarch64 {
   ];
 
   /// CRC-32C (Castagnoli) PMULL fusion kernels.
-  pub const CRC32C_PMULL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_PMULL: [Crc32Fn; 5] = [
     arch::crc32c_iscsi_pmull_v9s3x2e_s3_safe,
     arch::crc32c_iscsi_pmull_2way_safe,
     arch::crc32c_iscsi_pmull_3way_safe,
@@ -128,10 +127,10 @@ pub mod aarch64 {
     arch::crc32c_iscsi_pmull_3way_safe, // dup for index consistency
   ];
   /// CRC-32C PMULL small-buffer kernel.
-  pub const CRC32C_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_pmull_small_safe;
+  pub(in crate::checksum) const CRC32C_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_pmull_small_safe;
 
   /// CRC-32C (Castagnoli) PMULL+EOR3 fusion kernels.
-  pub const CRC32C_PMULL_EOR3: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_PMULL_EOR3: [Crc32Fn; 5] = [
     arch::crc32c_iscsi_pmull_eor3_v9s3x2e_s3_safe,
     arch::crc32c_iscsi_pmull_eor3_2way_safe,
     arch::crc32c_iscsi_pmull_eor3_3way_safe,
@@ -139,36 +138,40 @@ pub mod aarch64 {
     arch::crc32c_iscsi_pmull_eor3_3way_safe, // dup for index consistency
   ];
 
+  #[cfg(feature = "std")]
   /// CRC-32 (IEEE) "SVE2 PMULL" tier kernels (2/3-way striping).
-  pub const CRC32_SVE2_PMULL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_SVE2_PMULL: [Crc32Fn; 5] = [
     arch::crc32_iso_hdlc_pmull_v12e_v1_safe,
     arch::crc32_iso_hdlc_sve2_pmull_2way_safe,
     arch::crc32_iso_hdlc_sve2_pmull_3way_safe,
     arch::crc32_iso_hdlc_sve2_pmull_3way_safe,
     arch::crc32_iso_hdlc_sve2_pmull_3way_safe,
   ];
+  #[cfg(feature = "std")]
   /// CRC-32 "SVE2 PMULL" small-buffer kernel.
-  pub const CRC32_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_sve2_pmull_small_safe;
+  pub(in crate::checksum) const CRC32_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32_iso_hdlc_sve2_pmull_small_safe;
 
+  #[cfg(feature = "std")]
   /// CRC-32C (Castagnoli) "SVE2 PMULL" tier kernels (2/3-way striping).
-  pub const CRC32C_SVE2_PMULL: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_SVE2_PMULL: [Crc32Fn; 5] = [
     arch::crc32c_iscsi_pmull_v12e_v1_safe,
     arch::crc32c_iscsi_sve2_pmull_2way_safe,
     arch::crc32c_iscsi_sve2_pmull_3way_safe,
     arch::crc32c_iscsi_sve2_pmull_3way_safe,
     arch::crc32c_iscsi_sve2_pmull_3way_safe,
   ];
+  #[cfg(feature = "std")]
   /// CRC-32C "SVE2 PMULL" small-buffer kernel.
-  pub const CRC32C_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_sve2_pmull_small_safe;
+  pub(in crate::checksum) const CRC32C_SVE2_PMULL_SMALL_KERNEL: Crc32Fn = arch::crc32c_iscsi_sve2_pmull_small_safe;
 }
 
 #[cfg(target_arch = "powerpc64")]
-pub mod power {
+pub(in crate::checksum) mod power {
   use super::super::power as arch;
   use crate::checksum::dispatchers::Crc32Fn;
 
   /// CRC-32 (IEEE) VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
-  pub const CRC32_VPMSUM: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_VPMSUM: [Crc32Fn; 5] = [
     arch::crc32_ieee_vpmsum_safe,
     arch::crc32_ieee_vpmsum_2way_safe,
     arch::crc32_ieee_vpmsum_4way_safe,
@@ -177,7 +180,7 @@ pub mod power {
   ];
 
   /// CRC-32C VPMSUM kernels: [1-way, 2-way, 4-way, 8-way, 8-way(dup)].
-  pub const CRC32C_VPMSUM: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_VPMSUM: [Crc32Fn; 5] = [
     arch::crc32c_vpmsum_safe,
     arch::crc32c_vpmsum_2way_safe,
     arch::crc32c_vpmsum_4way_safe,
@@ -187,12 +190,12 @@ pub mod power {
 }
 
 #[cfg(target_arch = "s390x")]
-pub mod s390x {
+pub(in crate::checksum) mod s390x {
   use super::super::s390x as arch;
   use crate::checksum::dispatchers::Crc32Fn;
 
   /// CRC-32 (IEEE) VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32_VGFM: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_VGFM: [Crc32Fn; 5] = [
     arch::crc32_ieee_vgfm_safe,
     arch::crc32_ieee_vgfm_2way_safe,
     arch::crc32_ieee_vgfm_4way_safe,
@@ -201,7 +204,7 @@ pub mod s390x {
   ];
 
   /// CRC-32C VGFM kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32C_VGFM: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_VGFM: [Crc32Fn; 5] = [
     arch::crc32c_vgfm_safe,
     arch::crc32c_vgfm_2way_safe,
     arch::crc32c_vgfm_4way_safe,
@@ -211,31 +214,12 @@ pub mod s390x {
 }
 
 #[cfg(target_arch = "riscv64")]
-#[allow(dead_code)]
-pub mod riscv64 {
+pub(in crate::checksum) mod riscv64 {
   use super::super::riscv64 as arch;
   use crate::checksum::dispatchers::Crc32Fn;
 
-  /// Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32_ZBC_NAMES: &[&str] = &[
-    "riscv64/zbc",
-    "riscv64/zbc-2way",
-    "riscv64/zbc-4way",
-    "riscv64/zbc-4way",
-    "riscv64/zbc-4way",
-  ];
-
-  /// Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32_ZVBC_NAMES: &[&str] = &[
-    "riscv64/zvbc",
-    "riscv64/zvbc-2way",
-    "riscv64/zvbc-4way",
-    "riscv64/zvbc-4way",
-    "riscv64/zvbc-4way",
-  ];
-
   /// CRC-32 (IEEE) Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32_ZBC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_ZBC: [Crc32Fn; 5] = [
     arch::crc32_ieee_zbc_safe,
     arch::crc32_ieee_zbc_2way_safe,
     arch::crc32_ieee_zbc_4way_safe,
@@ -244,7 +228,7 @@ pub mod riscv64 {
   ];
 
   /// CRC-32 (IEEE) Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32_ZVBC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32_ZVBC: [Crc32Fn; 5] = [
     arch::crc32_ieee_zvbc_safe,
     arch::crc32_ieee_zvbc_2way_safe,
     arch::crc32_ieee_zvbc_4way_safe,
@@ -252,26 +236,8 @@ pub mod riscv64 {
     arch::crc32_ieee_zvbc_4way_safe, // dup for index consistency
   ];
 
-  /// CRC-32C Zbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32C_ZBC_NAMES: &[&str] = &[
-    "riscv64/zbc",
-    "riscv64/zbc-2way",
-    "riscv64/zbc-4way",
-    "riscv64/zbc-4way",
-    "riscv64/zbc-4way",
-  ];
-
-  /// CRC-32C Zvbc kernel names: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32C_ZVBC_NAMES: &[&str] = &[
-    "riscv64/zvbc",
-    "riscv64/zvbc-2way",
-    "riscv64/zvbc-4way",
-    "riscv64/zvbc-4way",
-    "riscv64/zvbc-4way",
-  ];
-
   /// CRC-32C Zbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32C_ZBC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_ZBC: [Crc32Fn; 5] = [
     arch::crc32c_zbc_safe,
     arch::crc32c_zbc_2way_safe,
     arch::crc32c_zbc_4way_safe,
@@ -280,7 +246,7 @@ pub mod riscv64 {
   ];
 
   /// CRC-32C Zvbc kernels: [1-way, 2-way, 4-way, 4-way(dup), 4-way(dup)].
-  pub const CRC32C_ZVBC: [Crc32Fn; 5] = [
+  pub(in crate::checksum) const CRC32C_ZVBC: [Crc32Fn; 5] = [
     arch::crc32c_zvbc_safe,
     arch::crc32c_zvbc_2way_safe,
     arch::crc32c_zvbc_4way_safe,

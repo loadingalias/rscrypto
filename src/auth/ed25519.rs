@@ -429,7 +429,7 @@ pub struct Ed25519Keypair {
 
 #[cfg(feature = "diag")]
 #[doc(hidden)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct DiagEd25519VerifyScalars {
   pub r_bytes: [u8; PUBLIC_KEY_LENGTH],
   pub s_canonical: [u8; SECRET_KEY_LENGTH],
@@ -992,24 +992,8 @@ mod tests {
   }
 
   fn decode_hex<const N: usize>(hex: &str) -> [u8; N] {
-    let bytes = hex.as_bytes();
     let mut out = [0u8; N];
-
-    for (dst, chunk) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-      *dst = match chunk[0] {
-        b'0'..=b'9' => chunk[0] - b'0',
-        b'a'..=b'f' => chunk[0] - b'a' + 10,
-        b'A'..=b'F' => chunk[0] - b'A' + 10,
-        _ => panic!("invalid hex"),
-      } << 4
-        | match chunk[1] {
-          b'0'..=b'9' => chunk[1] - b'0',
-          b'a'..=b'f' => chunk[1] - b'a' + 10,
-          b'A'..=b'F' => chunk[1] - b'A' + 10,
-          _ => panic!("invalid hex"),
-        };
-    }
-
+    crate::hex::from_hex(hex, &mut out).expect("RFC 8032 vectors must contain valid fixed-width hexadecimal");
     out
   }
 
@@ -1033,8 +1017,12 @@ mod tests {
     let signature = keypair.sign(message);
 
     assert_eq!(secret.sign(message), signature);
-    assert!(keypair.public_key().verify(message, &signature).is_ok());
-    assert!(verify(message, &keypair.public_key(), &signature).is_ok());
+    keypair
+      .public_key()
+      .verify(message, &signature)
+      .expect("the keypair signature must verify with its public key");
+    verify(message, &keypair.public_key(), &signature)
+      .expect("the keypair signature must verify through the free function");
   }
 
   #[test]
@@ -1189,7 +1177,7 @@ mod tests {
     for scalar_bytes in [[0u8; Ed25519SecretKey::LENGTH], one, reduced] {
       let portable = point::ExtendedPoint::scalar_mul_basepoint(&scalar_bytes)
         .to_bytes()
-        .unwrap();
+        .expect("basepoint multiplication produces an encodable Edwards point");
       let asm = super::basepoint_mul_encoded_dispatch(&scalar_bytes);
 
       assert_eq!(asm, portable);
@@ -1203,7 +1191,12 @@ mod tests {
       {
         let (asm_public, asm_point) = super::x86_64_asm::basepoint_mul_public(&scalar_bytes);
         assert_eq!(asm_public, portable);
-        assert_eq!(asm_point.to_bytes().unwrap(), portable);
+        assert_eq!(
+          asm_point
+            .to_bytes()
+            .expect("assembly basepoint multiplication produces an encodable Edwards point"),
+          portable
+        );
       }
     }
   }
@@ -1225,8 +1218,11 @@ mod tests {
       let public = keypair.public_key();
       let signature = keypair.sign(message);
       let (r_bytes, s_bytes) = super::split_signature(&signature);
-      let a_point = public.point().unwrap();
-      let s = scalar::from_canonical_bytes(&s_bytes).unwrap();
+      let a_point = public
+        .point()
+        .expect("a locally generated Ed25519 public key decodes to an Edwards point");
+      let s =
+        scalar::from_canonical_bytes(&s_bytes).expect("a locally generated Ed25519 signature has a canonical scalar");
 
       let challenge_digest = super::hash_challenge(&r_bytes, public.as_bytes(), message);
       let challenge = scalar::reduce_bytes_mod_order(&challenge_digest);
@@ -1236,10 +1232,10 @@ mod tests {
 
       let portable = point::straus_wnaf_basepoint_vartime(&s_canonical, &neg_challenge_bytes, &a_point)
         .to_bytes()
-        .unwrap();
+        .expect("double-scalar multiplication produces an encodable Edwards point");
       let asm =
         super::aarch64_asm::double_scalar_basepoint_encoded(&s_canonical, &neg_challenge_bytes, public.as_bytes())
-          .unwrap();
+          .expect("the assembly double-scalar path accepts a locally generated public key");
 
       assert_eq!(asm, portable);
       assert_eq!(asm, r_bytes);

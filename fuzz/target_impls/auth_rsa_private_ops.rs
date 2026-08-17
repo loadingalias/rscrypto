@@ -1,13 +1,12 @@
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto::{
-  RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy,
-  RsaSignatureProfile,
+  RsaBlindingPair, RsaEncryptionError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile,
+  RsaPublicKeyPolicy, RsaSignatureProfile,
 };
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-#[allow(dead_code)]
 #[path = "auth_rsa_import.rs"]
 mod rsa_import_fixture;
 
@@ -23,7 +22,7 @@ const PSS_PROFILES: [RsaPssProfile; 3] = [RsaPssProfile::Sha256, RsaPssProfile::
 const OAEP_PROFILES: [RsaOaepProfile; 3] = [RsaOaepProfile::Sha256, RsaOaepProfile::Sha384, RsaOaepProfile::Sha512];
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let mode = some_or_return!(input.byte());
   let selector = some_or_return!(input.byte());
@@ -37,12 +36,12 @@ pub fn run(data: &[u8]) {
   .expect("fuzz RSA private-key fixture must parse");
   let (one, one_inverse) = factor_one(key.signature_len());
 
-  match mode % 10 {
+  match mode.rem_euclid(10) {
     0 => {
       let profile = PKCS1_PROFILES[usize::from(selector) % PKCS1_PROFILES.len()];
       let mut signature = vec![0u8; key.signature_len()];
       key
-        .sign_pkcs1v15_with_blinding_factor(profile, left, &one, &one_inverse, &mut signature)
+        .sign_pkcs1v15_with_blinding_factor(profile, left, RsaBlindingPair::new(&one, &one_inverse), &mut signature)
         .expect("fixture RSA-PKCS1-v1_5 signing must succeed");
       key
         .public_key()
@@ -54,7 +53,13 @@ pub fn run(data: &[u8]) {
       let salt = bounded_slice(right, profile.digest_len());
       let mut signature = vec![0u8; key.signature_len()];
       key
-        .sign_pss_with_salt_and_blinding_factor(profile, left, salt, &one, &one_inverse, &mut signature)
+        .sign_pss_with_salt_and_blinding_factor(
+          profile,
+          left,
+          salt,
+          RsaBlindingPair::new(&one, &one_inverse),
+          &mut signature,
+        )
         .expect("fixture RSA-PSS signing must succeed");
       key
         .public_key()
@@ -73,7 +78,13 @@ pub fn run(data: &[u8]) {
         .expect("fixture RSA-OAEP encryption must succeed for bounded message");
       let mut plaintext = vec![0u8; key.signature_len()];
       let plaintext_len = key
-        .decrypt_oaep_with_blinding_factor(profile, label, &ciphertext, &one, &one_inverse, &mut plaintext)
+        .decrypt_oaep_with_blinding_factor(
+          profile,
+          label,
+          &ciphertext,
+          RsaBlindingPair::new(&one, &one_inverse),
+          &mut plaintext,
+        )
         .expect("self-produced RSA-OAEP ciphertext must decrypt");
       assert_eq!(&plaintext[..plaintext_len], message);
     }
@@ -84,8 +95,7 @@ pub fn run(data: &[u8]) {
         .sign_pkcs1v15_with_blinding_factor(
           profile.pkcs1v15_profile().expect("profile is PKCS1-v1_5"),
           left,
-          &one,
-          &one_inverse,
+          RsaBlindingPair::new(&one, &one_inverse),
           &mut signature,
         )
         .expect("typed fixture RSA-PKCS1-v1_5 signing must succeed");
@@ -98,30 +108,47 @@ pub fn run(data: &[u8]) {
       let profile = OAEP_PROFILES[usize::from(selector) % OAEP_PROFILES.len()];
       let mut plaintext = vec![0u8; key.signature_len()];
       let ciphertext = full_width_candidate(left, key.signature_len());
-      let _ = key.decrypt_oaep_with_blinding_factor(profile, right, &ciphertext, &one, &one_inverse, &mut plaintext);
+      let _decryption_result = key.decrypt_oaep_with_blinding_factor(
+        profile,
+        right,
+        &ciphertext,
+        RsaBlindingPair::new(&one, &one_inverse),
+        &mut plaintext,
+      );
     }
     5 => {
       let profile = PKCS1_PROFILES[usize::from(selector) % PKCS1_PROFILES.len()];
       let mut signature = vec![0u8; key.signature_len()];
       let bad_factor = full_width_candidate(left, key.signature_len());
-      let _ = key.sign_pkcs1v15_with_blinding_factor(profile, right, &bad_factor, &one_inverse, &mut signature);
+      let _signing_result = key.sign_pkcs1v15_with_blinding_factor(
+        profile,
+        right,
+        RsaBlindingPair::new(&bad_factor, &one_inverse),
+        &mut signature,
+      );
     }
     6 => {
       let profile = PSS_PROFILES[usize::from(selector) % PSS_PROFILES.len()];
       let mut short_signature = vec![0u8; key.signature_len().saturating_sub(1)];
-      assert!(key
-        .sign_pss_with_salt_and_blinding_factor(profile, left, right, &one, &one_inverse, &mut short_signature)
-        .is_err());
+      let _signing_error = key
+        .sign_pss_with_salt_and_blinding_factor(
+          profile,
+          left,
+          right,
+          RsaBlindingPair::new(&one, &one_inverse),
+          &mut short_signature,
+        )
+        .expect_err("RSA-PSS signing must reject a short output buffer");
     }
     7 => {
       let profile = OAEP_PROFILES[usize::from(selector) % OAEP_PROFILES.len()];
       let mut ciphertext = vec![0u8; key.signature_len()];
-      assert!(key
+      let _encryption_error = key
         .public_key()
         .encrypt_oaep_with_random_fill(profile, left, right, &mut ciphertext, |_| {
           Err(RsaEncryptionError::EntropyUnavailable)
         })
-        .is_err());
+        .expect_err("RSA-OAEP encryption must propagate entropy failure");
     }
     8 => {
       let message = bounded_slice(right, pkcs1v15_message_limit(&key));
@@ -133,21 +160,25 @@ pub fn run(data: &[u8]) {
         .expect("fixture RSAES-PKCS1-v1_5 encryption must succeed for bounded message");
       let mut plaintext = vec![0u8; key.signature_len()];
       let plaintext_len = key
-        .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &one, &one_inverse, &mut plaintext)
+        .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, RsaBlindingPair::new(&one, &one_inverse), &mut plaintext)
         .expect("self-produced RSAES-PKCS1-v1_5 ciphertext must decrypt");
       assert_eq!(&plaintext[..plaintext_len], message);
     }
     9 => {
       let mut plaintext = vec![0u8; key.signature_len()];
       let ciphertext = full_width_candidate(left, key.signature_len());
-      let _ = key.decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &one, &one_inverse, &mut plaintext);
+      let _decryption_result = key.decrypt_pkcs1v15_with_blinding_factor(
+        &ciphertext,
+        RsaBlindingPair::new(&one, &one_inverse),
+        &mut plaintext,
+      );
     }
-    _ => unreachable!("mode modulo 10 is always in 0..10"),
+    _ => {}
   }
 }
 
 #[cfg(not(any(fuzzing, rscrypto_internal_fuzzing)))]
-pub fn run(_data: &[u8]) {}
+pub(super) fn run(_data: &[u8]) {}
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn factor_one(len: usize) -> (Vec<u8>, Vec<u8>) {
@@ -191,7 +222,8 @@ fn fill_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncr
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn oaep_message_limit(key: &RsaPrivateKey, profile: RsaOaepProfile) -> usize {
-  key.signature_len()
+  key
+    .signature_len()
     .saturating_sub(profile.digest_len().saturating_mul(2))
     .saturating_sub(2)
 }
@@ -213,10 +245,7 @@ fn pkcs1v15_message_limit(key: &RsaPrivateKey) -> usize {
 
 #[cfg(any(fuzzing, rscrypto_internal_fuzzing))]
 fn pkcs1v15_seed(key: &RsaPrivateKey, message_len: usize, selector: u8, left: &[u8], right: &[u8]) -> Vec<u8> {
-  let len = key
-    .signature_len()
-    .saturating_sub(message_len)
-    .saturating_sub(3);
+  let len = key.signature_len().saturating_sub(message_len).saturating_sub(3);
   let mut seed = vec![selector.wrapping_add(1).max(1); len];
   for (index, byte) in left.iter().chain(right.iter()).copied().enumerate() {
     let seed_len = seed.len();

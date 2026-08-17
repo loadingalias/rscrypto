@@ -237,7 +237,7 @@ impl<const N: usize> Drop for ZeroizingBytes<N> {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_fixed_stack(input: [u8; 32]) -> u8 {
+pub(crate) fn diag_zeroize_fixed_stack(input: [u8; 32]) -> u8 {
   let secret = SecretBytes::new(input);
   core::hint::black_box(secret.as_bytes()[0])
 }
@@ -246,7 +246,7 @@ pub fn diag_zeroize_fixed_stack(input: [u8; 32]) -> u8 {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_fixed_move(input: [u8; 32]) -> u8 {
+pub(crate) fn diag_zeroize_fixed_move(input: [u8; 32]) -> u8 {
   let secret = SecretBytes::new(input);
   let mut exposed = secret.expose();
   let output = core::hint::black_box(exposed[0]);
@@ -258,7 +258,7 @@ pub fn diag_zeroize_fixed_move(input: [u8; 32]) -> u8 {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_early_return(input: [u8; 32], stop: bool) -> u8 {
+pub(crate) fn diag_zeroize_early_return(input: [u8; 32], stop: bool) -> u8 {
   let secret = SecretBytes::new(input);
   if core::hint::black_box(stop) {
     return 0;
@@ -270,7 +270,7 @@ pub fn diag_zeroize_early_return(input: [u8; 32], stop: bool) -> u8 {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_variable_heap(input: Vec<u8>) -> usize {
+pub(crate) fn diag_zeroize_variable_heap(input: Vec<u8>) -> usize {
   let secret = SecretVec::new(input);
   core::hint::black_box(secret.len())
 }

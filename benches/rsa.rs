@@ -61,38 +61,45 @@ const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("rsa_fixtures/rsa8192_pkcs
 fn hex_to_vec(hex: &str) -> Vec<u8> {
   let mut out = Vec::with_capacity(hex.len() / 2);
   for chunk in hex.as_bytes().chunks_exact(2) {
-    out.push((hex_value(chunk[0]) << 4) | hex_value(chunk[1]));
+    let high = hex_value(chunk[0]).expect("RSA benchmark fixture must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("RSA benchmark fixture must contain hexadecimal digits");
+    out.push((high << 4) | low);
   }
   out
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
-    return vec![len as u8];
+    return vec![u8::try_from(len).expect("short DER length must fit in one byte")];
   }
 
   let bytes = len.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap();
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .expect("long DER length must contain a non-zero byte");
   let len_bytes = &bytes[first_nonzero..];
-  let mut out = Vec::with_capacity(1 + len_bytes.len());
-  out.push(0x80 | len_bytes.len() as u8);
+  let mut out = Vec::with_capacity(1usize.strict_add(len_bytes.len()));
+  out.push(0x80 | u8::try_from(len_bytes.len()).expect("DER length-of-length must fit in one byte"));
   out.extend_from_slice(len_bytes);
   out
 }
 
 fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-  let mut out = Vec::with_capacity(1 + der_len(value.len()).len() + value.len());
+  let encoded_len = der_len(value.len());
+  let capacity = 1usize.strict_add(encoded_len.len()).strict_add(value.len());
+  let mut out = Vec::with_capacity(capacity);
   out.push(tag);
-  out.extend_from_slice(&der_len(value.len()));
+  out.extend_from_slice(&encoded_len);
   out.extend_from_slice(value);
   out
 }
@@ -104,7 +111,7 @@ fn sequence(value: &[u8]) -> Vec<u8> {
 fn integer_unsigned(value: &[u8]) -> Vec<u8> {
   let first_nonzero = value.iter().position(|&byte| byte != 0);
   let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
-  let mut encoded = Vec::with_capacity(value.len() + usize::from(value[0] & 0x80 != 0));
+  let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(value[0] & 0x80 != 0)));
   if value[0] & 0x80 != 0 {
     encoded.push(0);
   }
@@ -114,7 +121,10 @@ fn integer_unsigned(value: &[u8]) -> Vec<u8> {
 
 fn exponent_bytes(exponent: u64) -> Vec<u8> {
   let bytes = exponent.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap_or(bytes.len() - 1);
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .unwrap_or_else(|| bytes.len().strict_sub(1));
   bytes[first_nonzero..].to_vec()
 }
 
@@ -240,9 +250,11 @@ fn rsa_components_for_size(
   pkcs1_sig: &[u8],
   import_policy: &RsaPublicKeyPolicy,
 ) {
-  let pss_key = RsaPublicKey::from_spki_der_with_policy(pss_spki, import_policy).unwrap();
+  let pss_key =
+    RsaPublicKey::from_spki_der_with_policy(pss_spki, import_policy).expect("valid RSA benchmark fixture must succeed");
   let mut pss_scratch = pss_key.public_scratch();
-  let pkcs1_key = RsaPublicKey::from_spki_der_with_policy(pkcs1_spki, import_policy).unwrap();
+  let pkcs1_key = RsaPublicKey::from_spki_der_with_policy(pkcs1_spki, import_policy)
+    .expect("valid RSA benchmark fixture must succeed");
   let mut pkcs1_scratch = pkcs1_key.public_scratch();
   let pss_pkcs1 = pkcs1_der_from_key(&pss_key);
   let pkcs1_pkcs1 = pkcs1_der_from_key(&pkcs1_key);
@@ -254,7 +266,7 @@ fn rsa_components_for_size(
     let mut pss_encoded = vec![0u8; pss_key.modulus().len()];
     pss_key
       .public_operation_with_scratch(pss_sig, &mut pss_encoded, &mut pss_scratch)
-      .unwrap();
+      .expect("valid RSA benchmark fixture must succeed");
     let pss_em_bits = pss_key.modulus_bits().strict_sub(1);
     let pss_em_len = pss_em_bits.strict_add(7) / 8;
     let leading = pss_encoded.len().strict_sub(pss_em_len);
@@ -263,7 +275,7 @@ fn rsa_components_for_size(
     let mut pkcs1_encoded = vec![0u8; pkcs1_key.modulus().len()];
     pkcs1_key
       .public_operation_with_scratch(pkcs1_sig, &mut pkcs1_encoded, &mut pkcs1_scratch)
-      .unwrap();
+      .expect("valid RSA benchmark fixture must succeed");
 
     (
       pss_encoded,
@@ -286,20 +298,31 @@ fn rsa_components_for_size(
   let rustcrypto_pss_key = RustCryptoRsaPublicKey::from_public_key_der(pss_spki)
     .ok()
     .map(RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new);
-  let rustcrypto_pss_sig = RustCryptoPssSignature::try_from(pss_sig).unwrap();
+  let rustcrypto_pss_sig = RustCryptoPssSignature::try_from(pss_sig).expect("valid RSA benchmark fixture must succeed");
   let rustcrypto_pkcs1_key = RustCryptoRsaPublicKey::from_public_key_der(pkcs1_spki)
     .ok()
     .map(RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new);
-  let rustcrypto_pkcs1_sig = RustCryptoPkcs1v15Signature::try_from(pkcs1_sig).unwrap();
+  let rustcrypto_pkcs1_sig =
+    RustCryptoPkcs1v15Signature::try_from(pkcs1_sig).expect("valid RSA benchmark fixture must succeed");
 
   let mut group = c.benchmark_group(name);
 
   group.bench_function("parse-spki-rscrypto", |b| {
-    b.iter(|| black_box(RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy).unwrap()))
+    b.iter(|| {
+      black_box(
+        RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
+          .expect("valid RSA benchmark fixture must succeed"),
+      )
+    })
   });
   if rustcrypto_pss_key.is_some() {
     group.bench_function("parse-spki-rustcrypto-rsa", |b| {
-      b.iter(|| black_box(RustCryptoRsaPublicKey::from_public_key_der(black_box(pss_spki)).unwrap()))
+      b.iter(|| {
+        black_box(
+          RustCryptoRsaPublicKey::from_public_key_der(black_box(pss_spki))
+            .expect("valid RSA benchmark fixture must succeed"),
+        )
+      })
     });
   }
   group.bench_function("scratch-setup-rscrypto", |b| {
@@ -313,7 +336,7 @@ fn rsa_components_for_size(
           black_box(&mut out),
           black_box(&mut pss_scratch),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -328,7 +351,7 @@ fn rsa_components_for_size(
           black_box(&mut out),
           black_box(&mut product_scratch),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
       })
     });
     group.bench_function("public-op-e65537-cios-candidate", |b| {
@@ -339,7 +362,7 @@ fn rsa_components_for_size(
           black_box(&mut out),
           black_box(&mut cios_scratch),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
       })
     });
   }
@@ -354,7 +377,7 @@ fn rsa_components_for_size(
         black_box(&mut pss_db),
         black_box(&mut pss_db_mask),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -365,7 +388,7 @@ fn rsa_components_for_size(
         black_box(MESSAGE_PKCS1V15),
         black_box(&pkcs1_encoded),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("verify-pss-sha256-rscrypto", |b| {
@@ -377,22 +400,22 @@ fn rsa_components_for_size(
           black_box(pss_sig),
           black_box(&mut pss_scratch),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("verify-pss-sha256-rscrypto-oneshot", |b| {
     b.iter(|| {
       pss_key
         .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("verify-pss-sha256-rscrypto-cold", |b| {
     b.iter(|| {
       RsaPublicKey::from_spki_der_with_policy(black_box(pss_spki), import_policy)
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
         .verify_pss(RsaPssProfile::Sha256, black_box(MESSAGE_PSS), black_box(pss_sig))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   if let Some(rustcrypto_pss_key) = rustcrypto_pss_key {
@@ -400,16 +423,20 @@ fn rsa_components_for_size(
       b.iter(|| {
         rustcrypto_pss_key
           .verify(black_box(MESSAGE_PSS), black_box(&rustcrypto_pss_sig))
-          .unwrap()
+          .expect("valid RSA benchmark fixture must succeed")
       })
     });
   }
   group.bench_function("verify-pss-sha256-ring", |b| {
-    b.iter(|| ring_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).unwrap())
+    b.iter(|| {
+      ring_pss_key
+        .verify(black_box(MESSAGE_PSS), black_box(pss_sig))
+        .expect("valid RSA benchmark fixture must succeed")
+    })
   });
   aws_lc_bench! {
     group.bench_function("verify-pss-sha256-aws-lc-rs", |b| {
-      b.iter(|| aws_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).unwrap())
+      b.iter(|| aws_pss_key.verify(black_box(MESSAGE_PSS), black_box(pss_sig)).expect("valid RSA benchmark fixture must succeed"))
     });
   }
   group.bench_function("verify-pkcs1v15-sha256-rscrypto", |b| {
@@ -421,7 +448,7 @@ fn rsa_components_for_size(
           black_box(pkcs1_sig),
           black_box(&mut pkcs1_scratch),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("verify-pkcs1v15-sha256-rscrypto-oneshot", |b| {
@@ -432,19 +459,19 @@ fn rsa_components_for_size(
           black_box(MESSAGE_PKCS1V15),
           black_box(pkcs1_sig),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("verify-pkcs1v15-sha256-rscrypto-cold", |b| {
     b.iter(|| {
       RsaPublicKey::from_spki_der_with_policy(black_box(pkcs1_spki), import_policy)
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
         .verify_pkcs1v15(
           RsaPkcs1v15Profile::Sha256,
           black_box(MESSAGE_PKCS1V15),
           black_box(pkcs1_sig),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   if let Some(rustcrypto_pkcs1_key) = rustcrypto_pkcs1_key {
@@ -452,7 +479,7 @@ fn rsa_components_for_size(
       b.iter(|| {
         rustcrypto_pkcs1_key
           .verify(black_box(MESSAGE_PKCS1V15), black_box(&rustcrypto_pkcs1_sig))
-          .unwrap()
+          .expect("valid RSA benchmark fixture must succeed")
       })
     });
   }
@@ -460,7 +487,7 @@ fn rsa_components_for_size(
     b.iter(|| {
       ring_pkcs1_key
         .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   aws_lc_bench! {
@@ -468,7 +495,7 @@ fn rsa_components_for_size(
       b.iter(|| {
         aws_pkcs1_key
           .verify(black_box(MESSAGE_PKCS1V15), black_box(pkcs1_sig))
-          .unwrap()
+          .expect("valid RSA benchmark fixture must succeed")
       })
     });
   }
@@ -481,18 +508,18 @@ fn rsa_public_exponents(c: &mut Criterion) {
   let input = legacy_exponent_input();
   let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
 
-  let key_e3 =
-    RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x03]), &policy).unwrap();
-  let key_e17 =
-    RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x11]), &policy).unwrap();
+  let key_e3 = RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x03]), &policy)
+    .expect("valid RSA benchmark fixture must succeed");
+  let key_e17 = RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x11]), &policy)
+    .expect("valid RSA benchmark fixture must succeed");
   let key_e65537 =
     RsaPublicKey::from_pkcs1_der_with_policy(&pkcs1_der_from_modulus_exponent(&modulus, &[0x01, 0x00, 0x01]), &policy)
-      .unwrap();
+      .expect("valid RSA benchmark fixture must succeed");
   let key_generic = RsaPublicKey::from_pkcs1_der_with_policy(
     &pkcs1_der_from_modulus_exponent(&modulus, &[0x49, 0xd2, 0xa1]),
     &policy.allow_legacy_odd_exponents(),
   )
-  .unwrap();
+  .expect("valid RSA benchmark fixture must succeed");
 
   let mut scratch_e3 = key_e3.public_scratch();
   let mut scratch_e17 = key_e17.public_scratch();
@@ -527,12 +554,15 @@ fn rsa_public_exponents(c: &mut Criterion) {
     b.iter(|| {
       key_e3
         .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_e3))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
   group.bench_function("public-op-e3-bitserial-baseline", |b| {
-    b.iter(|| diag_rsa_public_operation_bitserial(black_box(&key_e3), black_box(&input), black_box(&mut out)).unwrap())
+    b.iter(|| {
+      diag_rsa_public_operation_bitserial(black_box(&key_e3), black_box(&input), black_box(&mut out))
+        .expect("valid RSA benchmark fixture must succeed")
+    })
   });
   #[cfg(feature = "diag")]
   group.bench_function("public-op-e3-product-montgomery", |b| {
@@ -543,7 +573,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut product_scratch_e3),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -555,7 +585,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut generic_scratch_e3),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -567,19 +597,22 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut cios_scratch_e3),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("public-op-e17", |b| {
     b.iter(|| {
       key_e17
         .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_e17))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
   group.bench_function("public-op-e17-bitserial-baseline", |b| {
-    b.iter(|| diag_rsa_public_operation_bitserial(black_box(&key_e17), black_box(&input), black_box(&mut out)).unwrap())
+    b.iter(|| {
+      diag_rsa_public_operation_bitserial(black_box(&key_e17), black_box(&input), black_box(&mut out))
+        .expect("valid RSA benchmark fixture must succeed")
+    })
   });
   #[cfg(feature = "diag")]
   group.bench_function("public-op-e17-product-montgomery", |b| {
@@ -590,7 +623,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut product_scratch_e17),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -602,7 +635,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut generic_scratch_e17),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -614,20 +647,21 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut cios_scratch_e17),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("public-op-e65537", |b| {
     b.iter(|| {
       key_e65537
         .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_e65537))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
   group.bench_function("public-op-e65537-bitserial-baseline", |b| {
     b.iter(|| {
-      diag_rsa_public_operation_bitserial(black_box(&key_e65537), black_box(&input), black_box(&mut out)).unwrap()
+      diag_rsa_public_operation_bitserial(black_box(&key_e65537), black_box(&input), black_box(&mut out))
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -639,7 +673,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut product_scratch_e65537),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -651,7 +685,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut generic_scratch_e65537),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -663,20 +697,21 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut cios_scratch_e65537),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.bench_function("public-op-e0x49d2a1-generic", |b| {
     b.iter(|| {
       key_generic
         .public_operation_with_scratch(black_box(&input), black_box(&mut out), black_box(&mut scratch_generic))
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
   group.bench_function("public-op-e0x49d2a1-bitserial-baseline", |b| {
     b.iter(|| {
-      diag_rsa_public_operation_bitserial(black_box(&key_generic), black_box(&input), black_box(&mut out)).unwrap()
+      diag_rsa_public_operation_bitserial(black_box(&key_generic), black_box(&input), black_box(&mut out))
+        .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -688,7 +723,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut product_scratch_generic),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   #[cfg(feature = "diag")]
@@ -700,7 +735,7 @@ fn rsa_public_exponents(c: &mut Criterion) {
         black_box(&mut out),
         black_box(&mut cios_scratch_generic),
       )
-      .unwrap()
+      .expect("valid RSA benchmark fixture must succeed")
     })
   });
   group.finish();
@@ -748,7 +783,7 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
       &synthetic_pkcs1_der(modulus_len),
       &RsaPublicKeyPolicy::legacy_verification(),
     )
-    .unwrap();
+    .expect("valid RSA benchmark fixture must succeed");
     let input = modulus_minus_one(&key);
     let mut out_auto = vec![0u8; key.modulus().len()];
     let mut out_product = vec![0u8; key.modulus().len()];
@@ -767,7 +802,7 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
             black_box(&mut out_auto),
             black_box(&mut scratch_auto),
           )
-          .unwrap()
+          .expect("valid RSA benchmark fixture must succeed")
       })
     });
     group.bench_function(format!("{name}/product-montgomery"), |b| {
@@ -778,7 +813,7 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
           black_box(&mut out_product),
           black_box(&mut scratch_product),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
       })
     });
     group.bench_function(format!("{name}/cios-candidate"), |b| {
@@ -789,7 +824,7 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
           black_box(&mut out_cios),
           black_box(&mut scratch_cios),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
       })
     });
     group.bench_function(format!("{name}/cios-portable"), |b| {
@@ -800,7 +835,7 @@ fn rsa_montgomery_thresholds(c: &mut Criterion) {
           black_box(&mut out_cios_portable),
           black_box(&mut scratch_cios_portable),
         )
-        .unwrap()
+        .expect("valid RSA benchmark fixture must succeed")
       })
     });
   }

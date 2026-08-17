@@ -1,28 +1,3 @@
-//! Deterministic AES-GCM nonce sequencing.
-//!
-//! `NonceCounter<Aes256Gcm>` builds 96-bit nonces as:
-//!
-//! - 32-bit fixed prefix chosen by the caller
-//! - 64-bit big-endian invocation counter
-//!
-//! This follows the deterministic IV shape from SP 800-38D and removes the
-//! easiest nonce-reuse footgun from high-volume AES-GCM usage.
-//!
-//! ```rust
-//! use rscrypto::{Aead, Aes256Gcm, Aes256GcmKey, aead::NonceCounter};
-//!
-//! let cipher = Aes256Gcm::new(&Aes256GcmKey::from_bytes([0x42; 32]));
-//! let mut counter = NonceCounter::<Aes256Gcm>::new(*b"sess");
-//!
-//! let mut sealed = [0u8; 4 + Aes256Gcm::TAG_SIZE];
-//! let nonce = counter.encrypt(&cipher, b"hdr", b"data", &mut sealed)?;
-//!
-//! let mut opened = [0u8; 4];
-//! cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened)?;
-//! assert_eq!(&opened, b"data");
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-
 use core::{fmt, marker::PhantomData};
 
 use super::{Aes128Gcm, Aes128GcmTag, Aes256Gcm, Aes256GcmTag, Nonce96, SealError};
@@ -98,6 +73,10 @@ impl From<SealError> for NonceCounterSealError {
 
 /// Monotonic deterministic nonce generator for AES-GCM.
 ///
+/// Each 96-bit nonce consists of a caller-selected 32-bit fixed prefix and a
+/// 64-bit big-endian invocation counter, following the deterministic IV shape
+/// from SP 800-38D.
+///
 /// The counter is intentionally not `Clone` or `Copy`. One instance owns one
 /// nonce stream. If you need restart-safe continuation, persist
 /// [`next_counter`](Self::next_counter) and restore with
@@ -106,6 +85,15 @@ pub struct NonceCounter<Cipher> {
   fixed_prefix: [u8; FIXED_PREFIX_LEN],
   next: u64,
   _cipher: PhantomData<fn() -> Cipher>,
+}
+
+impl<Cipher> fmt::Debug for NonceCounter<Cipher> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("NonceCounter")
+      .field("fixed_prefix", &self.fixed_prefix)
+      .field("next_counter", &self.next)
+      .finish()
+  }
 }
 
 impl NonceCounter<Aes256Gcm> {
@@ -355,6 +343,9 @@ impl NonceCounter<Aes128Gcm> {
 
 #[cfg(test)]
 mod tests {
+  use alloc::format;
+  use core::marker::PhantomData;
+
   use super::{Aes128Gcm, Aes256Gcm, NonceCounter, NonceCounterSealError};
   use crate::{
     Aes128GcmKey, Aes256GcmKey,
@@ -362,15 +353,31 @@ mod tests {
   };
 
   #[test]
+  fn nonce_counter_debug_does_not_require_cipher_debug() {
+    struct CipherWithoutDebug;
+
+    let counter = NonceCounter::<CipherWithoutDebug> {
+      fixed_prefix: *b"test",
+      next: 7,
+      _cipher: PhantomData,
+    };
+
+    assert_eq!(
+      format!("{counter:?}"),
+      "NonceCounter { fixed_prefix: [116, 101, 115, 116], next_counter: 7 }"
+    );
+  }
+
+  #[test]
   fn aes_gcm_nonce_counter_formats_prefix_and_counter() {
     let mut counter = NonceCounter::<Aes256Gcm>::new(*b"conn");
 
     assert_eq!(
-      counter.next_nonce().unwrap(),
+      counter.next_nonce().expect("first nonce should be available"),
       Nonce96::from_bytes([b'c', b'o', b'n', b'n', 0, 0, 0, 0, 0, 0, 0, 0])
     );
     assert_eq!(
-      counter.next_nonce().unwrap(),
+      counter.next_nonce().expect("second nonce should be available"),
       Nonce96::from_bytes([b'c', b'o', b'n', b'n', 0, 0, 0, 0, 0, 0, 0, 1])
     );
     assert_eq!(counter.issued(), 2);
@@ -382,10 +389,14 @@ mod tests {
     let mut counter = NonceCounter::<Aes256Gcm>::new(*b"sess");
 
     let mut sealed = [0u8; 4 + Aes256Gcm::TAG_SIZE];
-    let nonce = counter.encrypt(&cipher, b"hdr", b"data", &mut sealed).unwrap();
+    let nonce = counter
+      .encrypt(&cipher, b"hdr", b"data", &mut sealed)
+      .expect("valid inputs should seal");
 
     let mut opened = [0u8; 4];
-    cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened).unwrap();
+    cipher
+      .decrypt(&nonce, b"hdr", &sealed, &mut opened)
+      .expect("freshly sealed ciphertext should open");
     assert_eq!(&opened, b"data");
     assert_eq!(counter.next_counter(), 1);
   }
@@ -396,7 +407,9 @@ mod tests {
     let mut counter = NonceCounter::<Aes256Gcm>::new(*b"bufr");
     let mut out = [0u8; 3];
 
-    let err = counter.encrypt(&cipher, b"", b"data", &mut out).unwrap_err();
+    let err = counter
+      .encrypt(&cipher, b"", b"data", &mut out)
+      .expect_err("undersized output should be rejected");
     assert_eq!(err, NonceCounterSealError::from(SealError::buffer()));
     assert_eq!(counter.next_counter(), 1);
   }
@@ -404,11 +417,14 @@ mod tests {
   #[test]
   fn aes_gcm_nonce_counter_exhausts_cleanly() {
     let mut counter =
-      NonceCounter::<Aes256Gcm>::with_counter(*b"last", NonceCounter::<Aes256Gcm>::MAX_MESSAGES.strict_sub(1)).unwrap();
+      NonceCounter::<Aes256Gcm>::with_counter(*b"last", NonceCounter::<Aes256Gcm>::MAX_MESSAGES.strict_sub(1))
+        .expect("last permitted counter should be accepted");
 
-    assert!(counter.next_nonce().is_ok());
+    counter.next_nonce().expect("last nonce should be available");
     assert_eq!(counter.remaining(), 0);
-    assert!(counter.next_nonce().is_err());
+    counter
+      .next_nonce()
+      .expect_err("exhausted counter should reject another nonce");
   }
 
   #[test]
@@ -417,13 +433,15 @@ mod tests {
     // greater than or equal to MAX_MESSAGES. Pin both the equality and the
     // strictly-greater branch so a future relaxation cannot silently widen
     // the deterministic-IV budget past the SP 800-38D limit.
-    assert!(NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", NonceCounter::<Aes256Gcm>::MAX_MESSAGES).is_err());
-    assert!(NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", u64::MAX).is_err());
+    NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", NonceCounter::<Aes256Gcm>::MAX_MESSAGES)
+      .expect_err("maximum counter should be rejected");
+    NonceCounter::<Aes256Gcm>::with_counter(*b"oflw", u64::MAX).expect_err("out-of-range counter should be rejected");
   }
 
   #[test]
   fn aes_gcm_nonce_counters_report_resumed_state() {
-    let counter256 = NonceCounter::<Aes256Gcm>::with_counter(*b"r256", 37).unwrap();
+    let counter256 =
+      NonceCounter::<Aes256Gcm>::with_counter(*b"r256", 37).expect("in-range counter should be accepted");
     assert_eq!(counter256.fixed_prefix(), *b"r256");
     assert_eq!(counter256.next_counter(), 37);
     assert_eq!(counter256.issued(), 37);
@@ -432,7 +450,8 @@ mod tests {
       NonceCounter::<Aes256Gcm>::MAX_MESSAGES.strict_sub(37)
     );
 
-    let counter128 = NonceCounter::<Aes128Gcm>::with_counter(*b"r128", 73).unwrap();
+    let counter128 =
+      NonceCounter::<Aes128Gcm>::with_counter(*b"r128", 73).expect("in-range counter should be accepted");
     assert_eq!(counter128.fixed_prefix(), *b"r128");
     assert_eq!(counter128.next_counter(), 73);
     assert_eq!(counter128.issued(), 73);
@@ -448,10 +467,14 @@ mod tests {
     let mut counter = NonceCounter::<Aes128Gcm>::new(*b"sess");
 
     let mut sealed = [0u8; 4 + Aes128Gcm::TAG_SIZE];
-    let nonce = counter.encrypt(&cipher, b"hdr", b"data", &mut sealed).unwrap();
+    let nonce = counter
+      .encrypt(&cipher, b"hdr", b"data", &mut sealed)
+      .expect("valid inputs should seal");
 
     let mut opened = [0u8; 4];
-    cipher.decrypt(&nonce, b"hdr", &sealed, &mut opened).unwrap();
+    cipher
+      .decrypt(&nonce, b"hdr", &sealed, &mut opened)
+      .expect("freshly sealed ciphertext should open");
     assert_eq!(&opened, b"data");
     assert_eq!(counter.next_counter(), 1);
   }
@@ -461,11 +484,11 @@ mod tests {
     let mut counter = NonceCounter::<Aes128Gcm>::new(*b"conn");
 
     assert_eq!(
-      counter.next_nonce().unwrap(),
+      counter.next_nonce().expect("first nonce should be available"),
       Nonce96::from_bytes([b'c', b'o', b'n', b'n', 0, 0, 0, 0, 0, 0, 0, 0])
     );
     assert_eq!(
-      counter.next_nonce().unwrap(),
+      counter.next_nonce().expect("second nonce should be available"),
       Nonce96::from_bytes([b'c', b'o', b'n', b'n', 0, 0, 0, 0, 0, 0, 0, 1])
     );
     assert_eq!(counter.issued(), 2);
@@ -477,7 +500,9 @@ mod tests {
     let mut counter = NonceCounter::<Aes128Gcm>::new(*b"bufr");
     let mut out = [0u8; 3];
 
-    let err = counter.encrypt(&cipher, b"", b"data", &mut out).unwrap_err();
+    let err = counter
+      .encrypt(&cipher, b"", b"data", &mut out)
+      .expect_err("undersized output should be rejected");
     assert_eq!(err, NonceCounterSealError::from(SealError::buffer()));
     assert_eq!(counter.next_counter(), 1);
   }
@@ -485,11 +510,14 @@ mod tests {
   #[test]
   fn aes128_gcm_nonce_counter_exhausts_cleanly() {
     let mut counter =
-      NonceCounter::<Aes128Gcm>::with_counter(*b"last", NonceCounter::<Aes128Gcm>::MAX_MESSAGES.strict_sub(1)).unwrap();
+      NonceCounter::<Aes128Gcm>::with_counter(*b"last", NonceCounter::<Aes128Gcm>::MAX_MESSAGES.strict_sub(1))
+        .expect("last permitted counter should be accepted");
 
-    assert!(counter.next_nonce().is_ok());
+    counter.next_nonce().expect("last nonce should be available");
     assert_eq!(counter.remaining(), 0);
-    assert!(counter.next_nonce().is_err());
+    counter
+      .next_nonce()
+      .expect_err("exhausted counter should reject another nonce");
   }
 
   #[test]
@@ -497,7 +525,8 @@ mod tests {
     // Pin both the equality and strictly-greater branch so a future
     // relaxation cannot silently widen the deterministic-IV budget past
     // the SP 800-38D limit.
-    assert!(NonceCounter::<Aes128Gcm>::with_counter(*b"oflw", NonceCounter::<Aes128Gcm>::MAX_MESSAGES).is_err());
-    assert!(NonceCounter::<Aes128Gcm>::with_counter(*b"oflw", u64::MAX).is_err());
+    NonceCounter::<Aes128Gcm>::with_counter(*b"oflw", NonceCounter::<Aes128Gcm>::MAX_MESSAGES)
+      .expect_err("maximum counter should be rejected");
+    NonceCounter::<Aes128Gcm>::with_counter(*b"oflw", u64::MAX).expect_err("out-of-range counter should be rejected");
   }
 }

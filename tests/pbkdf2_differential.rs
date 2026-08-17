@@ -32,21 +32,27 @@ proptest! {
     oracle_sha256(&password, &salt, iterations, &mut expected);
 
     let mut oneshot = vec![0u8; out_len];
-    Pbkdf2Sha256::derive_key_primitive(&password, &salt, iterations, &mut oneshot).unwrap();
+    Pbkdf2Sha256::derive_key_primitive(&password, &salt, iterations, &mut oneshot)
+      .expect("PBKDF2-SHA-256 one-shot differential derivation must succeed");
 
     let state = Pbkdf2Sha256::new(&password);
     let mut reused = vec![0u8; out_len];
-    state.derive(&salt, iterations, &mut reused).unwrap();
+    state.derive(&salt, iterations, &mut reused)
+      .expect("PBKDF2-SHA-256 state-reuse differential derivation must succeed");
 
     prop_assert_eq!(oneshot, expected.as_slice());
     prop_assert_eq!(reused, expected.as_slice());
-    prop_assert!(state.verify_primitive(&salt, iterations, &expected).is_ok());
-    prop_assert!(Pbkdf2Sha256::verify_password_primitive(&password, &salt, iterations, &expected).is_ok());
+    state.verify_primitive(&salt, iterations, &expected)
+      .expect("PBKDF2-SHA-256 state must verify the oracle output");
+    Pbkdf2Sha256::verify_password_primitive(&password, &salt, iterations, &expected)
+      .expect("PBKDF2-SHA-256 one-shot API must verify the oracle output");
 
     let mut wrong = expected.clone();
     wrong[0] ^= 1;
-    prop_assert!(state.verify_primitive(&salt, iterations, &wrong).is_err());
-    prop_assert!(Pbkdf2Sha256::verify_password_primitive(&password, &salt, iterations, &wrong).is_err());
+    state.verify_primitive(&salt, iterations, &wrong)
+      .expect_err("PBKDF2-SHA-256 state must reject a corrupted output");
+    Pbkdf2Sha256::verify_password_primitive(&password, &salt, iterations, &wrong)
+      .expect_err("PBKDF2-SHA-256 one-shot API must reject a corrupted output");
   }
 
   #[test]
@@ -60,21 +66,27 @@ proptest! {
     oracle_sha512(&password, &salt, iterations, &mut expected);
 
     let mut oneshot = vec![0u8; out_len];
-    Pbkdf2Sha512::derive_key_primitive(&password, &salt, iterations, &mut oneshot).unwrap();
+    Pbkdf2Sha512::derive_key_primitive(&password, &salt, iterations, &mut oneshot)
+      .expect("PBKDF2-SHA-512 one-shot differential derivation must succeed");
 
     let state = Pbkdf2Sha512::new(&password);
     let mut reused = vec![0u8; out_len];
-    state.derive(&salt, iterations, &mut reused).unwrap();
+    state.derive(&salt, iterations, &mut reused)
+      .expect("PBKDF2-SHA-512 state-reuse differential derivation must succeed");
 
     prop_assert_eq!(oneshot, expected.as_slice());
     prop_assert_eq!(reused, expected.as_slice());
-    prop_assert!(state.verify_primitive(&salt, iterations, &expected).is_ok());
-    prop_assert!(Pbkdf2Sha512::verify_password_primitive(&password, &salt, iterations, &expected).is_ok());
+    state.verify_primitive(&salt, iterations, &expected)
+      .expect("PBKDF2-SHA-512 state must verify the oracle output");
+    Pbkdf2Sha512::verify_password_primitive(&password, &salt, iterations, &expected)
+      .expect("PBKDF2-SHA-512 one-shot API must verify the oracle output");
 
     let mut wrong = expected.clone();
     wrong[0] ^= 1;
-    prop_assert!(state.verify_primitive(&salt, iterations, &wrong).is_err());
-    prop_assert!(Pbkdf2Sha512::verify_password_primitive(&password, &salt, iterations, &wrong).is_err());
+    state.verify_primitive(&salt, iterations, &wrong)
+      .expect_err("PBKDF2-SHA-512 state must reject a corrupted output");
+    Pbkdf2Sha512::verify_password_primitive(&password, &salt, iterations, &wrong)
+      .expect_err("PBKDF2-SHA-512 one-shot API must reject a corrupted output");
   }
 }
 
@@ -106,7 +118,8 @@ fn pbkdf2_sha256_rfc7914_vectors_match_rustcrypto() {
   ];
 
   for case in cases {
-    let actual = Pbkdf2Sha256::derive_key_array_primitive::<64>(case.password, case.salt, case.iterations).unwrap();
+    let actual = Pbkdf2Sha256::derive_key_array_primitive::<64>(case.password, case.salt, case.iterations)
+      .expect("RFC 7914 PBKDF2-SHA-256 vector derivation must succeed");
     assert_eq!(actual, case.expected);
 
     let mut oracle = [0u8; 64];

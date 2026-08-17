@@ -79,7 +79,7 @@ cargo llvm-cov clean --workspace
 
 if [ "$RUN_NEXTEST" = true ]; then
   echo "━━━ Test Suite Coverage Capture (cargo-nextest) ━━━"
-  cargo llvm-cov nextest --no-report --workspace --all-features "${NEXTEST_ARGS[@]}"
+  cargo llvm-cov nextest --locked --no-report --workspace --all-features "${NEXTEST_ARGS[@]}"
 fi
 
 if [ "$RUN_FUZZ" = true ]; then
@@ -87,14 +87,14 @@ if [ "$RUN_FUZZ" = true ]; then
   export RSCRYPTO_FUZZ_REPLAY_MISSING=skip
 
   echo "Full fuzz workspace replay"
-  cargo llvm-cov test --no-report \
+  cargo llvm-cov test --locked --no-report \
     --manifest-path "$REPO_ROOT/fuzz/Cargo.toml" \
     --all-features --test corpus_replay -- --nocapture
 
   echo "Scoped fuzz package replay"
   while IFS= read -r manifest; do
     echo "  -> ${manifest#"$REPO_ROOT"/}"
-    cargo llvm-cov test --no-report \
+    cargo llvm-cov test --locked --no-report \
       --manifest-path "$manifest" \
       --all-features --test corpus_replay -- --nocapture
   done < <(find "$REPO_ROOT/fuzz-packages" -mindepth 2 -maxdepth 2 -name Cargo.toml | sort)

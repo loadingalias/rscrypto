@@ -8,16 +8,13 @@
 //! Uses `unsafe` for RISC-V inline assembly. Callers must ensure the required
 //! CPU features are available before executing the accelerated path (the
 //! dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(dead_code)] // Kernels wired up via dispatcher
-// SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
-#![allow(clippy::indexing_slicing)]
 
 use core::{
   arch::asm,
-  mem::MaybeUninit,
   ops::{BitXor, BitXorAssign},
 };
+
+use crate::checksum::common::{low_u16, low_u32};
 
 use super::keys::{
   CRC16_CCITT_KEYS_REFLECTED, CRC16_CCITT_STREAM_REFLECTED, CRC16_IBM_KEYS_REFLECTED, CRC16_IBM_STREAM_REFLECTED,
@@ -70,11 +67,11 @@ impl Simd {
   // Zbc carryless multiply primitives
 
   #[inline]
+  /// # Safety
+  ///
+  /// Requires the RISC-V extensions enabled by the target-feature attribute.
   #[target_feature(enable = "zbc")]
-  unsafe fn clmul_lo(a: u64, b: u64) -> u64 {
-    // SAFETY: Caller guarantees:
-    // 1. ZBC target features are available (dispatch check).
-    // 2. All SIMD operations are pure register computations after loads.
+  fn clmul_lo(a: u64, b: u64) -> u64 {
     // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
     // buffers and register-only operands are established before this block.
     unsafe {
@@ -91,11 +88,11 @@ impl Simd {
   }
 
   #[inline]
+  /// # Safety
+  ///
+  /// Requires the RISC-V extensions enabled by the target-feature attribute.
   #[target_feature(enable = "zbc")]
-  unsafe fn clmul_hi(a: u64, b: u64) -> u64 {
-    // SAFETY: Caller guarantees:
-    // 1. ZBC target features are available (dispatch check).
-    // 2. All SIMD operations are pure register computations after loads.
+  fn clmul_hi(a: u64, b: u64) -> u64 {
     // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
     // buffers and register-only operands are established before this block.
     unsafe {
@@ -112,18 +109,14 @@ impl Simd {
   }
 
   #[inline]
+  /// # Safety
+  ///
+  /// Requires the RISC-V extensions enabled by the target-feature attribute.
   #[target_feature(enable = "zbc")]
-  unsafe fn mul64(a: u64, b: u64) -> Self {
-    // SAFETY: Caller guarantees:
-    // 1. ZBC target features are available (dispatch check).
-    // 2. All SIMD operations are pure register computations after loads.
-    // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-    // buffers and register-only operands are established before this block.
-    unsafe {
-      Self {
-        hi: Self::clmul_hi(a, b),
-        lo: Self::clmul_lo(a, b),
-      }
+  fn mul64(a: u64, b: u64) -> Self {
+    Self {
+      hi: Self::clmul_hi(a, b),
+      lo: Self::clmul_lo(a, b),
     }
   }
 }
@@ -132,34 +125,20 @@ impl Simd {
 
 #[inline(always)]
 fn load_block(block: &Block) -> [Simd; 8] {
-  let mut out = MaybeUninit::<[Simd; 8]>::uninit();
-  let base = out.as_mut_ptr().cast::<Simd>();
-
-  let mut i = 0usize;
-  while i < 8 {
-    let lo = u64::from_le(block[i * 2]);
-    let hi = u64::from_le(block[i * 2 + 1]);
-    // SAFETY: `base` points to a `[Simd; 8]` buffer and `i` is in-bounds.
-    unsafe {
-      base.add(i).write(Simd::new(hi, lo));
-    }
-    i = i.strict_add(1);
+  let mut out = [Simd::new(0, 0); 8];
+  for (lane, &[low, high]) in out.iter_mut().zip(block.as_chunks::<2>().0) {
+    *lane = Simd::new(u64::from_le(high), u64::from_le(low));
   }
-
-  // SAFETY: all 8 elements are initialized above.
-  unsafe { out.assume_init() }
+  out
 }
 
 #[inline]
 fn load_block_split(block: &Block) -> ([u64; 8], [u64; 8]) {
   let mut hi = [0u64; 8];
   let mut lo = [0u64; 8];
-
-  let mut i = 0usize;
-  while i < 8 {
-    lo[i] = u64::from_le(block[i * 2]);
-    hi[i] = u64::from_le(block[i * 2 + 1]);
-    i = i.strict_add(1);
+  for ((hi_lane, lo_lane), &[low, high]) in hi.iter_mut().zip(&mut lo).zip(block.as_chunks::<2>().0) {
+    *hi_lane = u64::from_le(high);
+    *lo_lane = u64::from_le(low);
   }
 
   (hi, lo)
@@ -168,277 +147,249 @@ fn load_block_split(block: &Block) -> ([u64; 8], [u64; 8]) {
 // ZBC (scalar carryless multiply) backend
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn fold_16_zbc(x: Simd, coeff: (u64, u64)) -> Simd {
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let (coeff_high, coeff_low) = coeff;
-    Simd::mul64(x.low_64(), coeff_high) ^ Simd::mul64(x.high_64(), coeff_low)
-  }
+fn fold_16_zbc(x: Simd, coeff: (u64, u64)) -> Simd {
+  let (coeff_high, coeff_low) = coeff;
+  Simd::mul64(x.low_64(), coeff_high) ^ Simd::mul64(x.high_64(), coeff_low)
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn fold_16_reflected_zbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) -> Simd {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC + ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe { data_to_xor ^ fold_16_zbc(x, coeff) }
+fn fold_16_reflected_zbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) -> Simd {
+  data_to_xor ^ fold_16_zbc(x, coeff)
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn fold_width32_reflected_zbc(x: Simd, high: u64, low: u64) -> Simd {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC + ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let clmul = Simd::mul64(x.low_64(), low);
-    let shifted = Simd::new(0, x.high_64());
-    let mut state = clmul ^ shifted;
+fn fold_width32_reflected_zbc(x: Simd, high: u64, low: u64) -> Simd {
+  let clmul = Simd::mul64(x.low_64(), low);
+  let shifted = Simd::new(0, x.high_64());
+  let mut state = clmul ^ shifted;
 
-    let masked = Simd::new(state.high_64(), state.low_64() & 0xFFFF_FFFF_0000_0000);
-    let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
-    let clmul = Simd::mul64(shifted_high, high);
-    state = clmul ^ masked;
+  let masked = Simd::new(state.high_64(), state.low_64() & 0xFFFF_FFFF_0000_0000);
+  let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
+  let clmul = Simd::mul64(shifted_high, high);
+  state = clmul ^ masked;
 
-    state
-  }
+  state
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn barrett_width32_reflected_zbc(x: Simd, poly: u64, mu: u64) -> u32 {
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let t1 = Simd::mul64(x.low_64(), mu);
-    let l = Simd::mul64(t1.low_64(), poly);
-    (x ^ l).high_64() as u32
-  }
+fn barrett_width32_reflected_zbc(x: Simd, poly: u64, mu: u64) -> u32 {
+  let t1 = Simd::mul64(x.low_64(), mu);
+  let l = Simd::mul64(t1.low_64(), poly);
+  low_u32((x ^ l).high_64())
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn finalize_lanes_width32_reflected_zbc(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let mut res = x[7];
-    res = fold_16_reflected_zbc(x[0], (keys[10], keys[9]), res);
-    res = fold_16_reflected_zbc(x[1], (keys[12], keys[11]), res);
-    res = fold_16_reflected_zbc(x[2], (keys[14], keys[13]), res);
-    res = fold_16_reflected_zbc(x[3], (keys[16], keys[15]), res);
-    res = fold_16_reflected_zbc(x[4], (keys[18], keys[17]), res);
-    res = fold_16_reflected_zbc(x[5], (keys[20], keys[19]), res);
-    res = fold_16_reflected_zbc(x[6], (keys[2], keys[1]), res);
+fn finalize_lanes_width32_reflected_zbc(x: [Simd; 8], keys: &[u64; 23]) -> u32 {
+  let mut res = x[7];
+  res = fold_16_reflected_zbc(x[0], (keys[10], keys[9]), res);
+  res = fold_16_reflected_zbc(x[1], (keys[12], keys[11]), res);
+  res = fold_16_reflected_zbc(x[2], (keys[14], keys[13]), res);
+  res = fold_16_reflected_zbc(x[3], (keys[16], keys[15]), res);
+  res = fold_16_reflected_zbc(x[4], (keys[18], keys[17]), res);
+  res = fold_16_reflected_zbc(x[5], (keys[20], keys[19]), res);
+  res = fold_16_reflected_zbc(x[6], (keys[2], keys[1]), res);
 
-    barrett_width32_reflected_zbc(fold_width32_reflected_zbc(res, keys[6], keys[5]), keys[8], keys[7])
-  }
+  barrett_width32_reflected_zbc(fold_width32_reflected_zbc(res, keys[6], keys[5]), keys[8], keys[7])
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn update_simd_zbc(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let mut x = load_block(first);
-    x[0] ^= Simd::new(0, state as u64);
+fn update_simd_zbc(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
+  let mut x = load_block(first);
+  x[0] ^= Simd::new(0, state as u64);
 
-    let coeff_128b = (keys[4], keys[3]);
-    for block in rest {
-      let chunk = load_block(block);
-      x[0] = fold_16_reflected_zbc(x[0], coeff_128b, chunk[0]);
-      x[1] = fold_16_reflected_zbc(x[1], coeff_128b, chunk[1]);
-      x[2] = fold_16_reflected_zbc(x[2], coeff_128b, chunk[2]);
-      x[3] = fold_16_reflected_zbc(x[3], coeff_128b, chunk[3]);
-      x[4] = fold_16_reflected_zbc(x[4], coeff_128b, chunk[4]);
-      x[5] = fold_16_reflected_zbc(x[5], coeff_128b, chunk[5]);
-      x[6] = fold_16_reflected_zbc(x[6], coeff_128b, chunk[6]);
-      x[7] = fold_16_reflected_zbc(x[7], coeff_128b, chunk[7]);
-    }
-
-    finalize_lanes_width32_reflected_zbc(x, keys)
-  }
-}
-
-#[inline]
-#[target_feature(enable = "zbc")]
-unsafe fn fold_block_128_reflected_zbc(x: &mut [Simd; 8], block: &Block, coeff: (u64, u64)) {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
+  let coeff_128b = (keys[4], keys[3]);
+  for block in rest {
     let chunk = load_block(block);
-    x[0] = fold_16_reflected_zbc(x[0], coeff, chunk[0]);
-    x[1] = fold_16_reflected_zbc(x[1], coeff, chunk[1]);
-    x[2] = fold_16_reflected_zbc(x[2], coeff, chunk[2]);
-    x[3] = fold_16_reflected_zbc(x[3], coeff, chunk[3]);
-    x[4] = fold_16_reflected_zbc(x[4], coeff, chunk[4]);
-    x[5] = fold_16_reflected_zbc(x[5], coeff, chunk[5]);
-    x[6] = fold_16_reflected_zbc(x[6], coeff, chunk[6]);
-    x[7] = fold_16_reflected_zbc(x[7], coeff, chunk[7]);
+    x[0] = fold_16_reflected_zbc(x[0], coeff_128b, chunk[0]);
+    x[1] = fold_16_reflected_zbc(x[1], coeff_128b, chunk[1]);
+    x[2] = fold_16_reflected_zbc(x[2], coeff_128b, chunk[2]);
+    x[3] = fold_16_reflected_zbc(x[3], coeff_128b, chunk[3]);
+    x[4] = fold_16_reflected_zbc(x[4], coeff_128b, chunk[4]);
+    x[5] = fold_16_reflected_zbc(x[5], coeff_128b, chunk[5]);
+    x[6] = fold_16_reflected_zbc(x[6], coeff_128b, chunk[6]);
+    x[7] = fold_16_reflected_zbc(x[7], coeff_128b, chunk[7]);
   }
+
+  finalize_lanes_width32_reflected_zbc(x, keys)
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn update_simd_zbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u64), keys: &[u64; 23]) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    debug_assert!(!blocks.is_empty());
-
-    if blocks.len() < 2 {
-      let Some((first, rest)) = blocks.split_first() else {
-        return state;
-      };
-      return update_simd_zbc(state, first, rest, keys);
-    }
-
-    let even = blocks.len() & !1usize;
-    let coeff_256 = fold_256b;
-    let coeff_128 = (keys[4], keys[3]);
-
-    let mut s0 = load_block(&blocks[0]);
-    let mut s1 = load_block(&blocks[1]);
-
-    s0[0] ^= Simd::new(0, state as u64);
-
-    let mut i: usize = 2;
-    while i < even {
-      fold_block_128_reflected_zbc(&mut s0, &blocks[i], coeff_256);
-      fold_block_128_reflected_zbc(&mut s1, &blocks[i.strict_add(1)], coeff_256);
-      i = i.strict_add(2);
-    }
-
-    // Merge: A·s0 ⊕ s1 (A = shift by 128B).
-    s1[0] = fold_16_reflected_zbc(s0[0], coeff_128, s1[0]);
-    s1[1] = fold_16_reflected_zbc(s0[1], coeff_128, s1[1]);
-    s1[2] = fold_16_reflected_zbc(s0[2], coeff_128, s1[2]);
-    s1[3] = fold_16_reflected_zbc(s0[3], coeff_128, s1[3]);
-    s1[4] = fold_16_reflected_zbc(s0[4], coeff_128, s1[4]);
-    s1[5] = fold_16_reflected_zbc(s0[5], coeff_128, s1[5]);
-    s1[6] = fold_16_reflected_zbc(s0[6], coeff_128, s1[6]);
-    s1[7] = fold_16_reflected_zbc(s0[7], coeff_128, s1[7]);
-
-    if even != blocks.len() {
-      fold_block_128_reflected_zbc(&mut s1, &blocks[even], coeff_128);
-    }
-
-    finalize_lanes_width32_reflected_zbc(s1, keys)
-  }
+fn fold_block_128_reflected_zbc(x: &mut [Simd; 8], block: &Block, coeff: (u64, u64)) {
+  let chunk = load_block(block);
+  x[0] = fold_16_reflected_zbc(x[0], coeff, chunk[0]);
+  x[1] = fold_16_reflected_zbc(x[1], coeff, chunk[1]);
+  x[2] = fold_16_reflected_zbc(x[2], coeff, chunk[2]);
+  x[3] = fold_16_reflected_zbc(x[3], coeff, chunk[3]);
+  x[4] = fold_16_reflected_zbc(x[4], coeff, chunk[4]);
+  x[5] = fold_16_reflected_zbc(x[5], coeff, chunk[5]);
+  x[6] = fold_16_reflected_zbc(x[6], coeff, chunk[6]);
+  x[7] = fold_16_reflected_zbc(x[7], coeff, chunk[7]);
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn update_simd_zbc_4way(
+fn update_simd_zbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u64), keys: &[u64; 23]) -> u32 {
+  debug_assert!(!blocks.is_empty());
+
+  if blocks.len() < 2 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd_zbc(state, first, rest, keys);
+  }
+
+  let even = blocks.len() & !1usize;
+  let coeff_256 = fold_256b;
+  let coeff_128 = (keys[4], keys[3]);
+
+  let mut s0 = load_block(&blocks[0]);
+  let mut s1 = load_block(&blocks[1]);
+
+  s0[0] ^= Simd::new(0, state as u64);
+
+  let mut i: usize = 2;
+  while i < even {
+    fold_block_128_reflected_zbc(&mut s0, &blocks[i], coeff_256);
+    fold_block_128_reflected_zbc(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+    i = i.strict_add(2);
+  }
+
+  // Merge: A·s0 ⊕ s1 (A = shift by 128B).
+  s1[0] = fold_16_reflected_zbc(s0[0], coeff_128, s1[0]);
+  s1[1] = fold_16_reflected_zbc(s0[1], coeff_128, s1[1]);
+  s1[2] = fold_16_reflected_zbc(s0[2], coeff_128, s1[2]);
+  s1[3] = fold_16_reflected_zbc(s0[3], coeff_128, s1[3]);
+  s1[4] = fold_16_reflected_zbc(s0[4], coeff_128, s1[4]);
+  s1[5] = fold_16_reflected_zbc(s0[5], coeff_128, s1[5]);
+  s1[6] = fold_16_reflected_zbc(s0[6], coeff_128, s1[6]);
+  s1[7] = fold_16_reflected_zbc(s0[7], coeff_128, s1[7]);
+
+  if even != blocks.len() {
+    fold_block_128_reflected_zbc(&mut s1, &blocks[even], coeff_128);
+  }
+
+  finalize_lanes_width32_reflected_zbc(s1, keys)
+}
+
+#[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
+#[target_feature(enable = "zbc")]
+fn update_simd_zbc_4way(
   state: u32,
   blocks: &[Block],
   fold_512b: (u64, u64),
   combine: &[(u64, u64); 3],
   keys: &[u64; 23],
 ) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    debug_assert!(!blocks.is_empty());
+  debug_assert!(!blocks.is_empty());
 
-    if blocks.len() < 4 {
-      let Some((first, rest)) = blocks.split_first() else {
-        return state;
-      };
-      return update_simd_zbc(state, first, rest, keys);
-    }
-
-    let aligned = blocks.len().strict_div(4).strict_mul(4);
-
-    let coeff_512 = fold_512b;
-    let coeff_128 = (keys[4], keys[3]);
-    let c384 = combine[0];
-    let c256 = combine[1];
-    let c128 = combine[2];
-
-    let mut s0 = load_block(&blocks[0]);
-    let mut s1 = load_block(&blocks[1]);
-    let mut s2 = load_block(&blocks[2]);
-    let mut s3 = load_block(&blocks[3]);
-
-    s0[0] ^= Simd::new(0, state as u64);
-
-    let mut i: usize = 4;
-    while i < aligned {
-      fold_block_128_reflected_zbc(&mut s0, &blocks[i], coeff_512);
-      fold_block_128_reflected_zbc(&mut s1, &blocks[i.strict_add(1)], coeff_512);
-      fold_block_128_reflected_zbc(&mut s2, &blocks[i.strict_add(2)], coeff_512);
-      fold_block_128_reflected_zbc(&mut s3, &blocks[i.strict_add(3)], coeff_512);
-      i = i.strict_add(4);
-    }
-
-    // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
-    s3[0] = fold_16_reflected_zbc(s2[0], c128, s3[0]);
-    s3[1] = fold_16_reflected_zbc(s2[1], c128, s3[1]);
-    s3[2] = fold_16_reflected_zbc(s2[2], c128, s3[2]);
-    s3[3] = fold_16_reflected_zbc(s2[3], c128, s3[3]);
-    s3[4] = fold_16_reflected_zbc(s2[4], c128, s3[4]);
-    s3[5] = fold_16_reflected_zbc(s2[5], c128, s3[5]);
-    s3[6] = fold_16_reflected_zbc(s2[6], c128, s3[6]);
-    s3[7] = fold_16_reflected_zbc(s2[7], c128, s3[7]);
-
-    s3[0] = fold_16_reflected_zbc(s1[0], c256, s3[0]);
-    s3[1] = fold_16_reflected_zbc(s1[1], c256, s3[1]);
-    s3[2] = fold_16_reflected_zbc(s1[2], c256, s3[2]);
-    s3[3] = fold_16_reflected_zbc(s1[3], c256, s3[3]);
-    s3[4] = fold_16_reflected_zbc(s1[4], c256, s3[4]);
-    s3[5] = fold_16_reflected_zbc(s1[5], c256, s3[5]);
-    s3[6] = fold_16_reflected_zbc(s1[6], c256, s3[6]);
-    s3[7] = fold_16_reflected_zbc(s1[7], c256, s3[7]);
-
-    s3[0] = fold_16_reflected_zbc(s0[0], c384, s3[0]);
-    s3[1] = fold_16_reflected_zbc(s0[1], c384, s3[1]);
-    s3[2] = fold_16_reflected_zbc(s0[2], c384, s3[2]);
-    s3[3] = fold_16_reflected_zbc(s0[3], c384, s3[3]);
-    s3[4] = fold_16_reflected_zbc(s0[4], c384, s3[4]);
-    s3[5] = fold_16_reflected_zbc(s0[5], c384, s3[5]);
-    s3[6] = fold_16_reflected_zbc(s0[6], c384, s3[6]);
-    s3[7] = fold_16_reflected_zbc(s0[7], c384, s3[7]);
-
-    for block in &blocks[aligned..] {
-      fold_block_128_reflected_zbc(&mut s3, block, coeff_128);
-    }
-
-    finalize_lanes_width32_reflected_zbc(s3, keys)
+  if blocks.len() < 4 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd_zbc(state, first, rest, keys);
   }
+
+  let aligned = blocks.len().strict_div(4).strict_mul(4);
+
+  let coeff_512 = fold_512b;
+  let coeff_128 = (keys[4], keys[3]);
+  let c384 = combine[0];
+  let c256 = combine[1];
+  let c128 = combine[2];
+
+  let mut s0 = load_block(&blocks[0]);
+  let mut s1 = load_block(&blocks[1]);
+  let mut s2 = load_block(&blocks[2]);
+  let mut s3 = load_block(&blocks[3]);
+
+  s0[0] ^= Simd::new(0, state as u64);
+
+  let mut i: usize = 4;
+  while i < aligned {
+    fold_block_128_reflected_zbc(&mut s0, &blocks[i], coeff_512);
+    fold_block_128_reflected_zbc(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+    fold_block_128_reflected_zbc(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+    fold_block_128_reflected_zbc(&mut s3, &blocks[i.strict_add(3)], coeff_512);
+    i = i.strict_add(4);
+  }
+
+  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
+  s3[0] = fold_16_reflected_zbc(s2[0], c128, s3[0]);
+  s3[1] = fold_16_reflected_zbc(s2[1], c128, s3[1]);
+  s3[2] = fold_16_reflected_zbc(s2[2], c128, s3[2]);
+  s3[3] = fold_16_reflected_zbc(s2[3], c128, s3[3]);
+  s3[4] = fold_16_reflected_zbc(s2[4], c128, s3[4]);
+  s3[5] = fold_16_reflected_zbc(s2[5], c128, s3[5]);
+  s3[6] = fold_16_reflected_zbc(s2[6], c128, s3[6]);
+  s3[7] = fold_16_reflected_zbc(s2[7], c128, s3[7]);
+
+  s3[0] = fold_16_reflected_zbc(s1[0], c256, s3[0]);
+  s3[1] = fold_16_reflected_zbc(s1[1], c256, s3[1]);
+  s3[2] = fold_16_reflected_zbc(s1[2], c256, s3[2]);
+  s3[3] = fold_16_reflected_zbc(s1[3], c256, s3[3]);
+  s3[4] = fold_16_reflected_zbc(s1[4], c256, s3[4]);
+  s3[5] = fold_16_reflected_zbc(s1[5], c256, s3[5]);
+  s3[6] = fold_16_reflected_zbc(s1[6], c256, s3[6]);
+  s3[7] = fold_16_reflected_zbc(s1[7], c256, s3[7]);
+
+  s3[0] = fold_16_reflected_zbc(s0[0], c384, s3[0]);
+  s3[1] = fold_16_reflected_zbc(s0[1], c384, s3[1]);
+  s3[2] = fold_16_reflected_zbc(s0[2], c384, s3[2]);
+  s3[3] = fold_16_reflected_zbc(s0[3], c384, s3[3]);
+  s3[4] = fold_16_reflected_zbc(s0[4], c384, s3[4]);
+  s3[5] = fold_16_reflected_zbc(s0[5], c384, s3[5]);
+  s3[6] = fold_16_reflected_zbc(s0[6], c384, s3[6]);
+  s3[7] = fold_16_reflected_zbc(s0[7], c384, s3[7]);
+
+  for block in &blocks[aligned..] {
+    fold_block_128_reflected_zbc(&mut s3, block, coeff_128);
+  }
+
+  finalize_lanes_width32_reflected_zbc(s3, keys)
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn crc16_width32_zbc(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
+fn crc16_width32_zbc(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  // SAFETY: Every bit pattern is valid for Block; align_to returns
+  // non-overlapping subslices of the original allocation.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     let Some((first, rest)) = middle.split_first() else {
@@ -447,25 +398,25 @@ unsafe fn crc16_width32_zbc(mut state: u16, data: &[u8], keys: &[u64; 23], porta
 
     state = portable(state, left);
     let state32 = update_simd_zbc(state as u32, first, rest, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn crc16_width32_zbc_2way(
+fn crc16_width32_zbc_2way(
   mut state: u16,
   data: &[u8],
   keys: &[u64; 23],
   stream: &super::keys::Width32StreamConstants,
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
+  // SAFETY: Every bit pattern is valid for Block; align_to returns
+  // non-overlapping subslices of the original allocation.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -473,25 +424,25 @@ unsafe fn crc16_width32_zbc_2way(
     }
     state = portable(state, left);
     let state32 = update_simd_zbc_2way(state as u32, middle, stream.fold_256b, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "zbc")]
-unsafe fn crc16_width32_zbc_4way(
+fn crc16_width32_zbc_4way(
   mut state: u16,
   data: &[u8],
   keys: &[u64; 23],
   stream: &super::keys::Width32StreamConstants,
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  // SAFETY: Caller guarantees:
-  // 1. ZBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
+  // SAFETY: Every bit pattern is valid for Block; align_to returns
+  // non-overlapping subslices of the original allocation.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -499,7 +450,7 @@ unsafe fn crc16_width32_zbc_4way(
     }
     state = portable(state, left);
     let state32 = update_simd_zbc_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
@@ -513,10 +464,7 @@ unsafe fn crc16_width32_zbc_4way(
 /// Requires RISC-V `v` + `zvbc`.
 #[inline]
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn mul64_zvbc(a: u64, b: u64) -> Simd {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
+fn mul64_zvbc(a: u64, b: u64) -> Simd {
   // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
   // buffers and register-only operands are established before this block.
   unsafe {
@@ -543,92 +491,68 @@ unsafe fn mul64_zvbc(a: u64, b: u64) -> Simd {
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn fold_16_zvbc(x: Simd, coeff: (u64, u64)) -> Simd {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let (coeff_high, coeff_low) = coeff;
-    mul64_zvbc(x.low_64(), coeff_high) ^ mul64_zvbc(x.high_64(), coeff_low)
-  }
+fn fold_16_zvbc(x: Simd, coeff: (u64, u64)) -> Simd {
+  let (coeff_high, coeff_low) = coeff;
+  mul64_zvbc(x.low_64(), coeff_high) ^ mul64_zvbc(x.high_64(), coeff_low)
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn fold_16_reflected_zvbc(x: Simd, coeff: (u64, u64), data_to_xor: Simd) -> Simd {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC + V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe { data_to_xor ^ fold_16_zvbc(x, coeff) }
+fn fold_width32_reflected_zvbc(x: Simd, high: u64, low: u64) -> Simd {
+  let clmul = mul64_zvbc(x.low_64(), low);
+  let shifted = Simd::new(0, x.high_64());
+  let mut state = clmul ^ shifted;
+
+  let masked = Simd::new(state.high_64(), state.low_64() & 0xFFFF_FFFF_0000_0000);
+  let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
+  let clmul = mul64_zvbc(shifted_high, high);
+  state = clmul ^ masked;
+
+  state
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn fold_width32_reflected_zvbc(x: Simd, high: u64, low: u64) -> Simd {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC + V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let clmul = mul64_zvbc(x.low_64(), low);
-    let shifted = Simd::new(0, x.high_64());
-    let mut state = clmul ^ shifted;
-
-    let masked = Simd::new(state.high_64(), state.low_64() & 0xFFFF_FFFF_0000_0000);
-    let shifted_high = (state.low_64() & 0xFFFF_FFFF).strict_shl(32);
-    let clmul = mul64_zvbc(shifted_high, high);
-    state = clmul ^ masked;
-
-    state
-  }
+fn barrett_width32_reflected_zvbc(x: Simd, poly: u64, mu: u64) -> u32 {
+  let t1 = mul64_zvbc(x.low_64(), mu);
+  let l = mul64_zvbc(t1.low_64(), poly);
+  low_u32((x ^ l).high_64())
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn barrett_width32_reflected_zvbc(x: Simd, poly: u64, mu: u64) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let t1 = mul64_zvbc(x.low_64(), mu);
-    let l = mul64_zvbc(t1.low_64(), poly);
-    (x ^ l).high_64() as u32
-  }
+fn fold_tail_zvbc(hi: [u64; 8], lo: [u64; 8], keys: &[u64; 23]) -> u32 {
+  let mut acc = Simd::new(hi[7], lo[7]);
+  acc ^= fold_16_zvbc(Simd::new(hi[0], lo[0]), (keys[10], keys[9]));
+  acc ^= fold_16_zvbc(Simd::new(hi[1], lo[1]), (keys[12], keys[11]));
+  acc ^= fold_16_zvbc(Simd::new(hi[2], lo[2]), (keys[14], keys[13]));
+  acc ^= fold_16_zvbc(Simd::new(hi[3], lo[3]), (keys[16], keys[15]));
+  acc ^= fold_16_zvbc(Simd::new(hi[4], lo[4]), (keys[18], keys[17]));
+  acc ^= fold_16_zvbc(Simd::new(hi[5], lo[5]), (keys[20], keys[19]));
+  acc ^= fold_16_zvbc(Simd::new(hi[6], lo[6]), (keys[2], keys[1]));
+
+  barrett_width32_reflected_zvbc(fold_width32_reflected_zvbc(acc, keys[6], keys[5]), keys[8], keys[7])
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn fold_tail_zvbc(hi: [u64; 8], lo: [u64; 8], keys: &[u64; 23]) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let mut acc = Simd::new(hi[7], lo[7]);
-    acc ^= fold_16_zvbc(Simd::new(hi[0], lo[0]), (keys[10], keys[9]));
-    acc ^= fold_16_zvbc(Simd::new(hi[1], lo[1]), (keys[12], keys[11]));
-    acc ^= fold_16_zvbc(Simd::new(hi[2], lo[2]), (keys[14], keys[13]));
-    acc ^= fold_16_zvbc(Simd::new(hi[3], lo[3]), (keys[16], keys[15]));
-    acc ^= fold_16_zvbc(Simd::new(hi[4], lo[4]), (keys[18], keys[17]));
-    acc ^= fold_16_zvbc(Simd::new(hi[5], lo[5]), (keys[20], keys[19]));
-    acc ^= fold_16_zvbc(Simd::new(hi[6], lo[6]), (keys[2], keys[1]));
-
-    barrett_width32_reflected_zvbc(fold_width32_reflected_zvbc(acc, keys[6], keys[5]), keys[8], keys[7])
-  }
-}
-
-#[inline]
-#[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn fold_block_128_zvbc(
+fn fold_block_128_zvbc(
   x_hi: &mut [u64; 8],
   x_lo: &mut [u64; 8],
   chunk_hi: &[u64; 8],
@@ -636,15 +560,12 @@ unsafe fn fold_block_128_zvbc(
   coeff_low: u64,
   coeff_high: u64,
 ) {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
   // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
   // buffers and register-only operands are established before this block.
   unsafe {
     let mut offset = 0usize;
     while offset < 8 {
-      let remaining = 8 - offset;
+      let remaining = 8usize.strict_sub(offset);
       let vl: usize;
       asm!(
         "vsetvli {vl}, {avl}, e64, m1, ta, ma",
@@ -684,174 +605,162 @@ unsafe fn fold_block_128_zvbc(
   }
 }
 
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn update_simd_zvbc(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    let (mut x_hi, mut x_lo) = load_block_split(first);
-    x_lo[0] ^= state as u64;
+fn update_simd_zvbc(state: u32, first: &Block, rest: &[Block], keys: &[u64; 23]) -> u32 {
+  let (mut x_hi, mut x_lo) = load_block_split(first);
+  x_lo[0] ^= state as u64;
 
-    let coeff_low = keys[3];
-    let coeff_high = keys[4];
+  let coeff_low = keys[3];
+  let coeff_high = keys[4];
 
-    for block in rest {
-      let (chunk_hi, chunk_lo) = load_block_split(block);
-      fold_block_128_zvbc(&mut x_hi, &mut x_lo, &chunk_hi, &chunk_lo, coeff_low, coeff_high);
-    }
-
-    fold_tail_zvbc(x_hi, x_lo, keys)
+  for block in rest {
+    let (chunk_hi, chunk_lo) = load_block_split(block);
+    fold_block_128_zvbc(&mut x_hi, &mut x_lo, &chunk_hi, &chunk_lo, coeff_low, coeff_high);
   }
+
+  fold_tail_zvbc(x_hi, x_lo, keys)
 }
 
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn update_simd_zvbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u64), keys: &[u64; 23]) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    debug_assert!(!blocks.is_empty());
+fn update_simd_zvbc_2way(state: u32, blocks: &[Block], fold_256b: (u64, u64), keys: &[u64; 23]) -> u32 {
+  debug_assert!(!blocks.is_empty());
 
-    if blocks.len() < 2 {
-      let Some((first, rest)) = blocks.split_first() else {
-        return state;
-      };
-      return update_simd_zvbc(state, first, rest, keys);
-    }
-
-    let even = blocks.len() & !1usize;
-
-    let coeff_256_low = fold_256b.1;
-    let coeff_256_high = fold_256b.0;
-    let coeff_128_low = keys[3];
-    let coeff_128_high = keys[4];
-
-    let (mut s0_hi, mut s0_lo) = load_block_split(&blocks[0]);
-    let (mut s1_hi, mut s1_lo) = load_block_split(&blocks[1]);
-
-    // Inject CRC into stream 0.
-    s0_lo[0] ^= state as u64;
-
-    let mut i: usize = 2;
-    while i < even {
-      let (b0_hi, b0_lo) = load_block_split(&blocks[i]);
-      let (b1_hi, b1_lo) = load_block_split(&blocks[i.strict_add(1)]);
-      fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_256_low, coeff_256_high);
-      fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_256_low, coeff_256_high);
-      i = i.strict_add(2);
-    }
-
-    // Merge: A·s0 ⊕ s1 (A = shift by 128B).
-    fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &s1_hi, &s1_lo, coeff_128_low, coeff_128_high);
-
-    if even != blocks.len() {
-      let (tail_hi, tail_lo) = load_block_split(&blocks[even]);
-      fold_block_128_zvbc(
-        &mut s0_hi,
-        &mut s0_lo,
-        &tail_hi,
-        &tail_lo,
-        coeff_128_low,
-        coeff_128_high,
-      );
-    }
-
-    fold_tail_zvbc(s0_hi, s0_lo, keys)
+  if blocks.len() < 2 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd_zvbc(state, first, rest, keys);
   }
+
+  let even = blocks.len() & !1usize;
+
+  let coeff_256_low = fold_256b.1;
+  let coeff_256_high = fold_256b.0;
+  let coeff_128_low = keys[3];
+  let coeff_128_high = keys[4];
+
+  let (mut s0_hi, mut s0_lo) = load_block_split(&blocks[0]);
+  let (mut s1_hi, mut s1_lo) = load_block_split(&blocks[1]);
+
+  // Inject CRC into stream 0.
+  s0_lo[0] ^= state as u64;
+
+  let mut i: usize = 2;
+  while i < even {
+    let (b0_hi, b0_lo) = load_block_split(&blocks[i]);
+    let (b1_hi, b1_lo) = load_block_split(&blocks[i.strict_add(1)]);
+    fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_256_low, coeff_256_high);
+    fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_256_low, coeff_256_high);
+    i = i.strict_add(2);
+  }
+
+  // Merge: A·s0 ⊕ s1 (A = shift by 128B).
+  fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &s1_hi, &s1_lo, coeff_128_low, coeff_128_high);
+
+  if even != blocks.len() {
+    let (tail_hi, tail_lo) = load_block_split(&blocks[even]);
+    fold_block_128_zvbc(
+      &mut s0_hi,
+      &mut s0_lo,
+      &tail_hi,
+      &tail_lo,
+      coeff_128_low,
+      coeff_128_high,
+    );
+  }
+
+  fold_tail_zvbc(s0_hi, s0_lo, keys)
 }
 
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn update_simd_zvbc_4way(
+fn update_simd_zvbc_4way(
   state: u32,
   blocks: &[Block],
   fold_512b: (u64, u64),
   combine: &[(u64, u64); 3],
   keys: &[u64; 23],
 ) -> u32 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
-  unsafe {
-    debug_assert!(!blocks.is_empty());
+  debug_assert!(!blocks.is_empty());
 
-    if blocks.len() < 4 {
-      let Some((first, rest)) = blocks.split_first() else {
-        return state;
-      };
-      return update_simd_zvbc(state, first, rest, keys);
-    }
-
-    let aligned = blocks.len().strict_div(4).strict_mul(4);
-
-    let coeff_512_low = fold_512b.1;
-    let coeff_512_high = fold_512b.0;
-    let coeff_128_low = keys[3];
-    let coeff_128_high = keys[4];
-
-    let c384_low = combine[0].1;
-    let c384_high = combine[0].0;
-    let c256_low = combine[1].1;
-    let c256_high = combine[1].0;
-    let c128_low = combine[2].1;
-    let c128_high = combine[2].0;
-
-    let (mut s0_hi, mut s0_lo) = load_block_split(&blocks[0]);
-    let (mut s1_hi, mut s1_lo) = load_block_split(&blocks[1]);
-    let (mut s2_hi, mut s2_lo) = load_block_split(&blocks[2]);
-    let (mut s3_hi, mut s3_lo) = load_block_split(&blocks[3]);
-
-    // Inject CRC into stream 0.
-    s0_lo[0] ^= state as u64;
-
-    let mut i: usize = 4;
-    while i < aligned {
-      let (b0_hi, b0_lo) = load_block_split(&blocks[i]);
-      let (b1_hi, b1_lo) = load_block_split(&blocks[i.strict_add(1)]);
-      let (b2_hi, b2_lo) = load_block_split(&blocks[i.strict_add(2)]);
-      let (b3_hi, b3_lo) = load_block_split(&blocks[i.strict_add(3)]);
-      fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_512_low, coeff_512_high);
-      fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_512_low, coeff_512_high);
-      fold_block_128_zvbc(&mut s2_hi, &mut s2_lo, &b2_hi, &b2_lo, coeff_512_low, coeff_512_high);
-      fold_block_128_zvbc(&mut s3_hi, &mut s3_lo, &b3_hi, &b3_lo, coeff_512_low, coeff_512_high);
-      i = i.strict_add(4);
-    }
-
-    // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
-    fold_block_128_zvbc(&mut s2_hi, &mut s2_lo, &s3_hi, &s3_lo, c128_low, c128_high);
-    fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &s2_hi, &s2_lo, c256_low, c256_high);
-    fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &s1_hi, &s1_lo, c384_low, c384_high);
-
-    for block in &blocks[aligned..] {
-      let (tail_hi, tail_lo) = load_block_split(block);
-      fold_block_128_zvbc(
-        &mut s0_hi,
-        &mut s0_lo,
-        &tail_hi,
-        &tail_lo,
-        coeff_128_low,
-        coeff_128_high,
-      );
-    }
-
-    fold_tail_zvbc(s0_hi, s0_lo, keys)
+  if blocks.len() < 4 {
+    let Some((first, rest)) = blocks.split_first() else {
+      return state;
+    };
+    return update_simd_zvbc(state, first, rest, keys);
   }
+
+  let aligned = blocks.len().strict_div(4).strict_mul(4);
+
+  let coeff_512_low = fold_512b.1;
+  let coeff_512_high = fold_512b.0;
+  let coeff_128_low = keys[3];
+  let coeff_128_high = keys[4];
+
+  let c384_low = combine[0].1;
+  let c384_high = combine[0].0;
+  let c256_low = combine[1].1;
+  let c256_high = combine[1].0;
+  let c128_low = combine[2].1;
+  let c128_high = combine[2].0;
+
+  let (mut s0_hi, mut s0_lo) = load_block_split(&blocks[0]);
+  let (mut s1_hi, mut s1_lo) = load_block_split(&blocks[1]);
+  let (mut s2_hi, mut s2_lo) = load_block_split(&blocks[2]);
+  let (mut s3_hi, mut s3_lo) = load_block_split(&blocks[3]);
+
+  // Inject CRC into stream 0.
+  s0_lo[0] ^= state as u64;
+
+  let mut i: usize = 4;
+  while i < aligned {
+    let (b0_hi, b0_lo) = load_block_split(&blocks[i]);
+    let (b1_hi, b1_lo) = load_block_split(&blocks[i.strict_add(1)]);
+    let (b2_hi, b2_lo) = load_block_split(&blocks[i.strict_add(2)]);
+    let (b3_hi, b3_lo) = load_block_split(&blocks[i.strict_add(3)]);
+    fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &b0_hi, &b0_lo, coeff_512_low, coeff_512_high);
+    fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &b1_hi, &b1_lo, coeff_512_low, coeff_512_high);
+    fold_block_128_zvbc(&mut s2_hi, &mut s2_lo, &b2_hi, &b2_lo, coeff_512_low, coeff_512_high);
+    fold_block_128_zvbc(&mut s3_hi, &mut s3_lo, &b3_hi, &b3_lo, coeff_512_low, coeff_512_high);
+    i = i.strict_add(4);
+  }
+
+  // Merge: A^3·s0 ⊕ A^2·s1 ⊕ A·s2 ⊕ s3.
+  fold_block_128_zvbc(&mut s2_hi, &mut s2_lo, &s3_hi, &s3_lo, c128_low, c128_high);
+  fold_block_128_zvbc(&mut s1_hi, &mut s1_lo, &s2_hi, &s2_lo, c256_low, c256_high);
+  fold_block_128_zvbc(&mut s0_hi, &mut s0_lo, &s1_hi, &s1_lo, c384_low, c384_high);
+
+  for block in &blocks[aligned..] {
+    let (tail_hi, tail_lo) = load_block_split(block);
+    fold_block_128_zvbc(
+      &mut s0_hi,
+      &mut s0_lo,
+      &tail_hi,
+      &tail_lo,
+      coeff_128_low,
+      coeff_128_high,
+    );
+  }
+
+  fold_tail_zvbc(s0_hi, s0_lo, keys)
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn crc16_width32_zvbc(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
+fn crc16_width32_zvbc(mut state: u16, data: &[u8], keys: &[u64; 23], portable: fn(u16, &[u8]) -> u16) -> u16 {
+  // SAFETY: Every bit pattern is valid for Block; align_to returns
+  // non-overlapping subslices of the original allocation.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     let Some((first, rest)) = middle.split_first() else {
@@ -860,25 +769,25 @@ unsafe fn crc16_width32_zvbc(mut state: u16, data: &[u8], keys: &[u64; 23], port
 
     state = portable(state, left);
     let state32 = update_simd_zvbc(state as u32, first, rest, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn crc16_width32_zvbc_2way(
+fn crc16_width32_zvbc_2way(
   mut state: u16,
   data: &[u8],
   keys: &[u64; 23],
   stream: &super::keys::Width32StreamConstants,
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
+  // SAFETY: Every bit pattern is valid for Block; align_to returns
+  // non-overlapping subslices of the original allocation.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -887,25 +796,25 @@ unsafe fn crc16_width32_zvbc_2way(
 
     state = portable(state, left);
     let state32 = update_simd_zvbc_2way(state as u32, middle, stream.fold_256b, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
 #[inline]
+/// # Safety
+///
+/// Requires the RISC-V extensions enabled by the target-feature attribute.
 #[target_feature(enable = "v", enable = "zvbc")]
-unsafe fn crc16_width32_zvbc_4way(
+fn crc16_width32_zvbc_4way(
   mut state: u16,
   data: &[u8],
   keys: &[u64; 23],
   stream: &super::keys::Width32StreamConstants,
   portable: fn(u16, &[u8]) -> u16,
 ) -> u16 {
-  // SAFETY: Caller guarantees:
-  // 1. V + ZVBC target features are available (dispatch check).
-  // 2. All SIMD operations are pure register computations after loads.
-  // SAFETY: Dispatch verifies the required RISC-V feature bits; local fixed-size
-  // buffers and register-only operands are established before this block.
+  // SAFETY: Every bit pattern is valid for Block; align_to returns
+  // non-overlapping subslices of the original allocation.
   unsafe {
     let (left, middle, right) = data.align_to::<Block>();
     if middle.is_empty() {
@@ -914,7 +823,7 @@ unsafe fn crc16_width32_zvbc_4way(
 
     state = portable(state, left);
     let state32 = update_simd_zvbc_4way(state as u32, middle, stream.fold_512b, &stream.combine_4way, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
@@ -922,12 +831,8 @@ unsafe fn crc16_width32_zvbc_4way(
 // Public Safe Kernels
 
 /// CRC-16/CCITT Zbc kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies Zbc before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_zbc_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_zbc_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
   unsafe {
     crc16_width32_zbc(
@@ -940,12 +845,8 @@ pub fn crc16_ccitt_zbc_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/CCITT Zvbc kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies Zvbc before selecting this kernel.
 #[inline]
-pub fn crc16_ccitt_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
   unsafe {
     crc16_width32_zvbc(
@@ -958,29 +859,21 @@ pub fn crc16_ccitt_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 /// CRC-16/IBM Zbc kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies Zbc before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_zbc_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_zbc_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
   unsafe { crc16_width32_zbc(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 /// CRC-16/IBM Zvbc kernel.
-///
-/// # Safety
-///
-/// Dispatcher verifies Zvbc before selecting this kernel.
 #[inline]
-pub fn crc16_ibm_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_zvbc_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
   unsafe { crc16_width32_zvbc(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 #[inline]
-pub fn crc16_ccitt_zbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_zbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
   unsafe {
     crc16_width32_zbc_2way(
@@ -994,7 +887,7 @@ pub fn crc16_ccitt_zbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ccitt_zbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_zbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
   unsafe {
     crc16_width32_zbc_4way(
@@ -1008,7 +901,7 @@ pub fn crc16_ccitt_zbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ccitt_zvbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_zvbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
   unsafe {
     crc16_width32_zvbc_2way(
@@ -1022,7 +915,7 @@ pub fn crc16_ccitt_zvbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ccitt_zvbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_zvbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
   unsafe {
     crc16_width32_zvbc_4way(
@@ -1036,7 +929,7 @@ pub fn crc16_ccitt_zvbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ibm_zbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_zbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
   unsafe {
     crc16_width32_zbc_2way(
@@ -1050,7 +943,7 @@ pub fn crc16_ibm_zbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ibm_zbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_zbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zbc before selecting this kernel.
   unsafe {
     crc16_width32_zbc_4way(
@@ -1064,7 +957,7 @@ pub fn crc16_ibm_zbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ibm_zvbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_zvbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
   unsafe {
     crc16_width32_zvbc_2way(
@@ -1078,7 +971,7 @@ pub fn crc16_ibm_zvbc_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ibm_zvbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_zvbc_4way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies Zvbc before selecting this kernel.
   unsafe {
     crc16_width32_zvbc_4way(

@@ -40,9 +40,10 @@ fn runtime_power() -> Caps {
     let mut hwcap = 0u64;
     let mut hwcap2 = 0u64;
 
-    for chunk in buf.get(..n)?.chunks_exact(16) {
-      let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
-      let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
+    for chunk in buf.get(..n)?.as_chunks::<16>().0 {
+      let (types, values) = chunk.as_chunks::<8>().0.split_at(1);
+      let a_type = u64::from_ne_bytes(types[0]);
+      let a_val = u64::from_ne_bytes(values[0]);
 
       if a_type == AT_HWCAP {
         hwcap = a_val;

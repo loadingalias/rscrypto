@@ -36,13 +36,15 @@ fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8
 
   // Encrypt with rscrypto.
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("rscrypto must seal valid Ascon-AEAD128 oracle input");
 
   // Encrypt with oracle.
   let mut oracle_buf = plaintext.to_vec();
   let oracle_tag = oracle
     .encrypt_inout_detached(&oracle_nonce, aad, oracle_buf.as_mut_slice().into())
-    .unwrap();
+    .expect("RustCrypto must seal valid Ascon-AEAD128 oracle input");
 
   assert_eq!(ours, oracle_buf, "ciphertext mismatch (len={})", plaintext.len());
   assert_eq!(
@@ -53,7 +55,9 @@ fn assert_matches_oracle(key_bytes: &[u8; 16], nonce_bytes: &[u8; 16], aad: &[u8
   );
 
   // Decrypt with rscrypto.
-  cipher.decrypt_in_place(&nonce, aad, &mut ours, &tag).unwrap();
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &tag)
+    .expect("fresh Ascon-AEAD128 ciphertext must authenticate");
   assert_eq!(ours, plaintext, "decrypt round-trip failed (len={})", plaintext.len());
 }
 
@@ -101,7 +105,7 @@ fn ascon_aead128_oracle_rate_boundary_sizes() {
 fn ascon_aead128_oracle_large_input() {
   let key = [0x77u8; 16];
   let nonce = [0x88u8; 16];
-  let plaintext: Vec<u8> = (0..8192).map(|i| (i & 0xFF) as u8).collect();
+  let plaintext: Vec<u8> = (0usize..8192).map(|i| i.to_le_bytes()[0]).collect();
   assert_matches_oracle(&key, &nonce, b"large", &plaintext);
 }
 
@@ -114,14 +118,15 @@ fn ascon_aead128_rejects_modified_tag() {
   let cipher = AsconAead128::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
+  let mut tag = cipher
+    .encrypt_in_place(&nonce, b"aad", &mut buffer)
+    .expect("Ascon-AEAD128 tag-forgery fixture must seal")
+    .to_bytes();
   tag[0] ^= 1;
 
-  assert!(
-    cipher
-      .decrypt_in_place(&nonce, b"aad", &mut buffer, &AsconAead128Tag::from_bytes(tag))
-      .is_err()
-  );
+  cipher
+    .decrypt_in_place(&nonce, b"aad", &mut buffer, &AsconAead128Tag::from_bytes(tag))
+    .expect_err("Ascon-AEAD128 must reject a modified tag");
 }
 
 #[test]
@@ -131,10 +136,14 @@ fn ascon_aead128_rejects_modified_ciphertext() {
   let cipher = AsconAead128::new(&key);
 
   let mut buffer = *b"tamper-detect";
-  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"", &mut buffer)
+    .expect("Ascon-AEAD128 ciphertext-tampering fixture must seal");
   buffer[0] ^= 1;
 
-  assert!(cipher.decrypt_in_place(&nonce, b"", &mut buffer, &tag).is_err());
+  cipher
+    .decrypt_in_place(&nonce, b"", &mut buffer, &tag)
+    .expect_err("Ascon-AEAD128 must reject modified ciphertext");
 }
 
 #[test]
@@ -144,7 +153,11 @@ fn ascon_aead128_rejects_wrong_aad() {
   let cipher = AsconAead128::new(&key);
 
   let mut buffer = *b"aad-mismatch";
-  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"correct", &mut buffer)
+    .expect("Ascon-AEAD128 AAD-mismatch fixture must seal");
 
-  assert!(cipher.decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag).is_err());
+  cipher
+    .decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag)
+    .expect_err("Ascon-AEAD128 must reject incorrect associated data");
 }

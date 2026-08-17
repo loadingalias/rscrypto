@@ -28,10 +28,6 @@
 //!
 //! All functions require `avx512f`, `avx512vl`, and `bmi2` target features.
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::indexing_slicing)]
-
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
@@ -40,6 +36,9 @@ use super::{BLOCK_LEN, K, big_sigma0, big_sigma1, ch, maj};
 // 256-bit SIMD sigma with VPRORQ (dual-block schedule)
 
 /// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 256-bit, VPRORQ.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn small_sigma0_256(x: __m256i) -> __m256i {
@@ -53,6 +52,9 @@ unsafe fn small_sigma0_256(x: __m256i) -> __m256i {
 }
 
 /// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 256-bit, VPRORQ.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn small_sigma1_256(x: __m256i) -> __m256i {
@@ -68,6 +70,9 @@ unsafe fn small_sigma1_256(x: __m256i) -> __m256i {
 // 128-bit SIMD sigma with VPRORQ (single-block schedule)
 
 /// σ0(x) = ROTR(1) ^ ROTR(8) ^ SHR(7)  — 128-bit, VPRORQ.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn small_sigma0_128(x: __m128i) -> __m128i {
@@ -81,6 +86,9 @@ unsafe fn small_sigma0_128(x: __m128i) -> __m128i {
 }
 
 /// σ1(x) = ROTR(19) ^ ROTR(61) ^ SHR(6)  — 128-bit, VPRORQ.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn small_sigma1_128(x: __m128i) -> __m128i {
@@ -96,6 +104,9 @@ unsafe fn small_sigma1_128(x: __m128i) -> __m128i {
 // Dual-block message schedule helpers (256-bit)
 
 /// Cross-register extraction (256-bit): [a[1], a[2], a[3], b[0]].
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn cross_lanes_256(a: __m256i, b: __m256i) -> __m256i {
@@ -107,6 +118,9 @@ unsafe fn cross_lanes_256(a: __m256i, b: __m256i) -> __m256i {
 }
 
 /// Compute 2 schedule words for both blocks (256-bit ring buffer, VPRORQ).
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_pair_256(w: &mut [__m256i; 8], i: usize) {
@@ -127,6 +141,9 @@ unsafe fn schedule_pair_256(w: &mut [__m256i; 8], i: usize) {
 // Single-block message schedule helpers (128-bit)
 
 /// Cross-register extraction (128-bit): [a[1], b[0]].
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn cross_lanes_128(a: __m128i, b: __m128i) -> __m128i {
@@ -135,6 +152,9 @@ unsafe fn cross_lanes_128(a: __m128i, b: __m128i) -> __m128i {
 }
 
 /// Compute 2 schedule words for a single block (128-bit ring buffer, VPRORQ).
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_pair_128(w: &mut [__m128i; 8], i: usize) {
@@ -159,6 +179,10 @@ unsafe fn schedule_pair_128(w: &mut [__m128i; 8], i: usize) {
 static BSWAP64_128: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8];
 
 /// Load 2 big-endian u64 words from each of two blocks into a __m256i.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope. Both
+/// block pointers must remain valid for 16 readable bytes starting at `offset`.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn load_two_blocks(blk1: *const u8, blk2: *const u8, offset: usize, bswap: __m128i) -> __m256i {
@@ -171,33 +195,53 @@ unsafe fn load_two_blocks(blk1: *const u8, blk2: *const u8, offset: usize, bswap
 }
 
 /// Extract two u64 words from the lower 128-bit lane of a __m256i.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn extract_lo(v: __m256i) -> (u64, u64) {
   // SAFETY: SSE intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     let lo128 = _mm256_castsi256_si128(v);
-    (_mm_extract_epi64(lo128, 0) as u64, _mm_extract_epi64(lo128, 1) as u64)
+    (
+      _mm_extract_epi64(lo128, 0).cast_unsigned(),
+      _mm_extract_epi64(lo128, 1).cast_unsigned(),
+    )
   }
 }
 
 /// Extract two u64 words from the upper 128-bit lane of a __m256i.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn extract_hi(v: __m256i) -> (u64, u64) {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   unsafe {
     let hi128 = _mm256_extracti128_si256(v, 1);
-    (_mm_extract_epi64(hi128, 0) as u64, _mm_extract_epi64(hi128, 1) as u64)
+    (
+      _mm_extract_epi64(hi128, 0).cast_unsigned(),
+      _mm_extract_epi64(hi128, 1).cast_unsigned(),
+    )
   }
 }
 
 /// Extract two u64 words from a __m128i.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn extract_128(v: __m128i) -> (u64, u64) {
   // SAFETY: SSE intrinsics are available via the caller's #[target_feature] attribute.
-  unsafe { (_mm_extract_epi64(v, 0) as u64, _mm_extract_epi64(v, 1) as u64) }
+  unsafe {
+    (
+      _mm_extract_epi64(v, 0).cast_unsigned(),
+      _mm_extract_epi64(v, 1).cast_unsigned(),
+    )
+  }
 }
 
 // Entry point
@@ -418,6 +462,9 @@ pub(crate) unsafe fn compress_blocks_avx512vl(state: &mut [u64; 8], blocks: &[u8
 ///
 /// Same approach as [`schedule_rotate_256_vl`] but for 128-bit registers.
 /// Uses VPRORQ native rotates for sigma functions.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
@@ -454,6 +501,9 @@ unsafe fn schedule_rotate_128(x: &mut [__m128i; 8], k: __m128i) -> __m128i {
 /// shift-shift-or of the AVX2 path. Combined with array rotation, this also
 /// eliminates `_mm256_permute2x128_si256`, which the ring-buffer schedule uses
 /// for cross-lane extraction.
+///
+/// # Safety
+/// Caller must execute this helper only from this module's AVX-512VL target-feature scope.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn schedule_rotate_256(x: &mut [__m256i; 8], k: __m256i) -> __m256i {

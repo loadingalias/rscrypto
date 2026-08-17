@@ -15,9 +15,6 @@
 //!
 //! Requires the V extension. Caller must verify `riscv::V`.
 
-#![allow(unsafe_code)]
-#![allow(clippy::cast_possible_truncation, clippy::indexing_slicing)]
-
 use super::kernels::{SIGMA, init_v, load_msg};
 
 // ─── Inline asm helpers ───────────────────────────────────────────────────
@@ -70,47 +67,26 @@ fn vxor(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
 
 // ─── G function on register pairs ─────────────────────────────────────────
 
+struct PairState {
+  a: [[u64; 2]; 2],
+  b: [[u64; 2]; 2],
+  c: [[u64; 2]; 2],
+  d: [[u64; 2]; 2],
+}
+
 /// Blake2b G mixing on 2-wide pairs.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn g2(
-  a0: &mut [u64; 2],
-  a1: &mut [u64; 2],
-  b0: &mut [u64; 2],
-  b1: &mut [u64; 2],
-  c0: &mut [u64; 2],
-  c1: &mut [u64; 2],
-  d0: &mut [u64; 2],
-  d1: &mut [u64; 2],
-  mx0: [u64; 2],
-  mx1: [u64; 2],
-  my0: [u64; 2],
-  my1: [u64; 2],
-) {
-  // a += b + mx
-  *a0 = vadd(vadd(*a0, *b0), mx0);
-  *a1 = vadd(vadd(*a1, *b1), mx1);
-  // d = (d ^ a) >>> 32
-  *d0 = ror32(vxor(*d0, *a0));
-  *d1 = ror32(vxor(*d1, *a1));
-  // c += d
-  *c0 = vadd(*c0, *d0);
-  *c1 = vadd(*c1, *d1);
-  // b = (b ^ c) >>> 24
-  *b0 = ror24(vxor(*b0, *c0));
-  *b1 = ror24(vxor(*b1, *c1));
-  // a += b + my
-  *a0 = vadd(vadd(*a0, *b0), my0);
-  *a1 = vadd(vadd(*a1, *b1), my1);
-  // d = (d ^ a) >>> 16
-  *d0 = ror16(vxor(*d0, *a0));
-  *d1 = ror16(vxor(*d1, *a1));
-  // c += d
-  *c0 = vadd(*c0, *d0);
-  *c1 = vadd(*c1, *d1);
-  // b = (b ^ c) >>> 63
-  *b0 = ror63(vxor(*b0, *c0));
-  *b1 = ror63(vxor(*b1, *c1));
+fn g2(state: &mut PairState, mx: [[u64; 2]; 2], my: [[u64; 2]; 2]) {
+  for pair in 0..2 {
+    state.a[pair] = vadd(vadd(state.a[pair], state.b[pair]), mx[pair]);
+    state.d[pair] = ror32(vxor(state.d[pair], state.a[pair]));
+    state.c[pair] = vadd(state.c[pair], state.d[pair]);
+    state.b[pair] = ror24(vxor(state.b[pair], state.c[pair]));
+    state.a[pair] = vadd(vadd(state.a[pair], state.b[pair]), my[pair]);
+    state.d[pair] = ror16(vxor(state.d[pair], state.a[pair]));
+    state.c[pair] = vadd(state.c[pair], state.d[pair]);
+    state.b[pair] = ror63(vxor(state.b[pair], state.c[pair]));
+  }
 }
 
 // ─── Diagonalize / Un-diagonalize ─────────────────────────────────────────
@@ -121,54 +97,32 @@ fn g2(
 ///   new_lo = [old_lo[1], old_hi[0]]
 ///   new_hi = [old_hi[1], old_lo[0]]
 #[inline(always)]
-fn diagonalize(
-  b0: &mut [u64; 2],
-  b1: &mut [u64; 2],
-  c0: &mut [u64; 2],
-  c1: &mut [u64; 2],
-  d0: &mut [u64; 2],
-  d1: &mut [u64; 2],
-) {
+fn diagonalize(state: &mut PairState) {
   // B: rotate left 1
-  let tb0 = *b0;
-  let tb1 = *b1;
-  *b0 = [tb0[1], tb1[0]];
-  *b1 = [tb1[1], tb0[0]];
+  let [b0, b1] = state.b;
+  state.b = [[b0[1], b1[0]], [b1[1], b0[0]]];
 
   // C: rotate left 2 = swap lo/hi
-  core::mem::swap(c0, c1);
+  state.c.swap(0, 1);
 
   // D: rotate left 3 = rotate right 1
-  let td0 = *d0;
-  let td1 = *d1;
-  *d0 = [td1[1], td0[0]];
-  *d1 = [td0[1], td1[0]];
+  let [d0, d1] = state.d;
+  state.d = [[d1[1], d0[0]], [d0[1], d1[0]]];
 }
 
 /// Un-diagonalize: reverse the rotations.
 #[inline(always)]
-fn undiagonalize(
-  b0: &mut [u64; 2],
-  b1: &mut [u64; 2],
-  c0: &mut [u64; 2],
-  c1: &mut [u64; 2],
-  d0: &mut [u64; 2],
-  d1: &mut [u64; 2],
-) {
+fn undiagonalize(state: &mut PairState) {
   // B: rotate right 1 (undo left 1)
-  let tb0 = *b0;
-  let tb1 = *b1;
-  *b0 = [tb1[1], tb0[0]];
-  *b1 = [tb0[1], tb1[0]];
+  let [b0, b1] = state.b;
+  state.b = [[b1[1], b0[0]], [b0[1], b1[0]]];
 
   // C: swap back
-  core::mem::swap(c0, c1);
+  state.c.swap(0, 1);
 
   // D: rotate left 1 (undo right 1)
-  let td0 = *d0;
-  let td1 = *d1;
-  *d0 = [td0[1], td1[0]];
-  *d1 = [td1[1], td0[0]];
+  let [d0, d1] = state.d;
+  state.d = [[d0[1], d1[0]], [d1[1], d0[0]]];
 }
 
 // ─── Compress entry point ─────────────────────────────────────────────────
@@ -188,14 +142,12 @@ pub(super) unsafe fn compress_rvv(h: &mut [u64; 8], block: &[u8; 128], t: u128, 
   let v = init_v(h, t, last);
 
   // Pack into 2-wide pairs: (lo, hi) for each row
-  let mut a0 = [v[0], v[1]];
-  let mut a1 = [v[2], v[3]];
-  let mut b0 = [v[4], v[5]];
-  let mut b1 = [v[6], v[7]];
-  let mut c0 = [v[8], v[9]];
-  let mut c1 = [v[10], v[11]];
-  let mut d0 = [v[12], v[13]];
-  let mut d1 = [v[14], v[15]];
+  let mut state = PairState {
+    a: [[v[0], v[1]], [v[2], v[3]]],
+    b: [[v[4], v[5]], [v[6], v[7]]],
+    c: [[v[8], v[9]], [v[10], v[11]]],
+    d: [[v[12], v[13]], [v[14], v[15]]],
+  };
 
   // 12 rounds
   for round in 0..12u8 {
@@ -207,11 +159,9 @@ pub(super) unsafe fn compress_rvv(h: &mut [u64; 8], block: &[u8; 128], t: u128, 
     let my0 = [m[s[1] as usize], m[s[3] as usize]];
     let my1 = [m[s[5] as usize], m[s[7] as usize]];
 
-    g2(
-      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-    );
+    g2(&mut state, [mx0, mx1], [my0, my1]);
 
-    diagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    diagonalize(&mut state);
 
     // Diagonal step
     let mx0 = [m[s[8] as usize], m[s[10] as usize]];
@@ -219,20 +169,18 @@ pub(super) unsafe fn compress_rvv(h: &mut [u64; 8], block: &[u8; 128], t: u128, 
     let my0 = [m[s[9] as usize], m[s[11] as usize]];
     let my1 = [m[s[13] as usize], m[s[15] as usize]];
 
-    g2(
-      &mut a0, &mut a1, &mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1, mx0, mx1, my0, my1,
-    );
+    g2(&mut state, [mx0, mx1], [my0, my1]);
 
-    undiagonalize(&mut b0, &mut b1, &mut c0, &mut c1, &mut d0, &mut d1);
+    undiagonalize(&mut state);
   }
 
   // Finalize: h[i] ^= v[i] ^ v[i+8]
-  h[0] ^= a0[0] ^ c0[0];
-  h[1] ^= a0[1] ^ c0[1];
-  h[2] ^= a1[0] ^ c1[0];
-  h[3] ^= a1[1] ^ c1[1];
-  h[4] ^= b0[0] ^ d0[0];
-  h[5] ^= b0[1] ^ d0[1];
-  h[6] ^= b1[0] ^ d1[0];
-  h[7] ^= b1[1] ^ d1[1];
+  h[0] ^= state.a[0][0] ^ state.c[0][0];
+  h[1] ^= state.a[0][1] ^ state.c[0][1];
+  h[2] ^= state.a[1][0] ^ state.c[1][0];
+  h[3] ^= state.a[1][1] ^ state.c[1][1];
+  h[4] ^= state.b[0][0] ^ state.d[0][0];
+  h[5] ^= state.b[0][1] ^ state.d[0][1];
+  h[6] ^= state.b[1][0] ^ state.d[1][0];
+  h[7] ^= state.b[1][1] ^ state.d[1][1];
 }

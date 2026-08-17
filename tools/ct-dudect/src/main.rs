@@ -1,21 +1,20 @@
 use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main_with_seeds, rand::RngExt};
 use rscrypto::aead::expert::AeadWithNonce;
 use rscrypto::{
-  Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey,
-  Aes256GcmSiv, Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512,
-  Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
-  EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256,
-  HkdfSha384, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512,
-  MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024,
-  MlKem1024Ciphertext, MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile,
-  RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, SecretBytes, Sha512, X25519SecretKey, XChaCha20Poly1305,
-  XChaCha20Poly1305Key,
+  Aegis256, Aegis256Key, Aes128Gcm, Aes128GcmKey, Aes128GcmSiv, Aes128GcmSivKey, Aes256Gcm, Aes256GcmKey, Aes256GcmSiv,
+  Aes256GcmSivKey, Argon2Params, Argon2i, AsconAead128, AsconAead128Key, Blake2b256, Blake2b512, Blake2bKey,
+  Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
+  EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519Keypair, Ed25519SecretKey, HkdfSha256, HkdfSha384, HmacSha256,
+  HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag, Kmac256, MlKem512, MlKem512Ciphertext,
+  MlKem512DecapsulationKey, MlKem768, MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem1024, MlKem1024Ciphertext,
+  MlKem1024DecapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair, RsaEncryptionError,
+  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, SecretBytes, Sha512,
+  X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{
-    Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash,
-    diag_aes128gcm_tag_aes, diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys,
-    diag_aes128gcmsiv_polyval_digest, diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcm_ctr32_be,
-    diag_aes256gcm_ghash, diag_aes256gcm_tag_aes, diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys,
-    diag_aes256gcmsiv_raw_tag_aes,
+    Nonce96, Nonce128, Nonce192, Nonce256, diag_aes128gcm_ctr32_be, diag_aes128gcm_ghash, diag_aes128gcm_tag_aes,
+    diag_aes128gcmsiv_ctr32, diag_aes128gcmsiv_derive_keys, diag_aes128gcmsiv_polyval_digest,
+    diag_aes128gcmsiv_raw_tag_aes, diag_aes256gcm_ctr32_be, diag_aes256gcm_ghash, diag_aes256gcm_tag_aes,
+    diag_aes256gcmsiv_ctr32, diag_aes256gcmsiv_derive_keys, diag_aes256gcmsiv_raw_tag_aes,
   },
   auth::{
     diag_ecdsa_p256_basepoint_blinded_limb_digest, diag_ecdsa_p256_final_multiply_limb_digest,
@@ -34,7 +33,6 @@ use rscrypto::{
     diag_rsa_validate_pkcs8_private_key_der, diag_rsa_validate_pkcs8_private_key_der_stage,
   },
   traits::Kem as _,
-  RsaEncryptionError, RsaPublicKeyPolicy,
 };
 
 const DEFAULT_SAMPLES: usize = 20_000;
@@ -76,9 +74,9 @@ fn balanced_classes(rng: &mut BenchRng, count: usize) -> Vec<Class> {
   let mut classes = Vec::with_capacity(count);
   while classes.len() < count {
     let start = classes.len();
-    let len = (count - start).min(BLOCK_LEN);
-    let extra_left = len % 2 == 1 && rng.random::<bool>();
-    let left_len = len / 2 + usize::from(extra_left);
+    let len = count.strict_sub(start).min(BLOCK_LEN);
+    let extra_left = len.rem_euclid(2) == 1 && rng.random::<bool>();
+    let left_len = len.div_euclid(2).strict_add(usize::from(extra_left));
     classes.extend((0..len).map(|index| if index < left_len { Class::Left } else { Class::Right }));
 
     for index in (1..len).rev() {
@@ -92,7 +90,8 @@ fn balanced_classes(rng: &mut BenchRng, count: usize) -> Vec<Class> {
 fn mlkem_poly_from_seed(seed: u16) -> [u16; 256] {
   let mut out = [0u16; 256];
   for (i, coeff) in out.iter_mut().enumerate() {
-    *coeff = seed.wrapping_add((i as u16).wrapping_mul(73)) % MLKEM_Q;
+    let index = u16::try_from(i).expect("ML-KEM polynomial indices fit u16");
+    *coeff = seed.wrapping_add(index.wrapping_mul(73)).rem_euclid(MLKEM_Q);
   }
   out
 }
@@ -100,7 +99,7 @@ fn mlkem_poly_from_seed(seed: u16) -> [u16; 256] {
 fn random_mlkem_poly(rng: &mut BenchRng) -> [u16; 256] {
   let mut out = [0u16; 256];
   for coeff in &mut out {
-    *coeff = rng.random::<u16>() % MLKEM_Q;
+    *coeff = rng.random::<u16>().rem_euclid(MLKEM_Q);
   }
   out
 }
@@ -126,24 +125,30 @@ fn random_mlkem_polyvec4(rng: &mut BenchRng) -> [[u16; 256]; 4] {
 fn json_string_value_n<'a>(json: &'a str, key: &str, n: usize) -> &'a str {
   let needle = format!("\"{key}\": \"");
   let mut rest = json;
-  for index in 0..=n {
-    let start = rest.find(&needle).unwrap_or_else(|| panic!("missing JSON string key {key} at index {index}"));
-    let value = &rest[start + needle.len()..];
-    let end = value.find('"').unwrap_or_else(|| panic!("unterminated JSON string key {key} at index {index}"));
-    if index == n {
-      return &value[..end];
-    }
-    rest = &value[end + 1..];
+  for _ in 0..n {
+    let (_, value_and_rest) = rest
+      .split_once(&needle)
+      .expect("RSA fixture must contain the requested JSON string key");
+    let (_, tail) = value_and_rest
+      .split_once('"')
+      .expect("RSA fixture JSON string must be terminated");
+    rest = tail;
   }
-  unreachable!()
+  let (_, value_and_rest) = rest
+    .split_once(&needle)
+    .expect("RSA fixture must contain the requested JSON string key");
+  let (value, _) = value_and_rest
+    .split_once('"')
+    .expect("RSA fixture JSON string must be terminated");
+  value
 }
 
-fn hex_nibble(byte: u8) -> u8 {
+fn hex_nibble(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex byte"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
@@ -152,7 +157,11 @@ fn hex_to_vec(hex: &str) -> Vec<u8> {
   assert!(bytes.len().is_multiple_of(2), "hex string must have even length");
   bytes
     .chunks_exact(2)
-    .map(|pair| (hex_nibble(pair[0]) << 4) | hex_nibble(pair[1]))
+    .map(|pair| {
+      let high = hex_nibble(pair[0]).expect("RSA fixture must contain hexadecimal bytes");
+      let low = hex_nibble(pair[1]).expect("RSA fixture must contain hexadecimal bytes");
+      high.strict_shl(4) | low
+    })
     .collect()
 }
 
@@ -162,51 +171,59 @@ fn rsa_pkcs8_der(index: usize) -> Vec<u8> {
 
 fn rsa_ct_fixture_key(index: usize) -> RsaPrivateKey {
   let der = rsa_pkcs8_der(index);
-  RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("bundled RSA fixture must contain a valid private key")
 }
 
 fn rsa_blinding_pair(key: &RsaPrivateKey) -> (Vec<u8>, Vec<u8>) {
   let modulus = key.public_key().modulus();
   let mut factor = vec![0u8; modulus.len()];
-  factor[modulus.len() - 1] = 2;
+  factor[modulus.len().strict_sub(1)] = 2;
 
   let mut plus_one = modulus.to_vec();
   let mut carry = 1u16;
   for byte in plus_one.iter_mut().rev() {
-    let sum = u16::from(*byte) + carry;
-    *byte = sum as u8;
+    let sum = u16::from(*byte).strict_add(carry);
+    *byte = sum.to_le_bytes()[0];
     carry = sum >> 8;
     if carry == 0 {
       break;
     }
   }
   if carry != 0 {
-    plus_one.insert(0, carry as u8);
+    plus_one.insert(0, carry.to_le_bytes()[0]);
   }
 
   let mut quotient = Vec::with_capacity(plus_one.len());
   let mut remainder = 0u16;
   for byte in plus_one {
     let value = (remainder << 8) | u16::from(byte);
-    quotient.push((value / 2) as u8);
-    remainder = value % 2;
+    quotient.push(value.div_euclid(2).to_le_bytes()[0]);
+    remainder = value.rem_euclid(2);
   }
 
-  let first_nonzero = quotient.iter().position(|&byte| byte != 0).unwrap_or(quotient.len() - 1);
-  let inverse = &quotient[first_nonzero..];
+  let first_nonzero = quotient
+    .iter()
+    .position(|&byte| byte != 0)
+    .unwrap_or_else(|| quotient.len().strict_sub(1));
+  let inverse = quotient
+    .get(first_nonzero..)
+    .expect("the first nonzero quotient byte is in bounds");
   let mut inverse_fixed = vec![0u8; modulus.len()];
-  inverse_fixed[modulus.len() - inverse.len()..].copy_from_slice(inverse);
+  let inverse_start = modulus.len().strict_sub(inverse.len());
+  inverse_fixed
+    .get_mut(inverse_start..)
+    .expect("the RSA inverse fits the modulus width")
+    .copy_from_slice(inverse);
   (factor, inverse_fixed)
 }
 
 fn argon2i_params() -> Argon2Params {
-  Argon2Params::new(32, 1, 1)
-    .unwrap()
+  Argon2Params::new(32, 1, 1).expect("fixed Argon2i profile is valid")
 }
 
 fn argon2i_parallel_params() -> Argon2Params {
-  Argon2Params::new(512, 1, 4)
-    .unwrap()
+  Argon2Params::new(512, 1, 4).expect("fixed parallel Argon2i profile is valid")
 }
 
 macro_rules! fixed_owner_eq_case {
@@ -224,7 +241,11 @@ macro_rules! fixed_owner_eq_case {
       }
 
       for (class, left, right) in inputs {
-        runner.run_one(class, || $entry(left.as_ptr(), right.as_ptr()) == 1);
+        runner.run_one(class, || {
+          // SAFETY: left and right are initialized [$len; u8] values whose storage remains alive
+          // and immutable for the entrypoint's fixed-size reads.
+          unsafe { $entry(left.as_ptr(), right.as_ptr()) == 1 }
+        });
       }
     }
   };
@@ -303,7 +324,10 @@ fn hmac_sha256_truncated_64_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mu
     let class = random_class(rng);
     let key = rand_array::<32>(rng);
     let full_tag = HmacSha256::mac(&key, MESSAGE);
-    let mut expected = *full_tag.as_bytes().first_chunk::<8>().unwrap();
+    let mut expected = *full_tag
+      .as_bytes()
+      .first_chunk::<8>()
+      .expect("HMAC-SHA-256 tags contain eight bytes");
     if matches!(class, Class::Right) {
       expected[0] ^= 1;
     }
@@ -311,7 +335,9 @@ fn hmac_sha256_truncated_64_valid_vs_invalid_tag(runner: &mut CtRunner, rng: &mu
   }
 
   for (class, key, expected) in inputs {
-    runner.run_one(class, || HmacSha256::verify_truncated_tag_64(&key, MESSAGE, &expected).is_ok());
+    runner.run_one(class, || {
+      HmacSha256::verify_truncated_tag_64(&key, MESSAGE, &expected).is_ok()
+    });
   }
 }
 
@@ -365,7 +391,9 @@ macro_rules! aead_fixed_vs_random_key_open {
         let key = <$key>::from_bytes(key);
         let cipher = <$cipher>::new(&key);
         let mut ciphertext = AEAD_PLAINTEXT;
-        let tag = cipher.encrypt_in_place(&nonce, AAD, &mut ciphertext).unwrap();
+        let tag = cipher
+          .encrypt_in_place(&nonce, AAD, &mut ciphertext)
+          .expect("fixed-size AEAD timing fixture must encrypt");
         inputs.push((class, key, nonce, ciphertext, tag));
       }
 
@@ -502,7 +530,9 @@ fn gcm_siv_diag_polyval_fixed_vs_random_auth_key(runner: &mut CtRunner, rng: &mu
   }
 
   for (class, auth_key) in inputs {
-    runner.run_one(class, || diag_aes128gcmsiv_polyval_digest(&auth_key, AAD, &AEAD_PLAINTEXT));
+    runner.run_one(class, || {
+      diag_aes128gcmsiv_polyval_digest(&auth_key, AAD, &AEAD_PLAINTEXT)
+    });
   }
 }
 
@@ -766,7 +796,7 @@ macro_rules! mlkem_dudect_profile {
       }
 
       for (class, sigma) in inputs {
-        runner.run_one(class, || std::hint::black_box($diag(rho, sigma))[0]);
+        runner.run_one(class, || core::hint::black_box($diag(rho, sigma))[0]);
       }
     }
 
@@ -775,7 +805,7 @@ macro_rules! mlkem_dudect_profile {
         out.copy_from_slice(&[0x51; <$profile>::KEY_GENERATION_RANDOM_SIZE]);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
+      .expect("fixed ML-KEM key-generation entropy must produce a keypair");
       let mut inputs = Vec::with_capacity(samples());
       for _ in 0..samples() {
         let class = random_class(rng);
@@ -793,8 +823,8 @@ macro_rules! mlkem_dudect_profile {
             out.copy_from_slice(&random);
             Ok::<(), MlKemError>(())
           })
-          .unwrap();
-          std::hint::black_box(ciphertext.as_bytes()[0] ^ shared_secret.as_bytes()[0])
+          .expect("fixed ML-KEM encapsulation entropy must produce a ciphertext");
+          core::hint::black_box(ciphertext.as_bytes()[0] ^ shared_secret.as_bytes()[0])
         });
       }
     }
@@ -804,12 +834,12 @@ macro_rules! mlkem_dudect_profile {
         out.copy_from_slice(&[0x61; <$profile>::KEY_GENERATION_RANDOM_SIZE]);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
+      .expect("fixed ML-KEM key-generation entropy must produce a keypair");
       let (ciphertext, _) = <$profile>::encapsulate(&fixed_encapsulation_key, |out| {
         out.copy_from_slice(&[0x62; <$profile>::ENCAPSULATION_RANDOM_SIZE]);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
+      .expect("fixed ML-KEM encapsulation entropy must produce a ciphertext");
       let secret_key_len = <$profile>::DECAPSULATION_KEY_SIZE - <$profile>::ENCAPSULATION_KEY_SIZE - 64;
       let mut inputs = Vec::with_capacity(samples());
       for _ in 0..samples() {
@@ -821,7 +851,7 @@ macro_rules! mlkem_dudect_profile {
             out.copy_from_slice(&random);
             Ok::<(), MlKemError>(())
           })
-          .unwrap()
+          .expect("random ML-KEM key-generation entropy must produce a keypair")
           .1;
           decapsulation_key_bytes[..secret_key_len]
             .copy_from_slice(&random_decapsulation_key.as_bytes()[..secret_key_len]);
@@ -831,8 +861,9 @@ macro_rules! mlkem_dudect_profile {
 
       for (class, decapsulation_key) in inputs {
         runner.run_one(class, || {
-          let shared_secret = <$profile>::decapsulate(&decapsulation_key, &ciphertext).unwrap();
-          std::hint::black_box(shared_secret.as_bytes()[0])
+          let shared_secret = <$profile>::decapsulate(&decapsulation_key, &ciphertext)
+            .expect("well-formed ML-KEM ciphertext must decapsulate");
+          core::hint::black_box(shared_secret.as_bytes()[0])
         });
       }
     }
@@ -842,12 +873,12 @@ macro_rules! mlkem_dudect_profile {
         out.copy_from_slice(&[0x71; <$profile>::KEY_GENERATION_RANDOM_SIZE]);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
+      .expect("fixed ML-KEM key-generation entropy must produce a keypair");
       let (ciphertext, _) = <$profile>::encapsulate(&encapsulation_key, |out| {
         out.copy_from_slice(&[0x72; <$profile>::ENCAPSULATION_RANDOM_SIZE]);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
+      .expect("fixed ML-KEM encapsulation entropy must produce a ciphertext");
       let mut rejected_ciphertext = ciphertext.to_bytes();
       rejected_ciphertext[0] ^= 1;
       let rejected_ciphertext = <$ciphertext>::from_bytes(rejected_ciphertext);
@@ -868,8 +899,9 @@ macro_rules! mlkem_dudect_profile {
 
       for (class, decapsulation_key) in inputs {
         runner.run_one(class, || {
-          let shared_secret = <$profile>::decapsulate(&decapsulation_key, &rejected_ciphertext).unwrap();
-          std::hint::black_box(shared_secret.as_bytes()[0])
+          let shared_secret = <$profile>::decapsulate(&decapsulation_key, &rejected_ciphertext)
+            .expect("ML-KEM implicit rejection must produce a shared secret");
+          core::hint::black_box(shared_secret.as_bytes()[0])
         });
       }
     }
@@ -920,7 +952,7 @@ fn mlkem_arithmetic_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng: &mut Be
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || std::hint::black_box(diag_mlkem_ntt_input_digest(poly)));
+    runner.run_one(class, || core::hint::black_box(diag_mlkem_ntt_input_digest(poly)));
   }
 }
 
@@ -937,7 +969,9 @@ fn mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly(runner: &mut CtRunner, rng:
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || std::hint::black_box(diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly)));
+    runner.run_one(class, || {
+      core::hint::black_box(diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly))
+    });
   }
 }
 
@@ -954,7 +988,9 @@ fn mlkem_arithmetic_to_product_domain_fixed_vs_random_poly(runner: &mut CtRunner
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || std::hint::black_box(diag_mlkem_to_montgomery_product_domain_input_digest(poly)));
+    runner.run_one(class, || {
+      core::hint::black_box(diag_mlkem_to_montgomery_product_domain_input_digest(poly))
+    });
   }
 }
 
@@ -971,7 +1007,9 @@ fn mlkem_arithmetic_from_product_domain_fixed_vs_random_poly(runner: &mut CtRunn
   }
 
   for (class, poly) in inputs {
-    runner.run_one(class, || std::hint::black_box(diag_mlkem_from_montgomery_product_domain_input_digest(poly)));
+    runner.run_one(class, || {
+      core::hint::black_box(diag_mlkem_from_montgomery_product_domain_input_digest(poly))
+    });
   }
 }
 
@@ -992,7 +1030,9 @@ fn mlkem_arithmetic_basemul_fixed_vs_random_operands(runner: &mut CtRunner, rng:
   }
 
   for (class, a, b, acc) in inputs {
-    runner.run_one(class, || std::hint::black_box(diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc)));
+    runner.run_one(class, || {
+      core::hint::black_box(diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc))
+    });
   }
 }
 
@@ -1007,13 +1047,19 @@ fn mlkem1024_arithmetic_dot_fixed_vs_random_operands(runner: &mut CtRunner, rng:
         mlkem_poly_from_seed(0xA01),
       )
     } else {
-      (random_mlkem_polyvec4(rng), random_mlkem_polyvec4(rng), random_mlkem_poly(rng))
+      (
+        random_mlkem_polyvec4(rng),
+        random_mlkem_polyvec4(rng),
+        random_mlkem_poly(rng),
+      )
     };
     inputs.push((class, a, b, acc));
   }
 
   for (class, a, b, acc) in inputs {
-    runner.run_one(class, || std::hint::black_box(diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc)));
+    runner.run_one(class, || {
+      core::hint::black_box(diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc))
+    });
   }
 }
 
@@ -1079,7 +1125,10 @@ fn ed25519_keypair_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut 
     } else {
       rand_array::<{ Ed25519SecretKey::LENGTH }>(rng)
     };
-    inputs.push((class, Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes(secret))));
+    inputs.push((
+      class,
+      Ed25519Keypair::from_secret_key(Ed25519SecretKey::from_bytes(secret)),
+    ));
   }
 
   for (class, keypair) in inputs {
@@ -1117,9 +1166,14 @@ fn ecdsa_p256_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
   }
 
   for (class, secret, blind) in inputs {
-    let key = EcdsaP256SecretKey::from_bytes(secret).unwrap();
+    let key = EcdsaP256SecretKey::from_bytes(secret).expect("generated P-256 secret scalar is valid");
     runner.run_one(class, || {
-      std::hint::black_box(key.try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind)).unwrap().to_bytes());
+      core::hint::black_box(
+        key
+          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
+          .expect("valid P-256 key and blinding input must sign")
+          .to_bytes(),
+      );
     });
   }
 }
@@ -1136,9 +1190,14 @@ fn ecdsa_p384_sign_fixed_vs_random_secret(runner: &mut CtRunner, rng: &mut Bench
   }
 
   for (class, secret, blind) in inputs {
-    let key = EcdsaP384SecretKey::from_bytes(secret).unwrap();
+    let key = EcdsaP384SecretKey::from_bytes(secret).expect("generated P-384 secret scalar is valid");
     runner.run_one(class, || {
-      std::hint::black_box(key.try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind)).unwrap().to_bytes());
+      core::hint::black_box(
+        key
+          .try_sign_blinded(MESSAGE, |out| out.copy_from_slice(&blind))
+          .expect("valid P-384 key and blinding input must sign")
+          .to_bytes(),
+      );
     });
   }
 }
@@ -1156,7 +1215,7 @@ fn ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rn
 
   for (class, secret) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_nonce_reduce_limb_digest(secret, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p256_nonce_reduce_limb_digest(secret, MESSAGE))[0]
     });
   }
 }
@@ -1174,7 +1233,7 @@ fn ecdsa_p256_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng:
 
   for (class, wide) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_reduce_wide_order_limb_digest(wide))[0]
+      core::hint::black_box(diag_ecdsa_p256_reduce_wide_order_limb_digest(wide))[0]
     });
   }
 }
@@ -1192,7 +1251,7 @@ fn ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunne
 
   for (class, secret, blind) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_basepoint_blinded_limb_digest(secret, blind, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p256_basepoint_blinded_limb_digest(secret, blind, MESSAGE))[0]
     });
   }
 }
@@ -1210,7 +1269,7 @@ fn ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret(runner: &mut CtRunner, r
 
   for (class, secret, nonce_wide) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_scalar_finish_limb_digest(secret, nonce_wide, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p256_scalar_finish_limb_digest(secret, nonce_wide, MESSAGE))[0]
     });
   }
 }
@@ -1228,7 +1287,7 @@ fn ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret(runner: &mut CtRunne
 
   for (class, secret) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret))[0]
+      core::hint::black_box(diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret))[0]
     });
   }
 }
@@ -1246,7 +1305,7 @@ fn ecdsa_p256_diag_blinded_order_mul_fixed_vs_random_secret(runner: &mut CtRunne
 
   for (class, secret, blind) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret, blind))[0]
+      core::hint::black_box(diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret, blind))[0]
     });
   }
 }
@@ -1264,7 +1323,7 @@ fn ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, r
 
   for (class, secret) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_nonce_inverse_limb_digest(secret, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p256_nonce_inverse_limb_digest(secret, MESSAGE))[0]
     });
   }
 }
@@ -1282,7 +1341,7 @@ fn ecdsa_p256_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, 
 
   for (class, secret, nonce_wide) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p256_final_multiply_limb_digest(secret, nonce_wide, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p256_final_multiply_limb_digest(secret, nonce_wide, MESSAGE))[0]
     });
   }
 }
@@ -1300,7 +1359,7 @@ fn ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret(runner: &mut CtRunner, rn
 
   for (class, secret) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_nonce_reduce_limb_digest(secret, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p384_nonce_reduce_limb_digest(secret, MESSAGE))[0]
     });
   }
 }
@@ -1318,7 +1377,7 @@ fn ecdsa_p384_diag_reduce_wide_fixed_vs_random_input(runner: &mut CtRunner, rng:
 
   for (class, wide) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_reduce_wide_order_limb_digest(wide))[0]
+      core::hint::black_box(diag_ecdsa_p384_reduce_wide_order_limb_digest(wide))[0]
     });
   }
 }
@@ -1336,7 +1395,7 @@ fn ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret(runner: &mut CtRunne
 
   for (class, secret, blind) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_basepoint_blinded_limb_digest(secret, blind, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p384_basepoint_blinded_limb_digest(secret, blind, MESSAGE))[0]
     });
   }
 }
@@ -1354,7 +1413,7 @@ fn ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret(runner: &mut CtRunner, r
 
   for (class, secret, nonce_wide) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_scalar_finish_limb_digest(secret, nonce_wide, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p384_scalar_finish_limb_digest(secret, nonce_wide, MESSAGE))[0]
     });
   }
 }
@@ -1372,7 +1431,7 @@ fn ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret(runner: &mut CtRunne
 
   for (class, secret) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret))[0]
+      core::hint::black_box(diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret))[0]
     });
   }
 }
@@ -1390,7 +1449,7 @@ fn ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret(runner: &mut CtRunner, r
 
   for (class, secret) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_nonce_inverse_limb_digest(secret, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p384_nonce_inverse_limb_digest(secret, MESSAGE))[0]
     });
   }
 }
@@ -1408,7 +1467,7 @@ fn ecdsa_p384_diag_final_multiply_fixed_vs_random_secret(runner: &mut CtRunner, 
 
   for (class, secret, nonce_wide) in inputs {
     runner.run_one(class, || {
-      std::hint::black_box(diag_ecdsa_p384_final_multiply_limb_digest(secret, nonce_wide, MESSAGE))[0]
+      core::hint::black_box(diag_ecdsa_p384_final_multiply_limb_digest(secret, nonce_wide, MESSAGE))[0]
     });
   }
 }
@@ -1436,8 +1495,7 @@ fn rsa_pkcs1v15_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRn
         .sign_pkcs1v15_with_blinding_factor(
           RsaPkcs1v15Profile::Sha256,
           &message,
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
         )
         .is_ok()
@@ -1470,8 +1528,7 @@ fn rsa_pss_fixed_vs_random_message(runner: &mut CtRunner, rng: &mut BenchRng) {
           RsaPssProfile::Sha256,
           &message,
           &salt,
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
         )
         .is_ok()
@@ -1498,8 +1555,7 @@ fn rsa_pkcs1v15_full_width_vs_short_canonical_crt_exponent(runner: &mut CtRunner
         .sign_pkcs1v15_with_blinding_factor(
           RsaPkcs1v15Profile::Sha256,
           &message,
-          blinding_factor,
-          blinding_inverse,
+          RsaBlindingPair::new(blinding_factor, blinding_inverse),
           &mut out,
         )
         .is_ok()
@@ -1532,7 +1588,7 @@ fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut B
         out.copy_from_slice(&seed);
         Ok(())
       })
-      .unwrap();
+      .expect("fixed OAEP fixture must encrypt");
     inputs.push((class, ciphertext));
   }
 
@@ -1544,8 +1600,7 @@ fn rsa_oaep_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &mut B
           RsaOaepProfile::Sha256,
           label,
           &ciphertext,
-          &blinding_factor,
-          &blinding_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
           &mut out,
         )
         .is_ok()
@@ -1573,7 +1628,7 @@ fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &m
         out.fill(0x5d);
         Ok(())
       })
-      .unwrap();
+      .expect("fixed PKCS#1 v1.5 fixture must encrypt");
     inputs.push((class, ciphertext));
   }
 
@@ -1581,7 +1636,11 @@ fn rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext(runner: &mut CtRunner, rng: &m
     runner.run_one(class, || {
       let mut out = vec![0u8; sig_len];
       key
-        .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_inverse, &mut out)
+        .decrypt_pkcs1v15_with_blinding_factor(
+          &ciphertext,
+          RsaBlindingPair::new(&blinding_factor, &blinding_inverse),
+          &mut out,
+        )
         .is_ok()
     });
   }
@@ -1612,7 +1671,9 @@ fn rsa_private_component_validation_fixed_vs_random_component(runner: &mut CtRun
   }
 
   for (class, component) in inputs {
-    runner.run_one(class, || diag_rsa_private_component_validation_32(&component, &upper_bound, &other));
+    runner.run_one(class, || {
+      diag_rsa_private_component_validation_32(&component, &upper_bound, &other)
+    });
   }
 }
 
@@ -1629,7 +1690,8 @@ fn rsa_private_key_pkcs8_import_key_a_vs_key_b(runner: &mut CtRunner, rng: &mut 
     let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
     der.copy_from_slice(selected);
     runner.run_one(class, || {
-      let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+      let key = RsaPrivateKey::from_pkcs8_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+        .expect("selected bundled RSA fixture must import");
       key.signature_len()
     });
   }
@@ -1716,7 +1778,10 @@ fn rsa_private_key_pkcs8_import_stage_key_a_vs_key_b(runner: &mut CtRunner, rng:
   for class in inputs {
     let selected = if matches!(class, Class::Left) { &der_a } else { &der_b };
     der.copy_from_slice(selected);
-    runner.run_one(class, || diag_rsa_import_pkcs8_private_key_der_stage(&der, &policy, stage).unwrap());
+    runner.run_one(class, || {
+      diag_rsa_import_pkcs8_private_key_der_stage(&der, &policy, stage)
+        .expect("selected bundled RSA fixture must reach the requested import stage")
+    });
   }
 }
 
@@ -1735,9 +1800,10 @@ fn rsa_private_key_pkcs8_validate_stage_key_a_vs_key_b(runner: &mut CtRunner, rn
     der.copy_from_slice(selected);
     runner.run_one(class, || {
       if stage == u8::MAX {
-        diag_rsa_validate_pkcs8_private_key_der(&der, &policy).unwrap()
+        diag_rsa_validate_pkcs8_private_key_der(&der, &policy).expect("selected bundled RSA fixture must validate")
       } else {
-        diag_rsa_validate_pkcs8_private_key_der_stage(&der, &policy, stage).unwrap()
+        diag_rsa_validate_pkcs8_private_key_der_stage(&der, &policy, stage)
+          .expect("selected bundled RSA fixture must reach the requested validation stage")
       }
     });
   }
@@ -1962,7 +2028,7 @@ macro_rules! blake2_keyed_fixed_vs_random {
       }
 
       for (class, key) in inputs {
-        let key = <$key_ty>::new(&key).unwrap();
+        let key = <$key_ty>::new(&key).expect("32-byte BLAKE2 timing key is valid");
         runner.run_one(class, || <$ty>::keyed_digest(key, MESSAGE)[0]);
       }
     }
@@ -2040,10 +2106,7 @@ ctbench_main_with_seeds!(
   (owner_eq_64_equal_vs_first_diff, Some(0x6f776e657236345f)),
   (secret_wrappers_debug_fixed_vs_random, Some(0x7365637265745f77)),
   (hmac_sha256_valid_vs_invalid_tag, Some(0x686d61635f736861)),
-  (
-    hmac_sha256_truncated_64_valid_vs_invalid_tag,
-    Some(0x686d61635f743634)
-  ),
+  (hmac_sha256_truncated_64_valid_vs_invalid_tag, Some(0x686d61635f743634)),
   (hmac_sha384_valid_vs_invalid_tag, Some(0x686d61633338345f)),
   (hmac_sha512_valid_vs_invalid_tag, Some(0x686d61633531325f)),
   (kmac256_valid_vs_invalid_tag, Some(0x6b6d61633235365f)),
@@ -2055,8 +2118,14 @@ ctbench_main_with_seeds!(
   (aes128_gcm_siv_diag_derive_fixed_vs_random_key, Some(0x6131323867646572)),
   (aes256_gcm_siv_diag_derive_fixed_vs_random_key, Some(0x6132353667646572)),
   (gcm_siv_diag_polyval_fixed_vs_random_auth_key, Some(0x6763736976706f6c)),
-  (aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key, Some(0x6131323867746167)),
-  (aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key, Some(0x6132353667746167)),
+  (
+    aes128_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key,
+    Some(0x6131323867746167)
+  ),
+  (
+    aes256_gcm_siv_diag_raw_tag_aes_fixed_vs_random_key,
+    Some(0x6132353667746167)
+  ),
   (aes128_gcm_diag_ctr32_be_fixed_vs_random_key, Some(0x6731323863747262)),
   (aes256_gcm_diag_ctr32_be_fixed_vs_random_key, Some(0x6732353663747262)),
   (aes128_gcm_diag_ghash_fixed_vs_random_h, Some(0x6731323867686173)),
@@ -2074,43 +2143,124 @@ ctbench_main_with_seeds!(
   (x25519_fixed_vs_random_scalar, Some(0x7832353531395f63)),
   (mlkem512_keygen_secret_noise_fixed_vs_random, Some(0x6d6b3531326b676e)),
   (mlkem512_encapsulate_fixed_vs_random_coins, Some(0x6d6b353132656e63)),
-  (mlkem512_decapsulate_fixed_vs_random_secret_key, Some(0x6d6b353132646563)),
-  (mlkem512_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6b35313272656a)),
+  (
+    mlkem512_decapsulate_fixed_vs_random_secret_key,
+    Some(0x6d6b353132646563)
+  ),
+  (
+    mlkem512_decapsulate_rejection_seed_fixed_vs_random,
+    Some(0x6d6b35313272656a)
+  ),
   (mlkem768_keygen_secret_noise_fixed_vs_random, Some(0x6d6c6b656d6b676e)),
   (mlkem768_encapsulate_fixed_vs_random_coins, Some(0x6d6c6b656d656e63)),
-  (mlkem768_decapsulate_fixed_vs_random_secret_key, Some(0x6d6c6b656d646563)),
-  (mlkem768_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6c6b656d72656a)),
+  (
+    mlkem768_decapsulate_fixed_vs_random_secret_key,
+    Some(0x6d6c6b656d646563)
+  ),
+  (
+    mlkem768_decapsulate_rejection_seed_fixed_vs_random,
+    Some(0x6d6c6b656d72656a)
+  ),
   (mlkem1024_keygen_secret_noise_fixed_vs_random, Some(0x6d6b313032346b67)),
   (mlkem1024_encapsulate_fixed_vs_random_coins, Some(0x6d6b31303234656e)),
-  (mlkem1024_decapsulate_fixed_vs_random_secret_key, Some(0x6d6b313032346465)),
-  (mlkem1024_decapsulate_rejection_seed_fixed_vs_random, Some(0x6d6b31303234726a)),
+  (
+    mlkem1024_decapsulate_fixed_vs_random_secret_key,
+    Some(0x6d6b313032346465)
+  ),
+  (
+    mlkem1024_decapsulate_rejection_seed_fixed_vs_random,
+    Some(0x6d6b31303234726a)
+  ),
   (mlkem_arithmetic_ntt_fixed_vs_random_poly, Some(0x6d6c6b6e7474706f)),
-  (mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly, Some(0x6d6c6b696e747470)),
-  (mlkem_arithmetic_to_product_domain_fixed_vs_random_poly, Some(0x6d6c6b746f70726f)),
-  (mlkem_arithmetic_from_product_domain_fixed_vs_random_poly, Some(0x6d6c6b667270726f)),
-  (mlkem_arithmetic_basemul_fixed_vs_random_operands, Some(0x6d6c6b626173656d)),
-  (mlkem1024_arithmetic_dot_fixed_vs_random_operands, Some(0x6d6c6b313032646f)),
+  (
+    mlkem_arithmetic_inverse_ntt_fixed_vs_random_poly,
+    Some(0x6d6c6b696e747470)
+  ),
+  (
+    mlkem_arithmetic_to_product_domain_fixed_vs_random_poly,
+    Some(0x6d6c6b746f70726f)
+  ),
+  (
+    mlkem_arithmetic_from_product_domain_fixed_vs_random_poly,
+    Some(0x6d6c6b667270726f)
+  ),
+  (
+    mlkem_arithmetic_basemul_fixed_vs_random_operands,
+    Some(0x6d6c6b626173656d)
+  ),
+  (
+    mlkem1024_arithmetic_dot_fixed_vs_random_operands,
+    Some(0x6d6c6b313032646f)
+  ),
   (ed25519_sign_fixed_vs_random_secret, Some(0x656432353531395f)),
   (ed25519_public_key_fixed_vs_random_secret, Some(0x6564323535313950)),
-  (ed25519_sha512_secret_expand_fixed_vs_random_secret, Some(0x6564323535314853)),
+  (
+    ed25519_sha512_secret_expand_fixed_vs_random_secret,
+    Some(0x6564323535314853)
+  ),
   (ed25519_keypair_sign_fixed_vs_random_secret, Some(0x656432353531394b)),
   (ecdsa_p256_sign_fixed_vs_random_secret, Some(0x703235365f736967)),
   (ecdsa_p384_sign_fixed_vs_random_secret, Some(0x703338345f736967)),
-  (ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret, Some(0x703235366e6f6e63)),
-  (ecdsa_p256_diag_reduce_wide_fixed_vs_random_input, Some(0x7032353672656475)),
-  (ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret, Some(0x7032353662617365)),
-  (ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret, Some(0x7032353666696e73)),
-  (ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret, Some(0x703235366d756c72)),
-  (ecdsa_p256_diag_blinded_order_mul_fixed_vs_random_secret, Some(0x703235366d756c62)),
-  (ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret, Some(0x70323536696e766b)),
-  (ecdsa_p256_diag_final_multiply_fixed_vs_random_secret, Some(0x703235366d756c73)),
-  (ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret, Some(0x703338346e6f6e63)),
-  (ecdsa_p384_diag_reduce_wide_fixed_vs_random_input, Some(0x7033383472656475)),
-  (ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret, Some(0x7033383462617365)),
-  (ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret, Some(0x7033383466696e73)),
-  (ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret, Some(0x703338346d756c72)),
-  (ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret, Some(0x70333834696e766b)),
-  (ecdsa_p384_diag_final_multiply_fixed_vs_random_secret, Some(0x703338346d756c73)),
+  (
+    ecdsa_p256_diag_nonce_reduce_fixed_vs_random_secret,
+    Some(0x703235366e6f6e63)
+  ),
+  (
+    ecdsa_p256_diag_reduce_wide_fixed_vs_random_input,
+    Some(0x7032353672656475)
+  ),
+  (
+    ecdsa_p256_diag_basepoint_blinded_fixed_vs_random_secret,
+    Some(0x7032353662617365)
+  ),
+  (
+    ecdsa_p256_diag_scalar_finish_fixed_vs_random_secret,
+    Some(0x7032353666696e73)
+  ),
+  (
+    ecdsa_p256_diag_order_mul_fixed_r_fixed_vs_random_secret,
+    Some(0x703235366d756c72)
+  ),
+  (
+    ecdsa_p256_diag_blinded_order_mul_fixed_vs_random_secret,
+    Some(0x703235366d756c62)
+  ),
+  (
+    ecdsa_p256_diag_nonce_inverse_fixed_vs_random_secret,
+    Some(0x70323536696e766b)
+  ),
+  (
+    ecdsa_p256_diag_final_multiply_fixed_vs_random_secret,
+    Some(0x703235366d756c73)
+  ),
+  (
+    ecdsa_p384_diag_nonce_reduce_fixed_vs_random_secret,
+    Some(0x703338346e6f6e63)
+  ),
+  (
+    ecdsa_p384_diag_reduce_wide_fixed_vs_random_input,
+    Some(0x7033383472656475)
+  ),
+  (
+    ecdsa_p384_diag_basepoint_blinded_fixed_vs_random_secret,
+    Some(0x7033383462617365)
+  ),
+  (
+    ecdsa_p384_diag_scalar_finish_fixed_vs_random_secret,
+    Some(0x7033383466696e73)
+  ),
+  (
+    ecdsa_p384_diag_order_mul_fixed_r_fixed_vs_random_secret,
+    Some(0x703338346d756c72)
+  ),
+  (
+    ecdsa_p384_diag_nonce_inverse_fixed_vs_random_secret,
+    Some(0x70333834696e766b)
+  ),
+  (
+    ecdsa_p384_diag_final_multiply_fixed_vs_random_secret,
+    Some(0x703338346d756c73)
+  ),
   (rsa_pkcs1v15_fixed_vs_random_message, Some(0x7273615f7369676e)),
   (rsa_pss_fixed_vs_random_message, Some(0x7273615f70737373)),
   (
@@ -2119,25 +2269,76 @@ ctbench_main_with_seeds!(
   ),
   (rsa_oaep_decrypt_fixed_vs_random_plaintext, Some(0x7273615f6f616570)),
   (rsa_pkcs1v15_decrypt_fixed_vs_random_plaintext, Some(0x7273615f64656331)),
-  (rsa_private_component_validation_fixed_vs_random_component, Some(0x7273615f636f6d70)),
+  (
+    rsa_private_component_validation_fixed_vs_random_component,
+    Some(0x7273615f636f6d70)
+  ),
   (rsa_private_key_pkcs8_import_key_a_vs_key_b, Some(0x7273615f6b657969)),
   (rsa_private_key_pkcs8_validate_key_a_vs_key_b, Some(0x7273615f76616c69)),
-  (rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b, Some(0x7273615f76733030)),
-  (rsa_private_key_pkcs8_validate_stage1_key_a_vs_key_b, Some(0x7273615f76733031)),
-  (rsa_private_key_pkcs8_validate_stage2_key_a_vs_key_b, Some(0x7273615f76733032)),
-  (rsa_private_key_pkcs8_validate_stage3_key_a_vs_key_b, Some(0x7273615f76733033)),
-  (rsa_private_key_pkcs8_validate_stage4_key_a_vs_key_b, Some(0x7273615f76733034)),
-  (rsa_private_key_pkcs8_validate_stage30_key_a_vs_key_b, Some(0x7273615f76333030)),
-  (rsa_private_key_pkcs8_validate_stage31_key_a_vs_key_b, Some(0x7273615f76333031)),
-  (rsa_private_key_pkcs8_validate_stage32_key_a_vs_key_b, Some(0x7273615f76333032)),
-  (rsa_private_key_pkcs8_validate_stage40_key_a_vs_key_b, Some(0x7273615f76343030)),
-  (rsa_private_key_pkcs8_validate_stage41_key_a_vs_key_b, Some(0x7273615f76343031)),
-  (rsa_private_key_pkcs8_validate_stage42_key_a_vs_key_b, Some(0x7273615f76343032)),
-  (rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b, Some(0x7273615f69353030)),
-  (rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b, Some(0x7273615f69353031)),
-  (rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b, Some(0x7273615f69353032)),
-  (rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b, Some(0x7273615f69353033)),
-  (rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b, Some(0x7273615f69353034)),
+  (
+    rsa_private_key_pkcs8_validate_stage0_key_a_vs_key_b,
+    Some(0x7273615f76733030)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage1_key_a_vs_key_b,
+    Some(0x7273615f76733031)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage2_key_a_vs_key_b,
+    Some(0x7273615f76733032)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage3_key_a_vs_key_b,
+    Some(0x7273615f76733033)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage4_key_a_vs_key_b,
+    Some(0x7273615f76733034)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage30_key_a_vs_key_b,
+    Some(0x7273615f76333030)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage31_key_a_vs_key_b,
+    Some(0x7273615f76333031)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage32_key_a_vs_key_b,
+    Some(0x7273615f76333032)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage40_key_a_vs_key_b,
+    Some(0x7273615f76343030)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage41_key_a_vs_key_b,
+    Some(0x7273615f76343031)
+  ),
+  (
+    rsa_private_key_pkcs8_validate_stage42_key_a_vs_key_b,
+    Some(0x7273615f76343032)
+  ),
+  (
+    rsa_private_key_pkcs8_import_stage50_key_a_vs_key_b,
+    Some(0x7273615f69353030)
+  ),
+  (
+    rsa_private_key_pkcs8_import_stage51_key_a_vs_key_b,
+    Some(0x7273615f69353031)
+  ),
+  (
+    rsa_private_key_pkcs8_import_stage52_key_a_vs_key_b,
+    Some(0x7273615f69353032)
+  ),
+  (
+    rsa_private_key_pkcs8_import_stage53_key_a_vs_key_b,
+    Some(0x7273615f69353033)
+  ),
+  (
+    rsa_private_key_pkcs8_import_stage54_key_a_vs_key_b,
+    Some(0x7273615f69353034)
+  ),
   (rsa_private_key_pkcs8_export_key_a_vs_key_b, Some(0x7273615f6b657978)),
   (hkdf_sha2_fixed_vs_random_ikm, Some(0x686b64665f736861)),
   (pbkdf2_sha2_fixed_vs_random_password, Some(0x70626b6466325f73)),

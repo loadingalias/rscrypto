@@ -106,7 +106,7 @@ impl<T: Copy> AtomicOnceCache<T> {
             core::hint::spin_loop();
           }
         }
-        _ => unreachable!("atomic cache state is private and has three values"),
+        _ => core::hint::spin_loop(),
       }
     }
   }
@@ -116,7 +116,7 @@ impl<T: Copy> AtomicOnceCache<T> {
 ///
 /// Building block for dispatcher caching with proper synchronization.
 /// See module documentation for platform-specific behavior.
-pub struct OnceCache<T: Copy> {
+pub(crate) struct OnceCache<T: Copy> {
   #[cfg(feature = "std")]
   inner: std::sync::OnceLock<T>,
 
@@ -130,7 +130,7 @@ pub struct OnceCache<T: Copy> {
 impl<T: Copy> OnceCache<T> {
   /// Create a new empty cache.
   #[must_use]
-  pub const fn new() -> Self {
+  pub(crate) const fn new() -> Self {
     Self {
       #[cfg(feature = "std")]
       inner: std::sync::OnceLock::new(),
@@ -151,7 +151,7 @@ impl<T: Copy> OnceCache<T> {
   ///
   /// Returns the cached value by copy (since T is Copy).
   #[inline]
-  pub fn get_or_init(&self, f: impl FnOnce() -> T) -> T {
+  pub(crate) fn get_or_init(&self, f: impl FnOnce() -> T) -> T {
     #[cfg(feature = "std")]
     {
       *self.inner.get_or_init(f)
@@ -213,13 +213,13 @@ mod tests {
   }
 
   #[cfg(feature = "std")]
-  #[allow(clippy::std_instead_of_core, clippy::std_instead_of_alloc)]
   mod threading_tests {
-    use std::{
+    use alloc::{boxed::Box, vec::Vec};
+    use core::{
+      panic::AssertUnwindSafe,
       sync::atomic::{AtomicUsize, Ordering},
-      thread,
-      vec::Vec,
     };
+    use std::thread;
 
     use super::*;
 
@@ -243,7 +243,7 @@ mod tests {
         .collect();
 
       for handle in handles {
-        handle.join().unwrap();
+        handle.join().expect("cache worker thread must not panic");
       }
 
       assert_eq!(CALL_COUNT.load(Ordering::SeqCst), 1);
@@ -253,20 +253,19 @@ mod tests {
     fn test_atomic_once_cache_recovers_after_initializer_panic() {
       let cache = AtomicOnceCache::<u64>::new();
 
-      let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        cache.get_or_init(|| panic!("controlled initializer panic"));
+      let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        cache.get_or_init(|| std::panic::resume_unwind(Box::new("controlled initializer panic")));
       }));
 
-      assert!(result.is_err());
+      result.expect_err("panicking initializer must unwind");
       assert_eq!(cache.get_or_init(|| 23), 23);
     }
 
     #[test]
     fn test_atomic_once_cache_waiter_retries_after_initializer_panic() {
-      use std::{
-        sync::{Arc, Barrier, mpsc},
-        time::Duration,
-      };
+      use alloc::sync::Arc;
+      use core::time::Duration;
+      use std::sync::{Barrier, mpsc};
 
       let cache = Arc::new(AtomicOnceCache::<u64>::new());
       let initializer_entered = Arc::new(Barrier::new(2));
@@ -276,11 +275,11 @@ mod tests {
       let panicking_entered = Arc::clone(&initializer_entered);
       let panicking_release = Arc::clone(&release_initializer);
       let panicking = thread::spawn(move || {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
           panicking_cache.get_or_init(|| {
             panicking_entered.wait();
             panicking_release.wait();
-            panic!("controlled initializer panic");
+            std::panic::resume_unwind(Box::new("controlled initializer panic"))
           });
         }))
       });
@@ -289,13 +288,23 @@ mod tests {
       let waiting_cache = Arc::clone(&cache);
       let (sender, receiver) = mpsc::channel();
       let waiting = thread::spawn(move || {
-        sender.send(waiting_cache.get_or_init(|| 29)).unwrap();
+        sender
+          .send(waiting_cache.get_or_init(|| 29))
+          .expect("cache waiter result receiver must remain connected");
       });
 
       release_initializer.wait();
-      assert!(panicking.join().unwrap().is_err());
-      assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), 29);
-      waiting.join().unwrap();
+      panicking
+        .join()
+        .expect("panicking cache thread must unwind only inside catch_unwind")
+        .expect_err("cache initializer must panic");
+      assert_eq!(
+        receiver
+          .recv_timeout(Duration::from_secs(2))
+          .expect("cache waiter must publish its result before the timeout"),
+        29
+      );
+      waiting.join().expect("cache waiter thread must not panic");
     }
 
     #[test]
@@ -318,7 +327,7 @@ mod tests {
         .collect();
 
       for handle in handles {
-        handle.join().unwrap();
+        handle.join().expect("cache worker thread must not panic");
       }
 
       // Selector called exactly once

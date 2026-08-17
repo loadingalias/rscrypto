@@ -5,8 +5,6 @@
 //! the compiler lower the hot pair/quad operations appropriately for current
 //! RISC-V vector hardware.
 
-#![allow(clippy::indexing_slicing)]
-
 use super::kernels::{SIGMA, init_v, load_msg};
 
 #[inline(always)]

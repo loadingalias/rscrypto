@@ -39,7 +39,7 @@ jobs:
         id: rail
         uses: loadingalias/cargo-rail-action@ebc8ef2740efefe2cd5c42826344a8f1213113ae  # v6.1.2
         with:
-          version: "0.20.0"
+          version: "0.21.0"
           checksum: required
           since: ${{ github.event.pull_request.base.sha }}
 

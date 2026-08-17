@@ -42,7 +42,7 @@ const fn clmul64(a: u64, b: u64) -> (u64, u64) {
         lo ^= b;
       } else {
         lo ^= b << i;
-        hi ^= b >> (64 - i);
+        hi ^= b >> 64u32.strict_sub(i);
       }
     }
     i = i.strict_add(1);
@@ -79,7 +79,7 @@ pub(crate) const fn reduce128(hi: u64, lo: u64, poly: u64) -> u64 {
       } else {
         // XOR poly shifted by i
         result_lo ^= poly << i;
-        result_hi ^= (poly >> (64 - i)) | (1 << i);
+        result_hi ^= (poly >> 64i32.strict_sub(i)) | (1 << i);
       }
     }
     i = i.strict_sub(1);
@@ -176,14 +176,14 @@ pub(crate) const fn fold16_coeff_for_bytes(reflected_poly: u64, shift_bytes: u32
   }
 
   let normal = normal_poly(reflected_poly);
-  let d = shift_bytes * 8;
+  let d = shift_bytes.strict_mul(8);
   // `d >= 8`, so `d - 1` is valid.
-  (fold_k(normal, d - 1), fold_k(normal, d + 63))
+  (fold_k(normal, d.strict_sub(1)), fold_k(normal, d.strict_add(63)))
 }
 
 impl Crc64ClmulConstants {
   #[must_use]
-  pub const fn new(reflected_poly: u64) -> Self {
+  const fn new(reflected_poly: u64) -> Self {
     let poly = reciprocal_poly(reflected_poly);
     let normal = normal_poly(reflected_poly);
     let mu = compute_tikv_mu(poly);
@@ -227,7 +227,7 @@ const fn compute_tikv_mu(poly: u64) -> u64 {
     let mut i: u32 = 1;
     while i <= k {
       let p_i = (poly >> i) & 1;
-      let q_j = (inv >> (k - i)) & 1;
+      let q_j = (inv >> k.strict_sub(i)) & 1;
       s ^= p_i & q_j;
       i = i.strict_add(1);
     }
@@ -262,23 +262,29 @@ pub(crate) const CRC64_NVME_CLMUL: Crc64ClmulConstants = Crc64ClmulConstants::ne
 /// - `combine_8way`: merge coefficients for 8-way (x86_64)
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // Field subsets vary by architecture (x86_64 vs aarch64 stream widths).
 pub(crate) struct Crc64StreamConstants {
   /// 2-way fold coefficient (256B = 2×128B).
   pub fold_256b: (u64, u64),
   /// 3-way fold coefficient (384B = 3×128B).
+  #[cfg(target_arch = "aarch64")]
   pub fold_384b: (u64, u64),
   /// 4-way fold coefficient (512B = 4×128B).
+  #[cfg(target_arch = "x86_64")]
   pub fold_512b: (u64, u64),
   /// 7-way fold coefficient (896B = 7×128B).
+  #[cfg(target_arch = "x86_64")]
   pub fold_896b: (u64, u64),
   /// 8-way fold coefficient (1024B = 8×128B).
+  #[cfg(target_arch = "x86_64")]
   pub fold_1024b: (u64, u64),
   /// 4-way combine coefficients: shifts by 384B, 256B, 128B.
+  #[cfg(target_arch = "x86_64")]
   pub combine_4way: [(u64, u64); 3],
   /// 7-way combine coefficients: shifts by 768B, 640B, 512B, 384B, 256B, 128B.
+  #[cfg(target_arch = "x86_64")]
   pub combine_7way: [(u64, u64); 6],
   /// 8-way combine coefficients: shifts by 896B, 768B, 640B, 512B, 384B, 256B, 128B.
+  #[cfg(target_arch = "x86_64")]
   pub combine_8way: [(u64, u64); 7],
 }
 
@@ -286,18 +292,24 @@ pub(crate) struct Crc64StreamConstants {
 impl Crc64StreamConstants {
   /// Compute all multi-stream folding constants for a given polynomial.
   #[must_use]
-  pub const fn new(reflected_poly: u64) -> Self {
+  const fn new(reflected_poly: u64) -> Self {
     Self {
       fold_256b: fold16_coeff_for_bytes(reflected_poly, 256),
+      #[cfg(target_arch = "aarch64")]
       fold_384b: fold16_coeff_for_bytes(reflected_poly, 384),
+      #[cfg(target_arch = "x86_64")]
       fold_512b: fold16_coeff_for_bytes(reflected_poly, 512),
+      #[cfg(target_arch = "x86_64")]
       fold_896b: fold16_coeff_for_bytes(reflected_poly, 896),
+      #[cfg(target_arch = "x86_64")]
       fold_1024b: fold16_coeff_for_bytes(reflected_poly, 1024),
+      #[cfg(target_arch = "x86_64")]
       combine_4way: [
         fold16_coeff_for_bytes(reflected_poly, 384),
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
+      #[cfg(target_arch = "x86_64")]
       combine_7way: [
         fold16_coeff_for_bytes(reflected_poly, 768),
         fold16_coeff_for_bytes(reflected_poly, 640),
@@ -306,6 +318,7 @@ impl Crc64StreamConstants {
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
+      #[cfg(target_arch = "x86_64")]
       combine_8way: [
         fold16_coeff_for_bytes(reflected_poly, 896),
         fold16_coeff_for_bytes(reflected_poly, 768),

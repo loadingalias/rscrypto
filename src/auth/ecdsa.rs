@@ -21,6 +21,13 @@ use crate::{
 mod ecdsa_aarch64_asm;
 #[path = "ecdsa_generator_tables.rs"]
 mod ecdsa_generator_tables;
+#[cfg(any(
+  test,
+  not(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ))
+))]
 #[path = "ecdsa_p384_field.rs"]
 mod ecdsa_p384_field;
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
@@ -1609,23 +1616,20 @@ fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
   let mut multiplicand_lo = lhs;
   let mut multiplicand_hi = 0u64;
   let mut multiplier = rhs;
-  let mut bit = 0u32;
-
-  while bit < u64::BITS {
+  for _ in 0..u64::BITS {
     // Keep LLVM from recognizing the bit-serial product and lowering it back to a target multiply.
     // The CT artifact gate independently rejects scalar multiply in these ECDSA closures.
     let selected_bit = core::hint::black_box(multiplier & 1);
     let mask = 0u64.wrapping_sub(selected_bit);
     let (next_lo, carry) = product_lo.overflowing_add(multiplicand_lo & mask);
     let (next_hi, _) = product_hi.overflowing_add(multiplicand_hi & mask);
-    let (next_hi, _) = next_hi.overflowing_add(carry as u64);
+    let (next_hi, _) = next_hi.overflowing_add(u64::from(carry));
     product_lo = next_lo;
     product_hi = next_hi;
 
     multiplicand_hi = (multiplicand_hi << 1) | (multiplicand_lo >> 63);
     multiplicand_lo <<= 1;
     multiplier >>= 1;
-    bit += 1;
   }
 
   (product_lo, product_hi)
@@ -1633,26 +1637,25 @@ fn ct_mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
 
 #[inline(always)]
 fn mul_u64_wide(lhs: u64, rhs: u64) -> (u64, u64) {
-  #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
   {
     ct_mul_u64_wide(lhs, rhs)
   }
 
-  #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
   {
-    let product = (lhs as u128) * (rhs as u128);
-    (product as u64, (product >> 64) as u64)
+    split_u128(u128::from(lhs).strict_mul(u128::from(rhs)))
   }
 }
 
 #[inline(always)]
 fn mul_u64_low(lhs: u64, rhs: u64) -> u64 {
-  #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
+  #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
   {
     ct_mul_u64_wide(lhs, rhs).0
   }
 
-  #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
+  #[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
   {
     lhs.wrapping_mul(rhs)
   }
@@ -1714,17 +1717,15 @@ impl<const L: usize> Uint<L> {
   }
 
   fn from_be_slice(bytes: &[u8]) -> Result<Self, EcdsaError> {
-    if bytes.len() > L * 8 {
+    if bytes.len() > L.strict_mul(8) {
       return Err(EcdsaError::InvalidSignature);
     }
     let mut out = Self::ZERO;
-    for (index, byte) in bytes.iter().rev().copied().enumerate() {
-      let limb = index / 8;
-      let shift = (index % 8) * 8;
-      let Some(out_limb) = out.0.get_mut(limb) else {
-        return Err(EcdsaError::InvalidSignature);
-      };
-      *out_limb |= u64::from(byte) << shift;
+    for (out_limb, chunk) in out.0.iter_mut().zip(bytes.rchunks(8)) {
+      let mut encoded = [0u8; 8];
+      let offset = encoded.len().strict_sub(chunk.len());
+      encoded[offset..].copy_from_slice(chunk);
+      *out_limb = u64::from_be_bytes(encoded);
     }
     Ok(out)
   }
@@ -1739,12 +1740,10 @@ impl<const L: usize> Uint<L> {
 
   fn write_be(self, out: &mut [u8]) {
     out.fill(0);
-    for (index, byte) in out.iter_mut().rev().enumerate() {
-      let limb = index / 8;
-      let shift = (index % 8) * 8;
-      if let Some(limb_value) = self.0.get(limb) {
-        *byte = (*limb_value >> shift) as u8;
-      }
+    for (chunk, limb) in out.rchunks_mut(8).zip(self.0) {
+      let encoded = limb.to_be_bytes();
+      let offset = encoded.len().strict_sub(chunk.len());
+      chunk.copy_from_slice(&encoded[offset..]);
     }
   }
 
@@ -1948,24 +1947,18 @@ impl<const L: usize> Uint<L> {
     }
 
     const WINDOW_BITS: usize = 4;
-    const WINDOW_SIZE: usize = 1 << WINDOW_BITS;
+    const WINDOW_SIZE: usize = 16;
 
     let mut base = montgomery_mul(*self, modulus.r2, modulus);
     let mut acc = montgomery_mul(Self::ONE, modulus.r2, modulus);
     let mut powers = [acc; WINDOW_SIZE];
-    let mut next_power = base;
-    let mut remaining = WINDOW_SIZE - 1;
+    let mut next_power = acc;
     for power in powers.iter_mut().skip(1) {
+      next_power = montgomery_mul(next_power, base, modulus);
       *power = next_power;
-      remaining -= 1;
-      if remaining != 0 {
-        next_power = montgomery_mul(next_power, base, modulus);
-      }
     }
 
-    let mut bit = L * 64;
-    while bit > 0 {
-      bit -= WINDOW_BITS;
+    for bit in (0..L.strict_mul(64)).step_by(WINDOW_BITS).rev() {
       for _ in 0..WINDOW_BITS {
         acc = montgomery_square(acc, modulus);
       }
@@ -1999,15 +1992,14 @@ impl<const L: usize> SecretScalar<L> {
   }
 
   fn from_be_bytes<const N: usize>(bytes: &[u8; N]) -> Self {
-    debug_assert!(N <= L * 8);
+    debug_assert!(N <= L.strict_mul(8));
 
     let mut out = Uint::ZERO;
-    for (index, byte) in bytes.iter().rev().copied().enumerate() {
-      let limb = index / 8;
-      let shift = (index % 8) * 8;
-      if let Some(out_limb) = out.0.get_mut(limb) {
-        *out_limb |= u64::from(byte) << shift;
-      }
+    for (out_limb, chunk) in out.0.iter_mut().zip(bytes.rchunks(8)) {
+      let mut encoded = [0u8; 8];
+      let offset = encoded.len().strict_sub(chunk.len());
+      encoded[offset..].copy_from_slice(chunk);
+      *out_limb = u64::from_be_bytes(encoded);
     }
     Self::new(out)
   }
@@ -2068,7 +2060,6 @@ impl<const L: usize> FieldElement<L> {
     Self::from_uint(Uint::ONE, modulus)
   }
 
-  #[allow(clippy::indexing_slicing)]
   fn add(self, rhs: Self) -> Self {
     if is_p384_field_modulus(self.modulus) {
       let reduced = add_p384_field(
@@ -2096,7 +2087,6 @@ impl<const L: usize> FieldElement<L> {
     Self::from_montgomery(self.value.add_mod_ct(&rhs.value, self.modulus.value), self.modulus)
   }
 
-  #[allow(clippy::indexing_slicing)]
   fn sub(self, rhs: Self) -> Self {
     if is_p384_field_modulus(self.modulus) {
       let reduced = sub_p384_field(
@@ -2360,6 +2350,11 @@ impl<const L: usize> Jacobian<L> {
     }
   }
 
+  #[cfg(any(
+    feature = "diag",
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ))]
   fn to_affine_x_ct(self, exponent: Uint<L>) -> FieldElement<L> {
     let inv_z = self.z.inv_ct(exponent);
     let z2 = inv_z.square();
@@ -2492,39 +2487,47 @@ fn sign_digest_p384_blinded(
 }
 
 fn hmac_expand_p256(secret: &[u8; 32], digest: &[u8; 32], out: &mut [u8; 64]) {
-  for (block_index, block) in out.chunks_exact_mut(HmacSha256::TAG_SIZE).enumerate() {
+  let (blocks, remainder) = out.as_chunks_mut::<{ HmacSha256::TAG_SIZE }>();
+  debug_assert!(remainder.is_empty());
+  for (block_index, block) in [0u8, 1].into_iter().zip(blocks) {
     let mut mac = HmacSha256::new(secret);
     mac.update(P256_NONCE_DOMAIN);
-    mac.update(&[block_index as u8]);
+    mac.update(&[block_index]);
     mac.update(digest);
     block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
 fn hmac_expand_p256_public_blind(secret: &[u8; 32], out: &mut [u8; 64]) {
-  for (block_index, block) in out.chunks_exact_mut(HmacSha256::TAG_SIZE).enumerate() {
+  let (blocks, remainder) = out.as_chunks_mut::<{ HmacSha256::TAG_SIZE }>();
+  debug_assert!(remainder.is_empty());
+  for (block_index, block) in [0u8, 1].into_iter().zip(blocks) {
     let mut mac = HmacSha256::new(secret);
     mac.update(P256_PUBKEY_BLIND_DOMAIN);
-    mac.update(&[block_index as u8]);
+    mac.update(&[block_index]);
     block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
 fn hmac_expand_p384(secret: &[u8; 48], digest: &[u8; 48], out: &mut [u8; 96]) {
-  for (block_index, block) in out.chunks_exact_mut(HmacSha384::TAG_SIZE).enumerate() {
+  let (blocks, remainder) = out.as_chunks_mut::<{ HmacSha384::TAG_SIZE }>();
+  debug_assert!(remainder.is_empty());
+  for (block_index, block) in [0u8, 1].into_iter().zip(blocks) {
     let mut mac = HmacSha384::new(secret);
     mac.update(P384_NONCE_DOMAIN);
-    mac.update(&[block_index as u8]);
+    mac.update(&[block_index]);
     mac.update(digest);
     block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
 
 fn hmac_expand_p384_public_blind(secret: &[u8; 48], out: &mut [u8; 96]) {
-  for (block_index, block) in out.chunks_exact_mut(HmacSha384::TAG_SIZE).enumerate() {
+  let (blocks, remainder) = out.as_chunks_mut::<{ HmacSha384::TAG_SIZE }>();
+  debug_assert!(remainder.is_empty());
+  for (block_index, block) in [0u8, 1].into_iter().zip(blocks) {
     let mut mac = HmacSha384::new(secret);
     mac.update(P384_PUBKEY_BLIND_DOMAIN);
-    mac.update(&[block_index as u8]);
+    mac.update(&[block_index]);
     block.copy_from_slice(mac.finalize().as_bytes());
   }
 }
@@ -2755,7 +2758,9 @@ fn reduce_wide_order_nonzero_owned<const L: usize, const N: usize>(
   }
 
   let mut acc = Uint::ZERO;
-  for chunk in bytes.chunks_exact(8) {
+  let (chunks, remainder) = bytes.as_chunks::<8>();
+  debug_assert!(remainder.is_empty());
+  for chunk in chunks {
     acc = mul_mod_montgomery_ct(acc, radix, modulus);
     let word = chunk
       .iter()
@@ -2946,12 +2951,12 @@ fn is_p384_curve<const L: usize>(curve: &Curve<L>) -> bool {
   all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
   all(target_arch = "x86_64", target_os = "linux")
 ))]
-#[allow(clippy::indexing_slicing)]
 fn affine_from_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64]) -> Affine<L> {
   let mut x = [0u64; L];
   let mut y = [0u64; L];
-  x.copy_from_slice(&words[..L]);
-  y.copy_from_slice(&words[L..L * 2]);
+  let (x_words, y_words) = words.split_at(L);
+  x.copy_from_slice(x_words);
+  y.copy_from_slice(y_words);
   let x = Uint(x);
   let y = Uint(y);
   Affine {
@@ -3276,14 +3281,13 @@ fn p384_jacobian_from_words(words: &[u64; 18]) -> Jacobian<6> {
 }
 
 #[cfg(all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")))]
-#[allow(clippy::indexing_slicing)]
 fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words: &[u64; 18]) -> Jacobian<L> {
   let mut x = [0u64; L];
   let mut y = [0u64; L];
   let mut z = [0u64; L];
   x.copy_from_slice(&words[..L]);
-  y.copy_from_slice(&words[6..6 + L]);
-  z.copy_from_slice(&words[12..12 + L]);
+  y.copy_from_slice(&words[6..6usize.strict_add(L)]);
+  z.copy_from_slice(&words[12..12usize.strict_add(L)]);
   Jacobian {
     x: FieldElement::from_montgomery(Uint(x), modulus),
     y: FieldElement::from_montgomery(Uint(y), modulus),
@@ -3293,7 +3297,6 @@ fn jacobian_from_p384_words<const L: usize>(modulus: &'static Modulus<L>, words:
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing)]
 fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L>) -> Jacobian<L> {
   let rows = curve.signing_comb_rows;
   let mut acc = Jacobian::infinity(curve.field_modulus);
@@ -3308,7 +3311,6 @@ fn scalar_mul_basepoint_comb_ct<const L: usize>(curve: &Curve<L>, scalar: Uint<L
   acc
 }
 
-#[allow(clippy::indexing_slicing)]
 fn scalar_mul_basepoint_comb_ct_secret<const L: usize, const S: usize>(
   curve: &Curve<L>,
   scalar: &SecretScalar<S>,
@@ -3327,7 +3329,6 @@ fn scalar_mul_basepoint_comb_ct_secret<const L: usize, const S: usize>(
   acc
 }
 
-#[allow(clippy::indexing_slicing)]
 fn scalar_mul_basepoint_comb_ct_secret_blinded<const L: usize, const S: usize>(
   curve: &Curve<L>,
   scalar: &SecretScalar<S>,
@@ -3373,7 +3374,6 @@ fn signing_comb_digit_ct<const L: usize>(scalar: Uint<L>, row: usize, rows: usiz
   digit
 }
 
-#[allow(clippy::indexing_slicing)]
 fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: usize) -> Affine<L> {
   let mut x = curve.signing_generator_comb_x[0];
   let mut y = curve.signing_generator_comb_y[0];
@@ -3393,6 +3393,7 @@ fn select_signing_generator_affine_ct<const L: usize>(curve: &Curve<L>, digit: u
   }
 }
 
+/// Return the P-256 signing-comb coordinates selected by `digit` as Montgomery limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 8] {
   let selected = select_signing_generator_affine_ct(&P256, usize::from(digit));
@@ -3424,6 +3425,7 @@ pub(crate) fn diag_zeroize_ecdsa_p256_platform_scratch(wide: [u8; 64]) -> u64 {
   core::hint::black_box(inverse.value().0[0])
 }
 
+/// Derive the deterministic P-256 nonce for `message` and return its scalar limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
@@ -3434,6 +3436,7 @@ pub fn diag_ecdsa_p256_nonce_reduce_limb_digest(secret: [u8; 32], message: &[u8]
   nonce.value().0
 }
 
+/// Reduce a wide P-256 nonce candidate to a nonzero scalar and return its limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4] {
   let wide = ZeroizingBytes::new(wide);
@@ -3441,6 +3444,7 @@ pub fn diag_ecdsa_p256_reduce_wide_order_limb_digest(wide: [u8; 64]) -> [u64; 4]
   nonce.value().0
 }
 
+/// Return the affine limbs produced by blinded P-256 basepoint multiplication.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u8; 64], message: &[u8]) -> [u64; 8] {
   let secret = ZeroizingBytes::new(secret);
@@ -3457,6 +3461,7 @@ pub fn diag_ecdsa_p256_basepoint_blinded_limb_digest(secret: [u8; 32], blind: [u
   out
 }
 
+/// Run P-256 scalar signing finalization with supplied nonce material and return `r || s` limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 8] {
   let secret = ZeroizingBytes::new(secret);
@@ -3472,6 +3477,7 @@ pub fn diag_ecdsa_p256_scalar_finish_limb_digest(secret: [u8; 32], nonce_wide: [
   out
 }
 
+/// Multiply the P-256 secret scalar by a fixed public `r` and return the order-field limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
@@ -3481,6 +3487,7 @@ pub fn diag_ecdsa_p256_order_mul_fixed_r_limb_digest(secret: [u8; 32]) -> [u64; 
   rd.value().0
 }
 
+/// Run the blinded P-256 order multiplication stage for a fixed public `r` and return its limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret: [u8; 32], blind: [u8; 64]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
@@ -3497,6 +3504,7 @@ pub fn diag_ecdsa_p256_order_mul_blinded_fixed_r_limb_digest(secret: [u8; 32], b
   rd.value().0
 }
 
+/// Derive and invert the deterministic P-256 nonce and return its Montgomery limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
@@ -3512,6 +3520,7 @@ pub fn diag_ecdsa_p256_nonce_inverse_limb_digest(secret: [u8; 32], message: &[u8
   inverse.value().0
 }
 
+/// Run the final P-256 signing multiplication with supplied nonce material and return its limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p256"))]
 pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: [u8; 64], message: &[u8]) -> [u64; 4] {
   let secret = ZeroizingBytes::new(secret);
@@ -3536,6 +3545,7 @@ pub fn diag_ecdsa_p256_final_multiply_limb_digest(secret: [u8; 32], nonce_wide: 
   product.value().0
 }
 
+/// Return the P-384 signing-comb coordinates selected by `digit` as Montgomery limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_select_signing_generator_affine_limb_digest(digit: u8) -> [u64; 12] {
   let selected = select_signing_generator_affine_ct(&P384, usize::from(digit));
@@ -3565,6 +3575,7 @@ pub(crate) fn diag_zeroize_ecdsa_p384_platform_scratch(wide: [u8; 96]) -> u64 {
   core::hint::black_box(inverse.value().0[0])
 }
 
+/// Derive the deterministic P-384 nonce for `message` and return its scalar limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
@@ -3575,6 +3586,7 @@ pub fn diag_ecdsa_p384_nonce_reduce_limb_digest(secret: [u8; 48], message: &[u8]
   nonce.value().0
 }
 
+/// Reduce a wide P-384 nonce candidate to a nonzero scalar and return its limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6] {
   let wide = ZeroizingBytes::new(wide);
@@ -3582,6 +3594,7 @@ pub fn diag_ecdsa_p384_reduce_wide_order_limb_digest(wide: [u8; 96]) -> [u64; 6]
   nonce.value().0
 }
 
+/// Return the affine limbs produced by blinded P-384 basepoint multiplication.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u8; 96], message: &[u8]) -> [u64; 12] {
   let secret = ZeroizingBytes::new(secret);
@@ -3598,6 +3611,7 @@ pub fn diag_ecdsa_p384_basepoint_blinded_limb_digest(secret: [u8; 48], blind: [u
   out
 }
 
+/// Derive the P-384 nonce point and return its reduced affine x-coordinate limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_basepoint_r_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
@@ -3614,6 +3628,7 @@ pub fn diag_ecdsa_p384_basepoint_r_limb_digest(secret: [u8; 48], message: &[u8])
     .0
 }
 
+/// Run P-384 scalar signing finalization with supplied nonce material and return `r || s` limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 12] {
   let secret = ZeroizingBytes::new(secret);
@@ -3629,6 +3644,7 @@ pub fn diag_ecdsa_p384_scalar_finish_limb_digest(secret: [u8; 48], nonce_wide: [
   out
 }
 
+/// Multiply the P-384 secret scalar by a fixed public `r` and return the order-field limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
@@ -3638,6 +3654,7 @@ pub fn diag_ecdsa_p384_order_mul_fixed_r_limb_digest(secret: [u8; 48]) -> [u64; 
   rd.value().0
 }
 
+/// Derive and invert the deterministic P-384 nonce and return its Montgomery limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
@@ -3653,6 +3670,7 @@ pub fn diag_ecdsa_p384_nonce_inverse_limb_digest(secret: [u8; 48], message: &[u8
   inverse.value().0
 }
 
+/// Run the final P-384 signing multiplication with supplied nonce material and return its limbs.
 #[cfg(all(feature = "diag", feature = "ecdsa-p384"))]
 pub fn diag_ecdsa_p384_final_multiply_limb_digest(secret: [u8; 48], nonce_wide: [u8; 96], message: &[u8]) -> [u64; 6] {
   let secret = ZeroizingBytes::new(secret);
@@ -3697,7 +3715,6 @@ fn projective_x_matches_scalar<const L: usize>(point: Jacobian<L>, scalar: Uint<
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 fn scalar_mul_two<const L: usize>(
   curve: &Curve<L>,
   lhs_scalar: Uint<L>,
@@ -3723,13 +3740,13 @@ fn scalar_mul_two<const L: usize>(
 }
 
 const fn comb_rows<const L: usize>() -> usize {
-  (L * 64).div_ceil(COMB_WIDTH)
+  L.strict_mul(64).div_ceil(COMB_WIDTH)
 }
 
 fn comb_digit<const L: usize>(scalar: Uint<L>, row: usize, rows: usize) -> usize {
   let mut digit = 0usize;
   for column in 0..COMB_WIDTH {
-    let bit = row + column * rows;
+    let bit = row.strict_add(column.strict_mul(rows));
     if scalar.bit(bit) {
       digit |= 1usize << column;
     }
@@ -3737,7 +3754,6 @@ fn comb_digit<const L: usize>(scalar: Uint<L>, row: usize, rows: usize) -> usize
   digit
 }
 
-#[allow(clippy::indexing_slicing)]
 fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_TABLE_SIZE] {
   let rows = comb_rows::<L>();
   let mut column_points = [Jacobian::from_affine(point); COMB_WIDTH];
@@ -3763,14 +3779,16 @@ fn precompute_comb_table<const L: usize>(point: Affine<L>) -> [Affine<L>; COMB_T
   normalize_jacobian_table(table)
 }
 
-#[allow(clippy::indexing_slicing)]
 fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>; N]) -> [Affine<L>; N] {
-  let modulus = table[0].x.modulus;
+  let modulus = table
+    .first()
+    .map(|point| point.x.modulus)
+    .expect("ECDSA comb tables are nonempty");
   let mut prefixes = [FieldElement::one(modulus); N];
   let mut acc = FieldElement::one(modulus);
-  for i in 0..N {
-    prefixes[i] = acc;
-    acc = acc.mul(table[i].z);
+  for (prefix, point) in prefixes.iter_mut().zip(table.iter()) {
+    *prefix = acc;
+    acc = acc.mul(point.z);
   }
 
   let mut acc_inv = acc.inv();
@@ -3778,30 +3796,29 @@ fn normalize_jacobian_table<const L: usize, const N: usize>(table: [Jacobian<L>;
     x: FieldElement::zero(modulus),
     y: FieldElement::zero(modulus),
   }; N];
-  for i in (0..N).rev() {
-    let z_inv = acc_inv.mul(prefixes[i]);
-    acc_inv = acc_inv.mul(table[i].z);
+  for ((point, prefix), output) in table.iter().zip(prefixes).zip(out.iter_mut()).rev() {
+    let z_inv = acc_inv.mul(prefix);
+    acc_inv = acc_inv.mul(point.z);
     let z2 = z_inv.square();
     let z3 = z2.mul(z_inv);
-    out[i] = Affine {
-      x: table[i].x.mul(z2),
-      y: table[i].y.mul(z3),
+    *output = Affine {
+      x: point.x.mul(z2),
+      y: point.y.mul(z3),
     };
   }
   out
 }
 
-#[allow(clippy::indexing_slicing)]
 fn parse_public_key<const L: usize>(bytes: &[u8], curve: &Curve<L>) -> Result<Affine<L>, EcdsaError> {
-  let field_len = L * 8;
+  let field_len = L.strict_mul(8);
   if bytes.len() != field_len.strict_mul(2).strict_add(1) || bytes.first().copied() != Some(0x04) {
     return Err(EcdsaError::InvalidPublicKey);
   }
 
-  let x = Uint::from_be_slice(bytes.get(1..1 + field_len).ok_or(EcdsaError::InvalidPublicKey)?)
-    .map_err(|_| EcdsaError::InvalidPublicKey)?;
-  let y = Uint::from_be_slice(bytes.get(1 + field_len..).ok_or(EcdsaError::InvalidPublicKey)?)
-    .map_err(|_| EcdsaError::InvalidPublicKey)?;
+  let coordinates = bytes.get(1..).ok_or(EcdsaError::InvalidPublicKey)?;
+  let (x_bytes, y_bytes) = coordinates.split_at(field_len);
+  let x = Uint::from_be_slice(x_bytes).map_err(|_| EcdsaError::InvalidPublicKey)?;
+  let y = Uint::from_be_slice(y_bytes).map_err(|_| EcdsaError::InvalidPublicKey)?;
   if x.cmp(&curve.field_modulus.value).is_ge() || y.cmp(&curve.field_modulus.value).is_ge() {
     return Err(EcdsaError::InvalidPublicKey);
   }
@@ -3827,10 +3844,11 @@ fn is_on_curve<const L: usize>(point: Affine<L>, curve: &Curve<L>) -> bool {
 
 fn encode_sec1<const L: usize, const N: usize>(point: &Affine<L>) -> [u8; N] {
   let mut out = [0u8; N];
-  out[0] = 0x04;
-  let field_len = L * 8;
-  point.x.to_uint().write_be(&mut out[1..1 + field_len]);
-  point.y.to_uint().write_be(&mut out[1 + field_len..]);
+  let (tag, coordinates) = out.split_first_mut().expect("SEC1 output includes a tag byte");
+  *tag = 0x04;
+  let (x_bytes, y_bytes) = coordinates.split_at_mut(L.strict_mul(8));
+  point.x.to_uint().write_be(x_bytes);
+  point.y.to_uint().write_be(y_bytes);
   out
 }
 
@@ -3838,9 +3856,9 @@ fn parse_signature_scalars<const LIMBS: usize, const BYTES: usize>(
   bytes: &[u8; BYTES],
   scalar_modulus: Uint<LIMBS>,
 ) -> Result<(Uint<LIMBS>, Uint<LIMBS>), EcdsaError> {
-  let field_len = LIMBS * 8;
-  let r = Uint::from_be_slice(&bytes[..field_len])?;
-  let s = Uint::from_be_slice(&bytes[field_len..])?;
+  let (r_bytes, s_bytes) = bytes.split_at(LIMBS.strict_mul(8));
+  let r = Uint::from_be_slice(r_bytes)?;
+  let s = Uint::from_be_slice(s_bytes)?;
   if !r.is_in_range(&scalar_modulus) || !s.is_in_range(&scalar_modulus) {
     return Err(EcdsaError::InvalidSignature);
   }
@@ -3848,7 +3866,7 @@ fn parse_signature_scalars<const LIMBS: usize, const BYTES: usize>(
 }
 
 fn parse_signature_der_bytes<const LIMBS: usize, const BYTES: usize>(der: &[u8]) -> Result<[u8; BYTES], EcdsaError> {
-  let field_len = LIMBS * 8;
+  let field_len = LIMBS.strict_mul(8);
   let mut root = DerReader::new(der);
   let sig = root.read_constructed(TAG_SEQUENCE)?;
   root.finish()?;
@@ -3859,8 +3877,9 @@ fn parse_signature_der_bytes<const LIMBS: usize, const BYTES: usize>(der: &[u8])
   sig.finish()?;
 
   let mut bytes = [0u8; BYTES];
-  parse_der_integer_into(r_value, &mut bytes[..field_len])?;
-  parse_der_integer_into(s_value, &mut bytes[field_len..])?;
+  let (r_bytes, s_bytes) = bytes.split_at_mut(field_len);
+  parse_der_integer_into(r_value, r_bytes)?;
+  parse_der_integer_into(s_value, s_bytes)?;
   Ok(bytes)
 }
 
@@ -3959,7 +3978,6 @@ fn mul_mod_montgomery_blinded_ct<const L: usize>(
   product_share.value().add_mod_ct(&product_blind.value(), modulus.value)
 }
 
-#[allow(clippy::indexing_slicing)]
 fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static Modulus<L>) -> Uint<L> {
   debug_assert!(L <= 6);
 
@@ -4015,27 +4033,32 @@ fn montgomery_mul<const L: usize>(lhs: Uint<L>, rhs: Uint<L>, modulus: &'static 
   for i in 0..L {
     let mut carry = 0u64;
     for j in 0..L {
-      let k = i + j;
+      let k = i.strict_add(j);
       (limbs[k], carry) = mac_limb(limbs[k], lhs.0[i], rhs.0[j], carry);
     }
-    add_limb(&mut limbs, i + L, carry);
+    add_limb(&mut limbs, i.strict_add(L), carry);
   }
 
   for i in 0..L {
     let factor = mul_u64_low(limbs[i], modulus.n0_inv);
     let mut carry = 0u64;
     for j in 0..L {
-      let k = i + j;
+      let k = i.strict_add(j);
       (limbs[k], carry) = mac_limb(limbs[k], factor, modulus.value.0[j], carry);
     }
-    add_limb(&mut limbs, i + L, carry);
+    add_limb(&mut limbs, i.strict_add(L), carry);
   }
 
+  let double_limbs = L.strict_mul(2);
   let mut out = [0u64; L];
-  out.copy_from_slice(&limbs[L..L + L]);
+  out.copy_from_slice(&limbs[L..double_limbs]);
   let out = Uint(out);
   let (reduced, borrow) = out.sub_raw(&modulus.value);
-  Uint::select(out, reduced, mask_nonzero_u64(limbs[L + L]) | mask_zero_u64(borrow))
+  Uint::select(
+    out,
+    reduced,
+    mask_nonzero_u64(limbs[double_limbs]) | mask_zero_u64(borrow),
+  )
 }
 
 fn montgomery_square<const L: usize>(value: Uint<L>, modulus: &'static Modulus<L>) -> Uint<L> {
@@ -4095,7 +4118,7 @@ fn montgomery_mul_p256_order(lhs: [u64; 4], rhs: [u64; 4]) -> Uint<4> {
       t1 = v1;
       t2 = v2;
       t3 = v3;
-      t4 = carry_extra + carry;
+      t4 = carry_extra.strict_add(carry);
     }};
   }
 
@@ -4159,7 +4182,7 @@ fn montgomery_mul_p384_order(lhs: [u64; 6], rhs: [u64; 6]) -> Uint<6> {
       t3 = v3;
       t4 = v4;
       t5 = v5;
-      t6 = carry_extra + carry;
+      t6 = carry_extra.strict_add(carry);
     }};
   }
 
@@ -4260,7 +4283,6 @@ fn montgomery_mul_p256_field(lhs: [u64; 4], rhs: [u64; 4]) -> Uint<4> {
   montgomery_reduce_p256_field([w0, w1, w2, w3, w4, w5, w6, w7])
 }
 
-#[allow(clippy::indexing_slicing)]
 fn montgomery_reduce_p256_field(limbs: [u64; 8]) -> Uint<4> {
   let [r0, r1, r2, r3, r4, r5, r6, r7] = limbs;
   let p = P256_FIELD.0;
@@ -4306,8 +4328,9 @@ fn sub_p256_field_once(limbs: [u64; 5]) -> Uint<4> {
 
 #[inline(always)]
 fn adc_limb(lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  let result = u128::from(lhs) + u128::from(rhs) + u128::from(carry);
-  (result as u64, (result >> 64) as u64)
+  let (result, overflow0) = lhs.overflowing_add(rhs);
+  let (result, overflow1) = result.overflowing_add(carry);
+  (result, u64::from(overflow0 | overflow1))
 }
 
 #[inline(always)]
@@ -4319,29 +4342,32 @@ fn sbb_limb(lhs: u64, rhs: u64, borrow: u64) -> (u64, u64) {
 
 #[inline(always)]
 fn mac_limb(acc: u64, lhs: u64, rhs: u64, carry: u64) -> (u64, u64) {
-  #[cfg(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))]
-  {
-    let (product_lo, product_hi) = mul_u64_wide(lhs, rhs);
-    let (result, carry0) = product_lo.overflowing_add(acc);
-    let (result, carry1) = result.overflowing_add(carry);
-    let (high, overflow0) = product_hi.overflowing_add(u64::from(carry0));
-    let (high, overflow1) = high.overflowing_add(u64::from(carry1));
+  let (product_lo, product_hi) = mul_u64_wide(lhs, rhs);
+  let (result, carry0) = product_lo.overflowing_add(acc);
+  let (result, carry1) = result.overflowing_add(carry);
+  let (high, overflow0) = product_hi.overflowing_add(u64::from(carry0));
+  let (high, overflow1) = high.overflowing_add(u64::from(carry1));
 
-    // lhs*rhs + acc + carry is at most 2^128 - 1, so the high limb cannot overflow.
-    // Keep that invariant checked in debug builds without emitting secret-fed panic branches
-    // in release ECDSA arithmetic on s390x and RISC-V.
-    debug_assert!(!overflow0 && !overflow1);
-    (result, high)
-  }
-
-  #[cfg(not(any(test, target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x")))]
-  {
-    let result = u128::from(acc) + (u128::from(lhs) * u128::from(rhs)) + u128::from(carry);
-    (result as u64, (result >> 64) as u64)
-  }
+  // lhs*rhs + acc + carry is at most 2^128 - 1, so the high limb cannot overflow.
+  // Keep that invariant checked in debug builds without emitting secret-fed panic branches
+  // in release ECDSA arithmetic.
+  debug_assert!(!overflow0 && !overflow1);
+  (result, high)
 }
 
-#[allow(clippy::indexing_slicing)]
+#[inline(always)]
+#[cfg(any(
+  test,
+  not(any(target_arch = "riscv32", target_arch = "riscv64", target_arch = "s390x"))
+))]
+fn split_u128(value: u128) -> (u64, u64) {
+  let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = value.to_le_bytes();
+  (
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]),
+    u64::from_le_bytes([b8, b9, b10, b11, b12, b13, b14, b15]),
+  )
+}
+
 fn add_limb(limbs: &mut [u64; 13], mut index: usize, mut value: u64) {
   while index < limbs.len() {
     let (sum, carry) = limbs[index].overflowing_add(value);
@@ -4461,7 +4487,8 @@ mod tests {
       assert_eq!(reader.read_len(), Err(EcdsaError::MalformedDer));
     }
 
-    let oversized_len_len = [0x80 | (core::mem::size_of::<usize>() as u8 + 1)];
+    let length_bytes = u8::try_from(core::mem::size_of::<usize>()).expect("usize width fits in one DER length byte");
+    let oversized_len_len = [0x80 | length_bytes.strict_add(1)];
     let mut reader = DerReader::new(&oversized_len_len);
     assert_eq!(reader.read_len(), Err(EcdsaError::MalformedDer));
   }
@@ -4471,7 +4498,7 @@ mod tests {
     sec1[0] = 0x04;
     P256_GX.write_be(&mut sec1[1..33]);
     P256_GY.write_be(&mut sec1[33..]);
-    EcdsaP256PublicKey::from_sec1_bytes(&sec1).unwrap()
+    EcdsaP256PublicKey::from_sec1_bytes(&sec1).expect("the P-256 generator is a valid public key")
   }
 
   fn p384_public_key() -> EcdsaP384PublicKey {
@@ -4479,7 +4506,7 @@ mod tests {
     sec1[0] = 0x04;
     P384_GX.write_be(&mut sec1[1..49]);
     P384_GY.write_be(&mut sec1[49..]);
-    EcdsaP384PublicKey::from_sec1_bytes(&sec1).unwrap()
+    EcdsaP384PublicKey::from_sec1_bytes(&sec1).expect("the P-384 generator is a valid public key")
   }
 
   fn p384_sparse_scalar(bits: &[usize]) -> Uint<6> {
@@ -4504,12 +4531,12 @@ mod tests {
 
   #[test]
   fn ct_mul_u64_wide_matches_u128_for_edges_and_generated_inputs() {
-    const EDGES: [u64; 8] = [0, 1, 2, u32::MAX as u64, 1u64 << 32, 1u64 << 63, u64::MAX - 1, u64::MAX];
+    const EDGES: [u64; 8] = [0, 1, 2, 0xffff_ffff, 1u64 << 32, 1u64 << 63, u64::MAX - 1, u64::MAX];
 
     for lhs in EDGES {
       for rhs in EDGES {
-        let product = u128::from(lhs) * u128::from(rhs);
-        assert_eq!(ct_mul_u64_wide(lhs, rhs), (product as u64, (product >> 64) as u64));
+        let product = u128::from(lhs).strict_mul(u128::from(rhs));
+        assert_eq!(ct_mul_u64_wide(lhs, rhs), split_u128(product));
       }
     }
 
@@ -4518,24 +4545,24 @@ mod tests {
     for _ in 0..1024 {
       lhs = lhs.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
       rhs = rhs.wrapping_mul(0xd134_2543_de82_ef95).wrapping_add(1);
-      let product = u128::from(lhs) * u128::from(rhs);
-      assert_eq!(ct_mul_u64_wide(lhs, rhs), (product as u64, (product >> 64) as u64));
+      let product = u128::from(lhs).strict_mul(u128::from(rhs));
+      assert_eq!(ct_mul_u64_wide(lhs, rhs), split_u128(product));
     }
   }
 
   #[test]
   fn mac_limb_matches_u128_for_edges_and_generated_inputs() {
-    const EDGES: [u64; 8] = [0, 1, 2, u32::MAX as u64, 1u64 << 32, 1u64 << 63, u64::MAX - 1, u64::MAX];
+    const EDGES: [u64; 8] = [0, 1, 2, 0xffff_ffff, 1u64 << 32, 1u64 << 63, u64::MAX - 1, u64::MAX];
 
     for acc in EDGES {
       for lhs in EDGES {
         for rhs in EDGES {
           for carry in EDGES {
-            let expected = u128::from(lhs) * u128::from(rhs) + u128::from(acc) + u128::from(carry);
-            assert_eq!(
-              mac_limb(acc, lhs, rhs, carry),
-              (expected as u64, (expected >> 64) as u64)
-            );
+            let expected = u128::from(lhs)
+              .strict_mul(u128::from(rhs))
+              .strict_add(u128::from(acc))
+              .strict_add(u128::from(carry));
+            assert_eq!(mac_limb(acc, lhs, rhs, carry), split_u128(expected));
           }
         }
       }
@@ -4550,11 +4577,11 @@ mod tests {
       let rhs = state;
       state = state.wrapping_mul(0xa409_3822_299f_31d0).wrapping_add(1);
       let carry = state;
-      let expected = u128::from(lhs) * u128::from(rhs) + u128::from(acc) + u128::from(carry);
-      assert_eq!(
-        mac_limb(acc, lhs, rhs, carry),
-        (expected as u64, (expected >> 64) as u64)
-      );
+      let expected = u128::from(lhs)
+        .strict_mul(u128::from(rhs))
+        .strict_add(u128::from(acc))
+        .strict_add(u128::from(carry));
+      assert_eq!(mac_limb(acc, lhs, rhs, carry), split_u128(expected));
     }
   }
 
@@ -4612,7 +4639,7 @@ mod tests {
     );
 
     bytes[63] = 1;
-    assert!(EcdsaP256Signature::from_bytes(bytes).is_ok());
+    EcdsaP256Signature::from_bytes(bytes).expect("nonzero in-range P-256 scalars form a valid signature encoding");
 
     let mut out_of_range = bytes;
     P256_ORDER.write_be(&mut out_of_range[..32]);
@@ -4632,7 +4659,7 @@ mod tests {
     );
 
     bytes[95] = 1;
-    assert!(EcdsaP384Signature::from_bytes(bytes).is_ok());
+    EcdsaP384Signature::from_bytes(bytes).expect("nonzero in-range P-384 scalars form a valid signature encoding");
 
     let mut out_of_range = bytes;
     P384_ORDER.write_be(&mut out_of_range[..48]);
@@ -4645,7 +4672,7 @@ mod tests {
   #[test]
   fn der_signature_parser_requires_canonical_unsigned_integers() {
     let good = [0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01];
-    assert!(EcdsaP256Signature::from_der(&good).is_ok());
+    EcdsaP256Signature::from_der(&good).expect("canonical unsigned DER integers must parse");
 
     let negative = [0x30, 0x07, 0x02, 0x02, 0x80, 0x01, 0x02, 0x01, 0x01];
     assert_eq!(
@@ -4693,8 +4720,8 @@ mod tests {
   #[test]
   fn p256_secret_key_one_derives_generator_public_key() {
     let mut one = [0u8; EcdsaP256SecretKey::LENGTH];
-    one[EcdsaP256SecretKey::LENGTH - 1] = 1;
-    let secret = EcdsaP256SecretKey::from_bytes(one).unwrap();
+    *one.last_mut().expect("P-256 scalar encoding is nonempty") = 1;
+    let secret = EcdsaP256SecretKey::from_bytes(one).expect("one is a valid P-256 secret scalar");
 
     assert_eq!(secret.public_key(), p256_public_key());
     assert_eq!(secret.public_key_blinded(|blind| blind.fill(0xa5)), p256_public_key());
@@ -4703,8 +4730,8 @@ mod tests {
   #[test]
   fn p384_secret_key_one_derives_generator_public_key() {
     let mut one = [0u8; EcdsaP384SecretKey::LENGTH];
-    one[EcdsaP384SecretKey::LENGTH - 1] = 1;
-    let secret = EcdsaP384SecretKey::from_bytes(one).unwrap();
+    *one.last_mut().expect("P-384 scalar encoding is nonempty") = 1;
+    let secret = EcdsaP384SecretKey::from_bytes(one).expect("one is a valid P-384 secret scalar");
 
     assert_eq!(secret.public_key(), p384_public_key());
     assert_eq!(secret.public_key_blinded(|blind| blind.fill(0x5a)), p384_public_key());
@@ -4712,21 +4739,28 @@ mod tests {
 
   #[test]
   fn p256_try_sign_is_deterministic_low_s_and_verifies() {
-    let secret = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH]).unwrap();
+    let secret = EcdsaP256SecretKey::from_bytes([0x42; EcdsaP256SecretKey::LENGTH])
+      .expect("fixture is a valid P-256 secret scalar");
     let public = secret.public_key();
     let message = b"rscrypto ecdsa p256 signing";
 
-    let first = secret.try_sign(message).unwrap();
-    let second = secret.try_sign(message).unwrap();
-    let blinded = secret.try_sign_blinded(message, |blind| blind.fill(0x7b)).unwrap();
+    let first = secret.try_sign(message).expect("valid P-256 signing fixture must sign");
+    let second = secret.try_sign(message).expect("valid P-256 signing fixture must sign");
+    let blinded = secret
+      .try_sign_blinded(message, |blind| blind.fill(0x7b))
+      .expect("valid P-256 blinded signing fixture must sign");
 
     assert_eq!(first, second);
-    assert!(public.verify(message, &first).is_ok());
-    assert!(public.verify(message, &blinded).is_ok());
+    public
+      .verify(message, &first)
+      .expect("fresh P-256 signature must verify");
+    public
+      .verify(message, &blinded)
+      .expect("fresh blinded P-256 signature must verify");
     assert_eq!(first, blinded);
     assert!(
       Uint::from_be_slice(&first.as_bytes()[32..])
-        .unwrap()
+        .expect("P-256 signature scalar has the fixed field width")
         .cmp(&P256_ORDER_HALF)
         .is_le()
     );
@@ -4734,21 +4768,28 @@ mod tests {
 
   #[test]
   fn p384_try_sign_is_deterministic_low_s_and_verifies() {
-    let secret = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH]).unwrap();
+    let secret = EcdsaP384SecretKey::from_bytes([0x24; EcdsaP384SecretKey::LENGTH])
+      .expect("fixture is a valid P-384 secret scalar");
     let public = secret.public_key();
     let message = b"rscrypto ecdsa p384 signing";
 
-    let first = secret.try_sign(message).unwrap();
-    let second = secret.try_sign(message).unwrap();
-    let blinded = secret.try_sign_blinded(message, |blind| blind.fill(0xb7)).unwrap();
+    let first = secret.try_sign(message).expect("valid P-384 signing fixture must sign");
+    let second = secret.try_sign(message).expect("valid P-384 signing fixture must sign");
+    let blinded = secret
+      .try_sign_blinded(message, |blind| blind.fill(0xb7))
+      .expect("valid P-384 blinded signing fixture must sign");
 
     assert_eq!(first, second);
-    assert!(public.verify(message, &first).is_ok());
-    assert!(public.verify(message, &blinded).is_ok());
+    public
+      .verify(message, &first)
+      .expect("fresh P-384 signature must verify");
+    public
+      .verify(message, &blinded)
+      .expect("fresh blinded P-384 signature must verify");
     assert_eq!(first, blinded);
     assert!(
       Uint::from_be_slice(&first.as_bytes()[48..])
-        .unwrap()
+        .expect("P-384 signature scalar has the fixed field width")
         .cmp(&P384_ORDER_HALF)
         .is_le()
     );
@@ -4814,6 +4855,36 @@ mod tests {
     all(target_arch = "x86_64", target_os = "linux")
   ))]
   #[test]
+  fn p384_portable_field_arithmetic_matches_platform_backend() {
+    let values = [
+      Uint::ZERO,
+      P384_FIELD_MONTGOMERY_ONE,
+      P384_GX,
+      P384_GY,
+      P384_B,
+      P384_FIELD.sub_raw(&Uint::ONE).0,
+    ];
+
+    for lhs in values {
+      assert_eq!(
+        ecdsa_p384_field::square(lhs.0),
+        ecdsa_platform_asm::p384_field_square(&lhs.0)
+      );
+
+      for rhs in values {
+        assert_eq!(
+          ecdsa_p384_field::mul(lhs.0, rhs.0),
+          ecdsa_platform_asm::p384_field_mul(&lhs.0, &rhs.0)
+        );
+      }
+    }
+  }
+
+  #[cfg(any(
+    all(target_arch = "aarch64", any(target_os = "macos", target_os = "linux")),
+    all(target_arch = "x86_64", target_os = "linux")
+  ))]
+  #[test]
   fn p384_platform_basepoint_matches_portable_comb_for_sample_scalars() {
     let scalars = [
       Uint::ONE,
@@ -4852,8 +4923,8 @@ mod tests {
 
     for row in [0usize, 1, 2, 23, 46] {
       for column in [0usize, 1, 3, 7] {
-        let bit = row + column * P384_SIGNING_COMB_ROWS;
-        let next_bit = bit + 1;
+        let bit = row.strict_add(column.strict_mul(P384_SIGNING_COMB_ROWS));
+        let next_bit = bit.strict_add(1);
         assert_p384_nonexceptional_comb_matches_complete(p384_sparse_scalar(&[bit, next_bit]));
       }
     }
@@ -4888,8 +4959,10 @@ mod tests {
   fn p384_owned_wide_order_reduction_matches_platform_reduction() {
     for bytes in [[0u8; 96], [0xffu8; 96], {
       let mut bytes = [0u8; 96];
-      for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = (index as u8).wrapping_mul(17).wrapping_add(0xa5);
+      let mut value = 0xa5u8;
+      for byte in &mut bytes {
+        *byte = value;
+        value = value.wrapping_add(17);
       }
       bytes
     }] {
@@ -4902,8 +4975,10 @@ mod tests {
 
   #[test]
   fn ecdsa_secret_key_debug_is_redacted() {
-    let p256 = EcdsaP256SecretKey::from_bytes([0x11; EcdsaP256SecretKey::LENGTH]).unwrap();
-    let p384 = EcdsaP384SecretKey::from_bytes([0x22; EcdsaP384SecretKey::LENGTH]).unwrap();
+    let p256 = EcdsaP256SecretKey::from_bytes([0x11; EcdsaP256SecretKey::LENGTH])
+      .expect("fixture is a valid P-256 secret scalar");
+    let p384 = EcdsaP384SecretKey::from_bytes([0x22; EcdsaP384SecretKey::LENGTH])
+      .expect("fixture is a valid P-384 secret scalar");
 
     assert_eq!(format!("{p256:?}"), "EcdsaP256SecretKey(****)");
     assert_eq!(format!("{p384:?}"), "EcdsaP384SecretKey(****)");

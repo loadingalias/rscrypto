@@ -1,5 +1,6 @@
 //! Blake2b portable compression function and kernel dispatch (RFC 7693).
 
+#[cfg(any(test, not(all(target_arch = "aarch64", target_os = "macos"))))]
 use crate::platform::Caps;
 #[cfg(target_arch = "riscv64")]
 use crate::platform::caps::riscv;
@@ -7,6 +8,7 @@ use crate::platform::caps::riscv;
 use crate::platform::caps::wasm;
 #[cfg(target_arch = "x86_64")]
 use crate::platform::caps::x86;
+use crate::traits::ct;
 
 /// Blake2b compress function pointer type.
 ///
@@ -50,14 +52,19 @@ impl Blake2bCounter {
   pub(crate) const fn as_u128(self) -> u128 {
     ((self.hi as u128) << 64) | self.lo as u128
   }
+
+  #[inline(always)]
+  pub(crate) fn zeroize_no_fence(&mut self) {
+    ct::zeroize_words_no_fence(core::slice::from_mut(&mut self.lo));
+    ct::zeroize_words_no_fence(core::slice::from_mut(&mut self.hi));
+  }
 }
 
 /// Blake2b kernel identifier.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-pub enum Blake2bKernelId {
+pub(crate) enum Blake2bKernelId {
   Portable = 0,
   #[cfg(target_arch = "x86_64")]
   X86Avx2 = 1,
@@ -73,7 +80,7 @@ impl Blake2bKernelId {
   #[cfg(any(test, feature = "diag"))]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "x86_64")]
@@ -115,14 +122,12 @@ fn compress_wasm_simd128(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: boo
 #[inline(always)]
 fn compress_blocks_with(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter, compress: CompressFn) {
   debug_assert_eq!(blocks.len() % 128, 0);
-  let mut chunks = blocks.chunks_exact(128);
-  for chunk in &mut chunks {
+  let (chunks, remainder) = blocks.as_chunks::<128>();
+  for block in chunks {
     t.add_len(128);
-    // SAFETY: `chunks_exact(128)` yields slices of exactly 128 bytes.
-    let block = unsafe { &*chunk.as_ptr().cast::<[u8; 128]>() };
     compress(h, block, t.as_u128(), false);
   }
-  debug_assert!(chunks.remainder().is_empty());
+  debug_assert!(remainder.is_empty());
 }
 
 fn compress_blocks_portable(h: &mut [u64; 8], blocks: &[u8], t: &mut Blake2bCounter) {
@@ -181,10 +186,10 @@ pub(crate) fn compress_blocks_fn(id: Blake2bKernelId) -> CompressBlocksFn {
 }
 
 /// Capabilities required to run the given kernel.
+#[cfg(any(test, not(all(target_arch = "aarch64", target_os = "macos"))))]
 #[inline]
 #[must_use]
-#[allow(dead_code)] // Used by runtime dispatch on targets that don't bypass to a fixed kernel.
-pub const fn required_caps(id: Blake2bKernelId) -> Caps {
+pub(crate) const fn required_caps(id: Blake2bKernelId) -> Caps {
   match id {
     Blake2bKernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "x86_64")]
@@ -200,7 +205,7 @@ pub const fn required_caps(id: Blake2bKernelId) -> Caps {
 
 /// All kernel IDs for agreement testing.
 #[cfg(test)]
-pub const ALL: &[Blake2bKernelId] = &[
+pub(crate) const ALL: &[Blake2bKernelId] = &[
   Blake2bKernelId::Portable,
   #[cfg(target_arch = "x86_64")]
   Blake2bKernelId::X86Avx2,
@@ -237,7 +242,6 @@ pub(crate) fn compile_time_best() -> CompressFn {
   {
     return compress_x86_avx2;
   }
-  #[allow(unreachable_code)]
   compress
 }
 
@@ -255,7 +259,6 @@ pub(crate) fn compile_time_best_blocks() -> CompressBlocksFn {
   {
     return compress_blocks_x86_avx2;
   }
-  #[allow(unreachable_code)]
   compress_blocks_portable
 }
 
@@ -272,7 +275,6 @@ pub(crate) const IV: [u64; 8] = [
 ];
 
 /// Message-word permutation schedule (10 rows, reused cyclically for 12 rounds).
-#[allow(dead_code)] // Used by target-specific SIMD backends that are not compiled on every host.
 pub(crate) const SIGMA: [[u8; 16]; 10] = [
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
   [14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3],
@@ -426,7 +428,6 @@ fn round(v: &mut [U64x4; 4], m: &[u64; 16], s: &[u8; 16]) {
 
 /// Load 16 little-endian u64 message words from a 128-byte block.
 #[inline(always)]
-#[allow(clippy::indexing_slicing)] // i is always in 0..16 (loop bound).
 pub(crate) fn load_msg(block: &[u8; 128]) -> [u64; 16] {
   let mut m = [0u64; 16];
   let src = block.as_ptr();
@@ -439,18 +440,28 @@ pub(crate) fn load_msg(block: &[u8; 128]) -> [u64; 16] {
   m
 }
 
+#[inline(always)]
+fn split_counter(counter: u128) -> (u64, u64) {
+  let [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15] = counter.to_le_bytes();
+  (
+    u64::from_le_bytes([b0, b1, b2, b3, b4, b5, b6, b7]),
+    u64::from_le_bytes([b8, b9, b10, b11, b12, b13, b14, b15]),
+  )
+}
+
 /// Initialize the 16-word working vector from state, IV, counter, and finalization flag.
 #[cfg(any(target_arch = "x86_64", target_arch = "wasm32", target_arch = "riscv64"))]
 #[inline(always)]
 pub(crate) fn init_v(h: &[u64; 8], t: u128, last: bool) -> [u64; 16] {
+  let (t0, t1) = split_counter(t);
   let mut v = [0u64; 16];
   v[..8].copy_from_slice(h);
   v[8] = IV[0];
   v[9] = IV[1];
   v[10] = IV[2];
   v[11] = IV[3];
-  v[12] = IV[4] ^ (t as u64);
-  v[13] = IV[5] ^ ((t >> 64) as u64);
+  v[12] = IV[4] ^ t0;
+  v[13] = IV[5] ^ t1;
   v[14] = if last { IV[6] ^ u64::MAX } else { IV[6] };
   v[15] = IV[7];
   v
@@ -460,11 +471,9 @@ pub(crate) fn init_v(h: &[u64; 8], t: u128, last: bool) -> [u64; 16] {
 ///
 /// `t` is the total number of input bytes after this block (inclusive).
 /// `last` is `true` for the final block (sets the finalization flag).
-#[allow(clippy::indexing_slicing)]
 pub(crate) fn compress(h: &mut [u64; 8], block: &[u8; 128], t: u128, last: bool) {
   let m = load_msg(block);
-  let t0 = t as u64;
-  let t1 = (t >> 64) as u64;
+  let (t0, t1) = split_counter(t);
   let f0 = if last { u64::MAX } else { 0 };
 
   let mut v = [

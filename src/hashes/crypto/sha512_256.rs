@@ -3,8 +3,6 @@
 //! SHA-512/256 is identical to SHA-512 except for initial hash values (H0) and
 //! output truncation (32 bytes / 4 words). The compression function is shared.
 
-#![allow(clippy::indexing_slicing)] // Fixed-size arrays in finalization
-
 use self::kernels::CompressBlocksFn;
 use super::sha512::Sha512;
 use crate::{
@@ -153,7 +151,7 @@ impl Sha512_256 {
     let state = Sha512::finalize_state_words(self.state, self.block, self.block_len, total_len, compress_blocks);
 
     let mut out = [0u8; 32];
-    for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+    for (chunk, &word) in out.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
@@ -168,9 +166,9 @@ impl Drop for Sha512_256 {
     }
     crate::traits::ct::zeroize(&mut self.block);
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.bytes_hashed, 0) };
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }

@@ -4,15 +4,15 @@ Replace `crc-fast`'s enum-driven `checksum(CrcAlgorithm::*, data)` calls with
 rscrypto's named CRC types. The mapped algorithms keep the same CRC parameters,
 but rscrypto returns each algorithm's natural integer width instead of `u64`.
 
-Verified against `crc-fast = "1.10.0"` and the `rscrypto` 0.7.8 line.
+Verified against `crc-fast = "1.10.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/crc16_properties.rs`, `tests/crc32_properties.rs`, and
 `tests/crc64_properties.rs`.
 
 ## TL;DR
 
-| | Before (`crc-fast` 1.x) | After (`rscrypto` 0.7.8) |
+| | Before (`crc-fast` 1.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `crc-fast = "1.10"` | `rscrypto = { version = "0.7.8", features = ["crc32", "crc64"] }` |
+| Cargo dep | `crc-fast = "1.10"` | `rscrypto = { version = "0.8.1", features = ["crc32", "crc64"] }` |
 | Import | `use crc_fast::{checksum, CrcAlgorithm};` | `use rscrypto::checksum::{Checksum, Crc32};` |
 | Call | `checksum(CrcAlgorithm::Crc32IsoHdlc, data) as u32` | `Crc32::checksum(data)` |
 
@@ -27,7 +27,7 @@ crc-fast = "1.10"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["crc32", "crc64"] }
+rscrypto = { version = "0.8.1", features = ["crc32", "crc64"] }
 ```
 
 Add `crc16` or `crc24` only when you migrate a mapped variant from those

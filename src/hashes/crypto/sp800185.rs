@@ -1,7 +1,5 @@
 //! SP 800-185 framing helpers shared by cSHAKE and KMAC.
 
-#![allow(clippy::indexing_slicing)] // Fixed-width 9-byte encodings and rate-sized padding buffers.
-
 use super::keccak::KeccakCore;
 
 /// cSHAKE128 / KMAC128 bitrate in bytes.
@@ -18,10 +16,10 @@ fn encode_u64_be(value: u64, out: &mut [u8; 9], right: bool) -> usize {
 
   if right {
     out[..width].copy_from_slice(&bytes[first..]);
-    out[width] = width as u8;
+    out[width] = u8::try_from(width).expect("SP 800-185 integer width is at most eight bytes");
     width.strict_add(1)
   } else {
-    out[0] = width as u8;
+    out[0] = u8::try_from(width).expect("SP 800-185 integer width is at most eight bytes");
     out[1..=width].copy_from_slice(&bytes[first..]);
     width.strict_add(1)
   }
@@ -48,14 +46,15 @@ pub(crate) fn encoded_string_len(data: &[u8]) -> usize {
 }
 
 pub(crate) fn absorb_bytepad<const RATE: usize>(core: &mut KeccakCore<RATE>, segments: &[&[u8]], payload_len: usize) {
-  let (prefix, prefix_len) = left_encode(RATE as u64);
+  let rate = u64::try_from(RATE).expect("Keccak rate must fit u64");
+  let (prefix, prefix_len) = left_encode(rate);
   core.update(&prefix[..prefix_len]);
   for segment in segments {
     core.update(segment);
   }
 
   let total_len = prefix_len.strict_add(payload_len);
-  let rem = total_len % RATE;
+  let rem = total_len.strict_rem(RATE);
   if rem != 0 {
     core.update(&[0u8; RATE][..RATE.strict_sub(rem)]);
   }

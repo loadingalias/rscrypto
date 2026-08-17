@@ -203,14 +203,18 @@ impl Xxh3Hasher {
       *buffered = 0;
     }
 
-    let direct_len = input.len().saturating_sub(1) / INTERNAL_BUFFER_SIZE * INTERNAL_BUFFER_SIZE;
+    let direct_len = input
+      .len()
+      .saturating_sub(1)
+      .strict_div(INTERNAL_BUFFER_SIZE)
+      .strict_mul(INTERNAL_BUFFER_SIZE);
     let processed_direct = direct_len != 0;
     if processed_direct {
       let kernel = *stream_accumulate.get_or_insert_with(dispatch::stream_accumulate_fn);
       (*acc, *accumulated_stripes) = consume_stripes(
         kernel,
         *acc,
-        direct_len / STRIPE_LEN,
+        direct_len.strict_div(STRIPE_LEN),
         *accumulated_stripes,
         &input[..direct_len],
         secret,
@@ -459,7 +463,11 @@ mod tests {
   use crate::traits::FastHash;
 
   fn data(len: usize) -> Vec<u8> {
-    (0..len).map(|i| i.wrapping_mul(131).wrapping_add(17) as u8).collect()
+    (u8::MIN..=u8::MAX)
+      .cycle()
+      .take(len)
+      .map(|i| i.wrapping_mul(131).wrapping_add(17))
+      .collect()
   }
 
   #[test]
@@ -675,7 +683,7 @@ mod tests {
   }
 
   #[test]
-  #[should_panic]
+  #[should_panic(expected = "assertion failed: count.strict_mul(STRIPE_LEN) <= input.len()")]
   fn consume_stripes_rejects_short_input_before_kernel_call() {
     use super::super::kernels::{Xxh3KernelId, stream_accumulate_fn};
 

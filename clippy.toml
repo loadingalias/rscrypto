@@ -1,0 +1,2 @@
+check-private-items = true
+check-incompatible-msrv-in-tests = true

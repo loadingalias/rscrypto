@@ -27,16 +27,28 @@
 //! `s390x::VECTOR`.
 
 #![cfg(target_arch = "s390x")]
-#![allow(unsafe_code)]
-#![allow(clippy::cast_possible_truncation)]
 
 use core::simd::i64x2;
 
 use super::BLOCK_WORDS;
 
+struct VectorState {
+  a_lo: i64x2,
+  a_hi: i64x2,
+  b_lo: i64x2,
+  b_hi: i64x2,
+  c_lo: i64x2,
+  c_hi: i64x2,
+  d_lo: i64x2,
+  d_hi: i64x2,
+}
+
 // ─── Inline-asm primitives (z13+ vector facility) ──────────────────────────
 
 #[target_feature(enable = "vector")]
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
   // SAFETY: z13+ vector facility via target_feature.
@@ -53,6 +65,9 @@ unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 #[target_feature(enable = "vector")]
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
   // SAFETY: z13+ vector facility via target_feature.
@@ -69,6 +84,10 @@ unsafe fn vx(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 32 = ROR 32.
+///
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn verllg_32(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -85,6 +104,10 @@ unsafe fn verllg_32(x: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 40 = ROR 24.
+///
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn verllg_40(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -101,6 +124,10 @@ unsafe fn verllg_40(x: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 48 = ROR 16.
+///
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn verllg_48(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -117,6 +144,10 @@ unsafe fn verllg_48(x: i64x2) -> i64x2 {
 }
 
 /// `verllg` ROL by 1 = ROR 63.
+///
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn verllg_1(x: i64x2) -> i64x2 {
   let out: i64x2;
@@ -143,15 +174,22 @@ fn pair_b1_a0(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 #[inline(always)]
+/// # Safety
+///
+/// `p` must remain valid to read two initialized `u64` values from one
+/// allocation.
 unsafe fn vload_pair(p: *const u64) -> i64x2 {
   // SAFETY: caller ensures p is valid for 2 × u64.
-  unsafe { core::ptr::read_unaligned(p as *const i64x2) }
+  unsafe { core::ptr::read_unaligned(p.cast()) }
 }
 
 #[inline(always)]
+/// # Safety
+///
+/// `p` must remain valid to write two `u64` values into one allocation.
 unsafe fn vstore_pair(p: *mut u64, v: i64x2) {
   // SAFETY: caller ensures p is valid for 2 × u64.
-  unsafe { core::ptr::write_unaligned(p as *mut i64x2, v) }
+  unsafe { core::ptr::write_unaligned(p.cast(), v) }
 }
 
 /// `2 · lsb(a) · lsb(b)` lane-wise — scalar fallback (z13 has no native
@@ -162,108 +200,94 @@ fn bla_mul(a: i64x2, b: i64x2) -> i64x2 {
   let aa = a.to_array();
   let bb = b.to_array();
   const MASK: u64 = 0xffff_ffff;
-  let r0 = ((aa[0] as u64) & MASK)
-    .wrapping_mul((bb[0] as u64) & MASK)
+  let r0 = (aa[0].cast_unsigned() & MASK)
+    .wrapping_mul(bb[0].cast_unsigned() & MASK)
     .wrapping_shl(1);
-  let r1 = ((aa[1] as u64) & MASK)
-    .wrapping_mul((bb[1] as u64) & MASK)
+  let r1 = (aa[1].cast_unsigned() & MASK)
+    .wrapping_mul(bb[1].cast_unsigned() & MASK)
     .wrapping_shl(1);
-  i64x2::from_array([r0 as i64, r1 as i64])
+  i64x2::from_array([r0.cast_signed(), r1.cast_signed()])
 }
 
 // ─── 4-way P-round ─────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 #[target_feature(enable = "vector")]
-unsafe fn p_round(
-  a_lo: &mut i64x2,
-  a_hi: &mut i64x2,
-  b_lo: &mut i64x2,
-  b_hi: &mut i64x2,
-  c_lo: &mut i64x2,
-  c_hi: &mut i64x2,
-  d_lo: &mut i64x2,
-  d_hi: &mut i64x2,
-) {
+unsafe fn p_round(state: &mut VectorState) {
   // SAFETY: vector facility inherited.
   unsafe {
-    gb(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi);
+    gb(state);
 
-    let tb_lo = *b_lo;
-    let tb_hi = *b_hi;
-    *b_lo = pair_a1_b0(tb_lo, tb_hi);
-    *b_hi = pair_b1_a0(tb_lo, tb_hi);
+    let b_lo = state.b_lo;
+    let b_hi = state.b_hi;
+    state.b_lo = pair_a1_b0(b_lo, b_hi);
+    state.b_hi = pair_b1_a0(b_lo, b_hi);
 
-    core::mem::swap(c_lo, c_hi);
+    core::mem::swap(&mut state.c_lo, &mut state.c_hi);
 
-    let td_lo = *d_lo;
-    let td_hi = *d_hi;
-    *d_lo = pair_b1_a0(td_lo, td_hi);
-    *d_hi = pair_a1_b0(td_lo, td_hi);
+    let d_lo = state.d_lo;
+    let d_hi = state.d_hi;
+    state.d_lo = pair_b1_a0(d_lo, d_hi);
+    state.d_hi = pair_a1_b0(d_lo, d_hi);
 
-    gb(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi);
+    gb(state);
 
-    let tb_lo = *b_lo;
-    let tb_hi = *b_hi;
-    *b_lo = pair_b1_a0(tb_lo, tb_hi);
-    *b_hi = pair_a1_b0(tb_lo, tb_hi);
+    let b_lo = state.b_lo;
+    let b_hi = state.b_hi;
+    state.b_lo = pair_b1_a0(b_lo, b_hi);
+    state.b_hi = pair_a1_b0(b_lo, b_hi);
 
-    core::mem::swap(c_lo, c_hi);
+    core::mem::swap(&mut state.c_lo, &mut state.c_hi);
 
-    let td_lo = *d_lo;
-    let td_hi = *d_hi;
-    *d_lo = pair_a1_b0(td_lo, td_hi);
-    *d_hi = pair_b1_a0(td_lo, td_hi);
+    let d_lo = state.d_lo;
+    let d_hi = state.d_hi;
+    state.d_lo = pair_a1_b0(d_lo, d_hi);
+    state.d_hi = pair_b1_a0(d_lo, d_hi);
   }
 }
 
 // ─── 4-way BlaMka G ────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
+/// # Safety
+///
+/// The current CPU must support the z13+ vector facility.
 #[target_feature(enable = "vector")]
-unsafe fn gb(
-  a_lo: &mut i64x2,
-  a_hi: &mut i64x2,
-  b_lo: &mut i64x2,
-  b_hi: &mut i64x2,
-  c_lo: &mut i64x2,
-  c_hi: &mut i64x2,
-  d_lo: &mut i64x2,
-  d_hi: &mut i64x2,
-) {
+unsafe fn gb(state: &mut VectorState) {
   // SAFETY: vector facility inherited.
   unsafe {
     // Step 1
-    let p_lo = bla_mul(*a_lo, *b_lo);
-    let p_hi = bla_mul(*a_hi, *b_hi);
-    *a_lo = vag(vag(*a_lo, *b_lo), p_lo);
-    *a_hi = vag(vag(*a_hi, *b_hi), p_hi);
-    *d_lo = verllg_32(vx(*d_lo, *a_lo));
-    *d_hi = verllg_32(vx(*d_hi, *a_hi));
+    let p_lo = bla_mul(state.a_lo, state.b_lo);
+    let p_hi = bla_mul(state.a_hi, state.b_hi);
+    state.a_lo = vag(vag(state.a_lo, state.b_lo), p_lo);
+    state.a_hi = vag(vag(state.a_hi, state.b_hi), p_hi);
+    state.d_lo = verllg_32(vx(state.d_lo, state.a_lo));
+    state.d_hi = verllg_32(vx(state.d_hi, state.a_hi));
 
     // Step 2
-    let p_lo = bla_mul(*c_lo, *d_lo);
-    let p_hi = bla_mul(*c_hi, *d_hi);
-    *c_lo = vag(vag(*c_lo, *d_lo), p_lo);
-    *c_hi = vag(vag(*c_hi, *d_hi), p_hi);
-    *b_lo = verllg_40(vx(*b_lo, *c_lo));
-    *b_hi = verllg_40(vx(*b_hi, *c_hi));
+    let p_lo = bla_mul(state.c_lo, state.d_lo);
+    let p_hi = bla_mul(state.c_hi, state.d_hi);
+    state.c_lo = vag(vag(state.c_lo, state.d_lo), p_lo);
+    state.c_hi = vag(vag(state.c_hi, state.d_hi), p_hi);
+    state.b_lo = verllg_40(vx(state.b_lo, state.c_lo));
+    state.b_hi = verllg_40(vx(state.b_hi, state.c_hi));
 
     // Step 3
-    let p_lo = bla_mul(*a_lo, *b_lo);
-    let p_hi = bla_mul(*a_hi, *b_hi);
-    *a_lo = vag(vag(*a_lo, *b_lo), p_lo);
-    *a_hi = vag(vag(*a_hi, *b_hi), p_hi);
-    *d_lo = verllg_48(vx(*d_lo, *a_lo));
-    *d_hi = verllg_48(vx(*d_hi, *a_hi));
+    let p_lo = bla_mul(state.a_lo, state.b_lo);
+    let p_hi = bla_mul(state.a_hi, state.b_hi);
+    state.a_lo = vag(vag(state.a_lo, state.b_lo), p_lo);
+    state.a_hi = vag(vag(state.a_hi, state.b_hi), p_hi);
+    state.d_lo = verllg_48(vx(state.d_lo, state.a_lo));
+    state.d_hi = verllg_48(vx(state.d_hi, state.a_hi));
 
     // Step 4
-    let p_lo = bla_mul(*c_lo, *d_lo);
-    let p_hi = bla_mul(*c_hi, *d_hi);
-    *c_lo = vag(vag(*c_lo, *d_lo), p_lo);
-    *c_hi = vag(vag(*c_hi, *d_hi), p_hi);
-    *b_lo = verllg_1(vx(*b_lo, *c_lo));
-    *b_hi = verllg_1(vx(*b_hi, *c_hi));
+    let p_lo = bla_mul(state.c_lo, state.d_lo);
+    let p_hi = bla_mul(state.c_hi, state.d_hi);
+    state.c_lo = vag(vag(state.c_lo, state.d_lo), p_lo);
+    state.c_hi = vag(vag(state.c_hi, state.d_hi), p_hi);
+    state.b_lo = verllg_1(vx(state.b_lo, state.c_lo));
+    state.b_hi = verllg_1(vx(state.b_hi, state.c_hi));
   }
 }
 
@@ -289,74 +313,74 @@ pub(super) unsafe fn compress_vector(
   unsafe {
     let mut r = [0u64; BLOCK_WORDS];
     let mut q = [0u64; BLOCK_WORDS];
-    let mut i = 0;
+    let mut i = 0usize;
     while i < BLOCK_WORDS {
       let xv = vload_pair(x.as_ptr().add(i));
       let yv = vload_pair(y.as_ptr().add(i));
       let rv = vx(xv, yv);
       vstore_pair(r.as_mut_ptr().add(i), rv);
       vstore_pair(q.as_mut_ptr().add(i), rv);
-      i += 2;
+      i = i.strict_add(2);
     }
 
     // Row pass.
     let mut row = 0usize;
     while row < 8 {
-      let base = row * 16;
-      let mut a_lo = vload_pair(q.as_ptr().add(base));
-      let mut a_hi = vload_pair(q.as_ptr().add(base + 2));
-      let mut b_lo = vload_pair(q.as_ptr().add(base + 4));
-      let mut b_hi = vload_pair(q.as_ptr().add(base + 6));
-      let mut c_lo = vload_pair(q.as_ptr().add(base + 8));
-      let mut c_hi = vload_pair(q.as_ptr().add(base + 10));
-      let mut d_lo = vload_pair(q.as_ptr().add(base + 12));
-      let mut d_hi = vload_pair(q.as_ptr().add(base + 14));
+      let base = row.strict_mul(16);
+      let mut state = VectorState {
+        a_lo: vload_pair(q.as_ptr().add(base)),
+        a_hi: vload_pair(q.as_ptr().add(base.strict_add(2))),
+        b_lo: vload_pair(q.as_ptr().add(base.strict_add(4))),
+        b_hi: vload_pair(q.as_ptr().add(base.strict_add(6))),
+        c_lo: vload_pair(q.as_ptr().add(base.strict_add(8))),
+        c_hi: vload_pair(q.as_ptr().add(base.strict_add(10))),
+        d_lo: vload_pair(q.as_ptr().add(base.strict_add(12))),
+        d_hi: vload_pair(q.as_ptr().add(base.strict_add(14))),
+      };
 
-      p_round(
-        &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-      );
+      p_round(&mut state);
 
-      vstore_pair(q.as_mut_ptr().add(base), a_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 2), a_hi);
-      vstore_pair(q.as_mut_ptr().add(base + 4), b_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 6), b_hi);
-      vstore_pair(q.as_mut_ptr().add(base + 8), c_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 10), c_hi);
-      vstore_pair(q.as_mut_ptr().add(base + 12), d_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 14), d_hi);
-      row += 1;
+      vstore_pair(q.as_mut_ptr().add(base), state.a_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(2)), state.a_hi);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(4)), state.b_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(6)), state.b_hi);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(8)), state.c_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(10)), state.c_hi);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(12)), state.d_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(14)), state.d_hi);
+      row = row.strict_add(1);
     }
 
     // Column pass.
     let mut col = 0usize;
     while col < 8 {
-      let base = col * 2;
-      let mut a_lo = vload_pair(q.as_ptr().add(base));
-      let mut a_hi = vload_pair(q.as_ptr().add(base + 16));
-      let mut b_lo = vload_pair(q.as_ptr().add(base + 32));
-      let mut b_hi = vload_pair(q.as_ptr().add(base + 48));
-      let mut c_lo = vload_pair(q.as_ptr().add(base + 64));
-      let mut c_hi = vload_pair(q.as_ptr().add(base + 80));
-      let mut d_lo = vload_pair(q.as_ptr().add(base + 96));
-      let mut d_hi = vload_pair(q.as_ptr().add(base + 112));
+      let base = col.strict_mul(2);
+      let mut state = VectorState {
+        a_lo: vload_pair(q.as_ptr().add(base)),
+        a_hi: vload_pair(q.as_ptr().add(base.strict_add(16))),
+        b_lo: vload_pair(q.as_ptr().add(base.strict_add(32))),
+        b_hi: vload_pair(q.as_ptr().add(base.strict_add(48))),
+        c_lo: vload_pair(q.as_ptr().add(base.strict_add(64))),
+        c_hi: vload_pair(q.as_ptr().add(base.strict_add(80))),
+        d_lo: vload_pair(q.as_ptr().add(base.strict_add(96))),
+        d_hi: vload_pair(q.as_ptr().add(base.strict_add(112))),
+      };
 
-      p_round(
-        &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-      );
+      p_round(&mut state);
 
-      vstore_pair(q.as_mut_ptr().add(base), a_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 16), a_hi);
-      vstore_pair(q.as_mut_ptr().add(base + 32), b_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 48), b_hi);
-      vstore_pair(q.as_mut_ptr().add(base + 64), c_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 80), c_hi);
-      vstore_pair(q.as_mut_ptr().add(base + 96), d_lo);
-      vstore_pair(q.as_mut_ptr().add(base + 112), d_hi);
-      col += 1;
+      vstore_pair(q.as_mut_ptr().add(base), state.a_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(16)), state.a_hi);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(32)), state.b_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(48)), state.b_hi);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(64)), state.c_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(80)), state.c_hi);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(96)), state.d_lo);
+      vstore_pair(q.as_mut_ptr().add(base.strict_add(112)), state.d_hi);
+      col = col.strict_add(1);
     }
 
     // Final XOR with R, fused with dst store/xor.
-    let mut i = 0;
+    let mut i = 0usize;
     while i < BLOCK_WORDS {
       let qv = vload_pair(q.as_ptr().add(i));
       let rv = vload_pair(r.as_ptr().add(i));
@@ -367,7 +391,7 @@ pub(super) unsafe fn compress_vector(
       } else {
         vstore_pair(dst.as_mut_ptr().add(i), f);
       }
-      i += 2;
+      i = i.strict_add(2);
     }
   }
 }

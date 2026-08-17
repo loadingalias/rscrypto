@@ -9,16 +9,15 @@
 //! Uses `unsafe` for Power SIMD + inline assembly. Callers must ensure the
 //! required CPU features are available before executing the accelerated path
 //! (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
-#![allow(clippy::indexing_slicing)]
 
 use core::{
   arch::asm,
   ops::{BitAnd, BitXor, BitXorAssign},
   simd::i64x2,
 };
+
+use crate::checksum::common::low_u32;
 
 use super::{
   keys::{CRC24_OPENPGP_KEYS_REFLECTED, CRC24_OPENPGP_STREAM_REFLECTED},
@@ -87,11 +86,13 @@ impl Simd {
   }
 
   /// Normalize a loaded vector to little-endian lane encoding.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
   #[inline]
   #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
   unsafe fn to_le(self) -> Self {
-    // SAFETY: All intrinsics and asm require altivec+vsx+power8-vector, ensured by this function's
-    // #[target_feature] attribute.
     #[cfg(target_endian = "little")]
     {
       self
@@ -117,6 +118,9 @@ impl Simd {
     Self::new(bitrev_bytes_u64(self.high_64()), bitrev_bytes_u64(self.low_64()))
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -140,6 +144,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -157,6 +164,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -170,6 +180,9 @@ impl Simd {
     unsafe { Self(Self::vpmsumd(self.0, coeff.swap_lanes().0)) }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -183,6 +196,9 @@ impl Simd {
     unsafe { data_to_xor ^ self.fold_16(coeff) }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -208,6 +224,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -221,11 +240,14 @@ impl Simd {
     unsafe {
       let t1 = Self::mul64(self.low_64(), mu);
       let l = Self::mul64(t1.low_64(), poly);
-      (self ^ l).high_64() as u32
+      low_u32((self ^ l).high_64())
     }
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -251,6 +273,9 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u3
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -295,6 +320,9 @@ unsafe fn update_simd_width32_reflected_bitrev(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -317,6 +345,9 @@ unsafe fn fold_block_128_reflected_bitrev(x: &mut [Simd; 8], chunk: &[Simd; 8], 
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -340,6 +371,9 @@ unsafe fn normalize_block_le_bitrev(mut block: [Simd; 8]) -> [Simd; 8] {
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -400,6 +434,9 @@ unsafe fn update_simd_width32_reflected_bitrev_2way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -426,7 +463,7 @@ unsafe fn update_simd_width32_reflected_bitrev_4way(
       return update_simd_width32_reflected_bitrev(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = blocks.len() & !3_usize;
 
     let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
     let coeff_128 = Simd::new(keys[4], keys[3]);
@@ -487,6 +524,9 @@ unsafe fn update_simd_width32_reflected_bitrev_4way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -513,7 +553,7 @@ unsafe fn update_simd_width32_reflected_bitrev_8way(
       return update_simd_width32_reflected_bitrev(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = blocks.len() & !7_usize;
 
     let coeff_1024 = Simd::new(fold_1024b.0, fold_1024b.1);
     let coeff_128 = Simd::new(keys[4], keys[3]);
@@ -622,6 +662,9 @@ unsafe fn update_simd_width32_reflected_bitrev_8way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -645,6 +688,9 @@ unsafe fn crc24_width32_vpmsum_bitrev(mut state: u32, data: &[u8], keys: &[u64; 
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -668,6 +714,9 @@ unsafe fn crc24_width32_vpmsum_bitrev_2way(mut state: u32, data: &[u8], keys: &[
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -697,6 +746,9 @@ unsafe fn crc24_width32_vpmsum_bitrev_4way(mut state: u32, data: &[u8], keys: &[
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -730,11 +782,9 @@ unsafe fn crc24_width32_vpmsum_bitrev_8way(mut state: u32, data: &[u8], keys: &[
 
 /// CRC-24/OPENPGP VPMSUMD kernel.
 ///
-/// # Safety
-///
-/// Dispatcher verifies VPMSUMD before selecting this kernel.
+/// Runtime dispatch selects this kernel only when VPMSUMD is available.
 #[inline]
-pub fn crc24_openpgp_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   state = unsafe { crc24_width32_vpmsum_bitrev(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
@@ -742,7 +792,7 @@ pub fn crc24_openpgp_vpmsum_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc24_openpgp_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   state = unsafe { crc24_width32_vpmsum_bitrev_2way(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
@@ -750,7 +800,7 @@ pub fn crc24_openpgp_vpmsum_2way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc24_openpgp_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   state = unsafe { crc24_width32_vpmsum_bitrev_4way(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
@@ -758,7 +808,7 @@ pub fn crc24_openpgp_vpmsum_4way_safe(crc: u32, data: &[u8]) -> u32 {
 }
 
 #[inline]
-pub fn crc24_openpgp_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpmsum_8way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   state = unsafe { crc24_width32_vpmsum_bitrev_8way(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };

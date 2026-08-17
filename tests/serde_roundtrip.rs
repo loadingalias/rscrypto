@@ -13,7 +13,8 @@ macro_rules! serde_roundtrip {
       let bytes = {
         let mut b = [0u8; $len];
         for (i, v) in b.iter_mut().enumerate() {
-          *v = (i as u8).wrapping_mul(0x37).wrapping_add(0x11);
+          let i = u8::try_from(i).expect("serde fixture index must fit in one byte");
+          *v = i.wrapping_mul(0x37).wrapping_add(0x11);
         }
         b
       };
@@ -154,10 +155,10 @@ fn wrong_length_bytes_rejected() {
   use rscrypto::aead::Nonce96;
 
   // Nonce96 is 12 bytes; feeding 11 or 13 must fail.
-  let short = serde_json::to_string(&[0u8; 11]).unwrap();
-  let long = serde_json::to_string(&[0u8; 13]).unwrap();
-  assert!(serde_json::from_str::<Nonce96>(&short).is_err());
-  assert!(serde_json::from_str::<Nonce96>(&long).is_err());
+  let short = serde_json::to_string(&[0u8; 11]).expect("short nonce fixture must serialize");
+  let long = serde_json::to_string(&[0u8; 13]).expect("long nonce fixture must serialize");
+  serde_json::from_str::<Nonce96>(&short).expect_err("11-byte nonce must be rejected");
+  serde_json::from_str::<Nonce96>(&long).expect_err("13-byte nonce must be rejected");
 }
 
 #[cfg(all(feature = "serde-secrets", feature = "aes-gcm"))]
@@ -165,11 +166,12 @@ fn wrong_length_bytes_rejected() {
 fn secret_sequence_rejects_partial_and_wrong_length_inputs() {
   use rscrypto::Aes256GcmKey;
 
-  assert!(serde_json::from_str::<Aes256GcmKey>("[17,34]").is_err());
-  assert!(serde_json::from_str::<Aes256GcmKey>("[17,\"not-a-byte\"]").is_err());
+  serde_json::from_str::<Aes256GcmKey>("[17,34]").expect_err("partial AES-256-GCM key must be rejected");
+  serde_json::from_str::<Aes256GcmKey>("[17,\"not-a-byte\"]")
+    .expect_err("non-byte AES-256-GCM key element must be rejected");
 
   let exact = vec![0x42u8; Aes256GcmKey::LENGTH];
-  let encoded = serde_json::to_string(&exact).unwrap();
-  let key = serde_json::from_str::<Aes256GcmKey>(&encoded).unwrap();
+  let encoded = serde_json::to_string(&exact).expect("exact-length key fixture must serialize");
+  let key = serde_json::from_str::<Aes256GcmKey>(&encoded).expect("exact-length AES-256-GCM key must deserialize");
   assert_eq!(key.as_bytes(), exact.as_slice());
 }

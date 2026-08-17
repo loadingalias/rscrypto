@@ -1,7 +1,7 @@
 use rscrypto::{Ed25519SecretKey, Ed25519Signature};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let message = input.rest();

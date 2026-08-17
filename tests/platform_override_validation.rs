@@ -18,7 +18,7 @@ fn safe_override_rejects_impossible_caps_and_still_allows_portable() {
   );
 
   let portable = Detected::portable();
-  expert::try_set_override(Some(portable)).unwrap();
+  expert::try_set_override(Some(portable)).expect("portable override must be accepted before detection");
   assert!(expert::has_override());
   assert_eq!(platform::get(), portable);
 
@@ -33,7 +33,7 @@ fn safe_override_rejects_impossible_caps_and_still_allows_portable() {
 
   #[cfg(miri)]
   {
-    expert::try_set_override(None).unwrap();
+    expert::try_set_override(None).expect("Miri override must remain mutable");
     assert!(!expert::has_override());
   }
 }

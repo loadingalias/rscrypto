@@ -5,7 +5,7 @@ use crate::checksum::common::portable;
 
 /// CRC-24/OPENPGP slice-by-8 computation.
 #[inline]
-pub fn crc24_openpgp_slice8(crc: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn crc24_openpgp_slice8(crc: u32, data: &[u8]) -> u32 {
   portable::slice8_24(crc, data, &kernel_tables::OPENPGP_TABLES_8)
 }
 
@@ -15,8 +15,7 @@ pub fn crc24_openpgp_slice8(crc: u32, data: &[u8]) -> u32 {
 ///
 /// Uses one 256-entry table rather than the slice-by-8 table set.
 #[inline(always)]
-#[allow(clippy::indexing_slicing)] // index is 0..=255 by byte cast, table is [u32; 256]
-pub fn crc24_openpgp_bytewise(crc: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) fn crc24_openpgp_bytewise(crc: u32, data: &[u8]) -> u32 {
   const MASK24: u32 = 0x00FF_FFFF;
   let mut state = (crc & MASK24) << 8;
   for &byte in data {

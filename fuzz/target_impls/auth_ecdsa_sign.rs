@@ -7,7 +7,7 @@ use p384::ecdsa::{
 use rscrypto::{EcdsaP256Keypair, EcdsaP256SecretKey, EcdsaP384Keypair, EcdsaP384SecretKey};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let selector = some_or_return!(input.byte());
 
@@ -25,15 +25,21 @@ fn run_p256(input: &mut FuzzInput<'_>) {
   let message = input.rest();
   let public = keypair.public_key();
   let signature = some_or_return!(keypair.try_sign(message).ok());
-  let oracle_public = P256OracleVerifyingKey::from_sec1_bytes(&public.to_sec1_bytes()).expect("derived P-256 public key");
+  let oracle_public =
+    P256OracleVerifyingKey::from_sec1_bytes(&public.to_sec1_bytes()).expect("derived P-256 public key");
   let oracle_signature = P256OracleSignature::from_slice(signature.as_bytes()).expect("derived P-256 signature");
 
-  assert!(public.verify(message, &signature).is_ok());
-  assert!(P256Verifier::verify(&oracle_public, message, &oracle_signature).is_ok());
+  public
+    .verify(message, &signature)
+    .expect("P-256 public key must verify its own signature");
+  P256Verifier::verify(&oracle_public, message, &oracle_signature)
+    .expect("P-256 oracle must verify the equivalent signature");
 
   let mut tampered = message.to_vec();
   tampered.push(0x80);
-  assert!(public.verify(&tampered, &signature).is_err());
+  let _verification_error = public
+    .verify(&tampered, &signature)
+    .expect_err("P-256 verification must reject a tampered message");
 }
 
 fn run_p384(input: &mut FuzzInput<'_>) {
@@ -43,13 +49,19 @@ fn run_p384(input: &mut FuzzInput<'_>) {
   let message = input.rest();
   let public = keypair.public_key();
   let signature = some_or_return!(keypair.try_sign(message).ok());
-  let oracle_public = P384OracleVerifyingKey::from_sec1_bytes(&public.to_sec1_bytes()).expect("derived P-384 public key");
+  let oracle_public =
+    P384OracleVerifyingKey::from_sec1_bytes(&public.to_sec1_bytes()).expect("derived P-384 public key");
   let oracle_signature = P384OracleSignature::from_slice(signature.as_bytes()).expect("derived P-384 signature");
 
-  assert!(public.verify(message, &signature).is_ok());
-  assert!(P384Verifier::verify(&oracle_public, message, &oracle_signature).is_ok());
+  public
+    .verify(message, &signature)
+    .expect("P-384 public key must verify its own signature");
+  P384Verifier::verify(&oracle_public, message, &oracle_signature)
+    .expect("P-384 oracle must verify the equivalent signature");
 
   let mut tampered = message.to_vec();
   tampered.push(0x80);
-  assert!(public.verify(&tampered, &signature).is_err());
+  let _verification_error = public
+    .verify(&tampered, &signature)
+    .expect_err("P-384 verification must reject a tampered message");
 }

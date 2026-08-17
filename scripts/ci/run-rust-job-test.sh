@@ -292,7 +292,7 @@ grep -Fq \
   "$CAPTURE/amx-cargo.args" \
   || fail "AMX integration test existence was not checked under the required permission contract"
 grep -Fq \
-  'RUSTFLAGS=-A unstable-features -C target-feature=+amx-tile,+amx-bf16,+amx-int8' \
+  'RUSTFLAGS=-C target-feature=+amx-tile,+amx-bf16,+amx-int8' \
   "$CAPTURE/amx-cargo.args" \
   || fail "AMX no_std test existence was not checked with forced AMX target features"
 

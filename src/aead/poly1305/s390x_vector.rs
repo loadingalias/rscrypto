@@ -8,6 +8,11 @@ pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) 
   unsafe { compute_block_impl(state, block, partial) }
 }
 
+/// Process one Poly1305 block through the s390x vector multiplier.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[target_feature(enable = "vector")]
 unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
   compute_block_scalar_reduction(state, block, partial, |lhs, rhs| {
@@ -20,6 +25,10 @@ unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool)
 ///
 /// Computes `lhs[0]*rhs[0] + lhs[1]*rhs[1] + lhs[2]*rhs[2] + lhs[3]*rhs[3]`
 /// using two 128-bit multiply-odd and one 128-bit add.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
@@ -35,11 +44,15 @@ unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
 
     let sum = vag(prod_lo, prod_hi);
     let lanes = sum.to_array();
-    (lanes[0] as u64).wrapping_add(lanes[1] as u64)
+    u64::from_ne_bytes(lanes[0].to_ne_bytes()).wrapping_add(u64::from_ne_bytes(lanes[1].to_ne_bytes()))
   }
 }
 
 /// Multiply odd-indexed u32 lanes → u64: `vmlof`.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vmlof(a: i64x2, b: i64x2) -> i64x2 {
@@ -58,6 +71,10 @@ unsafe fn vmlof(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Add u64 lanes: `vag`.
+///
+/// # Safety
+///
+/// The executing CPU must support the vector facility.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {

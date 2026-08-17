@@ -8,8 +8,6 @@
 //! Uses `unsafe` for POWER8+ VSX inline asm. Callers must ensure POWER8+
 //! vector support before executing the accelerated path (the dispatcher
 //! does this).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
 
 use core::simd::i64x2;
 
@@ -21,6 +19,10 @@ use super::{
 // VSX primitive operations (inline asm, POWER8+)
 
 /// Add u64 lanes: `vaddudm`.
+///
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn vadd_u64(a: i64x2, b: i64x2) -> i64x2 {
@@ -39,6 +41,10 @@ unsafe fn vadd_u64(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Logical shift right u64 lanes: `vsrd`.
+///
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn vshr_u64(a: i64x2, shift: i64x2) -> i64x2 {
@@ -57,6 +63,10 @@ unsafe fn vshr_u64(a: i64x2, shift: i64x2) -> i64x2 {
 }
 
 /// Shift left u64 lanes: `vsld`.
+///
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn vshl_u64(a: i64x2, shift: i64x2) -> i64x2 {
@@ -82,6 +92,10 @@ unsafe fn vshl_u64(a: i64x2, shift: i64x2) -> i64x2 {
 ///
 /// (Using `vmuleuw` here would multiply the ISA "even" = **high** 32 bits,
 /// which is wrong for the XXH3 MAC pattern on LE.)
+///
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn vmul_low32(a: i64x2, b: i64x2) -> i64x2 {
@@ -102,17 +116,25 @@ unsafe fn vmul_low32(a: i64x2, b: i64x2) -> i64x2 {
 // Load, store, swap
 
 /// Load 128 bits from memory (unaligned).
+///
+/// # Safety
+///
+/// `ptr` must be valid for 16 readable bytes.
 #[inline(always)]
 unsafe fn vload(ptr: *const u8) -> i64x2 {
   // SAFETY: caller ensures ptr is valid for 16 bytes.
-  unsafe { core::ptr::read_unaligned(ptr as *const i64x2) }
+  unsafe { core::ptr::read_unaligned(ptr.cast::<i64x2>()) }
 }
 
 /// Store 128 bits to memory (unaligned).
+///
+/// # Safety
+///
+/// `ptr` must be valid for 16 writable bytes.
 #[inline(always)]
 unsafe fn vstore(ptr: *mut u8, val: i64x2) {
   // SAFETY: caller ensures ptr is valid for 16 bytes.
-  unsafe { core::ptr::write_unaligned(ptr as *mut i64x2, val) }
+  unsafe { core::ptr::write_unaligned(ptr.cast::<i64x2>(), val) }
 }
 
 /// Swap u64 lanes (idx ^ 1 effect).
@@ -123,23 +145,29 @@ fn vswap(a: i64x2) -> i64x2 {
 
 // SIMD accumulate + scramble
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn load_acc(initial: &[u64; ACC_NB]) -> [i64x2; 4] {
   // SAFETY: POWER8+ VSX via target_feature. Pointer valid for 8 × u64.
   unsafe {
-    let p = initial.as_ptr() as *const u8;
+    let p = initial.as_ptr().cast::<u8>();
     [vload(p), vload(p.add(16)), vload(p.add(32)), vload(p.add(48))]
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn store_acc(acc: &[i64x2; 4]) -> [u64; ACC_NB] {
   // SAFETY: POWER8+ VSX via target_feature.
   unsafe {
     let mut out = [0u64; ACC_NB];
-    let p = out.as_mut_ptr() as *mut u8;
+    let p = out.as_mut_ptr().cast::<u8>();
     vstore(p, acc[0]);
     vstore(p.add(16), acc[1]);
     vstore(p.add(32), acc[2]);
@@ -156,6 +184,11 @@ unsafe fn store_acc(acc: &[i64x2; 4]) -> [u64; ACC_NB] {
 /// 3. `vmuleuw`: low32(data_key) × high32(data_key) → u64
 /// 4. Swap u64 lanes (idx ^ 1) and add data
 /// 5. Accumulate product + swapped data into acc
+///
+/// # Safety
+///
+/// The caller must ensure the POWER vector features are available and both
+/// pointers are valid for 64 readable bytes.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn accumulate_512(acc: &mut [i64x2; 4], stripe: *const u8, secret: *const u8) {
@@ -188,6 +221,11 @@ unsafe fn accumulate_512(acc: &mut [i64x2; 4], stripe: *const u8, secret: *const
 ///
 /// Per element: `acc = (xorshift64(acc, 47) ^ secret) * PRIME32_1`
 /// The 64-bit multiply by a 32-bit prime is split into lo + hi halves.
+///
+/// # Safety
+///
+/// The caller must ensure the POWER vector features are available and `secret`
+/// is valid for 64 readable bytes.
 #[inline]
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
@@ -222,6 +260,10 @@ unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
 
 // Long-path loop (SIMD inner, scalar merge)
 
+/// # Safety
+///
+/// The caller must ensure the POWER vector features are available, `stripes` is
+/// nonzero, and the requested input and secret stripe ranges are in bounds.
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn stream_accumulate_inner(
   initial: [u64; ACC_NB],
@@ -298,15 +340,19 @@ pub(crate) unsafe fn stream_accumulate(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure the POWER vector features are available and `input`
+/// contains an XXH3 long input of more than 240 bytes.
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
-unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZE]) -> [u64; ACC_NB] {
   // SAFETY: POWER8+ VSX via target_feature. Input/secret bounds checked by caller.
   unsafe {
     let mut acc = load_acc(&INITIAL_ACC);
 
     let nb_stripes = (secret.len().strict_sub(STRIPE_LEN)) / SECRET_CONSUME_RATE;
     let block_len = STRIPE_LEN.strict_mul(nb_stripes);
-    let nb_blocks = (input.len().strict_sub(1)) / block_len;
+    let nb_blocks = input.len().strict_sub(1).strict_div(block_len);
 
     let mut block = 0usize;
     while block < nb_blocks {
@@ -349,7 +395,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 // Top-level kernel functions (safe wrappers)
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
     // SAFETY: Dispatcher verifies POWER8+ VSX before selecting this kernel.
     let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
@@ -373,7 +419,7 @@ pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
     // SAFETY: Dispatcher verifies POWER8+ VSX before selecting this kernel.
     let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };

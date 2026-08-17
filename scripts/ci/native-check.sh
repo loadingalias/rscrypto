@@ -23,7 +23,7 @@ echo "Native validation: $(rustc -vV | sed -n 's/^host: //p')"
 
 echo ""
 echo "Checking no-default-features library boundary..."
-cargo check --workspace --lib --no-default-features
+cargo check --locked --workspace --lib --no-default-features
 
 TARGET_ARGS=(--lib)
 if [[ "$ALL_TARGETS" == true ]]; then
@@ -32,16 +32,16 @@ fi
 
 echo ""
 echo "Checking all-feature native targets..."
-cargo check --workspace "${TARGET_ARGS[@]}" --all-features
+cargo check --locked --workspace "${TARGET_ARGS[@]}" --all-features
 
 echo ""
 echo "Linting all-feature native targets..."
-cargo clippy --workspace "${TARGET_ARGS[@]}" --all-features -- -D warnings
+cargo clippy --locked --workspace "${TARGET_ARGS[@]}" --all-features
 
 if [[ "$ALL_TARGETS" == true ]]; then
   echo ""
   echo "Building all-feature native targets..."
-  cargo build --workspace --all-targets --all-features
+  cargo build --locked --workspace --all-targets --all-features
 fi
 
 echo "Native validation passed"

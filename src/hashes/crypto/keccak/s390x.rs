@@ -25,8 +25,6 @@
 //!
 //! Requires MSA8 facility (CPACF, z14+). Caller must verify `s390x::MSA8`.
 
-#![allow(unsafe_code)]
-
 /// Map Keccak rate (bytes) to KIMD function code.
 ///
 /// For rate=136 (shared by SHA3-256 and SHAKE-256), returns SHA3-256's code (33).

@@ -48,12 +48,6 @@
 //! [`crate::Pbkdf2Sha256`] (alloc-free) or the `argon2` / `phc-strings`
 //! features under the same caveats.
 
-#![allow(clippy::indexing_slicing)]
-// `unwrap_used` applies to slice→array conversions whose lengths are fixed
-// by construction (BLOCK_SIZE / BLOCK_WORDS slicing); every site is bounded
-// by compile-time constants and cannot fail at runtime.
-#![allow(clippy::unwrap_used)]
-
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -102,8 +96,8 @@ const MAX_R_TIMES_P: u64 = (1u64 << 30) - 1;
 /// use rscrypto::{ScryptParams, auth::scrypt::ScryptError};
 ///
 /// assert_eq!(
-///   ScryptParams::new(0, 8, 1).unwrap_err(),
-///   ScryptError::InvalidLogN
+///   ScryptParams::new(0, 8, 1),
+///   Err(ScryptError::InvalidLogN)
 /// );
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -342,9 +336,8 @@ mod x86_sse2 {
     debug_assert_eq!(blocks.len() % super::BLOCK_SIZE, 0);
     for chunk in blocks.chunks_exact_mut(super::BLOCK_SIZE) {
       let mut words = [0u32; super::BLOCK_WORDS];
-      for (src, word) in chunk.chunks_exact(4).zip(words.iter_mut()) {
-        let arr: [u8; 4] = src.try_into().unwrap();
-        *word = u32::from_le_bytes(arr);
+      for (src, word) in chunk.as_chunks::<4>().0.iter().zip(&mut words) {
+        *word = u32::from_le_bytes(*src);
       }
       for (i, dst) in chunk.chunks_exact_mut(4).enumerate() {
         dst.copy_from_slice(&words[pivot[i]].to_le_bytes());
@@ -438,8 +431,9 @@ mod x86_sse2 {
   fn integerify_pivot_low64(chunk: &[u8]) -> u64 {
     debug_assert_eq!(chunk.len() % super::BLOCK_SIZE, 0);
     let last = &chunk[chunk.len().strict_sub(super::BLOCK_SIZE)..];
-    let lo = u32::from_le_bytes(last[0..4].try_into().unwrap()) as u64;
-    let hi = u32::from_le_bytes(last[52..56].try_into().unwrap()) as u64;
+    let words = last.as_chunks::<4>().0;
+    let lo = u64::from(u32::from_le_bytes(words[0]));
+    let hi = u64::from(u32::from_le_bytes(words[13]));
     lo | (hi << 32)
   }
 
@@ -463,9 +457,12 @@ mod x86_sse2 {
       block_mix(v_chunk, chunk);
     }
 
-    let n_mask = (n as u64).wrapping_sub(1);
+    let n_mask = u64::try_from(n)
+      .expect("scrypt allocation length must fit u64")
+      .strict_sub(1);
     for _ in 0..n {
-      let j = (integerify_pivot_low64(chunk) & n_mask) as usize;
+      let j =
+        usize::try_from(integerify_pivot_low64(chunk) & n_mask).expect("masked scrypt ROMix index must fit usize");
       let v_start = j.strict_mul(len);
       xor_into(chunk, &v[v_start..v_start.strict_add(len)], scratch);
       block_mix(scratch, chunk);
@@ -495,7 +492,6 @@ impl SalsaBlock {
 /// then adds the original input back word-wise. Additions are `u32`
 /// modular-wraparound per the spec.
 #[inline(always)]
-#[allow(clippy::too_many_lines)]
 fn salsa20_8(block: &mut SalsaBlock) {
   let input = block.0;
   let mut y = block.0;
@@ -649,10 +645,13 @@ fn ro_mix(chunk: &mut [SalsaBlock], v: &mut [SalsaBlock], scratch: &mut [SalsaBl
   // ping-pong; each pair XORs V[j] into the current X-buffer before
   // BlockMix targets the other buffer. X ends in `chunk`, which the
   // caller re-serialises for the final PBKDF2 leg.
-  let n_mask = (n as u64).wrapping_sub(1);
+  let n_mask = u64::try_from(n)
+    .expect("scrypt allocation length must fit u64")
+    .strict_sub(1);
   for _ in 0..pairs {
     // Even iteration: X lives in `chunk`; write into `scratch`.
-    let j = (integerify_low64(&chunk[two_r.strict_sub(1)]) & n_mask) as usize;
+    let j = usize::try_from(integerify_low64(&chunk[two_r.strict_sub(1)]) & n_mask)
+      .expect("masked scrypt ROMix index must fit usize");
     let v_off = j.strict_mul(two_r);
     for k in 0..two_r {
       xor_block_into(&mut chunk[k], &v[v_off.strict_add(k)]);
@@ -660,7 +659,8 @@ fn ro_mix(chunk: &mut [SalsaBlock], v: &mut [SalsaBlock], scratch: &mut [SalsaBl
     block_mix_into(chunk, scratch, r);
 
     // Odd iteration: X lives in `scratch`; write into `chunk`.
-    let j = (integerify_low64(&scratch[two_r.strict_sub(1)]) & n_mask) as usize;
+    let j = usize::try_from(integerify_low64(&scratch[two_r.strict_sub(1)]) & n_mask)
+      .expect("masked scrypt ROMix index must fit usize");
     let v_off = j.strict_mul(two_r);
     for k in 0..two_r {
       xor_block_into(&mut scratch[k], &v[v_off.strict_add(k)]);
@@ -672,23 +672,9 @@ fn ro_mix(chunk: &mut [SalsaBlock], v: &mut [SalsaBlock], scratch: &mut [SalsaBl
 // ─── Zeroisation helpers ────────────────────────────────────────────────────
 
 #[inline]
-fn zeroize_u32_slice_no_fence(words: &mut [u32]) {
-  let mut chunks = words.chunks_exact_mut(16);
-  for chunk in &mut chunks {
-    // SAFETY: chunk has exactly 16 initialized u32s and [u32; 16] has the
-    // same alignment requirement as u32.
-    unsafe { core::ptr::write_volatile(chunk.as_mut_ptr().cast::<[u32; 16]>(), [0u32; 16]) };
-  }
-  for w in chunks.into_remainder() {
-    // SAFETY: w is a valid, aligned, dereferenceable pointer to initialized u32.
-    unsafe { core::ptr::write_volatile(w, 0) };
-  }
-}
-
-#[inline]
 fn zeroize_blocks_no_fence(blocks: &mut [SalsaBlock]) {
   for block in blocks {
-    zeroize_u32_slice_no_fence(&mut block.0);
+    ct::zeroize_words_no_fence(&mut block.0);
   }
 }
 
@@ -848,10 +834,9 @@ fn scrypt_hash_portable(
     .map_err(|_| ScryptError::InvalidOutputLen)?;
 
   // Decode byte form into little-endian u32 blocks.
-  for (block, chunk) in state.b_u32.iter_mut().zip(state.b_bytes.chunks_exact(BLOCK_SIZE)) {
-    for (word, bytes) in block.0.iter_mut().zip(chunk.chunks_exact(4)) {
-      let arr: [u8; 4] = bytes.try_into().unwrap();
-      *word = u32::from_le_bytes(arr);
+  for (block, chunk) in state.b_u32.iter_mut().zip(state.b_bytes.as_chunks::<BLOCK_SIZE>().0) {
+    for (word, bytes) in block.0.iter_mut().zip(chunk.as_chunks::<4>().0) {
+      *word = u32::from_le_bytes(*bytes);
     }
   }
 
@@ -865,8 +850,8 @@ fn scrypt_hash_portable(
 
   // Re-serialise the mixed B back into the byte buffer for the final
   // PBKDF2 leg (the spec treats B as a byte string at this point).
-  for (block, chunk) in state.b_u32.iter().zip(state.b_bytes.chunks_exact_mut(BLOCK_SIZE)) {
-    for (word, bytes) in block.0.iter().zip(chunk.chunks_exact_mut(4)) {
+  for (block, chunk) in state.b_u32.iter().zip(state.b_bytes.as_chunks_mut::<BLOCK_SIZE>().0) {
+    for (word, bytes) in block.0.iter().zip(chunk.as_chunks_mut::<4>().0) {
       bytes.copy_from_slice(&word.to_le_bytes());
     }
   }
@@ -934,12 +919,13 @@ fn scrypt_hash(params: &ScryptParams, password: &[u8], salt: &[u8], out: &mut [u
 /// ```rust
 /// use rscrypto::{Scrypt, ScryptParams};
 ///
-/// // Small CI-friendly params — production deployments should use
-/// let params = ScryptParams::new(10, 8, 1).unwrap();
+/// // Small CI-friendly parameters.
+/// let params = ScryptParams::new(10, 8, 1)?;
 ///
 /// let mut hash = [0u8; 32];
-/// Scrypt::derive(&params, b"password", b"random-salt-1234", &mut hash).unwrap();
+/// Scrypt::derive(&params, b"password", b"random-salt-1234", &mut hash)?;
 /// assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &hash).is_ok());
+/// # Ok::<(), rscrypto::ScryptError>(())
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Scrypt;
@@ -1134,7 +1120,7 @@ mod password_phc {
   }
 
   impl ApprovedPhc {
-    pub fn salt(&self) -> &[u8] {
+    pub(super) fn salt(&self) -> &[u8] {
       &self.salt[..self.salt_len as usize]
     }
   }
@@ -1175,7 +1161,8 @@ mod password_phc {
     if log_n > u8::MAX as u32 {
       return Err(PhcError::ParamOutOfRange);
     }
-    let params = ScryptParams::new(log_n as u8, r, p).map_err(|_| PhcError::ParamOutOfRange)?;
+    let log_n = u8::try_from(log_n).map_err(|_| PhcError::ParamOutOfRange)?;
+    let params = ScryptParams::new(log_n, r, p).map_err(|_| PhcError::ParamOutOfRange)?;
     scrypt_shape(&params).map_err(|_| PhcError::ParamOutOfRange)?;
     if !limits.allows(params) {
       return Err(PhcError::ParamOutOfRange);
@@ -1198,7 +1185,7 @@ mod password_phc {
     Ok(ApprovedPhc {
       params,
       salt,
-      salt_len: decoded_salt_len as u8,
+      salt_len: u8::try_from(decoded_salt_len).map_err(|_| PhcError::InvalidLength)?,
       expected,
     })
   }
@@ -1235,20 +1222,21 @@ mod tests {
   ];
 
   fn small_params() -> ScryptParams {
-    ScryptParams::new(4, 1, 1).unwrap()
+    ScryptParams::new(4, 1, 1).expect("small scrypt test profile must be valid")
   }
 
   #[test]
   fn rfc7914_vector_1_empty_inputs() {
     let mut output = [0u8; 64];
-    Scrypt::derive(&small_params(), b"", b"", &mut output).unwrap();
+    Scrypt::derive(&small_params(), b"", b"", &mut output)
+      .expect("RFC 7914 empty-input vector derivation must succeed");
     assert_eq!(output, RFC_V1_EXPECTED);
   }
 
   fn oracle_scrypt(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, output_len: usize) -> alloc::vec::Vec<u8> {
-    let params = scrypt::Params::new(log_n, r, p).unwrap();
+    let params = scrypt::Params::new(log_n, r, p).expect("oracle scrypt profile must be valid");
     let mut output = vec![0u8; output_len];
-    scrypt::scrypt(password, salt, &params, &mut output).unwrap();
+    scrypt::scrypt(password, salt, &params, &mut output).expect("oracle scrypt derivation must succeed");
     output
   }
 
@@ -1256,9 +1244,10 @@ mod tests {
   fn matches_the_oracle_across_shapes_and_output_lengths() {
     let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 16), (5, 2, 1, 32), (6, 2, 2, 64)];
     for &(log_n, r, p, output_len) in cases {
-      let params = ScryptParams::new(log_n, r, p).unwrap();
+      let params = ScryptParams::new(log_n, r, p).expect("differential scrypt profile must be valid");
       let mut actual = vec![0u8; output_len];
-      Scrypt::derive(&params, b"password", b"salty-salty-salt", &mut actual).unwrap();
+      Scrypt::derive(&params, b"password", b"salty-salty-salt", &mut actual)
+        .expect("rscrypto scrypt derivation must succeed");
       assert_eq!(
         actual,
         oracle_scrypt(b"password", b"salty-salty-salt", log_n, r, p, output_len),
@@ -1272,11 +1261,13 @@ mod tests {
   fn sse2_backend_matches_portable() {
     let cases: &[(u8, u32, u32, usize)] = &[(4, 1, 1, 32), (5, 2, 1, 48), (6, 2, 2, 32), (7, 8, 1, 64)];
     for &(log_n, r, p, output_len) in cases {
-      let params = ScryptParams::new(log_n, r, p).unwrap();
+      let params = ScryptParams::new(log_n, r, p).expect("backend differential scrypt profile must be valid");
       let mut portable = vec![0u8; output_len];
       let mut sse2 = vec![0u8; output_len];
-      scrypt_hash_portable(&params, b"password", b"salty-salty-salt", &mut portable).unwrap();
-      scrypt_hash_x86_sse2(&params, b"password", b"salty-salty-salt", &mut sse2).unwrap();
+      scrypt_hash_portable(&params, b"password", b"salty-salty-salt", &mut portable)
+        .expect("portable scrypt derivation must succeed");
+      scrypt_hash_x86_sse2(&params, b"password", b"salty-salty-salt", &mut sse2)
+        .expect("SSE2 scrypt derivation must succeed");
       assert_eq!(sse2, portable);
     }
   }
@@ -1285,16 +1276,29 @@ mod tests {
   fn raw_verify_accepts_only_the_exact_inputs() {
     let params = small_params();
     let mut expected = [0u8; 32];
-    Scrypt::derive(&params, b"password", b"random-salt-1234", &mut expected).unwrap();
+    Scrypt::derive(&params, b"password", b"random-salt-1234", &mut expected)
+      .expect("scrypt verification fixture derivation must succeed");
 
-    assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &expected).is_ok());
-    assert!(Scrypt::verify(&params, b"wrong", b"random-salt-1234", &expected).is_err());
-    assert!(Scrypt::verify(&params, b"password", b"other-salt-00000", &expected).is_err());
+    assert_eq!(
+      Scrypt::verify(&params, b"password", b"random-salt-1234", &expected),
+      Ok(())
+    );
+    assert_eq!(
+      Scrypt::verify(&params, b"wrong", b"random-salt-1234", &expected),
+      Err(VerificationError::new())
+    );
+    assert_eq!(
+      Scrypt::verify(&params, b"password", b"other-salt-00000", &expected),
+      Err(VerificationError::new())
+    );
 
     for position in 0..expected.len() {
       let mut tampered = expected;
       tampered[position] ^= 1;
-      assert!(Scrypt::verify(&params, b"password", b"random-salt-1234", &tampered).is_err());
+      assert_eq!(
+        Scrypt::verify(&params, b"password", b"random-salt-1234", &tampered),
+        Err(VerificationError::new())
+      );
     }
   }
 
@@ -1305,7 +1309,7 @@ mod tests {
     assert_eq!(ScryptParams::new(4, 0, 1), Err(ScryptError::InvalidR));
     assert_eq!(ScryptParams::new(4, 1, 0), Err(ScryptError::InvalidP));
     assert_eq!(ScryptParams::new(4, 1 << 15, 1 << 15), Err(ScryptError::InvalidP));
-    assert!(ScryptParams::new(4, 1, 1).is_ok());
+    assert_eq!(ScryptParams::new(4, 1, 1), Ok(ScryptParams { log_n: 4, r: 1, p: 1 }));
   }
 
   #[test]
@@ -1320,7 +1324,7 @@ mod tests {
   #[cfg(target_pointer_width = "64")]
   #[test]
   fn derive_rejects_impossible_memory_shape_before_allocation() {
-    let params = ScryptParams::new(63, 1 << 20, 1).unwrap();
+    let params = ScryptParams::new(63, 1 << 20, 1).expect("overflow regression profile is structurally valid");
     let mut output = [0u8; 32];
     assert_eq!(
       Scrypt::derive(&params, b"password", b"salt", &mut output),
@@ -1381,14 +1385,14 @@ mod tests {
 
     fn encode(params: ScryptParams, password: &[u8], salt: &[u8]) -> alloc::string::String {
       let mut verifier = [0u8; PASSWORD_OUTPUT_LEN];
-      Scrypt::derive(&params, password, salt, &mut verifier).unwrap();
+      Scrypt::derive(&params, password, salt, &mut verifier).expect("scrypt PHC fixture derivation must succeed");
       password_phc::encode(params, salt, &verifier)
     }
 
     #[test]
     fn canonical_password_record_round_trips() {
       let params = small_params();
-      let password = ScryptPassword::new(params).unwrap();
+      let password = ScryptPassword::new(params).expect("small scrypt password profile must be valid");
       let encoded = encode(params, b"password", &[0xaa; 16]);
 
       assert!(encoded.starts_with("$scrypt$ln=4,r=1,p=1$"));
@@ -1396,13 +1400,16 @@ mod tests {
         password.verify_password(b"password", &encoded),
         Ok(PasswordStatus::Current)
       );
-      assert!(password.verify_password(b"wrong", &encoded).is_err());
+      assert_eq!(
+        password.verify_password(b"wrong", &encoded),
+        Err(VerificationError::new())
+      );
     }
 
     #[test]
     fn accepted_older_profile_requests_rehash() {
-      let generation = ScryptParams::new(5, 1, 1).unwrap();
-      let password = ScryptPassword::new(generation).unwrap();
+      let generation = ScryptParams::new(5, 1, 1).expect("rehash target profile must be valid");
+      let password = ScryptPassword::new(generation).expect("rehash target resource shape must be valid");
       let encoded = encode(small_params(), b"password", &[0xbb; 16]);
 
       assert_eq!(
@@ -1414,7 +1421,7 @@ mod tests {
     #[test]
     fn accepted_noncurrent_salt_length_requests_rehash() {
       let params = small_params();
-      let password = ScryptPassword::new(params).unwrap();
+      let password = ScryptPassword::new(params).expect("small scrypt password profile must be valid");
       let encoded = encode(params, b"password", &[0xbb; 8]);
 
       assert_eq!(
@@ -1443,8 +1450,8 @@ mod tests {
     fn limits_bound_both_memory_and_work() {
       let limits = ScryptVerificationLimits::for_profile(small_params());
       assert!(limits.allows(small_params()));
-      assert!(!limits.allows(ScryptParams::new(5, 1, 1).unwrap()));
-      assert!(!limits.allows(ScryptParams::new(4, 1, 2).unwrap()));
+      assert!(!limits.allows(ScryptParams::new(5, 1, 1).expect("memory-limit profile must be valid")));
+      assert!(!limits.allows(ScryptParams::new(4, 1, 2).expect("work-limit profile must be valid")));
     }
 
     #[test]
@@ -1453,24 +1460,41 @@ mod tests {
       let salt = "AAAAAAAAAAAAAAAAAAAAAA";
       let hash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
       let cases = [
-        format!("$argon2id$v=19$m=32,t=2,p=1$${salt}$${hash}"),
-        format!("$scrypt$v=1$ln=4,r=1,p=1$${salt}$${hash}"),
-        format!("$scrypt$r=1,ln=4,p=1$${salt}$${hash}"),
-        format!("$scrypt$ln=4,ln=4,p=1$${salt}$${hash}"),
-        format!("$scrypt$ln=4,r=1,x=1$${salt}$${hash}"),
-        format!("$scrypt$ln=04,r=1,p=1$${salt}$${hash}"),
+        (
+          format!("$argon2id$v=19$m=32,t=2,p=1${salt}${hash}"),
+          PhcError::AlgorithmMismatch,
+        ),
+        (
+          format!("$scrypt$v=1$ln=4,r=1,p=1${salt}${hash}"),
+          PhcError::UnsupportedVersion,
+        ),
+        (format!("$scrypt$r=1,ln=4,p=1${salt}${hash}"), PhcError::DuplicateParam),
+        (format!("$scrypt$ln=4,ln=4,p=1${salt}${hash}"), PhcError::DuplicateParam),
+        (format!("$scrypt$ln=4,r=1,x=1${salt}${hash}"), PhcError::UnknownParam),
+        (
+          format!("$scrypt$ln=04,r=1,p=1${salt}${hash}"),
+          PhcError::MalformedParams,
+        ),
       ];
-      for encoded in cases {
-        assert!(password_phc::approve(&encoded, limits).is_err(), "{encoded}");
+      for (encoded, expected) in cases {
+        assert_eq!(
+          password_phc::approve(&encoded, limits).err(),
+          Some(expected),
+          "{encoded}"
+        );
       }
     }
 
     #[cfg(feature = "getrandom")]
     #[test]
     fn generated_records_use_fresh_salts() {
-      let password = ScryptPassword::new(small_params()).unwrap();
-      let first = password.hash_password(b"password").unwrap();
-      let second = password.hash_password(b"password").unwrap();
+      let password = ScryptPassword::new(small_params()).expect("small scrypt password profile must be valid");
+      let first = password
+        .hash_password(b"password")
+        .expect("first scrypt password record must be generated");
+      let second = password
+        .hash_password(b"password")
+        .expect("second scrypt password record must be generated");
 
       assert_ne!(first, second);
       assert_eq!(

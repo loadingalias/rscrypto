@@ -35,16 +35,17 @@ const fn reduce128_crc32(hi: u64, lo: u64, poly: u32) -> u32 {
   let poly_full: u128 = (1u128 << 32) | (poly as u128);
   let mut val: u128 = ((hi as u128) << 64) | (lo as u128);
 
-  let mut bit: i32 = 127;
-  while bit >= 32 {
-    let b = bit as u32;
+  let mut bit = 128u32;
+  while bit > 32 {
+    bit = bit.strict_sub(1);
+    let b = bit;
     if ((val >> b) & 1) != 0 {
       val ^= poly_full << b.strict_sub(32);
     }
-    bit = bit.strict_sub(1);
   }
 
-  val as u32
+  let bytes = val.to_le_bytes();
+  u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 /// Compute `x^n mod (x^32 + poly)` in GF(2), where `poly` is the **normal** CRC polynomial
@@ -114,12 +115,12 @@ const fn compute_mu33(poly: u64) -> u64 {
     let mut i: u32 = 1;
     while i <= k {
       let p_i = (poly >> i) & 1;
-      let q_j = (inv >> (k - i)) & 1;
+      let q_j = (inv >> k.strict_sub(i)) & 1;
       s ^= p_i & q_j;
       i = i.strict_add(1);
     }
 
-    inv |= s << k;
+    inv |= s.strict_shl(k);
     k = k.strict_add(1);
   }
 
@@ -160,7 +161,7 @@ pub(super) struct Crc32ClmulConstants {
 
 impl Crc32ClmulConstants {
   #[must_use]
-  pub const fn new(reflected_poly: u32) -> Self {
+  pub(super) const fn new(reflected_poly: u32) -> Self {
     let poly = reciprocal_poly_crc32(reflected_poly);
     let mu = compute_mu33(poly);
 
@@ -185,27 +186,30 @@ impl Crc32ClmulConstants {
 
 /// Multi-stream folding constants for CRC-32 CLMUL kernels.
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // Field subsets vary by architecture (x86_64/aarch64/power vs s390x stream widths).
 pub(super) struct Crc32StreamConstants {
   pub fold_256b: (u64, u64),
   pub fold_512b: (u64, u64),
+  #[cfg(target_arch = "powerpc64")]
   pub fold_1024b: (u64, u64),
   pub combine_4way: [(u64, u64); 3],
+  #[cfg(target_arch = "powerpc64")]
   pub combine_8way: [(u64, u64); 7],
 }
 
 impl Crc32StreamConstants {
   #[must_use]
-  pub const fn new(reflected_poly: u32) -> Self {
+  pub(super) const fn new(reflected_poly: u32) -> Self {
     Self {
       fold_256b: fold16_coeff_for_bytes_crc32(reflected_poly, 256),
       fold_512b: fold16_coeff_for_bytes_crc32(reflected_poly, 512),
+      #[cfg(target_arch = "powerpc64")]
       fold_1024b: fold16_coeff_for_bytes_crc32(reflected_poly, 1024),
       combine_4way: [
         fold16_coeff_for_bytes_crc32(reflected_poly, 384),
         fold16_coeff_for_bytes_crc32(reflected_poly, 256),
         fold16_coeff_for_bytes_crc32(reflected_poly, 128),
       ],
+      #[cfg(target_arch = "powerpc64")]
       combine_8way: [
         fold16_coeff_for_bytes_crc32(reflected_poly, 896),
         fold16_coeff_for_bytes_crc32(reflected_poly, 768),

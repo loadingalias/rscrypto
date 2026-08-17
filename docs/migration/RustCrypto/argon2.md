@@ -5,16 +5,16 @@ rscrypto separates two jobs that should not share an API:
 - `Argon2d`, `Argon2i`, and `Argon2id` are deterministic raw KDFs.
 - `Argon2idPassword` generates canonical password records and verifies hostile PHC input under finite resource limits.
 
-The raw implementations are checked against RFC 9106 vectors and the RustCrypto `argon2 0.6.0-rc.8` oracle in `tests/argon2_vectors.rs`, `tests/argon2_differential.rs`, `tests/argon2_kernels.rs`, and `tests/argon2_parallel.rs`.
+The raw implementations are checked against RFC 9106 vectors and the RustCrypto `argon2 0.5.3` oracle in `tests/argon2_vectors.rs`, `tests/argon2_differential.rs`, `tests/argon2_kernels.rs`, and `tests/argon2_parallel.rs`.
 
 ## Cargo features
 
 ```toml
 # Raw Argon2 KDF
-rscrypto = { version = "0.7.8", default-features = false, features = ["argon2"] }
+rscrypto = { version = "0.8.1", default-features = false, features = ["argon2"] }
 
 # Password-record generation and verification with caller-owned entropy
-rscrypto = { version = "0.7.8", default-features = false, features = [
+rscrypto = { version = "0.8.1", default-features = false, features = [
   "argon2",
   "phc-strings",
 ] }

@@ -17,7 +17,7 @@
 ///
 /// Updated CRC state after processing the input data.
 #[cfg(feature = "crc16")]
-pub type Crc16Fn = fn(u16, &[u8]) -> u16;
+pub(in crate::checksum) type Crc16Fn = fn(u16, &[u8]) -> u16;
 
 // CRC-24 Kernel Function Type
 
@@ -35,7 +35,7 @@ pub type Crc16Fn = fn(u16, &[u8]) -> u16;
 ///
 /// Updated CRC state with the result in the low 24 bits.
 #[cfg(feature = "crc24")]
-pub type Crc24Fn = fn(u32, &[u8]) -> u32;
+pub(in crate::checksum) type Crc24Fn = fn(u32, &[u8]) -> u32;
 
 // CRC-32 Kernel Function Type
 
@@ -59,7 +59,7 @@ pub type Crc24Fn = fn(u32, &[u8]) -> u32;
 ///
 /// Updated CRC state after processing the input data.
 #[cfg(feature = "crc32")]
-pub type Crc32Fn = fn(u32, &[u8]) -> u32;
+pub(in crate::checksum) type Crc32Fn = fn(u32, &[u8]) -> u32;
 
 // CRC-64 Kernel Function Type
 
@@ -84,4 +84,4 @@ pub type Crc32Fn = fn(u32, &[u8]) -> u32;
 ///
 /// Updated CRC state after processing the input data.
 #[cfg(feature = "crc64")]
-pub type Crc64Fn = fn(u64, &[u8]) -> u64;
+pub(in crate::checksum) type Crc64Fn = fn(u64, &[u8]) -> u64;

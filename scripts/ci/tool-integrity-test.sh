@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset BASH_ENV
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -90,11 +91,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$destination" ]]
-root="$destination/wasmtime-v46.0.1-x86_64-linux"
+root="$destination/wasmtime-v47.0.3-x86_64-linux"
 mkdir -p "$root"
 cat >"$root/wasmtime" <<'EOF'
 #!/usr/bin/env bash
-printf 'wasmtime 46.0.1 (mock)\n'
+printf 'wasmtime 47.0.3 (mock)\n'
 printf 'wasmtime executed\n' >>"$MOCK_EXEC_LOG"
 EOF
 chmod +x "$root/wasmtime"
@@ -537,13 +538,13 @@ if HOME="$ct_home" \
 fi
 
 for contract in \
-  'cargo-nextest =0.9.140' \
+  'cargo-nextest =0.9.143' \
   'cargo-deny =0.20.2' \
   'cargo-audit =0.22.2' \
-  'cargo-rail =0.20.0' \
+  'cargo-rail =0.21.0' \
   'cargo-semver-checks =0.50.0' \
-  'just =1.57.0' \
-  'zizmor =1.26.1' \
+  'just =1.58.0' \
+  'zizmor =1.29.0' \
   'cargo-criterion =1.1.0' \
   'critcmp =0.1.8' \
   'cargo-fuzz =0.13.2' \
@@ -571,12 +572,12 @@ mkdir -p "$cached_home/.cargo/bin"
 cat >"$cached_home/.cargo/bin/just" <<'SH'
 #!/usr/bin/env bash
 printf 'forged exact-version cache executed\n' >>"$MALICIOUS_EXEC_LOG"
-printf 'just 1.57.0\n'
+printf 'just 1.58.0\n'
 SH
 chmod +x "$cached_home/.cargo/bin/just"
 cat >"$cached_home/.cargo/.crates.toml" <<'EOF'
 [v1]
-"just 1.57.0 (registry+https://github.com/rust-lang/crates.io-index)" = ["just"]
+"just 1.58.0 (registry+https://github.com/rust-lang/crates.io-index)" = ["just"]
 EOF
 : >"$package_log"
 HOME="$cached_home" \
@@ -589,7 +590,7 @@ HOME="$cached_home" \
   "$REPO_ROOT/scripts/ci/install-tools.sh" minimal >/dev/null
 [[ ! -e "$malicious_exec" ]] \
   || fail "forged exact-version cached binary executed before authenticated replacement"
-grep -Fq 'cargo install --registry crates-io just --locked --version =1.57.0 --force' "$package_log" \
+grep -Fq 'cargo install --registry crates-io just --locked --version =1.58.0 --force' "$package_log" \
   || fail "forged cache did not trigger a fresh authenticated install"
 trusted_bin=$(tail -n 1 "$github_path_file")
 case "$trusted_bin" in
@@ -600,11 +601,11 @@ esac
 : >"$package_log"
 MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" \
-  nightly-2026-07-17 'clippy, rustfmt' >/dev/null
+  nightly-2026-08-12 'clippy, rustfmt' >/dev/null
 grep -Fq \
-  'rustup toolchain install nightly-2026-07-17 --profile minimal --no-self-update --component clippy --component rustfmt' \
+  'rustup toolchain install nightly-2026-08-12 --profile minimal --no-self-update --component clippy --component rustfmt' \
   "$package_log" || fail "rustup toolchain command was not exact"
-grep -Fq 'rustup default nightly-2026-07-17' "$package_log" \
+grep -Fq 'rustup default nightly-2026-08-12' "$package_log" \
   || fail "rustup did not select the exact toolchain"
 if MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" nightly clippy >/dev/null 2>&1; then

@@ -39,14 +39,14 @@ Minimal `no_std` SHA-2 build:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.8.0", default-features = false, features = ["sha2"] }
+rscrypto = { version = "0.8.1", default-features = false, features = ["sha2"] }
 ```
 
 Full primitive stack with OS randomness enabled:
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.8.0", features = ["full", "getrandom"] }
+rscrypto = { version = "0.8.1", features = ["full", "getrandom"] }
 ```
 
 Use `default-features = false` for `no_std` builds. Enable `getrandom` only for
@@ -195,9 +195,10 @@ methodology, and known losses are in
 
 The minimum supported Rust version is **1.91.0**.
 
-The pinned development nightly in
-[`rust-toolchain.toml`](rust-toolchain.toml) is separate from the MSRV and is
-used for Miri, fuzzing, and architecture-specific checks.
+The pinned stable development toolchain in
+[`rust-toolchain.toml`](rust-toolchain.toml) is separate from the MSRV.
+Nightly-only Miri, fuzzing, and architecture checks use the dated exception in
+[`toolchains.toml`](.config/toolchains.toml).
 
 ## License
 

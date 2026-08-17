@@ -10,7 +10,7 @@ use crate::checksum::common::tables::{CRC16_CCITT_POLY, CRC16_IBM_POLY};
 
 /// Key schedule for CRC-16/CCITT (X.25 / IBM-SDLC), reflected polynomial.
 #[rustfmt::skip]
-pub(crate) const CRC16_CCITT_KEYS_REFLECTED: [u64; 23] = [
+pub(super) const CRC16_CCITT_KEYS_REFLECTED: [u64; 23] = [
   0x0000000000000000,
   0x00000000000189ae,
   0x0000000000008e10,
@@ -38,7 +38,7 @@ pub(crate) const CRC16_CCITT_KEYS_REFLECTED: [u64; 23] = [
 
 /// Key schedule for CRC-16/IBM (ARC), reflected polynomial.
 #[rustfmt::skip]
-pub(crate) const CRC16_IBM_KEYS_REFLECTED: [u64; 23] = [
+pub(super) const CRC16_IBM_KEYS_REFLECTED: [u64; 23] = [
   0x0000000000000000,
   0x0000000000018cc2,
   0x000000000001d0c2,
@@ -71,41 +71,73 @@ pub(crate) const CRC16_IBM_KEYS_REFLECTED: [u64; 23] = [
 /// - advance a stream by `N * 128B` per iteration (striping)
 /// - merge streams back together (combine coefficients)
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // Field subsets vary by architecture (x86_64/aarch64/power/s390x/riscv64 stream widths).
-pub(crate) struct Width32StreamConstants {
+pub(super) struct Width32StreamConstants {
   /// 2-way fold coefficient (256B = 2×128B).
-  pub fold_256b: (u64, u64),
+  pub(super) fold_256b: (u64, u64),
   /// 3-way fold coefficient (384B = 3×128B).
-  pub fold_384b: (u64, u64),
+  #[cfg(target_arch = "aarch64")]
+  pub(super) fold_384b: (u64, u64),
   /// 4-way fold coefficient (512B = 4×128B).
-  pub fold_512b: (u64, u64),
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  ))]
+  pub(super) fold_512b: (u64, u64),
   /// 7-way fold coefficient (896B = 7×128B).
-  pub fold_896b: (u64, u64),
+  #[cfg(target_arch = "x86_64")]
+  pub(super) fold_896b: (u64, u64),
   /// 8-way fold coefficient (1024B = 8×128B).
-  pub fold_1024b: (u64, u64),
+  #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+  pub(super) fold_1024b: (u64, u64),
   /// 4-way combine coefficients: shifts by 384B, 256B, 128B.
-  pub combine_4way: [(u64, u64); 3],
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  ))]
+  pub(super) combine_4way: [(u64, u64); 3],
   /// 7-way combine coefficients: shifts by 768B, 640B, 512B, 384B, 256B, 128B.
-  pub combine_7way: [(u64, u64); 6],
+  #[cfg(target_arch = "x86_64")]
+  pub(super) combine_7way: [(u64, u64); 6],
   /// 8-way combine coefficients: shifts by 896B, 768B, 640B, 512B, 384B, 256B, 128B.
-  pub combine_8way: [(u64, u64); 7],
+  #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+  pub(super) combine_8way: [(u64, u64); 7],
 }
 
 impl Width32StreamConstants {
   /// Compute all multi-stream folding constants for a given reflected polynomial.
   #[must_use]
-  pub const fn new(reflected_poly: u32) -> Self {
+  const fn new(reflected_poly: u32) -> Self {
     Self {
       fold_256b: fold16_coeff_for_bytes(reflected_poly, 256),
+      #[cfg(target_arch = "aarch64")]
       fold_384b: fold16_coeff_for_bytes(reflected_poly, 384),
+      #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "riscv64"
+      ))]
       fold_512b: fold16_coeff_for_bytes(reflected_poly, 512),
+      #[cfg(target_arch = "x86_64")]
       fold_896b: fold16_coeff_for_bytes(reflected_poly, 896),
+      #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
       fold_1024b: fold16_coeff_for_bytes(reflected_poly, 1024),
+      #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "riscv64"
+      ))]
       combine_4way: [
         fold16_coeff_for_bytes(reflected_poly, 384),
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
+      #[cfg(target_arch = "x86_64")]
       combine_7way: [
         fold16_coeff_for_bytes(reflected_poly, 768),
         fold16_coeff_for_bytes(reflected_poly, 640),
@@ -114,6 +146,7 @@ impl Width32StreamConstants {
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
+      #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
       combine_8way: [
         fold16_coeff_for_bytes(reflected_poly, 896),
         fold16_coeff_for_bytes(reflected_poly, 768),
@@ -127,9 +160,9 @@ impl Width32StreamConstants {
   }
 }
 
-pub(crate) const CRC16_CCITT_STREAM_REFLECTED: Width32StreamConstants =
+pub(super) const CRC16_CCITT_STREAM_REFLECTED: Width32StreamConstants =
   Width32StreamConstants::new(CRC16_CCITT_POLY as u32);
-pub(crate) const CRC16_IBM_STREAM_REFLECTED: Width32StreamConstants =
+pub(super) const CRC16_IBM_STREAM_REFLECTED: Width32StreamConstants =
   Width32StreamConstants::new(CRC16_IBM_POLY as u32);
 
 // Constant Generation (compile-time)
@@ -162,16 +195,16 @@ const fn reduce128(hi: u64, lo: u64, poly: u32) -> u32 {
   let poly_full: u128 = (1u128.strict_shl(32)) | (poly as u128);
   let mut val: u128 = (hi as u128).strict_shl(64) | (lo as u128);
 
-  let mut bit: i32 = 127;
+  let mut bit: u32 = 127;
   while bit >= 32 {
-    let b = bit as u32;
-    if ((val.strict_shr(b)) & 1) != 0 {
-      val ^= poly_full.strict_shl(b.strict_sub(32));
+    if ((val.strict_shr(bit)) & 1) != 0 {
+      val ^= poly_full.strict_shl(bit.strict_sub(32));
     }
     bit = bit.strict_sub(1);
   }
 
-  val as u32
+  let [b0, b1, b2, b3, ..] = val.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
 }
 
 /// Compute x^n mod (x^width + poly) in GF(2) where `poly` is the normal CRC polynomial

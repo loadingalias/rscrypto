@@ -5,13 +5,8 @@
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for ARM SIMD intrinsics. Callers must ensure PMULL is
-//! available before executing the accelerated path (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(dead_code)] // Kernels wired up via dispatcher
-// SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
-#![allow(clippy::indexing_slicing)]
-// This module is intrinsics-heavy; unsafe blocks are per-function with SAFETY justifications.
+//! Uses `unsafe` for ARM SIMD intrinsics. Callers must establish NEON, AES
+//! (PMULL), and SHA3 (EOR3) support as required by each accelerated path.
 
 use core::{
   arch::aarch64::*,
@@ -24,50 +19,71 @@ use crate::checksum::common::clmul::{CRC64_NVME_STREAM, CRC64_XZ_STREAM, Crc64Cl
 #[derive(Copy, Clone, Debug)]
 struct Simd(uint8x16_t);
 
-#[allow(non_camel_case_types)]
-type poly64_t = u64;
-
 impl Simd {
+  /// Multiplies two carry-less 64-bit polynomials into one 128-bit vector.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES (PMULL).
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
-  unsafe fn from_mul(a: poly64_t, b: poly64_t) -> Self {
-    // SAFETY: Caller guarantees NEON+AES (PMULL) is available. Intrinsics operate on registers.
+  unsafe fn from_mul(a: u64, b: u64) -> Self {
     let mul = vmull_p64(a, b);
     Self(vreinterpretq_u8_p128(mul))
   }
 
+  /// Returns the vector's two 64-bit polynomial lanes in low-to-high order.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES.
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
-  unsafe fn into_poly64s(self) -> [poly64_t; 2] {
-    // SAFETY: Caller guarantees NEON+AES is available. Intrinsics operate on registers.
+  unsafe fn into_poly64s(self) -> [u64; 2] {
     let x = vreinterpretq_p64_u8(self.0);
     [vgetq_lane_p64(x, 0), vgetq_lane_p64(x, 1)]
   }
 
+  /// Returns the high 64-bit polynomial lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES.
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
-  unsafe fn high_64(self) -> poly64_t {
-    // SAFETY: Caller guarantees NEON+AES is available. Intrinsics operate on registers.
+  unsafe fn high_64(self) -> u64 {
     let x = vreinterpretq_p64_u8(self.0);
     vgetq_lane_p64(x, 1)
   }
 
+  /// Returns the low 64-bit polynomial lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES.
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
-  unsafe fn low_64(self) -> poly64_t {
-    // SAFETY: Caller guarantees NEON+AES is available. Intrinsics operate on registers.
+  unsafe fn low_64(self) -> u64 {
     let x = vreinterpretq_p64_u8(self.0);
     vgetq_lane_p64(x, 0)
   }
 
+  /// Creates a vector from its high and low 64-bit lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON.
   #[inline]
   #[target_feature(enable = "neon")]
   unsafe fn new(high: u64, low: u64) -> Self {
-    // SAFETY: Caller guarantees NEON is available. Intrinsics operate on registers.
     Self(vcombine_u8(vcreate_u8(low), vcreate_u8(high)))
   }
 
   /// Fold 16 bytes: `(coeff.low ⊗ self.low) ⊕ (coeff.high ⊗ self.high)`.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES (PMULL).
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
@@ -86,9 +102,13 @@ impl Simd {
   ///
   /// Equivalent to `self.fold_16(Simd::new(high, low))` but avoids repeatedly
   /// extracting the coefficient lanes inside hot loops.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES (PMULL).
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
-  unsafe fn fold_16_pair(self, coeff_low: poly64_t, coeff_high: poly64_t) -> Self {
+  unsafe fn fold_16_pair(self, coeff_low: u64, coeff_high: u64) -> Self {
     // SAFETY: Caller guarantees NEON+AES (PMULL) is available. All operations are register
     // computations.
     unsafe {
@@ -100,6 +120,10 @@ impl Simd {
   }
 
   /// Fold 8 bytes: `self.high ⊕ (coeff ⊗ self.low)`.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES (PMULL).
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn fold_8(self, coeff: u64) -> Self {
@@ -114,6 +138,10 @@ impl Simd {
   }
 
   /// Barrett reduction to finalize the CRC.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support NEON and AES (PMULL).
   #[inline]
   #[target_feature(enable = "neon", enable = "aes")]
   unsafe fn barrett(self, poly: u64, mu: u64) -> u64 {
@@ -145,6 +173,11 @@ impl BitXorAssign for Simd {
   }
 }
 
+/// Folds a sequence of 128-byte blocks and reduces it to a CRC-64 state.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
   // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
@@ -167,6 +200,11 @@ unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts:
   } // unsafe
 }
 
+/// Folds a sequence of 128-byte blocks with EOR3 and reduces it to a CRC-64 state.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
   // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) target features are available (dispatch
@@ -188,6 +226,11 @@ unsafe fn update_simd_eor3(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], co
   } // unsafe
 }
 
+/// Reduces eight folded SIMD lanes to a CRC-64 state.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[inline(always)]
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
   // SAFETY: Caller guarantees NEON+AES (PMULL) target features are available (dispatch check).
@@ -218,6 +261,11 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
 
 // PMULL multi-stream (2-way/3-way, 128B blocks)
 
+/// Folds one 128-byte block into the current SIMD state.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[inline]
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
@@ -239,6 +287,10 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, c
 ///
 /// This reduces the XOR dependency chain: instead of `chunk ^ (h ^ l)` (2 XORs),
 /// we use `veor3(chunk, h, l)` (1 instruction).
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u64, coeff_high: u64) {
@@ -260,9 +312,13 @@ unsafe fn fold_block_128_eor3(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff_low: u
 ///
 /// Computes: `data ^ pmull(coeff_low, x.low) ^ pmull(coeff_high, x.high)`
 /// using a single 3-way XOR instruction.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[inline]
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
-unsafe fn fold_lane_eor3(x: Simd, data: Simd, coeff_low: poly64_t, coeff_high: poly64_t) -> Simd {
+unsafe fn fold_lane_eor3(x: Simd, data: Simd, coeff_low: u64, coeff_high: u64) -> Simd {
   // SAFETY: Caller guarantees NEON+AES+SHA3 (PMULL+EOR3) is available. All operations are register
   // computations.
   unsafe {
@@ -274,6 +330,11 @@ unsafe fn fold_lane_eor3(x: Simd, data: Simd, coeff_low: poly64_t, coeff_high: p
   }
 }
 
+/// Folds 128-byte blocks through two independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_2way(
   state: u64,
@@ -304,7 +365,7 @@ unsafe fn update_simd_2way(
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
     let mut i: usize = 2;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP);
 
     // Double-unrolled loop
     while i.strict_add(DOUBLE_GROUP) <= aligned {
@@ -353,6 +414,11 @@ unsafe fn update_simd_2way(
   } // unsafe
 }
 
+/// Folds 128-byte blocks through three independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn update_simd_3way(
   state: u64,
@@ -392,7 +458,7 @@ unsafe fn update_simd_3way(
     const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
 
     let mut i: usize = 3;
-    let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let double_aligned = blocks.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP);
 
     // Double-unrolled loop
     while i.strict_add(DOUBLE_GROUP) <= double_aligned {
@@ -416,7 +482,7 @@ unsafe fn update_simd_3way(
     }
 
     // Handle remaining 3-block groups
-    let aligned = (blocks.len() / 3) * 3;
+    let aligned = blocks.len().strict_div(3).strict_mul(3);
     while i < aligned {
       fold_block_128(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
       fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
@@ -459,6 +525,10 @@ unsafe fn update_simd_3way(
 ///
 /// Maintains two independent fold streams and uses EOR3 when merging each
 /// polynomial product with input data.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3_2way(
   state: u64,
@@ -490,7 +560,7 @@ unsafe fn update_simd_eor3_2way(
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
     let mut i: usize = 2;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP);
 
     // Double-unrolled loop
     while i.strict_add(DOUBLE_GROUP) <= aligned {
@@ -546,6 +616,10 @@ unsafe fn update_simd_eor3_2way(
 ///
 /// Maintains three independent fold streams and uses EOR3 when merging each
 /// polynomial product with input data.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn update_simd_eor3_3way(
   state: u64,
@@ -586,7 +660,7 @@ unsafe fn update_simd_eor3_3way(
     const DOUBLE_GROUP: usize = 6; // 2 × 3-way = 6 blocks = 768B
 
     let mut i: usize = 3;
-    let double_aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let double_aligned = blocks.len().strict_div(DOUBLE_GROUP).strict_mul(DOUBLE_GROUP);
 
     // Double-unrolled loop
     while i.strict_add(DOUBLE_GROUP) <= double_aligned {
@@ -610,7 +684,7 @@ unsafe fn update_simd_eor3_3way(
     }
 
     // Handle remaining 3-block groups
-    let aligned = (blocks.len() / 3) * 3;
+    let aligned = blocks.len().strict_div(3).strict_mul(3);
     while i < aligned {
       fold_block_128_eor3(&mut s0, &blocks[i], coeff_384_low, coeff_384_high);
       fold_block_128_eor3(&mut s1, &blocks[i.strict_add(1)], coeff_384_low, coeff_384_high);
@@ -650,6 +724,11 @@ unsafe fn update_simd_eor3_3way(
   } // unsafe
 }
 
+/// Computes CRC-64 with two EOR3-assisted PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc64_pmull_eor3_2way(
   mut state: u64,
@@ -671,6 +750,11 @@ unsafe fn crc64_pmull_eor3_2way(
   }
 }
 
+/// Computes CRC-64 with three EOR3-assisted PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc64_pmull_eor3_3way(
   mut state: u64,
@@ -693,6 +777,11 @@ unsafe fn crc64_pmull_eor3_3way(
   }
 }
 
+/// Computes CRC-64 with two independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull_2way(
   mut state: u64,
@@ -714,6 +803,11 @@ unsafe fn crc64_pmull_2way(
   }
 }
 
+/// Computes CRC-64 with three independent PMULL streams.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull_3way(
   mut state: u64,
@@ -736,6 +830,11 @@ unsafe fn crc64_pmull_3way(
   }
 }
 
+/// Computes CRC-64 with PMULL folding.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 8]) -> u64 {
   // SAFETY: Caller guarantees NEON+AES (PMULL) is available. align_to produces valid sub-slices.
@@ -754,6 +853,10 @@ unsafe fn crc64_pmull(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants
 /// PMULL+EOR3 path: uses EOR3 to combine three XOR operands.
 ///
 /// Available on ARMv8.2+ with SHA3 extension (Apple M1+, AWS Graviton3+).
+///
+/// # Safety
+///
+/// The current CPU must support NEON, AES (PMULL), and SHA3 (EOR3).
 #[target_feature(enable = "aes", enable = "neon", enable = "sha3")]
 unsafe fn crc64_pmull_eor3(
   mut state: u64,
@@ -778,6 +881,10 @@ unsafe fn crc64_pmull_eor3(
 ///
 /// This avoids constructing the full 128-byte fold state when only complete
 /// 16-byte lanes are available.
+///
+/// # Safety
+///
+/// The current CPU must support NEON and AES (PMULL).
 #[target_feature(enable = "aes", enable = "neon")]
 unsafe fn crc64_pmull_small(
   mut state: u64,
@@ -864,6 +971,7 @@ pub(crate) unsafe fn crc64_xz_pmull_small(crc: u64, data: &[u8]) -> u64 {
 ///
 /// Requires PMULL (crypto/aes). Caller must verify via
 /// `crate::platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
+#[cfg(any(feature = "std", test))]
 #[target_feature(enable = "aes", enable = "neon")]
 pub(crate) unsafe fn crc64_xz_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
@@ -879,6 +987,7 @@ pub(crate) unsafe fn crc64_xz_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 ///
 /// Requires PMULL (crypto/aes). Caller must verify via
 /// `crate::platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
+#[cfg(any(feature = "std", test))]
 #[target_feature(enable = "aes", enable = "neon")]
 pub(crate) unsafe fn crc64_xz_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
@@ -934,6 +1043,7 @@ pub(crate) unsafe fn crc64_nvme_pmull_small(crc: u64, data: &[u8]) -> u64 {
 ///
 /// Requires PMULL (crypto/aes). Caller must verify via
 /// `crate::platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
+#[cfg(any(feature = "std", test))]
 #[target_feature(enable = "aes", enable = "neon")]
 pub(crate) unsafe fn crc64_nvme_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
@@ -949,6 +1059,7 @@ pub(crate) unsafe fn crc64_nvme_sve2_pmull_2way(crc: u64, data: &[u8]) -> u64 {
 ///
 /// Requires PMULL (crypto/aes). Caller must verify via
 /// `crate::platform::caps().has(aarch64::SVE2_PMULL)` and `PMULL_READY` before selecting.
+#[cfg(any(feature = "std", test))]
 #[target_feature(enable = "aes", enable = "neon")]
 pub(crate) unsafe fn crc64_nvme_sve2_pmull_3way(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: the caller guarantees `SVE2_PMULL` and `PMULL_READY` before selecting this kernel.
@@ -1103,122 +1214,130 @@ pub(crate) unsafe fn crc64_nvme_pmull_eor3_3way(crc: u64, data: &[u8]) -> u64 {
 
 /// Safe wrapper for CRC-64-XZ PMULL kernel.
 #[inline]
-pub fn crc64_xz_pmull_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_xz_pmull(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PMULL small-buffer kernel.
 #[inline]
-pub fn crc64_xz_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_xz_pmull_small(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ tuned "SVE2 PMULL" tier (single-stream).
 #[inline]
-pub fn crc64_xz_sve2_pmull_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(feature = "std")]
+pub(super) fn crc64_xz_sve2_pmull_safe(crc: u64, data: &[u8]) -> u64 {
   crc64_xz_pmull_safe(crc, data)
 }
 
 /// Safe wrapper for CRC-64-XZ tuned "SVE2 PMULL" tier (small-buffer).
 #[inline]
-pub fn crc64_xz_sve2_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(feature = "std")]
+pub(super) fn crc64_xz_sve2_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
   crc64_xz_pmull_small_safe(crc, data)
 }
 
 /// Safe wrapper for CRC-64-XZ tuned SVE2 2-way PMULL kernel.
 #[inline]
-pub fn crc64_xz_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc64_xz_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
   unsafe { crc64_xz_sve2_pmull_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ tuned SVE2 3-way PMULL kernel.
 #[inline]
-pub fn crc64_xz_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc64_xz_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
   unsafe { crc64_xz_sve2_pmull_3way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL kernel.
 #[inline]
-pub fn crc64_nvme_pmull_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_nvme_pmull(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL small-buffer kernel.
 #[inline]
-pub fn crc64_nvme_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_nvme_pmull_small(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME tuned "SVE2 PMULL" tier (single-stream).
 #[inline]
-pub fn crc64_nvme_sve2_pmull_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(feature = "std")]
+pub(super) fn crc64_nvme_sve2_pmull_safe(crc: u64, data: &[u8]) -> u64 {
   crc64_nvme_pmull_safe(crc, data)
 }
 
 /// Safe wrapper for CRC-64-NVME tuned "SVE2 PMULL" tier (small-buffer).
 #[inline]
-pub fn crc64_nvme_sve2_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(feature = "std")]
+pub(super) fn crc64_nvme_sve2_pmull_small_safe(crc: u64, data: &[u8]) -> u64 {
   crc64_nvme_pmull_small_safe(crc, data)
 }
 
 /// Safe wrapper for CRC-64-NVME tuned SVE2 2-way PMULL kernel.
 #[inline]
-pub fn crc64_nvme_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc64_nvme_sve2_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
   unsafe { crc64_nvme_sve2_pmull_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME tuned SVE2 3-way PMULL kernel.
 #[inline]
-pub fn crc64_nvme_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+#[cfg(any(feature = "std", test))]
+pub(super) fn crc64_nvme_sve2_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies SVE2_PMULL + PMULL before selecting this kernel.
   unsafe { crc64_nvme_sve2_pmull_3way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PMULL+EOR3 kernel.
 #[inline]
-pub fn crc64_xz_pmull_eor3_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_eor3_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
   unsafe { crc64_xz_pmull_eor3(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL+EOR3 kernel.
 #[inline]
-pub fn crc64_nvme_pmull_eor3_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_eor3_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
   unsafe { crc64_nvme_pmull_eor3(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PMULL+EOR3 2-way kernel.
 #[inline]
-pub fn crc64_xz_pmull_eor3_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_eor3_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
   unsafe { crc64_xz_pmull_eor3_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PMULL+EOR3 3-way kernel.
 #[inline]
-pub fn crc64_xz_pmull_eor3_3way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_eor3_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
   unsafe { crc64_xz_pmull_eor3_3way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL+EOR3 2-way kernel.
 #[inline]
-pub fn crc64_nvme_pmull_eor3_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_eor3_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
   unsafe { crc64_nvme_pmull_eor3_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL+EOR3 3-way kernel.
 #[inline]
-pub fn crc64_nvme_pmull_eor3_3way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_eor3_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL_EOR3_READY before selecting this kernel.
   unsafe { crc64_nvme_pmull_eor3_3way(crc, data) }
 }
@@ -1317,28 +1436,28 @@ pub(crate) unsafe fn crc64_nvme_pmull_3way(crc: u64, data: &[u8]) -> u64 {
 
 /// Safe wrapper for CRC-64-XZ PMULL 2-way kernel.
 #[inline]
-pub fn crc64_xz_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_xz_pmull_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PMULL 3-way kernel.
 #[inline]
-pub fn crc64_xz_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_xz_pmull_3way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL 2-way kernel.
 #[inline]
-pub fn crc64_nvme_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_nvme_pmull_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PMULL 3-way kernel.
 #[inline]
-pub fn crc64_nvme_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pmull_3way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PMULL (crypto/aes) before selecting this kernel.
   unsafe { crc64_nvme_pmull_3way(crc, data) }
 }
@@ -1356,7 +1475,11 @@ mod tests {
 
   fn make_data(len: usize) -> alloc::vec::Vec<u8> {
     (0..len)
-      .map(|i| (i as u8).wrapping_mul(17).wrapping_add((i >> 3) as u8))
+      .map(|i| {
+        let [low, high, ..] = i.to_le_bytes();
+        let shifted = low.strict_shr(3) | high.strict_shl(5);
+        low.wrapping_mul(17).wrapping_add(shifted)
+      })
       .collect()
   }
 
@@ -1588,7 +1711,6 @@ mod tests {
       return;
     }
 
-    // SAFETY: We just checked AES+SHA3 is available.
     let crc = crc64_xz_pmull_eor3_safe(!0, TEST_DATA) ^ !0;
     assert_eq!(crc, 0x995D_C9BB_DF19_39FA);
   }
@@ -1599,7 +1721,6 @@ mod tests {
       return;
     }
 
-    // SAFETY: We just checked AES+SHA3 is available.
     let crc = crc64_nvme_pmull_eor3_safe(!0, TEST_DATA) ^ !0;
     assert_eq!(crc, 0xAE8B_1486_0A79_9888);
   }

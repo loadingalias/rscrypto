@@ -7,10 +7,7 @@
 //!
 //! Uses `unsafe` for x86 SIMD intrinsics. Callers must ensure PCLMULQDQ is
 //! available before executing the accelerated path (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
-#![allow(clippy::indexing_slicing)]
 
 use core::{
   arch::x86_64::*,
@@ -43,22 +40,33 @@ impl BitXorAssign for Simd {
 impl Simd {
   #[inline]
   #[target_feature(enable = "sse2")]
+  /// Constructs a SIMD value with `high` above `low`.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2, which is guaranteed on x86-64.
   unsafe fn new(high: u64, low: u64) -> Self {
-    // SAFETY: SSE2 intrinsics are available via this function's #[target_feature] attribute.
     Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
   }
 
   /// Fold 16 bytes: `(coeff.low ⊗ self.low) ⊕ (coeff.high ⊗ self.high)`.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and PCLMULQDQ.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_16(self, coeff: Self) -> Self {
-    // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
     let h = _mm_clmulepi64_si128::<0x11>(self.0, coeff.0);
     let l = _mm_clmulepi64_si128::<0x00>(self.0, coeff.0);
     Self(_mm_xor_si128(h, l))
   }
 
   /// Fold 8 bytes: `self.high ⊕ (coeff ⊗ self.low)`.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and PCLMULQDQ.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_8(self, coeff: u64) -> Self {
@@ -70,6 +78,10 @@ impl Simd {
   }
 
   /// Barrett reduction to finalize the CRC.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and PCLMULQDQ.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn barrett(self, poly: u64, mu: u64) -> u64 {
@@ -89,6 +101,11 @@ impl Simd {
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds an initial 128-byte block and its remaining block sequence.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
   unsafe {
@@ -125,8 +142,13 @@ unsafe fn update_simd(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts:
 }
 
 #[inline(always)]
+/// Reduces eight folded SIMD lanes to one CRC-64 state.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
-  // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
+  // SAFETY: The caller's SSE2/PCLMULQDQ guarantee covers the constructor, folds, and reduction.
   unsafe {
     // Tail reduction (8×16B → 1×16B), unrolled for throughput.
     let c0 = Simd::new(consts.tail_fold_16b[0].0, consts.tail_fold_16b[0].1);
@@ -154,6 +176,11 @@ unsafe fn fold_tail(x: [Simd; 8], consts: &Crc64ClmulConstants) -> u64 {
 
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds one 128-byte block into eight SIMD lanes.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
   unsafe {
@@ -178,8 +205,13 @@ unsafe fn fold_block_128(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: Simd) {
 }
 
 #[inline(always)]
+/// Folds and XORs one eight-lane stream into an accumulator.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn merge_lanes_xor(acc: &mut [Simd; 8], stream: &[Simd; 8], coeff: Simd) {
-  // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
+  // SAFETY: The caller's SSE2/PCLMULQDQ guarantee covers all eight lane folds.
   unsafe {
     acc[0] ^= stream[0].fold_16(coeff);
     acc[1] ^= stream[1].fold_16(coeff);
@@ -193,6 +225,14 @@ unsafe fn merge_lanes_xor(acc: &mut [Simd; 8], stream: &[Simd; 8], coeff: Simd) 
 }
 
 /// 2-way PCLMUL (SSE) kernel with double-unrolling and software prefetch.
+///
+/// # Panics
+///
+/// Panics if `blocks` contains fewer than two blocks.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_2way(
   state: u64,
@@ -229,16 +269,16 @@ unsafe fn update_simd_2way(
       prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
       fold_block_128(&mut s0, &blocks[i], coeff_256);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
-      fold_block_128(&mut s0, &blocks[i + 2], coeff_256);
-      fold_block_128(&mut s1, &blocks[i + 3], coeff_256);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256);
+      fold_block_128(&mut s0, &blocks[i.strict_add(2)], coeff_256);
+      fold_block_128(&mut s1, &blocks[i.strict_add(3)], coeff_256);
       i = i.strict_add(4);
     }
 
     // Handle remaining pair.
     while i < even {
       fold_block_128(&mut s0, &blocks[i], coeff_256);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_256);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_256);
       i = i.strict_add(2);
     }
 
@@ -256,6 +296,14 @@ unsafe fn update_simd_2way(
 }
 
 /// 4-way PCLMUL (SSE) kernel with double-unrolling and software prefetch.
+///
+/// # Panics
+///
+/// Panics in debug builds if `blocks` is empty.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_4way(
   state: u64,
@@ -279,7 +327,7 @@ unsafe fn update_simd_4way(
       return update_simd(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = (blocks.len() / 4).strict_mul(4);
     // Account for starting at i=4: we need i+7 < blocks.len() for valid access
     let double_aligned = 4usize.strict_add(((blocks.len().strict_sub(4)) / 8).strict_mul(8));
 
@@ -305,15 +353,15 @@ unsafe fn update_simd_4way(
 
       // First group of 4 blocks
       fold_block_128(&mut s0, &blocks[i], coeff_512);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
-      fold_block_128(&mut s2, &blocks[i + 2], coeff_512);
-      fold_block_128(&mut s3, &blocks[i + 3], coeff_512);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+      fold_block_128(&mut s3, &blocks[i.strict_add(3)], coeff_512);
 
       // Second group of 4 blocks
-      fold_block_128(&mut s0, &blocks[i + 4], coeff_512);
-      fold_block_128(&mut s1, &blocks[i + 5], coeff_512);
-      fold_block_128(&mut s2, &blocks[i + 6], coeff_512);
-      fold_block_128(&mut s3, &blocks[i + 7], coeff_512);
+      fold_block_128(&mut s0, &blocks[i.strict_add(4)], coeff_512);
+      fold_block_128(&mut s1, &blocks[i.strict_add(5)], coeff_512);
+      fold_block_128(&mut s2, &blocks[i.strict_add(6)], coeff_512);
+      fold_block_128(&mut s3, &blocks[i.strict_add(7)], coeff_512);
 
       i = i.strict_add(8);
     }
@@ -321,9 +369,9 @@ unsafe fn update_simd_4way(
     // Handle remaining group.
     while i < aligned {
       fold_block_128(&mut s0, &blocks[i], coeff_512);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_512);
-      fold_block_128(&mut s2, &blocks[i + 2], coeff_512);
-      fold_block_128(&mut s3, &blocks[i + 3], coeff_512);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_512);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_512);
+      fold_block_128(&mut s3, &blocks[i.strict_add(3)], coeff_512);
       i = i.strict_add(4);
     }
 
@@ -365,6 +413,14 @@ unsafe fn update_simd_4way(
 }
 
 /// 7-way PCLMUL (SSE) kernel with software prefetch.
+///
+/// # Panics
+///
+/// Panics in debug builds if `blocks` is empty.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_7way(
   state: u64,
@@ -388,7 +444,7 @@ unsafe fn update_simd_7way(
       return update_simd(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 7) * 7;
+    let aligned = (blocks.len() / 7).strict_mul(7);
 
     let coeff_896 = Simd::new(fold_896b.0, fold_896b.1);
     let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -415,12 +471,12 @@ unsafe fn update_simd_7way(
       prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
       fold_block_128(&mut s0, &blocks[i], coeff_896);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_896);
-      fold_block_128(&mut s2, &blocks[i + 2], coeff_896);
-      fold_block_128(&mut s3, &blocks[i + 3], coeff_896);
-      fold_block_128(&mut s4, &blocks[i + 4], coeff_896);
-      fold_block_128(&mut s5, &blocks[i + 5], coeff_896);
-      fold_block_128(&mut s6, &blocks[i + 6], coeff_896);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_896);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_896);
+      fold_block_128(&mut s3, &blocks[i.strict_add(3)], coeff_896);
+      fold_block_128(&mut s4, &blocks[i.strict_add(4)], coeff_896);
+      fold_block_128(&mut s5, &blocks[i.strict_add(5)], coeff_896);
+      fold_block_128(&mut s6, &blocks[i.strict_add(6)], coeff_896);
       i = i.strict_add(7);
     }
 
@@ -447,6 +503,14 @@ unsafe fn update_simd_7way(
 }
 
 /// 8-way PCLMUL (SSE) kernel with software prefetch.
+///
+/// # Panics
+///
+/// Panics in debug builds if `blocks` is empty.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn update_simd_8way(
   state: u64,
@@ -470,7 +534,7 @@ unsafe fn update_simd_8way(
       return update_simd(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = (blocks.len() / 8).strict_mul(8);
 
     let coeff_1024 = Simd::new(fold_1024b.0, fold_1024b.1);
     let coeff_128 = Simd::new(consts.fold_128b.0, consts.fold_128b.1);
@@ -498,13 +562,13 @@ unsafe fn update_simd_8way(
       prefetch_read_l1(prefetch_ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
       fold_block_128(&mut s0, &blocks[i], coeff_1024);
-      fold_block_128(&mut s1, &blocks[i + 1], coeff_1024);
-      fold_block_128(&mut s2, &blocks[i + 2], coeff_1024);
-      fold_block_128(&mut s3, &blocks[i + 3], coeff_1024);
-      fold_block_128(&mut s4, &blocks[i + 4], coeff_1024);
-      fold_block_128(&mut s5, &blocks[i + 5], coeff_1024);
-      fold_block_128(&mut s6, &blocks[i + 6], coeff_1024);
-      fold_block_128(&mut s7, &blocks[i + 7], coeff_1024);
+      fold_block_128(&mut s1, &blocks[i.strict_add(1)], coeff_1024);
+      fold_block_128(&mut s2, &blocks[i.strict_add(2)], coeff_1024);
+      fold_block_128(&mut s3, &blocks[i.strict_add(3)], coeff_1024);
+      fold_block_128(&mut s4, &blocks[i.strict_add(4)], coeff_1024);
+      fold_block_128(&mut s5, &blocks[i.strict_add(5)], coeff_1024);
+      fold_block_128(&mut s6, &blocks[i.strict_add(6)], coeff_1024);
+      fold_block_128(&mut s7, &blocks[i.strict_add(7)], coeff_1024);
       i = i.strict_add(8);
     }
 
@@ -532,9 +596,15 @@ unsafe fn update_simd_8way(
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds the 128-byte-aligned middle of `bytes` with PCLMULQDQ.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn crc64_pclmul(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 8]) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
-  // align_to is sound because Simd is repr(transparent) over __m128i.
+  // Every bit pattern is valid for `Simd`, which is transparent over `__m128i`, so `align_to`
+  // produces initialized, non-overlapping fragments.
   unsafe {
     let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
     if let Some((first, rest)) = middle.split_first() {
@@ -548,6 +618,11 @@ unsafe fn crc64_pclmul(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstant
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds the 128-byte-aligned middle of `bytes` with two PCLMUL streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn crc64_pclmul_2way(
   mut state: u64,
   bytes: &[u8],
@@ -556,7 +631,8 @@ unsafe fn crc64_pclmul_2way(
   tables: &[[u64; 256]; 8],
 ) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
-  // align_to is sound because Simd is repr(transparent) over __m128i.
+  // Every bit pattern is valid for `Simd`, which is transparent over `__m128i`, so `align_to`
+  // produces initialized, non-overlapping fragments.
   unsafe {
     let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
     if middle.is_empty() {
@@ -576,6 +652,11 @@ unsafe fn crc64_pclmul_2way(
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds the 128-byte-aligned middle of `bytes` with four PCLMUL streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn crc64_pclmul_4way(
   mut state: u64,
   bytes: &[u8],
@@ -585,7 +666,8 @@ unsafe fn crc64_pclmul_4way(
   tables: &[[u64; 256]; 8],
 ) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
-  // align_to is sound because Simd is repr(transparent) over __m128i.
+  // Every bit pattern is valid for `Simd`, which is transparent over `__m128i`, so `align_to`
+  // produces initialized, non-overlapping fragments.
   unsafe {
     let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
     if middle.is_empty() {
@@ -599,6 +681,11 @@ unsafe fn crc64_pclmul_4way(
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds the 128-byte-aligned middle of `bytes` with seven PCLMUL streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn crc64_pclmul_7way(
   mut state: u64,
   bytes: &[u8],
@@ -608,7 +695,8 @@ unsafe fn crc64_pclmul_7way(
   tables: &[[u64; 256]; 8],
 ) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
-  // align_to is sound because Simd is repr(transparent) over __m128i.
+  // Every bit pattern is valid for `Simd`, which is transparent over `__m128i`, so `align_to`
+  // produces initialized, non-overlapping fragments.
   unsafe {
     let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
     if middle.is_empty() {
@@ -622,6 +710,11 @@ unsafe fn crc64_pclmul_7way(
 }
 
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
+/// Folds the 128-byte-aligned middle of `bytes` with eight PCLMUL streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 unsafe fn crc64_pclmul_8way(
   mut state: u64,
   bytes: &[u8],
@@ -631,7 +724,8 @@ unsafe fn crc64_pclmul_8way(
   tables: &[[u64; 256]; 8],
 ) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
-  // align_to is sound because Simd is repr(transparent) over __m128i.
+  // Every bit pattern is valid for `Simd`, which is transparent over `__m128i`, so `align_to`
+  // produces initialized, non-overlapping fragments.
   unsafe {
     let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
     if middle.is_empty() {
@@ -648,6 +742,10 @@ unsafe fn crc64_pclmul_8way(
 ///
 /// This avoids constructing the full 128-byte fold state when only complete
 /// 16-byte lanes are available.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn crc64_pclmul_small(
   mut state: u64,
@@ -656,7 +754,8 @@ unsafe fn crc64_pclmul_small(
   tables: &[[u64; 256]; 8],
 ) -> u64 {
   // SAFETY: SSE2/PCLMULQDQ intrinsics are available via this function's #[target_feature] attribute.
-  // align_to is sound because Simd is repr(transparent) over __m128i.
+  // Every bit pattern is valid for `Simd`, which is transparent over `__m128i`, so `align_to`
+  // produces initialized, non-overlapping fragments.
   unsafe {
     let (left, middle, right) = bytes.align_to::<Simd>();
 
@@ -686,28 +785,20 @@ unsafe fn crc64_pclmul_small(
 
 // VPCLMULQDQ (AVX-512) folding
 
-#[inline]
-#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
-unsafe fn fold16_4x(x: __m512i, coeff: __m512i) -> __m512i {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
-  let h = _mm512_clmulepi64_epi128::<0x11>(x, coeff);
-  let l = _mm512_clmulepi64_epi128::<0x00>(x, coeff);
-  _mm512_xor_si512(h, l)
-}
-
 /// Fold and XOR with data using VPTERNLOGD (3-way XOR in one instruction).
 ///
 /// Computes: `data ^ clmul_hi(x, coeff) ^ clmul_lo(x, coeff)`
 ///
-/// This saves one XOR instruction per fold operation compared to the
-/// two-step `data ^ fold16_4x(x, coeff)` pattern. The ternary logic
+/// This saves one XOR instruction per fold operation compared with first
+/// combining the two products and then XORing the data. The ternary logic
 /// immediate 0x96 encodes XOR(a, XOR(b, c)) = a ^ b ^ c.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F and VPCLMULQDQ.
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn fold16_4x_ternlog(x: __m512i, data: __m512i, coeff: __m512i) -> __m512i {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
   let h = _mm512_clmulepi64_epi128::<0x11>(x, coeff);
   let l = _mm512_clmulepi64_epi128::<0x00>(x, coeff);
   // VPTERNLOGD: 3-way XOR (imm8 = 0x96 = a ^ b ^ c)
@@ -716,9 +807,12 @@ unsafe fn fold16_4x_ternlog(x: __m512i, data: __m512i, coeff: __m512i) -> __m512
 
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Broadcasts a coefficient pair across four 128-bit lanes.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F and VPCLMULQDQ.
 unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
   _mm512_set_epi64(
     pair.0.cast_signed(),
     pair.1.cast_signed(),
@@ -733,27 +827,53 @@ unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
 
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Loads one 64-byte AVX-512 vector.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. `ptr` must remain valid to read
+/// 64 initialized bytes from one allocation. When `ALIGNED` is `true`, `ptr`
+/// must also be aligned to 64 bytes; `false` permits any byte alignment.
 unsafe fn load_m512<const ALIGNED: bool>(ptr: *const u8) -> __m512i {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. Caller ensures `ptr` is valid for 64-byte reads (aligned or unaligned as indicated
-  // by ALIGNED).
+  // SAFETY: The function attribute enables both intrinsics. A readable 64-byte source cannot be
+  // null. Casting `NonNull` changes only the pointee type and preserves provenance; the aligned
+  // specialization's caller additionally guarantees the alignment required by
+  // `_mm512_load_si512`, while `_mm512_loadu_si512` accepts any byte alignment.
   unsafe {
     if ALIGNED {
       debug_assert_eq!((ptr as usize) & 63, 0);
-      _mm512_load_si512(ptr.cast::<__m512i>())
+      _mm512_load_si512(
+        core::ptr::NonNull::new_unchecked(ptr.cast_mut())
+          .cast::<__m512i>()
+          .as_ptr(),
+      )
     } else {
-      _mm512_loadu_si512(ptr.cast::<__m512i>())
+      _mm512_loadu_si512(
+        core::ptr::NonNull::new_unchecked(ptr.cast_mut())
+          .cast::<__m512i>()
+          .as_ptr(),
+      )
     }
   }
 }
 
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Loads one 128-byte block as two adjacent AVX-512 vectors.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. When `ALIGNED` is `true`,
+/// `block` must also begin at a 64-byte-aligned address.
 unsafe fn load_128b_block<const ALIGNED: bool>(block: &[Simd; 8]) -> (__m512i, __m512i) {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. `block` is 128 bytes (8x16B); ptr and ptr+64 are both in-bounds.
+  // SAFETY: The function attribute enables the intrinsics, and the reference provides 128
+  // initialized readable bytes. `from_ref` preserves its provenance; the first load reads bytes
+  // 0..64 and the second reads bytes 64..128. When `ALIGNED` is true, the caller's 64-byte
+  // alignment guarantee applies to both addresses.
   unsafe {
-    let ptr = block as *const [Simd; 8] as *const u8;
+    let ptr = core::ptr::from_ref(block).cast::<u8>();
     // 8×16B lanes packed as 2×64B vectors (4 lanes each).
     let y0 = load_m512::<ALIGNED>(ptr);
     let y1 = load_m512::<ALIGNED>(ptr.add(64));
@@ -763,9 +883,15 @@ unsafe fn load_128b_block<const ALIGNED: bool>(block: &[Simd; 8]) -> (__m512i, _
 
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Reduces two folded AVX-512 vectors to one CRC-64 state.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`.
 unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, consts: &Crc64ClmulConstants) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The function attribute enables the AVX-512 lane extractions. The caller's complete
+  // capability guarantee also covers the SSE2/PCLMULQDQ operations used by `fold_tail`.
   unsafe {
     // Reuse the well-tested 128-bit tail fold + Barrett reduction by extracting
     // the 8×16B lanes directly (avoids a store+reload round-trip).
@@ -784,11 +910,19 @@ unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, consts: &Crc64ClmulCo
 }
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Folds one initial block and its remaining VPCLMUL block sequence.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. If `first` begins at a
+/// 64-byte-aligned address, every block in `rest` must also be 64-byte aligned.
 unsafe fn update_simd_vpclmul(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]], consts: &Crc64ClmulConstants) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The caller provides the complete capability set and the alignment relationship
+  // between `first` and `rest`. `addr` observes only the public address; both specializations
+  // receive the original references with their provenance unchanged.
   unsafe {
-    let aligned = ((first as *const [Simd; 8] as usize) & 63) == 0;
+    let aligned = (core::ptr::from_ref(first).addr() & 63) == 0;
     if aligned {
       update_simd_vpclmul_impl::<true>(state, first, rest, consts)
     } else {
@@ -799,14 +933,22 @@ unsafe fn update_simd_vpclmul(state: u64, first: &[Simd; 8], rest: &[[Simd; 8]],
 
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Folds an initial 128-byte block and its remaining block sequence.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. When `ALIGNED` is `true`,
+/// `first` and every block in `rest` must begin at a 64-byte-aligned address.
 unsafe fn update_simd_vpclmul_impl<const ALIGNED: bool>(
   state: u64,
   first: &[Simd; 8],
   rest: &[[Simd; 8]],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The function attribute enables the AVX-512 intrinsics, and the caller supplies the
+  // complete capability set used by the final reduction. The references provide initialized
+  // 128-byte blocks; when ALIGNED is true, the caller's alignment guarantee covers every load.
   unsafe {
     let (mut x0, mut x1) = load_128b_block::<ALIGNED>(first);
 
@@ -830,9 +972,18 @@ unsafe fn update_simd_vpclmul_impl<const ALIGNED: bool>(
 }
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Folds the 128-byte middle of `bytes` with VPCLMULQDQ.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`.
 unsafe fn crc64_vpclmul(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstants, tables: &[[u64; 256]; 8]) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. align_to is sound because Simd is repr(transparent) over __m128i.
+  // SAFETY: The function attribute enables the AVX-512 intrinsics, and the caller supplies the
+  // complete capability set used by the final reduction. Every bit pattern is valid for `Simd`,
+  // which is transparent over `__m128i`, so `align_to` produces initialized, non-overlapping
+  // fragments. Middle blocks are 128 bytes apart and therefore share their first block's mod-64
+  // alignment, satisfying `update_simd_vpclmul`'s specialization contract.
   unsafe {
     let (left, middle, right) = bytes.align_to::<[Simd; 8]>();
     if let Some((first, rest)) = middle.split_first() {
@@ -848,16 +999,23 @@ unsafe fn crc64_vpclmul(mut state: u64, bytes: &[u8], consts: &Crc64ClmulConstan
 // VPCLMULQDQ multi-stream (2/4/7-way, 128B blocks)
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Selects the aligned or unaligned two-stream VPCLMUL fold.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`.
 unsafe fn update_simd_vpclmul_2way(
   state: u64,
   blocks: &[[Simd; 8]],
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The caller supplies the complete capability set. `addr` observes only the public
+  // address, and 128-byte array-element strides preserve its mod-64 alignment for every block;
+  // both specializations receive the original slice with its provenance unchanged.
   unsafe {
-    let aligned = ((blocks.as_ptr() as usize) & 63) == 0;
+    let aligned = (blocks.as_ptr().addr() & 63) == 0;
     if aligned {
       update_simd_vpclmul_2way_impl::<true>(state, blocks, fold_256b, consts)
     } else {
@@ -869,6 +1027,12 @@ unsafe fn update_simd_vpclmul_2way(
 /// 2-way VPCLMUL kernel with double-unrolling and software prefetch.
 ///
 /// Processes 512 bytes per iteration (4 × 128B blocks in 2 streams).
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. When `ALIGNED` is `true`,
+/// every block in `blocks` must begin at a 64-byte-aligned address.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   state: u64,
@@ -876,9 +1040,10 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
   fold_256b: (u64, u64),
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. Pointer arithmetic on `blocks.as_ptr()` is in-bounds: indices are bounded by
-  // `even`/`double_even` < `blocks.len()`.
+  // SAFETY: The caller supplies the complete capability set and the alignment required by the
+  // selected loads. After the fallback, len >= 2. `double_even` is 2 + 4k and <= len, so each
+  // double-loop i + {0,1,2,3} is in-bounds; i < even makes each remaining-pair i + {0,1}
+  // in-bounds; and even < len guards the odd tail. The prefetch base uses the in-bounds i.
   unsafe {
     use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
@@ -918,16 +1083,16 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
       x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_256);
       x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_256);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(1)]);
       x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_256);
       x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_256);
 
       // Second pair of blocks (256B)
-      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(2)]);
       x0_0 = fold16_4x_ternlog(x0_0, z0, coeff_256);
       x1_0 = fold16_4x_ternlog(x1_0, z1, coeff_256);
 
-      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(3)]);
       x0_1 = fold16_4x_ternlog(x0_1, z0, coeff_256);
       x1_1 = fold16_4x_ternlog(x1_1, z1, coeff_256);
 
@@ -940,7 +1105,7 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
       x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_256);
       x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_256);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(1)]);
       x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_256);
       x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_256);
 
@@ -963,6 +1128,12 @@ unsafe fn update_simd_vpclmul_2way_impl<const ALIGNED: bool>(
 }
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Selects the aligned or unaligned four-stream VPCLMUL fold.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`.
 unsafe fn update_simd_vpclmul_4way(
   state: u64,
   blocks: &[[Simd; 8]],
@@ -970,10 +1141,11 @@ unsafe fn update_simd_vpclmul_4way(
   combine: &[(u64, u64); 3],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The caller supplies the complete capability set. `addr` observes only the public
+  // address, and 128-byte array-element strides preserve its mod-64 alignment for every block;
+  // both specializations receive the original slice with its provenance unchanged.
   unsafe {
-    let aligned = ((blocks.as_ptr() as usize) & 63) == 0;
+    let aligned = (blocks.as_ptr().addr() & 63) == 0;
     if aligned {
       update_simd_vpclmul_4way_impl::<true>(state, blocks, fold_512b, combine, consts)
     } else {
@@ -985,6 +1157,12 @@ unsafe fn update_simd_vpclmul_4way(
 /// 4-way VPCLMUL kernel with double-unrolling and software prefetch.
 ///
 /// Processes 1024 bytes per iteration (8 × 128B blocks in 4 streams).
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. When `ALIGNED` is `true`,
+/// every block in `blocks` must begin at a 64-byte-aligned address.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   state: u64,
@@ -993,9 +1171,10 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
   combine: &[(u64, u64); 3],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. Pointer arithmetic on `blocks.as_ptr()` is in-bounds: indices are bounded by
-  // `aligned`/`double_aligned` < `blocks.len()`.
+  // SAFETY: The caller supplies the complete capability set and the alignment required by the
+  // selected loads. After the fallback, len >= 4. `double_aligned` is 4 + 8k and <= len, so each
+  // double-loop i + {0..7} is in-bounds; i < aligned makes each remaining-group i + {0..3}
+  // in-bounds; and aligned <= len makes the final suffix valid. The prefetch base uses in-bounds i.
   unsafe {
     use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
@@ -1008,7 +1187,7 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
       return update_simd_vpclmul(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = (blocks.len() / 4).strict_mul(4);
     // Account for starting at i=4: we need i+7 < blocks.len() for valid access
     let double_aligned = 4usize.strict_add(((blocks.len().strict_sub(4)) / 8).strict_mul(8));
 
@@ -1038,32 +1217,32 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
       x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_512);
       x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_512);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(1)]);
       x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_512);
       x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_512);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(2)]);
       x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_512);
       x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_512);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(3)]);
       x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_512);
       x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_512);
 
       // Second group of 4 blocks (512B)
-      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 4]);
+      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(4)]);
       x0_0 = fold16_4x_ternlog(x0_0, z0, coeff_512);
       x1_0 = fold16_4x_ternlog(x1_0, z1, coeff_512);
 
-      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 5]);
+      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(5)]);
       x0_1 = fold16_4x_ternlog(x0_1, z0, coeff_512);
       x1_1 = fold16_4x_ternlog(x1_1, z1, coeff_512);
 
-      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 6]);
+      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(6)]);
       x0_2 = fold16_4x_ternlog(x0_2, z0, coeff_512);
       x1_2 = fold16_4x_ternlog(x1_2, z1, coeff_512);
 
-      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i + 7]);
+      let (z0, z1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(7)]);
       x0_3 = fold16_4x_ternlog(x0_3, z0, coeff_512);
       x1_3 = fold16_4x_ternlog(x1_3, z1, coeff_512);
 
@@ -1076,15 +1255,15 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
       x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_512);
       x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_512);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(1)]);
       x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_512);
       x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_512);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(2)]);
       x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_512);
       x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_512);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(3)]);
       x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_512);
       x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_512);
 
@@ -1111,6 +1290,12 @@ unsafe fn update_simd_vpclmul_4way_impl<const ALIGNED: bool>(
 }
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Selects the aligned or unaligned seven-stream VPCLMUL fold.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`.
 unsafe fn update_simd_vpclmul_7way(
   state: u64,
   blocks: &[[Simd; 8]],
@@ -1118,10 +1303,11 @@ unsafe fn update_simd_vpclmul_7way(
   combine: &[(u64, u64); 6],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The caller supplies the complete capability set. `addr` observes only the public
+  // address, and 128-byte array-element strides preserve its mod-64 alignment for every block;
+  // both specializations receive the original slice with its provenance unchanged.
   unsafe {
-    let aligned = ((blocks.as_ptr() as usize) & 63) == 0;
+    let aligned = (blocks.as_ptr().addr() & 63) == 0;
     if aligned {
       update_simd_vpclmul_7way_impl::<true>(state, blocks, fold_896b, combine, consts)
     } else {
@@ -1134,6 +1320,12 @@ unsafe fn update_simd_vpclmul_7way(
 ///
 /// Processes 896 bytes per iteration (7 × 128B blocks in 7 streams).
 /// Already has high ILP from 7-way parallelism; prefetch helps hide memory latency.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. When `ALIGNED` is `true`,
+/// every block in `blocks` must begin at a 64-byte-aligned address.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
   state: u64,
@@ -1142,9 +1334,10 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
   combine: &[(u64, u64); 6],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. Pointer arithmetic on `blocks.as_ptr()` is in-bounds: indices are bounded by
-  // `aligned` < `blocks.len()`.
+  // SAFETY: The caller supplies the complete capability set and the alignment required by the
+  // selected loads. After the fallback, len >= 7. `aligned` is a multiple of 7 and <= len; i
+  // starts at 7 and advances by 7, so i < aligned makes every i + {0..6} and the prefetch base
+  // in-bounds. `aligned <= len` also makes the final suffix valid.
   unsafe {
     use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
@@ -1157,7 +1350,7 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
       return update_simd_vpclmul(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 7) * 7;
+    let aligned = (blocks.len() / 7).strict_mul(7);
 
     let (mut x0_0, mut x1_0) = load_128b_block::<ALIGNED>(&blocks[0]);
     let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
@@ -1189,27 +1382,27 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
       x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_896);
       x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_896);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(1)]);
       x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_896);
       x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_896);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(2)]);
       x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_896);
       x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_896);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(3)]);
       x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_896);
       x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_896);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 4]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(4)]);
       x0_4 = fold16_4x_ternlog(x0_4, y0, coeff_896);
       x1_4 = fold16_4x_ternlog(x1_4, y1, coeff_896);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 5]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(5)]);
       x0_5 = fold16_4x_ternlog(x0_5, y0, coeff_896);
       x1_5 = fold16_4x_ternlog(x1_5, y1, coeff_896);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 6]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(6)]);
       x0_6 = fold16_4x_ternlog(x0_6, y0, coeff_896);
       x1_6 = fold16_4x_ternlog(x1_6, y1, coeff_896);
 
@@ -1245,6 +1438,12 @@ unsafe fn update_simd_vpclmul_7way_impl<const ALIGNED: bool>(
 }
 
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
+/// Selects the aligned or unaligned eight-stream VPCLMUL fold.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`.
 unsafe fn update_simd_vpclmul_8way(
   state: u64,
   blocks: &[[Simd; 8]],
@@ -1252,10 +1451,11 @@ unsafe fn update_simd_vpclmul_8way(
   combine: &[(u64, u64); 7],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute.
+  // SAFETY: The caller supplies the complete capability set. `addr` observes only the public
+  // address, and 128-byte array-element strides preserve its mod-64 alignment for every block;
+  // both specializations receive the original slice with its provenance unchanged.
   unsafe {
-    let aligned = ((blocks.as_ptr() as usize) & 63) == 0;
+    let aligned = (blocks.as_ptr().addr() & 63) == 0;
     if aligned {
       update_simd_vpclmul_8way_impl::<true>(state, blocks, fold_1024b, combine, consts)
     } else {
@@ -1268,6 +1468,12 @@ unsafe fn update_simd_vpclmul_8way(
 ///
 /// Processes 1024 bytes per iteration (8 × 128B blocks in 8 streams).
 /// Already has high ILP from 8-way parallelism; prefetch helps hide memory latency.
+///
+/// # Safety
+///
+/// The current CPU must support the features represented by
+/// `crate::platform::caps::x86::VPCLMUL_READY`. When `ALIGNED` is `true`,
+/// every block in `blocks` must begin at a 64-byte-aligned address.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
   state: u64,
@@ -1276,9 +1482,10 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
   combine: &[(u64, u64); 7],
   consts: &Crc64ClmulConstants,
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. Pointer arithmetic on `blocks.as_ptr()` is in-bounds: indices are bounded by
-  // `aligned` < `blocks.len()`.
+  // SAFETY: The caller supplies the complete capability set and the alignment required by the
+  // selected loads. After the fallback, len >= 8. `aligned` is a multiple of 8 and <= len; i
+  // starts at 8 and advances by 8, so i < aligned makes every i + {0..7} and the prefetch base
+  // in-bounds. `aligned <= len` also makes the final suffix valid.
   unsafe {
     use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
@@ -1291,7 +1498,7 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
       return update_simd_vpclmul(state, first, rest, consts);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = (blocks.len() / 8).strict_mul(8);
 
     let (mut x0_0, mut x1_0) = load_128b_block::<ALIGNED>(&blocks[0]);
     let (mut x0_1, mut x1_1) = load_128b_block::<ALIGNED>(&blocks[1]);
@@ -1324,31 +1531,31 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
       x0_0 = fold16_4x_ternlog(x0_0, y0, coeff_1024);
       x1_0 = fold16_4x_ternlog(x1_0, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 1]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(1)]);
       x0_1 = fold16_4x_ternlog(x0_1, y0, coeff_1024);
       x1_1 = fold16_4x_ternlog(x1_1, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 2]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(2)]);
       x0_2 = fold16_4x_ternlog(x0_2, y0, coeff_1024);
       x1_2 = fold16_4x_ternlog(x1_2, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 3]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(3)]);
       x0_3 = fold16_4x_ternlog(x0_3, y0, coeff_1024);
       x1_3 = fold16_4x_ternlog(x1_3, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 4]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(4)]);
       x0_4 = fold16_4x_ternlog(x0_4, y0, coeff_1024);
       x1_4 = fold16_4x_ternlog(x1_4, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 5]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(5)]);
       x0_5 = fold16_4x_ternlog(x0_5, y0, coeff_1024);
       x1_5 = fold16_4x_ternlog(x1_5, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 6]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(6)]);
       x0_6 = fold16_4x_ternlog(x0_6, y0, coeff_1024);
       x1_6 = fold16_4x_ternlog(x1_6, y1, coeff_1024);
 
-      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i + 7]);
+      let (y0, y1) = load_128b_block::<ALIGNED>(&blocks[i.strict_add(7)]);
       x0_7 = fold16_4x_ternlog(x0_7, y0, coeff_1024);
       x1_7 = fold16_4x_ternlog(x1_7, y1, coeff_1024);
 
@@ -1397,6 +1604,11 @@ unsafe fn update_simd_vpclmul_8way_impl<const ALIGNED: bool>(
 /// 1. Fold x0,x1 into x2,x3 (1024-bit shift = 128 bytes)
 /// 2. Fold result into single 512-bit register (512-bit shift = 64 bytes)
 /// 3. Extract 4×128-bit lanes and reduce to u64
+///
+/// # Safety
+///
+/// Requires the x86 features represented by `crate::platform::caps::x86::VPCLMUL_READY`.
+/// The caller must verify that capability set before calling this function.
 #[inline]
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn finalize_4x512_state(
@@ -1448,6 +1660,11 @@ unsafe fn finalize_4x512_state(
 ///
 /// The double-unroll halves the number of loop-control steps. Software
 /// prefetch remains a target-dependent hint.
+///
+/// # Safety
+///
+/// Requires the x86 features represented by `crate::platform::caps::x86::VPCLMUL_READY`.
+/// The caller must verify that capability set before calling this function.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_4x512(
   mut state: u64,
@@ -1456,10 +1673,11 @@ unsafe fn crc64_vpclmul_4x512(
   consts: &Crc64ClmulConstants,
   tables: &[[u64; 256]; 8],
 ) -> u64 {
-  // SAFETY: AVX-512/VPCLMULQDQ intrinsics are available via this function's #[target_feature]
-  // attribute. align_to is sound because Simd is repr(transparent) over __m128i.
-  // Pointer arithmetic: `ptr` stays within `aligned_bytes`; bounds checked via `ptr.add(...) <= end`.
-  // from_raw_parts: `ptr` is valid for `remaining` bytes (derived from `end.offset_from(ptr)`).
+  // SAFETY: The caller provides the full VPCLMUL_READY capability set. `ptr` and `end` retain the
+  // provenance and order of the same slice allocation. The initial unsigned-distance check makes
+  // `last_double_block` in-bounds, and every aligned 64-byte load and pointer advance is dominated
+  // by that bound or a matching tail-distance check. The final pointer and tail length therefore
+  // describe initialized bytes from that allocation.
   unsafe {
     use crate::checksum::common::prefetch::{LARGE_BLOCK_DISTANCE, prefetch_read_l1};
 
@@ -1493,10 +1711,10 @@ unsafe fn crc64_vpclmul_4x512(
     debug_assert_eq!((ptr as usize) & 63, 0);
 
     // Load first 256B block into 4 __m512i registers.
-    let mut x0 = _mm512_load_si512(ptr.cast::<__m512i>());
-    let mut x1 = _mm512_load_si512(ptr.add(64).cast::<__m512i>());
-    let mut x2 = _mm512_load_si512(ptr.add(128).cast::<__m512i>());
-    let mut x3 = _mm512_load_si512(ptr.add(192).cast::<__m512i>());
+    let mut x0 = load_m512::<true>(ptr);
+    let mut x1 = load_m512::<true>(ptr.add(64));
+    let mut x2 = load_m512::<true>(ptr.add(128));
+    let mut x3 = load_m512::<true>(ptr.add(192));
     ptr = ptr.add(BLOCK_SIZE);
 
     // XOR the initial CRC into lane 0 (low 64 bits of first register).
@@ -1508,41 +1726,44 @@ unsafe fn crc64_vpclmul_4x512(
 
     // Double-unrolled main loop: fold 512B (2 blocks) per iteration.
     // This reduces loop overhead by 50% and improves ILP.
-    while ptr.add(DOUBLE_BLOCK) <= end {
-      // Prefetch 2 iterations ahead (1KB) to hide memory latency.
-      prefetch_read_l1(ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
+    if end.offset_from_unsigned(ptr) >= DOUBLE_BLOCK {
+      let last_double_block = end.sub(DOUBLE_BLOCK);
+      while ptr <= last_double_block {
+        // Prefetch 2 iterations ahead (1KB) to hide memory latency.
+        prefetch_read_l1(ptr.wrapping_add(LARGE_BLOCK_DISTANCE));
 
-      // First block (256B): load and fold
-      let y0 = _mm512_load_si512(ptr.cast::<__m512i>());
-      let y1 = _mm512_load_si512(ptr.add(64).cast::<__m512i>());
-      let y2 = _mm512_load_si512(ptr.add(128).cast::<__m512i>());
-      let y3 = _mm512_load_si512(ptr.add(192).cast::<__m512i>());
+        // First block (256B): load and fold
+        let y0 = load_m512::<true>(ptr);
+        let y1 = load_m512::<true>(ptr.add(64));
+        let y2 = load_m512::<true>(ptr.add(128));
+        let y3 = load_m512::<true>(ptr.add(192));
 
-      x0 = fold16_4x_ternlog(x0, y0, coeff_256);
-      x1 = fold16_4x_ternlog(x1, y1, coeff_256);
-      x2 = fold16_4x_ternlog(x2, y2, coeff_256);
-      x3 = fold16_4x_ternlog(x3, y3, coeff_256);
+        x0 = fold16_4x_ternlog(x0, y0, coeff_256);
+        x1 = fold16_4x_ternlog(x1, y1, coeff_256);
+        x2 = fold16_4x_ternlog(x2, y2, coeff_256);
+        x3 = fold16_4x_ternlog(x3, y3, coeff_256);
 
-      // Second block (256B): load and fold
-      let z0 = _mm512_load_si512(ptr.add(256).cast::<__m512i>());
-      let z1 = _mm512_load_si512(ptr.add(320).cast::<__m512i>());
-      let z2 = _mm512_load_si512(ptr.add(384).cast::<__m512i>());
-      let z3 = _mm512_load_si512(ptr.add(448).cast::<__m512i>());
+        // Second block (256B): load and fold
+        let z0 = load_m512::<true>(ptr.add(256));
+        let z1 = load_m512::<true>(ptr.add(320));
+        let z2 = load_m512::<true>(ptr.add(384));
+        let z3 = load_m512::<true>(ptr.add(448));
 
-      x0 = fold16_4x_ternlog(x0, z0, coeff_256);
-      x1 = fold16_4x_ternlog(x1, z1, coeff_256);
-      x2 = fold16_4x_ternlog(x2, z2, coeff_256);
-      x3 = fold16_4x_ternlog(x3, z3, coeff_256);
+        x0 = fold16_4x_ternlog(x0, z0, coeff_256);
+        x1 = fold16_4x_ternlog(x1, z1, coeff_256);
+        x2 = fold16_4x_ternlog(x2, z2, coeff_256);
+        x3 = fold16_4x_ternlog(x3, z3, coeff_256);
 
-      ptr = ptr.add(DOUBLE_BLOCK);
+        ptr = ptr.add(DOUBLE_BLOCK);
+      }
     }
 
     // Handle remaining single block (if odd number of blocks).
-    if ptr.add(BLOCK_SIZE) <= end {
-      let y0 = _mm512_load_si512(ptr.cast::<__m512i>());
-      let y1 = _mm512_load_si512(ptr.add(64).cast::<__m512i>());
-      let y2 = _mm512_load_si512(ptr.add(128).cast::<__m512i>());
-      let y3 = _mm512_load_si512(ptr.add(192).cast::<__m512i>());
+    if end.offset_from_unsigned(ptr) >= BLOCK_SIZE {
+      let y0 = load_m512::<true>(ptr);
+      let y1 = load_m512::<true>(ptr.add(64));
+      let y2 = load_m512::<true>(ptr.add(128));
+      let y3 = load_m512::<true>(ptr.add(192));
 
       x0 = fold16_4x_ternlog(x0, y0, coeff_256);
       x1 = fold16_4x_ternlog(x1, y1, coeff_256);
@@ -1556,11 +1777,17 @@ unsafe fn crc64_vpclmul_4x512(
     state = finalize_4x512_state(x0, x1, x2, x3, consts.fold_128b, consts.tail_fold_16b[3], consts);
 
     // Process any remaining bytes.
-    let remaining = end.offset_from(ptr) as usize;
+    let remaining = end.offset_from_unsigned(ptr);
     super::portable::crc64_slice8(state, core::slice::from_raw_parts(ptr, remaining), tables)
   }
 }
 
+/// Fold CRC-64 with two parallel VPCLMUL streams.
+///
+/// # Safety
+///
+/// Requires the x86 features represented by `crate::platform::caps::x86::VPCLMUL_READY`.
+/// The caller must verify that capability set before calling this function.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_2way(
   mut state: u64,
@@ -1583,6 +1810,12 @@ unsafe fn crc64_vpclmul_2way(
   }
 }
 
+/// Fold CRC-64 with four parallel VPCLMUL streams.
+///
+/// # Safety
+///
+/// Requires the x86 features represented by `crate::platform::caps::x86::VPCLMUL_READY`.
+/// The caller must verify that capability set before calling this function.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_4way(
   mut state: u64,
@@ -1606,6 +1839,12 @@ unsafe fn crc64_vpclmul_4way(
   }
 }
 
+/// Fold CRC-64 with seven parallel VPCLMUL streams.
+///
+/// # Safety
+///
+/// Requires the x86 features represented by `crate::platform::caps::x86::VPCLMUL_READY`.
+/// The caller must verify that capability set before calling this function.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_7way(
   mut state: u64,
@@ -1629,6 +1868,12 @@ unsafe fn crc64_vpclmul_7way(
   }
 }
 
+/// Fold CRC-64 with eight parallel VPCLMUL streams.
+///
+/// # Safety
+///
+/// Requires the x86 features represented by `crate::platform::caps::x86::VPCLMUL_READY`.
+/// The caller must verify that capability set before calling this function.
 #[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
 unsafe fn crc64_vpclmul_8way(
   mut state: u64,
@@ -2131,197 +2376,167 @@ pub(crate) unsafe fn crc64_nvme_vpclmul_8way(crc: u64, data: &[u8]) -> u64 {
   }
 }
 
-/// CRC-64-NVME using VPCLMULQDQ (4×512-bit variant).
-///
-/// Processes 512 bytes per main-loop iteration across four fold streams.
-///
-/// # Safety
-///
-/// Requires VPCLMULQDQ + AVX-512. Caller must verify via
-/// `crate::platform::caps().has(x86::VPCLMUL_READY)`.
-#[target_feature(enable = "avx512f", enable = "vpclmulqdq")]
-pub(crate) unsafe fn crc64_nvme_vpclmul_4x512(crc: u64, data: &[u8]) -> u64 {
-  // SAFETY: This wrapper relies on the function's safety contract (caller ensures VPCLMULQDQ/AVX-512
-  // is available).
-  unsafe {
-    crc64_vpclmul_4x512(
-      crc,
-      data,
-      CRC64_NVME_STREAM.fold_256b,
-      &crate::checksum::common::clmul::CRC64_NVME_CLMUL,
-      &super::kernel_tables::NVME_TABLES_8,
-    )
-  }
-}
-
 // Dispatcher Wrappers (safe interface)
 
 /// Safe wrapper for CRC-64-XZ PCLMUL kernel.
 #[inline]
-pub fn crc64_xz_pclmul_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pclmul_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_xz_pclmul(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PCLMUL small-buffer kernel.
 #[inline]
-pub fn crc64_xz_pclmul_small_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pclmul_small_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_xz_pclmul_small(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PCLMUL 2-way kernel.
 #[inline]
-pub fn crc64_xz_pclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_xz_pclmul_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PCLMUL 4-way kernel.
 #[inline]
-pub fn crc64_xz_pclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_xz_pclmul_4way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PCLMUL 7-way kernel.
 #[inline]
-pub fn crc64_xz_pclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_xz_pclmul_7way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ PCLMUL 8-way kernel.
 #[inline]
-pub fn crc64_xz_pclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_pclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_xz_pclmul_8way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ VPCLMUL kernel.
 #[inline]
-pub fn crc64_xz_vpclmul_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_vpclmul_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe { crc64_xz_vpclmul(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ VPCLMUL 2-way kernel.
 #[inline]
-pub fn crc64_xz_vpclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_vpclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_xz_vpclmul_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ VPCLMUL 4-way kernel.
 #[inline]
-pub fn crc64_xz_vpclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_vpclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_xz_vpclmul_4way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ VPCLMUL 7-way kernel.
 #[inline]
-pub fn crc64_xz_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_xz_vpclmul_7way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ VPCLMUL 8-way kernel.
 #[inline]
-pub fn crc64_xz_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_xz_vpclmul_8way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-XZ VPCLMUL 4×512-bit kernel.
 #[inline]
-pub fn crc64_xz_vpclmul_4x512_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_xz_vpclmul_4x512_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_xz_vpclmul_4x512(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL kernel.
 #[inline]
-pub fn crc64_nvme_pclmul_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pclmul_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_nvme_pclmul(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL small-buffer kernel.
 #[inline]
-pub fn crc64_nvme_pclmul_small_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pclmul_small_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_nvme_pclmul_small(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL 2-way kernel.
 #[inline]
-pub fn crc64_nvme_pclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_nvme_pclmul_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL 4-way kernel.
 #[inline]
-pub fn crc64_nvme_pclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_nvme_pclmul_4way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL 7-way kernel.
 #[inline]
-pub fn crc64_nvme_pclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_nvme_pclmul_7way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME PCLMUL 8-way kernel.
 #[inline]
-pub fn crc64_nvme_pclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_pclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies PCLMULQDQ before selecting this kernel.
   unsafe { crc64_nvme_pclmul_8way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME VPCLMUL kernel.
 #[inline]
-pub fn crc64_nvme_vpclmul_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_vpclmul_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   unsafe { crc64_nvme_vpclmul(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME VPCLMUL 2-way kernel.
 #[inline]
-pub fn crc64_nvme_vpclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_vpclmul_2way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_nvme_vpclmul_2way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME VPCLMUL 4-way kernel.
 #[inline]
-pub fn crc64_nvme_vpclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_vpclmul_4way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_nvme_vpclmul_4way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME VPCLMUL 7-way kernel.
 #[inline]
-pub fn crc64_nvme_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_vpclmul_7way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_nvme_vpclmul_7way(crc, data) }
 }
 
 /// Safe wrapper for CRC-64-NVME VPCLMUL 8-way kernel.
 #[inline]
-pub fn crc64_nvme_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
+pub(super) fn crc64_nvme_vpclmul_8way_safe(crc: u64, data: &[u8]) -> u64 {
   // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
   unsafe { crc64_nvme_vpclmul_8way(crc, data) }
-}
-
-/// Safe wrapper for CRC-64-NVME VPCLMUL 4×512-bit kernel.
-#[inline]
-pub fn crc64_nvme_vpclmul_4x512_safe(crc: u64, data: &[u8]) -> u64 {
-  // SAFETY: Callers must verify VPCLMUL_READY before selecting this kernel.
-  unsafe { crc64_nvme_vpclmul_4x512(crc, data) }
 }
 
 // Tests
@@ -2336,8 +2551,17 @@ mod tests {
   use super::*;
 
   fn make_data(len: usize) -> Vec<u8> {
+    let mut byte_index = 0u8;
+    let mut group_index = 0u8;
     (0..len)
-      .map(|i| (i as u8).wrapping_mul(17).wrapping_add((i >> 3) as u8))
+      .map(|_| {
+        let byte = byte_index.wrapping_mul(17).wrapping_add(group_index);
+        byte_index = byte_index.wrapping_add(1);
+        if byte_index & 7 == 0 {
+          group_index = group_index.wrapping_add(1);
+        }
+        byte
+      })
       .collect()
   }
 
@@ -2485,37 +2709,108 @@ mod tests {
 
   #[test]
   fn test_crc64_xz_vpclmul_multiway_matches_portable_various_lengths() {
-    if !(std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("vpclmulqdq")) {
+    if !crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
       return;
     }
 
-    for len in [0usize, 1, 7, 16, 63, 64, 127, 128, 255, 256, 512, 1024, 4096, 16 * 1024] {
+    for len in [
+      0usize,
+      1,
+      7,
+      16,
+      63,
+      64,
+      127,
+      128,
+      255,
+      256,
+      512,
+      1023,
+      1024,
+      1025,
+      4096,
+      16 * 1024,
+    ] {
       let data = make_data(len);
       let portable = super::super::portable::crc64_slice8_xz(!0, &data) ^ !0;
       let vp2 = crc64_xz_vpclmul_2way_safe(!0, &data) ^ !0;
       let vp4 = crc64_xz_vpclmul_4way_safe(!0, &data) ^ !0;
       let vp7 = crc64_xz_vpclmul_7way_safe(!0, &data) ^ !0;
+      let vp8 = crc64_xz_vpclmul_8way_safe(!0, &data) ^ !0;
       assert_eq!(vp2, portable, "2-way mismatch at len={len}");
       assert_eq!(vp4, portable, "4-way mismatch at len={len}");
       assert_eq!(vp7, portable, "7-way mismatch at len={len}");
+      assert_eq!(vp8, portable, "8-way mismatch at len={len}");
+    }
+  }
+
+  #[test]
+  fn test_crc64_xz_vpclmul_4x512_matches_portable_at_alignment_boundaries() {
+    if !crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
+      return;
+    }
+
+    const BUFFER_LEN: usize = 8256;
+    const LENGTHS: &[usize] = &[
+      0, 255, 256, 257, 511, 512, 513, 767, 768, 769, 1023, 1024, 1025, 4096, 4097, 8193,
+    ];
+    const STATES: &[u64] = &[0, u64::MAX, 0x0123_4567_89AB_CDEF, 0xDEAD_BEEF_CAFE_BABE];
+
+    #[repr(align(64))]
+    struct AlignedBytes([u8; BUFFER_LEN]);
+
+    let mut data = AlignedBytes([0; BUFFER_LEN]);
+    data.0.copy_from_slice(&make_data(BUFFER_LEN));
+
+    for &state in STATES {
+      for offset in 0usize..64 {
+        for &len in LENGTHS {
+          let input = &data.0[offset..offset.strict_add(len)];
+          let expected_xz = super::super::portable::crc64_slice8_xz(state, input);
+          assert_eq!(
+            crc64_xz_vpclmul_4x512_safe(state, input),
+            expected_xz,
+            "XZ mismatch at state={state:#018x}, offset={offset}, len={len}"
+          );
+        }
+      }
     }
   }
 
   #[test]
   fn test_crc64_nvme_vpclmul_multiway_matches_portable_various_lengths() {
-    if !(std::arch::is_x86_feature_detected!("avx512f") && std::arch::is_x86_feature_detected!("vpclmulqdq")) {
+    if !crate::platform::caps().has(crate::platform::caps::x86::VPCLMUL_READY) {
       return;
     }
 
-    for len in [0usize, 1, 7, 16, 63, 64, 127, 128, 255, 256, 512, 1024, 4096, 16 * 1024] {
+    for len in [
+      0usize,
+      1,
+      7,
+      16,
+      63,
+      64,
+      127,
+      128,
+      255,
+      256,
+      512,
+      1023,
+      1024,
+      1025,
+      4096,
+      16 * 1024,
+    ] {
       let data = make_data(len);
       let portable = super::super::portable::crc64_slice8_nvme(!0, &data) ^ !0;
       let vp2 = crc64_nvme_vpclmul_2way_safe(!0, &data) ^ !0;
       let vp4 = crc64_nvme_vpclmul_4way_safe(!0, &data) ^ !0;
       let vp7 = crc64_nvme_vpclmul_7way_safe(!0, &data) ^ !0;
+      let vp8 = crc64_nvme_vpclmul_8way_safe(!0, &data) ^ !0;
       assert_eq!(vp2, portable, "2-way mismatch at len={len}");
       assert_eq!(vp4, portable, "4-way mismatch at len={len}");
       assert_eq!(vp7, portable, "7-way mismatch at len={len}");
+      assert_eq!(vp8, portable, "8-way mismatch at len={len}");
     }
   }
 }

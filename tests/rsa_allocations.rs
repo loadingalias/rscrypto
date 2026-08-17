@@ -8,8 +8,8 @@ use std::alloc::System;
 
 use rsa::{BigUint, RsaPrivateKey as RustCryptoRsaPrivateKey, pkcs1::EncodeRsaPrivateKey};
 use rscrypto::{
-  RsaEncryptionError, RsaJwtAlgorithm, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKey,
-  RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
+  RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
+  RsaPssProfile, RsaPublicKey, RsaPublicKeyPolicy, RsaSignatureProfile, RsaX509PublicKey,
 };
 
 static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
@@ -74,41 +74,49 @@ const X509_PSS_DEFAULT_SHA1_ALGORITHM: &[u8] = &[
 ];
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0);
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().chunks_exact(2) {
-    out.push((hex_value(chunk[0]) << 4) | hex_value(chunk[1]));
+  let (chunks, remainder) = hex.as_bytes().as_chunks::<2>();
+  assert!(remainder.is_empty(), "hex input must contain complete byte pairs");
+  let mut out = Vec::with_capacity(chunks.len());
+  for &[hi, lo] in chunks {
+    let hi = hex_value(hi).expect("hex fixtures must contain only ASCII hexadecimal digits");
+    let lo = hex_value(lo).expect("hex fixtures must contain only ASCII hexadecimal digits");
+    out.push((hi << 4) | lo);
   }
   out
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
-    return vec![len as u8];
+    return vec![u8::try_from(len).expect("a short DER length must fit in one byte")];
   }
 
   let bytes = len.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap();
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .expect("a DER length of at least 128 must contain a nonzero byte");
   let len_bytes = &bytes[first_nonzero..];
-  let mut out = Vec::with_capacity(1 + len_bytes.len());
-  out.push(0x80 | len_bytes.len() as u8);
+  let mut out = Vec::with_capacity(1usize.strict_add(len_bytes.len()));
+  out.push(0x80 | u8::try_from(len_bytes.len()).expect("a usize DER length prefix must fit in one byte"));
   out.extend_from_slice(len_bytes);
   out
 }
 
 fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-  let mut out = Vec::with_capacity(1 + der_len(value.len()).len() + value.len());
+  let encoded_len = der_len(value.len());
+  let capacity = 1usize.strict_add(encoded_len.len()).strict_add(value.len());
+  let mut out = Vec::with_capacity(capacity);
   out.push(tag);
-  out.extend_from_slice(&der_len(value.len()));
+  out.extend_from_slice(&encoded_len);
   out.extend_from_slice(value);
   out
 }
@@ -148,7 +156,7 @@ fn bit_string(value: &[u8]) -> Vec<u8> {
 fn integer_unsigned(value: &[u8]) -> Vec<u8> {
   let first_nonzero = value.iter().position(|&byte| byte != 0);
   let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
-  let mut encoded = Vec::with_capacity(value.len() + usize::from(value[0] & 0x80 != 0));
+  let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(value[0] & 0x80 != 0)));
   if value[0] & 0x80 != 0 {
     encoded.push(0);
   }
@@ -167,7 +175,10 @@ fn algorithm_identifier(algorithm_oid: &[u8], params: Option<&[u8]>) -> Vec<u8> 
 
 fn exponent_bytes(value: u64) -> Vec<u8> {
   let bytes = value.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap_or(bytes.len() - 1);
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .unwrap_or_else(|| bytes.len().strict_sub(1));
   bytes[first_nonzero..].to_vec()
 }
 
@@ -179,7 +190,7 @@ fn pkcs1_from_public_key(key: &RsaPublicKey) -> Vec<u8> {
 }
 
 fn spki_for_pkcs1_with_algorithm(pkcs1: &[u8], algorithm: &[u8]) -> Vec<u8> {
-  let mut subject_public_key = Vec::with_capacity(1 + pkcs1.len());
+  let mut subject_public_key = Vec::with_capacity(1usize.strict_add(pkcs1.len()));
   subject_public_key.push(0);
   subject_public_key.extend_from_slice(pkcs1);
 
@@ -196,11 +207,13 @@ fn pss_algorithm_spki_from_rsa_encryption_spki(spki: &[u8]) -> Vec<u8> {
 }
 
 fn legacy_public_key_from_spki(spki: &[u8]) -> RsaPublicKey {
-  RsaPublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  RsaPublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("the SPKI fixture must satisfy the legacy verification policy")
 }
 
 fn legacy_x509_public_key_from_spki(spki: &[u8]) -> RsaX509PublicKey {
-  RsaX509PublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  RsaX509PublicKey::from_spki_der_with_policy(spki, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("the X.509 SPKI fixture must satisfy the legacy verification policy")
 }
 
 fn minimal_tbs_certificate(signature_algorithm_der: &[u8]) -> Vec<u8> {
@@ -211,7 +224,7 @@ fn minimal_tbs_certificate(signature_algorithm_der: &[u8]) -> Vec<u8> {
 }
 
 fn x509_certificate(tbs_certificate_der: &[u8], signature_algorithm_der: &[u8], signature: &[u8]) -> Vec<u8> {
-  let mut signature_value = Vec::with_capacity(signature.len() + 1);
+  let mut signature_value = Vec::with_capacity(signature.len().strict_add(1));
   signature_value.push(0);
   signature_value.extend_from_slice(signature);
 
@@ -282,32 +295,35 @@ fn rustcrypto_fixture_private_key() -> RustCryptoRsaPrivateKey {
       b"00d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
       16,
     )
-    .unwrap(),
-    BigUint::parse_bytes(b"010001", 16).unwrap(),
+    .expect("the fixed RSA modulus must be valid hexadecimal"),
+    BigUint::parse_bytes(b"010001", 16).expect("the fixed RSA exponent must be valid hexadecimal"),
     BigUint::parse_bytes(
       b"00c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
       16,
     )
-    .unwrap(),
+    .expect("the fixed RSA private exponent must be valid hexadecimal"),
     vec![
       BigUint::parse_bytes(
         b"00f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
         16,
       )
-      .unwrap(),
+      .expect("the fixed first RSA prime must be valid hexadecimal"),
       BigUint::parse_bytes(
         b"00da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
         16,
       )
-      .unwrap(),
+      .expect("the fixed second RSA prime must be valid hexadecimal"),
     ],
   )
-  .unwrap()
+  .expect("the fixed RSA components must form a valid private key")
 }
 
 fn private_key() -> RsaPrivateKey {
-  let der = rustcrypto_fixture_private_key().to_pkcs1_der().unwrap();
-  RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  let der = rustcrypto_fixture_private_key()
+    .to_pkcs1_der()
+    .expect("the RustCrypto private-key fixture must encode as PKCS#1");
+  RsaPrivateKey::from_pkcs1_der_with_policy(der.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
+    .expect("rscrypto must decode the RustCrypto private-key fixture")
 }
 
 fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -319,32 +335,32 @@ fn factor_two_and_inverse(modulus: &[u8]) -> (Vec<u8>, Vec<u8>) {
   let mut plus_one = modulus.to_vec();
   let mut carry = 1u16;
   for byte in plus_one.iter_mut().rev() {
-    let sum = u16::from(*byte) + carry;
-    *byte = sum as u8;
+    let sum = u16::from(*byte).strict_add(carry);
+    *byte = sum.to_le_bytes()[0];
     carry = sum >> 8;
     if carry == 0 {
       break;
     }
   }
   if carry != 0 {
-    plus_one.insert(0, carry as u8);
+    plus_one.insert(0, u8::try_from(carry).expect("addition carry must be at most one"));
   }
 
   let mut quotient = Vec::with_capacity(plus_one.len());
   let mut remainder = 0u16;
   for byte in plus_one {
     let value = (remainder << 8) | u16::from(byte);
-    quotient.push((value / 2) as u8);
+    quotient.push(u8::try_from(value / 2).expect("a base-256 long-division digit must fit in one byte"));
     remainder = value % 2;
   }
   let first_nonzero = quotient
     .iter()
     .position(|&byte| byte != 0)
-    .unwrap_or(quotient.len() - 1);
+    .unwrap_or_else(|| quotient.len().strict_sub(1));
   let inverse = quotient[first_nonzero..].to_vec();
 
   let mut inverse_fixed = vec![0u8; modulus.len()];
-  inverse_fixed[modulus.len() - inverse.len()..].copy_from_slice(&inverse);
+  inverse_fixed[modulus.len().strict_sub(inverse.len())..].copy_from_slice(&inverse);
   (factor, inverse_fixed)
 }
 
@@ -379,12 +395,12 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
 
   key
     .public_operation_with_scratch(&input, &mut out, &mut scratch)
-    .unwrap();
+    .expect("the warm-up RSA public operation must succeed");
 
   reset_allocations();
   key
     .public_operation_with_scratch(&input, &mut out, &mut scratch)
-    .unwrap();
+    .expect("the measured RSA public operation must succeed");
   assert_eq!(allocation_count(), 0);
 
   let sig = pss_signature_sha256();
@@ -392,7 +408,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   reset_allocations();
   key
     .verify_pss_with_scratch(RsaPssProfile::Sha256, MESSAGE_PSS, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed PSS verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
@@ -403,20 +419,20 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &sig,
       &mut scratch,
     )
-    .unwrap();
+    .expect("typed scratch-backed PSS verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   key
     .jwt_verifier(RsaJwtAlgorithm::Ps256)
     .verify_with_scratch("PS256", MESSAGE_PSS, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed PS256 verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   key
     .verify_expected_cose_algorithm_id_with_scratch(-37, -37, pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed PS256 COSE verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   let seed = [0x42; 32];
@@ -430,7 +446,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &mut scratch,
       fill_rsa_random_from(&seed),
     )
-    .unwrap();
+    .expect("scratch-backed OAEP encryption must succeed");
   assert_eq!(allocation_count(), 0);
 
   let x509_key = legacy_x509_public_key_from_spki(&pss_spki());
@@ -438,13 +454,13 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   reset_allocations();
   x509_key
     .verify_signature_from_x509_algorithm_der_with_scratch(X509_PSS_SHA256_ALGORITHM, MESSAGE_PSS, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed X.509 PSS verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   x509_key
     .verify_expected_tls13_signature_scheme_with_scratch(0x0804, 0x0804, pss_sha256, MESSAGE_PSS, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed TLS 1.3 PSS verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   let key = legacy_public_key_from_spki(&pkcs1v15_spki());
@@ -454,7 +470,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   reset_allocations();
   key
     .verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed PKCS#1 v1.5 verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
@@ -465,20 +481,20 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &sig,
       &mut scratch,
     )
-    .unwrap();
+    .expect("typed scratch-backed PKCS#1 v1.5 verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   key
     .jwt_verifier(RsaJwtAlgorithm::Rs256)
     .verify_with_scratch("RS256", MESSAGE_PKCS1V15, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed RS256 verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
   key
     .verify_expected_cose_algorithm_id_with_scratch(-257, -257, pkcs1v15_sha256, MESSAGE_PKCS1V15, &sig, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed RS256 COSE verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   let message = b"scratch-backed RSAES-PKCS1-v1_5 encryption";
@@ -486,7 +502,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
   reset_allocations();
   key
     .encrypt_pkcs1v15_with_random_fill_and_scratch(message, &mut ciphertext, &mut scratch, fill_rsa_random_with(0x5d))
-    .unwrap();
+    .expect("scratch-backed PKCS#1 v1.5 encryption must succeed");
   assert_eq!(allocation_count(), 0);
 
   let x509_key = legacy_x509_public_key_from_spki(&pkcs1v15_spki());
@@ -499,7 +515,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &sig,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed X.509 PKCS#1 v1.5 verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   reset_allocations();
@@ -512,7 +528,7 @@ fn reused_scratch_rsa_operations_do_not_allocate() {
       &sig,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed TLS certificate PKCS#1 v1.5 verification must succeed");
   assert_eq!(allocation_count(), 0);
 
   assert_one_shot_protocol_rejects_fail_before_scratch_allocation();
@@ -651,12 +667,11 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
     .sign_pkcs1v15_with_blinding_factor_and_scratch(
       RsaPkcs1v15Profile::Sha256,
       b"private scratch allocation PKCS1v15",
-      &blinding_factor,
-      &blinding_factor_inverse,
+      RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
       &mut signature,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed blinded PKCS#1 v1.5 signing must succeed");
   assert_eq!(allocation_count(), 0);
 
   let salt = [0x7a; 32];
@@ -666,12 +681,11 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       RsaPssProfile::Sha256,
       b"private scratch allocation PSS",
       &salt,
-      &blinding_factor,
-      &blinding_factor_inverse,
+      RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
       &mut signature,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed blinded PSS signing must succeed");
   assert_eq!(allocation_count(), 0);
 
   let label = b"private-scratch-allocation";
@@ -687,7 +701,7 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut ciphertext,
       fill_rsa_random_from(&seed),
     )
-    .unwrap();
+    .expect("OAEP fixture encryption must succeed");
 
   reset_allocations();
   let len = key
@@ -695,12 +709,11 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       RsaOaepProfile::Sha256,
       label,
       &ciphertext,
-      &blinding_factor,
-      &blinding_factor_inverse,
+      RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
       &mut decrypted,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed blinded OAEP decryption must succeed");
   assert_eq!(&decrypted[..len], plaintext);
   assert_eq!(allocation_count(), 0);
 
@@ -708,18 +721,17 @@ fn assert_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
   key
     .public_key()
     .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut ciphertext, fill_rsa_random_with(0x5d))
-    .unwrap();
+    .expect("PKCS#1 v1.5 fixture encryption must succeed");
 
   reset_allocations();
   let len = key
     .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
       &ciphertext,
-      &blinding_factor,
-      &blinding_factor_inverse,
+      RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
       &mut decrypted,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed blinded PKCS#1 v1.5 decryption must succeed");
   assert_eq!(&decrypted[..len], pkcs1v15_plaintext);
   assert_eq!(allocation_count(), 0);
 }
@@ -738,7 +750,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut signature,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed randomized PKCS#1 v1.5 signing must succeed");
   assert_eq!(allocation_count(), 0);
   key
     .public_key()
@@ -747,7 +759,7 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       b"rng private scratch allocation PKCS1v15",
       &signature,
     )
-    .unwrap();
+    .expect("the randomized PKCS#1 v1.5 signature must verify");
 
   reset_allocations();
   key
@@ -757,12 +769,12 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut signature,
       &mut scratch,
     )
-    .unwrap();
+    .expect("scratch-backed randomized PSS signing must succeed");
   assert_eq!(allocation_count(), 0);
   key
     .public_key()
     .verify_pss(RsaPssProfile::Sha256, b"rng private scratch allocation PSS", &signature)
-    .unwrap();
+    .expect("the randomized PSS signature must verify");
 
   let label = b"rng-private-scratch-allocation";
   let plaintext = b"rng private scratch allocation OAEP";
@@ -777,12 +789,12 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
       &mut ciphertext,
       fill_rsa_random_from(&seed),
     )
-    .unwrap();
+    .expect("OAEP fixture encryption must succeed");
 
   reset_allocations();
   let len = key
     .decrypt_oaep_with_scratch(RsaOaepProfile::Sha256, label, &ciphertext, &mut decrypted, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed randomized OAEP decryption must succeed");
   assert_eq!(&decrypted[..len], plaintext);
   assert_eq!(allocation_count(), 0);
 
@@ -790,12 +802,12 @@ fn assert_rng_private_scratch_operations_do_not_allocate(key: &RsaPrivateKey) {
   key
     .public_key()
     .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut ciphertext, fill_rsa_random_with(0x5d))
-    .unwrap();
+    .expect("PKCS#1 v1.5 fixture encryption must succeed");
 
   reset_allocations();
   let len = key
     .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut scratch)
-    .unwrap();
+    .expect("scratch-backed randomized PKCS#1 v1.5 decryption must succeed");
   assert_eq!(&decrypted[..len], pkcs1v15_plaintext);
   assert_eq!(allocation_count(), 0);
 }

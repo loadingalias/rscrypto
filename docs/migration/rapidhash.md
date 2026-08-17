@@ -8,7 +8,7 @@ inherent methods can run at compile time.
 
 ```toml
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["rapidhash"] }
+rscrypto = { version = "0.8.1", features = ["rapidhash"] }
 ```
 
 ```rust

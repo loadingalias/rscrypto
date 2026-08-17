@@ -5,7 +5,7 @@
 //! so algorithms can reuse implementation building blocks without creating
 //! public-surface or feature-graph coupling.
 #[cfg(any(feature = "ascon-hash", feature = "ascon-aead"))]
-pub mod ascon;
+pub(crate) mod ascon;
 #[cfg(any(
   feature = "crc16",
   feature = "crc24",
@@ -19,13 +19,30 @@ pub mod ascon;
     not(all(target_arch = "aarch64", target_os = "macos"))
   ),
   feature = "blake3",
-  feature = "ascon-hash",
+  all(feature = "ascon-hash", feature = "diag"),
   feature = "xxh3",
   feature = "aes-gcm",
   feature = "aes-gcm-siv",
   feature = "chacha20poly1305",
   feature = "xchacha20poly1305"
 ))]
-pub mod cache;
-#[cfg(any(feature = "ed25519", feature = "x25519"))]
-pub mod curve25519;
+pub(crate) mod cache;
+#[cfg(any(
+  feature = "ed25519",
+  all(
+    feature = "x25519",
+    any(
+      test,
+      miri,
+      not(any(
+        all(
+          target_arch = "aarch64",
+          any(target_os = "macos", target_os = "linux"),
+          not(feature = "portable-only")
+        ),
+        all(target_arch = "x86_64", target_os = "linux", not(feature = "portable-only"))
+      ))
+    )
+  )
+))]
+pub(crate) mod curve25519;

@@ -1,7 +1,7 @@
 use rscrypto::{Scrypt, ScryptParams};
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let pw_salt_split: u8 = some_or_return!(input.byte());
   let out_len_byte: u8 = some_or_return!(input.byte());
@@ -16,8 +16,7 @@ pub fn run(data: &[u8]) {
   let r = 1u32.strict_add(u32::from(r_byte) % 4);
   let out_len = 1u32.strict_add(u32::from(out_len_byte) % 64);
 
-  let params = ScryptParams::new(log_n, r, 1)
-    .expect("params must be valid for fuzzer ranges");
+  let params = ScryptParams::new(log_n, r, 1).expect("params must be valid for fuzzer ranges");
 
   let (password, salt) = split_at_ratio(rest, pw_salt_split);
 

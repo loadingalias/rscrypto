@@ -1,6 +1,3 @@
-#![allow(clippy::indexing_slicing)] // Fixed-size ML-KEM native tables and assembly ABI.
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 #[cfg(all(test, target_os = "linux"))]
@@ -204,6 +201,10 @@ pub(super) unsafe fn sample_ntt_rej_uniform_3blocks_asm(out: *mut u16, input: *c
 
 #[inline]
 #[cfg(any(test, feature = "diag", target_os = "macos"))]
+/// # Safety
+///
+/// The active platform must provide the matching ML-KEM AArch64 assembly
+/// backend. `acc`, `a`, and `b` must be valid, non-overlapping polynomials.
 pub(super) unsafe fn basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &Poly) {
   #[cfg(target_os = "macos")]
   {
@@ -251,6 +252,11 @@ pub(super) unsafe fn test_basemul_accumulate_asm(acc: &mut Poly, a: &Poly, b: &P
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
+/// # Safety
+///
+/// The active platform must provide the matching ML-KEM AArch64 assembly
+/// backend. `a` and `b` must each reference at least `2 * N` readable,
+/// contiguous coefficients and must not overlap the uniquely borrowed `acc`.
 pub(super) unsafe fn basemul_accumulate_k2_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
   #[cfg(target_os = "macos")]
   {
@@ -283,6 +289,11 @@ pub(super) unsafe fn basemul_accumulate_k2_asm_ptr(acc: &mut Poly, a: *const u16
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
+/// # Safety
+///
+/// The active platform must provide the matching ML-KEM AArch64 assembly
+/// backend. `a` and `b` must each reference at least `3 * N` readable,
+/// contiguous coefficients and must not overlap the uniquely borrowed `acc`.
 pub(super) unsafe fn basemul_accumulate_k3_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
   #[cfg(target_os = "macos")]
   {
@@ -315,6 +326,11 @@ pub(super) unsafe fn basemul_accumulate_k3_asm_ptr(acc: &mut Poly, a: *const u16
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[inline]
+/// # Safety
+///
+/// The active platform must provide the matching ML-KEM AArch64 assembly
+/// backend. `a` and `b` must each reference at least `4 * N` readable,
+/// contiguous coefficients and must not overlap the uniquely borrowed `acc`.
 pub(super) unsafe fn basemul_accumulate_k4_asm_ptr(acc: &mut Poly, a: *const u16, b: *const u16) {
   #[cfg(target_os = "macos")]
   {

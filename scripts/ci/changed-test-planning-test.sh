@@ -226,7 +226,7 @@ run_test_consumer() {
   assert_eq "$expected" "$actual" "test commands for $name"
 }
 
-workspace_test='cargo test --workspace --all-features --lib --tests'
+workspace_test='cargo test --locked --workspace --all-features --lib --tests'
 run_test_consumer planner-failure '' 9 "$workspace_test"
 run_test_consumer empty-output '' 0 "$workspace_test"
 run_test_consumer malformed-json '{' 0 "$workspace_test"
@@ -238,12 +238,13 @@ run_test_consumer malformed-crates "$empty_crate_selection" 0 "$workspace_test"
 run_test_consumer malformed-surface "$malformed_surface" 0 "$workspace_test"
 run_test_consumer valid-empty "$EMPTY_PLAN" 0 ''
 run_test_consumer valid-workspace "$WORKSPACE_PLAN" 0 "$workspace_test"
-run_test_consumer valid-crates "$CRATES_PLAN" 0 $'cargo test -p crate-a --all-features --lib --tests\ncargo test -p crate-b --all-features --lib --tests'
+run_test_consumer valid-crates "$CRATES_PLAN" 0 $'cargo test --locked -p crate-a --all-features --lib --tests\ncargo test --locked -p crate-b --all-features --lib --tests'
 run_test_consumer valid-legacy-workspace "$LEGACY_WORKSPACE_PLAN" 0 "$workspace_test"
 
 check_fixture="$TMP_ROOT/check-repository"
 mkdir -p "$check_fixture/scripts/check" "$check_fixture/scripts/lib" "$check_fixture/scripts/ct" "$check_fixture/scripts/test"
 cp "$REPO_ROOT/scripts/check/check.sh" "$check_fixture/scripts/check/check.sh"
+cp "$REPO_ROOT/scripts/check/lint-independent-workspaces.sh" "$check_fixture/scripts/check/lint-independent-workspaces.sh"
 cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" "$check_fixture/scripts/lib/"
 for helper in "$check_fixture/scripts/check/asm-ledger.sh" \
   "$check_fixture/scripts/check/check-feature-matrix.sh" \
@@ -289,9 +290,11 @@ run_check_consumer valid-workspace "$WORKSPACE_PLAN" 0 '--workspace'
 run_check_consumer valid-crates "$CRATES_PLAN" 0 '-p crate-a -p crate-b'
 
 check_all_fixture="$TMP_ROOT/check-all-repository"
-mkdir -p "$check_all_fixture/scripts/check" "$check_all_fixture/scripts/lib"
+mkdir -p "$check_all_fixture/.config" "$check_all_fixture/scripts/check" "$check_all_fixture/scripts/lib"
 cp "$REPO_ROOT/scripts/check/check-all.sh" "$check_all_fixture/scripts/check/check-all.sh"
-cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" "$check_all_fixture/scripts/lib/"
+cp "$REPO_ROOT/scripts/lib/common.sh" "$REPO_ROOT/scripts/lib/rail-plan.sh" \
+  "$REPO_ROOT/scripts/lib/toolchain.sh" "$check_all_fixture/scripts/lib/"
+cp "$REPO_ROOT/.config/toolchains.toml" "$check_all_fixture/.config/toolchains.toml"
 cat >"$check_all_fixture/scripts/lib/targets.sh" <<'EOF'
 WIN_TARGETS=()
 LINUX_TARGETS=()

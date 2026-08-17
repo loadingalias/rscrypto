@@ -3,7 +3,7 @@
 mod support;
 
 use rscrypto::{Blake2b512, Blake2bKey, Blake2s256, Blake2sKey, Digest};
-use support::blobby_compat::Blob3Iterator;
+use support::blobby_compat::BlobIterator;
 
 fn run_blake2_vectors<const OUT: usize>(
   data: &'static [u8],
@@ -11,12 +11,11 @@ fn run_blake2_vectors<const OUT: usize>(
   mut one_shot: impl FnMut(&[u8], &[u8]) -> [u8; OUT],
   mut streaming: impl FnMut(&[u8], &[u8]) -> [u8; OUT],
 ) {
-  for (index, row) in Blob3Iterator::new(data)
+  for (index, row) in BlobIterator::<3>::new(data)
     .expect("blake2 vector corpus must parse")
     .enumerate()
   {
-    let [input, key, output] =
-      row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {index}: {err:?}"));
+    let [input, key, output] = row.expect("BLAKE2 vector row must decode");
 
     let actual = one_shot(input, key);
     assert_eq!(
@@ -48,14 +47,16 @@ fn blake2s_official_vectors() {
       if key.is_empty() {
         Blake2s256::digest(input)
       } else {
-        Blake2s256::keyed_digest(Blake2sKey::new(key).unwrap(), input)
+        let key = Blake2sKey::new(key).expect("official BLAKE2s key length must be valid");
+        Blake2s256::keyed_digest(key, input)
       }
     },
     |input, key| {
       let mut hasher = if key.is_empty() {
         Blake2s256::new()
       } else {
-        Blake2s256::new_keyed(Blake2sKey::new(key).unwrap())
+        let key = Blake2sKey::new(key).expect("official BLAKE2s key length must be valid");
+        Blake2s256::new_keyed(key)
       };
       for chunk in input.chunks(11) {
         hasher.update(chunk);
@@ -75,14 +76,16 @@ fn blake2b_official_vectors() {
       if key.is_empty() {
         Blake2b512::digest(input)
       } else {
-        Blake2b512::keyed_digest(Blake2bKey::new(key).unwrap(), input)
+        let key = Blake2bKey::new(key).expect("official BLAKE2b key length must be valid");
+        Blake2b512::keyed_digest(key, input)
       }
     },
     |input, key| {
       let mut hasher = if key.is_empty() {
         Blake2b512::new()
       } else {
-        Blake2b512::new_keyed(Blake2bKey::new(key).unwrap())
+        let key = Blake2bKey::new(key).expect("official BLAKE2b key length must be valid");
+        Blake2b512::new_keyed(key)
       };
       for chunk in input.chunks(17) {
         hasher.update(chunk);

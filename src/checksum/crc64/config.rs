@@ -35,10 +35,6 @@ pub enum Crc64Force {
   Vpmsum,
   /// Force s390x VGFM (if supported).
   Vgfm,
-  /// Force riscv64 Zbc carryless multiply (if supported).
-  Zbc,
-  /// Force riscv64 Zvbc (vector carryless multiply) folding (if supported).
-  Zvbc,
 }
 
 impl Crc64Force {
@@ -56,8 +52,6 @@ impl Crc64Force {
       Self::Sve2Pmull => "sve2-pmull",
       Self::Vpmsum => "vpmsum",
       Self::Vgfm => "vgfm",
-      Self::Zbc => "zbc",
-      Self::Zvbc => "zvbc",
     }
   }
 }
@@ -111,20 +105,20 @@ fn parse_force_env() -> Crc64Force {
   if value.eq_ignore_ascii_case("vgfm") || value.eq_ignore_ascii_case("gfmsum") {
     return Crc64Force::Vgfm;
   }
-  if value.eq_ignore_ascii_case("zbc") {
-    return Crc64Force::Zbc;
-  }
-  if value.eq_ignore_ascii_case("zvbc") || value.eq_ignore_ascii_case("vclmul") {
-    return Crc64Force::Zvbc;
-  }
-
   Crc64Force::Auto
 }
 
 #[inline]
 #[must_use]
-#[allow(unused_variables)] // `caps` only used on x86_64/aarch64
 fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
+  #[cfg(not(any(
+    target_arch = "aarch64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "x86_64"
+  )))]
+  let _ = caps;
+
   match requested {
     Crc64Force::Auto | Crc64Force::Reference | Crc64Force::Portable => requested,
     Crc64Force::Pclmul => {
@@ -191,24 +185,6 @@ fn clamp_force_to_caps(requested: Crc64Force, caps: Caps) -> Crc64Force {
       }
       Crc64Force::Auto
     }
-    Crc64Force::Zbc => {
-      #[cfg(target_arch = "riscv64")]
-      {
-        if caps.has(crate::platform::caps::riscv::ZBC) {
-          return Crc64Force::Zbc;
-        }
-      }
-      Crc64Force::Auto
-    }
-    Crc64Force::Zvbc => {
-      #[cfg(target_arch = "riscv64")]
-      {
-        if caps.has(crate::platform::caps::riscv::ZVBC) {
-          return Crc64Force::Zvbc;
-        }
-      }
-      Crc64Force::Auto
-    }
   }
 }
 
@@ -249,7 +225,7 @@ fn config(caps: Caps) -> Crc64Config {
 /// platform capabilities.
 #[inline]
 #[must_use]
-pub fn get() -> Crc64Config {
+pub(super) fn get() -> Crc64Config {
   #[cfg(feature = "std")]
   {
     use std::sync::OnceLock;

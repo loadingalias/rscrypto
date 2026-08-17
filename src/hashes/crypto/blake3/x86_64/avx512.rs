@@ -1,57 +1,64 @@
 //! BLAKE3 x86_64 AVX-512 throughput kernel (16-way).
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::many_single_char_names)]
-// On Linux we currently prefer the upstream asm implementation; keep the
-// intrinsic fallback compiled but don't let `-D warnings` turn it into a build
-// failure.
-#![cfg_attr(
-  any(target_os = "linux", target_os = "macos", target_os = "windows"),
-  allow(dead_code, unused_imports)
-)]
-
 use core::arch::x86_64::*;
 
 use super::{
-  super::{BLOCK_LEN, CHUNK_LEN, IV, MSG_SCHEDULE, OUT_LEN},
+  super::{BLOCK_LEN, BLOCK_LEN_U32, CHUNK_LEN, IV, MSG_SCHEDULE, OUT_LEN},
+  HashManyRequest,
   avx2::transpose8x8,
   counter_high, counter_low,
 };
 
-pub const DEGREE: usize = 16;
+pub(crate) const DEGREE: usize = 16;
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn add(a: __m512i, b: __m512i) -> __m512i {
   // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_add_epi32(a, b) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn xor(a: __m512i, b: __m512i) -> __m512i {
   // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_xor_si512(a, b) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m512i {
   // SAFETY: Caller guarantees the required AVX-512 feature set for this backend.
   unsafe { _mm512_set1_epi32(x.cast_signed()) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and `src` must be readable for 32 bytes.
 #[inline(always)]
 unsafe fn loadu256(src: *const u8) -> __m256i {
   // SAFETY: Caller guarantees `src` is valid to read 32 bytes and has enabled this AVX-512 backend.
   unsafe { _mm256_loadu_si256(src.cast()) }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and `dest` must be writable for 32 bytes.
 #[inline(always)]
 unsafe fn storeu256(src: __m256i, dest: *mut u8) {
   // SAFETY: Caller guarantees `dest` is valid to write 32 bytes and has enabled this AVX-512 backend.
   unsafe { _mm256_storeu_si256(dest.cast(), src) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn rot16(x: __m512i) -> __m512i {
   // 32-bit rotate by 16. Prefer `vprold` over shift/or.
@@ -59,6 +66,9 @@ unsafe fn rot16(x: __m512i) -> __m512i {
   unsafe { _mm512_rol_epi32(x, 16) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn rot12(x: __m512i) -> __m512i {
   // Rotate right by 12 == rotate left by 20.
@@ -66,6 +76,9 @@ unsafe fn rot12(x: __m512i) -> __m512i {
   unsafe { _mm512_rol_epi32(x, 20) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn rot8(x: __m512i) -> __m512i {
   // Rotate right by 8 == rotate left by 24.
@@ -73,6 +86,9 @@ unsafe fn rot8(x: __m512i) -> __m512i {
   unsafe { _mm512_rol_epi32(x, 24) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn rot7(x: __m512i) -> __m512i {
   // Rotate right by 7 == rotate left by 25.
@@ -80,6 +96,9 @@ unsafe fn rot7(x: __m512i) -> __m512i {
   unsafe { _mm512_rol_epi32(x, 25) }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available and `r` must be in `0..7`.
 #[inline(always)]
 unsafe fn round(v: &mut [__m512i; 16], m: &[__m512i; 16], r: usize) {
   // SAFETY: Caller guarantees this AVX-512 backend is active; all vector lanes are local registers.
@@ -200,6 +219,9 @@ unsafe fn round(v: &mut [__m512i; 16], m: &[__m512i; 16], r: usize) {
   }
 }
 
+/// # Safety
+///
+/// AVX-512F must be available.
 #[inline(always)]
 unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512i) {
   let mask = if increment_counter { !0u64 } else { 0u64 };
@@ -245,11 +267,15 @@ unsafe fn counter_vec(counter: u64, increment_counter: bool) -> (__m512i, __m512
   }
 }
 
+/// # Safety
+///
+/// AVX2 must be available and every input must be readable for a complete
+/// block starting at `block_offset`.
 #[inline(always)]
 unsafe fn transpose_msg_vecs8(inputs: &[*const u8; 8], block_offset: usize) -> [__m256i; 16] {
   // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
   unsafe {
-    let stride = 4 * 8;
+    let stride = 4usize.strict_mul(8);
     let mut half0 = [
       loadu256(inputs[0].add(block_offset)),
       loadu256(inputs[1].add(block_offset)),
@@ -261,18 +287,21 @@ unsafe fn transpose_msg_vecs8(inputs: &[*const u8; 8], block_offset: usize) -> [
       loadu256(inputs[7].add(block_offset)),
     ];
     let mut half1 = [
-      loadu256(inputs[0].add(block_offset + stride)),
-      loadu256(inputs[1].add(block_offset + stride)),
-      loadu256(inputs[2].add(block_offset + stride)),
-      loadu256(inputs[3].add(block_offset + stride)),
-      loadu256(inputs[4].add(block_offset + stride)),
-      loadu256(inputs[5].add(block_offset + stride)),
-      loadu256(inputs[6].add(block_offset + stride)),
-      loadu256(inputs[7].add(block_offset + stride)),
+      loadu256(inputs[0].add(block_offset.strict_add(stride))),
+      loadu256(inputs[1].add(block_offset.strict_add(stride))),
+      loadu256(inputs[2].add(block_offset.strict_add(stride))),
+      loadu256(inputs[3].add(block_offset.strict_add(stride))),
+      loadu256(inputs[4].add(block_offset.strict_add(stride))),
+      loadu256(inputs[5].add(block_offset.strict_add(stride))),
+      loadu256(inputs[6].add(block_offset.strict_add(stride))),
+      loadu256(inputs[7].add(block_offset.strict_add(stride))),
     ];
 
     for &input in inputs.iter() {
-      _mm_prefetch(input.wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
+      _mm_prefetch(
+        input.wrapping_add(block_offset.strict_add(256)).cast::<i8>(),
+        _MM_HINT_T0,
+      );
     }
 
     transpose8x8(&mut half0);
@@ -285,6 +314,10 @@ unsafe fn transpose_msg_vecs8(inputs: &[*const u8; 8], block_offset: usize) -> [
   }
 }
 
+/// # Safety
+///
+/// AVX-512F, AVX-512DQ, and AVX2 must be available. Every input must be
+/// readable for a complete block starting at `block_offset`.
 #[inline(always)]
 unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) -> [__m512i; 16] {
   // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
@@ -310,63 +343,6 @@ unsafe fn transpose_msg_vecs16(inputs: &[*const u8; 16], block_offset: usize) ->
   }
 }
 
-/// Hash 16 contiguous independent inputs in parallel.
-///
-/// This is optimized for the contiguous chunk hashing hot path, where inputs
-/// are arranged as `CHUNK_LEN`-byte blocks back-to-back.
-///
-/// # Safety
-/// Caller must ensure AVX-512 is available, and `input`/`out` are valid for
-/// `DEGREE * CHUNK_LEN` and `DEGREE * OUT_LEN` bytes respectively.
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-// Match upstream: AVX-512 detection is based on `avx512f` + `avx512vl`.
-// The Linux backend delegates to upstream-grade asm, so we intentionally do
-// not require BW/DQ here.
-#[target_feature(enable = "avx512f,avx512vl,avx2")]
-pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter: u64, flags: u32, out: *mut u8) {
-  // Delegate to the upstream-grade AVX-512 asm implementation on Linux.
-  //
-  // The upstream function accepts an array of input pointers, so we build it
-  // from the contiguous layout.
-  debug_assert!(flags <= u8::MAX as u32);
-  // SAFETY: Caller guarantees AVX-512F/VL+AVX2 availability, `input` readable for 16 chunks, and
-  // `out` writable for `DEGREE * OUT_LEN`. The asm entrypoint shares that contract.
-  unsafe {
-    let inputs = [
-      input,
-      input.add(CHUNK_LEN),
-      input.add(2 * CHUNK_LEN),
-      input.add(3 * CHUNK_LEN),
-      input.add(4 * CHUNK_LEN),
-      input.add(5 * CHUNK_LEN),
-      input.add(6 * CHUNK_LEN),
-      input.add(7 * CHUNK_LEN),
-      input.add(8 * CHUNK_LEN),
-      input.add(9 * CHUNK_LEN),
-      input.add(10 * CHUNK_LEN),
-      input.add(11 * CHUNK_LEN),
-      input.add(12 * CHUNK_LEN),
-      input.add(13 * CHUNK_LEN),
-      input.add(14 * CHUNK_LEN),
-      input.add(15 * CHUNK_LEN),
-    ];
-    let flags_start = (flags | super::super::CHUNK_START) as u8;
-    let flags_end = (flags | super::super::CHUNK_END) as u8;
-    super::asm::rscrypto_blake3_hash_many_avx512(
-      inputs.as_ptr(),
-      DEGREE,
-      CHUNK_LEN / BLOCK_LEN,
-      key.as_ptr(),
-      counter,
-      true,
-      flags as u8,
-      flags_start,
-      flags_end,
-      out,
-    );
-  }
-}
-
 /// Owned Rust-intrinsic implementation of the 16-way contiguous hash-many kernel.
 ///
 /// This stays callable on platforms where production dispatch still prefers
@@ -379,15 +355,17 @@ pub(crate) unsafe fn hash16_contiguous(input: *const u8, key: &[u32; 8], counter
 /// `out` is valid for `DEGREE * OUT_LEN` writable bytes.
 #[target_feature(enable = "avx512f,avx512vl,avx512dq,avx2")]
 pub(crate) unsafe fn hash16_owned(
-  inputs: &[*const u8; DEGREE],
-  blocks: usize,
-  key: &[u32; 8],
-  counter: u64,
-  increment_counter: bool,
-  flags: u32,
-  flags_start: u32,
-  flags_end: u32,
-  out: *mut u8,
+  HashManyRequest {
+    inputs,
+    blocks,
+    key,
+    counter,
+    increment_counter,
+    flags,
+    flags_start,
+    flags_end,
+    out,
+  }: HashManyRequest<'_, DEGREE>,
 ) {
   // SAFETY: 16-way AVX-512 BLAKE3 contiguous hash-many because:
   // 1. The caller guarantees AVX-512F/VL/DQ plus AVX2 availability.
@@ -395,7 +373,7 @@ pub(crate) unsafe fn hash16_owned(
   // 3. `out` is writable for `DEGREE * OUT_LEN` bytes.
   // 4. All lane pointers and stores are bounded by fixed-size local arrays.
   unsafe {
-    let block_len_vec = set1(BLOCK_LEN as u32);
+    let block_len_vec = set1(BLOCK_LEN_U32);
     let iv0 = set1(IV[0]);
     let iv1 = set1(IV[1]);
     let iv2 = set1(IV[2]);
@@ -419,13 +397,13 @@ pub(crate) unsafe fn hash16_owned(
       if block == 0 {
         block_flags |= flags_start;
       }
-      if block + 1 == blocks {
+      if block.strict_add(1) == blocks {
         block_flags |= flags_end;
       }
 
       let block_flags_vec = set1(block_flags);
 
-      let m = transpose_msg_vecs16(inputs, block * BLOCK_LEN);
+      let m = transpose_msg_vecs16(inputs, block.strict_mul(BLOCK_LEN));
 
       let mut v = [
         h_vecs[0],
@@ -476,8 +454,8 @@ pub(crate) unsafe fn hash16_owned(
     transpose8x8(&mut hi);
 
     for chunk in 0..8 {
-      storeu256(lo[chunk], out.add(chunk * OUT_LEN));
-      storeu256(hi[chunk], out.add((chunk + 8) * OUT_LEN));
+      storeu256(lo[chunk], out.add(chunk.strict_mul(OUT_LEN)));
+      storeu256(hi[chunk], out.add(chunk.strict_add(8).strict_mul(OUT_LEN)));
     }
   }
 }
@@ -518,17 +496,17 @@ pub(crate) unsafe fn hash16_contiguous_owned(input: *const u8, key: &[u32; 8], c
       input.add(14 * CHUNK_LEN),
       input.add(15 * CHUNK_LEN),
     ];
-    hash16_owned(
-      &inputs,
-      CHUNK_LEN / BLOCK_LEN,
+    hash16_owned(HashManyRequest {
+      inputs: &inputs,
+      blocks: CHUNK_LEN / BLOCK_LEN,
       key,
       counter,
-      true,
+      increment_counter: true,
       flags,
-      super::super::CHUNK_START,
-      super::super::CHUNK_END,
+      flags_start: super::super::CHUNK_START,
+      flags_end: super::super::CHUNK_END,
       out,
-    );
+    });
   }
 }
 
@@ -569,21 +547,21 @@ pub(crate) unsafe fn root_output_blocks16(
 ) {
   #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
   {
-    debug_assert!(flags <= u8::MAX as u32);
-    debug_assert!(block_len <= u8::MAX as u32);
+    let block_len = u8::try_from(block_len).expect("BLAKE3 block length must fit the assembly ABI");
+    let flags = u8::try_from(flags).expect("BLAKE3 flags must fit the assembly ABI");
     // SAFETY: AVX-512 XOF assembly call because:
     // 1. This target-feature function requires the AVX-512 features used by the wrapper.
     // 2. `chaining_value` and `block_words` are fixed-size readable arrays.
     // 3. The caller guarantees `out` is writable for `16 * 64` bytes.
-    // 4. `block_len` and `flags` are debug-checked to fit the assembly ABI.
+    // 4. `block_len` and `flags` were converted without loss to the assembly ABI types.
     // 5. Counters, block length, flags, and output block count are public values.
     unsafe {
       super::asm::xof_many_avx512(
         chaining_value.as_ptr(),
         block_words.as_ptr().cast(),
-        block_len as u8,
+        block_len,
         counter,
-        flags as u8,
+        flags,
         out,
         16,
       );
@@ -591,6 +569,9 @@ pub(crate) unsafe fn root_output_blocks16(
   }
 
   #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+  // SAFETY: Running the intrinsic AVX-512 root-output implementation because this function's
+  // target-feature contract provides AVX-512F/VL and AVX2, and the caller provides 16 writable
+  // output blocks.
   unsafe {
     let cv_vecs = [
       set1(chaining_value[0]),
@@ -685,8 +666,8 @@ pub(crate) unsafe fn root_output_blocks16(
     for i in 0..8 {
       lo0[i] = _mm512_castsi512_si256(out_words[i]);
       hi0[i] = _mm512_extracti64x4_epi64(out_words[i], 1);
-      lo1[i] = _mm512_castsi512_si256(out_words[i + 8]);
-      hi1[i] = _mm512_extracti64x4_epi64(out_words[i + 8], 1);
+      lo1[i] = _mm512_castsi512_si256(out_words[i.strict_add(8)]);
+      hi1[i] = _mm512_extracti64x4_epi64(out_words[i.strict_add(8)], 1);
     }
 
     transpose8x8(&mut lo0);
@@ -694,13 +675,13 @@ pub(crate) unsafe fn root_output_blocks16(
     transpose8x8(&mut lo1);
     transpose8x8(&mut hi1);
 
-    for lane in 0..8 {
-      let base = out.add(lane * 64);
+    for lane in 0usize..8 {
+      let base = out.add(lane.strict_mul(64));
       storeu256(lo0[lane], base);
       storeu256(lo1[lane], base.add(32));
     }
-    for lane in 0..8 {
-      let base = out.add((lane + 8) * 64);
+    for lane in 0usize..8 {
+      let base = out.add(lane.strict_add(8).strict_mul(64));
       storeu256(hi0[lane], base);
       storeu256(hi1[lane], base.add(32));
     }
@@ -723,21 +704,21 @@ pub(crate) unsafe fn root_output_blocks(
   blocks: usize,
 ) {
   debug_assert!(blocks != 0);
-  debug_assert!(flags <= u8::MAX as u32);
-  debug_assert!(block_len <= u8::MAX as u32);
+  let block_len = u8::try_from(block_len).expect("BLAKE3 block length must fit the assembly ABI");
+  let flags = u8::try_from(flags).expect("BLAKE3 flags must fit the assembly ABI");
   // SAFETY: AVX-512 XOF assembly call because:
   // 1. Dispatch only selects this function for the AVX-512 kernel.
   // 2. The caller guarantees `out` is writable for `blocks * 64` bytes.
   // 3. `block_words` is a readable 64-byte block and `chaining_value` has 8 words.
-  // 4. `block_len` and `flags` are debug-checked to fit the assembly ABI.
+  // 4. `block_len` and `flags` were converted without loss to the assembly ABI types.
   // 5. Counters, block length, flags, and output block count are public values.
   unsafe {
     super::asm::xof_many_avx512(
       chaining_value.as_ptr(),
       block_words.as_ptr().cast(),
-      block_len as u8,
+      block_len,
       counter,
-      flags as u8,
+      flags,
       out,
       blocks,
     );
@@ -806,7 +787,7 @@ pub(crate) unsafe fn compress_block(
     let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
     let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
     let [mut row0, mut row1, mut row2, mut row3] =
-      super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
+      super::compress_pre_sse41_impl(chaining_value, [m0, m1, m2, m3], counter, block_len, flags);
 
     let cv_lo = _mm_loadu_si128(chaining_value.as_ptr().cast());
     let cv_hi = _mm_loadu_si128(chaining_value.as_ptr().add(4).cast());
@@ -821,36 +802,6 @@ pub(crate) unsafe fn compress_block(
     _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
     _mm_storeu_si128(out.as_mut_ptr().add(8).cast(), row2);
     _mm_storeu_si128(out.as_mut_ptr().add(12).cast(), row3);
-    out
-  }
-}
-
-/// Compress one BLAKE3 block and return only the chaining value (8 words).
-///
-/// # Safety
-/// Caller must ensure AVX-512F + AVX-512VL + AVX2 + SSE4.1 + SSSE3 are available.
-#[target_feature(enable = "avx512f,avx512vl,avx2,sse4.1,ssse3")]
-pub(crate) unsafe fn compress_cv_block(
-  chaining_value: &[u32; 8],
-  block_words: &[u32; 16],
-  counter: u64,
-  block_len: u32,
-  flags: u32,
-) -> [u32; 8] {
-  // SAFETY: AVX-512/AVX2/SSE4.1/SSSE3 intrinsics are available via this function's
-  // #[target_feature] attribute. Pointer accesses are to valid fixed-size array references.
-  unsafe {
-    let m0 = _mm_loadu_si128(block_words.as_ptr().cast());
-    let m1 = _mm_loadu_si128(block_words.as_ptr().add(4).cast());
-    let m2 = _mm_loadu_si128(block_words.as_ptr().add(8).cast());
-    let m3 = _mm_loadu_si128(block_words.as_ptr().add(12).cast());
-    let [row0, row1, row2, row3] =
-      super::compress_pre_sse41_impl(chaining_value, m0, m1, m2, m3, counter, block_len, flags);
-    let row0 = _mm_xor_si128(row0, row2);
-    let row1 = _mm_xor_si128(row1, row3);
-    let mut out = [0u32; 8];
-    _mm_storeu_si128(out.as_mut_ptr().cast(), row0);
-    _mm_storeu_si128(out.as_mut_ptr().add(4).cast(), row1);
     out
   }
 }

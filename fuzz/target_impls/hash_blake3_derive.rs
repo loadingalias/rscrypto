@@ -6,7 +6,7 @@ use rscrypto_fuzz::{FuzzInput, assert_xof_prefix, some_or_return};
 // separator, not the interesting input.
 const CONTEXT: &str = "rscrypto fuzz 2026-04-12 derive_key test context";
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let data = input.rest();

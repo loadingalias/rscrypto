@@ -11,16 +11,16 @@ use proptest::{prelude::*, test_runner::Config as ProptestConfig};
 use rscrypto::{Scrypt, ScryptParams};
 
 fn oracle_scrypt(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = scrypt::Params::new(log_n, r, p).unwrap();
+  let params = scrypt::Params::new(log_n, r, p).expect("RustCrypto must accept generated scrypt parameters");
   let mut out = vec![0u8; out_len];
-  scrypt::scrypt(password, salt, &params, &mut out).unwrap();
+  scrypt::scrypt(password, salt, &params, &mut out).expect("RustCrypto scrypt derivation must succeed");
   out
 }
 
 fn rs_hash(password: &[u8], salt: &[u8], log_n: u8, r: u32, p: u32, out_len: usize) -> Vec<u8> {
-  let params = ScryptParams::new(log_n, r, p).unwrap();
+  let params = ScryptParams::new(log_n, r, p).expect("generated rscrypto scrypt parameters must be valid");
   let mut out = vec![0u8; out_len];
-  Scrypt::derive(&params, password, salt, &mut out).unwrap();
+  Scrypt::derive(&params, password, salt, &mut out).expect("rscrypto scrypt derivation must succeed");
   out
 }
 
@@ -54,10 +54,12 @@ proptest! {
     p in 1u32..=2,
   ) {
     let params = ScryptParams::new(log_n, r, p)
-      .unwrap();
+      .expect("generated scrypt verification parameters must be valid");
     let mut hash = [0u8; 32];
-    Scrypt::derive(&params, &password, &salt, &mut hash).unwrap();
-    prop_assert!(Scrypt::verify(&params, &password, &salt, &hash).is_ok());
+    Scrypt::derive(&params, &password, &salt, &mut hash)
+      .expect("scrypt verification fixture must derive");
+    Scrypt::verify(&params, &password, &salt, &hash)
+      .expect("fresh scrypt hash must verify");
   }
 }
 
@@ -83,29 +85,25 @@ fn scrypt_short_dklen_is_prefix_of_wide() {
   // `Scrypt::derive(.., out_len=1)` must equal the first byte of
   // `Scrypt::derive(.., out_len=64)` for the same inputs. Exercises the
   // `out_len=1` PBKDF2 single-byte tail that the oracle rejects.
-  let params_short = rscrypto::ScryptParams::new(6, 2, 1).unwrap();
-  let params_wide = rscrypto::ScryptParams::new(6, 2, 1).unwrap();
+  let params = ScryptParams::new(6, 2, 1).expect("short-output scrypt parameters must be valid");
   let mut short_out = [0u8; 1];
   let mut wide_out = [0u8; 64];
-  Scrypt::derive(&params_short, b"pw", b"salty-salty-salt", &mut short_out).unwrap();
-  Scrypt::derive(&params_wide, b"pw", b"salty-salty-salt", &mut wide_out).unwrap();
+  Scrypt::derive(&params, b"pw", b"salty-salty-salt", &mut short_out).expect("one-byte scrypt derivation must succeed");
+  Scrypt::derive(&params, b"pw", b"salty-salty-salt", &mut wide_out).expect("64-byte scrypt derivation must succeed");
   assert_eq!(short_out[0], wide_out[0]);
 }
 
 #[test]
 fn scrypt_verify_rejects_byte_flip_at_every_position() {
-  let params = ScryptParams::new(6, 2, 1).unwrap();
+  let params = ScryptParams::new(6, 2, 1).expect("byte-flip scrypt parameters must be valid");
   let password = b"correct horse battery staple";
   let salt = b"random-salt-1234";
   let mut hash = [0u8; 32];
-  Scrypt::derive(&params, password, salt, &mut hash).unwrap();
+  Scrypt::derive(&params, password, salt, &mut hash).expect("byte-flip scrypt fixture must derive");
 
   for pos in 0..hash.len() {
     let mut tampered = hash;
     tampered[pos] ^= 0x01;
-    assert!(
-      Scrypt::verify(&params, password, salt, &tampered).is_err(),
-      "verify must reject flip at byte {pos}",
-    );
+    Scrypt::verify(&params, password, salt, &tampered).expect_err("scrypt must reject a hash with any flipped byte");
   }
 }

@@ -34,6 +34,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 maybe_disable_sccache
+activate_nightly_toolchain
 unset RUSTC_WRAPPER
 unset CARGO_BUILD_RUSTC_WRAPPER
 
@@ -87,7 +88,7 @@ run_miri_lib_filter() {
 
   echo ""
   echo "━━━ $label ━━━"
-  cargo miri test --lib --features "$MIRI_FEATURES" "$filter"
+  cargo miri test --locked --lib --features "$MIRI_FEATURES" "$filter"
 }
 
 run_miri_lib_filter_features() {
@@ -100,14 +101,14 @@ run_miri_lib_filter_features() {
 
   echo ""
   echo "━━━ $label ━━━"
-  listing=$(cargo miri test --lib --features "$features" "$filter" -- --list)
+  listing=$(cargo miri test --locked --lib --features "$features" "$filter" -- --list)
   printf '%s\n' "$listing"
   count=$(printf '%s\n' "$listing" | awk '/: test$/ { count++ } END { print count + 0 }')
   if [ "$count" -ne "$expected_count" ]; then
     echo "Expected $expected_count Miri tests matching '$filter'; found $count" >&2
     return 1
   fi
-  cargo miri test --lib --features "$features" "$filter"
+  cargo miri test --locked --lib --features "$features" "$filter"
 }
 
 run_miri_test_target() {
@@ -117,7 +118,7 @@ run_miri_test_target() {
 
   echo ""
   echo "━━━ $label ━━━"
-  cargo miri test --test "$target" --features "$features"
+  cargo miri test --locked --test "$target" --features "$features"
 }
 
 # Run Miri Tests
@@ -152,7 +153,7 @@ case "$MIRI_SCOPE" in
     ;;
   exhaustive)
     echo "Scope: exhaustive lib tests under Miri"
-    cargo miri test --lib --features "$MIRI_FEATURES"
+    cargo miri test --locked --lib --features "$MIRI_FEATURES"
     ;;
   *)
     echo "Invalid RSCRYPTO_MIRI_SCOPE: $MIRI_SCOPE"

@@ -21,43 +21,75 @@ use crate::checksum::common::tables::CRC24_OPENPGP_POLY;
 /// CRC-24/OPENPGP polynomial in reflected CRC-32 form (LSB-first).
 ///
 /// This is `reverse_bits(poly32)` where `poly32 = CRC24_OPENPGP_POLY << 8`.
-pub(crate) const CRC24_OPENPGP_POLY_REFLECTED: u32 = (CRC24_OPENPGP_POLY << 8).reverse_bits();
+pub(super) const CRC24_OPENPGP_POLY_REFLECTED: u32 = (CRC24_OPENPGP_POLY << 8).reverse_bits();
 
 /// Key schedule for CRC-24/OPENPGP in the width32 folding strategy.
 #[rustfmt::skip]
-pub(crate) const CRC24_OPENPGP_KEYS_REFLECTED: [u64; 23] = build_keys(CRC24_OPENPGP_POLY_REFLECTED);
+pub(super) const CRC24_OPENPGP_KEYS_REFLECTED: [u64; 23] = build_keys(CRC24_OPENPGP_POLY_REFLECTED);
 
 /// Multi-stream folding constants for CRC-24/OPENPGP in the width32 strategy.
 ///
 /// These constants enable multi-way striping (2-way / 3-way / 4-way / 7-way / 8-way)
 /// for carryless-multiply kernels.
 #[derive(Clone, Copy, Debug)]
-#[allow(dead_code)] // Field subsets vary by architecture (x86_64/aarch64/power/s390x/riscv64 stream widths).
-pub(crate) struct Crc24StreamConstants {
-  pub fold_256b: (u64, u64),
-  pub fold_384b: (u64, u64),
-  pub fold_512b: (u64, u64),
-  pub fold_896b: (u64, u64),
-  pub fold_1024b: (u64, u64),
-  pub combine_4way: [(u64, u64); 3],
-  pub combine_7way: [(u64, u64); 6],
-  pub combine_8way: [(u64, u64); 7],
+pub(super) struct Crc24StreamConstants {
+  pub(super) fold_256b: (u64, u64),
+  #[cfg(target_arch = "aarch64")]
+  pub(super) fold_384b: (u64, u64),
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  ))]
+  pub(super) fold_512b: (u64, u64),
+  #[cfg(target_arch = "x86_64")]
+  pub(super) fold_896b: (u64, u64),
+  #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+  pub(super) fold_1024b: (u64, u64),
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "powerpc64",
+    target_arch = "s390x",
+    target_arch = "riscv64"
+  ))]
+  pub(super) combine_4way: [(u64, u64); 3],
+  #[cfg(target_arch = "x86_64")]
+  pub(super) combine_7way: [(u64, u64); 6],
+  #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
+  pub(super) combine_8way: [(u64, u64); 7],
 }
 
 impl Crc24StreamConstants {
   #[must_use]
-  pub const fn new(reflected_poly: u32) -> Self {
+  const fn new(reflected_poly: u32) -> Self {
     Self {
       fold_256b: fold16_coeff_for_bytes(reflected_poly, 256),
+      #[cfg(target_arch = "aarch64")]
       fold_384b: fold16_coeff_for_bytes(reflected_poly, 384),
+      #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "riscv64"
+      ))]
       fold_512b: fold16_coeff_for_bytes(reflected_poly, 512),
+      #[cfg(target_arch = "x86_64")]
       fold_896b: fold16_coeff_for_bytes(reflected_poly, 896),
+      #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
       fold_1024b: fold16_coeff_for_bytes(reflected_poly, 1024),
+      #[cfg(any(
+        target_arch = "x86_64",
+        target_arch = "powerpc64",
+        target_arch = "s390x",
+        target_arch = "riscv64"
+      ))]
       combine_4way: [
         fold16_coeff_for_bytes(reflected_poly, 384),
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
+      #[cfg(target_arch = "x86_64")]
       combine_7way: [
         fold16_coeff_for_bytes(reflected_poly, 768),
         fold16_coeff_for_bytes(reflected_poly, 640),
@@ -66,6 +98,7 @@ impl Crc24StreamConstants {
         fold16_coeff_for_bytes(reflected_poly, 256),
         fold16_coeff_for_bytes(reflected_poly, 128),
       ],
+      #[cfg(any(target_arch = "x86_64", target_arch = "powerpc64"))]
       combine_8way: [
         fold16_coeff_for_bytes(reflected_poly, 896),
         fold16_coeff_for_bytes(reflected_poly, 768),
@@ -79,7 +112,7 @@ impl Crc24StreamConstants {
   }
 }
 
-pub(crate) const CRC24_OPENPGP_STREAM_REFLECTED: Crc24StreamConstants =
+pub(super) const CRC24_OPENPGP_STREAM_REFLECTED: Crc24StreamConstants =
   Crc24StreamConstants::new(CRC24_OPENPGP_POLY_REFLECTED);
 
 // Constant Generation (compile-time)
@@ -112,16 +145,16 @@ const fn reduce128(hi: u64, lo: u64, poly: u32) -> u32 {
   let poly_full: u128 = (1u128.strict_shl(32)) | (poly as u128);
   let mut val: u128 = (hi as u128).strict_shl(64) | (lo as u128);
 
-  let mut bit: i32 = 127;
+  let mut bit: u32 = 127;
   while bit >= 32 {
-    let b = bit as u32;
-    if ((val.strict_shr(b)) & 1) != 0 {
-      val ^= poly_full.strict_shl(b.strict_sub(32));
+    if ((val.strict_shr(bit)) & 1) != 0 {
+      val ^= poly_full.strict_shl(bit.strict_sub(32));
     }
     bit = bit.strict_sub(1);
   }
 
-  val as u32
+  let [b0, b1, b2, b3, ..] = val.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
 }
 
 /// Compute x^n mod (x^width + poly) in GF(2) where `poly` is the normal CRC polynomial

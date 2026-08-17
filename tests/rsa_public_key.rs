@@ -9,7 +9,7 @@ use core::{
 use std::{
   fs,
   path::PathBuf,
-  process::{self, Command},
+  process::{self, Command, Output},
   sync::OnceLock,
   time::{SystemTime, UNIX_EPOCH},
 };
@@ -71,22 +71,27 @@ const RSA8192_PKCS1V15_SHA256: &[u8] = include_bytes!("../benches/rsa_fixtures/r
 
 fn der_len(len: usize) -> Vec<u8> {
   if len < 128 {
-    return vec![len as u8];
+    return vec![u8::try_from(len).expect("a short DER length must fit in one byte")];
   }
 
   let bytes = len.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap();
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .expect("a DER length of at least 128 must contain a nonzero byte");
   let len_bytes = &bytes[first_nonzero..];
-  let mut out = Vec::with_capacity(1 + len_bytes.len());
-  out.push(0x80 | len_bytes.len() as u8);
+  let mut out = Vec::with_capacity(1usize.strict_add(len_bytes.len()));
+  out.push(0x80 | u8::try_from(len_bytes.len()).expect("a usize DER length prefix must fit in one byte"));
   out.extend_from_slice(len_bytes);
   out
 }
 
 fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-  let mut out = Vec::with_capacity(1 + der_len(value.len()).len() + value.len());
+  let encoded_len = der_len(value.len());
+  let capacity = 1usize.strict_add(encoded_len.len()).strict_add(value.len());
+  let mut out = Vec::with_capacity(capacity);
   out.push(tag);
-  out.extend_from_slice(&der_len(value.len()));
+  out.extend_from_slice(&encoded_len);
   out.extend_from_slice(value);
   out
 }
@@ -99,7 +104,7 @@ fn tlv_with_leading_zero_long_len(der: &[u8]) -> Vec<u8> {
 
   let mut out = Vec::with_capacity(der.len().strict_add(1));
   out.push(tag);
-  out.push(0x80 | (len_len.strict_add(1) as u8));
+  out.push(0x80 | u8::try_from(len_len.strict_add(1)).expect("a DER length-of-length must fit in one byte"));
   out.push(0);
   out.extend_from_slice(&der[2..]);
   out
@@ -170,7 +175,7 @@ fn context_constructed(index: u8, value: &[u8]) -> Vec<u8> {
 fn integer_unsigned(value: &[u8]) -> Vec<u8> {
   let first_nonzero = value.iter().position(|&byte| byte != 0);
   let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
-  let mut encoded = Vec::with_capacity(value.len() + usize::from(value[0] & 0x80 != 0));
+  let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(value[0] & 0x80 != 0)));
   if value[0] & 0x80 != 0 {
     encoded.push(0);
   }
@@ -188,11 +193,12 @@ fn algorithm_identifier(algorithm_oid: &[u8], params: Option<&[u8]>) -> Vec<u8> 
 }
 
 fn hex_to_vec(hex: &str) -> Vec<u8> {
-  assert_eq!(hex.len() % 2, 0);
-  let mut out = Vec::with_capacity(hex.len() / 2);
-  for chunk in hex.as_bytes().chunks_exact(2) {
-    let hi = hex_value(chunk[0]);
-    let lo = hex_value(chunk[1]);
+  let (chunks, remainder) = hex.as_bytes().as_chunks::<2>();
+  assert!(remainder.is_empty(), "hex input must contain complete byte pairs");
+  let mut out = Vec::with_capacity(chunks.len());
+  for &[hi, lo] in chunks {
+    let hi = hex_value(hi).expect("hex fixtures must contain only ASCII hexadecimal digits");
+    let lo = hex_value(lo).expect("hex fixtures must contain only ASCII hexadecimal digits");
     out.push((hi << 4) | lo);
   }
   out
@@ -211,12 +217,12 @@ fn cavp_hex_to_vec(hex: &str) -> Vec<u8> {
   hex_to_vec(hex)
 }
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
@@ -246,20 +252,26 @@ fn valid_pkcs1_with_modulus_and_exponent(modulus: &[u8], exponent: &[u8]) -> Vec
 }
 
 fn legacy_public_key_from_pkcs1(der: &[u8]) -> RsaPublicKey {
-  RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  RsaPublicKey::from_pkcs1_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("the PKCS#1 fixture must satisfy the legacy verification policy")
 }
 
 fn legacy_public_key_from_spki(der: &[u8]) -> RsaPublicKey {
-  RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  RsaPublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("the SPKI fixture must satisfy the legacy verification policy")
 }
 
 fn legacy_x509_public_key_from_spki(der: &[u8]) -> RsaX509PublicKey {
-  RsaX509PublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification()).unwrap()
+  RsaX509PublicKey::from_spki_der_with_policy(der, &RsaPublicKeyPolicy::legacy_verification())
+    .expect("the X.509 SPKI fixture must satisfy the legacy verification policy")
 }
 
 fn exponent_bytes(exponent: u64) -> Vec<u8> {
   let bytes = exponent.to_be_bytes();
-  let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap_or(bytes.len() - 1);
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .unwrap_or_else(|| bytes.len().strict_sub(1));
   bytes[first_nonzero..].to_vec()
 }
 
@@ -283,12 +295,16 @@ fn x509_pss_algorithm(profile: RsaPssProfile, salt_len: usize, trailer: Option<u
   params.extend_from_slice(&context_constructed(1, &x509_mgf1_algorithm(profile)));
   params.extend_from_slice(&context_constructed(
     2,
-    &integer_unsigned(&exponent_bytes(u64::try_from(salt_len).unwrap())),
+    &integer_unsigned(&exponent_bytes(
+      u64::try_from(salt_len).expect("an X.509 PSS salt length must fit in u64"),
+    )),
   ));
   if let Some(trailer) = trailer {
     params.extend_from_slice(&context_constructed(
       3,
-      &integer_unsigned(&exponent_bytes(u64::try_from(trailer).unwrap())),
+      &integer_unsigned(&exponent_bytes(
+        u64::try_from(trailer).expect("an X.509 PSS trailer field must fit in u64"),
+      )),
     ));
   }
   algorithm_identifier(ID_RSASSA_PSS_OID, Some(&sequence(&params)))
@@ -310,13 +326,15 @@ fn x509_pss_sha256_algorithm_with_absent_hash_params(salt_len: usize) -> Vec<u8>
   params.extend_from_slice(&context_constructed(1, &mgf1_sha256_without_params));
   params.extend_from_slice(&context_constructed(
     2,
-    &integer_unsigned(&exponent_bytes(u64::try_from(salt_len).unwrap())),
+    &integer_unsigned(&exponent_bytes(
+      u64::try_from(salt_len).expect("an X.509 PSS salt length must fit in u64"),
+    )),
   ));
   algorithm_identifier(ID_RSASSA_PSS_OID, Some(&sequence(&params)))
 }
 
 fn x509_certificate(tbs_certificate_der: &[u8], signature_algorithm_der: &[u8], signature: &[u8]) -> Vec<u8> {
-  let mut signature_value = Vec::with_capacity(signature.len() + 1);
+  let mut signature_value = Vec::with_capacity(signature.len().strict_add(1));
   signature_value.push(0);
   signature_value.extend_from_slice(signature);
 
@@ -386,27 +404,27 @@ fn rustcrypto_fixture_private_key() -> RustCryptoRsaPrivateKey {
       b"00d397b84d98a4c26138ed1b695a8106ead91d553bf06041b62d3fdc50a041e222b8f4529689c1b82c5e71554f5dd69fa2f4b6158cf0dbeb57811a0fc327e1f28e74fe74d3bc166c1eabdc1b8b57b934ca8be5b00b4f29975bcc99acaf415b59bb28a6782bb41a2c3c2976b3c18dbadef62f00c6bb226640095096c0cc60d22fe7ef987d75c6a81b10d96bf292028af110dc7cc1bbc43d22adab379a0cd5d8078cc780ff5cd6209dea34c922cf784f7717e428d75b5aec8ff30e5f0141510766e2e0ab8d473c84e8710b2b98227c3db095337ad3452f19e2b9bfbccdd8148abf6776fa552775e6e75956e45229ae5a9c46949bab1e622f0e48f56524a84ed3483b",
       16,
     )
-    .unwrap(),
-    BigUint::parse_bytes(b"010001", 16).unwrap(),
+    .expect("the fixed RSA modulus must be valid hexadecimal"),
+    BigUint::parse_bytes(b"010001", 16).expect("the fixed RSA exponent must be valid hexadecimal"),
     BigUint::parse_bytes(
       b"00c4e70c689162c94c660828191b52b4d8392115df486a9adbe831e458d73958320dc1b755456e93701e9702d76fb0b92f90e01d1fe248153281fe79aa9763a92fae69d8d7ecd144de29fa135bd14f9573e349e45031e3b76982f583003826c552e89a397c1a06bd2163488630d92e8c2bb643d7abef700da95d685c941489a46f54b5316f62b5d2c3a7f1bbd134cb37353a44683fdc9d95d36458de22f6c44057fe74a0a436c4308f73f4da42f35c47ac16a7138d483afc91e41dc3a1127382e0c0f5119b0221b4fc639d6b9c38177a6de9b526ebd88c38d7982c07f98a0efd877d508aae275b946915c02e2e1106d175d74ec6777f5e80d12c053d9c7be1e341",
       16,
     )
-    .unwrap(),
+    .expect("the fixed RSA private exponent must be valid hexadecimal"),
     vec![
       BigUint::parse_bytes(
         b"00f827bbf3a41877c7cc59aebf42ed4b29c32defcb8ed96863d5b090a05a8930dd624a21c9dcf9838568fdfa0df65b8462a5f2ac913d6c56f975532bd8e78fb07bd405ca99a484bcf59f019bbddcb3933f2bce706300b4f7b110120c5df9018159067c35da3061a56c8635a52b54273b31271b4311f0795df6021e6355e1a42e61",
         16,
       )
-      .unwrap(),
+      .expect("the fixed first RSA prime must be valid hexadecimal"),
       BigUint::parse_bytes(
         b"00da4817ce0089dd36f2ade6a3ff410c73ec34bf1b4f6bda38431bfede11cef1f7f6efa70e5f8063a3b1f6e17296ffb15feefa0912a0325b8d1fd65a559e717b5b961ec345072e0ec5203d03441d29af4d64054a04507410cf1da78e7b6119d909ec66e6ad625bf995b279a4b3c5be7d895cd7c5b9c4c497fde730916fcdb4e41b",
         16,
       )
-      .unwrap(),
+      .expect("the fixed second RSA prime must be valid hexadecimal"),
     ],
   )
-  .unwrap()
+  .expect("the fixed RSA components must form a valid private key")
 }
 
 fn x509_sha256_rsa_self_signed_certificate(params: Option<&[u8]>) -> (Vec<u8>, Vec<u8>) {
@@ -552,7 +570,7 @@ eb10e16719b6b54d1768dc5278e6bcebc67d45226ab0164ede685b74a3d53eb14bcdfb",
 }
 
 fn spki_for_pkcs1_with_algorithm(pkcs1: &[u8], algorithm: &[u8]) -> Vec<u8> {
-  let mut subject_public_key = Vec::with_capacity(pkcs1.len() + 1);
+  let mut subject_public_key = Vec::with_capacity(pkcs1.len().strict_add(1));
   subject_public_key.push(0);
   subject_public_key.extend_from_slice(pkcs1);
 
@@ -600,58 +618,78 @@ fn assert_aws_lc_rs_pkcs1v15_sha256(spki: &[u8], message: &[u8], signature: &[u8
 
 fn assert_ring_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let actual = match (scheme, sha) {
-    ("pss", "SHA256") => ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA256, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pss", "SHA384") => ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA384, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pss", "SHA512") => ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA512, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pkcs1v15", "SHA256") => {
+    ("pss", "SHA256") => Some(
+      ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA256, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pss", "SHA384") => Some(
+      ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA384, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pss", "SHA512") => Some(
+      ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PSS_2048_8192_SHA512, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pkcs1v15", "SHA256") => Some(
       ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PKCS1_2048_8192_SHA256, pkcs1)
         .verify(message, signature)
-        .is_ok()
-    }
-    ("pkcs1v15", "SHA384") => {
+        .is_ok(),
+    ),
+    ("pkcs1v15", "SHA384") => Some(
       ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PKCS1_2048_8192_SHA384, pkcs1)
         .verify(message, signature)
-        .is_ok()
-    }
-    ("pkcs1v15", "SHA512") => {
+        .is_ok(),
+    ),
+    ("pkcs1v15", "SHA512") => Some(
       ring_signature::UnparsedPublicKey::new(&ring_signature::RSA_PKCS1_2048_8192_SHA512, pkcs1)
         .verify(message, signature)
-        .is_ok()
-    }
-    other => panic!("unsupported ring CAVP profile {other:?}"),
-  };
+        .is_ok(),
+    ),
+    _ => None,
+  }
+  .expect("CAVP fixtures must use a ring-supported RSA/SHA-2 profile");
   assert_eq!(actual, expected, "ring mismatch for {scheme}/{sha}");
 }
 
 #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
 fn assert_aws_lc_rs_cavp(scheme: &str, sha: &str, pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
   let actual = match (scheme, sha) {
-    ("pss", "SHA256") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA256, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pss", "SHA384") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA384, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pss", "SHA512") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA512, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pkcs1v15", "SHA256") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA256, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pkcs1v15", "SHA384") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA384, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    ("pkcs1v15", "SHA512") => aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA512, pkcs1)
-      .verify(message, signature)
-      .is_ok(),
-    other => panic!("unsupported aws-lc-rs CAVP profile {other:?}"),
-  };
+    ("pss", "SHA256") => Some(
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA256, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pss", "SHA384") => Some(
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA384, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pss", "SHA512") => Some(
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PSS_2048_8192_SHA512, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pkcs1v15", "SHA256") => Some(
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA256, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pkcs1v15", "SHA384") => Some(
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA384, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    ("pkcs1v15", "SHA512") => Some(
+      aws_signature::UnparsedPublicKey::new(&aws_signature::RSA_PKCS1_2048_8192_SHA512, pkcs1)
+        .verify(message, signature)
+        .is_ok(),
+    ),
+    _ => None,
+  }
+  .expect("CAVP fixtures must use an aws-lc-rs-supported RSA/SHA-2 profile");
   assert_eq!(actual, expected, "aws-lc-rs mismatch for {scheme}/{sha}");
 }
 
@@ -689,30 +727,30 @@ impl Drop for AwsLcMdCtx {
 }
 
 #[cfg(not(any(target_arch = "s390x", target_arch = "powerpc64")))]
-fn aws_lc_md(sha: &str) -> *const aws_lc::EVP_MD {
+fn aws_lc_md(sha: &str) -> Option<*const aws_lc::EVP_MD> {
   match sha {
     "SHA256" => {
       // SAFETY: Obtains AWS-LC's static SHA-256 EVP_MD descriptor because:
       // 1. The function takes no caller-owned pointers.
       // 2. AWS-LC returns a process-static descriptor that must not be freed.
       // 3. The descriptor is only passed back into AWS-LC verification APIs.
-      unsafe { aws_lc::EVP_sha256() }
+      Some(unsafe { aws_lc::EVP_sha256() })
     }
     "SHA384" => {
       // SAFETY: Obtains AWS-LC's static SHA-384 EVP_MD descriptor because:
       // 1. The function takes no caller-owned pointers.
       // 2. AWS-LC returns a process-static descriptor that must not be freed.
       // 3. The descriptor is only passed back into AWS-LC verification APIs.
-      unsafe { aws_lc::EVP_sha384() }
+      Some(unsafe { aws_lc::EVP_sha384() })
     }
     "SHA512" => {
       // SAFETY: Obtains AWS-LC's static SHA-512 EVP_MD descriptor because:
       // 1. The function takes no caller-owned pointers.
       // 2. AWS-LC returns a process-static descriptor that must not be freed.
       // 3. The descriptor is only passed back into AWS-LC verification APIs.
-      unsafe { aws_lc::EVP_sha512() }
+      Some(unsafe { aws_lc::EVP_sha512() })
     }
-    other => panic!("unsupported AWS-LC sys hash `{other}`"),
+    _ => None,
   }
 }
 
@@ -751,7 +789,7 @@ fn aws_lc_sys_verify(
 ) -> Option<bool> {
   let key = aws_lc_parse_public_key(spki)?;
   let ctx = aws_lc_new_md_ctx()?;
-  let md = aws_lc_md(sha);
+  let md = aws_lc_md(sha)?;
   let mut pctx = ptr::null_mut();
 
   // SAFETY: Initializes an AWS-LC digest verification context because:
@@ -759,7 +797,8 @@ fn aws_lc_sys_verify(
   // 2. `md` is a live process-static descriptor returned by AWS-LC for the selected SHA-2 digest.
   // 3. `pctx` points to stack storage where AWS-LC writes a context borrowed by `ctx`; it is not
   //    freed separately.
-  let init_rc = unsafe { aws_lc::EVP_DigestVerifyInit(ctx.0.as_ptr(), &mut pctx, md, ptr::null_mut(), key.0.as_ptr()) };
+  let init_rc =
+    unsafe { aws_lc::EVP_DigestVerifyInit(ctx.0.as_ptr(), &raw mut pctx, md, ptr::null_mut(), key.0.as_ptr()) };
   if init_rc != 1 || pctx.is_null() {
     return None;
   }
@@ -767,7 +806,7 @@ fn aws_lc_sys_verify(
   let padding = match scheme {
     "pss" => aws_lc::RSA_PKCS1_PSS_PADDING,
     "pkcs1v15" => aws_lc::RSA_PKCS1_PADDING,
-    other => panic!("unsupported AWS-LC sys RSA scheme `{other}`"),
+    _ => return None,
   };
 
   // SAFETY: Configures RSA verification padding on AWS-LC's borrowed PKEY context because:
@@ -824,7 +863,7 @@ fn assert_aws_lc_sys_cavp(
 ) {
   let spki = spki_for_pkcs1(pkcs1);
   let actual = aws_lc_sys_verify(scheme, sha, salt_len, &spki, message, signature)
-    .unwrap_or_else(|| panic!("AWS-LC sys setup failed for {scheme}/{sha} salt_len={salt_len:?}"));
+    .expect("CAVP fixtures must select supported AWS-LC RSA/SHA-2 parameters");
   assert_eq!(actual, expected, "AWS-LC sys mismatch for {scheme}/{sha}");
 }
 
@@ -850,47 +889,58 @@ fn assert_rustcrypto_cavp(
   signature: &[u8],
   expected: bool,
 ) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the CAVP PKCS#1 public key must parse");
   let actual = match (scheme, sha) {
     ("pss", "SHA256") => {
-      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new_with_salt_len(key, salt_len.unwrap());
-      let signature = RustCryptoPssSignature::try_from(signature).unwrap();
-      key.verify(message, &signature).is_ok()
+      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new_with_salt_len(
+        key,
+        salt_len.expect("a CAVP PSS case must provide a salt length"),
+      );
+      let signature = RustCryptoPssSignature::try_from(signature).expect("the CAVP PSS signature width must match");
+      Some(key.verify(message, &signature).is_ok())
     }
     ("pss", "SHA384") => {
-      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha384>::new_with_salt_len(key, salt_len.unwrap());
-      let signature = RustCryptoPssSignature::try_from(signature).unwrap();
-      key.verify(message, &signature).is_ok()
+      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha384>::new_with_salt_len(
+        key,
+        salt_len.expect("a CAVP PSS case must provide a salt length"),
+      );
+      let signature = RustCryptoPssSignature::try_from(signature).expect("the CAVP PSS signature width must match");
+      Some(key.verify(message, &signature).is_ok())
     }
     ("pss", "SHA512") => {
-      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha512>::new_with_salt_len(key, salt_len.unwrap());
-      let signature = RustCryptoPssSignature::try_from(signature).unwrap();
-      key.verify(message, &signature).is_ok()
+      let key = RustCryptoPssVerifyingKey::<sha2_010::Sha512>::new_with_salt_len(
+        key,
+        salt_len.expect("a CAVP PSS case must provide a salt length"),
+      );
+      let signature = RustCryptoPssSignature::try_from(signature).expect("the CAVP PSS signature width must match");
+      Some(key.verify(message, &signature).is_ok())
     }
     ("pkcs1v15", "SHA256") => {
       let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(key);
-      let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
-      key.verify(message, &signature).is_ok()
+      let signature =
+        RustCryptoPkcs1v15Signature::try_from(signature).expect("the CAVP PKCS#1 v1.5 signature width must match");
+      Some(key.verify(message, &signature).is_ok())
     }
     ("pkcs1v15", "SHA384") => {
       let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha384>::new(key);
-      let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
-      key.verify(message, &signature).is_ok()
+      let signature =
+        RustCryptoPkcs1v15Signature::try_from(signature).expect("the CAVP PKCS#1 v1.5 signature width must match");
+      Some(key.verify(message, &signature).is_ok())
     }
     ("pkcs1v15", "SHA512") => {
       let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha512>::new(key);
-      let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
-      key.verify(message, &signature).is_ok()
+      let signature =
+        RustCryptoPkcs1v15Signature::try_from(signature).expect("the CAVP PKCS#1 v1.5 signature width must match");
+      Some(key.verify(message, &signature).is_ok())
     }
-    other => panic!("unsupported RustCrypto CAVP profile {other:?}"),
-  };
+    _ => None,
+  }
+  .expect("CAVP fixtures must use a RustCrypto-supported RSA/SHA-2 profile");
   assert_eq!(actual, expected, "RustCrypto mismatch for {scheme}/{sha}");
 }
 
 fn cavp_field<'a>(value: &'a serde_json::Value, name: &'static str) -> &'a str {
-  value[name]
-    .as_str()
-    .unwrap_or_else(|| panic!("missing CAVP string field `{name}`"))
+  value[name].as_str().expect("a required CAVP field must be a string")
 }
 
 fn cavp_public_exponent(bytes: &[u8]) -> u64 {
@@ -913,81 +963,92 @@ fn cavp_rscrypto_result(
   signature: &[u8],
 ) -> Result<(), rscrypto::VerificationError> {
   let profile = match (scheme, sha) {
-    ("pss", "SHA256") => RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, salt_len.unwrap()),
-    ("pss", "SHA384") => RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha384, salt_len.unwrap()),
-    ("pss", "SHA512") => RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha512, salt_len.unwrap()),
-    ("pkcs1v15", "SHA256") => RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
-    ("pkcs1v15", "SHA384") => RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384),
-    ("pkcs1v15", "SHA512") => RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512),
-    other => panic!("unsupported rscrypto CAVP profile {other:?}"),
-  };
+    ("pss", "SHA256") => {
+      salt_len.map(|salt_len| RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, salt_len))
+    }
+    ("pss", "SHA384") => {
+      salt_len.map(|salt_len| RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha384, salt_len))
+    }
+    ("pss", "SHA512") => {
+      salt_len.map(|salt_len| RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha512, salt_len))
+    }
+    ("pkcs1v15", "SHA256") => Some(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256)),
+    ("pkcs1v15", "SHA384") => Some(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha384)),
+    ("pkcs1v15", "SHA512") => Some(RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha512)),
+    _ => None,
+  }
+  .expect("CAVP fixtures must use a supported RSA/SHA-2 profile and provide a PSS salt length");
   key.verify_signature(profile, message, signature)
 }
 
 fn assert_rustcrypto_pss_sha256(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
   let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new(key);
-  let signature = RustCryptoPssSignature::try_from(signature).unwrap();
+  let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pss_sha384(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
   let key = RustCryptoPssVerifyingKey::<sha2_010::Sha384>::new(key);
-  let signature = RustCryptoPssSignature::try_from(signature).unwrap();
+  let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pss_sha512(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
   let key = RustCryptoPssVerifyingKey::<sha2_010::Sha512>::new(key);
-  let signature = RustCryptoPssSignature::try_from(signature).unwrap();
+  let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 fn assert_rustcrypto_pkcs1v15_sha256(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
   let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(key);
-  let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
+  let signature =
+    RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pkcs1v15_sha384(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
   let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha384>::new(key);
-  let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
+  let signature =
+    RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 #[cfg(feature = "getrandom")]
 fn assert_rustcrypto_pkcs1v15_sha512(pkcs1: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).unwrap();
+  let key = RustCryptoRsaPublicKey::from_pkcs1_der(pkcs1).expect("the PKCS#1 public-key fixture must parse");
   let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha512>::new(key);
-  let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
+  let signature =
+    RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 fn assert_rustcrypto_spki_pss_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_public_key_der(spki).unwrap();
+  let key = RustCryptoRsaPublicKey::from_public_key_der(spki).expect("the SPKI public-key fixture must parse");
   let key = RustCryptoPssVerifyingKey::<sha2_010::Sha256>::new(key);
-  let signature = RustCryptoPssSignature::try_from(signature).unwrap();
+  let signature = RustCryptoPssSignature::try_from(signature).expect("the PSS signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
 
 fn assert_rustcrypto_spki_pkcs1v15_sha256(spki: &[u8], message: &[u8], signature: &[u8], expected: bool) {
-  let key = RustCryptoRsaPublicKey::from_public_key_der(spki).unwrap();
+  let key = RustCryptoRsaPublicKey::from_public_key_der(spki).expect("the SPKI public-key fixture must parse");
   let key = RustCryptoPkcs1v15VerifyingKey::<sha2_010::Sha256>::new(key);
-  let signature = RustCryptoPkcs1v15Signature::try_from(signature).unwrap();
+  let signature =
+    RustCryptoPkcs1v15Signature::try_from(signature).expect("the PKCS#1 v1.5 signature width must match the key");
 
   assert_eq!(key.verify(message, &signature).is_ok(), expected);
 }
@@ -1012,7 +1073,16 @@ fn assert_openssl_signature(
   assert_eq!(actual, expected);
 }
 
-#[allow(clippy::std_instead_of_core)]
+fn openssl_output(command: &mut Command) -> Option<Output> {
+  match command.output() {
+    Ok(output) => Some(output),
+    Err(error) => {
+      eprintln!("OpenSSL oracle unavailable because the process could not start: {error}");
+      None
+    }
+  }
+}
+
 fn openssl_verify(
   digest_arg: &'static str,
   spki: &[u8],
@@ -1025,9 +1095,9 @@ fn openssl_verify(
   let msg_path = openssl_temp_path(&id, "msg.bin");
   let sig_path = openssl_temp_path(&id, "sig.bin");
 
-  fs::write(&key_path, spki).unwrap();
-  fs::write(&msg_path, message).unwrap();
-  fs::write(&sig_path, signature).unwrap();
+  fs::write(&key_path, spki).expect("the OpenSSL SPKI fixture must be written");
+  fs::write(&msg_path, message).expect("the OpenSSL message fixture must be written");
+  fs::write(&sig_path, signature).expect("the OpenSSL signature fixture must be written");
 
   let mut command = Command::new("openssl");
   command
@@ -1039,17 +1109,13 @@ fn openssl_verify(
   for sigopt in sigopts {
     command.args(["-sigopt", sigopt]);
   }
-  let output = command.arg(&msg_path).output();
+  let output = openssl_output(command.arg(&msg_path));
 
-  let _ = fs::remove_file(&key_path);
-  let _ = fs::remove_file(&msg_path);
-  let _ = fs::remove_file(&sig_path);
+  fs::remove_file(&key_path).expect("the temporary OpenSSL SPKI fixture must be removed");
+  fs::remove_file(&msg_path).expect("the temporary OpenSSL message fixture must be removed");
+  fs::remove_file(&sig_path).expect("the temporary OpenSSL signature fixture must be removed");
 
-  let output = match output {
-    Ok(output) => output,
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-    Err(error) => panic!("failed to run openssl: {error}"),
-  };
+  let output = output?;
 
   if output.status.success() {
     return Some(true);
@@ -1057,18 +1123,15 @@ fn openssl_verify(
 
   let stdout = String::from_utf8_lossy(&output.stdout);
   let stderr = String::from_utf8_lossy(&output.stderr);
-  if stdout.contains("Verification failure") || stderr.contains("bad signature") {
-    return Some(false);
-  }
-
-  panic!(
+  assert!(
+    stdout.contains("Verification failure") || stderr.contains("bad signature"),
     "openssl RSA verify failed unexpectedly: status={:?} stdout={stdout:?} stderr={stderr:?}",
     output.status.code()
   );
+  Some(false)
 }
 
 #[cfg(feature = "getrandom")]
-#[allow(clippy::std_instead_of_core)]
 fn openssl_oaep_crypt(
   operation: &'static str,
   key_der: &[u8],
@@ -1080,8 +1143,8 @@ fn openssl_oaep_crypt(
   let key_path = openssl_temp_path(&id, "oaep-key.der");
   let input_path = openssl_temp_path(&id, "oaep-input.bin");
 
-  fs::write(&key_path, key_der).unwrap();
-  fs::write(&input_path, input).unwrap();
+  fs::write(&key_path, key_der).expect("the OpenSSL OAEP key fixture must be written");
+  fs::write(&input_path, input).expect("the OpenSSL OAEP input fixture must be written");
 
   let mut command = Command::new("openssl");
   command
@@ -1090,34 +1153,29 @@ fn openssl_oaep_crypt(
   if public_key {
     command.arg("-pubin");
   }
-  let output = command
-    .arg("-in")
-    .arg(&input_path)
-    .args(["-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt"])
-    .arg(format!("rsa_mgf1_md:{digest}"))
-    .arg("-pkeyopt")
-    .arg(format!("rsa_oaep_md:{digest}"))
-    .output();
+  let output = openssl_output(
+    command
+      .arg("-in")
+      .arg(&input_path)
+      .args(["-pkeyopt", "rsa_padding_mode:oaep", "-pkeyopt"])
+      .arg(format!("rsa_mgf1_md:{digest}"))
+      .arg("-pkeyopt")
+      .arg(format!("rsa_oaep_md:{digest}")),
+  );
 
-  let _ = fs::remove_file(&key_path);
-  let _ = fs::remove_file(&input_path);
+  fs::remove_file(&key_path).expect("the temporary OpenSSL OAEP key fixture must be removed");
+  fs::remove_file(&input_path).expect("the temporary OpenSSL OAEP input fixture must be removed");
 
-  let output = match output {
-    Ok(output) => output,
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-    Err(error) => panic!("failed to run openssl: {error}"),
-  };
-
-  if output.status.success() {
-    return Some(output.stdout);
-  }
+  let output = output?;
 
   let stdout = String::from_utf8_lossy(&output.stdout);
   let stderr = String::from_utf8_lossy(&output.stderr);
-  panic!(
+  assert!(
+    output.status.success(),
     "openssl RSA OAEP {operation} failed unexpectedly: status={:?} stdout={stdout:?} stderr={stderr:?}",
     output.status.code()
   );
+  Some(output.stdout)
 }
 
 #[cfg(feature = "getrandom")]
@@ -1131,14 +1189,13 @@ fn openssl_oaep_decrypt(pkcs1_private_key: &[u8], ciphertext: &[u8], digest: &'s
 }
 
 #[cfg(feature = "getrandom")]
-#[allow(clippy::std_instead_of_core)]
 fn openssl_pkcs1v15_crypt(operation: &'static str, key_der: &[u8], input: &[u8], public_key: bool) -> Option<Vec<u8>> {
   let id = openssl_temp_id();
   let key_path = openssl_temp_path(&id, "pkcs1v15-key.der");
   let input_path = openssl_temp_path(&id, "pkcs1v15-input.bin");
 
-  fs::write(&key_path, key_der).unwrap();
-  fs::write(&input_path, input).unwrap();
+  fs::write(&key_path, key_der).expect("the OpenSSL PKCS#1 v1.5 key fixture must be written");
+  fs::write(&input_path, input).expect("the OpenSSL PKCS#1 v1.5 input fixture must be written");
 
   let mut command = Command::new("openssl");
   command
@@ -1147,31 +1204,26 @@ fn openssl_pkcs1v15_crypt(operation: &'static str, key_der: &[u8], input: &[u8],
   if public_key {
     command.arg("-pubin");
   }
-  let output = command
-    .arg("-in")
-    .arg(&input_path)
-    .args(["-pkeyopt", "rsa_padding_mode:pkcs1"])
-    .output();
+  let output = openssl_output(
+    command
+      .arg("-in")
+      .arg(&input_path)
+      .args(["-pkeyopt", "rsa_padding_mode:pkcs1"]),
+  );
 
-  let _ = fs::remove_file(&key_path);
-  let _ = fs::remove_file(&input_path);
+  fs::remove_file(&key_path).expect("the temporary OpenSSL PKCS#1 v1.5 key fixture must be removed");
+  fs::remove_file(&input_path).expect("the temporary OpenSSL PKCS#1 v1.5 input fixture must be removed");
 
-  let output = match output {
-    Ok(output) => output,
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-    Err(error) => panic!("failed to run openssl: {error}"),
-  };
-
-  if output.status.success() {
-    return Some(output.stdout);
-  }
+  let output = output?;
 
   let stdout = String::from_utf8_lossy(&output.stdout);
   let stderr = String::from_utf8_lossy(&output.stderr);
-  panic!(
+  assert!(
+    output.status.success(),
     "openssl RSA PKCS#1 v1.5 {operation} failed unexpectedly: status={:?} stdout={stdout:?} stderr={stderr:?}",
     output.status.code()
   );
+  Some(output.stdout)
 }
 
 #[cfg(feature = "getrandom")]
@@ -1199,10 +1251,12 @@ fn assert_generated_pkcs1v15_encryption_external_oracles(
   key
     .public_key()
     .encrypt_pkcs1v15_with_random_fill(plaintext, &mut ciphertext, fill_rsa_random_with(0x37))
-    .unwrap();
+    .expect("deterministic PKCS#1 v1.5 encryption must succeed");
 
   let rustcrypto_decrypting_key = RustCryptoPkcs1v15DecryptingKey::new(rustcrypto_private_key.clone());
-  let rustcrypto_decrypted = rustcrypto_decrypting_key.decrypt(&ciphertext).unwrap();
+  let rustcrypto_decrypted = rustcrypto_decrypting_key
+    .decrypt(&ciphertext)
+    .expect("RustCrypto must decrypt the matching deterministic PKCS#1 v1.5 ciphertext");
   assert_eq!(rustcrypto_decrypted, plaintext);
 
   if let Some(openssl_decrypted) = openssl_pkcs1v15_decrypt(pkcs1, &ciphertext) {
@@ -1217,7 +1271,7 @@ fn assert_generated_pkcs1v15_encryption_external_oracles(
     let mut rscrypto_decrypted = vec![0u8; key.signature_len()];
     let rscrypto_decrypted_len = key
       .decrypt_pkcs1v15(&openssl_ciphertext, &mut rscrypto_decrypted)
-      .unwrap();
+      .expect("rscrypto must decrypt the matching OpenSSL PKCS#1 v1.5 ciphertext");
     assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
   } else {
     eprintln!(
@@ -1226,69 +1280,69 @@ fn assert_generated_pkcs1v15_encryption_external_oracles(
   }
 }
 
-#[allow(clippy::std_instead_of_core)]
 fn openssl_private_key_to_spki_der(private_key_der: &[u8]) -> Option<Vec<u8>> {
   let id = openssl_temp_id();
   let key_path = openssl_temp_path(&id, "private-key.der");
 
-  fs::write(&key_path, private_key_der).unwrap();
+  fs::write(&key_path, private_key_der).expect("the OpenSSL private-key fixture must be written");
 
-  let output = Command::new("openssl")
-    .args(["pkey", "-inform", "DER", "-in"])
-    .arg(&key_path)
-    .args(["-pubout", "-outform", "DER"])
-    .output();
+  let output = openssl_output(
+    Command::new("openssl")
+      .args(["pkey", "-inform", "DER", "-in"])
+      .arg(&key_path)
+      .args(["-pubout", "-outform", "DER"]),
+  );
 
-  let _ = fs::remove_file(&key_path);
+  fs::remove_file(&key_path).expect("the temporary OpenSSL private-key fixture must be removed");
 
-  let output = match output {
-    Ok(output) => output,
-    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-    Err(error) => panic!("failed to run openssl: {error}"),
-  };
-
-  if output.status.success() {
-    return Some(output.stdout);
-  }
+  let output = output?;
 
   let stdout = String::from_utf8_lossy(&output.stdout);
   let stderr = String::from_utf8_lossy(&output.stderr);
-  panic!(
+  assert!(
+    output.status.success(),
     "openssl RSA private-key DER parse failed unexpectedly: status={:?} stdout={stdout:?} stderr={stderr:?}",
     output.status.code()
   );
+  Some(output.stdout)
 }
 
 fn digest_salt_len(sha: &str) -> usize {
   match sha {
-    "SHA256" => 32,
-    "SHA384" => 48,
-    "SHA512" => 64,
-    other => panic!("unsupported SHA-2 profile `{other}`"),
+    "SHA256" => Some(32),
+    "SHA384" => Some(48),
+    "SHA512" => Some(64),
+    _ => None,
   }
+  .expect("CAVP fixtures must use a supported SHA-2 profile")
 }
 
 fn openssl_pss_sigopts(sha: &str, salt_len: usize) -> [&'static str; 3] {
   let salt_len = match salt_len {
-    0 => "rsa_pss_saltlen:0",
-    1 => "rsa_pss_saltlen:1",
-    24 => "rsa_pss_saltlen:24",
-    32 => "rsa_pss_saltlen:32",
-    48 => "rsa_pss_saltlen:48",
-    64 => "rsa_pss_saltlen:64",
-    other => panic!("unsupported CAVP PSS salt length `{other}`"),
-  };
+    0 => Some("rsa_pss_saltlen:0"),
+    1 => Some("rsa_pss_saltlen:1"),
+    24 => Some("rsa_pss_saltlen:24"),
+    32 => Some("rsa_pss_saltlen:32"),
+    48 => Some("rsa_pss_saltlen:48"),
+    64 => Some("rsa_pss_saltlen:64"),
+    _ => None,
+  }
+  .expect("CAVP fixtures must use a supported PSS salt length");
   let mgf1 = match sha {
-    "SHA256" => "rsa_mgf1_md:sha256",
-    "SHA384" => "rsa_mgf1_md:sha384",
-    "SHA512" => "rsa_mgf1_md:sha512",
-    other => panic!("unsupported OpenSSL PSS hash `{other}`"),
-  };
+    "SHA256" => Some("rsa_mgf1_md:sha256"),
+    "SHA384" => Some("rsa_mgf1_md:sha384"),
+    "SHA512" => Some("rsa_mgf1_md:sha512"),
+    _ => None,
+  }
+  .expect("CAVP fixtures must use an OpenSSL-supported PSS hash");
   ["rsa_padding_mode:pss", salt_len, mgf1]
 }
 
 fn openssl_temp_id() -> String {
-  let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+  let nanos = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .expect("the system clock must be after the Unix epoch")
+    .as_nanos();
   format!("rscrypto-rsa-{}-{nanos}", process::id())
 }
 
@@ -1333,7 +1387,10 @@ fn fixed_width_signature_candidate(material: &[u8], len: usize) -> Vec<u8> {
     return out;
   }
   for (index, byte) in out.iter_mut().enumerate() {
-    *byte = material[index % material.len()];
+    let source_index = index
+      .checked_rem(material.len())
+      .expect("nonempty signature material must have a valid remainder");
+    *byte = material[source_index];
   }
   out
 }
@@ -1343,7 +1400,7 @@ fn assert_opaque_verification_failure(result: Result<(), rscrypto::VerificationE
 }
 
 fn assert_unsupported_protocol_algorithm<T: core::fmt::Debug>(result: Result<T, RsaProtocolAlgorithmError>) {
-  let err = result.unwrap_err();
+  let err = result.expect_err("the protocol algorithm must be rejected as unsupported");
   assert_eq!(err, RsaProtocolAlgorithmError::UnsupportedAlgorithm);
   assert!(!err.is_malformed_algorithm_identifier());
   assert!(err.is_unsupported_algorithm());
@@ -1351,7 +1408,7 @@ fn assert_unsupported_protocol_algorithm<T: core::fmt::Debug>(result: Result<T, 
 }
 
 fn assert_malformed_protocol_algorithm<T: core::fmt::Debug>(result: Result<T, RsaProtocolAlgorithmError>) {
-  let err = result.unwrap_err();
+  let err = result.expect_err("the malformed protocol algorithm identifier must be rejected");
   assert_eq!(err, RsaProtocolAlgorithmError::MalformedAlgorithmIdentifier);
   assert!(err.is_malformed_algorithm_identifier());
   assert!(!err.is_unsupported_algorithm());
@@ -1389,15 +1446,17 @@ fn spki_public_key_accepts_rsa2048_with_legacy_policy() {
 #[test]
 fn private_key_der_exports_roundtrip_with_rustcrypto_rsa() {
   let rustcrypto_key = rustcrypto_fixture_private_key();
-  let rustcrypto_pkcs1 = EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).unwrap();
-  let rustcrypto_pkcs8 = EncodePrivateKey::to_pkcs8_der(&rustcrypto_key).unwrap();
+  let rustcrypto_pkcs1 =
+    EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
+  let rustcrypto_pkcs8 =
+    EncodePrivateKey::to_pkcs8_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#8");
 
   let rscrypto_from_pkcs1 =
     RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
-      .unwrap();
+      .expect("rscrypto must decode the RustCrypto PKCS#1 private-key fixture");
   let rscrypto_from_pkcs8 =
     RsaPrivateKey::from_pkcs8_der_with_policy(rustcrypto_pkcs8.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
-      .unwrap();
+      .expect("rscrypto must decode the RustCrypto PKCS#8 private-key fixture");
   assert_eq!(rscrypto_from_pkcs1.public_key(), rscrypto_from_pkcs8.public_key());
 
   let rscrypto_pkcs1 = rscrypto_from_pkcs1.to_pkcs1_der();
@@ -1448,7 +1507,8 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
 
   impl RngCore for DeterministicRng {
     fn next_u32(&mut self) -> u32 {
-      self.next_u64() as u32
+      let word = self.next_u64().to_le_bytes();
+      u32::from_le_bytes([word[0], word[1], word[2], word[3]])
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -1475,11 +1535,12 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   impl CryptoRng for DeterministicRng {}
 
   let rustcrypto_key = rustcrypto_fixture_private_key();
-  let rustcrypto_pkcs1 = EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).unwrap();
+  let rustcrypto_pkcs1 =
+    EncodeRsaPrivateKey::to_pkcs1_der(&rustcrypto_key).expect("the RustCrypto fixture must encode as PKCS#1");
   let rustcrypto_public_key = rustcrypto_key.to_public_key();
   let rscrypto_key =
     RsaPrivateKey::from_pkcs1_der_with_policy(rustcrypto_pkcs1.as_bytes(), &RsaPublicKeyPolicy::legacy_verification())
-      .unwrap();
+      .expect("rscrypto must decode the RustCrypto private-key fixture");
   let rscrypto_public_pkcs1 = rscrypto_key.public_key().to_pkcs1_der();
   let rscrypto_public_spki = rscrypto_key.public_key().to_spki_der();
   let message = b"rscrypto private outputs verified by RustCrypto rsa";
@@ -1487,7 +1548,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   let mut pkcs1v15_signature = vec![0u8; rscrypto_key.signature_len()];
   rscrypto_key
     .sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &mut pkcs1v15_signature)
-    .unwrap();
+    .expect("PKCS#1 v1.5 SHA-256 signing must succeed for the valid fixture");
   assert_rustcrypto_pkcs1v15_sha256(&rscrypto_public_pkcs1, message, &pkcs1v15_signature, true);
   assert_openssl_signature(
     "-sha256",
@@ -1499,7 +1560,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   );
   rscrypto_key
     .sign_pkcs1v15(RsaPkcs1v15Profile::Sha384, message, &mut pkcs1v15_signature)
-    .unwrap();
+    .expect("PKCS#1 v1.5 SHA-384 signing must succeed for the valid fixture");
   assert_rustcrypto_pkcs1v15_sha384(&rscrypto_public_pkcs1, message, &pkcs1v15_signature, true);
   assert_openssl_signature(
     "-sha384",
@@ -1511,7 +1572,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   );
   rscrypto_key
     .sign_pkcs1v15(RsaPkcs1v15Profile::Sha512, message, &mut pkcs1v15_signature)
-    .unwrap();
+    .expect("PKCS#1 v1.5 SHA-512 signing must succeed for the valid fixture");
   assert_rustcrypto_pkcs1v15_sha512(&rscrypto_public_pkcs1, message, &pkcs1v15_signature, true);
   assert_openssl_signature(
     "-sha512",
@@ -1525,7 +1586,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   let mut pss_signature = vec![0u8; rscrypto_key.signature_len()];
   rscrypto_key
     .sign_pss(RsaPssProfile::Sha256, message, &mut pss_signature)
-    .unwrap();
+    .expect("PSS SHA-256 signing must succeed for the valid fixture");
   assert_rustcrypto_pss_sha256(&rscrypto_public_pkcs1, message, &pss_signature, true);
   let openssl_pss_sha256 = openssl_pss_sigopts("SHA256", 32);
   assert_openssl_signature(
@@ -1538,7 +1599,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   );
   rscrypto_key
     .sign_pss(RsaPssProfile::Sha384, message, &mut pss_signature)
-    .unwrap();
+    .expect("PSS SHA-384 signing must succeed for the valid fixture");
   assert_rustcrypto_pss_sha384(&rscrypto_public_pkcs1, message, &pss_signature, true);
   let openssl_pss_sha384 = openssl_pss_sigopts("SHA384", 48);
   assert_openssl_signature(
@@ -1551,7 +1612,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   );
   rscrypto_key
     .sign_pss(RsaPssProfile::Sha512, message, &mut pss_signature)
-    .unwrap();
+    .expect("PSS SHA-512 signing must succeed for the valid fixture");
   assert_rustcrypto_pss_sha512(&rscrypto_public_pkcs1, message, &pss_signature, true);
   let openssl_pss_sha512 = openssl_pss_sigopts("SHA512", 64);
   assert_openssl_signature(
@@ -1571,14 +1632,18 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
       rscrypto_key
         .public_key()
         .encrypt_oaep($profile, label.as_bytes(), plaintext, &mut ciphertext)
-        .unwrap();
+        .expect("OAEP encryption must succeed for the valid RustCrypto round-trip fixture");
       let decrypting_key = RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_key.clone(), label);
-      let decrypted = decrypting_key.decrypt(&ciphertext).unwrap();
+      let decrypted = decrypting_key
+        .decrypt(&ciphertext)
+        .expect("RustCrypto must decrypt the matching rscrypto OAEP ciphertext");
       assert_eq!(decrypted, plaintext);
 
       let encrypting_key = RustCryptoOaepEncryptingKey::<$digest>::new_with_label(rustcrypto_public_key.clone(), label);
       let mut rng = DeterministicRng { state: $seed };
-      let rustcrypto_ciphertext = encrypting_key.encrypt_with_rng(&mut rng, plaintext).unwrap();
+      let rustcrypto_ciphertext = encrypting_key
+        .encrypt_with_rng(&mut rng, plaintext)
+        .expect("RustCrypto OAEP encryption must succeed for the valid fixture");
       let mut rscrypto_decrypted = vec![0u8; rscrypto_key.signature_len()];
       let rscrypto_decrypted_len = rscrypto_key
         .decrypt_oaep(
@@ -1587,7 +1652,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
           &rustcrypto_ciphertext,
           &mut rscrypto_decrypted,
         )
-        .unwrap();
+        .expect("rscrypto must decrypt the matching RustCrypto OAEP ciphertext");
       assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
     }};
   }
@@ -1614,7 +1679,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
       rscrypto_key
         .public_key()
         .encrypt_oaep($profile, b"", openssl_plaintext, &mut ciphertext)
-        .unwrap();
+        .expect("OAEP encryption must succeed for the valid OpenSSL round-trip fixture");
       if let Some(decrypted) = openssl_oaep_decrypt(rustcrypto_pkcs1.as_bytes(), &ciphertext, $digest) {
         assert_eq!(decrypted, openssl_plaintext);
       } else {
@@ -1625,7 +1690,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
         let mut rscrypto_decrypted = vec![0u8; rscrypto_key.signature_len()];
         let rscrypto_decrypted_len = rscrypto_key
           .decrypt_oaep($profile, b"", &openssl_ciphertext, &mut rscrypto_decrypted)
-          .unwrap();
+          .expect("rscrypto must decrypt the matching OpenSSL OAEP ciphertext");
         assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], openssl_plaintext);
       } else {
         eprintln!("skipping OpenSSL RSA OAEP encrypt differential check because `openssl` is not available");
@@ -1641,7 +1706,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
   rscrypto_key
     .public_key()
     .encrypt_pkcs1v15_with_random_fill(pkcs1v15_plaintext, &mut pkcs1v15_ciphertext, fill_rsa_random_with(0x6d))
-    .unwrap();
+    .expect("PKCS#1 v1.5 encryption must succeed for the valid OpenSSL round-trip fixture");
   if let Some(decrypted) = openssl_pkcs1v15_decrypt(rustcrypto_pkcs1.as_bytes(), &pkcs1v15_ciphertext) {
     assert_eq!(decrypted, pkcs1v15_plaintext);
   } else {
@@ -1652,7 +1717,7 @@ fn private_key_outputs_verify_and_decrypt_with_rustcrypto_rsa() {
     let mut rscrypto_decrypted = vec![0u8; rscrypto_key.signature_len()];
     let rscrypto_decrypted_len = rscrypto_key
       .decrypt_pkcs1v15(&openssl_ciphertext, &mut rscrypto_decrypted)
-      .unwrap();
+      .expect("rscrypto must decrypt the matching OpenSSL PKCS#1 v1.5 ciphertext");
     assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], pkcs1v15_plaintext);
   } else {
     eprintln!("skipping OpenSSL RSA PKCS#1 v1.5 encrypt differential check because `openssl` is not available");
@@ -1709,7 +1774,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
       let mut pkcs1v15_signature = vec![0u8; key.signature_len()];
       key
         .sign_pkcs1v15($pkcs1_profile, message, &mut pkcs1v15_signature)
-        .unwrap();
+        .expect("generated-key PKCS#1 v1.5 signing must succeed");
       $assert_pkcs1(&public_pkcs1, message, &pkcs1v15_signature, true);
       assert_ring_cavp("pkcs1v15", $pss_sha, &public_pkcs1, message, &pkcs1v15_signature, true);
       assert_aws_lc_rs_cavp("pkcs1v15", $pss_sha, &public_pkcs1, message, &pkcs1v15_signature, true);
@@ -1725,7 +1790,9 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
       assert_openssl_signature($digest_arg, &spki, message, &pkcs1v15_signature, &[], true);
 
       let mut pss_signature = vec![0u8; key.signature_len()];
-      key.sign_pss($pss_profile, message, &mut pss_signature).unwrap();
+      key
+        .sign_pss($pss_profile, message, &mut pss_signature)
+        .expect("generated-key PSS signing must succeed");
       $assert_pss(&public_pkcs1, message, &pss_signature, true);
       assert_ring_cavp("pss", $pss_sha, &public_pkcs1, message, &pss_signature, true);
       assert_aws_lc_rs_cavp("pss", $pss_sha, &public_pkcs1, message, &pss_signature, true);
@@ -1753,10 +1820,12 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
           &mut ciphertext,
           fill_rsa_random_from(&$seed),
         )
-        .unwrap();
+        .expect("generated-key OAEP encryption must succeed");
       let rustcrypto_decrypting_key =
         RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label);
-      let rustcrypto_decrypted = rustcrypto_decrypting_key.decrypt(&ciphertext).unwrap();
+      let rustcrypto_decrypted = rustcrypto_decrypting_key
+        .decrypt(&ciphertext)
+        .expect("RustCrypto must decrypt the matching generated-key OAEP ciphertext");
       assert_eq!(rustcrypto_decrypted, plaintext);
 
       if let Some(openssl_decrypted) = openssl_oaep_decrypt(&pkcs1, &ciphertext, $oaep_digest) {
@@ -1769,7 +1838,7 @@ fn generated_private_key_outputs_verify_and_decrypt_with_external_oracles() {
         let mut rscrypto_decrypted = vec![0u8; key.signature_len()];
         let rscrypto_decrypted_len = key
           .decrypt_oaep($oaep_profile, b"", &openssl_ciphertext, &mut rscrypto_decrypted)
-          .unwrap();
+          .expect("rscrypto must decrypt the matching OpenSSL OAEP ciphertext");
         assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
       } else {
         eprintln!("skipping OpenSSL generated RSA OAEP encrypt check because `openssl` is not available");
@@ -1881,7 +1950,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
         let mut pkcs1v15_signature = vec![0u8; key.signature_len()];
         key
           .sign_pkcs1v15($pkcs1_profile, message, &mut pkcs1v15_signature)
-          .unwrap();
+          .expect("generated modern-key PKCS#1 v1.5 signing must succeed");
         $assert_pkcs1(&public_pkcs1, message, &pkcs1v15_signature, true);
         assert_ring_cavp("pkcs1v15", $pss_sha, &public_pkcs1, message, &pkcs1v15_signature, true);
         assert_aws_lc_rs_cavp("pkcs1v15", $pss_sha, &public_pkcs1, message, &pkcs1v15_signature, true);
@@ -1897,7 +1966,9 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
         assert_openssl_signature($digest_arg, &spki, message, &pkcs1v15_signature, &[], true);
 
         let mut pss_signature = vec![0u8; key.signature_len()];
-        key.sign_pss($pss_profile, message, &mut pss_signature).unwrap();
+        key
+          .sign_pss($pss_profile, message, &mut pss_signature)
+          .expect("generated modern-key PSS signing must succeed");
         $assert_pss(&public_pkcs1, message, &pss_signature, true);
         assert_ring_cavp("pss", $pss_sha, &public_pkcs1, message, &pss_signature, true);
         assert_aws_lc_rs_cavp("pss", $pss_sha, &public_pkcs1, message, &pss_signature, true);
@@ -1925,10 +1996,12 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
             &mut ciphertext,
             fill_rsa_random_from(&$seed),
           )
-          .unwrap();
+          .expect("generated modern-key OAEP encryption must succeed");
         let rustcrypto_decrypting_key =
           RustCryptoOaepDecryptingKey::<$digest>::new_with_label(rustcrypto_from_pkcs1.clone(), label);
-        let rustcrypto_decrypted = rustcrypto_decrypting_key.decrypt(&ciphertext).unwrap();
+        let rustcrypto_decrypted = rustcrypto_decrypting_key
+          .decrypt(&ciphertext)
+          .expect("RustCrypto must decrypt the matching generated modern-key OAEP ciphertext");
         assert_eq!(rustcrypto_decrypted, plaintext);
 
         if let Some(openssl_decrypted) = openssl_oaep_decrypt(&pkcs1, &ciphertext, $oaep_digest) {
@@ -1941,7 +2014,7 @@ fn generated_modern_private_key_outputs_verify_and_decrypt_with_external_oracles
           let mut rscrypto_decrypted = vec![0u8; key.signature_len()];
           let rscrypto_decrypted_len = key
             .decrypt_oaep($oaep_profile, b"", &openssl_ciphertext, &mut rscrypto_decrypted)
-            .unwrap();
+            .expect("rscrypto must decrypt the matching OpenSSL OAEP ciphertext");
           assert_eq!(&rscrypto_decrypted[..rscrypto_decrypted_len], plaintext);
         } else {
           eprintln!("skipping OpenSSL generated RSA-{bits} OAEP encrypt check because `openssl` is not available");
@@ -2007,12 +2080,10 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
   );
   let pss_only_key = legacy_x509_public_key_from_spki(&pss_only_spki);
   assert_eq!(pss_only_key.key_algorithm(), RsaX509PublicKeyAlgorithm::RsaPss);
-  assert!(
-    pss_only_key
-      .key_algorithm()
-      .permits_signature_profile(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
-      .is_ok()
-  );
+  pss_only_key
+    .key_algorithm()
+    .permits_signature_profile(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
+    .expect("an unrestricted PSS key must permit PSS SHA-256");
   assert_eq!(
     pss_only_key
       .key_algorithm()
@@ -2029,12 +2100,10 @@ fn x509_spki_public_key_preserves_pss_key_algorithm_constraints() {
       minimum_salt_len: 32,
     }
   );
-  assert!(
-    restricted_key
-      .key_algorithm()
-      .permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 64))
-      .is_ok()
-  );
+  restricted_key
+    .key_algorithm()
+    .permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 64))
+    .expect("a SHA-256 PSS key with a 32-byte minimum salt must permit a 64-byte salt");
   assert_eq!(
     restricted_key
       .key_algorithm()
@@ -2105,16 +2174,12 @@ fn x509_restricted_pss_key_enforces_rfc4055_signature_parameter_validation() {
     minimum_salt_len: 32,
   };
 
-  assert!(
-    key_algorithm
-      .permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 32))
-      .is_ok()
-  );
-  assert!(
-    key_algorithm
-      .permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 64))
-      .is_ok()
-  );
+  key_algorithm
+    .permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 32))
+    .expect("a restricted PSS key must permit its minimum salt length");
+  key_algorithm
+    .permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 64))
+    .expect("a restricted PSS key must permit a salt longer than its minimum");
   assert_eq!(
     key_algorithm.permits_signature_profile(RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 31)),
     Err(RsaProtocolAlgorithmError::UnsupportedAlgorithm)
@@ -2184,11 +2249,9 @@ fn x509_spki_constraints_are_enforced_during_signature_verification() {
   let pss_algorithm = x509_pss_algorithm(RsaPssProfile::Sha256, 32, None);
   let pss_sig = pss_fixture_signature_sha256();
 
-  assert!(
-    pss32_key
-      .verify_signature_from_x509_algorithm_der(&pss_algorithm, pss_fixture_message(), &pss_sig)
-      .is_ok()
-  );
+  pss32_key
+    .verify_signature_from_x509_algorithm_der(&pss_algorithm, pss_fixture_message(), &pss_sig)
+    .expect("a restricted PSS key must verify a signature with matching parameters");
   assert_eq!(
     pss32_key.verify_signature_from_x509_algorithm_der(
       &algorithm_identifier(SHA256_WITH_RSA_ENCRYPTION_OID, Some(&null())),
@@ -2239,16 +2302,12 @@ fn x509_signature_verification_adapter_failures_are_opaque() {
 fn x509_certificate_signature_verification_accepts_real_rsa_certificates() {
   let issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
 
-  assert!(
-    issuer
-      .verify_x509_certificate_signature_der(&x509_pkcs1v15_certificate_fixture())
-      .is_ok()
-  );
-  assert!(
-    issuer
-      .verify_x509_certificate_signature_der(&x509_pss_certificate_fixture())
-      .is_ok()
-  );
+  issuer
+    .verify_x509_certificate_signature_der(&x509_pkcs1v15_certificate_fixture())
+    .expect("the RSA issuer must verify the PKCS#1 v1.5 certificate fixture");
+  issuer
+    .verify_x509_certificate_signature_der(&x509_pss_certificate_fixture())
+    .expect("the RSA issuer must verify the PSS certificate fixture");
 
   let public_key = legacy_public_key_from_spki(&x509_certificate_fixture_public_key());
   let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
@@ -2260,11 +2319,9 @@ fn x509_certificate_signature_verification_accepts_real_rsa_certificates() {
     &algorithm_identifier(ID_RSASSA_PSS_OID, None),
   ));
 
-  assert!(
-    pss_issuer
-      .verify_x509_certificate_signature_der(&x509_pss_certificate_fixture())
-      .is_ok()
-  );
+  pss_issuer
+    .verify_x509_certificate_signature_der(&x509_pss_certificate_fixture())
+    .expect("the PSS issuer must verify the PSS certificate fixture");
   assert_eq!(
     pss_issuer.verify_x509_certificate_signature_der(&x509_pkcs1v15_certificate_fixture()),
     Err(VerificationError::new())
@@ -2275,22 +2332,20 @@ fn x509_certificate_signature_verification_accepts_real_rsa_certificates() {
 fn x509_certificate_signature_algorithms_accept_absent_and_null_sha2_rsa_params() {
   let (null_params_spki, null_params_certificate) = x509_sha256_rsa_self_signed_certificate(Some(&null()));
   let null_params_issuer = legacy_x509_public_key_from_spki(&null_params_spki);
-  assert!(
-    null_params_issuer
-      .verify_x509_certificate_signature_der(&null_params_certificate)
-      .is_ok()
-  );
+  null_params_issuer
+    .verify_x509_certificate_signature_der(&null_params_certificate)
+    .expect("SHA-256 RSA parameters encoded as NULL must verify");
 
   let (absent_params_spki, absent_params_certificate) = x509_sha256_rsa_self_signed_certificate(None);
   let absent_params_issuer = legacy_x509_public_key_from_spki(&absent_params_spki);
-  assert!(
-    absent_params_issuer
-      .verify_x509_certificate_signature_der(&absent_params_certificate)
-      .is_ok()
-  );
+  absent_params_issuer
+    .verify_x509_certificate_signature_der(&absent_params_certificate)
+    .expect("absent SHA-256 RSA parameters must verify");
 
   let mut tampered_absent_params_certificate = absent_params_certificate;
-  *tampered_absent_params_certificate.last_mut().unwrap() ^= 0x01;
+  *tampered_absent_params_certificate
+    .last_mut()
+    .expect("the certificate fixture must contain a signature byte") ^= 0x01;
   assert_eq!(
     absent_params_issuer.verify_x509_certificate_signature_der(&tampered_absent_params_certificate),
     Err(VerificationError::new())
@@ -2339,8 +2394,9 @@ fn x509_certificate_chain_signature_fixtures_cover_rsa_pss_and_pkcs1v15() {
       pss_certificate.as_slice(),
     ),
   ] {
-    assert!(
-      issuer.verify_x509_certificate_signature_der(certificate).is_ok(),
+    assert_eq!(
+      issuer.verify_x509_certificate_signature_der(certificate),
+      Ok(()),
       "{name}"
     );
   }
@@ -2365,7 +2421,9 @@ fn x509_certificate_chain_signature_fixtures_cover_rsa_pss_and_pkcs1v15() {
   }
 
   let mut tampered_pss_certificate = pss_certificate;
-  *tampered_pss_certificate.last_mut().unwrap() ^= 0x01;
+  *tampered_pss_certificate
+    .last_mut()
+    .expect("the PSS certificate fixture must contain a signature byte") ^= 0x01;
   assert_eq!(
     rsae_issuer.verify_x509_certificate_signature_der(&tampered_pss_certificate),
     Err(VerificationError::new())
@@ -2377,7 +2435,9 @@ fn x509_certificate_signature_verification_rejects_malformed_and_confused_certif
   let issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
 
   let mut tampered = x509_pkcs1v15_certificate_fixture();
-  *tampered.last_mut().unwrap() ^= 0x01;
+  *tampered
+    .last_mut()
+    .expect("the PKCS#1 v1.5 certificate fixture must contain a signature byte") ^= 0x01;
   assert_eq!(
     issuer.verify_x509_certificate_signature_der(&tampered),
     Err(VerificationError::new())
@@ -2524,18 +2584,14 @@ fn tls_signature_scheme_advertisement_matches_executable_key_constraints() {
 
   for algorithm in [rsae, pss, pss_sha256_32, pss_sha256_64] {
     for scheme in algorithm.advertised_tls13_signature_schemes().iter() {
-      assert!(
-        algorithm.signature_profile_from_tls13_signature_scheme(scheme).is_ok(),
-        "advertised TLS 1.3 scheme {scheme:#06x} must be executable by {algorithm:?}"
-      );
+      let _profile = algorithm
+        .signature_profile_from_tls13_signature_scheme(scheme)
+        .expect("every advertised TLS 1.3 scheme must map to an executable profile");
     }
     for scheme in algorithm.advertised_tls_certificate_signature_schemes().iter() {
-      assert!(
-        algorithm
-          .signature_profile_from_tls_certificate_signature_scheme(scheme)
-          .is_ok(),
-        "advertised TLS certificate scheme {scheme:#06x} must be executable by {algorithm:?}"
-      );
+      let _profile = algorithm
+        .signature_profile_from_tls_certificate_signature_scheme(scheme)
+        .expect("every advertised TLS certificate scheme must map to an executable profile");
     }
 
     for unsupported_legacy_scheme in [0x0101, 0x0201, 0x0301, 0x0420, 0x0520, 0x0620] {
@@ -2555,8 +2611,8 @@ fn tls_signature_scheme_advertisement_matches_executable_key_constraints() {
 
 #[test]
 fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
-  let rsae_key = RsaX509PublicKey::from_spki_der(RSA3072_SPKI).unwrap();
-  let rsa3072_public = RsaPublicKey::from_spki_der(RSA3072_SPKI).unwrap();
+  let rsae_key = RsaX509PublicKey::from_spki_der(RSA3072_SPKI).expect("the RSA-3072 X.509 fixture must parse");
+  let rsa3072_public = RsaPublicKey::from_spki_der(RSA3072_SPKI).expect("the RSA-3072 SPKI fixture must parse");
   let rsa3072_pkcs1 = valid_pkcs1_with_modulus_and_exponent(
     rsa3072_public.modulus(),
     &exponent_bytes(rsa3072_public.public_exponent().as_u64()),
@@ -2565,12 +2621,12 @@ fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
     &rsa3072_pkcs1,
     &algorithm_identifier(ID_RSASSA_PSS_OID, None),
   ))
-  .unwrap();
+  .expect("the unrestricted RSA-PSS SPKI fixture must parse");
   let restricted_pss_key = RsaX509PublicKey::from_spki_der(&spki_for_pkcs1_with_algorithm(
     &rsa3072_pkcs1,
     &x509_pss_algorithm(RsaPssProfile::Sha256, 32, None),
   ))
-  .unwrap();
+  .expect("the restricted RSA-PSS SPKI fixture must parse");
 
   assert!(
     rsae_key
@@ -2584,53 +2640,45 @@ fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
       .advertised_tls_certificate_signature_schemes()
       .contains(0x0401)
   );
-  assert!(
-    rsae_key
-      .verify_expected_tls13_signature_scheme(
-        0x0804,
-        0x0804,
-        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-        pss_fixture_message(),
-        RSA3072_PSS_SHA256,
-      )
-      .is_ok()
-  );
+  rsae_key
+    .verify_expected_tls13_signature_scheme(
+      0x0804,
+      0x0804,
+      RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+      pss_fixture_message(),
+      RSA3072_PSS_SHA256,
+    )
+    .expect("the advertised RSAE TLS 1.3 PSS scheme must verify its fixture");
   let mut rsae_scratch = rsae_key.public_key().public_scratch();
-  assert!(
-    rsae_key
-      .verify_expected_tls13_signature_scheme_with_scratch(
-        0x0804,
-        0x0804,
-        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-        pss_fixture_message(),
-        RSA3072_PSS_SHA256,
-        &mut rsae_scratch,
-      )
-      .is_ok()
-  );
-  assert!(
-    rsae_key
-      .verify_expected_tls_certificate_signature_scheme(
-        0x0401,
-        0x0401,
-        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
-        pkcs1v15_fixture_message(),
-        RSA3072_PKCS1V15_SHA256,
-      )
-      .is_ok()
-  );
-  assert!(
-    rsae_key
-      .verify_expected_tls_certificate_signature_scheme_with_scratch(
-        0x0401,
-        0x0401,
-        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
-        pkcs1v15_fixture_message(),
-        RSA3072_PKCS1V15_SHA256,
-        &mut rsae_scratch,
-      )
-      .is_ok()
-  );
+  rsae_key
+    .verify_expected_tls13_signature_scheme_with_scratch(
+      0x0804,
+      0x0804,
+      RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+      pss_fixture_message(),
+      RSA3072_PSS_SHA256,
+      &mut rsae_scratch,
+    )
+    .expect("the advertised RSAE TLS 1.3 PSS scheme must verify with scratch reuse");
+  rsae_key
+    .verify_expected_tls_certificate_signature_scheme(
+      0x0401,
+      0x0401,
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      pkcs1v15_fixture_message(),
+      RSA3072_PKCS1V15_SHA256,
+    )
+    .expect("the advertised RSAE certificate PKCS#1 v1.5 scheme must verify its fixture");
+  rsae_key
+    .verify_expected_tls_certificate_signature_scheme_with_scratch(
+      0x0401,
+      0x0401,
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      pkcs1v15_fixture_message(),
+      RSA3072_PKCS1V15_SHA256,
+      &mut rsae_scratch,
+    )
+    .expect("the advertised RSAE certificate PKCS#1 v1.5 scheme must verify with scratch reuse");
 
   for key in [&pss_key, &restricted_pss_key] {
     assert!(
@@ -2645,53 +2693,45 @@ fn tls_signature_scheme_advertisement_executes_real_verification_helpers() {
         .advertised_tls_certificate_signature_schemes()
         .contains(0x0809)
     );
-    assert!(
-      key
-        .verify_expected_tls13_signature_scheme(
-          0x0809,
-          0x0809,
-          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-          pss_fixture_message(),
-          RSA3072_PSS_SHA256,
-        )
-        .is_ok()
-    );
+    key
+      .verify_expected_tls13_signature_scheme(
+        0x0809,
+        0x0809,
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        pss_fixture_message(),
+        RSA3072_PSS_SHA256,
+      )
+      .expect("the advertised PSS TLS 1.3 scheme must verify its fixture");
     let mut scratch = key.public_key().public_scratch();
-    assert!(
-      key
-        .verify_expected_tls13_signature_scheme_with_scratch(
-          0x0809,
-          0x0809,
-          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-          pss_fixture_message(),
-          RSA3072_PSS_SHA256,
-          &mut scratch,
-        )
-        .is_ok()
-    );
-    assert!(
-      key
-        .verify_expected_tls_certificate_signature_scheme(
-          0x0809,
-          0x0809,
-          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-          pss_fixture_message(),
-          RSA3072_PSS_SHA256,
-        )
-        .is_ok()
-    );
-    assert!(
-      key
-        .verify_expected_tls_certificate_signature_scheme_with_scratch(
-          0x0809,
-          0x0809,
-          RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-          pss_fixture_message(),
-          RSA3072_PSS_SHA256,
-          &mut scratch,
-        )
-        .is_ok()
-    );
+    key
+      .verify_expected_tls13_signature_scheme_with_scratch(
+        0x0809,
+        0x0809,
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        pss_fixture_message(),
+        RSA3072_PSS_SHA256,
+        &mut scratch,
+      )
+      .expect("the advertised PSS TLS 1.3 scheme must verify with scratch reuse");
+    key
+      .verify_expected_tls_certificate_signature_scheme(
+        0x0809,
+        0x0809,
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        pss_fixture_message(),
+        RSA3072_PSS_SHA256,
+      )
+      .expect("the advertised PSS certificate scheme must verify its fixture");
+    key
+      .verify_expected_tls_certificate_signature_scheme_with_scratch(
+        0x0809,
+        0x0809,
+        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+        pss_fixture_message(),
+        RSA3072_PSS_SHA256,
+        &mut scratch,
+      )
+      .expect("the advertised PSS certificate scheme must verify with scratch reuse");
   }
 }
 
@@ -2708,26 +2748,18 @@ fn tls_signature_scheme_verification_rejects_key_algorithm_confusion() {
   let pss_signature = pss_fixture_signature_sha256();
   let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
 
-  assert!(
-    rsae_key
-      .verify_tls13_signature_scheme(0x0804, pss_fixture_message(), &pss_signature)
-      .is_ok()
-  );
-  assert!(
-    rsae_key
-      .verify_expected_tls13_signature_scheme(0x0804, 0x0804, pss_profile, pss_fixture_message(), &pss_signature)
-      .is_ok()
-  );
-  assert!(
-    pss_key
-      .verify_tls13_signature_scheme(0x0809, pss_fixture_message(), &pss_signature)
-      .is_ok()
-  );
-  assert!(
-    pss_key
-      .verify_expected_tls13_signature_scheme(0x0809, 0x0809, pss_profile, pss_fixture_message(), &pss_signature)
-      .is_ok()
-  );
+  rsae_key
+    .verify_tls13_signature_scheme(0x0804, pss_fixture_message(), &pss_signature)
+    .expect("an RSAE key must verify its matching TLS 1.3 PSS fixture");
+  rsae_key
+    .verify_expected_tls13_signature_scheme(0x0804, 0x0804, pss_profile, pss_fixture_message(), &pss_signature)
+    .expect("an RSAE key must verify matching expected and received TLS 1.3 schemes");
+  pss_key
+    .verify_tls13_signature_scheme(0x0809, pss_fixture_message(), &pss_signature)
+    .expect("a PSS key must verify its matching TLS 1.3 PSS fixture");
+  pss_key
+    .verify_expected_tls13_signature_scheme(0x0809, 0x0809, pss_profile, pss_fixture_message(), &pss_signature)
+    .expect("a PSS key must verify matching expected and received TLS 1.3 schemes");
   assert_eq!(
     rsae_key.verify_expected_tls13_signature_scheme(0x0804, 0x0809, pss_profile, pss_fixture_message(), &pss_signature),
     Err(VerificationError::new())
@@ -2765,22 +2797,18 @@ fn tls_signature_scheme_verification_rejects_key_algorithm_confusion() {
   let rsae_pkcs1_key = legacy_x509_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_signature = pkcs1v15_fixture_signature_sha256();
   let pkcs1_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
-  assert!(
-    rsae_pkcs1_key
-      .verify_tls_certificate_signature_scheme(0x0401, pkcs1v15_fixture_message(), &pkcs1_signature)
-      .is_ok()
-  );
-  assert!(
-    rsae_pkcs1_key
-      .verify_expected_tls_certificate_signature_scheme(
-        0x0401,
-        0x0401,
-        pkcs1_profile,
-        pkcs1v15_fixture_message(),
-        &pkcs1_signature,
-      )
-      .is_ok()
-  );
+  rsae_pkcs1_key
+    .verify_tls_certificate_signature_scheme(0x0401, pkcs1v15_fixture_message(), &pkcs1_signature)
+    .expect("an RSAE key must verify its matching TLS certificate PKCS#1 v1.5 fixture");
+  rsae_pkcs1_key
+    .verify_expected_tls_certificate_signature_scheme(
+      0x0401,
+      0x0401,
+      pkcs1_profile,
+      pkcs1v15_fixture_message(),
+      &pkcs1_signature,
+    )
+    .expect("an RSAE key must verify matching expected and received TLS certificate schemes");
   assert_eq!(
     rsae_pkcs1_key.verify_expected_tls_certificate_signature_scheme(
       0x0401,
@@ -3056,7 +3084,9 @@ fn protocol_verification_helpers_collapse_adapter_failures_to_opaque_error() {
   let issuer = legacy_x509_public_key_from_spki(&x509_certificate_fixture_public_key());
   let mut certificate_scratch = issuer.public_key().public_scratch();
   let mut tampered_certificate = x509_pkcs1v15_certificate_fixture();
-  *tampered_certificate.last_mut().unwrap() ^= 0x01;
+  *tampered_certificate
+    .last_mut()
+    .expect("the certificate fixture must contain a signature byte") ^= 0x01;
   let certificate_with_short_signature = x509_certificate(
     &minimal_tbs_certificate(&pkcs1_algorithm),
     &pkcs1_algorithm,
@@ -3112,55 +3142,49 @@ fn rsa_policy_boundary_separates_legacy_rsa2048_from_modern_rsa3072_verification
   let legacy_policy = RsaPublicKeyPolicy::legacy_verification();
   let modern_policy = RsaPublicKeyPolicy::modern_verification();
 
-  let legacy_pss_key = RsaPublicKey::from_spki_der_with_policy(&pss_fixture_public_key(), &legacy_policy).unwrap();
+  let legacy_pss_key = RsaPublicKey::from_spki_der_with_policy(&pss_fixture_public_key(), &legacy_policy)
+    .expect("the RSA-2048 PSS fixture must satisfy the legacy policy");
   assert_eq!(legacy_pss_key.modulus_bits(), 2048);
-  assert!(
-    legacy_pss_key
-      .verify_pss(
-        RsaPssProfile::Sha256,
-        pss_fixture_message(),
-        &pss_fixture_signature_sha256()
-      )
-      .is_ok()
-  );
+  legacy_pss_key
+    .verify_pss(
+      RsaPssProfile::Sha256,
+      pss_fixture_message(),
+      &pss_fixture_signature_sha256(),
+    )
+    .expect("the RSA-2048 PSS fixture must verify under the legacy policy");
   assert_eq!(
     RsaPublicKey::from_spki_der_with_policy(&pss_fixture_public_key(), &modern_policy),
     Err(RsaKeyError::InvalidModulus)
   );
 
-  let legacy_pkcs1v15_key =
-    RsaPublicKey::from_spki_der_with_policy(&pkcs1v15_fixture_public_key(), &legacy_policy).unwrap();
+  let legacy_pkcs1v15_key = RsaPublicKey::from_spki_der_with_policy(&pkcs1v15_fixture_public_key(), &legacy_policy)
+    .expect("the RSA-2048 PKCS#1 v1.5 fixture must satisfy the legacy policy");
   assert_eq!(legacy_pkcs1v15_key.modulus_bits(), 2048);
-  assert!(
-    legacy_pkcs1v15_key
-      .verify_pkcs1v15(
-        RsaPkcs1v15Profile::Sha256,
-        pkcs1v15_fixture_message(),
-        &pkcs1v15_fixture_signature_sha256(),
-      )
-      .is_ok()
-  );
+  legacy_pkcs1v15_key
+    .verify_pkcs1v15(
+      RsaPkcs1v15Profile::Sha256,
+      pkcs1v15_fixture_message(),
+      &pkcs1v15_fixture_signature_sha256(),
+    )
+    .expect("the RSA-2048 PKCS#1 v1.5 fixture must verify under the legacy policy");
   assert_eq!(
     RsaPublicKey::from_spki_der_with_policy(&pkcs1v15_fixture_public_key(), &modern_policy),
     Err(RsaKeyError::InvalidModulus)
   );
 
-  let modern_key = RsaPublicKey::from_spki_der_with_policy(RSA3072_SPKI, &modern_policy).unwrap();
+  let modern_key = RsaPublicKey::from_spki_der_with_policy(RSA3072_SPKI, &modern_policy)
+    .expect("the RSA-3072 fixture must satisfy the modern policy");
   assert_eq!(modern_key.modulus_bits(), 3072);
-  assert!(
-    modern_key
-      .verify_pss(RsaPssProfile::Sha256, pss_fixture_message(), RSA3072_PSS_SHA256)
-      .is_ok()
-  );
-  assert!(
-    modern_key
-      .verify_pkcs1v15(
-        RsaPkcs1v15Profile::Sha256,
-        pkcs1v15_fixture_message(),
-        RSA3072_PKCS1V15_SHA256
-      )
-      .is_ok()
-  );
+  modern_key
+    .verify_pss(RsaPssProfile::Sha256, pss_fixture_message(), RSA3072_PSS_SHA256)
+    .expect("the RSA-3072 PSS fixture must verify under the modern policy");
+  modern_key
+    .verify_pkcs1v15(
+      RsaPkcs1v15Profile::Sha256,
+      pkcs1v15_fixture_message(),
+      RSA3072_PKCS1V15_SHA256,
+    )
+    .expect("the RSA-3072 PKCS#1 v1.5 fixture must verify under the modern policy");
 }
 
 #[test]
@@ -3391,7 +3415,8 @@ fn pkcs1_public_key_can_accept_legacy_small_fermat_exponents_by_policy() {
   let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
   let der = pkcs1_with_parts(integer_unsigned(&rsa2048_modulus()), integer_unsigned(&[0x03]));
 
-  let key = RsaPublicKey::from_pkcs1_der_with_policy(&der, &policy).unwrap();
+  let key = RsaPublicKey::from_pkcs1_der_with_policy(&der, &policy)
+    .expect("the legacy policy must accept the RSA exponent 3 fixture");
 
   assert_eq!(key.public_exponent().as_u64(), 3);
 }
@@ -3429,14 +3454,14 @@ fn public_operation_boundary_representatives_match_independent_reference_across_
     let key = if name == "rsa2048" {
       legacy_public_key_from_spki(spki)
     } else {
-      RsaPublicKey::from_spki_der(spki).unwrap()
+      RsaPublicKey::from_spki_der(spki).expect("the modern RSA boundary fixture must parse")
     };
     let len = key.modulus().len();
     let mut out = vec![0u8; len];
     let mut scratch = key.public_scratch();
 
     let mut one = vec![0u8; len];
-    *one.last_mut().unwrap() = 1;
+    *one.last_mut().expect("a supported RSA representative must be nonempty") = 1;
     let mut leading_zero = vec![0u8; len];
     let leading_zero_tail = b"rscrypto-rsa-boundary-reference";
     leading_zero[len - leading_zero_tail.len()..].copy_from_slice(leading_zero_tail);
@@ -3450,7 +3475,7 @@ fn public_operation_boundary_representatives_match_independent_reference_across_
     for (representative_name, representative) in valid_representatives {
       key
         .public_operation_with_scratch(&representative, &mut out, &mut scratch)
-        .unwrap_or_else(|error| panic!("{name} {representative_name} public operation failed: {error:?}"));
+        .expect("a valid boundary representative must complete the RSA public operation");
       assert_eq!(
         out,
         rsa_public_operation_reference(&key, &representative),
@@ -3526,7 +3551,7 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
 
   key
     .public_operation_with_scratch(&input, &mut out, &mut scratch)
-    .unwrap();
+    .expect("the independent RSA-65537 public-operation vector must be valid");
 
   assert_eq!(out, expected);
 }
@@ -3578,16 +3603,20 @@ fc87eb5a2ea7a141091f3d2fa37a581ef39e6e496e5e476d43b6",
 
   let key_e3 =
     RsaPublicKey::from_pkcs1_der_with_policy(&valid_pkcs1_with_modulus_and_exponent(&modulus, &[0x03]), &policy)
-      .unwrap();
+      .expect("the legacy policy must accept the exponent 3 vector");
   let key_e17 =
     RsaPublicKey::from_pkcs1_der_with_policy(&valid_pkcs1_with_modulus_and_exponent(&modulus, &[0x11]), &policy)
-      .unwrap();
+      .expect("the legacy policy must accept the exponent 17 vector");
 
   let mut out = vec![0u8; modulus.len()];
-  key_e3.public_operation(&input, &mut out).unwrap();
+  key_e3
+    .public_operation(&input, &mut out)
+    .expect("the exponent 3 public-operation vector must be valid");
   assert_eq!(out, expected_e3);
 
-  key_e17.public_operation(&input, &mut out).unwrap();
+  key_e17
+    .public_operation(&input, &mut out)
+    .expect("the exponent 17 public-operation vector must be valid");
   assert_eq!(out, expected_e17);
 }
 
@@ -3605,7 +3634,7 @@ fn public_scratch_reuses_after_modulus_minus_one_operation() {
         core::hint::black_box(&mut out),
         &mut scratch,
       )
-      .unwrap();
+      .expect("the modulus-minus-one public operation must succeed across scratch reuse");
   }
   key
     .verify_pss_with_scratch(
@@ -3614,7 +3643,7 @@ fn public_scratch_reuses_after_modulus_minus_one_operation() {
       &pss_fixture_signature_sha256(),
       &mut scratch,
     )
-    .unwrap();
+    .expect("PSS verification must succeed after repeated scratch reuse");
 }
 
 #[cfg(feature = "diag")]
@@ -3651,7 +3680,7 @@ d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
   ] {
     let key =
       RsaPublicKey::from_pkcs1_der_with_policy(&valid_pkcs1_with_modulus_and_exponent(&modulus, exponent), &policy)
-        .unwrap();
+        .expect("the diagnostic exponent fixture must satisfy its policy");
     let mut current = vec![0u8; modulus.len()];
     let mut product = vec![0u8; modulus.len()];
     let mut comba = vec![0u8; modulus.len()];
@@ -3664,11 +3693,15 @@ d5add90a8a212c10dd997b0a4efcb3df990808509dcb28c504e0649827a83ffd864395d1f62f2\
 
     key
       .public_operation_with_scratch(&input, &mut current, &mut scratch)
-      .unwrap();
-    diag_rsa_public_operation_product(&key, &input, &mut product, &mut product_scratch).unwrap();
-    diag_rsa_public_operation_comba_product(&key, &input, &mut comba, &mut comba_scratch).unwrap();
-    diag_rsa_public_operation_window2_exponent(&key, &input, &mut window2, &mut window2_scratch).unwrap();
-    diag_rsa_public_operation_bitserial(&key, &input, &mut bitserial).unwrap();
+      .expect("the current Montgomery path must accept the diagnostic fixture");
+    diag_rsa_public_operation_product(&key, &input, &mut product, &mut product_scratch)
+      .expect("the product Montgomery candidate must accept the diagnostic fixture");
+    diag_rsa_public_operation_comba_product(&key, &input, &mut comba, &mut comba_scratch)
+      .expect("the Comba Montgomery candidate must accept the diagnostic fixture");
+    diag_rsa_public_operation_window2_exponent(&key, &input, &mut window2, &mut window2_scratch)
+      .expect("the window-2 exponent candidate must accept the diagnostic fixture");
+    diag_rsa_public_operation_bitserial(&key, &input, &mut bitserial)
+      .expect("the bit-serial candidate must accept the diagnostic fixture");
 
     assert_eq!(
       product, current,
@@ -3705,7 +3738,7 @@ fn public_operation_montgomery_candidates_match_current_path() {
     let key = if name == "rsa2048" {
       legacy_public_key_from_spki(spki)
     } else {
-      RsaPublicKey::from_spki_der(spki).unwrap()
+      RsaPublicKey::from_spki_der(spki).expect("the modern RSA diagnostic fixture must parse")
     };
     let representative = modulus_minus_one(&key);
     let mut current = vec![0u8; key.modulus().len()];
@@ -3721,12 +3754,15 @@ fn public_operation_montgomery_candidates_match_current_path() {
 
     key
       .public_operation_with_scratch(&representative, &mut current, &mut scratch)
-      .unwrap();
-    diag_rsa_public_operation_cios(&key, &representative, &mut cios, &mut cios_scratch).unwrap();
+      .expect("the current Montgomery path must accept modulus minus one");
+    diag_rsa_public_operation_cios(&key, &representative, &mut cios, &mut cios_scratch)
+      .expect("the CIOS candidate must accept modulus minus one");
     diag_rsa_public_operation_cios_portable(&key, &representative, &mut cios_portable, &mut cios_portable_scratch)
-      .unwrap();
-    diag_rsa_public_operation_comba_product(&key, &representative, &mut comba, &mut comba_scratch).unwrap();
-    diag_rsa_public_operation_product(&key, &representative, &mut product, &mut product_scratch).unwrap();
+      .expect("the portable CIOS candidate must accept modulus minus one");
+    diag_rsa_public_operation_comba_product(&key, &representative, &mut comba, &mut comba_scratch)
+      .expect("the Comba candidate must accept modulus minus one");
+    diag_rsa_public_operation_product(&key, &representative, &mut product, &mut product_scratch)
+      .expect("the product candidate must accept modulus minus one");
     assert_eq!(cios, current, "CIOS mismatch for modulus-minus-one representative");
     assert_eq!(
       cios_portable, current,
@@ -3743,11 +3779,15 @@ fn public_operation_montgomery_candidates_match_current_path() {
 
     key
       .public_operation_with_scratch(signature, &mut current, &mut scratch)
-      .unwrap();
-    diag_rsa_public_operation_cios(&key, signature, &mut cios, &mut cios_scratch).unwrap();
-    diag_rsa_public_operation_cios_portable(&key, signature, &mut cios_portable, &mut cios_portable_scratch).unwrap();
-    diag_rsa_public_operation_comba_product(&key, signature, &mut comba, &mut comba_scratch).unwrap();
-    diag_rsa_public_operation_product(&key, signature, &mut product, &mut product_scratch).unwrap();
+      .expect("the current Montgomery path must accept the signature fixture");
+    diag_rsa_public_operation_cios(&key, signature, &mut cios, &mut cios_scratch)
+      .expect("the CIOS candidate must accept the signature fixture");
+    diag_rsa_public_operation_cios_portable(&key, signature, &mut cios_portable, &mut cios_portable_scratch)
+      .expect("the portable CIOS candidate must accept the signature fixture");
+    diag_rsa_public_operation_comba_product(&key, signature, &mut comba, &mut comba_scratch)
+      .expect("the Comba candidate must accept the signature fixture");
+    diag_rsa_public_operation_product(&key, signature, &mut product, &mut product_scratch)
+      .expect("the product candidate must accept the signature fixture");
     assert_eq!(cios, current, "CIOS mismatch for fixture signature representative");
     assert_eq!(
       cios_portable, current,
@@ -3800,9 +3840,15 @@ aec5205b05ff989176db1199e8d34341380f501c34973526d024ef9fd87108e041c16625937a\
 c2b691954f9bd86140e31acf6a8a2b9d28cba358e509dfc234c1e33e223c",
   );
 
-  assert!(key.verify_pss(RsaPssProfile::Sha256, message, &sig256).is_ok());
-  assert!(key.verify_pss(RsaPssProfile::Sha384, message, &sig384).is_ok());
-  assert!(key.verify_pss(RsaPssProfile::Sha512, message, &sig512).is_ok());
+  key
+    .verify_pss(RsaPssProfile::Sha256, message, &sig256)
+    .expect("the OpenSSL PSS SHA-256 vector must verify");
+  key
+    .verify_pss(RsaPssProfile::Sha384, message, &sig384)
+    .expect("the OpenSSL PSS SHA-384 vector must verify");
+  key
+    .verify_pss(RsaPssProfile::Sha512, message, &sig512)
+    .expect("the OpenSSL PSS SHA-512 vector must verify");
 }
 
 #[test]
@@ -3832,25 +3878,21 @@ fn typed_signature_profile_dispatches_and_rejects_algorithm_confusion() {
   let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
   let mut pss_scratch = pss_key.public_scratch();
-  assert!(
-    pss_key
-      .verify_signature(
-        RsaSignatureProfile::pss(RsaPssProfile::Sha256),
-        pss_fixture_message(),
-        &pss_sig,
-      )
-      .is_ok()
-  );
-  assert!(
-    pss_key
-      .verify_signature_with_scratch(
-        RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 32),
-        pss_fixture_message(),
-        &pss_sig,
-        &mut pss_scratch,
-      )
-      .is_ok()
-  );
+  pss_key
+    .verify_signature(
+      RsaSignatureProfile::pss(RsaPssProfile::Sha256),
+      pss_fixture_message(),
+      &pss_sig,
+    )
+    .expect("the typed PSS profile must verify its matching fixture");
+  pss_key
+    .verify_signature_with_scratch(
+      RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 32),
+      pss_fixture_message(),
+      &pss_sig,
+      &mut pss_scratch,
+    )
+    .expect("the typed PSS profile must verify with scratch reuse");
   assert_eq!(
     pss_key.verify_signature(
       RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
@@ -3871,25 +3913,21 @@ fn typed_signature_profile_dispatches_and_rejects_algorithm_confusion() {
   let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
   let mut pkcs1_scratch = pkcs1_key.public_scratch();
-  assert!(
-    pkcs1_key
-      .verify_signature(
-        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-      )
-      .is_ok()
-  );
-  assert!(
-    pkcs1_key
-      .verify_signature_with_scratch(
-        RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-        &mut pkcs1_scratch,
-      )
-      .is_ok()
-  );
+  pkcs1_key
+    .verify_signature(
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      pkcs1v15_fixture_message(),
+      &pkcs1_sig,
+    )
+    .expect("the typed PKCS#1 v1.5 profile must verify its matching fixture");
+  pkcs1_key
+    .verify_signature_with_scratch(
+      RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256),
+      pkcs1v15_fixture_message(),
+      &pkcs1_sig,
+      &mut pkcs1_scratch,
+    )
+    .expect("the typed PKCS#1 v1.5 profile must verify with scratch reuse");
   assert_eq!(
     pkcs1_key.verify_signature(
       RsaSignatureProfile::pss(RsaPssProfile::Sha256),
@@ -4053,27 +4091,23 @@ fn provider_facing_legacy_algorithm_rejections_are_typed() {
 fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
   let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
-  assert!(
-    pss_key
-      .verify_signature(
-        RsaSignatureProfile::from_tls13_signature_scheme(0x0804).unwrap(),
-        pss_fixture_message(),
-        &pss_sig,
-      )
-      .is_ok()
-  );
-  assert!(
-    pss_key
-      .verify_signature(
-        RsaJwtAlgorithm::Ps256.signature_profile(),
-        pss_fixture_message(),
-        &pss_sig,
-      )
-      .is_ok()
-  );
+  pss_key
+    .verify_signature(
+      RsaSignatureProfile::from_tls13_signature_scheme(0x0804).expect("TLS scheme 0x0804 must map to RSA-PSS SHA-256"),
+      pss_fixture_message(),
+      &pss_sig,
+    )
+    .expect("the TLS-mapped PSS profile must verify its matching fixture");
+  pss_key
+    .verify_signature(
+      RsaJwtAlgorithm::Ps256.signature_profile(),
+      pss_fixture_message(),
+      &pss_sig,
+    )
+    .expect("the JWT-mapped PSS profile must verify its matching fixture");
   assert_eq!(
     pss_key.verify_signature(
-      RsaSignatureProfile::from_cose_algorithm_id(-257).unwrap(),
+      RsaSignatureProfile::from_cose_algorithm_id(-257).expect("COSE algorithm -257 must map to RS256"),
       pss_fixture_message(),
       &pss_sig,
     ),
@@ -4082,27 +4116,24 @@ fn protocol_mapped_profiles_verify_and_reject_algorithm_confusion() {
 
   let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
-  assert!(
-    pkcs1_key
-      .verify_signature(
-        RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0401).unwrap(),
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-      )
-      .is_ok()
-  );
-  assert!(
-    pkcs1_key
-      .verify_signature(
-        RsaJwtAlgorithm::Rs256.signature_profile(),
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-      )
-      .is_ok()
-  );
+  pkcs1_key
+    .verify_signature(
+      RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0401)
+        .expect("TLS certificate scheme 0x0401 must map to PKCS#1 v1.5 SHA-256"),
+      pkcs1v15_fixture_message(),
+      &pkcs1_sig,
+    )
+    .expect("the TLS-mapped PKCS#1 v1.5 profile must verify its matching fixture");
+  pkcs1_key
+    .verify_signature(
+      RsaJwtAlgorithm::Rs256.signature_profile(),
+      pkcs1v15_fixture_message(),
+      &pkcs1_sig,
+    )
+    .expect("the JWT-mapped PKCS#1 v1.5 profile must verify its matching fixture");
   assert_eq!(
     pkcs1_key.verify_signature(
-      RsaSignatureProfile::from_cose_algorithm_id(-37).unwrap(),
+      RsaSignatureProfile::from_cose_algorithm_id(-37).expect("COSE algorithm -37 must map to PS256"),
       pkcs1v15_fixture_message(),
       &pkcs1_sig,
     ),
@@ -4120,13 +4151,13 @@ fn jwt_policy_and_cose_helpers_reject_algorithm_confusion() {
   let pss_jwt = pss_key.jwt_verifier(RsaJwtAlgorithm::Ps256);
 
   assert_eq!(pss_jwt.algorithm(), RsaJwtAlgorithm::Ps256);
-  assert!(core::ptr::eq(pss_jwt.key(), &pss_key));
-  assert!(pss_jwt.verify("PS256", pss_fixture_message(), &pss_sig).is_ok());
-  assert!(
-    pss_jwt
-      .verify_with_scratch("PS256", pss_fixture_message(), &pss_sig, &mut scratch)
-      .is_ok()
-  );
+  assert!(core::ptr::eq(pss_jwt.key(), &raw const pss_key));
+  pss_jwt
+    .verify("PS256", pss_fixture_message(), &pss_sig)
+    .expect("the PS256 JWT verifier must accept its matching fixture");
+  pss_jwt
+    .verify_with_scratch("PS256", pss_fixture_message(), &pss_sig, &mut scratch)
+    .expect("the PS256 JWT verifier must accept its matching fixture with scratch reuse");
   for header_alg in [
     "",
     "none",
@@ -4147,23 +4178,19 @@ fn jwt_policy_and_cose_helpers_reject_algorithm_confusion() {
       "accepted noncanonical or mismatched JWT alg {header_alg:?}",
     );
   }
-  assert!(
-    pss_key
-      .verify_expected_cose_algorithm_id(-37, -37, pss_profile, pss_fixture_message(), &pss_sig)
-      .is_ok()
-  );
-  assert!(
-    pss_key
-      .verify_expected_cose_algorithm_id_with_scratch(
-        -37,
-        -37,
-        pss_profile,
-        pss_fixture_message(),
-        &pss_sig,
-        &mut scratch,
-      )
-      .is_ok()
-  );
+  pss_key
+    .verify_expected_cose_algorithm_id(-37, -37, pss_profile, pss_fixture_message(), &pss_sig)
+    .expect("matching PS256 COSE identifiers must verify");
+  pss_key
+    .verify_expected_cose_algorithm_id_with_scratch(
+      -37,
+      -37,
+      pss_profile,
+      pss_fixture_message(),
+      &pss_sig,
+      &mut scratch,
+    )
+    .expect("matching PS256 COSE identifiers must verify with scratch reuse");
   for result in [
     pss_key
       .jwt_verifier(RsaJwtAlgorithm::Rs256)
@@ -4181,33 +4208,25 @@ fn jwt_policy_and_cose_helpers_reject_algorithm_confusion() {
   let mut scratch = pkcs1_key.public_scratch();
   let pkcs1_jwt = pkcs1_key.jwt_verifier(RsaJwtAlgorithm::Rs256);
 
-  assert!(
-    pkcs1_jwt
-      .verify("RS256", pkcs1v15_fixture_message(), &pkcs1_sig)
-      .is_ok()
-  );
-  assert!(
-    pkcs1_jwt
-      .verify_with_scratch("RS256", pkcs1v15_fixture_message(), &pkcs1_sig, &mut scratch)
-      .is_ok()
-  );
-  assert!(
-    pkcs1_key
-      .verify_expected_cose_algorithm_id(-257, -257, pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
-      .is_ok()
-  );
-  assert!(
-    pkcs1_key
-      .verify_expected_cose_algorithm_id_with_scratch(
-        -257,
-        -257,
-        pkcs1_profile,
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-        &mut scratch,
-      )
-      .is_ok()
-  );
+  pkcs1_jwt
+    .verify("RS256", pkcs1v15_fixture_message(), &pkcs1_sig)
+    .expect("the RS256 JWT verifier must accept its matching fixture");
+  pkcs1_jwt
+    .verify_with_scratch("RS256", pkcs1v15_fixture_message(), &pkcs1_sig, &mut scratch)
+    .expect("the RS256 JWT verifier must accept its matching fixture with scratch reuse");
+  pkcs1_key
+    .verify_expected_cose_algorithm_id(-257, -257, pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
+    .expect("matching RS256 COSE identifiers must verify");
+  pkcs1_key
+    .verify_expected_cose_algorithm_id_with_scratch(
+      -257,
+      -257,
+      pkcs1_profile,
+      pkcs1v15_fixture_message(),
+      &pkcs1_sig,
+      &mut scratch,
+    )
+    .expect("matching RS256 COSE identifiers must verify with scratch reuse");
   for result in [
     pkcs1_key
       .jwt_verifier(RsaJwtAlgorithm::Ps256)
@@ -4353,16 +4372,14 @@ fn x509_signature_algorithm_mapping_is_strict_and_rejects_sha1_defaults() {
 fn x509_mapped_profiles_verify_real_fixtures_and_reject_padding_mismatch() {
   let pss_key = legacy_public_key_from_spki(&pss_fixture_public_key());
   let pss_sig = pss_fixture_signature_sha256();
-  assert!(
-    pss_key
-      .verify_signature(
-        RsaSignatureProfile::from_x509_signature_algorithm_der(&x509_pss_algorithm(RsaPssProfile::Sha256, 32, None))
-          .unwrap(),
-        pss_fixture_message(),
-        &pss_sig,
-      )
-      .is_ok()
-  );
+  pss_key
+    .verify_signature(
+      RsaSignatureProfile::from_x509_signature_algorithm_der(&x509_pss_algorithm(RsaPssProfile::Sha256, 32, None))
+        .expect("the X.509 PSS SHA-256 algorithm fixture must map to a signature profile"),
+      pss_fixture_message(),
+      &pss_sig,
+    )
+    .expect("the X.509-mapped PSS profile must verify its matching fixture");
 
   let pkcs1_key = legacy_public_key_from_spki(&pkcs1v15_fixture_public_key());
   let pkcs1_sig = pkcs1v15_fixture_signature_sha256();
@@ -4370,22 +4387,18 @@ fn x509_mapped_profiles_verify_real_fixtures_and_reject_padding_mismatch() {
     SHA256_WITH_RSA_ENCRYPTION_OID,
     Some(&null()),
   ))
-  .unwrap();
-  assert!(
-    pkcs1_key
-      .verify_signature(pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
-      .is_ok()
-  );
+  .expect("the X.509 PKCS#1 v1.5 SHA-256 algorithm fixture must map to a signature profile");
+  pkcs1_key
+    .verify_signature(pkcs1_profile, pkcs1v15_fixture_message(), &pkcs1_sig)
+    .expect("the X.509-mapped PKCS#1 v1.5 profile must verify its matching fixture");
   let pkcs1_x509_key = legacy_x509_public_key_from_spki(&pkcs1v15_fixture_public_key());
-  assert!(
-    pkcs1_x509_key
-      .verify_signature_from_x509_algorithm_der(
-        &algorithm_identifier(SHA256_WITH_RSA_ENCRYPTION_OID, None),
-        pkcs1v15_fixture_message(),
-        &pkcs1_sig,
-      )
-      .is_ok()
-  );
+  pkcs1_x509_key
+    .verify_signature_from_x509_algorithm_der(
+      &algorithm_identifier(SHA256_WITH_RSA_ENCRYPTION_OID, None),
+      pkcs1v15_fixture_message(),
+      &pkcs1_sig,
+    )
+    .expect("an X.509 PKCS#1 v1.5 algorithm with absent parameters must verify");
   assert_eq!(
     pss_key.verify_signature(pkcs1_profile, pss_fixture_message(), &pss_sig),
     Err(VerificationError::new())
@@ -4428,21 +4441,15 @@ addc98f3b49437df55aad5e96a6b7db196f9d30de7173dda79944f51fc7a339655cd2727d47\
 4630a322103c344bc4c65add2214f60155b3819869210f19730544989fed6921bf",
   );
 
-  assert!(
-    key
-      .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &sig256)
-      .is_ok()
-  );
-  assert!(
-    key
-      .verify_pkcs1v15(RsaPkcs1v15Profile::Sha384, message, &sig384)
-      .is_ok()
-  );
-  assert!(
-    key
-      .verify_pkcs1v15(RsaPkcs1v15Profile::Sha512, message, &sig512)
-      .is_ok()
-  );
+  key
+    .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &sig256)
+    .expect("the OpenSSL PKCS#1 v1.5 SHA-256 vector must verify");
+  key
+    .verify_pkcs1v15(RsaPkcs1v15Profile::Sha384, message, &sig384)
+    .expect("the OpenSSL PKCS#1 v1.5 SHA-384 vector must verify");
+  key
+    .verify_pkcs1v15(RsaPkcs1v15Profile::Sha512, message, &sig512)
+    .expect("the OpenSSL PKCS#1 v1.5 SHA-512 vector must verify");
 }
 
 #[test]
@@ -4478,13 +4485,16 @@ fn pss_encoded_message_oracle_failures_are_opaque() {
   let mut encoded = vec![0u8; key.modulus().len()];
   key
     .public_operation(&pss_fixture_signature_sha256(), &mut encoded)
-    .unwrap();
+    .expect("the PSS signature fixture must decode to its encoded message");
   let em_bits = key.modulus_bits().strict_sub(1);
 
-  assert!(diag_rsa_verify_pss_encoded(RsaPssProfile::Sha256, pss_fixture_message(), &encoded, em_bits).is_ok());
+  diag_rsa_verify_pss_encoded(RsaPssProfile::Sha256, pss_fixture_message(), &encoded, em_bits)
+    .expect("the valid PSS encoded message must verify");
 
   let mut bad_trailer = encoded.clone();
-  *bad_trailer.last_mut().unwrap() ^= 0x01;
+  *bad_trailer
+    .last_mut()
+    .expect("the PSS encoded message must contain a trailer byte") ^= 0x01;
   assert_opaque_verification_failure(diag_rsa_verify_pss_encoded(
     RsaPssProfile::Sha256,
     pss_fixture_message(),
@@ -4555,9 +4565,10 @@ fn pkcs1v15_encoded_message_oracle_failures_are_opaque() {
   let mut encoded = vec![0u8; key.modulus().len()];
   key
     .public_operation(&pkcs1v15_fixture_signature_sha256(), &mut encoded)
-    .unwrap();
+    .expect("the PKCS#1 v1.5 signature fixture must decode to its encoded message");
 
-  assert!(diag_rsa_verify_pkcs1v15_encoded(RsaPkcs1v15Profile::Sha256, pkcs1v15_fixture_message(), &encoded).is_ok());
+  diag_rsa_verify_pkcs1v15_encoded(RsaPkcs1v15Profile::Sha256, pkcs1v15_fixture_message(), &encoded)
+    .expect("the valid PKCS#1 v1.5 encoded message must verify");
 
   let mut bad_prefix = encoded.clone();
   bad_prefix[0] = 0x01;
@@ -4602,7 +4613,9 @@ fn pkcs1v15_encoded_message_oracle_failures_are_opaque() {
   ));
 
   let mut bad_digest = encoded.clone();
-  *bad_digest.last_mut().unwrap() ^= 0x80;
+  *bad_digest
+    .last_mut()
+    .expect("the PKCS#1 v1.5 encoded message must contain a digest byte") ^= 0x80;
   assert_opaque_verification_failure(diag_rsa_verify_pkcs1v15_encoded(
     RsaPkcs1v15Profile::Sha256,
     pkcs1v15_fixture_message(),
@@ -4629,11 +4642,9 @@ fn sha256_signature_verification_matches_external_oracles_for_valid_and_tampered
   let pss_pkcs1 =
     valid_pkcs1_with_modulus_and_exponent(pss_key.modulus(), &exponent_bytes(pss_key.public_exponent().as_u64()));
 
-  assert!(
-    pss_key
-      .verify_pss(RsaPssProfile::Sha256, pss_fixture_message(), &pss_sig)
-      .is_ok()
-  );
+  pss_key
+    .verify_pss(RsaPssProfile::Sha256, pss_fixture_message(), &pss_sig)
+    .expect("the valid PSS SHA-256 fixture must verify before external-oracle comparison");
   assert_ring_pss_sha256(&pss_pkcs1, pss_fixture_message(), &pss_sig, true);
   assert_aws_lc_rs_pss_sha256(&pss_pkcs1, pss_fixture_message(), &pss_sig, true);
   assert_rustcrypto_pss_sha256(&pss_pkcs1, pss_fixture_message(), &pss_sig, true);
@@ -4645,7 +4656,7 @@ fn sha256_signature_verification_matches_external_oracles_for_valid_and_tampered
     true,
   );
 
-  let mut tampered = pss_sig.clone();
+  let mut tampered = pss_sig;
   tampered[0] ^= 0x80;
   assert!(
     pss_key
@@ -4671,17 +4682,15 @@ fn sha256_signature_verification_matches_external_oracles_for_valid_and_tampered
     &exponent_bytes(pkcs1_key.public_exponent().as_u64()),
   );
 
-  assert!(
-    pkcs1_key
-      .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, pkcs1v15_fixture_message(), &pkcs1_sig)
-      .is_ok()
-  );
+  pkcs1_key
+    .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, pkcs1v15_fixture_message(), &pkcs1_sig)
+    .expect("the valid PKCS#1 v1.5 SHA-256 fixture must verify before external-oracle comparison");
   assert_ring_pkcs1v15_sha256(&pkcs1_der, pkcs1v15_fixture_message(), &pkcs1_sig, true);
   assert_aws_lc_rs_pkcs1v15_sha256(&pkcs1_der, pkcs1v15_fixture_message(), &pkcs1_sig, true);
   assert_rustcrypto_pkcs1v15_sha256(&pkcs1_der, pkcs1v15_fixture_message(), &pkcs1_sig, true);
   assert_openssl_sha256(&pkcs1_spki, pkcs1v15_fixture_message(), &pkcs1_sig, &[], true);
 
-  let mut tampered = pkcs1_sig.clone();
+  let mut tampered = pkcs1_sig;
   tampered[0] ^= 0x80;
   assert!(
     pkcs1_key
@@ -4703,13 +4712,16 @@ fn nist_cavp_sha2_signatures_match_rust_external_oracles() {
   for test in tests {
     let scheme = cavp_field(test, "scheme");
     let sha = cavp_field(test, "sha");
-    let salt_len =
-      (scheme == "pss").then(|| test["salt_len"].as_u64().expect("CAVP PSS salt length must be numeric") as usize);
+    let salt_len = (scheme == "pss").then(|| {
+      usize::try_from(test["salt_len"].as_u64().expect("CAVP PSS salt length must be numeric"))
+        .expect("a CAVP PSS salt length must fit in usize")
+    });
     let expected = match cavp_field(test, "result") {
-      "P" => true,
-      "F" => false,
-      other => panic!("unsupported CAVP result `{other}`"),
-    };
+      "P" => Some(true),
+      "F" => Some(false),
+      _ => None,
+    }
+    .expect("CAVP result fields must be `P` or `F`");
 
     let modulus = cavp_hex_to_vec(cavp_field(test, "n"));
     let exponent = cavp_hex_to_vec(cavp_field(test, "e"));
@@ -4745,13 +4757,16 @@ fn nist_cavp_sha2_signatures_match_openssl_cli_when_available() {
   for test in tests {
     let scheme = cavp_field(test, "scheme");
     let sha = cavp_field(test, "sha");
-    let salt_len =
-      (scheme == "pss").then(|| test["salt_len"].as_u64().expect("CAVP PSS salt length must be numeric") as usize);
+    let salt_len = (scheme == "pss").then(|| {
+      usize::try_from(test["salt_len"].as_u64().expect("CAVP PSS salt length must be numeric"))
+        .expect("a CAVP PSS salt length must fit in usize")
+    });
     let expected = match cavp_field(test, "result") {
-      "P" => true,
-      "F" => false,
-      other => panic!("unsupported CAVP result `{other}`"),
-    };
+      "P" => Some(true),
+      "F" => Some(false),
+      _ => None,
+    }
+    .expect("CAVP result fields must be `P` or `F`");
     let pkcs1 = valid_pkcs1_with_modulus_and_exponent(
       &cavp_hex_to_vec(cavp_field(test, "n")),
       &cavp_hex_to_vec(cavp_field(test, "e")),
@@ -4760,14 +4775,15 @@ fn nist_cavp_sha2_signatures_match_openssl_cli_when_available() {
     let message = cavp_hex_to_vec(cavp_field(test, "msg"));
     let signature = cavp_hex_to_vec(cavp_field(test, "sig"));
     let digest_arg = match sha {
-      "SHA256" => "-sha256",
-      "SHA384" => "-sha384",
-      "SHA512" => "-sha512",
-      other => panic!("unsupported OpenSSL CAVP hash `{other}`"),
-    };
+      "SHA256" => Some("-sha256"),
+      "SHA384" => Some("-sha384"),
+      "SHA512" => Some("-sha512"),
+      _ => None,
+    }
+    .expect("CAVP fixtures must use an OpenSSL-supported SHA-2 profile");
     let pss_sigopts;
     let sigopts = if scheme == "pss" {
-      pss_sigopts = openssl_pss_sigopts(sha, salt_len.unwrap());
+      pss_sigopts = openssl_pss_sigopts(sha, salt_len.expect("a CAVP PSS case must provide a salt length"));
       &pss_sigopts[..]
     } else {
       &[]
@@ -4795,19 +4811,15 @@ fn generated_rsa_size_fixtures_verify_for_benchmark_matrix() {
     (4096, RSA4096_SPKI, RSA4096_PSS_SHA256, RSA4096_PKCS1V15_SHA256),
     (8192, RSA8192_SPKI, RSA8192_PSS_SHA256, RSA8192_PKCS1V15_SHA256),
   ] {
-    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let key = RsaPublicKey::from_spki_der(spki).expect("the generated RSA benchmark fixture must parse");
 
     assert_eq!(key.modulus_bits(), bits);
-    assert!(
-      key
-        .verify_pss(RsaPssProfile::Sha256, pss_fixture_message(), pss_sig)
-        .is_ok()
-    );
-    assert!(
-      key
-        .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, pkcs1v15_fixture_message(), pkcs1_sig)
-        .is_ok()
-    );
+    key
+      .verify_pss(RsaPssProfile::Sha256, pss_fixture_message(), pss_sig)
+      .expect("the generated RSA benchmark PSS fixture must verify");
+    key
+      .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, pkcs1v15_fixture_message(), pkcs1_sig)
+      .expect("the generated RSA benchmark PKCS#1 v1.5 fixture must verify");
 
     let pkcs1_der =
       valid_pkcs1_with_modulus_and_exponent(key.modulus(), &exponent_bytes(key.public_exponent().as_u64()));
@@ -4841,35 +4853,29 @@ fn aarch64_linux_dispatch_verifies_generated_rsa_fixtures() {
     (4096, RSA4096_SPKI, RSA4096_PSS_SHA256, RSA4096_PKCS1V15_SHA256),
     (8192, RSA8192_SPKI, RSA8192_PSS_SHA256, RSA8192_PKCS1V15_SHA256),
   ] {
-    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let key = RsaPublicKey::from_spki_der(spki).expect("the generated AArch64 Linux RSA fixture must parse");
     let mut scratch = key.public_scratch();
 
     assert_eq!(key.modulus_bits(), bits);
-    assert!(
-      key
-        .verify_pss_with_scratch(RsaPssProfile::Sha256, pss_fixture_message(), pss_sig, &mut scratch)
-        .is_ok(),
-      "RSA-{bits} PSS fixture failed through AArch64 Linux dispatch"
-    );
-    assert!(
-      key
-        .verify_pkcs1v15_with_scratch(
-          RsaPkcs1v15Profile::Sha256,
-          pkcs1v15_fixture_message(),
-          pkcs1_sig,
-          &mut scratch,
-        )
-        .is_ok(),
-      "RSA-{bits} PKCS1v15 fixture failed through AArch64 Linux dispatch"
-    );
+    key
+      .verify_pss_with_scratch(RsaPssProfile::Sha256, pss_fixture_message(), pss_sig, &mut scratch)
+      .expect("the PSS fixture must verify through AArch64 Linux dispatch");
+    key
+      .verify_pkcs1v15_with_scratch(
+        RsaPkcs1v15Profile::Sha256,
+        pkcs1v15_fixture_message(),
+        pkcs1_sig,
+        &mut scratch,
+      )
+      .expect("the PKCS#1 v1.5 fixture must verify through AArch64 Linux dispatch");
   }
 }
 
 proptest! {
   #[test]
   fn arbitrary_der_inputs_do_not_panic(input in proptest::collection::vec(any::<u8>(), 0..4096)) {
-    let _ = RsaPublicKey::from_pkcs1_der(&input);
-    let _ = RsaPublicKey::from_spki_der(&input);
+    let _pkcs1_result = RsaPublicKey::from_pkcs1_der(&input);
+    let _spki_result = RsaPublicKey::from_spki_der(&input);
   }
 
   #[test]
@@ -4880,12 +4886,18 @@ proptest! {
     let key = arbitrary_verify_key();
     let mut scratch = key.public_scratch();
 
-    let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha256, &message, &signature, &mut scratch);
-    let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha384, &message, &signature, &mut scratch);
-    let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha512, &message, &signature, &mut scratch);
-    let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, &message, &signature, &mut scratch);
-    let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha384, &message, &signature, &mut scratch);
-    let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha512, &message, &signature, &mut scratch);
+    let _pss_sha256_result =
+      key.verify_pss_with_scratch(RsaPssProfile::Sha256, &message, &signature, &mut scratch);
+    let _pss_sha384_result =
+      key.verify_pss_with_scratch(RsaPssProfile::Sha384, &message, &signature, &mut scratch);
+    let _pss_sha512_result =
+      key.verify_pss_with_scratch(RsaPssProfile::Sha512, &message, &signature, &mut scratch);
+    let _pkcs1_sha256_result =
+      key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, &message, &signature, &mut scratch);
+    let _pkcs1_sha384_result =
+      key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha384, &message, &signature, &mut scratch);
+    let _pkcs1_sha512_result =
+      key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha512, &message, &signature, &mut scratch);
   }
 
   #[test]
@@ -4897,11 +4909,17 @@ proptest! {
     let signature = fixed_width_signature_candidate(&material, key.modulus().len());
     let mut scratch = key.public_scratch();
 
-    let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha256, &message, &signature, &mut scratch);
-    let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha384, &message, &signature, &mut scratch);
-    let _ = key.verify_pss_with_scratch(RsaPssProfile::Sha512, &message, &signature, &mut scratch);
-    let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, &message, &signature, &mut scratch);
-    let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha384, &message, &signature, &mut scratch);
-    let _ = key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha512, &message, &signature, &mut scratch);
+    let _pss_sha256_result =
+      key.verify_pss_with_scratch(RsaPssProfile::Sha256, &message, &signature, &mut scratch);
+    let _pss_sha384_result =
+      key.verify_pss_with_scratch(RsaPssProfile::Sha384, &message, &signature, &mut scratch);
+    let _pss_sha512_result =
+      key.verify_pss_with_scratch(RsaPssProfile::Sha512, &message, &signature, &mut scratch);
+    let _pkcs1_sha256_result =
+      key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha256, &message, &signature, &mut scratch);
+    let _pkcs1_sha384_result =
+      key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha384, &message, &signature, &mut scratch);
+    let _pkcs1_sha512_result =
+      key.verify_pkcs1v15_with_scratch(RsaPkcs1v15Profile::Sha512, &message, &signature, &mut scratch);
   }
 }

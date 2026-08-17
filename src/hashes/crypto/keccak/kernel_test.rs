@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use super::kernels::{ALL, permute_fn, required_caps};
 
 #[derive(Clone, Debug)]
-pub struct KernelResult {
+pub(crate) struct KernelResult {
   pub name: &'static str,
   pub state: [u64; 25],
 }
@@ -24,7 +24,7 @@ fn state_from_bytes(data: &[u8]) -> [u64; 25] {
 }
 
 #[must_use]
-pub fn run_all_keccakf1600_kernels(data: &[u8]) -> Vec<KernelResult> {
+pub(crate) fn run_all_keccakf1600_kernels(data: &[u8]) -> Vec<KernelResult> {
   let caps = crate::platform::caps();
   let mut out = Vec::with_capacity(ALL.len());
   let init = state_from_bytes(data);
@@ -44,7 +44,7 @@ pub fn run_all_keccakf1600_kernels(data: &[u8]) -> Vec<KernelResult> {
   out
 }
 
-pub fn verify_keccakf1600_kernels(data: &[u8]) -> Result<(), &'static str> {
+pub(crate) fn verify_keccakf1600_kernels(data: &[u8]) -> Result<(), &'static str> {
   let results = run_all_keccakf1600_kernels(data);
   let Some(first) = results.first() else {
     return Ok(());
@@ -219,7 +219,7 @@ mod tests {
 
   /// Verify the production aarch64 x3 dispatch matches three independent portable runs.
   #[test]
-  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  #[cfg(all(feature = "ml-kem", target_arch = "aarch64", not(miri)))]
   fn keccakf1600_aarch64_platform_x3_matches_portable() {
     use super::super::Permuter;
 
@@ -260,7 +260,7 @@ mod tests {
 
   /// Verify Linux-targeted hybrid x3 kernel matches three independent portable runs.
   #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+  #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem", not(miri)))]
   fn keccakf1600_sha3_x3_hybrid_matches_portable() {
     let caps = crate::platform::caps();
     if !caps.has(crate::platform::caps::aarch64::SHA3) {
@@ -287,7 +287,7 @@ mod tests {
 
   /// Verify SVE2-SHA3 4-state kernel matches four independent portable runs.
   #[test]
-  #[cfg(all(target_arch = "aarch64", target_os = "linux", not(miri)))]
+  #[cfg(all(target_arch = "aarch64", target_os = "linux", feature = "ml-kem", not(miri)))]
   fn keccakf1600_sve2_sha3_x4_matches_portable() {
     let caps = crate::platform::caps();
     if !caps.has(crate::platform::caps::aarch64::SVE2_SHA3) {
@@ -331,7 +331,7 @@ mod tests {
       let len = RATE.strict_mul(4);
       let mut blocks = Vec::with_capacity(len);
       for i in 0..len {
-        blocks.push(((i.strict_mul(37).strict_add(11)) & 0xff) as u8);
+        blocks.push(i.strict_mul(37).strict_add(11).to_le_bytes()[0]);
       }
 
       let mut expected = state_from_bytes(b"batch-absorb-reference-state");
@@ -353,5 +353,22 @@ mod tests {
     assert_rate::<136>();
     assert_rate::<144>();
     assert_rate::<168>();
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  #[should_panic(expected = "Keccak rate must be a positive whole number of lanes")]
+  fn keccakf1600_absorb_blocks_rejects_zero_rate() {
+    let mut state = [0u64; 25];
+    super::super::aarch64::keccakf_aarch64_sha3_absorb_blocks::<0>(&mut state, &[]);
+  }
+
+  #[test]
+  #[cfg(all(target_arch = "aarch64", not(miri)))]
+  #[should_panic(expected = "Keccak batch must contain complete rate blocks")]
+  fn keccakf1600_absorb_blocks_rejects_partial_block() {
+    let mut state = [0u64; 25];
+    let blocks = [0u8; 73];
+    super::super::aarch64::keccakf_aarch64_sha3_absorb_blocks::<72>(&mut state, &blocks);
   }
 }

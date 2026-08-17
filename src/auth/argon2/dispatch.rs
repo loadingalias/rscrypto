@@ -221,7 +221,12 @@ mod tests {
 
   #[test]
   fn all_kernels_terminate_on_portable() {
-    assert_eq!(*ALL_KERNELS.last().unwrap(), KernelId::Portable);
+    assert_eq!(
+      *ALL_KERNELS
+        .last()
+        .expect("Argon2 kernel table must contain the portable fallback"),
+      KernelId::Portable
+    );
   }
 
   #[test]

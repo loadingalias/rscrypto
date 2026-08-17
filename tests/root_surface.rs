@@ -1,9 +1,11 @@
-#![allow(unused_imports)]
-
 #[cfg(feature = "aead")]
 use rscrypto::Aead;
-#[cfg(any(feature = "hmac", feature = "hmac-sha3", feature = "kmac"))]
+#[cfg(feature = "hmac")]
 use rscrypto::Mac;
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
+use rscrypto::RsaJwtAlgorithm;
+#[cfg(all(feature = "hashes", any(feature = "std", feature = "diag")))]
+use rscrypto::Sha256;
 #[cfg(feature = "aead")]
 use rscrypto::aead::expert::AeadWithNonce;
 #[cfg(all(feature = "aead", feature = "diag"))]
@@ -21,7 +23,7 @@ use rscrypto::aead::{
 use rscrypto::auth::HkdfOutputLengthError;
 #[cfg(all(feature = "checksums", feature = "alloc"))]
 use rscrypto::checksum::buffered::BufferedCrc32C;
-#[cfg(feature = "checksums")]
+#[cfg(all(feature = "checksums", feature = "diag"))]
 use rscrypto::checksum::config::{
   Crc16Config, Crc16Force, Crc24Config, Crc24Force, Crc32Config, Crc32Force, Crc64Config, Crc64Force,
 };
@@ -39,11 +41,12 @@ use rscrypto::hashes::introspect::{
 use rscrypto::hashes::{DigestReader, DigestWriter};
 #[cfg(feature = "hashes")]
 use rscrypto::{
-  AsconCxof128, AsconCxof128Reader, AsconHash256, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake128,
-  Cshake128XofReader, Cshake256, Cshake256XofReader, Digest, FastHash, RapidHash64, RapidHasher, RapidRandomState,
-  RapidSeededState, RapidStreamHasher, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha256, Sha384, Sha512,
-  Sha512_256, Shake128, Shake128XofReader, Shake256, Shake256XofReader, Xof, Xxh3, Xxh3_128,
+  AsconCxof128, AsconCxof128Reader, AsconXof, AsconXofReader, Blake3, Blake3XofReader, Cshake128, Cshake128XofReader,
+  Cshake256, Cshake256XofReader, Digest, FastHash, RapidHash64, RapidHasher, RapidRandomState, RapidSeededState,
+  RapidStreamHasher, Shake128, Shake128XofReader, Shake256, Shake256XofReader, Xof, Xxh3,
 };
+#[cfg(all(feature = "hashes", feature = "diag"))]
+use rscrypto::{AsconHash256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Sha224, Sha384, Sha512, Sha512_256, Xxh3_128};
 #[cfg(feature = "checksums")]
 use rscrypto::{Checksum, ChecksumCombine, Crc16Ccitt, Crc16Ibm, Crc24OpenPgp, Crc32, Crc32C, Crc64, Crc64Nvme};
 #[cfg(feature = "ed25519")]
@@ -71,7 +74,7 @@ use rscrypto::{
 use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 use rscrypto::{
-  RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile,
+  RsaBlindingPair, RsaEncryptionError, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationError, RsaOaepProfile,
   RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch,
   RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey,
   RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaTlsSignatureSchemes,
@@ -81,7 +84,7 @@ use rscrypto::{VerificationError, ct};
 #[cfg(feature = "x25519")]
 use rscrypto::{X25519Error, X25519PublicKey, X25519SecretKey, X25519SharedSecret};
 
-#[cfg(feature = "rsa")]
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
 fn fill_rsa_random_with(byte: u8) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> {
   move |out| {
     out.fill(byte);
@@ -89,7 +92,7 @@ fn fill_rsa_random_with(byte: u8) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncr
   }
 }
 
-#[cfg(feature = "rsa")]
+#[cfg(all(feature = "rsa", feature = "getrandom"))]
 fn fill_rsa_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), RsaEncryptionError> + '_ {
   let mut offset = 0usize;
   move |out| {
@@ -105,7 +108,7 @@ fn fill_rsa_random_from(bytes: &[u8]) -> impl FnMut(&mut [u8]) -> Result<(), Rsa
 
 #[test]
 fn root_surface_core_exports_compile() {
-  let _ = VerificationError::new();
+  let _error = VerificationError::new();
   let mut secret = [0x5a; 8];
   ct::zeroize(&mut secret);
   assert_eq!(secret, [0; 8]);
@@ -125,22 +128,22 @@ fn root_surface_aead_exports_compile() {
   let nonce256 = Nonce256::from_bytes([0x44; Nonce256::LENGTH]);
   assert_eq!(nonce256.as_bytes().len(), Nonce256::LENGTH);
 
-  let _ = AeadBufferError::new();
-  let _ = SealError::buffer();
-  let _ = SealError::too_large();
-  let _ = OpenError::buffer();
-  let _ = OpenError::too_large();
-  let _ = OpenError::verification();
+  let _buffer_error = AeadBufferError::new();
+  let _seal_buffer_error = SealError::buffer();
+  let _seal_length_error = SealError::too_large();
+  let _open_buffer_error = OpenError::buffer();
+  let _open_length_error = OpenError::too_large();
+  let _verification_error = OpenError::verification();
 
   #[cfg(feature = "diag")]
   {
-    let _ = AeadDispatchInfo::current();
-    let _ = aes256gcm_backend();
-    let _ = aes256gcmsiv_backend();
-    let _ = chacha20poly1305_backend();
-    let _ = xchacha20poly1305_backend();
-    let _ = aegis256_backend();
-    let _ = ascon_aead128_backend();
+    let _dispatch = AeadDispatchInfo::current();
+    let _aes256gcm_backend = aes256gcm_backend();
+    let _aes256gcmsiv_backend = aes256gcmsiv_backend();
+    let _chacha20poly1305_backend = chacha20poly1305_backend();
+    let _xchacha20poly1305_backend = xchacha20poly1305_backend();
+    let _aegis256_backend = aegis256_backend();
+    let _ascon_aead128_backend = ascon_aead128_backend();
   }
 
   fn assert_aead_trait<T: Aead>() {}
@@ -149,20 +152,26 @@ fn root_surface_aead_exports_compile() {
   let key = XChaCha20Poly1305Key::from_bytes([0x44; XChaCha20Poly1305::KEY_SIZE]);
   let cipher = XChaCha20Poly1305::new(&key);
   let mut sealed = [0u8; 20];
-  cipher.encrypt(&nonce192, b"aad", b"test", &mut sealed).unwrap();
-  let _ = XChaCha20Poly1305Tag::from_bytes([0u8; XChaCha20Poly1305Tag::LENGTH]);
+  cipher
+    .encrypt(&nonce192, b"aad", b"test", &mut sealed)
+    .expect("valid XChaCha20-Poly1305 input must encrypt");
+  let _tag = XChaCha20Poly1305Tag::from_bytes([0u8; XChaCha20Poly1305Tag::LENGTH]);
 
   let key = ChaCha20Poly1305Key::from_bytes([0x55; ChaCha20Poly1305::KEY_SIZE]);
   let cipher = ChaCha20Poly1305::new(&key);
   let mut sealed = [0u8; 20];
-  cipher.encrypt(&nonce96, b"aad", b"test", &mut sealed).unwrap();
-  let _ = ChaCha20Poly1305Tag::from_bytes([0u8; ChaCha20Poly1305Tag::LENGTH]);
+  cipher
+    .encrypt(&nonce96, b"aad", b"test", &mut sealed)
+    .expect("valid ChaCha20-Poly1305 input must encrypt");
+  let _tag = ChaCha20Poly1305Tag::from_bytes([0u8; ChaCha20Poly1305Tag::LENGTH]);
 
   let key = Aegis256Key::from_bytes([0x66; Aegis256::KEY_SIZE]);
   let cipher = Aegis256::new(&key);
   let mut sealed = [0u8; 20];
-  cipher.encrypt(&nonce256, b"aad", b"test", &mut sealed).unwrap();
-  let _ = Aegis256Tag::from_bytes([0u8; Aegis256Tag::LENGTH]);
+  cipher
+    .encrypt(&nonce256, b"aad", b"test", &mut sealed)
+    .expect("valid AEGIS-256 input must encrypt");
+  let _tag = Aegis256Tag::from_bytes([0u8; Aegis256Tag::LENGTH]);
 }
 
 #[test]
@@ -174,26 +183,29 @@ fn root_surface_mac_exports_compile() {
   let tag = HmacSha256::mac(key, data);
   let tag384 = HmacSha384::mac(key, data);
   let tag512 = HmacSha512::mac(key, data);
-  let _ = HmacSha256Tag::from_bytes(tag.to_bytes());
-  let _ = HmacSha384Tag::from_bytes(tag384.to_bytes());
-  let _ = HmacSha512Tag::from_bytes(tag512.to_bytes());
+  let _tag256 = HmacSha256Tag::from_bytes(tag.to_bytes());
+  let _tag384 = HmacSha384Tag::from_bytes(tag384.to_bytes());
+  let _tag512 = HmacSha512Tag::from_bytes(tag512.to_bytes());
 
   let mut mac = HmacSha256::new(key);
   mac.update(data);
   assert!(tag.ct_eq(&mac.finalize()).declassify());
-  assert!(mac.verify(&tag).is_ok());
-  let prefix = *tag.as_bytes().first_chunk::<8>().unwrap();
-  assert!(HmacSha256::verify_truncated_tag_64(key, data, &prefix).is_ok());
+  mac.verify(&tag).expect("matching HMAC-SHA-256 tag must verify");
+  let prefix = *tag
+    .as_bytes()
+    .first_chunk::<8>()
+    .expect("an HMAC-SHA-256 tag must contain an eight-byte prefix");
+  HmacSha256::verify_truncated_tag_64(key, data, &prefix).expect("matching truncated HMAC-SHA-256 tag must verify");
 
   let mut mac384 = HmacSha384::new(key);
   mac384.update(data);
   assert!(tag384.ct_eq(&mac384.finalize()).declassify());
-  assert!(mac384.verify(&tag384).is_ok());
+  mac384.verify(&tag384).expect("matching HMAC-SHA-384 tag must verify");
 
   let mut mac512 = HmacSha512::new(key);
   mac512.update(data);
   assert!(tag512.ct_eq(&mac512.finalize()).declassify());
-  assert!(mac512.verify(&tag512).is_ok());
+  mac512.verify(&tag512).expect("matching HMAC-SHA-512 tag must verify");
 }
 
 #[test]
@@ -206,15 +218,15 @@ fn root_surface_hmac_sha3_exports_compile() {
   let tag256 = HmacSha3_256::mac(key, data);
   let tag384 = HmacSha3_384::mac(key, data);
   let tag512 = HmacSha3_512::mac(key, data);
-  let _ = HmacSha3_224Tag::from_bytes(tag224.to_bytes());
-  let _ = HmacSha3_256Tag::from_bytes(tag256.to_bytes());
-  let _ = HmacSha3_384Tag::from_bytes(tag384.to_bytes());
-  let _ = HmacSha3_512Tag::from_bytes(tag512.to_bytes());
+  let _tag224 = HmacSha3_224Tag::from_bytes(tag224.to_bytes());
+  let _tag256 = HmacSha3_256Tag::from_bytes(tag256.to_bytes());
+  let _tag384 = HmacSha3_384Tag::from_bytes(tag384.to_bytes());
+  let _tag512 = HmacSha3_512Tag::from_bytes(tag512.to_bytes());
 
-  assert!(HmacSha3_224::verify_tag(key, data, &tag224).is_ok());
-  assert!(HmacSha3_256::verify_tag(key, data, &tag256).is_ok());
-  assert!(HmacSha3_384::verify_tag(key, data, &tag384).is_ok());
-  assert!(HmacSha3_512::verify_tag(key, data, &tag512).is_ok());
+  HmacSha3_224::verify_tag(key, data, &tag224).expect("matching HMAC-SHA3-224 tag must verify");
+  HmacSha3_256::verify_tag(key, data, &tag256).expect("matching HMAC-SHA3-256 tag must verify");
+  HmacSha3_384::verify_tag(key, data, &tag384).expect("matching HMAC-SHA3-384 tag must verify");
+  HmacSha3_512::verify_tag(key, data, &tag512).expect("matching HMAC-SHA3-512 tag must verify");
 }
 
 #[test]
@@ -224,19 +236,34 @@ fn root_surface_kdf_exports_compile() {
 
   let mut out = [0u8; 32];
   let hkdf = HkdfSha256::new(b"salt", key);
-  hkdf.expand(b"info", &mut out).unwrap();
-  assert_eq!(out, HkdfSha256::derive_array::<32>(b"salt", key, b"info").unwrap());
+  hkdf
+    .expand(b"info", &mut out)
+    .expect("32-byte HKDF-SHA-256 output must fit");
+  assert_eq!(
+    out,
+    HkdfSha256::derive_array::<32>(b"salt", key, b"info").expect("32-byte HKDF-SHA-256 output must fit")
+  );
 
   let mut out384 = [0u8; 48];
   let hkdf384 = HkdfSha384::new(b"salt", key);
-  hkdf384.expand(b"info", &mut out384).unwrap();
-  assert_eq!(out384, HkdfSha384::derive_array::<48>(b"salt", key, b"info").unwrap());
+  hkdf384
+    .expand(b"info", &mut out384)
+    .expect("48-byte HKDF-SHA-384 output must fit");
+  assert_eq!(
+    out384,
+    HkdfSha384::derive_array::<48>(b"salt", key, b"info").expect("48-byte HKDF-SHA-384 output must fit")
+  );
 
   let mut out512 = [0u8; 64];
   let hkdf512 = HkdfSha512::new(b"salt", key);
-  hkdf512.expand(b"info", &mut out512).unwrap();
-  assert_eq!(out512, HkdfSha512::derive_array::<64>(b"salt", key, b"info").unwrap());
-  let _ = HkdfOutputLengthError::new();
+  hkdf512
+    .expand(b"info", &mut out512)
+    .expect("64-byte HKDF-SHA-512 output must fit");
+  assert_eq!(
+    out512,
+    HkdfSha512::derive_array::<64>(b"salt", key, b"info").expect("64-byte HKDF-SHA-512 output must fit")
+  );
+  let _length_error = HkdfOutputLengthError::new();
 }
 
 #[test]
@@ -248,13 +275,13 @@ fn root_surface_kmac_exports_compile() {
   let mut kmac128 = Kmac128::new(key, b"svc=v1");
   kmac128.update(data);
   kmac128.finalize_into(&mut out128);
-  assert!(Kmac128::verify_tag(key, b"svc=v1", data, &out128).is_ok());
+  Kmac128::verify_tag(key, b"svc=v1", data, &out128).expect("matching KMAC128 tag must verify");
 
   let mut out = [0u8; 32];
   let mut kmac = Kmac256::new(key, b"svc=v1");
   kmac.update(data);
   kmac.finalize_into(&mut out);
-  assert!(Kmac256::verify_tag(key, b"svc=v1", data, &out).is_ok());
+  Kmac256::verify_tag(key, b"svc=v1", data, &out).expect("matching KMAC256 tag must verify");
 }
 
 #[test]
@@ -262,10 +289,10 @@ fn root_surface_kmac_exports_compile() {
 fn root_surface_poly1305_exports_compile() {
   let key = Poly1305OneTimeKey::from_bytes([0x33; Poly1305OneTimeKey::LENGTH]);
   let tag = Poly1305::authenticate_once(key, b"root-surface-poly1305");
-  let _ = Poly1305Tag::from_bytes(tag.to_bytes());
+  let _tag = Poly1305Tag::from_bytes(tag.to_bytes());
 
   let key = Poly1305OneTimeKey::from_bytes([0x33; Poly1305OneTimeKey::LENGTH]);
-  assert!(Poly1305::verify_once(key, b"root-surface-poly1305", &tag).is_ok());
+  Poly1305::verify_once(key, b"root-surface-poly1305", &tag).expect("matching Poly1305 tag must verify");
 }
 
 #[test]
@@ -328,13 +355,15 @@ fn root_surface_mlkem_exports_compile() {
 fn root_surface_signature_exports_compile() {
   let secret = Ed25519SecretKey::from_bytes([7u8; Ed25519SecretKey::LENGTH]);
   let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
-  let public = keypair.public_key();
-  let signature = keypair.sign(b"root-surface-ed25519");
+  let public: Ed25519PublicKey = keypair.public_key();
+  let signature: Ed25519Signature = keypair.sign(b"root-surface-ed25519");
 
   assert_eq!(secret.as_bytes().len(), 32);
   assert_eq!(public.as_bytes().len(), 32);
   assert_eq!(signature.as_bytes().len(), 64);
-  assert!(public.verify(b"root-surface-ed25519", &signature).is_ok());
+  public
+    .verify(b"root-surface-ed25519", &signature)
+    .expect("matching Ed25519 signature must verify");
 }
 
 #[test]
@@ -343,24 +372,25 @@ fn root_surface_rsa_exports_compile() {
   let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
   assert_eq!(policy.min_modulus_bits(), 2048);
   assert_eq!(policy.max_modulus_bits(), 8192);
-  let _ = RsaPublicExponentPolicy::Common65537;
-  let _ = RsaKeyError::InvalidModulus;
-  let _ = RsaKeyGenerationError::InvalidModulusBits;
-  let _ = RsaEncryptionError::InvalidLength;
-  let _ = RsaPrivateOpError::InvalidLength;
-  let _ = RsaPublicOpError::RepresentativeOutOfRange;
-  let _ = RsaProtocolAlgorithmError::UnsupportedAlgorithm;
-  let _ = RsaOaepProfile::Sha256;
-  let _ = RsaPssProfile::Sha256;
-  let _ = RsaPkcs1v15Profile::Sha256;
-  let _: Option<RsaPublicExponent> = None;
-  let _: Option<RsaPublicKey> = None;
-  let _: Option<RsaPublicScratch> = None;
-  let _: Option<RsaJwtVerifier<'static>> = None;
-  let _: Option<RsaPrivateKey> = None;
-  let _: Option<RsaPrivateKeyParts<'static>> = None;
-  let _: Option<RsaPrivateScratch> = None;
-  let _: Option<RsaX509PublicKey> = None;
+  let _exponent_policy = RsaPublicExponentPolicy::Common65537;
+  let _key_error = RsaKeyError::InvalidModulus;
+  let _generation_error = RsaKeyGenerationError::InvalidModulusBits;
+  let _encryption_error = RsaEncryptionError::InvalidLength;
+  let _private_op_error = RsaPrivateOpError::InvalidLength;
+  let _public_op_error = RsaPublicOpError::RepresentativeOutOfRange;
+  let _protocol_error = RsaProtocolAlgorithmError::UnsupportedAlgorithm;
+  let _oaep_profile = RsaOaepProfile::Sha256;
+  let _pss_profile = RsaPssProfile::Sha256;
+  let _pkcs1v15_profile = RsaPkcs1v15Profile::Sha256;
+  let _public_exponent: Option<RsaPublicExponent> = None;
+  let _public_key: Option<RsaPublicKey> = None;
+  let _public_scratch: Option<RsaPublicScratch> = None;
+  let _jwt_verifier: Option<RsaJwtVerifier<'static>> = None;
+  let _private_key: Option<RsaPrivateKey> = None;
+  let _private_key_parts: Option<RsaPrivateKeyParts<'static>> = None;
+  let _blinding_pair = RsaBlindingPair::new(&[], &[]);
+  let _private_scratch: Option<RsaPrivateScratch> = None;
+  let _x509_public_key: Option<RsaX509PublicKey> = None;
   assert_eq!(
     RsaSignatureProfile::pss(RsaPssProfile::Sha256).pss_parts(),
     Some((RsaPssProfile::Sha256, 32))
@@ -370,23 +400,20 @@ fn root_surface_rsa_exports_compile() {
     Some(RsaPkcs1v15Profile::Sha384)
   );
   assert_eq!(
-    RsaSignatureProfile::from_tls13_signature_scheme(0x0804).unwrap(),
+    RsaSignatureProfile::from_tls13_signature_scheme(0x0804)
+      .expect("TLS 1.3 rsa_pss_rsae_sha256 must map to an RSA signature profile"),
     RsaSignatureProfile::pss(RsaPssProfile::Sha256)
   );
-  assert!(
-    RsaX509PublicKeyAlgorithm::RsaPss
-      .permits_signature_profile(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
-      .is_ok()
-  );
-  assert!(
-    RsaX509PublicKeyAlgorithm::RsaEncryption
-      .signature_profile_from_tls13_signature_scheme(0x0804)
-      .is_ok()
-  );
+  RsaX509PublicKeyAlgorithm::RsaPss
+    .permits_signature_profile(RsaSignatureProfile::pss(RsaPssProfile::Sha256))
+    .expect("an RSA-PSS key must permit the SHA-256 PSS profile");
+  RsaX509PublicKeyAlgorithm::RsaEncryption
+    .signature_profile_from_tls13_signature_scheme(0x0804)
+    .expect("an rsaEncryption key must accept TLS 1.3 rsa_pss_rsae_sha256");
   let advertised = RsaX509PublicKeyAlgorithm::RsaEncryption.advertised_tls13_signature_schemes();
   assert_eq!(advertised.len(), 3);
   assert!(advertised.contains(0x0804));
-  let _ = RsaTlsSignatureSchemes::MAX_LEN;
+  let _maximum_scheme_count = RsaTlsSignatureSchemes::MAX_LEN;
 }
 
 #[test]
@@ -403,9 +430,11 @@ fn root_surface_rsa_generated_key_end_to_end() {
   ];
 
   let policy = RsaPublicKeyPolicy::legacy_verification();
-  let key = RsaPrivateKey::generate_with_policy(2048, &policy).unwrap();
+  let key =
+    RsaPrivateKey::generate_with_policy(2048, &policy).expect("the supported 2048-bit policy must generate an RSA key");
   let public_key = key.public_key();
-  let x509_key = RsaX509PublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy).unwrap();
+  let x509_key = RsaX509PublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy)
+    .expect("the generated public key must round-trip through X.509 SPKI");
   let message = b"root-surface-rsa-generated-key";
   let mut private_scratch = key.private_scratch();
   let mut public_scratch = public_key.public_scratch();
@@ -416,29 +445,31 @@ fn root_surface_rsa_generated_key_end_to_end() {
   assert_eq!(format!("{pkcs1_der:?}"), "SecretVec(****)");
   assert_eq!(
     RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1_der, &policy)
-      .unwrap()
+      .expect("the generated private key must round-trip through PKCS#1 DER")
       .public_key(),
     public_key
   );
   assert_eq!(
     RsaPrivateKey::from_pkcs8_der_with_policy(&pkcs8_der, &policy)
-      .unwrap()
+      .expect("the generated private key must round-trip through PKCS#8 DER")
       .public_key(),
     public_key
   );
   assert_eq!(
-    RsaPublicKey::from_pkcs1_der_with_policy(&public_key.to_pkcs1_der(), &policy).unwrap(),
+    RsaPublicKey::from_pkcs1_der_with_policy(&public_key.to_pkcs1_der(), &policy)
+      .expect("the generated public key must round-trip through PKCS#1 DER"),
     *public_key
   );
   assert_eq!(
-    RsaPublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy).unwrap(),
+    RsaPublicKey::from_spki_der_with_policy(&public_key.to_spki_der(), &policy)
+      .expect("the generated public key must round-trip through SPKI DER"),
     *public_key
   );
 
   let mut unprotected_pkcs1 = key.to_pkcs1_der().into_unprotected_vec();
   assert_eq!(
     RsaPrivateKey::from_pkcs1_der_with_policy(&unprotected_pkcs1, &policy)
-      .unwrap()
+      .expect("the unprotected PKCS#1 bytes must parse before zeroization")
       .public_key(),
     public_key
   );
@@ -451,54 +482,62 @@ fn root_surface_rsa_generated_key_end_to_end() {
     (RsaPkcs1v15Profile::Sha512, RsaPssProfile::Sha512),
   ] {
     let pkcs1v15_profile = RsaSignatureProfile::pkcs1v15(pkcs1v15_profile);
-    key.sign_signature(pkcs1v15_profile, message, &mut signature).unwrap();
+    key
+      .sign_signature(pkcs1v15_profile, message, &mut signature)
+      .expect("the generated key must produce a PKCS#1 v1.5 signature");
     public_key
       .verify_signature(pkcs1v15_profile, message, &signature)
-      .unwrap();
+      .expect("the generated public key must verify its PKCS#1 v1.5 signature");
     public_key
       .verify_signature_with_scratch(pkcs1v15_profile, message, &signature, &mut public_scratch)
-      .unwrap();
+      .expect("scratch-backed PKCS#1 v1.5 verification must accept the matching signature");
     key
       .sign_signature_with_scratch(pkcs1v15_profile, message, &mut signature, &mut private_scratch)
-      .unwrap();
+      .expect("scratch-backed PKCS#1 v1.5 signing must succeed");
     public_key
       .verify_signature(pkcs1v15_profile, message, &signature)
-      .unwrap();
+      .expect("the generated public key must verify the scratch-backed PKCS#1 v1.5 signature");
     public_key
       .verify_signature_with_scratch(pkcs1v15_profile, message, &signature, &mut public_scratch)
-      .unwrap();
+      .expect("scratch-backed verification must accept the scratch-backed PKCS#1 v1.5 signature");
 
     let pss_profile = RsaSignatureProfile::pss(pss_profile);
-    key.sign_signature(pss_profile, message, &mut signature).unwrap();
-    public_key.verify_signature(pss_profile, message, &signature).unwrap();
+    key
+      .sign_signature(pss_profile, message, &mut signature)
+      .expect("the generated key must produce an RSA-PSS signature");
+    public_key
+      .verify_signature(pss_profile, message, &signature)
+      .expect("the generated public key must verify its RSA-PSS signature");
     public_key
       .verify_signature_with_scratch(pss_profile, message, &signature, &mut public_scratch)
-      .unwrap();
+      .expect("scratch-backed RSA-PSS verification must accept the matching signature");
     key
       .sign_signature_with_scratch(pss_profile, message, &mut signature, &mut private_scratch)
-      .unwrap();
-    public_key.verify_signature(pss_profile, message, &signature).unwrap();
+      .expect("scratch-backed RSA-PSS signing must succeed");
+    public_key
+      .verify_signature(pss_profile, message, &signature)
+      .expect("the generated public key must verify the scratch-backed RSA-PSS signature");
     public_key
       .verify_signature_with_scratch(pss_profile, message, &signature, &mut public_scratch)
-      .unwrap();
+      .expect("scratch-backed verification must accept the scratch-backed RSA-PSS signature");
   }
   let explicit_pss_profile = RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha384, 24);
   key
     .sign_signature_with_scratch(explicit_pss_profile, message, &mut signature, &mut private_scratch)
-    .unwrap();
+    .expect("RSA-PSS signing with an explicit salt length must succeed");
   public_key
     .verify_signature(explicit_pss_profile, message, &signature)
-    .unwrap();
+    .expect("RSA-PSS verification must honor the explicit salt length");
   public_key
     .verify_signature_with_scratch(explicit_pss_profile, message, &signature, &mut public_scratch)
-    .unwrap();
+    .expect("scratch-backed RSA-PSS verification must honor the explicit salt length");
 
   key
     .sign_x509_signature_algorithm_der(X509_SHA256_WITH_RSA_ENCRYPTION, message, &mut signature)
-    .unwrap();
+    .expect("the PKCS#1 v1.5 X.509 algorithm identifier must be accepted for signing");
   x509_key
     .verify_signature_from_x509_algorithm_der(X509_SHA256_WITH_RSA_ENCRYPTION, message, &signature)
-    .unwrap();
+    .expect("the X.509 key must verify the matching PKCS#1 v1.5 signature");
   x509_key
     .verify_signature_from_x509_algorithm_der_with_scratch(
       X509_SHA256_WITH_RSA_ENCRYPTION,
@@ -506,7 +545,7 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut x509_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed X.509 verification must accept the matching PKCS#1 v1.5 signature");
   key
     .sign_x509_signature_algorithm_der_with_scratch(
       X509_PSS_SHA256_ALGORITHM,
@@ -514,10 +553,10 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &mut signature,
       &mut private_scratch,
     )
-    .unwrap();
+    .expect("the RSA-PSS X.509 algorithm identifier must be accepted for scratch-backed signing");
   x509_key
     .verify_signature_from_x509_algorithm_der(X509_PSS_SHA256_ALGORITHM, message, &signature)
-    .unwrap();
+    .expect("the X.509 key must verify the matching RSA-PSS signature");
   x509_key
     .verify_signature_from_x509_algorithm_der_with_scratch(
       X509_PSS_SHA256_ALGORITHM,
@@ -525,17 +564,17 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut x509_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed X.509 verification must accept the matching RSA-PSS signature");
 
   let pss_sha256 = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
   let pkcs1v15_sha256 = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
 
   key
     .sign_tls13_signature_scheme(0x0804, message, &mut signature)
-    .unwrap();
+    .expect("TLS 1.3 rsa_pss_rsae_sha256 signing must succeed");
   x509_key
     .verify_expected_tls13_signature_scheme(0x0804, 0x0804, pss_sha256, message, &signature)
-    .unwrap();
+    .expect("the matching TLS 1.3 RSA-PSS signature must verify");
   x509_key
     .verify_expected_tls13_signature_scheme_with_scratch(
       0x0804,
@@ -545,13 +584,13 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut x509_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed TLS 1.3 RSA-PSS verification must accept the matching signature");
   key
     .sign_tls13_signature_scheme_with_scratch(0x0804, message, &mut signature, &mut private_scratch)
-    .unwrap();
+    .expect("scratch-backed TLS 1.3 RSA-PSS signing must succeed");
   x509_key
     .verify_expected_tls13_signature_scheme(0x0804, 0x0804, pss_sha256, message, &signature)
-    .unwrap();
+    .expect("the scratch-backed TLS 1.3 RSA-PSS signature must verify");
   x509_key
     .verify_expected_tls13_signature_scheme_with_scratch(
       0x0804,
@@ -561,14 +600,14 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut x509_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed verification must accept the scratch-backed TLS 1.3 RSA-PSS signature");
 
   key
     .sign_tls_certificate_signature_scheme(0x0401, message, &mut signature)
-    .unwrap();
+    .expect("TLS certificate rsa_pkcs1_sha256 signing must succeed");
   x509_key
     .verify_expected_tls_certificate_signature_scheme(0x0401, 0x0401, pkcs1v15_sha256, message, &signature)
-    .unwrap();
+    .expect("the matching TLS certificate PKCS#1 v1.5 signature must verify");
   x509_key
     .verify_expected_tls_certificate_signature_scheme_with_scratch(
       0x0401,
@@ -578,13 +617,13 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut x509_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed TLS certificate verification must accept the matching signature");
   key
     .sign_tls_certificate_signature_scheme_with_scratch(0x0401, message, &mut signature, &mut private_scratch)
-    .unwrap();
+    .expect("scratch-backed TLS certificate PKCS#1 v1.5 signing must succeed");
   x509_key
     .verify_expected_tls_certificate_signature_scheme(0x0401, 0x0401, pkcs1v15_sha256, message, &signature)
-    .unwrap();
+    .expect("the scratch-backed TLS certificate signature must verify");
   x509_key
     .verify_expected_tls_certificate_signature_scheme_with_scratch(
       0x0401,
@@ -594,17 +633,19 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut x509_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed verification must accept the scratch-backed TLS certificate signature");
 
   key
     .jwt_signer(RsaJwtAlgorithm::Ps256)
     .try_sign_into(message, &mut signature)
-    .unwrap();
+    .expect("PS256 JWT signing must succeed");
   let verifier = public_key.jwt_verifier(RsaJwtAlgorithm::Ps256);
-  verifier.verify("PS256", message, &signature).unwrap();
+  verifier
+    .verify("PS256", message, &signature)
+    .expect("the matching PS256 JWT signature must verify");
   verifier
     .verify_with_scratch("PS256", message, &signature, &mut public_scratch)
-    .unwrap();
+    .expect("scratch-backed PS256 JWT verification must accept the matching signature");
   key
     .sign_signature_with_scratch(
       RsaJwtAlgorithm::Rs256.signature_profile(),
@@ -612,26 +653,30 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &mut signature,
       &mut private_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed RS256 signing must succeed");
   let verifier = public_key.jwt_verifier(RsaJwtAlgorithm::Rs256);
-  verifier.verify("RS256", message, &signature).unwrap();
+  verifier
+    .verify("RS256", message, &signature)
+    .expect("the matching RS256 JWT signature must verify");
   verifier
     .verify_with_scratch("RS256", message, &signature, &mut public_scratch)
-    .unwrap();
+    .expect("scratch-backed RS256 JWT verification must accept the matching signature");
 
-  key.sign_cose_algorithm_id(-37, message, &mut signature).unwrap();
+  key
+    .sign_cose_algorithm_id(-37, message, &mut signature)
+    .expect("COSE PS256 signing must succeed");
   public_key
     .verify_expected_cose_algorithm_id(-37, -37, pss_sha256, message, &signature)
-    .unwrap();
+    .expect("the matching COSE PS256 signature must verify");
   public_key
     .verify_expected_cose_algorithm_id_with_scratch(-37, -37, pss_sha256, message, &signature, &mut public_scratch)
-    .unwrap();
+    .expect("scratch-backed COSE PS256 verification must accept the matching signature");
   key
     .sign_cose_algorithm_id_with_scratch(-257, message, &mut signature, &mut private_scratch)
-    .unwrap();
+    .expect("scratch-backed COSE RS256 signing must succeed");
   public_key
     .verify_expected_cose_algorithm_id(-257, -257, pkcs1v15_sha256, message, &signature)
-    .unwrap();
+    .expect("the matching COSE RS256 signature must verify");
   public_key
     .verify_expected_cose_algorithm_id_with_scratch(
       -257,
@@ -641,7 +686,7 @@ fn root_surface_rsa_generated_key_end_to_end() {
       &signature,
       &mut public_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed COSE RS256 verification must accept the matching signature");
 
   let label = b"root-surface-rsa-label";
   let plaintext = b"root-surface-rsa-oaep";
@@ -650,37 +695,41 @@ fn root_surface_rsa_generated_key_end_to_end() {
   for oaep_profile in [RsaOaepProfile::Sha256, RsaOaepProfile::Sha384, RsaOaepProfile::Sha512] {
     public_key
       .encrypt_oaep(oaep_profile, label, plaintext, &mut ciphertext)
-      .unwrap();
+      .expect("OAEP encryption of the bounded plaintext must succeed");
     public_key
       .encrypt_oaep_with_scratch(oaep_profile, label, plaintext, &mut ciphertext, &mut public_scratch)
-      .unwrap();
+      .expect("scratch-backed OAEP encryption of the bounded plaintext must succeed");
     let decrypted_len = key
       .decrypt_oaep(oaep_profile, label, &ciphertext, &mut decrypted)
-      .unwrap();
+      .expect("OAEP decryption with the matching key and label must succeed");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
     let decrypted_len = key
       .decrypt_oaep_with_scratch(oaep_profile, label, &ciphertext, &mut decrypted, &mut private_scratch)
-      .unwrap();
+      .expect("scratch-backed OAEP decryption with the matching key and label must succeed");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
   }
 
   let legacy_plaintext = b"root-surface-rsaes-pkcs1v15";
-  public_key.encrypt_pkcs1v15(legacy_plaintext, &mut ciphertext).unwrap();
+  public_key
+    .encrypt_pkcs1v15(legacy_plaintext, &mut ciphertext)
+    .expect("PKCS#1 v1.5 encryption of the bounded plaintext must succeed");
   public_key
     .encrypt_pkcs1v15_with_scratch(legacy_plaintext, &mut ciphertext, &mut public_scratch)
-    .unwrap();
-  let decrypted_len = key.decrypt_pkcs1v15(&ciphertext, &mut decrypted).unwrap();
+    .expect("scratch-backed PKCS#1 v1.5 encryption of the bounded plaintext must succeed");
+  let decrypted_len = key
+    .decrypt_pkcs1v15(&ciphertext, &mut decrypted)
+    .expect("PKCS#1 v1.5 decryption with the matching key must succeed");
   assert_eq!(&decrypted[..decrypted_len], legacy_plaintext);
   let decrypted_len = key
     .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut private_scratch)
-    .unwrap();
+    .expect("scratch-backed PKCS#1 v1.5 decryption with the matching key must succeed");
   assert_eq!(&decrypted[..decrypted_len], legacy_plaintext);
 }
 
 #[test]
 #[cfg(all(feature = "rsa", feature = "getrandom"))]
 fn root_surface_rsa_default_generated_key_end_to_end() {
-  let key = RsaPrivateKey::generate(3072).unwrap();
+  let key = RsaPrivateKey::generate(3072).expect("the default policy must generate a 3072-bit RSA key");
   assert_eq!(key.public_key().modulus_bits(), 3072);
   let public_key = key.public_key();
   let message = b"root-surface-rsa-default-generated-key";
@@ -690,19 +739,25 @@ fn root_surface_rsa_default_generated_key_end_to_end() {
   let pkcs1_der = key.to_pkcs1_der();
   let pkcs8_der = key.to_pkcs8_der();
   assert_eq!(
-    RsaPrivateKey::from_pkcs1_der(&pkcs1_der).unwrap().public_key(),
+    RsaPrivateKey::from_pkcs1_der(&pkcs1_der)
+      .expect("the default-policy private key must round-trip through PKCS#1 DER")
+      .public_key(),
     public_key
   );
   assert_eq!(
-    RsaPrivateKey::from_pkcs8_der(&pkcs8_der).unwrap().public_key(),
+    RsaPrivateKey::from_pkcs8_der(&pkcs8_der)
+      .expect("the default-policy private key must round-trip through PKCS#8 DER")
+      .public_key(),
     public_key
   );
   assert_eq!(
-    RsaPublicKey::from_pkcs1_der(&public_key.to_pkcs1_der()).unwrap(),
+    RsaPublicKey::from_pkcs1_der(&public_key.to_pkcs1_der())
+      .expect("the default-policy public key must round-trip through PKCS#1 DER"),
     *public_key
   );
   assert_eq!(
-    RsaPublicKey::from_spki_der(&public_key.to_spki_der()).unwrap(),
+    RsaPublicKey::from_spki_der(&public_key.to_spki_der())
+      .expect("the default-policy public key must round-trip through SPKI DER"),
     *public_key
   );
 
@@ -710,18 +765,18 @@ fn root_surface_rsa_default_generated_key_end_to_end() {
   let pkcs1v15_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
   key
     .sign_signature_with_scratch(pkcs1v15_profile, message, &mut signature, &mut private_scratch)
-    .unwrap();
+    .expect("default-policy scratch-backed PKCS#1 v1.5 signing must succeed");
   public_key
     .verify_signature_with_scratch(pkcs1v15_profile, message, &signature, &mut public_scratch)
-    .unwrap();
+    .expect("default-policy scratch-backed PKCS#1 v1.5 verification must succeed");
 
   let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
   key
     .sign_signature_with_scratch(pss_profile, message, &mut signature, &mut private_scratch)
-    .unwrap();
+    .expect("default-policy scratch-backed RSA-PSS signing must succeed");
   public_key
     .verify_signature_with_scratch(pss_profile, message, &signature, &mut public_scratch)
-    .unwrap();
+    .expect("default-policy scratch-backed RSA-PSS verification must succeed");
 
   let label = b"root-surface-rsa-default-label";
   let plaintext = b"root-surface-rsa-default-oaep";
@@ -737,7 +792,7 @@ fn root_surface_rsa_default_generated_key_end_to_end() {
       &mut public_scratch,
       fill_rsa_random_from(&seed),
     )
-    .unwrap();
+    .expect("deterministic scratch-backed OAEP encryption must succeed");
   let decrypted_len = key
     .decrypt_oaep_with_scratch(
       RsaOaepProfile::Sha256,
@@ -746,7 +801,7 @@ fn root_surface_rsa_default_generated_key_end_to_end() {
       &mut decrypted,
       &mut private_scratch,
     )
-    .unwrap();
+    .expect("scratch-backed OAEP decryption of the deterministic ciphertext must succeed");
   assert_eq!(&decrypted[..decrypted_len], plaintext);
 
   let legacy_plaintext = b"root-surface-rsa-default-rsaes-pkcs1v15";
@@ -757,10 +812,10 @@ fn root_surface_rsa_default_generated_key_end_to_end() {
       &mut public_scratch,
       fill_rsa_random_with(0x5b),
     )
-    .unwrap();
+    .expect("deterministic scratch-backed PKCS#1 v1.5 encryption must succeed");
   let decrypted_len = key
     .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut private_scratch)
-    .unwrap();
+    .expect("scratch-backed PKCS#1 v1.5 decryption of the deterministic ciphertext must succeed");
   assert_eq!(&decrypted[..decrypted_len], legacy_plaintext);
 }
 
@@ -771,13 +826,16 @@ fn root_surface_key_exchange_exports_compile() {
   let bob = X25519SecretKey::from_bytes([13u8; X25519SecretKey::LENGTH]);
   let alice_public: X25519PublicKey = (&alice).into();
   let bob_public: X25519PublicKey = (&bob).into();
-  let alice_shared = alice.diffie_hellman(&bob_public).unwrap();
-  let bob_shared = X25519SharedSecret::diffie_hellman(&bob, &alice_public).unwrap();
+  let alice_shared = alice
+    .diffie_hellman(&bob_public)
+    .expect("the fixed Alice and Bob X25519 keys must produce a shared secret");
+  let bob_shared = X25519SharedSecret::diffie_hellman(&bob, &alice_public)
+    .expect("the fixed Bob and Alice X25519 keys must produce a shared secret");
 
   assert_eq!(alice_public.as_bytes().len(), 32);
   assert_eq!(alice_shared.as_bytes().len(), 32);
   assert!(alice_shared.ct_eq(&bob_shared).declassify());
-  let _ = X25519Error::new();
+  let _error = X25519Error::new();
 }
 
 #[test]
@@ -801,6 +859,10 @@ fn root_surface_checksum_exports_compile() {
   assert_eq!(Crc32Ieee::checksum(data), Crc32::checksum(data));
   assert_eq!(Crc32Castagnoli::checksum(data), Crc32C::checksum(data));
   assert_eq!(Crc64Xz::checksum(data), Crc64::checksum(data));
+  let _crc16_ccitt = Crc16Ccitt::checksum(data);
+  let _crc16_ibm = Crc16Ibm::checksum(data);
+  let _crc24_openpgp = Crc24OpenPgp::checksum(data);
+  let _crc64_nvme = Crc64Nvme::checksum(data);
 }
 
 #[test]
@@ -831,38 +893,41 @@ fn root_surface_hash_exports_compile() {
   streaming.update(data);
   assert_eq!(oneshot, streaming.finalize());
 
-  let mut xof = Blake3::xof(data);
+  let mut xof: Blake3XofReader = Blake3::xof(data);
   let mut out = [0u8; 16];
   xof.squeeze(&mut out);
 
-  let mut shake = Shake256::xof(data);
+  let mut shake128: Shake128XofReader = Shake128::xof(data);
+  shake128.squeeze(&mut out);
+
+  let mut shake: Shake256XofReader = Shake256::xof(data);
   shake.squeeze(&mut out);
 
-  let mut ascon = AsconXof::xof(data);
+  let mut ascon: AsconXofReader = AsconXof::xof(data);
   ascon.squeeze(&mut out);
 
-  let mut cshake = Cshake256::xof(b"", b"ctx=v1", data);
+  let mut cshake: Cshake256XofReader = Cshake256::xof(b"", b"ctx=v1", data);
   cshake.squeeze(&mut out);
 
-  let mut cshake128 = Cshake128::xof(b"", b"ctx=v1", data);
+  let mut cshake128: Cshake128XofReader = Cshake128::xof(b"", b"ctx=v1", data);
   cshake128.squeeze(&mut out);
-  let _: Option<Cshake128XofReader> = None;
-  let mut cxof = AsconCxof128::xof(b"ctx=v1", data).unwrap();
+  let mut cxof: AsconCxof128Reader =
+    AsconCxof128::xof(b"ctx=v1", data).expect("the short Ascon-CXOF customization must be accepted");
   cxof.squeeze(&mut out);
 
   assert_eq!(Xxh3::hash(data), Xxh3_64::hash(data));
-  let _ = RapidHash64::hash(data);
+  let _rapid_hash = RapidHash64::hash(data);
   let deterministic = RapidSeededState::new(42);
-  let mut collection = deterministic.build_hasher();
+  let mut collection: RapidHasher = deterministic.build_hasher();
   collection.write(data);
-  let _ = collection.finish();
+  let _collection_hash = collection.finish();
 
   let random = RapidRandomState::try_new_with(|seed| {
     seed.copy_from_slice(&42u64.to_le_bytes());
     Ok::<_, ()>(())
   })
-  .unwrap();
-  let _ = random.hash_one(data);
+  .expect("the deterministic seed filler must initialize RapidHash state");
+  let _randomized_hash = random.hash_one(data);
 
   let mut stream = RapidStreamHasher::new();
   stream.write(data);
@@ -873,20 +938,22 @@ fn root_surface_hash_exports_compile() {
 #[test]
 #[cfg(all(feature = "hashes", feature = "std"))]
 fn digest_reader_writer_round_trip() {
-  use std::io::{Cursor, Read, Write};
+  use std::io::Write;
 
   let data = b"hello digest reader writer";
   let expected = Sha256::digest(data);
 
   // DigestReader: read data through and verify digest matches.
-  let mut reader = DigestReader::<_, Sha256>::new(Cursor::new(data.to_vec()));
+  let mut reader = DigestReader::<_, Sha256>::new(data.as_slice());
   let mut sink = Vec::new();
-  std::io::copy(&mut reader, &mut sink).unwrap();
+  std::io::copy(&mut reader, &mut sink).expect("copying from an in-memory digest reader must succeed");
   assert_eq!(reader.digest(), expected);
 
   // DigestWriter: write data through and verify digest matches.
   let mut writer = DigestWriter::<_, Sha256>::new(Vec::new());
-  writer.write_all(data).unwrap();
+  writer
+    .write_all(data)
+    .expect("writing to an in-memory digest writer must succeed");
   let (out, digest) = writer.into_parts();
   assert_eq!(&out, data);
   assert_eq!(digest, expected);
@@ -897,12 +964,18 @@ fn digest_reader_writer_round_trip() {
 fn advanced_checksum_modules_compile() {
   fn assert_kernel_introspect<T: KernelIntrospect>() {}
 
-  let _: Crc32Config = Crc32::config();
-  let _ = Crc32Force::Auto;
-  let _ = DispatchInfo::current();
-  let _ = kernel_for::<Crc32>(64);
-  let _ = is_hardware_accelerated();
-  let _ = rscrypto::platform::describe();
+  let _crc16_config: Crc16Config = Crc16Ccitt::config();
+  let _crc24_config: Crc24Config = Crc24OpenPgp::config();
+  let _crc32_config: Crc32Config = Crc32::config();
+  let _crc64_config: Crc64Config = Crc64::config();
+  let _crc16_force = Crc16Force::Auto;
+  let _crc24_force = Crc24Force::Auto;
+  let _crc32_force = Crc32Force::Auto;
+  let _crc64_force = Crc64Force::Auto;
+  let _dispatch = DispatchInfo::current();
+  let _kernel = kernel_for::<Crc32>(64);
+  let _accelerated = is_hardware_accelerated();
+  let _platform = rscrypto::platform::describe();
   assert_kernel_introspect::<Crc32>();
 }
 
@@ -911,14 +984,14 @@ fn advanced_checksum_modules_compile() {
 fn advanced_hash_modules_compile() {
   fn assert_hash_kernel_introspect<T: HashKernelIntrospect>() {}
 
-  let _ = HashDispatchInfo::current();
-  let _ = hash_kernel_for::<Sha256>(64);
-  let _ = hash_kernel_for::<Shake256>(64);
-  let _ = hash_kernel_for::<Blake3>(64);
-  let _ = hash_kernel_for::<AsconHash256>(64);
-  let _ = hash_kernel_for::<AsconXof>(64);
-  let _ = hash_kernel_for::<AsconCxof128>(64);
-  let _ = hash_kernel_for::<Xxh3>(64);
+  let _dispatch = HashDispatchInfo::current();
+  let _sha256_kernel = hash_kernel_for::<Sha256>(64);
+  let _shake256_kernel = hash_kernel_for::<Shake256>(64);
+  let _blake3_kernel = hash_kernel_for::<Blake3>(64);
+  let _ascon_hash_kernel = hash_kernel_for::<AsconHash256>(64);
+  let _ascon_xof_kernel = hash_kernel_for::<AsconXof>(64);
+  let _ascon_cxof_kernel = hash_kernel_for::<AsconCxof128>(64);
+  let _xxh3_kernel = hash_kernel_for::<Xxh3>(64);
 
   assert_hash_kernel_introspect::<Sha224>();
   assert_hash_kernel_introspect::<Sha256>();

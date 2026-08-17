@@ -5,12 +5,14 @@ mod common;
 use core::hint::black_box;
 
 use blake2::{
-  Blake2b256 as RustCryptoBlake2b256, Blake2b512 as RustCryptoBlake2b512, Blake2bMac,
-  Blake2s128 as RustCryptoBlake2s128, Blake2s256 as RustCryptoBlake2s256, Blake2sMac, Digest as _,
+  Blake2b as RustCryptoBlake2b, Blake2b512 as RustCryptoBlake2b512, Blake2bMac, Blake2s as RustCryptoBlake2s,
+  Blake2s256 as RustCryptoBlake2s256, Blake2sMac,
+  digest::{
+    Digest as _, Mac as _,
+    consts::{U16, U32, U64},
+  },
 };
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use digest::typenum::{U16, U32, U64};
-use hmac::{Mac as _, digest::KeyInit};
 use rscrypto::{
   Blake2b256, Blake2b512, Blake2bKey, Blake2bParams, Blake2s128, Blake2s256, Blake2sKey, Blake2sParams, Digest,
 };
@@ -19,6 +21,8 @@ type RustCryptoBlake2bMac256 = Blake2bMac<U32>;
 type RustCryptoBlake2bMac512 = Blake2bMac<U64>;
 type RustCryptoBlake2sMac128 = Blake2sMac<U16>;
 type RustCryptoBlake2sMac256 = Blake2sMac<U32>;
+type RustCryptoBlake2b256 = RustCryptoBlake2b<U32>;
+type RustCryptoBlake2s128 = RustCryptoBlake2s<U16>;
 
 fn oneshot(c: &mut Criterion) {
   use dryoc::classic::crypto_generichash::crypto_generichash;
@@ -38,7 +42,8 @@ fn oneshot(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("dryoc/blake2b256", len), data, |b, d| {
       let mut out = [0u8; 32];
       b.iter(|| {
-        crypto_generichash(black_box(&mut out), black_box(d), None).unwrap();
+        crypto_generichash(black_box(&mut out), black_box(d), None)
+          .expect("valid BLAKE2 benchmark operation must succeed");
         black_box(out)
       })
     });
@@ -52,7 +57,8 @@ fn oneshot(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("dryoc/blake2b512", len), data, |b, d| {
       let mut out = [0u8; 64];
       b.iter(|| {
-        crypto_generichash(black_box(&mut out), black_box(d), None).unwrap();
+        crypto_generichash(black_box(&mut out), black_box(d), None)
+          .expect("valid BLAKE2 benchmark operation must succeed");
         black_box(out)
       })
     });
@@ -86,8 +92,8 @@ fn host_overhead(c: &mut Criterion) {
   let inputs = tiny_inputs();
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
-  let key_b_typed = Blake2bKey::new(black_box(&key_b[..32])).unwrap();
-  let key_s_typed = Blake2sKey::new(black_box(&key_s)).unwrap();
+  let key_b_typed = Blake2bKey::new(black_box(&key_b[..32])).expect("valid BLAKE2 benchmark operation must succeed");
+  let key_s_typed = Blake2sKey::new(black_box(&key_s)).expect("valid BLAKE2 benchmark operation must succeed");
 
   let mut oneshot = c.benchmark_group("blake2/host-overhead");
   for (len, data) in &inputs {
@@ -118,7 +124,8 @@ fn host_overhead(c: &mut Criterion) {
     });
     keyed.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| {
-        let mut mac = RustCryptoBlake2bMac256::new_from_slice(black_box(&key_b[..32])).unwrap();
+        let mut mac = RustCryptoBlake2bMac256::new_from_slice(black_box(&key_b[..32]))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -129,7 +136,8 @@ fn host_overhead(c: &mut Criterion) {
     });
     keyed.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
       b.iter(|| {
-        let mut mac = RustCryptoBlake2sMac256::new_from_slice(black_box(&key_s)).unwrap();
+        let mut mac = RustCryptoBlake2sMac256::new_from_slice(black_box(&key_s))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -180,10 +188,10 @@ fn keyed(c: &mut Criterion) {
   let inputs = common::comp_sizes();
   let key_b = [0x42u8; 64];
   let key_s = [0x24u8; 32];
-  let key_b_256 = Blake2bKey::new(black_box(&key_b[..32])).unwrap();
-  let key_b_512 = Blake2bKey::new(black_box(&key_b)).unwrap();
-  let key_s_128 = Blake2sKey::new(black_box(&key_s[..16])).unwrap();
-  let key_s_256 = Blake2sKey::new(black_box(&key_s)).unwrap();
+  let key_b_256 = Blake2bKey::new(black_box(&key_b[..32])).expect("valid BLAKE2 benchmark operation must succeed");
+  let key_b_512 = Blake2bKey::new(black_box(&key_b)).expect("valid BLAKE2 benchmark operation must succeed");
+  let key_s_128 = Blake2sKey::new(black_box(&key_s[..16])).expect("valid BLAKE2 benchmark operation must succeed");
+  let key_s_256 = Blake2sKey::new(black_box(&key_s)).expect("valid BLAKE2 benchmark operation must succeed");
   let mut g = c.benchmark_group("blake2/keyed");
 
   for (len, data) in &inputs {
@@ -194,7 +202,8 @@ fn keyed(c: &mut Criterion) {
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b256", len), data, |b, d| {
       b.iter(|| {
-        let mut mac = RustCryptoBlake2bMac256::new_from_slice(black_box(&key_b[..32])).unwrap();
+        let mut mac = RustCryptoBlake2bMac256::new_from_slice(black_box(&key_b[..32]))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -202,7 +211,8 @@ fn keyed(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("dryoc/blake2b256", len), data, |b, d| {
       let mut out = [0u8; 32];
       b.iter(|| {
-        crypto_generichash(black_box(&mut out), black_box(d), Some(black_box(&key_b[..32]))).unwrap();
+        crypto_generichash(black_box(&mut out), black_box(d), Some(black_box(&key_b[..32])))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         black_box(out)
       })
     });
@@ -212,7 +222,8 @@ fn keyed(c: &mut Criterion) {
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2b512", len), data, |b, d| {
       b.iter(|| {
-        let mut mac = RustCryptoBlake2bMac512::new_from_slice(black_box(&key_b)).unwrap();
+        let mut mac = RustCryptoBlake2bMac512::new_from_slice(black_box(&key_b))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -220,7 +231,8 @@ fn keyed(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("dryoc/blake2b512", len), data, |b, d| {
       let mut out = [0u8; 64];
       b.iter(|| {
-        crypto_generichash(black_box(&mut out), black_box(d), Some(black_box(&key_b[..]))).unwrap();
+        crypto_generichash(black_box(&mut out), black_box(d), Some(black_box(&key_b[..])))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         black_box(out)
       })
     });
@@ -230,7 +242,8 @@ fn keyed(c: &mut Criterion) {
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2s128", len), data, |b, d| {
       b.iter(|| {
-        let mut mac = RustCryptoBlake2sMac128::new_from_slice(black_box(&key_s[..16])).unwrap();
+        let mut mac = RustCryptoBlake2sMac128::new_from_slice(black_box(&key_s[..16]))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -241,7 +254,8 @@ fn keyed(c: &mut Criterion) {
     });
     g.bench_with_input(BenchmarkId::new("rustcrypto/blake2s256", len), data, |b, d| {
       b.iter(|| {
-        let mut mac = RustCryptoBlake2sMac256::new_from_slice(black_box(&key_s)).unwrap();
+        let mut mac = RustCryptoBlake2sMac256::new_from_slice(black_box(&key_s))
+          .expect("valid BLAKE2 benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -281,12 +295,12 @@ fn streaming(c: &mut Criterion) {
     });
     g.bench_function(format!("dryoc/blake2b256/{chunk_size}B"), |b| {
       b.iter(|| {
-        let mut state = crypto_generichash_init(None, 32).unwrap();
+        let mut state = crypto_generichash_init(None, 32).expect("valid BLAKE2 benchmark operation must succeed");
         for chunk in data.chunks(chunk_size) {
           crypto_generichash_update(&mut state, black_box(chunk));
         }
         let mut out = [0u8; 32];
-        crypto_generichash_final(state, &mut out).unwrap();
+        crypto_generichash_final(state, &mut out).expect("valid BLAKE2 benchmark operation must succeed");
         black_box(out)
       })
     });

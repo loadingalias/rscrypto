@@ -1,7 +1,5 @@
 //! HMAC-SHA3 family (RFC 2104, FIPS 198-1, FIPS 202).
 
-#![allow(clippy::indexing_slicing)] // HMAC pads are fixed-size arrays bounded by rate constants.
-
 use crate::{
   hashes::crypto::keccak::KeccakCore,
   traits::{Mac, VerificationError, ct},

@@ -73,6 +73,7 @@ claim in [`docs/secret-lifecycle.md`](../docs/secret-lifecycle.md).
 | `check/check-win.sh`    | `scripts/check/check-all.sh` |
 | `check/check-linux.sh`  | `scripts/check/check-all.sh` |
 | `check/check-ibm.sh`    | `scripts/check/check-all.sh` |
+| `check/lint-independent-workspaces.sh` | `scripts/check/check.sh --all` |
 | `check/zig-cc.sh`       | `scripts/check/check-linux.sh`, `scripts/check/check-ibm.sh` |
 
 ## Bench Internals
@@ -127,10 +128,10 @@ candidate selected after the metadata refresh, verifies the installed version,
 and refuses downgrades. OPAM uses exact packages from a repository pinned to a
 full Git commit and verifies package source hashes from that immutable metadata.
 CT formal reports bind the resulting BINSEC executable by SHA-256. Rustup
-receives only the exact toolchain declared in `rust-toolchain.toml`; runner
-images must provide rustup, which verifies component downloads against the
-exact distribution manifest, because network bootstrap installers are
-rejected.
+receives only the exact stable or nightly contract declared in
+`rust-toolchain.toml` and `.config/toolchains.toml`; runner images must provide
+rustup, which verifies component downloads against the exact distribution
+manifest, because network bootstrap installers are rejected.
 
 ## Results layout
 

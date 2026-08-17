@@ -4,14 +4,14 @@
 > the SP 800-232 Ascon-Hash256 parameter set; the output bytes, `update`, and
 > `finalize` flow are unchanged.
 
-Verified against `ascon-hash = "0.4.0"` and the `rscrypto` 0.7.8 line.
+Verified against `ascon-hash = "0.4.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/ascon_official_vectors.rs`, `tests/ascon_hash_oracle.rs`, `tests/ascon_cxof_vectors.rs`, and `tests/ascon_differential.rs`.
 
 ## TL;DR
 
-| | Before (`ascon-hash` 0.4.x) | After (`rscrypto` 0.7.8) |
+| | Before (`ascon-hash` 0.4.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `ascon-hash = "0.4"` | `rscrypto = { version = "0.7.8", features = ["ascon-hash"] }` |
+| Cargo dep | `ascon-hash = "0.4"` | `rscrypto = { version = "0.8.1", features = ["ascon-hash"] }` |
 | Import | `use ascon_hash::{AsconHash256, digest::Digest};` | `use rscrypto::{AsconHash256, Digest};` |
 | Call | `AsconHash256::digest(data)` | `AsconHash256::digest(data)` |
 
@@ -26,7 +26,7 @@ ascon-hash = "0.4"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["ascon-hash"] }
+rscrypto = { version = "0.8.1", features = ["ascon-hash"] }
 ```
 
 ## Algorithm map

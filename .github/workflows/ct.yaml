@@ -175,6 +175,7 @@ jobs:
       timeout_minutes: ${{ matrix.timeout_minutes }}
       cache_key: ct-${{ matrix.artifact_suffix }}
       tools_mode: ${{ matrix.tools_mode }}
+      toolchain_contract: ${{ (matrix.platform == 'ibm-s390x' || matrix.platform == 'ibm-power10' || matrix.platform == 'rise-riscv') && 'nightly' || 'development' }}
       toolchain_components: ${{ matrix.toolchain_components }}
       enable_magic_cache: ${{ matrix.enable_magic_cache }}
       enable_rust_cache: ${{ matrix.enable_rust_cache }}

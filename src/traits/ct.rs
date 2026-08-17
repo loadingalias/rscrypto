@@ -15,9 +15,37 @@ pub struct CtDecision {
   mask: u8,
 }
 
+impl core::fmt::Debug for CtDecision {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    f.write_str("CtDecision(..)")
+  }
+}
+
 impl CtDecision {
   const TRUE_MASK: u8 = u8::MAX;
 
+  #[cfg(any(
+    test,
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "argon2",
+    feature = "ascon-aead",
+    feature = "blake3",
+    feature = "chacha20poly1305",
+    feature = "ecdsa-p256",
+    feature = "ecdsa-p384",
+    feature = "ed25519",
+    feature = "hmac",
+    feature = "hmac-sha3",
+    feature = "kmac",
+    feature = "ml-kem",
+    feature = "poly1305",
+    feature = "rsa",
+    feature = "scrypt",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  ))]
   #[inline(always)]
   const fn from_difference(difference: u64) -> Self {
     let nonzero = ((difference | difference.wrapping_neg()) >> 63) as u8;
@@ -37,14 +65,14 @@ impl CtDecision {
     self.mask == Self::TRUE_MASK
   }
 
+  #[cfg(any(feature = "ed25519", feature = "kmac", feature = "rsa"))]
   #[inline(always)]
-  #[allow(dead_code)]
   pub(crate) const fn into_u8(self) -> u8 {
     self.mask & 1
   }
 
+  #[cfg(feature = "ml-kem")]
   #[inline(always)]
-  #[allow(dead_code)]
   pub(crate) const fn into_mask(self) -> u8 {
     self.mask
   }
@@ -83,22 +111,40 @@ impl core::ops::Not for CtDecision {
   }
 }
 
+#[cfg(any(
+  test,
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "argon2",
+  feature = "ascon-aead",
+  feature = "blake3",
+  feature = "chacha20poly1305",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "hmac",
+  feature = "hmac-sha3",
+  feature = "kmac",
+  feature = "ml-kem",
+  feature = "poly1305",
+  feature = "rsa",
+  feature = "scrypt",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 #[inline(always)]
 fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
   let mut difference = 0u64;
-  let mut left_chunks = left.chunks_exact(8);
-  let mut right_chunks = right.chunks_exact(8);
+  let (left_chunks, left_remainder) = left.as_chunks::<8>();
+  let (right_chunks, right_remainder) = right.as_chunks::<8>();
 
-  for (left_chunk, right_chunk) in left_chunks.by_ref().zip(right_chunks.by_ref()) {
-    let (Ok(left_bytes), Ok(right_bytes)) = (<&[u8; 8]>::try_from(left_chunk), <&[u8; 8]>::try_from(right_chunk))
-    else {
-      return u64::MAX;
-    };
-    difference |= u64::from_ne_bytes(*left_bytes) ^ u64::from_ne_bytes(*right_bytes);
+  for (left_chunk, right_chunk) in left_chunks.iter().zip(right_chunks) {
+    difference |= u64::from_ne_bytes(*left_chunk) ^ u64::from_ne_bytes(*right_chunk);
   }
 
   let mut remainder = 0u8;
-  for (left_byte, right_byte) in left_chunks.remainder().iter().zip(right_chunks.remainder()) {
+  for (left_byte, right_byte) in left_remainder.iter().zip(right_remainder) {
     remainder |= left_byte ^ right_byte;
   }
   difference | u64::from(remainder)
@@ -110,8 +156,27 @@ fn byte_difference(left: &[u8], right: &[u8]) -> u64 {
 /// concrete cryptographic type that owns the bytes. Optimized machine-code
 /// evidence is tracked separately in `ct.toml`; source structure is not a
 /// universal constant-time guarantee.
+#[cfg(any(
+  test,
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  all(feature = "argon2", feature = "phc-strings"),
+  feature = "ascon-aead",
+  feature = "blake3",
+  feature = "chacha20poly1305",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "hmac",
+  feature = "hmac-sha3",
+  feature = "ml-kem",
+  feature = "poly1305",
+  all(feature = "scrypt", feature = "phc-strings"),
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 #[inline(always)]
-#[allow(dead_code)]
 pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> CtDecision {
   // SECURITY: Keep the accumulated word opaque before declassification. LLVM can otherwise fold
   // equality into target-specific vector reductions; exact binary evidence still owns the
@@ -124,8 +189,15 @@ pub(crate) fn fixed_eq<const N: usize>(left: &[u8; N], right: &[u8; N]) -> CtDec
 /// Length mismatch is intentionally observable. Equal-length contents are
 /// traversed without content-dependent exits. Keep callers individually
 /// classified in `ct.toml`; fixed-shape owner types must use [`fixed_eq`].
+#[cfg(any(
+  test,
+  feature = "argon2",
+  feature = "kmac",
+  feature = "ml-kem",
+  feature = "rsa",
+  feature = "scrypt"
+))]
 #[inline]
-#[allow(dead_code)]
 pub(crate) fn public_len_eq(left: &[u8], right: &[u8]) -> CtDecision {
   if left.len() != right.len() {
     return CtDecision::from_difference(1);
@@ -175,6 +247,18 @@ pub fn zeroize(buf: &mut [u8]) {
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "ascon-aead",
+  feature = "blake2b",
+  feature = "blake2s",
+  feature = "blake3",
+  feature = "chacha20poly1305",
+  feature = "poly1305",
+  feature = "sha2",
+  feature = "sha3",
+  feature = "xchacha20poly1305"
+))]
 mod word_zero_sealed {
   /// Marker for primitive integer types whose zero representation is
   /// `0` and whose `write_volatile` of zero is a sound clear.
@@ -182,8 +266,7 @@ mod word_zero_sealed {
   /// Sealed: only the integer types listed here are accepted as scratch
   /// types for [`zeroize_words_no_fence`] / [`zeroize_words`]. New
   /// implementors must be reviewed for soundness (no padding, no Drop).
-  #[allow(dead_code)]
-  pub trait WordZero: Copy {
+  pub(crate) trait WordZero: Copy {
     const ZERO: Self;
   }
 
@@ -207,6 +290,18 @@ mod word_zero_sealed {
   }
 }
 
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "ascon-aead",
+  feature = "blake2b",
+  feature = "blake2s",
+  feature = "blake3",
+  feature = "chacha20poly1305",
+  feature = "poly1305",
+  feature = "sha2",
+  feature = "sha3",
+  feature = "xchacha20poly1305"
+))]
 pub(crate) use word_zero_sealed::WordZero;
 
 /// Volatile-zero a slice of `WordZero` integers without a compiler fence.
@@ -216,8 +311,19 @@ pub(crate) use word_zero_sealed::WordZero;
 /// loops over `core::ptr::write_volatile` patterns. Caller is responsible
 /// for emitting a single `compiler_fence(SeqCst)` after all related
 /// zeroizations.
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "ascon-aead",
+  feature = "blake2b",
+  feature = "blake2s",
+  feature = "blake3",
+  feature = "chacha20poly1305",
+  feature = "poly1305",
+  feature = "sha2",
+  feature = "sha3",
+  feature = "xchacha20poly1305"
+))]
 #[inline(always)]
-#[allow(dead_code)]
 pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
   for word in words {
     // SAFETY: `word` is a valid, aligned, dereferenceable pointer to `T`.
@@ -228,8 +334,14 @@ pub(crate) fn zeroize_words_no_fence<T: WordZero>(words: &mut [T]) {
 }
 
 /// Volatile-zero a slice of `WordZero` integers and emit a compiler fence.
+#[cfg(any(
+  feature = "aes-gcm",
+  feature = "ascon-aead",
+  feature = "blake3",
+  feature = "sha2",
+  feature = "sha3"
+))]
 #[inline(always)]
-#[allow(dead_code)]
 pub(crate) fn zeroize_words<T: WordZero>(words: &mut [T]) {
   zeroize_words_no_fence(words);
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);

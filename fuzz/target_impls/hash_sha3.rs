@@ -1,7 +1,7 @@
 use rscrypto::{Digest, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256, Xof};
 use rscrypto_fuzz::{FuzzInput, assert_digest_chunked, assert_digest_reset, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let out_len_byte: u8 = some_or_return!(input.byte());

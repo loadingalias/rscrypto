@@ -14,7 +14,8 @@ proptest! {
 
     let ours = HmacSha256::mac(&key, &data);
 
-    let mut oracle = Hmac::<Sha256>::new_from_slice(&key).unwrap();
+    let mut oracle = Hmac::<Sha256>::new_from_slice(&key)
+      .expect("RustCrypto HMAC-SHA-256 must accept every generated key length");
     oracle.update(&data);
     let expected = oracle.finalize().into_bytes();
 

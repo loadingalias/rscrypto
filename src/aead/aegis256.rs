@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! AEGIS-256 authenticated encryption (draft-irtf-cfrg-aegis-aead).
 //!
 //! AES-round-based AEAD with a 256-bit key, 256-bit nonce, and 128-bit
@@ -16,6 +14,7 @@ use core::fmt;
 ))]
 use super::targets::AeadBackend;
 #[cfg(any(
+  target_arch = "x86_64",
   target_arch = "aarch64",
   all(target_arch = "powerpc64", target_endian = "little"),
   target_arch = "riscv64",
@@ -217,31 +216,21 @@ fn finalize(s: &mut State, ad_len: usize, msg_len: usize) -> [u8; TAG_SIZE] {
 // riscv64 scalar AES backend (Zkne)
 
 #[cfg(target_arch = "aarch64")]
-#[allow(unsafe_op_in_unsafe_fn)]
 #[path = "aegis256/aarch64_ce.rs"]
 mod ce;
 #[cfg(target_arch = "x86_64")]
-#[allow(unsafe_op_in_unsafe_fn)]
 #[path = "aegis256/x86_64_ni.rs"]
 mod ni;
 #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
-#[allow(unsafe_code, unsafe_op_in_unsafe_fn)]
 #[path = "aegis256/powerpc64_ppc.rs"]
 mod ppc;
 #[cfg(target_arch = "riscv64")]
-#[allow(unsafe_code)]
-#[path = "aegis256/riscv64_vperm.rs"]
-mod rv_vperm;
-#[cfg(target_arch = "riscv64")]
-#[allow(unsafe_code)]
 #[path = "aegis256/riscv64_zkne.rs"]
 mod rv_zkne;
 #[cfg(target_arch = "riscv64")]
-#[allow(unsafe_code)]
 #[path = "aegis256/riscv64_zvkned.rs"]
 mod rv_zvkned;
 #[cfg(target_arch = "s390x")]
-#[allow(unsafe_code)]
 #[path = "aegis256/s390x_vperm.rs"]
 mod s390x_vperm;
 #[cfg(any(
@@ -254,20 +243,7 @@ mod s390x_vperm;
 #[inline]
 fn resolve_backend() -> AeadBackend {
   let caps = crate::platform::caps();
-
-  #[cfg(target_arch = "x86_64")]
-  {
-    use crate::platform::caps::x86;
-    if caps.has(x86::AESNI) && caps.has(x86::AVX) {
-      return AeadBackend::X86Aesni;
-    }
-    AeadBackend::Portable
-  }
-
-  #[cfg(not(target_arch = "x86_64"))]
-  {
-    select_backend(AeadPrimitive::Aegis256, crate::platform::arch(), caps)
-  }
+  select_backend(AeadPrimitive::Aegis256, crate::platform::arch(), caps)
 }
 
 // Key
@@ -435,6 +411,7 @@ fn encrypt_portable(key: &[u8; KEY_SIZE], nonce: &[u8; NONCE_SIZE], aad: &[u8], 
 }
 
 #[cfg(feature = "diag")]
+/// Run one portable AEGIS-256 state update and return its diagnostic final tag.
 #[unsafe(no_mangle)]
 #[inline(never)]
 #[must_use]
@@ -570,13 +547,6 @@ impl Aead for Aegis256 {
       return Ok(Aegis256Tag::from_bytes(tag));
     }
 
-    #[cfg(target_arch = "riscv64")]
-    if self.backend == AeadBackend::Riscv64Vperm {
-      // SAFETY: backend resolution confirmed the RISC-V V extension is available.
-      let tag = unsafe { rv_vperm::encrypt_fused(key, nonce, aad, buffer) };
-      return Ok(Aegis256Tag::from_bytes(tag));
-    }
-
     #[cfg(target_arch = "s390x")]
     if self.backend == AeadBackend::S390xVperm {
       // SAFETY: s390x vperm backend call because:
@@ -584,7 +554,6 @@ impl Aead for Aegis256 {
       // 2. `select_backend` returns `S390xVperm` only when caps include `s390x::VECTOR`.
       // 3. `key`, `nonce`, `aad`, and `buffer` are valid references from the safe AEAD API.
       let tag = unsafe { s390x_vperm::encrypt_fused(key, nonce, aad, buffer) };
-      #[allow(clippy::needless_return)]
       return Ok(Aegis256Tag::from_bytes(tag));
     }
 
@@ -635,9 +604,6 @@ impl Aead for Aegis256 {
     } else if self.backend == AeadBackend::Riscv64ScalarCrypto {
       // SAFETY: backend resolution confirmed scalar AES (`zkne`) is available.
       unsafe { rv_zkne::decrypt_fused(key, nonce, aad, buffer) }
-    } else if self.backend == AeadBackend::Riscv64Vperm {
-      // SAFETY: backend resolution confirmed the RISC-V V extension is available.
-      unsafe { rv_vperm::decrypt_fused(key, nonce, aad, buffer) }
     } else {
       decrypt_portable(key, nonce, aad, buffer)
     };
@@ -676,10 +642,12 @@ impl Aead for Aegis256 {
 #[cfg(test)]
 mod tests {
   use alloc::{vec, vec::Vec};
-  use std::eprintln;
 
   use super::*;
-  use crate::aead::expert::AeadWithNonce;
+  use crate::aead::{
+    expert::AeadWithNonce,
+    test_vectors::{hex_array, hex_vec as hex},
+  };
 
   #[cfg(not(target_arch = "s390x"))]
   #[inline(always)]
@@ -687,18 +655,8 @@ mod tests {
     super::super::aes_round::aes_enc_round_portable(block, round_key)
   }
 
-  fn hex(s: &str) -> Vec<u8> {
-    (0..s.len())
-      .step_by(2)
-      .map(|i| u8::from_str_radix(&s[i..i.strict_add(2)], 16).unwrap())
-      .collect()
-  }
-
   fn hex_block(s: &str) -> [u8; 16] {
-    let v = hex(s);
-    let mut out = [0u8; 16];
-    out.copy_from_slice(&v);
-    out
+    hex_array(s)
   }
 
   // -- AESRound test vector (Appendix A.1) --
@@ -767,15 +725,10 @@ mod tests {
   // -- Spec test vectors (Appendix A.3) --
 
   fn spec_key() -> Aegis256Key {
-    Aegis256Key::from_bytes(
-      hex_block("10010000000000000000000000000000")
-        .iter()
-        .chain(hex_block("00000000000000000000000000000000").iter())
-        .copied()
-        .collect::<Vec<u8>>()
-        .try_into()
-        .unwrap(),
-    )
+    Aegis256Key::from_bytes(hex_array(concat!(
+      "10010000000000000000000000000000",
+      "00000000000000000000000000000000"
+    )))
   }
 
   fn spec_nonce() -> Nonce256 {
@@ -793,12 +746,16 @@ mod tests {
 
     // Encrypt.
     let mut buf = msg.to_vec();
-    let tag = aead.encrypt_in_place(&nonce, aad, &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, aad, &mut buf)
+      .expect("AEGIS-256 specification-vector encryption must succeed");
     assert_eq!(&buf, &expected_ct, "ciphertext mismatch");
     assert_eq!(tag.as_bytes(), expected_tag.as_slice(), "tag mismatch");
 
     // Decrypt round-trip.
-    aead.decrypt_in_place(&nonce, aad, &mut buf, &tag).unwrap();
+    aead
+      .decrypt_in_place(&nonce, aad, &mut buf, &tag)
+      .expect("AEGIS-256 specification-vector decryption must succeed");
     assert_eq!(&buf, msg, "plaintext recovery mismatch");
   }
 
@@ -861,8 +818,12 @@ mod tests {
     let aead = Aegis256::new(&key);
 
     let mut buf = [];
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
-    aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"", &mut buf)
+      .expect("empty AEGIS-256 encryption must succeed");
+    aead
+      .decrypt_in_place(&nonce, b"", &mut buf, &tag)
+      .expect("empty AEGIS-256 decryption must succeed");
   }
 
   #[test]
@@ -873,10 +834,14 @@ mod tests {
     let plaintext = b"the quick brown fox jumps over the lazy dog";
 
     let mut buf = *plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"header", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"header", &mut buf)
+      .expect("AEGIS-256 encryption with AAD must succeed");
     assert_ne!(&buf[..], &plaintext[..]);
 
-    aead.decrypt_in_place(&nonce, b"header", &mut buf, &tag).unwrap();
+    aead
+      .decrypt_in_place(&nonce, b"header", &mut buf, &tag)
+      .expect("AEGIS-256 decryption with AAD must succeed");
     assert_eq!(&buf[..], &plaintext[..]);
   }
 
@@ -889,10 +854,10 @@ mod tests {
     let mut buf = [];
     let tag = aead
       .encrypt_in_place(&nonce, b"associated data only", &mut buf)
-      .unwrap();
+      .expect("AAD-only AEGIS-256 encryption must succeed");
     aead
       .decrypt_in_place(&nonce, b"associated data only", &mut buf, &tag)
-      .unwrap();
+      .expect("AAD-only AEGIS-256 decryption must succeed");
   }
 
   #[test]
@@ -902,14 +867,18 @@ mod tests {
     let aead = Aegis256::new(&key);
 
     let mut buf = *b"zero me on failure";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("AEGIS-256 test setup encryption must succeed");
 
     let mut bad_tag = tag.to_bytes();
     bad_tag[0] ^= 0xFF;
     let bad_tag = Aegis256Tag::from_bytes(bad_tag);
 
-    let result = aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag),
+      Err(OpenError::verification())
+    );
     assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
@@ -920,11 +889,15 @@ mod tests {
     let aead = Aegis256::new(&key);
 
     let mut buf = *b"secret";
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"", &mut buf)
+      .expect("AEGIS-256 test setup encryption must succeed");
 
     buf[0] ^= 1;
-    let result = aead.decrypt_in_place(&nonce, b"", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
     assert_eq!(&buf, &[0u8; 6]);
   }
 
@@ -935,14 +908,18 @@ mod tests {
     let aead = Aegis256::new(&key);
 
     let mut buf = *b"data";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("AEGIS-256 test setup encryption must succeed");
 
     let mut bad_tag_bytes = tag.to_bytes();
     bad_tag_bytes[15] ^= 1;
     let bad_tag = Aegis256Tag::from_bytes(bad_tag_bytes);
 
-    let result = aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag),
+      Err(OpenError::verification())
+    );
     assert_eq!(&buf, &[0u8; 4]);
   }
 
@@ -953,10 +930,14 @@ mod tests {
     let aead = Aegis256::new(&key);
 
     let mut buf = *b"msg";
-    let tag = aead.encrypt_in_place(&nonce, b"correct", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"correct", &mut buf)
+      .expect("AEGIS-256 test setup encryption must succeed");
 
-    let result = aead.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   #[test]
@@ -966,11 +947,15 @@ mod tests {
     let aead = Aegis256::new(&key);
 
     let mut buf = *b"nonce test";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("AEGIS-256 test setup encryption must succeed");
 
     let wrong_nonce = Nonce256::from_bytes([11; 32]);
-    let result = aead.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   #[test]
@@ -981,18 +966,29 @@ mod tests {
     let pt = b"combined mode";
 
     let mut sealed = vec![0u8; pt.len().strict_add(TAG_SIZE)];
-    aead.encrypt(&nonce, b"h", pt.as_slice(), &mut sealed).unwrap();
+    aead
+      .encrypt(&nonce, b"h", pt.as_slice(), &mut sealed)
+      .expect("combined AEGIS-256 encryption must succeed");
 
     let mut opened = vec![0u8; pt.len()];
-    aead.decrypt(&nonce, b"h", &sealed, &mut opened).unwrap();
+    aead
+      .decrypt(&nonce, b"h", &sealed, &mut opened)
+      .expect("combined AEGIS-256 decryption must succeed");
     assert_eq!(&opened, &pt[..]);
   }
 
   #[test]
   fn tag_from_slice_rejects_wrong_length() {
-    assert!(Aegis256::tag_from_slice(&[0u8; 15]).is_err());
-    assert!(Aegis256::tag_from_slice(&[0u8; 17]).is_err());
-    assert!(Aegis256::tag_from_slice(&[0u8; 16]).is_ok());
+    assert_eq!(
+      Aegis256::tag_from_slice(&[0u8; 15]).expect_err("short AEGIS-256 tag must be rejected"),
+      AeadBufferError::new()
+    );
+    assert_eq!(
+      Aegis256::tag_from_slice(&[0u8; 17]).expect_err("long AEGIS-256 tag must be rejected"),
+      AeadBufferError::new()
+    );
+    let tag = Aegis256::tag_from_slice(&[0u8; 16]).expect("16-byte AEGIS-256 tag must be accepted");
+    assert_eq!(tag.as_bytes(), &[0u8; 16]);
   }
 
   #[test]
@@ -1006,7 +1002,7 @@ mod tests {
     let mut buf = plaintext;
     let tag = aead
       .encrypt_in_place(&nonce, b"multi-block aad that is longer than one rate block", &mut buf)
-      .unwrap();
+      .expect("multi-block AEGIS-256 encryption must succeed");
     aead
       .decrypt_in_place(
         &nonce,
@@ -1014,7 +1010,7 @@ mod tests {
         &mut buf,
         &tag,
       )
-      .unwrap();
+      .expect("multi-block AEGIS-256 decryption must succeed");
     assert_eq!(buf, plaintext);
   }
 
@@ -1027,15 +1023,23 @@ mod tests {
     // Exactly 16 bytes = 1 full block, 0-byte tail.
     let plaintext = [0x55u8; 16];
     let mut buf = plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
-    aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"", &mut buf)
+      .expect("one-block AEGIS-256 encryption must succeed");
+    aead
+      .decrypt_in_place(&nonce, b"", &mut buf, &tag)
+      .expect("one-block AEGIS-256 decryption must succeed");
     assert_eq!(buf, plaintext);
 
     // Exactly 32 bytes = 2 full blocks, 0-byte tail.
     let plaintext32 = [0x66u8; 32];
     let mut buf32 = plaintext32;
-    let tag32 = aead.encrypt_in_place(&nonce, b"", &mut buf32).unwrap();
-    aead.decrypt_in_place(&nonce, b"", &mut buf32, &tag32).unwrap();
+    let tag32 = aead
+      .encrypt_in_place(&nonce, b"", &mut buf32)
+      .expect("two-block AEGIS-256 encryption must succeed");
+    aead
+      .decrypt_in_place(&nonce, b"", &mut buf32, &tag32)
+      .expect("two-block AEGIS-256 decryption must succeed");
     assert_eq!(buf32, plaintext32);
   }
 
@@ -1047,12 +1051,16 @@ mod tests {
     let aead = Aegis256::new(&key);
     let aad = b"four-block-test";
 
-    for &size in &[48, 64, 80, 96, 112, 128, 256, 1024, 4096] {
-      let plaintext: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+    for &size in &[48usize, 64, 80, 96, 112, 128, 256, 1024, 4096] {
+      let plaintext: Vec<u8> = (0u8..=u8::MAX).cycle().take(size).collect();
       let mut buf = plaintext.clone();
-      let tag = aead.encrypt_in_place(&nonce, aad, &mut buf).unwrap();
+      let tag = aead
+        .encrypt_in_place(&nonce, aad, &mut buf)
+        .expect("boundary AEGIS-256 encryption must succeed");
       assert_ne!(&buf, &plaintext, "size {size}: ciphertext must differ");
-      aead.decrypt_in_place(&nonce, aad, &mut buf, &tag).unwrap();
+      aead
+        .decrypt_in_place(&nonce, aad, &mut buf, &tag)
+        .expect("boundary AEGIS-256 decryption must succeed");
       assert_eq!(&buf, &plaintext, "size {size}: round-trip failed");
     }
   }
@@ -1066,7 +1074,7 @@ mod tests {
 
   /// Scalar simulation of vperm: table[index & 0x0F].
   fn vperm_scalar(table: &[u8; 16], index: u8) -> u8 {
-    table[(index & 0x0F) as usize]
+    table[usize::from(index & 0x0F)]
   }
 
   /// Scalar simulation of vperm with PSHUFB zeroing: returns 0 when bit 7 set.
@@ -1074,7 +1082,7 @@ mod tests {
     if index & 0x80 != 0 {
       0
     } else {
-      table[(index & 0x0F) as usize]
+      table[usize::from(index & 0x0F)]
     }
   }
 
@@ -1147,24 +1155,14 @@ mod tests {
       0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16,
     ];
 
-    let mut failures = 0u32;
-    for input in 0u16..256 {
-      let got = vperm_sbox_scalar(input as u8);
+    for input in u8::MIN..=u8::MAX {
+      let got = vperm_sbox_scalar(input);
       // The Hamburg vperm S-box omits the AES affine constant.
       // vpaes_sbox(x) = AES_sbox(x) ^ AES_AFFINE for all x.
       use super::super::aes_round::AES_AFFINE;
-      let expected = AES_SBOX[input as usize] ^ AES_AFFINE;
-      if got != expected {
-        if failures < 16 {
-          eprintln!(
-            "vperm S-box mismatch at input 0x{:02X}: got 0x{:02X}, expected 0x{:02X}",
-            input, got, expected,
-          );
-        }
-        failures = failures.strict_add(1);
-      }
+      let expected = AES_SBOX[usize::from(input)] ^ AES_AFFINE;
+      assert_eq!(got, expected, "vperm S-box mismatch at input 0x{input:02X}");
     }
-    assert_eq!(failures, 0, "{failures} vperm S-box mismatches out of 256");
   }
 
   // -- Full vperm AES round validation --
@@ -1180,35 +1178,37 @@ mod tests {
     // SubBytes via vperm tower field (includes affine constant compensation)
     use super::super::aes_round::{AES_AFFINE, VPERM_SR as SR};
     let mut sb = [0u8; 16];
-    for i in 0..16 {
-      sb[i] = vperm_sbox_scalar(block[i]) ^ AES_AFFINE;
+    for (substituted, &input) in sb.iter_mut().zip(block) {
+      *substituted = vperm_sbox_scalar(input) ^ AES_AFFINE;
     }
 
     // ShiftRows
     let mut sr = [0u8; 16];
-    for i in 0..16 {
-      sr[i] = sb[SR[i] as usize];
+    for (shifted, &source) in sr.iter_mut().zip(&SR) {
+      *shifted = sb[usize::from(source)];
     }
 
     // MixColumns via xtime decomposition
     fn xtime(b: u8) -> u8 {
-      let r = (b as u16) << 1;
-      (r ^ (if r & 0x100 != 0 { 0x1B } else { 0 })) as u8
+      let doubled = u16::from(b).strict_mul(2);
+      let reduced = if doubled & 0x100 == 0 { doubled } else { doubled ^ 0x11B };
+      u8::try_from(reduced).expect("AES polynomial reduction must produce one byte")
     }
     let mut mc = [0u8; 16];
-    for col in 0..4 {
-      let c = col * 4;
-      let (b0, b1, b2, b3) = (sr[c], sr[c + 1], sr[c + 2], sr[c + 3]);
-      mc[c] = xtime(b0) ^ xtime(b1) ^ b1 ^ b2 ^ b3;
-      mc[c + 1] = b0 ^ xtime(b1) ^ xtime(b2) ^ b2 ^ b3;
-      mc[c + 2] = b0 ^ b1 ^ xtime(b2) ^ xtime(b3) ^ b3;
-      mc[c + 3] = xtime(b0) ^ b0 ^ b1 ^ b2 ^ xtime(b3);
+    for (source, mixed) in sr.as_chunks::<4>().0.iter().zip(mc.as_chunks_mut::<4>().0) {
+      let [b0, b1, b2, b3] = *source;
+      *mixed = [
+        xtime(b0) ^ xtime(b1) ^ b1 ^ b2 ^ b3,
+        b0 ^ xtime(b1) ^ xtime(b2) ^ b2 ^ b3,
+        b0 ^ b1 ^ xtime(b2) ^ xtime(b3) ^ b3,
+        xtime(b0) ^ b0 ^ b1 ^ b2 ^ xtime(b3),
+      ];
     }
 
     // AddRoundKey
     let mut result = [0u8; 16];
-    for i in 0..16 {
-      result[i] = mc[i] ^ round_key[i];
+    for ((output, &mixed), &key_byte) in result.iter_mut().zip(&mc).zip(round_key) {
+      *output = mixed ^ key_byte;
     }
     result
   }
@@ -1237,9 +1237,9 @@ mod tests {
     assert_eq!(vperm_aes_round_scalar(&a, &b), portable_aes_round(&a, &b));
 
     // Exhaustive: test all single-byte patterns in position 0
-    for val in 0u16..256 {
+    for val in u8::MIN..=u8::MAX {
       let mut block = [0u8; 16];
-      block[0] = val as u8;
+      block[0] = val;
       let key = [0u8; 16];
       let got = vperm_aes_round_scalar(&block, &key);
       let expected = portable_aes_round(&block, &key);

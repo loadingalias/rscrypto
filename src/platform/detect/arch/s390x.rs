@@ -47,9 +47,10 @@ fn runtime_s390x_linux() -> Caps {
     let mut buf = [0u8; 4096];
     let n = file.read(&mut buf).ok()?;
 
-    for chunk in buf.get(..n)?.chunks_exact(16) {
-      let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
-      let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
+    for chunk in buf.get(..n)?.as_chunks::<16>().0 {
+      let (types, values) = chunk.as_chunks::<8>().0.split_at(1);
+      let a_type = u64::from_ne_bytes(types[0]);
+      let a_val = u64::from_ne_bytes(values[0]);
       if a_type == AT_HWCAP {
         return Some(a_val);
       }
@@ -64,12 +65,12 @@ fn runtime_s390x_linux() -> Caps {
   let stfle = stfle_facilities();
 
   #[inline(always)]
-  fn has_facility(words: &[u64; 4], bit: usize) -> bool {
-    // SAFETY: Facility bits are 0-255; words[bit/64] accesses indices 0-3 in a 4-element array.
-    // Using get() satisfies clippy::indexing_slicing while maintaining performance.
+  fn has_facility(words: &[u64; 4], bit: u8) -> bool {
+    let word_index = usize::from(bit >> 6);
+    let shift = 63u32.strict_sub(u32::from(bit & 63));
     words
-      .get(bit / 64)
-      .map(|w| w & (1u64 << (63 - (bit % 64))) != 0)
+      .get(word_index)
+      .map(|word| word & 1u64.strict_shl(shift) != 0)
       .unwrap_or(false)
   }
 
@@ -152,7 +153,7 @@ fn stfle_facilities() -> [u64; 4] {
     core::arch::asm!(
       "stfle 0({ptr})",
       ptr = in(reg) facilities.as_mut_ptr(),
-      inout("r0") facilities.len() as u64 - 1 => _,
+      inout("r0") 3u64 => _,
       options(nostack)
     );
   }

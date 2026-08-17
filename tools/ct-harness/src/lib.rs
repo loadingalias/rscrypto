@@ -6,7 +6,6 @@
 
 // C ABI harness functions must remain plain `extern "C"` symbols. Pointer validity is documented
 // on the shared helpers and each entrypoint rejects null shapes before copying fixed-size inputs.
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use core::{ptr, slice};
 use std::format;
@@ -17,12 +16,11 @@ use rscrypto::{
   Blake2bKey, Blake2s128, Blake2s256, Blake2sKey, Blake3, Blake3KeyedHash, ChaCha20Poly1305, ChaCha20Poly1305Key,
   Crc32, EcdsaP256SecretKey, EcdsaP384SecretKey, Ed25519PublicKey, Ed25519SecretKey, Ed25519Signature, HkdfSha256,
   HkdfSha384, HmacSha3_224Tag, HmacSha256, HmacSha256Tag, HmacSha384, HmacSha384Tag, HmacSha512, HmacSha512Tag,
-  Kmac256, MlKem512,
-  MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768, MlKem768Ciphertext,
-  MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext, MlKem1024DecapsulationKey,
-  MlKem1024EncapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey,
-  RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams, SecretBytes, Sha256, X25519PublicKey, X25519SecretKey,
-  XChaCha20Poly1305, XChaCha20Poly1305Key,
+  Kmac256, MlKem512, MlKem512Ciphertext, MlKem512DecapsulationKey, MlKem512EncapsulationKey, MlKem768,
+  MlKem768Ciphertext, MlKem768DecapsulationKey, MlKem768EncapsulationKey, MlKem1024, MlKem1024Ciphertext,
+  MlKem1024DecapsulationKey, MlKem1024EncapsulationKey, MlKemError, Pbkdf2Sha256, Pbkdf2Sha512, RsaBlindingPair,
+  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPssProfile, RsaPublicKeyPolicy, Scrypt, ScryptParams,
+  SecretBytes, Sha256, X25519PublicKey, X25519SecretKey, XChaCha20Poly1305, XChaCha20Poly1305Key,
   aead::{Nonce96, Nonce128, Nonce192, Nonce256},
   checksum::Checksum,
   traits::Kem as _,
@@ -122,13 +120,16 @@ unsafe fn read_mlkem_polyvec<const K: usize>(ptr: *const u16) -> Option<[[u16; 2
   }
 
   let mut out = [[0u16; 256]; K];
+  let coefficient_count = K.strict_mul(256);
   // SAFETY: Copies a fixed-size ML-KEM polyvec from FFI memory because:
-  // 1. The caller contract requires `ptr` to be valid for reads of `K * 256` initialized `u16`
-  //    values.
-  // 2. The caller contract requires `ptr` to be aligned for `u16`.
-  // 3. `out` is stack-owned storage valid for writes of `K * 256` `u16` values.
-  // 4. Source and destination cannot overlap because `out` is newly allocated stack storage.
-  unsafe { ptr::copy_nonoverlapping(ptr, out.as_mut_ptr().cast::<u16>(), K * 256) };
+  // 1. `coefficient_count` is exactly `K * 256`; strict multiplication rejects an impossible
+  //    destination layout instead of wrapping the copy length.
+  // 2. The caller contract requires `ptr` to be valid for reads of `coefficient_count` initialized
+  //    `u16` values.
+  // 3. The caller contract requires `ptr` to be aligned for `u16`.
+  // 4. `out` is stack-owned storage valid for writes of `coefficient_count` `u16` values.
+  // 5. Source and destination cannot overlap because `out` is newly allocated stack storage.
+  unsafe { ptr::copy_nonoverlapping(ptr, out.as_mut_ptr().cast::<u16>(), coefficient_count) };
   Some(out)
 }
 
@@ -157,23 +158,36 @@ fn rsa_ct_fixture_key(pkcs8_der: &[u8]) -> Option<RsaPrivateKey> {
 }
 
 /// HMAC-SHA256 tag verification harness.
+///
+/// # Safety
+///
+/// - When non-null, `key` and `data` must each reference a single allocation containing the
+///   corresponding number of initialized bytes. Each byte length must be no greater than
+///   `isize::MAX`, and neither range may be mutated during the call.
+/// - When non-null, `expected_tag` must be valid for reads of 32 initialized bytes and must not be
+///   mutated while copied.
+/// - Null key and data pointers represent empty slices only when their corresponding lengths are
+///   zero. Other null shapes are rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_hmac_sha256_verify(
+pub unsafe extern "C" fn ct_entry_hmac_sha256_verify(
   key: *const u8,
   key_len: usize,
   data: *const u8,
   data_len: usize,
   expected_tag: *const u8,
 ) -> u8 {
-  // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, immutability,
+  // and lifetime required to borrow a non-null `key`; `input_slice` handles both null shapes.
   let Some(key) = (unsafe { input_slice(key, key_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, immutability,
+  // and lifetime required to borrow non-null `data`; `input_slice` handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: The expected tag pointer must reference exactly 32 readable bytes.
+  // SAFETY: The function contract requires a non-null `expected_tag` to reference exactly 32
+  // readable, initialized bytes that remain immutable while copied into owned storage.
   let Some(expected_tag) = (unsafe { read_array::<32>(expected_tag) }) else {
     return STATUS_ERR;
   };
@@ -185,23 +199,36 @@ pub extern "C" fn ct_entry_hmac_sha256_verify(
 }
 
 /// HMAC-SHA256 64-bit truncated-tag verification harness.
+///
+/// # Safety
+///
+/// - When non-null, `key` and `data` must each reference a single allocation containing the
+///   corresponding number of initialized bytes. Each byte length must be no greater than
+///   `isize::MAX`, and neither range may be mutated during the call.
+/// - When non-null, `expected_tag` must be valid for reads of 8 initialized bytes and must not be
+///   mutated while copied.
+/// - Null key and data pointers represent empty slices only when their corresponding lengths are
+///   zero. Other null shapes are rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_hmac_sha256_verify_truncated_64(
+pub unsafe extern "C" fn ct_entry_hmac_sha256_verify_truncated_64(
   key: *const u8,
   key_len: usize,
   data: *const u8,
   data_len: usize,
   expected_tag: *const u8,
 ) -> u8 {
-  // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, immutability,
+  // and lifetime required to borrow a non-null `key`; `input_slice` handles both null shapes.
   let Some(key) = (unsafe { input_slice(key, key_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, immutability,
+  // and lifetime required to borrow non-null `data`; `input_slice` handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: The expected tag pointer must reference exactly 8 readable bytes.
+  // SAFETY: The function contract requires a non-null `expected_tag` to reference exactly 8
+  // readable, initialized bytes that remain immutable while copied into owned storage.
   let Some(expected_tag) = (unsafe { read_array::<8>(expected_tag) }) else {
     return STATUS_ERR;
   };
@@ -212,22 +239,35 @@ pub extern "C" fn ct_entry_hmac_sha256_verify_truncated_64(
 }
 
 /// BLAKE3 keyed-tag verification harness.
+///
+/// # Safety
+///
+/// - When non-null, `key` and `expected_tag` must each be valid for reads of 32 initialized bytes
+///   and must not be mutated while copied. Null pointers are rejected.
+/// - When non-null, `data` must reference a single allocation containing `data_len` initialized
+///   bytes. `data_len` must be no greater than `isize::MAX`, and the range must not be mutated
+///   during the call.
+/// - A null `data` pointer represents an empty slice only when `data_len == 0`; other null shapes
+///   are rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_blake3_verify_keyed(
+pub unsafe extern "C" fn ct_entry_blake3_verify_keyed(
   key: *const u8,
   data: *const u8,
   data_len: usize,
   expected_tag: *const u8,
 ) -> u8 {
-  // SAFETY: The key pointer must reference exactly 32 readable bytes.
+  // SAFETY: The function contract requires a non-null `key` to reference exactly 32 readable,
+  // initialized bytes that remain immutable while copied into owned storage.
   let Some(key) = (unsafe { read_array::<32>(key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, immutability,
+  // and lifetime required to borrow non-null `data`; `input_slice` handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: The expected tag pointer must reference exactly 32 readable bytes.
+  // SAFETY: The function contract requires a non-null `expected_tag` to reference exactly 32
+  // readable, initialized bytes that remain immutable while copied into owned storage.
   let Some(expected_tag) = (unsafe { read_array::<32>(expected_tag) }) else {
     return STATUS_ERR;
   };
@@ -239,8 +279,23 @@ pub extern "C" fn ct_entry_blake3_verify_keyed(
 }
 
 /// ChaCha20-Poly1305 open/authentication harness.
+///
+/// # Safety
+///
+/// - When non-null, `key`, `nonce`, and `tag` must be valid for reads of 32, 12, and 16 initialized
+///   bytes respectively and must not be mutated while copied. Null pointers are rejected.
+/// - When non-null, `aad` must reference a single allocation containing `aad_len` initialized
+///   bytes. `aad_len` must be no greater than `isize::MAX`, and the range must not be mutated
+///   during the call.
+/// - When non-null, `buffer` must reference a single allocation containing `buffer_len` initialized
+///   bytes. `buffer_len` must be no greater than `isize::MAX`, and the range must remain exclusively
+///   accessible for reads and writes during the call.
+/// - Null `aad` and `buffer` pointers represent empty slices only when their corresponding lengths
+///   are zero; other null shapes are rejected.
+/// - The buffer range must not overlap the AAD or tag ranges. It may overlap the key or nonce ranges
+///   because those inputs are copied before the mutable buffer borrow begins.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_chacha20poly1305_open(
+pub unsafe extern "C" fn ct_entry_chacha20poly1305_open(
   key: *const u8,
   nonce: *const u8,
   aad: *const u8,
@@ -249,23 +304,30 @@ pub extern "C" fn ct_entry_chacha20poly1305_open(
   buffer_len: usize,
   tag: *const u8,
 ) -> u8 {
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+  // SAFETY: The function contract requires a non-null `key` to reference exactly 32 readable,
+  // initialized bytes that remain immutable while copied into owned storage.
   let Some(key) = (unsafe { read_array::<32>(key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+  // SAFETY: The function contract requires a non-null `nonce` to reference exactly 12 readable,
+  // initialized bytes that remain immutable while copied into owned storage.
   let Some(nonce) = (unsafe { read_array::<12>(nonce) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, immutability,
+  // and lifetime required to borrow non-null `aad`; `input_slice` handles both null shapes.
   let Some(aad) = (unsafe { input_slice(aad, aad_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI output pointer is validated by `output_slice`.
+  // SAFETY: The function contract establishes the allocation, bounds, initialization, exclusivity,
+  // lifetime, and disjointness from the live AAD and tag ranges required to borrow `buffer`
+  // mutably; `output_slice` handles both null shapes.
   let Some(buffer) = (unsafe { output_slice(buffer, buffer_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires a non-null `tag` to reference exactly 16 readable,
+  // initialized bytes that remain immutable while copied and do not overlap the live mutable
+  // buffer borrow.
   let Some(tag) = (unsafe { read_array::<16>(tag) }) else {
     return STATUS_ERR;
   };
@@ -284,13 +346,23 @@ pub extern "C" fn ct_entry_chacha20poly1305_open(
 }
 
 /// X25519 scalar multiplication / shared-secret harness.
+///
+/// # Safety
+///
+/// - When non-null, `scalar` and `point` must each be valid for reads of 32 initialized bytes and
+///   must not be mutated while copied.
+/// - When non-null, `out` must be valid for writes of 32 bytes and must not be accessed while
+///   written.
+/// - Every non-null pointer must remain valid for the duration of the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_x25519(out: *mut u8, scalar: *const u8, point: *const u8) -> u8 {
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+pub unsafe extern "C" fn ct_entry_x25519(out: *mut u8, scalar: *const u8, point: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null `scalar` to reference exactly 32 readable,
+  // initialized bytes that remain valid while `read_array` copies them into owned storage.
   let Some(scalar) = (unsafe { read_array::<32>(scalar) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+  // SAFETY: The function contract requires a non-null `point` to reference exactly 32 readable,
+  // initialized bytes that remain valid while `read_array` copies them into owned storage.
   let Some(point) = (unsafe { read_array::<32>(point) }) else {
     return STATUS_ERR;
   };
@@ -300,7 +372,8 @@ pub extern "C" fn ct_entry_x25519(out: *mut u8, scalar: *const u8, point: *const
   let Ok(shared) = secret.diffie_hellman(&public) else {
     return STATUS_ERR;
   };
-  // SAFETY: The output pointer must reference exactly 32 writable bytes.
+  // SAFETY: The function contract requires a non-null `out` to reference exactly 32 writable bytes
+  // that remain valid and unaccessed while `write_array` copies the initialized shared secret.
   if unsafe { write_array(out, shared.as_bytes()) } {
     STATUS_OK
   } else {
@@ -318,8 +391,24 @@ macro_rules! mlkem_ct_harness {
     $decapsulation_key:ty,
     $ciphertext:ty
   ) => {
+    /// Generate an ML-KEM key pair through the constant-time C ABI harness.
+    ///
+    /// # Safety
+    ///
+    /// - `encapsulation_key_out` must be valid for writes of
+    ///   `<$profile>::ENCAPSULATION_KEY_SIZE` bytes.
+    /// - `decapsulation_key_out` must be valid for writes of
+    ///   `<$profile>::DECAPSULATION_KEY_SIZE` bytes.
+    /// - `random` must be valid for reads of `<$profile>::KEY_GENERATION_RANDOM_SIZE` initialized
+    ///   bytes.
+    /// - Each pointer must remain valid for the duration of the call, and writable regions must not
+    ///   be accessed concurrently.
     #[unsafe(no_mangle)]
-    pub extern "C" fn $keygen(encapsulation_key_out: *mut u8, decapsulation_key_out: *mut u8, random: *const u8) -> u8 {
+    pub unsafe extern "C" fn $keygen(
+      encapsulation_key_out: *mut u8,
+      decapsulation_key_out: *mut u8,
+      random: *const u8,
+    ) -> u8 {
       // SAFETY: Copies ML-KEM key-generation randomness from FFI memory because:
       // 1. `read_array` rejects a null pointer before reading.
       // 2. The required length is exactly `<$profile>::KEY_GENERATION_RANDOM_SIZE`.
@@ -353,18 +442,31 @@ macro_rules! mlkem_ct_harness {
       STATUS_OK
     }
 
+    /// Encapsulate an ML-KEM shared secret through the constant-time C ABI harness.
+    ///
+    /// # Safety
+    ///
+    /// - `ciphertext_out` must be valid for writes of `<$profile>::CIPHERTEXT_SIZE` bytes.
+    /// - `shared_secret_out` must be valid for writes of `<$profile>::SHARED_SECRET_SIZE` bytes.
+    /// - `encapsulation_key` must be valid for reads of `<$profile>::ENCAPSULATION_KEY_SIZE`
+    ///   initialized bytes.
+    /// - `random` must be valid for reads of `<$profile>::ENCAPSULATION_RANDOM_SIZE` initialized
+    ///   bytes.
+    /// - Each pointer must remain valid for the duration of the call, and writable regions must not
+    ///   be accessed concurrently.
     #[unsafe(no_mangle)]
-    pub extern "C" fn $encapsulate(
+    pub unsafe extern "C" fn $encapsulate(
       ciphertext_out: *mut u8,
       shared_secret_out: *mut u8,
       encapsulation_key: *const u8,
       random: *const u8,
     ) -> u8 {
-      // SAFETY: Copies the ML-KEM encapsulation key from FFI memory because:
-      // 1. `read_array` rejects a null pointer before reading.
-      // 2. The required length is exactly `<$profile>::ENCAPSULATION_KEY_SIZE`.
-      // 3. The returned array is owned by this harness function before validation.
       let Some(encapsulation_key) =
+        // SAFETY: Copies the ML-KEM encapsulation key from FFI memory because:
+        // 1. `read_array` rejects a null pointer before reading.
+        // 2. The function contract requires exactly `<$profile>::ENCAPSULATION_KEY_SIZE` readable
+        //    bytes.
+        // 3. The returned array is owned by this harness function before validation.
         (unsafe { read_array::<{ <$profile>::ENCAPSULATION_KEY_SIZE }>(encapsulation_key) })
       else {
         return STATUS_ERR;
@@ -405,17 +507,28 @@ macro_rules! mlkem_ct_harness {
       STATUS_OK
     }
 
+    /// Decapsulate an ML-KEM shared secret through the constant-time C ABI harness.
+    ///
+    /// # Safety
+    ///
+    /// - `shared_secret_out` must be valid for writes of `<$profile>::SHARED_SECRET_SIZE` bytes.
+    /// - `decapsulation_key` must be valid for reads of `<$profile>::DECAPSULATION_KEY_SIZE`
+    ///   initialized bytes.
+    /// - `ciphertext` must be valid for reads of `<$profile>::CIPHERTEXT_SIZE` initialized bytes.
+    /// - Each pointer must remain valid for the duration of the call, and `shared_secret_out` must
+    ///   not be accessed concurrently.
     #[unsafe(no_mangle)]
-    pub extern "C" fn $decapsulate(
+    pub unsafe extern "C" fn $decapsulate(
       shared_secret_out: *mut u8,
       decapsulation_key: *const u8,
       ciphertext: *const u8,
     ) -> u8 {
-      // SAFETY: Copies the ML-KEM decapsulation key from FFI memory because:
-      // 1. `read_array` rejects a null pointer before reading.
-      // 2. The required length is exactly `<$profile>::DECAPSULATION_KEY_SIZE`.
-      // 3. The returned array is owned by this harness function before use.
       let Some(decapsulation_key) =
+        // SAFETY: Copies the ML-KEM decapsulation key from FFI memory because:
+        // 1. `read_array` rejects a null pointer before reading.
+        // 2. The function contract requires exactly `<$profile>::DECAPSULATION_KEY_SIZE` readable
+        //    bytes.
+        // 3. The returned array is owned by this harness function before use.
         (unsafe { read_array::<{ <$profile>::DECAPSULATION_KEY_SIZE }>(decapsulation_key) })
       else {
         return STATUS_ERR;
@@ -474,9 +587,16 @@ mlkem_ct_harness!(
   MlKem1024Ciphertext
 );
 
+/// Run the ML-KEM forward-NTT diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `poly` must be aligned for `u16`, valid for reads of 256 initialized
+/// coefficients, and immutable while copied. A null pointer is rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_ntt(poly: *const u16) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+pub unsafe extern "C" fn ct_entry_mlkem_diag_ntt(poly: *const u16) -> u16 {
+  // SAFETY: The function contract requires a non-null `poly` to be aligned for `u16` and valid for
+  // reads of exactly 256 initialized coefficients that remain immutable while copied.
   let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
     return 0;
   };
@@ -493,9 +613,16 @@ pub extern "C" fn ct_entry_mlkem_diag_ntt(poly: *const u16) -> u16 {
   rscrypto::auth::mlkem::diag_mlkem_ntt_input_digest(poly)
 }
 
+/// Run the ML-KEM inverse-NTT diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `poly` must be aligned for `u16`, valid for reads of 256 initialized
+/// coefficients, and immutable while copied. A null pointer is rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_inverse_ntt(poly: *const u16) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+pub unsafe extern "C" fn ct_entry_mlkem_diag_inverse_ntt(poly: *const u16) -> u16 {
+  // SAFETY: The function contract requires a non-null `poly` to be aligned for `u16` and valid for
+  // reads of exactly 256 initialized coefficients that remain immutable while copied.
   let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
     return 0;
   };
@@ -512,9 +639,16 @@ pub extern "C" fn ct_entry_mlkem_diag_inverse_ntt(poly: *const u16) -> u16 {
   rscrypto::auth::mlkem::diag_mlkem_inverse_ntt_montgomery_product_input_digest(poly)
 }
 
+/// Run the ML-KEM to-product-domain diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `poly` must be aligned for `u16`, valid for reads of 256 initialized
+/// coefficients, and immutable while copied. A null pointer is rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_to_product_domain(poly: *const u16) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+pub unsafe extern "C" fn ct_entry_mlkem_diag_to_product_domain(poly: *const u16) -> u16 {
+  // SAFETY: The function contract requires an aligned, initialized, immutable 256-coefficient
+  // source whenever poly is non-null; read_u16_array rejects null before copying.
   let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
     return 0;
   };
@@ -531,9 +665,16 @@ pub extern "C" fn ct_entry_mlkem_diag_to_product_domain(poly: *const u16) -> u16
   rscrypto::auth::mlkem::diag_mlkem_to_montgomery_product_domain_input_digest(poly)
 }
 
+/// Run the ML-KEM from-product-domain diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `poly` must be aligned for `u16`, valid for reads of 256 initialized
+/// coefficients, and immutable while copied. A null pointer is rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_from_product_domain(poly: *const u16) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+pub unsafe extern "C" fn ct_entry_mlkem_diag_from_product_domain(poly: *const u16) -> u16 {
+  // SAFETY: The function contract requires an aligned, initialized, immutable 256-coefficient
+  // source whenever poly is non-null; read_u16_array rejects null before copying.
   let Some(poly) = (unsafe { read_u16_array::<256>(poly) }) else {
     return 0;
   };
@@ -550,21 +691,31 @@ pub extern "C" fn ct_entry_mlkem_diag_from_product_domain(poly: *const u16) -> u
   rscrypto::auth::mlkem::diag_mlkem_from_montgomery_product_domain_input_digest(poly)
 }
 
+/// Run the ML-KEM NTT multiply/add diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, each of `a`, `b`, and `acc` must be aligned for `u16`, valid for reads
+/// of 256 initialized coefficients, and immutable while copied. Null pointers are rejected.
+/// The three read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
+pub unsafe extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
   a: *const u16,
   b: *const u16,
   acc: *const u16,
 ) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  // SAFETY: The function contract requires an aligned, initialized, immutable 256-coefficient
+  // source whenever a is non-null; read_u16_array rejects null before copying.
   let Some(a) = (unsafe { read_u16_array::<256>(a) }) else {
     return 0;
   };
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  // SAFETY: The function contract provides the same guarantees for b. Its range may overlap a
+  // because both operations only read and each result is independently owned.
   let Some(b) = (unsafe { read_u16_array::<256>(b) }) else {
     return 0;
   };
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  // SAFETY: The function contract provides the same guarantees for acc. Its range may overlap a
+  // or b because all three operations only read and each result is independently owned.
   let Some(acc) = (unsafe { read_u16_array::<256>(acc) }) else {
     return 0;
   };
@@ -581,21 +732,31 @@ pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_add_assign(
   rscrypto::auth::mlkem::diag_mlkem_multiply_ntts_add_assign_input_digest(a, b, acc)
 }
 
+/// Run the ML-KEM K=3 NTT accumulation diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `a` and `b` must each be aligned for `u16`, valid for reads of 768
+/// initialized coefficients, and immutable while copied. `acc` has the same obligations for
+/// 256 coefficients. Null pointers are rejected. The three read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k3(
+pub unsafe extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k3(
   a: *const u16,
   b: *const u16,
   acc: *const u16,
 ) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly three readable ML-KEM polynomials.
+  // SAFETY: The function contract requires an aligned, initialized, immutable 768-coefficient
+  // source whenever a is non-null; read_mlkem_polyvec rejects null before copying.
   let Some(a) = (unsafe { read_mlkem_polyvec::<3>(a) }) else {
     return 0;
   };
-  // SAFETY: The diagnostic pointer must reference exactly three readable ML-KEM polynomials.
+  // SAFETY: The function contract provides the same guarantees for b. Its range may overlap a
+  // because both operations only read and each result is independently owned.
   let Some(b) = (unsafe { read_mlkem_polyvec::<3>(b) }) else {
     return 0;
   };
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  // SAFETY: The function contract requires an aligned, initialized, immutable 256-coefficient
+  // acc source. Its range may overlap a or b because all three operations only read.
   let Some(acc) = (unsafe { read_u16_array::<256>(acc) }) else {
     return 0;
   };
@@ -611,21 +772,31 @@ pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k3(
   rscrypto::auth::mlkem::diag_mlkem768_multiply_ntts_accumulate_input_digest(a, b, acc)
 }
 
+/// Run the ML-KEM K=4 NTT accumulation diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `a` and `b` must each be aligned for `u16`, valid for reads of 1,024
+/// initialized coefficients, and immutable while copied. `acc` has the same obligations for
+/// 256 coefficients. Null pointers are rejected. The three read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k4(
+pub unsafe extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k4(
   a: *const u16,
   b: *const u16,
   acc: *const u16,
 ) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly four readable ML-KEM polynomials.
+  // SAFETY: The function contract requires an aligned, initialized, immutable 1,024-coefficient
+  // source whenever a is non-null; read_mlkem_polyvec rejects null before copying.
   let Some(a) = (unsafe { read_mlkem_polyvec::<4>(a) }) else {
     return 0;
   };
-  // SAFETY: The diagnostic pointer must reference exactly four readable ML-KEM polynomials.
+  // SAFETY: The function contract provides the same guarantees for b. Its range may overlap a
+  // because both operations only read and each result is independently owned.
   let Some(b) = (unsafe { read_mlkem_polyvec::<4>(b) }) else {
     return 0;
   };
-  // SAFETY: The diagnostic pointer must reference exactly one readable ML-KEM polynomial.
+  // SAFETY: The function contract requires an aligned, initialized, immutable 256-coefficient
+  // acc source. Its range may overlap a or b because all three operations only read.
   let Some(acc) = (unsafe { read_u16_array::<256>(acc) }) else {
     return 0;
   };
@@ -641,9 +812,16 @@ pub extern "C" fn ct_entry_mlkem_diag_multiply_ntts_accumulate_k4(
   rscrypto::auth::mlkem::diag_mlkem1024_multiply_ntts_accumulate_input_digest(a, b, acc)
 }
 
+/// Run the ML-KEM compression/decompression diagnostic through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// When non-null, `values` must be aligned for `u16`, valid for reads of four initialized
+/// coefficients, and immutable while copied. A null pointer is rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_mlkem_diag_compress_decompress(values: *const u16) -> u16 {
-  // SAFETY: The diagnostic pointer must reference exactly four readable ML-KEM coefficient values.
+pub unsafe extern "C" fn ct_entry_mlkem_diag_compress_decompress(values: *const u16) -> u16 {
+  // SAFETY: The function contract requires an aligned, initialized, immutable four-coefficient
+  // source whenever values is non-null; read_u16_array rejects null before copying.
   let Some(values) = (unsafe { read_u16_array::<4>(values) }) else {
     return 0;
   };
@@ -660,26 +838,42 @@ pub extern "C" fn ct_entry_mlkem_diag_compress_decompress(values: *const u16) ->
   rscrypto::auth::mlkem::diag_mlkem_compress_decompress_values_digest(values)
 }
 
-/// Ed25519 signing harness.
+/// Sign a message with Ed25519 through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` must be valid for reads of 32 initialized bytes and immutable
+///   while copied. A null pointer is rejected.
+/// - A null `message` represents an empty slice only when `message_len` is zero. When non-null,
+///   `message` must reference one allocation of `message_len` initialized bytes, `message_len`
+///   must not exceed `isize::MAX`, and the range must remain immutable while signing reads it.
+/// - When non-null, `out` must be valid for writes of 64 bytes and must not be accessed
+///   concurrently while written. A null pointer is rejected.
+/// - The output may overlap either input because both input reads finish before the output write.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_ed25519_sign(
+pub unsafe extern "C" fn ct_entry_ed25519_sign(
   out: *mut u8,
   secret_key: *const u8,
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
   let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null message; input_slice handles both null
+  // shapes.
   let Some(message) = (unsafe { input_slice(message, message_len) }) else {
     return STATUS_ERR;
   };
 
   let secret_key = Ed25519SecretKey::from_bytes(secret_key);
   let signature = secret_key.sign(message);
-  // SAFETY: The output pointer must reference exactly 64 writable bytes.
+  // SAFETY: The function contract requires a non-null out to expose 64 writable bytes without
+  // concurrent access. Both caller-memory reads have finished, so out may overlap either input;
+  // write_array rejects null before writing from the independently owned signature.
   if unsafe { write_array(out, signature.as_bytes()) } {
     STATUS_OK
   } else {
@@ -687,24 +881,40 @@ pub extern "C" fn ct_entry_ed25519_sign(
   }
 }
 
-/// ECDSA/P-256 signing harness with caller-supplied projective blinding.
+/// Sign a message with ECDSA/P-256 and caller-supplied projective blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` and `blind` must be valid for reads of 32 and 64 initialized
+///   bytes, respectively, and immutable while copied. Null pointers are rejected.
+/// - A null `message` represents an empty slice only when `message_len` is zero. When non-null,
+///   `message` must reference one allocation of `message_len` initialized bytes, `message_len`
+///   must not exceed `isize::MAX`, and the range must remain immutable while signing reads it.
+/// - When non-null, `out` must be valid for writes of 64 bytes and must not be accessed
+///   concurrently while written. A null pointer is rejected.
+/// - The read-only inputs may overlap. The output may overlap any input because all input reads
+///   finish before the output write.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_ecdsa_p256_sign(
+pub unsafe extern "C" fn ct_entry_ecdsa_p256_sign(
   out: *mut u8,
   secret_key: *const u8,
   blind: *const u8,
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires a non-null secret_key to expose 32 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
   let Some(secret_key) = (unsafe { read_array::<32>(secret_key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires a non-null blind to expose 64 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
   let Some(blind) = (unsafe { read_array::<64>(blind) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null message; input_slice handles both null
+  // shapes.
   let Some(message) = (unsafe { input_slice(message, message_len) }) else {
     return STATUS_ERR;
   };
@@ -717,7 +927,9 @@ pub extern "C" fn ct_entry_ecdsa_p256_sign(
   };
   let signature = signature.to_bytes();
 
-  // SAFETY: The output pointer must reference exactly 64 writable bytes.
+  // SAFETY: The function contract requires a non-null out to expose 64 writable bytes without
+  // concurrent access. All caller-memory reads have finished, so out may overlap any input;
+  // write_array rejects null before writing from the independently owned signature.
   if unsafe { write_array(out, &signature) } {
     STATUS_OK
   } else {
@@ -725,24 +937,40 @@ pub extern "C" fn ct_entry_ecdsa_p256_sign(
   }
 }
 
-/// ECDSA/P-384 signing harness with caller-supplied projective blinding.
+/// Sign a message with ECDSA/P-384 and caller-supplied projective blinding.
+///
+/// # Safety
+///
+/// - When non-null, `secret_key` and `blind` must be valid for reads of 48 and 96 initialized
+///   bytes, respectively, and immutable while copied. Null pointers are rejected.
+/// - A null `message` represents an empty slice only when `message_len` is zero. When non-null,
+///   `message` must reference one allocation of `message_len` initialized bytes, `message_len`
+///   must not exceed `isize::MAX`, and the range must remain immutable while signing reads it.
+/// - When non-null, `out` must be valid for writes of 96 bytes and must not be accessed
+///   concurrently while written. A null pointer is rejected.
+/// - The read-only inputs may overlap. The output may overlap any input because all input reads
+///   finish before the output write.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_ecdsa_p384_sign(
+pub unsafe extern "C" fn ct_entry_ecdsa_p384_sign(
   out: *mut u8,
   secret_key: *const u8,
   blind: *const u8,
   message: *const u8,
   message_len: usize,
 ) -> u8 {
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires a non-null secret_key to expose 48 initialized,
+  // readable bytes that remain immutable while read_array copies them into owned storage.
   let Some(secret_key) = (unsafe { read_array::<48>(secret_key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires a non-null blind to expose 96 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
   let Some(blind) = (unsafe { read_array::<96>(blind) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null message; input_slice handles both null
+  // shapes.
   let Some(message) = (unsafe { input_slice(message, message_len) }) else {
     return STATUS_ERR;
   };
@@ -755,7 +983,9 @@ pub extern "C" fn ct_entry_ecdsa_p384_sign(
   };
   let signature = signature.to_bytes();
 
-  // SAFETY: The output pointer must reference exactly 96 writable bytes.
+  // SAFETY: The function contract requires a non-null out to expose 96 writable bytes without
+  // concurrent access. All caller-memory reads have finished, so out may overlap any input;
+  // write_array rejects null before writing from the independently owned signature.
   if unsafe { write_array(out, &signature) } {
     STATUS_OK
   } else {
@@ -763,9 +993,21 @@ pub extern "C" fn ct_entry_ecdsa_p384_sign(
   }
 }
 
-/// PBKDF2-HMAC-SHA256 verification harness.
+/// Verify a PBKDF2-HMAC-SHA256 password through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// Each `(pointer, length)` pair for `password`, `salt`, and `expected` must satisfy all of the
+/// following:
+///
+/// - a null pointer is used only with a zero length;
+/// - a non-null pointer references one allocation of `length` initialized bytes;
+/// - `length` does not exceed `isize::MAX`; and
+/// - the referenced bytes remain immutable for the call.
+///
+/// The three read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_pbkdf2_sha256_verify(
+pub unsafe extern "C" fn ct_entry_pbkdf2_sha256_verify(
   password: *const u8,
   password_len: usize,
   salt: *const u8,
@@ -774,15 +1016,21 @@ pub extern "C" fn ct_entry_pbkdf2_sha256_verify(
   expected: *const u8,
   expected_len: usize,
 ) -> u8 {
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null password; input_slice handles both null
+  // shapes.
   let Some(password) = (unsafe { input_slice(password, password_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null salt; input_slice handles both null
+  // shapes.
   let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null expected value; input_slice handles both
+  // null shapes.
   let Some(expected) = (unsafe { input_slice(expected, expected_len) }) else {
     return STATUS_ERR;
   };
@@ -794,23 +1042,38 @@ pub extern "C" fn ct_entry_pbkdf2_sha256_verify(
 
 macro_rules! fixed_tag_verify_entry {
   ($name:ident, $ty:ty, $tag_ty:ty, $tag_len:literal) => {
+    #[doc = "Verify a fixed-size authentication tag through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "- Null `key` and `data` pointers are permitted only with matching zero lengths. Each"]
+    #[doc = "  non-null pointer must reference one allocation of initialized bytes, its length must"]
+    #[doc = "  not exceed `isize::MAX`, and the range must remain immutable for the call."]
+    #[doc = "- When non-null, `expected_tag` must be valid for reads of the fixed tag length,"]
+    #[doc = "  contain initialized bytes, and remain immutable while copied. Null is rejected."]
+    #[doc = "- The three read-only ranges may overlap."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $name(
+    pub unsafe extern "C" fn $name(
       key: *const u8,
       key_len: usize,
       data: *const u8,
       data_len: usize,
       expected_tag: *const u8,
     ) -> u8 {
-      // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for a non-null key; input_slice
+      // handles both null shapes.
       let Some(key) = (unsafe { input_slice(key, key_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointers are validated by `input_slice` / `read_array`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null data; input_slice
+      // handles both null shapes.
       let Some(data) = (unsafe { input_slice(data, data_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: The expected tag pointer must reference exactly `$tag_len` readable bytes.
+      // SAFETY: The generated function contract requires a non-null expected_tag to expose
+      // $tag_len initialized, readable bytes that remain immutable while read_array copies them.
       let Some(expected_tag) = (unsafe { read_array::<$tag_len>(expected_tag) }) else {
         return STATUS_ERR;
       };
@@ -828,14 +1091,23 @@ fixed_tag_verify_entry!(ct_entry_hmac_sha512_verify, HmacSha512, HmacSha512Tag, 
 
 macro_rules! fixed_owner_eq_entry {
   ($name:ident, $type:ty, $len:expr) => {
+    #[doc = "Compare two fixed-size secret-owning values through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "When non-null, `a` and `b` must each be valid for reads of the selected fixed length,"]
+    #[doc = "contain initialized bytes, and remain immutable while copied. Null is rejected. The"]
+    #[doc = "two read-only ranges may overlap."]
     #[inline(never)]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $name(a: *const u8, b: *const u8) -> u8 {
-      // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+    pub unsafe extern "C" fn $name(a: *const u8, b: *const u8) -> u8 {
+      // SAFETY: The generated function contract requires non-null a to expose $len initialized,
+      // readable bytes that remain immutable while read_array copies them into owned storage.
       let Some(a) = (unsafe { read_array::<$len>(a) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+      // SAFETY: The generated function contract requires non-null b to expose $len initialized,
+      // readable bytes that remain immutable while read_array copies them into owned storage.
       let Some(b) = (unsafe { read_array::<$len>(b) }) else {
         return STATUS_ERR;
       };
@@ -854,9 +1126,16 @@ fixed_owner_eq_entry!(ct_entry_owner_eq_1632, MlKem512DecapsulationKey, 1632);
 fixed_owner_eq_entry!(ct_entry_owner_eq_2400, MlKem768DecapsulationKey, 2400);
 fixed_owner_eq_entry!(ct_entry_owner_eq_3168, MlKem1024DecapsulationKey, 3168);
 
+/// Check that a 32-byte secret's `Debug` representation remains redacted.
+///
+/// # Safety
+///
+/// When non-null, `secret` must be valid for reads of 32 initialized bytes and immutable while
+/// copied. A null pointer is rejected.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_secret_bytes32_debug_masked(secret: *const u8) -> u8 {
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+pub unsafe extern "C" fn ct_entry_secret_bytes32_debug_masked(secret: *const u8) -> u8 {
+  // SAFETY: The function contract requires a non-null secret to expose 32 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
   let Some(secret) = (unsafe { read_array::<32>(secret) }) else {
     return STATUS_ERR;
   };
@@ -865,8 +1144,21 @@ pub extern "C" fn ct_entry_secret_bytes32_debug_masked(secret: *const u8) -> u8 
   u8::from(formatted == "SecretBytes(****)")
 }
 
+/// Verify a KMAC256 tag through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// Each `(pointer, length)` pair for `key`, `customization`, `data`, and `expected_tag` must
+/// satisfy all of the following:
+///
+/// - a null pointer is used only with a zero length;
+/// - a non-null pointer references one allocation of `length` initialized bytes;
+/// - `length` does not exceed `isize::MAX`; and
+/// - the referenced bytes remain immutable for the call.
+///
+/// The four read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_kmac256_verify(
+pub unsafe extern "C" fn ct_entry_kmac256_verify(
   key: *const u8,
   key_len: usize,
   customization: *const u8,
@@ -876,19 +1168,25 @@ pub extern "C" fn ct_entry_kmac256_verify(
   expected_tag: *const u8,
   expected_tag_len: usize,
 ) -> u8 {
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null key; input_slice handles both null shapes.
   let Some(key) = (unsafe { input_slice(key, key_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null customization; input_slice handles both
+  // null shapes.
   let Some(customization) = (unsafe { input_slice(customization, customization_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null data; input_slice handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for a non-null expected_tag; input_slice handles both
+  // null shapes.
   let Some(expected_tag) = (unsafe { input_slice(expected_tag, expected_tag_len) }) else {
     return STATUS_ERR;
   };
@@ -900,8 +1198,26 @@ pub extern "C" fn ct_entry_kmac256_verify(
 
 macro_rules! aead_open_entry {
   ($name:ident, $cipher:ty, $key:ty, $nonce:ty, $key_len:literal, $nonce_len:literal) => {
+    #[doc = "Authenticate and decrypt a buffer in place through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "- Non-null `key` and `nonce` pointers must expose the selected fixed lengths of"]
+    #[doc = "  initialized readable bytes and remain immutable while copied. Null is rejected."]
+    #[doc = "- A null `aad` pointer is permitted only when `aad_len` is zero. A non-null pointer"]
+    #[doc = "  must reference one allocation of `aad_len` initialized bytes, `aad_len` must not"]
+    #[doc = "  exceed `isize::MAX`, and the range must remain immutable for the call."]
+    #[doc = "- A null `buffer` pointer is permitted only when `buffer_len` is zero. A non-null"]
+    #[doc = "  pointer must reference one allocation of `buffer_len` initialized writable bytes,"]
+    #[doc = "  `buffer_len` must not exceed `isize::MAX`, and the range must be exclusively"]
+    #[doc = "  accessed for the call."]
+    #[doc = "- When non-null, `tag` must expose 16 initialized readable bytes and remain immutable"]
+    #[doc = "  while copied. Null is rejected."]
+    #[doc = "- Nonempty `buffer` ranges must be disjoint from `aad` and `tag`. The buffer may"]
+    #[doc = "  overlap `key` or `nonce` because both are copied before its mutable borrow begins."]
+    #[doc = "  Read-only ranges may overlap one another."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $name(
+    pub unsafe extern "C" fn $name(
       key: *const u8,
       nonce: *const u8,
       aad: *const u8,
@@ -910,23 +1226,30 @@ macro_rules! aead_open_entry {
       buffer_len: usize,
       tag: *const u8,
     ) -> u8 {
-      // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+      // SAFETY: The generated function contract requires non-null key to expose $key_len
+      // initialized, readable bytes that remain immutable while read_array copies them.
       let Some(key) = (unsafe { read_array::<$key_len>(key) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+      // SAFETY: The generated function contract requires non-null nonce to expose $nonce_len
+      // initialized, readable bytes that remain immutable while read_array copies them.
       let Some(nonce) = (unsafe { read_array::<$nonce_len>(nonce) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointer is validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null aad; input_slice handles
+      // both null shapes.
       let Some(aad) = (unsafe { input_slice(aad, aad_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI output pointer is validated by `output_slice`.
+      // SAFETY: The generated function contract establishes buffer's allocation, length bound,
+      // initialization, exclusivity, and lifetime. It also requires disjointness from the live aad
+      // and tag reads; output_slice handles both null shapes.
       let Some(buffer) = (unsafe { output_slice(buffer, buffer_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: Fixed-size FFI input is copied by value after null check.
+      // SAFETY: The generated function contract requires non-null tag to expose 16 initialized,
+      // readable bytes, remain immutable while copied, and be disjoint from the live buffer.
       let Some(tag) = (unsafe { read_array::<16>(tag) }) else {
         return STATUS_ERR;
       };
@@ -984,8 +1307,22 @@ aead_open_entry!(
 
 macro_rules! hkdf_derive_entry {
   ($name:ident, $ty:ty) => {
+    #[doc = "Derive HKDF output through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "- Null `salt`, `ikm`, and `info` pointers are permitted only with matching zero"]
+    #[doc = "  lengths. Each non-null pointer must reference one allocation of initialized bytes,"]
+    #[doc = "  its length must not exceed `isize::MAX`, and the range must remain immutable for"]
+    #[doc = "  the call."]
+    #[doc = "- A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer"]
+    #[doc = "  must reference one allocation of `out_len` initialized writable bytes, `out_len`"]
+    #[doc = "  must not exceed `isize::MAX`, and the range must be exclusively accessed for the"]
+    #[doc = "  call."]
+    #[doc = "- Input ranges may overlap one another. A nonempty output range must be disjoint from"]
+    #[doc = "  every input range because the shared and mutable borrows remain live together."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $name(
+    pub unsafe extern "C" fn $name(
       salt: *const u8,
       salt_len: usize,
       ikm: *const u8,
@@ -995,19 +1332,27 @@ macro_rules! hkdf_derive_entry {
       out: *mut u8,
       out_len: usize,
     ) -> u8 {
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null salt; input_slice handles
+      // both null shapes.
       let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null ikm; input_slice handles
+      // both null shapes.
       let Some(ikm) = (unsafe { input_slice(ikm, ikm_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null info; input_slice handles
+      // both null shapes.
       let Some(info) = (unsafe { input_slice(info, info_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes out's allocation, length bound,
+      // initialization, exclusivity, and lifetime, including disjointness from all live inputs;
+      // output_slice handles both null shapes.
       let Some(out) = (unsafe { output_slice(out, out_len) }) else {
         return STATUS_ERR;
       };
@@ -1024,8 +1369,22 @@ hkdf_derive_entry!(ct_entry_hkdf_sha384_derive, HkdfSha384);
 
 macro_rules! pbkdf2_entry {
   ($derive_name:ident, $verify_name:ident, $ty:ty) => {
+    #[doc = "Derive PBKDF2 output through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "- Null `password` and `salt` pointers are permitted only with matching zero lengths."]
+    #[doc = "  Each non-null pointer must reference one allocation of initialized bytes, its"]
+    #[doc = "  length must not exceed `isize::MAX`, and the range must remain immutable for the"]
+    #[doc = "  call."]
+    #[doc = "- A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer"]
+    #[doc = "  must reference one allocation of `out_len` initialized writable bytes, `out_len`"]
+    #[doc = "  must not exceed `isize::MAX`, and the range must be exclusively accessed for the"]
+    #[doc = "  call."]
+    #[doc = "- Password and salt may overlap. A nonempty output range must be disjoint from both"]
+    #[doc = "  input ranges because their shared and mutable borrows remain live together."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $derive_name(
+    pub unsafe extern "C" fn $derive_name(
       password: *const u8,
       password_len: usize,
       salt: *const u8,
@@ -1034,15 +1393,21 @@ macro_rules! pbkdf2_entry {
       out: *mut u8,
       out_len: usize,
     ) -> u8 {
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null password; input_slice
+      // handles both null shapes.
       let Some(password) = (unsafe { input_slice(password, password_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null salt; input_slice handles
+      // both null shapes.
       let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes out's allocation, length bound,
+      // initialization, exclusivity, and lifetime, including disjointness from both live inputs;
+      // output_slice handles both null shapes.
       let Some(out) = (unsafe { output_slice(out, out_len) }) else {
         return STATUS_ERR;
       };
@@ -1052,8 +1417,16 @@ macro_rules! pbkdf2_entry {
         .unwrap_or(STATUS_ERR)
     }
 
+    #[doc = "Verify PBKDF2 output through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "Null `password`, `salt`, and `expected` pointers are permitted only with matching"]
+    #[doc = "zero lengths. Each non-null pointer must reference one allocation of initialized"]
+    #[doc = "bytes, its length must not exceed `isize::MAX`, and the range must remain immutable"]
+    #[doc = "for the call. The three read-only ranges may overlap."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $verify_name(
+    pub unsafe extern "C" fn $verify_name(
       password: *const u8,
       password_len: usize,
       salt: *const u8,
@@ -1062,15 +1435,21 @@ macro_rules! pbkdf2_entry {
       expected: *const u8,
       expected_len: usize,
     ) -> u8 {
-      // SAFETY: FFI input pointers are validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null password; input_slice
+      // handles both null shapes.
       let Some(password) = (unsafe { input_slice(password, password_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointers are validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null salt; input_slice handles
+      // both null shapes.
       let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointers are validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null expected output;
+      // input_slice handles both null shapes.
       let Some(expected) = (unsafe { input_slice(expected, expected_len) }) else {
         return STATUS_ERR;
       };
@@ -1095,8 +1474,22 @@ pbkdf2_entry!(
 
 macro_rules! argon2_entry {
   ($derive_name:ident, $verify_name:ident, $ty:ty) => {
+    #[doc = "Derive Argon2 output through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "- Null `password` and `salt` pointers are permitted only with matching zero lengths."]
+    #[doc = "  Each non-null pointer must reference one allocation of initialized bytes, its"]
+    #[doc = "  length must not exceed `isize::MAX`, and the range must remain immutable for the"]
+    #[doc = "  call."]
+    #[doc = "- A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer"]
+    #[doc = "  must reference one allocation of `out_len` initialized writable bytes, `out_len`"]
+    #[doc = "  must not exceed `isize::MAX`, and the range must be exclusively accessed for the"]
+    #[doc = "  call."]
+    #[doc = "- Password and salt may overlap. A nonempty output range must be disjoint from both"]
+    #[doc = "  input ranges because their shared and mutable borrows remain live together."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $derive_name(
+    pub unsafe extern "C" fn $derive_name(
       password: *const u8,
       password_len: usize,
       salt: *const u8,
@@ -1106,15 +1499,21 @@ macro_rules! argon2_entry {
       out: *mut u8,
       out_len: usize,
     ) -> u8 {
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null password; input_slice
+      // handles both null shapes.
       let Some(password) = (unsafe { input_slice(password, password_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null salt; input_slice handles
+      // both null shapes.
       let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input/output pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes out's allocation, length bound,
+      // initialization, exclusivity, and lifetime, including disjointness from both live inputs;
+      // output_slice handles both null shapes.
       let Some(out) = (unsafe { output_slice(out, out_len) }) else {
         return STATUS_ERR;
       };
@@ -1127,8 +1526,16 @@ macro_rules! argon2_entry {
         .unwrap_or(STATUS_ERR)
     }
 
+    #[doc = "Verify Argon2 output through the constant-time C ABI harness."]
+    #[doc = ""]
+    #[doc = "# Safety"]
+    #[doc = ""]
+    #[doc = "Null `password`, `salt`, and `expected` pointers are permitted only with matching"]
+    #[doc = "zero lengths. Each non-null pointer must reference one allocation of initialized"]
+    #[doc = "bytes, its length must not exceed `isize::MAX`, and the range must remain immutable"]
+    #[doc = "for the call. The three read-only ranges may overlap."]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $verify_name(
+    pub unsafe extern "C" fn $verify_name(
       password: *const u8,
       password_len: usize,
       salt: *const u8,
@@ -1138,15 +1545,21 @@ macro_rules! argon2_entry {
       expected: *const u8,
       expected_len: usize,
     ) -> u8 {
-      // SAFETY: FFI input pointers are validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null password; input_slice
+      // handles both null shapes.
       let Some(password) = (unsafe { input_slice(password, password_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointers are validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null salt; input_slice handles
+      // both null shapes.
       let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointers are validated by `input_slice`.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null expected output;
+      // input_slice handles both null shapes.
       let Some(expected) = (unsafe { input_slice(expected, expected_len) }) else {
         return STATUS_ERR;
       };
@@ -1165,8 +1578,21 @@ argon2_entry!(ct_entry_argon2i_hash, ct_entry_argon2i_verify, Argon2i);
 argon2_entry!(ct_entry_argon2d_hash, ct_entry_argon2d_verify, Argon2d);
 argon2_entry!(ct_entry_argon2id_hash, ct_entry_argon2id_verify, Argon2id);
 
+/// Verify scrypt output through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// Each `(pointer, length)` pair for `password`, `salt`, and `expected` must satisfy all of the
+/// following:
+///
+/// - a null pointer is used only with a zero length;
+/// - a non-null pointer references one allocation of `length` initialized bytes;
+/// - `length` does not exceed `isize::MAX`; and
+/// - the referenced bytes remain immutable for the call.
+///
+/// The three read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_scrypt_verify(
+pub unsafe extern "C" fn ct_entry_scrypt_verify(
   password: *const u8,
   password_len: usize,
   salt: *const u8,
@@ -1177,20 +1603,24 @@ pub extern "C" fn ct_entry_scrypt_verify(
   expected: *const u8,
   expected_len: usize,
 ) -> u8 {
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null password; input_slice handles both null
+  // shapes.
   let Some(password) = (unsafe { input_slice(password, password_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null salt; input_slice handles both null shapes.
   let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointers are validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null expected output; input_slice handles both
+  // null shapes.
   let Some(expected) = (unsafe { input_slice(expected, expected_len) }) else {
     return STATUS_ERR;
   };
-  let Ok(params) = ScryptParams::new(log_n, r, p)
-  else {
+  let Ok(params) = ScryptParams::new(log_n, r, p) else {
     return STATUS_ERR;
   };
 
@@ -1199,22 +1629,36 @@ pub extern "C" fn ct_entry_scrypt_verify(
     .unwrap_or(STATUS_ERR)
 }
 
+/// Verify an Ed25519 signature through the constant-time C ABI harness.
+///
+/// # Safety
+///
+/// - When non-null, `public_key` and `signature` must be valid for reads of 32 and 64 initialized
+///   bytes, respectively, and immutable while copied. Null pointers are rejected.
+/// - A null `message` pointer is permitted only when `message_len` is zero. A non-null pointer
+///   must reference one allocation of `message_len` initialized bytes, `message_len` must not
+///   exceed `isize::MAX`, and the range must remain immutable for the call.
+/// - The three read-only ranges may overlap.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_ed25519_verify(
+pub unsafe extern "C" fn ct_entry_ed25519_verify(
   public_key: *const u8,
   message: *const u8,
   message_len: usize,
   signature: *const u8,
 ) -> u8 {
-  // SAFETY: Fixed-size FFI inputs are copied by value after null checks.
+  // SAFETY: The function contract requires non-null public_key to expose 32 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
   let Some(public_key) = (unsafe { read_array::<32>(public_key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null message; input_slice handles both null
+  // shapes.
   let Some(message) = (unsafe { input_slice(message, message_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+  // SAFETY: The function contract requires non-null signature to expose 64 initialized, readable
+  // bytes that remain immutable while read_array copies them into owned storage.
   let Some(signature) = (unsafe { read_array::<64>(signature) }) else {
     return STATUS_ERR;
   };
@@ -1225,8 +1669,21 @@ pub extern "C" fn ct_entry_ed25519_verify(
     .unwrap_or(STATUS_ERR)
 }
 
+/// Sign with RSA PKCS#1 v1.5 and caller-supplied blinding through the CT harness.
+///
+/// # Safety
+///
+/// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
+///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
+///   `isize::MAX`, and the range must be exclusively accessed for the call.
+/// - Each `(pointer, length)` pair for `pkcs8_der`, `message`, `blinding_factor`, and
+///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
+///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
+///   the range must remain immutable for the call.
+/// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
+///   overlap one another.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
+pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
   out: *mut u8,
   out_len: usize,
   pkcs8_der: *const u8,
@@ -1238,23 +1695,33 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
   blinding_inverse: *const u8,
   blinding_inverse_len: usize,
 ) -> u8 {
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes out's allocation, length bound, initialization,
+  // exclusivity, lifetime, and disjointness from every live input; output_slice handles both null
+  // shapes.
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
+  // handles both null shapes.
   let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null message; input_slice
+  // handles both null shapes.
   let Some(message) = (unsafe { input_slice(message, message_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_factor;
+  // input_slice handles both null shapes.
   let Some(blinding_factor) = (unsafe { input_slice(blinding_factor, blinding_factor_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_inverse;
+  // input_slice handles both null shapes.
   let Some(blinding_inverse) = (unsafe { input_slice(blinding_inverse, blinding_inverse_len) }) else {
     return STATUS_ERR;
   };
@@ -1267,8 +1734,7 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
     .sign_pkcs1v15_with_blinding_factor_and_scratch(
       RsaPkcs1v15Profile::Sha256,
       message,
-      blinding_factor,
-      blinding_inverse,
+      RsaBlindingPair::new(blinding_factor, blinding_inverse),
       out,
       &mut scratch,
     )
@@ -1276,8 +1742,21 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_sign_fixed_blinding(
     .unwrap_or(STATUS_ERR)
 }
 
+/// Sign with RSA-PSS and caller-supplied salt and blinding through the CT harness.
+///
+/// # Safety
+///
+/// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
+///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
+///   `isize::MAX`, and the range must be exclusively accessed for the call.
+/// - Each `(pointer, length)` pair for `pkcs8_der`, `message`, `salt`, `blinding_factor`, and
+///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
+///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
+///   the range must remain immutable for the call.
+/// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
+///   overlap one another.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
+pub unsafe extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
   out: *mut u8,
   out_len: usize,
   pkcs8_der: *const u8,
@@ -1291,27 +1770,39 @@ pub extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
   blinding_inverse: *const u8,
   blinding_inverse_len: usize,
 ) -> u8 {
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes out's allocation, length bound, initialization,
+  // exclusivity, lifetime, and disjointness from every live input; output_slice handles both null
+  // shapes.
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
+  // handles both null shapes.
   let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null message; input_slice
+  // handles both null shapes.
   let Some(message) = (unsafe { input_slice(message, message_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null salt; input_slice
+  // handles both null shapes.
   let Some(salt) = (unsafe { input_slice(salt, salt_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_factor;
+  // input_slice handles both null shapes.
   let Some(blinding_factor) = (unsafe { input_slice(blinding_factor, blinding_factor_len) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_inverse;
+  // input_slice handles both null shapes.
   let Some(blinding_inverse) = (unsafe { input_slice(blinding_inverse, blinding_inverse_len) }) else {
     return STATUS_ERR;
   };
@@ -1325,8 +1816,7 @@ pub extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
       RsaPssProfile::Sha256,
       message,
       salt,
-      blinding_factor,
-      blinding_inverse,
+      RsaBlindingPair::new(blinding_factor, blinding_inverse),
       out,
       &mut scratch,
     )
@@ -1334,8 +1824,21 @@ pub extern "C" fn ct_entry_rsa_pss_sign_fixed_blinding(
     .unwrap_or(STATUS_ERR)
 }
 
+/// Decrypt RSA-OAEP with caller-supplied blinding through the CT harness.
+///
+/// # Safety
+///
+/// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
+///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
+///   `isize::MAX`, and the range must be exclusively accessed for the call.
+/// - Each `(pointer, length)` pair for `pkcs8_der`, `label`, `ciphertext`, `blinding_factor`, and
+///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
+///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
+///   the range must remain immutable for the call.
+/// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
+///   overlap one another.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
+pub unsafe extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
   out: *mut u8,
   out_len: usize,
   pkcs8_der: *const u8,
@@ -1349,27 +1852,39 @@ pub extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
   blinding_inverse: *const u8,
   blinding_inverse_len: usize,
 ) -> usize {
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes out's allocation, length bound, initialization,
+  // exclusivity, lifetime, and disjointness from every live input; output_slice handles both null
+  // shapes.
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
+  // handles both null shapes.
   let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null label; input_slice
+  // handles both null shapes.
   let Some(label) = (unsafe { input_slice(label, label_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null ciphertext; input_slice
+  // handles both null shapes.
   let Some(ciphertext) = (unsafe { input_slice(ciphertext, ciphertext_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_factor;
+  // input_slice handles both null shapes.
   let Some(blinding_factor) = (unsafe { input_slice(blinding_factor, blinding_factor_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_inverse;
+  // input_slice handles both null shapes.
   let Some(blinding_inverse) = (unsafe { input_slice(blinding_inverse, blinding_inverse_len) }) else {
     return usize::MAX;
   };
@@ -1383,16 +1898,28 @@ pub extern "C" fn ct_entry_rsa_oaep_decrypt_fixed_blinding(
       RsaOaepProfile::Sha256,
       label,
       ciphertext,
-      blinding_factor,
-      blinding_inverse,
+      RsaBlindingPair::new(blinding_factor, blinding_inverse),
       out,
       &mut scratch,
     )
     .unwrap_or(usize::MAX)
 }
 
+/// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding through the CT harness.
+///
+/// # Safety
+///
+/// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
+///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
+///   `isize::MAX`, and the range must be exclusively accessed for the call.
+/// - Each `(pointer, length)` pair for `pkcs8_der`, `ciphertext`, `blinding_factor`, and
+///   `blinding_inverse` may use a null pointer only with a zero length. Every non-null pointer must
+///   reference one allocation of initialized bytes, its length must not exceed `isize::MAX`, and
+///   the range must remain immutable for the call.
+/// - A nonempty output range must be disjoint from every input range. Read-only input ranges may
+///   overlap one another.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
+pub unsafe extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
   out: *mut u8,
   out_len: usize,
   pkcs8_der: *const u8,
@@ -1404,23 +1931,33 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
   blinding_inverse: *const u8,
   blinding_inverse_len: usize,
 ) -> usize {
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes out's allocation, length bound, initialization,
+  // exclusivity, lifetime, and disjointness from every live input; output_slice handles both null
+  // shapes.
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
+  // handles both null shapes.
   let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null ciphertext; input_slice
+  // handles both null shapes.
   let Some(ciphertext) = (unsafe { input_slice(ciphertext, ciphertext_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_factor;
+  // input_slice handles both null shapes.
   let Some(blinding_factor) = (unsafe { input_slice(blinding_factor, blinding_factor_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null blinding_inverse;
+  // input_slice handles both null shapes.
   let Some(blinding_inverse) = (unsafe { input_slice(blinding_inverse, blinding_inverse_len) }) else {
     return usize::MAX;
   };
@@ -1430,22 +1967,42 @@ pub extern "C" fn ct_entry_rsa_pkcs1v15_decrypt_fixed_blinding(
   };
   let mut scratch = key.private_scratch();
   key
-    .decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding_factor, blinding_inverse, out, &mut scratch)
+    .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
+      ciphertext,
+      RsaBlindingPair::new(blinding_factor, blinding_inverse),
+      out,
+      &mut scratch,
+    )
     .unwrap_or(usize::MAX)
 }
 
+/// Parse and re-encode the CT fixture RSA private key through the C ABI harness.
+///
+/// # Safety
+///
+/// - A null `out` pointer is permitted only when `out_len` is zero. A non-null pointer must
+///   reference one allocation of `out_len` initialized writable bytes, `out_len` must not exceed
+///   `isize::MAX`, and the range must be exclusively accessed for the call.
+/// - A null `pkcs8_der` pointer is permitted only when `pkcs8_der_len` is zero. A non-null pointer
+///   must reference one allocation of `pkcs8_der_len` initialized bytes, `pkcs8_der_len` must not
+///   exceed `isize::MAX`, and the range must remain immutable for the call.
+/// - A nonempty output range must be disjoint from the input range.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_rsa_private_key_pkcs8_roundtrip(
+pub unsafe extern "C" fn ct_entry_rsa_private_key_pkcs8_roundtrip(
   out: *mut u8,
   out_len: usize,
   pkcs8_der: *const u8,
   pkcs8_der_len: usize,
 ) -> usize {
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes out's allocation, length bound, initialization,
+  // exclusivity, lifetime, and disjointness from the live input; output_slice handles both null
+  // shapes.
   let Some(out) = (unsafe { output_slice(out, out_len) }) else {
     return usize::MAX;
   };
-  // SAFETY: FFI input/output pointers are validated by slice helpers.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, lifetime, and output disjointness required for non-null pkcs8_der; input_slice
+  // handles both null shapes.
   let Some(pkcs8_der) = (unsafe { input_slice(pkcs8_der, pkcs8_der_len) }) else {
     return usize::MAX;
   };
@@ -1463,13 +2020,37 @@ pub extern "C" fn ct_entry_rsa_private_key_pkcs8_roundtrip(
 
 macro_rules! blake2_keyed_entry {
   ($name:ident, $ty:ty, $key_ty:ty, $out_len:literal) => {
+    #[doc = concat!("Compute a keyed `", stringify!($ty), "` digest through the CT harness.")]
+    ///
+    /// # Safety
+    ///
+    /// - A null `key` or `data` pointer represents an empty slice only when its corresponding
+    ///   length is zero. Every non-null pointer must reference one allocation of initialized
+    ///   bytes, its length must not exceed `isize::MAX`, and the range must remain immutable
+    ///   through its last use. The two read-only ranges may overlap.
+    #[doc = concat!(
+      "- When non-null, `out` must be valid for writes of ",
+      stringify!($out_len),
+      " bytes. A null output is rejected. The output may overlap caller input because hashing and input borrows end ",
+      "before the digest is copied out; it must not overlap the stack-owned digest."
+    )]
     #[unsafe(no_mangle)]
-    pub extern "C" fn $name(key: *const u8, key_len: usize, data: *const u8, data_len: usize, out: *mut u8) -> u8 {
-      // SAFETY: FFI input pointers are validated by slice helpers.
+    pub unsafe extern "C" fn $name(
+      key: *const u8,
+      key_len: usize,
+      data: *const u8,
+      data_len: usize,
+      out: *mut u8,
+    ) -> u8 {
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null key; input_slice handles
+      // both null shapes.
       let Some(key) = (unsafe { input_slice(key, key_len) }) else {
         return STATUS_ERR;
       };
-      // SAFETY: FFI input pointers are validated by slice helpers.
+      // SAFETY: The generated function contract establishes the allocation, length bound,
+      // initialization, immutability, and lifetime required for non-null data; input_slice handles
+      // both null shapes. Shared key and data ranges may overlap.
       let Some(data) = (unsafe { input_slice(data, data_len) }) else {
         return STATUS_ERR;
       };
@@ -1478,7 +2059,9 @@ macro_rules! blake2_keyed_entry {
         return STATUS_ERR;
       };
       let digest = <$ty>::keyed_digest(key, data);
-      // SAFETY: The output pointer must reference exactly `$out_len` writable bytes.
+      // SAFETY: The generated function contract requires non-null out to be valid for writes of
+      // the selected digest width. Hashing and the caller-input borrows have ended, and the
+      // contract prevents overlap with the stack-owned digest copied by write_array.
       if unsafe { write_array::<$out_len>(out, &digest) } {
         STATUS_OK
       } else {
@@ -1493,19 +2076,41 @@ blake2_keyed_entry!(ct_entry_blake2b512_keyed_digest, Blake2b512, Blake2bKey, 64
 blake2_keyed_entry!(ct_entry_blake2s128_keyed_digest, Blake2s128, Blake2sKey, 16);
 blake2_keyed_entry!(ct_entry_blake2s256_keyed_digest, Blake2s256, Blake2sKey, 32);
 
+/// Compute a keyed BLAKE3 digest through the CT harness.
+///
+/// # Safety
+///
+/// - When non-null, `key` must be valid for reads of 32 initialized bytes and remain immutable
+///   while copied. A null key is rejected.
+/// - A null `data` pointer represents an empty slice only when `data_len` is zero. A non-null
+///   pointer must reference one allocation of `data_len` initialized bytes, `data_len` must not
+///   exceed `isize::MAX`, and the range must remain immutable through its last use. The key and
+///   data ranges may overlap.
+/// - When non-null, `out` must be valid for writes of 32 bytes. A null output is rejected. Output
+///   may overlap caller input because hashing and input borrows end before the digest is copied
+///   out; it must not overlap the stack-owned digest.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_blake3_keyed_digest(key: *const u8, data: *const u8, data_len: usize, out: *mut u8) -> u8 {
-  // SAFETY: Fixed-size FFI input is copied by value after null check.
+pub unsafe extern "C" fn ct_entry_blake3_keyed_digest(
+  key: *const u8,
+  data: *const u8,
+  data_len: usize,
+  out: *mut u8,
+) -> u8 {
+  // SAFETY: The function contract requires non-null key to expose 32 initialized, readable bytes
+  // that remain immutable while read_array copies them into owned storage.
   let Some(key) = (unsafe { read_array::<32>(key) }) else {
     return STATUS_ERR;
   };
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null data; input_slice handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return STATUS_ERR;
   };
 
   let digest = Blake3::keyed_digest(&key, data);
-  // SAFETY: The output pointer must reference exactly 32 writable bytes.
+  // SAFETY: The function contract requires non-null out to be valid for a 32-byte write. Hashing
+  // and caller-input borrows have ended, and the contract prevents overlap with the stack-owned
+  // digest copied by write_array.
   if unsafe { write_array(out, digest.as_bytes()) } {
     STATUS_OK
   } else {
@@ -1513,14 +2118,27 @@ pub extern "C" fn ct_entry_blake3_keyed_digest(key: *const u8, data: *const u8, 
   }
 }
 
+/// Compute a public-data SHA-256 digest through the CT harness.
+///
+/// # Safety
+///
+/// - A null `data` pointer represents an empty slice only when `data_len` is zero. A non-null
+///   pointer must reference one allocation of `data_len` initialized bytes, `data_len` must not
+///   exceed `isize::MAX`, and the range must remain immutable through its last use.
+/// - When non-null, `out` must be valid for writes of 32 bytes. A null output is rejected. Output
+///   may overlap the input because hashing and the input borrow end before the digest is copied
+///   out; it must not overlap the stack-owned digest.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_public_sha256_digest(data: *const u8, data_len: usize, out: *mut u8) -> u8 {
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+pub unsafe extern "C" fn ct_entry_public_sha256_digest(data: *const u8, data_len: usize, out: *mut u8) -> u8 {
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null data; input_slice handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return STATUS_ERR;
   };
   let digest = Sha256::digest(data);
-  // SAFETY: The output pointer must reference exactly 32 writable bytes.
+  // SAFETY: The function contract requires non-null out to be valid for a 32-byte write. Hashing
+  // and the caller-input borrow have ended, and the contract prevents overlap with the
+  // stack-owned digest copied by write_array.
   if unsafe { write_array(out, &digest) } {
     STATUS_OK
   } else {
@@ -1528,9 +2146,17 @@ pub extern "C" fn ct_entry_public_sha256_digest(data: *const u8, data_len: usize
   }
 }
 
+/// Compute a public-data IEEE CRC-32 checksum through the CT harness.
+///
+/// # Safety
+///
+/// A null `data` pointer represents an empty slice only when `data_len` is zero. A non-null
+/// pointer must reference one allocation of `data_len` initialized bytes, `data_len` must not
+/// exceed `isize::MAX`, and the range must remain immutable for the call.
 #[unsafe(no_mangle)]
-pub extern "C" fn ct_entry_public_crc32_checksum(data: *const u8, data_len: usize) -> u32 {
-  // SAFETY: FFI input pointer is validated by `input_slice`.
+pub unsafe extern "C" fn ct_entry_public_crc32_checksum(data: *const u8, data_len: usize) -> u32 {
+  // SAFETY: The function contract establishes the allocation, length bound, initialization,
+  // immutability, and lifetime required for non-null data; input_slice handles both null shapes.
   let Some(data) = (unsafe { input_slice(data, data_len) }) else {
     return 0;
   };

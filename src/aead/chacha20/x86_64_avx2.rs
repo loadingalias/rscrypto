@@ -7,13 +7,32 @@ use core::arch::x86_64::{
 use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, x86_ssse3_x4, xor_keystream_portable};
 
 const BLOCKS_PER_BATCH: usize = 8;
+const COUNTERS_PER_BATCH: u32 = 8;
 
+/// Generate and XOR a ChaCha20 stream with the AVX2 kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 is available and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`.
 #[inline]
-pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
-  // SAFETY: Backend selection guarantees AVX2 is available before this wrapper is chosen.
+pub(super) unsafe fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  // SAFETY: Production validates the counter range and detects AVX2; direct test and diagnostic callers establish the
+  // same conditions.
   unsafe { xor_keystream_impl(key, initial_counter, nonce, buffer) }
 }
 
+/// Generate and XOR a ChaCha20 stream with the AVX2 eight-way kernel and four-way/portable tails.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 is available and that the number of 64-byte blocks in `buffer` does not exhaust
+/// the 32-bit block counter starting at `initial_counter`.
 #[target_feature(enable = "avx2")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   // vpshufb masks for byte-aligned rotations (16-bit and 8-bit).
@@ -27,33 +46,33 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
   let mut counter = initial_counter;
   let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
   for chunk in &mut batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some());
+    debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
-    let mut x0 = _mm256_set1_epi32(0x6170_7865u32 as i32);
-    let mut x1 = _mm256_set1_epi32(0x3320_646eu32 as i32);
-    let mut x2 = _mm256_set1_epi32(0x7962_2d32u32 as i32);
-    let mut x3 = _mm256_set1_epi32(0x6b20_6574u32 as i32);
-    let mut x4 = _mm256_set1_epi32(load_u32_le(&key[0..4]) as i32);
-    let mut x5 = _mm256_set1_epi32(load_u32_le(&key[4..8]) as i32);
-    let mut x6 = _mm256_set1_epi32(load_u32_le(&key[8..12]) as i32);
-    let mut x7 = _mm256_set1_epi32(load_u32_le(&key[12..16]) as i32);
-    let mut x8 = _mm256_set1_epi32(load_u32_le(&key[16..20]) as i32);
-    let mut x9 = _mm256_set1_epi32(load_u32_le(&key[20..24]) as i32);
-    let mut x10 = _mm256_set1_epi32(load_u32_le(&key[24..28]) as i32);
-    let mut x11 = _mm256_set1_epi32(load_u32_le(&key[28..32]) as i32);
+    let mut x0 = _mm256_set1_epi32(0x6170_7865u32.cast_signed());
+    let mut x1 = _mm256_set1_epi32(0x3320_646eu32.cast_signed());
+    let mut x2 = _mm256_set1_epi32(0x7962_2d32u32.cast_signed());
+    let mut x3 = _mm256_set1_epi32(0x6b20_6574u32.cast_signed());
+    let mut x4 = _mm256_set1_epi32(load_u32_le(&key[0..4]).cast_signed());
+    let mut x5 = _mm256_set1_epi32(load_u32_le(&key[4..8]).cast_signed());
+    let mut x6 = _mm256_set1_epi32(load_u32_le(&key[8..12]).cast_signed());
+    let mut x7 = _mm256_set1_epi32(load_u32_le(&key[12..16]).cast_signed());
+    let mut x8 = _mm256_set1_epi32(load_u32_le(&key[16..20]).cast_signed());
+    let mut x9 = _mm256_set1_epi32(load_u32_le(&key[20..24]).cast_signed());
+    let mut x10 = _mm256_set1_epi32(load_u32_le(&key[24..28]).cast_signed());
+    let mut x11 = _mm256_set1_epi32(load_u32_le(&key[28..32]).cast_signed());
     let mut x12 = _mm256_setr_epi32(
-      counter as i32,
-      counter.wrapping_add(1) as i32,
-      counter.wrapping_add(2) as i32,
-      counter.wrapping_add(3) as i32,
-      counter.wrapping_add(4) as i32,
-      counter.wrapping_add(5) as i32,
-      counter.wrapping_add(6) as i32,
-      counter.wrapping_add(7) as i32,
+      counter.cast_signed(),
+      counter.wrapping_add(1).cast_signed(),
+      counter.wrapping_add(2).cast_signed(),
+      counter.wrapping_add(3).cast_signed(),
+      counter.wrapping_add(4).cast_signed(),
+      counter.wrapping_add(5).cast_signed(),
+      counter.wrapping_add(6).cast_signed(),
+      counter.wrapping_add(7).cast_signed(),
     );
-    let mut x13 = _mm256_set1_epi32(load_u32_le(&nonce[0..4]) as i32);
-    let mut x14 = _mm256_set1_epi32(load_u32_le(&nonce[4..8]) as i32);
-    let mut x15 = _mm256_set1_epi32(load_u32_le(&nonce[8..12]) as i32);
+    let mut x13 = _mm256_set1_epi32(load_u32_le(&nonce[0..4]).cast_signed());
+    let mut x14 = _mm256_set1_epi32(load_u32_le(&nonce[4..8]).cast_signed());
+    let mut x15 = _mm256_set1_epi32(load_u32_le(&nonce[8..12]).cast_signed());
 
     let o0 = x0;
     let o1 = x1;
@@ -108,7 +127,6 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     // to block-major (each pair of YMM registers = one 64-byte block).
     //
     // Stage 1: 32-bit interleave.
-    // SAFETY: AVX2 intrinsics are valid under the enclosing target_feature.
     let s1_0 = _mm256_unpacklo_epi32(x0, x1);
     let s1_1 = _mm256_unpackhi_epi32(x0, x1);
     let s1_2 = _mm256_unpacklo_epi32(x2, x3);
@@ -162,7 +180,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       xor_block_pair(ptr, 3, 7, s2_3, s2_7, s2_11, s2_15);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
   let remainder = batches.into_remainder();
@@ -171,7 +189,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     // SAFETY: AVX2-capable CPUs provide the SSSE3 instructions used by the
     // 4-block tail kernel, and `chunk` is exactly 4 ChaCha20 blocks.
     unsafe { x86_ssse3_x4::xor_blocks(key, counter, nonce, chunk) };
-    counter = counter.wrapping_add(x86_ssse3_x4::BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(x86_ssse3_x4::COUNTERS_PER_BATCH);
   }
 
   let remainder = x4_batches.into_remainder();
@@ -182,6 +200,11 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
 
 /// Permute stage-2 results into two complete blocks (lo_idx and hi_idx) and
 /// XOR+store them in-place. Each block is 64 bytes = 2 × YMM.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 is available, `buf` is valid for exclusive access to 512 initialized bytes,
+/// and `lo_idx` and `hi_idx` are distinct values below eight.
 #[inline(always)]
 unsafe fn xor_block_pair(
   buf: *mut u8,

@@ -35,20 +35,12 @@ impl<T: Copy> SizeClassDispatch<T> {
 #[must_use]
 #[cfg(feature = "sha2")]
 pub(crate) fn len_hint_from_u64(v: u64) -> usize {
-  if (v as usize) as u64 == v {
-    v as usize
-  } else {
-    usize::MAX
-  }
+  usize::try_from(v).unwrap_or(usize::MAX)
 }
 
 #[inline]
 #[must_use]
 #[cfg(feature = "sha2")]
 pub(crate) fn len_hint_from_u128(v: u128) -> usize {
-  if (v as usize) as u128 == v {
-    v as usize
-  } else {
-    usize::MAX
-  }
+  usize::try_from(v).unwrap_or(usize::MAX)
 }

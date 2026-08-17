@@ -128,7 +128,7 @@ expect_failure "$invalid_tool_digest" "direct tool digest is malformed"
 
 mutable_tool_url="$TMP_ROOT/mutable-tool-url"
 make_fixture "$mutable_tool_url"
-sed -i.bak 's#/download/v46\.0\.1/#/download/Latest/#' \
+sed -i.bak 's#/download/v47\.0\.3/#/download/Latest/#' \
   "$mutable_tool_url/.config/ci-tool-archives.tsv"
 rm -f "$mutable_tool_url/.config/ci-tool-archives.tsv.bak"
 expect_failure "$mutable_tool_url" "direct tool URL resolves a mutable release"

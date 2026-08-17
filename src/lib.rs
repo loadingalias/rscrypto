@@ -14,7 +14,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.8.0", default-features = false, features = ["sha2"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["sha2"] }
 //! ```
 //!
 //! # Guides
@@ -32,6 +32,8 @@
 //! - XOFs: `Type::xof(data)` or `new` / `update` / `finalize_xof`.
 //! - MACs: `Type::mac(key, data)` and `Type::verify_tag(key, data, tag)`.
 //! - AEADs: typed keys and nonces, with combined, detached, and `alloc` Vec helpers.
+#![deny(missing_debug_implementations, missing_docs)]
+#![deny(clippy::print_stderr, clippy::print_stdout)]
 #![cfg_attr(
   feature = "sha2",
   doc = r#"
@@ -125,9 +127,6 @@ assert!(
 //! evidence. See the security guidance for nonce lifecycle, PHC verification
 //! limits, and platform fallback notes.
 
-#![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(not(test), deny(clippy::expect_used))]
-#![cfg_attr(not(test), deny(clippy::indexing_slicing))]
 // Exotic-architecture backends require nightly-only features (inline asm +
 // portable_simd + unstable target-feature flags). Primary targets (x86_64,
 // aarch64, wasm) compile on stable Rust 1.91.0.
@@ -184,7 +183,6 @@ assert!(
       feature = "crc16",
       feature = "crc24",
       feature = "crc32",
-      feature = "crc64",
       feature = "blake2b",
       feature = "blake2s",
       feature = "blake3",
@@ -205,7 +203,6 @@ assert!(
       feature = "crc16",
       feature = "crc24",
       feature = "crc32",
-      feature = "crc64",
       feature = "aes-gcm",
       feature = "aes-gcm-siv",
       feature = "aegis256"
@@ -223,17 +220,16 @@ assert!(
 #![cfg_attr(
   all(
     target_arch = "riscv64",
-    any(feature = "blake3", feature = "chacha20poly1305", feature = "xchacha20poly1305")
+    any(
+      feature = "blake3",
+      feature = "chacha20poly1305",
+      feature = "xchacha20poly1305",
+      feature = "argon2"
+    )
   ),
   feature(portable_simd)
 )]
-#![cfg_attr(
-  all(
-    target_arch = "riscv32",
-    any(feature = "sha2", feature = "aes-gcm", feature = "aes-gcm-siv", feature = "aegis256")
-  ),
-  feature(riscv_ext_intrinsics)
-)]
+#![cfg_attr(all(target_arch = "riscv32", feature = "sha2"), feature(riscv_ext_intrinsics))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -340,20 +336,12 @@ mod secret;
 ))]
 pub mod hashes;
 
-#[cfg_attr(
-  not(any(feature = "kmac", feature = "ascon-hash", feature = "sha3")),
-  allow(dead_code)
-)]
 #[inline]
 #[track_caller]
+#[cfg(any(test, feature = "kmac", feature = "sha3", feature = "ascon-hash"))]
 pub(crate) fn bytes_to_bits(len: usize) -> u64 {
-  let Ok(bytes) = u64::try_from(len) else {
-    panic!("byte length exceeds u64");
-  };
-  let Some(bits) = bytes.checked_mul(8) else {
-    panic!("byte length bit count exceeds u64");
-  };
-  bits
+  let bytes = u64::try_from(len).expect("byte length exceeds u64");
+  bytes.checked_mul(8).expect("byte length bit count exceeds u64")
 }
 
 // Checksum re-exports.
@@ -417,10 +405,10 @@ pub use auth::{Pbkdf2Error, Pbkdf2Params, Pbkdf2Sha256, Pbkdf2Sha512, Pbkdf2Veri
 pub use auth::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 #[cfg(feature = "rsa")]
 pub use auth::{
-  RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract, RsaKeyGenerationError,
-  RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError, RsaPrivateScratch,
-  RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy, RsaPublicKey,
-  RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
+  RsaBlindingPair, RsaEncryptionError, RsaJwtAlgorithm, RsaJwtVerifier, RsaKeyError, RsaKeyGenerationContract,
+  RsaKeyGenerationError, RsaOaepProfile, RsaPkcs1v15Profile, RsaPrivateKey, RsaPrivateKeyParts, RsaPrivateOpError,
+  RsaPrivateScratch, RsaProtocolAlgorithmError, RsaPssProfile, RsaPublicExponent, RsaPublicExponentPolicy,
+  RsaPublicKey, RsaPublicKeyPolicy, RsaPublicOpError, RsaPublicScratch, RsaSignatureProfile, RsaSignatureSigner,
   RsaSignatureVerifier, RsaTlsSignatureSchemes, RsaX509PublicKey, RsaX509PublicKeyAlgorithm,
 };
 #[cfg(feature = "scrypt")]
@@ -471,8 +459,6 @@ pub use hashes::fast::{Xxh3_128Hasher, Xxh3BuildHasher, Xxh3Hasher};
   feature = "xchacha20poly1305",
   feature = "aegis256",
   feature = "ascon-aead",
-  feature = "ecdsa-p256",
-  feature = "ecdsa-p384",
   feature = "ed25519",
   feature = "ml-kem",
   feature = "x25519"
@@ -898,12 +884,14 @@ let third = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
 let _ = first.ct_eq(&second) == second.ct_eq(&third);
 ```
 
-```compile_fail
+`Debug` output is deliberately opaque and must not reveal the decision.
+
+```rust
 use rscrypto::HmacSha256Tag;
 
 let left = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
 let right = HmacSha256Tag::from_bytes([0u8; HmacSha256Tag::LENGTH]);
-let _ = format!("{:?}", left.ct_eq(&right));
+assert_eq!(format!("{:?}", left.ct_eq(&right)), "CtDecision(..)");
 ```
 
 ```rust
@@ -1192,8 +1180,10 @@ mod direct_io_write_tests {
   #[test]
   fn digest_state_accepts_direct_io_write() {
     let mut digest = Sha256::new();
-    digest.write_all(b"hello ").unwrap();
-    digest.write_all(b"world").unwrap();
+    digest
+      .write_all(b"hello ")
+      .expect("in-memory digest write must succeed");
+    digest.write_all(b"world").expect("in-memory digest write must succeed");
 
     assert_eq!(digest.finalize(), Sha256::digest(b"hello world"));
   }
@@ -1201,8 +1191,12 @@ mod direct_io_write_tests {
   #[test]
   fn checksum_state_accepts_direct_io_write() {
     let mut checksum = Crc32C::new();
-    checksum.write_all(b"hello ").unwrap();
-    checksum.write_all(b"world").unwrap();
+    checksum
+      .write_all(b"hello ")
+      .expect("in-memory checksum write must succeed");
+    checksum
+      .write_all(b"world")
+      .expect("in-memory checksum write must succeed");
 
     assert_eq!(checksum.finalize(), Crc32C::checksum(b"hello world"));
   }
@@ -1212,7 +1206,9 @@ mod direct_io_write_tests {
     let mut digest = Sha256::new();
     let bufs = [IoSlice::new(b"hello "), IoSlice::new(b"world")];
 
-    let written = digest.write_vectored(&bufs).unwrap();
+    let written = digest
+      .write_vectored(&bufs)
+      .expect("in-memory vectored digest write must succeed");
 
     assert_eq!(written, b"hello world".len());
     assert_eq!(digest.finalize(), Sha256::digest(b"hello world"));
@@ -1221,7 +1217,6 @@ mod direct_io_write_tests {
 
 #[cfg(test)]
 mod send_sync_assertions {
-  #![allow(unused_imports)]
   use super::*;
 
   fn assert_send_sync<T: Send + Sync>() {}
@@ -1343,14 +1338,14 @@ mod send_sync_assertions {
   #[cfg(all(feature = "checksums", feature = "std"))]
   fn io_adapter_types_are_send_and_sync() {
     // ChecksumReader/Writer are Send+Sync when their inner types are
-    assert_send_sync::<traits::io::ChecksumReader<std::io::Cursor<Vec<u8>>, Crc32C>>();
+    assert_send_sync::<traits::io::ChecksumReader<&'static [u8], Crc32C>>();
     assert_send_sync::<traits::io::ChecksumWriter<Vec<u8>, Crc32C>>();
   }
 
   #[test]
   #[cfg(all(feature = "hashes", feature = "std"))]
   fn digest_io_adapter_types_are_send_and_sync() {
-    assert_send_sync::<hashes::DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
+    assert_send_sync::<hashes::DigestReader<&'static [u8], Sha256>>();
     assert_send_sync::<hashes::DigestWriter<Vec<u8>, Sha256>>();
   }
 
@@ -1500,14 +1495,14 @@ mod send_sync_assertions {
   #[test]
   #[cfg(all(feature = "checksums", feature = "std"))]
   fn io_adapter_types_are_debug() {
-    assert_debug::<traits::io::ChecksumReader<std::io::Cursor<Vec<u8>>, Crc32C>>();
+    assert_debug::<traits::io::ChecksumReader<&'static [u8], Crc32C>>();
     assert_debug::<traits::io::ChecksumWriter<Vec<u8>, Crc32C>>();
   }
 
   #[test]
   #[cfg(all(feature = "hashes", feature = "std"))]
   fn digest_io_adapter_types_are_debug() {
-    assert_debug::<hashes::DigestReader<std::io::Cursor<Vec<u8>>, Sha256>>();
+    assert_debug::<hashes::DigestReader<&'static [u8], Sha256>>();
     assert_debug::<hashes::DigestWriter<Vec<u8>, Sha256>>();
   }
 }

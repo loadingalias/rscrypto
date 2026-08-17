@@ -16,7 +16,9 @@ Thumbs.db
 AGENTS.md
 
 # Zed/IDE
-.zed
+.zed/*
+!.zed/settings.json
+!.zed/tasks.json
 
 # Keys/Creds
 *.pem

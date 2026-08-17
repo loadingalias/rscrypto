@@ -7,7 +7,14 @@ use core::arch::x86_64::{
 use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le};
 
 pub(super) const BLOCKS_PER_BATCH: usize = 4;
+pub(super) const COUNTERS_PER_BATCH: u32 = 4;
 
+/// XOR four consecutive ChaCha20 blocks with the SSSE3 four-way kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that SSSE3 and AVX are available, `chunk` is exactly four blocks, and
+/// `initial_counter + 3` fits in `u32`.
 #[inline]
 pub(super) unsafe fn xor_blocks(
   key: &[u8; KEY_SIZE],
@@ -16,37 +23,45 @@ pub(super) unsafe fn xor_blocks(
   chunk: &mut [u8],
 ) {
   debug_assert_eq!(chunk.len(), BLOCK_SIZE * BLOCKS_PER_BATCH);
+  debug_assert!(initial_counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
   // SAFETY: callers only reach this helper from x86 SIMD backends whose
-  // dispatch gates guarantee AVX/SSSE3-capable hardware.
+  // dispatch or forced-backend contracts guarantee AVX/SSSE3-capable hardware; the assertions above restate the
+  // exact block and counter bounds.
   unsafe { xor_blocks_impl(key, initial_counter, nonce, chunk) }
 }
 
+/// Generate and XOR four consecutive ChaCha20 blocks.
+///
+/// # Safety
+///
+/// The caller must ensure that SSSE3 and AVX are available, `chunk` is exactly four blocks, and
+/// `initial_counter + 3` fits in `u32`.
 #[target_feature(enable = "ssse3,avx")]
 unsafe fn xor_blocks_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], chunk: &mut [u8]) {
   let rot16 = _mm_set_epi8(13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2);
   let rot8 = _mm_set_epi8(14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3);
 
-  let mut x0 = _mm_set1_epi32(0x6170_7865u32 as i32);
-  let mut x1 = _mm_set1_epi32(0x3320_646eu32 as i32);
-  let mut x2 = _mm_set1_epi32(0x7962_2d32u32 as i32);
-  let mut x3 = _mm_set1_epi32(0x6b20_6574u32 as i32);
-  let mut x4 = _mm_set1_epi32(load_u32_le(&key[0..4]) as i32);
-  let mut x5 = _mm_set1_epi32(load_u32_le(&key[4..8]) as i32);
-  let mut x6 = _mm_set1_epi32(load_u32_le(&key[8..12]) as i32);
-  let mut x7 = _mm_set1_epi32(load_u32_le(&key[12..16]) as i32);
-  let mut x8 = _mm_set1_epi32(load_u32_le(&key[16..20]) as i32);
-  let mut x9 = _mm_set1_epi32(load_u32_le(&key[20..24]) as i32);
-  let mut x10 = _mm_set1_epi32(load_u32_le(&key[24..28]) as i32);
-  let mut x11 = _mm_set1_epi32(load_u32_le(&key[28..32]) as i32);
+  let mut x0 = _mm_set1_epi32(0x6170_7865u32.cast_signed());
+  let mut x1 = _mm_set1_epi32(0x3320_646eu32.cast_signed());
+  let mut x2 = _mm_set1_epi32(0x7962_2d32u32.cast_signed());
+  let mut x3 = _mm_set1_epi32(0x6b20_6574u32.cast_signed());
+  let mut x4 = _mm_set1_epi32(load_u32_le(&key[0..4]).cast_signed());
+  let mut x5 = _mm_set1_epi32(load_u32_le(&key[4..8]).cast_signed());
+  let mut x6 = _mm_set1_epi32(load_u32_le(&key[8..12]).cast_signed());
+  let mut x7 = _mm_set1_epi32(load_u32_le(&key[12..16]).cast_signed());
+  let mut x8 = _mm_set1_epi32(load_u32_le(&key[16..20]).cast_signed());
+  let mut x9 = _mm_set1_epi32(load_u32_le(&key[20..24]).cast_signed());
+  let mut x10 = _mm_set1_epi32(load_u32_le(&key[24..28]).cast_signed());
+  let mut x11 = _mm_set1_epi32(load_u32_le(&key[28..32]).cast_signed());
   let mut x12 = _mm_setr_epi32(
-    initial_counter as i32,
-    initial_counter.wrapping_add(1) as i32,
-    initial_counter.wrapping_add(2) as i32,
-    initial_counter.wrapping_add(3) as i32,
+    initial_counter.cast_signed(),
+    initial_counter.wrapping_add(1).cast_signed(),
+    initial_counter.wrapping_add(2).cast_signed(),
+    initial_counter.wrapping_add(3).cast_signed(),
   );
-  let mut x13 = _mm_set1_epi32(load_u32_le(&nonce[0..4]) as i32);
-  let mut x14 = _mm_set1_epi32(load_u32_le(&nonce[4..8]) as i32);
-  let mut x15 = _mm_set1_epi32(load_u32_le(&nonce[8..12]) as i32);
+  let mut x13 = _mm_set1_epi32(load_u32_le(&nonce[0..4]).cast_signed());
+  let mut x14 = _mm_set1_epi32(load_u32_le(&nonce[4..8]).cast_signed());
+  let mut x15 = _mm_set1_epi32(load_u32_le(&nonce[8..12]).cast_signed());
 
   let o0 = x0;
   let o1 = x1;
@@ -129,6 +144,11 @@ fn transpose_words(w0: __m128i, w1: __m128i, w2: __m128i, w3: __m128i) -> [__m12
   }
 }
 
+/// XOR one generated ChaCha20 block into a selected block of a four-block buffer.
+///
+/// # Safety
+///
+/// `buf` must be valid for exclusive access to 256 initialized bytes, and `idx` must be less than four.
 #[inline(always)]
 unsafe fn xor_block(buf: *mut u8, idx: usize, w03: __m128i, w47: __m128i, w811: __m128i, w1215: __m128i) {
   // SAFETY: caller guarantees `buf` points to four full ChaCha20 blocks and
@@ -142,6 +162,11 @@ unsafe fn xor_block(buf: *mut u8, idx: usize, w03: __m128i, w47: __m128i, w811: 
   }
 }
 
+/// XOR 16 keystream bytes into an in-place buffer segment.
+///
+/// # Safety
+///
+/// `ptr` must be valid for reading and exclusively writing 16 initialized bytes. It need not be aligned.
 #[inline(always)]
 unsafe fn xor_store(ptr: *mut u8, keystream: __m128i) {
   // SAFETY: caller guarantees `ptr..ptr+16` is in bounds for unaligned access.

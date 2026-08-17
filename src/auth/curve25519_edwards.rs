@@ -4,28 +4,23 @@
 //! same Curve25519 basepoint. Reuse the Ed25519 basepoint machinery instead of
 //! maintaining a second precompute stack for the identical scalar-mul problem.
 
-#[allow(dead_code)]
+#[cfg(feature = "ed25519")]
 #[path = "ed25519/constants.rs"]
 pub(crate) mod constants;
-#[allow(dead_code)]
 #[path = "ed25519/field.rs"]
 pub(crate) mod field;
 #[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
 #[path = "ed25519/field_avx2.rs"]
 pub(crate) mod field_avx2;
 #[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
 #[path = "ed25519/field_ifma.rs"]
 pub(crate) mod field_ifma;
-#[allow(dead_code)]
 #[path = "ed25519/point.rs"]
 pub(crate) mod point;
 #[cfg(target_arch = "x86_64")]
-#[allow(dead_code)]
 #[path = "ed25519/point_avx2.rs"]
 pub(crate) mod point_avx2;
-#[allow(dead_code)]
+#[cfg(feature = "ed25519")]
 #[path = "ed25519/scalar.rs"]
 pub(crate) mod scalar;
 
@@ -39,7 +34,6 @@ pub use point_avx2::{
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest validated CT path.
 #[must_use]
-#[allow(dead_code)]
 pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
   {
@@ -58,4 +52,27 @@ pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::Extended
   }
 
   point::ExtendedPoint::scalar_mul_basepoint(scalar_bytes)
+}
+
+/// Decompose a scalar encoding into signed radix-16 digits in `[-8, 8]`.
+#[must_use]
+fn scalar_radix_16(bytes: &[u8; 32]) -> [i8; 64] {
+  debug_assert!(bytes[31] <= 127);
+
+  let mut digits = [0i8; 64];
+  for (index, byte) in bytes.iter().copied().enumerate() {
+    let low = index.strict_mul(2);
+    let high = low.strict_add(1);
+    digits[low] = i8::from_ne_bytes([byte & 0x0F]);
+    digits[high] = i8::from_ne_bytes([(byte >> 4) & 0x0F]);
+  }
+
+  for index in 0usize..63 {
+    let next = index.strict_add(1);
+    let carry = digits[index].strict_add(8) >> 4;
+    digits[index] = digits[index].strict_sub(carry << 4);
+    digits[next] = digits[next].strict_add(carry);
+  }
+
+  digits
 }

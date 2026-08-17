@@ -19,7 +19,6 @@
 
 // SAFETY: All array indexing in this module uses bounded loop indices (0..256, 0..N).
 // Clippy cannot prove this in const fn contexts, but bounds are statically guaranteed.
-#![allow(clippy::indexing_slicing)]
 
 // CRC-16 Table Generation
 
@@ -28,7 +27,7 @@
 /// Uses bit-by-bit computation with the reflected polynomial.
 #[cfg(feature = "crc16")]
 #[must_use]
-pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
+pub(super) const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
   let mut crc = index as u16;
   let mut i: u32 = 0;
   while i < 8 {
@@ -49,21 +48,24 @@ pub const fn crc16_table_entry(poly: u16, index: u8) -> u16 {
 /// * `poly` - The reflected polynomial
 #[cfg(feature = "crc16")]
 #[must_use]
-pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
+pub(in crate::checksum) const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
   let mut tables = [[0u16; 256]; 8];
 
-  let mut i = 0u16;
-  while i < 256 {
-    tables[0][i as usize] = crc16_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    tables[0][index as usize] = crc16_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
 
   let mut k = 1usize;
   while k < 8 {
-    i = 0;
+    let mut i = 0usize;
     while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      let prev = tables[k.strict_sub(1)][i];
+      tables[k][i] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
     k = k.strict_add(1);
@@ -84,7 +86,7 @@ pub const fn generate_crc16_tables_8(poly: u16) -> [[u16; 256]; 8] {
 /// The returned entry has its low 8 bits cleared.
 #[cfg(feature = "crc24")]
 #[must_use]
-pub const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
+const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
   // Expand a 24-bit CRC into the top 24 bits of a u32.
   // Polynomial is aligned to the same position (<< 8).
   let poly = poly.strict_shl(8);
@@ -108,21 +110,24 @@ pub const fn crc24_table_entry(poly: u32, index: u8) -> u32 {
 /// * `poly` - The normal polynomial (low 24 bits), e.g. 0x864CFB for OpenPGP
 #[cfg(feature = "crc24")]
 #[must_use]
-pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
+pub(in crate::checksum) const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut tables = [[0u32; 256]; 8];
 
-  let mut i = 0u16;
-  while i < 256 {
-    tables[0][i as usize] = crc24_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    tables[0][index as usize] = crc24_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
 
   let mut k = 1usize;
   while k < 8 {
-    i = 0;
+    let mut i = 0usize;
     while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
+      let prev = tables[k.strict_sub(1)][i];
+      tables[k][i] = tables[0][(prev >> 24) as usize] ^ (prev.strict_shl(8));
       i = i.strict_add(1);
     }
     k = k.strict_add(1);
@@ -138,7 +143,7 @@ pub const fn generate_crc24_tables_8(poly: u32) -> [[u32; 256]; 8] {
 /// Uses bit-by-bit computation with the reflected polynomial.
 #[cfg(feature = "crc32")]
 #[must_use]
-pub const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
+const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
   let mut crc = index as u32;
   let mut i: u32 = 0;
   while i < 8 {
@@ -159,21 +164,24 @@ pub const fn crc32_table_entry(poly: u32, index: u8) -> u32 {
 /// * `poly` - The reflected polynomial
 #[cfg(all(test, feature = "crc32"))]
 #[must_use]
-pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
+pub(super) const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
   let mut tables = [[0u32; 256]; 8];
 
-  let mut i: u16 = 0;
-  while i < 256 {
-    tables[0][i as usize] = crc32_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    tables[0][index as usize] = crc32_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
 
   let mut k: usize = 1;
   while k < 8 {
-    i = 0;
+    let mut i = 0usize;
     while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      let prev = tables[k.strict_sub(1)][i];
+      tables[k][i] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
     k = k.strict_add(1);
@@ -189,21 +197,24 @@ pub const fn generate_crc32_tables_8(poly: u32) -> [[u32; 256]; 8] {
 /// * `poly` - The reflected polynomial
 #[cfg(feature = "crc32")]
 #[must_use]
-pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
+pub(in crate::checksum) const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
   let mut tables = [[0u32; 256]; 16];
 
-  let mut i: u16 = 0;
-  while i < 256 {
-    tables[0][i as usize] = crc32_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    tables[0][index as usize] = crc32_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
 
   let mut k: usize = 1;
   while k < 16 {
-    i = 0;
+    let mut i = 0usize;
     while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      let prev = tables[k.strict_sub(1)][i];
+      tables[k][i] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
     k = k.strict_add(1);
@@ -219,7 +230,7 @@ pub const fn generate_crc32_tables_16(poly: u32) -> [[u32; 256]; 16] {
 /// Uses bit-by-bit computation with the reflected polynomial.
 #[cfg(feature = "crc64")]
 #[must_use]
-pub const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
+pub(super) const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
   let mut crc = index as u64;
   let mut i: u32 = 0;
   while i < 8 {
@@ -240,21 +251,24 @@ pub const fn crc64_table_entry(poly: u64, index: u8) -> u64 {
 /// * `poly` - The reflected polynomial
 #[cfg(all(feature = "crc64", any(target_arch = "x86_64", target_arch = "aarch64", test)))]
 #[must_use]
-pub const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
+pub(in crate::checksum) const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
   let mut tables = [[0u64; 256]; 8];
 
-  let mut i = 0u16;
-  while i < 256 {
-    tables[0][i as usize] = crc64_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    tables[0][index as usize] = crc64_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
 
   let mut k = 1usize;
   while k < 8 {
-    i = 0;
+    let mut i = 0usize;
     while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      let prev = tables[k.strict_sub(1)][i];
+      tables[k][i] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
     k = k.strict_add(1);
@@ -273,21 +287,24 @@ pub const fn generate_crc64_tables_8(poly: u64) -> [[u64; 256]; 8] {
 /// * `poly` - The reflected polynomial
 #[cfg(feature = "crc64")]
 #[must_use]
-pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
+pub(in crate::checksum) const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
   let mut tables = [[0u64; 256]; 16];
 
-  let mut i = 0u16;
-  while i < 256 {
-    tables[0][i as usize] = crc64_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    tables[0][index as usize] = crc64_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
 
   let mut k = 1usize;
   while k < 16 {
-    i = 0;
+    let mut i = 0usize;
     while i < 256 {
-      let prev = tables[k - 1][i as usize];
-      tables[k][i as usize] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
+      let prev = tables[k.strict_sub(1)][i];
+      tables[k][i] = tables[0][(prev & 0xFF) as usize] ^ (prev >> 8);
       i = i.strict_add(1);
     }
     k = k.strict_add(1);
@@ -303,19 +320,19 @@ pub const fn generate_crc64_tables_16(poly: u64) -> [[u64; 256]; 16] {
 /// CRC-16-CCITT polynomial (0x1021) in reflected form.
 /// Used by X.25, V.41, HDLC, XMODEM, Bluetooth, PACTOR, SD, etc.
 #[cfg(feature = "crc16")]
-pub const CRC16_CCITT_POLY: u16 = 0x8408;
+pub(in crate::checksum) const CRC16_CCITT_POLY: u16 = 0x8408;
 
 /// CRC-16-IBM polynomial (0x8005) in reflected form.
 /// Used by Modbus, USB, ANSI X3.28, etc.
 #[cfg(feature = "crc16")]
-pub const CRC16_IBM_POLY: u16 = 0xA001;
+pub(in crate::checksum) const CRC16_IBM_POLY: u16 = 0xA001;
 
 // CRC-24 Polynomials
 
 /// CRC-24-OPENPGP polynomial (0x864CFB) in normal form.
 /// Used by OpenPGP (RFC 4880).
 #[cfg(feature = "crc24")]
-pub const CRC24_OPENPGP_POLY: u32 = 0x0086_4CFB;
+pub(in crate::checksum) const CRC24_OPENPGP_POLY: u32 = 0x0086_4CFB;
 
 // CRC-64 Polynomials
 
@@ -325,23 +342,23 @@ pub const CRC24_OPENPGP_POLY: u32 = 0x0086_4CFB;
 ///
 /// Used by Ethernet, gzip, zip, PNG, etc.
 #[cfg(feature = "crc32")]
-pub const CRC32_IEEE_POLY: u32 = 0xEDB8_8320;
+pub(in crate::checksum) const CRC32_IEEE_POLY: u32 = 0xEDB8_8320;
 
 /// CRC-32C (Castagnoli) polynomial (0x1EDC6F41) in reflected form.
 ///
 /// Used by iSCSI, SCTP, ext4, Btrfs, SSE4.2 `crc32`, etc.
 #[cfg(feature = "crc32")]
-pub const CRC32C_POLY: u32 = 0x82F6_3B78;
+pub(in crate::checksum) const CRC32C_POLY: u32 = 0x82F6_3B78;
 
 /// CRC-64-XZ polynomial (0x42F0E1EBA9EA3693) in reflected form.
 /// Used by XZ Utils, 7-Zip, LZMA.
 #[cfg(feature = "crc64")]
-pub const CRC64_XZ_POLY: u64 = 0xC96C_5795_D787_0F42;
+pub(in crate::checksum) const CRC64_XZ_POLY: u64 = 0xC96C_5795_D787_0F42;
 
 /// CRC-64-NVME polynomial (0xAD93D23594C93659) in reflected form.
 /// Used by NVMe specification.
 #[cfg(feature = "crc64")]
-pub const CRC64_NVME_POLY: u64 = 0x9A6C_9329_AC4B_C9B5;
+pub(in crate::checksum) const CRC64_NVME_POLY: u64 = 0x9A6C_9329_AC4B_C9B5;
 
 // Tests
 

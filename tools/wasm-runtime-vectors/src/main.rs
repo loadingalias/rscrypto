@@ -1,25 +1,31 @@
 use rscrypto::{Blake2b512, Blake3, Digest, Sha256, Sha512};
 
-fn hex_value(byte: u8) -> u8 {
+fn hex_value(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => byte - b'0',
-    b'a'..=b'f' => byte - b'a' + 10,
-    b'A'..=b'F' => byte - b'A' + 10,
-    _ => panic!("invalid hex digit"),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+    _ => None,
   }
 }
 
 fn assert_hex(actual: &[u8], expected: &str) {
   assert_eq!(actual.len().strict_mul(2), expected.len());
   for (i, chunk) in expected.as_bytes().chunks_exact(2).enumerate() {
-    let byte = (hex_value(chunk[0]) << 4) | hex_value(chunk[1]);
+    let high = hex_value(chunk[0]).expect("known hash vector must contain hexadecimal digits");
+    let low = hex_value(chunk[1]).expect("known hash vector must contain hexadecimal digits");
+    let byte = high.strict_shl(4) | low;
     assert_eq!(actual[i], byte, "hex mismatch at byte {i}");
   }
 }
 
 fn patterned_bytes(len: usize) -> Vec<u8> {
   (0..len)
-    .map(|i| (i as u8).wrapping_mul(37).wrapping_add((i >> 8) as u8))
+    .map(|i| {
+      i.to_le_bytes()[0]
+        .wrapping_mul(37)
+        .wrapping_add(i.strict_shr(8).to_le_bytes()[0])
+    })
     .collect()
 }
 

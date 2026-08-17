@@ -3,8 +3,6 @@
 //! This module owns the ABI boundary. `rsa.rs` owns all RSA validation,
 //! representative range checks, dispatch, and fallback semantics.
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 global_asm!(include_str!("asm/rscrypto_rsa_aarch64_linux_elf.s"));
@@ -74,7 +72,14 @@ pub(super) fn mont_mul_cios_words(
   //    read/write ranges. The assembly does not retain pointers after returning.
   // 4. `out` does not alias `a`, `b`, or `modulus` in current non-in-place callers.
   unsafe {
-    rscrypto_rsa_bn_mul_mont_words_aarch64_elf(out.as_mut_ptr(), a.as_ptr(), b.as_ptr(), modulus.as_ptr(), &n0, words)
+    rscrypto_rsa_bn_mul_mont_words_aarch64_elf(
+      out.as_mut_ptr(),
+      a.as_ptr(),
+      b.as_ptr(),
+      modulus.as_ptr(),
+      &raw const n0,
+      words,
+    )
   };
 }
 
@@ -104,7 +109,7 @@ pub(super) fn mont_square_cios_words_in_place(
       value.as_ptr(),
       value.as_ptr(),
       modulus.as_ptr(),
-      &n0,
+      &raw const n0,
       words,
     )
   };
@@ -139,7 +144,7 @@ pub(super) fn mont_mul_cios_words_in_place_left(
       left.as_ptr(),
       right.as_ptr(),
       modulus.as_ptr(),
-      &n0,
+      &raw const n0,
       words,
     )
   };
@@ -162,8 +167,8 @@ pub(super) fn mont_reduce_cios_words(
 
   // SAFETY: RSA Montgomery REDC assembly call because:
   // 1. This module is compiled only for Linux AArch64 and embeds the matching ELF symbol.
-  // 2. The caller checks `out`, `value`, and `modulus` are 48 or 64 `u64` limbs and `t` has `2 *
-  //    words + 2` scratch limbs.
+  // 2. The caller checks `out`, `value`, and `modulus` are 48, 64, or 128 `u64` limbs and `t` has
+  //    `2 * words + 2` scratch limbs.
   // 3. The assembly writes only caller-provided scratch and performs final conditional subtraction
   //    with mask selection, not data-dependent branches.
   // 4. All pointers are derived from live Rust slices and the assembly does not retain them.
@@ -180,7 +185,6 @@ pub(super) fn mont_reduce_cios_words(
 }
 
 #[inline]
-#[allow(clippy::too_many_arguments)] // Assembly ABI boundary; a wrapper struct would only repack these operands.
 pub(super) fn public_e65537_mont_words(
   out: &mut [u64],
   input: &[u64],
@@ -188,9 +192,9 @@ pub(super) fn public_e65537_mont_words(
   acc: &mut [u64],
   modulus: &[u64],
   n0: u64,
-  words: usize,
   t: &mut [u64],
 ) {
+  let words = out.len();
   debug_assert!(supports_bignum_mont_words(words));
   debug_assert_eq!(out.len(), words);
   debug_assert_eq!(input.len(), words);
@@ -212,7 +216,7 @@ pub(super) fn public_e65537_mont_words(
       input.as_ptr(),
       r2.as_ptr(),
       modulus.as_ptr(),
-      &n0,
+      &raw const n0,
       words,
     );
     acc.copy_from_slice(out);
@@ -222,7 +226,7 @@ pub(super) fn public_e65537_mont_words(
         acc.as_ptr(),
         acc.as_ptr(),
         modulus.as_ptr(),
-        &n0,
+        &raw const n0,
         words,
       );
     }
@@ -231,7 +235,7 @@ pub(super) fn public_e65537_mont_words(
       acc.as_ptr(),
       out.as_ptr(),
       modulus.as_ptr(),
-      &n0,
+      &raw const n0,
       words,
     );
 

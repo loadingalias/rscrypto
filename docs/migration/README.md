@@ -29,12 +29,12 @@ For projects upgrading rscrypto itself, start with
 
 | From | To | Status |
 |---|---|---|
-| [`blake3`](blake3.md) | `Blake3` | Verified against `blake3 1.8.5` |
+| [`blake3`](blake3.md) | `Blake3` | Verified against `blake3 1.8.6` |
 | [`sha2`](RustCrypto/sha2.md) (RustCrypto) | `Sha224`, `Sha256`, `Sha384`, `Sha512`, `Sha512_256` | Verified against `sha2 0.11.0` |
 | [`sha3`](RustCrypto/sha3.md) (RustCrypto) | `Sha3_224`, `Sha3_256`, `Sha3_384`, `Sha3_512`, `Shake128`, `Shake256`, `Cshake128`, `Cshake256` | Verified against `sha3 0.12.0` |
-| [`blake2`](RustCrypto/blake2.md) (RustCrypto) | `Blake2b256`, `Blake2b512`, `Blake2s128`, `Blake2s256` | Verified against `blake2 0.11.0-rc.6` |
+| [`blake2`](RustCrypto/blake2.md) (RustCrypto) | `Blake2b256`, `Blake2b512`, `Blake2s128`, `Blake2s256` | Verified against `blake2 0.10.6` |
 | [`ascon-hash`](RustCrypto/ascon-hash.md) (RustCrypto) | `AsconHash256`, `AsconXof`, `AsconCxof128` | Verified against `ascon-hash 0.4.0` |
-| [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.16` |
+| [`xxhash-rust`](xxhash-rust.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | Verified against `xxhash-rust 0.8.18` |
 | [`twox-hash`](twox-hash.md) | `Xxh3`, `Xxh3_128`, `Xxh3Hasher`, `Xxh3_128Hasher`, `Xxh3BuildHasher` | API migration guidance; XXH3 output covered by `xxhash-rust` oracle tests |
 | [`rapidhash`](rapidhash.md) | `RapidHash64`, `RapidStreamHasher`, `RapidHasher`, `RapidSeededState`, `RapidRandomState` | Verified against `rapidhash 4.5.1` |
 
@@ -53,25 +53,25 @@ For projects upgrading rscrypto itself, start with
 | From | To | Status |
 |---|---|---|
 | [`aes-gcm`](RustCrypto/aes-gcm.md) (RustCrypto) | `Aes128Gcm`, `Aes256Gcm` | Verified against `aes-gcm 0.11.0` |
-| [`aes-gcm-siv`](RustCrypto/aes-gcm-siv.md) (RustCrypto) | `Aes128GcmSiv`, `Aes256GcmSiv` | Verified against `aes-gcm-siv 0.11.1` |
+| [`aes-gcm-siv`](RustCrypto/aes-gcm-siv.md) (RustCrypto) | `Aes128GcmSiv`, `Aes256GcmSiv` | Verified against `aes-gcm-siv 0.12.0` |
 | [`chacha20poly1305`](RustCrypto/chacha20poly1305.md) (RustCrypto) | `ChaCha20Poly1305`, `XChaCha20Poly1305` | Verified against `chacha20poly1305 0.11.0` |
 | [`ascon-aead`](RustCrypto/ascon-aead.md) (RustCrypto) | `AsconAead128` | Verified against `ascon-aead 0.6.0` |
-| [`aegis`](aegis.md) | `Aegis256` | Verified against `aegis 0.9.12` |
+| [`aegis`](aegis.md) | `Aegis256` | Verified against `aegis 0.9.15` |
 
 ## Signatures and key exchange
 
 | From | To | Status |
 |---|---|---|
-| [`p256`](RustCrypto/p256.md) / [`p384`](RustCrypto/p384.md) (RustCrypto) | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey`, raw/DER signatures | Signing and verification tested against RustCrypto `p256 0.14.0` / `p384 0.13.1` |
-| [`ed25519-dalek`](RustCrypto/ed25519-dalek.md) | `Ed25519SecretKey`, `Ed25519PublicKey`, `Ed25519Signature`, `Ed25519Keypair` | Verified against `ed25519-dalek 2.2.0` |
+| [`p256`](RustCrypto/p256.md) / [`p384`](RustCrypto/p384.md) (RustCrypto) | `EcdsaP256SecretKey`, `EcdsaP384SecretKey`, `EcdsaP256PublicKey`, `EcdsaP384PublicKey`, raw/DER signatures | Signing and verification tested against RustCrypto `p256 0.14.0` / `p384 0.14.0` |
+| [`ed25519-dalek`](RustCrypto/ed25519-dalek.md) | `Ed25519SecretKey`, `Ed25519PublicKey`, `Ed25519Signature`, `Ed25519Keypair` | Verified against `ed25519-dalek 3.0.0` |
 | [`rsa`](RustCrypto/rsa.md) (RustCrypto) | `RsaPublicKey`, `RsaPrivateKey`, RSA-PSS, RSASSA-PKCS1-v1_5, OAEP | Partial; verified through CAVP, Wycheproof, and RustCrypto/ring/OpenSSL oracles |
-| [`x25519-dalek`](RustCrypto/x25519-dalek.md) | `X25519SecretKey`, `X25519PublicKey`, `X25519SharedSecret` | Verified against `x25519-dalek 2.0.1` |
+| [`x25519-dalek`](RustCrypto/x25519-dalek.md) | `X25519SecretKey`, `X25519PublicKey`, `X25519SharedSecret` | Verified against `x25519-dalek 3.0.0` |
 
 ## Password hashing
 
 | From | To | Status |
 |---|---|---|
-| [`argon2`](RustCrypto/argon2.md) (RustCrypto) | Raw `Argon2{d,i,id}` KDFs; bounded `Argon2idPassword` records | Verified against `argon2 0.6.0-rc.8` |
+| [`argon2`](RustCrypto/argon2.md) (RustCrypto) | Raw `Argon2{d,i,id}` KDFs; bounded `Argon2idPassword` records | Verified against `argon2 0.5.3` |
 | [`scrypt`](RustCrypto/scrypt.md) (RustCrypto) | Raw `Scrypt` KDF; bounded `ScryptPassword` records | Verified against `scrypt 0.12.0` |
 
 ## Stack migrations

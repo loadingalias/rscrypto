@@ -47,10 +47,10 @@
 //! ```toml
 //! [dependencies]
 //! # Smallest CRC-32-only build
-//! rscrypto = { version = "0.7", default-features = false, features = ["crc32"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["crc32"] }
 //!
 //! # All checksum families
-//! rscrypto = { version = "0.7", default-features = false, features = ["checksums"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["checksums"] }
 //! ```
 //!
 //! # API Conventions
@@ -76,7 +76,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! rscrypto = { version = "0.7", default-features = false, features = ["crc32"] }
+//! rscrypto = { version = "0.8.1", default-features = false, features = ["crc32"] }
 //! ```
 
 mod common;
@@ -104,6 +104,7 @@ pub mod io;
 #[doc(hidden)]
 pub(crate) mod kernel_table;
 #[cfg(feature = "alloc")]
+/// Buffered checksum adapters for workloads composed of many short updates.
 pub mod buffered {
   #[cfg(feature = "crc16")]
   pub use crate::checksum::crc16::{BufferedCrc16Ccitt, BufferedCrc16Ibm};

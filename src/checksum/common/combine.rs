@@ -17,7 +17,6 @@
 // SAFETY: All array indexing in this module uses bounded loop indices (0..N where N is the
 // array size). Clippy cannot prove this in const fn contexts, but the bounds are statically
 // guaranteed by the loop conditions.
-#![allow(clippy::indexing_slicing)]
 
 // Unified GF(2) matrix macro
 
@@ -55,12 +54,12 @@ macro_rules! define_gf2_combine {
   ) => {
     #[doc = $doc_matrix]
     #[derive(Clone, Copy)]
-    pub struct $Name([$T; $DIM]);
+    pub(in crate::checksum) struct $Name([$T; $DIM]);
 
     impl $Name {
       /// Create the identity matrix.
       #[must_use]
-      pub const fn identity() -> Self {
+      pub(in crate::checksum) const fn identity() -> Self {
         let mut m = [0 as $T; $DIM];
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -73,7 +72,7 @@ macro_rules! define_gf2_combine {
       /// Multiply matrix by a vector.
       #[inline]
       #[must_use]
-      pub const fn mul_vec(self, vec: $T) -> $T {
+      pub(in crate::checksum) const fn mul_vec(self, vec: $T) -> $T {
         let mut result = 0 as $T;
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -87,7 +86,7 @@ macro_rules! define_gf2_combine {
 
       /// Multiply two matrices.
       #[must_use]
-      pub const fn mul_mat(self, other: Self) -> Self {
+      pub(in crate::checksum) const fn mul_mat(self, other: Self) -> Self {
         let mut result = [0 as $T; $DIM];
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -100,14 +99,14 @@ macro_rules! define_gf2_combine {
       /// Square the matrix.
       #[inline]
       #[must_use]
-      pub const fn square(self) -> Self {
+      pub(in crate::checksum) const fn square(self) -> Self {
         self.mul_mat(self)
       }
     }
 
     #[doc = $doc_shift1]
     #[must_use]
-    pub const fn $shift1_fn(poly: $T) -> $Name {
+    const fn $shift1_fn(poly: $T) -> $Name {
       let mut m = [0 as $T; $DIM];
       m[0] = poly;
       let mut j: u32 = 1;
@@ -120,7 +119,7 @@ macro_rules! define_gf2_combine {
 
     #[doc = $doc_shift8]
     #[must_use]
-    pub const fn $shift8_fn(poly: $T) -> $Name {
+    pub(in crate::checksum) const fn $shift8_fn(poly: $T) -> $Name {
       let shift1 = $shift1_fn(poly);
       let shift2 = shift1.square();
       let shift4 = shift2.square();
@@ -129,7 +128,7 @@ macro_rules! define_gf2_combine {
 
     #[doc = $doc_combine]
     #[must_use]
-    pub const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name) -> $T {
+    pub(in crate::checksum) const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name) -> $T {
       if len_b == 0 {
         return crc_a;
       }
@@ -170,12 +169,12 @@ macro_rules! define_gf2_combine {
   ) => {
     #[doc = $doc_matrix]
     #[derive(Clone, Copy)]
-    pub struct $Name([$T; $DIM]);
+    pub(in crate::checksum) struct $Name([$T; $DIM]);
 
     impl $Name {
       /// Create the identity matrix.
       #[must_use]
-      pub const fn identity() -> Self {
+      const fn identity() -> Self {
         let mut m = [0 as $T; $DIM];
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -188,7 +187,7 @@ macro_rules! define_gf2_combine {
       /// Multiply matrix by a vector.
       #[inline]
       #[must_use]
-      pub const fn mul_vec(self, vec: $T) -> $T {
+      const fn mul_vec(self, vec: $T) -> $T {
         let mut result = 0 as $T;
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -202,7 +201,7 @@ macro_rules! define_gf2_combine {
 
       /// Multiply two matrices.
       #[must_use]
-      pub const fn mul_mat(self, other: Self) -> Self {
+      const fn mul_mat(self, other: Self) -> Self {
         let mut result = [0 as $T; $DIM];
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -215,14 +214,14 @@ macro_rules! define_gf2_combine {
       /// Square the matrix.
       #[inline]
       #[must_use]
-      pub const fn square(self) -> Self {
+      const fn square(self) -> Self {
         self.mul_mat(self)
       }
     }
 
     #[doc = $doc_shift1]
     #[must_use]
-    pub const fn $shift1_fn(poly: $T) -> $Name {
+    const fn $shift1_fn(poly: $T) -> $Name {
       let mut m = [0 as $T; $DIM];
       m[0] = poly;
       let mut j: u32 = 1;
@@ -235,7 +234,7 @@ macro_rules! define_gf2_combine {
 
     #[doc = $doc_shift8]
     #[must_use]
-    pub const fn $shift8_fn(poly: $T) -> $Name {
+    pub(in crate::checksum) const fn $shift8_fn(poly: $T) -> $Name {
       let shift1 = $shift1_fn(poly);
       let shift2 = shift1.square();
       let shift4 = shift2.square();
@@ -246,7 +245,13 @@ macro_rules! define_gf2_combine {
     /// This works for any init/xorout as long as the caller supplies
     /// `init_xorout = init ^ xorout` for the CRC variant being combined.
     #[must_use]
-    pub const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name, init_xorout: $T) -> $T {
+    pub(in crate::checksum) const fn $combine_fn(
+      crc_a: $T,
+      crc_b: $T,
+      len_b: usize,
+      shift8_matrix: $Name,
+      init_xorout: $T,
+    ) -> $T {
       if len_b == 0 {
         return crc_a;
       }
@@ -288,15 +293,15 @@ macro_rules! define_gf2_combine {
   ) => {
     #[doc = $doc_matrix]
     #[derive(Clone, Copy)]
-    pub struct $Name([$T; $DIM]);
+    pub(in crate::checksum) struct $Name([$T; $DIM]);
 
     impl $Name {
       /// Bit mask that keeps only the low `DIM` bits of the backing type.
-      pub const MASK: $T = $MASK;
+      const MASK: $T = $MASK;
 
       /// Create the identity matrix.
       #[must_use]
-      pub const fn identity() -> Self {
+      const fn identity() -> Self {
         let mut m = [0 as $T; $DIM];
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -309,7 +314,7 @@ macro_rules! define_gf2_combine {
       /// Multiply matrix by a vector (low bits only).
       #[inline]
       #[must_use]
-      pub const fn mul_vec(self, vec: $T) -> $T {
+      const fn mul_vec(self, vec: $T) -> $T {
         let vec = vec & Self::MASK;
         let mut result = 0 as $T;
         let mut i: u32 = 0;
@@ -324,7 +329,7 @@ macro_rules! define_gf2_combine {
 
       /// Multiply two matrices.
       #[must_use]
-      pub const fn mul_mat(self, other: Self) -> Self {
+      const fn mul_mat(self, other: Self) -> Self {
         let mut result = [0 as $T; $DIM];
         let mut i: u32 = 0;
         while i < $DIM as u32 {
@@ -337,14 +342,14 @@ macro_rules! define_gf2_combine {
       /// Square the matrix.
       #[inline]
       #[must_use]
-      pub const fn square(self) -> Self {
+      const fn square(self) -> Self {
         self.mul_mat(self)
       }
     }
 
     #[doc = $doc_shift1]
     #[must_use]
-    pub const fn $shift1_fn(poly: $T) -> $Name {
+    const fn $shift1_fn(poly: $T) -> $Name {
       let poly = poly & $Name::MASK;
       let mut m = [0 as $T; $DIM];
 
@@ -361,7 +366,7 @@ macro_rules! define_gf2_combine {
 
     #[doc = $doc_shift8]
     #[must_use]
-    pub const fn $shift8_fn(poly: $T) -> $Name {
+    pub(in crate::checksum) const fn $shift8_fn(poly: $T) -> $Name {
       let shift1 = $shift1_fn(poly);
       let shift2 = shift1.square();
       let shift4 = shift2.square();
@@ -372,7 +377,13 @@ macro_rules! define_gf2_combine {
     /// This works for any init/xorout as long as the caller supplies
     /// `init_xorout = init ^ xorout` for the CRC variant being combined.
     #[must_use]
-    pub const fn $combine_fn(crc_a: $T, crc_b: $T, len_b: usize, shift8_matrix: $Name, init_xorout: $T) -> $T {
+    pub(in crate::checksum) const fn $combine_fn(
+      crc_a: $T,
+      crc_b: $T,
+      len_b: usize,
+      shift8_matrix: $Name,
+      init_xorout: $T,
+    ) -> $T {
       if len_b == 0 {
         return crc_a & $Name::MASK;
       }
@@ -465,7 +476,7 @@ define_gf2_combine! {
 #[inline]
 #[must_use]
 #[cfg(all(feature = "crc32", target_arch = "aarch64"))]
-pub const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) -> Gf2Matrix32 {
+pub(in crate::checksum) const fn pow_shift8_matrix_32(len_bytes: usize, shift8_matrix: Gf2Matrix32) -> Gf2Matrix32 {
   if len_bytes == 0 {
     return Gf2Matrix32::identity();
   }

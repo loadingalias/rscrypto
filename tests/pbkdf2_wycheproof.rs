@@ -13,9 +13,10 @@ type Pbkdf2Derive = fn(&[u8], &[u8], u32, &mut [u8]) -> Result<(), Pbkdf2Error>;
 type Pbkdf2Verify = fn(&[u8], &[u8], u32, &[u8]) -> Result<(), rscrypto::VerificationError>;
 
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
-  value[name]
-    .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+  value
+    .get(name)
+    .and_then(Value::as_str)
+    .expect("Wycheproof string field must exist and contain a string")
 }
 
 fn groups(suite: &Value) -> &[Value] {
@@ -44,24 +45,25 @@ fn run_pbkdf2_suite(
       let tc_id = test["tcId"].as_u64().expect("tcId must be numeric");
       let password = decode_hex_vec(field(test, "password"));
       let salt = decode_hex_vec(field(test, "salt"));
-      let iterations = test["iterationCount"].as_u64().expect("iterationCount must be numeric") as u32;
-      let dk_len = test["dkLen"].as_u64().expect("dkLen must be numeric") as usize;
+      let iterations = u32::try_from(test["iterationCount"].as_u64().expect("iterationCount must be numeric"))
+        .expect("Wycheproof iterationCount must fit in u32");
+      let dk_len = usize::try_from(test["dkLen"].as_u64().expect("dkLen must be numeric"))
+        .expect("Wycheproof dkLen must fit in usize");
       let expected_dk = decode_hex_vec(field(test, "dk"));
       assert_eq!(expected_dk.len(), dk_len, "{algorithm} tcId {tc_id} dkLen mismatch");
 
-      match field(test, "result") {
-        "valid" => {
-          valid += 1;
-          let mut actual = vec![0u8; dk_len];
-          derive(&password, &salt, iterations, &mut actual)
-            .unwrap_or_else(|err| panic!("{algorithm} tcId {tc_id} failed: {err}"));
-          assert_eq!(actual, expected_dk, "{algorithm} tcId {tc_id} derived key mismatch");
+      assert_eq!(
+        field(test, "result"),
+        "valid",
+        "{algorithm} tcId {tc_id} has an unsupported result"
+      );
+      valid = valid.strict_add(1);
+      let mut actual = vec![0u8; dk_len];
+      derive(&password, &salt, iterations, &mut actual).expect("known-valid PBKDF2 Wycheproof vector must derive");
+      assert_eq!(actual, expected_dk, "{algorithm} tcId {tc_id} derived key mismatch");
 
-          if first_valid_for_negative_check.is_none() {
-            first_valid_for_negative_check = Some((password, salt, iterations, expected_dk));
-          }
-        }
-        other => panic!("{algorithm} tcId {tc_id} has unsupported result `{other}`"),
+      if first_valid_for_negative_check.is_none() {
+        first_valid_for_negative_check = Some((password, salt, iterations, expected_dk));
       }
     }
   }
@@ -70,21 +72,12 @@ fn run_pbkdf2_suite(
 
   let (password, salt, iterations, expected_dk) =
     first_valid_for_negative_check.expect("PBKDF2 suite must contain at least one valid vector");
-  assert!(
-    verify(&password, &salt, iterations, &expected_dk).is_ok(),
-    "{algorithm} rejected a known-good derived key"
-  );
+  verify(&password, &salt, iterations, &expected_dk).expect("PBKDF2 must verify a known-good Wycheproof derived key");
 
   let mut wrong_dk = expected_dk.clone();
   wrong_dk[0] ^= 1;
-  assert!(
-    verify(&password, &salt, iterations, &wrong_dk).is_err(),
-    "{algorithm} accepted a corrupted derived key"
-  );
-  assert!(
-    verify(b"wrong password", &salt, iterations, &expected_dk).is_err(),
-    "{algorithm} accepted the wrong password"
-  );
+  verify(&password, &salt, iterations, &wrong_dk).expect_err("PBKDF2 must reject a corrupted Wycheproof derived key");
+  verify(b"wrong password", &salt, iterations, &expected_dk).expect_err("PBKDF2 must reject the wrong password");
 }
 
 #[test]

@@ -15,7 +15,8 @@ const SALT_B64: &str = "AAECAwQFBgcICQoLDA0ODw";
 fn argon2_hashes_with_one_caller_entropy_fill() {
   use rscrypto::{Argon2Params, Argon2idPassword};
 
-  let passwords = Argon2idPassword::new(Argon2Params::new(32, 2, 1).unwrap()).unwrap();
+  let params = Argon2Params::new(32, 2, 1).expect("Argon2 entropy-test parameters must be valid");
+  let passwords = Argon2idPassword::new(params).expect("Argon2 password service must accept entropy-test parameters");
   let fills = Cell::new(0usize);
   let record = passwords
     .hash_password_with(PASSWORD, |salt| {
@@ -24,7 +25,7 @@ fn argon2_hashes_with_one_caller_entropy_fill() {
       salt.copy_from_slice(&SALT);
       Ok::<(), &'static str>(())
     })
-    .unwrap();
+    .expect("Argon2 hashing with caller entropy must succeed");
 
   assert_eq!(fills.get(), 1);
   assert_eq!(record.split('$').nth(4), Some(SALT_B64));
@@ -39,7 +40,8 @@ fn argon2_hashes_with_one_caller_entropy_fill() {
 fn scrypt_hashes_with_one_caller_entropy_fill() {
   use rscrypto::{ScryptParams, ScryptPassword};
 
-  let passwords = ScryptPassword::new(ScryptParams::new(4, 1, 1).unwrap()).unwrap();
+  let params = ScryptParams::new(4, 1, 1).expect("scrypt entropy-test parameters must be valid");
+  let passwords = ScryptPassword::new(params).expect("scrypt password service must accept entropy-test parameters");
   let fills = Cell::new(0usize);
   let record = passwords
     .hash_password_with(PASSWORD, |salt| {
@@ -48,7 +50,7 @@ fn scrypt_hashes_with_one_caller_entropy_fill() {
       salt.copy_from_slice(&SALT);
       Ok::<(), &'static str>(())
     })
-    .unwrap();
+    .expect("scrypt hashing with caller entropy must succeed");
 
   assert_eq!(fills.get(), 1);
   assert_eq!(record.split('$').nth(3), Some(SALT_B64));
@@ -63,10 +65,11 @@ fn scrypt_hashes_with_one_caller_entropy_fill() {
 fn argon2_preserves_entropy_errors_without_hashing() {
   use rscrypto::{Argon2Error, Argon2Params, Argon2idPassword};
 
-  let passwords = Argon2idPassword::new(Argon2Params::new(32, 2, 1).unwrap()).unwrap();
+  let params = Argon2Params::new(32, 2, 1).expect("Argon2 entropy-error parameters must be valid");
+  let passwords = Argon2idPassword::new(params).expect("Argon2 password service must accept entropy-error parameters");
   let error = passwords
     .hash_password_with(PASSWORD, |_| Err("entropy unavailable"))
-    .unwrap_err();
+    .expect_err("Argon2 must preserve caller entropy failures");
 
   assert_eq!(
     error,
@@ -79,10 +82,11 @@ fn argon2_preserves_entropy_errors_without_hashing() {
 fn scrypt_preserves_entropy_errors_without_hashing() {
   use rscrypto::{ScryptError, ScryptParams, ScryptPassword};
 
-  let passwords = ScryptPassword::new(ScryptParams::new(4, 1, 1).unwrap()).unwrap();
+  let params = ScryptParams::new(4, 1, 1).expect("scrypt entropy-error parameters must be valid");
+  let passwords = ScryptPassword::new(params).expect("scrypt password service must accept entropy-error parameters");
   let error = passwords
     .hash_password_with(PASSWORD, |_| Err("entropy unavailable"))
-    .unwrap_err();
+    .expect_err("scrypt must preserve caller entropy failures");
 
   assert_eq!(
     error,

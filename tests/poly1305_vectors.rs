@@ -3,7 +3,9 @@
 use rscrypto::{Poly1305, Poly1305OneTimeKey, Poly1305Tag};
 
 mod common;
-use common::decode_hex_array;
+#[path = "common/array.rs"]
+mod hex_array;
+use hex_array::decode_hex_array;
 
 #[test]
 fn poly1305_matches_rfc_8439_section_2_5_2() {
@@ -39,7 +41,7 @@ fn poly1305_verify_rejects_corrupted_tag() {
   corrupted[7] ^= 0x80;
   let corrupted = Poly1305Tag::from_bytes(corrupted);
 
-  assert!(Poly1305::verify_once(key, message, &corrupted).is_err());
+  Poly1305::verify_once(key, message, &corrupted).expect_err("corrupted Poly1305 tag must be rejected");
 }
 
 #[test]
@@ -48,8 +50,8 @@ fn poly1305_try_generate_with_uses_fallible_fill() {
     out.fill(0x11);
     Ok::<(), ()>(())
   })
-  .unwrap();
+  .expect("deterministic entropy callback must generate a Poly1305 key");
 
   assert_eq!(key.as_bytes(), &[0x11; Poly1305OneTimeKey::LENGTH]);
-  assert!(Poly1305OneTimeKey::try_generate_with(|_| Err("rng")).is_err());
+  Poly1305OneTimeKey::try_generate_with(|_| Err("rng")).expect_err("entropy-source failure must be returned");
 }

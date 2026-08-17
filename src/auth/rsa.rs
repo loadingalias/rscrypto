@@ -1275,6 +1275,21 @@ pub struct RsaPrivateKeyParts<'a> {
   pub coefficient: &'a [u8],
 }
 
+impl fmt::Debug for RsaPrivateKeyParts<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("RsaPrivateKeyParts")
+      .field("modulus_bits", &unsigned_be_bit_len(self.modulus))
+      .field("public_exponent", &self.public_exponent)
+      .field("private_exponent", &"****")
+      .field("prime_p", &"****")
+      .field("prime_q", &"****")
+      .field("exponent_p", &"****")
+      .field("exponent_q", &"****")
+      .field("coefficient", &"****")
+      .finish()
+  }
+}
+
 impl RsaPrivateKey {
   /// Key-generation contract used by [`Self::generate`] and
   /// [`Self::generate_with_policy`].
@@ -2053,11 +2068,7 @@ impl RsaPrivateKey {
     clear_decryption_output_on_error(result, out)
   }
 
-  /// Sign a message using RSASSA-PKCS1-v1_5 with a caller-supplied blinding factor.
-  ///
-  /// `blinding_factor` and `blinding_factor_inverse` must be fixed-width
-  /// modulus-sized representatives satisfying
-  /// `blinding_factor * blinding_factor_inverse == 1 mod n`.
+  /// Sign a message using RSASSA-PKCS1-v1_5 with caller-supplied blinding.
   ///
   /// # Errors
   ///
@@ -2068,23 +2079,19 @@ impl RsaPrivateKey {
     &self,
     profile: RsaPkcs1v15Profile,
     message: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let result = self.components.sign_pkcs1v15_with_blinding_factor(
-      profile,
-      message,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-    );
+    let result = self
+      .components
+      .sign_pkcs1v15_with_blinding_factor(profile, message, blinding, out);
     clear_output_on_error(result, out)
   }
 
   /// Sign using RSASSA-PKCS1-v1_5 with caller-supplied blinding and scratch.
   ///
   /// Reusing scratch avoids top-level private-operation temporary allocation
-  /// after setup. The blinding-factor requirements are the same as
+  /// after setup. The blinding-pair requirements are the same as
   /// [`Self::sign_pkcs1v15_with_blinding_factor`].
   ///
   /// # Errors
@@ -2097,18 +2104,13 @@ impl RsaPrivateKey {
     &self,
     profile: RsaPkcs1v15Profile,
     message: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    let result = self.components.sign_pkcs1v15_with_blinding_factor_and_scratch(
-      profile,
-      message,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-      scratch,
-    );
+    let result = self
+      .components
+      .sign_pkcs1v15_with_blinding_factor_and_scratch(profile, message, blinding, out, scratch);
     clear_output_on_error(result, out)
   }
 
@@ -2125,24 +2127,19 @@ impl RsaPrivateKey {
     profile: RsaPssProfile,
     message: &[u8],
     salt: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<(), RsaPrivateOpError> {
-    let result = self.components.sign_pss_with_salt_and_blinding_factor(
-      profile,
-      message,
-      salt,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-    );
+    let result = self
+      .components
+      .sign_pss_with_salt_and_blinding_factor(profile, message, salt, blinding, out);
     clear_output_on_error(result, out)
   }
 
   /// Sign using RSASSA-PSS with explicit salt, caller blinding, and scratch.
   ///
   /// Reusing scratch avoids top-level private-operation temporary allocation
-  /// after setup. The salt and blinding-factor requirements are the same as
+  /// after setup. The salt and blinding-pair requirements are the same as
   /// [`Self::sign_pss_with_salt_and_blinding_factor`].
   ///
   /// # Errors
@@ -2151,26 +2148,19 @@ impl RsaPrivateKey {
   /// allocated for a different modulus width, the blinding pair is invalid, the
   /// key is too small for the salt/profile, or the post-signing public fault
   /// check fails.
-  #[allow(clippy::too_many_arguments)]
   #[must_use = "RSA signing failure must be checked; a dropped Result silently discards a failed signature"]
   pub fn sign_pss_with_salt_and_blinding_factor_and_scratch(
     &self,
     profile: RsaPssProfile,
     message: &[u8],
     salt: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<(), RsaPrivateOpError> {
-    let result = self.components.sign_pss_with_salt_and_blinding_factor_and_scratch(
-      profile,
-      message,
-      salt,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-      scratch,
-    );
+    let result = self
+      .components
+      .sign_pss_with_salt_and_blinding_factor_and_scratch(profile, message, salt, blinding, out, scratch);
     clear_output_on_error(result, out)
   }
 
@@ -2190,17 +2180,12 @@ impl RsaPrivateKey {
     profile: RsaOaepProfile,
     label: &[u8],
     ciphertext: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    let result = self.components.decrypt_oaep_with_blinding_factor(
-      profile,
-      label,
-      ciphertext,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-    );
+    let result = self
+      .components
+      .decrypt_oaep_with_blinding_factor(profile, label, ciphertext, blinding, out);
     clear_decryption_output_on_error(result, out)
   }
 
@@ -2218,22 +2203,19 @@ impl RsaPrivateKey {
   pub fn decrypt_pkcs1v15_with_blinding_factor(
     &self,
     ciphertext: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
   ) -> Result<usize, RsaPrivateOpError> {
-    let result = self.components.decrypt_pkcs1v15_with_blinding_factor(
-      ciphertext,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-    );
+    let result = self
+      .components
+      .decrypt_pkcs1v15_with_blinding_factor(ciphertext, blinding, out);
     clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-OAEP with caller-supplied blinding and scratch.
   ///
   /// Reusing scratch avoids top-level private-operation temporary allocation
-  /// after setup. The blinding-factor requirements are the same as
+  /// after setup. The blinding-pair requirements are the same as
   /// [`Self::decrypt_oaep_with_blinding_factor`].
   ///
   /// # Errors
@@ -2241,33 +2223,26 @@ impl RsaPrivateKey {
   /// Returns [`RsaPrivateOpError`] if lengths are invalid, `scratch` was
   /// allocated for a different modulus width, the blinding pair is invalid, the
   /// ciphertext representative is out of range, or OAEP decoding fails.
-  #[allow(clippy::too_many_arguments)]
   #[must_use = "RSA decryption failure must be checked; a dropped Result silently discards plaintext"]
   pub fn decrypt_oaep_with_blinding_factor_and_scratch(
     &self,
     profile: RsaOaepProfile,
     label: &[u8],
     ciphertext: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    let result = self.components.decrypt_oaep_with_blinding_factor_and_scratch(
-      profile,
-      label,
-      ciphertext,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-      scratch,
-    );
+    let result = self
+      .components
+      .decrypt_oaep_with_blinding_factor_and_scratch(profile, label, ciphertext, blinding, out, scratch);
     clear_decryption_output_on_error(result, out)
   }
 
   /// Decrypt RSAES-PKCS1-v1_5 with caller-supplied blinding and scratch.
   ///
   /// Reusing scratch avoids top-level private-operation temporary allocation
-  /// after setup. The blinding-factor requirements are the same as
+  /// after setup. The blinding-pair requirements are the same as
   /// [`Self::decrypt_pkcs1v15_with_blinding_factor`].
   ///
   /// # Errors
@@ -2279,17 +2254,13 @@ impl RsaPrivateKey {
   pub fn decrypt_pkcs1v15_with_blinding_factor_and_scratch(
     &self,
     ciphertext: &[u8],
-    blinding_factor: &[u8],
-    blinding_factor_inverse: &[u8],
+    blinding: RsaBlindingPair<'_>,
     out: &mut [u8],
     scratch: &mut RsaPrivateScratch,
   ) -> Result<usize, RsaPrivateOpError> {
-    let result = self.components.decrypt_pkcs1v15_with_blinding_factor_and_scratch(
-      ciphertext,
-      RsaBlindingPair::caller_supplied(blinding_factor, blinding_factor_inverse),
-      out,
-      scratch,
-    );
+    let result = self
+      .components
+      .decrypt_pkcs1v15_with_blinding_factor_and_scratch(ciphertext, blinding, out, scratch);
     clear_decryption_output_on_error(result, out)
   }
 }
@@ -2612,7 +2583,6 @@ impl Drop for RsaPrivateScratch {
 // separate from private-operation exponentiation so validation arithmetic does
 // not become signing, decryption, blinding, CRT recombination, or key
 // generation arithmetic by accident.
-#[allow(dead_code)]
 struct RsaPrivateKeyComponents {
   public: RsaPublicKey,
   private_exponent: SecretBigEndianInteger,
@@ -2625,7 +2595,6 @@ struct RsaPrivateKeyComponents {
   coefficient: SecretBigEndianInteger,
 }
 
-#[allow(dead_code)]
 impl RsaPrivateKeyComponents {
   #[inline]
   fn public_key(&self) -> &RsaPublicKey {
@@ -2991,6 +2960,7 @@ impl RsaPrivateKeyComponents {
     result
   }
 
+  #[cfg(feature = "getrandom")]
   fn sign_pkcs1v15_with_stored_blinding_and_scratch(
     &self,
     profile: RsaPkcs1v15Profile,
@@ -3084,6 +3054,7 @@ impl RsaPrivateKeyComponents {
     result
   }
 
+  #[cfg(feature = "getrandom")]
   fn sign_pss_with_stored_salt_and_blinding_and_scratch(
     &self,
     profile: RsaPssProfile,
@@ -3162,6 +3133,7 @@ impl RsaPrivateKeyComponents {
     self.private_operation_with_blinding_factor_and_scratch(blinding, out, scratch)
   }
 
+  #[cfg(feature = "getrandom")]
   fn sign_encoded_message_with_stored_blinding_and_scratch(
     &self,
     out: &mut [u8],
@@ -3213,6 +3185,7 @@ impl RsaPrivateKeyComponents {
     clear_decryption_output_on_error(result, out)
   }
 
+  #[cfg(feature = "getrandom")]
   fn decrypt_oaep_with_stored_blinding_and_scratch(
     &self,
     profile: RsaOaepProfile,
@@ -3262,6 +3235,7 @@ impl RsaPrivateKeyComponents {
     clear_decryption_output_on_error(result, out)
   }
 
+  #[cfg(feature = "getrandom")]
   fn decrypt_pkcs1v15_with_stored_blinding_and_scratch(
     &self,
     ciphertext: &[u8],
@@ -3457,6 +3431,7 @@ impl RsaPrivateKeyComponents {
     }
   }
 
+  #[cfg(feature = "getrandom")]
   fn private_operation_from_scratch_encoded_with_stored_blinding(
     &self,
     scratch: &mut RsaPrivateScratch,
@@ -3690,12 +3665,10 @@ impl fmt::Debug for RsaPrivateKeyComponents {
   }
 }
 
-#[allow(dead_code)]
 struct SecretBigEndianInteger {
   bytes: Box<[u8]>,
 }
 
-#[allow(dead_code)]
 impl SecretBigEndianInteger {
   fn new(bytes: &[u8]) -> Result<Self, RsaKeyError> {
     if is_zero_unsigned_be(bytes) {
@@ -3706,6 +3679,7 @@ impl SecretBigEndianInteger {
     })
   }
 
+  #[cfg(feature = "getrandom")]
   fn from_vec(mut bytes: Vec<u8>) -> Result<Self, RsaKeyError> {
     if is_zero_unsigned_be(&bytes) {
       ct::zeroize(&mut bytes);
@@ -3804,13 +3778,43 @@ impl RsaBlindingFactor {
   }
 }
 
-struct RsaBlindingPair<'a> {
+/// Borrowed inputs for a caller-blinded RSA private operation.
+///
+/// The factor and inverse must be fixed-width, modulus-sized representatives
+/// satisfying `factor * inverse == 1 mod n`. Construction only borrows the
+/// inputs; each private operation validates them against its key before secret
+/// exponentiation. This type does not own, copy, or zeroize the borrowed bytes.
+#[derive(Clone, Copy)]
+pub struct RsaBlindingPair<'a> {
   factor: &'a [u8],
   inverse: &'a [u8],
   validate: bool,
 }
 
+impl fmt::Debug for RsaBlindingPair<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_struct("RsaBlindingPair")
+      .field("factor", &"****")
+      .field("inverse", &"****")
+      .finish()
+  }
+}
+
 impl<'a> RsaBlindingPair<'a> {
+  /// Borrow a factor and its claimed modular inverse.
+  ///
+  /// Validation requires the target RSA modulus and is therefore deferred to
+  /// the private operation that consumes this value.
+  #[inline]
+  #[must_use]
+  pub const fn new(factor: &'a [u8], inverse: &'a [u8]) -> Self {
+    Self {
+      factor,
+      inverse,
+      validate: true,
+    }
+  }
+
   #[cfg(feature = "getrandom")]
   #[inline]
   const fn trusted(factor: &'a [u8], inverse: &'a [u8]) -> Self {
@@ -3818,15 +3822,6 @@ impl<'a> RsaBlindingPair<'a> {
       factor,
       inverse,
       validate: false,
-    }
-  }
-
-  #[inline]
-  const fn caller_supplied(factor: &'a [u8], inverse: &'a [u8]) -> Self {
-    Self {
-      factor,
-      inverse,
-      validate: true,
     }
   }
 }
@@ -5768,11 +5763,8 @@ impl RsaPublicModulus {
     }
   }
 
-  fn montgomery_r2(&self) -> &[u64] {
-    match self.r2.as_deref() {
-      Some(r2) => r2,
-      None => unreachable!("private RSA modulus missing Montgomery R^2"),
-    }
+  fn montgomery_r2(&self) -> Option<&[u64]> {
+    self.r2.as_deref()
   }
 
   fn public_operation(
@@ -5831,7 +5823,7 @@ impl RsaPublicModulus {
         && rsa_aarch64_asm::supports_bignum_mont_words(limbs)
         && t.len() >= rsa_aarch64_asm::bignum_mont_scratch_words(limbs)
       {
-        rsa_aarch64_asm::public_e65537_mont_words(base, x, r2, acc, &self.limbs, self.n0, limbs, t);
+        rsa_aarch64_asm::public_e65537_mont_words(base, x, r2, acc, &self.limbs, self.n0, t);
         limbs_to_be(base, out);
         return Ok(());
       }
@@ -5846,7 +5838,7 @@ impl RsaPublicModulus {
         && rsa_aarch64_linux_asm::supports_bignum_mont_words(limbs)
         && t.len() >= rsa_aarch64_linux_asm::bignum_mont_scratch_words(limbs)
       {
-        rsa_aarch64_linux_asm::public_e65537_mont_words(base, x, r2, acc, &self.limbs, self.n0, limbs, t);
+        rsa_aarch64_linux_asm::public_e65537_mont_words(base, x, r2, acc, &self.limbs, self.n0, t);
         limbs_to_be(base, out);
         return Ok(());
       }
@@ -6463,23 +6455,20 @@ fn der_len_len(len: usize) -> usize {
   1usize.strict_add(significant)
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn der_push_len(len: usize, out: &mut Vec<u8>) {
   if len < 128 {
-    out.push(len as u8);
+    out.push(u8::try_from(len).expect("a short DER length must fit in one byte"));
     return;
   }
 
-  let mut started = false;
-  let len_len = der_len_len(len).strict_sub(1);
-  out.push(0x80 | (len_len as u8));
-  for index in (0..core::mem::size_of::<usize>()).rev() {
-    let byte = (len >> index.strict_mul(8)) as u8;
-    if byte != 0 || started {
-      out.push(byte);
-      started = true;
-    }
-  }
+  let bytes = len.to_be_bytes();
+  let first_nonzero = bytes
+    .iter()
+    .position(|&byte| byte != 0)
+    .unwrap_or_else(|| bytes.len().strict_sub(1));
+  let len_bytes = &bytes[first_nonzero..];
+  out.push(0x80 | u8::try_from(len_bytes.len()).expect("a usize DER length prefix must fit in one byte"));
+  out.extend_from_slice(len_bytes);
 }
 
 fn parse_rsa_algorithm_identifier(der: &[u8]) -> Result<(), RsaKeyError> {
@@ -6496,7 +6485,6 @@ fn parse_rsa_algorithm_identifier(der: &[u8]) -> Result<(), RsaKeyError> {
   reader.finish()
 }
 
-#[allow(dead_code)]
 fn parse_pkcs8_private_key_der_with_policy(
   der: &[u8],
   policy: &RsaPublicKeyPolicy,
@@ -6522,7 +6510,6 @@ fn parse_pkcs8_private_key_der_parts_with_policy<'a>(
   parse_pkcs1_private_key_der_parts_with_policy(private_key, policy)
 }
 
-#[allow(dead_code)]
 fn parse_pkcs1_private_key_der_with_policy(
   der: &[u8],
   policy: &RsaPublicKeyPolicy,
@@ -7292,7 +7279,7 @@ fn keygen_mask_unused_top_bits(bytes: &mut [u8], bits: usize) {
     return;
   }
   if let Some(first) = bytes.first_mut() {
-    *first &= (1u8 << used_top_bits) - 1;
+    *first &= u8::MAX >> 8usize.strict_sub(used_top_bits);
   }
 }
 
@@ -7596,7 +7583,10 @@ fn keygen_inverse_small_mod_odd(exponent: u64, modulus: &[u8]) -> Result<Vec<u8>
   }
 
   for k in 1..exponent {
-    if (1u128 + u128::from(k).strict_mul(u128::from(modulus_mod_exponent))).is_multiple_of(u128::from(exponent)) {
+    if 1u128
+      .strict_add(u128::from(k).strict_mul(u128::from(modulus_mod_exponent)))
+      .is_multiple_of(u128::from(exponent))
+    {
       return keygen_mul_u64_add_one_div_u64(modulus, k, exponent);
     }
   }
@@ -7614,11 +7604,11 @@ fn keygen_mul_u64_add_one_div_u64(
   let mut carry = 1u128;
   for &byte in value.iter().rev() {
     let acc = u128::from(byte).strict_mul(u128::from(multiplier)).strict_add(carry);
-    product_rev.push(acc as u8);
+    product_rev.push(acc.to_le_bytes()[0]);
     carry = acc >> 8;
   }
   while carry != 0 {
-    product_rev.push(carry as u8);
+    product_rev.push(carry.to_le_bytes()[0]);
     carry >>= 8;
   }
   product_rev.reverse();
@@ -7628,8 +7618,8 @@ fn keygen_mul_u64_add_one_div_u64(
   let divisor = u128::from(divisor);
   for &byte in &product_rev {
     let acc = (remainder << 8).strict_add(u128::from(byte));
-    quotient.push((acc / divisor) as u8);
-    remainder = acc % divisor;
+    quotient.push(u8::try_from(acc.div_euclid(divisor)).map_err(|_| RsaKeyGenerationError::ArithmeticFailure)?);
+    remainder = acc.rem_euclid(divisor);
   }
   ct::zeroize(&mut product_rev);
   if remainder != 0 {
@@ -7699,9 +7689,9 @@ fn unsigned_be_mod_u64(bytes: &[u8], modulus: u64) -> u64 {
   let mut remainder = 0u128;
   let modulus = u128::from(modulus);
   for &byte in bytes {
-    remainder = ((remainder << 8).strict_add(u128::from(byte))) % modulus;
+    remainder = (remainder << 8).strict_add(u128::from(byte)).rem_euclid(modulus);
   }
-  remainder as u64
+  split_u128(remainder).0
 }
 
 const fn tls13_signature_scheme_profile_and_key_algorithm(
@@ -8102,7 +8092,6 @@ fn validate_modulus(modulus: &[u8], policy: &RsaPublicKeyPolicy) -> Result<usize
   Ok(modulus_bits)
 }
 
-#[allow(clippy::indexing_slicing)]
 fn encode_pkcs1v15<D>(message: &[u8], digest_info_prefix: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError>
 where
   D: Digest,
@@ -8154,7 +8143,6 @@ fn fill_pkcs1v15_nonzero_padding_with(
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn encode_pkcs1v15_encryption_with_seed(message: &[u8], seed: &[u8], out: &mut [u8]) -> Result<(), RsaEncryptionError> {
   let ps_len = pkcs1v15_encryption_padding_len(out.len(), message.len())?;
   if seed.len() != ps_len {
@@ -8222,7 +8210,6 @@ fn clear_output_on_error<T, E>(result: Result<T, E>, out: &mut [u8]) -> Result<T
   result
 }
 
-#[allow(clippy::indexing_slicing)]
 fn encode_pss<D>(message: &[u8], salt: &[u8], em_bits: usize, out: &mut [u8]) -> Result<(), RsaPrivateOpError>
 where
   D: Digest,
@@ -8239,7 +8226,6 @@ where
   result
 }
 
-#[allow(clippy::indexing_slicing)]
 fn encode_pss_with_mask<D>(
   message: &[u8],
   salt: &[u8],
@@ -8301,7 +8287,6 @@ where
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn encode_oaep_with_masks<D>(
   label: &[u8],
   message: &[u8],
@@ -8353,7 +8338,6 @@ where
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn decode_oaep<D>(label: &[u8], encoded: &mut [u8], out: &mut [u8]) -> Result<usize, RsaPrivateOpError>
 where
   D: Digest,
@@ -8372,7 +8356,6 @@ where
   result
 }
 
-#[allow(clippy::indexing_slicing)]
 fn decode_oaep_with_masks<D>(
   label: &[u8],
   encoded: &mut [u8],
@@ -8491,7 +8474,7 @@ where
     return Err(VerificationError::new());
   }
   if unused_bits > 0 {
-    let mask = 0xffu8 << (8usize.strict_sub(unused_bits) as u32);
+    let mask = 0xffu8 << 8usize.strict_sub(unused_bits);
     if masked_db.first().copied().unwrap_or(0) & mask != 0 {
       return Err(VerificationError::new());
     }
@@ -8589,7 +8572,6 @@ where
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 fn limbs_from_be(bytes: &[u8]) -> Vec<u64> {
   let limbs = bytes.len().strict_add(7) / 8;
   let mut out = vec![0u64; limbs];
@@ -8597,11 +8579,10 @@ fn limbs_from_be(bytes: &[u8]) -> Vec<u64> {
   out
 }
 
-#[allow(clippy::indexing_slicing)]
 fn limbs_from_be_into(bytes: &[u8], out: &mut [u64]) {
   let full_limbs = bytes.len() / 8;
   let leading = bytes.len() % 8;
-  let needed_limbs = full_limbs + usize::from(leading != 0);
+  let needed_limbs = bytes.len().div_ceil(8);
   if out.len() != needed_limbs {
     out.fill(0);
   }
@@ -8622,7 +8603,6 @@ fn limbs_from_be_into(bytes: &[u8], out: &mut [u64]) {
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 fn limbs_to_be(limbs: &[u64], out: &mut [u8]) {
   let full_limbs = out.len() / 8;
   let leading = out.len() % 8;
@@ -8741,7 +8721,6 @@ fn left_pad_be(src: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn private_sub_mod_unsigned_be_to_fixed(
   left: &[u8],
   right: &[u8],
@@ -8757,7 +8736,7 @@ fn private_sub_mod_unsigned_be_to_fixed(
     let src = out.len().strict_sub(index).strict_sub(1);
     let subtrahend = u16::from(right[src]).strict_add(borrow);
     let difference = u16::from(left[src]).wrapping_sub(subtrahend);
-    out[src] = difference as u8;
+    out[src] = difference.to_le_bytes()[0];
     borrow = (difference >> 15) & 1;
   }
 
@@ -8767,14 +8746,13 @@ fn private_sub_mod_unsigned_be_to_fixed(
     let dst = out.len().strict_sub(index).strict_sub(1);
     let addend = u16::from(modulus[dst]) & mask;
     let sum = u16::from(out[dst]).strict_add(addend).strict_add(carry);
-    out[dst] = sum as u8;
+    out[dst] = sum.to_le_bytes()[0];
     carry = sum >> 8;
   }
 
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 #[cfg(feature = "getrandom")]
 fn private_sub_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -> Result<(), RsaPrivateOpError> {
   if left.len() != right.len() || left.len() != out.len() || unsigned_be_cmp(left, right) == core::cmp::Ordering::Less {
@@ -8784,14 +8762,16 @@ fn private_sub_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -
   let mut borrow = 0i16;
   for index in 0..out.len() {
     let src = out.len().strict_sub(index).strict_sub(1);
-    let mut difference = i16::from(left[src]) - i16::from(right[src]) - borrow;
+    let mut difference = i16::from(left[src])
+      .strict_sub(i16::from(right[src]))
+      .strict_sub(borrow);
     if difference < 0 {
-      difference += 256;
+      difference = difference.strict_add(256);
       borrow = 1;
     } else {
       borrow = 0;
     }
-    out[src] = difference as u8;
+    out[src] = difference.to_le_bytes()[0];
   }
 
   if borrow == 0 {
@@ -8801,7 +8781,6 @@ fn private_sub_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &mut [u8]) -
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 #[cfg(feature = "getrandom")]
 fn private_sub_unsigned_be_to_len(
   left: &[u8],
@@ -8827,15 +8806,17 @@ fn private_sub_unsigned_be_to_len(
       .and_then(|src| right.get(src))
       .copied()
       .unwrap_or(0);
-    let mut difference = i16::from(left_byte) - i16::from(right_byte) - borrow;
+    let mut difference = i16::from(left_byte)
+      .strict_sub(i16::from(right_byte))
+      .strict_sub(borrow);
     if difference < 0 {
-      difference += 256;
+      difference = difference.strict_add(256);
       borrow = 1;
     } else {
       borrow = 0;
     }
     let dst = out.len().strict_sub(index).strict_sub(1);
-    out[dst] = difference as u8;
+    out[dst] = difference.to_le_bytes()[0];
   }
 
   if borrow != 0 {
@@ -8844,7 +8825,6 @@ fn private_sub_unsigned_be_to_len(
   Ok(private_import_canonical_unsigned_be(out))
 }
 
-#[allow(clippy::indexing_slicing)]
 fn private_exponentiate_representative(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -8856,6 +8836,9 @@ fn private_exponentiate_representative(
   if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
     return Err(RsaPrivateOpError::InvalidLength);
   }
+  let r2 = modulus
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
 
   let mut t = SecretLimbs::zeroed(limbs.strict_mul(2).strict_add(2));
   let mut representative = SecretLimbs::zeroed(limbs);
@@ -8876,17 +8859,11 @@ fn private_exponentiate_representative(
   private_mont_mul(
     base.as_mut_slice(),
     representative.as_slice(),
-    modulus.montgomery_r2(),
+    r2,
     modulus,
     t.as_mut_slice(),
   );
-  private_mont_mul(
-    acc.as_mut_slice(),
-    one.as_slice(),
-    modulus.montgomery_r2(),
-    modulus,
-    t.as_mut_slice(),
-  );
+  private_mont_mul(acc.as_mut_slice(), one.as_slice(), r2, modulus, t.as_mut_slice());
 
   let mut table = private_fixed_window_table(base.as_slice(), acc.as_slice(), modulus, t.as_mut_slice());
   let mut index = 0;
@@ -8896,23 +8873,27 @@ fn private_exponentiate_representative(
       &table,
       exponent_byte >> 4,
       modulus,
-      t.as_mut_slice(),
-      acc.as_mut_slice(),
-      squared.as_mut_slice(),
-      multiplied.as_mut_slice(),
-      selected.as_mut_slice(),
+      RsaPrivateWindowWorkspace {
+        t: t.as_mut_slice(),
+        acc: acc.as_mut_slice(),
+        squared: squared.as_mut_slice(),
+        multiplied: multiplied.as_mut_slice(),
+        selected: selected.as_mut_slice(),
+      },
     );
     private_exponentiate_window(
       &table,
       exponent_byte & 0x0f,
       modulus,
-      t.as_mut_slice(),
-      acc.as_mut_slice(),
-      squared.as_mut_slice(),
-      multiplied.as_mut_slice(),
-      selected.as_mut_slice(),
+      RsaPrivateWindowWorkspace {
+        t: t.as_mut_slice(),
+        acc: acc.as_mut_slice(),
+        squared: squared.as_mut_slice(),
+        multiplied: multiplied.as_mut_slice(),
+        selected: selected.as_mut_slice(),
+      },
     );
-    index += 1;
+    index = index.strict_add(1);
   }
 
   ct::zeroize_words(table.as_mut_slice());
@@ -8921,7 +8902,6 @@ fn private_exponentiate_representative(
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn private_exponentiate_representative_with_scratch(
   modulus: &RsaPublicModulus,
   exponent: &[u8],
@@ -8934,6 +8914,9 @@ fn private_exponentiate_representative_with_scratch(
   if input.len() != bytes || out.len() != bytes || exponent.len() != bytes {
     return Err(RsaPrivateOpError::InvalidLength);
   }
+  let r2 = modulus
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
   let RsaPrivateExponentWorkspace {
     t,
     representative,
@@ -8954,8 +8937,8 @@ fn private_exponentiate_representative_with_scratch(
 
   one.fill(0);
   one[0] = 1;
-  private_mont_mul(base, representative, modulus.montgomery_r2(), modulus, t);
-  private_mont_mul(acc, one, modulus.montgomery_r2(), modulus, t);
+  private_mont_mul(base, representative, r2, modulus, t);
+  private_mont_mul(acc, one, r2, modulus, t);
 
   private_fixed_window_table_into(table, base, acc, modulus, t);
   let mut index = 0;
@@ -8965,23 +8948,27 @@ fn private_exponentiate_representative_with_scratch(
       table,
       exponent_byte >> 4,
       modulus,
-      t,
-      acc,
-      squared,
-      multiplied,
-      selected,
+      RsaPrivateWindowWorkspace {
+        t: &mut *t,
+        acc: &mut *acc,
+        squared: &mut *squared,
+        multiplied: &mut *multiplied,
+        selected: &mut *selected,
+      },
     );
     private_exponentiate_window(
       table,
       exponent_byte & 0x0f,
       modulus,
-      t,
-      acc,
-      squared,
-      multiplied,
-      selected,
+      RsaPrivateWindowWorkspace {
+        t: &mut *t,
+        acc: &mut *acc,
+        squared: &mut *squared,
+        multiplied: &mut *multiplied,
+        selected: &mut *selected,
+      },
     );
-    index += 1;
+    index = index.strict_add(1);
   }
 
   private_mont_reduce(reduced, acc, modulus, t);
@@ -8989,7 +8976,6 @@ fn private_exponentiate_representative_with_scratch(
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn private_fixed_window_table(
   base: &[u64],
   one_montgomery: &[u64],
@@ -9002,7 +8988,6 @@ fn private_fixed_window_table(
   table
 }
 
-#[allow(clippy::indexing_slicing)]
 fn private_fixed_window_table_into(
   table: &mut [u64],
   base: &[u64],
@@ -9025,17 +9010,27 @@ fn private_fixed_window_table_into(
   }
 }
 
-#[allow(clippy::too_many_arguments)]
+struct RsaPrivateWindowWorkspace<'a> {
+  t: &'a mut [u64],
+  acc: &'a mut [u64],
+  squared: &'a mut [u64],
+  multiplied: &'a mut [u64],
+  selected: &'a mut [u64],
+}
+
 fn private_exponentiate_window(
   table: &[u64],
   window: u8,
   modulus: &RsaPublicModulus,
-  t: &mut [u64],
-  acc: &mut [u64],
-  squared: &mut [u64],
-  multiplied: &mut [u64],
-  selected: &mut [u64],
+  workspace: RsaPrivateWindowWorkspace<'_>,
 ) {
+  let RsaPrivateWindowWorkspace {
+    t,
+    acc,
+    squared,
+    multiplied,
+    selected,
+  } = workspace;
   for _ in 0..4 {
     private_mont_mul(squared, acc, acc, modulus, t);
     acc.copy_from_slice(squared);
@@ -9046,13 +9041,14 @@ fn private_exponentiate_window(
   acc.copy_from_slice(multiplied);
 }
 
-#[allow(clippy::indexing_slicing)]
 #[inline(always)]
 fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
   let limbs = out.len();
   debug_assert_eq!(table.len(), limbs.strict_mul(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES));
   out.fill(0);
-  for index in 0..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES as u8 {
+  let entry_count =
+    u8::try_from(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES).expect("private fixed-window table entry count must fit u8");
+  for index in 0..entry_count {
     let start = usize::from(index).strict_mul(limbs);
     let entry = &table[start..start.strict_add(limbs)];
     let mask = core::hint::black_box(private_choice_eq_mask_u8(window, index));
@@ -9069,6 +9065,7 @@ fn private_select_window_power(out: &mut [u64], table: &[u64], window: u8) {
 
 #[cfg(feature = "diag")]
 #[inline(always)]
+/// Run the four-limb RSA private fixed-window selector for diagnostic harnesses.
 pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> [u64; 4] {
   let mut out = [0u64; 4];
   private_select_window_power(&mut out, table, window);
@@ -9077,6 +9074,7 @@ pub fn diag_rsa_private_select_window_power_4(table: &[u64; 64], window: u8) -> 
 
 #[cfg(feature = "diag")]
 #[inline(always)]
+/// Evaluate the fixed-width RSA private-component checks used by diagnostic harnesses.
 pub fn diag_rsa_private_component_validation_32(component: &[u8; 32], upper_bound: &[u8; 32], other: &[u8; 32]) -> u8 {
   let canonical = u8::from(is_canonical_positive_unsigned_be(component));
   let less_than_bound = u8::from(ct_unsigned_be_lt_public_shape(component, upper_bound));
@@ -9102,6 +9100,9 @@ fn mod_mul_representatives(
   if left.len() != bytes || right.len() != bytes || out.len() != bytes {
     return Err(RsaPrivateOpError::InvalidLength);
   }
+  let r2 = modulus
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
 
   let mut t = SecretLimbs::zeroed(limbs.strict_mul(2).strict_add(2));
   let mut left_limbs = SecretLimbs::zeroed(limbs);
@@ -9120,14 +9121,14 @@ fn mod_mul_representatives(
   private_mont_mul(
     left_mont.as_mut_slice(),
     left_limbs.as_slice(),
-    modulus.montgomery_r2(),
+    r2,
     modulus,
     t.as_mut_slice(),
   );
   private_mont_mul(
     right_mont.as_mut_slice(),
     right_limbs.as_slice(),
-    modulus.montgomery_r2(),
+    r2,
     modulus,
     t.as_mut_slice(),
   );
@@ -9160,6 +9161,9 @@ fn mod_mul_representatives_with_scratch(
   if left.len() != bytes || right.len() != bytes || out.len() != bytes {
     return Err(RsaPrivateOpError::InvalidLength);
   }
+  let r2 = modulus
+    .montgomery_r2()
+    .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
   scratch.ensure_limb_count(limbs)?;
 
   let t_len = limbs.strict_mul(2).strict_add(2);
@@ -9205,8 +9209,8 @@ fn mod_mul_representatives_with_scratch(
     return Err(RsaPrivateOpError::RepresentativeOutOfRange);
   }
 
-  private_mont_mul(left_mont, left_limbs, modulus.montgomery_r2(), modulus, t);
-  private_mont_mul(right_mont, right_limbs, modulus.montgomery_r2(), modulus, t);
+  private_mont_mul(left_mont, left_limbs, r2, modulus, t);
+  private_mont_mul(right_mont, right_limbs, r2, modulus, t);
   private_mont_mul(product_mont, left_mont, right_mont, modulus, t);
   private_mont_reduce(product, product_mont, modulus, t);
   limbs_to_be(product, out);
@@ -9229,6 +9233,14 @@ fn private_mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulu
   }
 }
 
+#[inline(always)]
+fn split_u128(value: u128) -> (u64, u64) {
+  (
+    u64::try_from(value & u128::from(u64::MAX)).expect("masked low half of u128 must fit u64"),
+    u64::try_from(value >> u64::BITS).expect("shifted high half of u128 must fit u64"),
+  )
+}
+
 #[cfg(feature = "getrandom")]
 fn private_import_product_unsigned_be(left: &[u8], right: &[u8]) -> Option<SecretBigEndianBuffer> {
   let left = SecretLimbs::from_be(left);
@@ -9236,22 +9248,24 @@ fn private_import_product_unsigned_be(left: &[u8], right: &[u8]) -> Option<Secre
   let mut product = SecretLimbs::zeroed(left.as_slice().len().strict_add(right.as_slice().len()));
 
   for (left_index, &left_limb) in left.as_slice().iter().enumerate() {
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for (right_index, &right_limb) in right.as_slice().iter().enumerate() {
       let index = left_index.strict_add(right_index);
       let limb = product.as_mut_slice().get_mut(index)?;
       let acc = u128::from(*limb)
         .strict_add(u128::from(left_limb).strict_mul(u128::from(right_limb)))
-        .strict_add(carry);
-      *limb = acc as u64;
-      carry = acc >> 64;
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *limb = acc_low;
+      carry = acc_high;
     }
 
     let index = left_index.strict_add(right.as_slice().len());
     for limb in product.as_mut_slice().get_mut(index..)?.iter_mut() {
-      let acc = u128::from(*limb).strict_add(carry);
-      *limb = acc as u64;
-      carry = acc >> 64;
+      let acc = u128::from(*limb).strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *limb = acc_low;
+      carry = acc_high;
     }
     if carry != 0 {
       return None;
@@ -9274,7 +9288,7 @@ fn private_import_product_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &
   let mut product = SecretLimbs::zeroed(out_limb_count);
 
   for (left_index, &left_limb) in left.as_slice().iter().enumerate() {
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for (right_index, &right_limb) in right.as_slice().iter().enumerate() {
       let index = left_index.strict_add(right_index);
       let Some(limb) = product.as_mut_slice().get_mut(index) else {
@@ -9282,9 +9296,10 @@ fn private_import_product_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &
       };
       let acc = u128::from(*limb)
         .strict_add(u128::from(left_limb).strict_mul(u128::from(right_limb)))
-        .strict_add(carry);
-      *limb = acc as u64;
-      carry = acc >> 64;
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *limb = acc_low;
+      carry = acc_high;
     }
 
     let index = left_index.strict_add(right.as_slice().len());
@@ -9292,9 +9307,10 @@ fn private_import_product_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &
       return Err(RsaKeyError::InvalidModulus);
     };
     for limb in carry_limbs {
-      let acc = u128::from(*limb).strict_add(carry);
-      *limb = acc as u64;
-      carry = acc >> 64;
+      let acc = u128::from(*limb).strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *limb = acc_low;
+      carry = acc_high;
     }
     if carry != 0 {
       return Err(RsaKeyError::InvalidModulus);
@@ -9321,7 +9337,6 @@ fn private_import_product_unsigned_be_to_fixed(left: &[u8], right: &[u8], out: &
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn private_product_add_unsigned_be_to_fixed(
   left: &[u8],
   right: &[u8],
@@ -9362,7 +9377,7 @@ fn private_product_add_unsigned_be_to_fixed(
   product.fill(0);
 
   for (left_index, &left_limb) in left_limbs.iter().enumerate() {
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for (right_index, &right_limb) in right_limbs.iter().enumerate() {
       let index = left_index.strict_add(right_index);
       let limb = product
@@ -9370,9 +9385,10 @@ fn private_product_add_unsigned_be_to_fixed(
         .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
       let acc = u128::from(*limb)
         .strict_add(u128::from(left_limb).strict_mul(u128::from(right_limb)))
-        .strict_add(carry);
-      *limb = acc as u64;
-      carry = acc >> 64;
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *limb = acc_low;
+      carry = acc_high;
     }
 
     let index = left_index.strict_add(right_limbs.len());
@@ -9380,9 +9396,10 @@ fn private_product_add_unsigned_be_to_fixed(
       .get_mut(index..)
       .ok_or(RsaPrivateOpError::RepresentativeOutOfRange)?;
     for limb in carry_limbs {
-      let acc = u128::from(*limb).strict_add(carry);
-      *limb = acc as u64;
-      carry = acc >> 64;
+      let acc = u128::from(*limb).strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *limb = acc_low;
+      carry = acc_high;
     }
     if carry != 0 {
       return Err(RsaPrivateOpError::RepresentativeOutOfRange);
@@ -9401,7 +9418,7 @@ fn private_product_add_unsigned_be_to_fixed(
       .copied()
       .unwrap_or(0);
     let sum = u16::from(out[dst]).strict_add(u16::from(add_byte)).strict_add(carry);
-    out[dst] = sum as u8;
+    out[dst] = sum.to_le_bytes()[0];
     carry = sum >> 8;
   }
 
@@ -9439,7 +9456,6 @@ fn private_import_decrement_unsigned_be_to_fixed(bytes: &[u8], out: &mut [u8]) -
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 #[cfg(feature = "getrandom")]
 fn private_sub_small_unsigned_be_to_fixed(
   bytes: &[u8],
@@ -9527,7 +9543,6 @@ fn private_import_unsigned_be_mod_to_fixed(
   Ok(())
 }
 
-#[allow(clippy::indexing_slicing)]
 fn add_bit_mod_in_place(value: &mut [u64], modulus: &[u64], bit: u8) {
   debug_assert_eq!(value.len(), modulus.len());
 
@@ -9559,7 +9574,6 @@ fn private_import_canonical_unsigned_be(mut bytes: Vec<u8>) -> SecretBigEndianBu
   SecretBigEndianBuffer::new(canonical)
 }
 
-#[allow(clippy::indexing_slicing)]
 fn cmp_limbs(a: &[u64], b: &[u64]) -> core::cmp::Ordering {
   debug_assert_eq!(a.len(), b.len());
   for index in (0..a.len()).rev() {
@@ -9582,7 +9596,6 @@ fn ct_limbs_lt(left: &[u64], right: &[u64]) -> bool {
   borrow == 1
 }
 
-#[allow(clippy::indexing_slicing)]
 fn limb_bit_len(limbs: &[u64]) -> usize {
   for index in (0..limbs.len()).rev() {
     let limb = limbs[index];
@@ -9631,7 +9644,6 @@ fn ct_nonzero_u64(value: u64) -> u64 {
   (value | value.wrapping_neg()) >> 63
 }
 
-#[allow(clippy::indexing_slicing)]
 fn sub_modulus_in_place(value: &mut [u64], modulus: &[u64]) -> u64 {
   debug_assert_eq!(value.len(), modulus.len());
   let mut borrow = 0u64;
@@ -9644,7 +9656,6 @@ fn sub_modulus_in_place(value: &mut [u64], modulus: &[u64]) -> u64 {
   borrow
 }
 
-#[allow(clippy::indexing_slicing)]
 fn add_modulus_masked(value: &mut [u64], modulus: &[u64], choice: u64) {
   debug_assert_eq!(value.len(), modulus.len());
   let mask = 0u64.wrapping_sub(choice & 1);
@@ -9658,7 +9669,6 @@ fn add_modulus_masked(value: &mut [u64], modulus: &[u64], choice: u64) {
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 fn subtract_modulus_if_needed(value: &mut [u64], modulus: &[u64], extra: u64) {
   debug_assert_eq!(value.len(), modulus.len());
   let borrow = sub_modulus_in_place(value, modulus);
@@ -9667,7 +9677,6 @@ fn subtract_modulus_if_needed(value: &mut [u64], modulus: &[u64], extra: u64) {
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing)]
 fn add_mod_in_place(value: &mut [u64], addend: &[u64], modulus: &[u64]) {
   debug_assert_eq!(value.len(), addend.len());
   debug_assert_eq!(value.len(), modulus.len());
@@ -9683,7 +9692,6 @@ fn add_mod_in_place(value: &mut [u64], addend: &[u64], modulus: &[u64]) {
   subtract_modulus_if_needed(value, modulus, carry);
 }
 
-#[allow(clippy::indexing_slicing)]
 fn double_mod_in_place(value: &mut [u64], modulus: &[u64]) {
   debug_assert_eq!(value.len(), modulus.len());
   let mut carry = 0u64;
@@ -9715,7 +9723,6 @@ fn mul_mod_bitserial(out: &mut [u64], a: &[u64], b: &[u64], modulus: &[u64], add
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 fn pow2_mod_into(out: &mut [u64], bits: usize, modulus: &[u64]) {
   out.fill(0);
   let modulus_bits = limb_bit_len(modulus);
@@ -9736,27 +9743,23 @@ fn montgomery_n0(n0: u64) -> u64 {
   inv.wrapping_neg()
 }
 
-#[allow(clippy::indexing_slicing)]
 fn mont_square_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let _ = tmp;
   mont_square_product(value, modulus, t);
 }
 
-#[allow(clippy::indexing_slicing)]
 fn mont_mul_in_place_left(left: &mut [u64], right: &[u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   copy_limbs(tmp, left);
   mont_mul(left, tmp, right, modulus, t);
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing)]
 fn mont_square_comba_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   copy_limbs(tmp, value);
   mont_mul_comba(value, tmp, tmp, modulus, t);
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing)]
 fn mont_mul_comba_in_place_left(
   left: &mut [u64],
   right: &[u64],
@@ -9768,7 +9771,6 @@ fn mont_mul_comba_in_place_left(
   mont_mul_comba(left, tmp, right, modulus, t);
 }
 
-#[allow(clippy::indexing_slicing)]
 fn mont_square_cios_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   #[cfg(all(
     target_arch = "aarch64",
@@ -9816,7 +9818,6 @@ fn mont_square_cios_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPu
   mont_mul_cios(value, tmp, tmp, modulus, t);
 }
 
-#[allow(clippy::indexing_slicing)]
 fn mont_mul_cios_in_place_left(
   left: &mut [u64],
   right: &[u64],
@@ -9881,14 +9882,12 @@ fn mont_mul_cios_in_place_left(
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing)]
 fn mont_square_cios_portable_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   copy_limbs(tmp, value);
   mont_mul_cios_portable(value, tmp, tmp, modulus, t);
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing)]
 fn mont_mul_cios_portable_in_place_left(
   left: &mut [u64],
   right: &[u64],
@@ -9913,7 +9912,6 @@ fn use_public_cios_montgomery(modulus: &RsaPublicModulus) -> bool {
   modulus.limbs.len() <= 128
 }
 
-#[allow(clippy::indexing_slicing)]
 #[cfg(feature = "diag")]
 fn mont_square_auto_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   if use_public_cios_montgomery(modulus) {
@@ -9923,7 +9921,6 @@ fn mont_square_auto_in_place(value: &mut [u64], tmp: &mut [u64], modulus: &RsaPu
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 #[cfg(feature = "diag")]
 fn mont_mul_auto_in_place_left(
   left: &mut [u64],
@@ -9957,7 +9954,6 @@ fn mont_reduce_auto(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, 
   }
 }
 
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_mul_cios(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10003,7 +9999,6 @@ fn mont_mul_cios(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModul
   mont_mul_cios_portable(out, a, b, modulus, t);
 }
 
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10013,14 +10008,15 @@ fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPu
 
   t[..n.strict_add(2)].fill(0);
 
-  for i in 0..n {
+  for &b_limb in &b[..n] {
     let mut carry = 0u64;
-    for j in 0..n {
-      let acc = u128::from(t[j])
-        .strict_add(u128::from(a[j]).strict_mul(u128::from(b[i])))
+    for (t_limb, &a_limb) in t[..n].iter_mut().zip(&a[..n]) {
+      let acc = u128::from(*t_limb)
+        .strict_add(u128::from(a_limb).strict_mul(u128::from(b_limb)))
         .strict_add(u128::from(carry));
-      t[j] = acc as u64;
-      carry = (acc >> 64) as u64;
+      let (acc_low, acc_high) = split_u128(acc);
+      *t_limb = acc_low;
+      carry = acc_high;
     }
     let (sum, overflow) = t[n].overflowing_add(carry);
     t[n] = sum;
@@ -10028,19 +10024,20 @@ fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPu
 
     let q = t[0].wrapping_mul(modulus.n0);
     carry = 0;
-    for j in 0..n {
-      let acc = u128::from(t[j])
-        .strict_add(u128::from(q).strict_mul(u128::from(modulus.limbs[j])))
+    for (t_limb, &modulus_limb) in t[..n].iter_mut().zip(modulus.limbs.iter()) {
+      let acc = u128::from(*t_limb)
+        .strict_add(u128::from(q).strict_mul(u128::from(modulus_limb)))
         .strict_add(u128::from(carry));
-      t[j] = acc as u64;
-      carry = (acc >> 64) as u64;
+      let (acc_low, acc_high) = split_u128(acc);
+      *t_limb = acc_low;
+      carry = acc_high;
     }
     let (sum, overflow) = t[n].overflowing_add(carry);
     t[n] = sum;
     t[n.strict_add(1)] = t[n.strict_add(1)].strict_add(u64::from(overflow));
 
-    for j in 0..=n {
-      t[j] = t[j.strict_add(1)];
+    for index in 0..=n {
+      t[index] = t[index.strict_add(1)];
     }
     t[n.strict_add(1)] = 0;
   }
@@ -10052,7 +10049,6 @@ fn mont_mul_cios_portable(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPu
   subtract_modulus_if_needed(out, &modulus.limbs, t[n]);
 }
 
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_reduce_cios(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10106,7 +10102,6 @@ fn mont_reduce_cios(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, 
   mont_reduce_cios_portable(out, value, modulus, t);
 }
 
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_reduce_cios_portable(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10119,19 +10114,20 @@ fn mont_reduce_cios_portable(out: &mut [u64], value: &[u64], modulus: &RsaPublic
   for _ in 0..n {
     let q = t[0].wrapping_mul(modulus.n0);
     let mut carry = 0u64;
-    for j in 0..n {
-      let acc = u128::from(t[j])
-        .strict_add(u128::from(q).strict_mul(u128::from(modulus.limbs[j])))
+    for (t_limb, &modulus_limb) in t[..n].iter_mut().zip(modulus.limbs.iter()) {
+      let acc = u128::from(*t_limb)
+        .strict_add(u128::from(q).strict_mul(u128::from(modulus_limb)))
         .strict_add(u128::from(carry));
-      t[j] = acc as u64;
-      carry = (acc >> 64) as u64;
+      let (acc_low, acc_high) = split_u128(acc);
+      *t_limb = acc_low;
+      carry = acc_high;
     }
     let (sum, overflow) = t[n].overflowing_add(carry);
     t[n] = sum;
     t[n.strict_add(1)] = t[n.strict_add(1)].strict_add(u64::from(overflow));
 
-    for j in 0..=n {
-      t[j] = t[j.strict_add(1)];
+    for index in 0..=n {
+      t[index] = t[index.strict_add(1)];
     }
     t[n.strict_add(1)] = 0;
   }
@@ -10144,7 +10140,6 @@ fn mont_reduce_cios_portable(out: &mut [u64], value: &[u64], modulus: &RsaPublic
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_mul_comba(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10156,17 +10151,18 @@ fn mont_mul_comba(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModu
 
   for i in 0..n {
     let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for j in 0..n {
       let index = i.strict_add(j);
       let acc = u128::from(q)
         .strict_mul(u128::from(modulus.limbs[j]))
         .strict_add(u128::from(t[index]))
-        .strict_add(carry);
-      t[index] = acc as u64;
-      carry = acc >> 64;
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      t[index] = acc_low;
+      carry = acc_high;
     }
-    add_carry(t, i.strict_add(n), carry as u64);
+    add_carry(t, i.strict_add(n), carry);
   }
 
   for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
@@ -10178,7 +10174,6 @@ fn mont_mul_comba(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModu
 }
 
 #[cfg(feature = "diag")]
-#[allow(clippy::indexing_slicing)]
 fn comba_mul_into(out: &mut [u64], a: &[u64], b: &[u64]) {
   debug_assert_eq!(a.len(), b.len());
   let n = a.len();
@@ -10211,8 +10206,7 @@ fn comba_mul_into(out: &mut [u64], a: &[u64], b: &[u64]) {
 
 fn add_product_to_acc(acc_lo: &mut u64, acc_mid: &mut u64, acc_hi: &mut u64, a: u64, b: u64) {
   let product = u128::from(a).strict_mul(u128::from(b));
-  let product_lo = product as u64;
-  let product_hi = (product >> 64) as u64;
+  let (product_lo, product_hi) = split_u128(product);
 
   let (lo, lo_overflow) = acc_lo.overflowing_add(product_lo);
   *acc_lo = lo;
@@ -10222,7 +10216,6 @@ fn add_product_to_acc(acc_lo: &mut u64, acc_mid: &mut u64, acc_hi: &mut u64, a: 
   *acc_hi = acc_hi.strict_add(u64::from(product_hi_overflow).strict_add(u64::from(lo_carry_overflow)));
 }
 
-#[allow(clippy::indexing_slicing)]
 fn square_into_wide_product(out: &mut [u64], value: &[u64]) {
   let n = value.len();
   debug_assert!(out.len() >= n.strict_mul(2).strict_add(2));
@@ -10261,7 +10254,6 @@ fn square_into_wide_product(out: &mut [u64], value: &[u64]) {
   out[product_limbs] = carry_hi;
 }
 
-#[allow(clippy::indexing_slicing)]
 fn mont_square_product(out: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10271,14 +10263,18 @@ fn mont_square_product(out: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64
 
   for i in 0..n {
     let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for j in 0..n {
       let index = i.strict_add(j);
-      let acc = u128::from(q) * u128::from(modulus.limbs[j]) + u128::from(t[index]) + carry;
-      t[index] = acc as u64;
-      carry = acc >> 64;
+      let acc = u128::from(q)
+        .strict_mul(u128::from(modulus.limbs[j]))
+        .strict_add(u128::from(t[index]))
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      t[index] = acc_low;
+      carry = acc_high;
     }
-    add_carry(t, i.strict_add(n), carry as u64);
+    add_carry(t, i.strict_add(n), carry);
   }
 
   for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
@@ -10289,7 +10285,6 @@ fn mont_square_product(out: &mut [u64], modulus: &RsaPublicModulus, t: &mut [u64
   subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10299,33 +10294,35 @@ fn mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t
 
   t.fill(0);
 
-  for i in 0..n {
-    let mut carry = 0u128;
-    for j in 0..n {
-      let index = i.strict_add(j);
-      let acc = u128::from(a[j])
-        .strict_mul(u128::from(b[i]))
-        .strict_add(u128::from(t[index]))
-        .strict_add(carry);
-      t[index] = acc as u64;
-      carry = acc >> 64;
+  for (i, &b_limb) in b[..n].iter().enumerate() {
+    let mut carry = 0u64;
+    let row_end = i.strict_add(n);
+    for (t_limb, &a_limb) in t[i..row_end].iter_mut().zip(&a[..n]) {
+      let acc = u128::from(a_limb)
+        .strict_mul(u128::from(b_limb))
+        .strict_add(u128::from(*t_limb))
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      *t_limb = acc_low;
+      carry = acc_high;
     }
-    add_carry(t, i.strict_add(n), carry as u64);
+    add_carry(t, row_end, carry);
   }
 
   for i in 0..n {
     let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for j in 0..n {
       let index = i.strict_add(j);
       let acc = u128::from(q)
         .strict_mul(u128::from(modulus.limbs[j]))
         .strict_add(u128::from(t[index]))
-        .strict_add(carry);
-      t[index] = acc as u64;
-      carry = acc >> 64;
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      t[index] = acc_low;
+      carry = acc_high;
     }
-    add_carry(t, i.strict_add(n), carry as u64);
+    add_carry(t, i.strict_add(n), carry);
   }
 
   for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
@@ -10336,7 +10333,6 @@ fn mont_mul(out: &mut [u64], a: &[u64], b: &[u64], modulus: &RsaPublicModulus, t
   subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
-#[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
 fn mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &mut [u64]) {
   let n = modulus.limbs.len();
   debug_assert_eq!(out.len(), n);
@@ -10348,17 +10344,18 @@ fn mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &m
 
   for i in 0..n {
     let q = t[i].wrapping_mul(modulus.n0);
-    let mut carry = 0u128;
+    let mut carry = 0u64;
     for j in 0..n {
       let index = i.strict_add(j);
       let acc = u128::from(q)
         .strict_mul(u128::from(modulus.limbs[j]))
         .strict_add(u128::from(t[index]))
-        .strict_add(carry);
-      t[index] = acc as u64;
-      carry = acc >> 64;
+        .strict_add(u128::from(carry));
+      let (acc_low, acc_high) = split_u128(acc);
+      t[index] = acc_low;
+      carry = acc_high;
     }
-    add_carry(t, i.strict_add(n), carry as u64);
+    add_carry(t, i.strict_add(n), carry);
   }
 
   for (dst, src) in out.iter_mut().zip(t[n..n.strict_add(n)].iter().copied()) {
@@ -10369,7 +10366,6 @@ fn mont_reduce(out: &mut [u64], value: &[u64], modulus: &RsaPublicModulus, t: &m
   subtract_modulus_if_needed(out, &modulus.limbs, extra);
 }
 
-#[allow(clippy::indexing_slicing)]
 fn add_carry(t: &mut [u64], index: usize, mut carry: u64) {
   for limb in &mut t[index..] {
     let (sum, overflow) = limb.overflowing_add(carry);
@@ -10481,45 +10477,52 @@ mod tests {
     include_str!("../../testdata/rsa/nist_cavp/rsa_keygen_186_3_probable_prime_subset.json");
 
   fn hex_to_vec(hex: &str) -> Vec<u8> {
-    assert_eq!(hex.len() % 2, 0);
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    for chunk in hex.as_bytes().chunks_exact(2) {
-      out.push((hex_value(chunk[0]) << 4) | hex_value(chunk[1]));
+    let (chunks, remainder) = hex.as_bytes().as_chunks::<2>();
+    assert!(remainder.is_empty(), "hex input must contain complete byte pairs");
+    let mut out = Vec::with_capacity(chunks.len());
+    for &[hi, lo] in chunks {
+      let hi = hex_value(hi).expect("hex fixtures must contain only ASCII hexadecimal digits");
+      let lo = hex_value(lo).expect("hex fixtures must contain only ASCII hexadecimal digits");
+      out.push((hi << 4) | lo);
     }
     out
   }
 
-  const fn hex_value(byte: u8) -> u8 {
+  const fn hex_value(byte: u8) -> Option<u8> {
     match byte {
-      b'0'..=b'9' => byte - b'0',
-      b'a'..=b'f' => byte - b'a' + 10,
-      b'A'..=b'F' => byte - b'A' + 10,
-      _ => panic!("invalid hex digit"),
+      b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+      b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+      b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
+      _ => None,
     }
   }
 
   #[cfg(feature = "getrandom")]
   fn json_field<'a>(value: &'a Value, name: &'static str) -> &'a str {
-    value[name]
-      .as_str()
-      .unwrap_or_else(|| panic!("missing string field `{name}`"))
+    value
+      .get(name)
+      .and_then(Value::as_str)
+      .expect("the CAVP fixture field must be a string")
   }
 
   #[cfg(feature = "getrandom")]
   fn test_keygen_drbg(label: &'static [u8]) -> RsaKeygenDrbg {
-    let mut seed = [0u8; RSA_KEYGEN_DRBG_ENTROPY_BYTES + RSA_KEYGEN_DRBG_NONCE_BYTES];
+    let mut seed = [0u8; RSA_KEYGEN_DRBG_ENTROPY_BYTES.strict_add(RSA_KEYGEN_DRBG_NONCE_BYTES)];
     for (index, byte) in seed.iter_mut().enumerate() {
-      *byte = (index as u8).wrapping_mul(17).wrapping_add(0xa5);
+      *byte = u8::try_from(index)
+        .expect("the RSA keygen DRBG fixture seed length must fit in one byte")
+        .wrapping_mul(17)
+        .wrapping_add(0xa5);
     }
     RsaKeygenDrbg::new(&seed, label)
   }
 
   fn rsa_miri_private_limb_widths() -> core::ops::RangeInclusive<usize> {
-    let min_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.min_modulus_bits.strict_add(1) / 2;
-    let max_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.max_modulus_bits.strict_add(1) / 2;
+    let min_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.min_modulus_bits.div_ceil(2);
+    let max_factor_bits = RsaPublicKeyPolicy::LEGACY_VERIFICATION.max_modulus_bits.div_ceil(2);
     let bits_per_limb = u64::BITS as usize;
-    let min_limbs = min_factor_bits.strict_add(bits_per_limb.strict_sub(1)) / bits_per_limb;
-    let max_limbs = max_factor_bits.strict_add(bits_per_limb.strict_sub(1)) / bits_per_limb;
+    let min_limbs = min_factor_bits.div_ceil(bits_per_limb);
+    let max_limbs = max_factor_bits.div_ceil(bits_per_limb);
     min_limbs..=max_limbs
   }
 
@@ -10570,7 +10573,9 @@ mod tests {
         rsa_miri_fill_exponent_scratch(&mut scratch, MARKER);
 
         {
-          let workspace = scratch.workspace(limbs).unwrap();
+          let workspace = scratch
+            .workspace(limbs)
+            .expect("valid RSA private-exponent scratch must bind to its limb width");
           assert_eq!(workspace.t.len(), limbs.strict_mul(2).strict_add(2));
           assert_eq!(workspace.representative.len(), limbs);
           assert_eq!(workspace.one.len(), limbs);
@@ -10592,7 +10597,9 @@ mod tests {
             }
           }
 
-          for window in 0..PRIVATE_FIXED_WINDOW_TABLE_ENTRIES as u8 {
+          let window_count = u8::try_from(PRIVATE_FIXED_WINDOW_TABLE_ENTRIES)
+            .expect("the RSA fixed-window table entry count must fit in one byte");
+          for window in 0..window_count {
             workspace.selected.fill(MARKER);
             private_select_window_power(workspace.selected, workspace.table, window);
             let start = usize::from(window).strict_mul(limbs);
@@ -10657,7 +10664,9 @@ mod tests {
   fn rsa_miri_proof_miller_rabin_covers_small_prime_and_composite_paths() {
     let prime = 1009u16.to_be_bytes();
     assert!(!has_small_prime_factor(&prime));
-    assert!(private_import_is_probable_prime(&prime).unwrap());
+    assert!(
+      private_import_is_probable_prime(&prime).expect("the small-prime RSA fixture must be accepted for testing")
+    );
 
     let composite = [0x0f, 0x98, 0xa5];
     assert_eq!(
@@ -10665,7 +10674,10 @@ mod tests {
       1009 * 1013
     );
     assert!(!has_small_prime_factor(&composite));
-    assert!(!private_import_is_probable_prime(&composite).unwrap());
+    assert!(
+      !private_import_is_probable_prime(&composite)
+        .expect("the composite RSA fixture must be evaluated without an arithmetic failure")
+    );
   }
 
   #[test]
@@ -10677,19 +10689,21 @@ mod tests {
       ([0x00], [0x00], [0x01], [0x00]),
     ] {
       let mut out = [0u8; 1];
-      private_sub_mod_unsigned_be_to_fixed(&left, &right, &modulus, &mut out).unwrap();
+      private_sub_mod_unsigned_be_to_fixed(&left, &right, &modulus, &mut out)
+        .expect("the bounded modular-subtraction fixture must be valid");
       assert_eq!(out, expected);
     }
 
     let mut out = [0u8; 2];
-    private_sub_mod_unsigned_be_to_fixed(&[0x00, 0x01], &[0x01, 0x00], &[0x01, 0x01], &mut out).unwrap();
+    private_sub_mod_unsigned_be_to_fixed(&[0x00, 0x01], &[0x01, 0x00], &[0x01, 0x01], &mut out)
+      .expect("the borrow-propagation modular-subtraction fixture must be valid");
     assert_eq!(out, [0x00, 0x02]);
   }
 
   fn integer_unsigned(value: &[u8]) -> Vec<u8> {
     let first_nonzero = value.iter().position(|&byte| byte != 0);
     let value = first_nonzero.map_or(&[0u8][..], |index| &value[index..]);
-    let mut encoded = Vec::with_capacity(value.len() + usize::from(value[0] & 0x80 != 0));
+    let mut encoded = Vec::with_capacity(value.len().strict_add(usize::from(value[0] & 0x80 != 0)));
     if value[0] & 0x80 != 0 {
       encoded.push(0);
     }
@@ -10747,7 +10761,11 @@ mod tests {
     params.extend_from_slice(&context_constructed(1, &x509_mgf1_algorithm(profile)));
     params.extend_from_slice(&context_constructed(
       2,
-      &integer_unsigned(&u64::try_from(salt_len).unwrap().to_be_bytes()),
+      &integer_unsigned(
+        &u64::try_from(salt_len)
+          .expect("an RSA-PSS test salt length must fit in an unsigned DER integer")
+          .to_be_bytes(),
+      ),
     ));
     algorithm_identifier(ID_RSASSA_PSS_OID, Some(&tlv(TAG_SEQUENCE, &params)))
   }
@@ -10845,7 +10863,8 @@ ca5b455045218c7e196209c1c651702ece090a15e3cbcc265971300023a86fe9d34ad527e9ef03b7
     };
 
     RsaPrivateKey {
-      components: private_key_components_from_prevalidated_parts(&components, unsigned_be_bit_len(&modulus)).unwrap(),
+      components: private_key_components_from_prevalidated_parts(&components, unsigned_be_bit_len(&modulus))
+        .expect("the prevalidated RSA private-key fixture must satisfy component invariants"),
     }
   }
 
@@ -10985,18 +11004,20 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + der_len(value.len()).len() + value.len());
+    let encoded_len = der_len(value.len());
+    let capacity = 1usize.strict_add(encoded_len.len()).strict_add(value.len());
+    let mut out = Vec::with_capacity(capacity);
     out.push(tag);
-    out.extend_from_slice(&der_len(value.len()));
+    out.extend_from_slice(&encoded_len);
     out.extend_from_slice(value);
     out
   }
 
   fn tlv_with_noncanonical_short_len(tag: u8, value: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(3 + value.len());
+    let mut out = Vec::with_capacity(3usize.strict_add(value.len()));
     out.push(tag);
     out.push(0x81);
-    out.push(value.len() as u8);
+    out.push(u8::try_from(value.len()).expect("a noncanonical short DER fixture length must fit in one byte"));
     out.extend_from_slice(value);
     out
   }
@@ -11009,7 +11030,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let mut out = Vec::with_capacity(der.len().strict_add(1));
     out.push(tag);
-    out.push(0x80 | (len_len.strict_add(1) as u8));
+    out.push(0x80 | u8::try_from(len_len.strict_add(1)).expect("a DER length-of-length must fit in one byte"));
     out.push(0);
     out.extend_from_slice(&der[2..]);
     out
@@ -11017,14 +11038,17 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
   fn der_len(len: usize) -> Vec<u8> {
     if len < 128 {
-      return vec![len as u8];
+      return vec![u8::try_from(len).expect("a short DER length must fit in one byte")];
     }
 
     let bytes = len.to_be_bytes();
-    let first_nonzero = bytes.iter().position(|&byte| byte != 0).unwrap();
+    let first_nonzero = bytes
+      .iter()
+      .position(|&byte| byte != 0)
+      .expect("a DER length of at least 128 must contain a nonzero byte");
     let len_bytes = &bytes[first_nonzero..];
-    let mut out = Vec::with_capacity(1 + len_bytes.len());
-    out.push(0x80 | len_bytes.len() as u8);
+    let mut out = Vec::with_capacity(1usize.strict_add(len_bytes.len()));
+    out.push(0x80 | u8::try_from(len_bytes.len()).expect("a usize DER length prefix must fit in one byte"));
     out.extend_from_slice(len_bytes);
     out
   }
@@ -11044,14 +11068,19 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   }
 
   fn pss_encoded_sha256(message: &[u8], em_bits: usize, salt_len: usize) -> Vec<u8> {
-    let em_len = em_bits.strict_add(7) / 8;
+    let em_len = em_bits.div_ceil(8);
     let h_len = Sha256::OUTPUT_SIZE;
     let db_len = em_len.strict_sub(h_len).strict_sub(1);
     let ps_len = db_len.strict_sub(salt_len).strict_sub(1);
 
     let mut salt = Vec::with_capacity(salt_len);
     for index in 0..salt_len {
-      salt.push((index as u8).wrapping_mul(17).wrapping_add(0xa5));
+      salt.push(
+        u8::try_from(index)
+          .expect("the RSA-PSS test salt length must fit in one byte")
+          .wrapping_mul(17)
+          .wrapping_add(0xa5),
+      );
     }
 
     let m_hash = Sha256::digest(message);
@@ -11149,7 +11178,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn pkcs1_private_key_parser_preserves_components_and_public_key() {
     let der = test_pkcs1_private_key();
-    let key = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = parse_pkcs1_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("the canonical PKCS#1 private-key fixture must parse");
 
     assert_eq!(prevalidated_test_private_key().to_pkcs1_der().as_bytes(), der);
 
@@ -11263,7 +11293,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(unsigned_be_bit_len(&prime_q), 1024);
     assert_eq!(prime_p, composite_p.to_bytes_be());
     assert!(!has_small_prime_factor(&prime_p));
-    assert!(!private_import_is_probable_prime(&prime_p).unwrap());
+    assert!(
+      !private_import_is_probable_prime(&prime_p)
+        .expect("the balanced composite fixture must be evaluated without an arithmetic failure")
+    );
 
     assert_eq!(
       RsaPrivateKey::from_components_with_policy(
@@ -11340,6 +11373,20 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn private_key_components_debug_redacts_secret_material() {
     let key = prevalidated_test_private_key();
     let debug = format!("{:?}", key.components);
+    let (blinding_factor, blinding_inverse) = factor_two_and_inverse(key.public_key().modulus());
+    let blinding_debug = format!("{:?}", RsaBlindingPair::new(&blinding_factor, &blinding_inverse));
+    let parts_debug = format!(
+      "{:?}",
+      rsa_private_key_parts(
+        &rsa_private_modulus(),
+        &rsa_private_exponent(),
+        &rsa_private_prime_p(),
+        &rsa_private_prime_q(),
+        &rsa_private_exponent_p(),
+        &rsa_private_exponent_q(),
+        &rsa_private_coefficient(),
+      )
+    );
 
     assert!(debug.contains("modulus_bits"));
     assert!(debug.contains("public_exponent"));
@@ -11347,6 +11394,18 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert!(debug.contains("prime_p: \"****\""));
     assert!(debug.contains("prime_q: \"****\""));
     assert!(debug.contains("coefficient: \"****\""));
+    assert!(parts_debug.contains("modulus_bits"));
+    assert!(parts_debug.contains("public_exponent: 65537"));
+    assert!(parts_debug.contains("private_exponent: \"****\""));
+    assert!(parts_debug.contains("prime_p: \"****\""));
+    assert!(parts_debug.contains("prime_q: \"****\""));
+    assert!(parts_debug.contains("coefficient: \"****\""));
+    assert_eq!(
+      blinding_debug,
+      "RsaBlindingPair { factor: \"****\", inverse: \"****\" }"
+    );
+    assert!(!blinding_debug.contains(&format!("{blinding_factor:?}")));
+    assert!(!blinding_debug.contains(&format!("{blinding_inverse:?}")));
     for secret in [
       rsa_private_exponent(),
       rsa_private_prime_p(),
@@ -11356,6 +11415,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       rsa_private_coefficient(),
     ] {
       assert!(!debug.contains(&format!("{secret:?}")));
+      assert!(!parts_debug.contains(&format!("{secret:?}")));
     }
 
     assert_eq!(
@@ -11382,15 +11442,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .sign_pkcs1v15_with_blinding_factor(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pkcs1v15_signature,
       )
-      .unwrap();
+      .expect("PKCS#1 v1.5 signing with a valid blinding pair must succeed");
     key
       .public_key()
       .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &pkcs1v15_signature)
-      .unwrap();
+      .expect("the generated PKCS#1 v1.5 signature must verify");
     assert_eq!(
       key
         .public_key()
@@ -11404,15 +11463,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         RsaPssProfile::Sha256,
         message,
         &salt,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pss_signature,
       )
-      .unwrap();
+      .expect("PSS signing with explicit salt and a valid blinding pair must succeed");
     key
       .public_key()
       .verify_pss_with_salt_len(RsaPssProfile::Sha256, salt.len(), message, &pss_signature)
-      .unwrap();
+      .expect("the generated PSS signature must verify with its explicit salt length");
     assert_eq!(
       key
         .public_key()
@@ -11426,7 +11484,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("OAEP encryption with a correctly sized deterministic seed must succeed");
     let short_seed = [0x53; Sha256::OUTPUT_SIZE - 1];
     ciphertext.fill(0xa5);
     assert_eq!(
@@ -11443,26 +11501,24 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("OAEP fixture encryption must succeed after the rejected short seed");
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
       .decrypt_oaep_with_blinding_factor(
         RsaOaepProfile::Sha256,
         label,
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut decrypted,
       )
-      .unwrap();
+      .expect("OAEP decryption with the matching label and blinding pair must succeed");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
     assert_eq!(
       key.decrypt_oaep_with_blinding_factor(
         RsaOaepProfile::Sha256,
         b"wrong label",
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut decrypted,
       ),
       Err(RsaPrivateOpError::DecryptionFailed)
@@ -11473,27 +11529,25 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_padding, &mut pkcs1v15_ciphertext)
-      .unwrap();
+      .expect("PKCS#1 v1.5 encryption with a valid deterministic padding string must succeed");
     let mut pkcs1v15_decrypted = vec![0u8; key.signature_len()];
     let pkcs1v15_decrypted_len = key
       .decrypt_pkcs1v15_with_blinding_factor(
         &pkcs1v15_ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pkcs1v15_decrypted,
       )
-      .unwrap();
+      .expect("PKCS#1 v1.5 decryption with a valid blinding pair must succeed");
     assert_eq!(&pkcs1v15_decrypted[..pkcs1v15_decrypted_len], pkcs1v15_plaintext);
     let mut scratch = key.private_scratch();
     let pkcs1v15_decrypted_len = key
       .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
         &pkcs1v15_ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pkcs1v15_decrypted,
         &mut scratch,
       )
-      .unwrap();
+      .expect("scratch-backed PKCS#1 v1.5 decryption with a valid blinding pair must succeed");
     assert_eq!(&pkcs1v15_decrypted[..pkcs1v15_decrypted_len], pkcs1v15_plaintext);
   }
 
@@ -11534,9 +11588,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn private_key_invalid_blinding_clears_signing_and_decryption_outputs() {
     let key = prevalidated_test_private_key();
     let message = b"rscrypto RSA invalid blinding output clearing";
-    let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
-    let mut bad_blinding_inverse = blinding_factor_inverse.clone();
-    *bad_blinding_inverse.last_mut().unwrap() ^= 1;
+    let (blinding_factor, mut bad_blinding_inverse) = factor_two_and_inverse(key.public_key().modulus());
+    *bad_blinding_inverse
+      .last_mut()
+      .expect("the fixed-width blinding inverse must contain at least one byte") ^= 1;
     let mut scratch = key.private_scratch();
 
     let mut pkcs1v15_signature = vec![0xa5; key.signature_len()];
@@ -11544,8 +11599,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key.sign_pkcs1v15_with_blinding_factor(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut pkcs1v15_signature,
       ),
       Err(RsaPrivateOpError::InvalidBlindingFactor)
@@ -11557,8 +11611,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key.sign_pkcs1v15_with_blinding_factor_and_scratch(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut pkcs1v15_signature,
         &mut scratch,
       ),
@@ -11573,8 +11626,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         RsaPssProfile::Sha256,
         message,
         &salt,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut pss_signature,
       ),
       Err(RsaPrivateOpError::InvalidBlindingFactor)
@@ -11587,8 +11639,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         RsaPssProfile::Sha256,
         message,
         &salt,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut pss_signature,
         &mut scratch,
       ),
@@ -11603,7 +11654,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("the OAEP invalid-blinding fixture must encrypt successfully");
 
     let mut decrypted = vec![0xa5; key.signature_len()];
     assert_eq!(
@@ -11611,8 +11662,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         RsaOaepProfile::Sha256,
         label,
         &ciphertext,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut decrypted,
       ),
       Err(RsaPrivateOpError::InvalidBlindingFactor)
@@ -11625,8 +11675,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         RsaOaepProfile::Sha256,
         label,
         &ciphertext,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut decrypted,
         &mut scratch,
       ),
@@ -11640,14 +11689,13 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut pkcs1v15_ciphertext)
-      .unwrap();
+      .expect("the PKCS#1 v1.5 invalid-blinding fixture must encrypt successfully");
 
     let mut pkcs1v15_decrypted = vec![0xa5; key.signature_len()];
     assert_eq!(
       key.decrypt_pkcs1v15_with_blinding_factor(
         &pkcs1v15_ciphertext,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut pkcs1v15_decrypted,
       ),
       Err(RsaPrivateOpError::InvalidBlindingFactor)
@@ -11658,8 +11706,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_eq!(
       key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(
         &pkcs1v15_ciphertext,
-        &blinding_factor,
-        &bad_blinding_inverse,
+        RsaBlindingPair::new(&blinding_factor, &bad_blinding_inverse),
         &mut pkcs1v15_decrypted,
         &mut scratch,
       ),
@@ -11677,7 +11724,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let mut valid = masked_oaep_sha256_from_decoded_db(&seed, &decoded_db);
     let mut out = vec![0u8; message.len()];
-    let len = decode_oaep::<Sha256>(label, &mut valid, &mut out).unwrap();
+    let len = decode_oaep::<Sha256>(label, &mut valid, &mut out)
+      .expect("the canonical OAEP encoded-message fixture must decode");
     assert_eq!(len, message.len());
     assert_eq!(out, message);
 
@@ -11725,10 +11773,12 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let message = b"abc";
     let seed = [0x7bu8; 10];
     let mut encoded = [0u8; 16];
-    encode_pkcs1v15_encryption_with_seed(message, &seed, &mut encoded).unwrap();
+    encode_pkcs1v15_encryption_with_seed(message, &seed, &mut encoded)
+      .expect("the canonical PKCS#1 v1.5 encryption-padding fixture must encode");
 
     let mut out = [0u8; 8];
-    let len = decode_pkcs1v15_encryption(&encoded, &mut out).unwrap();
+    let len = decode_pkcs1v15_encryption(&encoded, &mut out)
+      .expect("the canonical PKCS#1 v1.5 encryption-padding fixture must decode");
     assert_eq!(&out[..len], message);
 
     let mut zero_seed = seed;
@@ -11781,8 +11831,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             label,
             &ciphertext,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
           )
           .unwrap();
@@ -11794,8 +11843,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             label,
             &ciphertext,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
             &mut scratch,
           )
@@ -11819,8 +11867,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             b"wrong label",
             &ciphertext,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
           ),
           Err(RsaPrivateOpError::DecryptionFailed)
@@ -11832,8 +11879,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             b"wrong label",
             &ciphertext,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
             &mut scratch,
           ),
@@ -11865,8 +11911,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             label,
             &tampered_tail,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
           ),
           Err(RsaPrivateOpError::DecryptionFailed)
@@ -11878,8 +11923,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             label,
             &tampered_tail,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
             &mut scratch,
           ),
@@ -11910,8 +11954,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             label,
             &zero_representative,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
           ),
           Err(RsaPrivateOpError::DecryptionFailed)
@@ -11923,8 +11966,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
             $profile,
             label,
             &zero_representative,
-            &blinding_factor,
-            &blinding_factor_inverse,
+            RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
             &mut out,
             &mut scratch,
           ),
@@ -11966,36 +12008,41 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_pkcs1v15_with_seed(plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("valid PKCS#1 v1.5 test plaintext and seed must encrypt");
     let mut out = vec![0u8; key.signature_len()];
     let decrypted_len = key
-      .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_factor_inverse, &mut out)
-      .unwrap();
+      .decrypt_pkcs1v15_with_blinding_factor(
+        &ciphertext,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+        &mut out,
+      )
+      .expect("valid PKCS#1 v1.5 ciphertext must decrypt with explicit blinding");
     assert_eq!(&out[..decrypted_len], plaintext);
 
     let mut scratch = key.private_scratch();
     let decrypted_len = key
       .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut out,
         &mut scratch,
       )
-      .unwrap();
+      .expect("valid PKCS#1 v1.5 ciphertext must decrypt with caller scratch");
     assert_eq!(&out[..decrypted_len], plaintext);
 
     #[cfg(feature = "getrandom")]
     {
-      let decrypted_len = key.decrypt_pkcs1v15(&ciphertext, &mut out).unwrap();
+      let decrypted_len = key
+        .decrypt_pkcs1v15(&ciphertext, &mut out)
+        .expect("valid PKCS#1 v1.5 ciphertext must decrypt with random blinding");
       assert_eq!(&out[..decrypted_len], plaintext);
       let decrypted_len = key
         .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut out, &mut scratch)
-        .unwrap();
+        .expect("valid PKCS#1 v1.5 ciphertext must decrypt with random blinding and caller scratch");
       assert_eq!(&out[..decrypted_len], plaintext);
     }
 
-    let mut zero_seed = seed.clone();
+    let mut zero_seed = seed;
     zero_seed[3] = 0;
     ciphertext.fill(0xa5);
     assert_eq!(
@@ -12021,11 +12068,18 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     bad_block[2..10].fill(0xc5);
     bad_block[10] = 0;
     bad_block[11..11usize.strict_add(plaintext.len())].copy_from_slice(plaintext);
-    key.public_key().public_operation(&bad_block, &mut ciphertext).unwrap();
+    key
+      .public_key()
+      .public_operation(&bad_block, &mut ciphertext)
+      .expect("malformed encoded block must remain a valid RSA representative");
     let mut assert_decrypt_error = |ciphertext: &[u8]| {
       out.fill(0xa5);
       assert_eq!(
-        key.decrypt_pkcs1v15_with_blinding_factor(ciphertext, &blinding_factor, &blinding_factor_inverse, &mut out,),
+        key.decrypt_pkcs1v15_with_blinding_factor(
+          ciphertext,
+          RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+          &mut out,
+        ),
         Err(RsaPrivateOpError::DecryptionFailed)
       );
       assert!(is_zero_unsigned_be(&out));
@@ -12033,8 +12087,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       assert_eq!(
         key.decrypt_pkcs1v15_with_blinding_factor_and_scratch(
           ciphertext,
-          &blinding_factor,
-          &blinding_factor_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
           &mut out,
           &mut scratch,
         ),
@@ -12059,24 +12112,34 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     };
 
     bad_block[1] = 1;
-    key.public_key().public_operation(&bad_block, &mut ciphertext).unwrap();
+    key
+      .public_key()
+      .public_operation(&bad_block, &mut ciphertext)
+      .expect("wrong block type must remain a valid RSA representative");
     assert_decrypt_error(&ciphertext);
 
     bad_block[1] = 2;
     bad_block[5] = 0;
-    key.public_key().public_operation(&bad_block, &mut ciphertext).unwrap();
+    key
+      .public_key()
+      .public_operation(&bad_block, &mut ciphertext)
+      .expect("short padding block must remain a valid RSA representative");
     assert_decrypt_error(&ciphertext);
 
     bad_block[5] = 0xc5;
     bad_block[10..].fill(0xc5);
-    key.public_key().public_operation(&bad_block, &mut ciphertext).unwrap();
+    key
+      .public_key()
+      .public_operation(&bad_block, &mut ciphertext)
+      .expect("missing separator block must remain a valid RSA representative");
     assert_decrypt_error(&ciphertext);
   }
 
   #[test]
   fn key_der_exports_roundtrip_through_strict_importers() {
     let pkcs1 = test_pkcs1_private_key();
-    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("PKCS#1 fixture must import");
     let rsa_algorithm = algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null()));
 
     assert_eq!(
@@ -12090,22 +12153,25 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     let exported_pkcs1 = key.to_pkcs1_der();
     let imported_pkcs1 =
-      RsaPrivateKey::from_pkcs1_der_with_policy(&exported_pkcs1, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+      RsaPrivateKey::from_pkcs1_der_with_policy(&exported_pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+        .expect("exported PKCS#1 private key must re-import");
     assert_eq!(imported_pkcs1.public_key(), key.public_key());
 
     let exported_pkcs8 = key.to_pkcs8_der();
     let imported_pkcs8 =
-      RsaPrivateKey::from_pkcs8_der_with_policy(&exported_pkcs8, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+      RsaPrivateKey::from_pkcs8_der_with_policy(&exported_pkcs8, &RsaPublicKeyPolicy::legacy_verification())
+        .expect("exported PKCS#8 private key must re-import");
     assert_eq!(imported_pkcs8.public_key(), key.public_key());
 
     let public_pkcs1 = key.public_key().to_pkcs1_der();
     let imported_public_pkcs1 =
-      RsaPublicKey::from_pkcs1_der_with_policy(&public_pkcs1, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+      RsaPublicKey::from_pkcs1_der_with_policy(&public_pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+        .expect("exported PKCS#1 public key must re-import");
     assert_eq!(imported_public_pkcs1, *key.public_key());
 
     let spki = key.public_key().to_spki_der();
-    let imported_spki =
-      RsaPublicKey::from_spki_der_with_policy(&spki, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let imported_spki = RsaPublicKey::from_spki_der_with_policy(&spki, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("exported SPKI public key must re-import");
     assert_eq!(imported_spki, *key.public_key());
   }
 
@@ -12120,7 +12186,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let coefficient = rsa_private_coefficient();
     let policy = RsaPublicKeyPolicy::legacy_verification();
 
-    let public = RsaPublicKey::from_modulus_exponent_with_policy(&modulus, 65_537, &policy).unwrap();
+    let public = RsaPublicKey::from_modulus_exponent_with_policy(&modulus, 65_537, &policy)
+      .expect("valid raw public components must import");
     assert_eq!(public.modulus(), modulus);
     assert_eq!(public.public_exponent().as_u64(), 65_537);
 
@@ -12136,7 +12203,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       ),
       &policy,
     )
-    .unwrap();
+    .expect("valid raw private components must import");
     assert_eq!(key.public_key(), &public);
 
     let message = b"rscrypto raw RSA component import signing roundtrip";
@@ -12146,17 +12213,18 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .sign_pkcs1v15_with_blinding_factor(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut signature,
       )
-      .unwrap();
+      .expect("imported raw private components must sign");
     public
       .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &signature)
-      .unwrap();
+      .expect("signature from imported raw components must verify");
 
     let mut bad_coefficient = coefficient;
-    *bad_coefficient.last_mut().unwrap() ^= 1;
+    *bad_coefficient
+      .last_mut()
+      .expect("RSA coefficient fixture must be nonempty") ^= 1;
     assert_eq!(
       RsaPrivateKey::from_components_with_policy(
         rsa_private_key_parts(
@@ -12285,7 +12353,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       Some(RsaKeyError::InvalidModulus)
     );
 
-    let mut bad_coefficient = coefficient.clone();
+    let mut bad_coefficient = coefficient;
     bad_coefficient.insert(0, 0);
     assert_eq!(
       RsaPrivateKey::from_components_with_policy(
@@ -12315,11 +12383,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut pkcs1v15_signature = vec![0u8; key.signature_len()];
     key
       .sign_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &mut pkcs1v15_signature)
-      .unwrap();
+      .expect("PKCS#1 v1.5 signing with random blinding must succeed");
     key
       .public_key()
       .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &pkcs1v15_signature)
-      .unwrap();
+      .expect("PKCS#1 v1.5 signature must verify");
     key
       .sign_pkcs1v15_with_scratch(
         RsaPkcs1v15Profile::Sha384,
@@ -12327,35 +12395,35 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         &mut pkcs1v15_signature,
         &mut scratch,
       )
-      .unwrap();
+      .expect("PKCS#1 v1.5 signing with caller scratch must succeed");
     key
       .public_key()
       .verify_pkcs1v15(RsaPkcs1v15Profile::Sha384, message, &pkcs1v15_signature)
-      .unwrap();
+      .expect("caller-scratch PKCS#1 v1.5 signature must verify");
 
     let mut pss_signature = vec![0u8; key.signature_len()];
     key
       .sign_pss(RsaPssProfile::Sha256, message, &mut pss_signature)
-      .unwrap();
+      .expect("PSS signing with random salt and blinding must succeed");
     key
       .public_key()
       .verify_pss(RsaPssProfile::Sha256, message, &pss_signature)
-      .unwrap();
+      .expect("PSS signature must verify");
     key
       .sign_pss_with_scratch(RsaPssProfile::Sha384, message, &mut pss_signature, &mut scratch)
-      .unwrap();
+      .expect("PSS signing with caller scratch must succeed");
     key
       .public_key()
       .verify_pss(RsaPssProfile::Sha384, message, &pss_signature)
-      .unwrap();
+      .expect("caller-scratch PSS signature must verify");
     let pss_zero_salt = RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 0);
     key
       .sign_signature_with_scratch(pss_zero_salt, message, &mut pss_signature, &mut scratch)
-      .unwrap();
+      .expect("zero-salt PSS signing with caller scratch must succeed");
     key
       .public_key()
       .verify_signature(pss_zero_salt, message, &pss_signature)
-      .unwrap();
+      .expect("zero-salt PSS signature must verify");
 
     let label = b"rscrypto-getrandom-oaep";
     let plaintext = b"normal oaep api";
@@ -12363,27 +12431,29 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .encrypt_oaep(RsaOaepProfile::Sha256, label, plaintext, &mut ciphertext)
-      .unwrap();
+      .expect("OAEP encryption with random seed must succeed");
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
       .decrypt_oaep(RsaOaepProfile::Sha256, label, &ciphertext, &mut decrypted)
-      .unwrap();
+      .expect("OAEP ciphertext must decrypt with random blinding");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
     let decrypted_len = key
       .decrypt_oaep_with_scratch(RsaOaepProfile::Sha256, label, &ciphertext, &mut decrypted, &mut scratch)
-      .unwrap();
+      .expect("OAEP ciphertext must decrypt with caller scratch");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
 
     let pkcs1v15_plaintext = b"normal pkcs1v15 encryption api";
     key
       .public_key()
       .encrypt_pkcs1v15(pkcs1v15_plaintext, &mut ciphertext)
-      .unwrap();
-    let decrypted_len = key.decrypt_pkcs1v15(&ciphertext, &mut decrypted).unwrap();
+      .expect("PKCS#1 v1.5 encryption with random padding must succeed");
+    let decrypted_len = key
+      .decrypt_pkcs1v15(&ciphertext, &mut decrypted)
+      .expect("PKCS#1 v1.5 ciphertext must decrypt with random blinding");
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
     let decrypted_len = key
       .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut scratch)
-      .unwrap();
+      .expect("PKCS#1 v1.5 ciphertext must decrypt with caller scratch");
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
   }
 
@@ -12397,36 +12467,38 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut pkcs1v15_signature = vec![0u8; key.signature_len()];
     key
       .sign_signature(pkcs1_profile, message, &mut pkcs1v15_signature)
-      .unwrap();
+      .expect("typed PKCS#1 v1.5 profile must sign");
     key
       .public_key()
       .verify_signature(pkcs1_profile, message, &pkcs1v15_signature)
-      .unwrap();
+      .expect("typed PKCS#1 v1.5 signature must verify");
 
     let pss_zero_salt = RsaSignatureProfile::pss_with_salt_len(RsaPssProfile::Sha256, 0);
     let mut pss_signature = vec![0u8; key.signature_len()];
-    key.sign_signature(pss_zero_salt, message, &mut pss_signature).unwrap();
+    key
+      .sign_signature(pss_zero_salt, message, &mut pss_signature)
+      .expect("typed zero-salt PSS profile must sign");
     key
       .public_key()
       .verify_signature(pss_zero_salt, message, &pss_signature)
-      .unwrap();
+      .expect("typed zero-salt PSS signature must verify");
 
     key
       .sign_pss_with_salt_len(RsaPssProfile::Sha512, 24, message, &mut pss_signature)
-      .unwrap();
+      .expect("explicit-salt-length PSS signing must succeed");
     key
       .public_key()
       .verify_pss_with_salt_len(RsaPssProfile::Sha512, 24, message, &pss_signature)
-      .unwrap();
+      .expect("explicit-salt-length PSS signature must verify");
 
     let mut scratch = key.private_scratch();
     key
       .sign_pss_with_salt_len_and_scratch(RsaPssProfile::Sha384, 16, message, &mut pss_signature, &mut scratch)
-      .unwrap();
+      .expect("explicit-salt-length PSS signing with caller scratch must succeed");
     key
       .public_key()
       .verify_pss_with_salt_len(RsaPssProfile::Sha384, 16, message, &pss_signature)
-      .unwrap();
+      .expect("caller-scratch explicit-salt-length PSS signature must verify");
 
     pss_signature.fill(0xa5);
     assert_eq!(
@@ -12460,114 +12532,122 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let x509_pkcs1v15 = algorithm_identifier(SHA384_WITH_RSA_ENCRYPTION_OID, Some(&null()));
     key
       .sign_x509_signature_algorithm_der(&x509_pkcs1v15, message, &mut signature)
-      .unwrap();
-    let x509_pkcs1v15_profile = RsaSignatureProfile::from_x509_signature_algorithm_der(&x509_pkcs1v15).unwrap();
+      .expect("X.509 PKCS#1 v1.5 algorithm must sign");
+    let x509_pkcs1v15_profile = RsaSignatureProfile::from_x509_signature_algorithm_der(&x509_pkcs1v15)
+      .expect("X.509 PKCS#1 v1.5 algorithm must parse");
     key
       .public_key()
       .verify_signature(x509_pkcs1v15_profile, message, &signature)
-      .unwrap();
+      .expect("X.509 PKCS#1 v1.5 signature must verify");
     key
       .sign_x509_signature_algorithm_der_with_scratch(&x509_pkcs1v15, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("X.509 PKCS#1 v1.5 algorithm must sign with caller scratch");
     key
       .public_key()
       .verify_signature(x509_pkcs1v15_profile, message, &signature)
-      .unwrap();
+      .expect("caller-scratch X.509 PKCS#1 v1.5 signature must verify");
 
     let x509_pss = x509_pss_algorithm(RsaPssProfile::Sha256, 20);
     key
       .sign_x509_signature_algorithm_der(&x509_pss, message, &mut signature)
-      .unwrap();
-    let x509_pss_profile = RsaSignatureProfile::from_x509_signature_algorithm_der(&x509_pss).unwrap();
+      .expect("X.509 PSS algorithm must sign");
+    let x509_pss_profile =
+      RsaSignatureProfile::from_x509_signature_algorithm_der(&x509_pss).expect("X.509 PSS algorithm must parse");
     key
       .public_key()
       .verify_signature(x509_pss_profile, message, &signature)
-      .unwrap();
+      .expect("X.509 PSS signature must verify");
     key
       .sign_x509_signature_algorithm_der_with_scratch(&x509_pss, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("X.509 PSS algorithm must sign with caller scratch");
     key
       .public_key()
       .verify_signature(x509_pss_profile, message, &signature)
-      .unwrap();
+      .expect("caller-scratch X.509 PSS signature must verify");
 
     key
       .sign_tls13_signature_scheme(0x0804, message, &mut signature)
-      .unwrap();
+      .expect("TLS 1.3 rsa_pss_rsae_sha256 scheme must sign");
     key
       .public_key()
       .verify_signature(
-        RsaSignatureProfile::from_tls13_signature_scheme(0x0804).unwrap(),
+        RsaSignatureProfile::from_tls13_signature_scheme(0x0804)
+          .expect("TLS 1.3 rsa_pss_rsae_sha256 scheme must map to a profile"),
         message,
         &signature,
       )
-      .unwrap();
+      .expect("TLS 1.3 rsa_pss_rsae_sha256 signature must verify");
     key
       .sign_tls13_signature_scheme_with_scratch(0x0804, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("TLS 1.3 scheme must sign with caller scratch");
     key
       .public_key()
       .verify_signature(
-        RsaSignatureProfile::from_tls13_signature_scheme(0x0804).unwrap(),
+        RsaSignatureProfile::from_tls13_signature_scheme(0x0804)
+          .expect("TLS 1.3 rsa_pss_rsae_sha256 scheme must map to a profile"),
         message,
         &signature,
       )
-      .unwrap();
+      .expect("caller-scratch TLS 1.3 signature must verify");
 
     key
       .sign_tls_certificate_signature_scheme(0x0501, message, &mut signature)
-      .unwrap();
+      .expect("TLS certificate rsa_pkcs1_sha384 scheme must sign");
     key
       .public_key()
       .verify_signature(
-        RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0501).unwrap(),
+        RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0501)
+          .expect("TLS certificate rsa_pkcs1_sha384 scheme must map to a profile"),
         message,
         &signature,
       )
-      .unwrap();
+      .expect("TLS certificate rsa_pkcs1_sha384 signature must verify");
     key
       .sign_tls_certificate_signature_scheme_with_scratch(0x0501, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("TLS certificate scheme must sign with caller scratch");
     key
       .public_key()
       .verify_signature(
-        RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0501).unwrap(),
+        RsaSignatureProfile::from_tls_certificate_signature_scheme(0x0501)
+          .expect("TLS certificate rsa_pkcs1_sha384 scheme must map to a profile"),
         message,
         &signature,
       )
-      .unwrap();
+      .expect("caller-scratch TLS certificate signature must verify");
 
     let jwt_algorithm = RsaJwtAlgorithm::Ps512;
     key
       .jwt_signer(jwt_algorithm)
       .try_sign_into(message, &mut signature)
-      .unwrap();
+      .expect("JWT PS512 signer must sign");
     key
       .public_key()
       .jwt_verifier(jwt_algorithm)
       .verify("PS512", message, &signature)
-      .unwrap();
+      .expect("JWT PS512 signature must verify");
     key
       .sign_signature_with_scratch(jwt_algorithm.signature_profile(), message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("JWT PS512 profile must sign with caller scratch");
     key
       .public_key()
       .jwt_verifier(jwt_algorithm)
       .verify("PS512", message, &signature)
-      .unwrap();
+      .expect("caller-scratch JWT PS512 signature must verify");
 
-    key.sign_cose_algorithm_id(-257, message, &mut signature).unwrap();
+    key
+      .sign_cose_algorithm_id(-257, message, &mut signature)
+      .expect("COSE RS256 algorithm must sign");
     key
       .public_key()
       .verify_cose_algorithm_id(-257, message, &signature)
-      .unwrap();
+      .expect("COSE RS256 signature must verify");
     key
       .sign_cose_algorithm_id_with_scratch(-257, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("COSE RS256 algorithm must sign with caller scratch");
     key
       .public_key()
       .verify_cose_algorithm_id(-257, message, &signature)
-      .unwrap();
+      .expect("caller-scratch COSE RS256 signature must verify");
 
     signature.fill(0xa5);
     assert_eq!(
@@ -12637,7 +12717,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn private_key_random_blinding_factor_has_valid_crt_inverse() {
     let key = prevalidated_test_private_key();
-    let blinding = key.components.random_blinding_factor().unwrap();
+    let blinding = key
+      .components
+      .random_blinding_factor()
+      .expect("test key must yield an invertible random blinding factor");
 
     let mut check = vec![0u8; key.signature_len()];
     mod_mul_representatives(
@@ -12646,7 +12729,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       blinding.inverse(),
       &mut check,
     )
-    .unwrap();
+    .expect("blinding factor and inverse must multiply modulo n");
 
     assert!(check[..check.len().strict_sub(1)].iter().all(|&byte| byte == 0));
     assert_eq!(check.last().copied(), Some(1));
@@ -12657,7 +12740,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   fn private_key_blinding_inverse_rejects_non_invertible_factor() {
     let key = prevalidated_test_private_key();
     let mut factor = vec![0u8; key.signature_len()];
-    left_pad_be(&rsa_private_prime_p(), &mut factor).unwrap();
+    left_pad_be(&rsa_private_prime_p(), &mut factor).expect("prime fixture must fit the RSA representative width");
     let mut inverse = vec![0u8; key.signature_len()];
 
     assert_eq!(
@@ -12678,16 +12761,15 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .sign_pkcs1v15_with_blinding_factor_and_scratch(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pkcs1v15_signature,
         &mut scratch,
       )
-      .unwrap();
+      .expect("PKCS#1 v1.5 signing with explicit blinding and caller scratch must succeed");
     key
       .public_key()
       .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &pkcs1v15_signature)
-      .unwrap();
+      .expect("caller-scratch PKCS#1 v1.5 signature must verify");
 
     let salt = [0x42; Sha384::OUTPUT_SIZE];
     let mut pss_signature = vec![0u8; key.signature_len()];
@@ -12696,16 +12778,15 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         RsaPssProfile::Sha384,
         message,
         &salt,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pss_signature,
         &mut scratch,
       )
-      .unwrap();
+      .expect("PSS signing with explicit salt, blinding, and caller scratch must succeed");
     key
       .public_key()
       .verify_pss(RsaPssProfile::Sha384, message, &pss_signature)
-      .unwrap();
+      .expect("caller-scratch PSS signature must verify");
 
     let label = b"rscrypto-private-scratch-oaep";
     let plaintext = b"private scratch OAEP roundtrip";
@@ -12714,19 +12795,18 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("valid OAEP fixture inputs must encrypt");
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
       .decrypt_oaep_with_blinding_factor_and_scratch(
         RsaOaepProfile::Sha256,
         label,
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut decrypted,
         &mut scratch,
       )
-      .unwrap();
+      .expect("OAEP ciphertext must decrypt with explicit blinding and caller scratch");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
 
     let pkcs1v15_plaintext = b"private scratch RSAES-PKCS1-v1_5 roundtrip";
@@ -12734,16 +12814,15 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
-      .unwrap();
+      .expect("valid PKCS#1 v1.5 fixture inputs must encrypt");
     let decrypted_len = key
       .decrypt_pkcs1v15_with_blinding_factor_and_scratch(
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut decrypted,
         &mut scratch,
       )
-      .unwrap();
+      .expect("PKCS#1 v1.5 ciphertext must decrypt with explicit blinding and caller scratch");
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
 
     let mut smaller_scratch = wrong_width_private_scratch(&key);
@@ -12751,8 +12830,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key.sign_pkcs1v15_with_blinding_factor_and_scratch(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut pkcs1v15_signature,
         &mut smaller_scratch,
       ),
@@ -12772,8 +12850,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key.sign_pkcs1v15_with_blinding_factor_and_scratch(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut signature,
         &mut scratch,
       ),
@@ -12824,22 +12901,27 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn keygen_generated_prime_satisfies_fips_a1_3_prime_constraints() {
     let mut drbg = test_keygen_drbg(b"generated-prime-constraints");
-    let prime = keygen_generate_prime(&mut drbg, 128, 256, None, 256usize.strict_mul(5)).unwrap();
+    let prime = keygen_generate_prime(&mut drbg, 128, 256, None, 256usize.strict_mul(5))
+      .expect("deterministic prime search must complete");
 
     assert!(keygen_probable_prime_meets_fips_lower_bound(&prime, 128));
     assert_eq!(prime.last().copied().unwrap_or_default() & 1, 1);
     assert!(!has_small_prime_factor(&prime));
     assert!(!keygen_conflicts_with_public_exponent(&prime));
-    assert!(keygen_is_probable_prime(&mut drbg, &prime).unwrap());
+    assert!(keygen_is_probable_prime(&mut drbg, &prime).expect("generated prime must pass a valid primality test"));
   }
 
   #[cfg(feature = "getrandom")]
   #[test]
   fn keygen_lcm_private_exponent_contract_is_enforced() {
-    let p_minus_one = private_import_decrement_unsigned_be(&rsa_private_prime_p()).unwrap();
-    let q_minus_one = private_import_decrement_unsigned_be(&rsa_private_prime_q()).unwrap();
-    let lambda = keygen_lcm_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice()).unwrap();
-    let phi = private_import_product_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice()).unwrap();
+    let p_minus_one =
+      private_import_decrement_unsigned_be(&rsa_private_prime_p()).expect("fixture prime p must be greater than zero");
+    let q_minus_one =
+      private_import_decrement_unsigned_be(&rsa_private_prime_q()).expect("fixture prime q must be greater than zero");
+    let lambda = keygen_lcm_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())
+      .expect("fixture prime totients must have an LCM");
+    let phi = private_import_product_unsigned_be(p_minus_one.as_slice(), q_minus_one.as_slice())
+      .expect("fixture prime totient product must fit the supported width");
 
     assert_eq!(
       private_import_unsigned_be_mod(phi.as_slice(), lambda.as_slice()).as_slice(),
@@ -12863,7 +12945,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         accepted = Some(candidate);
       }
     }
-    let candidate = accepted.unwrap();
+    let candidate = accepted.expect("deterministic search must find a FIPS-shaped candidate");
     assert!(
       keygen_candidate_has_fixed_shape(&candidate, 128),
       "accepted FIPS A.1.3 candidate must be odd and full-width"
@@ -12903,16 +12985,19 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn keygen_miller_rabin_accepts_prime_and_rejects_composite_for_fixed_bases() {
     let prime = 1009u16.to_be_bytes();
-    let prime_modulus = private_component_modulus(&prime).unwrap();
+    let prime_modulus = private_component_modulus(&prime).expect("nonzero prime fixture must define a modulus");
     assert!(
-      keygen_miller_rabin_accepts_base(&prime_modulus, &[0, 63], 4, &1008u16.to_be_bytes(), &[0, 11]).unwrap(),
+      keygen_miller_rabin_accepts_base(&prime_modulus, &[0, 63], 4, &1008u16.to_be_bytes(), &[0, 11])
+        .expect("valid prime fixture must admit a Miller-Rabin round"),
       "1009 must pass a direct Miller-Rabin round for base 11"
     );
 
     let composite = 341u16.to_be_bytes();
-    let composite_modulus = private_component_modulus(&composite).unwrap();
+    let composite_modulus =
+      private_component_modulus(&composite).expect("nonzero composite fixture must define a modulus");
     assert!(
-      !keygen_miller_rabin_accepts_base(&composite_modulus, &[0, 85], 2, &340u16.to_be_bytes(), &[0, 2]).unwrap(),
+      !keygen_miller_rabin_accepts_base(&composite_modulus, &[0, 85], 2, &340u16.to_be_bytes(), &[0, 2])
+        .expect("valid composite fixture must admit a Miller-Rabin round"),
       "341 must fail a direct Miller-Rabin round for base 2"
     );
   }
@@ -12927,15 +13012,15 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       rsa_private_prime_p(),
       rsa_private_prime_q(),
     )
-    .unwrap()
-    .unwrap();
+    .expect("fixture primes must derive without arithmetic failure")
+    .expect("fixture primes must produce the requested modulus width");
     let key = RsaPrivateKey { components };
     assert_eq!(key.public_key().modulus(), modulus);
     assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
 
     let exported = key.to_pkcs1_der();
-    let imported =
-      RsaPrivateKey::from_pkcs1_der_with_policy(&exported, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let imported = RsaPrivateKey::from_pkcs1_der_with_policy(&exported, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("generated PKCS#1 private key must re-import");
     assert_eq!(imported.public_key(), key.public_key());
 
     let message = b"rscrypto generated RSA component signing roundtrip";
@@ -12945,15 +13030,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       .sign_pkcs1v15_with_blinding_factor(
         RsaPkcs1v15Profile::Sha256,
         message,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut signature,
       )
-      .unwrap();
+      .expect("key derived from fixture primes must sign");
     key
       .public_key()
       .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &signature)
-      .unwrap();
+      .expect("signature from fixture-prime key must verify");
 
     let label = b"rscrypto-keygen-oaep";
     let plaintext = b"generated component oaep roundtrip";
@@ -12962,18 +13046,17 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("fixture-prime OAEP inputs must encrypt");
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
       .decrypt_oaep_with_blinding_factor(
         RsaOaepProfile::Sha256,
         label,
         &ciphertext,
-        &blinding_factor,
-        &blinding_factor_inverse,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
         &mut decrypted,
       )
-      .unwrap();
+      .expect("fixture-prime OAEP ciphertext must decrypt");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
 
     let pkcs1v15_plaintext = b"generated component RSAES-PKCS1-v1_5 roundtrip";
@@ -12981,10 +13064,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
-      .unwrap();
+      .expect("fixture-prime PKCS#1 v1.5 inputs must encrypt");
     let decrypted_len = key
-      .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_factor_inverse, &mut decrypted)
-      .unwrap();
+      .decrypt_pkcs1v15_with_blinding_factor(
+        &ciphertext,
+        RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+        &mut decrypted,
+      )
+      .expect("fixture-prime PKCS#1 v1.5 ciphertext must decrypt");
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
   }
 
@@ -13003,7 +13090,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut covered = Vec::new();
 
     for test in tests {
-      let modulus_bits = test["mod"].as_u64().expect("CAVP modulus size must be numeric") as usize;
+      let modulus_bits = usize::try_from(test["mod"].as_u64().expect("CAVP modulus size must be numeric"))
+        .expect("CAVP modulus size must fit usize");
       let components = keygen_build_private_key_from_primes(
         modulus_bits,
         &policy,
@@ -13016,8 +13104,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       assert_eq!(key.public_key().modulus_bits(), modulus_bits);
       assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
       let mut primality_drbg = test_keygen_drbg(b"cavp-primality");
-      assert!(keygen_is_probable_prime(&mut primality_drbg, key.components.prime_p.as_bytes()).unwrap());
-      assert!(keygen_is_probable_prime(&mut primality_drbg, key.components.prime_q.as_bytes()).unwrap());
+      assert!(
+        keygen_is_probable_prime(&mut primality_drbg, key.components.prime_p.as_bytes())
+          .expect("CAVP prime p must admit a primality test")
+      );
+      assert!(
+        keygen_is_probable_prime(&mut primality_drbg, key.components.prime_q.as_bytes())
+          .expect("CAVP prime q must admit a primality test")
+      );
 
       let (blinding_factor, blinding_factor_inverse) = factor_two_and_inverse(key.public_key().modulus());
       let message = b"rscrypto NIST CAVP keygen candidate private operation";
@@ -13027,15 +13121,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         .sign_pkcs1v15_with_blinding_factor(
           RsaPkcs1v15Profile::Sha256,
           message,
-          &blinding_factor,
-          &blinding_factor_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
           &mut pkcs1v15_signature,
         )
-        .unwrap();
+        .expect("CAVP-derived key must sign PKCS#1 v1.5");
       key
         .public_key()
         .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, message, &pkcs1v15_signature)
-        .unwrap();
+        .expect("CAVP-derived PKCS#1 v1.5 signature must verify");
 
       let salt = [0xa5; Sha256::OUTPUT_SIZE];
       let mut pss_signature = vec![0u8; key.signature_len()];
@@ -13044,15 +13137,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           RsaPssProfile::Sha256,
           message,
           &salt,
-          &blinding_factor,
-          &blinding_factor_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
           &mut pss_signature,
         )
-        .unwrap();
+        .expect("CAVP-derived key must sign PSS with explicit salt and blinding");
       key
         .public_key()
         .verify_pss(RsaPssProfile::Sha256, message, &pss_signature)
-        .unwrap();
+        .expect("CAVP-derived PSS signature must verify");
 
       let label = b"rscrypto-cavp-keygen-oaep";
       let plaintext = b"NIST CAVP keygen candidate OAEP";
@@ -13061,18 +13153,17 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key
         .public_key()
         .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-        .unwrap();
+        .expect("CAVP-derived OAEP inputs must encrypt");
       let mut decrypted = vec![0u8; key.signature_len()];
       let decrypted_len = key
         .decrypt_oaep_with_blinding_factor(
           RsaOaepProfile::Sha256,
           label,
           &ciphertext,
-          &blinding_factor,
-          &blinding_factor_inverse,
+          RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
           &mut decrypted,
         )
-        .unwrap();
+        .expect("CAVP-derived OAEP ciphertext must decrypt");
       assert_eq!(&decrypted[..decrypted_len], plaintext);
 
       let pkcs1v15_plaintext = b"NIST CAVP keygen candidate RSAES-PKCS1-v1_5";
@@ -13080,10 +13171,14 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       key
         .public_key()
         .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
-        .unwrap();
+        .expect("CAVP-derived PKCS#1 v1.5 inputs must encrypt");
       let decrypted_len = key
-        .decrypt_pkcs1v15_with_blinding_factor(&ciphertext, &blinding_factor, &blinding_factor_inverse, &mut decrypted)
-        .unwrap();
+        .decrypt_pkcs1v15_with_blinding_factor(
+          &ciphertext,
+          RsaBlindingPair::new(&blinding_factor, &blinding_factor_inverse),
+          &mut decrypted,
+        )
+        .expect("CAVP-derived PKCS#1 v1.5 ciphertext must decrypt");
       assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
 
       covered.push(modulus_bits);
@@ -13095,16 +13190,17 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn keygen_generate_with_policy_produces_usable_private_key_end_to_end() {
-    let key = RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = RsaPrivateKey::generate_with_policy(2048, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("legacy test policy must generate a 2048-bit key");
     assert_eq!(key.public_key().modulus_bits(), 2048);
     assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
 
     let pkcs1 = key.to_pkcs1_der();
     let pkcs8 = key.to_pkcs8_der();
-    let pkcs1_imported =
-      RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
-    let pkcs8_imported =
-      RsaPrivateKey::from_pkcs8_der_with_policy(&pkcs8, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let pkcs1_imported = RsaPrivateKey::from_pkcs1_der_with_policy(&pkcs1, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("generated PKCS#1 key must re-import");
+    let pkcs8_imported = RsaPrivateKey::from_pkcs8_der_with_policy(&pkcs8, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("generated PKCS#8 key must re-import");
     assert_eq!(pkcs1_imported.public_key(), key.public_key());
     assert_eq!(pkcs8_imported.public_key(), key.public_key());
 
@@ -13114,29 +13210,31 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         let mut pkcs1v15_signature = vec![0u8; key.signature_len()];
         key
           .sign_pkcs1v15($pkcs1_profile, message, &mut pkcs1v15_signature)
-          .unwrap();
+          .expect("generated key must sign PKCS#1 v1.5");
         key
           .public_key()
           .verify_pkcs1v15($pkcs1_profile, message, &pkcs1v15_signature)
-          .unwrap();
+          .expect("generated-key PKCS#1 v1.5 signature must verify");
 
         let mut pss_signature = vec![0u8; key.signature_len()];
-        key.sign_pss($pss_profile, message, &mut pss_signature).unwrap();
+        key
+          .sign_pss($pss_profile, message, &mut pss_signature)
+          .expect("generated key must sign PSS");
         key
           .public_key()
           .verify_pss($pss_profile, message, &pss_signature)
-          .unwrap();
+          .expect("generated-key PSS signature must verify");
 
         let label = b"rscrypto-generated-key-oaep";
         let mut ciphertext = vec![0u8; key.signature_len()];
         key
           .public_key()
           .diag_encrypt_oaep_with_seed($oaep_profile, label, $plaintext, &$seed, &mut ciphertext)
-          .unwrap();
+          .expect("generated-key OAEP inputs must encrypt");
         let mut decrypted = vec![0u8; key.signature_len()];
         let decrypted_len = key
           .decrypt_oaep($oaep_profile, label, &ciphertext, &mut decrypted)
-          .unwrap();
+          .expect("generated-key OAEP ciphertext must decrypt");
         assert_eq!(&decrypted[..decrypted_len], $plaintext);
 
         let pkcs1v15_plaintext = b"generated key RSAES-PKCS1-v1_5";
@@ -13144,8 +13242,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         key
           .public_key()
           .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
-          .unwrap();
-        let decrypted_len = key.decrypt_pkcs1v15(&ciphertext, &mut decrypted).unwrap();
+          .expect("generated-key PKCS#1 v1.5 inputs must encrypt");
+        let decrypted_len = key
+          .decrypt_pkcs1v15(&ciphertext, &mut decrypted)
+          .expect("generated-key PKCS#1 v1.5 ciphertext must decrypt");
         assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
       }};
     }
@@ -13176,18 +13276,22 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(feature = "getrandom")]
   #[test]
   fn keygen_generate_default_modern_key_produces_usable_private_key_end_to_end() {
-    let key = RsaPrivateKey::generate(3072).unwrap();
+    let key = RsaPrivateKey::generate(3072).expect("default policy must generate a 3072-bit key");
     assert_eq!(key.public_key().modulus_bits(), 3072);
     assert_eq!(key.public_key().public_exponent().as_u64(), RSA_KEYGEN_PUBLIC_EXPONENT);
 
     let pkcs1 = key.to_pkcs1_der();
     let pkcs8 = key.to_pkcs8_der();
     assert_eq!(
-      RsaPrivateKey::from_pkcs1_der(&pkcs1).unwrap().public_key(),
+      RsaPrivateKey::from_pkcs1_der(&pkcs1)
+        .expect("generated PKCS#1 key must re-import")
+        .public_key(),
       key.public_key()
     );
     assert_eq!(
-      RsaPrivateKey::from_pkcs8_der(&pkcs8).unwrap().public_key(),
+      RsaPrivateKey::from_pkcs8_der(&pkcs8)
+        .expect("generated PKCS#8 key must re-import")
+        .public_key(),
       key.public_key()
     );
 
@@ -13198,20 +13302,20 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1v15_profile = RsaSignatureProfile::pkcs1v15(RsaPkcs1v15Profile::Sha256);
     key
       .sign_signature_with_scratch(pkcs1v15_profile, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("generated modern key must sign PKCS#1 v1.5 with caller scratch");
     key
       .public_key()
       .verify_signature(pkcs1v15_profile, message, &signature)
-      .unwrap();
+      .expect("generated modern-key PKCS#1 v1.5 signature must verify");
 
     let pss_profile = RsaSignatureProfile::pss(RsaPssProfile::Sha256);
     key
       .sign_signature_with_scratch(pss_profile, message, &mut signature, &mut scratch)
-      .unwrap();
+      .expect("generated modern key must sign PSS with caller scratch");
     key
       .public_key()
       .verify_signature(pss_profile, message, &signature)
-      .unwrap();
+      .expect("generated modern-key PSS signature must verify");
 
     let label = b"rscrypto-generated-modern-key-oaep";
     let plaintext = b"modern generated key OAEP roundtrip";
@@ -13220,11 +13324,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_oaep_with_seed(RsaOaepProfile::Sha256, label, plaintext, &seed, &mut ciphertext)
-      .unwrap();
+      .expect("generated modern-key OAEP inputs must encrypt");
     let mut decrypted = vec![0u8; key.signature_len()];
     let decrypted_len = key
       .decrypt_oaep_with_scratch(RsaOaepProfile::Sha256, label, &ciphertext, &mut decrypted, &mut scratch)
-      .unwrap();
+      .expect("generated modern-key OAEP ciphertext must decrypt with caller scratch");
     assert_eq!(&decrypted[..decrypted_len], plaintext);
 
     let pkcs1v15_plaintext = b"modern generated key RSAES-PKCS1-v1_5";
@@ -13232,10 +13336,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     key
       .public_key()
       .diag_encrypt_pkcs1v15_with_seed(pkcs1v15_plaintext, &pkcs1v15_seed, &mut ciphertext)
-      .unwrap();
+      .expect("generated modern-key PKCS#1 v1.5 inputs must encrypt");
     let decrypted_len = key
       .decrypt_pkcs1v15_with_scratch(&ciphertext, &mut decrypted, &mut scratch)
-      .unwrap();
+      .expect("generated modern-key PKCS#1 v1.5 ciphertext must decrypt with caller scratch");
     assert_eq!(&decrypted[..decrypted_len], pkcs1v15_plaintext);
   }
 
@@ -13278,7 +13382,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
     assert!(
       keygen_build_private_key_from_primes(modulus_bits, &policy, rsa_private_prime_p(), rsa_private_prime_p())
-        .unwrap()
+        .expect("duplicate prime fixtures must complete validation")
         .is_none()
     );
     assert!(
@@ -13288,7 +13392,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         rsa_private_prime_p(),
         rsa_private_prime_q()
       )
-      .unwrap()
+      .expect("undersized modulus candidates must complete validation")
       .is_none()
     );
     assert!(
@@ -13298,7 +13402,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         rsa_private_prime_p(),
         rsa_private_prime_q()
       )
-      .unwrap()
+      .expect("oversized modulus candidates must complete validation")
       .is_none()
     );
 
@@ -13306,7 +13410,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut carry = 2u16;
     for byte in close_prime_q.iter_mut().rev() {
       let sum = u16::from(*byte).strict_add(carry);
-      *byte = sum as u8;
+      *byte = sum.to_le_bytes()[0];
       carry = sum >> 8;
       if carry == 0 {
         break;
@@ -13319,7 +13423,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
     assert!(
       keygen_build_private_key_from_primes(modulus_bits, &policy, rsa_private_prime_p(), close_prime_q)
-        .unwrap()
+        .expect("close-prime candidates must complete validation")
         .is_none()
     );
 
@@ -13331,7 +13435,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
         break;
       }
       let sum = u64::from(*byte).strict_add(delta & 0xff);
-      *byte = sum as u8;
+      *byte = sum.to_le_bytes()[0];
       delta = (delta >> 8).strict_add(sum >> 8);
     }
     assert_eq!(delta, 0);
@@ -13341,7 +13445,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
     assert!(
       keygen_build_private_key_from_primes(modulus_bits, &policy, public_exponent_conflict, rsa_private_prime_q())
-        .unwrap()
+        .expect("public-exponent-conflicting candidates must complete validation")
         .is_none()
     );
   }
@@ -13350,20 +13454,21 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn keygen_random_prime_search_returns_probable_prime() {
     let mut drbg = test_keygen_drbg(b"random-prime-search");
-    let prime = keygen_generate_prime(&mut drbg, 128, 256, None, 256usize.strict_mul(5)).unwrap();
+    let prime = keygen_generate_prime(&mut drbg, 128, 256, None, 256usize.strict_mul(5))
+      .expect("deterministic prime search must complete");
 
     assert_eq!(unsigned_be_bit_len(&prime), 128);
     assert_eq!(prime.last().copied().unwrap_or_default() & 1, 1);
     assert!(!has_small_prime_factor(&prime));
     assert!(!keygen_conflicts_with_public_exponent(&prime));
     assert!(keygen_probable_prime_meets_fips_lower_bound(&prime, 128));
-    assert!(keygen_is_probable_prime(&mut drbg, &prime).unwrap());
+    assert!(keygen_is_probable_prime(&mut drbg, &prime).expect("generated prime must admit a primality test"));
   }
 
   #[test]
   fn pkcs1_private_key_parser_applies_modulus_policy_before_component_checks() {
     let mut bad_q = rsa_private_prime_q();
-    *bad_q.last_mut().unwrap() ^= 0x02;
+    *bad_q.last_mut().expect("prime q fixture must be nonempty") ^= 0x02;
     let der = test_pkcs1_private_key_with_components(
       &[0x01, 0x00, 0x01],
       &rsa_private_exponent(),
@@ -13386,7 +13491,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let pkcs1 = test_pkcs1_private_key();
     let rsa_algorithm = algorithm_identifier(RSA_ENCRYPTION_OID, Some(&null()));
     let der = test_pkcs8_private_key(&pkcs1, &rsa_algorithm);
-    let key = parse_pkcs8_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+    let key = parse_pkcs8_private_key_der_with_policy(&der, &RsaPublicKeyPolicy::legacy_verification())
+      .expect("valid PKCS#8 fixture must parse");
 
     assert_eq!(key.public_key().modulus(), rsa_private_modulus());
 
@@ -13495,7 +13601,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
 
     let mut bad_q = rsa_private_prime_q();
-    let last = bad_q.last_mut().unwrap();
+    let last = bad_q.last_mut().expect("prime q fixture must be nonempty");
     *last ^= 0x02;
     let mut inconsistent_body = Vec::new();
     for field in [
@@ -13521,7 +13627,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn pkcs1_private_key_parser_rejects_crt_congruence_mismatches() {
     let mut bad_exponent_p = rsa_private_exponent_p();
-    *bad_exponent_p.last_mut().unwrap() ^= 0x02;
+    *bad_exponent_p
+      .last_mut()
+      .expect("CRT exponent p fixture must be nonempty") ^= 0x02;
     let bad_dp = test_pkcs1_private_key_with_crt(
       &[0x01, 0x00, 0x01],
       &bad_exponent_p,
@@ -13534,7 +13642,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
 
     let mut bad_exponent_q = rsa_private_exponent_q();
-    *bad_exponent_q.last_mut().unwrap() ^= 0x02;
+    *bad_exponent_q
+      .last_mut()
+      .expect("CRT exponent q fixture must be nonempty") ^= 0x02;
     let bad_dq = test_pkcs1_private_key_with_crt(
       &[0x01, 0x00, 0x01],
       &rsa_private_exponent_p(),
@@ -13547,7 +13657,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     );
 
     let mut bad_coefficient = rsa_private_coefficient();
-    *bad_coefficient.last_mut().unwrap() ^= 0x02;
+    *bad_coefficient
+      .last_mut()
+      .expect("CRT coefficient fixture must be nonempty") ^= 0x02;
     let bad_qinv = test_pkcs1_private_key_with_crt(
       &[0x01, 0x00, 0x01],
       &rsa_private_exponent_p(),
@@ -13923,11 +14035,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let mut bytes = vec![0u8; words.strict_mul(8)];
     for (i, byte) in bytes.iter_mut().enumerate() {
       *byte = 0xa5u8
-        .wrapping_add((i as u8).wrapping_mul(0x3d))
-        .wrapping_add((words as u8).wrapping_mul(0x17));
+        .wrapping_add(i.to_le_bytes()[0].wrapping_mul(0x3d))
+        .wrapping_add(words.to_le_bytes()[0].wrapping_mul(0x17));
     }
     bytes[0] = 0xff;
-    *bytes.last_mut().unwrap() |= 1;
+    *bytes.last_mut().expect("RSA Montgomery test width must be nonzero") |= 1;
     RsaPublicModulus::new(&bytes, words.strict_mul(64))
   }
 
@@ -13948,7 +14060,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       state ^= state << 17;
       *limb = state;
     }
-    *limbs.last_mut().unwrap() &= 0x7fff_ffff_ffff_ffff;
+    *limbs.last_mut().expect("RSA Montgomery test width must be nonzero") &= 0x7fff_ffff_ffff_ffff;
     limbs[0] |= 1;
     limbs
   }
@@ -14057,7 +14169,6 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
           &mut asm_acc,
           &modulus.limbs,
           modulus.n0,
-          words,
           &mut asm_t,
         );
         public_e65537_cios_portable(&mut portable_out, &a, &r2, &mut portable_acc, &modulus, &mut portable_t);
@@ -14243,9 +14354,10 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn diag_spki_public_key_validation_matches_import_metadata() {
     let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
-    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let key = RsaPublicKey::from_spki_der(spki).expect("RSA-3072 SPKI fixture must import");
     let (modulus_len, modulus_bits, exponent) =
-      diag_rsa_validate_spki_public_key_der(spki, &RsaPublicKeyPolicy::default()).unwrap();
+      diag_rsa_validate_spki_public_key_der(spki, &RsaPublicKeyPolicy::default())
+        .expect("RSA-3072 SPKI fixture must pass diagnostic validation");
 
     assert_eq!(modulus_len, key.modulus().len());
     assert_eq!(modulus_bits, key.modulus_bits());
@@ -14256,7 +14368,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[test]
   fn diag_montgomery_r2_precompute_matches_imported_key() {
     let spki = include_bytes!("../../benches/rsa_fixtures/rsa3072_spki.der");
-    let key = RsaPublicKey::from_spki_der(spki).unwrap();
+    let key = RsaPublicKey::from_spki_der(spki).expect("RSA-3072 SPKI fixture must import");
     let scratch = key.public_scratch();
     let (_, scratch_r2) = scratch.montgomery.split_at(scratch.limb_count);
 
@@ -14275,7 +14387,8 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     let policy = RsaPublicKeyPolicy::legacy_verification().allow_legacy_small_exponents();
 
     for exponent in [&[0x03][..], &[0x11][..], &[0x01, 0x00, 0x01][..]] {
-      let key = RsaPublicKey::from_pkcs1_der_with_policy(&test_pkcs1_public_key(&modulus, exponent), &policy).unwrap();
+      let key = RsaPublicKey::from_pkcs1_der_with_policy(&test_pkcs1_public_key(&modulus, exponent), &policy)
+        .expect("test exponent must produce a valid public key");
       let mut specialized = vec![0u8; key.modulus().len()];
       let mut generic = vec![0u8; key.modulus().len()];
       let mut specialized_scratch = key.public_scratch();
@@ -14283,8 +14396,9 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
 
       key
         .public_operation_with_scratch(&input, &mut specialized, &mut specialized_scratch)
-        .unwrap();
-      diag_rsa_public_operation_generic_exponent(&key, &input, &mut generic, &mut generic_scratch).unwrap();
+        .expect("specialized public operation must accept the test representative");
+      diag_rsa_public_operation_generic_exponent(&key, &input, &mut generic, &mut generic_scratch)
+        .expect("generic public operation must accept the test representative");
 
       assert_eq!(
         generic, specialized,
@@ -14302,7 +14416,7 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
       &test_pkcs1_public_key(&modulus, &exponent),
       &RsaPublicKeyPolicy::legacy_verification(),
     )
-    .unwrap();
+    .expect("diagnostic backend test key must import");
     let representative = key.modulus().to_vec();
 
     let mut out = vec![0xa5; key.modulus().len()];
@@ -14416,13 +14530,13 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
       &test_pkcs1_public_key(&modulus, &[0x01, 0x00, 0x01]),
       &RsaPublicKeyPolicy::legacy_verification(),
     )
-    .unwrap();
+    .expect("independent-vector public key must import");
     let mut out = vec![0u8; key.modulus().len()];
     let mut scratch = key.public_scratch();
 
     key
       .public_operation_with_scratch(&input, &mut out, &mut scratch)
-      .unwrap();
+      .expect("independent-vector representative must exponentiate");
 
     assert_eq!(out, expected);
   }
@@ -14506,10 +14620,12 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
       &x509_certificate_fixture_public_key(),
       &RsaPublicKeyPolicy::legacy_verification(),
     )
-    .unwrap();
+    .expect("X.509 issuer fixture must import");
     let certificate = x509_pkcs1v15_certificate_fixture();
 
-    assert!(issuer.verify_x509_certificate_signature_der(&certificate).is_ok());
+    issuer
+      .verify_x509_certificate_signature_der(&certificate)
+      .expect("fixture certificate signature must verify");
 
     let mut tampered = certificate;
     if let Some(last) = tampered.last_mut() {
@@ -14577,9 +14693,15 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
       left in any::<u32>(),
       right in any::<u32>(),
     ) {
-      let left = left % modulus;
-      let right = right % modulus;
-      let expected = ((u64::from(left) + u64::from(modulus) - u64::from(right)) % u64::from(modulus)) as u32;
+      let left = left.rem_euclid(modulus);
+      let right = right.rem_euclid(modulus);
+      let expected = u32::try_from(
+        u64::from(left)
+          .strict_add(u64::from(modulus))
+          .strict_sub(u64::from(right))
+          .rem_euclid(u64::from(modulus)),
+      )
+      .expect("reduced u32 modular difference must fit u32");
       let mut out = [0u8; 4];
 
       private_sub_mod_unsigned_be_to_fixed(
@@ -14588,7 +14710,7 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
         &modulus.to_be_bytes(),
         &mut out,
       )
-      .unwrap();
+      .expect("valid u32 modular subtraction inputs must succeed");
 
       prop_assert_eq!(out, expected.to_be_bytes());
     }
@@ -14598,7 +14720,8 @@ ec34e8c72cc58fd5324fbe1ddd9714909caedfaa38706cfa66d9bc1026ba3ec1188092392a54a\
       modulus[0] |= 0x80;
       modulus[255] |= 0x01;
       let exponent = RsaPublicExponent(65_537);
-      let bits = validate_modulus(&modulus, &RsaPublicKeyPolicy::legacy_verification()).unwrap();
+      let bits = validate_modulus(&modulus, &RsaPublicKeyPolicy::legacy_verification())
+        .expect("generated full-width odd modulus must satisfy the legacy test policy");
       let key = RsaPublicKey {
         modulus: RsaPublicModulus::new(&modulus, bits),
         exponent,

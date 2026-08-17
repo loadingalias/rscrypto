@@ -5,72 +5,61 @@
 /// Detects features enabled via `-C target-feature=...` or `-C target-cpu=native`.
 /// Returns a `const` value—the compiler eliminates all runtime checks.
 ///
-/// # When to Use
-///
-/// - Building specialized binaries for known hardware
-/// - Maximum performance when target features are guaranteed
-/// - Embedded/bare-metal where runtime detection isn't available
-///
-/// For generic binaries that run on multiple CPUs, use [`get()`] instead.
-///
-/// # Examples
-///
-/// ```
-/// use rscrypto::platform::caps_static;
-///
-/// // Evaluates at compile time—no runtime cost
-/// const CAPS: rscrypto::platform::Caps = caps_static();
-///
-/// // On x86_64, SSE2 is always present
-/// #[cfg(target_arch = "x86_64")]
-/// {
-///   use rscrypto::platform::caps::x86;
-///   assert!(CAPS.has(x86::SSE2));
-/// }
-///
-/// // On aarch64, NEON is always present
-/// #[cfg(target_arch = "aarch64")]
-/// {
-///   use rscrypto::platform::caps::aarch64;
-///   assert!(CAPS.has(aarch64::NEON));
-/// }
-/// ```
-///
-/// When compiled with `-C target-cpu=znver4`:
-///
-/// ```
-/// # #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-/// # fn example() {
-/// use rscrypto::platform::{caps::x86, caps_static};
-///
-/// const CAPS: rscrypto::platform::Caps = caps_static();
-/// // AVX-512 features are detected at compile time
-/// assert!(CAPS.has(x86::AVX512F));
-/// # }
-/// ```
-///
 /// # Implementation
 ///
 /// Uses `cfg!()` macro inside `const fn`. The compiler evaluates `cfg!()` at
 /// compile time and eliminates dead branches via constant propagation.
 #[inline(always)]
 #[must_use]
-pub const fn caps_static() -> Caps {
+pub(super) const fn caps_static() -> Caps {
   // Note: imports are architecture-conditional to avoid warnings
   use crate::platform::caps::Caps;
 
   // Declarative macro for compile-time feature detection.
   // Uses cfg!() which returns a const bool, enabling use in const fn.
   // The compiler eliminates dead branches entirely.
-  #[allow(unused_macros)] // Only used on x86/x86_64/aarch64
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "riscv32",
+    target_arch = "wasm32",
+    target_arch = "wasm64",
+    target_arch = "s390x",
+    target_arch = "powerpc64"
+  ))]
   macro_rules! detect {
     ($caps:ident; $($feature:literal => $cap:expr),+ $(,)?) => {
       $(if cfg!(target_feature = $feature) { $caps = $caps.union($cap); })+
     };
   }
 
-  #[allow(unused_mut)]
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "riscv32",
+    target_arch = "wasm32",
+    target_arch = "wasm64",
+    target_arch = "s390x",
+    target_arch = "powerpc64"
+  ))]
   let mut result = Caps::NONE;
+
+  #[cfg(not(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "riscv32",
+    target_arch = "wasm32",
+    target_arch = "wasm64",
+    target_arch = "s390x",
+    target_arch = "powerpc64"
+  )))]
+  return Caps::NONE;
 
   // x86/x86_64
   #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
@@ -305,5 +294,16 @@ pub const fn caps_static() -> Caps {
     );
   }
 
+  #[cfg(any(
+    target_arch = "x86_64",
+    target_arch = "x86",
+    target_arch = "aarch64",
+    target_arch = "riscv64",
+    target_arch = "riscv32",
+    target_arch = "wasm32",
+    target_arch = "wasm64",
+    target_arch = "s390x",
+    target_arch = "powerpc64"
+  ))]
   result
 }

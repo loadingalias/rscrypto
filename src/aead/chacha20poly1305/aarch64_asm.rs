@@ -4,8 +4,6 @@
 //! ChaCha20-Poly1305 assembly. This Rust module owns the ABI boundary and
 //! keeps runtime feature dispatch in the parent AEAD implementation.
 
-#![allow(unsafe_code)]
-
 use core::{arch::global_asm, mem};
 
 use super::KEY_SIZE;
@@ -120,7 +118,10 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   //    empty slices because the length is zero.
   // 4. `extra_ciphertext` points at 16 initialized bytes and `extra_ciphertext_len` is zero, matching
   //    the AWS-LC seal ABI for callers without extra trailing ciphertext.
-  // 5. `data` is 16-byte aligned and matches the assembly input/output union layout.
+  // 5. `data` is 16-byte aligned and matches the assembly input/output union layout; the assembly initializes all
+  //    16 bytes of `data.out.tag` before the union field is read.
+  // 6. After that write, the tag replaces the first 16 copied key bytes; the second half remains initialized key
+  //    material and is volatile-zeroed before the stack allocation expires.
   unsafe {
     #[cfg(target_os = "macos")]
     rscrypto_chacha20_poly1305_seal_aarch64_apple_darwin(
@@ -129,7 +130,7 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.len(),
       aad.as_ptr(),
       aad.len(),
-      &mut data,
+      core::ptr::from_mut(&mut data),
     );
     #[cfg(target_os = "linux")]
     rscrypto_chacha20_poly1305_seal_aarch64(
@@ -138,8 +139,9 @@ pub(super) fn seal_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.len(),
       aad.as_ptr(),
       aad.len(),
-      &mut data,
+      core::ptr::from_mut(&mut data),
     );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
     data.out.tag
   }
 }
@@ -161,7 +163,10 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
   //    the assembly routine supports in-place open, matching the AWS-LC ABI.
   // 3. `aad.as_ptr()` is valid for `aad.len()` bytes, including the conventional dangling pointer for
   //    empty slices because the length is zero.
-  // 4. `data` is 16-byte aligned and matches the assembly input/output union layout.
+  // 4. `data` is 16-byte aligned and matches the assembly input/output union layout; the assembly initializes all
+  //    16 bytes of `data.out.tag` before the union field is read.
+  // 5. After that write, the tag replaces the first 16 copied key bytes; the second half remains initialized key
+  //    material and is volatile-zeroed before the stack allocation expires.
   unsafe {
     #[cfg(target_os = "macos")]
     rscrypto_chacha20_poly1305_open_aarch64_apple_darwin(
@@ -170,7 +175,7 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.len(),
       aad.as_ptr(),
       aad.len(),
-      &mut data,
+      core::ptr::from_mut(&mut data),
     );
     #[cfg(target_os = "linux")]
     rscrypto_chacha20_poly1305_open_aarch64(
@@ -179,8 +184,9 @@ pub(super) fn open_in_place(key: &[u8; KEY_SIZE], nonce: &[u8; 12], aad: &[u8], 
       buffer.len(),
       aad.as_ptr(),
       aad.len(),
-      &mut data,
+      core::ptr::from_mut(&mut data),
     );
+    crate::traits::ct::zeroize(&mut data.input.key[16..]);
     data.out.tag
   }
 }

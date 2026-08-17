@@ -179,6 +179,7 @@ impl<R: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debu
 
 #[cfg(feature = "std")]
 impl<R, C: crate::Checksum> ChecksumReader<R, C> {
+  /// Wrap `inner` with a checksum initialized to its algorithm-defined default.
   #[inline]
   #[must_use]
   pub fn new(inner: R) -> Self {
@@ -188,6 +189,7 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
     }
   }
 
+  /// Wrap `inner` with a checksum initialized from `initial`.
   #[inline]
   #[must_use]
   pub fn with_initial(inner: R, initial: C::Output) -> Self {
@@ -197,32 +199,42 @@ impl<R, C: crate::Checksum> ChecksumReader<R, C> {
     }
   }
 
+  /// Return the checksum of the bytes read through this adapter so far.
   #[inline]
   #[must_use]
   pub fn checksum(&self) -> C::Output {
     self.hasher.finalize()
   }
 
+  /// Borrow the checksum state mutably.
+  ///
+  /// Direct updates affect the returned checksum but do not read from the inner reader.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut C {
     &mut self.hasher
   }
 
+  /// Consume the adapter and return the inner reader and current checksum.
   #[inline]
   pub fn into_parts(self) -> (R, C::Output) {
     (self.inner, self.hasher.finalize())
   }
 
+  /// Consume the adapter and return the inner reader, discarding the checksum state.
   #[inline]
   pub fn into_inner(self) -> R {
     self.inner
   }
 
+  /// Borrow the inner reader.
   #[inline]
   pub fn inner(&self) -> &R {
     &self.inner
   }
 
+  /// Borrow the inner reader mutably.
+  ///
+  /// Bytes read directly from this value are not included in the checksum.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut R {
     &mut self.inner
@@ -303,6 +315,7 @@ impl<W: core::fmt::Debug, C: crate::Checksum + core::fmt::Debug> core::fmt::Debu
 
 #[cfg(feature = "std")]
 impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
+  /// Wrap `inner` with a checksum initialized to its algorithm-defined default.
   #[inline]
   #[must_use]
   pub fn new(inner: W) -> Self {
@@ -312,6 +325,7 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
     }
   }
 
+  /// Wrap `inner` with a checksum initialized from `initial`.
   #[inline]
   #[must_use]
   pub fn with_initial(inner: W, initial: C::Output) -> Self {
@@ -321,32 +335,42 @@ impl<W, C: crate::Checksum> ChecksumWriter<W, C> {
     }
   }
 
+  /// Return the checksum of the bytes written through this adapter so far.
   #[inline]
   #[must_use]
   pub fn checksum(&self) -> C::Output {
     self.hasher.finalize()
   }
 
+  /// Borrow the checksum state mutably.
+  ///
+  /// Direct updates affect the returned checksum but do not write to the inner writer.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut C {
     &mut self.hasher
   }
 
+  /// Consume the adapter and return the inner writer and current checksum.
   #[inline]
   pub fn into_parts(self) -> (W, C::Output) {
     (self.inner, self.hasher.finalize())
   }
 
+  /// Consume the adapter and return the inner writer, discarding the checksum state.
   #[inline]
   pub fn into_inner(self) -> W {
     self.inner
   }
 
+  /// Borrow the inner writer.
   #[inline]
   pub fn inner(&self) -> &W {
     &self.inner
   }
 
+  /// Borrow the inner writer mutably.
+  ///
+  /// Bytes written directly to this value are not included in the checksum.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut W {
     &mut self.inner
@@ -424,6 +448,7 @@ impl<R: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt
 
 #[cfg(feature = "std")]
 impl<R, D: crate::traits::Digest> DigestReader<R, D> {
+  /// Wrap `inner` with a new digest state.
   #[inline]
   #[must_use]
   pub fn new(inner: R) -> Self {
@@ -433,32 +458,42 @@ impl<R, D: crate::traits::Digest> DigestReader<R, D> {
     }
   }
 
+  /// Return the digest of the bytes read through this adapter so far.
   #[inline]
   #[must_use]
   pub fn digest(&self) -> D::Output {
     self.hasher.finalize()
   }
 
+  /// Borrow the digest state mutably.
+  ///
+  /// Direct updates affect the returned digest but do not read from the inner reader.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut D {
     &mut self.hasher
   }
 
+  /// Consume the adapter and return the inner reader and current digest.
   #[inline]
   pub fn into_parts(self) -> (R, D::Output) {
     (self.inner, self.hasher.finalize())
   }
 
+  /// Consume the adapter and return the inner reader, discarding the digest state.
   #[inline]
   pub fn into_inner(self) -> R {
     self.inner
   }
 
+  /// Borrow the inner reader.
   #[inline]
   pub fn inner(&self) -> &R {
     &self.inner
   }
 
+  /// Borrow the inner reader mutably.
+  ///
+  /// Bytes read directly from this value are not included in the digest.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut R {
     &mut self.inner
@@ -538,6 +573,7 @@ impl<W: core::fmt::Debug, D: crate::traits::Digest + core::fmt::Debug> core::fmt
 
 #[cfg(feature = "std")]
 impl<W, D: crate::traits::Digest> DigestWriter<W, D> {
+  /// Wrap `inner` with a new digest state.
   #[inline]
   #[must_use]
   pub fn new(inner: W) -> Self {
@@ -547,32 +583,42 @@ impl<W, D: crate::traits::Digest> DigestWriter<W, D> {
     }
   }
 
+  /// Return the digest of the bytes written through this adapter so far.
   #[inline]
   #[must_use]
   pub fn digest(&self) -> D::Output {
     self.hasher.finalize()
   }
 
+  /// Borrow the digest state mutably.
+  ///
+  /// Direct updates affect the returned digest but do not write to the inner writer.
   #[inline]
   pub fn hasher_mut(&mut self) -> &mut D {
     &mut self.hasher
   }
 
+  /// Consume the adapter and return the inner writer and current digest.
   #[inline]
   pub fn into_parts(self) -> (W, D::Output) {
     (self.inner, self.hasher.finalize())
   }
 
+  /// Consume the adapter and return the inner writer, discarding the digest state.
   #[inline]
   pub fn into_inner(self) -> W {
     self.inner
   }
 
+  /// Borrow the inner writer.
   #[inline]
   pub fn inner(&self) -> &W {
     &self.inner
   }
 
+  /// Borrow the inner writer mutably.
+  ///
+  /// Bytes written directly to this value are not included in the digest.
   #[inline]
   pub fn inner_mut(&mut self) -> &mut W {
     &mut self.inner
@@ -717,7 +763,9 @@ mod tests {
   #[test]
   fn checksum_writer_hashes_only_written_prefix() {
     let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(4));
-    let written = writer.write(b"abcdef").unwrap();
+    let written = writer
+      .write(b"abcdef")
+      .expect("in-memory checksum writer must accept input");
     assert_eq!(written, 4);
     assert_eq!(writer.checksum(), checksum_sum(b"abcd"));
 
@@ -730,7 +778,9 @@ mod tests {
   fn checksum_writer_vectored_hashes_only_written_prefix() {
     let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(5));
     let bufs = [IoSlice::new(b"ab"), IoSlice::new(b"cdef"), IoSlice::new(b"gh")];
-    let written = writer.write_vectored(&bufs).unwrap();
+    let written = writer
+      .write_vectored(&bufs)
+      .expect("in-memory checksum writer must accept vectored input");
     assert_eq!(written, 5);
     assert_eq!(writer.checksum(), checksum_sum(b"abcde"));
 
@@ -742,7 +792,9 @@ mod tests {
   #[test]
   fn digest_writer_hashes_only_written_prefix() {
     let mut writer = DigestWriter::<_, SumDigest>::new(PartialWriter::new(3));
-    let written = writer.write(b"abcdef").unwrap();
+    let written = writer
+      .write(b"abcdef")
+      .expect("in-memory digest writer must accept input");
     assert_eq!(written, 3);
     assert_eq!(writer.digest(), digest_sum(b"abc"));
 
@@ -755,7 +807,9 @@ mod tests {
   fn digest_writer_vectored_hashes_only_written_prefix() {
     let mut writer = DigestWriter::<_, SumDigest>::new(PartialWriter::new(6));
     let bufs = [IoSlice::new(b"ab"), IoSlice::new(b"cdef"), IoSlice::new(b"ghij")];
-    let written = writer.write_vectored(&bufs).unwrap();
+    let written = writer
+      .write_vectored(&bufs)
+      .expect("in-memory digest writer must accept vectored input");
     assert_eq!(written, 6);
     assert_eq!(writer.digest(), digest_sum(b"abcdef"));
 
@@ -776,7 +830,9 @@ mod tests {
       IoSliceMut::new(&mut third),
     ];
 
-    let read = reader.read_vectored(&mut bufs).unwrap();
+    let read = reader
+      .read_vectored(&mut bufs)
+      .expect("in-memory checksum reader must provide vectored input");
     assert_eq!(read, 5);
     assert_eq!(second, *b"ab");
     assert_eq!(third, *b"cde");
@@ -795,7 +851,9 @@ mod tests {
       IoSliceMut::new(&mut third),
     ];
 
-    let read = reader.read_vectored(&mut bufs).unwrap();
+    let read = reader
+      .read_vectored(&mut bufs)
+      .expect("in-memory digest reader must provide vectored input");
     assert_eq!(read, 5);
     assert_eq!(second, *b"ab");
     assert_eq!(third, *b"cde");
@@ -806,7 +864,9 @@ mod tests {
   fn checksum_writer_vectored_skips_empty_buffers() {
     let mut writer = ChecksumWriter::<_, Sum>::new(PartialWriter::new(5));
     let bufs = [IoSlice::new(b""), IoSlice::new(b"ab"), IoSlice::new(b"cde")];
-    let written = writer.write_vectored(&bufs).unwrap();
+    let written = writer
+      .write_vectored(&bufs)
+      .expect("in-memory checksum writer must accept nonempty vectored input");
 
     assert_eq!(written, 5);
     assert_eq!(writer.checksum(), checksum_sum(b"abcde"));
@@ -820,7 +880,9 @@ mod tests {
   fn digest_writer_vectored_skips_empty_buffers() {
     let mut writer = DigestWriter::<_, SumDigest>::new(PartialWriter::new(5));
     let bufs = [IoSlice::new(b""), IoSlice::new(b"ab"), IoSlice::new(b"cde")];
-    let written = writer.write_vectored(&bufs).unwrap();
+    let written = writer
+      .write_vectored(&bufs)
+      .expect("in-memory digest writer must accept nonempty vectored input");
 
     assert_eq!(written, 5);
     assert_eq!(writer.digest(), digest_sum(b"abcde"));

@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! Ascon-AEAD128 authenticated encryption (NIST SP 800-232).
 //!
 //! Pure Rust, `no_std` implementation with fixed-work, table-free source
@@ -26,17 +24,19 @@ const DOMAIN_SEPARATOR: u64 = 0x8000_0000_0000_0000;
 
 /// Little-endian padding: set the first free byte at position `n`.
 #[inline(always)]
-const fn pad(n: usize) -> u64 {
-  0x01_u64 << (8 * n)
+fn pad(n: usize) -> u64 {
+  let shift = u32::try_from(n.strict_mul(8)).expect("Ascon tail position must fit the word width");
+  0x01_u64.strict_shl(shift)
 }
 
 /// Clear the lowest `n` bytes of `word`.
 #[inline(always)]
-const fn clear(word: u64, n: usize) -> u64 {
+fn clear(word: u64, n: usize) -> u64 {
   if n == 0 {
     return word;
   }
-  word & (u64::MAX << (8 * n))
+  let shift = u32::try_from(n.strict_mul(8)).expect("Ascon tail length must fit the word width");
+  word & u64::MAX.strict_shl(shift)
 }
 
 /// Load up to 8 bytes little-endian into a u64, zero-padding on the right.
@@ -213,14 +213,13 @@ impl AsconAead128 {
   /// Absorb associated data into the state.
   fn process_aad(s: &mut [u64; 5], aad: &[u8]) {
     if !aad.is_empty() {
-      let mut chunks = aad.chunks_exact(RATE);
-      for chunk in chunks.by_ref() {
+      let (chunks, mut rest) = aad.as_chunks::<RATE>();
+      for chunk in chunks {
         s[0] ^= load_bytes(&chunk[..8]);
         s[1] ^= load_bytes(&chunk[8..]);
         permute_8_portable(s);
       }
 
-      let mut rest = chunks.remainder();
       let sidx = if rest.len() >= 8 {
         s[0] ^= load_bytes(&rest[..8]);
         rest = &rest[8..];
@@ -289,8 +288,8 @@ impl Aead for AsconAead128 {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
-    let mut blocks = buffer.chunks_exact_mut(RATE);
-    for block in blocks.by_ref() {
+    let (blocks, mut tail) = buffer.as_chunks_mut::<RATE>();
+    for block in blocks {
       s[0] ^= load_bytes(&block[..8]);
       block[..8].copy_from_slice(&s[0].to_le_bytes());
       s[1] ^= load_bytes(&block[8..]);
@@ -298,7 +297,6 @@ impl Aead for AsconAead128 {
       permute_8_portable(&mut s);
     }
 
-    let mut tail = blocks.into_remainder();
     let sidx = if tail.len() >= 8 {
       s[0] ^= load_bytes(&tail[..8]);
       tail[..8].copy_from_slice(&s[0].to_le_bytes());
@@ -328,8 +326,8 @@ impl Aead for AsconAead128 {
     let mut s = self.initialize(nonce);
     Self::process_aad(&mut s, aad);
 
-    let mut blocks = buffer.chunks_exact_mut(RATE);
-    for block in blocks.by_ref() {
+    let (blocks, mut tail) = buffer.as_chunks_mut::<RATE>();
+    for block in blocks {
       let c0 = load_bytes(&block[..8]);
       block[..8].copy_from_slice(&(s[0] ^ c0).to_le_bytes());
       s[0] = c0;
@@ -339,7 +337,6 @@ impl Aead for AsconAead128 {
       permute_8_portable(&mut s);
     }
 
-    let mut tail = blocks.into_remainder();
     let sidx = if tail.len() >= 8 {
       let c0 = load_bytes(&tail[..8]);
       tail[..8].copy_from_slice(&(s[0] ^ c0).to_le_bytes());
@@ -369,6 +366,7 @@ impl Aead for AsconAead128 {
 }
 
 #[cfg(feature = "diag")]
+/// Compare a portable Ascon-AEAD128 tag computation with an expected diagnostic tag.
 #[unsafe(no_mangle)]
 #[inline(never)]
 pub fn diag_ascon_aead128_tag_portable(
@@ -402,18 +400,24 @@ mod tests {
   fn assert_matches_oracle(key: [u8; 16], nonce: [u8; 16], aad: &[u8], plaintext: &[u8]) {
     let aead = AsconAead128::new(&AsconAead128Key::from_bytes(key));
     let nonce_typed = Nonce128::from_bytes(nonce);
-    let oracle = ascon_aead::AsconAead128::new_from_slice(&key).unwrap();
+    let oracle = ascon_aead::AsconAead128::new_from_slice(&key).expect("16-byte Ascon oracle key must be accepted");
     let oracle_nonce = Array(nonce);
 
     let mut ours = plaintext.to_vec();
-    let tag = aead.encrypt_in_place(&nonce_typed, aad, &mut ours).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce_typed, aad, &mut ours)
+      .expect("rscrypto Ascon encryption must succeed");
     let mut ours_combined = ours.clone();
     ours_combined.extend_from_slice(tag.as_bytes());
-    let expected = oracle.encrypt(&oracle_nonce, Payload { msg: plaintext, aad }).unwrap();
+    let expected = oracle
+      .encrypt(&oracle_nonce, Payload { msg: plaintext, aad })
+      .expect("oracle Ascon encryption must succeed");
     assert_eq!(ours_combined, expected, "encryption mismatch");
 
     let mut ours_buf = ours.clone();
-    aead.decrypt_in_place(&nonce_typed, aad, &mut ours_buf, &tag).unwrap();
+    aead
+      .decrypt_in_place(&nonce_typed, aad, &mut ours_buf, &tag)
+      .expect("rscrypto Ascon self-decryption must succeed");
     assert_eq!(ours_buf, plaintext, "self decrypt mismatch");
 
     let (oracle_ct, oracle_tag) = expected.split_at(expected.len().strict_sub(TAG_SIZE));
@@ -423,9 +427,13 @@ mod tests {
         &nonce_typed,
         aad,
         &mut oracle_buf,
-        &AsconAead128Tag::from_bytes(oracle_tag.try_into().unwrap()),
+        &AsconAead128Tag::from_bytes(
+          oracle_tag
+            .try_into()
+            .expect("oracle Ascon output must end in a 16-byte tag"),
+        ),
       )
-      .unwrap();
+      .expect("rscrypto must decrypt the oracle Ascon ciphertext");
     assert_eq!(oracle_buf, plaintext, "oracle decrypt mismatch");
   }
 
@@ -437,8 +445,12 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = [];
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
-    aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"", &mut buf)
+      .expect("empty Ascon encryption must succeed");
+    aead
+      .decrypt_in_place(&nonce, b"", &mut buf, &tag)
+      .expect("empty Ascon decryption must succeed");
   }
 
   #[test]
@@ -449,10 +461,14 @@ mod tests {
     let plaintext = b"the quick brown fox jumps over the lazy dog";
 
     let mut buf = *plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"header", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"header", &mut buf)
+      .expect("Ascon encryption with AAD must succeed");
     assert_ne!(&buf[..], &plaintext[..]);
 
-    aead.decrypt_in_place(&nonce, b"header", &mut buf, &tag).unwrap();
+    aead
+      .decrypt_in_place(&nonce, b"header", &mut buf, &tag)
+      .expect("Ascon decryption with AAD must succeed");
     assert_eq!(&buf[..], &plaintext[..]);
   }
 
@@ -465,10 +481,10 @@ mod tests {
     let mut buf = [];
     let tag = aead
       .encrypt_in_place(&nonce, b"associated data only", &mut buf)
-      .unwrap();
+      .expect("AAD-only Ascon encryption must succeed");
     aead
       .decrypt_in_place(&nonce, b"associated data only", &mut buf, &tag)
-      .unwrap();
+      .expect("AAD-only Ascon decryption must succeed");
   }
 
   #[test]
@@ -478,14 +494,18 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"zero me on failure";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("Ascon test setup encryption must succeed");
 
     let mut bad_tag = tag.to_bytes();
     bad_tag[0] ^= 0xFF;
     let bad_tag = AsconAead128Tag::from_bytes(bad_tag);
 
-    let result = aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag),
+      Err(OpenError::verification())
+    );
     assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
@@ -496,11 +516,15 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"secret";
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"", &mut buf)
+      .expect("Ascon test setup encryption must succeed");
 
     buf[0] ^= 1;
-    let result = aead.decrypt_in_place(&nonce, b"", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
     // Buffer must be zeroized on failure.
     assert_eq!(&buf, &[0u8; 6]);
   }
@@ -512,14 +536,18 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"data";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("Ascon test setup encryption must succeed");
 
     let mut bad_tag_bytes = tag.to_bytes();
     bad_tag_bytes[15] ^= 1;
     let bad_tag = AsconAead128Tag::from_bytes(bad_tag_bytes);
 
-    let result = aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag),
+      Err(OpenError::verification())
+    );
     assert_eq!(&buf, &[0u8; 4]);
   }
 
@@ -530,10 +558,14 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"msg";
-    let tag = aead.encrypt_in_place(&nonce, b"correct", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"correct", &mut buf)
+      .expect("Ascon test setup encryption must succeed");
 
-    let result = aead.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   #[test]
@@ -543,11 +575,15 @@ mod tests {
     let aead = AsconAead128::new(&key);
 
     let mut buf = *b"nonce test";
-    let tag = aead.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("Ascon test setup encryption must succeed");
 
     let wrong_nonce = Nonce128::from_bytes([11; 16]);
-    let result = aead.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      aead.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   #[test]
@@ -558,18 +594,29 @@ mod tests {
     let pt = b"combined mode";
 
     let mut sealed = vec![0u8; pt.len().strict_add(TAG_SIZE)];
-    aead.encrypt(&nonce, b"h", pt.as_slice(), &mut sealed).unwrap();
+    aead
+      .encrypt(&nonce, b"h", pt.as_slice(), &mut sealed)
+      .expect("combined Ascon encryption must succeed");
 
     let mut opened = vec![0u8; pt.len()];
-    aead.decrypt(&nonce, b"h", &sealed, &mut opened).unwrap();
+    aead
+      .decrypt(&nonce, b"h", &sealed, &mut opened)
+      .expect("combined Ascon decryption must succeed");
     assert_eq!(&opened, &pt[..]);
   }
 
   #[test]
   fn tag_from_slice_rejects_wrong_length() {
-    assert!(AsconAead128::tag_from_slice(&[0u8; 15]).is_err());
-    assert!(AsconAead128::tag_from_slice(&[0u8; 17]).is_err());
-    assert!(AsconAead128::tag_from_slice(&[0u8; 16]).is_ok());
+    assert_eq!(
+      AsconAead128::tag_from_slice(&[0u8; 15]).expect_err("short Ascon tag must be rejected"),
+      AeadBufferError::new()
+    );
+    assert_eq!(
+      AsconAead128::tag_from_slice(&[0u8; 17]).expect_err("long Ascon tag must be rejected"),
+      AeadBufferError::new()
+    );
+    let tag = AsconAead128::tag_from_slice(&[0u8; 16]).expect("16-byte Ascon tag must be accepted");
+    assert_eq!(tag.as_bytes(), &[0u8; 16]);
   }
 
   #[test]
@@ -583,7 +630,7 @@ mod tests {
     let mut buf = plaintext;
     let tag = aead
       .encrypt_in_place(&nonce, b"multi-block aad that is longer than one rate block", &mut buf)
-      .unwrap();
+      .expect("multi-block Ascon encryption must succeed");
     aead
       .decrypt_in_place(
         &nonce,
@@ -591,7 +638,7 @@ mod tests {
         &mut buf,
         &tag,
       )
-      .unwrap();
+      .expect("multi-block Ascon decryption must succeed");
     assert_eq!(buf, plaintext);
   }
 
@@ -604,15 +651,23 @@ mod tests {
     // Exactly 8 bytes = 1 full block, 0-byte tail.
     let plaintext = [0x55u8; 8];
     let mut buf = plaintext;
-    let tag = aead.encrypt_in_place(&nonce, b"", &mut buf).unwrap();
-    aead.decrypt_in_place(&nonce, b"", &mut buf, &tag).unwrap();
+    let tag = aead
+      .encrypt_in_place(&nonce, b"", &mut buf)
+      .expect("one-word Ascon encryption must succeed");
+    aead
+      .decrypt_in_place(&nonce, b"", &mut buf, &tag)
+      .expect("one-word Ascon decryption must succeed");
     assert_eq!(buf, plaintext);
 
     // Exactly 16 bytes = 2 full blocks, 0-byte tail.
     let plaintext16 = [0x66u8; 16];
     let mut buf16 = plaintext16;
-    let tag16 = aead.encrypt_in_place(&nonce, b"", &mut buf16).unwrap();
-    aead.decrypt_in_place(&nonce, b"", &mut buf16, &tag16).unwrap();
+    let tag16 = aead
+      .encrypt_in_place(&nonce, b"", &mut buf16)
+      .expect("one-rate Ascon encryption must succeed");
+    aead
+      .decrypt_in_place(&nonce, b"", &mut buf16, &tag16)
+      .expect("one-rate Ascon decryption must succeed");
     assert_eq!(buf16, plaintext16);
   }
 
@@ -653,7 +708,7 @@ mod tests {
   fn differential_multiblock_matches_oracle() {
     let key = [0x42; 16];
     let nonce = [0x24; 16];
-    let aad: Vec<u8> = (0..48).map(|i| i as u8).collect();
+    let aad: Vec<u8> = (0u8..48).collect();
     let pt: Vec<u8> = (0u8..97).map(|i| i.wrapping_mul(17)).collect();
     assert_matches_oracle(key, nonce, &aad, &pt);
   }

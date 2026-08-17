@@ -392,8 +392,7 @@ impl HmacSha256 {
     }
   }
 
-  #[cfg(any(test, feature = "diag"))]
-  #[allow(dead_code)]
+  #[cfg(any(feature = "diag", all(test, feature = "hkdf")))]
   pub(crate) fn new_with_compress_for_test(
     key: &[u8],
     compress: crate::hashes::crypto::sha256::kernels::CompressBlocksFn,
@@ -427,8 +426,7 @@ impl HmacSha256 {
     }
   }
 
-  #[cfg(any(test, feature = "diag"))]
-  #[allow(dead_code)]
+  #[cfg(any(feature = "diag", all(test, feature = "hkdf")))]
   pub(crate) fn mac_with_compress_for_test(
     key: &[u8],
     data: &[u8],
@@ -441,6 +439,7 @@ impl HmacSha256 {
 }
 
 #[cfg(feature = "diag")]
+/// Compare the portable HMAC-SHA256 tag for the diagnostic message `b"binsec"` with `expected`.
 pub fn diag_hmac_sha256_verify_portable(
   key: &[u8; SHA256_TAG_SIZE],
   expected: &[u8; SHA256_TAG_SIZE],
@@ -453,6 +452,7 @@ pub fn diag_hmac_sha256_verify_portable(
 }
 
 #[cfg(feature = "diag")]
+/// Compare the leading 64 bits of the portable HMAC-SHA256 diagnostic tag with `expected`.
 pub fn diag_hmac_sha256_verify_truncated_64_portable(
   key: &[u8; SHA256_TAG_SIZE],
   expected: &[u8; 8],
@@ -545,7 +545,6 @@ impl Mac for HmacSha256 {
   /// dispatch, state save/restore) that dominates on fast SHA2-CE cores.
   /// The outer hash is always merged into a single 128-byte (2-block) call.
   #[inline]
-  #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
     if hmac_sha256_oneshot_should_stream() {
       // The Sapphire Rapids policy uses the public streaming path instead of
@@ -598,7 +597,12 @@ impl Mac for HmacSha256 {
         256 => compress_inline_inner!(256),
         320 => compress_inline_inner!(320),
         384 => compress_inline_inner!(384),
-        _ => unreachable!("HMAC-SHA256 inline inner padding is bounded to 128..=384 bytes"),
+        _ => {
+          ct::zeroize(&mut ipad);
+          let mut mac = Self::new(key);
+          mac.update(data);
+          return mac.finalize();
+        }
       }
     } else {
       compress(&mut state, &ipad);
@@ -634,7 +638,7 @@ impl Mac for HmacSha256 {
     compress(&mut state, &outer);
 
     let mut tag = [0u8; SHA256_TAG_SIZE];
-    for (chunk, &word) in tag.chunks_exact_mut(4).zip(state.iter()) {
+    for (chunk, &word) in tag.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
 
@@ -768,6 +772,7 @@ impl HmacSha384 {
 }
 
 #[cfg(feature = "diag")]
+/// Compare the portable HMAC-SHA384 tag for the diagnostic message `b"binsec"` with `expected`.
 pub fn diag_hmac_sha384_verify_portable(
   key: &[u8; SHA384_TAG_SIZE],
   expected: &[u8; SHA384_TAG_SIZE],
@@ -841,7 +846,6 @@ impl Mac for HmacSha384 {
   }
 
   #[inline]
-  #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
     const INLINE_DATA_MAX: usize = 256;
 
@@ -884,7 +888,12 @@ impl Mac for HmacSha384 {
         256 => compress_inline_inner!(256),
         384 => compress_inline_inner!(384),
         512 => compress_inline_inner!(512),
-        _ => unreachable!("HMAC-SHA384 inline inner padding is bounded to 256..=512 bytes"),
+        _ => {
+          ct::zeroize(&mut ipad);
+          let mut mac = Self::new(key);
+          mac.update(data);
+          return mac.finalize();
+        }
       }
     } else {
       compress(&mut state, &ipad);
@@ -920,7 +929,7 @@ impl Mac for HmacSha384 {
     compress(&mut state, &outer);
 
     let mut tag = [0u8; SHA384_TAG_SIZE];
-    for (chunk, &word) in tag.chunks_exact_mut(8).zip(state.iter()) {
+    for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
 
@@ -1054,6 +1063,7 @@ impl HmacSha512 {
 }
 
 #[cfg(feature = "diag")]
+/// Compare the portable HMAC-SHA512 tag for the diagnostic message `b"binsec"` with `expected`.
 pub fn diag_hmac_sha512_verify_portable(
   key: &[u8; SHA512_TAG_SIZE],
   expected: &[u8; SHA512_TAG_SIZE],
@@ -1127,7 +1137,6 @@ impl Mac for HmacSha512 {
   }
 
   #[inline]
-  #[allow(clippy::indexing_slicing)] // All indices bounded by prior length checks + fixed-size arrays.
   fn mac(key: &[u8], data: &[u8]) -> Self::Tag {
     const INLINE_DATA_MAX: usize = 256;
 
@@ -1170,7 +1179,12 @@ impl Mac for HmacSha512 {
         256 => compress_inline_inner!(256),
         384 => compress_inline_inner!(384),
         512 => compress_inline_inner!(512),
-        _ => unreachable!("HMAC-SHA512 inline inner padding is bounded to 256..=512 bytes"),
+        _ => {
+          ct::zeroize(&mut ipad);
+          let mut mac = Self::new(key);
+          mac.update(data);
+          return mac.finalize();
+        }
       }
     } else {
       compress(&mut state, &ipad);
@@ -1206,7 +1220,7 @@ impl Mac for HmacSha512 {
     compress(&mut state, &outer);
 
     let mut tag = [0u8; SHA512_TAG_SIZE];
-    for (chunk, &word) in tag.chunks_exact_mut(8).zip(state.iter()) {
+    for (chunk, &word) in tag.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
 
@@ -1263,15 +1277,15 @@ mod tests {
   fn pattern(len: usize, mul: u8, add: u8) -> Vec<u8> {
     (0..len)
       .map(|i| {
-        (i as u8)
+        i.to_le_bytes()[0]
           .wrapping_mul(mul)
-          .wrapping_add(((i >> 3) as u8).wrapping_add(add))
+          .wrapping_add((i >> 3).to_le_bytes()[0].wrapping_add(add))
       })
       .collect()
   }
 
   fn oracle_hmac_sha384(key: &[u8], data: &[u8]) -> [u8; SHA384_TAG_SIZE] {
-    let mut mac = RustCryptoHmacSha384::new_from_slice(key).unwrap();
+    let mut mac = RustCryptoHmacSha384::new_from_slice(key).expect("HMAC accepts keys of any length");
     mac.update(data);
     let bytes = mac.finalize().into_bytes();
     let mut tag = [0u8; SHA384_TAG_SIZE];
@@ -1280,7 +1294,7 @@ mod tests {
   }
 
   fn oracle_hmac_sha512(key: &[u8], data: &[u8]) -> [u8; SHA512_TAG_SIZE] {
-    let mut mac = RustCryptoHmacSha512::new_from_slice(key).unwrap();
+    let mut mac = RustCryptoHmacSha512::new_from_slice(key).expect("HMAC accepts keys of any length");
     mac.update(data);
     let bytes = mac.finalize().into_bytes();
     let mut tag = [0u8; SHA512_TAG_SIZE];

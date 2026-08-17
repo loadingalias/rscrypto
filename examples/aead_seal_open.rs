@@ -11,7 +11,9 @@ fn main() -> Result<(), Box<dyn core::error::Error>> {
   let (nonce, sealed) = cipher.seal_random_to_vec(aad, plaintext)?;
   let opened = cipher.decrypt_to_vec(&nonce, aad, &sealed)?;
 
-  assert_eq!(opened, plaintext);
+  if opened != plaintext {
+    return Err(std::io::Error::other("AEAD round-trip changed the plaintext").into());
+  }
   println!("ChaCha20-Poly1305 sealed {} bytes", plaintext.len());
   Ok(())
 }

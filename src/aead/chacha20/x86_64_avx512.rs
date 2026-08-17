@@ -7,53 +7,72 @@ use core::arch::x86_64::{
 use super::{BLOCK_SIZE, KEY_SIZE, NONCE_SIZE, load_u32_le, x86_ssse3_x4, xor_keystream_portable};
 
 const BLOCKS_PER_BATCH: usize = 16;
+const COUNTERS_PER_BATCH: u32 = 16;
 
+/// Generate and XOR a ChaCha20 stream with the AVX-512 kernel.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX512F, AVX512VL, AVX512BW, and AVX512DQ are available and that `buffer`'s 64-byte
+/// block count fits the counter range starting at `initial_counter`.
 #[inline]
-pub(super) fn xor_keystream(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
-  // SAFETY: Backend selection guarantees the AVX-512 feature set required by this kernel.
+pub(super) unsafe fn xor_keystream(
+  key: &[u8; KEY_SIZE],
+  initial_counter: u32,
+  nonce: &[u8; NONCE_SIZE],
+  buffer: &mut [u8],
+) {
+  // SAFETY: Production validates the counter range and detects AVX512F+VL+BW+DQ; direct test and diagnostic callers
+  // establish the same conditions.
   unsafe { xor_keystream_impl(key, initial_counter, nonce, buffer) }
 }
 
+/// Generate and XOR a ChaCha20 stream with the AVX-512 16-way kernel and four-way/portable tails.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX512F, AVX512VL, AVX512BW, and AVX512DQ are available and that the number of
+/// 64-byte blocks in `buffer` does not exhaust the 32-bit block counter starting at `initial_counter`.
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
   let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
   for chunk in &mut batches {
-    debug_assert!(counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some());
+    debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
-    let mut x0 = _mm512_set1_epi32(0x6170_7865u32 as i32);
-    let mut x1 = _mm512_set1_epi32(0x3320_646eu32 as i32);
-    let mut x2 = _mm512_set1_epi32(0x7962_2d32u32 as i32);
-    let mut x3 = _mm512_set1_epi32(0x6b20_6574u32 as i32);
-    let mut x4 = _mm512_set1_epi32(load_u32_le(&key[0..4]) as i32);
-    let mut x5 = _mm512_set1_epi32(load_u32_le(&key[4..8]) as i32);
-    let mut x6 = _mm512_set1_epi32(load_u32_le(&key[8..12]) as i32);
-    let mut x7 = _mm512_set1_epi32(load_u32_le(&key[12..16]) as i32);
-    let mut x8 = _mm512_set1_epi32(load_u32_le(&key[16..20]) as i32);
-    let mut x9 = _mm512_set1_epi32(load_u32_le(&key[20..24]) as i32);
-    let mut x10 = _mm512_set1_epi32(load_u32_le(&key[24..28]) as i32);
-    let mut x11 = _mm512_set1_epi32(load_u32_le(&key[28..32]) as i32);
+    let mut x0 = _mm512_set1_epi32(0x6170_7865u32.cast_signed());
+    let mut x1 = _mm512_set1_epi32(0x3320_646eu32.cast_signed());
+    let mut x2 = _mm512_set1_epi32(0x7962_2d32u32.cast_signed());
+    let mut x3 = _mm512_set1_epi32(0x6b20_6574u32.cast_signed());
+    let mut x4 = _mm512_set1_epi32(load_u32_le(&key[0..4]).cast_signed());
+    let mut x5 = _mm512_set1_epi32(load_u32_le(&key[4..8]).cast_signed());
+    let mut x6 = _mm512_set1_epi32(load_u32_le(&key[8..12]).cast_signed());
+    let mut x7 = _mm512_set1_epi32(load_u32_le(&key[12..16]).cast_signed());
+    let mut x8 = _mm512_set1_epi32(load_u32_le(&key[16..20]).cast_signed());
+    let mut x9 = _mm512_set1_epi32(load_u32_le(&key[20..24]).cast_signed());
+    let mut x10 = _mm512_set1_epi32(load_u32_le(&key[24..28]).cast_signed());
+    let mut x11 = _mm512_set1_epi32(load_u32_le(&key[28..32]).cast_signed());
     let mut x12 = _mm512_setr_epi32(
-      counter as i32,
-      counter.wrapping_add(1) as i32,
-      counter.wrapping_add(2) as i32,
-      counter.wrapping_add(3) as i32,
-      counter.wrapping_add(4) as i32,
-      counter.wrapping_add(5) as i32,
-      counter.wrapping_add(6) as i32,
-      counter.wrapping_add(7) as i32,
-      counter.wrapping_add(8) as i32,
-      counter.wrapping_add(9) as i32,
-      counter.wrapping_add(10) as i32,
-      counter.wrapping_add(11) as i32,
-      counter.wrapping_add(12) as i32,
-      counter.wrapping_add(13) as i32,
-      counter.wrapping_add(14) as i32,
-      counter.wrapping_add(15) as i32,
+      counter.cast_signed(),
+      counter.wrapping_add(1).cast_signed(),
+      counter.wrapping_add(2).cast_signed(),
+      counter.wrapping_add(3).cast_signed(),
+      counter.wrapping_add(4).cast_signed(),
+      counter.wrapping_add(5).cast_signed(),
+      counter.wrapping_add(6).cast_signed(),
+      counter.wrapping_add(7).cast_signed(),
+      counter.wrapping_add(8).cast_signed(),
+      counter.wrapping_add(9).cast_signed(),
+      counter.wrapping_add(10).cast_signed(),
+      counter.wrapping_add(11).cast_signed(),
+      counter.wrapping_add(12).cast_signed(),
+      counter.wrapping_add(13).cast_signed(),
+      counter.wrapping_add(14).cast_signed(),
+      counter.wrapping_add(15).cast_signed(),
     );
-    let mut x13 = _mm512_set1_epi32(load_u32_le(&nonce[0..4]) as i32);
-    let mut x14 = _mm512_set1_epi32(load_u32_le(&nonce[4..8]) as i32);
-    let mut x15 = _mm512_set1_epi32(load_u32_le(&nonce[8..12]) as i32);
+    let mut x13 = _mm512_set1_epi32(load_u32_le(&nonce[0..4]).cast_signed());
+    let mut x14 = _mm512_set1_epi32(load_u32_le(&nonce[4..8]).cast_signed());
+    let mut x15 = _mm512_set1_epi32(load_u32_le(&nonce[8..12]).cast_signed());
 
     let o0 = x0;
     let o1 = x1;
@@ -108,7 +127,6 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     // 16 blocks) to block-major (each register = one complete 64-byte block).
     //
     // Stage 1: 32-bit interleave — pairwise unpack adjacent state-word registers.
-    // SAFETY: AVX-512 intrinsics are valid under the enclosing target_feature.
     let s1_0 = _mm512_unpacklo_epi32(x0, x1);
     let s1_1 = _mm512_unpackhi_epi32(x0, x1);
     let s1_2 = _mm512_unpacklo_epi32(x2, x3);
@@ -215,7 +233,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
       xor_block(ptr, 15, blk15);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
   let remainder = batches.into_remainder();
@@ -224,7 +242,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     // SAFETY: AVX-512-ready CPUs provide the SSSE3 instructions used by the
     // 4-block tail kernel, and `chunk` is exactly 4 ChaCha20 blocks.
     unsafe { x86_ssse3_x4::xor_blocks(key, counter, nonce, chunk) };
-    counter = counter.wrapping_add(x86_ssse3_x4::BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(x86_ssse3_x4::COUNTERS_PER_BATCH);
   }
 
   let remainder = x4_batches.into_remainder();
@@ -234,11 +252,18 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
 }
 
 /// Load 64 bytes of plaintext at block offset `idx`, XOR with keystream block, store.
+///
+/// # Safety
+///
+/// The caller must ensure that AVX512F is available, `buf` is valid for exclusive access to 1,024 initialized bytes,
+/// and `idx` is less than 16. The buffer need not be 64-byte aligned.
 #[inline(always)]
 unsafe fn xor_block(buf: *mut u8, idx: usize, keystream: __m512i) {
   // SAFETY: caller guarantees `buf` points to a 1024-byte chunk and `idx < 16`.
   unsafe {
-    let p = buf.add(idx.strict_mul(BLOCK_SIZE)).cast::<__m512i>();
+    let p = core::ptr::NonNull::new_unchecked(buf.add(idx.strict_mul(BLOCK_SIZE)))
+      .cast::<__m512i>()
+      .as_ptr();
     let plaintext = _mm512_loadu_si512(p);
     _mm512_storeu_si512(p, _mm512_xor_si512(plaintext, keystream));
   }

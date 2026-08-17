@@ -3,8 +3,11 @@
 mod common;
 
 #[cfg(feature = "ascon-aead")]
-use common::decode_hex_array;
+#[path = "common/array.rs"]
+mod hex_array;
 use common::decode_hex_vec;
+#[cfg(feature = "ascon-aead")]
+use hex_array::decode_hex_array;
 
 #[cfg(feature = "ascon-aead")]
 const AEAD_VECTORS: &str = include_str!("../testdata/ascon/asconaead128.txt");
@@ -20,11 +23,13 @@ fn field<'a>(case: &'a str, name: &str) -> &'a str {
     .lines()
     .find_map(|line| line.split_once(" = ").filter(|(key, _)| *key == name))
     .map(|(_, value)| value)
-    .unwrap_or_else(|| panic!("missing Ascon KAT field `{name}`"))
+    .expect("Ascon KAT field must be present")
 }
 
 fn case_number(case: &str) -> usize {
-  field(case, "Count").parse().expect("invalid Ascon KAT case number")
+  field(case, "Count")
+    .parse()
+    .expect("Ascon KAT case number must be valid")
 }
 
 #[cfg(feature = "ascon-aead")]
@@ -35,7 +40,7 @@ fn ascon_aead128_matches_final_reference_kats() {
     aead::{Nonce128, expert::AeadWithNonce as _},
   };
 
-  let mut rows = 0;
+  let mut rows = 0usize;
   for case in cases(AEAD_VECTORS) {
     let count = case_number(case);
     let key = AsconAead128Key::from_bytes(decode_hex_array(field(case, "Key")));
@@ -58,7 +63,7 @@ fn ascon_aead128_matches_final_reference_kats() {
     let mut ciphertext = plaintext.clone();
     let tag = cipher
       .encrypt_in_place(&nonce, &aad, &mut ciphertext)
-      .unwrap_or_else(|err| panic!("Ascon-AEAD128 KAT {count} encryption failed: {err}"));
+      .expect("Ascon-AEAD128 KAT encryption must succeed");
     assert_eq!(
       ciphertext, expected_ciphertext,
       "Ascon-AEAD128 KAT {count} ciphertext mismatch"
@@ -72,10 +77,10 @@ fn ascon_aead128_matches_final_reference_kats() {
     let mut decrypted = expected_ciphertext.to_vec();
     cipher
       .decrypt_in_place(&nonce, &aad, &mut decrypted, &expected_tag)
-      .unwrap_or_else(|err| panic!("Ascon-AEAD128 KAT {count} decryption failed: {err}"));
+      .expect("Ascon-AEAD128 KAT decryption must succeed");
     assert_eq!(decrypted, plaintext, "Ascon-AEAD128 KAT {count} plaintext mismatch");
 
-    rows += 1;
+    rows = rows.strict_add(1);
   }
   assert_eq!(rows, 1089, "incomplete Ascon-AEAD128 KAT corpus");
 }
@@ -85,7 +90,7 @@ fn ascon_aead128_matches_final_reference_kats() {
 fn ascon_cxof128_matches_final_reference_kats() {
   use rscrypto::{AsconCxof128, traits::Xof as _};
 
-  let mut rows = 0;
+  let mut rows = 0usize;
   for case in cases(CXOF_VECTORS) {
     let count = case_number(case);
     let message = decode_hex_vec(field(case, "Msg"));
@@ -94,11 +99,11 @@ fn ascon_cxof128_matches_final_reference_kats() {
     let mut actual = vec![0u8; expected.len()];
 
     AsconCxof128::xof(&customization, &message)
-      .unwrap_or_else(|err| panic!("Ascon-CXOF128 KAT {count} setup failed: {err}"))
+      .expect("Ascon-CXOF128 KAT setup must succeed")
       .squeeze(&mut actual);
     assert_eq!(actual, expected, "Ascon-CXOF128 KAT {count} output mismatch");
 
-    rows += 1;
+    rows = rows.strict_add(1);
   }
   assert_eq!(rows, 1089, "incomplete Ascon-CXOF128 KAT corpus");
 }

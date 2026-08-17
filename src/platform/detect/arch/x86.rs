@@ -20,8 +20,16 @@ fn detect_x86_64() -> Detected {
 
   #[cfg(feature = "std")]
   let mut caps = caps_static.union(runtime_caps);
-  #[cfg(not(feature = "std"))]
+  #[cfg(all(
+    not(feature = "std"),
+    any(target_os = "linux", target_os = "android")
+  ))]
   let mut caps = caps_static;
+  #[cfg(all(
+    not(feature = "std"),
+    not(any(target_os = "linux", target_os = "android"))
+  ))]
+  let caps = caps_static;
 
   #[cfg(feature = "std")]
   {
@@ -36,7 +44,7 @@ fn detect_x86_64() -> Detected {
     caps = gate_x86_amx_permission(caps, false);
   }
 
-  // Hybrid Intel AVX-512 Safety: Clear AVX-512 caps on hybrid CPUs
+  // Clear AVX-512 capabilities on hybrid Intel CPUs.
   // On hybrid Intel CPUs (Alder Lake, Raptor Lake, etc.), the P-cores have
   // AVX-512 but E-cores don't. If a thread migrates to an E-core while
   // executing AVX-512 code, it will SIGILL. The only safe approach is to
@@ -74,14 +82,20 @@ fn detect_x86_64() -> Detected {
   }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "std", target_os = "linux", target_os = "android")
+))]
 const X86_ALL_AMX: Caps = crate::platform::caps::x86::AMX_TILE
   .union(crate::platform::caps::x86::AMX_BF16)
   .union(crate::platform::caps::x86::AMX_INT8)
   .union(crate::platform::caps::x86::AMX_FP16)
   .union(crate::platform::caps::x86::AMX_COMPLEX);
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+  target_arch = "x86_64",
+  any(feature = "std", target_os = "linux", target_os = "android")
+))]
 #[inline]
 const fn gate_x86_amx_permission(caps: Caps, permitted: bool) -> Caps {
   if permitted {
@@ -115,32 +129,41 @@ fn detect_x86() -> Detected {
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[inline]
-// MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
-#[allow(unsafe_code, unused_unsafe)]
-fn cpuid_leaf(leaf: u32) -> core::arch::x86_64::CpuidResult {
-  // SAFETY: CPUID leaf read is safe here because:
-  // 1. This function is compiled only for x86_64 targets.
-  // 2. CPUID is a non-privileged CPU-identification instruction.
-  // 3. The intrinsic returns register values and does not access Rust memory.
-  unsafe { core::arch::x86_64::__cpuid(leaf) }
+fn cpuid_leaf(leaf: u32) -> CpuidRegisters {
+  cpuid_leaf_count(leaf, 0)
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[inline]
-// MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
-#[allow(unsafe_code, unused_unsafe)]
-fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> core::arch::x86_64::CpuidResult {
-  // SAFETY: CPUID leaf/subleaf read is safe here because:
-  // 1. This function is compiled only for x86_64 targets.
-  // 2. CPUID is a non-privileged CPU-identification instruction.
-  // 3. The intrinsic returns register values and does not access Rust memory.
-  unsafe { core::arch::x86_64::__cpuid_count(leaf, subleaf) }
+fn cpuid_leaf_count(leaf: u32, subleaf: u32) -> CpuidRegisters {
+  let mut eax = leaf;
+  let mut ecx = subleaf;
+  let ebx: u32;
+  let edx: u32;
+
+  // SAFETY: CPUID is a non-privileged identification instruction on x86_64.
+  // The sequence preserves RBX, reports every modified register, restores RSP,
+  // and neither reads nor writes Rust memory.
+  unsafe {
+    core::arch::asm!(
+      "push rbx",
+      "cpuid",
+      "mov {ebx:e}, ebx",
+      "pop rbx",
+      ebx = lateout(reg) ebx,
+      inout("eax") eax,
+      inout("ecx") ecx,
+      lateout("edx") edx,
+      options(preserves_flags),
+    );
+  }
+
+  CpuidRegisters { eax, ebx, ecx, edx }
 }
 
 #[cfg(all(target_arch = "x86", feature = "std"))]
 #[inline]
 // MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
-#[allow(unsafe_code, unused_unsafe)]
 fn cpuid_leaf(leaf: u32) -> core::arch::x86::CpuidResult {
   // SAFETY: CPUID leaf read is safe here because:
   // 1. This function is compiled only for x86 targets.
@@ -175,18 +198,6 @@ struct CpuidRegisters {
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
-impl From<core::arch::x86_64::CpuidResult> for CpuidRegisters {
-  fn from(result: core::arch::x86_64::CpuidResult) -> Self {
-    Self {
-      eax: result.eax,
-      ebx: result.ebx,
-      ecx: result.ecx,
-      edx: result.edx,
-    }
-  }
-}
-
-#[cfg(all(target_arch = "x86_64", feature = "std"))]
 #[derive(Clone, Copy, Default)]
 struct CpuidSnapshot {
   leaf0: CpuidRegisters,
@@ -214,37 +225,35 @@ struct CpuidSnapshot {
 /// OSXSAVE and XGETBV(XCR0) to ensure the OS will save/restore extended registers.
 /// Without this check, using AVX/AVX-512 instructions could cause SIGILL.
 ///
-/// # Safety
-/// Uses XGETBV, which requires `unsafe` and is only called when OSXSAVE is set.
+/// XGETBV is read only after CPUID reports OSXSAVE support.
 #[cfg(all(target_arch = "x86_64", feature = "std"))]
-#[allow(unsafe_code)]
 fn cpuid_batch_x86_64() -> CpuidBatch {
   use core::arch::x86_64::_xgetbv;
 
-  let leaf0 = CpuidRegisters::from(cpuid_leaf(0));
+  let leaf0 = cpuid_leaf(0);
   let leaf1 = if leaf0.eax >= 1 {
-    CpuidRegisters::from(cpuid_leaf(1))
+    cpuid_leaf(1)
   } else {
     CpuidRegisters::default()
   };
   let leaf7_0 = if leaf0.eax >= 7 {
-    CpuidRegisters::from(cpuid_leaf_count(7, 0))
+    cpuid_leaf_count(7, 0)
   } else {
     CpuidRegisters::default()
   };
   let leaf7_1 = if leaf0.eax >= 7 && leaf7_0.eax >= 1 {
-    CpuidRegisters::from(cpuid_leaf_count(7, 1))
+    cpuid_leaf_count(7, 1)
   } else {
     CpuidRegisters::default()
   };
   let leaf24_0 = if leaf0.eax >= 0x24 && leaf7_1.edx & (1 << 19) != 0 {
-    CpuidRegisters::from(cpuid_leaf_count(0x24, 0))
+    cpuid_leaf_count(0x24, 0)
   } else {
     CpuidRegisters::default()
   };
-  let extended_leaf0 = CpuidRegisters::from(cpuid_leaf(0x8000_0000));
+  let extended_leaf0 = cpuid_leaf(0x8000_0000);
   let extended_leaf1 = if extended_leaf0.eax >= 0x8000_0001 {
-    CpuidRegisters::from(cpuid_leaf(0x8000_0001))
+    cpuid_leaf(0x8000_0001)
   } else {
     CpuidRegisters::default()
   };
@@ -274,7 +283,6 @@ fn cpuid_batch_x86_64() -> CpuidBatch {
   feature = "std",
   any(target_os = "linux", target_os = "android")
 ))]
-#[allow(unsafe_code)]
 fn amx_xstate_permission_x86_64() -> bool {
   const SYS_ARCH_PRCTL: isize = 158;
   const ARCH_GET_XCOMP_PERM: usize = 0x1022;
@@ -294,7 +302,7 @@ fn amx_xstate_permission_x86_64() -> bool {
       "syscall",
       inlateout("rax") result,
       in("rdi") ARCH_GET_XCOMP_PERM,
-      in("rsi") &mut permissions,
+      in("rsi") &raw mut permissions,
       lateout("rcx") _,
       lateout("r11") _,
       options(nostack),
@@ -358,13 +366,17 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
   // Extract extended family (bits 27:20) + base family (bits 11:8)
   let base_family = (cpuid1.eax >> 8) & 0xF;
   let ext_family = (cpuid1.eax >> 20) & 0xFF;
-  let family = base_family + ext_family;
+  let family = if base_family == 0xF {
+    base_family.strict_add(ext_family)
+  } else {
+    base_family
+  };
 
   // Extract model (bits 7:4 + extended model bits 19:16 for family 6/15)
   let base_model = (cpuid1.eax >> 4) & 0xF;
   let ext_model = (cpuid1.eax >> 16) & 0xF;
   let model = if base_family == 6 || base_family == 15 {
-    base_model + (ext_model << 4)
+    base_model | ext_model.strict_shl(4)
   } else {
     base_model
   };
@@ -596,7 +608,6 @@ fn decode_cpuid_x86_64(snapshot: CpuidSnapshot) -> CpuidBatch {
 /// # Safety
 /// Uses CPUID instruction which requires unsafe, but is always safe to call on x86.
 #[cfg(all(target_arch = "x86", feature = "std"))]
-#[allow(unsafe_code)]
 fn runtime_x86_32() -> Caps {
   use crate::platform::caps::x86;
 

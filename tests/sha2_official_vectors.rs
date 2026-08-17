@@ -3,14 +3,14 @@
 mod support;
 
 use rscrypto::hashes::crypto::{Sha224, Sha384, Sha512, Sha512_256};
-use support::blobby_compat::Blob2Iterator;
+use support::blobby_compat::BlobIterator;
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
-  for (i, row) in Blob2Iterator::new(data)
+  for (i, row) in BlobIterator::<2>::new(data)
     .expect("sha2 vector corpus must parse")
     .enumerate()
   {
-    let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
+    let [input, output] = row.expect("SHA-2 vector row must decode");
     let actual = digest(input);
     assert_eq!(
       &actual[..],

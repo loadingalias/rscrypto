@@ -35,7 +35,6 @@
 
 // SAFETY: All array indexing uses bounded loop indices (0..data.len()).
 // Clippy cannot prove this in const fn contexts, but bounds are statically guaranteed.
-#![allow(clippy::indexing_slicing)]
 
 // CRC-16 Reference Implementation
 
@@ -55,7 +54,7 @@
 /// The raw CRC register state (caller applies final XOR if needed).
 #[cfg(feature = "crc16")]
 #[must_use]
-pub const fn crc16_bitwise(poly: u16, init: u16, data: &[u8]) -> u16 {
+pub(in crate::checksum) const fn crc16_bitwise(poly: u16, init: u16, data: &[u8]) -> u16 {
   let mut crc = init;
   let mut i: usize = 0;
   while i < data.len() {
@@ -88,7 +87,7 @@ pub const fn crc16_bitwise(poly: u16, init: u16, data: &[u8]) -> u16 {
 /// The CRC value in the low 24 bits.
 #[cfg(feature = "crc24")]
 #[must_use]
-pub const fn crc24_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) const fn crc24_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
   // Work in expanded form: CRC in top 24 bits of u32
   let poly_expanded = poly.strict_shl(8);
   let mut crc = (init & 0x00FF_FFFF).strict_shl(8);
@@ -130,7 +129,7 @@ pub const fn crc24_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
 /// The raw CRC register state (caller applies final XOR if needed).
 #[cfg(feature = "crc32")]
 #[must_use]
-pub const fn crc32_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
+pub(in crate::checksum) const fn crc32_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
   let mut crc = init;
   let mut i: usize = 0;
   while i < data.len() {
@@ -163,7 +162,7 @@ pub const fn crc32_bitwise(poly: u32, init: u32, data: &[u8]) -> u32 {
 /// The raw CRC register state (caller applies final XOR if needed).
 #[cfg(feature = "crc64")]
 #[must_use]
-pub const fn crc64_bitwise(poly: u64, init: u64, data: &[u8]) -> u64 {
+pub(in crate::checksum) const fn crc64_bitwise(poly: u64, init: u64, data: &[u8]) -> u64 {
   let mut crc = init;
   let mut i: usize = 0;
   while i < data.len() {
@@ -397,11 +396,16 @@ mod tests {
   #[cfg(all(feature = "crc16", feature = "crc24", feature = "crc32", feature = "crc64"))]
   fn all_widths_handle_large_input() {
     // Verify all widths can handle larger inputs without panic
-    let data: [u8; 1024] = core::array::from_fn(|i| (i as u8).wrapping_mul(17));
+    let mut byte = 0u8;
+    let data: [u8; 1024] = core::array::from_fn(|_| {
+      let value = byte.wrapping_mul(17);
+      byte = byte.wrapping_add(1);
+      value
+    });
 
-    let _ = crc16_bitwise(CRC16_CCITT_POLY, !0u16, &data);
-    let _ = crc24_bitwise(CRC24_OPENPGP_POLY, 0x00B7_04CE, &data);
-    let _ = crc32_bitwise(CRC32_IEEE_POLY, !0u32, &data);
-    let _ = crc64_bitwise(CRC64_XZ_POLY, !0u64, &data);
+    let _crc16 = crc16_bitwise(CRC16_CCITT_POLY, !0u16, &data);
+    let _crc24 = crc24_bitwise(CRC24_OPENPGP_POLY, 0x00B7_04CE, &data);
+    let _crc32 = crc32_bitwise(CRC32_IEEE_POLY, !0u32, &data);
+    let _crc64 = crc64_bitwise(CRC64_XZ_POLY, !0u64, &data);
   }
 }

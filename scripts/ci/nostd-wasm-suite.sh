@@ -57,9 +57,9 @@ run_wasm_runtime_vectors() {
   export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime"
 
   local manifest="tools/wasm-runtime-vectors/Cargo.toml"
-  cargo run --manifest-path "$manifest" --target "$TARGET"
+  cargo run --locked --manifest-path "$manifest" --target "$TARGET"
   RUSTFLAGS="-C target-feature=+simd128" \
-    cargo run --manifest-path "$manifest" --target "$TARGET"
+    cargo run --locked --manifest-path "$manifest" --target "$TARGET"
 }
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -67,11 +67,11 @@ echo "Cross-compile sweep: $TARGET ($DEPTH)"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Always: bare no-default-features.
-cargo check --target "$TARGET" --no-default-features --lib
-cargo build --target "$TARGET" --no-default-features --lib --release
+cargo check --locked --target "$TARGET" --no-default-features --lib
+cargo build --locked --target "$TARGET" --no-default-features --lib --release
 
 # Always: alloc.
-cargo check --target "$TARGET" --no-default-features --features alloc --lib
+cargo check --locked --target "$TARGET" --no-default-features --features alloc --lib
 
 if [[ "$DEPTH" == "deep" ]]; then
   # Union of the historical check-all facade matrix and the dedicated weekly
@@ -110,22 +110,22 @@ if [[ "$DEPTH" == "deep" ]]; then
   )
 
   for feature_set in "${FEATURE_SETS[@]}"; do
-    cargo check --target "$TARGET" --no-default-features --features "$feature_set" --lib
+    cargo check --locked --target "$TARGET" --no-default-features --features "$feature_set" --lib
   done
 
   # Full no_std release build.
-  cargo build --target "$TARGET" --no-default-features --features "alloc,checksums,hashes,auth,aead" --lib --release
+  cargo build --locked --target "$TARGET" --no-default-features --features "alloc,checksums,hashes,auth,aead" --lib --release
 fi
 
 # Target-specific smoke (shallow gets a token extra so each target has >0 feature coverage).
 if [[ "$DEPTH" == "shallow" ]]; then
   case "$TARGET" in
     thumbv6m-none-eabi)
-      cargo check --target "$TARGET" --no-default-features --features checksums --lib
+      cargo check --locked --target "$TARGET" --no-default-features --features checksums --lib
       ;;
     wasm32-unknown-unknown)
-      cargo check --target "$TARGET" --no-default-features --features hashes --lib
-      RUSTFLAGS="-C target-feature=+simd128" cargo check --target "$TARGET" --no-default-features --features hashes --lib
+      cargo check --locked --target "$TARGET" --no-default-features --features hashes --lib
+      RUSTFLAGS="-C target-feature=+simd128" cargo check --locked --target "$TARGET" --no-default-features --features hashes --lib
       ;;
   esac
 fi

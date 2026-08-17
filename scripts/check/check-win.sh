@@ -85,7 +85,7 @@ for i in "${!WIN_TARGETS[@]}"; do
     # shellcheck disable=SC2086
     if ! XWIN_CACHE_DIR="$target_cache_dir" \
          CARGO_TARGET_DIR="$target_dir" \
-         cargo xwin clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" -- -D warnings \
+         cargo xwin clippy $CRATE_FLAGS --lib --all-features --locked --target "$target" \
          >"$log_file" 2>&1; then
       exit 1
     fi

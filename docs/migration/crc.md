@@ -4,14 +4,14 @@ Replace supported `Crc::<W>::new(&CRC_*)` configurations with rscrypto's named
 CRC types. The mapped algorithms retain their output parameters and have a
 portable fallback plus selected target-specific backends.
 
-Verified against `crc = "3.4.0"` and the `rscrypto` 0.7.8 line.
+Verified against `crc = "3.4.0"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/crc16_properties.rs`, `tests/crc24_properties.rs`, `tests/crc32_properties.rs`, and `tests/crc64_properties.rs`.
 
 ## TL;DR
 
-| | Before (`crc` 3.x) | After (`rscrypto` 0.7.8) |
+| | Before (`crc` 3.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `crc = "3.4"` | `rscrypto = { version = "0.7.8", features = ["checksums"] }` |
+| Cargo dep | `crc = "3.4"` | `rscrypto = { version = "0.8.1", features = ["checksums"] }` |
 | Import | `use crc::{Crc, CRC_32_ISO_HDLC};` | `use rscrypto::checksum::{Checksum, Crc32};` |
 | Call | `Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(data)` | `Crc32::checksum(data)` |
 
@@ -26,7 +26,7 @@ crc = "3.4"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["checksums"] }
+rscrypto = { version = "0.8.1", features = ["checksums"] }
 ```
 
 `features = ["checksums"]` enables every CRC family. To trim the build, pick only what you use: `crc16`, `crc24`, `crc32` (covers IEEE + Castagnoli), `crc64` (covers XZ + NVME).

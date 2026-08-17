@@ -37,7 +37,9 @@ fn blake3_ref_derive_xof(context: &str, data: &[u8], out: &mut [u8]) {
 }
 
 fn patterned_bytes(len: usize) -> Vec<u8> {
-  (0..len).map(|i| (i % 251) as u8).collect()
+  (0..len)
+    .map(|i| u8::try_from(i % 251).expect("remainder modulo 251 must fit in one byte"))
+    .collect()
 }
 
 proptest! {
@@ -53,8 +55,8 @@ proptest! {
     let mut h = Blake3::new();
     let mut i = 0usize;
     while i < data.len() {
-      let step = (data[i] as usize % 251) + 1;
-      let end = core::cmp::min(data.len(), i + step);
+      let step = (usize::from(data[i]) % 251).strict_add(1);
+      let end = core::cmp::min(data.len(), i.strict_add(step));
       h.update(&data[i..end]);
       i = end;
     }

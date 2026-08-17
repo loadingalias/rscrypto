@@ -5,13 +5,23 @@
 
 #![cfg(feature = "getrandom")]
 
-#[allow(unused_macros)]
+#[cfg(any(
+  feature = "chacha20poly1305",
+  feature = "xchacha20poly1305",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "aegis256",
+  feature = "aead",
+  feature = "ed25519",
+  feature = "x25519"
+))]
 macro_rules! random_smoke {
   ($name:ident, $ty:ty) => {
     #[test]
     fn $name() {
-      let a = <$ty>::try_random().unwrap();
-      let b = <$ty>::try_random().unwrap();
+      let a = <$ty>::try_random().expect("OS entropy must produce the first value");
+      let b = <$ty>::try_random().expect("OS entropy must produce the second value");
 
       // Must not be all-zero (overwhelmingly unlikely from a CSPRNG).
       assert!(a.as_bytes().iter().any(|&b| b != 0), "try_random() returned all zeros");
@@ -89,7 +99,7 @@ mod ed25519_rng {
 
   #[test]
   fn keypair_try_generate() {
-    let keypair = Ed25519Keypair::try_generate().unwrap();
+    let keypair = Ed25519Keypair::try_generate().expect("OS entropy must generate an Ed25519 keypair");
     assert!(keypair.secret_key().as_bytes().iter().any(|&b| b != 0));
   }
 }
@@ -101,7 +111,7 @@ mod x25519_rng {
 
   #[test]
   fn secret_key_try_generate() {
-    let secret = X25519SecretKey::try_generate().unwrap();
+    let secret = X25519SecretKey::try_generate().expect("OS entropy must generate an X25519 secret key");
     assert!(secret.as_bytes().iter().any(|&b| b != 0));
   }
 }
@@ -114,8 +124,8 @@ mod rapidhash_rng {
 
   #[test]
   fn random_state_uses_platform_entropy() {
-    let first = RapidRandomState::try_new().unwrap();
-    let second = RapidRandomState::try_new().unwrap();
+    let first = RapidRandomState::try_new().expect("OS entropy must initialize the first random state");
+    let second = RapidRandomState::try_new().expect("OS entropy must initialize the second random state");
     assert_ne!(
       first.hash_one(b"collection key"),
       second.hash_one(b"collection key"),
@@ -130,7 +140,7 @@ mod ecdsa_p256_rng {
 
   #[test]
   fn secret_key_try_generate() {
-    let secret = EcdsaP256SecretKey::try_generate().unwrap();
+    let secret = EcdsaP256SecretKey::try_generate().expect("OS entropy must generate a P-256 secret key");
     assert!(secret.as_bytes().iter().any(|&b| b != 0));
   }
 }
@@ -141,7 +151,7 @@ mod ecdsa_p384_rng {
 
   #[test]
   fn secret_key_try_generate() {
-    let secret = EcdsaP384SecretKey::try_generate().unwrap();
+    let secret = EcdsaP384SecretKey::try_generate().expect("OS entropy must generate a P-384 secret key");
     assert!(secret.as_bytes().iter().any(|&b| b != 0));
   }
 }
@@ -152,9 +162,9 @@ mod mlkem_rng {
 
   #[test]
   fn keypair_try_generate() {
-    let (ek512, dk512) = MlKem512::try_generate_keypair().unwrap();
-    let (ek768, dk768) = MlKem768::try_generate_keypair().unwrap();
-    let (ek1024, dk1024) = MlKem1024::try_generate_keypair().unwrap();
+    let (ek512, dk512) = MlKem512::try_generate_keypair().expect("OS entropy must generate an ML-KEM-512 keypair");
+    let (ek768, dk768) = MlKem768::try_generate_keypair().expect("OS entropy must generate an ML-KEM-768 keypair");
+    let (ek1024, dk1024) = MlKem1024::try_generate_keypair().expect("OS entropy must generate an ML-KEM-1024 keypair");
 
     assert!(ek512.as_bytes().iter().any(|&b| b != 0));
     assert!(dk512.as_bytes().iter().any(|&b| b != 0));

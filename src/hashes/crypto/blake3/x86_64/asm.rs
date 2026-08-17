@@ -8,8 +8,6 @@
 //!   preprocessor conditionals removed and symbols renamed.
 //! - The implementation is compiled via `global_asm!` (no external objects).
 
-#![allow(unsafe_code)]
-
 use core::arch::global_asm;
 
 #[cfg(target_os = "linux")]
@@ -33,7 +31,7 @@ global_asm!(include_str!("asm/rscrypto_blake3_avx512_x86-64_windows_msvc.s"));
 // entrypoints are internal to rscrypto and are only called from our own code.
 #[cfg(target_os = "windows")]
 unsafe extern "sysv64" {
-  pub fn rscrypto_blake3_hash_many_avx2(
+  fn rscrypto_blake3_hash_many_avx2(
     inputs: *const *const u8,
     num_inputs: usize,
     blocks: usize,
@@ -46,7 +44,7 @@ unsafe extern "sysv64" {
     out: *mut u8,
   );
 
-  pub fn rscrypto_blake3_hash_many_avx512(
+  fn rscrypto_blake3_hash_many_avx512(
     inputs: *const *const u8,
     num_inputs: usize,
     blocks: usize,
@@ -59,7 +57,7 @@ unsafe extern "sysv64" {
     out: *mut u8,
   );
 
-  pub fn rscrypto_blake3_xof_many_avx512(
+  fn rscrypto_blake3_xof_many_avx512(
     cv: *const u32,
     block: *const u8,
     block_len: u8,
@@ -69,19 +67,13 @@ unsafe extern "sysv64" {
     outblocks: usize,
   );
 
-  pub fn rscrypto_blake3_compress_in_place_avx512(
-    cv: *mut u32,
-    block: *const u8,
-    counter: u64,
-    block_len: u8,
-    flags: u8,
-  );
+  fn rscrypto_blake3_compress_in_place_avx512(cv: *mut u32, block: *const u8, counter: u64, block_len: u8, flags: u8);
 
 }
 
 #[cfg(not(target_os = "windows"))]
 unsafe extern "C" {
-  pub fn rscrypto_blake3_hash_many_avx2(
+  fn rscrypto_blake3_hash_many_avx2(
     inputs: *const *const u8,
     num_inputs: usize,
     blocks: usize,
@@ -94,7 +86,7 @@ unsafe extern "C" {
     out: *mut u8,
   );
 
-  pub fn rscrypto_blake3_hash_many_avx512(
+  fn rscrypto_blake3_hash_many_avx512(
     inputs: *const *const u8,
     num_inputs: usize,
     blocks: usize,
@@ -107,7 +99,7 @@ unsafe extern "C" {
     out: *mut u8,
   );
 
-  pub fn rscrypto_blake3_xof_many_avx512(
+  fn rscrypto_blake3_xof_many_avx512(
     cv: *const u32,
     block: *const u8,
     block_len: u8,
@@ -117,14 +109,32 @@ unsafe extern "C" {
     outblocks: usize,
   );
 
-  pub fn rscrypto_blake3_compress_in_place_avx512(
-    cv: *mut u32,
-    block: *const u8,
-    counter: u64,
-    block_len: u8,
-    flags: u8,
-  );
+  fn rscrypto_blake3_compress_in_place_avx512(cv: *mut u32, block: *const u8, counter: u64, block_len: u8, flags: u8);
 
+}
+
+/// Raw parameters for an x86 BLAKE3 hash-many assembly call.
+pub(crate) struct HashManyRequest {
+  /// Input pointer array.
+  pub(crate) inputs: *const *const u8,
+  /// Number of input pointers.
+  pub(crate) num_inputs: usize,
+  /// Complete BLAKE3 blocks in each input.
+  pub(crate) blocks: usize,
+  /// Eight-word chaining key.
+  pub(crate) key: *const u32,
+  /// Initial chunk counter.
+  pub(crate) counter: u64,
+  /// Whether to advance the counter for each input.
+  pub(crate) increment_counter: bool,
+  /// Flags applied to every block.
+  pub(crate) flags: u8,
+  /// Flags added to the first block.
+  pub(crate) flags_start: u8,
+  /// Flags added to the last block.
+  pub(crate) flags_end: u8,
+  /// Destination for one chaining value per input.
+  pub(crate) out: *mut u8,
 }
 
 /// AVX2 `hash_many` assembly entrypoint.
@@ -140,18 +150,19 @@ unsafe extern "C" {
 /// 6. The output range does not alias any input range or `key`.
 /// 7. `num_inputs`, `blocks`, counters, and flags are public values.
 #[inline(always)]
-pub(crate) unsafe fn hash_many_avx2(
-  inputs: *const *const u8,
-  num_inputs: usize,
-  blocks: usize,
-  key: *const u32,
-  counter: u64,
-  increment_counter: bool,
-  flags: u8,
-  flags_start: u8,
-  flags_end: u8,
-  out: *mut u8,
-) {
+pub(crate) unsafe fn hash_many_avx2(request: HashManyRequest) {
+  let HashManyRequest {
+    inputs,
+    num_inputs,
+    blocks,
+    key,
+    counter,
+    increment_counter,
+    flags,
+    flags_start,
+    flags_end,
+    out,
+  } = request;
   // SAFETY: AVX2 `hash_many` FFI call because:
   // 1. The caller upholds this wrapper's CPU-feature contract.
   // 2. The caller upholds the input pointer, key, output, and aliasing contracts.
@@ -185,18 +196,19 @@ pub(crate) unsafe fn hash_many_avx2(
 /// 6. The output range does not alias any input range or `key`.
 /// 7. `num_inputs`, `blocks`, counters, and flags are public values.
 #[inline(always)]
-pub(crate) unsafe fn hash_many_avx512(
-  inputs: *const *const u8,
-  num_inputs: usize,
-  blocks: usize,
-  key: *const u32,
-  counter: u64,
-  increment_counter: bool,
-  flags: u8,
-  flags_start: u8,
-  flags_end: u8,
-  out: *mut u8,
-) {
+pub(crate) unsafe fn hash_many_avx512(request: HashManyRequest) {
+  let HashManyRequest {
+    inputs,
+    num_inputs,
+    blocks,
+    key,
+    counter,
+    increment_counter,
+    flags,
+    flags_start,
+    flags_end,
+    out,
+  } = request;
   // SAFETY: AVX-512 `hash_many` FFI call because:
   // 1. The caller upholds this wrapper's CPU-feature contract.
   // 2. The caller upholds the input pointer, key, output, and aliasing contracts.
@@ -265,8 +277,8 @@ pub(crate) unsafe fn compress_in_place_avx512(
   block_len: u32,
   flags: u32,
 ) -> [u32; 8] {
-  debug_assert!(block_len <= u8::MAX as u32);
-  debug_assert!(flags <= u8::MAX as u32);
+  let block_len = u8::try_from(block_len).expect("BLAKE3 block length fits the assembly ABI");
+  let flags = u8::try_from(flags).expect("BLAKE3 flags fit the assembly ABI");
   let mut cv_out = *cv;
   // SAFETY: AVX-512 single-block FFI call because:
   // 1. The caller upholds this wrapper's CPU-feature contract.
@@ -274,7 +286,7 @@ pub(crate) unsafe fn compress_in_place_avx512(
   // 3. The caller guarantees `block` is readable for one BLAKE3 block.
   // 4. Debug assertions document the ABI narrowing for `block_len` and `flags`.
   unsafe {
-    rscrypto_blake3_compress_in_place_avx512(cv_out.as_mut_ptr(), block, counter, block_len as u8, flags as u8);
+    rscrypto_blake3_compress_in_place_avx512(cv_out.as_mut_ptr(), block, counter, block_len, flags);
   }
   cv_out
 }
@@ -297,14 +309,14 @@ pub(crate) unsafe fn compress_in_place_avx512_mut(
   block_len: u32,
   flags: u32,
 ) {
-  debug_assert!(block_len <= u8::MAX as u32);
-  debug_assert!(flags <= u8::MAX as u32);
+  let block_len = u8::try_from(block_len).expect("BLAKE3 block length fits the assembly ABI");
+  let flags = u8::try_from(flags).expect("BLAKE3 flags fit the assembly ABI");
   // SAFETY: AVX-512 in-place single-block FFI call because:
   // 1. The caller upholds this wrapper's CPU-feature contract.
   // 2. `cv` is writable for 8 words and the mutable borrow prevents another Rust alias.
   // 3. The caller guarantees `block` is readable for one BLAKE3 block and does not alias `cv`.
   // 4. Debug assertions document the ABI narrowing for `block_len` and `flags`.
   unsafe {
-    rscrypto_blake3_compress_in_place_avx512(cv.as_mut_ptr(), block, counter, block_len as u8, flags as u8);
+    rscrypto_blake3_compress_in_place_avx512(cv.as_mut_ptr(), block, counter, block_len, flags);
   }
 }

@@ -13,7 +13,7 @@ fn array_from_slice<const N: usize>(bytes: &[u8]) -> [u8; N] {
   bytes.try_into().expect("oracle ECDSA signature length must match")
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let selector = some_or_return!(input.byte());
   let derive_public = selector & 2 != 0;

@@ -26,15 +26,15 @@ macro_rules! ror_epi64 {
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn permute_12_x86_avx2_impl(state: &mut [u64; 5]) {
-  let mut x0 = _mm256_set1_epi64x(state[0] as i64);
-  let mut x1 = _mm256_set1_epi64x(state[1] as i64);
-  let mut x2 = _mm256_set1_epi64x(state[2] as i64);
-  let mut x3 = _mm256_set1_epi64x(state[3] as i64);
-  let mut x4 = _mm256_set1_epi64x(state[4] as i64);
+  let mut x0 = _mm256_set1_epi64x(state[0].cast_signed());
+  let mut x1 = _mm256_set1_epi64x(state[1].cast_signed());
+  let mut x2 = _mm256_set1_epi64x(state[2].cast_signed());
+  let mut x3 = _mm256_set1_epi64x(state[3].cast_signed());
+  let mut x4 = _mm256_set1_epi64x(state[4].cast_signed());
   let ones = _mm256_set1_epi64x(-1);
 
   for &c in &super::RC {
-    x2 = _mm256_xor_si256(x2, _mm256_set1_epi64x(c as i64));
+    x2 = _mm256_xor_si256(x2, _mm256_set1_epi64x(c.cast_signed()));
 
     x0 = _mm256_xor_si256(x0, x4);
     x4 = _mm256_xor_si256(x4, x3);
@@ -70,11 +70,11 @@ unsafe fn permute_12_x86_avx2_impl(state: &mut [u64; 5]) {
     x4 = _mm256_xor_si256(y4, _mm256_xor_si256(ror_epi64!(y4, 7, 57), ror_epi64!(y4, 41, 23)));
   }
 
-  state[0] = _mm256_extract_epi64::<0>(x0) as u64;
-  state[1] = _mm256_extract_epi64::<0>(x1) as u64;
-  state[2] = _mm256_extract_epi64::<0>(x2) as u64;
-  state[3] = _mm256_extract_epi64::<0>(x3) as u64;
-  state[4] = _mm256_extract_epi64::<0>(x4) as u64;
+  state[0] = _mm256_extract_epi64::<0>(x0).cast_unsigned();
+  state[1] = _mm256_extract_epi64::<0>(x1).cast_unsigned();
+  state[2] = _mm256_extract_epi64::<0>(x2).cast_unsigned();
+  state[3] = _mm256_extract_epi64::<0>(x3).cast_unsigned();
+  state[4] = _mm256_extract_epi64::<0>(x4).cast_unsigned();
 }
 
 /// Apply the Ascon-p[12] permutation using x86_64 AVX2.
@@ -91,44 +91,43 @@ pub(crate) fn permute_12_x86_avx2(state: &mut [u64; 5]) {
 ///
 /// Caller must ensure the `avx2` CPU feature is available.
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[target_feature(enable = "avx2")]
 #[inline]
 unsafe fn permute_12_x86_avx2_x4_impl(states: &mut [[u64; 5]; 4]) {
   let mut x0 = _mm256_set_epi64x(
-    states[3][0] as i64,
-    states[2][0] as i64,
-    states[1][0] as i64,
-    states[0][0] as i64,
+    states[3][0].cast_signed(),
+    states[2][0].cast_signed(),
+    states[1][0].cast_signed(),
+    states[0][0].cast_signed(),
   );
   let mut x1 = _mm256_set_epi64x(
-    states[3][1] as i64,
-    states[2][1] as i64,
-    states[1][1] as i64,
-    states[0][1] as i64,
+    states[3][1].cast_signed(),
+    states[2][1].cast_signed(),
+    states[1][1].cast_signed(),
+    states[0][1].cast_signed(),
   );
   let mut x2 = _mm256_set_epi64x(
-    states[3][2] as i64,
-    states[2][2] as i64,
-    states[1][2] as i64,
-    states[0][2] as i64,
+    states[3][2].cast_signed(),
+    states[2][2].cast_signed(),
+    states[1][2].cast_signed(),
+    states[0][2].cast_signed(),
   );
   let mut x3 = _mm256_set_epi64x(
-    states[3][3] as i64,
-    states[2][3] as i64,
-    states[1][3] as i64,
-    states[0][3] as i64,
+    states[3][3].cast_signed(),
+    states[2][3].cast_signed(),
+    states[1][3].cast_signed(),
+    states[0][3].cast_signed(),
   );
   let mut x4 = _mm256_set_epi64x(
-    states[3][4] as i64,
-    states[2][4] as i64,
-    states[1][4] as i64,
-    states[0][4] as i64,
+    states[3][4].cast_signed(),
+    states[2][4].cast_signed(),
+    states[1][4].cast_signed(),
+    states[0][4].cast_signed(),
   );
   let ones = _mm256_set1_epi64x(-1);
 
   for &c in &super::RC {
-    x2 = _mm256_xor_si256(x2, _mm256_set1_epi64x(c as i64));
+    x2 = _mm256_xor_si256(x2, _mm256_set1_epi64x(c.cast_signed()));
 
     x0 = _mm256_xor_si256(x0, x4);
     x4 = _mm256_xor_si256(x4, x3);
@@ -164,31 +163,30 @@ unsafe fn permute_12_x86_avx2_x4_impl(states: &mut [[u64; 5]; 4]) {
     x4 = _mm256_xor_si256(y4, _mm256_xor_si256(ror_epi64!(y4, 7, 57), ror_epi64!(y4, 41, 23)));
   }
 
-  states[0][0] = _mm256_extract_epi64::<0>(x0) as u64;
-  states[1][0] = _mm256_extract_epi64::<1>(x0) as u64;
-  states[2][0] = _mm256_extract_epi64::<2>(x0) as u64;
-  states[3][0] = _mm256_extract_epi64::<3>(x0) as u64;
-  states[0][1] = _mm256_extract_epi64::<0>(x1) as u64;
-  states[1][1] = _mm256_extract_epi64::<1>(x1) as u64;
-  states[2][1] = _mm256_extract_epi64::<2>(x1) as u64;
-  states[3][1] = _mm256_extract_epi64::<3>(x1) as u64;
-  states[0][2] = _mm256_extract_epi64::<0>(x2) as u64;
-  states[1][2] = _mm256_extract_epi64::<1>(x2) as u64;
-  states[2][2] = _mm256_extract_epi64::<2>(x2) as u64;
-  states[3][2] = _mm256_extract_epi64::<3>(x2) as u64;
-  states[0][3] = _mm256_extract_epi64::<0>(x3) as u64;
-  states[1][3] = _mm256_extract_epi64::<1>(x3) as u64;
-  states[2][3] = _mm256_extract_epi64::<2>(x3) as u64;
-  states[3][3] = _mm256_extract_epi64::<3>(x3) as u64;
-  states[0][4] = _mm256_extract_epi64::<0>(x4) as u64;
-  states[1][4] = _mm256_extract_epi64::<1>(x4) as u64;
-  states[2][4] = _mm256_extract_epi64::<2>(x4) as u64;
-  states[3][4] = _mm256_extract_epi64::<3>(x4) as u64;
+  states[0][0] = _mm256_extract_epi64::<0>(x0).cast_unsigned();
+  states[1][0] = _mm256_extract_epi64::<1>(x0).cast_unsigned();
+  states[2][0] = _mm256_extract_epi64::<2>(x0).cast_unsigned();
+  states[3][0] = _mm256_extract_epi64::<3>(x0).cast_unsigned();
+  states[0][1] = _mm256_extract_epi64::<0>(x1).cast_unsigned();
+  states[1][1] = _mm256_extract_epi64::<1>(x1).cast_unsigned();
+  states[2][1] = _mm256_extract_epi64::<2>(x1).cast_unsigned();
+  states[3][1] = _mm256_extract_epi64::<3>(x1).cast_unsigned();
+  states[0][2] = _mm256_extract_epi64::<0>(x2).cast_unsigned();
+  states[1][2] = _mm256_extract_epi64::<1>(x2).cast_unsigned();
+  states[2][2] = _mm256_extract_epi64::<2>(x2).cast_unsigned();
+  states[3][2] = _mm256_extract_epi64::<3>(x2).cast_unsigned();
+  states[0][3] = _mm256_extract_epi64::<0>(x3).cast_unsigned();
+  states[1][3] = _mm256_extract_epi64::<1>(x3).cast_unsigned();
+  states[2][3] = _mm256_extract_epi64::<2>(x3).cast_unsigned();
+  states[3][3] = _mm256_extract_epi64::<3>(x3).cast_unsigned();
+  states[0][4] = _mm256_extract_epi64::<0>(x4).cast_unsigned();
+  states[1][4] = _mm256_extract_epi64::<1>(x4).cast_unsigned();
+  states[2][4] = _mm256_extract_epi64::<2>(x4).cast_unsigned();
+  states[3][4] = _mm256_extract_epi64::<3>(x4).cast_unsigned();
 }
 
 /// Apply the Ascon-p[12] permutation to four independent states in parallel.
 #[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
 #[inline]
 pub(crate) fn permute_12_x86_avx2_x4(states: &mut [[u64; 5]; 4]) {
   // SAFETY: Dispatch verifies x86::AVX2 before selecting this kernel.

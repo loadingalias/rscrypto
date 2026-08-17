@@ -1,7 +1,5 @@
 //! SHA-512 (FIPS 180-4).
 
-#![allow(clippy::indexing_slicing)] // Fixed-size arrays + compression schedule
-
 use self::kernels::CompressBlocksFn;
 use crate::{
   hashes::{
@@ -216,7 +214,7 @@ impl Sha512Prefix {
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     // SAFETY: bytes_hashed is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.bytes_hashed, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -280,14 +278,11 @@ impl Sha512 {
 
   #[inline]
   pub(crate) fn compress_blocks_portable(state: &mut [u64; 8], blocks: &[u8]) {
-    debug_assert_eq!(blocks.len() % BLOCK_LEN, 0);
-    let mut chunks = blocks.chunks_exact(BLOCK_LEN);
-    for chunk in &mut chunks {
-      // SAFETY: `chunks_exact(BLOCK_LEN)` yields slices of exactly `BLOCK_LEN` bytes.
-      let block = unsafe { &*(chunk.as_ptr() as *const [u8; BLOCK_LEN]) };
+    let (chunks, remainder) = blocks.as_chunks::<BLOCK_LEN>();
+    for block in chunks {
       Self::compress_block(state, block);
     }
-    debug_assert!(chunks.remainder().is_empty());
+    debug_assert!(remainder.is_empty());
   }
 
   #[inline]
@@ -465,7 +460,7 @@ impl Sha512 {
   #[inline(always)]
   fn state_to_digest(state: &[u64; 8]) -> [u8; 64] {
     let mut out = [0u8; 64];
-    for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+    for (chunk, &word) in out.as_chunks_mut::<8>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
@@ -528,7 +523,6 @@ impl Sha512 {
 
   #[cfg(all(feature = "hmac", any(test, feature = "diag")))]
   #[inline]
-  #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
     Self {
       state: H0,
@@ -818,9 +812,9 @@ impl Drop for Sha512 {
     }
     crate::traits::ct::zeroize(&mut self.block);
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.bytes_hashed, 0) };
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -871,7 +865,7 @@ mod tests {
     use core::fmt::Write;
     let mut s = String::new();
     for &b in bytes {
-      write!(&mut s, "{:02x}", b).unwrap();
+      write!(&mut s, "{:02x}", b).expect("writing hexadecimal to String must succeed");
     }
     s
   }

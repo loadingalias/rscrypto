@@ -1,7 +1,5 @@
-#![allow(dead_code)]
-
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum Error {
+pub(crate) enum Error {
   InvalidVlq,
   InvalidIndex,
   UnexpectedEnd,
@@ -13,9 +11,9 @@ const VAL_MASK: u8 = 0b0111_1111;
 
 fn read_vlq(data: &[u8], pos: &mut usize) -> Result<usize, Error> {
   let b = *data.get(*pos).ok_or(Error::UnexpectedEnd)?;
-  *pos += 1;
+  *pos = (*pos).strict_add(1);
   let mut next = b & NEXT_MASK;
-  let mut val = (b & VAL_MASK) as usize;
+  let mut val = usize::from(b & VAL_MASK);
 
   macro_rules! step {
     () => {
@@ -23,10 +21,10 @@ fn read_vlq(data: &[u8], pos: &mut usize) -> Result<usize, Error> {
         return Ok(val);
       }
       let b = *data.get(*pos).ok_or(Error::UnexpectedEnd)?;
-      *pos += 1;
+      *pos = (*pos).strict_add(1);
       next = b & NEXT_MASK;
-      let t = (b & VAL_MASK) as usize;
-      val = ((val + 1) << 7) + t;
+      let t = usize::from(b & VAL_MASK);
+      val = val.strict_add(1).strict_mul(128).strict_add(t);
     };
   }
 
@@ -41,14 +39,18 @@ fn read_vlq(data: &[u8], pos: &mut usize) -> Result<usize, Error> {
   Ok(val)
 }
 
-pub struct BlobIterator<'a> {
+pub(crate) struct BlobIterator<'a, const N: usize> {
   data: &'a [u8],
   dedup: Box<[&'a [u8]]>,
   pos: usize,
 }
 
-impl<'a> BlobIterator<'a> {
-  pub fn new(data: &'a [u8]) -> Result<Self, Error> {
+impl<'a, const N: usize> BlobIterator<'a, N> {
+  pub(crate) fn new(data: &'a [u8]) -> Result<Self, Error> {
+    if N == 0 {
+      return Err(Error::NotEnoughElements);
+    }
+
     let mut pos = 0;
     let dedup_n = read_vlq(data, &mut pos)?;
 
@@ -61,7 +63,7 @@ impl<'a> BlobIterator<'a> {
     }
 
     Ok(Self {
-      data: &data[pos..],
+      data: data.get(pos..).ok_or(Error::UnexpectedEnd)?,
       dedup: dedup.into_boxed_slice(),
       pos: 0,
     })
@@ -87,58 +89,28 @@ impl<'a> BlobIterator<'a> {
   }
 }
 
-impl<'a> Iterator for BlobIterator<'a> {
-  type Item = Result<&'a [u8], Error>;
+impl<'a, const N: usize> Iterator for BlobIterator<'a, N> {
+  type Item = Result<[&'a [u8]; N], Error>;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.pos >= self.data.len() {
       return None;
     }
 
-    let value = self.read();
-    if value.is_err() {
-      self.error_block();
+    let mut out = [&[][..]; N];
+    for slot in &mut out {
+      if self.pos >= self.data.len() {
+        self.error_block();
+        return Some(Err(Error::NotEnoughElements));
+      }
+      *slot = match self.read() {
+        Ok(value) => value,
+        Err(err) => {
+          self.error_block();
+          return Some(Err(err));
+        }
+      };
     }
-    Some(value)
+    Some(Ok(out))
   }
 }
-
-macro_rules! blob_iter {
-  ($name:ident, $n:expr) => {
-    pub struct $name<'a> {
-      inner: BlobIterator<'a>,
-    }
-
-    impl<'a> $name<'a> {
-      pub fn new(data: &'a [u8]) -> Result<Self, Error> {
-        BlobIterator::new(data).map(|inner| Self { inner })
-      }
-    }
-
-    impl<'a> Iterator for $name<'a> {
-      type Item = Result<[&'a [u8]; $n], Error>;
-
-      fn next(&mut self) -> Option<Self::Item> {
-        let mut out = [&[][..]; $n];
-
-        for (i, slot) in out.iter_mut().enumerate() {
-          *slot = match self.inner.next() {
-            Some(Ok(value)) => value,
-            Some(Err(err)) => return Some(Err(err)),
-            None if i == 0 => return None,
-            None => {
-              self.inner.error_block();
-              return Some(Err(Error::NotEnoughElements));
-            }
-          };
-        }
-
-        Some(Ok(out))
-      }
-    }
-  };
-}
-
-blob_iter!(Blob2Iterator, 2);
-blob_iter!(Blob3Iterator, 3);
-blob_iter!(Blob6Iterator, 6);

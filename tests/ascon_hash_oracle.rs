@@ -56,7 +56,7 @@ fn ascon_hash256_oracle_rate_boundaries() {
 
 #[test]
 fn ascon_hash256_oracle_large() {
-  let input: Vec<u8> = (0..8192).map(|i| (i & 0xFF) as u8).collect();
+  let input: Vec<u8> = (0usize..8192).map(|i| i.to_le_bytes()[0]).collect();
   assert_hash_matches_oracle(&input);
 }
 
@@ -133,7 +133,7 @@ fn ascon_xof128_oracle_large_squeeze() {
 
 #[test]
 fn ascon_xof128_oracle_large_input() {
-  let input: Vec<u8> = (0..4096).map(|i| (i & 0xFF) as u8).collect();
+  let input: Vec<u8> = (0usize..4096).map(|i| i.to_le_bytes()[0]).collect();
   assert_xof_matches_oracle(&input, 64);
 }
 

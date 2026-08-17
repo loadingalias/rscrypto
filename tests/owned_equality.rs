@@ -1,3 +1,4 @@
+#[cfg(any(feature = "aes-gcm", feature = "hmac", feature = "x25519"))]
 fn assert_owned_equality<const N: usize, T>(make: impl Fn([u8; N]) -> T, compare: impl Fn(&T, &T) -> bool) {
   let bytes = [0x5a; N];
   assert!(compare(&make(bytes), &make(bytes)));

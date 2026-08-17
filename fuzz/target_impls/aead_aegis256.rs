@@ -1,10 +1,10 @@
 use rscrypto::{
-    Aegis256, Aegis256Key,
-    aead::{Nonce256, expert::AeadWithNonce},
+  Aegis256, Aegis256Key,
+  aead::{Nonce256, expert::AeadWithNonce},
 };
 use rscrypto_fuzz::{FuzzInput, assert_aead_forgery, assert_aead_roundtrip, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let nonce_bytes: [u8; 32] = some_or_return!(input.bytes());
@@ -26,9 +26,14 @@ pub fn run(data: &[u8]) {
     let tag = cipher
       .encrypt_in_place(&nonce, aad, &mut ct)
       .expect("differential: rscrypto encrypt must succeed");
-    let tag_arr: [u8; 16] = tag.as_ref().try_into().unwrap();
+    let tag_arr: [u8; 16] = tag
+      .as_ref()
+      .try_into()
+      .expect("AEGIS-256 produces a 16-byte authentication tag");
     let oracle = OracleAegis::<16>::new(&key_bytes, &nonce_bytes);
-    let pt = oracle.decrypt(&ct, &tag_arr, aad).unwrap();
+    let pt = oracle
+      .decrypt(&ct, &tag_arr, aad)
+      .expect("oracle must accept the equivalent rscrypto ciphertext");
     assert_eq!(pt, plaintext, "oracle failed to decrypt our ciphertext");
 
     // oracle encrypt → rscrypto decrypt
@@ -36,7 +41,12 @@ pub fn run(data: &[u8]) {
     let (oct, otag) = oracle_enc.encrypt(plaintext, aad);
     let mut buf = oct;
     cipher
-      .decrypt_in_place(&nonce, aad, &mut buf, &Aegis256::tag_from_slice(&otag).unwrap())
+      .decrypt_in_place(
+        &nonce,
+        aad,
+        &mut buf,
+        &Aegis256::tag_from_slice(&otag).expect("oracle produces a 16-byte authentication tag"),
+      )
       .expect("we failed to decrypt oracle ciphertext");
     assert_eq!(buf, plaintext, "decrypt mismatch on oracle ciphertext");
   }

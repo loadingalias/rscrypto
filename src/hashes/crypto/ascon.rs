@@ -2,8 +2,6 @@
 //!
 //! Portable, `no_std`, pure Rust implementation.
 
-#![allow(clippy::indexing_slicing)] // Fixed-size state + sponge buffering
-
 use core::fmt;
 
 use crate::{
@@ -11,18 +9,21 @@ use crate::{
   traits::{Digest, Xof},
 };
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", any(test, feature = "std")))]
 mod aarch64;
 #[doc(hidden)]
+#[cfg(any(test, feature = "std"))]
 pub(crate) mod dispatch;
 #[doc(hidden)]
+#[cfg(any(test, feature = "std"))]
 pub(crate) mod dispatch_tables;
 #[cfg(test)]
 mod kernel_test;
+#[cfg(any(test, feature = "std"))]
 pub(crate) mod kernels;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", any(test, feature = "std")))]
 mod x86_64_avx2;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", any(test, feature = "std")))]
 mod x86_64_avx512;
 
 const RATE: usize = 8;
@@ -48,7 +49,7 @@ impl Permuter for InlinePermuter {
 
 // Ascon permutation round constants (12 rounds).
 // Used by SIMD kernels; the shared portable permutation inlines the constants.
-#[allow(dead_code)]
+#[cfg(all(any(test, feature = "std"), any(target_arch = "aarch64", target_arch = "x86_64")))]
 const RC: [u64; 12] = [0xF0, 0xE1, 0xD2, 0xC3, 0xB4, 0xA5, 0x96, 0x87, 0x78, 0x69, 0x5A, 0x4B];
 
 // Domain-specific IVs (from the Ascon hash/XOF specification).
@@ -80,7 +81,7 @@ define_unit_error! {
 const fn pad(n: usize) -> u64 {
   // Produce the padding mask used by the reference construction:
   // XOR `pad(len)` into state[0], with state interpreted little-endian.
-  0x01_u64 << (8 * n)
+  0x01_u64 << n.strict_mul(8)
 }
 
 #[derive(Clone)]
@@ -121,7 +122,7 @@ impl<P: Permuter, const IV0: u64, const IV1: u64, const IV2: u64, const IV3: u64
     }
 
     if self.buf_len != 0 {
-      let take = core::cmp::min(RATE - self.buf_len, data.len());
+      let take = core::cmp::min(RATE.strict_sub(self.buf_len), data.len());
       self.buf[self.buf_len..self.buf_len.strict_add(take)].copy_from_slice(&data[..take]);
       self.buf_len = self.buf_len.strict_add(take);
       data = &data[take..];
@@ -181,9 +182,9 @@ fn squeeze_hash256(mut state: [u64; 5], mut permute: impl FnMut(&mut [u64; 5])) 
   let mut out = [0u8; 32];
   let mut off = 0usize;
   while off < 24 {
-    out[off..off + 8].copy_from_slice(&state[0].to_le_bytes());
+    out[off..off.strict_add(RATE)].copy_from_slice(&state[0].to_le_bytes());
     permute(&mut state);
-    off += 8;
+    off = off.strict_add(RATE);
   }
   out[24..32].copy_from_slice(&state[0].to_le_bytes());
   out
@@ -196,7 +197,7 @@ fn squeeze_xof_into(mut state: [u64; 5], out: &mut [u8], mut permute: impl FnMut
   let block_count = blocks.len();
   for (index, block) in blocks.iter_mut().enumerate() {
     block.copy_from_slice(&buf);
-    if index + 1 < block_count || !tail.is_empty() {
+    if index.strict_add(1) < block_count || !tail.is_empty() {
       permute(&mut state);
       buf = state[0].to_le_bytes();
     }
@@ -228,18 +229,18 @@ fn absorb_equal_len_group<const N: usize>(
 ) {
   debug_assert_eq!(inputs.len(), N);
   let len = inputs[0].len();
-  let full_bytes = len / RATE * RATE;
+  let full_bytes = len.strict_sub(len % RATE);
 
   for off in (0..full_bytes).step_by(RATE) {
     for (state, input) in states.iter_mut().zip(inputs.iter().copied()) {
       let mut block = [0u8; RATE];
-      block.copy_from_slice(&input[off..off + RATE]);
+      block.copy_from_slice(&input[off..off.strict_add(RATE)]);
       state[0] ^= u64::from_le_bytes(block);
     }
     permute_many(states);
   }
 
-  let tail_len = len - full_bytes;
+  let tail_len = len.strict_sub(full_bytes);
   for (state, input) in states.iter_mut().zip(inputs.iter().copied()) {
     let mut block = [0u8; RATE];
     block[..tail_len].copy_from_slice(&input[full_bytes..]);
@@ -259,10 +260,10 @@ fn squeeze_hash256_group<const N: usize>(
   let mut off = 0usize;
   while off < 24 {
     for (state, output) in states.iter().zip(outputs.iter_mut()) {
-      output[off..off + RATE].copy_from_slice(&state[0].to_le_bytes());
+      output[off..off.strict_add(RATE)].copy_from_slice(&state[0].to_le_bytes());
     }
     permute_many(states);
-    off += RATE;
+    off = off.strict_add(RATE);
   }
   for (state, output) in states.iter().zip(outputs.iter_mut()) {
     output[24..32].copy_from_slice(&state[0].to_le_bytes());
@@ -276,14 +277,14 @@ fn squeeze_xof_group<const N: usize>(
   outputs: &mut [u8],
   permute_many: fn(&mut [[u64; 5]; N]),
 ) {
-  debug_assert_eq!(outputs.len(), N * out_len);
+  debug_assert_eq!(outputs.len(), N.strict_mul(out_len));
   let mut produced = 0usize;
   while produced < out_len {
-    let take = core::cmp::min(RATE, out_len - produced);
+    let take = core::cmp::min(RATE, out_len.strict_sub(produced));
     for (state, output) in states.iter().zip(outputs.chunks_exact_mut(out_len)) {
-      output[produced..produced + take].copy_from_slice(&state[0].to_le_bytes()[..take]);
+      output[produced..produced.strict_add(take)].copy_from_slice(&state[0].to_le_bytes()[..take]);
     }
-    produced += take;
+    produced = produced.strict_add(take);
     if produced < out_len {
       permute_many(states);
     }
@@ -321,7 +322,7 @@ fn xof_many_equal_len_group<const N: usize>(
   permute_many: fn(&mut [[u64; 5]; N]),
 ) {
   debug_assert_eq!(inputs.len(), N);
-  debug_assert_eq!(outputs.len(), N * out_len);
+  debug_assert_eq!(outputs.len(), N.strict_mul(out_len));
   let mut states = init_states::<N>(iv);
   absorb_equal_len_group(&mut states, inputs, permute_many);
   squeeze_xof_group(&mut states, out_len, outputs, permute_many);
@@ -383,17 +384,19 @@ impl AsconHash256 {
 
     match kid {
       kernels::AsconPermute12KernelId::Portable => {
-        let mut input_groups = inputs.chunks_exact(1);
-        let mut output_groups = outputs.chunks_exact_mut(1);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<1>();
+        let (output_groups, rem_outputs) = outputs.as_chunks_mut::<1>();
+        debug_assert!(rem_inputs.is_empty());
+        debug_assert!(rem_outputs.is_empty());
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.iter_mut()) {
           digest_many_equal_len_group::<1>(group_inputs, group_outputs, HASH256_IV, permute_12_many_portable::<1>);
         }
       }
       #[cfg(target_arch = "aarch64")]
       kernels::AsconPermute12KernelId::Aarch64Neon => {
-        let mut input_groups = inputs.chunks_exact(2);
-        let mut output_groups = outputs.chunks_exact_mut(2);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<2>();
+        let (output_groups, rem_outputs) = outputs.as_chunks_mut::<2>();
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.iter_mut()) {
           digest_many_equal_len_group::<2>(
             group_inputs,
             group_outputs,
@@ -401,8 +404,6 @@ impl AsconHash256 {
             aarch64::permute_12_aarch64_neon_x2,
           );
         }
-        let rem_inputs = input_groups.remainder();
-        let rem_outputs = output_groups.into_remainder();
         if !rem_inputs.is_empty() {
           Self::digest_many_with_kernel(
             dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
@@ -413,9 +414,9 @@ impl AsconHash256 {
       }
       #[cfg(target_arch = "x86_64")]
       kernels::AsconPermute12KernelId::X86Avx2 => {
-        let mut input_groups = inputs.chunks_exact(4);
-        let mut output_groups = outputs.chunks_exact_mut(4);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<4>();
+        let (output_groups, rem_outputs) = outputs.as_chunks_mut::<4>();
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.iter_mut()) {
           digest_many_equal_len_group::<4>(
             group_inputs,
             group_outputs,
@@ -423,8 +424,6 @@ impl AsconHash256 {
             x86_64_avx2::permute_12_x86_avx2_x4,
           );
         }
-        let rem_inputs = input_groups.remainder();
-        let rem_outputs = output_groups.into_remainder();
         if !rem_inputs.is_empty() {
           Self::digest_many_with_kernel(
             dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
@@ -435,9 +434,9 @@ impl AsconHash256 {
       }
       #[cfg(target_arch = "x86_64")]
       kernels::AsconPermute12KernelId::X86Avx512 => {
-        let mut input_groups = inputs.chunks_exact(8);
-        let mut output_groups = outputs.chunks_exact_mut(8);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<8>();
+        let (output_groups, rem_outputs) = outputs.as_chunks_mut::<8>();
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.iter_mut()) {
           digest_many_equal_len_group::<8>(
             group_inputs,
             group_outputs,
@@ -445,8 +444,6 @@ impl AsconHash256 {
             x86_64_avx512::permute_12_x86_avx512_x8,
           );
         }
-        let rem_inputs = input_groups.remainder();
-        let rem_outputs = output_groups.into_remainder();
         if !rem_inputs.is_empty() {
           Self::digest_many_with_kernel(
             dispatch::batch_fallback_kernel_id(kid, rem_inputs.len()),
@@ -472,12 +469,12 @@ impl AsconHash256 {
     let mut start = 0usize;
     while start < inputs.len() {
       let len = inputs[start].len();
-      let mut end = start + 1;
+      let mut end = start.strict_add(1);
       while end < inputs.len() && inputs[end].len() == len {
-        end += 1;
+        end = end.strict_add(1);
       }
 
-      let kid = Self::batch_kernel_id_for_count(end - start);
+      let kid = Self::batch_kernel_id_for_count(end.strict_sub(start));
       Self::digest_many_with_kernel(kid, &inputs[start..end], &mut outputs[start..end]);
       start = end;
     }
@@ -531,12 +528,14 @@ impl fmt::Debug for AsconXof {
 }
 
 impl AsconXof {
+  /// Creates an empty Ascon-XOF128 state.
   #[inline]
   #[must_use]
   pub fn new() -> Self {
     Self::default()
   }
 
+  /// Absorbs `data` and returns an Ascon-XOF128 output reader.
   #[inline]
   #[must_use]
   pub fn xof(data: &[u8]) -> AsconXofReader {
@@ -544,16 +543,19 @@ impl AsconXof {
     AsconXofReader::from_state(state)
   }
 
+  /// Absorbs more input into the XOF state.
   #[inline]
   pub fn update(&mut self, data: &[u8]) {
     self.sponge.update(data);
   }
 
+  /// Resets the XOF state to its initial value.
   #[inline]
   pub fn reset(&mut self) {
     *self = Self::default();
   }
 
+  /// Finalizes the current state into an output reader without consuming it.
   #[inline]
   #[must_use]
   pub fn finalize_xof(&self) -> AsconXofReader {
@@ -592,10 +594,10 @@ impl AsconXof {
   ) {
     assert_eq!(
       outputs.len(),
-      inputs.len() * out_len,
+      inputs.len().strict_mul(out_len),
       "input/output batch length mismatch"
     );
-    if inputs.is_empty() {
+    if inputs.is_empty() || out_len == 0 {
       return;
     }
 
@@ -604,17 +606,18 @@ impl AsconXof {
     if degree == 1 || !inputs_have_equal_len(inputs) {
       let scalar_kid = dispatch::scalar_kernel_id();
       for (index, input) in inputs.iter().enumerate() {
-        let base = index * out_len;
-        Self::hash_into_with_kernel(scalar_kid, input, &mut outputs[base..base + out_len]);
+        let base = index.strict_mul(out_len);
+        Self::hash_into_with_kernel(scalar_kid, input, &mut outputs[base..base.strict_add(out_len)]);
       }
       return;
     }
 
     match kid {
       kernels::AsconPermute12KernelId::Portable => {
-        let mut input_groups = inputs.chunks_exact(1);
+        let (input_groups, rem_inputs) = inputs.as_chunks::<1>();
         let mut output_groups = outputs.chunks_exact_mut(out_len);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        debug_assert!(rem_inputs.is_empty());
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<1>(
             group_inputs,
             out_len,
@@ -626,9 +629,9 @@ impl AsconXof {
       }
       #[cfg(target_arch = "aarch64")]
       kernels::AsconPermute12KernelId::Aarch64Neon => {
-        let mut input_groups = inputs.chunks_exact(2);
-        let mut output_groups = outputs.chunks_exact_mut(2 * out_len);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<2>();
+        let mut output_groups = outputs.chunks_exact_mut(2usize.strict_mul(out_len));
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<2>(
             group_inputs,
             out_len,
@@ -637,7 +640,6 @@ impl AsconXof {
             aarch64::permute_12_aarch64_neon_x2,
           );
         }
-        let rem_inputs = input_groups.remainder();
         let rem_outputs = output_groups.into_remainder();
         if !rem_inputs.is_empty() {
           Self::hash_many_into_with_kernel(
@@ -650,9 +652,9 @@ impl AsconXof {
       }
       #[cfg(target_arch = "x86_64")]
       kernels::AsconPermute12KernelId::X86Avx2 => {
-        let mut input_groups = inputs.chunks_exact(4);
-        let mut output_groups = outputs.chunks_exact_mut(4 * out_len);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<4>();
+        let mut output_groups = outputs.chunks_exact_mut(4usize.strict_mul(out_len));
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<4>(
             group_inputs,
             out_len,
@@ -661,7 +663,6 @@ impl AsconXof {
             x86_64_avx2::permute_12_x86_avx2_x4,
           );
         }
-        let rem_inputs = input_groups.remainder();
         let rem_outputs = output_groups.into_remainder();
         if !rem_inputs.is_empty() {
           Self::hash_many_into_with_kernel(
@@ -674,9 +675,9 @@ impl AsconXof {
       }
       #[cfg(target_arch = "x86_64")]
       kernels::AsconPermute12KernelId::X86Avx512 => {
-        let mut input_groups = inputs.chunks_exact(8);
-        let mut output_groups = outputs.chunks_exact_mut(8 * out_len);
-        for (group_inputs, group_outputs) in input_groups.by_ref().zip(output_groups.by_ref()) {
+        let (input_groups, rem_inputs) = inputs.as_chunks::<8>();
+        let mut output_groups = outputs.chunks_exact_mut(8usize.strict_mul(out_len));
+        for (group_inputs, group_outputs) in input_groups.iter().zip(output_groups.by_ref()) {
           xof_many_equal_len_group::<8>(
             group_inputs,
             out_len,
@@ -685,7 +686,6 @@ impl AsconXof {
             x86_64_avx512::permute_12_x86_avx512_x8,
           );
         }
-        let rem_inputs = input_groups.remainder();
         let rem_outputs = output_groups.into_remainder();
         if !rem_inputs.is_empty() {
           Self::hash_many_into_with_kernel(
@@ -709,21 +709,24 @@ impl AsconXof {
   pub fn hash_many_into(inputs: &[&[u8]], out_len: usize, outputs: &mut [u8]) {
     assert_eq!(
       outputs.len(),
-      inputs.len() * out_len,
+      inputs.len().strict_mul(out_len),
       "input/output batch length mismatch"
     );
+    if inputs.is_empty() || out_len == 0 {
+      return;
+    }
 
     let mut start = 0usize;
     while start < inputs.len() {
       let len = inputs[start].len();
-      let mut end = start + 1;
+      let mut end = start.strict_add(1);
       while end < inputs.len() && inputs[end].len() == len {
-        end += 1;
+        end = end.strict_add(1);
       }
 
-      let kid = AsconHash256::batch_kernel_id_for_count(end - start);
-      let start_byte = start * out_len;
-      let end_byte = end * out_len;
+      let kid = AsconHash256::batch_kernel_id_for_count(end.strict_sub(start));
+      let start_byte = start.strict_mul(out_len);
+      let end_byte = end.strict_mul(out_len);
       Self::hash_many_into_with_kernel(kid, &inputs[start..end], out_len, &mut outputs[start_byte..end_byte]);
       start = end;
     }
@@ -766,7 +769,7 @@ impl Xof for AsconXofReader {
   #[inline(always)]
   fn squeeze(&mut self, mut out: &mut [u8]) {
     if self.pos < RATE && !out.is_empty() {
-      let take = core::cmp::min(RATE - self.pos, out.len());
+      let take = core::cmp::min(RATE.strict_sub(self.pos), out.len());
       out[..take].copy_from_slice(&self.buf[self.pos..self.pos.strict_add(take)]);
       self.pos = self.pos.strict_add(take);
       out = &mut out[take..];

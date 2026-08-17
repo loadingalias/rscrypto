@@ -5,7 +5,6 @@
 // Symbols are renamed into the rscrypto namespace and the Darwin-specific
 // symbol spelling is kept explicit for Rust global_asm!.
 
-.intel_syntax noprefix
 
 
 

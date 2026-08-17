@@ -33,7 +33,7 @@ fn rfc9106_appendix_a1_argon2d() {
     RFC_SALT,
     &mut out,
   )
-  .unwrap();
+  .expect("RFC 9106 Argon2d vector derivation must succeed");
   assert_eq!(out, expected);
 }
 
@@ -51,7 +51,7 @@ fn rfc9106_appendix_a2_argon2i() {
     RFC_SALT,
     &mut out,
   )
-  .unwrap();
+  .expect("RFC 9106 Argon2i vector derivation must succeed");
   assert_eq!(out, expected);
 }
 
@@ -69,7 +69,7 @@ fn rfc9106_appendix_a3_argon2id() {
     RFC_SALT,
     &mut out,
   )
-  .unwrap();
+  .expect("RFC 9106 Argon2id vector derivation must succeed");
   assert_eq!(out, expected);
 }
 
@@ -82,9 +82,12 @@ fn all_three_variants_produce_distinct_output() {
   let mut d = [0u8; 32];
   let mut i = [0u8; 32];
   let mut id = [0u8; 32];
-  Argon2d::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut d).unwrap();
-  Argon2i::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut i).unwrap();
-  Argon2id::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut id).unwrap();
+  Argon2d::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut d)
+    .expect("Argon2d distinct-output fixture must derive");
+  Argon2i::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut i)
+    .expect("Argon2i distinct-output fixture must derive");
+  Argon2id::derive_with_context(&params, canonical_context(), RFC_PASSWORD, RFC_SALT, &mut id)
+    .expect("Argon2id distinct-output fixture must derive");
   assert_ne!(d, i);
   assert_ne!(d, id);
   assert_ne!(i, id);

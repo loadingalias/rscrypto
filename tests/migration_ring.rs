@@ -53,15 +53,17 @@ fn test_ring_digest_hmac_hkdf_and_pbkdf2_migration_examples_are_byte_equivalent(
   ring_hkdf::Salt::new(ring_hkdf::HKDF_SHA256, salt)
     .extract(ikm)
     .expand(&[info], RingHkdfLen(ring_okm.len()))
-    .unwrap()
+    .expect("ring HKDF must accept the migration output length")
     .fill(&mut ring_okm)
-    .unwrap();
+    .expect("ring HKDF migration expansion must succeed");
 
   let mut ours_okm = [0u8; 42];
-  HkdfSha256::new(salt, ikm).expand(info, &mut ours_okm).unwrap();
+  HkdfSha256::new(salt, ikm)
+    .expand(info, &mut ours_okm)
+    .expect("rscrypto HKDF migration expansion must succeed");
   assert_eq!(ours_okm, ring_okm);
 
-  let iterations = NonZeroU32::new(600_000).unwrap();
+  let iterations = NonZeroU32::new(600_000).expect("migration iteration count must be nonzero");
   let mut ring_pbkdf2 = [0u8; 32];
   ring_pbkdf2::derive(
     ring_pbkdf2::PBKDF2_HMAC_SHA256,
@@ -72,7 +74,8 @@ fn test_ring_digest_hmac_hkdf_and_pbkdf2_migration_examples_are_byte_equivalent(
   );
 
   let mut ours_pbkdf2 = [0u8; 32];
-  Pbkdf2Sha256::derive_key(b"ring migration password", salt, iterations.get(), &mut ours_pbkdf2).unwrap();
+  Pbkdf2Sha256::derive_key(b"ring migration password", salt, iterations.get(), &mut ours_pbkdf2)
+    .expect("rscrypto PBKDF2 migration derivation must succeed");
   assert_eq!(ours_pbkdf2, ring_pbkdf2);
 }
 
@@ -82,13 +85,17 @@ fn test_ring_aead_migration_examples_are_byte_equivalent() {
   let aes = Aes256Gcm::new(&Aes256GcmKey::from_bytes(KEY_32));
   let nonce = Nonce96::from_bytes(NONCE_12);
   let mut ours_aes = vec![0u8; DATA.len() + 16];
-  aes.encrypt(&nonce, AAD, DATA, &mut ours_aes).unwrap();
+  aes
+    .encrypt(&nonce, AAD, DATA, &mut ours_aes)
+    .expect("rscrypto AES-GCM migration encryption must succeed");
   assert_eq!(ours_aes, ring_aes);
 
   let ring_chacha = ring_aead_seal(&ring_aead::CHACHA20_POLY1305, &KEY_32, DATA);
   let chacha = ChaCha20Poly1305::new(&ChaCha20Poly1305Key::from_bytes(KEY_32));
   let mut ours_chacha = vec![0u8; DATA.len() + 16];
-  chacha.encrypt(&nonce, AAD, DATA, &mut ours_chacha).unwrap();
+  chacha
+    .encrypt(&nonce, AAD, DATA, &mut ours_chacha)
+    .expect("rscrypto ChaCha20-Poly1305 migration encryption must succeed");
   assert_eq!(ours_chacha, ring_chacha);
 }
 
@@ -97,7 +104,8 @@ fn test_ring_ed25519_and_rsa_verify_migration_examples_are_compatible() {
   use ring::signature::KeyPair as _;
 
   let seed = [0x13; 32];
-  let ring_ed25519 = ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
+  let ring_ed25519 =
+    ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed).expect("ring must accept the Ed25519 migration seed");
   let ours_ed25519 = Ed25519SecretKey::from_bytes(seed);
   let ours_public = ours_ed25519.public_key();
   let ours_signature = ours_ed25519.sign(DATA);
@@ -107,28 +115,32 @@ fn test_ring_ed25519_and_rsa_verify_migration_examples_are_compatible() {
 
   ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, ours_public.as_bytes())
     .verify(DATA, ours_signature.as_bytes())
-    .unwrap();
-  ours_public.verify(DATA, &ours_signature).unwrap();
+    .expect("ring must verify the rscrypto Ed25519 migration signature");
+  ours_public
+    .verify(DATA, &ours_signature)
+    .expect("rscrypto must verify its Ed25519 migration signature");
 
-  let ours = RsaPublicKey::from_spki_der(RSA3072_SPKI).unwrap();
+  let ours = RsaPublicKey::from_spki_der(RSA3072_SPKI).expect("RSA migration SPKI fixture must parse");
   let pkcs1 = ours.to_pkcs1_der();
   ours
     .verify_pss(RsaPssProfile::Sha256, MESSAGE_PSS, RSA3072_PSS_SHA256)
-    .unwrap();
+    .expect("rscrypto must verify the RSA-PSS migration fixture");
   ours
     .verify_pkcs1v15(RsaPkcs1v15Profile::Sha256, MESSAGE_PKCS1V15, RSA3072_PKCS1V15_SHA256)
-    .unwrap();
+    .expect("rscrypto must verify the RSA-PKCS1-v1_5 migration fixture");
 
   ring::signature::UnparsedPublicKey::new(&ring::signature::RSA_PSS_2048_8192_SHA256, &pkcs1)
     .verify(MESSAGE_PSS, RSA3072_PSS_SHA256)
-    .unwrap();
+    .expect("ring must verify the RSA-PSS migration fixture");
   ring::signature::UnparsedPublicKey::new(&ring::signature::RSA_PKCS1_2048_8192_SHA256, &pkcs1)
     .verify(MESSAGE_PKCS1V15, RSA3072_PKCS1V15_SHA256)
-    .unwrap();
+    .expect("ring must verify the RSA-PKCS1-v1_5 migration fixture");
 }
 
 fn ring_aead_seal(algorithm: &'static ring_aead::Algorithm, key_bytes: &[u8], plaintext: &[u8]) -> Vec<u8> {
-  let key = ring_aead::LessSafeKey::new(ring_aead::UnboundKey::new(algorithm, key_bytes).unwrap());
+  let unbound_key =
+    ring_aead::UnboundKey::new(algorithm, key_bytes).expect("ring must accept the migration AEAD key length");
+  let key = ring_aead::LessSafeKey::new(unbound_key);
   let mut out = plaintext.to_vec();
   key
     .seal_in_place_append_tag(
@@ -136,6 +148,6 @@ fn ring_aead_seal(algorithm: &'static ring_aead::Algorithm, key_bytes: &[u8], pl
       ring_aead::Aad::from(AAD),
       &mut out,
     )
-    .unwrap();
+    .expect("ring migration AEAD encryption must succeed");
   out
 }

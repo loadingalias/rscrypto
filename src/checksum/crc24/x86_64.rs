@@ -9,11 +9,9 @@
 //!
 //! # Safety
 //!
-//! Uses `unsafe` for x86 SIMD intrinsics. Callers must ensure SSSE3 +
-//! PCLMULQDQ are available before executing these kernels (the dispatcher does
-//! this).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
+//! The baseline kernels require SSE2, SSSE3, and PCLMULQDQ. The wide kernels
+//! additionally require AVX-512F/VL/BW/DQ and VPCLMULQDQ. The private safe
+//! wrappers are installed only through capability-gated dispatcher tables.
 
 use core::{
   arch::x86_64::*,
@@ -49,40 +47,77 @@ impl BitXorAssign for Simd128 {
 }
 
 impl Simd128 {
+  /// Loads 16 bytes without requiring alignment.
+  ///
+  /// # Safety
+  ///
+  /// `ptr` must be valid to read 16 initialized bytes. The source may be
+  /// unaligned because the bytes are copied into aligned local storage.
+  #[inline]
+  unsafe fn load_unaligned(ptr: *const u8) -> Self {
+    let mut value = core::mem::MaybeUninit::<Self>::uninit();
+
+    // SAFETY: The caller guarantees a readable 16-byte source. `value` is an
+    // aligned, non-overlapping 16-byte destination, and every bit pattern is
+    // valid for the integer vector inside `Simd128`.
+    unsafe {
+      core::ptr::copy_nonoverlapping(ptr, value.as_mut_ptr().cast::<u8>(), 16);
+      value.assume_init()
+    }
+  }
+
+  /// Creates a vector from its high and low 64-bit lanes.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2.
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn new(high: u64, low: u64) -> Self {
-    // SAFETY: All intrinsics require SSE2, ensured by this function's #[target_feature] attribute.
     Self(_mm_set_epi64x(high.cast_signed(), low.cast_signed()))
   }
 
+  /// Shifts the vector right by eight bytes, filling the high bytes with zero.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2.
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn shift_right_8(self) -> Self {
-    // SAFETY: All intrinsics require SSE2, ensured by this function's #[target_feature] attribute.
     Self(_mm_srli_si128::<8>(self.0))
   }
 
+  /// Shifts the vector left by 12 bytes, filling the low bytes with zero.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2.
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn shift_left_12(self) -> Self {
-    // SAFETY: All intrinsics require SSE2, ensured by this function's #[target_feature] attribute.
     Self(_mm_slli_si128::<12>(self.0))
   }
 
+  /// Computes the bitwise AND of two vectors.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2.
   #[inline]
   #[target_feature(enable = "sse2")]
   unsafe fn and(self, mask: Self) -> Self {
-    // SAFETY: All intrinsics require SSE2, ensured by this function's #[target_feature] attribute.
     Self(_mm_and_si128(self.0, mask.0))
   }
 
-  /// Reverse bits within each byte (u8::reverse_bits), lane-wise.
+  /// Reverses the bits within each byte.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and SSSE3.
   #[inline]
   #[target_feature(enable = "sse2", enable = "ssse3")]
   unsafe fn bitrev_bytes(self) -> Self {
-    // SAFETY: All intrinsics require SSE2+SSSE3, ensured by this function's #[target_feature]
-    // attribute.
     let mask = _mm_set1_epi8(0x0f);
     let lo = _mm_and_si128(self.0, mask);
     let hi = _mm_and_si128(_mm_srli_epi16::<4>(self.0), mask);
@@ -95,17 +130,24 @@ impl Simd128 {
     Self(_mm_or_si128(lo_shift, hi_rev))
   }
 
+  /// Folds one reflected 16-byte lane and XORs the supplied input lane.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and PCLMULQDQ.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_16_reflected(self, coeff: Self, data_to_xor: Self) -> Self {
-    // SAFETY: All intrinsics require SSE2+PCLMULQDQ, ensured by this function's #[target_feature]
-    // attribute.
     let h = _mm_clmulepi64_si128::<0x10>(self.0, coeff.0);
     let l = _mm_clmulepi64_si128::<0x01>(self.0, coeff.0);
     Self(_mm_xor_si128(_mm_xor_si128(h, l), data_to_xor.0))
   }
 
-  /// Fold 16 bytes down to the "width32" reduction state (reflected mode).
+  /// Folds a reflected CRC state from 128 bits to the width-32 reduction state.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and PCLMULQDQ.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn fold_width32_reflected(self, high: u64, low: u64) -> Self {
@@ -131,6 +173,11 @@ impl Simd128 {
     }
   }
 
+  /// Applies Barrett reduction and returns the width-32 state.
+  ///
+  /// # Safety
+  ///
+  /// The current CPU must support SSE2 and PCLMULQDQ.
   #[inline]
   #[target_feature(enable = "sse2", enable = "pclmulqdq")]
   unsafe fn barrett_width32_reflected(self, poly: u64, mu: u64) -> u32 {
@@ -143,13 +190,18 @@ impl Simd128 {
       let xorred = _mm_xor_si128(self.0, clmul2);
 
       let hi = _mm_srli_si128::<8>(xorred);
-      _mm_cvtsi128_si64(hi) as u32
+      _mm_cvtsi128_si32(hi).cast_unsigned()
     }
   }
 }
 
 // 8-lane width32 update (128B blocks)
 
+/// Combines eight folded lanes and applies width-32 Barrett reduction.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2 and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "pclmulqdq")]
 unsafe fn finalize_lanes_width32_reflected(x: [Simd128; 8], keys: &[u64; 23]) -> u32 {
@@ -170,6 +222,11 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd128; 8], keys: &[u64; 23]) ->
   }
 }
 
+/// Bit-reverses and folds one or more 128-byte blocks into a width-32 CRC state.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes(
@@ -221,6 +278,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes(
 
 // PCLMULQDQ multi-stream (2/4/7/8-way, 128B blocks)
 
+/// Bit-reverses and folds one 128-byte block into eight parallel lanes.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn fold_block_128_reflected_bitrev(x: &mut [Simd128; 8], chunk: &[Simd128; 8], coeff: Simd128) {
@@ -247,6 +309,11 @@ unsafe fn fold_block_128_reflected_bitrev(x: &mut [Simd128; 8], chunk: &[Simd128
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through two PCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
@@ -301,7 +368,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
     let mut i: usize = 2;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(DOUBLE_GROUP));
 
     while i.strict_add(DOUBLE_GROUP) <= aligned {
       let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
@@ -346,6 +413,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_2way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through four PCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
@@ -398,7 +470,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
     const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
 
     let mut i: usize = 4;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(DOUBLE_GROUP));
 
     while i.strict_add(DOUBLE_GROUP) <= aligned {
       let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
@@ -422,7 +494,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
     }
 
     // Handle remaining quads.
-    let quad_aligned = (blocks.len() / 4) * 4;
+    let quad_aligned = blocks.len().strict_sub(blocks.len().strict_rem(4));
     while i < quad_aligned {
       fold_block_128_reflected_bitrev(&mut s0, &blocks[i], coeff_512);
       fold_block_128_reflected_bitrev(&mut s1, &blocks[i.strict_add(1)], coeff_512);
@@ -467,6 +539,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_4way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through seven PCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
@@ -490,7 +567,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
       return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 7) * 7;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(7));
 
     let coeff_896 = Simd128::new(fold_896b.0, fold_896b.1);
     let coeff_128 = Simd128::new(keys[4], keys[3]);
@@ -604,6 +681,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_7way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through eight PCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
@@ -627,7 +709,7 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
       return update_simd_width32_reflected_bitrev_bytes(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(8));
 
     let coeff_1024 = Simd128::new(fold_1024b.0, fold_1024b.1);
     let coeff_128 = Simd128::new(keys[4], keys[3]);
@@ -753,6 +835,11 @@ unsafe fn update_simd_width32_reflected_bitrev_bytes_8way(
   }
 }
 
+/// Updates CRC-24 with a selected multi-stream PCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn crc24_width32_pclmul_stream(
@@ -788,6 +875,11 @@ unsafe fn crc24_width32_pclmul_stream(
 
 // Single-stream kernel entry points
 
+/// Updates CRC-24 with the single-stream PCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn crc24_width32_pclmul_small(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
@@ -804,13 +896,13 @@ unsafe fn crc24_width32_pclmul_small(mut state: u32, data: &[u8], keys: &[u64; 2
 
     let coeff_16b = Simd128::new(keys[2], keys[1]);
 
-    let mut x0 = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
+    let mut x0 = Simd128::load_unaligned(buf).bitrev_bytes();
     x0 ^= Simd128::new(0, state as u64);
     buf = buf.add(16);
     len = len.strict_sub(16);
 
     while len >= 16 {
-      let chunk = Simd128(_mm_loadu_si128(buf as *const __m128i)).bitrev_bytes();
+      let chunk = Simd128::load_unaligned(buf).bitrev_bytes();
       x0 = x0.fold_16_reflected(coeff_16b, chunk);
       buf = buf.add(16);
       len = len.strict_sub(16);
@@ -824,6 +916,11 @@ unsafe fn crc24_width32_pclmul_small(mut state: u32, data: &[u8], keys: &[u64; 2
   }
 }
 
+/// Updates CRC-24 with the baseline PCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// The current CPU must support SSE2, SSSE3, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "sse2", enable = "ssse3", enable = "pclmulqdq")]
 unsafe fn crc24_width32_pclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
@@ -845,22 +942,67 @@ unsafe fn crc24_width32_pclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) ->
 
 // AVX-512 VPCLMULQDQ Tier
 
+/// Loads 64 bytes without requiring alignment.
+///
+/// # Safety
+///
+/// `ptr` must be valid to read 64 initialized bytes. The source may be
+/// unaligned because the bytes are copied into aligned local storage.
+#[inline]
+unsafe fn load_unaligned_512(ptr: *const u8) -> __m512i {
+  let mut value = core::mem::MaybeUninit::<__m512i>::uninit();
+
+  // SAFETY: The caller guarantees a readable 64-byte source. `value` is an
+  // aligned, non-overlapping 64-byte destination, and every bit pattern is
+  // valid for an integer vector.
+  unsafe {
+    core::ptr::copy_nonoverlapping(ptr, value.as_mut_ptr().cast::<u8>(), 64);
+    value.assume_init()
+  }
+}
+
+/// Stores 64 bytes without requiring alignment.
+///
+/// # Safety
+///
+/// `ptr` must be valid to write 64 bytes and must not overlap `value`.
+#[inline]
+unsafe fn store_unaligned_512(ptr: *mut u8, value: __m512i) {
+  // SAFETY: The caller guarantees a writable, non-overlapping 64-byte
+  // destination. `value` provides exactly 64 initialized source bytes.
+  unsafe { core::ptr::copy_nonoverlapping(core::ptr::from_ref(&value).cast::<u8>(), ptr, 64) }
+}
+
+/// Multiplies the high lane of each 128-bit element in `a` by the low lane in `b`.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F, AVX-512VL, AVX-512BW, AVX-512DQ, and
+/// VPCLMULQDQ.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn clmul10_vpclmul(a: __m512i, b: __m512i) -> __m512i {
-  // SAFETY: All intrinsics require AVX512F+AVX512VL+AVX512BW+AVX512DQ+VPCLMULQDQ, ensured by this
-  // function's #[target_feature] attribute.
   _mm512_clmulepi64_epi128(a, b, 0x10)
 }
 
+/// Multiplies the low lane of each 128-bit element in `a` by the high lane in `b`.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F, AVX-512VL, AVX-512BW, AVX-512DQ, and
+/// VPCLMULQDQ.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn clmul01_vpclmul(a: __m512i, b: __m512i) -> __m512i {
-  // SAFETY: All intrinsics require AVX512F+AVX512VL+AVX512BW+AVX512DQ+VPCLMULQDQ, ensured by this
-  // function's #[target_feature] attribute.
   _mm512_clmulepi64_epi128(a, b, 0x01)
 }
 
+/// Folds four reflected 16-byte lanes and XORs their supplied input lanes.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F, AVX-512VL, AVX-512BW, AVX-512DQ, and
+/// VPCLMULQDQ.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq")]
 unsafe fn fold_16_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512i) -> __m512i {
@@ -870,10 +1012,14 @@ unsafe fn fold_16_reflected_vpclmul(state: __m512i, coeff: __m512i, data: __m512
   unsafe { _mm512_ternarylogic_epi64(clmul10_vpclmul(state, coeff), clmul01_vpclmul(state, coeff), data, 0x96) }
 }
 
+/// Broadcasts a pair of 64-bit coefficients across four 128-bit lanes.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn broadcast_coeff_128b(high: u64, low: u64) -> __m512i {
-  // SAFETY: All intrinsics require AVX512F, ensured by this function's #[target_feature] attribute.
   _mm512_set_epi64(
     high.cast_signed(),
     low.cast_signed(),
@@ -886,18 +1032,25 @@ unsafe fn broadcast_coeff_128b(high: u64, low: u64) -> __m512i {
   )
 }
 
+/// Places the width-32 CRC state in the low 32 bits of lane zero.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn state_mask_lane0(state: u32) -> __m512i {
-  // SAFETY: All intrinsics require AVX512F, ensured by this function's #[target_feature] attribute.
   _mm512_set_epi64(0, 0, 0, 0, 0, 0, 0, state as i64)
 }
 
+/// Reverses the bits within each byte of a 512-bit vector.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F and AVX-512BW.
 #[inline]
 #[target_feature(enable = "avx512f,avx512bw")]
 unsafe fn bitrev_bytes_vpclmul(x: __m512i) -> __m512i {
-  // SAFETY: All intrinsics require AVX512F+AVX512BW, ensured by this function's #[target_feature]
-  // attribute.
   let mask = _mm512_set1_epi8(0x0f);
   let lo = _mm512_and_si512(x, mask);
   let hi = _mm512_and_si512(_mm512_srli_epi16(x, 4), mask);
@@ -909,6 +1062,11 @@ unsafe fn bitrev_bytes_vpclmul(x: __m512i) -> __m512i {
   _mm512_or_si512(_mm512_slli_epi16(lo_rev, 4), hi_rev)
 }
 
+/// Bit-reverses and folds 128-byte blocks into a width-32 VPCLMULQDQ state.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes(
@@ -921,9 +1079,9 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes(
   // AVX512F+AVX512VL+AVX512BW+AVX512DQ+VPCLMULQDQ+SSSE3+PCLMULQDQ+SSE2, ensured by this function's
   // #[target_feature] attribute. Pointer arithmetic stays within bounds via first/rest structure.
   unsafe {
-    let ptr = first.as_ptr() as *const u8;
-    let mut x0 = _mm512_loadu_si512(ptr as *const __m512i);
-    let mut x1 = _mm512_loadu_si512(ptr.add(64) as *const __m512i);
+    let ptr = first.as_ptr().cast::<u8>();
+    let mut x0 = load_unaligned_512(ptr);
+    let mut x1 = load_unaligned_512(ptr.add(64));
 
     x0 = bitrev_bytes_vpclmul(x0);
     x1 = bitrev_bytes_vpclmul(x1);
@@ -932,17 +1090,17 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes(
 
     let coeff_128b = broadcast_coeff_128b(keys[4], keys[3]);
     for chunk in rest {
-      let ptr = chunk.as_ptr() as *const u8;
-      let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
-      let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
+      let ptr = chunk.as_ptr().cast::<u8>();
+      let y0 = bitrev_bytes_vpclmul(load_unaligned_512(ptr));
+      let y1 = bitrev_bytes_vpclmul(load_unaligned_512(ptr.add(64)));
       x0 = fold_16_reflected_vpclmul(x0, coeff_128b, y0);
       x1 = fold_16_reflected_vpclmul(x1, coeff_128b, y1);
     }
 
     let mut lanes0 = [Simd128(_mm_setzero_si128()); 4];
     let mut lanes1 = [Simd128(_mm_setzero_si128()); 4];
-    _mm512_storeu_si512(lanes0.as_mut_ptr() as *mut __m512i, x0);
-    _mm512_storeu_si512(lanes1.as_mut_ptr() as *mut __m512i, x1);
+    store_unaligned_512(lanes0.as_mut_ptr().cast::<u8>(), x0);
+    store_unaligned_512(lanes1.as_mut_ptr().cast::<u8>(), x1);
 
     let x = [
       lanes0[0], lanes0[1], lanes0[2], lanes0[3], lanes1[0], lanes1[1], lanes1[2], lanes1[3],
@@ -952,6 +1110,11 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes(
   }
 }
 
+/// Broadcasts one pair of folding coefficients across four 128-bit lanes.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
@@ -959,6 +1122,11 @@ unsafe fn vpclmul_coeff(pair: (u64, u64)) -> __m512i {
   unsafe { broadcast_coeff_128b(pair.0, pair.1) }
 }
 
+/// Loads, bit-reverses, and returns one 128-byte block as two vectors.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F and AVX-512BW.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn load_128b_block_bitrev(block: &[Simd128; 8]) -> (__m512i, __m512i) {
@@ -966,13 +1134,18 @@ unsafe fn load_128b_block_bitrev(block: &[Simd128; 8]) -> (__m512i, __m512i) {
   // #[target_feature] attribute. Pointer arithmetic stays within bounds: block is 128 bytes,
   // loading at offsets 0 and 64.
   unsafe {
-    let ptr = block.as_ptr() as *const u8;
-    let y0 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr as *const __m512i));
-    let y1 = bitrev_bytes_vpclmul(_mm512_loadu_si512(ptr.add(64) as *const __m512i));
+    let ptr = block.as_ptr().cast::<u8>();
+    let y0 = bitrev_bytes_vpclmul(load_unaligned_512(ptr));
+    let y1 = bitrev_bytes_vpclmul(load_unaligned_512(ptr.add(64)));
     (y0, y1)
   }
 }
 
+/// Combines two four-lane VPCLMULQDQ states and applies width-32 reduction.
+///
+/// # Safety
+///
+/// The current CPU must support AVX-512F, SSE2, and PCLMULQDQ.
 #[inline]
 #[target_feature(enable = "avx512f")]
 unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, keys: &[u64; 23]) -> u32 {
@@ -999,6 +1172,11 @@ unsafe fn finalize_vpclmul_state(x0: __m512i, x1: __m512i, keys: &[u64; 23]) -> 
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through two VPCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
@@ -1035,7 +1213,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
     const DOUBLE_GROUP: usize = 4; // 2 × 2-way = 4 blocks = 512B
 
     let mut i: usize = 2;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(DOUBLE_GROUP));
 
     while i.strict_add(DOUBLE_GROUP) <= aligned {
       let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
@@ -1091,6 +1269,11 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_2way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through four VPCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
@@ -1133,7 +1316,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
     const DOUBLE_GROUP: usize = 8; // 2 × 4-way = 8 blocks = 1KB
 
     let mut i: usize = 4;
-    let aligned = (blocks.len() / DOUBLE_GROUP) * DOUBLE_GROUP;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(DOUBLE_GROUP));
 
     while i.strict_add(DOUBLE_GROUP) <= aligned {
       let prefetch_idx = i.strict_add(LARGE_BLOCK_DISTANCE / BLOCK_SIZE);
@@ -1179,7 +1362,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
     }
 
     // Handle remaining quads.
-    let quad_aligned = (blocks.len() / 4) * 4;
+    let quad_aligned = blocks.len().strict_sub(blocks.len().strict_rem(4));
     while i < quad_aligned {
       let (y0, y1) = load_128b_block_bitrev(&blocks[i]);
       x0_0 = fold_16_reflected_vpclmul(x0_0, coeff_512, y0);
@@ -1217,6 +1400,11 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_4way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through seven VPCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
@@ -1241,7 +1429,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
       return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 7) * 7;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(7));
 
     let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
     let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
@@ -1325,6 +1513,11 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_7way(
   }
 }
 
+/// Bit-reverses and folds 128-byte blocks through eight VPCLMULQDQ streams.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
@@ -1349,7 +1542,7 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
       return update_simd_width32_reflected_vpclmul_bitrev_bytes(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = blocks.len().strict_sub(blocks.len().strict_rem(8));
 
     let (mut x0_0, mut x1_0) = load_128b_block_bitrev(&blocks[0]);
     let (mut x0_1, mut x1_1) = load_128b_block_bitrev(&blocks[1]);
@@ -1441,6 +1634,11 @@ unsafe fn update_simd_width32_reflected_vpclmul_bitrev_bytes_8way(
   }
 }
 
+/// Updates CRC-24 with a selected multi-stream VPCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn crc24_width32_vpclmul_stream(
@@ -1491,6 +1689,11 @@ unsafe fn crc24_width32_vpclmul_stream(
   }
 }
 
+/// Updates CRC-24 with the baseline VPCLMULQDQ kernel.
+///
+/// # Safety
+///
+/// The current CPU must support all target features enabled on this function.
 #[inline]
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq,vpclmulqdq,ssse3,pclmulqdq,sse2")]
 unsafe fn crc24_width32_vpclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -> u32 {
@@ -1511,15 +1714,14 @@ unsafe fn crc24_width32_vpclmul(mut state: u32, data: &[u8], keys: &[u64; 23]) -
   }
 }
 
-// Public Safe Kernels
+// Private safe kernel adapters matching the dispatcher's function signature.
 
 /// CRC-24/OPENPGP PCLMULQDQ kernel.
 ///
-/// # Safety
-///
-/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+/// The dispatcher selects this private kernel only after verifying SSSE3 and
+/// PCLMULQDQ support.
 #[inline]
-pub fn crc24_openpgp_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe { crc24_width32_pclmul(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
@@ -1530,11 +1732,10 @@ pub fn crc24_openpgp_pclmul_safe(crc: u32, data: &[u8]) -> u32 {
 ///
 /// Optimized for inputs smaller than a folding block (128 bytes).
 ///
-/// # Safety
-///
-/// Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
+/// The dispatcher selects this private kernel only after verifying SSSE3 and
+/// PCLMULQDQ support.
 #[inline]
-pub fn crc24_openpgp_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe { crc24_width32_pclmul_small(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
@@ -1543,7 +1744,7 @@ pub fn crc24_openpgp_pclmul_small_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP PCLMULQDQ kernel (2-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
@@ -1560,7 +1761,7 @@ pub fn crc24_openpgp_pclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP PCLMULQDQ kernel (4-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
@@ -1577,7 +1778,7 @@ pub fn crc24_openpgp_pclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP PCLMULQDQ kernel (7-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
@@ -1594,7 +1795,7 @@ pub fn crc24_openpgp_pclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP PCLMULQDQ kernel (8-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_pclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_pclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies SSSE3 + PCLMULQDQ before selecting this kernel.
   state = unsafe {
@@ -1611,11 +1812,10 @@ pub fn crc24_openpgp_pclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP VPCLMULQDQ kernel (AVX-512).
 ///
-/// # Safety
-///
-/// Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
+/// The dispatcher selects this private kernel only after verifying VPCLMULQDQ
+/// and AVX-512 support.
 #[inline]
-pub fn crc24_openpgp_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe { crc24_width32_vpclmul(state, data, &CRC24_OPENPGP_KEYS_REFLECTED) };
@@ -1624,7 +1824,7 @@ pub fn crc24_openpgp_vpclmul_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP VPCLMULQDQ kernel (2-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
@@ -1641,7 +1841,7 @@ pub fn crc24_openpgp_vpclmul_2way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP VPCLMULQDQ kernel (4-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
@@ -1658,7 +1858,7 @@ pub fn crc24_openpgp_vpclmul_4way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP VPCLMULQDQ kernel (7-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
@@ -1675,7 +1875,7 @@ pub fn crc24_openpgp_vpclmul_7way_safe(crc: u32, data: &[u8]) -> u32 {
 
 /// CRC-24/OPENPGP VPCLMULQDQ kernel (8-way multi-stream).
 #[inline]
-pub fn crc24_openpgp_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
+pub(super) fn crc24_openpgp_vpclmul_8way_safe(crc: u32, data: &[u8]) -> u32 {
   let mut state = to_reflected_state(crc);
   // SAFETY: Dispatcher verifies VPCLMULQDQ + AVX-512 before selecting this kernel.
   state = unsafe {
@@ -1702,14 +1902,21 @@ mod tests {
   const OFFSETS: &[usize] = &[0, 1, 7, 15];
   const STATES: &[u32] = &[0, 0x00b7_04ce, 0x005a_a5a5, 0x00ff_ffff];
 
+  fn data() -> Vec<u8> {
+    (0u16..4111)
+      .map(|i| {
+        let [low, high] = i.to_le_bytes();
+        low.wrapping_mul(61).wrapping_add(high)
+      })
+      .collect()
+  }
+
   fn assert_kernel(name: &str, kernel: fn(u32, &[u8]) -> u32) {
-    let input: Vec<u8> = (0..4111)
-      .map(|i| (i as u8).wrapping_mul(61).wrapping_add((i >> 8) as u8))
-      .collect();
+    let input = data();
     for &state in STATES {
       for &offset in OFFSETS {
         for &len in LENS {
-          let slice = &input[offset..offset + len];
+          let slice = &input[offset..offset.strict_add(len)];
           assert_eq!(
             kernel(state, slice),
             super::super::portable::crc24_openpgp_slice8(state, slice),

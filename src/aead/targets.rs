@@ -5,86 +5,240 @@
 //!
 //! Backend selection is derived from detected CPU capabilities.
 
+#[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
+use crate::platform::caps::wasm;
 use crate::platform::{
   Arch, Caps,
-  caps::{aarch64, power, riscv, s390x, wasm, x86},
+  caps::{aarch64, power, riscv, s390x, x86},
 };
 
 /// AEAD primitives on the public surface.
-#[allow(dead_code)] // Reduced-feature test builds can compile only byte wrappers, not live dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum AeadPrimitive {
+pub(super) enum AeadPrimitive {
+  #[cfg(any(test, feature = "xchacha20poly1305"))]
   XChaCha20Poly1305,
+  #[cfg(any(test, feature = "chacha20poly1305"))]
   ChaCha20Poly1305,
+  #[cfg(any(
+    test,
+    all(
+      feature = "aes-gcm-siv",
+      any(
+        feature = "diag",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      )
+    )
+  ))]
   Aes256GcmSiv,
+  #[cfg(any(test, feature = "aes-gcm"))]
   Aes256Gcm,
+  #[cfg(any(test, feature = "aes-gcm"))]
   Aes128Gcm,
+  #[cfg(any(
+    test,
+    all(
+      feature = "aes-gcm-siv",
+      any(
+        feature = "diag",
+        target_arch = "aarch64",
+        target_arch = "powerpc64",
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      )
+    )
+  ))]
   Aes128GcmSiv,
-  AsconAead128,
+  #[cfg(any(
+    test,
+    all(
+      feature = "aegis256",
+      any(
+        feature = "diag",
+        target_arch = "aarch64",
+        all(target_arch = "powerpc64", target_endian = "little"),
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      )
+    )
+  ))]
   Aegis256,
 }
 
 /// Backend classes selected by live dispatch.
-#[allow(dead_code)] // Some architecture-specific variants are only constructed on their target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum AeadBackend {
+pub(super) enum AeadBackend {
   Portable,
   WasmPortable,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   WasmSimd128,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   X86Avx2,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   X86Avx512,
+  #[cfg(any(
+    test,
+    all(
+      feature = "aegis256",
+      any(
+        feature = "diag",
+        target_arch = "aarch64",
+        all(target_arch = "powerpc64", target_endian = "little"),
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      )
+    )
+  ))]
   X86Aesni,
+  #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
   X86AesniPclmul,
+  #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
   X86VaesVpclmul,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   Aarch64Neon,
+  #[cfg(any(
+    test,
+    all(
+      feature = "aegis256",
+      any(
+        feature = "diag",
+        target_arch = "aarch64",
+        all(target_arch = "powerpc64", target_endian = "little"),
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      )
+    )
+  ))]
   Aarch64Aes,
+  #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Aarch64AesPmull,
+  #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Aarch64Sve2AesPmull,
+  #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
   S390xMsa,
   /// Hamburg vperm AES rounds for AEGIS using register-only z/Vector VPERM.
   /// Used on s390x z13+ where no single-round AES instruction exists.
+  #[cfg(any(
+    test,
+    all(
+      feature = "aegis256",
+      any(
+        feature = "diag",
+        target_arch = "aarch64",
+        all(target_arch = "powerpc64", target_endian = "little"),
+        target_arch = "riscv64",
+        target_arch = "s390x",
+        target_arch = "x86_64",
+      )
+    )
+  ))]
   S390xVperm,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   S390xVector,
+  #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Power8Crypto,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   PowerVector,
+  #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Riscv64ScalarCrypto,
+  #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
   Riscv64VectorCrypto,
+  #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
   Riscv64Vector,
-  /// Hamburg vperm AES via register-only `vrgather.vv` operations.
-  /// Kept as an explicit backend, but not selected for V-only RISC-V without
-  /// target-native evidence supporting that dispatch policy.
-  Riscv64Vperm,
 }
 
 impl AeadBackend {
   /// Stable backend label for diagnostics and future benchmark grouping.
-  #[allow(dead_code)] // Used by `diag`; reduced-feature builds can compile dispatch without introspection.
+  #[cfg(feature = "diag")]
   #[must_use]
-  pub const fn name(self) -> &'static str {
+  pub(super) const fn name(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       Self::WasmPortable => "wasm32/portable",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::WasmSimd128 => "wasm32/simd128",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::X86Avx2 => "x86_64/avx2",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::X86Avx512 => "x86_64/avx512",
+      #[cfg(any(
+        test,
+        all(
+          feature = "aegis256",
+          any(
+            feature = "diag",
+            target_arch = "aarch64",
+            all(target_arch = "powerpc64", target_endian = "little"),
+            target_arch = "riscv64",
+            target_arch = "s390x",
+            target_arch = "x86_64",
+          )
+        )
+      ))]
       Self::X86Aesni => "x86_64/aesni",
+      #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::X86AesniPclmul => "x86_64/aesni+pclmul",
+      #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::X86VaesVpclmul => "x86_64/vaes+vpclmul",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::Aarch64Neon => "aarch64/neon",
+      #[cfg(any(
+        test,
+        all(
+          feature = "aegis256",
+          any(
+            feature = "diag",
+            target_arch = "aarch64",
+            all(target_arch = "powerpc64", target_endian = "little"),
+            target_arch = "riscv64",
+            target_arch = "s390x",
+            target_arch = "x86_64",
+          )
+        )
+      ))]
       Self::Aarch64Aes => "aarch64/aes",
+      #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Aarch64AesPmull => "aarch64/aes+pmull",
+      #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Aarch64Sve2AesPmull => "aarch64/sve2+aes+pmull",
+      #[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::S390xMsa => "s390x/msa",
+      #[cfg(any(
+        test,
+        all(
+          feature = "aegis256",
+          any(
+            feature = "diag",
+            target_arch = "aarch64",
+            all(target_arch = "powerpc64", target_endian = "little"),
+            target_arch = "riscv64",
+            target_arch = "s390x",
+            target_arch = "x86_64",
+          )
+        )
+      ))]
       Self::S390xVperm => "s390x/vperm",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::S390xVector => "s390x/vector",
+      #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Power8Crypto => "powerpc64/crypto",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::PowerVector => "powerpc64/vector",
+      #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Riscv64ScalarCrypto => "riscv64/scalar-crypto",
+      #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
       Self::Riscv64VectorCrypto => "riscv64/vector-crypto",
+      #[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
       Self::Riscv64Vector => "riscv64/vector",
-      Self::Riscv64Vperm => "riscv64/vperm",
     }
   }
 }
@@ -93,21 +247,50 @@ impl AeadBackend {
 /// and current dispatch policy.
 ///
 /// SIMD classes without accepted target-native evidence resolve to `portable`.
-#[allow(dead_code)] // Some leaf AEAD builds compile target policy without live dispatch on the host.
 #[must_use]
-pub fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
+pub(super) fn select_backend(primitive: AeadPrimitive, arch: Arch, caps: Caps) -> AeadBackend {
   match primitive {
-    AeadPrimitive::XChaCha20Poly1305 | AeadPrimitive::ChaCha20Poly1305 => select_chacha_backend(arch, caps),
-    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes256Gcm | AeadPrimitive::Aes128Gcm | AeadPrimitive::Aes128GcmSiv => {
-      select_gcm_backend(arch, caps)
-    }
-    AeadPrimitive::AsconAead128 => select_ascon_backend(arch),
+    #[cfg(any(test, feature = "xchacha20poly1305"))]
+    AeadPrimitive::XChaCha20Poly1305 => select_chacha_backend(arch, caps),
+    #[cfg(any(test, feature = "chacha20poly1305"))]
+    AeadPrimitive::ChaCha20Poly1305 => select_chacha_backend(arch, caps),
+    #[cfg(any(
+      test,
+      all(
+        feature = "aes-gcm-siv",
+        any(
+          feature = "diag",
+          target_arch = "aarch64",
+          target_arch = "powerpc64",
+          target_arch = "riscv64",
+          target_arch = "s390x",
+          target_arch = "x86_64",
+        )
+      )
+    ))]
+    AeadPrimitive::Aes256GcmSiv | AeadPrimitive::Aes128GcmSiv => select_gcm_backend(arch, caps),
+    #[cfg(any(test, feature = "aes-gcm"))]
+    AeadPrimitive::Aes256Gcm | AeadPrimitive::Aes128Gcm => select_gcm_backend(arch, caps),
+    #[cfg(any(
+      test,
+      all(
+        feature = "aegis256",
+        any(
+          feature = "diag",
+          target_arch = "aarch64",
+          all(target_arch = "powerpc64", target_endian = "little"),
+          target_arch = "riscv64",
+          target_arch = "s390x",
+          target_arch = "x86_64",
+        )
+      )
+    ))]
     AeadPrimitive::Aegis256 => select_aegis_backend(arch, caps),
   }
 }
 
+#[cfg(any(test, feature = "chacha20poly1305", feature = "xchacha20poly1305"))]
 #[inline]
-#[allow(dead_code)] // Only used when a ChaCha20-Poly1305 feature is enabled.
 fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
   match arch {
     Arch::X86_64 => {
@@ -158,8 +341,8 @@ fn select_chacha_backend(arch: Arch, caps: Caps) -> AeadBackend {
   }
 }
 
+#[cfg(any(test, feature = "aes-gcm", feature = "aes-gcm-siv"))]
 #[inline]
-#[allow(dead_code)] // Only used when an AES-GCM-family feature needs live dispatch on this target.
 fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
   match arch {
     Arch::X86_64 => {
@@ -214,24 +397,28 @@ fn select_gcm_backend(arch: Arch, caps: Caps) -> AeadBackend {
   }
 }
 
+#[cfg(any(
+  test,
+  all(
+    feature = "aegis256",
+    any(
+      feature = "diag",
+      target_arch = "aarch64",
+      all(target_arch = "powerpc64", target_endian = "little"),
+      target_arch = "riscv64",
+      target_arch = "s390x",
+      target_arch = "x86_64",
+    )
+  )
+))]
 #[inline]
-#[allow(dead_code)] // Only used by Ascon-AEAD dispatch diagnostics.
-const fn select_ascon_backend(arch: Arch) -> AeadBackend {
-  match arch {
-    Arch::Wasm32 | Arch::Wasm64 => AeadBackend::WasmPortable,
-    _ => AeadBackend::Portable,
-  }
-}
-
-#[inline]
-#[allow(dead_code)] // Only used when AEGIS-256 needs target-policy dispatch on this target.
 fn select_aegis_backend(arch: Arch, caps: Caps) -> AeadBackend {
   // VAES-256 is intentionally not used for AEGIS-256. Its six dependent state
   // lanes require cross-lane shuffles in the packed representation; see the
   // XMM-state path in aegis256.rs.
   match arch {
     Arch::X86_64 => {
-      if caps.has(x86::AESNI) {
+      if caps.has(x86::AESNI) && caps.has(x86::AVX) {
         AeadBackend::X86Aesni
       } else {
         AeadBackend::Portable
@@ -382,6 +569,10 @@ mod tests {
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::X86_64, x86::AESNI),
+      AeadBackend::Portable
+    );
+    assert_eq!(
+      select_backend(AeadPrimitive::Aegis256, Arch::X86_64, x86::AESNI | x86::AVX),
       AeadBackend::X86Aesni
     );
     assert_eq!(
@@ -559,18 +750,6 @@ mod tests {
     );
     assert_eq!(
       select_backend(AeadPrimitive::Aegis256, Arch::Wasm64, wasm::SIMD128),
-      AeadBackend::WasmPortable
-    );
-  }
-
-  #[test]
-  fn ascon_stays_portable_until_simd_policy_is_accepted() {
-    assert_eq!(
-      select_backend(AeadPrimitive::AsconAead128, Arch::X86_64, x86::AVX2 | x86::VAES_READY),
-      AeadBackend::Portable
-    );
-    assert_eq!(
-      select_backend(AeadPrimitive::AsconAead128, Arch::Wasm32, Caps::NONE),
       AeadBackend::WasmPortable
     );
   }

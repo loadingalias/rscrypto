@@ -1,7 +1,7 @@
 use rscrypto::HkdfSha384;
 use rscrypto_fuzz::{FuzzInput, assert_hkdf_against_oracle, some_or_return, split_at_ratio};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let salt_split: u8 = some_or_return!(input.byte());
   let ikm_split: u8 = some_or_return!(input.byte());
@@ -11,7 +11,7 @@ pub fn run(data: &[u8]) {
   let (salt, remainder) = split_at_ratio(rest, salt_split);
   let (ikm, info) = split_at_ratio(remainder, ikm_split);
 
-  let out_len = usize::from(u16::from_le_bytes(out_len_bytes)) % HkdfSha384::MAX_OUTPUT_SIZE.strict_add(33);
+  let out_len = usize::from(u16::from_le_bytes(out_len_bytes)).rem_euclid(HkdfSha384::MAX_OUTPUT_SIZE.strict_add(33));
 
   let hk = HkdfSha384::new(salt, ikm);
   let mut okm = vec![0u8; out_len];

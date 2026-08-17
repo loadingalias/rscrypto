@@ -71,10 +71,14 @@ fn aead_encrypt_and_decrypt_helpers_round_trip() {
   let aead = fixture_cipher();
 
   let mut sealed = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
-  aead.encrypt(&nonce, aad, &plaintext, &mut sealed).unwrap();
+  aead
+    .encrypt(&nonce, aad, &plaintext, &mut sealed)
+    .expect("combined AEAD seal buffer must fit plaintext and tag");
 
   let mut opened = [0u8; 12];
-  aead.decrypt(&nonce, aad, &sealed, &mut opened).unwrap();
+  aead
+    .decrypt(&nonce, aad, &sealed, &mut opened)
+    .expect("freshly sealed combined AEAD ciphertext must authenticate");
 
   assert_eq!(opened, plaintext);
 }
@@ -86,15 +90,21 @@ fn aead_seal_random_issues_fresh_nonces_and_round_trips() {
   let aead = fixture_cipher();
 
   let mut sealed_a = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
-  let nonce_a = aead.seal_random(aad, b"hello world!", &mut sealed_a).unwrap();
+  let nonce_a = aead
+    .seal_random(aad, b"hello world!", &mut sealed_a)
+    .expect("first random-nonce AEAD seal must succeed");
 
   let mut sealed_b = [0u8; 12 + ChaCha20Poly1305::TAG_SIZE];
-  let nonce_b = aead.seal_random(aad, b"hello world!", &mut sealed_b).unwrap();
+  let nonce_b = aead
+    .seal_random(aad, b"hello world!", &mut sealed_b)
+    .expect("second random-nonce AEAD seal must succeed");
 
   assert_ne!(nonce_a, nonce_b, "successive random seals must not reuse a nonce");
 
   let mut opened = [0u8; 12];
-  aead.decrypt(&nonce_a, aad, &sealed_a, &mut opened).unwrap();
+  aead
+    .decrypt(&nonce_a, aad, &sealed_a, &mut opened)
+    .expect("fresh random-nonce AEAD ciphertext must authenticate");
   assert_eq!(&opened, b"hello world!");
 }
 
@@ -105,10 +115,14 @@ fn aead_seal_random_in_place_returns_nonce_and_tag_for_open() {
   let aead = fixture_cipher();
   let mut buffer = *b"detached";
 
-  let (nonce, tag) = aead.seal_random_in_place(aad, &mut buffer).unwrap();
+  let (nonce, tag) = aead
+    .seal_random_in_place(aad, &mut buffer)
+    .expect("random-nonce detached AEAD seal must succeed");
   assert_ne!(&buffer, b"detached");
 
-  aead.decrypt_in_place(&nonce, aad, &mut buffer, &tag).unwrap();
+  aead
+    .decrypt_in_place(&nonce, aad, &mut buffer, &tag)
+    .expect("fresh random-nonce detached ciphertext must authenticate");
   assert_eq!(&buffer, b"detached");
 }
 
@@ -118,7 +132,9 @@ fn aead_seal_random_maps_buffer_errors_without_mutating_output() {
   let aead = fixture_cipher();
   let mut out = [0xA5; 3];
 
-  let err = aead.seal_random(b"", b"data", &mut out).unwrap_err();
+  let err = aead
+    .seal_random(b"", b"data", &mut out)
+    .expect_err("undersized random-nonce AEAD output must be rejected");
 
   assert_eq!(err, RandomSealError::seal(SealError::buffer()));
   assert_eq!(
@@ -137,15 +153,19 @@ fn detached_aliases_match_core_behavior() {
   let mut left = *b"detached";
   let mut right = left;
 
-  let tag_left = aead.encrypt_in_place(&nonce, aad, &mut left).unwrap();
-  let tag_right = aead.encrypt_in_place_detached(&nonce, aad, &mut right).unwrap();
+  let tag_left = aead
+    .encrypt_in_place(&nonce, aad, &mut left)
+    .expect("core detached AEAD seal must succeed");
+  let tag_right = aead
+    .encrypt_in_place_detached(&nonce, aad, &mut right)
+    .expect("detached AEAD alias must seal the same input");
 
   assert_eq!(left, right);
   assert!(tag_left.ct_eq(&tag_right).declassify());
 
   aead
     .decrypt_in_place_detached(&nonce, aad, &mut right, &tag_right)
-    .unwrap();
+    .expect("detached AEAD alias must open its fresh ciphertext");
   assert_eq!(right, *b"detached");
 }
 
@@ -156,7 +176,9 @@ fn aead_open_reports_buffer_and_verification_failures() {
   let aead = fixture_cipher();
 
   let mut sealed = [0u8; 4 + ChaCha20Poly1305::TAG_SIZE];
-  aead.encrypt(&nonce, b"aad", b"data", &mut sealed).unwrap();
+  aead
+    .encrypt(&nonce, b"aad", b"data", &mut sealed)
+    .expect("AEAD error fixture seal buffer must fit plaintext and tag");
 
   let mut short_out = [0u8; 3];
   assert_eq!(
@@ -184,8 +206,12 @@ fn aead_combined_open_accepts_empty_plaintext() {
   let mut sealed = [0u8; ChaCha20Poly1305::TAG_SIZE];
   let mut opened = [0u8; 0];
 
-  aead.encrypt(&nonce, b"aad", b"", &mut sealed).unwrap();
-  aead.decrypt(&nonce, b"aad", &sealed, &mut opened).unwrap();
+  aead
+    .encrypt(&nonce, b"aad", b"", &mut sealed)
+    .expect("AEAD must seal an empty plaintext");
+  aead
+    .decrypt(&nonce, b"aad", &sealed, &mut opened)
+    .expect("AEAD must open its empty-plaintext ciphertext");
 }
 
 #[test]
@@ -210,7 +236,9 @@ fn all_aeads_clear_in_place_buffer_on_verification_failure() {
       let cipher = $cipher;
       let nonce = $nonce;
       let mut buffer = *b"failed-open-clear";
-      let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap();
+      let tag = cipher
+        .encrypt_in_place(&nonce, b"aad", &mut buffer)
+        .expect(concat!($name, " failed-open fixture must seal"));
       let mut bad_tag = tag.to_bytes();
       bad_tag[0] ^= 0x80;
       let bad_tag = <$tag>::from_bytes(bad_tag);
@@ -282,7 +310,13 @@ fn all_aeads_clear_in_place_buffer_on_verification_failure() {
 #[test]
 #[cfg(feature = "aead")]
 fn aead_length_helpers_reject_invalid_sizes() {
-  assert_eq!(ChaCha20Poly1305::ciphertext_len(5).unwrap(), 21);
-  assert_eq!(ChaCha20Poly1305::plaintext_len(21).unwrap(), 5);
+  assert_eq!(
+    ChaCha20Poly1305::ciphertext_len(5).expect("five-byte plaintext length must fit ChaCha20-Poly1305"),
+    21
+  );
+  assert_eq!(
+    ChaCha20Poly1305::plaintext_len(21).expect("21-byte ciphertext length must include a full tag"),
+    5
+  );
   assert_eq!(ChaCha20Poly1305::plaintext_len(15), Err(AeadBufferError::new()));
 }

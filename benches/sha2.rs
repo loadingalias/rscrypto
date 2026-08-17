@@ -200,7 +200,7 @@ fn sha256_internal(c: &mut Criterion) {
     let mut g = c.benchmark_group("sha256/internal/compress");
 
     for block_count in [1usize, 2, 16] {
-      let len = block_count * 64;
+      let len = block_count.strict_mul(64);
       common::set_throughput(&mut g, len);
       g.bench_with_input(BenchmarkId::new("selected-kernel", format!("{len}B")), &len, |b, &n| {
         let blocks = &blocks[..n];

@@ -1,13 +1,18 @@
-use blake2::{Blake2s128 as OracleBlake2s128, Blake2s256 as OracleBlake2s256, Blake2sMac, Digest as _};
-use digest::typenum::{U16, U32};
-use hmac::{Mac as _, digest::KeyInit};
+use blake2::{
+  Blake2s as OracleBlake2s, Blake2s256 as OracleBlake2s256, Blake2sMac,
+  digest::{
+    Digest as _, Mac as _,
+    consts::{U16, U32},
+  },
+};
 use rscrypto::{Blake2s128, Blake2s256, Blake2sKey, Digest};
 use rscrypto_fuzz::{FuzzInput, assert_digest_chunked, assert_digest_reset, some_or_return, split_at_ratio};
 
 type OracleBlake2sMac128 = Blake2sMac<U16>;
 type OracleBlake2sMac256 = Blake2sMac<U32>;
+type OracleBlake2s128 = OracleBlake2s<U16>;
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let key_ratio: u8 = some_or_return!(input.byte());
@@ -30,7 +35,7 @@ pub fn run(data: &[u8]) {
     let split_idx = split_at_ratio(data, key_ratio).0.len();
     let key_len = split_idx.clamp(1, 32);
     let (key, msg) = data.split_at(key_len);
-    let typed_key = Blake2sKey::new(key).unwrap();
+    let typed_key = Blake2sKey::new(key).expect("the bounded BLAKE2s key length is valid");
     let (msg_a, msg_b) = split_at_ratio(msg, split);
 
     let mut ours_128_stream = Blake2s128::new_keyed(typed_key);
@@ -38,7 +43,8 @@ pub fn run(data: &[u8]) {
     ours_128_stream.update(msg_b);
     let ours_128_keyed = ours_128_stream.finalize();
 
-    let mut oracle_128_mac = OracleBlake2sMac128::new_from_slice(key).unwrap();
+    let mut oracle_128_mac =
+      OracleBlake2sMac128::new_from_slice(key).expect("the bounded BLAKE2s oracle key length is valid");
     oracle_128_mac.update(msg);
     let oracle_128_keyed = oracle_128_mac.finalize().into_bytes();
     assert_eq!(&ours_128_keyed[..], &oracle_128_keyed[..], "blake2s128 keyed mismatch");
@@ -48,7 +54,8 @@ pub fn run(data: &[u8]) {
     ours_256_stream.update(msg_b);
     let ours_256_keyed = ours_256_stream.finalize();
 
-    let mut oracle_256_mac = OracleBlake2sMac256::new_from_slice(key).unwrap();
+    let mut oracle_256_mac =
+      OracleBlake2sMac256::new_from_slice(key).expect("the bounded BLAKE2s oracle key length is valid");
     oracle_256_mac.update(msg);
     let oracle_256_keyed = oracle_256_mac.finalize().into_bytes();
     assert_eq!(&ours_256_keyed[..], &oracle_256_keyed[..], "blake2s256 keyed mismatch");

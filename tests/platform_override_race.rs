@@ -10,14 +10,15 @@ fn concurrent_override_writers_are_serialized() {
     for _ in 0..8 {
       scope.spawn(|| {
         for _ in 0..128 {
-          expert::try_set_override(Some(Detected::portable())).unwrap();
-          expert::try_set_override(None).unwrap();
+          expert::try_set_override(Some(Detected::portable()))
+            .expect("portable override must be accepted before detection");
+          expert::try_set_override(None).expect("override must be clearable before detection");
         }
       });
     }
   });
 
-  expert::try_set_override(None).unwrap();
+  expert::try_set_override(None).expect("override must be clearable after concurrent updates");
 }
 
 #[test]
@@ -39,13 +40,15 @@ fn concurrent_detection_and_override_child() {
     });
 
     barrier.wait();
-    let setter_result = setter.join().unwrap();
-    let detected = detector.join().unwrap();
+    let setter_result = setter.join().expect("override thread must not panic");
+    let detected = detector.join().expect("detection thread must not panic");
 
-    match setter_result {
-      Ok(()) => assert_eq!(detected, Detected::portable()),
-      Err(expert::OverrideError::AlreadyInitialized) => {}
-      Err(error) => panic!("unexpected override result: {error:?}"),
+    assert!(
+      matches!(setter_result, Ok(()) | Err(expert::OverrideError::AlreadyInitialized)),
+      "concurrent override returned an invalid result: {setter_result:?}"
+    );
+    if setter_result == Ok(()) {
+      assert_eq!(detected, Detected::portable());
     }
   });
 }
@@ -53,7 +56,7 @@ fn concurrent_detection_and_override_child() {
 #[test]
 #[cfg(not(miri))]
 fn concurrent_detection_and_override_are_linearizable() {
-  let executable = std::env::current_exe().unwrap();
+  let executable = std::env::current_exe().expect("test executable path must be available");
 
   for _ in 0..32 {
     let status = std::process::Command::new(&executable)
@@ -62,7 +65,7 @@ fn concurrent_detection_and_override_are_linearizable() {
       .arg("--quiet")
       .env(CHILD_MODE, "1")
       .status()
-      .unwrap();
+      .expect("race child process must start");
     assert!(status.success(), "race child failed with {status}");
   }
 }

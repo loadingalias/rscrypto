@@ -4,8 +4,7 @@ use crate::platform::Caps;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 #[non_exhaustive]
-#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
-pub enum AsconPermute12KernelId {
+pub(crate) enum AsconPermute12KernelId {
   Portable = 0,
   #[cfg(target_arch = "aarch64")]
   Aarch64Neon = 1,
@@ -16,9 +15,10 @@ pub enum AsconPermute12KernelId {
 }
 
 impl AsconPermute12KernelId {
+  #[cfg(feature = "diag")]
   #[inline]
   #[must_use]
-  pub const fn as_str(self) -> &'static str {
+  pub(crate) const fn as_str(self) -> &'static str {
     match self {
       Self::Portable => "portable",
       #[cfg(target_arch = "aarch64")]
@@ -33,8 +33,7 @@ impl AsconPermute12KernelId {
 
 #[inline]
 #[must_use]
-#[cfg_attr(not(any(test, feature = "std")), allow(dead_code))]
-pub const fn simd_degree(id: AsconPermute12KernelId) -> usize {
+pub(crate) const fn simd_degree(id: AsconPermute12KernelId) -> usize {
   match id {
     AsconPermute12KernelId::Portable => 1,
     #[cfg(target_arch = "aarch64")]
@@ -47,7 +46,7 @@ pub const fn simd_degree(id: AsconPermute12KernelId) -> usize {
 }
 
 #[must_use]
-pub fn permute_fn(id: AsconPermute12KernelId) -> fn(&mut [u64; 5]) {
+pub(crate) fn permute_fn(id: AsconPermute12KernelId) -> fn(&mut [u64; 5]) {
   match id {
     AsconPermute12KernelId::Portable => permute_12_portable,
     #[cfg(target_arch = "aarch64")]
@@ -61,7 +60,7 @@ pub fn permute_fn(id: AsconPermute12KernelId) -> fn(&mut [u64; 5]) {
 
 #[inline]
 #[must_use]
-pub const fn required_caps(id: AsconPermute12KernelId) -> Caps {
+pub(crate) const fn required_caps(id: AsconPermute12KernelId) -> Caps {
   match id {
     AsconPermute12KernelId::Portable => Caps::NONE,
     #[cfg(target_arch = "aarch64")]
@@ -76,7 +75,7 @@ pub const fn required_caps(id: AsconPermute12KernelId) -> Caps {
 }
 
 #[cfg(test)]
-pub const ALL: &[AsconPermute12KernelId] = &[
+pub(crate) const ALL: &[AsconPermute12KernelId] = &[
   AsconPermute12KernelId::Portable,
   #[cfg(target_arch = "aarch64")]
   AsconPermute12KernelId::Aarch64Neon,

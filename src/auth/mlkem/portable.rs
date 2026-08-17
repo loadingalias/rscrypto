@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)] // Fixed-size FIPS buffers and public loop indices bound every access.
-
 #[cfg(all(
   target_arch = "aarch64",
   any(target_os = "macos", target_os = "linux"),
@@ -12,13 +10,6 @@ mod s390x;
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 mod x86_64;
 
-#[cfg(all(
-  target_arch = "aarch64",
-  not(any(target_os = "macos", target_os = "linux")),
-  not(miri),
-  not(feature = "portable-only")
-))]
-use core::arch::aarch64::vgetq_lane_u16;
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 use core::arch::aarch64::{
   int16x4_t, int16x8_t, int32x4_t, uint16x4_t, uint16x8_t, uint16x8x2_t, vaddq_s16, vaddq_s32, vaddq_u16, vaddq_u32,
@@ -35,21 +26,13 @@ use core::arch::aarch64::{
   vdup_n_u16, vget_low_u16, vreinterpret_s16_u16, vreinterpret_u16_s16, vreinterpret_u32_u16, vreinterpretq_u16_u32,
   vreinterpretq_u32_u16, vset_lane_s16, vshr_n_s16, vsub_u16, vuzp1q_u32, vuzp2q_u32, vzip1_u32, vzip2_u32,
 };
-#[cfg(all(
-  target_arch = "aarch64",
-  not(any(target_os = "macos", target_os = "linux")),
-  not(miri),
-  not(feature = "portable-only")
-))]
-use core::arch::aarch64::{vget_high_u8, vget_low_u8, vld3q_u8, vmovl_u8, vorrq_u16, vshlq_n_u16, vshrq_n_u16};
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 use core::arch::x86_64::{
-  __m128i, __m256i, _mm_add_epi16, _mm_and_si128, _mm_cmpgt_epi16, _mm_loadl_epi64, _mm_loadu_si128, _mm_mulhi_epi16,
-  _mm_mullo_epi16, _mm_set1_epi16, _mm_setr_epi8, _mm_setzero_si128, _mm_shuffle_epi8, _mm_srli_epi16,
-  _mm_storel_epi64, _mm_storeu_si128, _mm_sub_epi16, _mm_unpacklo_epi16, _mm256_add_epi32, _mm256_and_si256,
-  _mm256_cmpgt_epi32, _mm256_cvtepi16_epi32, _mm256_loadu_si256, _mm256_mulhi_epi16, _mm256_mullo_epi16,
-  _mm256_mullo_epi32, _mm256_or_si256, _mm256_set1_epi32, _mm256_setzero_si256, _mm256_slli_epi32, _mm256_srai_epi32,
-  _mm256_srli_epi32, _mm256_storeu_si256, _mm256_sub_epi16, _mm256_sub_epi32,
+  __m128i, __m256i, _mm_add_epi16, _mm_and_si128, _mm_cmpgt_epi16, _mm_mulhi_epi16, _mm_mullo_epi16, _mm_set1_epi16,
+  _mm_setr_epi8, _mm_setzero_si128, _mm_shuffle_epi8, _mm_srli_epi16, _mm_sub_epi16, _mm_unpacklo_epi16,
+  _mm256_add_epi32, _mm256_and_si256, _mm256_cmpgt_epi32, _mm256_cvtepi16_epi32, _mm256_mulhi_epi16,
+  _mm256_mullo_epi16, _mm256_mullo_epi32, _mm256_or_si256, _mm256_set1_epi32, _mm256_setzero_si256, _mm256_slli_epi32,
+  _mm256_srai_epi32, _mm256_srli_epi32, _mm256_sub_epi16, _mm256_sub_epi32,
 };
 
 #[cfg(test)]
@@ -73,7 +56,7 @@ const Q_U32: u32 = Q as u32;
   all(target_arch = "aarch64", not(miri), not(feature = "portable-only")),
   all(target_arch = "x86_64", not(miri), not(feature = "portable-only"))
 ))]
-const Q_I16: i16 = Q as i16;
+const Q_I16: i16 = Q.cast_signed();
 #[cfg(any(
   test,
   miri,
@@ -90,7 +73,7 @@ const Q_DIV_RECIP: u64 = 20_642_679;
 #[cfg(any(test, not(target_arch = "s390x")))]
 const Q_COMPRESS_DIV_SHIFT: i32 = 33;
 #[cfg(any(test, not(target_arch = "s390x")))]
-const Q_COMPRESS_DIV_RECIP: u64 = 2_580_335;
+const Q_COMPRESS_DIV_RECIP: u32 = 2_580_335;
 const Q_MONT_INV_U16: u16 = 62_209;
 const MONT_R_SQUARED_MOD_Q: i16 = 1353;
 #[cfg(test)]
@@ -113,6 +96,42 @@ const SAMPLE_NTT_ACC_CHUNK_COEFFS: usize = 16;
 type Poly = [u16; N];
 type PolyVec<const K: usize> = [Poly; K];
 type PolyMatrix<const K: usize> = [PolyVec<K>; K];
+
+#[inline(always)]
+fn low_byte(value: u16) -> u8 {
+  value.to_le_bytes()[0]
+}
+
+#[inline(always)]
+fn low_u16(value: u32) -> u16 {
+  let [b0, b1, _, _] = value.to_le_bytes();
+  u16::from_le_bytes([b0, b1])
+}
+
+#[cfg(any(test, not(target_arch = "s390x")))]
+#[inline(always)]
+fn low_u32(value: u64) -> u32 {
+  let [b0, b1, b2, b3, _, _, _, _] = value.to_le_bytes();
+  u32::from_le_bytes([b0, b1, b2, b3])
+}
+
+#[cfg(test)]
+#[inline]
+fn test_low_byte(value: usize) -> u8 {
+  value.to_le_bytes()[0]
+}
+
+#[cfg(test)]
+#[inline]
+fn test_u8(value: usize) -> u8 {
+  u8::try_from(value).expect("test value fits in u8")
+}
+
+#[cfg(test)]
+#[inline]
+fn test_u16(value: usize) -> u16 {
+  u16::try_from(value).expect("test value fits in u16")
+}
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 type PolyMulCache = [u16; N / 2];
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -254,10 +273,7 @@ pub(super) fn validate_and_prepare_decapsulation_key<
     return Err(MlKemError::InvalidDecapsulationKey);
   }
 
-  let ek = match <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]) {
-    Ok(ek) => ek,
-    Err(_) => unreachable!("ML-KEM decapsulation key layout must include an encapsulation key"),
-  };
+  let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
   Ok(PreparedDecapsulationArithmetic {
     s_hat: prepare_decapsulation_key::<K, DK_PKE_BYTES, DK_BYTES>(dk),
     encapsulation: prepare_encapsulation_key::<K, EK_BYTES>(ek),
@@ -291,7 +307,9 @@ fn prepare_matrix_transpose<const K: usize>(rho: &[u8; SEED_BYTES]) -> PolyMatri
   let mut a_transpose_hat = [[[0u16; N]; K]; K];
   for (i, row) in a_transpose_hat.iter_mut().enumerate() {
     for (j, poly) in row.iter_mut().enumerate() {
-      sample_ntt_into(rho, i as u8, j as u8, poly);
+      let i = u8::try_from(i).expect("ML-KEM matrix row fits in u8");
+      let j = u8::try_from(j).expect("ML-KEM matrix column fits in u8");
+      sample_ntt_into(rho, i, j, poly);
     }
   }
   a_transpose_hat
@@ -580,14 +598,11 @@ pub(super) fn decapsulate<
 >(
   dk: &[u8; DK_BYTES],
   c: &[u8; CT_BYTES],
-) -> [u8; SHARED_SECRET_BYTES] {
+) -> Result<[u8; SHARED_SECRET_BYTES], MlKemError> {
   let dk_pke = &dk[..DK_PKE_BYTES];
   let ek_start = DK_PKE_BYTES;
   let ek_end = ek_start.strict_add(EK_BYTES);
-  let ek = match <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]) {
-    Ok(ek) => ek,
-    Err(_) => unreachable!("ML-KEM decapsulation key layout must include an encapsulation key"),
-  };
+  let ek = <&[u8; EK_BYTES]>::try_from(&dk[ek_start..ek_end]).map_err(|_| MlKemError::InvalidDecapsulationKey)?;
   let h_start = ek_end;
   let h_stored = &dk[h_start..h_start.strict_add(HASH_BYTES)];
   let z = &dk[h_start.strict_add(HASH_BYTES)..];
@@ -624,7 +639,7 @@ pub(super) fn decapsulate<
   ct::zeroize(&mut c_prime);
   ct::zeroize(core::slice::from_mut(&mut match_mask));
 
-  shared
+  Ok(shared)
 }
 
 fn pke_keygen<
@@ -686,22 +701,22 @@ fn keygen_sample_noise<const K: usize, const ETA1_RANDOM_BYTES: usize>(
     let (s1, _) = s_tail.split_at_mut(1);
     let (e0, e_tail) = t_hat.split_at_mut(1);
     let (e1, _) = e_tail.split_at_mut(1);
-    sample_noise_quad::<ETA1_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut e0[0], 3, &mut e1[0]);
+    sample_noise_quad::<ETA1_RANDOM_BYTES>(sigma, [0, 1, 2, 3], [&mut s0[0], &mut s1[0], &mut e0[0], &mut e1[0]]);
   } else if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 4 {
     let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, s_tail) = s_tail.split_at_mut(1);
     let (s2, s3) = s_tail.split_at_mut(1);
-    sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut s2[0], 3, &mut s3[0]);
+    sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, [0, 1, 2, 3], [&mut s0[0], &mut s1[0], &mut s2[0], &mut s3[0]]);
 
     let (e0, e_tail) = t_hat.split_at_mut(1);
     let (e1, e_tail) = e_tail.split_at_mut(1);
     let (e2, e3) = e_tail.split_at_mut(1);
-    sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 4, &mut e0[0], 5, &mut e1[0], 6, &mut e2[0], 7, &mut e3[0]);
+    sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, [4, 5, 6, 7], [&mut e0[0], &mut e1[0], &mut e2[0], &mut e3[0]]);
   } else if ETA1_RANDOM_BYTES == ETA2_RANDOM_BYTES && K == 3 {
     let (s0, s_tail) = s_hat.split_at_mut(1);
     let (s1, s2) = s_tail.split_at_mut(1);
     let (e0, e_tail) = t_hat.split_at_mut(1);
-    sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, 0, &mut s0[0], 1, &mut s1[0], 2, &mut s2[0], 3, &mut e0[0]);
+    sample_noise_quad::<ETA2_RANDOM_BYTES>(sigma, [0, 1, 2, 3], [&mut s0[0], &mut s1[0], &mut s2[0], &mut e0[0]]);
 
     let (e1, e2) = e_tail.split_at_mut(1);
     sample_noise_pair::<ETA2_RANDOM_BYTES>(sigma, 4, &mut e1[0], 5, &mut e2[0]);
@@ -740,14 +755,15 @@ fn keygen_matrix_accumulate<const K: usize>(rho: &[u8; SEED_BYTES], s_hat: &Poly
 #[inline(always)]
 fn keygen_matrix_accumulate_fused<const K: usize>(rho: &[u8; SEED_BYTES], s_hat: &PolyVec<K>, t_hat: &mut PolyVec<K>) {
   for (i, t_hat_i) in t_hat.iter_mut().enumerate() {
+    let i_u8 = u8::try_from(i).expect("ML-KEM matrix row fits in u8");
     if K == 4 {
       sample_ntt_quad_mul_accumulate(
         rho,
         [
-          (0, i as u8, &s_hat[0]),
-          (1, i as u8, &s_hat[1]),
-          (2, i as u8, &s_hat[2]),
-          (3, i as u8, &s_hat[3]),
+          (0, i_u8, &s_hat[0]),
+          (1, i_u8, &s_hat[1]),
+          (2, i_u8, &s_hat[2]),
+          (3, i_u8, &s_hat[3]),
         ],
         t_hat_i,
       );
@@ -755,17 +771,15 @@ fn keygen_matrix_accumulate_fused<const K: usize>(rho: &[u8; SEED_BYTES], s_hat:
       let mut j = 0usize;
       while j.strict_add(1) < K {
         let next = j.strict_add(1);
-        sample_ntt_pair_mul_accumulate(
-          rho,
-          (j as u8, i as u8, &s_hat[j]),
-          (next as u8, i as u8, &s_hat[next]),
-          t_hat_i,
-        );
+        let j_u8 = u8::try_from(j).expect("ML-KEM matrix column fits in u8");
+        let next_u8 = u8::try_from(next).expect("ML-KEM matrix column fits in u8");
+        sample_ntt_pair_mul_accumulate(rho, (j_u8, i_u8, &s_hat[j]), (next_u8, i_u8, &s_hat[next]), t_hat_i);
 
         j = j.strict_add(2);
       }
       if j < K {
-        sample_ntt_mul_accumulate(rho, j as u8, i as u8, &s_hat[j], t_hat_i);
+        let j_u8 = u8::try_from(j).expect("ML-KEM matrix column fits in u8");
+        sample_ntt_mul_accumulate(rho, j_u8, i_u8, &s_hat[j], t_hat_i);
       }
     }
   }
@@ -1149,7 +1163,8 @@ pub(super) unsafe fn diag_s390x_compress_decompress_values_digest(values: [u16; 
 #[cfg(test)]
 fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
   for (i, byte) in out.iter_mut().enumerate() {
-    *byte = seed.wrapping_add(i as u8);
+    let i = u8::try_from(i).expect("ML-KEM diagnostic seed offset fits in u8");
+    *byte = seed.wrapping_add(i);
   }
 }
 
@@ -1158,7 +1173,8 @@ fn fill_diag_seed(out: &mut [u8; SEED_BYTES], seed: u8) {
 fn diag_fold_poly(poly: &Poly) -> u16 {
   let mut acc = 0u16;
   for (i, &coeff) in poly.iter().enumerate() {
-    acc ^= coeff.wrapping_mul((i as u16).wrapping_add(1));
+    let i = u16::try_from(i).expect("ML-KEM polynomial index fits in u16");
+    acc ^= coeff.wrapping_mul(i.wrapping_add(1));
   }
   acc
 }
@@ -1190,7 +1206,7 @@ fn pke_encrypt_prepared_768(
   let mut e1 = [[0u16; N]; 3];
   let [y0, y1, y2] = &mut y_hat;
   let [e10, e11, e12] = &mut e1;
-  sample_noise_quad::<128>(r, 0, y0, 1, y1, 2, y2, 3, e10);
+  sample_noise_quad::<128>(r, [0, 1, 2, 3], [y0, y1, y2, e10]);
   sample_noise_pair::<ETA2_RANDOM_BYTES>(r, 4, e11, 5, e12);
   let mut e2 = [0u16; N];
   sample_noise::<ETA2_RANDOM_BYTES>(r, 6, &mut e2);
@@ -1233,9 +1249,9 @@ fn pke_encrypt_prepared_1024(
   let mut y_hat = [[0u16; N]; 4];
   let mut e1 = [[0u16; N]; 4];
   let [y0, y1, y2, y3] = &mut y_hat;
-  sample_noise_quad::<128>(r, 0, y0, 1, y1, 2, y2, 3, y3);
+  sample_noise_quad::<128>(r, [0, 1, 2, 3], [y0, y1, y2, y3]);
   let [e10, e11, e12, e13] = &mut e1;
-  sample_noise_quad::<ETA2_RANDOM_BYTES>(r, 4, e10, 5, e11, 6, e12, 7, e13);
+  sample_noise_quad::<ETA2_RANDOM_BYTES>(r, [4, 5, 6, 7], [e10, e11, e12, e13]);
   let mut e2 = [0u16; N];
   sample_noise::<ETA2_RANDOM_BYTES>(r, 8, &mut e2);
 
@@ -1324,7 +1340,7 @@ fn pke_encrypt_prepared_768_compare(
   let mut e1 = [[0u16; N]; 3];
   let [y0, y1, y2] = &mut y_hat;
   let [e10, e11, e12] = &mut e1;
-  sample_noise_quad::<128>(r, 0, y0, 1, y1, 2, y2, 3, e10);
+  sample_noise_quad::<128>(r, [0, 1, 2, 3], [y0, y1, y2, e10]);
   sample_noise_pair::<ETA2_RANDOM_BYTES>(r, 4, e11, 5, e12);
   let mut e2 = [0u16; N];
   sample_noise::<ETA2_RANDOM_BYTES>(r, 6, &mut e2);
@@ -1368,9 +1384,9 @@ fn pke_encrypt_prepared_1024_compare(
   let mut y_hat = [[0u16; N]; 4];
   let mut e1 = [[0u16; N]; 4];
   let [y0, y1, y2, y3] = &mut y_hat;
-  sample_noise_quad::<128>(r, 0, y0, 1, y1, 2, y2, 3, y3);
+  sample_noise_quad::<128>(r, [0, 1, 2, 3], [y0, y1, y2, y3]);
   let [e10, e11, e12, e13] = &mut e1;
-  sample_noise_quad::<ETA2_RANDOM_BYTES>(r, 4, e10, 5, e11, 6, e12, 7, e13);
+  sample_noise_quad::<ETA2_RANDOM_BYTES>(r, [4, 5, 6, 7], [e10, e11, e12, e13]);
   let mut e2 = [0u16; N];
   sample_noise::<ETA2_RANDOM_BYTES>(r, 8, &mut e2);
 
@@ -2162,13 +2178,11 @@ fn sample_matrix_ntt_mul_accumulate_materialized_k4_transpose<const K: usize>(
 
 #[inline]
 fn matrix_accumulate_coord<const K: usize>(entry: usize, transpose: bool) -> ((u8, u8), usize, usize) {
-  let dst = entry / K;
-  let rhs = entry % K;
-  let sample = if transpose {
-    (dst as u8, rhs as u8)
-  } else {
-    (rhs as u8, dst as u8)
-  };
+  let dst = entry.checked_div(K).expect("ML-KEM dimension must be nonzero");
+  let rhs = entry.checked_rem(K).expect("ML-KEM dimension must be nonzero");
+  let dst_u8 = u8::try_from(dst).expect("ML-KEM matrix row fits in u8");
+  let rhs_u8 = u8::try_from(rhs).expect("ML-KEM matrix column fits in u8");
+  let sample = if transpose { (dst_u8, rhs_u8) } else { (rhs_u8, dst_u8) };
   (sample, dst, rhs)
 }
 
@@ -2397,7 +2411,7 @@ fn sample_ntt_initial_3blocks_then_tail_into(rho: &[u8; SEED_BYTES], j: u8, i: u
   let mut filled = 0usize;
   sample_ntt_initial_3blocks_public(&buf, out, &mut filled);
 
-  let mut blocks = SAMPLE_NTT_INITIAL_BLOCKS as u16;
+  let mut blocks = u16::try_from(SAMPLE_NTT_INITIAL_BLOCKS).expect("initial ML-KEM sample block count fits in u16");
   let mut tail = [0u8; SHAKE128_RATE_BYTES];
   while filled < N {
     reader.squeeze(&mut tail);
@@ -2537,7 +2551,8 @@ fn sample_ntt_triple_initial_3blocks_then_tail_into(
   sample_ntt_initial_3blocks_public(&initial[1], out1, &mut filled[1]);
   sample_ntt_initial_3blocks_public(&initial[2], out2, &mut filled[2]);
 
-  let mut blocks = [SAMPLE_NTT_INITIAL_BLOCKS as u16; 3];
+  let initial_blocks = u16::try_from(SAMPLE_NTT_INITIAL_BLOCKS).expect("initial ML-KEM sample block count fits in u16");
+  let mut blocks = [initial_blocks; 3];
   let mut tail = [[0u8; SHAKE128_RATE_BYTES]; 3];
 
   while filled[0] < N && filled[1] < N && filled[2] < N {
@@ -2895,125 +2910,6 @@ fn sample_ntt_pair_block_scalar(
   *filled1 = n1;
 }
 
-#[cfg(all(
-  target_arch = "aarch64",
-  not(any(target_os = "macos", target_os = "linux")),
-  not(miri),
-  not(feature = "portable-only")
-))]
-macro_rules! sample_ntt_extract_16_candidate_vectors_neon {
-  ($input:expr) => {{
-    let mask = vdupq_n_u16(0x0f);
-    // SAFETY: 48-byte deinterleaved load because:
-    // 1. The caller guarantees `$input..$input+48` is readable.
-    // 2. `vld3q_u8` reads exactly three 16-byte vectors from that public SampleNTT byte block.
-    // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
-    let triples = unsafe { vld3q_u8($input) };
-
-    let a0 = vmovl_u8(vget_low_u8(triples.0));
-    let a1 = vmovl_u8(vget_low_u8(triples.1));
-    let a2 = vmovl_u8(vget_low_u8(triples.2));
-    let d0 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
-    let d1 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
-
-    let a0 = vmovl_u8(vget_high_u8(triples.0));
-    let a1 = vmovl_u8(vget_high_u8(triples.1));
-    let a2 = vmovl_u8(vget_high_u8(triples.2));
-    let d2 = vorrq_u16(a0, vshlq_n_u16(vandq_u16(a1, mask), 8));
-    let d3 = vorrq_u16(vshrq_n_u16(a1, 4), vshlq_n_u16(a2, 4));
-
-    (d0, d1, d2, d3)
-  }};
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  not(any(target_os = "macos", target_os = "linux")),
-  not(miri),
-  not(feature = "portable-only")
-))]
-macro_rules! sample_ntt_store_public_candidate_unchecked {
-  ($out:expr, $n:ident, $candidate:expr) => {{
-    let candidate = $candidate;
-    if candidate < Q {
-      // SAFETY: unchecked public-sample store because:
-      // 1. The caller reserved enough output capacity for every possible accepted candidate in this
-      //    block, so the current accepted candidate is in bounds.
-      // 2. `$out` comes from a unique mutable polynomial borrow for the duration of parsing.
-      // 3. The branch depends only on public matrix-A sample bytes.
-      unsafe {
-        *$out.add($n) = candidate;
-      }
-      $n = $n.strict_add(1);
-    }
-  }};
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  not(any(target_os = "macos", target_os = "linux")),
-  not(miri),
-  not(feature = "portable-only")
-))]
-macro_rules! sample_ntt_store_candidate_vectors_neon {
-  ($out:expr, $n:ident, $candidates:expr) => {{
-    let (d0_lo, d1_lo, d0_hi, d1_hi) = $candidates;
-    macro_rules! store_pair_lane {
-      ($lane:literal, $d0:expr, $d1:expr) => {{
-        sample_ntt_store_public_candidate_unchecked!($out, $n, vgetq_lane_u16::<$lane>($d0));
-        sample_ntt_store_public_candidate_unchecked!($out, $n, vgetq_lane_u16::<$lane>($d1));
-      }};
-    }
-
-    store_pair_lane!(0, d0_lo, d1_lo);
-    store_pair_lane!(1, d0_lo, d1_lo);
-    store_pair_lane!(2, d0_lo, d1_lo);
-    store_pair_lane!(3, d0_lo, d1_lo);
-    store_pair_lane!(4, d0_lo, d1_lo);
-    store_pair_lane!(5, d0_lo, d1_lo);
-    store_pair_lane!(6, d0_lo, d1_lo);
-    store_pair_lane!(7, d0_lo, d1_lo);
-    store_pair_lane!(0, d0_hi, d1_hi);
-    store_pair_lane!(1, d0_hi, d1_hi);
-    store_pair_lane!(2, d0_hi, d1_hi);
-    store_pair_lane!(3, d0_hi, d1_hi);
-    store_pair_lane!(4, d0_hi, d1_hi);
-    store_pair_lane!(5, d0_hi, d1_hi);
-    store_pair_lane!(6, d0_hi, d1_hi);
-    store_pair_lane!(7, d0_hi, d1_hi);
-  }};
-}
-
-#[cfg(all(
-  target_arch = "aarch64",
-  not(any(target_os = "macos", target_os = "linux")),
-  not(miri),
-  not(feature = "portable-only")
-))]
-#[target_feature(enable = "neon")]
-/// # Safety
-///
-/// `input` must point to 48 readable bytes. The caller must guarantee that the active CPU supports
-/// NEON. `out` must be a unique 32-candidate destination.
-unsafe fn sample_ntt_extract_16_candidates_neon(input: *const u8, out: &mut [u16; 32]) {
-  let (d0_lo, d1_lo, d0_hi, d1_hi) = sample_ntt_extract_16_candidate_vectors_neon!(input);
-
-  // SAFETY: store the first 16 interleaved candidates because:
-  // 1. `out` is a unique `[u16; 32]` destination.
-  // 2. `vst2q_u16` writes exactly 16 u16 values from two eight-lane vectors.
-  // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
-  unsafe {
-    vst2q_u16(out.as_mut_ptr(), uint16x8x2_t(d0_lo, d1_lo));
-  }
-  // SAFETY: store the last 16 interleaved candidates because:
-  // 1. `out.as_mut_ptr().add(16)..add(32)` is inside the 32-candidate destination.
-  // 2. `vst2q_u16` writes exactly 16 u16 values from two eight-lane vectors.
-  // 3. The surrounding function is gated by `#[target_feature(enable = "neon")]`.
-  unsafe {
-    vst2q_u16(out.as_mut_ptr().add(16), uint16x8x2_t(d0_hi, d1_hi));
-  }
-}
-
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
 /// # Safety
@@ -3073,105 +2969,33 @@ fn sample_ntt_pair_block_neon(
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
   if N.strict_sub(*filled0) < MAX_CANDIDATES || N.strict_sub(*filled1) < MAX_CANDIDATES {
-    #[cfg(target_os = "linux")]
-    {
-      // SAFETY: bounded aarch64 SampleNTT tail parsing because:
-      // 1. `buf0` and `buf1` are fixed full SHAKE128 rate blocks.
-      // 2. The helper caps writes to each polynomial's remaining capacity.
-      // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
-      // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-      unsafe {
-        sample_ntt_block_asm_bounded(buf0.as_ptr(), out0, filled0);
-        sample_ntt_block_asm_bounded(buf1.as_ptr(), out1, filled1);
-      }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-      sample_ntt_block(buf0, out0, filled0);
-      sample_ntt_block(buf1, out1, filled1);
+    // SAFETY: bounded aarch64 SampleNTT tail parsing because:
+    // 1. `buf0` and `buf1` are fixed full SHAKE128 rate blocks.
+    // 2. The helper caps writes to each polynomial's remaining capacity.
+    // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
+    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+    unsafe {
+      sample_ntt_block_asm_bounded(buf0.as_ptr(), out0, filled0);
+      sample_ntt_block_asm_bounded(buf1.as_ptr(), out1, filled1);
     }
     return;
   }
 
-  #[cfg(target_os = "linux")]
-  {
-    let n0 = *filled0;
-    let n1 = *filled1;
-    // SAFETY: aarch64 compact assembly SampleNTT block parsing because:
-    // 1. `buf0` and `buf1` are full 168-byte SHAKE128 rate blocks.
-    // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
-    // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
-    // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
-    let (count0, count1) = unsafe {
-      (
-        aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), buf0.as_ptr()),
-        aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), buf1.as_ptr()),
-      )
-    };
-    *filled0 = n0.strict_add(count0);
-    *filled1 = n1.strict_add(count1);
-  }
-
-  #[cfg(not(target_os = "linux"))]
-  {
-    const NEON_TRIPLES: usize = 16;
-    const NEON_BYTES: usize = NEON_TRIPLES * 3;
-
-    let mut n0 = *filled0;
-    let mut n1 = *filled1;
-    let out0_ptr = out0.as_mut_ptr();
-    let out1_ptr = out1.as_mut_ptr();
-    let mut offset = 0usize;
-
-    while offset.strict_add(NEON_BYTES) <= SHAKE128_RATE_BYTES {
-      // SAFETY: fixed 48-byte NEON extraction plus unchecked public-sample stores because:
-      // 1. `offset + NEON_BYTES <= SHAKE128_RATE_BYTES`, so both inputs name complete chunks.
-      // 2. The preflight above ensures each output has room for all candidates from the whole rate block.
-      // 3. Rejection branches and write counts depend only on public matrix-A samples.
-      let candidates0 = sample_ntt_extract_16_candidate_vectors_neon!(buf0.as_ptr().add(offset));
-      let candidates1 = sample_ntt_extract_16_candidate_vectors_neon!(buf1.as_ptr().add(offset));
-      sample_ntt_store_candidate_vectors_neon!(out0_ptr, n0, candidates0);
-      sample_ntt_store_candidate_vectors_neon!(out1_ptr, n1, candidates1);
-
-      offset = offset.strict_add(NEON_BYTES);
-    }
-
-    while offset.strict_add(2) < SHAKE128_RATE_BYTES {
-      let a0 = buf0[offset];
-      let a1 = buf0[offset.strict_add(1)];
-      let a2 = buf0[offset.strict_add(2)];
-      let b0 = buf1[offset];
-      let b1 = buf1[offset.strict_add(1)];
-      let b2 = buf1[offset.strict_add(2)];
-
-      let d0 = u16::from(a0) | (u16::from(a1 & 0x0f) << 8);
-      let d1 = (u16::from(a1) >> 4) | (u16::from(a2) << 4);
-      let e0 = u16::from(b0) | (u16::from(b1 & 0x0f) << 8);
-      let e1 = (u16::from(b1) >> 4) | (u16::from(b2) << 4);
-
-      if d0 < Q {
-        out0[n0] = d0;
-        n0 = n0.strict_add(1);
-      }
-      if d1 < Q {
-        out0[n0] = d1;
-        n0 = n0.strict_add(1);
-      }
-      if e0 < Q {
-        out1[n1] = e0;
-        n1 = n1.strict_add(1);
-      }
-      if e1 < Q {
-        out1[n1] = e1;
-        n1 = n1.strict_add(1);
-      }
-
-      offset = offset.strict_add(3);
-    }
-
-    *filled0 = n0;
-    *filled1 = n1;
-  }
+  let n0 = *filled0;
+  let n1 = *filled1;
+  // SAFETY: aarch64 compact assembly SampleNTT block parsing because:
+  // 1. `buf0` and `buf1` are full 168-byte SHAKE128 rate blocks.
+  // 2. The preflight above reserves capacity for all 112 candidates each block can produce.
+  // 3. `out0` and `out1` come from distinct mutable polynomial borrows.
+  // 4. Rejection branches and write positions depend only on public matrix-A XOF bytes.
+  let (count0, count1) = unsafe {
+    (
+      aarch64::sample_ntt_rej_uniform_block_asm(out0.as_mut_ptr().add(n0), buf0.as_ptr()),
+      aarch64::sample_ntt_rej_uniform_block_asm(out1.as_mut_ptr().add(n1), buf1.as_ptr()),
+    )
+  };
+  *filled0 = n0.strict_add(count0);
+  *filled1 = n1.strict_add(count1);
 }
 
 fn sample_ntt_triple_from_xof_into(mut readers: [Shake128XofReader; 3], out: [&mut Poly; 3]) {
@@ -3250,8 +3074,7 @@ fn sample_ntt_quad_from_xof_into(mut readers: [Shake128XofReader; 4], out: [&mut
       not(feature = "portable-only")
     )))]
     {
-      let [buf0, buf1, buf2, buf3] = &mut bufs;
-      Shake128XofReader::squeeze_quad(reader0, reader1, reader2, reader3, buf0, buf1, buf2, buf3);
+      reader0.squeeze_quad(reader1, reader2, reader3, &mut bufs);
       sample_ntt_quad_block(&bufs, [out0, out1, out2, out3], &mut filled);
     }
   }
@@ -3384,7 +3207,8 @@ impl<'a> SampleNttProduct<'a> {
   #[cfg(not(all(target_arch = "aarch64", not(miri), not(feature = "portable-only"))))]
   #[inline(always)]
   fn absorb_block_scalar(&mut self, buf: &[u8; SHAKE128_RATE_BYTES], acc: &mut Poly) {
-    for chunk in buf.chunks_exact(3) {
+    let (chunks, remainder) = buf.as_chunks::<3>();
+    for chunk in chunks {
       let d1 = u16::from(chunk[0]) | (u16::from(chunk[1] & 0x0f) << 8);
       let d2 = (u16::from(chunk[1]) >> 4) | (u16::from(chunk[2]) << 4);
 
@@ -3394,6 +3218,7 @@ impl<'a> SampleNttProduct<'a> {
         break;
       }
     }
+    debug_assert!(remainder.is_empty());
   }
 
   #[inline(always)]
@@ -3493,6 +3318,9 @@ unsafe fn multiply_ntts_add_assign_chunk_neon_ptr(acc: &mut Poly, a_ptr: *const 
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn sample_ntt_product_absorb_block_neon(
   product: &mut SampleNttProduct<'_>,
   buf: &[u8; SHAKE128_RATE_BYTES],
@@ -3617,6 +3445,10 @@ unsafe fn sample_ntt_product_absorb_rate_ptr_neon(
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// # Safety
+///
+/// The active CPU must support AVX2, SSE4.1, and SSSE3. `buf` must be one complete SHAKE128 rate
+/// block, and `product` and `acc` must retain their unique ML-KEM polynomial ownership.
 fn sample_ntt_product_absorb_block_avx2(
   product: &mut SampleNttProduct<'_>,
   buf: &[u8; SHAKE128_RATE_BYTES],
@@ -3643,6 +3475,10 @@ fn sample_ntt_product_absorb_block_avx2(
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// # Safety
+///
+/// The active CPU must support AVX2, SSE4.1, and SSSE3. `product` and `acc` must retain their unique
+/// ML-KEM polynomial ownership.
 fn sample_ntt_product_absorb_candidates_avx2(
   product: &mut SampleNttProduct<'_>,
   candidates: &[u16; 8],
@@ -3755,8 +3591,7 @@ fn sample_ntt_quad_mul_accumulate_from_xof(mut readers: [Shake128XofReader; 4], 
   {
     while !products[0].is_done() && !products[1].is_done() && !products[2].is_done() && !products[3].is_done() {
       let [reader0, reader1, reader2, reader3] = &mut readers;
-      let [buf0, buf1, buf2, buf3] = &mut bufs;
-      Shake128XofReader::squeeze_quad(reader0, reader1, reader2, reader3, buf0, buf1, buf2, buf3);
+      reader0.squeeze_quad(reader1, reader2, reader3, &mut bufs);
       products[0].absorb_block(&bufs[0], acc);
       products[1].absorb_block(&bufs[1], acc);
       products[2].absorb_block(&bufs[2], acc);
@@ -3997,6 +3832,11 @@ unsafe fn sample_ntt_triple_block_neon_ptrs(rate_ptrs: [*const u8; 3], out: [&mu
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The active CPU must support AArch64 NEON. Every pointer in `rate_ptrs` must
+/// reference a readable SHAKE128 rate block. The output polynomials must be
+/// distinct, and every value in `filled` must be at most `N`.
 unsafe fn sample_ntt_quad_block_neon_ptrs(rate_ptrs: [*const u8; 4], out: [&mut Poly; 4], filled: &mut [usize; 4]) {
   const MAX_CANDIDATES: usize = (SHAKE128_RATE_BYTES / 3) * 2;
 
@@ -4144,6 +3984,10 @@ unsafe fn sample_ntt_block_avx2(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly,
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// # Safety
+///
+/// The active CPU must support AVX2, SSE4.1, and SSSE3. `out` must have room for every accepted
+/// candidate in `buf`, as established by the caller's remaining-capacity check.
 fn sample_ntt_block_avx2_full(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
   let mut n = *filled;
   let out_ptr = out.as_mut_ptr();
@@ -4169,6 +4013,10 @@ fn sample_ntt_block_avx2_full(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, f
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// # Safety
+///
+/// The active CPU must support AVX2, SSE4.1, and SSSE3. `out` and `filled` must describe one unique
+/// ML-KEM polynomial destination.
 fn sample_ntt_block_avx2_bounded(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mut usize) {
   let mut n = *filled;
   let out_ptr = out.as_mut_ptr();
@@ -4241,6 +4089,11 @@ fn sample_ntt_store_candidates_bounded(out: *mut u16, n: &mut usize, candidates:
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1,ssse3")]
+/// Decode eight SampleNTT candidates from a potentially unaligned 16-byte window.
+///
+/// # Safety
+///
+/// The active CPU must support AVX2, SSE4.1, and SSSE3, and `input` must be valid to read 16 bytes.
 unsafe fn sample_ntt_extract_8_candidates_avx2(input: *const u8, shifted_tail: bool) -> [u16; 8] {
   let pad = i8::MIN;
   let (even_mask, odd_mask) = if shifted_tail {
@@ -4255,24 +4108,17 @@ unsafe fn sample_ntt_extract_8_candidates_avx2(input: *const u8, shifted_tail: b
     )
   };
 
-  // SAFETY: unaligned 16-byte input load because:
-  // 1. The caller guarantees `input..input + 16` is readable inside the SHAKE128 rate block.
-  // 2. `_mm_loadu_si128` accepts arbitrary alignment.
-  // 3. The surrounding function is gated by AVX2/SSE4.1/SSSE3 target features.
-  let block = unsafe { _mm_loadu_si128(input.cast::<__m128i>()) };
+  // SAFETY: the caller guarantees `input..input + 16` is readable inside the SHAKE128 rate block.
+  let bytes = unsafe { input.cast::<[u8; 16]>().read_unaligned() };
+  // SAFETY: `[u8; 16]` and `__m128i` are 128-bit values, and every bit pattern is valid for both.
+  let block = unsafe { core::mem::transmute::<[u8; 16], __m128i>(bytes) };
   let mask_12 = _mm_set1_epi16(0x0fff);
   let even = _mm_and_si128(_mm_shuffle_epi8(block, even_mask), mask_12);
   let odd = _mm_srli_epi16::<4>(_mm_shuffle_epi8(block, odd_mask));
   let interleaved = _mm_unpacklo_epi16(even, odd);
 
-  let mut candidates = [0u16; 8];
-  // SAFETY: store exactly eight decoded candidates because:
-  // 1. `candidates` is a fully initialized local `[u16; 8]` destination.
-  // 2. `_mm_storeu_si128` writes exactly 16 bytes and accepts arbitrary alignment.
-  unsafe {
-    _mm_storeu_si128(candidates.as_mut_ptr().cast::<__m128i>(), interleaved);
-  }
-  candidates
+  // SAFETY: `__m128i` and `[u16; 8]` are 128-bit values, and every bit pattern is valid for both.
+  unsafe { core::mem::transmute::<__m128i, [u16; 8]>(interleaved) }
 }
 
 #[cfg(not(all(
@@ -4309,12 +4155,16 @@ fn sample_ntt_block(buf: &[u8; SHAKE128_RATE_BYTES], out: &mut Poly, filled: &mu
 }
 
 fn sample_noise<const RANDOM_BYTES: usize>(seed: &[u8; SEED_BYTES], nonce: u8, out: &mut Poly) {
+  assert!(
+    matches!(RANDOM_BYTES, ETA2_RANDOM_BYTES | ETA3_RANDOM_BYTES),
+    "unsupported ML-KEM noise width"
+  );
   let mut buf = [0u8; RANDOM_BYTES];
   prf_eta(seed, nonce, &mut buf);
   match RANDOM_BYTES {
     ETA2_RANDOM_BYTES => sample_poly_cbd_eta2(&buf, out),
     ETA3_RANDOM_BYTES => sample_poly_cbd_eta3(&buf, out),
-    _ => unreachable!("unsupported ML-KEM noise width"),
+    _ => {}
   }
   ct::zeroize(&mut buf);
 }
@@ -4326,6 +4176,10 @@ fn sample_noise_pair<const RANDOM_BYTES: usize>(
   nonce1: u8,
   out1: &mut Poly,
 ) {
+  assert!(
+    matches!(RANDOM_BYTES, ETA2_RANDOM_BYTES | ETA3_RANDOM_BYTES),
+    "unsupported ML-KEM noise width"
+  );
   let (mut reader0, mut reader1) = MlKemShake256XofReader::seeded_32_1_pair(seed, nonce0, nonce1);
   let mut buf0 = [0u8; RANDOM_BYTES];
   let mut buf1 = [0u8; RANDOM_BYTES];
@@ -4339,59 +4193,43 @@ fn sample_noise_pair<const RANDOM_BYTES: usize>(
       sample_poly_cbd_eta3(&buf0, out0);
       sample_poly_cbd_eta3(&buf1, out1);
     }
-    _ => unreachable!("unsupported ML-KEM noise width"),
+    _ => {}
   }
   ct::zeroize(&mut buf0);
   ct::zeroize(&mut buf1);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn sample_noise_quad<const RANDOM_BYTES: usize>(
   seed: &[u8; SEED_BYTES],
-  nonce0: u8,
-  out0: &mut Poly,
-  nonce1: u8,
-  out1: &mut Poly,
-  nonce2: u8,
-  out2: &mut Poly,
-  nonce3: u8,
-  out3: &mut Poly,
+  [nonce0, nonce1, nonce2, nonce3]: [u8; 4],
+  [out0, out1, out2, out3]: [&mut Poly; 4],
 ) {
+  assert!(
+    matches!(RANDOM_BYTES, ETA2_RANDOM_BYTES | ETA3_RANDOM_BYTES),
+    "unsupported ML-KEM noise width"
+  );
   let (mut reader0, mut reader1, mut reader2, mut reader3) =
     MlKemShake256XofReader::seeded_32_1_quad(seed, nonce0, nonce1, nonce2, nonce3);
-  let mut buf0 = [0u8; RANDOM_BYTES];
-  let mut buf1 = [0u8; RANDOM_BYTES];
-  let mut buf2 = [0u8; RANDOM_BYTES];
-  let mut buf3 = [0u8; RANDOM_BYTES];
-  MlKemShake256XofReader::squeeze_quad(
-    &mut reader0,
-    &mut reader1,
-    &mut reader2,
-    &mut reader3,
-    &mut buf0,
-    &mut buf1,
-    &mut buf2,
-    &mut buf3,
-  );
+  let mut bufs = [[0u8; RANDOM_BYTES]; 4];
+  reader0.squeeze_quad(&mut reader1, &mut reader2, &mut reader3, &mut bufs);
   match RANDOM_BYTES {
     ETA2_RANDOM_BYTES => {
-      sample_poly_cbd_eta2(&buf0, out0);
-      sample_poly_cbd_eta2(&buf1, out1);
-      sample_poly_cbd_eta2(&buf2, out2);
-      sample_poly_cbd_eta2(&buf3, out3);
+      sample_poly_cbd_eta2(&bufs[0], out0);
+      sample_poly_cbd_eta2(&bufs[1], out1);
+      sample_poly_cbd_eta2(&bufs[2], out2);
+      sample_poly_cbd_eta2(&bufs[3], out3);
     }
     ETA3_RANDOM_BYTES => {
-      sample_poly_cbd_eta3(&buf0, out0);
-      sample_poly_cbd_eta3(&buf1, out1);
-      sample_poly_cbd_eta3(&buf2, out2);
-      sample_poly_cbd_eta3(&buf3, out3);
+      sample_poly_cbd_eta3(&bufs[0], out0);
+      sample_poly_cbd_eta3(&bufs[1], out1);
+      sample_poly_cbd_eta3(&bufs[2], out2);
+      sample_poly_cbd_eta3(&bufs[3], out3);
     }
-    _ => unreachable!("unsupported ML-KEM noise width"),
+    _ => {}
   }
-  ct::zeroize(&mut buf0);
-  ct::zeroize(&mut buf1);
-  ct::zeroize(&mut buf2);
-  ct::zeroize(&mut buf3);
+  for buf in &mut bufs {
+    ct::zeroize(buf);
+  }
 }
 
 fn sample_poly_cbd_eta2(input: &[u8], out: &mut Poly) {
@@ -4402,26 +4240,31 @@ fn sample_poly_cbd_eta2(input: &[u8], out: &mut Poly) {
     let y0 = ((byte >> 2) & 1).strict_add((byte >> 3) & 1);
     let x1 = ((byte >> 4) & 1).strict_add((byte >> 5) & 1);
     let y1 = ((byte >> 6) & 1).strict_add((byte >> 7) & 1);
-    out[i.strict_mul(2)] = small_signed_to_mod_q(i16::from(x0) - i16::from(y0));
-    out[i.strict_mul(2).strict_add(1)] = small_signed_to_mod_q(i16::from(x1) - i16::from(y1));
+    out[i.strict_mul(2)] = small_signed_to_mod_q(i16::from(x0).strict_sub(i16::from(y0)));
+    out[i.strict_mul(2).strict_add(1)] = small_signed_to_mod_q(i16::from(x1).strict_sub(i16::from(y1)));
   }
 }
 
 fn sample_poly_cbd_eta3(input: &[u8], out: &mut Poly) {
   debug_assert_eq!(input.len(), ETA3_RANDOM_BYTES);
 
-  for (i, bytes) in input.chunks_exact(3).enumerate() {
+  let (chunks, remainder) = input.as_chunks::<3>();
+  for (i, bytes) in chunks.iter().enumerate() {
     let bits = u32::from(bytes[0]) | (u32::from(bytes[1]) << 8) | (u32::from(bytes[2]) << 16);
-    let counts = (bits & 0x0024_9249) + ((bits >> 1) & 0x0024_9249) + ((bits >> 2) & 0x0024_9249);
+    let counts = (bits & 0x0024_9249)
+      .strict_add((bits >> 1) & 0x0024_9249)
+      .strict_add((bits >> 2) & 0x0024_9249);
     let start = i.strict_mul(4);
 
     for j in 0usize..4 {
       let shift = j.strict_mul(6);
       let x = (counts >> shift) & 0x7;
       let y = (counts >> shift.strict_add(3)) & 0x7;
-      out[start.strict_add(j)] = small_signed_to_mod_q(x as i16 - y as i16);
+      out[start.strict_add(j)] =
+        small_signed_to_mod_q(i16::from(low_byte(low_u16(x))).strict_sub(i16::from(low_byte(low_u16(y)))));
     }
   }
+  debug_assert!(remainder.is_empty());
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
@@ -5116,6 +4959,9 @@ fn multiply_ntts_add_assign_scalar(acc: &mut Poly, a: &Poly, b: &Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn ntt_neon(poly: &mut Poly) {
   ntt_neon_butterflies(poly);
   canonicalize_ntt_neon(poly);
@@ -5123,6 +4969,9 @@ fn ntt_neon(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn ntt_to_montgomery_product_domain_neon(poly: &mut Poly) {
   ntt_neon_butterflies(poly);
   canonicalize_ntt_product_domain_neon(poly);
@@ -5130,6 +4979,9 @@ fn ntt_to_montgomery_product_domain_neon(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn ntt_neon_butterflies(poly: &mut Poly) {
   let mut zeta_index = 1usize;
   let mut len = 128usize;
@@ -5179,6 +5031,9 @@ fn ntt_neon_butterflies(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
@@ -5215,6 +5070,9 @@ fn ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
@@ -5244,6 +5102,9 @@ fn ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn canonicalize_ntt_neon(poly: &mut Poly) {
   for i in (0..N).step_by(8) {
     // SAFETY: fixed-size NEON forward-NTT canonicalization because:
@@ -5262,6 +5123,9 @@ fn canonicalize_ntt_neon(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn canonicalize_ntt_product_domain_neon(poly: &mut Poly) {
   for i in (0..N).step_by(8) {
     // SAFETY: fixed-size NEON forward-NTT product-domain finalization because:
@@ -5281,6 +5145,9 @@ fn canonicalize_ntt_product_domain_neon(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
   inverse_ntt_neon_butterflies(poly);
 
@@ -5302,6 +5169,9 @@ fn inverse_ntt_neon(poly: &mut Poly, final_scale_mont: i16) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont: i16) {
   inverse_ntt_neon_butterflies(poly);
 
@@ -5323,6 +5193,9 @@ fn inverse_ntt_neon_add_assign(poly: &mut Poly, addend: &Poly, final_scale_mont:
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
   let mut zeta_index = 127usize;
   let mut len = 2usize;
@@ -5371,6 +5244,9 @@ fn inverse_ntt_neon_butterflies(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn inverse_ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
@@ -5406,6 +5282,9 @@ fn inverse_ntt_len2_neon(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn inverse_ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
@@ -5432,6 +5311,9 @@ fn inverse_ntt_len4_neon(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn duplicate_i16_pair_lanes_neon(a: i16, b: i16) -> int16x4_t {
   let lanes = vdup_n_s16(a);
   let lanes = vset_lane_s16::<2>(b, lanes);
@@ -5440,6 +5322,9 @@ fn duplicate_i16_pair_lanes_neon(a: i16, b: i16) -> int16x4_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn zip_u16x4_pair_lanes_neon(lower: uint16x4_t, upper: uint16x4_t) -> uint16x8_t {
   let lower_pairs: uint32x2_t = vreinterpret_u32_u16(lower);
   let upper_pairs: uint32x2_t = vreinterpret_u32_u16(upper);
@@ -5451,6 +5336,9 @@ fn zip_u16x4_pair_lanes_neon(lower: uint16x4_t, upper: uint16x4_t) -> uint16x8_t
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn poly_mulcache_compute_neon(poly: &Poly, cache: &mut PolyMulCache) {
   for i in (0..(N / 2)).step_by(8) {
     let coeff_offset = i.strict_mul(2);
@@ -5477,6 +5365,9 @@ fn poly_mulcache_compute_neon(poly: &Poly, cache: &mut PolyMulCache) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn base_multiply_cached_8_neon(
   a: &Poly,
   b: &Poly,
@@ -5524,6 +5415,9 @@ fn base_multiply_cached_8_neon(
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn multiply_ntts_accumulate_cached_neon<const K: usize>(
   acc: &mut Poly,
   a: &PolyVec<K>,
@@ -5553,6 +5447,9 @@ fn multiply_ntts_accumulate_cached_neon<const K: usize>(
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn base_multiply_8_neon(a: &Poly, b: &Poly, gamma: int16x8_t, coeff_offset: usize) -> (uint16x8_t, uint16x8_t) {
   debug_assert_eq!(coeff_offset % 16, 0);
   debug_assert!(coeff_offset.strict_add(16) <= N);
@@ -5594,6 +5491,9 @@ fn base_multiply_8_neon(a: &Poly, b: &Poly, gamma: int16x8_t, coeff_offset: usiz
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn store_accumulated_8_neon(acc: &mut Poly, coeff_offset: usize, c0: uint16x8_t, c1: uint16x8_t) {
   debug_assert_eq!(coeff_offset % 16, 0);
   debug_assert!(coeff_offset.strict_add(16) <= N);
@@ -5619,6 +5519,9 @@ fn store_accumulated_8_neon(acc: &mut Poly, coeff_offset: usize, c0: uint16x8_t,
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
     let coeff_offset = i.strict_mul(2);
@@ -5643,6 +5546,9 @@ fn multiply_ntts_add_assign_neon(acc: &mut Poly, a: &Poly, b: &Poly) {
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn multiply_ntts_accumulate_k3_neon(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
     let coeff_offset = i.strict_mul(2);
@@ -5673,6 +5579,9 @@ fn multiply_ntts_accumulate_k3_neon(acc: &mut Poly, a: [&Poly; 3], b: [&Poly; 3]
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn multiply_ntts_accumulate_k4_neon(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]) {
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
     let coeff_offset = i.strict_mul(2);
@@ -5701,6 +5610,9 @@ fn multiply_ntts_accumulate_k4_neon(acc: &mut Poly, a: [&Poly; 4], b: [&Poly; 4]
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_i16x8_to_i32x4_neon(a: int16x8_t, b: int16x8_t) -> (int32x4_t, int32x4_t) {
   (
     vmull_s16(vget_low_s16(a), vget_low_s16(b)),
@@ -5710,38 +5622,56 @@ fn mul_i16x8_to_i32x4_neon(a: int16x8_t, b: int16x8_t) -> (int32x4_t, int32x4_t)
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_mont_const_i16x8(a: int16x8_t, b_mont: i16) -> int16x8_t {
   montgomery_reduce_s16x8(vmulq_n_s16(a, b_mont), vshrq_n_s16::<1>(vqdmulhq_n_s16(a, b_mont)))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_mont_const_i16x4(a: int16x4_t, b_mont: i16) -> int16x4_t {
   montgomery_reduce_i32x4_neon(vmull_n_s16(a, b_mont))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_mont_i16x4(a: int16x4_t, b_mont: int16x4_t) -> int16x4_t {
   montgomery_reduce_i32x4_neon(vmull_s16(a, b_mont))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn montgomery_reduce_i32x8_neon(lo: int32x4_t, hi: int32x4_t) -> int16x8_t {
   vcombine_s16(montgomery_reduce_i32x4_neon(lo), montgomery_reduce_i32x4_neon(hi))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn montgomery_reduce_i32x4_neon(value: int32x4_t) -> int16x4_t {
-  let k = vmul_n_s16(vmovn_s32(value), Q_MONT_INV_U16 as i16);
+  let k = vmul_n_s16(vmovn_s32(value), Q_MONT_INV_U16.cast_signed());
   let c = vshrn_n_s32::<16>(vmull_n_s16(k, Q_I16));
   vsub_s16(vshrn_n_s32::<16>(value), c)
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_mont_const_mod_u16x4(a: uint16x4_t, b_mont: i16) -> uint16x4_t {
   signed_to_mod_q_s16x4(montgomery_reduce_i32x4_neon(vmull_n_s16(
     vreinterpret_s16_u16(a),
@@ -5751,12 +5681,18 @@ fn mul_mont_const_mod_u16x4(a: uint16x4_t, b_mont: i16) -> uint16x4_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_mont_mod_u16x4(a: uint16x4_t, b_mont: int16x4_t) -> uint16x4_t {
   signed_to_mod_q_s16x4(montgomery_reduce_i32x4_neon(vmull_s16(vreinterpret_s16_u16(a), b_mont)))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn add_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   let sum = vadd_u16(a, b);
   let q = vdup_n_u16(Q);
@@ -5766,6 +5702,9 @@ fn add_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn sub_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
   let diff = vsub_u16(a, b);
   let q = vdup_n_u16(Q);
@@ -5775,6 +5714,9 @@ fn sub_mod_u16x4(a: uint16x4_t, b: uint16x4_t) -> uint16x4_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn add_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
   let sum = vaddq_u16(a, b);
   let q = vdupq_n_u16(Q);
@@ -5784,6 +5726,9 @@ fn add_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn sub_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
   let diff = vsubq_u16(a, b);
   let q = vdupq_n_u16(Q);
@@ -5793,9 +5738,12 @@ fn sub_mod_u16x8(a: uint16x8_t, b: uint16x8_t) -> uint16x8_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn canonicalize_lazy_i16x8(value: int16x8_t) -> uint16x8_t {
   let negative = vshrq_n_s16::<15>(value);
-  let shifted = vaddq_s16(value, vandq_s16(negative, vdupq_n_s16((Q as i16) * 8)));
+  let shifted = vaddq_s16(value, vandq_s16(negative, vdupq_n_s16(Q_I16.strict_mul(8))));
   let shifted = vreinterpretq_u16_s16(shifted);
   let lo = reduce_lazy_u32x4(vmovl_u16(vget_low_u16(shifted)));
   let hi = reduce_lazy_u32x4(vmovl_u16(vget_high_u16(shifted)));
@@ -5804,12 +5752,18 @@ fn canonicalize_lazy_i16x8(value: int16x8_t) -> uint16x8_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn lazy_i16x8_to_product_domain(value: int16x8_t) -> uint16x8_t {
   signed_to_mod_q_s16x8(montgomery_reduce_s16x8(value, vshrq_n_s16::<15>(value)))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn reduce_lazy_u32x4(value: uint32x4_t) -> uint32x4_t {
   let quotient = vshrq_n_u32::<26>(vaddq_u32(vmulq_n_u32(value, 20_159), vdupq_n_u32(1 << 25)));
   let product = vmulq_n_u32(quotient, Q_U32);
@@ -5820,12 +5774,18 @@ fn reduce_lazy_u32x4(value: uint32x4_t) -> uint32x4_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn mul_mont_const_mod_u16x8(a: uint16x8_t, b_mont: i16) -> uint16x8_t {
   signed_to_mod_q_s16x8(mul_mont_const_i16x8(vreinterpretq_s16_u16(a), b_mont))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn montgomery_reduce_s16x8(low: int16x8_t, high: int16x8_t) -> int16x8_t {
   let k = vreinterpretq_s16_u16(vmulq_n_u16(vreinterpretq_u16_s16(low), Q_MONT_INV_U16));
   let c = vshrq_n_s16::<1>(vqdmulhq_n_s16(k, Q_I16));
@@ -5834,6 +5794,9 @@ fn montgomery_reduce_s16x8(low: int16x8_t, high: int16x8_t) -> int16x8_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn signed_to_mod_q_s16x8(value: int16x8_t) -> uint16x8_t {
   let negative = vshrq_n_s16::<15>(value);
   vreinterpretq_u16_s16(vaddq_s16(value, vandq_s16(negative, vdupq_n_s16(Q_I16))))
@@ -5841,6 +5804,9 @@ fn signed_to_mod_q_s16x8(value: int16x8_t) -> uint16x8_t {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
   let negative = vshr_n_s16::<15>(value);
   vreinterpret_u16_s16(vadd_s16(value, vand_s16(negative, vdup_n_s16(Q_I16))))
@@ -5853,6 +5819,9 @@ fn signed_to_mod_q_s16x4(value: int16x4_t) -> uint16x4_t {
   not(feature = "portable-only")
 ))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn to_montgomery_product_domain_neon(poly: &mut Poly) {
   let high = vdupq_n_s16(0);
   for i in (0..N).step_by(8) {
@@ -5875,6 +5844,9 @@ fn to_montgomery_product_domain_neon(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn from_montgomery_product_domain_neon(poly: &mut Poly) {
   for i in (0..N).step_by(8) {
     // SAFETY: fixed-size NEON product-domain exit because:
@@ -5897,6 +5869,9 @@ fn from_montgomery_product_domain_neon(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn ntt_avx2(poly: &mut Poly) {
   let mut zeta_index = 1usize;
   x86_64::ntt_len_ge16_avx2(poly, &mut zeta_index);
@@ -5942,6 +5917,9 @@ fn ntt_avx2(poly: &mut Poly) {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
@@ -5965,6 +5943,9 @@ fn ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn inverse_ntt_avx2(poly: &mut Poly, final_scale_mont: i16) {
   let mut zeta_index = 127usize;
   let mut len = 2usize;
@@ -6029,6 +6010,9 @@ fn inverse_ntt_avx2(poly: &mut Poly, final_scale_mont: i16) {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn inverse_ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
   let mut start = 0usize;
   while start < N {
@@ -6055,6 +6039,9 @@ fn inverse_ntt_len4_avx2(poly: &mut Poly, zeta_index: &mut usize) {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn multiply_ntts_add_assign_avx2(acc: &mut Poly, a: &Poly, b: &Poly) {
   let mask = set1_u32x8_avx2(0xffff);
   for i in (0..GAMMAS_MONT.len()).step_by(8) {
@@ -6069,9 +6056,9 @@ fn multiply_ntts_add_assign_avx2(acc: &mut Poly, a: &Poly, b: &Poly) {
     // 4. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`, and the caller proves
     //    AVX2 and SSE4.1 availability.
     unsafe {
-      let a_pairs = _mm256_loadu_si256(a.as_ptr().add(coeff_offset).cast::<__m256i>());
-      let b_pairs = _mm256_loadu_si256(b.as_ptr().add(coeff_offset).cast::<__m256i>());
-      let acc_pairs = _mm256_loadu_si256(acc.as_ptr().add(coeff_offset).cast::<__m256i>());
+      let a_pairs = load_u16x16_avx2(a.as_ptr().add(coeff_offset));
+      let b_pairs = load_u16x16_avx2(b.as_ptr().add(coeff_offset));
+      let acc_pairs = load_u16x16_avx2(acc.as_ptr().add(coeff_offset));
       let gamma = load_i16x8_as_i32x8_avx2(GAMMAS_MONT.as_ptr().add(i));
 
       let a0 = _mm256_and_si256(a_pairs, mask);
@@ -6093,13 +6080,17 @@ fn multiply_ntts_add_assign_avx2(acc: &mut Poly, a: &Poly, b: &Poly) {
       let out0 = add_mod_u32x8_avx2(acc0, c0);
       let out1 = add_mod_u32x8_avx2(acc1, c1);
       let packed = _mm256_or_si256(out0, _mm256_slli_epi32::<16>(out1));
-      _mm256_storeu_si256(acc.as_mut_ptr().add(coeff_offset).cast::<__m256i>(), packed);
+      store_u16x16_avx2(acc.as_mut_ptr().add(coeff_offset), packed);
     }
   }
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `coeff_offset..coeff_offset + 16` must be in
+/// bounds for `b` and `acc`.
 fn multiply_ntts_add_assign_chunk_avx2(
   acc: &mut Poly,
   a: &[u16; SAMPLE_NTT_ACC_CHUNK_COEFFS],
@@ -6118,9 +6109,9 @@ fn multiply_ntts_add_assign_chunk_avx2(
   // 4. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`, and the caller proves
   //    AVX2 and SSE4.1 availability.
   unsafe {
-    let a_pairs = _mm256_loadu_si256(a.as_ptr().cast::<__m256i>());
-    let b_pairs = _mm256_loadu_si256(b.as_ptr().add(coeff_offset).cast::<__m256i>());
-    let acc_pairs = _mm256_loadu_si256(acc.as_ptr().add(coeff_offset).cast::<__m256i>());
+    let a_pairs = load_u16x16_avx2(a.as_ptr());
+    let b_pairs = load_u16x16_avx2(b.as_ptr().add(coeff_offset));
+    let acc_pairs = load_u16x16_avx2(acc.as_ptr().add(coeff_offset));
     let gamma = load_i16x8_as_i32x8_avx2(GAMMAS_MONT.as_ptr().add(gamma_offset));
 
     let a0 = _mm256_and_si256(a_pairs, mask);
@@ -6142,60 +6133,109 @@ fn multiply_ntts_add_assign_chunk_avx2(
     let out0 = add_mod_u32x8_avx2(acc0, c0);
     let out1 = add_mod_u32x8_avx2(acc1, c1);
     let packed = _mm256_or_si256(out0, _mm256_slli_epi32::<16>(out1));
-    _mm256_storeu_si256(acc.as_mut_ptr().add(coeff_offset).cast::<__m256i>(), packed);
+    store_u16x16_avx2(acc.as_mut_ptr().add(coeff_offset), packed);
   }
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn set1_u32x8_avx2(value: u32) -> __m256i {
-  _mm256_set1_epi32(value as i32)
+  _mm256_set1_epi32(value.cast_signed())
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// Load 16 potentially unaligned coefficients without asserting SIMD alignment.
+///
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read 16 initialized
+/// `u16` values.
+fn load_u16x16_avx2(ptr: *const u16) -> __m256i {
+  // SAFETY: the caller provides 16 readable coefficients; `[u16; 16]` retains two-byte alignment.
+  let lanes = unsafe { ptr.cast::<[u16; 16]>().read_unaligned() };
+  // SAFETY: `[u16; 16]` and `__m256i` are 256-bit values, and every bit pattern is valid for both.
+  unsafe { core::mem::transmute::<[u16; 16], __m256i>(lanes) }
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1")]
+/// Store 16 coefficients without asserting SIMD alignment.
+///
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write 16 `u16` values.
+fn store_u16x16_avx2(ptr: *mut u16, value: __m256i) {
+  // SAFETY: `__m256i` and `[u16; 16]` are 256-bit values, and every bit pattern is valid for both.
+  let lanes = unsafe { core::mem::transmute::<__m256i, [u16; 16]>(value) };
+  // SAFETY: the caller provides 16 writable coefficients; `[u16; 16]` retains two-byte alignment.
+  unsafe { ptr.cast::<[u16; 16]>().write_unaligned(lanes) };
+}
+
+#[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
+#[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read eight initialized
+/// `u16` values.
 fn load_u16x8_avx2(ptr: *const u16) -> __m128i {
-  // SAFETY: unaligned 8-coefficient input load because:
-  // 1. The caller proves `ptr..ptr + 8` is readable.
-  // 2. `_mm_loadu_si128` accepts arbitrary alignment.
-  // 3. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`.
-  unsafe { _mm_loadu_si128(ptr.cast::<__m128i>()) }
+  // SAFETY: the caller proves `ptr..ptr + 8` is readable.
+  let lanes = unsafe { ptr.cast::<[u16; 8]>().read_unaligned() };
+  // SAFETY: `[u16; 8]` and `__m128i` are 128-bit values, and every bit pattern is valid for both.
+  unsafe { core::mem::transmute::<[u16; 8], __m128i>(lanes) }
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read four initialized
+/// `u16` values.
 fn load_u16x4_avx2(ptr: *const u16) -> __m128i {
-  // SAFETY: unaligned 4-coefficient input load because:
-  // 1. The caller proves `ptr..ptr + 4` is readable.
-  // 2. `_mm_loadl_epi64` accepts arbitrary alignment.
-  // 3. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`.
-  unsafe { _mm_loadl_epi64(ptr.cast::<__m128i>()) }
+  // SAFETY: the caller proves `ptr..ptr + 4` is readable.
+  let low = unsafe { ptr.cast::<[u16; 4]>().read_unaligned() };
+  // Match `_mm_loadl_epi64` by zeroing the upper 64 bits.
+  let lanes = [low[0], low[1], low[2], low[3], 0, 0, 0, 0];
+  // SAFETY: `[u16; 8]` and `__m128i` are 128-bit values, and every bit pattern is valid for both.
+  unsafe { core::mem::transmute::<[u16; 8], __m128i>(lanes) }
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write eight `u16` values.
 fn store_u16x8_avx2(ptr: *mut u16, values: __m128i) {
-  // SAFETY: unaligned 8-coefficient output store because:
-  // 1. The caller proves `ptr..ptr + 8` is writable.
-  // 2. Values are reduced modulo Q and fit in u16 before storing.
-  // 3. `_mm_storeu_si128` accepts arbitrary alignment.
-  // 4. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`.
-  unsafe { _mm_storeu_si128(ptr.cast::<__m128i>(), values) };
+  // SAFETY: `__m128i` and `[u16; 8]` are 128-bit values, and every bit pattern is valid for both.
+  let lanes = unsafe { core::mem::transmute::<__m128i, [u16; 8]>(values) };
+  // SAFETY: the caller proves `ptr..ptr + 8` is writable.
+  unsafe { ptr.cast::<[u16; 8]>().write_unaligned(lanes) };
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to write four `u16` values.
 fn store_u16x4_avx2(ptr: *mut u16, values: __m128i) {
-  // SAFETY: unaligned 4-coefficient output store because:
-  // 1. The caller proves `ptr..ptr + 4` is writable.
-  // 2. Values in the low four lanes are reduced modulo Q and fit in u16 before storing.
-  // 3. `_mm_storel_epi64` accepts arbitrary alignment.
-  // 4. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`.
-  unsafe { _mm_storel_epi64(ptr.cast::<__m128i>(), values) };
+  // SAFETY: `__m128i` and `[u16; 8]` are 128-bit values, and every bit pattern is valid for both.
+  let lanes = unsafe { core::mem::transmute::<__m128i, [u16; 8]>(values) };
+  // SAFETY: the caller proves `ptr..ptr + 4` is writable.
+  unsafe {
+    ptr
+      .cast::<[u16; 4]>()
+      .write_unaligned([lanes[0], lanes[1], lanes[2], lanes[3]])
+  };
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn mul_mont_const_mod_u16x8_avx2(a: __m128i, b_mont: i16) -> __m128i {
   let b = _mm_set1_epi16(b_mont);
   signed_to_mod_q_s16x8_avx2(montgomery_reduce_s16x8_avx2(
@@ -6206,14 +6246,20 @@ fn mul_mont_const_mod_u16x8_avx2(a: __m128i, b_mont: i16) -> __m128i {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn montgomery_reduce_s16x8_avx2(low: __m128i, high: __m128i) -> __m128i {
-  let k = _mm_mullo_epi16(low, _mm_set1_epi16(Q_MONT_INV_U16 as i16));
+  let k = _mm_mullo_epi16(low, _mm_set1_epi16(Q_MONT_INV_U16.cast_signed()));
   let c = _mm_mulhi_epi16(k, _mm_set1_epi16(Q_I16));
   _mm_sub_epi16(high, c)
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn signed_to_mod_q_s16x8_avx2(value: __m128i) -> __m128i {
   let negative = _mm_cmpgt_epi16(_mm_setzero_si128(), value);
   _mm_add_epi16(value, _mm_and_si128(negative, _mm_set1_epi16(Q_I16)))
@@ -6221,6 +6267,9 @@ fn signed_to_mod_q_s16x8_avx2(value: __m128i) -> __m128i {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn add_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
   let sum = _mm_add_epi16(a, b);
   let ge_q = _mm_cmpgt_epi16(sum, _mm_set1_epi16(Q_I16 - 1));
@@ -6229,6 +6278,9 @@ fn add_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn sub_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
   let diff = _mm_sub_epi16(a, b);
   let borrowed = _mm_cmpgt_epi16(b, a);
@@ -6237,17 +6289,27 @@ fn sub_mod_u16x8_avx2(a: __m128i, b: __m128i) -> __m128i {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1, and `ptr` must be valid to read eight initialized
+/// `i16` values.
 fn load_i16x8_as_i32x8_avx2(ptr: *const i16) -> __m256i {
   // SAFETY: unaligned 8-coefficient AVX2 input load because:
   // 1. The caller proves `ptr..ptr + 8` is readable.
   // 2. `_mm_loadu_si128` accepts arbitrary alignment.
   // 3. The function is gated by `#[target_feature(enable = "avx2,sse4.1")]`.
-  let packed = unsafe { _mm_loadu_si128(ptr.cast::<__m128i>()) };
+  // SAFETY: the caller proves `ptr..ptr + 8` is readable.
+  let lanes = unsafe { ptr.cast::<[i16; 8]>().read_unaligned() };
+  // SAFETY: `[i16; 8]` and `__m128i` are 128-bit values, and every bit pattern is valid for both.
+  let packed = unsafe { core::mem::transmute::<[i16; 8], __m128i>(lanes) };
   _mm256_cvtepi16_epi32(packed)
 }
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn montgomery_reduce_i32x8_avx2(value: __m256i) -> __m256i {
   let k = _mm256_mullo_epi16(value, _mm256_set1_epi32(i32::from(Q_MONT_INV_U16)));
   let c = _mm256_mulhi_epi16(k, _mm256_set1_epi32(Q_I32));
@@ -6258,6 +6320,9 @@ fn montgomery_reduce_i32x8_avx2(value: __m256i) -> __m256i {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn signed_to_mod_q_i32x8_avx2(value: __m256i) -> __m256i {
   let negative = _mm256_cmpgt_epi32(_mm256_setzero_si256(), value);
   _mm256_add_epi32(value, _mm256_and_si256(negative, set1_u32x8_avx2(Q_U32)))
@@ -6265,6 +6330,9 @@ fn signed_to_mod_q_i32x8_avx2(value: __m256i) -> __m256i {
 
 #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "avx2,sse4.1")]
+/// # Safety
+///
+/// The active CPU must support AVX2 and SSE4.1.
 fn add_mod_u32x8_avx2(a: __m256i, b: __m256i) -> __m256i {
   let sum = _mm256_add_epi32(a, b);
   let q = set1_u32x8_avx2(Q_U32);
@@ -6284,10 +6352,10 @@ fn base_case_multiply(a0: u16, a1: u16, b0: u16, b1: u16, gamma_mont: i16) -> (u
   let a0b0 = mul_i32_secret(i32::from(a0), i32::from(b0));
   let a1b1 = montgomery_reduce_i32(mul_i32_secret(i32::from(a1), i32::from(b1)));
   let c0 = signed_to_mod_q(montgomery_reduce_i32(
-    a0b0 + mul_i32_secret(i32::from(a1b1), i32::from(gamma_mont)),
+    a0b0.strict_add(mul_i32_secret(i32::from(a1b1), i32::from(gamma_mont))),
   ));
   let c1 = signed_to_mod_q(montgomery_reduce_i32(
-    mul_i32_secret(i32::from(a0), i32::from(b1)) + mul_i32_secret(i32::from(a1), i32::from(b0)),
+    mul_i32_secret(i32::from(a0), i32::from(b1)).strict_add(mul_i32_secret(i32::from(a1), i32::from(b0))),
   ));
   (c0, c1)
 }
@@ -6439,8 +6507,8 @@ fn decompress_poly_add_assign<const D: usize>(input: &Poly, out: &mut Poly) {
 
 #[inline]
 fn compress_value<const D: usize>(value: u16) -> u16 {
-  let numerator = (u32::from(value) << D) + Q_HALF;
-  (div_q_compress_u32(numerator) & ((1u32 << D) - 1)) as u16
+  let numerator = (u32::from(value) << D).strict_add(Q_HALF);
+  low_u16(div_q_compress_u32(numerator) & (1u32 << D).strict_sub(1))
 }
 
 #[inline(always)]
@@ -6493,6 +6561,9 @@ fn compress_values_4<const D: usize>(values: [u16; 4]) -> [u16; 4] {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn compress_values_4_neon<const D: i32>(values: [u16; 4]) -> [u16; 4] {
   debug_assert!(matches!(D, 1 | 4 | 5 | 10 | 11));
 
@@ -6514,18 +6585,25 @@ fn compress_values_4_neon<const D: i32>(values: [u16; 4]) -> [u16; 4] {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn compress_lanes_4_neon<const D: i32>(lanes: uint16x4_t) -> uint16x4_t {
   debug_assert!(matches!(D, 1 | 4 | 5 | 10 | 11));
   let numerators = vaddq_u32(vshll_n_u16::<D>(lanes), vdupq_n_u32(Q_HALF));
-  let recip = vdup_n_u32(Q_COMPRESS_DIV_RECIP as u32);
+  let recip = vdup_n_u32(Q_COMPRESS_DIV_RECIP);
   let lo = vshrq_n_u64::<Q_COMPRESS_DIV_SHIFT>(vmull_u32(vget_low_u32(numerators), recip));
   let hi = vshrq_n_u64::<Q_COMPRESS_DIV_SHIFT>(vmull_u32(vget_high_u32(numerators), recip));
   let quotients = vcombine_u32(vmovn_u64(lo), vmovn_u64(hi));
-  vmovn_u32(vandq_u32(quotients, vdupq_n_u32((1u32 << (D as u32)) - 1)))
+  let mask = 1u32.strict_shl(D.cast_unsigned()).strict_sub(1);
+  vmovn_u32(vandq_u32(quotients, vdupq_n_u32(mask)))
 }
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn load_compress_lanes_4_neon<const D: i32>(input: &Poly, offset: usize) -> uint16x4_t {
   debug_assert!(offset.strict_add(4) <= N);
 
@@ -6540,7 +6618,7 @@ fn load_compress_lanes_4_neon<const D: i32>(input: &Poly, offset: usize) -> uint
 
 #[inline]
 fn decompress_value<const D: usize>(value: u16) -> u16 {
-  ((mul_u32_secret(Q_U32, u32::from(value)) + (1u32 << (D - 1))) >> D) as u16
+  low_u16(mul_u32_secret(Q_U32, u32::from(value)).strict_add(1u32 << D.strict_sub(1)) >> D)
 }
 
 #[inline(always)]
@@ -6592,7 +6670,11 @@ fn decompress_message_add_assign(input: &[u8; SEED_BYTES], out: &mut Poly) {
 }
 
 fn compress_encode_poly<const D: usize>(input: &Poly, out: &mut [u8]) {
-  debug_assert_eq!(out.len(), 32 * D);
+  assert!(
+    matches!(D, 1 | 4 | 5 | 10 | 11),
+    "unsupported ML-KEM fused compress/encode width"
+  );
+  debug_assert_eq!(out.len(), 32usize.strict_mul(D));
 
   match D {
     1 => compress_encode_1(input, out),
@@ -6600,12 +6682,16 @@ fn compress_encode_poly<const D: usize>(input: &Poly, out: &mut [u8]) {
     5 => compress_encode_5(input, out),
     10 => compress_encode_10(input, out),
     11 => compress_encode_11(input, out),
-    _ => unreachable!("unsupported ML-KEM fused compress/encode width"),
+    _ => {}
   }
 }
 
 fn compress_encode_compare_poly<const D: usize, const BYTES: usize>(input: &Poly, expected: &[u8]) -> u8 {
-  debug_assert_eq!(BYTES, 32 * D);
+  assert!(
+    matches!(D, 4 | 5 | 10 | 11),
+    "unsupported ML-KEM fused compress/encode compare width"
+  );
+  debug_assert_eq!(BYTES, 32usize.strict_mul(D));
   debug_assert_eq!(expected.len(), BYTES);
 
   match D {
@@ -6613,7 +6699,7 @@ fn compress_encode_compare_poly<const D: usize, const BYTES: usize>(input: &Poly
     5 => compress_encode_compare_5(input, expected),
     10 => compress_encode_compare_10(input, expected),
     11 => compress_encode_compare_11(input, expected),
-    _ => unreachable!("unsupported ML-KEM fused compress/encode compare width"),
+    _ => 0,
   }
 }
 
@@ -6625,7 +6711,7 @@ fn ct_zero_mask_u8(value: u8) -> u8 {
 
 #[inline]
 fn ct_zero_mask_u64(value: u64) -> u8 {
-  let nonzero = ((value | value.wrapping_neg()) >> 63) as u8;
+  let nonzero = ((value | value.wrapping_neg()) >> 63).to_le_bytes()[0];
   0u8.wrapping_sub(nonzero ^ 1)
 }
 
@@ -6641,8 +6727,8 @@ fn compress_encode_compare_4(input: &Poly, expected: &[u8]) -> u8 {
       input[j.strict_add(2)],
       input[j.strict_add(3)],
     ]);
-    diff |= ((t[0] | (t[1] << 4)) as u8) ^ expected[k];
-    diff |= ((t[2] | (t[3] << 4)) as u8) ^ expected[k.strict_add(1)];
+    diff |= low_byte(t[0] | (t[1] << 4)) ^ expected[k];
+    diff |= low_byte(t[2] | (t[3] << 4)) ^ expected[k.strict_add(1)];
   }
   ct_zero_mask_u8(diff)
 }
@@ -6668,11 +6754,11 @@ fn compress_encode_compare_5(input: &Poly, expected: &[u8]) -> u8 {
     let [t0, t1, t2, t3] = lo;
     let [t4, t5, t6, t7] = hi;
 
-    diff |= ((t0 | (t1 << 5)) as u8) ^ expected[k];
-    diff |= (((t1 >> 3) | (t2 << 2) | (t3 << 7)) as u8) ^ expected[k.strict_add(1)];
-    diff |= (((t3 >> 1) | (t4 << 4)) as u8) ^ expected[k.strict_add(2)];
-    diff |= (((t4 >> 4) | (t5 << 1) | (t6 << 6)) as u8) ^ expected[k.strict_add(3)];
-    diff |= (((t6 >> 2) | (t7 << 3)) as u8) ^ expected[k.strict_add(4)];
+    diff |= low_byte(t0 | (t1 << 5)) ^ expected[k];
+    diff |= low_byte((t1 >> 3) | (t2 << 2) | (t3 << 7)) ^ expected[k.strict_add(1)];
+    diff |= low_byte((t3 >> 1) | (t4 << 4)) ^ expected[k.strict_add(2)];
+    diff |= low_byte((t4 >> 4) | (t5 << 1) | (t6 << 6)) ^ expected[k.strict_add(3)];
+    diff |= low_byte((t6 >> 2) | (t7 << 3)) ^ expected[k.strict_add(4)];
   }
   ct_zero_mask_u8(diff)
 }
@@ -6703,11 +6789,11 @@ fn compress_encode_compare_10(input: &Poly, expected: &[u8]) -> u8 {
         input[j.strict_add(3)],
       ]);
 
-      diff |= (t0 as u8) ^ expected[k];
-      diff |= (((t0 >> 8) | (t1 << 2)) as u8) ^ expected[k.strict_add(1)];
-      diff |= (((t1 >> 6) | (t2 << 4)) as u8) ^ expected[k.strict_add(2)];
-      diff |= (((t2 >> 4) | (t3 << 6)) as u8) ^ expected[k.strict_add(3)];
-      diff |= ((t3 >> 2) as u8) ^ expected[k.strict_add(4)];
+      diff |= low_byte(t0) ^ expected[k];
+      diff |= low_byte((t0 >> 8) | (t1 << 2)) ^ expected[k.strict_add(1)];
+      diff |= low_byte((t1 >> 6) | (t2 << 4)) ^ expected[k.strict_add(2)];
+      diff |= low_byte((t2 >> 4) | (t3 << 6)) ^ expected[k.strict_add(3)];
+      diff |= low_byte(t3 >> 2) ^ expected[k.strict_add(4)];
     }
     ct_zero_mask_u8(diff)
   }
@@ -6734,17 +6820,17 @@ fn compress_encode_compare_11(input: &Poly, expected: &[u8]) -> u8 {
     let [t0, t1, t2, t3] = lo;
     let [t4, t5, t6, t7] = hi;
 
-    let encoded_lo = u64::from(t0 as u8)
-      | (u64::from(((t0 >> 8) | (t1 << 3)) as u8) << 8)
-      | (u64::from(((t1 >> 5) | (t2 << 6)) as u8) << 16)
-      | (u64::from((t2 >> 2) as u8) << 24)
-      | (u64::from(((t2 >> 10) | (t3 << 1)) as u8) << 32)
-      | (u64::from(((t3 >> 7) | (t4 << 4)) as u8) << 40)
-      | (u64::from(((t4 >> 4) | (t5 << 7)) as u8) << 48)
-      | (u64::from((t5 >> 1) as u8) << 56);
-    let encoded_hi = u32::from(((t5 >> 9) | (t6 << 2)) as u8)
-      | (u32::from(((t6 >> 6) | (t7 << 5)) as u8) << 8)
-      | (u32::from((t7 >> 3) as u8) << 16);
+    let encoded_lo = u64::from(low_byte(t0))
+      | (u64::from(low_byte((t0 >> 8) | (t1 << 3))) << 8)
+      | (u64::from(low_byte((t1 >> 5) | (t2 << 6))) << 16)
+      | (u64::from(low_byte(t2 >> 2)) << 24)
+      | (u64::from(low_byte((t2 >> 10) | (t3 << 1))) << 32)
+      | (u64::from(low_byte((t3 >> 7) | (t4 << 4))) << 40)
+      | (u64::from(low_byte((t4 >> 4) | (t5 << 7))) << 48)
+      | (u64::from(low_byte(t5 >> 1)) << 56);
+    let encoded_hi = u32::from(low_byte((t5 >> 9) | (t6 << 2)))
+      | (u32::from(low_byte((t6 >> 6) | (t7 << 5))) << 8)
+      | (u32::from(low_byte(t7 >> 3)) << 16);
 
     let expected_lo = u64::from_le_bytes([
       expected[k],
@@ -6768,6 +6854,9 @@ fn compress_encode_compare_11(input: &Poly, expected: &[u8]) -> u8 {
 
 #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
 #[target_feature(enable = "neon")]
+/// # Safety
+///
+/// The caller must ensure the active CPU supports AArch64 NEON and preserve the ML-KEM coefficient-domain invariants of the calling transform.
 fn compress_encode_compare_10_neon(input: &Poly, expected: &[u8]) -> u8 {
   let mut diff = 0u8;
   for i in 0usize..64 {
@@ -6779,17 +6868,21 @@ fn compress_encode_compare_10_neon(input: &Poly, expected: &[u8]) -> u8 {
     let t2 = vget_lane_u16::<2>(t);
     let t3 = vget_lane_u16::<3>(t);
 
-    diff |= (t0 as u8) ^ expected[k];
-    diff |= (((t0 >> 8) | (t1 << 2)) as u8) ^ expected[k.strict_add(1)];
-    diff |= (((t1 >> 6) | (t2 << 4)) as u8) ^ expected[k.strict_add(2)];
-    diff |= (((t2 >> 4) | (t3 << 6)) as u8) ^ expected[k.strict_add(3)];
-    diff |= ((t3 >> 2) as u8) ^ expected[k.strict_add(4)];
+    diff |= low_byte(t0) ^ expected[k];
+    diff |= low_byte((t0 >> 8) | (t1 << 2)) ^ expected[k.strict_add(1)];
+    diff |= low_byte((t1 >> 6) | (t2 << 4)) ^ expected[k.strict_add(2)];
+    diff |= low_byte((t2 >> 4) | (t3 << 6)) ^ expected[k.strict_add(3)];
+    diff |= low_byte(t3 >> 2) ^ expected[k.strict_add(4)];
   }
   ct_zero_mask_u8(diff)
 }
 
 fn decode_decompress_poly<const D: usize>(input: &[u8], out: &mut Poly) {
-  debug_assert_eq!(input.len(), 32 * D);
+  assert!(
+    matches!(D, 1 | 4 | 5 | 10 | 11),
+    "unsupported ML-KEM fused decode/decompress width"
+  );
+  debug_assert_eq!(input.len(), 32usize.strict_mul(D));
 
   match D {
     1 => decode_decompress_1(input, out),
@@ -6797,12 +6890,16 @@ fn decode_decompress_poly<const D: usize>(input: &[u8], out: &mut Poly) {
     5 => decode_decompress_5(input, out),
     10 => decode_decompress_10(input, out),
     11 => decode_decompress_11(input, out),
-    _ => unreachable!("unsupported ML-KEM fused decode/decompress width"),
+    _ => {}
   }
 }
 
 fn byte_encode<const D: usize>(input: &Poly, out: &mut [u8]) {
-  debug_assert_eq!(out.len(), 32 * D);
+  assert!(
+    matches!(D, 1 | 4 | 5 | 10 | 11 | 12),
+    "unsupported ML-KEM byte encoding width"
+  );
+  debug_assert_eq!(out.len(), 32usize.strict_mul(D));
 
   match D {
     1 => byte_encode_1(input, out),
@@ -6811,12 +6908,16 @@ fn byte_encode<const D: usize>(input: &Poly, out: &mut [u8]) {
     10 => byte_encode_10(input, out),
     11 => byte_encode_11(input, out),
     12 => byte_encode_12(input, out),
-    _ => unreachable!("unsupported ML-KEM byte encoding width"),
+    _ => {}
   }
 }
 
 fn byte_decode<const D: usize>(input: &[u8], out: &mut Poly) {
-  debug_assert_eq!(input.len(), 32 * D);
+  assert!(
+    matches!(D, 1 | 4 | 5 | 10 | 11 | 12),
+    "unsupported ML-KEM byte decoding width"
+  );
+  debug_assert_eq!(input.len(), 32usize.strict_mul(D));
 
   match D {
     1 => byte_decode_1(input, out),
@@ -6825,7 +6926,7 @@ fn byte_decode<const D: usize>(input: &[u8], out: &mut Poly) {
     10 => byte_decode_10(input, out),
     11 => byte_decode_11(input, out),
     12 => byte_decode_12(input, out),
-    _ => unreachable!("unsupported ML-KEM byte decoding width"),
+    _ => {}
   }
 }
 
@@ -6844,14 +6945,14 @@ fn compress_encode_1(input: &Poly, out: &mut [u8]) {
       input[start.strict_add(6)],
       input[start.strict_add(7)],
     ]);
-    *byte = (lo[0] as u8 & 1)
-      | ((lo[1] as u8 & 1) << 1)
-      | ((lo[2] as u8 & 1) << 2)
-      | ((lo[3] as u8 & 1) << 3)
-      | ((hi[0] as u8 & 1) << 4)
-      | ((hi[1] as u8 & 1) << 5)
-      | ((hi[2] as u8 & 1) << 6)
-      | ((hi[3] as u8 & 1) << 7);
+    *byte = (low_byte(lo[0]) & 1)
+      | ((low_byte(lo[1]) & 1) << 1)
+      | ((low_byte(lo[2]) & 1) << 2)
+      | ((low_byte(lo[3]) & 1) << 3)
+      | ((low_byte(hi[0]) & 1) << 4)
+      | ((low_byte(hi[1]) & 1) << 5)
+      | ((low_byte(hi[2]) & 1) << 6)
+      | ((low_byte(hi[3]) & 1) << 7);
   }
 }
 
@@ -6870,14 +6971,14 @@ fn subtract_compress_encode_message(lhs: &Poly, rhs: &Poly, out: &mut [u8; SEED_
       sub_mod(lhs[start.strict_add(6)], rhs[start.strict_add(6)]),
       sub_mod(lhs[start.strict_add(7)], rhs[start.strict_add(7)]),
     ]);
-    *byte = (lo[0] as u8 & 1)
-      | ((lo[1] as u8 & 1) << 1)
-      | ((lo[2] as u8 & 1) << 2)
-      | ((lo[3] as u8 & 1) << 3)
-      | ((hi[0] as u8 & 1) << 4)
-      | ((hi[1] as u8 & 1) << 5)
-      | ((hi[2] as u8 & 1) << 6)
-      | ((hi[3] as u8 & 1) << 7);
+    *byte = (low_byte(lo[0]) & 1)
+      | ((low_byte(lo[1]) & 1) << 1)
+      | ((low_byte(lo[2]) & 1) << 2)
+      | ((low_byte(lo[3]) & 1) << 3)
+      | ((low_byte(hi[0]) & 1) << 4)
+      | ((low_byte(hi[1]) & 1) << 5)
+      | ((low_byte(hi[2]) & 1) << 6)
+      | ((low_byte(hi[3]) & 1) << 7);
   }
 }
 
@@ -6912,7 +7013,7 @@ fn byte_encode_1(input: &Poly, out: &mut [u8]) {
     let start = i.strict_mul(8);
     let mut packed = 0u8;
     for bit in 0..8 {
-      packed |= ((input[start.strict_add(bit)] & 1) as u8) << bit;
+      packed |= low_byte(input[start.strict_add(bit)] & 1) << bit;
     }
     *byte = packed;
   }
@@ -6937,8 +7038,8 @@ fn compress_encode_4(input: &Poly, out: &mut [u8]) {
       input[j.strict_add(2)],
       input[j.strict_add(3)],
     ]);
-    out[k] = (t[0] | (t[1] << 4)) as u8;
-    out[k.strict_add(1)] = (t[2] | (t[3] << 4)) as u8;
+    out[k] = low_byte(t[0] | (t[1] << 4));
+    out[k.strict_add(1)] = low_byte(t[2] | (t[3] << 4));
   }
 }
 
@@ -6964,7 +7065,7 @@ fn decode_decompress_4(input: &[u8], out: &mut Poly) {
 fn byte_encode_4(input: &Poly, out: &mut [u8]) {
   for (i, byte) in out.iter_mut().enumerate() {
     let j = i.strict_mul(2);
-    *byte = ((input[j] & 0x0f) | ((input[j.strict_add(1)] & 0x0f) << 4)) as u8;
+    *byte = low_byte((input[j] & 0x0f) | ((input[j.strict_add(1)] & 0x0f) << 4));
   }
 }
 
@@ -6995,11 +7096,11 @@ fn compress_encode_5(input: &Poly, out: &mut [u8]) {
     let [t0, t1, t2, t3] = lo;
     let [t4, t5, t6, t7] = hi;
 
-    out[k] = (t0 | (t1 << 5)) as u8;
-    out[k.strict_add(1)] = ((t1 >> 3) | (t2 << 2) | (t3 << 7)) as u8;
-    out[k.strict_add(2)] = ((t3 >> 1) | (t4 << 4)) as u8;
-    out[k.strict_add(3)] = ((t4 >> 4) | (t5 << 1) | (t6 << 6)) as u8;
-    out[k.strict_add(4)] = ((t6 >> 2) | (t7 << 3)) as u8;
+    out[k] = low_byte(t0 | (t1 << 5));
+    out[k.strict_add(1)] = low_byte((t1 >> 3) | (t2 << 2) | (t3 << 7));
+    out[k.strict_add(2)] = low_byte((t3 >> 1) | (t4 << 4));
+    out[k.strict_add(3)] = low_byte((t4 >> 4) | (t5 << 1) | (t6 << 6));
+    out[k.strict_add(4)] = low_byte((t6 >> 2) | (t7 << 3));
   }
 }
 
@@ -7049,11 +7150,11 @@ fn byte_encode_5(input: &Poly, out: &mut [u8]) {
     let t6 = input[j.strict_add(6)] & 0x001f;
     let t7 = input[j.strict_add(7)] & 0x001f;
 
-    out[k] = (t0 | (t1 << 5)) as u8;
-    out[k.strict_add(1)] = ((t1 >> 3) | (t2 << 2) | (t3 << 7)) as u8;
-    out[k.strict_add(2)] = ((t3 >> 1) | (t4 << 4)) as u8;
-    out[k.strict_add(3)] = ((t4 >> 4) | (t5 << 1) | (t6 << 6)) as u8;
-    out[k.strict_add(4)] = ((t6 >> 2) | (t7 << 3)) as u8;
+    out[k] = low_byte(t0 | (t1 << 5));
+    out[k.strict_add(1)] = low_byte((t1 >> 3) | (t2 << 2) | (t3 << 7));
+    out[k.strict_add(2)] = low_byte((t3 >> 1) | (t4 << 4));
+    out[k.strict_add(3)] = low_byte((t4 >> 4) | (t5 << 1) | (t6 << 6));
+    out[k.strict_add(4)] = low_byte((t6 >> 2) | (t7 << 3));
   }
 }
 
@@ -7089,11 +7190,11 @@ fn compress_encode_10(input: &Poly, out: &mut [u8]) {
       input[j.strict_add(3)],
     ]);
 
-    out[k] = t0 as u8;
-    out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 2)) as u8;
-    out[k.strict_add(2)] = ((t1 >> 6) | (t2 << 4)) as u8;
-    out[k.strict_add(3)] = ((t2 >> 4) | (t3 << 6)) as u8;
-    out[k.strict_add(4)] = (t3 >> 2) as u8;
+    out[k] = low_byte(t0);
+    out[k.strict_add(1)] = low_byte((t0 >> 8) | (t1 << 2));
+    out[k.strict_add(2)] = low_byte((t1 >> 6) | (t2 << 4));
+    out[k.strict_add(3)] = low_byte((t2 >> 4) | (t3 << 6));
+    out[k.strict_add(4)] = low_byte(t3 >> 2);
   }
 }
 
@@ -7129,11 +7230,11 @@ fn byte_encode_10(input: &Poly, out: &mut [u8]) {
     let t2 = input[j.strict_add(2)] & 0x03ff;
     let t3 = input[j.strict_add(3)] & 0x03ff;
 
-    out[k] = t0 as u8;
-    out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 2)) as u8;
-    out[k.strict_add(2)] = ((t1 >> 6) | (t2 << 4)) as u8;
-    out[k.strict_add(3)] = ((t2 >> 4) | (t3 << 6)) as u8;
-    out[k.strict_add(4)] = (t3 >> 2) as u8;
+    out[k] = low_byte(t0);
+    out[k.strict_add(1)] = low_byte((t0 >> 8) | (t1 << 2));
+    out[k.strict_add(2)] = low_byte((t1 >> 6) | (t2 << 4));
+    out[k.strict_add(3)] = low_byte((t2 >> 4) | (t3 << 6));
+    out[k.strict_add(4)] = low_byte(t3 >> 2);
   }
 }
 
@@ -7173,17 +7274,17 @@ fn compress_encode_11(input: &Poly, out: &mut [u8]) {
     let [t0, t1, t2, t3] = lo;
     let [t4, t5, t6, t7] = hi;
 
-    out[k] = t0 as u8;
-    out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 3)) as u8;
-    out[k.strict_add(2)] = ((t1 >> 5) | (t2 << 6)) as u8;
-    out[k.strict_add(3)] = (t2 >> 2) as u8;
-    out[k.strict_add(4)] = ((t2 >> 10) | (t3 << 1)) as u8;
-    out[k.strict_add(5)] = ((t3 >> 7) | (t4 << 4)) as u8;
-    out[k.strict_add(6)] = ((t4 >> 4) | (t5 << 7)) as u8;
-    out[k.strict_add(7)] = (t5 >> 1) as u8;
-    out[k.strict_add(8)] = ((t5 >> 9) | (t6 << 2)) as u8;
-    out[k.strict_add(9)] = ((t6 >> 6) | (t7 << 5)) as u8;
-    out[k.strict_add(10)] = (t7 >> 3) as u8;
+    out[k] = low_byte(t0);
+    out[k.strict_add(1)] = low_byte((t0 >> 8) | (t1 << 3));
+    out[k.strict_add(2)] = low_byte((t1 >> 5) | (t2 << 6));
+    out[k.strict_add(3)] = low_byte(t2 >> 2);
+    out[k.strict_add(4)] = low_byte((t2 >> 10) | (t3 << 1));
+    out[k.strict_add(5)] = low_byte((t3 >> 7) | (t4 << 4));
+    out[k.strict_add(6)] = low_byte((t4 >> 4) | (t5 << 7));
+    out[k.strict_add(7)] = low_byte(t5 >> 1);
+    out[k.strict_add(8)] = low_byte((t5 >> 9) | (t6 << 2));
+    out[k.strict_add(9)] = low_byte((t6 >> 6) | (t7 << 5));
+    out[k.strict_add(10)] = low_byte(t7 >> 3);
   }
 }
 
@@ -7239,17 +7340,17 @@ fn byte_encode_11(input: &Poly, out: &mut [u8]) {
     let t6 = input[j.strict_add(6)] & 0x07ff;
     let t7 = input[j.strict_add(7)] & 0x07ff;
 
-    out[k] = t0 as u8;
-    out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 3)) as u8;
-    out[k.strict_add(2)] = ((t1 >> 5) | (t2 << 6)) as u8;
-    out[k.strict_add(3)] = (t2 >> 2) as u8;
-    out[k.strict_add(4)] = ((t2 >> 10) | (t3 << 1)) as u8;
-    out[k.strict_add(5)] = ((t3 >> 7) | (t4 << 4)) as u8;
-    out[k.strict_add(6)] = ((t4 >> 4) | (t5 << 7)) as u8;
-    out[k.strict_add(7)] = (t5 >> 1) as u8;
-    out[k.strict_add(8)] = ((t5 >> 9) | (t6 << 2)) as u8;
-    out[k.strict_add(9)] = ((t6 >> 6) | (t7 << 5)) as u8;
-    out[k.strict_add(10)] = (t7 >> 3) as u8;
+    out[k] = low_byte(t0);
+    out[k.strict_add(1)] = low_byte((t0 >> 8) | (t1 << 3));
+    out[k.strict_add(2)] = low_byte((t1 >> 5) | (t2 << 6));
+    out[k.strict_add(3)] = low_byte(t2 >> 2);
+    out[k.strict_add(4)] = low_byte((t2 >> 10) | (t3 << 1));
+    out[k.strict_add(5)] = low_byte((t3 >> 7) | (t4 << 4));
+    out[k.strict_add(6)] = low_byte((t4 >> 4) | (t5 << 7));
+    out[k.strict_add(7)] = low_byte(t5 >> 1);
+    out[k.strict_add(8)] = low_byte((t5 >> 9) | (t6 << 2));
+    out[k.strict_add(9)] = low_byte((t6 >> 6) | (t7 << 5));
+    out[k.strict_add(10)] = low_byte(t7 >> 3);
   }
 }
 
@@ -7287,9 +7388,9 @@ fn byte_encode_12(input: &Poly, out: &mut [u8]) {
     let t0 = input[j];
     let t1 = input[j.strict_add(1)];
 
-    out[k] = t0 as u8;
-    out[k.strict_add(1)] = ((t0 >> 8) | (t1 << 4)) as u8;
-    out[k.strict_add(2)] = (t1 >> 4) as u8;
+    out[k] = low_byte(t0);
+    out[k.strict_add(1)] = low_byte((t0 >> 8) | (t1 << 4));
+    out[k.strict_add(2)] = low_byte(t1 >> 4);
   }
 }
 
@@ -7308,27 +7409,27 @@ fn byte_decode_12(input: &[u8], out: &mut Poly) {
 
 #[inline]
 fn add_mod(a: u16, b: u16) -> u16 {
-  let sum = u32::from(a) + u32::from(b);
+  let sum = u32::from(a).strict_add(u32::from(b));
   let reduced = sum.wrapping_sub(Q_U32);
-  add_q_if_borrowed(reduced) as u16
+  low_u16(add_q_if_borrowed(reduced))
 }
 
 #[inline]
 fn sub_mod(a: u16, b: u16) -> u16 {
   let diff = u32::from(a).wrapping_sub(u32::from(b));
-  add_q_if_borrowed(diff) as u16
+  low_u16(add_q_if_borrowed(diff))
 }
 
 #[inline]
 fn sub_if_ge_q(value: u16) -> u16 {
   let reduced = u32::from(value).wrapping_sub(Q_U32);
-  add_q_if_borrowed(reduced) as u16
+  low_u16(add_q_if_borrowed(reduced))
 }
 
 #[inline]
 #[cfg(test)]
 fn mul_mod(a: u16, b: u16) -> u16 {
-  reduce_u32(u32::from(a) * u32::from(b))
+  reduce_u32(u32::from(a).strict_mul(u32::from(b)))
 }
 
 #[inline]
@@ -7376,9 +7477,16 @@ fn from_montgomery_product_domain(value: u16) -> u16 {
   not(any(target_arch = "aarch64", target_arch = "x86_64"))
 ))]
 fn montgomery_reduce_i32(value: i32) -> i16 {
-  let k = mul_i32_secret(i32::from(value as i16), i32::from(Q_MONT_INV_U16 as i16));
-  let c = (mul_i32_secret(i32::from(k as i16), Q_I32) >> 16) as i16;
-  ((value >> 16) as i16).wrapping_sub(c)
+  #[inline(always)]
+  fn low_i16(value: i32) -> i16 {
+    let [b0, b1, _, _] = value.to_le_bytes();
+    i16::from_le_bytes([b0, b1])
+  }
+
+  let mont_inverse = i16::from_ne_bytes(Q_MONT_INV_U16.to_ne_bytes());
+  let k = mul_i32_secret(i32::from(low_i16(value)), i32::from(mont_inverse));
+  let c = low_i16(mul_i32_secret(i32::from(low_i16(k)), Q_I32) >> 16);
+  low_i16(value >> 16).wrapping_sub(c)
 }
 
 #[inline]
@@ -7391,20 +7499,21 @@ fn montgomery_reduce_i32(value: i32) -> i16 {
 ))]
 fn signed_to_mod_q(value: i16) -> u16 {
   let value = i32::from(value);
-  (value + ((value >> 31) & Q_I32)) as u16
+  let reduced = value.strict_add((value >> 31) & Q_I32);
+  low_u16(u32::from_ne_bytes(reduced.to_ne_bytes()))
 }
 
 #[inline]
 #[cfg(test)]
 fn reduce_u32(value: u32) -> u16 {
   let quotient = div_q_u32(value);
-  value.wrapping_sub(quotient * Q_U32) as u16
+  low_u16(value.wrapping_sub(quotient.strict_mul(Q_U32)))
 }
 
 #[inline]
 #[cfg(test)]
 fn div_q_u32(value: u32) -> u32 {
-  ((u64::from(value) * Q_DIV_RECIP) >> Q_DIV_SHIFT) as u32
+  low_u32(u64::from(value).strict_mul(Q_DIV_RECIP) >> Q_DIV_SHIFT)
 }
 
 #[inline]
@@ -7415,12 +7524,15 @@ fn div_q_compress_u32(value: u32) -> u32 {
   }
   #[cfg(not(target_arch = "s390x"))]
   {
-    ((u64::from(value) * Q_COMPRESS_DIV_RECIP) >> Q_COMPRESS_DIV_SHIFT) as u32
+    low_u32(u64::from(value).strict_mul(u64::from(Q_COMPRESS_DIV_RECIP)) >> Q_COMPRESS_DIV_SHIFT)
   }
 }
 
 #[inline]
 fn mul_u32_secret(a: u32, b: u32) -> u32 {
+  debug_assert!(u16::try_from(a).is_ok());
+  debug_assert!(u16::try_from(b).is_ok());
+
   #[cfg(target_arch = "s390x")]
   {
     // IBM Z integer multiply latency is operand-dependent; keep secret-fed products on a fixed
@@ -7429,7 +7541,7 @@ fn mul_u32_secret(a: u32, b: u32) -> u32 {
   }
   #[cfg(not(target_arch = "s390x"))]
   {
-    a * b
+    a.wrapping_mul(b)
   }
 }
 
@@ -7442,13 +7554,16 @@ fn mul_u32_secret(a: u32, b: u32) -> u32 {
   not(any(target_arch = "aarch64", target_arch = "x86_64"))
 ))]
 fn mul_i32_secret(a: i32, b: i32) -> i32 {
+  debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&a));
+  debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&b));
+
   #[cfg(target_arch = "s390x")]
   {
     mul_i32_16_ct(a, b)
   }
   #[cfg(not(target_arch = "s390x"))]
   {
-    a * b
+    a.wrapping_mul(b)
   }
 }
 
@@ -7456,15 +7571,15 @@ fn mul_i32_secret(a: i32, b: i32) -> i32 {
 #[cfg_attr(not(target_arch = "s390x"), inline)]
 #[cfg(any(test, target_arch = "s390x"))]
 fn mul_u32_16_ct(a: u32, b: u32) -> u32 {
-  debug_assert!(a <= u32::from(u16::MAX));
-  debug_assert!(b <= u32::from(u16::MAX));
+  debug_assert!(u16::try_from(a).is_ok());
+  debug_assert!(u16::try_from(b).is_ok());
 
   let mut acc = 0u32;
   let mut bit = 0u32;
   while bit < 16 {
     let mask = 0u32.wrapping_sub((b >> bit) & 1);
     acc = acc.wrapping_add((a << bit) & mask);
-    bit += 1;
+    bit = bit.strict_add(1);
   }
   acc
 }
@@ -7476,13 +7591,15 @@ fn mul_i32_16_ct(a: i32, b: i32) -> i32 {
   debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&a));
   debug_assert!((i32::from(i16::MIN)..=i32::from(i16::MAX)).contains(&b));
 
-  let a_sign = (a >> 31) as u32;
-  let b_sign = (b >> 31) as u32;
-  let abs_a = ((a as u32) ^ a_sign).wrapping_sub(a_sign);
-  let abs_b = ((b as u32) ^ b_sign).wrapping_sub(b_sign);
+  let a_bits = u32::from_ne_bytes(a.to_ne_bytes());
+  let b_bits = u32::from_ne_bytes(b.to_ne_bytes());
+  let a_sign = 0u32.wrapping_sub(a_bits >> 31);
+  let b_sign = 0u32.wrapping_sub(b_bits >> 31);
+  let abs_a = (a_bits ^ a_sign).wrapping_sub(a_sign);
+  let abs_b = (b_bits ^ b_sign).wrapping_sub(b_sign);
   let magnitude = mul_u32_16_ct(abs_a, abs_b);
   let sign = a_sign ^ b_sign;
-  ((magnitude ^ sign).wrapping_sub(sign)) as i32
+  i32::from_ne_bytes((magnitude ^ sign).wrapping_sub(sign).to_ne_bytes())
 }
 
 #[cfg_attr(target_arch = "s390x", inline(never))]
@@ -7495,7 +7612,7 @@ fn div_q_compress_u32_ct(value: u32) -> u32 {
   let mut remainder = 0u32;
   let mut bit = 23u32;
   while bit > 0 {
-    bit -= 1;
+    bit = bit.strict_sub(1);
     remainder = (remainder << 1) | ((value >> bit) & 1);
     let reduced = remainder.wrapping_sub(Q_U32);
     let borrow = reduced >> 31;
@@ -7529,13 +7646,14 @@ fn opaque_s390x_bit(value: u32) -> u32 {
 #[inline]
 #[cfg(test)]
 fn div_q_compress_u32_recip(value: u32) -> u32 {
-  ((u64::from(value) * Q_COMPRESS_DIV_RECIP) >> Q_COMPRESS_DIV_SHIFT) as u32
+  low_u32(u64::from(value).strict_mul(u64::from(Q_COMPRESS_DIV_RECIP)) >> Q_COMPRESS_DIV_SHIFT)
 }
 
 #[inline]
 fn small_signed_to_mod_q(value: i16) -> u16 {
   let value = i32::from(value);
-  (value + ((value >> 31) & i32::from(Q))) as u16
+  let reduced = value.strict_add((value >> 31) & i32::from(Q));
+  low_u16(u32::from_ne_bytes(reduced.to_ne_bytes()))
 }
 
 fn h(input: &[u8]) -> [u8; HASH_BYTES] {
@@ -7615,11 +7733,11 @@ mod tests {
   fn miri_mlkem512_portable_round_trip_and_rejection() {
     let mut key_random = [0u8; MlKem512::KEY_GENERATION_RANDOM_SIZE];
     for (i, byte) in key_random.iter_mut().enumerate() {
-      *byte = (i.strict_mul(29).strict_add(7)) as u8;
+      *byte = test_low_byte(i.strict_mul(29).strict_add(7));
     }
     let mut encapsulation_random = [0u8; MlKem512::ENCAPSULATION_RANDOM_SIZE];
     for (i, byte) in encapsulation_random.iter_mut().enumerate() {
-      *byte = (i.strict_mul(31).strict_add(11)) as u8;
+      *byte = test_low_byte(i.strict_mul(31).strict_add(11));
     }
 
     let (encapsulation_key, decapsulation_key) = MlKem512::generate_keypair(|out| {
@@ -7646,7 +7764,7 @@ mod tests {
   fn ntt_round_trip_preserves_polynomial() {
     let mut poly = [0u16; N];
     for (i, coeff) in poly.iter_mut().enumerate() {
-      *coeff = ((i.strict_mul(17).strict_add(91)) as u16) % Q;
+      *coeff = test_u16(i.strict_mul(17).strict_add(91)) % Q;
     }
     let original = poly;
 
@@ -7781,22 +7899,22 @@ mod tests {
   #[cfg(all(target_arch = "aarch64", not(miri), not(feature = "portable-only")))]
   #[test]
   fn lazy_ntt_neon_finalizers_match_scalar_range() {
-    let min = -i32::from(Q) * 8;
-    let max = i32::from(Q) * 8;
+    let min = -i32::from(Q).strict_mul(8);
+    let max = i32::from(Q).strict_mul(8);
     let mut start = min;
 
     while start <= max {
       let lanes = [
         start,
-        (start + 1).min(max),
-        (start + 2).min(max),
-        (start + 3).min(max),
-        (start + 4).min(max),
-        (start + 5).min(max),
-        (start + 6).min(max),
-        (start + 7).min(max),
+        start.strict_add(1).min(max),
+        start.strict_add(2).min(max),
+        start.strict_add(3).min(max),
+        start.strict_add(4).min(max),
+        start.strict_add(5).min(max),
+        start.strict_add(6).min(max),
+        start.strict_add(7).min(max),
       ];
-      let lanes_i16 = lanes.map(|value| value as i16);
+      let lanes_i16 = lanes.map(|value| i16::try_from(value).expect("lazy NTT test lane fits in i16"));
       let mut canonical = [0u16; 8];
       let mut product_domain = [0u16; 8];
 
@@ -7813,9 +7931,9 @@ mod tests {
       for lane in 0..8 {
         let mut expected = lanes[lane] % i32::from(Q);
         if expected < 0 {
-          expected += i32::from(Q);
+          expected = expected.strict_add(i32::from(Q));
         }
-        let expected = expected as u16;
+        let expected = u16::try_from(expected).expect("canonical ML-KEM test coefficient fits in u16");
         assert_eq!(canonical[lane], expected, "canonical start {start} lane {lane}");
         assert_eq!(
           product_domain[lane],
@@ -7824,7 +7942,7 @@ mod tests {
         );
       }
 
-      start += 8;
+      start = start.strict_add(8);
     }
   }
 
@@ -8012,7 +8130,7 @@ mod tests {
   fn sample_ntt_pair_matches_scalar_samplers() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(37).strict_add(11)) as u8;
+      *byte = test_low_byte(i.strict_mul(37).strict_add(11));
     }
 
     let (left, right) = sample_ntt_pair(&rho, 0, 1, 2, 1);
@@ -8025,7 +8143,7 @@ mod tests {
   fn sample_ntt_triple_matches_scalar_samplers() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(43).strict_add(17)) as u8;
+      *byte = test_low_byte(i.strict_mul(43).strict_add(17));
     }
 
     let lanes = [(0, 0), (1, 2), (2, 1)];
@@ -8045,11 +8163,13 @@ mod tests {
     for seed in 0usize..64 {
       let mut rho = [0u8; SEED_BYTES];
       for (i, byte) in rho.iter_mut().enumerate() {
-        *byte = (seed
-          .strict_mul(53)
-          .strict_add(i.strict_mul(47))
-          .strict_add((seed >> 1).strict_mul(19))
-          & 0xff) as u8;
+        *byte = test_low_byte(
+          seed
+            .strict_mul(53)
+            .strict_add(i.strict_mul(47))
+            .strict_add((seed >> 1).strict_mul(19))
+            & 0xff,
+        );
       }
 
       for j in 0u8..4 {
@@ -8068,7 +8188,7 @@ mod tests {
           let mut actual = [0u16; N];
           let blocks = sample_ntt_initial_3blocks_then_tail_into(&rho, j, i, &mut actual);
           assert!(
-            blocks >= SAMPLE_NTT_INITIAL_BLOCKS as u16,
+            blocks >= test_u16(SAMPLE_NTT_INITIAL_BLOCKS),
             "seed {seed}, lane ({j}, {i})"
           );
           assert_eq!(actual, expected, "full sample seed {seed}, lane ({j}, {i})");
@@ -8090,11 +8210,13 @@ mod tests {
     for seed in 0usize..64 {
       let mut rho = [0u8; SEED_BYTES];
       for (i, byte) in rho.iter_mut().enumerate() {
-        *byte = (seed
-          .strict_mul(59)
-          .strict_add(i.strict_mul(31))
-          .strict_add((seed >> 2).strict_mul(23))
-          & 0xff) as u8;
+        *byte = test_low_byte(
+          seed
+            .strict_mul(59)
+            .strict_add(i.strict_mul(31))
+            .strict_add((seed >> 2).strict_mul(23))
+            & 0xff,
+        );
       }
 
       for lanes in lane_sets {
@@ -8164,11 +8286,13 @@ mod tests {
     for seed in 0usize..512 {
       let mut buf = [0u8; SHAKE128_RATE_BYTES];
       for (i, byte) in buf.iter_mut().enumerate() {
-        *byte = (seed
-          .strict_mul(109)
-          .strict_add(i.strict_mul(37))
-          .strict_add((seed >> 2).strict_mul(41))
-          & 0xff) as u8;
+        *byte = test_low_byte(
+          seed
+            .strict_mul(109)
+            .strict_add(i.strict_mul(37))
+            .strict_add((seed >> 2).strict_mul(41))
+            & 0xff,
+        );
       }
 
       for &start in &fill_offsets {
@@ -8206,11 +8330,13 @@ mod tests {
     for seed in 0usize..512 {
       let mut buf = [0u8; SHAKE128_RATE_BYTES];
       for (i, byte) in buf.iter_mut().enumerate() {
-        *byte = (seed
-          .strict_mul(73)
-          .strict_add(i.strict_mul(29))
-          .strict_add((seed >> 1).strict_mul(17))
-          & 0xff) as u8;
+        *byte = test_low_byte(
+          seed
+            .strict_mul(73)
+            .strict_add(i.strict_mul(29))
+            .strict_add((seed >> 1).strict_mul(17))
+            & 0xff,
+        );
       }
 
       let mut expected = [0u16; MAX_CANDIDATES];
@@ -8242,12 +8368,14 @@ mod tests {
       let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
       for (lane, buf) in bufs.iter_mut().enumerate() {
         for (i, byte) in buf.iter_mut().enumerate() {
-          *byte = (seed
-            .strict_mul(97)
-            .strict_add(lane.strict_mul(43))
-            .strict_add(i.strict_mul(31))
-            .strict_add((seed >> 1).strict_mul(19))
-            & 0xff) as u8;
+          *byte = test_low_byte(
+            seed
+              .strict_mul(97)
+              .strict_add(lane.strict_mul(43))
+              .strict_add(i.strict_mul(31))
+              .strict_add((seed >> 1).strict_mul(19))
+              & 0xff,
+          );
         }
       }
 
@@ -8297,11 +8425,13 @@ mod tests {
     for seed in 0usize..512 {
       let mut buf = [0u8; SAMPLE_NTT_INITIAL_BYTES];
       for (i, byte) in buf.iter_mut().enumerate() {
-        *byte = (seed
-          .strict_mul(83)
-          .strict_add(i.strict_mul(41))
-          .strict_add((seed >> 1).strict_mul(37))
-          & 0xff) as u8;
+        *byte = test_low_byte(
+          seed
+            .strict_mul(83)
+            .strict_add(i.strict_mul(41))
+            .strict_add((seed >> 1).strict_mul(37))
+            & 0xff,
+        );
       }
 
       let mut expected = [0u16; N];
@@ -8336,11 +8466,13 @@ mod tests {
     for seed in 0usize..256 {
       let mut buf = [0u8; SHAKE128_RATE_BYTES];
       for (i, byte) in buf.iter_mut().enumerate() {
-        *byte = (seed
-          .strict_mul(91)
-          .strict_add(i.strict_mul(19))
-          .strict_add((seed >> 2).strict_mul(23))
-          & 0xff) as u8;
+        *byte = test_low_byte(
+          seed
+            .strict_mul(91)
+            .strict_add(i.strict_mul(19))
+            .strict_add((seed >> 2).strict_mul(23))
+            & 0xff,
+        );
       }
 
       for &start in &fill_offsets {
@@ -8391,12 +8523,14 @@ mod tests {
       let mut bufs = [[0u8; SHAKE128_RATE_BYTES]; 3];
       for (lane, buf) in bufs.iter_mut().enumerate() {
         for (i, byte) in buf.iter_mut().enumerate() {
-          *byte = (seed
-            .strict_mul(101)
-            .strict_add(lane.strict_mul(47))
-            .strict_add(i.strict_mul(23))
-            .strict_add((seed >> 2).strict_mul(29))
-            & 0xff) as u8;
+          *byte = test_low_byte(
+            seed
+              .strict_mul(101)
+              .strict_add(lane.strict_mul(47))
+              .strict_add(i.strict_mul(23))
+              .strict_add((seed >> 2).strict_mul(29))
+              & 0xff,
+          );
         }
       }
 
@@ -8452,7 +8586,7 @@ mod tests {
   fn sample_ntt_quad_matches_scalar_samplers() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(41).strict_add(13)) as u8;
+      *byte = test_low_byte(i.strict_mul(41).strict_add(13));
     }
 
     let lanes = [(0, 0), (1, 3), (2, 1), (3, 2)];
@@ -8524,7 +8658,7 @@ mod tests {
   fn seeded_sample_ntt_matches_generic_xof_input() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(31).strict_add(7)) as u8;
+      *byte = test_low_byte(i.strict_mul(31).strict_add(7));
     }
 
     for j in 0u8..4 {
@@ -8543,7 +8677,7 @@ mod tests {
   fn seeded_prf_eta_matches_generic_xof_input() {
     let mut seed = [0u8; SEED_BYTES];
     for (i, byte) in seed.iter_mut().enumerate() {
-      *byte = (i.strict_mul(43).strict_add(5)) as u8;
+      *byte = test_low_byte(i.strict_mul(43).strict_add(5));
     }
 
     for nonce in 0u8..8 {
@@ -8571,7 +8705,7 @@ mod tests {
   fn batched_sample_noise_pair_matches_scalar_sampling() {
     let mut seed = [0u8; SEED_BYTES];
     for (i, byte) in seed.iter_mut().enumerate() {
-      *byte = (i.strict_mul(47).strict_add(13)) as u8;
+      *byte = test_low_byte(i.strict_mul(47).strict_add(13));
     }
 
     let mut expected0 = [0u16; N];
@@ -8595,7 +8729,7 @@ mod tests {
   fn batched_sample_noise_quad_matches_scalar_sampling() {
     let mut seed = [0u8; SEED_BYTES];
     for (i, byte) in seed.iter_mut().enumerate() {
-      *byte = (i.strict_mul(59).strict_add(19)) as u8;
+      *byte = test_low_byte(i.strict_mul(59).strict_add(19));
     }
 
     let mut expected = [[0u16; N]; 4];
@@ -8604,14 +8738,14 @@ mod tests {
       sample_noise::<ETA2_RANDOM_BYTES>(&seed, lane.strict_add(3), &mut expected[usize::from(lane)]);
     }
     let [actual0, actual1, actual2, actual3] = &mut actual;
-    sample_noise_quad::<ETA2_RANDOM_BYTES>(&seed, 3, actual0, 4, actual1, 5, actual2, 6, actual3);
+    sample_noise_quad::<ETA2_RANDOM_BYTES>(&seed, [3, 4, 5, 6], [actual0, actual1, actual2, actual3]);
     assert_eq!(actual, expected, "eta2 quad");
 
     for lane in 0u8..4 {
       sample_noise::<ETA3_RANDOM_BYTES>(&seed, lane.strict_add(8), &mut expected[usize::from(lane)]);
     }
     let [actual0, actual1, actual2, actual3] = &mut actual;
-    sample_noise_quad::<ETA3_RANDOM_BYTES>(&seed, 8, actual0, 9, actual1, 10, actual2, 11, actual3);
+    sample_noise_quad::<ETA3_RANDOM_BYTES>(&seed, [8, 9, 10, 11], [actual0, actual1, actual2, actual3]);
     assert_eq!(actual, expected, "eta3 quad");
   }
 
@@ -8619,15 +8753,15 @@ mod tests {
   fn fused_sample_ntt_accumulate_matches_sample_then_multiply() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(29).strict_add(17)) as u8;
+      *byte = test_low_byte(i.strict_mul(29).strict_add(17));
     }
 
     for seed in 0usize..8 {
       let rhs = test_poly(seed.strict_add(100));
       let base = test_poly(seed.strict_add(200));
       let mut sampled = [0u16; N];
-      let j = (seed % 4) as u8;
-      let i = ((seed.strict_mul(3)) % 4) as u8;
+      let j = test_u8(seed % 4);
+      let i = test_u8(seed.strict_mul(3) % 4);
 
       sample_ntt_into(&rho, j, i, &mut sampled);
       let mut expected = base;
@@ -8644,17 +8778,17 @@ mod tests {
   fn fused_sample_ntt_pair_accumulate_matches_two_sampled_products() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(41).strict_add(23)) as u8;
+      *byte = test_low_byte(i.strict_mul(41).strict_add(23));
     }
 
     for seed in 0usize..8 {
       let rhs0 = test_poly(seed.strict_add(300));
       let rhs1 = test_poly(seed.strict_add(400));
       let base = test_poly(seed.strict_add(500));
-      let j0 = (seed % 4) as u8;
-      let i0 = ((seed.strict_mul(5).strict_add(1)) % 4) as u8;
-      let j1 = ((seed.strict_add(2)) % 4) as u8;
-      let i1 = ((seed.strict_mul(7).strict_add(3)) % 4) as u8;
+      let j0 = test_u8(seed % 4);
+      let i0 = test_u8(seed.strict_mul(5).strict_add(1) % 4);
+      let j1 = test_u8(seed.strict_add(2) % 4);
+      let i1 = test_u8(seed.strict_mul(7).strict_add(3) % 4);
 
       let mut sampled0 = [0u16; N];
       let mut sampled1 = [0u16; N];
@@ -8675,7 +8809,7 @@ mod tests {
   fn fused_sample_ntt_quad_accumulate_matches_four_sampled_products() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(53).strict_add(29)) as u8;
+      *byte = test_low_byte(i.strict_mul(53).strict_add(29));
     }
 
     for seed in 0usize..8 {
@@ -8685,18 +8819,18 @@ mod tests {
       let rhs3 = test_poly(seed.strict_add(900));
       let rhs = [&rhs0, &rhs1, &rhs2, &rhs3];
       let coords = [
-        ((seed % 4) as u8, ((seed.strict_mul(3).strict_add(1)) % 4) as u8),
+        (test_u8(seed % 4), test_u8(seed.strict_mul(3).strict_add(1) % 4)),
         (
-          ((seed.strict_add(1)) % 4) as u8,
-          ((seed.strict_mul(5).strict_add(2)) % 4) as u8,
+          test_u8(seed.strict_add(1) % 4),
+          test_u8(seed.strict_mul(5).strict_add(2) % 4),
         ),
         (
-          ((seed.strict_add(2)) % 4) as u8,
-          ((seed.strict_mul(7).strict_add(3)) % 4) as u8,
+          test_u8(seed.strict_add(2) % 4),
+          test_u8(seed.strict_mul(7).strict_add(3) % 4),
         ),
         (
-          ((seed.strict_add(3)) % 4) as u8,
-          ((seed.strict_mul(11).strict_add(1)) % 4) as u8,
+          test_u8(seed.strict_add(3) % 4),
+          test_u8(seed.strict_mul(11).strict_add(1) % 4),
         ),
       ];
       let base = test_poly(seed.strict_add(1000));
@@ -8728,7 +8862,7 @@ mod tests {
   fn materialized_k4_matrix_accumulate_matches_reference_layouts() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(61).strict_add(31)) as u8;
+      *byte = test_low_byte(i.strict_mul(61).strict_add(31));
     }
 
     let rhs = [test_poly(0x10), test_poly(0x20), test_poly(0x30), test_poly(0x40)];
@@ -8758,7 +8892,7 @@ mod tests {
   fn materialized_k3_matrix_accumulate_matches_reference_layouts() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(47).strict_add(23)) as u8;
+      *byte = test_low_byte(i.strict_mul(47).strict_add(23));
     }
 
     let rhs = [test_poly(0x10), test_poly(0x20), test_poly(0x30)];
@@ -8788,7 +8922,7 @@ mod tests {
   fn materialized_k2_matrix_accumulate_matches_reference_layouts() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(43).strict_add(19)) as u8;
+      *byte = test_low_byte(i.strict_mul(43).strict_add(19));
     }
 
     let rhs = [test_poly(0x10), test_poly(0x20)];
@@ -8814,10 +8948,10 @@ mod tests {
     let mut rho = [0u8; SEED_BYTES];
     let mut sigma = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(37).strict_add(11)) as u8;
+      *byte = test_low_byte(i.strict_mul(37).strict_add(11));
     }
     for (i, byte) in sigma.iter_mut().enumerate() {
-      *byte = (i.strict_mul(53).strict_add(19)) as u8;
+      *byte = test_low_byte(i.strict_mul(53).strict_add(19));
     }
 
     let mut s_hat = [[0u16; N]; 2];
@@ -8829,7 +8963,7 @@ mod tests {
     for (i, expected_i) in expected.iter_mut().enumerate() {
       for (j, rhs) in s_hat.iter().enumerate() {
         let mut sampled = [0u16; N];
-        sample_ntt_into(&rho, j as u8, i as u8, &mut sampled);
+        sample_ntt_into(&rho, test_u8(j), test_u8(i), &mut sampled);
         multiply_ntts_add_assign_scalar(expected_i, &sampled, rhs);
       }
     }
@@ -8850,7 +8984,7 @@ mod tests {
   fn assert_prepared_matrix_cache_matches_materialized_transpose<const K: usize>() {
     let mut rho = [0u8; SEED_BYTES];
     for (i, byte) in rho.iter_mut().enumerate() {
-      *byte = (i.strict_mul(67).strict_add(29)) as u8;
+      *byte = test_low_byte(i.strict_mul(67).strict_add(29));
     }
 
     let mut rhs = [[0u16; N]; K];
@@ -8876,7 +9010,13 @@ mod tests {
   fn test_poly(seed: usize) -> Poly {
     let mut poly = [0u16; N];
     for (i, coeff) in poly.iter_mut().enumerate() {
-      *coeff = ((seed.strict_mul(37).strict_add(i.strict_mul(19)).strict_add(11)) % usize::from(Q)) as u16;
+      let value = seed
+        .strict_mul(37)
+        .strict_add(i.strict_mul(19))
+        .strict_add(11)
+        .checked_rem(usize::from(Q))
+        .expect("ML-KEM modulus is nonzero");
+      *coeff = test_u16(value);
     }
     poly
   }
@@ -8941,13 +9081,13 @@ mod tests {
     let mut m = [0u8; SEED_BYTES];
     let mut r = [0u8; SEED_BYTES];
     for (i, byte) in key_random.iter_mut().enumerate() {
-      *byte = (i.strict_mul(13).strict_add(7)) as u8;
+      *byte = test_low_byte(i.strict_mul(13).strict_add(7));
     }
     for (i, byte) in m.iter_mut().enumerate() {
-      *byte = (i.strict_mul(17).strict_add(23)) as u8;
+      *byte = test_low_byte(i.strict_mul(17).strict_add(23));
     }
     for (i, byte) in r.iter_mut().enumerate() {
-      *byte = (i.strict_mul(19).strict_add(29)) as u8;
+      *byte = test_low_byte(i.strict_mul(19).strict_add(29));
     }
 
     let (ek512, _) = keygen::<2, 2, 192, 768, 800, 1632>(&key_random);
@@ -8979,7 +9119,7 @@ mod tests {
     );
 
     for (i, byte) in key_random.iter_mut().enumerate() {
-      *byte = (i.strict_mul(31).strict_add(11)) as u8;
+      *byte = test_low_byte(i.strict_mul(31).strict_add(11));
     }
     let (ek1024, _) = keygen::<4, 4, 128, 1536, 1568, 3168>(&key_random);
     let prepared1024 = prepare_encapsulation_key::<4, 1568>(&ek1024);
@@ -9214,9 +9354,9 @@ mod tests {
       let mut b = [0u16; N];
 
       for i in 0usize..N {
-        acc[i] = ((seed.strict_mul(19).strict_add(i.strict_mul(7))) % usize::from(Q)) as u16;
-        a[i] = ((seed.strict_mul(31).strict_add(i.strict_mul(11)).strict_add(5)) % usize::from(Q)) as u16;
-        b[i] = ((seed.strict_mul(43).strict_add(i.strict_mul(13)).strict_add(17)) % usize::from(Q)) as u16;
+        acc[i] = test_u16(seed.strict_mul(19).strict_add(i.strict_mul(7)) % usize::from(Q));
+        a[i] = test_u16(seed.strict_mul(31).strict_add(i.strict_mul(11)).strict_add(5) % usize::from(Q));
+        b[i] = test_u16(seed.strict_mul(43).strict_add(i.strict_mul(13)).strict_add(17) % usize::from(Q));
       }
 
       let mut scalar = acc;
@@ -9378,7 +9518,7 @@ mod tests {
   fn byte_encode_decode_round_trips_supported_widths() {
     let mut poly = [0u16; N];
     for (i, coeff) in poly.iter_mut().enumerate() {
-      *coeff = ((i.strict_mul(19).strict_add(7)) as u16) % Q;
+      *coeff = test_u16(i.strict_mul(19).strict_add(7)) % Q;
     }
 
     let mut encoded_1 = [0u8; 32];
@@ -9455,7 +9595,7 @@ mod tests {
   fn fused_decode_decompress_matches_two_pass_codec() {
     let mut input = [0u8; 352];
     for (i, byte) in input.iter_mut().enumerate() {
-      *byte = (i.strict_mul(73).strict_add(19)) as u8;
+      *byte = test_low_byte(i.strict_mul(73).strict_add(19));
     }
 
     macro_rules! assert_width {
@@ -9482,7 +9622,7 @@ mod tests {
   fn fused_message_decompress_add_matches_two_pass_codec() {
     let mut message = [0u8; SEED_BYTES];
     for (i, byte) in message.iter_mut().enumerate() {
-      *byte = (i.strict_mul(37).strict_add(11)) as u8;
+      *byte = test_low_byte(i.strict_mul(37).strict_add(11));
     }
 
     let base = test_poly(0x72);
@@ -9517,8 +9657,8 @@ mod tests {
     for d in [1usize, 4, 5, 10, 11] {
       let max = 1u16 << d;
       for y in 0..max {
-        let x = ((Q_U32 * u32::from(y)) + (1u32 << (d - 1))) >> d;
-        let compressed = (div_q_compress_u32((x << d) + Q_HALF) & ((1u32 << d) - 1)) as u16;
+        let x = Q_U32.strict_mul(u32::from(y)).strict_add(1u32 << d.strict_sub(1)) >> d;
+        let compressed = low_u16(div_q_compress_u32((x << d).strict_add(Q_HALF)) & (1u32 << d).strict_sub(1));
         assert_eq!(compressed, y, "d={d} y={y}");
       }
     }

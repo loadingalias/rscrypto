@@ -36,11 +36,11 @@ for target in "${MUSL_TARGETS[@]}"; do
   mkdir -p "$target_dir"
 
   RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-    cargo check --target "$target" --no-default-features --lib
+    cargo check --locked --target "$target" --no-default-features --lib
   RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-    cargo clippy --target "$target" --lib --all-features -- -D warnings
+    cargo clippy --locked --target "$target" --lib --all-features
   RUSTC_WRAPPER="" CARGO_TARGET_DIR="$target_dir" \
-    cargo build --target "$target" --no-default-features --features alloc --lib --release
+    cargo build --locked --target "$target" --no-default-features --features alloc --lib --release
 done
 
 for target in "${NOSTD_TARGETS[@]}" "${WASM_TARGETS[@]}"; do

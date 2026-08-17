@@ -3,7 +3,7 @@
 //!
 //! Run with: `cargo run --example basic --features full,getrandom`
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 
 use rscrypto::{
   Aead, Blake3, ChaCha20Poly1305, ChaCha20Poly1305Key, Checksum, Crc32C, Digest, Ed25519Keypair, Ed25519SecretKey,
@@ -86,17 +86,19 @@ fn auth_api() -> Result<(), Box<dyn core::error::Error>> {
   let mut mac = HmacSha256::new(key);
   mac.update(b"hello ");
   mac.update(b"world");
-  assert!(mac.verify(&tag).is_ok());
+  mac.verify(&tag)?;
   mac.reset();
   mac.update(data);
-  assert!(mac.verify(&tag).is_ok());
+  mac.verify(&tag)?;
 
   let hkdf = HkdfSha256::new(b"salt", b"input key material");
   let mut okm = [0u8; 42];
   hkdf.expand(b"context", &mut okm)?;
 
   let oneshot = HkdfSha256::derive_array::<42>(b"salt", b"input key material", b"context")?;
-  assert_eq!(okm, oneshot);
+  if okm != oneshot {
+    return Err(std::io::Error::other("HKDF streaming and one-shot outputs differ").into());
+  }
 
   println!("HMAC-SHA256 tag size = {} bytes", tag.as_slice().len());
   println!("HKDF-SHA256 output   = {} bytes\n", okm.len());
@@ -116,7 +118,9 @@ fn aead_api() -> Result<(), Box<dyn core::error::Error>> {
 
   let mut opened = [0u8; 5];
   aead.decrypt(&nonce, b"", &sealed, &mut opened)?;
-  assert_eq!(&opened, b"hello");
+  if &opened != b"hello" {
+    return Err(std::io::Error::other("AEAD round-trip changed the plaintext").into());
+  }
 
   println!("ChaCha20-Poly1305 round-trip succeeded");
   println!("  nonce = {nonce}\n");
@@ -135,12 +139,16 @@ fn hex_api() -> Result<(), Box<dyn core::error::Error>> {
   println!("Debug:    {nonce:?}");
 
   let parsed: Nonce96 = "abababababababababababab".parse()?;
-  assert_eq!(parsed, nonce);
+  if parsed != nonce {
+    return Err(std::io::Error::other("nonce hex round-trip changed the value").into());
+  }
   println!("FromStr:  round-trip succeeded");
 
   let key = ChaCha20Poly1305Key::from_bytes([0x42; 32]);
   let key_debug = format!("{key:?}");
-  assert_eq!(key_debug, "ChaCha20Poly1305Key(****)");
+  if key_debug != "ChaCha20Poly1305Key(****)" {
+    return Err(std::io::Error::other("secret-key Debug output exposed an unexpected representation").into());
+  }
   println!("\nSecret Debug: {key_debug}");
 
   let ed_sk = Ed25519SecretKey::from_bytes([7u8; 32]);
@@ -215,23 +223,35 @@ fn io_api() -> std::io::Result<()> {
 
   let data = b"stream me through adapters";
 
-  let mut reader = Sha256::reader(Cursor::new(data.to_vec()));
+  let mut reader = Sha256::reader(data.as_slice());
   let mut copied = Vec::new();
   reader.read_to_end(&mut copied)?;
-  assert_eq!(copied, data);
-  assert_eq!(reader.digest(), Sha256::digest(data));
+  if copied != data {
+    return Err(std::io::Error::other("digest reader changed the copied data"));
+  }
+  if reader.digest() != Sha256::digest(data) {
+    return Err(std::io::Error::other("digest reader produced the wrong digest"));
+  }
 
   let mut checksum_writer = Crc32C::writer(Vec::new());
   checksum_writer.write_all(data)?;
   let (written, crc) = checksum_writer.into_parts();
-  assert_eq!(written, data);
-  assert_eq!(crc, Crc32C::checksum(data));
+  if written != data {
+    return Err(std::io::Error::other("checksum writer changed the written data"));
+  }
+  if crc != Crc32C::checksum(data) {
+    return Err(std::io::Error::other("checksum writer produced the wrong checksum"));
+  }
 
   let mut digest_writer = Blake3::writer(Vec::new());
   digest_writer.write_all(data)?;
   let (written, digest) = digest_writer.into_parts();
-  assert_eq!(written, data);
-  assert_eq!(digest, Blake3::digest(data));
+  if written != data {
+    return Err(std::io::Error::other("digest writer changed the written data"));
+  }
+  if digest != Blake3::digest(data) {
+    return Err(std::io::Error::other("digest writer produced the wrong digest"));
+  }
 
   println!("reader digest matches Sha256::digest()");
   println!("writer checksum matches Crc32C::checksum()");

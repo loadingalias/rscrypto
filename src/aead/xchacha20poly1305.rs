@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! XChaCha20-Poly1305 public AEAD surface.
 
 use core::fmt;
@@ -220,8 +218,12 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"hello xchacha";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
-    cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &tag).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("XChaCha20-Poly1305 encryption must succeed");
+    cipher
+      .decrypt_in_place(&nonce, b"aad", &mut buf, &tag)
+      .expect("XChaCha20-Poly1305 decryption must succeed");
     assert_eq!(&buf, b"hello xchacha");
   }
 
@@ -232,11 +234,15 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"nonce test";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("XChaCha20-Poly1305 test setup encryption must succeed");
 
     let wrong_nonce = Nonce192::from_bytes([0x08u8; 24]);
-    let result = cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&wrong_nonce, b"aad", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 
   #[test]
@@ -246,14 +252,18 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"zero me on failure";
-    let tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"aad", &mut buf)
+      .expect("XChaCha20-Poly1305 test setup encryption must succeed");
 
     let mut bad_tag = tag.to_bytes();
     bad_tag[0] ^= 0xFF;
     let bad_tag = XChaCha20Poly1305Tag::from_bytes(bad_tag);
 
-    let result = cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&nonce, b"aad", &mut buf, &bad_tag),
+      Err(OpenError::verification())
+    );
     assert!(buf.iter().all(|&b| b == 0), "buffer not zeroed on auth failure");
   }
 
@@ -264,9 +274,13 @@ mod tests {
     let cipher = XChaCha20Poly1305::new(&key);
 
     let mut buf = *b"aad test";
-    let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buf).unwrap();
+    let tag = cipher
+      .encrypt_in_place(&nonce, b"correct", &mut buf)
+      .expect("XChaCha20-Poly1305 test setup encryption must succeed");
 
-    let result = cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag);
-    assert!(result.is_err());
+    assert_eq!(
+      cipher.decrypt_in_place(&nonce, b"wrong", &mut buf, &tag),
+      Err(OpenError::verification())
+    );
   }
 }

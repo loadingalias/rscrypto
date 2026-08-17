@@ -60,22 +60,22 @@ else
 fi
 
 run_step "owned aarch64 NEON NTT scalar oracle" \
-  cargo test --lib --features ml-kem ntt_neon -- --nocapture
+  cargo test --locked --lib --features ml-kem ntt_neon -- --nocapture
 
 run_step "owned aarch64 basemul scalar oracle" \
-  cargo test --lib --features ml-kem basemul_accumulate -- --nocapture
+  cargo test --locked --lib --features ml-kem basemul_accumulate -- --nocapture
 
 run_step "ML-KEM ACVP FIPS 203 vectors" \
-  cargo test --test mlkem_acvp --features ml-kem -- --nocapture
+  cargo test --locked --test mlkem_acvp --features ml-kem -- --nocapture
 
 run_step "ML-KEM operation tests" \
-  cargo test --test mlkem_ops --features ml-kem -- --nocapture
+  cargo test --locked --test mlkem_ops --features ml-kem -- --nocapture
 
 run_step "ML-KEM FIPS/property tests" \
-  cargo test --test mlkem_properties --features ml-kem -- --nocapture
+  cargo test --locked --test mlkem_properties --features ml-kem -- --nocapture
 
 run_step "ML-KEM fuzz corpus replay" \
-  cargo test --manifest-path fuzz/Cargo.toml --test corpus_replay replay_auth_mlkem -- --nocapture
+  cargo test --locked --manifest-path fuzz/Cargo.toml --test corpus_replay replay_auth_mlkem -- --nocapture
 
 if [[ "$(bool_value "${RSCRYPTO_MLKEM_AARCH64_GATE_SKIP_BENCH:-false}")" == "true" ]]; then
   echo "warning: ML-KEM benchmark gate skipped by RSCRYPTO_MLKEM_AARCH64_GATE_SKIP_BENCH" | tee -a "$LOG_PATH"

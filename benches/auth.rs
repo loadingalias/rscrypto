@@ -43,7 +43,8 @@ fn array_from_slice<const N: usize>(slice: &[u8]) -> [u8; N] {
 fn deterministic_bytes<const N: usize>(offset: u8) -> [u8; N] {
   let mut out = [0u8; N];
   for (i, byte) in out.iter_mut().enumerate() {
-    *byte = offset.wrapping_add(i as u8);
+    let low_index = u8::try_from(i & usize::from(u8::MAX)).expect("masked deterministic-byte index must fit u8");
+    *byte = offset.wrapping_add(low_index);
   }
   out
 }
@@ -147,7 +148,8 @@ fn hmac_sha256(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      let base_mac = RustCryptoHmacSha256::new_from_slice(&key).unwrap();
+      let base_mac =
+        RustCryptoHmacSha256::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
       b.iter(|| {
         use hmac::Mac as _;
 
@@ -196,7 +198,8 @@ fn hmac_sha384(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      let base_mac = RustCryptoHmacSha384::new_from_slice(&key).unwrap();
+      let base_mac =
+        RustCryptoHmacSha384::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
       b.iter(|| {
         use hmac::Mac as _;
 
@@ -245,7 +248,8 @@ fn hmac_sha512(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("rustcrypto", len), data, |b, d| {
-      let base_mac = RustCryptoHmacSha512::new_from_slice(&key).unwrap();
+      let base_mac =
+        RustCryptoHmacSha512::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
       b.iter(|| {
         use hmac::Mac as _;
 
@@ -292,7 +296,8 @@ fn hmac_sha256_streaming(c: &mut Criterion) {
       b.iter(|| {
         use hmac::Mac as _;
 
-        let mut mac = RustCryptoHmacSha256::new_from_slice(&key).unwrap();
+        let mut mac =
+          RustCryptoHmacSha256::new_from_slice(&key).expect("valid authentication benchmark operation must succeed");
         for chunk in data.chunks(chunk_size) {
           mac.update(black_box(chunk));
         }
@@ -345,7 +350,8 @@ fn hmac_sha256_internal(c: &mut Criterion) {
       b.iter(|| {
         use hmac::Mac as _;
 
-        let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key)).unwrap();
+        let mut mac = RustCryptoHmacSha256::new_from_slice(black_box(&key))
+          .expect("valid authentication benchmark operation must succeed");
         mac.update(black_box(d));
         black_box(mac.finalize().into_bytes())
       })
@@ -384,7 +390,9 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
       b.iter(|| {
-        hkdf.expand(black_box(&info), black_box(&mut out)).unwrap();
+        hkdf
+          .expand(black_box(&info), black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(out[0])
       })
     });
@@ -392,7 +400,9 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
       b.iter(|| {
-        rustcrypto.expand(black_box(&info), black_box(&mut out)).unwrap();
+        rustcrypto
+          .expand(black_box(&info), black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(out[0])
       })
     });
@@ -403,9 +413,9 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
         b.iter(|| {
           aws_prk
             .expand(&[black_box(&info)], AwsHkdfLen(len))
-            .unwrap()
+            .expect("valid authentication benchmark operation must succeed")
             .fill(black_box(&mut out))
-            .unwrap();
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -416,9 +426,9 @@ fn hkdf_sha256_expand(c: &mut Criterion) {
       b.iter(|| {
         ring_prk
           .expand(&[black_box(&info)], RingHkdfLen(len))
-          .unwrap()
+          .expect("valid authentication benchmark operation must succeed")
           .fill(black_box(&mut out))
-          .unwrap();
+          .expect("valid authentication benchmark operation must succeed");
         black_box(out[0])
       })
     });
@@ -446,7 +456,9 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
       b.iter(|| {
-        hkdf.expand(black_box(&info), black_box(&mut out)).unwrap();
+        hkdf
+          .expand(black_box(&info), black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(out[0])
       })
     });
@@ -454,7 +466,9 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rustcrypto", out_len), &out_len, |b, &len| {
       let mut out = vec![0u8; len];
       b.iter(|| {
-        rustcrypto.expand(black_box(&info), black_box(&mut out)).unwrap();
+        rustcrypto
+          .expand(black_box(&info), black_box(&mut out))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(out[0])
       })
     });
@@ -465,9 +479,9 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
         b.iter(|| {
           aws_prk
             .expand(&[black_box(&info)], AwsHkdfLen(len))
-            .unwrap()
+            .expect("valid authentication benchmark operation must succeed")
             .fill(black_box(&mut out))
-            .unwrap();
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -478,9 +492,9 @@ fn hkdf_sha384_expand(c: &mut Criterion) {
       b.iter(|| {
         ring_prk
           .expand(&[black_box(&info)], RingHkdfLen(len))
-          .unwrap()
+          .expect("valid authentication benchmark operation must succeed")
           .fill(black_box(&mut out))
-          .unwrap();
+          .expect("valid authentication benchmark operation must succeed");
         black_box(out[0])
       })
     });
@@ -497,7 +511,8 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
   let state = Pbkdf2Sha256::new(&password);
 
   for &iterations in &[1u32, 100, 1000] {
-    let nz_iters = core::num::NonZeroU32::new(iterations).unwrap();
+    let nz_iters =
+      core::num::NonZeroU32::new(iterations).expect("valid authentication benchmark operation must succeed");
     let mut g = c.benchmark_group(format!("pbkdf2-sha256/iters={iterations}"));
 
     for &out_len in &[32usize, 64] {
@@ -507,7 +522,7 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
         let mut out = vec![0u8; len];
         b.iter(|| {
           Pbkdf2Sha256::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
-            .unwrap();
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -559,7 +574,9 @@ fn pbkdf2_sha256_derive(c: &mut Criterion) {
       g_state.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          state.derive(black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          state
+            .derive(black_box(&salt), iterations, black_box(&mut out))
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -576,7 +593,8 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
   let state = Pbkdf2Sha256::new(&password);
 
   for &iterations in &[1u32, 100, 1000] {
-    let nz_iters = core::num::NonZeroU32::new(iterations).unwrap();
+    let nz_iters =
+      core::num::NonZeroU32::new(iterations).expect("valid authentication benchmark operation must succeed");
     let mut g = c.benchmark_group(format!("pbkdf2-sha256/internal/iters={iterations}"));
 
     for &out_len in &[32usize, 64] {
@@ -586,7 +604,7 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
         let mut out = vec![0u8; len];
         b.iter(|| {
           Pbkdf2Sha256::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
-            .unwrap();
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -594,7 +612,9 @@ fn pbkdf2_sha256_internal(c: &mut Criterion) {
       g.bench_with_input(BenchmarkId::new("rscrypto-state", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          state.derive(black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          state
+            .derive(black_box(&salt), iterations, black_box(&mut out))
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -650,7 +670,8 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
   let state = Pbkdf2Sha512::new(&password);
 
   for &iterations in &[1u32, 100, 1000] {
-    let nz_iters = core::num::NonZeroU32::new(iterations).unwrap();
+    let nz_iters =
+      core::num::NonZeroU32::new(iterations).expect("valid authentication benchmark operation must succeed");
     let mut g = c.benchmark_group(format!("pbkdf2-sha512/iters={iterations}"));
 
     for &out_len in &[64usize, 128] {
@@ -660,7 +681,7 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
         let mut out = vec![0u8; len];
         b.iter(|| {
           Pbkdf2Sha512::derive_key_primitive(black_box(&password), black_box(&salt), iterations, black_box(&mut out))
-            .unwrap();
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -712,7 +733,9 @@ fn pbkdf2_sha512_derive(c: &mut Criterion) {
       g_state.bench_with_input(BenchmarkId::new("rscrypto", out_len), &out_len, |b, &len| {
         let mut out = vec![0u8; len];
         b.iter(|| {
-          state.derive(black_box(&salt), iterations, black_box(&mut out)).unwrap();
+          state
+            .derive(black_box(&salt), iterations, black_box(&mut out))
+            .expect("valid authentication benchmark operation must succeed");
           black_box(out[0])
         })
       });
@@ -744,13 +767,15 @@ fn ed25519_public_key(c: &mut Criterion) {
 
 fn ecdsa_p256_verify(c: &mut Criterion) {
   let secret_bytes = [0x11u8; 32];
-  let signing_key = P256OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let signing_key =
+    P256OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
   let verifying_key = signing_key.verifying_key();
   let sec1 = EcdsaP256SecretKey::from_bytes(secret_bytes)
-    .unwrap()
+    .expect("valid authentication benchmark operation must succeed")
     .public_key()
     .to_sec1_bytes();
-  let public = EcdsaP256PublicKey::from_sec1_bytes(sec1.as_slice()).unwrap();
+  let public = EcdsaP256PublicKey::from_sec1_bytes(sec1.as_slice())
+    .expect("valid authentication benchmark operation must succeed");
   let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_FIXED, sec1.as_slice());
   aws_lc_bench! {
     let aws_upk =
@@ -766,11 +791,14 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let oracle_signature: P256OracleSignature = p256::ecdsa::signature::Signer::sign(&signing_key, data);
-    let signature = EcdsaP256Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref())).unwrap();
+    let signature = EcdsaP256Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref()))
+      .expect("valid authentication benchmark operation must succeed");
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
-        black_box(&public).verify(black_box(d), black_box(&signature)).unwrap();
+        black_box(&public)
+          .verify(black_box(d), black_box(&signature))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -778,14 +806,16 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rustcrypto-p256", len), data, |b, d| {
       b.iter(|| {
         p256::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
-          .unwrap();
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| {
-        ring_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+        ring_upk
+          .verify(black_box(d), black_box(signature.as_bytes()))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -793,7 +823,7 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
     aws_lc_bench! {
       g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
         b.iter(|| {
-          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
           black_box(())
         })
       });
@@ -805,10 +835,12 @@ fn ecdsa_p256_verify(c: &mut Criterion) {
 
 fn ecdsa_p256_sign(c: &mut Criterion) {
   let secret_bytes = [0x11u8; 32];
-  let secret = EcdsaP256SecretKey::from_bytes(secret_bytes).unwrap();
+  let secret =
+    EcdsaP256SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
   let keypair = EcdsaP256Keypair::from_secret_key(secret);
   let blind = [0x5cu8; 64];
-  let signing_key = P256OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let signing_key =
+    P256OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
   let sec1 = keypair.public_key().to_sec1_bytes();
   let ring_rng = ring::rand::SystemRandom::new();
   let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
@@ -817,7 +849,7 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     &sec1,
     &ring_rng,
   )
-  .unwrap();
+  .expect("valid authentication benchmark operation must succeed");
   aws_lc_bench! {
     let aws_rng = aws_lc_rs::rand::SystemRandom::new();
     let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
@@ -825,7 +857,7 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
       &secret_bytes,
       &sec1,
     )
-    .unwrap();
+    .expect("valid authentication benchmark operation must succeed");
   }
 
   let inputs = [0usize, 32, 1024, 16384]
@@ -838,7 +870,13 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto-deterministic", len), data, |b, d| {
-      b.iter(|| black_box(black_box(&keypair).try_sign(black_box(d)).unwrap()))
+      b.iter(|| {
+        black_box(
+          black_box(&keypair)
+            .try_sign(black_box(d))
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      })
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto-blinded", len), data, |b, d| {
@@ -846,7 +884,7 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
         black_box(
           black_box(&keypair)
             .try_sign_blinded(black_box(d), |out| out.copy_from_slice(black_box(&blind)))
-            .unwrap(),
+            .expect("valid authentication benchmark operation must succeed"),
         )
       })
     });
@@ -860,12 +898,18 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| black_box(ring_key.sign(&ring_rng, black_box(d)).unwrap()))
+      b.iter(|| {
+        black_box(
+          ring_key
+            .sign(&ring_rng, black_box(d))
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      })
     });
 
     aws_lc_bench! {
       g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).unwrap()))
+        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).expect("valid authentication benchmark operation must succeed")))
       });
     }
   }
@@ -875,13 +919,15 @@ fn ecdsa_p256_sign(c: &mut Criterion) {
 
 fn ecdsa_p384_verify(c: &mut Criterion) {
   let secret_bytes = [0x31u8; 48];
-  let signing_key = P384OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let signing_key =
+    P384OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
   let verifying_key = signing_key.verifying_key();
   let sec1 = EcdsaP384SecretKey::from_bytes(secret_bytes)
-    .unwrap()
+    .expect("valid authentication benchmark operation must succeed")
     .public_key()
     .to_sec1_bytes();
-  let public = EcdsaP384PublicKey::from_sec1_bytes(sec1.as_slice()).unwrap();
+  let public = EcdsaP384PublicKey::from_sec1_bytes(sec1.as_slice())
+    .expect("valid authentication benchmark operation must succeed");
   let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P384_SHA384_FIXED, sec1.as_slice());
   aws_lc_bench! {
     let aws_upk =
@@ -897,11 +943,14 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let oracle_signature: P384OracleSignature = p384::ecdsa::signature::Signer::sign(&signing_key, data);
-    let signature = EcdsaP384Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref())).unwrap();
+    let signature = EcdsaP384Signature::from_bytes(array_from_slice(oracle_signature.to_bytes().as_ref()))
+      .expect("valid authentication benchmark operation must succeed");
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
-        black_box(&public).verify(black_box(d), black_box(&signature)).unwrap();
+        black_box(&public)
+          .verify(black_box(d), black_box(&signature))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -909,14 +958,16 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
     g.bench_with_input(BenchmarkId::new("rustcrypto-p384", len), data, |b, d| {
       b.iter(|| {
         p384::ecdsa::signature::Verifier::verify(black_box(verifying_key), black_box(d), black_box(&oracle_signature))
-          .unwrap();
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| {
-        ring_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+        ring_upk
+          .verify(black_box(d), black_box(signature.as_bytes()))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -924,7 +975,7 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
     aws_lc_bench! {
       g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
         b.iter(|| {
-          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).unwrap();
+          aws_upk.verify(black_box(d), black_box(signature.as_bytes())).expect("valid authentication benchmark operation must succeed");
           black_box(())
         })
       });
@@ -936,10 +987,12 @@ fn ecdsa_p384_verify(c: &mut Criterion) {
 
 fn ecdsa_p384_sign(c: &mut Criterion) {
   let secret_bytes = [0x31u8; 48];
-  let secret = EcdsaP384SecretKey::from_bytes(secret_bytes).unwrap();
+  let secret =
+    EcdsaP384SecretKey::from_bytes(secret_bytes).expect("valid authentication benchmark operation must succeed");
   let keypair = EcdsaP384Keypair::from_secret_key(secret);
   let blind = [0xa3u8; 96];
-  let signing_key = P384OracleSigningKey::from_slice(&secret_bytes).unwrap();
+  let signing_key =
+    P384OracleSigningKey::from_slice(&secret_bytes).expect("valid authentication benchmark operation must succeed");
   let sec1 = keypair.public_key().to_sec1_bytes();
   let ring_rng = ring::rand::SystemRandom::new();
   let ring_key = ring::signature::EcdsaKeyPair::from_private_key_and_public_key(
@@ -948,7 +1001,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     &sec1,
     &ring_rng,
   )
-  .unwrap();
+  .expect("valid authentication benchmark operation must succeed");
   aws_lc_bench! {
     let aws_rng = aws_lc_rs::rand::SystemRandom::new();
     let aws_key = aws_lc_rs::signature::EcdsaKeyPair::from_private_key_and_public_key(
@@ -956,7 +1009,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
       &secret_bytes,
       &sec1,
     )
-    .unwrap();
+    .expect("valid authentication benchmark operation must succeed");
   }
 
   let inputs = [0usize, 32, 1024, 16384]
@@ -969,7 +1022,13 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     common::set_throughput(&mut g, *len);
 
     g.bench_with_input(BenchmarkId::new("rscrypto-deterministic", len), data, |b, d| {
-      b.iter(|| black_box(black_box(&keypair).try_sign(black_box(d)).unwrap()))
+      b.iter(|| {
+        black_box(
+          black_box(&keypair)
+            .try_sign(black_box(d))
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      })
     });
 
     g.bench_with_input(BenchmarkId::new("rscrypto-blinded", len), data, |b, d| {
@@ -977,7 +1036,7 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
         black_box(
           black_box(&keypair)
             .try_sign_blinded(black_box(d), |out| out.copy_from_slice(black_box(&blind)))
-            .unwrap(),
+            .expect("valid authentication benchmark operation must succeed"),
         )
       })
     });
@@ -991,12 +1050,18 @@ fn ecdsa_p384_sign(c: &mut Criterion) {
     });
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
-      b.iter(|| black_box(ring_key.sign(&ring_rng, black_box(d)).unwrap()))
+      b.iter(|| {
+        black_box(
+          ring_key
+            .sign(&ring_rng, black_box(d))
+            .expect("valid authentication benchmark operation must succeed"),
+        )
+      })
     });
 
     aws_lc_bench! {
       g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
-        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).unwrap()))
+        b.iter(|| black_box(aws_key.sign(&aws_rng, black_box(d)).expect("valid authentication benchmark operation must succeed")))
       });
     }
   }
@@ -1118,9 +1183,10 @@ fn ed25519_sign(c: &mut Criterion) {
   let keypair = Ed25519Keypair::from_secret_key(secret.duplicate_secret());
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   aws_lc_bench! {
-    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).expect("valid authentication benchmark operation must succeed");
   }
-  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes)
+    .expect("valid authentication benchmark operation must succeed");
   let (_dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
   let mut dryoc_sig: [u8; 64] = [0u8; 64];
   let inputs = [0usize, 32, 1024, 16384]
@@ -1156,7 +1222,8 @@ fn ed25519_sign(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("dryoc", len), data, |b, d| {
       b.iter(|| {
-        crypto_sign_detached(&mut dryoc_sig, black_box(d), &dryoc_sk).unwrap();
+        crypto_sign_detached(&mut dryoc_sig, black_box(d), &dryoc_sk)
+          .expect("valid authentication benchmark operation must succeed");
         black_box(&dryoc_sig);
       })
     });
@@ -1179,11 +1246,12 @@ fn ed25519_verify(c: &mut Criterion) {
   let signing_key = SigningKey::from_bytes(&secret_bytes);
   let verifying_key = signing_key.verifying_key();
   aws_lc_bench! {
-    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+    let aws_kp = aws_lc_rs::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).expect("valid authentication benchmark operation must succeed");
     let aws_pubkey: Vec<u8> = aws_kp.public_key().as_ref().to_vec();
     let aws_upk = aws_lc_rs::signature::UnparsedPublicKey::new(&aws_lc_rs::signature::ED25519, aws_pubkey);
   }
-  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes).unwrap();
+  let ring_kp = ring::signature::Ed25519KeyPair::from_seed_unchecked(&secret_bytes)
+    .expect("valid authentication benchmark operation must succeed");
   let ring_pubkey: Vec<u8> = ring_kp.public_key().as_ref().to_vec();
   let ring_upk = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, ring_pubkey);
   let (dryoc_pk, dryoc_sk) = crypto_sign_seed_keypair(&secret_bytes);
@@ -1202,11 +1270,14 @@ fn ed25519_verify(c: &mut Criterion) {
     }
     let ring_sig = ring_kp.sign(data);
     let mut dryoc_sig: [u8; 64] = [0u8; 64];
-    crypto_sign_detached(&mut dryoc_sig, data, &dryoc_sk).unwrap();
+    crypto_sign_detached(&mut dryoc_sig, data, &dryoc_sk)
+      .expect("valid authentication benchmark operation must succeed");
 
     g.bench_with_input(BenchmarkId::new("rscrypto", len), data, |b, d| {
       b.iter(|| {
-        black_box(&public).verify(black_box(d), black_box(&ours)).unwrap();
+        black_box(&public)
+          .verify(black_box(d), black_box(&ours))
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -1215,7 +1286,7 @@ fn ed25519_verify(c: &mut Criterion) {
       b.iter(|| {
         black_box(&verifying_key)
           .verify_strict(black_box(d), black_box(&dalek))
-          .unwrap();
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -1223,7 +1294,7 @@ fn ed25519_verify(c: &mut Criterion) {
     aws_lc_bench! {
       g.bench_with_input(BenchmarkId::new("aws-lc-rs", len), data, |b, d| {
         b.iter(|| {
-          aws_upk.verify(black_box(d), aws_sig.as_ref()).unwrap();
+          aws_upk.verify(black_box(d), aws_sig.as_ref()).expect("valid authentication benchmark operation must succeed");
           black_box(())
         })
       });
@@ -1231,14 +1302,17 @@ fn ed25519_verify(c: &mut Criterion) {
 
     g.bench_with_input(BenchmarkId::new("ring", len), data, |b, d| {
       b.iter(|| {
-        ring_upk.verify(black_box(d), ring_sig.as_ref()).unwrap();
+        ring_upk
+          .verify(black_box(d), ring_sig.as_ref())
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
 
     g.bench_with_input(BenchmarkId::new("dryoc", len), data, |b, d| {
       b.iter(|| {
-        crypto_sign_verify_detached(&dryoc_sig, black_box(d), &dryoc_pk).unwrap();
+        crypto_sign_verify_detached(&dryoc_sig, black_box(d), &dryoc_pk)
+          .expect("valid authentication benchmark operation must succeed");
         black_box(())
       })
     });
@@ -1269,7 +1343,8 @@ fn ed25519_verify_phase(c: &mut Criterion) {
   for (len, data) in &inputs {
     common::set_throughput(&mut g, *len);
     let signature = keypair.sign(data);
-    let scalars = diag_ed25519_verify_scalars(&public, &signature, data).unwrap();
+    let scalars = diag_ed25519_verify_scalars(&public, &signature, data)
+      .expect("valid authentication benchmark operation must succeed");
 
     g.bench_with_input(BenchmarkId::new("challenge-reduce", len), data, |b, d| {
       b.iter(|| {
@@ -1352,8 +1427,8 @@ fn x25519_public_key(c: &mut Criterion) {
       b.iter(|| {
         let priv_key =
           aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, black_box(&secret_bytes))
-            .unwrap();
-        black_box(priv_key.compute_public_key().unwrap())
+            .expect("valid authentication benchmark operation must succeed");
+        black_box(priv_key.compute_public_key().expect("valid authentication benchmark operation must succeed"))
       })
     });
   }
@@ -1381,11 +1456,11 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   let dalek_bob_public = DalekX25519PublicKey::from(&DalekX25519Secret::from(bob_bytes));
   aws_lc_bench! {
     let aws_alice =
-      aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).unwrap();
+      aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &alice_bytes).expect("valid authentication benchmark operation must succeed");
     let aws_bob_pub_bytes: [u8; 32] = {
       let bob_priv =
-        aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &bob_bytes).unwrap();
-      let pk = bob_priv.compute_public_key().unwrap();
+        aws_lc_rs::agreement::PrivateKey::from_private_key(&aws_lc_rs::agreement::X25519, &bob_bytes).expect("valid authentication benchmark operation must succeed");
+      let pk = bob_priv.compute_public_key().expect("valid authentication benchmark operation must succeed");
       let mut out = [0u8; 32];
       out.copy_from_slice(pk.as_ref());
       out
@@ -1398,7 +1473,13 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   let mut g = c.benchmark_group("x25519/diffie-hellman");
 
   g.bench_function("rscrypto", |b| {
-    b.iter(|| black_box(black_box(&alice).diffie_hellman(black_box(&bob_public)).unwrap()))
+    b.iter(|| {
+      black_box(
+        black_box(&alice)
+          .diffie_hellman(black_box(&bob_public))
+          .expect("valid authentication benchmark operation must succeed"),
+      )
+    })
   });
 
   g.bench_function("dalek", |b| {
@@ -1413,7 +1494,7 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
           out.copy_from_slice(bytes);
           Ok::<[u8; 32], ()>(out)
         })
-        .unwrap();
+        .expect("valid authentication benchmark operation must succeed");
         black_box(shared)
       })
     });
@@ -1422,7 +1503,8 @@ fn x25519_diffie_hellman(c: &mut Criterion) {
   g.bench_function("dryoc", |b| {
     let mut shared = [0u8; 32];
     b.iter(|| {
-      crypto_scalarmult(&mut shared, black_box(&alice_bytes), black_box(&dryoc_bob_pub));
+      crypto_scalarmult(&mut shared, black_box(&alice_bytes), black_box(&dryoc_bob_pub))
+        .expect("valid authentication benchmark operation must succeed");
       black_box(shared)
     })
   });
@@ -1454,7 +1536,7 @@ macro_rules! mlkem_profile_benches {
             out.copy_from_slice(black_box(&key_random));
             Ok::<(), MlKemError>(())
           })
-          .unwrap()
+          .expect("valid authentication benchmark operation must succeed")
         })
       });
 
@@ -1464,7 +1546,7 @@ macro_rules! mlkem_profile_benches {
 
       aws_lc_bench! {
         g.bench_function("aws-lc-rs", |b| {
-          b.iter(|| black_box(AwsMlKemDecapsulationKey::generate(&$aws_algorithm).unwrap()))
+          b.iter(|| black_box(AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("valid authentication benchmark operation must succeed")))
         });
       }
 
@@ -1490,8 +1572,8 @@ macro_rules! mlkem_profile_benches {
         out.copy_from_slice(&key_random);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
-      let prepared_ek = ek.prepare().unwrap();
+      .expect("valid authentication benchmark operation must succeed");
+      let prepared_ek = ek.prepare().expect("valid authentication benchmark operation must succeed");
       let (fips_ek, _) = $fips::KG::keygen_from_seed(
         array_from_slice::<32>(&key_random[..32]),
         array_from_slice::<32>(&key_random[32..]),
@@ -1502,8 +1584,8 @@ macro_rules! mlkem_profile_benches {
       let libcrux_keypair = $libcrux::generate_key_pair(key_random);
       let libcrux_ek = libcrux_keypair.public_key().clone();
       aws_lc_bench! {
-        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).unwrap();
-        let aws_ek = aws_dk.encapsulation_key().unwrap();
+        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("valid authentication benchmark operation must succeed");
+        let aws_ek = aws_dk.encapsulation_key().expect("valid authentication benchmark operation must succeed");
       }
       let mut g = c.benchmark_group(concat!($group, "/encapsulate"));
 
@@ -1514,7 +1596,7 @@ macro_rules! mlkem_profile_benches {
               out.copy_from_slice(black_box(&encaps_random));
               Ok::<(), MlKemError>(())
             })
-            .unwrap()
+            .expect("valid authentication benchmark operation must succeed")
         })
       });
 
@@ -1524,7 +1606,7 @@ macro_rules! mlkem_profile_benches {
 
       aws_lc_bench! {
         g.bench_function("aws-lc-rs", |b| {
-          b.iter(|| black_box(aws_ek.encapsulate().unwrap()))
+          b.iter(|| black_box(aws_ek.encapsulate().expect("valid authentication benchmark operation must succeed")))
         });
       }
 
@@ -1548,15 +1630,15 @@ macro_rules! mlkem_profile_benches {
         out.copy_from_slice(&key_random);
         Ok::<(), MlKemError>(())
       })
-      .unwrap();
-      let prepared_ek = ek.prepare().unwrap();
-      let prepared_dk = dk.prepare().unwrap();
+      .expect("valid authentication benchmark operation must succeed");
+      let prepared_ek = ek.prepare().expect("valid authentication benchmark operation must succeed");
+      let prepared_dk = dk.prepare().expect("valid authentication benchmark operation must succeed");
       let (ciphertext, _) = prepared_ek
         .encapsulate(|out| {
           out.copy_from_slice(&encaps_random);
           Ok::<(), MlKemError>(())
         })
-        .unwrap();
+        .expect("valid authentication benchmark operation must succeed");
       let (fips_ek, fips_dk) = $fips::KG::keygen_from_seed(
         array_from_slice::<32>(&key_random[..32]),
         array_from_slice::<32>(&key_random[32..]),
@@ -1572,14 +1654,14 @@ macro_rules! mlkem_profile_benches {
       let libcrux_dk = libcrux_keypair.private_key().clone();
       let (libcrux_ciphertext, _) = $libcrux::encapsulate(&libcrux_ek, encaps_random);
       aws_lc_bench! {
-        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).unwrap();
-        let aws_ek = aws_dk.encapsulation_key().unwrap();
-        let (aws_ciphertext, _) = aws_ek.encapsulate().unwrap();
+        let aws_dk = AwsMlKemDecapsulationKey::generate(&$aws_algorithm).expect("valid authentication benchmark operation must succeed");
+        let aws_ek = aws_dk.encapsulation_key().expect("valid authentication benchmark operation must succeed");
+        let (aws_ciphertext, _) = aws_ek.encapsulate().expect("valid authentication benchmark operation must succeed");
       }
       let mut g = c.benchmark_group(concat!($group, "/decapsulate"));
 
       g.bench_function("rscrypto", |b| {
-        b.iter(|| black_box(&prepared_dk).decapsulate(black_box(&ciphertext)).unwrap())
+        b.iter(|| black_box(&prepared_dk).decapsulate(black_box(&ciphertext)).expect("valid authentication benchmark operation must succeed"))
       });
 
       g.bench_function("libcrux", |b| {
@@ -1597,14 +1679,14 @@ macro_rules! mlkem_profile_benches {
             black_box(
               aws_dk
                 .decapsulate(AwsMlKemCiphertext::from(black_box(aws_ciphertext.as_ref())))
-                .unwrap(),
+                .expect("valid authentication benchmark operation must succeed"),
             )
           })
         });
       }
 
       g.bench_function("fips203", |b| {
-        b.iter(|| black_box(fips_dk.try_decaps(black_box(&fips_ciphertext)).unwrap()))
+        b.iter(|| black_box(fips_dk.try_decaps(black_box(&fips_ciphertext)).expect("valid authentication benchmark operation must succeed")))
       });
 
       g.bench_function("rustcrypto", |b| {

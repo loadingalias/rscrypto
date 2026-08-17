@@ -1,7 +1,7 @@
 use rscrypto::{AsconHash256, AsconXof, Digest, Xof};
 use rscrypto_fuzz::{FuzzInput, assert_digest_chunked, assert_digest_reset, some_or_return, split_at_ratio};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let out_len_byte: u8 = some_or_return!(input.byte());

@@ -96,7 +96,7 @@ jq -e --arg commit "$commit" '
   and (.release.tag_object | test("^[0-9a-f]{40}$"))
   and .release.git_commit == $commit
   and (.release.git_tree | test("^[0-9a-f]{40}$"))
-  and .toolchain.channel == "nightly-2026-07-17"
+  and .toolchain.channel == "1.97.1"
   and (.toolchain.manifest.sha256 | test("^[0-9a-f]{64}$"))
   and .evidence.git_commit == $commit
   and .evidence.mode == "exact_commit"

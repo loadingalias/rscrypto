@@ -29,6 +29,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/fuzz-packages.sh"
 
 maybe_disable_sccache
+activate_nightly_toolchain
 
 # Configuration (can be overridden via environment)
 DURATION_SECS=${RSCRYPTO_FUZZ_DURATION_SECS:-60}

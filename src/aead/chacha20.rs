@@ -1,5 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-
 //! Portable ChaCha20 and HChaCha20 core.
 
 use core::mem;
@@ -25,9 +23,11 @@ pub(crate) const POLY1305_KEY_SIZE: usize = 32;
 
 const CONSTANTS: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 
-pub(crate) type XorKeystreamFn = fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]);
+type XorKeystreamFn = unsafe fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]);
 
+#[cfg(feature = "xchacha20poly1305")]
 static XCHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
+#[cfg(feature = "chacha20poly1305")]
 static CHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH: OnceCache<XorKeystreamFn> = OnceCache::new();
 
 #[inline(always)]
@@ -133,7 +133,9 @@ pub(crate) fn block(key: &[u8; KEY_SIZE], counter: u32, nonce: &[u8; NONCE_SIZE]
   }
 
   let mut out = [0u8; BLOCK_SIZE];
-  for (chunk, word) in out.chunks_exact_mut(4).zip(state) {
+  let (chunks, remainder) = out.as_chunks_mut::<4>();
+  debug_assert!(remainder.is_empty());
+  for (chunk, word) in chunks.iter_mut().zip(state) {
     chunk.copy_from_slice(&word.to_le_bytes());
   }
   out
@@ -185,19 +187,25 @@ pub(crate) fn xor_keystream(
     }
   }
 
-  xor_keystream_resolved(primitive)(key, initial_counter, nonce, buffer);
+  let kernel = xor_keystream_resolved(primitive);
+  // SAFETY: the counter-range check above covers every 64-byte block, and the resolver returns an accelerated kernel
+  // only when its complete capability set is available. The portable function also coerces to this unsafe fn type.
+  unsafe { kernel(key, initial_counter, nonce, buffer) };
   Ok(())
 }
 
 #[inline]
-pub(crate) fn xor_keystream_resolved(primitive: AeadPrimitive) -> XorKeystreamFn {
+fn xor_keystream_resolved(primitive: AeadPrimitive) -> XorKeystreamFn {
   match primitive {
+    #[cfg(feature = "xchacha20poly1305")]
     AeadPrimitive::XChaCha20Poly1305 => {
       XCHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH.get_or_init(|| resolve_xor_keystream(primitive))
     }
+    #[cfg(feature = "chacha20poly1305")]
     AeadPrimitive::ChaCha20Poly1305 => {
       CHACHA20POLY1305_XOR_KEYSTREAM_DISPATCH.get_or_init(|| resolve_xor_keystream(primitive))
     }
+    #[cfg(any(test, feature = "aegis256", feature = "aes-gcm", feature = "aes-gcm-siv"))]
     _ => resolve_xor_keystream(primitive),
   }
 }
@@ -247,7 +255,7 @@ fn xor_keystream_portable(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u
   }
 }
 
-#[cfg_attr(not(all(target_arch = "powerpc64", target_endian = "little")), allow(dead_code))]
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
 pub(crate) fn xor_keystream_first_block_portable(
   key: &[u8; KEY_SIZE],
   counter: u32,
@@ -265,31 +273,46 @@ pub(crate) fn xor_keystream_first_block_portable(
 
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
-fn simd_u32x4_rotl(value: u32x4, bits: u32) -> u32x4 {
-  (value << u32x4::splat(bits)) | (value >> u32x4::splat(32u32.wrapping_sub(bits)))
+fn simd_u32x4_rotl<const BITS: u32>(value: u32x4) -> u32x4 {
+  const { assert!(BITS > 0 && BITS < 32) }
+  let left = core::ops::Shl::shl(value, u32x4::splat(BITS));
+  let right = core::ops::Shr::shr(value, u32x4::splat(32u32.strict_sub(BITS)));
+  core::ops::BitOr::bitor(left, right)
+}
+
+#[cfg(target_arch = "riscv64")]
+#[inline(always)]
+fn simd_u32x4_wrapping_add(left: u32x4, right: u32x4) -> u32x4 {
+  core::ops::Add::add(left, right)
 }
 
 #[cfg(target_arch = "riscv64")]
 #[inline(always)]
 fn simd_u32x4_quarter_round(a: &mut u32x4, b: &mut u32x4, c: &mut u32x4, d: &mut u32x4) {
-  *a += *b;
+  *a = simd_u32x4_wrapping_add(*a, *b);
   *d ^= *a;
-  *d = simd_u32x4_rotl(*d, 16);
+  *d = simd_u32x4_rotl::<16>(*d);
 
-  *c += *d;
+  *c = simd_u32x4_wrapping_add(*c, *d);
   *b ^= *c;
-  *b = simd_u32x4_rotl(*b, 12);
+  *b = simd_u32x4_rotl::<12>(*b);
 
-  *a += *b;
+  *a = simd_u32x4_wrapping_add(*a, *b);
   *d ^= *a;
-  *d = simd_u32x4_rotl(*d, 8);
+  *d = simd_u32x4_rotl::<8>(*d);
 
-  *c += *d;
+  *c = simd_u32x4_wrapping_add(*c, *d);
   *b ^= *c;
-  *b = simd_u32x4_rotl(*b, 7);
+  *b = simd_u32x4_rotl::<7>(*b);
 }
 
 #[cfg(target_arch = "riscv64")]
+/// Generate and XOR a ChaCha20 stream in four-block RISC-V vector batches.
+///
+/// # Safety
+///
+/// The caller must ensure that the RISC-V vector extension is available and that `buffer`'s 64-byte block count fits
+/// the counter range starting at `initial_counter`.
 #[target_feature(enable = "v")]
 unsafe fn xor_keystream_u32x4_impl(
   key: &[u8; KEY_SIZE],
@@ -298,12 +321,14 @@ unsafe fn xor_keystream_u32x4_impl(
   buffer: &mut [u8],
 ) {
   const BLOCKS_PER_BATCH: usize = 4;
+  const BLOCKS_PER_BATCH_U32: u32 = 4;
+  const BATCH_SIZE: usize = BLOCK_SIZE.strict_mul(BLOCKS_PER_BATCH);
 
   let mut counter = initial_counter;
-  let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
+  let (batches, remainder) = buffer.as_chunks_mut::<BATCH_SIZE>();
+  for chunk in batches {
     debug_assert!(
-      counter.checked_add((BLOCKS_PER_BATCH - 1) as u32).is_some(),
+      counter <= u32::MAX.strict_sub(BLOCKS_PER_BATCH_U32.strict_sub(1)),
       "ChaCha20 block counter overflow"
     );
 
@@ -321,9 +346,9 @@ unsafe fn xor_keystream_u32x4_impl(
     let mut x11 = u32x4::splat(load_u32_le(&key[28..32]));
     let mut x12 = u32x4::from_array([
       counter,
-      counter.wrapping_add(1),
-      counter.wrapping_add(2),
-      counter.wrapping_add(3),
+      counter.strict_add(1),
+      counter.strict_add(2),
+      counter.strict_add(3),
     ]);
     let mut x13 = u32x4::splat(load_u32_le(&nonce[0..4]));
     let mut x14 = u32x4::splat(load_u32_le(&nonce[4..8]));
@@ -361,22 +386,22 @@ unsafe fn xor_keystream_u32x4_impl(
       round = round.strict_add(1);
     }
 
-    x0 += o0;
-    x1 += o1;
-    x2 += o2;
-    x3 += o3;
-    x4 += o4;
-    x5 += o5;
-    x6 += o6;
-    x7 += o7;
-    x8 += o8;
-    x9 += o9;
-    x10 += o10;
-    x11 += o11;
-    x12 += o12;
-    x13 += o13;
-    x14 += o14;
-    x15 += o15;
+    x0 = simd_u32x4_wrapping_add(x0, o0);
+    x1 = simd_u32x4_wrapping_add(x1, o1);
+    x2 = simd_u32x4_wrapping_add(x2, o2);
+    x3 = simd_u32x4_wrapping_add(x3, o3);
+    x4 = simd_u32x4_wrapping_add(x4, o4);
+    x5 = simd_u32x4_wrapping_add(x5, o5);
+    x6 = simd_u32x4_wrapping_add(x6, o6);
+    x7 = simd_u32x4_wrapping_add(x7, o7);
+    x8 = simd_u32x4_wrapping_add(x8, o8);
+    x9 = simd_u32x4_wrapping_add(x9, o9);
+    x10 = simd_u32x4_wrapping_add(x10, o10);
+    x11 = simd_u32x4_wrapping_add(x11, o11);
+    x12 = simd_u32x4_wrapping_add(x12, o12);
+    x13 = simd_u32x4_wrapping_add(x13, o13);
+    x14 = simd_u32x4_wrapping_add(x14, o14);
+    x15 = simd_u32x4_wrapping_add(x15, o15);
 
     let words = [
       x0.to_array(),
@@ -412,10 +437,9 @@ unsafe fn xor_keystream_u32x4_impl(
       block_index = block_index.strict_add(1);
     }
 
-    counter = counter.wrapping_add(BLOCKS_PER_BATCH as u32);
+    counter = counter.wrapping_add(BLOCKS_PER_BATCH_U32);
   }
 
-  let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }
@@ -429,7 +453,9 @@ pub(crate) fn hchacha20(key: &[u8; KEY_SIZE], nonce: &[u8; HCHACHA_NONCE_SIZE]) 
   rounds(&mut state);
 
   let mut out = [0u8; KEY_SIZE];
-  for (chunk, word) in out.chunks_exact_mut(4).zip([
+  let (chunks, remainder) = out.as_chunks_mut::<4>();
+  debug_assert!(remainder.is_empty());
+  for (chunk, word) in chunks.iter_mut().zip([
     state[0], state[1], state[2], state[3], state[12], state[13], state[14], state[15],
   ]) {
     chunk.copy_from_slice(&word.to_le_bytes());
@@ -462,15 +488,22 @@ mod x86_avx512;
 #[path = "chacha20/x86_64_ssse3_x4.rs"]
 mod x86_ssse3_x4;
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", feature = "chacha20poly1305"))]
 #[inline]
-pub(crate) fn xor_keystream_aarch64_neon(
+/// Apply the AArch64 NEON ChaCha20 kernel for the interleaved AEAD path.
+///
+/// # Safety
+///
+/// The caller must verify [`aarch64::NEON`](crate::platform::caps::aarch64::NEON) and ensure that the number of
+/// 64-byte blocks in `buffer` does not exhaust the `u32` block counter starting at `initial_counter`.
+pub(super) unsafe fn xor_keystream_aarch64_neon(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller establishes the NEON capability and counter-range preconditions required by this backend.
+  unsafe { aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer) }
 }
 
 // Forced entry points let backend-equivalence tests bypass runtime dispatch.
@@ -490,105 +523,120 @@ pub fn diag_chacha20_xor_keystream_portable(
 ///
 /// # Safety
 ///
-/// Caller must verify the host has `aarch64::NEON`. Compile-time gated to
-/// `target_arch = "aarch64"`.
+/// Caller must verify the host has `aarch64::NEON` and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`. Compile-time gated to `target_arch = "aarch64"`.
 #[cfg(all(feature = "diag", target_arch = "aarch64"))]
-pub fn diag_chacha20_xor_keystream_aarch64_neon(
+pub unsafe fn diag_chacha20_xor_keystream_aarch64_neon(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { aarch64_neon::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 
 /// Run the x86_64 AVX2 ChaCha20 XOR-keystream.
 ///
 /// # Safety
 ///
-/// Caller must verify the host has `x86::AVX2`.
+/// Caller must verify the host has `x86::AVX2` and that `buffer`'s 64-byte block count fits the counter range starting
+/// at `initial_counter`.
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
-pub fn diag_chacha20_xor_keystream_x86_avx2(
+pub unsafe fn diag_chacha20_xor_keystream_x86_avx2(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  x86_avx2::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { x86_avx2::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 
 /// Run the x86_64 AVX-512 ChaCha20 XOR-keystream.
 ///
 /// # Safety
 ///
-/// Caller must verify the host has `x86::AVX512F + AVX512VL + AVX512BW`.
+/// Caller must verify the host has `x86::AVX512F + AVX512VL + AVX512BW + AVX512DQ` and that `buffer`'s 64-byte block
+/// count fits the counter range starting at `initial_counter`.
 #[cfg(all(feature = "diag", target_arch = "x86_64"))]
-pub fn diag_chacha20_xor_keystream_x86_avx512(
+pub unsafe fn diag_chacha20_xor_keystream_x86_avx512(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  x86_avx512::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { x86_avx512::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 
 /// Run the POWER VSX ChaCha20 XOR-keystream.
 ///
 /// # Safety
 ///
-/// Caller must verify the host is `powerpc64le` with VSX. The portable
-/// kernel — which has been the correctness oracle since commit `2631aefa`
-/// fixed the rotation-amount bug here — must produce identical bytes.
+/// Caller must verify the host has `power::POWER8_VECTOR` and that `buffer`'s 64-byte block count fits the counter
+/// range starting at `initial_counter`. The portable kernel — which has been the correctness oracle since commit
+/// `2631aefa` fixed the rotation-amount bug here — must produce identical bytes.
 #[cfg(all(feature = "diag", target_arch = "powerpc64", target_endian = "little"))]
-pub fn diag_chacha20_xor_keystream_power_vsx(
+pub unsafe fn diag_chacha20_xor_keystream_power_vsx(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  power_vsx::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { power_vsx::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 
 /// Run the s390x z/Vector ChaCha20 XOR-keystream.
 ///
 /// # Safety
 ///
-/// Caller must verify the host has `s390x::VECTOR`. Same correctness-oracle
-/// invariant as POWER VSX above.
+/// Caller must verify the host has `s390x::VECTOR` and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`. Same correctness-oracle invariant as POWER VSX above.
 #[cfg(all(feature = "diag", target_arch = "s390x"))]
-pub fn diag_chacha20_xor_keystream_s390x_vector(
+pub unsafe fn diag_chacha20_xor_keystream_s390x_vector(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  s390x_vector::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { s390x_vector::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 
 /// Run the riscv64 RVV ChaCha20 XOR-keystream.
 ///
 /// # Safety
 ///
-/// Caller must verify the host has `riscv::V`.
+/// Caller must verify the host has `riscv::V` and that `buffer`'s 64-byte block count fits the counter range starting
+/// at `initial_counter`.
 #[cfg(all(feature = "diag", target_arch = "riscv64"))]
-pub fn diag_chacha20_xor_keystream_riscv64_vector(
+pub unsafe fn diag_chacha20_xor_keystream_riscv64_vector(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  riscv64_vector::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { riscv64_vector::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 
 /// Run the wasm32 simd128 ChaCha20 XOR-keystream.
+///
+/// # Safety
+///
+/// Caller must verify the host has `wasm::SIMD128` and that `buffer`'s 64-byte block count fits the counter range
+/// starting at `initial_counter`.
 #[cfg(all(feature = "diag", target_arch = "wasm32"))]
-pub fn diag_chacha20_xor_keystream_wasm_simd128(
+pub unsafe fn diag_chacha20_xor_keystream_wasm_simd128(
   key: &[u8; KEY_SIZE],
   initial_counter: u32,
   nonce: &[u8; NONCE_SIZE],
   buffer: &mut [u8],
 ) {
-  wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer);
+  // SAFETY: the caller contract is exactly the private backend entry's contract.
+  unsafe { wasm_simd128::xor_keystream(key, initial_counter, nonce, buffer) };
 }
 #[cfg(test)]
 mod tests {
@@ -611,6 +659,17 @@ mod tests {
   use super::xor_keystream_portable;
   use super::{KEY_SIZE, NONCE_SIZE, block, xor_keystream};
   use crate::aead::targets::AeadPrimitive;
+
+  fn primitive() -> AeadPrimitive {
+    #[cfg(feature = "chacha20poly1305")]
+    {
+      AeadPrimitive::ChaCha20Poly1305
+    }
+    #[cfg(all(not(feature = "chacha20poly1305"), feature = "xchacha20poly1305"))]
+    {
+      AeadPrimitive::XChaCha20Poly1305
+    }
+  }
   #[cfg(target_arch = "aarch64")]
   use crate::platform::caps::aarch64;
   #[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
@@ -662,10 +721,12 @@ mod tests {
     let plaintext = *b"chacha20 portable core";
     let mut ciphertext = plaintext;
 
-    xor_keystream(AeadPrimitive::ChaCha20Poly1305, &key, 1, &nonce, &mut ciphertext).unwrap();
+    xor_keystream(primitive(), &key, 1, &nonce, &mut ciphertext)
+      .expect("test message must fit the ChaCha20 counter range");
     assert_ne!(ciphertext, plaintext);
 
-    xor_keystream(AeadPrimitive::XChaCha20Poly1305, &key, 1, &nonce, &mut ciphertext).unwrap();
+    xor_keystream(primitive(), &key, 1, &nonce, &mut ciphertext)
+      .expect("test message must fit the XChaCha20 counter range");
     assert_eq!(ciphertext, plaintext);
   }
 
@@ -675,10 +736,58 @@ mod tests {
     let nonce = [0u8; NONCE_SIZE];
 
     let mut one_block = [0u8; 64];
-    assert!(xor_keystream(AeadPrimitive::ChaCha20Poly1305, &key, u32::MAX, &nonce, &mut one_block).is_ok());
+    xor_keystream(primitive(), &key, u32::MAX, &nonce, &mut one_block)
+      .expect("one block at the final counter must fit");
 
     let mut two_blocks = [0u8; 65];
-    assert!(xor_keystream(AeadPrimitive::ChaCha20Poly1305, &key, u32::MAX, &nonce, &mut two_blocks).is_err());
+    xor_keystream(primitive(), &key, u32::MAX, &nonce, &mut two_blocks)
+      .expect_err("a second block after the final counter must fail");
+  }
+
+  #[cfg(target_arch = "x86_64")]
+  /// Compare one capability-gated x86 backend with the portable authority and preserve both guard regions.
+  ///
+  /// # Safety
+  ///
+  /// The caller must establish `kernel`'s CPU features and ensure that the block count implied by the `len` bytes fits
+  /// the counter range starting at `initial_counter`.
+  unsafe fn assert_x86_backend_matches_portable(
+    backend_name: &str,
+    kernel: unsafe fn(&[u8; KEY_SIZE], u32, &[u8; NONCE_SIZE], &mut [u8]),
+    key: &[u8; KEY_SIZE],
+    nonce: &[u8; NONCE_SIZE],
+    initial_counter: u32,
+    offset: usize,
+    len: usize,
+  ) {
+    const GUARD_LEN: usize = 64;
+
+    let allocation_len = GUARD_LEN.strict_add(offset).strict_add(len).strict_add(GUARD_LEN);
+    let start = GUARD_LEN.strict_add(offset);
+    let mut portable_storage = vec![0xa5; allocation_len];
+    let mut accelerated_storage = portable_storage.clone();
+    {
+      let (_, portable_suffix) = portable_storage.split_at_mut(start);
+      let (portable, _) = portable_suffix.split_at_mut(len);
+      let (_, accelerated_suffix) = accelerated_storage.split_at_mut(start);
+      let (accelerated, _) = accelerated_suffix.split_at_mut(len);
+
+      for (index, (portable_byte, accelerated_byte)) in portable.iter_mut().zip(accelerated.iter_mut()).enumerate() {
+        let [value, ..] = index.strict_mul(29).strict_add(3).to_le_bytes();
+        *portable_byte = value;
+        *accelerated_byte = value;
+      }
+
+      xor_keystream_portable(key, initial_counter, nonce, portable);
+      // SAFETY: the caller established the kernel capability and counter range; `accelerated` is the exact initialized
+      // in-place segment and the surrounding allocation stays live for the call.
+      unsafe { kernel(key, initial_counter, nonce, accelerated) };
+    }
+
+    assert_eq!(
+      accelerated_storage, portable_storage,
+      "{backend_name} mismatch at counter={initial_counter}, offset={offset}, len={len}"
+    );
   }
 
   #[test]
@@ -690,22 +799,48 @@ mod tests {
 
     let key = [0x71; KEY_SIZE];
     let nonce = [0x19; NONCE_SIZE];
-    for len in [
-      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 768, 769, 1023, 1024, 1280, 1281, 1536, 2048, 4096, 8192,
-    ] {
-      let mut portable = vec![0u8; len];
-      let mut accelerated = vec![0u8; len];
-      let mut index = 0usize;
-      while index < len {
-        let value = index.strict_mul(13).strict_add(5) as u8;
-        portable[index] = value;
-        accelerated[index] = value;
-        index = index.strict_add(1);
+    for initial_counter in [0, 0x7fff_ffff, 0x8000_0000] {
+      for offset in [0usize, 1, 15, 31, 63] {
+        for len in [
+          0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 768, 769, 1023, 1024, 1279, 1280, 1281, 1536, 2048,
+          4096, 8192,
+        ] {
+          // SAFETY: the test returned unless AVX512_READY is available; these ordinary/sign-boundary counters leave
+          // room for every selected test length.
+          unsafe {
+            assert_x86_backend_matches_portable(
+              "AVX-512",
+              super::x86_avx512::xor_keystream,
+              &key,
+              &nonce,
+              initial_counter,
+              offset,
+              len,
+            );
+          }
+        }
       }
-
-      xor_keystream_portable(&key, 3, &nonce, &mut portable);
-      super::x86_avx512::xor_keystream(&key, 3, &nonce, &mut accelerated);
-      assert_eq!(accelerated, portable, "AVX-512 mismatch at len={len}");
+    }
+    for (initial_counter, len) in [
+      (u32::MAX.strict_sub(15), 1024usize),
+      (u32::MAX.strict_sub(3), 256),
+      (u32::MAX, 64),
+    ] {
+      for offset in [0usize, 1, 15, 31, 63] {
+        // SAFETY: the test returned unless AVX512_READY is available, and each pair is the exact maximum-valid counter
+        // for the 16-way, four-way, or portable width.
+        unsafe {
+          assert_x86_backend_matches_portable(
+            "AVX-512",
+            super::x86_avx512::xor_keystream,
+            &key,
+            &nonce,
+            initial_counter,
+            offset,
+            len,
+          );
+        }
+      }
     }
   }
 
@@ -718,22 +853,48 @@ mod tests {
 
     let key = [0x55; KEY_SIZE];
     let nonce = [0x33; NONCE_SIZE];
-    for len in [
-      0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 768, 769, 1023, 1024, 1280, 1281, 2048, 4096, 8192,
-    ] {
-      let mut portable = vec![0u8; len];
-      let mut accelerated = vec![0u8; len];
-      let mut index = 0usize;
-      while index < len {
-        let value = index.strict_mul(17).strict_add(9) as u8;
-        portable[index] = value;
-        accelerated[index] = value;
-        index = index.strict_add(1);
+    for initial_counter in [0, 0x7fff_ffff, 0x8000_0000] {
+      for offset in [0usize, 1, 15, 31, 63] {
+        for len in [
+          0usize, 1, 63, 64, 65, 255, 256, 257, 511, 512, 513, 767, 768, 769, 1023, 1024, 1279, 1280, 1281, 2048, 4096,
+          8192,
+        ] {
+          // SAFETY: the test returned unless AVX2 is available; these ordinary/sign-boundary counters leave room for
+          // every selected test length.
+          unsafe {
+            assert_x86_backend_matches_portable(
+              "AVX2",
+              super::x86_avx2::xor_keystream,
+              &key,
+              &nonce,
+              initial_counter,
+              offset,
+              len,
+            );
+          }
+        }
       }
-
-      xor_keystream_portable(&key, 7, &nonce, &mut portable);
-      super::x86_avx2::xor_keystream(&key, 7, &nonce, &mut accelerated);
-      assert_eq!(accelerated, portable, "AVX2 mismatch at len={len}");
+    }
+    for (initial_counter, len) in [
+      (u32::MAX.strict_sub(7), 512usize),
+      (u32::MAX.strict_sub(3), 256),
+      (u32::MAX, 64),
+    ] {
+      for offset in [0usize, 1, 15, 31, 63] {
+        // SAFETY: the test returned unless AVX2 is available, and each pair is the exact maximum-valid counter for
+        // the eight-way, four-way, or portable width.
+        unsafe {
+          assert_x86_backend_matches_portable(
+            "AVX2",
+            super::x86_avx2::xor_keystream,
+            &key,
+            &nonce,
+            initial_counter,
+            offset,
+            len,
+          );
+        }
+      }
     }
   }
 
@@ -746,20 +907,32 @@ mod tests {
 
     let key = [0x66; KEY_SIZE];
     let nonce = [0x11; NONCE_SIZE];
-    for len in [0usize, 1, 63, 64, 65, 127, 128, 129, 255, 256, 257, 768] {
-      let mut portable = vec![0u8; len];
-      let mut accelerated = vec![0u8; len];
-      let mut index = 0usize;
-      while index < len {
-        let value = index.strict_mul(29).strict_add(3) as u8;
-        portable[index] = value;
-        accelerated[index] = value;
-        index = index.strict_add(1);
-      }
+    for initial_counter in [0, 11, u32::MAX.strict_sub(11)] {
+      for offset in 0usize..16 {
+        for len in [0usize, 1, 63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512, 513, 768] {
+          let allocation_len = offset.strict_add(len);
+          let mut portable_storage = vec![0u8; allocation_len];
+          let mut accelerated_storage = vec![0u8; allocation_len];
+          let (_, portable) = portable_storage.split_at_mut(offset);
+          let (_, accelerated) = accelerated_storage.split_at_mut(offset);
+          let mut index = 0usize;
+          while index < len {
+            let [value, ..] = index.strict_mul(29).strict_add(3).to_le_bytes();
+            portable[index] = value;
+            accelerated[index] = value;
+            index = index.strict_add(1);
+          }
 
-      xor_keystream_portable(&key, 11, &nonce, &mut portable);
-      super::aarch64_neon::xor_keystream(&key, 11, &nonce, &mut accelerated);
-      assert_eq!(accelerated, portable);
+          xor_keystream_portable(&key, initial_counter, &nonce, portable);
+          // SAFETY: the test capability guard proves NEON, and the selected maximum counter leaves room for every
+          // selected length.
+          unsafe { super::aarch64_neon::xor_keystream(&key, initial_counter, &nonce, accelerated) };
+          assert_eq!(
+            accelerated, portable,
+            "NEON mismatch at counter={initial_counter}, offset={offset}, len={len}"
+          );
+        }
+      }
     }
   }
 
@@ -784,7 +957,8 @@ mod tests {
       }
 
       xor_keystream_portable(&key, 5, &nonce, &mut portable);
-      super::power_vsx::xor_keystream(&key, 5, &nonce, &mut accelerated);
+      // SAFETY: the test capability guard proves POWER8 vector support, and counter 5 leaves room for every length.
+      unsafe { super::power_vsx::xor_keystream(&key, 5, &nonce, &mut accelerated) };
       assert_eq!(accelerated, portable, "POWER VSX mismatch at len={len}");
     }
   }
@@ -810,7 +984,8 @@ mod tests {
       }
 
       xor_keystream_portable(&key, 9, &nonce, &mut portable);
-      super::s390x_vector::xor_keystream(&key, 9, &nonce, &mut accelerated);
+      // SAFETY: the test capability guard proves z/Vector support, and counter 9 leaves room for every length.
+      unsafe { super::s390x_vector::xor_keystream(&key, 9, &nonce, &mut accelerated) };
       assert_eq!(accelerated, portable, "s390x vector mismatch at len={len}");
     }
   }

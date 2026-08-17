@@ -31,9 +31,7 @@ use super::field::FieldElement;
 
 const LOW_25_BITS: i64 = (1 << 25) - 1;
 const LOW_26_BITS: i64 = (1 << 26) - 1;
-
-/// D-lane blend mask: positions 5 and 7 in each `__m256i` (u32 view).
-const D_BLEND: i32 = 0b1010_0000u8 as i32;
+const LOW_26_BITS_U64: u64 = (1 << 26) - 1;
 
 /// Four field elements packed for AVX2 parallel processing.
 ///
@@ -49,30 +47,32 @@ pub(crate) struct FieldElement2625x4(pub(crate) [__m256i; 5]);
 /// Lane rearrangement patterns for `shuffle`.
 #[derive(Clone, Copy)]
 #[repr(u8)]
-#[allow(clippy::upper_case_acronyms, dead_code)] // Lane labels, complete API.
 pub(crate) enum Shuffle {
-  /// Identity: (A, B, C, D) → (A, B, C, D)
-  ABCD,
   /// Swap pairs: (A, B, C, D) → (B, A, D, C)
-  BADC,
+  SwapPairs,
   /// Swap left pair only: (A, B, C, D) → (B, A, C, D)
-  BACD,
+  SwapAB,
   /// Swap right pair only: (A, B, C, D) → (A, B, D, C)
-  ABDC,
+  SwapCD,
   /// Broadcast A: (A, B, C, D) → (A, A, A, A)
-  AAAA,
+  #[cfg(any(test, feature = "ed25519"))]
+  BroadcastA,
   /// Broadcast B: (A, B, C, D) → (B, B, B, B)
-  BBBB,
+  #[cfg(any(test, feature = "ed25519"))]
+  BroadcastB,
   /// (A, B, C, D) → (C, A, C, A)
-  CACA,
+  #[cfg(any(test, feature = "ed25519"))]
+  AlternateCA,
   /// (A, B, C, D) → (D, B, B, D)
-  DBBD,
+  #[cfg(any(test, feature = "ed25519"))]
+  OuterDInnerB,
   /// (A, B, C, D) → (A, D, D, A)
-  ADDA,
+  OuterAInnerD,
   /// (A, B, C, D) → (C, B, C, B)
-  CBCB,
+  AlternateCB,
   /// (A, B, C, D) → (A, B, A, B)
-  ABAB,
+  #[cfg(any(test, feature = "ed25519"))]
+  RepeatAB,
 }
 
 impl Shuffle {
@@ -80,17 +80,21 @@ impl Shuffle {
   #[inline(always)]
   fn control(self) -> [i32; 8] {
     match self {
-      Self::ABCD => [0, 1, 2, 3, 4, 5, 6, 7],
-      Self::BADC => [1, 0, 3, 2, 5, 4, 7, 6],
-      Self::BACD => [1, 0, 3, 2, 4, 5, 6, 7],
-      Self::ABDC => [0, 1, 2, 3, 5, 4, 7, 6],
-      Self::AAAA => [0, 0, 2, 2, 0, 0, 2, 2],
-      Self::BBBB => [1, 1, 3, 3, 1, 1, 3, 3],
-      Self::CACA => [4, 0, 6, 2, 4, 0, 6, 2],
-      Self::DBBD => [5, 1, 7, 3, 1, 5, 3, 7],
-      Self::ADDA => [0, 5, 2, 7, 5, 0, 7, 2],
-      Self::CBCB => [4, 1, 6, 3, 4, 1, 6, 3],
-      Self::ABAB => [0, 1, 2, 3, 0, 1, 2, 3],
+      Self::SwapPairs => [1, 0, 3, 2, 5, 4, 7, 6],
+      Self::SwapAB => [1, 0, 3, 2, 4, 5, 6, 7],
+      Self::SwapCD => [0, 1, 2, 3, 5, 4, 7, 6],
+      #[cfg(any(test, feature = "ed25519"))]
+      Self::BroadcastA => [0, 0, 2, 2, 0, 0, 2, 2],
+      #[cfg(any(test, feature = "ed25519"))]
+      Self::BroadcastB => [1, 1, 3, 3, 1, 1, 3, 3],
+      #[cfg(any(test, feature = "ed25519"))]
+      Self::AlternateCA => [4, 0, 6, 2, 4, 0, 6, 2],
+      #[cfg(any(test, feature = "ed25519"))]
+      Self::OuterDInnerB => [5, 1, 7, 3, 1, 5, 3, 7],
+      Self::OuterAInnerD => [0, 5, 2, 7, 5, 0, 7, 2],
+      Self::AlternateCB => [4, 1, 6, 3, 4, 1, 6, 3],
+      #[cfg(any(test, feature = "ed25519"))]
+      Self::RepeatAB => [0, 1, 2, 3, 0, 1, 2, 3],
     }
   }
 }
@@ -103,13 +107,9 @@ impl Shuffle {
 /// Lane positions: `[a_even, b_even, a_odd, b_odd, c_even, d_even, c_odd, d_odd]`.
 #[derive(Clone, Copy)]
 #[repr(u8)]
-#[allow(clippy::upper_case_acronyms, dead_code)] // Lane labels, complete API.
 pub(crate) enum Lanes {
-  /// Select A lanes: positions 0, 2
-  A = 0b0000_0101,
-  /// Select B lanes: positions 1, 3
-  B = 0b0000_1010,
   /// Select C lanes: positions 4, 6
+  #[cfg(any(test, feature = "ed25519"))]
   C = 0b0101_0000,
   /// Select D lanes: positions 5, 7
   D = 0b1010_0000,
@@ -118,15 +118,14 @@ pub(crate) enum Lanes {
   /// Select A and C lanes: positions 0, 2, 4, 6
   AC = 0b0101_0101,
   /// Select A and D lanes: positions 0, 2, 5, 7
+  #[cfg(any(test, feature = "ed25519"))]
   AD = 0b1010_0101,
   /// Select B and C lanes: positions 1, 3, 4, 6
+  #[cfg(any(test, feature = "ed25519"))]
   BC = 0b0101_1010,
-  /// Select B, C, and D lanes: positions 1, 3, 4, 5, 6, 7
-  BCD = 0b1111_1010,
-  /// Select C and D lanes: positions 4-7
-  CD = 0b1111_0000,
-  /// Select all lanes
-  ABCD = 0b1111_1111,
+  /// Select every lane except A: positions 1, 3, 4, 5, 6, 7
+  #[cfg(any(test, feature = "ed25519"))]
+  ExceptA = 0b1111_1010,
 }
 
 /// Zero-extend packed u32 pairs into two u64x4 vectors suitable for `vpmuludq`.
@@ -138,11 +137,10 @@ pub(crate) enum Lanes {
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// Calls from outside an AVX2-enabled context require runtime AVX2 support.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn unpack_pair(v: __m256i) -> (__m256i, __m256i) {
+fn unpack_pair(v: __m256i) -> (__m256i, __m256i) {
   let zero = _mm256_setzero_si256();
   let lo = _mm256_unpacklo_epi32(v, zero);
   let hi = _mm256_unpackhi_epi32(v, zero);
@@ -155,11 +153,10 @@ unsafe fn unpack_pair(v: __m256i) -> (__m256i, __m256i) {
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// Calls from outside an AVX2-enabled context require runtime AVX2 support.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn repack_pair(lo: __m256i, hi: __m256i) -> __m256i {
+fn repack_pair(lo: __m256i, hi: __m256i) -> __m256i {
   // Shuffle to pack the low u32 of each 64-bit lane into consecutive positions.
   // _mm256_shuffle_epi32 with imm [0, 2, 0, 2] = 0b10_00_10_00 packs positions
   // 0 and 2 within each 128-bit lane.
@@ -173,11 +170,10 @@ unsafe fn repack_pair(lo: __m256i, hi: __m256i) -> __m256i {
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// Calls from outside an AVX2-enabled context require runtime AVX2 support.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn mul32(a: __m256i, b: __m256i) -> __m256i {
+fn mul32(a: __m256i, b: __m256i) -> __m256i {
   _mm256_mul_epu32(a, b)
 }
 
@@ -185,12 +181,17 @@ unsafe fn mul32(a: __m256i, b: __m256i) -> __m256i {
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
+/// Calls from outside an AVX2-enabled context require runtime AVX2 support.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
-unsafe fn add64(a: __m256i, b: __m256i) -> __m256i {
+fn add64(a: __m256i, b: __m256i) -> __m256i {
   _mm256_add_epi64(a, b)
+}
+
+#[inline(always)]
+fn low_word_as_i32(value: u64) -> i32 {
+  let bytes = value.to_le_bytes();
+  i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 // FieldElement2625x4 implementation
@@ -201,11 +202,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn zero() -> Self {
+  pub(crate) fn zero() -> Self {
     Self([_mm256_setzero_si256(); 5])
   }
 
@@ -216,42 +216,43 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn new(a: &FieldElement, b: &FieldElement, c: &FieldElement, d: &FieldElement) -> Self {
+  pub(crate) fn new(a: &FieldElement, b: &FieldElement, c: &FieldElement, d: &FieldElement) -> Self {
     let al = a.limbs();
     let bl = b.limbs();
     let cl = c.limbs();
     let dl = d.limbs();
 
-    let mask = LOW_26_BITS as u64;
     let out = [
-      Self::pack_limb_pair(al[0], bl[0], cl[0], dl[0], mask),
-      Self::pack_limb_pair(al[1], bl[1], cl[1], dl[1], mask),
-      Self::pack_limb_pair(al[2], bl[2], cl[2], dl[2], mask),
-      Self::pack_limb_pair(al[3], bl[3], cl[3], dl[3], mask),
-      Self::pack_limb_pair(al[4], bl[4], cl[4], dl[4], mask),
+      Self::pack_limb_pair(al[0], bl[0], cl[0], dl[0]),
+      Self::pack_limb_pair(al[1], bl[1], cl[1], dl[1]),
+      Self::pack_limb_pair(al[2], bl[2], cl[2], dl[2]),
+      Self::pack_limb_pair(al[3], bl[3], cl[3], dl[3]),
+      Self::pack_limb_pair(al[4], bl[4], cl[4], dl[4]),
     ];
 
     // Odd limbs from a non-reduced FieldElement may exceed 25 bits.
     Self(out).reduce()
   }
 
+  /// # Safety
+  ///
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  unsafe fn pack_limb_pair(al: u64, bl: u64, cl: u64, dl: u64, mask: u64) -> __m256i {
+  fn pack_limb_pair(al: u64, bl: u64, cl: u64, dl: u64) -> __m256i {
+    // Valid radix-51 limbs stay below 2^55, so each shifted half fits in an unsigned 32-bit lane.
     _mm256_setr_epi32(
-      (al & mask) as i32,
-      (bl & mask) as i32,
-      (al >> 26) as i32,
-      (bl >> 26) as i32,
-      (cl & mask) as i32,
-      (dl & mask) as i32,
-      (cl >> 26) as i32,
-      (dl >> 26) as i32,
+      low_word_as_i32(al & LOW_26_BITS_U64),
+      low_word_as_i32(bl & LOW_26_BITS_U64),
+      low_word_as_i32(al >> 26),
+      low_word_as_i32(bl >> 26),
+      low_word_as_i32(cl & LOW_26_BITS_U64),
+      low_word_as_i32(dl & LOW_26_BITS_U64),
+      low_word_as_i32(cl >> 26),
+      low_word_as_i32(dl >> 26),
     )
   }
 
@@ -259,11 +260,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn split(&self) -> [FieldElement; 4] {
+  pub(crate) fn split(&self) -> [FieldElement; 4] {
     let mut al = [0u64; 5];
     let mut bl = [0u64; 5];
     let mut cl = [0u64; 5];
@@ -277,7 +277,8 @@ impl FieldElement2625x4 {
       .zip(self.0.iter())
     {
       let mut tmp = [0u32; 8];
-      _mm256_storeu_si256(tmp.as_mut_ptr().cast(), *vec);
+      // SAFETY: AVX2 is active in this function, and `tmp` provides 32 writable bytes for the unaligned store.
+      unsafe { _mm256_storeu_si256(tmp.as_mut_ptr().cast(), *vec) };
 
       *a_out = u64::from(tmp[0]) | (u64::from(tmp[2]) << 26);
       *b_out = u64::from(tmp[1]) | (u64::from(tmp[3]) << 26);
@@ -302,11 +303,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn add(&self, rhs: &Self) -> Self {
+  pub(crate) fn add(&self, rhs: &Self) -> Self {
     Self([
       _mm256_add_epi32(self.0[0], rhs.0[0]),
       _mm256_add_epi32(self.0[1], rhs.0[1]),
@@ -323,35 +323,34 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn sub(&self, rhs: &Self) -> Self {
+  pub(crate) fn sub(&self, rhs: &Self) -> Self {
     // 2p in radix 10×(26/25):
     // p = 2^255 - 19
     // Limb 0: 2 * ((1 << 26) - 19) = 2^27 - 38
     // Even limbs 2,4,6,8: 2 * ((1 << 26) - 1) = 2^27 - 2
     // Odd limbs 1,3,5,7,9: 2 * ((1 << 25) - 1) = 2^26 - 2
     let bias_0 = _mm256_setr_epi32(
-      (2 * ((1i64 << 26) - 19)) as i32,
-      (2 * ((1i64 << 26) - 19)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
-      (2 * ((1i64 << 26) - 19)) as i32,
-      (2 * ((1i64 << 26) - 19)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
+      (1 << 27) - 38,
+      (1 << 27) - 38,
+      (1 << 26) - 2,
+      (1 << 26) - 2,
+      (1 << 27) - 38,
+      (1 << 27) - 38,
+      (1 << 26) - 2,
+      (1 << 26) - 2,
     );
     let bias_n = _mm256_setr_epi32(
-      (2 * ((1i64 << 26) - 1)) as i32,
-      (2 * ((1i64 << 26) - 1)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
-      (2 * ((1i64 << 26) - 1)) as i32,
-      (2 * ((1i64 << 26) - 1)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
-      (2 * ((1i64 << 25) - 1)) as i32,
+      (1 << 27) - 2,
+      (1 << 27) - 2,
+      (1 << 26) - 2,
+      (1 << 26) - 2,
+      (1 << 27) - 2,
+      (1 << 27) - 2,
+      (1 << 26) - 2,
+      (1 << 26) - 2,
     );
 
     Self([
@@ -370,11 +369,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn negate_lazy(&self) -> Self {
+  pub(crate) fn negate_lazy(&self) -> Self {
     Self::zero().sub(self)
   }
 
@@ -387,11 +385,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn shuffle(&self, pattern: Shuffle) -> Self {
+  pub(crate) fn shuffle(&self, pattern: Shuffle) -> Self {
     let ctrl = pattern.control();
     let c = _mm256_setr_epi32(ctrl[0], ctrl[1], ctrl[2], ctrl[3], ctrl[4], ctrl[5], ctrl[6], ctrl[7]);
     Self([
@@ -410,11 +407,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn blend(&self, other: &Self, lanes: Lanes) -> Self {
+  pub(crate) fn blend(&self, other: &Self, lanes: Lanes) -> Self {
     // _mm256_blend_epi32 requires a compile-time immediate, so dispatch
     // on the enum variant.
     macro_rules! do_blend {
@@ -430,17 +426,17 @@ impl FieldElement2625x4 {
     }
 
     match lanes {
-      Lanes::A => do_blend!(0b0000_0101),
-      Lanes::B => do_blend!(0b0000_1010),
+      #[cfg(any(test, feature = "ed25519"))]
       Lanes::C => do_blend!(0b0101_0000),
       Lanes::D => do_blend!(0b1010_0000),
       Lanes::AB => do_blend!(0b0000_1111),
       Lanes::AC => do_blend!(0b0101_0101),
+      #[cfg(any(test, feature = "ed25519"))]
       Lanes::AD => do_blend!(0b1010_0101),
+      #[cfg(any(test, feature = "ed25519"))]
       Lanes::BC => do_blend!(0b0101_1010),
-      Lanes::BCD => do_blend!(0b1111_1010),
-      Lanes::CD => do_blend!(0b1111_0000),
-      Lanes::ABCD => do_blend!(0b1111_1111),
+      #[cfg(any(test, feature = "ed25519"))]
+      Lanes::ExceptA => do_blend!(0b1111_1010),
     }
   }
 
@@ -448,12 +444,11 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn select_mask(&self, other: &Self, mask: u64) -> Self {
-    let mask = _mm256_set1_epi64x(mask as i64);
+  pub(crate) fn select_mask(&self, other: &Self, mask: u64) -> Self {
+    let mask = _mm256_set1_epi64x(i64::from_ne_bytes(mask.to_ne_bytes()));
     Self([
       _mm256_xor_si256(
         self.0[0],
@@ -485,12 +480,11 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn diff_sum(&self) -> Self {
-    let swapped = self.shuffle(Shuffle::BADC); // (B, A, D, C)
+  pub(crate) fn diff_sum(&self) -> Self {
+    let swapped = self.shuffle(Shuffle::SwapPairs); // (B, A, D, C)
     let negated = self.negate_lazy(); // (-A, -B, -C, -D)
     let neg_ac = self.blend(&negated, Lanes::AC); // (-A, B, -C, D)
     swapped.add(&neg_ac) // (B-A, A+B, D-C, C+D)
@@ -506,11 +500,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn reduce(&self) -> Self {
+  pub(crate) fn reduce(&self) -> Self {
     // Unpack to 10 × u64x4 for carry propagation.
     let (z0, z1) = unpack_pair(self.0[0]);
     let (z2, z3) = unpack_pair(self.0[1]);
@@ -528,11 +521,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  unsafe fn reduce64(z: &mut [__m256i; 10]) -> Self {
+  fn reduce64(z: &mut [__m256i; 10]) -> Self {
     let mask_26 = _mm256_set1_epi64x(LOW_26_BITS);
     let mask_25 = _mm256_set1_epi64x(LOW_25_BITS);
     let v19 = _mm256_set1_epi64x(19);
@@ -608,11 +600,10 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn mul(&self, rhs: &Self) -> Self {
+  pub(crate) fn mul(&self, rhs: &Self) -> Self {
     let v19 = _mm256_set1_epi64x(19);
 
     // Unpack self into 10 �� u64x4 (zero-extended for vpmuludq)
@@ -790,11 +781,11 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  unsafe fn square_accum(&self) -> [__m256i; 10] {
+  #[cfg(any(test, feature = "ed25519"))]
+  fn square_accum(&self) -> [__m256i; 10] {
     let v19 = _mm256_set1_epi64x(19);
 
     let (x0, x1) = unpack_pair(self.0[0]);
@@ -916,12 +907,11 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[cfg(test)]
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square(&self) -> Self {
+  pub(crate) fn square(&self) -> Self {
     let mut z = self.square_accum();
     Self::reduce64(&mut z)
   }
@@ -940,11 +930,11 @@ impl FieldElement2625x4 {
   ///
   /// # Safety
   ///
-  /// Caller must ensure AVX2 is available.
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  pub(crate) unsafe fn square_and_negate_d(&self) -> Self {
+  #[cfg(any(test, feature = "ed25519"))]
+  pub(crate) fn square_and_negate_d(&self) -> Self {
     let mut z = self.square_accum();
     Self::negate_d_accum(&mut z);
     Self::reduce64(&mut z)
@@ -957,10 +947,14 @@ impl FieldElement2625x4 {
   /// min bias ≈ 2^62) and small enough to fit in u64. The subsequent
   /// `reduce64` carry chain processes the biased values normally, producing
   /// a fully reduced negation with b < 0.007.
+  ///
+  /// # Safety
+  ///
+  /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn)]
-  unsafe fn negate_d_accum(z: &mut [__m256i; 10]) {
+  #[cfg(any(test, feature = "ed25519"))]
+  fn negate_d_accum(z: &mut [__m256i; 10]) {
     // p × 2^37 per limb (radix-26/25):
     let bias_even_0 = _mm256_set1_epi64x(((1i64 << 26) - 19) << 37);
     let bias_even = _mm256_set1_epi64x(((1i64 << 26) - 1) << 37);
@@ -986,37 +980,6 @@ impl FieldElement2625x4 {
     neg_d!(7, bias_odd);
     neg_d!(8, bias_even);
     neg_d!(9, bias_odd);
-  }
-
-  /// Negate the D lane of each limb via `2p − D` in the packed u32 domain.
-  ///
-  /// **Not used by AVX2 `square_and_negate_d`** (which negates in u64 domain
-  /// for tighter bounds). Retained for potential external callers.
-  #[inline]
-  #[target_feature(enable = "avx2")]
-  #[allow(unsafe_op_in_unsafe_fn, dead_code)]
-  unsafe fn negate_d_lane(fe: &mut Self) {
-    let p2_limb0_even = (2i64.wrapping_mul((1i64 << 26) - 19)) as i32;
-    let p2_limb_even = (2i64.wrapping_mul((1i64 << 26) - 1)) as i32;
-    let p2_limb_odd = (2i64.wrapping_mul((1i64 << 25) - 1)) as i32;
-
-    let bias_0 = _mm256_setr_epi32(0, 0, 0, 0, 0, p2_limb0_even, 0, p2_limb_odd);
-    let bias_n = _mm256_setr_epi32(0, 0, 0, 0, 0, p2_limb_even, 0, p2_limb_odd);
-
-    let neg0 = _mm256_sub_epi32(bias_0, fe.0[0]);
-    fe.0[0] = _mm256_blend_epi32::<D_BLEND>(fe.0[0], neg0);
-
-    let neg1 = _mm256_sub_epi32(bias_n, fe.0[1]);
-    fe.0[1] = _mm256_blend_epi32::<D_BLEND>(fe.0[1], neg1);
-
-    let neg2 = _mm256_sub_epi32(bias_n, fe.0[2]);
-    fe.0[2] = _mm256_blend_epi32::<D_BLEND>(fe.0[2], neg2);
-
-    let neg3 = _mm256_sub_epi32(bias_n, fe.0[3]);
-    fe.0[3] = _mm256_blend_epi32::<D_BLEND>(fe.0[3], neg3);
-
-    let neg4 = _mm256_sub_epi32(bias_n, fe.0[4]);
-    fe.0[4] = _mm256_blend_epi32::<D_BLEND>(fe.0[4], neg4);
   }
 }
 
@@ -1229,7 +1192,7 @@ mod tests {
     // SAFETY: AVX2 availability checked by the runtime guard above.
     unsafe {
       let packed = FieldElement2625x4::new(&a, &b, &c, &d);
-      let shuffled = packed.shuffle(Shuffle::BADC);
+      let shuffled = packed.shuffle(Shuffle::SwapPairs);
       let [ra, rb, rc, rd] = shuffled.split();
 
       assert_eq!(ra.normalize(), b.normalize(), "BADC: A should be B");

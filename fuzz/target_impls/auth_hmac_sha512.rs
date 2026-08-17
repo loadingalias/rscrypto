@@ -3,7 +3,7 @@ use rscrypto_fuzz::{
   FuzzInput, assert_mac_against_oracle, assert_mac_reset, assert_mac_streaming, some_or_return, split_at_ratio,
 };
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let split: u8 = some_or_return!(input.byte());
   let key_split: u8 = some_or_return!(input.byte());
@@ -19,7 +19,7 @@ pub fn run(data: &[u8]) {
 
   assert_mac_against_oracle::<HmacSha512>(key, message, &tag, |key, msg| {
     use hmac::{Hmac, KeyInit, Mac as _};
-    let mut oracle = <Hmac<sha2::Sha512> as KeyInit>::new_from_slice(key).unwrap();
+    let mut oracle = <Hmac<sha2::Sha512> as KeyInit>::new_from_slice(key).expect("HMAC accepts keys of every length");
     oracle.update(msg);
     oracle.finalize().into_bytes().to_vec()
   });

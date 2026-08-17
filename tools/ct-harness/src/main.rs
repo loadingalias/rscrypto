@@ -3,7 +3,7 @@
 fn main() {
   macro_rules! retain {
     ($($entry:path),+ $(,)?) => {
-      $(let _ = std::hint::black_box($entry as *const ());)+
+      $(let _ = core::hint::black_box($entry as *const ());)+
     };
   }
 

@@ -11,8 +11,6 @@
 //! Uses `unsafe` for z/Vector inline asm. Callers must ensure z13+
 //! vector facility before executing the accelerated path (the dispatcher
 //! does this).
-#![allow(unsafe_code)]
-#![allow(clippy::indexing_slicing)]
 
 use core::simd::i64x2;
 
@@ -30,6 +28,10 @@ const BSWAP_MASK: [u8; 16] = [7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9,
 // z/Vector primitive operations (inline asm, z13+)
 
 /// Add u64 lanes: `vag`.
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
@@ -48,6 +50,10 @@ unsafe fn vag(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Logical shift right u64 lanes by immediate: `vesrlg`.
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vesrlg<const SHIFT: u32>(a: i64x2) -> i64x2 {
@@ -66,6 +72,10 @@ unsafe fn vesrlg<const SHIFT: u32>(a: i64x2) -> i64x2 {
 }
 
 /// Shift left u64 lanes by immediate: `veslg`.
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn veslg<const SHIFT: u32>(a: i64x2) -> i64x2 {
@@ -87,6 +97,10 @@ unsafe fn veslg<const SHIFT: u32>(a: i64x2) -> i64x2 {
 ///
 /// On s390x (big-endian), odd u32 elements are the low 32 bits of each
 /// u64 lane. This gives: `low32(a) × low32(b) → u64` per lane.
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vmlof(a: i64x2, b: i64x2) -> i64x2 {
@@ -108,6 +122,10 @@ unsafe fn vmlof(a: i64x2, b: i64x2) -> i64x2 {
 ///
 /// Selects bytes from the concatenation of `a:a` according to `mask`.
 /// Used to byte-reverse each u64 element (BE → LE).
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vperm(a: i64x2, mask: i64x2) -> i64x2 {
@@ -128,6 +146,10 @@ unsafe fn vperm(a: i64x2, mask: i64x2) -> i64x2 {
 /// Swap u64 lanes (idx ^ 1 effect): `vpdi` with M3=4.
 ///
 /// Result element 0 = source element 1, result element 1 = source element 0.
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vpdi_swap(a: i64x2) -> i64x2 {
@@ -147,20 +169,33 @@ unsafe fn vpdi_swap(a: i64x2) -> i64x2 {
 // Load / store helpers
 
 /// Load 128 bits from memory (unaligned, native byte order).
+///
+/// # Safety
+///
+/// `ptr` must be valid for 16 readable bytes.
 #[inline(always)]
 unsafe fn vload_raw(ptr: *const u8) -> i64x2 {
   // SAFETY: caller ensures ptr is valid for 16 bytes.
-  unsafe { core::ptr::read_unaligned(ptr as *const i64x2) }
+  unsafe { core::ptr::read_unaligned(ptr.cast::<i64x2>()) }
 }
 
 /// Store 128 bits to memory (unaligned, native byte order).
+///
+/// # Safety
+///
+/// `ptr` must be valid for 16 writable bytes.
 #[inline(always)]
 unsafe fn vstore(ptr: *mut u8, val: i64x2) {
   // SAFETY: caller ensures ptr is valid for 16 bytes.
-  unsafe { core::ptr::write_unaligned(ptr as *mut i64x2, val) }
+  unsafe { core::ptr::write_unaligned(ptr.cast::<i64x2>(), val) }
 }
 
 /// Load 128 bits with per-element byte-reversal (BE → LE).
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available and `ptr` is valid
+/// for 16 readable bytes.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn vload_le(ptr: *const u8, bswap: i64x2) -> i64x2 {
@@ -170,20 +205,23 @@ unsafe fn vload_le(ptr: *const u8, bswap: i64x2) -> i64x2 {
 
 /// Load the byte-swap permutation mask into a vector register.
 #[inline(always)]
-unsafe fn load_bswap_mask() -> i64x2 {
+fn load_bswap_mask() -> i64x2 {
   // SAFETY: BSWAP_MASK is a 16-byte constant.
   unsafe { vload_raw(BSWAP_MASK.as_ptr()) }
 }
 
 // SIMD accumulate + scramble
 
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn load_acc(initial: &[u64; ACC_NB]) -> [i64x2; 4] {
   // SAFETY: z13+ vector facility via target_feature. Pointer valid for 8 × u64.
   // Accumulator values are native u64s — no byte-swap needed.
   unsafe {
-    let p = initial.as_ptr() as *const u8;
+    let p = initial.as_ptr().cast::<u8>();
     [
       vload_raw(p),
       vload_raw(p.add(16)),
@@ -193,6 +231,9 @@ unsafe fn load_acc(initial: &[u64; ACC_NB]) -> [i64x2; 4] {
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn store_acc(acc: &[i64x2; 4]) -> [u64; ACC_NB] {
@@ -200,7 +241,7 @@ unsafe fn store_acc(acc: &[i64x2; 4]) -> [u64; ACC_NB] {
   // Accumulator values are native u64s — no byte-swap needed.
   unsafe {
     let mut out = [0u64; ACC_NB];
-    let p = out.as_mut_ptr() as *mut u8;
+    let p = out.as_mut_ptr().cast::<u8>();
     vstore(p, acc[0]);
     vstore(p.add(16), acc[1]);
     vstore(p.add(32), acc[2]);
@@ -217,6 +258,11 @@ unsafe fn store_acc(acc: &[i64x2; 4]) -> [u64; ACC_NB] {
 /// 3. `vmlof`: low32(data_key) × high32(data_key) → u64
 /// 4. Swap u64 lanes (idx ^ 1) and add data
 /// 5. Accumulate product + swapped data into acc
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available and both pointers
+/// are valid for 64 readable bytes.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn accumulate_512(acc: &mut [i64x2; 4], stripe: *const u8, secret: *const u8) {
@@ -250,6 +296,11 @@ unsafe fn accumulate_512(acc: &mut [i64x2; 4], stripe: *const u8, secret: *const
 ///
 /// Per element: `acc = (xorshift64(acc, 47) ^ secret) * PRIME32_1`
 /// The 64-bit multiply by a 32-bit prime is split into lo + hi halves.
+///
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available and `secret` is
+/// valid for 64 readable bytes.
 #[inline]
 #[target_feature(enable = "vector")]
 unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
@@ -283,6 +334,10 @@ unsafe fn scramble_acc(acc: &mut [i64x2; 4], secret: *const u8) {
 
 // Long-path loop (SIMD inner, scalar merge)
 
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available, `stripes` is
+/// nonzero, and the requested input and secret stripe ranges are in bounds.
 #[target_feature(enable = "vector")]
 unsafe fn stream_accumulate_inner(
   initial: [u64; ACC_NB],
@@ -358,8 +413,12 @@ pub(crate) unsafe fn stream_accumulate(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure the z/Vector facility is available and `input`
+/// contains an XXH3 long input of more than 240 bytes.
 #[target_feature(enable = "vector")]
-unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] {
+unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8; DEFAULT_SECRET_SIZE]) -> [u64; ACC_NB] {
   // SAFETY: z13+ vector facility via target_feature. Input/secret bounds
   // checked by caller.
   unsafe {
@@ -367,7 +426,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 
     let nb_stripes = (secret.len().strict_sub(STRIPE_LEN)) / SECRET_CONSUME_RATE;
     let block_len = STRIPE_LEN.strict_mul(nb_stripes);
-    let nb_blocks = (input.len().strict_sub(1)) / block_len;
+    let nb_blocks = input.len().strict_sub(1).strict_div(block_len);
 
     let mut block = 0usize;
     while block < nb_blocks {
@@ -410,7 +469,7 @@ unsafe fn hash_long_internal_loop(input: &[u8], secret: &[u8]) -> [u64; ACC_NB] 
 // Top-level kernel functions (safe wrappers)
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
+pub(crate) fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
   if seed == 0 {
     // SAFETY: Dispatcher verifies z13+ vector facility before selecting this kernel.
     let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };
@@ -434,7 +493,7 @@ pub fn xxh3_64_long(input: &[u8], seed: u64) -> u64 {
 }
 
 /// Long-path entry point (>240B) — no ≤240B branches.
-pub fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
+pub(crate) fn xxh3_128_long(input: &[u8], seed: u64) -> u128 {
   if seed == 0 {
     // SAFETY: Dispatcher verifies z13+ vector facility before selecting this kernel.
     let acc = unsafe { hash_long_internal_loop(input, &DEFAULT_SECRET) };

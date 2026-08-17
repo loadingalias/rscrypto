@@ -115,7 +115,7 @@ BUILD_TARGET_DIR="$ROOT/target/ct-dudect-build/$TARGET/$PROFILE"
 if [[ ! -s "$LINKER_COMMAND_PATH" ]]; then
   rm -rf "$BUILD_TARGET_DIR"
 fi
-CARGO_ARGS=(--locked --manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$BUILD_TARGET_DIR" --target "$TARGET")
+CARGO_ARGS=(--manifest-path "$ROOT/tools/ct-dudect/Cargo.toml" --target-dir "$BUILD_TARGET_DIR" --target "$TARGET")
 if [[ "$PROFILE" == "release" ]]; then
   CARGO_ARGS+=(--release)
 elif [[ "$PROFILE" != "debug" ]]; then
@@ -124,7 +124,7 @@ elif [[ "$PROFILE" != "debug" ]]; then
 fi
 
 linker_log_candidate="$(mktemp "$OUT_DIR/.dudect-linker-command.XXXXXXXX")"
-cargo rustc "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- --print link-args 2>&1 | tee "$linker_log_candidate"
+cargo rustc --locked "${CARGO_ARGS[@]}" --bin rscrypto-ct-dudect -- --print link-args 2>&1 | tee "$linker_log_candidate"
 link_command_count=$(grep -c '"-o"' "$linker_log_candidate" || true)
 if [[ "$link_command_count" -gt 1 ]]; then
   echo "expected at most one DudeCT linker command; found $link_command_count" >&2

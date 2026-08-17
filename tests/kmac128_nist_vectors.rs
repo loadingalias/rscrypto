@@ -6,7 +6,9 @@ mod common;
 use common::decode_hex_vec as decode_hex;
 
 fn ascending_bytes(len: usize) -> Vec<u8> {
-  (0..len).map(|byte| byte as u8).collect()
+  (0..len)
+    .map(|byte| u8::try_from(byte).expect("NIST KMAC-128 sample index must fit in one byte"))
+    .collect()
 }
 
 fn key_bytes() -> Vec<u8> {
@@ -22,7 +24,7 @@ fn kmac128_nist_sample_1_matches() {
   let mut actual = vec![0u8; expected.len()];
   Kmac128::mac_into(&key, b"", &data, &mut actual);
   assert_eq!(actual, expected, "kmac128 sample 1 one-shot mismatch");
-  assert!(Kmac128::verify_tag(&key, b"", &data, &expected).is_ok());
+  Kmac128::verify_tag(&key, b"", &data, &expected).expect("KMAC-128 must verify NIST sample 1");
 }
 
 #[test]
@@ -34,7 +36,7 @@ fn kmac128_nist_sample_2_matches() {
   let mut actual = vec![0u8; expected.len()];
   Kmac128::mac_into(&key, b"My Tagged Application", &data, &mut actual);
   assert_eq!(actual, expected, "kmac128 sample 2 one-shot mismatch");
-  assert!(Kmac128::verify_tag(&key, b"My Tagged Application", &data, &expected).is_ok());
+  Kmac128::verify_tag(&key, b"My Tagged Application", &data, &expected).expect("KMAC-128 must verify NIST sample 2");
 }
 
 #[test]
@@ -46,7 +48,7 @@ fn kmac128_nist_sample_3_matches() {
   let mut actual = vec![0u8; expected.len()];
   Kmac128::mac_into(&key, b"My Tagged Application", &data, &mut actual);
   assert_eq!(actual, expected, "kmac128 sample 3 one-shot mismatch");
-  assert!(Kmac128::verify_tag(&key, b"My Tagged Application", &data, &expected).is_ok());
+  Kmac128::verify_tag(&key, b"My Tagged Application", &data, &expected).expect("KMAC-128 must verify NIST sample 3");
 
   let mut streaming = Kmac128::new(&key, b"My Tagged Application");
   streaming.update(&data[..168]);
@@ -62,17 +64,13 @@ fn kmac128_verify_rejects_empty_and_corrupted_tags() {
   let data = ascending_bytes(200);
   let expected = Kmac128::mac_array::<32>(&key, b"My Tagged Application", &data);
 
-  assert!(
-    Kmac128::verify_tag(&key, b"My Tagged Application", &data, &[]).is_err(),
-    "KMAC128 must reject an empty expected tag"
-  );
+  Kmac128::verify_tag(&key, b"My Tagged Application", &data, &[])
+    .expect_err("KMAC-128 must reject an empty expected tag");
 
   for index in [0, expected.len() / 2, expected.len() - 1] {
     let mut corrupted = expected;
     corrupted[index] ^= 0x80;
-    assert!(
-      Kmac128::verify_tag(&key, b"My Tagged Application", &data, &corrupted).is_err(),
-      "KMAC128 accepted a tag corrupted at byte {index}"
-    );
+    Kmac128::verify_tag(&key, b"My Tagged Application", &data, &corrupted)
+      .expect_err("KMAC-128 must reject a corrupted tag");
   }
 }

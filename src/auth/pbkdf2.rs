@@ -60,7 +60,6 @@ const SHA512_BLOCK_SIZE: usize = 128;
 const SHA512_INLINE_SALT_MAX: usize = SHA512_BLOCK_SIZE - 4 - 1 - 16;
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn write_u32x8_be(dst: &mut [u8], words: &[u32; 8]) {
   dst[0..4].copy_from_slice(&words[0].to_be_bytes());
   dst[4..8].copy_from_slice(&words[1].to_be_bytes());
@@ -73,7 +72,6 @@ fn write_u32x8_be(dst: &mut [u8], words: &[u32; 8]) {
 }
 
 #[inline(always)]
-#[allow(clippy::indexing_slicing)]
 fn write_u64x8_be(dst: &mut [u8], words: &[u64; 8]) {
   dst[0..8].copy_from_slice(&words[0].to_be_bytes());
   dst[8..16].copy_from_slice(&words[1].to_be_bytes());
@@ -339,7 +337,6 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Pre-compute HMAC prefix states from `password`.
       #[must_use]
-      #[allow(clippy::indexing_slicing)] // password.len() <= block size in the else branch.
       pub fn new(password: &[u8]) -> Self {
         if let Some(state) = $new_fast_path(password) {
           return state;
@@ -375,20 +372,17 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Derive a key into `okm`.
       #[inline]
-      #[allow(clippy::indexing_slicing)]
       pub fn derive(&self, salt: &[u8], iterations: u32, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
         Self::derive_with_prefixes(self.compress, &self.inner_init, &self.outer_init, salt, iterations, okm)
       }
 
       /// Derive a key into `okm` using validated password parameters.
       #[inline]
-      #[allow(clippy::indexing_slicing)]
       pub fn derive_with_params(&self, params: Pbkdf2Params<'_>, okm: &mut [u8]) -> Result<(), Pbkdf2Error> {
         self.derive(params.salt(), params.iterations(), okm)
       }
 
       #[inline]
-      #[allow(clippy::indexing_slicing)]
       fn derive_with_prefixes(
         compress: $compress_ty,
         inner_init: &[$word_ty; 8],
@@ -403,23 +397,17 @@ macro_rules! define_pbkdf2_sha2 {
         if okm.is_empty() {
           return Ok(());
         }
-        let num_blocks = okm.len().div_ceil($output_size_const);
-        if num_blocks as u64 > u32::MAX as u64 {
-          return Err(Pbkdf2Error::OutputTooLong);
-        }
+        let num_blocks = u32::try_from(okm.len().div_ceil($output_size_const))
+          .map_err(|_| Pbkdf2Error::OutputTooLong)?;
 
         if iterations == 1 {
-          $iter1_fn(compress, inner_init, outer_init, salt, okm);
+          $iter1_fn(compress, inner_init, outer_init, salt, num_blocks, okm);
           return Ok(());
         }
 
-        let mut block_index = 1u32;
-        let mut chunks = okm.chunks_exact_mut($output_size_const);
+        let (chunks, tail) = okm.as_chunks_mut::<$output_size_const>();
 
-        for chunk in chunks.by_ref() {
-          // SAFETY: chunks_exact_mut yields slices whose length is exactly
-          // $output_size_const, so this cast is to the same initialized bytes.
-          let full_chunk = unsafe { &mut *(chunk.as_mut_ptr().cast::<[u8; $output_size_const]>()) };
+        for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
           $f_fn(
             compress,
             inner_init,
@@ -427,12 +415,10 @@ macro_rules! define_pbkdf2_sha2 {
             salt,
             iterations,
             block_index,
-            full_chunk,
+            chunk,
           );
-          block_index = block_index.strict_add(1);
         }
 
-        let tail = chunks.into_remainder();
         if !tail.is_empty() {
           let mut block_out = [0u8; $output_size_const];
           $f_fn(
@@ -441,7 +427,7 @@ macro_rules! define_pbkdf2_sha2 {
             outer_init,
             salt,
             iterations,
-            block_index,
+            num_blocks,
             &mut block_out,
           );
           tail.copy_from_slice(&block_out[..tail.len()]);
@@ -470,7 +456,6 @@ macro_rules! define_pbkdf2_sha2 {
       ///
       /// Generated-code timing claims are configuration- and release-evidence-bound;
       /// see `ct.toml`.
-      #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
         self.verify_with_policy_bounded(
@@ -491,7 +476,6 @@ macro_rules! define_pbkdf2_sha2 {
       ///
       /// Generated-code timing claims are configuration- and release-evidence-bound;
       /// see `ct.toml`.
-      #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_with_policy(
         &self,
@@ -506,7 +490,6 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Verify `expected` under an explicit lower-bound policy and
       /// caller-selected verification work limit.
-      #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_with_policy_bounded(
         &self,
@@ -536,24 +519,20 @@ macro_rules! define_pbkdf2_sha2 {
       /// verification should use [`verify`](Self::verify),
       /// [`verify_with_policy`](Self::verify_with_policy), or
       /// [`verify_password`](Self::verify_password).
-      #[allow(clippy::indexing_slicing)]
       #[must_use = "password verification must be checked; a dropped Result silently accepts the wrong password"]
       pub fn verify_primitive(&self, salt: &[u8], iterations: u32, expected: &[u8]) -> Result<(), VerificationError> {
         if iterations == 0 || expected.is_empty() {
           return Err(VerificationError::new());
         }
-        let num_blocks = expected.len().div_ceil($output_size_const);
-        if num_blocks as u64 > u32::MAX as u64 {
-          return Err(VerificationError::new());
-        }
+        let num_blocks = u32::try_from(expected.len().div_ceil($output_size_const))
+          .map_err(|_| VerificationError::new())?;
 
         let compress = self.compress;
 
         let mut block_out = [0u8; $output_size_const];
         let mut acc = 0u8;
 
-        for (i, chunk) in expected.chunks($output_size_const).enumerate() {
-          let block_index = (i as u32).strict_add(1);
+        for (block_index, chunk) in (1..=num_blocks).zip(expected.chunks($output_size_const)) {
           $f_fn(
             compress,
             &self.inner_init,
@@ -716,8 +695,6 @@ macro_rules! define_pbkdf2_sha2 {
 
       /// Test-only: build with a specific digest compress function.
       #[cfg(any(test, feature = "diag"))]
-      #[allow(dead_code)]
-      #[allow(clippy::indexing_slicing)]
       pub(crate) fn new_with_compress_for_test(password: &[u8], compress: $compress_ty) -> Self {
         let mut key_block = [0u8; $block_size_const];
         if password.len() > $block_size_const {
@@ -804,7 +781,6 @@ define_pbkdf2_sha2! {
 
 /// Test-only: one-shot SHA-256 digest using a specific compress function.
 #[cfg(any(test, feature = "diag"))]
-#[allow(clippy::indexing_slicing)]
 fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -> [u8; SHA256_OUTPUT_SIZE] {
   let mut state = SHA256_H0;
   let mut pos = 0usize;
@@ -823,7 +799,8 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
   block[56..64].copy_from_slice(&(data.len() as u64).strict_mul(8).to_be_bytes());
   compress(&mut state, &block);
   let mut out = [0u8; SHA256_OUTPUT_SIZE];
-  for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
+  let (chunks, _) = out.as_chunks_mut::<4>();
+  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
     chunk.copy_from_slice(&word.to_be_bytes());
   }
   ct::zeroize_words_no_fence(&mut state);
@@ -834,6 +811,8 @@ fn sha256_oneshot_with_compress(data: &[u8], compress: Sha256CompressBlocksFn) -
 
 #[cfg(feature = "diag")]
 #[must_use]
+/// Return whether portable PBKDF2-HMAC-SHA256 derives `expected` from `password`
+/// using the salt `salt` and one iteration.
 pub fn diag_pbkdf2_sha256_verify_portable(
   password: &[u8; SHA256_OUTPUT_SIZE],
   expected: &[u8; SHA256_OUTPUT_SIZE],
@@ -848,6 +827,8 @@ pub fn diag_pbkdf2_sha256_verify_portable(
 
 #[cfg(feature = "diag")]
 #[must_use]
+/// Return whether portable PBKDF2-HMAC-SHA512 derives `expected` from `password`
+/// using the salt `salt` and one iteration.
 pub fn diag_pbkdf2_sha512_verify_portable(
   password: &[u8; SHA512_OUTPUT_SIZE],
   expected: &[u8; SHA512_OUTPUT_SIZE],
@@ -861,7 +842,6 @@ pub fn diag_pbkdf2_sha512_verify_portable(
 }
 
 #[inline]
-#[allow(clippy::indexing_slicing)]
 fn pbkdf2_sha256_new_fast_path(password: &[u8]) -> Option<Pbkdf2Sha256> {
   if !pbkdf2_sha256_spr_prefers_hmac_iter1() {
     return None;
@@ -913,7 +893,6 @@ fn pbkdf2_sha256_spr_prefers_hmac_iter1() -> bool {
   }
 }
 
-#[allow(clippy::indexing_slicing)]
 #[inline]
 fn pbkdf2_sha256_hmac_iter1_small(password: &[u8], salt: &[u8], okm: &mut [u8]) {
   debug_assert!(salt.len() <= SHA256_INLINE_SALT_MAX);
@@ -923,8 +902,7 @@ fn pbkdf2_sha256_hmac_iter1_small(password: &[u8], salt: &[u8], okm: &mut [u8]) 
   msg[..salt.len()].copy_from_slice(salt);
   let msg_len = salt.len().strict_add(4);
 
-  for (i, chunk) in okm.chunks_mut(SHA256_OUTPUT_SIZE).enumerate() {
-    let block_index = (i as u32).strict_add(1);
+  for (block_index, chunk) in (1u32..=2).zip(okm.chunks_mut(SHA256_OUTPUT_SIZE)) {
     msg[salt.len()..msg_len].copy_from_slice(&block_index.to_be_bytes());
     let tag = HmacSha256::mac(password, &msg[..msg_len]);
     chunk.copy_from_slice(&tag.as_bytes()[..chunk.len()]);
@@ -974,7 +952,6 @@ fn pbkdf2_sha256_derive_key_fast_path_with_preference(
 /// Each HMAC iteration in the hot loop runs exactly 2 SHA-256 compress calls
 /// using pre-padded block templates — no hash struct creation, no dispatch
 /// overhead, no padding recomputation.
-#[allow(clippy::indexing_slicing)]
 #[inline(always)]
 fn pbkdf2_sha256_f(
   compress: Sha256CompressBlocksFn,
@@ -1104,28 +1081,23 @@ fn pbkdf2_sha256_f(
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-#[allow(clippy::indexing_slicing)]
 #[inline(always)]
 fn pbkdf2_sha256_iter1(
   compress: Sha256CompressBlocksFn,
   inner_init: &[u32; 8],
   outer_init: &[u32; 8],
   salt: &[u8],
+  num_blocks: u32,
   okm: &mut [u8],
 ) {
   if salt.len() > SHA256_INLINE_SALT_MAX {
-    let mut block_index = 1u32;
-    let mut chunks = okm.chunks_exact_mut(SHA256_OUTPUT_SIZE);
-    for chunk in chunks.by_ref() {
-      // SAFETY: chunks_exact_mut yields slices whose length is exactly SHA256_OUTPUT_SIZE.
-      let full_chunk = unsafe { &mut *(chunk.as_mut_ptr().cast::<[u8; SHA256_OUTPUT_SIZE]>()) };
-      pbkdf2_sha256_f(compress, inner_init, outer_init, salt, 1, block_index, full_chunk);
-      block_index = block_index.strict_add(1);
+    let (chunks, tail) = okm.as_chunks_mut::<SHA256_OUTPUT_SIZE>();
+    for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
+      pbkdf2_sha256_f(compress, inner_init, outer_init, salt, 1, block_index, chunk);
     }
-    let tail = chunks.into_remainder();
     if !tail.is_empty() {
       let mut block_out = [0u8; SHA256_OUTPUT_SIZE];
-      pbkdf2_sha256_f(compress, inner_init, outer_init, salt, 1, block_index, &mut block_out);
+      pbkdf2_sha256_f(compress, inner_init, outer_init, salt, 1, num_blocks, &mut block_out);
       tail.copy_from_slice(&block_out[..tail.len()]);
       ct::zeroize(&mut block_out);
     }
@@ -1147,10 +1119,9 @@ fn pbkdf2_sha256_iter1(
   outer_block[56..SHA256_BLOCK_SIZE].copy_from_slice(&768u64.to_be_bytes());
 
   let mut state = [0u32; 8];
-  let mut block_index = 1u32;
 
-  let mut chunks = okm.chunks_exact_mut(SHA256_OUTPUT_SIZE);
-  for chunk in chunks.by_ref() {
+  let (chunks, tail) = okm.as_chunks_mut::<SHA256_OUTPUT_SIZE>();
+  for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
     block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
 
     state = *inner_init;
@@ -1161,12 +1132,10 @@ fn pbkdf2_sha256_iter1(
     compress(&mut state, &outer_block);
 
     write_u32x8_be(chunk, &state);
-    block_index = block_index.strict_add(1);
   }
 
-  let tail = chunks.into_remainder();
   if !tail.is_empty() {
-    block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
+    block[index_pos..pad_pos].copy_from_slice(&num_blocks.to_be_bytes());
 
     state = *inner_init;
     compress(&mut state, &block);
@@ -1239,8 +1208,6 @@ fn pbkdf2_sha512_derive_key_fast_path(
 
 /// Test-only: one-shot SHA-512 digest using a specific compress function.
 #[cfg(any(test, feature = "diag"))]
-#[allow(dead_code)]
-#[allow(clippy::indexing_slicing)]
 fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -> [u8; SHA512_OUTPUT_SIZE] {
   let mut state = SHA512_H0;
   let mut pos = 0usize;
@@ -1259,7 +1226,8 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
   block[112..128].copy_from_slice(&(data.len() as u128).strict_mul(8).to_be_bytes());
   compress(&mut state, &block);
   let mut out = [0u8; SHA512_OUTPUT_SIZE];
-  for (chunk, &word) in out.chunks_exact_mut(8).zip(state.iter()) {
+  let (chunks, _) = out.as_chunks_mut::<8>();
+  for (chunk, &word) in chunks.iter_mut().zip(state.iter()) {
     chunk.copy_from_slice(&word.to_be_bytes());
   }
   ct::zeroize_words_no_fence(&mut state);
@@ -1269,7 +1237,6 @@ fn sha512_oneshot_with_compress(data: &[u8], compress: Sha512CompressBlocksFn) -
 }
 
 /// Compute one PBKDF2-SHA512 block: `F(Password, Salt, c, i)`.
-#[allow(clippy::indexing_slicing)]
 #[inline(always)]
 fn pbkdf2_sha512_f(
   compress: Sha512CompressBlocksFn,
@@ -1382,28 +1349,23 @@ fn pbkdf2_sha512_f(
   core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
-#[allow(clippy::indexing_slicing)]
 #[inline(always)]
 fn pbkdf2_sha512_iter1(
   compress: Sha512CompressBlocksFn,
   inner_init: &[u64; 8],
   outer_init: &[u64; 8],
   salt: &[u8],
+  num_blocks: u32,
   okm: &mut [u8],
 ) {
   if salt.len() > SHA512_INLINE_SALT_MAX {
-    let mut block_index = 1u32;
-    let mut chunks = okm.chunks_exact_mut(SHA512_OUTPUT_SIZE);
-    for chunk in chunks.by_ref() {
-      // SAFETY: chunks_exact_mut yields slices whose length is exactly SHA512_OUTPUT_SIZE.
-      let full_chunk = unsafe { &mut *(chunk.as_mut_ptr().cast::<[u8; SHA512_OUTPUT_SIZE]>()) };
-      pbkdf2_sha512_f(compress, inner_init, outer_init, salt, 1, block_index, full_chunk);
-      block_index = block_index.strict_add(1);
+    let (chunks, tail) = okm.as_chunks_mut::<SHA512_OUTPUT_SIZE>();
+    for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
+      pbkdf2_sha512_f(compress, inner_init, outer_init, salt, 1, block_index, chunk);
     }
-    let tail = chunks.into_remainder();
     if !tail.is_empty() {
       let mut block_out = [0u8; SHA512_OUTPUT_SIZE];
-      pbkdf2_sha512_f(compress, inner_init, outer_init, salt, 1, block_index, &mut block_out);
+      pbkdf2_sha512_f(compress, inner_init, outer_init, salt, 1, num_blocks, &mut block_out);
       tail.copy_from_slice(&block_out[..tail.len()]);
       ct::zeroize(&mut block_out);
     }
@@ -1425,10 +1387,9 @@ fn pbkdf2_sha512_iter1(
   outer_block[112..SHA512_BLOCK_SIZE].copy_from_slice(&1536u128.to_be_bytes());
 
   let mut state = [0u64; 8];
-  let mut block_index = 1u32;
 
-  let mut chunks = okm.chunks_exact_mut(SHA512_OUTPUT_SIZE);
-  for chunk in chunks.by_ref() {
+  let (chunks, tail) = okm.as_chunks_mut::<SHA512_OUTPUT_SIZE>();
+  for (block_index, chunk) in (1..=num_blocks).zip(chunks) {
     block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
 
     state = *inner_init;
@@ -1439,12 +1400,10 @@ fn pbkdf2_sha512_iter1(
     compress(&mut state, &outer_block);
 
     write_u64x8_be(chunk, &state);
-    block_index = block_index.strict_add(1);
   }
 
-  let tail = chunks.into_remainder();
   if !tail.is_empty() {
-    block[index_pos..pad_pos].copy_from_slice(&block_index.to_be_bytes());
+    block[index_pos..pad_pos].copy_from_slice(&num_blocks.to_be_bytes());
 
     state = *inner_init;
     compress(&mut state, &block);
@@ -1477,7 +1436,7 @@ mod tests {
   #[test]
   fn rfc7914_sha256_vector_1() {
     let mut dk = [0u8; 64];
-    Pbkdf2Sha256::derive_key_primitive(b"passwd", b"salt", 1, &mut dk).unwrap();
+    Pbkdf2Sha256::derive_key_primitive(b"passwd", b"salt", 1, &mut dk).expect("RFC 7914 vector parameters are valid");
     assert_eq!(
       dk,
       [
@@ -1498,7 +1457,9 @@ mod tests {
     for len in [1usize, 16, 31, 32, 33, 63, 64] {
       let mut expected = vec![0u8; len];
       let mut actual = vec![0u8; len];
-      state.derive(&salt, 1, &mut expected).unwrap();
+      state
+        .derive(&salt, 1, &mut expected)
+        .expect("nonempty output and one iteration are valid");
       pbkdf2_sha256_hmac_iter1_small(&password, &salt, &mut actual);
       assert_eq!(actual, expected, "len={len}");
     }
@@ -1512,20 +1473,33 @@ mod tests {
     let mut actual = [0u8; 64];
 
     oracle_sha256(&password, &salt, 1, &mut expected);
-    assert!(pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut actual, true).unwrap());
+    assert!(
+      pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut actual, true)
+        .expect("fast-path parameters are valid")
+    );
     assert_eq!(actual, expected);
 
     let mut rejected = [0u8; 65];
-    assert!(!pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut rejected, true).unwrap());
-    assert!(!pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 2, &mut actual, true).unwrap());
-    assert!(!pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut actual, false).unwrap());
+    assert!(
+      !pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut rejected, true)
+        .expect("oversized fast-path output is a supported fallback")
+    );
+    assert!(
+      !pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 2, &mut actual, true)
+        .expect("multi-iteration fast-path input is a supported fallback")
+    );
+    assert!(
+      !pbkdf2_sha256_derive_key_fast_path_with_preference(&password, &salt, 1, &mut actual, false)
+        .expect("disabled fast-path input is a supported fallback")
+    );
   }
 
   #[cfg(not(miri))]
   #[test]
   fn rfc7914_sha256_vector_2() {
     let mut dk = [0u8; 64];
-    Pbkdf2Sha256::derive_key_primitive(b"Password", b"NaCl", 80000, &mut dk).unwrap();
+    Pbkdf2Sha256::derive_key_primitive(b"Password", b"NaCl", 80000, &mut dk)
+      .expect("RFC 7914 vector parameters are valid");
     assert_eq!(
       dk,
       [
@@ -1589,7 +1563,8 @@ mod tests {
       oracle_sha256(password, salt, iterations, &mut expected);
 
       let mut actual = vec![0u8; dk_len];
-      Pbkdf2Sha256::derive_key_primitive(password, salt, iterations, &mut actual).unwrap();
+      Pbkdf2Sha256::derive_key_primitive(password, salt, iterations, &mut actual)
+        .expect("oracle case parameters are valid");
 
       assert_eq!(
         actual,
@@ -1642,7 +1617,8 @@ mod tests {
       oracle_sha512(password, salt, iterations, &mut expected);
 
       let mut actual = vec![0u8; dk_len];
-      Pbkdf2Sha512::derive_key_primitive(password, salt, iterations, &mut actual).unwrap();
+      Pbkdf2Sha512::derive_key_primitive(password, salt, iterations, &mut actual)
+        .expect("oracle case parameters are valid");
 
       assert_eq!(
         actual,
@@ -1660,37 +1636,45 @@ mod tests {
 
   #[test]
   fn sha256_verify_correct_password() {
-    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha256::verify_password_primitive(b"password", b"salt", 100, &dk).is_ok());
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100)
+      .expect("test derivation parameters are valid");
+    Pbkdf2Sha256::verify_password_primitive(b"password", b"salt", 100, &dk)
+      .expect("matching PBKDF2-SHA256 output must verify");
   }
 
   #[test]
   fn sha256_verify_wrong_password() {
-    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100)
+      .expect("test derivation parameters are valid");
     assert!(Pbkdf2Sha256::verify_password_primitive(b"wrong", b"salt", 100, &dk).is_err());
   }
 
   #[test]
   fn sha256_verify_wrong_salt() {
-    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100)
+      .expect("test derivation parameters are valid");
     assert!(Pbkdf2Sha256::verify_password_primitive(b"password", b"wrong", 100, &dk).is_err());
   }
 
   #[test]
   fn sha256_verify_wrong_iterations() {
-    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100).unwrap();
+    let dk = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt", 100)
+      .expect("test derivation parameters are valid");
     assert!(Pbkdf2Sha256::verify_password_primitive(b"password", b"salt", 101, &dk).is_err());
   }
 
   #[test]
   fn sha512_verify_correct_password() {
-    let dk = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"password", b"salt", 100).unwrap();
-    assert!(Pbkdf2Sha512::verify_password_primitive(b"password", b"salt", 100, &dk).is_ok());
+    let dk = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"password", b"salt", 100)
+      .expect("test derivation parameters are valid");
+    Pbkdf2Sha512::verify_password_primitive(b"password", b"salt", 100, &dk)
+      .expect("matching PBKDF2-SHA512 output must verify");
   }
 
   #[test]
   fn sha512_verify_wrong_password() {
-    let dk = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"password", b"salt", 100).unwrap();
+    let dk = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"password", b"salt", 100)
+      .expect("test derivation parameters are valid");
     assert!(Pbkdf2Sha512::verify_password_primitive(b"wrong", b"salt", 100, &dk).is_err());
   }
 
@@ -1728,15 +1712,13 @@ mod tests {
       ),
       Err(Pbkdf2Error::SaltTooShort)
     );
-    assert!(
-      Pbkdf2Sha256::derive_key(
-        b"pw",
-        &strong_salt,
-        Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS,
-        &mut empty
-      )
-      .is_ok()
-    );
+    Pbkdf2Sha256::derive_key(
+      b"pw",
+      &strong_salt,
+      Pbkdf2Sha256::MIN_RECOMMENDED_ITERATIONS,
+      &mut empty,
+    )
+    .expect("the default PBKDF2-SHA256 policy must accept its minimums");
     assert!(
       Pbkdf2Sha256::verify_password(
         b"pw",
@@ -1751,12 +1733,14 @@ mod tests {
   #[test]
   fn pbkdf2_params_can_use_explicit_policy_for_migrations() {
     let policy = Pbkdf2VerifyPolicy::new(1, 0);
-    let params = Pbkdf2Sha256::params_with_policy(b"", 1, &policy).unwrap();
+    let params =
+      Pbkdf2Sha256::params_with_policy(b"", 1, &policy).expect("the explicit migration policy permits these inputs");
     assert_eq!(params.salt(), b"");
     assert_eq!(params.iterations(), 1);
 
     let mut empty = [];
-    assert!(Pbkdf2Sha256::derive_key_with_params(b"pw", params, &mut empty).is_ok());
+    Pbkdf2Sha256::derive_key_with_params(b"pw", params, &mut empty)
+      .expect("validated migration parameters permit empty output");
   }
 
   #[test]
@@ -1769,11 +1753,12 @@ mod tests {
     ] {
       let params =
         Pbkdf2Sha256::params_with_policy_bounded(b"", iterations, &policy, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS)
-          .unwrap();
+          .expect("iterations at or below the verification limit are valid");
       assert!(policy.allows_bounded(&params, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS));
     }
     let excessive_sha256 = Pbkdf2Sha256::MAX_VERIFY_ITERATIONS.strict_add(1);
-    let lower_bound_only = Pbkdf2Sha256::params_with_policy(b"", excessive_sha256, &policy).unwrap();
+    let lower_bound_only = Pbkdf2Sha256::params_with_policy(b"", excessive_sha256, &policy)
+      .expect("the lower-bound-only policy has no upper iteration limit");
     assert!(policy.allows(&lower_bound_only));
     assert!(!policy.allows_bounded(&lower_bound_only, Pbkdf2Sha256::MAX_VERIFY_ITERATIONS));
     assert_eq!(
@@ -1802,11 +1787,12 @@ mod tests {
     ] {
       let params =
         Pbkdf2Sha512::params_with_policy_bounded(b"", iterations, &policy, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS)
-          .unwrap();
+          .expect("iterations at or below the verification limit are valid");
       assert!(policy.allows_bounded(&params, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS));
     }
     let excessive_sha512 = Pbkdf2Sha512::MAX_VERIFY_ITERATIONS.strict_add(1);
-    let lower_bound_only = Pbkdf2Sha512::params_with_policy(b"", excessive_sha512, &policy).unwrap();
+    let lower_bound_only = Pbkdf2Sha512::params_with_policy(b"", excessive_sha512, &policy)
+      .expect("the lower-bound-only policy has no upper iteration limit");
     assert!(policy.allows(&lower_bound_only));
     assert!(!policy.allows_bounded(&lower_bound_only, Pbkdf2Sha512::MAX_VERIFY_ITERATIONS));
     assert_eq!(
@@ -1841,12 +1827,12 @@ mod tests {
 
   #[test]
   fn sha256_empty_output_ok() {
-    assert!(Pbkdf2Sha256::derive_key_primitive(b"pw", b"salt", 1, &mut []).is_ok());
+    Pbkdf2Sha256::derive_key_primitive(b"pw", b"salt", 1, &mut []).expect("PBKDF2-SHA256 permits empty output");
   }
 
   #[test]
   fn sha512_empty_output_ok() {
-    assert!(Pbkdf2Sha512::derive_key_primitive(b"pw", b"salt", 1, &mut []).is_ok());
+    Pbkdf2Sha512::derive_key_primitive(b"pw", b"salt", 1, &mut []).expect("PBKDF2-SHA512 permits empty output");
   }
 
   #[test]
@@ -1870,8 +1856,10 @@ mod tests {
 
     for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
-      Pbkdf2Sha256::derive_key_primitive(&password, &salt, 2, &mut expected).unwrap();
-      assert!(Pbkdf2Sha256::verify_password_primitive(&password, &salt, 2, &expected).is_ok());
+      Pbkdf2Sha256::derive_key_primitive(&password, &salt, 2, &mut expected)
+        .expect("coverage case parameters are valid");
+      Pbkdf2Sha256::verify_password_primitive(&password, &salt, 2, &expected)
+        .expect("matching PBKDF2-SHA256 output must verify");
 
       let mut wrong_first = expected.clone();
       wrong_first[0] ^= 1;
@@ -1895,8 +1883,10 @@ mod tests {
 
     for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
-      Pbkdf2Sha512::derive_key_primitive(&password, &salt, 2, &mut expected).unwrap();
-      assert!(Pbkdf2Sha512::verify_password_primitive(&password, &salt, 2, &expected).is_ok());
+      Pbkdf2Sha512::derive_key_primitive(&password, &salt, 2, &mut expected)
+        .expect("coverage case parameters are valid");
+      Pbkdf2Sha512::verify_password_primitive(&password, &salt, 2, &expected)
+        .expect("matching PBKDF2-SHA512 output must verify");
 
       let mut wrong_first = expected.clone();
       wrong_first[0] ^= 1;
@@ -1914,11 +1904,17 @@ mod tests {
   #[test]
   fn sha256_state_reuse_matches_oneshot() {
     let state = Pbkdf2Sha256::new(b"password");
-    let dk1 = state.derive_array::<32>(b"salt1", 100).unwrap();
-    let dk2 = state.derive_array::<32>(b"salt2", 100).unwrap();
+    let dk1 = state
+      .derive_array::<32>(b"salt1", 100)
+      .expect("first state-reuse derivation parameters are valid");
+    let dk2 = state
+      .derive_array::<32>(b"salt2", 100)
+      .expect("second state-reuse derivation parameters are valid");
 
-    let oneshot1 = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt1", 100).unwrap();
-    let oneshot2 = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt2", 100).unwrap();
+    let oneshot1 = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt1", 100)
+      .expect("first one-shot derivation parameters are valid");
+    let oneshot2 = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"password", b"salt2", 100)
+      .expect("second one-shot derivation parameters are valid");
 
     assert_eq!(dk1, oneshot1);
     assert_eq!(dk2, oneshot2);
@@ -1931,7 +1927,8 @@ mod tests {
   fn sha256_single_iteration() {
     let mut expected = [0u8; 32];
     oracle_sha256(b"pw", b"salt", 1, &mut expected);
-    let actual = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"pw", b"salt", 1).unwrap();
+    let actual = Pbkdf2Sha256::derive_key_array_primitive::<32>(b"pw", b"salt", 1)
+      .expect("single-iteration PBKDF2-SHA256 parameters are valid");
     assert_eq!(actual, expected);
   }
 
@@ -1939,7 +1936,8 @@ mod tests {
   fn sha512_single_iteration() {
     let mut expected = [0u8; 64];
     oracle_sha512(b"pw", b"salt", 1, &mut expected);
-    let actual = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"pw", b"salt", 1).unwrap();
+    let actual = Pbkdf2Sha512::derive_key_array_primitive::<64>(b"pw", b"salt", 1)
+      .expect("single-iteration PBKDF2-SHA512 parameters are valid");
     assert_eq!(actual, expected);
   }
 
@@ -2054,7 +2052,9 @@ mod tests {
 
       let state = Pbkdf2Sha256::new_with_compress_for_test(password, compress);
       let mut actual = vec![0u8; dk_len];
-      state.derive(salt, iterations, &mut actual).unwrap();
+      state
+        .derive(salt, iterations, &mut actual)
+        .expect("forced SHA-256 kernel case parameters are valid");
 
       assert_eq!(
         actual,
@@ -2089,7 +2089,9 @@ mod tests {
 
       let state = Pbkdf2Sha512::new_with_compress_for_test(password, compress);
       let mut actual = vec![0u8; dk_len];
-      state.derive(salt, iterations, &mut actual).unwrap();
+      state
+        .derive(salt, iterations, &mut actual)
+        .expect("forced SHA-512 kernel case parameters are valid");
 
       assert_eq!(
         actual,
@@ -2136,10 +2138,12 @@ mod tests {
 
     for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
-      state.derive(&salt, 3, &mut expected).unwrap();
+      state
+        .derive(&salt, 3, &mut expected)
+        .expect("SHA-256 work-count case parameters are valid");
 
       let (ok, ok_blocks) = counted_sha256_verify(&state, &salt, 3, &expected);
-      assert!(ok.is_ok(), "sha256 verify must accept correct output_len={out_len}");
+      ok.expect("SHA-256 verification must accept matching output");
 
       let mut wrong_first = expected.clone();
       wrong_first[0] ^= 1;
@@ -2182,10 +2186,12 @@ mod tests {
 
     for out_len in output_lengths {
       let mut expected = vec![0u8; out_len];
-      state.derive(&salt, 3, &mut expected).unwrap();
+      state
+        .derive(&salt, 3, &mut expected)
+        .expect("SHA-512 work-count case parameters are valid");
 
       let (ok, ok_blocks) = counted_sha512_verify(&state, &salt, 3, &expected);
-      assert!(ok.is_ok(), "sha512 verify must accept correct output_len={out_len}");
+      ok.expect("SHA-512 verification must accept matching output");
 
       let mut wrong_first = expected.clone();
       wrong_first[0] ^= 1;

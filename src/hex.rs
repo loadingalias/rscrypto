@@ -1,18 +1,3 @@
-#![allow(clippy::indexing_slicing)]
-#![cfg_attr(
-  not(any(
-    feature = "aes-gcm",
-    feature = "aes-gcm-siv",
-    feature = "chacha20poly1305",
-    feature = "xchacha20poly1305",
-    feature = "aegis256",
-    feature = "ascon-aead",
-    feature = "ed25519",
-    feature = "x25519"
-  )),
-  allow(dead_code, unused_macros)
-)]
-
 //! Internal hex encoding, decoding, and formatting utilities.
 //!
 //! Provides zero-allocation, `no_std`-compatible hex formatting through
@@ -22,6 +7,17 @@
 use core::fmt;
 
 /// Hex decoding error.
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum InvalidHexError {
@@ -36,6 +32,17 @@ pub enum InvalidHexError {
   },
 }
 
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 impl fmt::Debug for InvalidHexError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
@@ -48,6 +55,17 @@ impl fmt::Debug for InvalidHexError {
   }
 }
 
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 impl fmt::Display for InvalidHexError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
@@ -57,15 +75,37 @@ impl fmt::Display for InvalidHexError {
   }
 }
 
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 impl core::error::Error for InvalidHexError {}
 
 /// Decode a single hex character to its 4-bit value.
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 #[inline]
 const fn decode_nibble(byte: u8) -> Option<u8> {
   match byte {
-    b'0'..=b'9' => Some(byte - b'0'),
-    b'a'..=b'f' => Some(byte - b'a' + 10),
-    b'A'..=b'F' => Some(byte - b'A' + 10),
+    b'0'..=b'9' => Some(byte.strict_sub(b'0')),
+    b'a'..=b'f' => Some(byte.strict_sub(b'a').strict_add(10)),
+    b'A'..=b'F' => Some(byte.strict_sub(b'A').strict_add(10)),
     _ => None,
   }
 }
@@ -73,7 +113,18 @@ const fn decode_nibble(byte: u8) -> Option<u8> {
 /// Decode a hex string into `out`. Accepts mixed case, no `0x` prefix.
 ///
 /// Returns `InvalidHexError::InvalidLength` when `hex.len() != out.len() * 2`.
-pub fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError> {
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
+pub(crate) fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError> {
   let hex = hex.as_bytes();
   if hex.len() != out.len().strict_mul(2) {
     return Err(InvalidHexError::InvalidLength);
@@ -107,7 +158,7 @@ pub fn from_hex(hex: &str, out: &mut [u8]) -> Result<(), InvalidHexError> {
 }
 
 /// Write each byte as two lowercase hex characters.
-pub fn fmt_hex_lower(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {
+pub(crate) fn fmt_hex_lower(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {
   for &b in bytes {
     write!(f, "{b:02x}")?;
   }
@@ -115,7 +166,18 @@ pub fn fmt_hex_lower(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {
 }
 
 /// Write each byte as two uppercase hex characters.
-pub fn fmt_hex_upper(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
+pub(crate) fn fmt_hex_upper(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {
   for &b in bytes {
     write!(f, "{b:02X}")?;
   }
@@ -126,14 +188,53 @@ pub fn fmt_hex_upper(bytes: &[u8], f: &mut fmt::Formatter<'_>) -> fmt::Result {
 ///
 /// Returned by the `display_secret()` method on secret key types. Implements
 /// [`Display`](fmt::Display) so you can `format!("{}", key.display_secret())`.
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 pub struct DisplaySecret<'a>(pub(crate) &'a [u8]);
 
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 impl fmt::Display for DisplaySecret<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     fmt_hex_lower(self.0, f)
   }
 }
 
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ecdsa-p256",
+  feature = "ecdsa-p384",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 impl fmt::Debug for DisplaySecret<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "DisplaySecret(\"")?;
@@ -147,6 +248,17 @@ impl fmt::Debug for DisplaySecret<'_> {
 /// Implement `LowerHex`, `UpperHex`, `Display`, `Debug`, and `FromStr` for
 /// a public byte-array newtype that has `as_bytes()`, `from_bytes()`, and
 /// `LENGTH`.
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 macro_rules! impl_hex_fmt {
   ($type:ty) => {
     impl core::fmt::LowerHex for $type {
@@ -182,6 +294,17 @@ macro_rules! impl_hex_fmt {
 /// Implement masked `Debug`, `FromStr`, and `display_secret()` for a secret
 /// key newtype. Does **not** implement `Display`, `LowerHex`, or `UpperHex`
 /// to prevent accidental logging of key material.
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "ml-kem",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 macro_rules! impl_hex_fmt_secret {
   ($type:ty) => {
     impl core::str::FromStr for $type {
@@ -211,7 +334,20 @@ macro_rules! impl_hex_fmt_secret {
 /// Implement `serde::Serialize` and `serde::Deserialize` for a byte-array
 /// newtype with `as_bytes() -> &[u8; N]`, `from_bytes([u8; N]) -> Self`,
 /// and `LENGTH`.
-#[cfg(feature = "serde")]
+#[cfg(all(
+  feature = "serde",
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  )
+))]
 macro_rules! impl_serde_bytes_inner {
   ($type:ty, $feature:literal) => {
     #[cfg_attr(docsrs, doc(cfg(feature = $feature)))]
@@ -255,7 +391,20 @@ macro_rules! impl_serde_bytes_inner {
   };
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(
+  feature = "serde",
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  )
+))]
 macro_rules! impl_serde_bytes {
   ($type:ty) => {
     impl_serde_bytes_inner!($type, "serde");
@@ -263,14 +412,40 @@ macro_rules! impl_serde_bytes {
 }
 
 // No-op when serde feature is disabled.
-#[cfg(not(feature = "serde"))]
+#[cfg(all(
+  not(feature = "serde"),
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  )
+))]
 macro_rules! impl_serde_bytes {
   ($type:ty) => {};
 }
 
 /// Implement `serde` for secret material behind the explicit `serde-secrets`
 /// feature. This keeps broad DTO serialization from silently exporting keys.
-#[cfg(feature = "serde-secrets")]
+#[cfg(all(
+  feature = "serde-secrets",
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  )
+))]
 macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {
     #[cfg_attr(docsrs, doc(cfg(feature = "serde-secrets")))]
@@ -315,13 +490,36 @@ macro_rules! impl_serde_secret_bytes {
   };
 }
 
-#[cfg(not(feature = "serde-secrets"))]
+#[cfg(all(
+  not(feature = "serde-secrets"),
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  )
+))]
 macro_rules! impl_serde_secret_bytes {
   ($type:ty) => {};
 }
 
 /// Generate a fallible constructor that fills `Self::LENGTH` bytes from the
 /// operating system CSPRNG via `getrandom`.
+#[cfg(any(
+  feature = "aegis256",
+  feature = "aes-gcm",
+  feature = "aes-gcm-siv",
+  feature = "ascon-aead",
+  feature = "chacha20poly1305",
+  feature = "ed25519",
+  feature = "x25519",
+  feature = "xchacha20poly1305"
+))]
 macro_rules! impl_getrandom {
   () => {
     /// Try to generate a random instance from the platform entropy source.
@@ -344,7 +542,7 @@ macro_rules! impl_getrandom {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_hex_success() -> bool {
+pub(crate) fn diag_zeroize_hex_success() -> bool {
   let parsed = core::hint::black_box("1111111111111111111111111111111111111111111111111111111111111111")
     .parse::<crate::Aes256GcmKey>();
   core::hint::black_box(parsed.is_ok())
@@ -354,7 +552,7 @@ pub fn diag_zeroize_hex_success() -> bool {
 #[doc(hidden)]
 #[unsafe(no_mangle)]
 #[inline(never)]
-pub fn diag_zeroize_hex_error() -> bool {
+pub(crate) fn diag_zeroize_hex_error() -> bool {
   let parsed = core::hint::black_box("11111111111111111111111111111111111111111111111111111111111111zz")
     .parse::<crate::Aes256GcmKey>();
   core::hint::black_box(parsed.is_err())
@@ -362,7 +560,20 @@ pub fn diag_zeroize_hex_error() -> bool {
 
 // Tests
 
-#[cfg(test)]
+#[cfg(all(
+  test,
+  any(
+    feature = "aegis256",
+    feature = "aes-gcm",
+    feature = "aes-gcm-siv",
+    feature = "ascon-aead",
+    feature = "chacha20poly1305",
+    feature = "ed25519",
+    feature = "ml-kem",
+    feature = "x25519",
+    feature = "xchacha20poly1305"
+  )
+))]
 mod tests {
   use super::*;
 
@@ -373,7 +584,7 @@ mod tests {
     assert_eq!(hex, "deadbeef");
 
     let mut out = [0u8; 4];
-    from_hex(&hex, &mut out).unwrap();
+    from_hex(&hex, &mut out).expect("lowercase hex fixture must decode");
     assert_eq!(out, bytes);
   }
 
@@ -391,7 +602,7 @@ mod tests {
   #[test]
   fn from_hex_mixed_case() {
     let mut out = [0u8; 3];
-    from_hex("aAbBcC", &mut out).unwrap();
+    from_hex("aAbBcC", &mut out).expect("mixed-case hex fixture must decode");
     assert_eq!(out, [0xaa, 0xbb, 0xcc]);
   }
 
@@ -404,7 +615,7 @@ mod tests {
   #[test]
   fn from_hex_invalid_char() {
     let mut out = [0u8; 2];
-    let err = from_hex("abzz", &mut out).unwrap_err();
+    let err = from_hex("abzz", &mut out).expect_err("non-hex characters must be rejected");
     assert_eq!(err, InvalidHexError::InvalidChar { byte: b'z', index: 2 });
   }
 
@@ -416,7 +627,9 @@ mod tests {
     let mut encoded = alloc::string::String::from("11").repeat(Aes256GcmKey::LENGTH);
     encoded.replace_range(encoded.len().strict_sub(2).., "zz");
     assert_eq!(
-      encoded.parse::<Aes256GcmKey>().unwrap_err(),
+      encoded
+        .parse::<Aes256GcmKey>()
+        .expect_err("invalid secret hex must be rejected"),
       InvalidHexError::InvalidChar {
         byte: b'z',
         index: encoded.len().strict_sub(2),

@@ -5,7 +5,6 @@
   target_os = "linux",
   not(miri)
 ))]
-#![allow(unsafe_code)]
 
 use rscrypto::platform::{self, caps::x86};
 
@@ -18,7 +17,6 @@ const ARCH_REQ_XCOMP_PERM: usize = 0x1023;
 const XFEATURE_XTILEDATA: usize = 18;
 const XCOMP_TILE_MASK: u64 = (1 << 17) | (1 << 18);
 
-#[allow(unused_unsafe)]
 fn cpu_supports_amx_tile() -> bool {
   // MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
   // SAFETY: CPUID is a non-privileged x86-64 identification instruction.

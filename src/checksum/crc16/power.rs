@@ -8,16 +8,15 @@
 //! Uses `unsafe` for Power SIMD + inline assembly. Callers must ensure the
 //! required CPU features are available before executing the accelerated path
 //! (the dispatcher does this).
-#![allow(unsafe_code)]
-#![allow(dead_code)] // Kernels wired up via dispatcher
 // SAFETY: All indexing is over fixed-size arrays with in-bounds constant indices.
-#![allow(clippy::indexing_slicing)]
 
 use core::{
   arch::asm,
   ops::{BitAnd, BitXor, BitXorAssign},
   simd::i64x2,
 };
+
+use crate::checksum::common::{low_u16, low_u32};
 
 use super::keys::{
   CRC16_CCITT_KEYS_REFLECTED, CRC16_CCITT_STREAM_REFLECTED, CRC16_IBM_KEYS_REFLECTED, CRC16_IBM_STREAM_REFLECTED,
@@ -80,12 +79,13 @@ impl Simd {
   /// On `powerpc64le` this is a no-op. On big-endian `powerpc64`, we byte-swap
   /// each 64-bit lane so the folding algorithm sees the same lane values as on
   /// little-endian platforms.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, and POWER8 vector instructions are available.
   #[inline]
   #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
   unsafe fn to_le(self) -> Self {
-    // SAFETY: Caller guarantees:
-    // 1. ALTIVEC + VSX + POWER8-VECTOR target features are available (dispatch check).
-    // 2. All SIMD operations are pure register computations after loads.
     #[cfg(target_endian = "little")]
     {
       self
@@ -107,6 +107,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -132,6 +135,9 @@ impl Simd {
     }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -153,6 +159,10 @@ impl Simd {
 
   /// Fold 16 bytes (reflected width32 folding primitive):
   /// `self.low ⊗ coeff.high ⊕ self.high ⊗ coeff.low`.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -170,6 +180,9 @@ impl Simd {
     unsafe { Self(Self::vpmsumd(self.0, coeff.swap_lanes().0)) }
   }
 
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -186,6 +199,10 @@ impl Simd {
   }
 
   /// Fold 16 bytes down to the "width32" reduction state (reflected mode).
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -216,6 +233,10 @@ impl Simd {
   }
 
   /// Barrett reduction for reflected width32; returns the updated CRC state.
+  ///
+  /// # Safety
+  ///
+  /// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
   #[inline]
   #[target_feature(
     enable = "altivec",
@@ -232,11 +253,14 @@ impl Simd {
     unsafe {
       let t1 = Self::mul64(self.low_64(), mu);
       let l = Self::mul64(t1.low_64(), poly);
-      (self ^ l).high_64() as u32
+      low_u32((self ^ l).high_64())
     }
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -264,6 +288,9 @@ unsafe fn finalize_lanes_width32_reflected(x: [Simd; 8], keys: &[u64; 23]) -> u3
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -305,6 +332,9 @@ unsafe fn update_simd_width32_reflected(state: u32, first: &[Simd; 8], rest: &[[
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -329,6 +359,9 @@ unsafe fn fold_block_128_reflected(x: &mut [Simd; 8], chunk: &[Simd; 8], coeff: 
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -354,6 +387,9 @@ unsafe fn normalize_block_le(mut block: [Simd; 8]) -> [Simd; 8] {
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -416,6 +452,9 @@ unsafe fn update_simd_width32_reflected_2way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -444,7 +483,7 @@ unsafe fn update_simd_width32_reflected_4way(
       return update_simd_width32_reflected(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 4) * 4;
+    let aligned = blocks.len() & !3_usize;
 
     let coeff_512 = Simd::new(fold_512b.0, fold_512b.1);
     let coeff_128 = Simd::new(keys[4], keys[3]);
@@ -505,6 +544,9 @@ unsafe fn update_simd_width32_reflected_4way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -533,7 +575,7 @@ unsafe fn update_simd_width32_reflected_8way(
       return update_simd_width32_reflected(state, first, rest, keys);
     }
 
-    let aligned = (blocks.len() / 8) * 8;
+    let aligned = blocks.len() & !7_usize;
 
     let coeff_1024 = Simd::new(fold_1024b.0, fold_1024b.1);
     let coeff_128 = Simd::new(keys[4], keys[3]);
@@ -642,6 +684,9 @@ unsafe fn update_simd_width32_reflected_8way(
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -662,11 +707,14 @@ unsafe fn crc16_width32_vpmsum(mut state: u16, data: &[u8], keys: &[u64; 23], po
 
     state = portable(state, left);
     let state32 = update_simd_width32_reflected(state as u32, first, rest, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -693,11 +741,14 @@ unsafe fn crc16_width32_vpmsum_2way(
 
     state = portable(state, left);
     let state32 = update_simd_width32_reflected_2way(state as u32, middle, fold_256b, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -725,11 +776,14 @@ unsafe fn crc16_width32_vpmsum_4way(
 
     state = portable(state, left);
     let state32 = update_simd_width32_reflected_4way(state as u32, middle, fold_512b, combine, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
 
+/// # Safety
+///
+/// The caller must ensure Altivec, VSX, POWER8 vector, and POWER8 crypto instructions are available.
 #[inline]
 #[target_feature(
   enable = "altivec",
@@ -757,7 +811,7 @@ unsafe fn crc16_width32_vpmsum_8way(
 
     state = portable(state, left);
     let state32 = update_simd_width32_reflected_8way(state as u32, middle, fold_1024b, combine, keys);
-    state = state32 as u16;
+    state = low_u16(state32);
     portable(state, right)
   }
 }
@@ -766,11 +820,9 @@ unsafe fn crc16_width32_vpmsum_8way(
 
 /// CRC-16/CCITT VPMSUMD kernel.
 ///
-/// # Safety
-///
-/// Dispatcher verifies VPMSUMD before selecting this kernel.
+/// Runtime dispatch selects this kernel only when VPMSUMD is available.
 #[inline]
-pub fn crc16_ccitt_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum(
@@ -783,7 +835,7 @@ pub fn crc16_ccitt_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ccitt_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_2way(
@@ -797,7 +849,7 @@ pub fn crc16_ccitt_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ccitt_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_4way(
@@ -812,7 +864,7 @@ pub fn crc16_ccitt_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ccitt_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ccitt_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_8way(
@@ -828,17 +880,15 @@ pub fn crc16_ccitt_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
 
 /// CRC-16/IBM VPMSUMD kernel.
 ///
-/// # Safety
-///
-/// Dispatcher verifies VPMSUMD before selecting this kernel.
+/// Runtime dispatch selects this kernel only when VPMSUMD is available.
 #[inline]
-pub fn crc16_ibm_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_vpmsum_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe { crc16_width32_vpmsum(crc, data, &CRC16_IBM_KEYS_REFLECTED, super::portable::crc16_ibm_slice8) }
 }
 
 #[inline]
-pub fn crc16_ibm_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_2way(
@@ -852,7 +902,7 @@ pub fn crc16_ibm_vpmsum_2way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ibm_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_4way(
@@ -867,7 +917,7 @@ pub fn crc16_ibm_vpmsum_4way_safe(crc: u16, data: &[u8]) -> u16 {
 }
 
 #[inline]
-pub fn crc16_ibm_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
+pub(super) fn crc16_ibm_vpmsum_8way_safe(crc: u16, data: &[u8]) -> u16 {
   // SAFETY: Dispatcher verifies VPMSUMD before selecting this kernel.
   unsafe {
     crc16_width32_vpmsum_8way(

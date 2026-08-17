@@ -1,9 +1,8 @@
 //! RISC-V Vector (RVV) BlaMka compression kernel for Argon2.
 //!
-//! Uses two-u64 pairs to expose independent operations to the optimizer while
-//! preserving ordinary scalar Rust semantics. Dispatch requires the RISC-V V
-//! extension for this backend, but exact RVV lowering is target- and
-//! toolchain-specific generated-code evidence.
+//! Uses `core::simd::u64x2` pairs to expose two independent lanes per
+//! operation. Dispatch requires the RISC-V V extension for this backend;
+//! exact RVV lowering remains target- and toolchain-specific evidence.
 //!
 //! # Vectorisation topology
 //!
@@ -14,29 +13,41 @@
 //! ```
 //!
 //! Column step: `GB(a_i, b_i, c_i, d_i)` for `i ∈ 0..4` runs at 4-way
-//! parallelism with each `[u64; 2]` pair holding two of the four lanes
+//! parallelism with each `u64x2` pair holding two of the four lanes
 //! per row (a/b/c/d × {lo, hi}).
 //!
 //! Diagonal step: rotate `b` by 1, `c` by 2, `d` by 3 within each
-//! 4-lane row. Implemented as plain index swaps.
+//! 4-lane row using cross-pair swizzles.
 //!
 //! # BlaMka multiply
 //!
-//! `2 · lsb(a) · lsb(b)` lane-wise via masked `wrapping_mul`. The
-//! product of two 32-bit values fits in u64, so masking with
-//! `0xffffffff` and one `wrapping_mul(2)` is exact.
+//! `2 · lsb(a) · lsb(b)` lane-wise via a masked SIMD multiply. The product of
+//! two 32-bit values fits in u64, so the operation is exact modulo the lane
+//! representation.
 //!
 //! # Rotations
 //!
-//! All four (32, 24, 16, 63) use scalar `u64::rotate_right`; instruction
-//! selection is left to the target compiler.
+//! All four rotations use lane-wise SIMD shifts and OR. Instruction selection
+//! is left to the target compiler.
 
 #![cfg(target_arch = "riscv64")]
-#![allow(clippy::cast_possible_truncation)]
+
+use core::simd::u64x2;
 
 use super::BLOCK_WORDS;
 
-type Pair = [u64; 2];
+type Pair = u64x2;
+
+struct RvvState {
+  a_lo: Pair,
+  a_hi: Pair,
+  b_lo: Pair,
+  b_hi: Pair,
+  c_lo: Pair,
+  c_hi: Pair,
+  d_lo: Pair,
+  d_hi: Pair,
+}
 
 /// RISC-V V extension BlaMka compression kernel.
 ///
@@ -53,225 +64,217 @@ pub(super) unsafe fn compress_rvv(
   y: &[u64; BLOCK_WORDS],
   xor_into: bool,
 ) {
-  // SAFETY: V extension is enabled by this function's `#[target_feature]`.
-  // Memory accesses are explicit indices into fixed-size arrays.
   let mut r = [0u64; BLOCK_WORDS];
   let mut q = [0u64; BLOCK_WORDS];
-  let mut i = 0;
+  let mut i = 0usize;
   while i < BLOCK_WORDS {
-    r[i] = x[i] ^ y[i];
-    r[i + 1] = x[i + 1] ^ y[i + 1];
-    q[i] = r[i];
-    q[i + 1] = r[i + 1];
-    i += 2;
+    let rv = vxor(load_pair(x, i), load_pair(y, i));
+    store_pair(&mut r, i, rv);
+    store_pair(&mut q, i, rv);
+    i = i.strict_add(2);
   }
 
   // Row pass.
   let mut row = 0usize;
   while row < 8 {
-    let base = row * 16;
-    let mut a_lo: Pair = [q[base], q[base + 1]];
-    let mut a_hi: Pair = [q[base + 2], q[base + 3]];
-    let mut b_lo: Pair = [q[base + 4], q[base + 5]];
-    let mut b_hi: Pair = [q[base + 6], q[base + 7]];
-    let mut c_lo: Pair = [q[base + 8], q[base + 9]];
-    let mut c_hi: Pair = [q[base + 10], q[base + 11]];
-    let mut d_lo: Pair = [q[base + 12], q[base + 13]];
-    let mut d_hi: Pair = [q[base + 14], q[base + 15]];
+    let base = row.strict_mul(16);
+    let mut state = RvvState {
+      a_lo: load_pair(&q, base),
+      a_hi: load_pair(&q, base.strict_add(2)),
+      b_lo: load_pair(&q, base.strict_add(4)),
+      b_hi: load_pair(&q, base.strict_add(6)),
+      c_lo: load_pair(&q, base.strict_add(8)),
+      c_hi: load_pair(&q, base.strict_add(10)),
+      d_lo: load_pair(&q, base.strict_add(12)),
+      d_hi: load_pair(&q, base.strict_add(14)),
+    };
 
-    p_round(
-      &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-    );
+    p_round(&mut state);
 
-    q[base] = a_lo[0];
-    q[base + 1] = a_lo[1];
-    q[base + 2] = a_hi[0];
-    q[base + 3] = a_hi[1];
-    q[base + 4] = b_lo[0];
-    q[base + 5] = b_lo[1];
-    q[base + 6] = b_hi[0];
-    q[base + 7] = b_hi[1];
-    q[base + 8] = c_lo[0];
-    q[base + 9] = c_lo[1];
-    q[base + 10] = c_hi[0];
-    q[base + 11] = c_hi[1];
-    q[base + 12] = d_lo[0];
-    q[base + 13] = d_lo[1];
-    q[base + 14] = d_hi[0];
-    q[base + 15] = d_hi[1];
-    row += 1;
+    store_pair(&mut q, base, state.a_lo);
+    store_pair(&mut q, base.strict_add(2), state.a_hi);
+    store_pair(&mut q, base.strict_add(4), state.b_lo);
+    store_pair(&mut q, base.strict_add(6), state.b_hi);
+    store_pair(&mut q, base.strict_add(8), state.c_lo);
+    store_pair(&mut q, base.strict_add(10), state.c_hi);
+    store_pair(&mut q, base.strict_add(12), state.d_lo);
+    store_pair(&mut q, base.strict_add(14), state.d_hi);
+    row = row.strict_add(1);
   }
 
   // Column pass.
   let mut col = 0usize;
   while col < 8 {
-    let base = col * 2;
-    let mut a_lo: Pair = [q[base], q[base + 1]];
-    let mut a_hi: Pair = [q[base + 16], q[base + 17]];
-    let mut b_lo: Pair = [q[base + 32], q[base + 33]];
-    let mut b_hi: Pair = [q[base + 48], q[base + 49]];
-    let mut c_lo: Pair = [q[base + 64], q[base + 65]];
-    let mut c_hi: Pair = [q[base + 80], q[base + 81]];
-    let mut d_lo: Pair = [q[base + 96], q[base + 97]];
-    let mut d_hi: Pair = [q[base + 112], q[base + 113]];
+    let base = col.strict_mul(2);
+    let mut state = RvvState {
+      a_lo: load_pair(&q, base),
+      a_hi: load_pair(&q, base.strict_add(16)),
+      b_lo: load_pair(&q, base.strict_add(32)),
+      b_hi: load_pair(&q, base.strict_add(48)),
+      c_lo: load_pair(&q, base.strict_add(64)),
+      c_hi: load_pair(&q, base.strict_add(80)),
+      d_lo: load_pair(&q, base.strict_add(96)),
+      d_hi: load_pair(&q, base.strict_add(112)),
+    };
 
-    p_round(
-      &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-    );
+    p_round(&mut state);
 
-    q[base] = a_lo[0];
-    q[base + 1] = a_lo[1];
-    q[base + 16] = a_hi[0];
-    q[base + 17] = a_hi[1];
-    q[base + 32] = b_lo[0];
-    q[base + 33] = b_lo[1];
-    q[base + 48] = b_hi[0];
-    q[base + 49] = b_hi[1];
-    q[base + 64] = c_lo[0];
-    q[base + 65] = c_lo[1];
-    q[base + 80] = c_hi[0];
-    q[base + 81] = c_hi[1];
-    q[base + 96] = d_lo[0];
-    q[base + 97] = d_lo[1];
-    q[base + 112] = d_hi[0];
-    q[base + 113] = d_hi[1];
-    col += 1;
+    store_pair(&mut q, base, state.a_lo);
+    store_pair(&mut q, base.strict_add(16), state.a_hi);
+    store_pair(&mut q, base.strict_add(32), state.b_lo);
+    store_pair(&mut q, base.strict_add(48), state.b_hi);
+    store_pair(&mut q, base.strict_add(64), state.c_lo);
+    store_pair(&mut q, base.strict_add(80), state.c_hi);
+    store_pair(&mut q, base.strict_add(96), state.d_lo);
+    store_pair(&mut q, base.strict_add(112), state.d_hi);
+    col = col.strict_add(1);
   }
 
   // Final XOR with R, fused with dst store/xor.
-  let mut i = 0;
+  let mut i = 0usize;
   while i < BLOCK_WORDS {
-    let f0 = q[i] ^ r[i];
-    let f1 = q[i + 1] ^ r[i + 1];
-    if xor_into {
-      dst[i] ^= f0;
-      dst[i + 1] ^= f1;
+    let result = vxor(load_pair(&q, i), load_pair(&r, i));
+    let result = if xor_into {
+      vxor(load_pair(dst, i), result)
     } else {
-      dst[i] = f0;
-      dst[i + 1] = f1;
-    }
-    i += 2;
+      result
+    };
+    store_pair(dst, i, result);
+    i = i.strict_add(2);
   }
+}
+
+#[inline(always)]
+fn load_pair(buf: &[u64; BLOCK_WORDS], idx: usize) -> Pair {
+  u64x2::from_array([buf[idx], buf[idx.strict_add(1)]])
+}
+
+#[inline(always)]
+fn store_pair(buf: &mut [u64; BLOCK_WORDS], idx: usize, pair: Pair) {
+  let lanes = pair.to_array();
+  buf[idx] = lanes[0];
+  buf[idx.strict_add(1)] = lanes[1];
 }
 
 // ─── 4-way P-round ─────────────────────────────────────────────────────────
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn p_round(
-  a_lo: &mut Pair,
-  a_hi: &mut Pair,
-  b_lo: &mut Pair,
-  b_hi: &mut Pair,
-  c_lo: &mut Pair,
-  c_hi: &mut Pair,
-  d_lo: &mut Pair,
-  d_hi: &mut Pair,
-) {
+fn p_round(state: &mut RvvState) {
   // Column step.
-  gb(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi);
+  gb(state);
 
   // Diagonalise: rotate b by 1, c by 2, d by 3 across the 4-lane row.
-  let tb_lo = *b_lo;
-  let tb_hi = *b_hi;
-  *b_lo = [tb_lo[1], tb_hi[0]];
-  *b_hi = [tb_hi[1], tb_lo[0]];
+  let b_lo = state.b_lo;
+  let b_hi = state.b_hi;
+  state.b_lo = pair_a1_b0(b_lo, b_hi);
+  state.b_hi = pair_b1_a0(b_lo, b_hi);
 
-  core::mem::swap(c_lo, c_hi);
+  core::mem::swap(&mut state.c_lo, &mut state.c_hi);
 
-  let td_lo = *d_lo;
-  let td_hi = *d_hi;
-  *d_lo = [td_hi[1], td_lo[0]];
-  *d_hi = [td_lo[1], td_hi[0]];
+  let d_lo = state.d_lo;
+  let d_hi = state.d_hi;
+  state.d_lo = pair_b1_a0(d_lo, d_hi);
+  state.d_hi = pair_a1_b0(d_lo, d_hi);
 
   // Diagonal step.
-  gb(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi);
+  gb(state);
 
   // Undo diagonalisation.
-  let tb_lo = *b_lo;
-  let tb_hi = *b_hi;
-  *b_lo = [tb_hi[1], tb_lo[0]];
-  *b_hi = [tb_lo[1], tb_hi[0]];
+  let b_lo = state.b_lo;
+  let b_hi = state.b_hi;
+  state.b_lo = pair_b1_a0(b_lo, b_hi);
+  state.b_hi = pair_a1_b0(b_lo, b_hi);
 
-  core::mem::swap(c_lo, c_hi);
+  core::mem::swap(&mut state.c_lo, &mut state.c_hi);
 
-  let td_lo = *d_lo;
-  let td_hi = *d_hi;
-  *d_lo = [td_lo[1], td_hi[0]];
-  *d_hi = [td_hi[1], td_lo[0]];
+  let d_lo = state.d_lo;
+  let d_hi = state.d_hi;
+  state.d_lo = pair_a1_b0(d_lo, d_hi);
+  state.d_hi = pair_b1_a0(d_lo, d_hi);
+}
+
+#[inline(always)]
+fn pair_a1_b0(a: Pair, b: Pair) -> Pair {
+  core::simd::simd_swizzle!(a, b, [1, 2])
+}
+
+#[inline(always)]
+fn pair_b1_a0(a: Pair, b: Pair) -> Pair {
+  core::simd::simd_swizzle!(a, b, [3, 0])
 }
 
 // ─── 4-way BlaMka G ────────────────────────────────────────────────────────
 
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn gb(
-  a_lo: &mut Pair,
-  a_hi: &mut Pair,
-  b_lo: &mut Pair,
-  b_hi: &mut Pair,
-  c_lo: &mut Pair,
-  c_hi: &mut Pair,
-  d_lo: &mut Pair,
-  d_hi: &mut Pair,
-) {
+fn gb(state: &mut RvvState) {
   // Step 1: a = a + b + 2·lsb(a)·lsb(b)
-  let p_lo = bla_mul(*a_lo, *b_lo);
-  let p_hi = bla_mul(*a_hi, *b_hi);
-  *a_lo = vadd(vadd(*a_lo, *b_lo), p_lo);
-  *a_hi = vadd(vadd(*a_hi, *b_hi), p_hi);
-  *d_lo = ror(vxor(*d_lo, *a_lo), 32);
-  *d_hi = ror(vxor(*d_hi, *a_hi), 32);
+  let p_lo = bla_mul(state.a_lo, state.b_lo);
+  let p_hi = bla_mul(state.a_hi, state.b_hi);
+  state.a_lo = bla_add(state.a_lo, state.b_lo, p_lo);
+  state.a_hi = bla_add(state.a_hi, state.b_hi, p_hi);
+  state.d_lo = ror::<32>(vxor(state.d_lo, state.a_lo));
+  state.d_hi = ror::<32>(vxor(state.d_hi, state.a_hi));
 
   // Step 2: c = c + d + 2·lsb(c)·lsb(d)
-  let p_lo = bla_mul(*c_lo, *d_lo);
-  let p_hi = bla_mul(*c_hi, *d_hi);
-  *c_lo = vadd(vadd(*c_lo, *d_lo), p_lo);
-  *c_hi = vadd(vadd(*c_hi, *d_hi), p_hi);
-  *b_lo = ror(vxor(*b_lo, *c_lo), 24);
-  *b_hi = ror(vxor(*b_hi, *c_hi), 24);
+  let p_lo = bla_mul(state.c_lo, state.d_lo);
+  let p_hi = bla_mul(state.c_hi, state.d_hi);
+  state.c_lo = bla_add(state.c_lo, state.d_lo, p_lo);
+  state.c_hi = bla_add(state.c_hi, state.d_hi, p_hi);
+  state.b_lo = ror::<24>(vxor(state.b_lo, state.c_lo));
+  state.b_hi = ror::<24>(vxor(state.b_hi, state.c_hi));
 
   // Step 3: a = a + b + 2·lsb(a)·lsb(b)
-  let p_lo = bla_mul(*a_lo, *b_lo);
-  let p_hi = bla_mul(*a_hi, *b_hi);
-  *a_lo = vadd(vadd(*a_lo, *b_lo), p_lo);
-  *a_hi = vadd(vadd(*a_hi, *b_hi), p_hi);
-  *d_lo = ror(vxor(*d_lo, *a_lo), 16);
-  *d_hi = ror(vxor(*d_hi, *a_hi), 16);
+  let p_lo = bla_mul(state.a_lo, state.b_lo);
+  let p_hi = bla_mul(state.a_hi, state.b_hi);
+  state.a_lo = bla_add(state.a_lo, state.b_lo, p_lo);
+  state.a_hi = bla_add(state.a_hi, state.b_hi, p_hi);
+  state.d_lo = ror::<16>(vxor(state.d_lo, state.a_lo));
+  state.d_hi = ror::<16>(vxor(state.d_hi, state.a_hi));
 
   // Step 4: c = c + d + 2·lsb(c)·lsb(d)
-  let p_lo = bla_mul(*c_lo, *d_lo);
-  let p_hi = bla_mul(*c_hi, *d_hi);
-  *c_lo = vadd(vadd(*c_lo, *d_lo), p_lo);
-  *c_hi = vadd(vadd(*c_hi, *d_hi), p_hi);
-  *b_lo = ror(vxor(*b_lo, *c_lo), 63);
-  *b_hi = ror(vxor(*b_hi, *c_hi), 63);
+  let p_lo = bla_mul(state.c_lo, state.d_lo);
+  let p_hi = bla_mul(state.c_hi, state.d_hi);
+  state.c_lo = bla_add(state.c_lo, state.d_lo, p_lo);
+  state.c_hi = bla_add(state.c_hi, state.d_hi, p_hi);
+  state.b_lo = ror::<63>(vxor(state.b_lo, state.c_lo));
+  state.b_hi = ror::<63>(vxor(state.b_hi, state.c_hi));
 }
 
-// ─── Micro-ops (compiler-vectorised at VL=2/SEW=64 under -C target-feature=+v) ─
-
-#[inline(always)]
-fn vadd(a: Pair, b: Pair) -> Pair {
-  [a[0].wrapping_add(b[0]), a[1].wrapping_add(b[1])]
-}
+// ─── Micro-ops ─────────────────────────────────────────────────────────────
 
 #[inline(always)]
 fn vxor(a: Pair, b: Pair) -> Pair {
-  [a[0] ^ b[0], a[1] ^ b[1]]
+  core::ops::BitXor::bitxor(a, b)
 }
 
 #[inline(always)]
-fn ror(x: Pair, n: u32) -> Pair {
-  [x[0].rotate_right(n), x[1].rotate_right(n)]
+fn ror<const N: u32>(value: Pair) -> Pair {
+  const { assert!(N > 0 && N < 64) }
+  let right = core::ops::Shr::shr(value, u64x2::splat(u64::from(N)));
+  let left = core::ops::Shl::shl(value, u64x2::splat(u64::from(64u32.strict_sub(N))));
+  core::ops::BitOr::bitor(right, left)
+}
+
+#[inline(always)]
+fn bla_add(a: Pair, b: Pair, product: Pair) -> Pair {
+  simd_wrapping_add(simd_wrapping_add(a, b), product)
 }
 
 /// `2 · lsb(a) · lsb(b)` lane-wise. Masked u32 multiply fits in u64 so
 /// the result is exact without a 128-bit-wide product.
 #[inline(always)]
 fn bla_mul(a: Pair, b: Pair) -> Pair {
-  const MASK: u64 = 0xffff_ffff;
-  [
-    (a[0] & MASK).wrapping_mul(b[0] & MASK).wrapping_shl(1),
-    (a[1] & MASK).wrapping_mul(b[1] & MASK).wrapping_shl(1),
-  ]
+  let mask = u64x2::splat(0xffff_ffff);
+  let product = simd_wrapping_mul(a & mask, b & mask);
+  core::ops::Shl::shl(product, u64x2::splat(1))
+}
+
+#[inline(always)]
+fn simd_wrapping_add(a: Pair, b: Pair) -> Pair {
+  core::ops::Add::add(a, b)
+}
+
+#[inline(always)]
+fn simd_wrapping_mul(a: Pair, b: Pair) -> Pair {
+  core::ops::Mul::mul(a, b)
 }

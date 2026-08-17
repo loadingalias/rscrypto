@@ -18,7 +18,7 @@ fn extend_to_overlong(input: &[u8], control: u8) -> Vec<u8> {
   out
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let customization_split: u8 = some_or_return!(input.byte());
   let message_split: u8 = some_or_return!(input.byte());

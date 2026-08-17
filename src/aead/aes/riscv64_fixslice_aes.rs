@@ -8,8 +8,6 @@
 //! Reference: Adomnicai et al., "Fixslicing AES-like Ciphers",
 //! <https://eprint.iacr.org/2020/1123.pdf>.
 
-#![allow(clippy::unreadable_literal)]
-
 use super::{BLOCK_SIZE, KEY_SIZE, KEY_SIZE_128};
 
 type State = [u64; 8];
@@ -27,7 +25,7 @@ impl RvFixsliceRoundKeys {
   }
 
   #[inline]
-  #[allow(dead_code)]
+  #[cfg(target_arch = "riscv64")]
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `[u64; 120]` is contiguous and valid to view as bytes for its
     // exact initialized size.
@@ -51,7 +49,7 @@ impl RvFixslice128RoundKeys {
   }
 
   #[inline]
-  #[allow(dead_code)]
+  #[cfg(target_arch = "riscv64")]
   pub(super) fn zeroize(&mut self) {
     // SAFETY: `[u64; 88]` is contiguous and valid to view as bytes for its
     // exact initialized size.
@@ -110,7 +108,6 @@ pub(super) fn encrypt_4blocks(rkeys: &RvFixsliceRoundKeys, blocks: &mut [[u8; BL
 }
 
 #[inline]
-#[allow(dead_code)]
 pub(super) fn cipher_round_4(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
   let mut state = State::default();
   bitslice(&mut state, &blocks[0], &blocks[1], &blocks[2], &blocks[3]);
@@ -625,14 +622,15 @@ fn inv_bitslice(input: &[u64]) -> [[u8; BLOCK_SIZE]; 4] {
 
   #[rustfmt::skip]
   fn write_reordered(columns: u64, output: &mut [u8]) {
-    output[0x0] = (columns        ) as u8;
-    output[0x1] = (columns >> 0x10) as u8;
-    output[0x2] = (columns >> 0x20) as u8;
-    output[0x3] = (columns >> 0x30) as u8;
-    output[0x8] = (columns >> 0x08) as u8;
-    output[0x9] = (columns >> 0x18) as u8;
-    output[0xa] = (columns >> 0x28) as u8;
-    output[0xb] = (columns >> 0x38) as u8;
+    let bytes = columns.to_le_bytes();
+    output[0x0] = bytes[0];
+    output[0x1] = bytes[2];
+    output[0x2] = bytes[4];
+    output[0x3] = bytes[6];
+    output[0x8] = bytes[1];
+    output[0x9] = bytes[3];
+    output[0xa] = bytes[5];
+    output[0xb] = bytes[7];
   }
 
   let mut output = [[0u8; BLOCK_SIZE]; 4];
@@ -691,7 +689,7 @@ fn ror(x: u64, y: u32) -> u64 {
 
 #[inline(always)]
 fn ror_distance(rows: u32, cols: u32) -> u32 {
-  (rows << 4) + (cols << 2)
+  rows.strict_shl(4).strict_add(cols.strict_shl(2))
 }
 
 #[inline(always)]

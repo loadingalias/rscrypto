@@ -140,7 +140,7 @@ mod atomic_cache {
   }
 
   #[cfg(all(not(feature = "std"), target_has_atomic = "64"))]
-  pub fn get_or_init(f: fn() -> Detected) -> Detected {
+  pub(super) fn get_or_init(f: fn() -> Detected) -> Detected {
     if STATE.load(Ordering::Acquire) == STATE_READY {
       return load_cached();
     }
@@ -176,7 +176,7 @@ mod atomic_cache {
     }
   }
 
-  pub fn try_set_override(value: Option<Detected>, already_initialized: bool) -> Result<(), OverrideError> {
+  pub(super) fn try_set_override(value: Option<Detected>, already_initialized: bool) -> Result<(), OverrideError> {
     let _guard = lock_override();
 
     if OVERRIDE_SEALED.load(Ordering::Relaxed) {
@@ -204,12 +204,12 @@ mod atomic_cache {
     Ok(())
   }
 
-  pub fn has_override() -> bool {
+  pub(super) fn has_override() -> bool {
     OVERRIDE_SET.load(Ordering::Acquire)
   }
 
   #[cfg(not(miri))]
-  pub fn seal_and_get_override() -> Option<Detected> {
+  pub(super) fn seal_and_get_override() -> Option<Detected> {
     let _guard = lock_override();
     OVERRIDE_SEALED.store(true, Ordering::Relaxed);
 

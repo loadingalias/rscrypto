@@ -25,20 +25,78 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 usage() {
-  echo "Usage: $0 --format {shell|json} [--key KEY]" >&2
+  echo "Usage: $0 --validate | --format {shell|json} [--key KEY]" >&2
   exit 1
 }
 
 FORMAT=""
 KEY=""
+VALIDATE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --validate) VALIDATE=true; shift ;;
     --format) FORMAT="$2"; shift 2 ;;
     --key)    KEY="$2";    shift 2 ;;
     *)        usage ;;
   esac
 done
+
+if [[ "$VALIDATE" == true && -n "$FORMAT" ]]; then
+  usage
+fi
+
+validate_manifest() {
+  jq -e '
+    . as $root |
+    ($root.groups | keys) == ["ibm", "linux", "macos", "no_std", "wasm", "win"] and
+    all($root.groups[]; type == "array" and length > 0 and . == sort and all(.[]; type == "string" and length > 0)) and
+    ([$root.groups[][]] | length) == ([$root.groups[][]] | unique | length) and
+    ($root.ci | type == "array" and length > 0) and
+    ($root.ci == ($root.ci | sort_by(.name))) and
+    ([$root.ci[].name] | length) == ([$root.ci[].name] | unique | length) and
+    all($root.ci[];
+      .name as $name |
+      any($root.groups[][]; . == $name) and
+      if .type == "runson" then
+        (keys | sort) == ["name", "pool", "type"]
+      elif .type == "gha" then
+        (keys | sort) == ["name", "runner", "type"]
+      else
+        false
+      end
+    )
+  ' "$MANIFEST" >/dev/null || {
+    echo "ERROR: invalid target matrix schema: $MANIFEST" >&2
+    return 1
+  }
+
+  local matrix_targets
+  matrix_targets="$(jq -r '.groups[][]' "$MANIFEST" | LC_ALL=C sort)"
+
+  local projection
+  for projection in "$REPO_ROOT/.config/rail.toml" "$REPO_ROOT/deny.toml"; do
+    local projected_targets
+    projected_targets="$(awk '
+      /^targets = \[$/ { in_targets = 1; next }
+      in_targets && /^\]$/ { exit }
+      in_targets && match($0, /"[^"]+"/) {
+        print substr($0, RSTART + 1, RLENGTH - 2)
+      }
+    ' "$projection" | LC_ALL=C sort)"
+    if [[ "$projected_targets" != "$matrix_targets" ]]; then
+      echo "ERROR: target projection does not match .config/target-matrix.json: $projection" >&2
+      diff -u <(printf '%s\n' "$matrix_targets") <(printf '%s\n' "$projected_targets") >&2 || true
+      return 1
+    fi
+  done
+}
+
+validate_manifest
+
+if [[ "$VALIDATE" == true ]]; then
+  exit 0
+fi
 
 [[ -n "$FORMAT" ]] || usage
 

@@ -9,7 +9,6 @@
 // SAFETY: All array indexing in this module uses bounded indices:
 // - Table generation iterates i: 0..256 into a [u32; 256]
 // - Table lookups use `& 0xFF` which produces indices 0..255
-#![allow(clippy::indexing_slicing)]
 
 use super::keys::CRC24_OPENPGP_POLY_REFLECTED;
 
@@ -42,10 +41,13 @@ const fn crc32_reflected_table_entry(poly: u32, index: u8) -> u32 {
 #[must_use]
 const fn generate_crc32_reflected_table(poly: u32) -> [u32; 256] {
   let mut table = [0u32; 256];
-  let mut i: u16 = 0;
-  while i < 256 {
-    table[i as usize] = crc32_reflected_table_entry(poly, i as u8);
-    i = i.strict_add(1);
+  let mut index = 0u8;
+  loop {
+    table[index as usize] = crc32_reflected_table_entry(poly, index);
+    if index == u8::MAX {
+      break;
+    }
+    index = index.strict_add(1);
   }
   table
 }

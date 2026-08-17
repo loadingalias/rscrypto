@@ -3,7 +3,7 @@ use rscrypto_fuzz::{
   FuzzInput, assert_aead_against_oracle, assert_aead_forgery, assert_aead_roundtrip, some_or_return,
 };
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let nonce_bytes: [u8; 24] = some_or_return!(input.bytes());
@@ -18,14 +18,23 @@ pub fn run(data: &[u8]) {
 
   // Differential: rscrypto ↔ chacha20poly1305 crate (XChaCha variant).
   use chacha20poly1305::aead::{Aead as _, KeyInit, Payload};
-  let oracle = chacha20poly1305::XChaCha20Poly1305::new_from_slice(&key_bytes).unwrap();
+  let oracle =
+    chacha20poly1305::XChaCha20Poly1305::new_from_slice(&key_bytes).expect("XChaCha20-Poly1305 accepts a 32-byte key");
   let on = chacha20poly1305::XNonce::from(nonce_bytes);
   assert_aead_against_oracle(
     &cipher,
     &nonce,
     aad,
     plaintext,
-    |pt, aad| oracle.encrypt(&on, Payload { msg: pt, aad }).unwrap(),
-    |ct, aad| oracle.decrypt(&on, Payload { msg: ct, aad }).unwrap(),
+    |pt, aad| {
+      oracle
+        .encrypt(&on, Payload { msg: pt, aad })
+        .expect("oracle encryption accepts the fuzz input")
+    },
+    |ct, aad| {
+      oracle
+        .decrypt(&on, Payload { msg: ct, aad })
+        .expect("oracle must accept the equivalent rscrypto ciphertext")
+    },
   );
 }

@@ -4,7 +4,10 @@ use rscrypto::{Ed25519PublicKey, Ed25519Signature};
 use serde_json::Value;
 
 mod common;
-use common::{decode_hex_array, decode_hex_vec};
+#[path = "common/array.rs"]
+mod hex_array;
+use common::decode_hex_vec;
+use hex_array::decode_hex_array;
 
 const ED25519: &str = include_str!("../testdata/auth/wycheproof/ed25519_test.json");
 
@@ -15,9 +18,11 @@ struct Counts {
 }
 
 fn field<'a>(value: &'a Value, name: &str) -> &'a str {
-  value[name]
+  value
+    .get(name)
+    .expect("Wycheproof field must be present")
     .as_str()
-    .unwrap_or_else(|| panic!("missing string field `{name}`"))
+    .expect("Wycheproof field must be a string")
 }
 
 fn groups(suite: &Value) -> &[Value] {
@@ -45,7 +50,12 @@ fn wycheproof_ed25519_verify_vectors_match_expected_results() {
       let message = decode_hex_vec(field(test, "msg"));
       let signature = decode_hex_vec(field(test, "sig"));
 
-      match field(test, "result") {
+      let disposition = field(test, "result");
+      assert!(
+        matches!(disposition, "valid" | "invalid"),
+        "unsupported Wycheproof Ed25519 result `{disposition}`"
+      );
+      match disposition {
         "valid" => {
           counts.valid = counts.valid.strict_add(1);
           let signature = Ed25519Signature::from_bytes(
@@ -53,25 +63,24 @@ fn wycheproof_ed25519_verify_vectors_match_expected_results() {
               .try_into()
               .expect("valid Wycheproof Ed25519 signatures must be 64 bytes"),
           );
-          assert!(
-            public.verify(&message, &signature).is_ok(),
-            "Wycheproof Ed25519 tcId {} rejected a valid signature",
-            test["tcId"]
-          );
+          public
+            .verify(&message, &signature)
+            .expect("Wycheproof valid Ed25519 signature must verify");
         }
         "invalid" => {
           counts.invalid = counts.invalid.strict_add(1);
           if signature.len() == Ed25519Signature::LENGTH {
-            let signature = Ed25519Signature::from_bytes(signature.try_into().unwrap());
-            assert!(
-              public.verify(&message, &signature).is_err(),
-              "Wycheproof Ed25519 tcId {} accepted an invalid signature: {}",
-              test["tcId"],
-              field(test, "comment")
+            let signature = Ed25519Signature::from_bytes(
+              signature
+                .try_into()
+                .expect("length-checked Wycheproof Ed25519 signature must fit an array"),
             );
+            public
+              .verify(&message, &signature)
+              .expect_err("Wycheproof invalid Ed25519 signature must be rejected");
           }
         }
-        other => panic!("unsupported Wycheproof Ed25519 result `{other}`"),
+        _ => {}
       }
     }
   }

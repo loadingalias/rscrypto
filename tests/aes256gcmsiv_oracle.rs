@@ -13,10 +13,7 @@
 
 #![cfg(feature = "aead")]
 
-use aes_gcm_siv::{
-  Aes256GcmSiv as Oracle, KeyInit,
-  aead::{AeadInPlace, generic_array::GenericArray},
-};
+use aes_gcm_siv::{Aes256GcmSiv as Oracle, KeyInit, Nonce as OracleNonce, aead::AeadInOut};
 use rscrypto::{
   Aes256GcmSiv, Aes256GcmSivKey, Aes256GcmSivTag,
   aead::{Nonce96, expert::AeadWithNonce},
@@ -27,18 +24,20 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 12], aad: &[u8
   let nonce = Nonce96::from_bytes(*nonce_bytes);
   let cipher = Aes256GcmSiv::new(&key);
 
-  let oracle = Oracle::new(GenericArray::from_slice(key_bytes));
-  let oracle_nonce = GenericArray::from_slice(nonce_bytes);
+  let oracle = Oracle::new_from_slice(key_bytes).expect("AES-256-GCM-SIV oracle key length must be valid");
+  let oracle_nonce = OracleNonce::from(*nonce_bytes);
 
   // Encrypt with rscrypto.
   let mut ours = plaintext.to_vec();
-  let tag = cipher.encrypt_in_place(&nonce, aad, &mut ours).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut ours)
+    .expect("rscrypto must seal valid AES-256-GCM-SIV oracle input");
 
   // Encrypt with oracle.
   let mut oracle_buf = plaintext.to_vec();
   let oracle_tag = oracle
-    .encrypt_in_place_detached(oracle_nonce, aad, &mut oracle_buf)
-    .unwrap();
+    .encrypt_inout_detached(&oracle_nonce, aad, oracle_buf.as_mut_slice().into())
+    .expect("RustCrypto must seal valid AES-256-GCM-SIV oracle input");
 
   assert_eq!(ours, oracle_buf, "ciphertext mismatch (len={})", plaintext.len());
   assert_eq!(
@@ -49,7 +48,9 @@ fn assert_matches_oracle(key_bytes: &[u8; 32], nonce_bytes: &[u8; 12], aad: &[u8
   );
 
   // Decrypt with rscrypto.
-  cipher.decrypt_in_place(&nonce, aad, &mut ours, &tag).unwrap();
+  cipher
+    .decrypt_in_place(&nonce, aad, &mut ours, &tag)
+    .expect("fresh AES-256-GCM-SIV ciphertext must authenticate");
   assert_eq!(ours, plaintext, "decrypt round-trip failed (len={})", plaintext.len());
 }
 
@@ -96,7 +97,7 @@ fn aes256gcmsiv_oracle_block_boundary_sizes() {
 fn aes256gcmsiv_oracle_large_input() {
   let key = [0x77u8; 32];
   let nonce = [0x88u8; 12];
-  let plaintext: Vec<u8> = (0..8192).map(|i| (i & 0xFF) as u8).collect();
+  let plaintext: Vec<u8> = (0usize..8192).map(|i| i.to_le_bytes()[0]).collect();
   assert_matches_oracle(&key, &nonce, b"large", &plaintext);
 }
 
@@ -108,8 +109,8 @@ fn aes256gcmsiv_oracle_aad_size_sweep() {
 
   // Sweeps cover the wide-POLYVAL 4-block boundary (64-byte chunks) and the
   // partial-tail seam at +/-1 around 16-byte block boundaries.
-  for aad_len in [0, 1, 15, 16, 17, 32, 33, 47, 48, 49, 64, 65, 80, 81, 128, 1024] {
-    let aad: Vec<u8> = (0..aad_len).map(|i| (i & 0xFF) as u8).collect();
+  for aad_len in [0usize, 1, 15, 16, 17, 32, 33, 47, 48, 49, 64, 65, 80, 81, 128, 1024] {
+    let aad: Vec<u8> = (0..aad_len).map(|i| i.to_le_bytes()[0]).collect();
     assert_matches_oracle(&key, &nonce, &aad, plaintext);
   }
 }
@@ -123,10 +124,14 @@ fn aes256gcmsiv_is_deterministic_under_nonce_reuse() {
   let plaintext = b"same nonce, same plaintext, same tag";
 
   let mut first = plaintext.to_vec();
-  let first_tag = cipher.encrypt_in_place(&nonce, aad, &mut first).unwrap();
+  let first_tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut first)
+    .expect("first deterministic AES-256-GCM-SIV seal must succeed");
 
   let mut second = plaintext.to_vec();
-  let second_tag = cipher.encrypt_in_place(&nonce, aad, &mut second).unwrap();
+  let second_tag = cipher
+    .encrypt_in_place(&nonce, aad, &mut second)
+    .expect("second deterministic AES-256-GCM-SIV seal must succeed");
 
   assert_eq!(first, second, "ciphertext changed across identical AES-GCM-SIV inputs");
   assert_eq!(
@@ -145,14 +150,15 @@ fn aes256gcmsiv_rejects_modified_tag() {
   let cipher = Aes256GcmSiv::new(&key);
 
   let mut buffer = *b"forgery-check";
-  let mut tag = cipher.encrypt_in_place(&nonce, b"aad", &mut buffer).unwrap().to_bytes();
+  let mut tag = cipher
+    .encrypt_in_place(&nonce, b"aad", &mut buffer)
+    .expect("AES-256-GCM-SIV tag-forgery fixture must seal")
+    .to_bytes();
   tag[0] ^= 1;
 
-  assert!(
-    cipher
-      .decrypt_in_place(&nonce, b"aad", &mut buffer, &Aes256GcmSivTag::from_bytes(tag))
-      .is_err()
-  );
+  cipher
+    .decrypt_in_place(&nonce, b"aad", &mut buffer, &Aes256GcmSivTag::from_bytes(tag))
+    .expect_err("AES-256-GCM-SIV must reject a modified tag");
 }
 
 #[test]
@@ -162,10 +168,14 @@ fn aes256gcmsiv_rejects_modified_ciphertext() {
   let cipher = Aes256GcmSiv::new(&key);
 
   let mut buffer = *b"tamper-detect";
-  let tag = cipher.encrypt_in_place(&nonce, b"", &mut buffer).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"", &mut buffer)
+    .expect("AES-256-GCM-SIV ciphertext-tampering fixture must seal");
   buffer[0] ^= 1;
 
-  assert!(cipher.decrypt_in_place(&nonce, b"", &mut buffer, &tag).is_err());
+  cipher
+    .decrypt_in_place(&nonce, b"", &mut buffer, &tag)
+    .expect_err("AES-256-GCM-SIV must reject modified ciphertext");
 }
 
 #[test]
@@ -175,7 +185,11 @@ fn aes256gcmsiv_rejects_wrong_aad() {
   let cipher = Aes256GcmSiv::new(&key);
 
   let mut buffer = *b"aad-mismatch";
-  let tag = cipher.encrypt_in_place(&nonce, b"correct", &mut buffer).unwrap();
+  let tag = cipher
+    .encrypt_in_place(&nonce, b"correct", &mut buffer)
+    .expect("AES-256-GCM-SIV AAD-mismatch fixture must seal");
 
-  assert!(cipher.decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag).is_err());
+  cipher
+    .decrypt_in_place(&nonce, b"wrong", &mut buffer, &tag)
+    .expect_err("AES-256-GCM-SIV must reject incorrect associated data");
 }

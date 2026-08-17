@@ -7,14 +7,14 @@ use rscrypto::{
   hashes::crypto::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256},
   traits::Xof as _,
 };
-use support::blobby_compat::Blob2Iterator;
+use support::blobby_compat::BlobIterator;
 
 fn run_fixed_vectors<const OUT: usize>(data: &'static [u8], name: &str, mut digest: impl FnMut(&[u8]) -> [u8; OUT]) {
-  for (i, row) in Blob2Iterator::new(data)
+  for (i, row) in BlobIterator::<2>::new(data)
     .expect("sha3 vector corpus must parse")
     .enumerate()
   {
-    let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
+    let [input, output] = row.expect("SHA-3 vector row must decode");
     let actual = digest(input);
     assert_eq!(
       &actual[..],
@@ -50,11 +50,11 @@ fn sha3_384_official_vectors() {
 }
 
 fn run_xof_vectors(data: &'static [u8], name: &str, mut xof: impl FnMut(&[u8], &mut [u8])) {
-  for (i, row) in Blob2Iterator::new(data)
+  for (i, row) in BlobIterator::<2>::new(data)
     .expect("sha3 xof vector corpus must parse")
     .enumerate()
   {
-    let [input, output] = row.unwrap_or_else(|err| panic!("{name} vector row decode failed at case {i}: {err:?}"));
+    let [input, output] = row.expect("SHA-3 XOF vector row must decode");
     let mut out = vec![0u8; output.len()];
     xof(input, &mut out);
     assert_eq!(

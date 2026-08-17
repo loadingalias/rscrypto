@@ -1,6 +1,6 @@
 use rscrypto::{
-    Aes256Gcm, Aes256GcmKey,
-    aead::{NonceCounter, expert::AeadWithNonce},
+  Aes256Gcm, Aes256GcmKey,
+  aead::{NonceCounter, expert::AeadWithNonce},
 };
 use rscrypto_fuzz::{FuzzInput, some_or_return, split_at_ratio};
 
@@ -87,7 +87,7 @@ fn assert_resume_equivalence(prefix: [u8; 4], advance: u32) {
   );
 }
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let key_bytes: [u8; 32] = some_or_return!(input.bytes());
   let prefix: [u8; 4] = some_or_return!(input.bytes());
@@ -101,12 +101,12 @@ pub fn run(data: &[u8]) {
   // are pinned by `aes_gcm_nonce_counter_exhausts_cleanly` and
   // `aes_gcm_nonce_counter_with_counter_rejects_max` in src/aead/nonce_counter.rs.
   let initial = u64::from_le_bytes(initial_bytes)
-    % NonceCounter::<Aes256Gcm>::MAX_MESSAGES.strict_sub(u64::from(MAX_NONCES_PER_ITER));
-  let burst = (u32::from(burst_byte) % MAX_NONCES_PER_ITER).strict_add(1);
+    .rem_euclid(NonceCounter::<Aes256Gcm>::MAX_MESSAGES.strict_sub(u64::from(MAX_NONCES_PER_ITER)));
+  let burst = u32::from(burst_byte).rem_euclid(MAX_NONCES_PER_ITER).strict_add(1);
   // Resume-equivalence advance bounded so the fresh-counter loop runs
   // ≤ MAX_NONCES_PER_ITER times — exercised every iteration rather than
   // gated on a 10⁻¹² fuzzer probability.
-  let resume_advance = u32::from(burst_byte) % MAX_NONCES_PER_ITER;
+  let resume_advance = u32::from(burst_byte).rem_euclid(MAX_NONCES_PER_ITER);
 
   let cipher = Aes256Gcm::new(&Aes256GcmKey::from_bytes(key_bytes));
   let (aad, plaintext) = split_at_ratio(rest, aad_split);

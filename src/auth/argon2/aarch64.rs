@@ -43,6 +43,17 @@ use core::arch::aarch64::{
 
 use super::BLOCK_WORDS;
 
+struct NeonState {
+  a_lo: uint64x2_t,
+  a_hi: uint64x2_t,
+  b_lo: uint64x2_t,
+  b_hi: uint64x2_t,
+  c_lo: uint64x2_t,
+  c_hi: uint64x2_t,
+  d_lo: uint64x2_t,
+  d_hi: uint64x2_t,
+}
+
 /// NEON BlaMka compression kernel.
 ///
 /// # Safety
@@ -63,41 +74,41 @@ pub(super) unsafe fn compress_neon(
   // value; uint64x2_t has no invalid bit patterns.
   let mut r = unsafe { [core::mem::zeroed::<uint64x2_t>(); 64] };
   let mut q = r;
-  for i in 0..64 {
+  for i in 0usize..64 {
+    let offset = i.strict_mul(2);
     // SAFETY: x and y are [u64; BLOCK_WORDS] with BLOCK_WORDS == 128; the
     // loop reads 2 u64 per iteration at offset `2 * i` for i ∈ 0..64, so
     // the last read is at words 126..=127. NEON inherited from the fn
     // target_feature.
-    let (xv, yv) = unsafe { (vld1q_u64(x.as_ptr().add(2 * i)), vld1q_u64(y.as_ptr().add(2 * i))) };
+    let (xv, yv) = unsafe { (vld1q_u64(x.as_ptr().add(offset)), vld1q_u64(y.as_ptr().add(offset))) };
     r[i] = veorq_u64(xv, yv);
     q[i] = r[i];
   }
 
   // Row pass: 8 rows × 16 u64 per row = 8 P-rounds on contiguous blocks
   // of 8 uint64x2_t.
-  for row in 0..8 {
-    let base = row * 8;
-    let (a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi) = (
-      q[base],
-      q[base + 1],
-      q[base + 2],
-      q[base + 3],
-      q[base + 4],
-      q[base + 5],
-      q[base + 6],
-      q[base + 7],
-    );
+  for row in 0usize..8 {
+    let base = row.strict_mul(8);
+    let mut state = NeonState {
+      a_lo: q[base],
+      a_hi: q[base.strict_add(1)],
+      b_lo: q[base.strict_add(2)],
+      b_hi: q[base.strict_add(3)],
+      c_lo: q[base.strict_add(4)],
+      c_hi: q[base.strict_add(5)],
+      d_lo: q[base.strict_add(6)],
+      d_hi: q[base.strict_add(7)],
+    };
     // SAFETY: NEON inherited from outer target_feature.
-    let (a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi) =
-      unsafe { p_round_neon(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi) };
-    q[base] = a_lo;
-    q[base + 1] = a_hi;
-    q[base + 2] = b_lo;
-    q[base + 3] = b_hi;
-    q[base + 4] = c_lo;
-    q[base + 5] = c_hi;
-    q[base + 6] = d_lo;
-    q[base + 7] = d_hi;
+    unsafe { p_round_neon(&mut state) };
+    q[base] = state.a_lo;
+    q[base.strict_add(1)] = state.a_hi;
+    q[base.strict_add(2)] = state.b_lo;
+    q[base.strict_add(3)] = state.b_hi;
+    q[base.strict_add(4)] = state.c_lo;
+    q[base.strict_add(5)] = state.c_hi;
+    q[base.strict_add(6)] = state.d_lo;
+    q[base.strict_add(7)] = state.d_hi;
   }
 
   // Column pass: each P-round reads 16 u64s at stride-16 positions
@@ -105,41 +116,41 @@ pub(super) unsafe fn compress_neon(
   // q[col*2+113]`). In uint64x2_t indexing each "col*2" pair corresponds
   // to a single uint64x2_t at index `col`, and the stride-16 becomes
   // stride 8 in uint64x2_t space.
-  for col in 0..8 {
-    let (a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi) = (
-      q[col],
-      q[col + 8],
-      q[col + 16],
-      q[col + 24],
-      q[col + 32],
-      q[col + 40],
-      q[col + 48],
-      q[col + 56],
-    );
+  for col in 0usize..8 {
+    let mut state = NeonState {
+      a_lo: q[col],
+      a_hi: q[col.strict_add(8)],
+      b_lo: q[col.strict_add(16)],
+      b_hi: q[col.strict_add(24)],
+      c_lo: q[col.strict_add(32)],
+      c_hi: q[col.strict_add(40)],
+      d_lo: q[col.strict_add(48)],
+      d_hi: q[col.strict_add(56)],
+    };
     // SAFETY: NEON inherited from outer target_feature.
-    let (a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi) =
-      unsafe { p_round_neon(a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi) };
-    q[col] = a_lo;
-    q[col + 8] = a_hi;
-    q[col + 16] = b_lo;
-    q[col + 24] = b_hi;
-    q[col + 32] = c_lo;
-    q[col + 40] = c_hi;
-    q[col + 48] = d_lo;
-    q[col + 56] = d_hi;
+    unsafe { p_round_neon(&mut state) };
+    q[col] = state.a_lo;
+    q[col.strict_add(8)] = state.a_hi;
+    q[col.strict_add(16)] = state.b_lo;
+    q[col.strict_add(24)] = state.b_hi;
+    q[col.strict_add(32)] = state.c_lo;
+    q[col.strict_add(40)] = state.c_hi;
+    q[col.strict_add(48)] = state.d_lo;
+    q[col.strict_add(56)] = state.d_hi;
   }
 
   // Final XOR with R, fused with the dst store.
-  for i in 0..64 {
+  for i in 0usize..64 {
     let final_v = veorq_u64(q[i], r[i]);
     // SAFETY: dst[2*i..2*i+2] is within BLOCK_WORDS for i ∈ 0..64. NEON
     // inherited from the fn target_feature.
     unsafe {
+      let offset = i.strict_mul(2);
       if xor_into {
-        let cur = vld1q_u64(dst.as_ptr().add(2 * i));
-        vst1q_u64(dst.as_mut_ptr().add(2 * i), veorq_u64(cur, final_v));
+        let cur = vld1q_u64(dst.as_ptr().add(offset));
+        vst1q_u64(dst.as_mut_ptr().add(offset), veorq_u64(cur, final_v));
       } else {
-        vst1q_u64(dst.as_mut_ptr().add(2 * i), final_v);
+        vst1q_u64(dst.as_mut_ptr().add(offset), final_v);
       }
     }
   }
@@ -157,83 +168,48 @@ pub(super) unsafe fn compress_neon(
 /// aarch64 so any aarch64 build satisfies this, but the `unsafe fn`
 /// signature preserves the contract for completeness.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-unsafe fn p_round_neon(
-  mut a_lo: uint64x2_t,
-  mut a_hi: uint64x2_t,
-  mut b_lo: uint64x2_t,
-  mut b_hi: uint64x2_t,
-  mut c_lo: uint64x2_t,
-  mut c_hi: uint64x2_t,
-  mut d_lo: uint64x2_t,
-  mut d_hi: uint64x2_t,
-) -> (
-  uint64x2_t,
-  uint64x2_t,
-  uint64x2_t,
-  uint64x2_t,
-  uint64x2_t,
-  uint64x2_t,
-  uint64x2_t,
-  uint64x2_t,
-) {
+unsafe fn p_round_neon(state: &mut NeonState) {
   // Column step — 4 parallel GBs.
   // SAFETY: NEON precondition inherited from caller.
-  unsafe {
-    gb_neon(
-      &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-    );
-  }
+  unsafe { gb_neon(state) };
 
   // Diagonalise: rotate b by 1, c by 2, d by 3 across the 4-lane row.
   // SAFETY: vextq_u64 only operates on register values, no memory access.
   unsafe {
-    let b_lo2 = vextq_u64::<1>(b_lo, b_hi);
-    let b_hi2 = vextq_u64::<1>(b_hi, b_lo);
-    b_lo = b_lo2;
-    b_hi = b_hi2;
+    let b_lo = vextq_u64::<1>(state.b_lo, state.b_hi);
+    let b_hi = vextq_u64::<1>(state.b_hi, state.b_lo);
+    state.b_lo = b_lo;
+    state.b_hi = b_hi;
 
     // c: rotate by 2 == swap lo/hi.
-    let c_lo2 = c_hi;
-    let c_hi2 = c_lo;
-    c_lo = c_lo2;
-    c_hi = c_hi2;
+    core::mem::swap(&mut state.c_lo, &mut state.c_hi);
 
-    let d_lo2 = vextq_u64::<1>(d_hi, d_lo);
-    let d_hi2 = vextq_u64::<1>(d_lo, d_hi);
-    d_lo = d_lo2;
-    d_hi = d_hi2;
+    let d_lo = vextq_u64::<1>(state.d_hi, state.d_lo);
+    let d_hi = vextq_u64::<1>(state.d_lo, state.d_hi);
+    state.d_lo = d_lo;
+    state.d_hi = d_hi;
   }
 
   // Diagonal step — 4 parallel GBs on the rotated state.
   // SAFETY: NEON precondition inherited from caller.
-  unsafe {
-    gb_neon(
-      &mut a_lo, &mut a_hi, &mut b_lo, &mut b_hi, &mut c_lo, &mut c_hi, &mut d_lo, &mut d_hi,
-    );
-  }
+  unsafe { gb_neon(state) };
 
   // Undo diagonalisation: rotate b by -1, c by -2, d by -3.
   // SAFETY: vextq_u64 only operates on register values.
   unsafe {
-    let b_lo2 = vextq_u64::<1>(b_hi, b_lo);
-    let b_hi2 = vextq_u64::<1>(b_lo, b_hi);
-    b_lo = b_lo2;
-    b_hi = b_hi2;
+    let b_lo = vextq_u64::<1>(state.b_hi, state.b_lo);
+    let b_hi = vextq_u64::<1>(state.b_lo, state.b_hi);
+    state.b_lo = b_lo;
+    state.b_hi = b_hi;
 
     // c: undo swap.
-    let c_lo2 = c_hi;
-    let c_hi2 = c_lo;
-    c_lo = c_lo2;
-    c_hi = c_hi2;
+    core::mem::swap(&mut state.c_lo, &mut state.c_hi);
 
-    let d_lo2 = vextq_u64::<1>(d_lo, d_hi);
-    let d_hi2 = vextq_u64::<1>(d_hi, d_lo);
-    d_lo = d_lo2;
-    d_hi = d_hi2;
+    let d_lo = vextq_u64::<1>(state.d_lo, state.d_hi);
+    let d_hi = vextq_u64::<1>(state.d_hi, state.d_lo);
+    state.d_lo = d_lo;
+    state.d_hi = d_hi;
   }
-
-  (a_lo, a_hi, b_lo, b_hi, c_lo, c_hi, d_lo, d_hi)
 }
 
 // ─── 4-way parallel BlaMka G ───────────────────────────────────────────────
@@ -246,54 +222,44 @@ unsafe fn p_round_neon(
 /// Must be called from a context with NEON enabled (inherited from the
 /// outer `#[target_feature(enable = "neon")]` entry point).
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-unsafe fn gb_neon(
-  a_lo: &mut uint64x2_t,
-  a_hi: &mut uint64x2_t,
-  b_lo: &mut uint64x2_t,
-  b_hi: &mut uint64x2_t,
-  c_lo: &mut uint64x2_t,
-  c_hi: &mut uint64x2_t,
-  d_lo: &mut uint64x2_t,
-  d_hi: &mut uint64x2_t,
-) {
+unsafe fn gb_neon(state: &mut NeonState) {
   // SAFETY: NEON precondition inherited; all ops below are register-only.
   unsafe {
     // Step 1: a ← a + b + 2·lsb(a)·lsb(b)
-    let p_lo = bla_mul(*a_lo, *b_lo);
-    let p_hi = bla_mul(*a_hi, *b_hi);
-    *a_lo = vaddq_u64(vaddq_u64(*a_lo, *b_lo), p_lo);
-    *a_hi = vaddq_u64(vaddq_u64(*a_hi, *b_hi), p_hi);
+    let p_lo = bla_mul(state.a_lo, state.b_lo);
+    let p_hi = bla_mul(state.a_hi, state.b_hi);
+    state.a_lo = vaddq_u64(vaddq_u64(state.a_lo, state.b_lo), p_lo);
+    state.a_hi = vaddq_u64(vaddq_u64(state.a_hi, state.b_hi), p_hi);
     // d ← (d ^ a) ROR 32
-    *d_lo = ror32(veorq_u64(*d_lo, *a_lo));
-    *d_hi = ror32(veorq_u64(*d_hi, *a_hi));
+    state.d_lo = ror32(veorq_u64(state.d_lo, state.a_lo));
+    state.d_hi = ror32(veorq_u64(state.d_hi, state.a_hi));
 
     // Step 2: c ← c + d + 2·lsb(c)·lsb(d)
-    let p_lo = bla_mul(*c_lo, *d_lo);
-    let p_hi = bla_mul(*c_hi, *d_hi);
-    *c_lo = vaddq_u64(vaddq_u64(*c_lo, *d_lo), p_lo);
-    *c_hi = vaddq_u64(vaddq_u64(*c_hi, *d_hi), p_hi);
+    let p_lo = bla_mul(state.c_lo, state.d_lo);
+    let p_hi = bla_mul(state.c_hi, state.d_hi);
+    state.c_lo = vaddq_u64(vaddq_u64(state.c_lo, state.d_lo), p_lo);
+    state.c_hi = vaddq_u64(vaddq_u64(state.c_hi, state.d_hi), p_hi);
     // b ← (b ^ c) ROR 24
-    *b_lo = ror24(veorq_u64(*b_lo, *c_lo));
-    *b_hi = ror24(veorq_u64(*b_hi, *c_hi));
+    state.b_lo = ror24(veorq_u64(state.b_lo, state.c_lo));
+    state.b_hi = ror24(veorq_u64(state.b_hi, state.c_hi));
 
     // Step 3: a ← a + b + 2·lsb(a)·lsb(b)
-    let p_lo = bla_mul(*a_lo, *b_lo);
-    let p_hi = bla_mul(*a_hi, *b_hi);
-    *a_lo = vaddq_u64(vaddq_u64(*a_lo, *b_lo), p_lo);
-    *a_hi = vaddq_u64(vaddq_u64(*a_hi, *b_hi), p_hi);
+    let p_lo = bla_mul(state.a_lo, state.b_lo);
+    let p_hi = bla_mul(state.a_hi, state.b_hi);
+    state.a_lo = vaddq_u64(vaddq_u64(state.a_lo, state.b_lo), p_lo);
+    state.a_hi = vaddq_u64(vaddq_u64(state.a_hi, state.b_hi), p_hi);
     // d ← (d ^ a) ROR 16
-    *d_lo = ror16(veorq_u64(*d_lo, *a_lo));
-    *d_hi = ror16(veorq_u64(*d_hi, *a_hi));
+    state.d_lo = ror16(veorq_u64(state.d_lo, state.a_lo));
+    state.d_hi = ror16(veorq_u64(state.d_hi, state.a_hi));
 
     // Step 4: c ← c + d + 2·lsb(c)·lsb(d)
-    let p_lo = bla_mul(*c_lo, *d_lo);
-    let p_hi = bla_mul(*c_hi, *d_hi);
-    *c_lo = vaddq_u64(vaddq_u64(*c_lo, *d_lo), p_lo);
-    *c_hi = vaddq_u64(vaddq_u64(*c_hi, *d_hi), p_hi);
+    let p_lo = bla_mul(state.c_lo, state.d_lo);
+    let p_hi = bla_mul(state.c_hi, state.d_hi);
+    state.c_lo = vaddq_u64(vaddq_u64(state.c_lo, state.d_lo), p_lo);
+    state.c_hi = vaddq_u64(vaddq_u64(state.c_hi, state.d_hi), p_hi);
     // b ← (b ^ c) ROR 63 ≡ ROL 1
-    *b_lo = ror63(veorq_u64(*b_lo, *c_lo));
-    *b_hi = ror63(veorq_u64(*b_hi, *c_hi));
+    state.b_lo = ror63(veorq_u64(state.b_lo, state.c_lo));
+    state.b_hi = ror63(veorq_u64(state.b_hi, state.c_hi));
   }
 }
 

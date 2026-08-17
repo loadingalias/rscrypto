@@ -23,7 +23,7 @@ fn collection_state_schedules_match_rapidhash() {
   for seed in [0, 1, u64::MAX, 0x243f_6a88_85a3_08d3] {
     for len in lengths {
       let data: Vec<u8> = (0..len)
-        .map(|index| index.wrapping_mul(131).wrapping_add(17) as u8)
+        .map(|index| index.wrapping_mul(131).wrapping_add(17).to_le_bytes()[0])
         .collect();
 
       let deterministic = RapidSeededState::new(seed);
@@ -37,7 +37,7 @@ fn collection_state_schedules_match_rapidhash() {
         out.copy_from_slice(&seed.to_le_bytes());
         Ok::<_, ()>(())
       })
-      .unwrap();
+      .expect("deterministic entropy callback must initialize RapidRandomState");
       let secrets = rapidhash::v3::RapidSecrets::seed(seed);
       assert_eq!(
         hash_bytes(&randomized, &data),

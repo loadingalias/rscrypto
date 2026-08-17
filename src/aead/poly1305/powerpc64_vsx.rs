@@ -8,6 +8,11 @@ pub(super) fn compute_block(state: &mut State, block: &[u8; 16], partial: bool) 
   unsafe { compute_block_impl(state, block, partial) }
 }
 
+/// Process one Poly1305 block through the POWER8 vector multiplier.
+///
+/// # Safety
+///
+/// The executing CPU must support AltiVec, VSX, and POWER8 vector instructions.
 #[target_feature(enable = "altivec", enable = "vsx", enable = "power8-vector")]
 unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool) {
   compute_block_scalar_reduction(state, block, partial, |lhs, rhs| {
@@ -20,6 +25,10 @@ unsafe fn compute_block_impl(state: &mut State, block: &[u8; 16], partial: bool)
 ///
 /// Computes `lhs[0]*rhs[0] + lhs[1]*rhs[1] + lhs[2]*rhs[2] + lhs[3]*rhs[3]`
 /// using two 128-bit multiply-odd and one 128-bit add.
+///
+/// # Safety
+///
+/// The executing CPU must support POWER8 vector instructions.
 #[inline(always)]
 unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
   // SAFETY: POWER8+ VSX available via enclosing target_feature.
@@ -34,11 +43,15 @@ unsafe fn sum4_mul(lhs: [u32; 4], rhs: [u32; 4]) -> u64 {
 
     let sum = vaddudm(prod_lo, prod_hi);
     let lanes = sum.to_array();
-    (lanes[0] as u64).wrapping_add(lanes[1] as u64)
+    u64::from_ne_bytes(lanes[0].to_ne_bytes()).wrapping_add(u64::from_ne_bytes(lanes[1].to_ne_bytes()))
   }
 }
 
 /// Multiply low 32 bits of each u64 lane → u64: `vmulouw`.
+///
+/// # Safety
+///
+/// The executing CPU must support POWER8 vector instructions.
 #[inline(always)]
 unsafe fn vmulouw(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;
@@ -56,6 +69,10 @@ unsafe fn vmulouw(a: i64x2, b: i64x2) -> i64x2 {
 }
 
 /// Add u64 lanes: `vaddudm`.
+///
+/// # Safety
+///
+/// The executing CPU must support POWER8 vector instructions.
 #[inline(always)]
 unsafe fn vaddudm(a: i64x2, b: i64x2) -> i64x2 {
   let out: i64x2;

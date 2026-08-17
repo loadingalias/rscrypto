@@ -30,7 +30,7 @@ fn matches_target_arch(target: &str, arch: Arch) -> bool {
 /// an arch prefix like `x86_64-`, so false positives are impossible.
 #[inline]
 #[must_use]
-pub fn manifest_has_arch(arch: Arch) -> bool {
+pub(super) fn manifest_has_arch(arch: Arch) -> bool {
   let Some(_) = manifest_prefix_for_arch(arch) else {
     return true;
   };
@@ -41,8 +41,10 @@ pub fn manifest_has_arch(arch: Arch) -> bool {
   for (i, b) in TARGET_MATRIX_MANIFEST.bytes().enumerate() {
     if b == b'"' {
       if in_quote {
-        let value = &TARGET_MATRIX_MANIFEST[start..i];
-        if matches_target_arch(value, arch) {
+        if TARGET_MATRIX_MANIFEST
+          .get(start..i)
+          .is_some_and(|value| matches_target_arch(value, arch))
+        {
           return true;
         }
       } else {

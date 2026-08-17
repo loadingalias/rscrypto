@@ -3,8 +3,6 @@
 //! SHA-384 is identical to SHA-512 except for initial hash values (H0) and
 //! output truncation (48 bytes / 6 words). The compression function is shared.
 
-#![allow(clippy::indexing_slicing)] // Fixed-size arrays in finalization
-
 use self::kernels::CompressBlocksFn;
 use super::sha512::Sha512;
 use crate::{
@@ -82,7 +80,7 @@ impl Sha384Prefix {
       unsafe { core::ptr::write_volatile(word, 0) };
     }
     // SAFETY: bytes_hashed is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.bytes_hashed, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -255,7 +253,6 @@ impl Sha384 {
 
   #[cfg(all(feature = "hmac", any(test, feature = "diag")))]
   #[inline]
-  #[allow(dead_code)]
   pub(crate) fn new_with_compress_for_test(compress_blocks: CompressBlocksFn) -> Self {
     Self {
       state: H0,
@@ -282,9 +279,9 @@ impl Drop for Sha384 {
     }
     crate::traits::ct::zeroize(&mut self.block);
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.bytes_hashed, 0) };
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }

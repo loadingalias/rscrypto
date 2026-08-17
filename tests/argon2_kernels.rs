@@ -13,15 +13,14 @@
 //! full hash with a non-trivial cost matrix surfaces it.
 
 #![cfg(all(feature = "argon2", feature = "diag"))]
-#![allow(clippy::unwrap_used)]
 
 use rscrypto::{
   Argon2Params,
   auth::{argon2, argon2::Argon2Variant},
 };
 
-fn params(m_kib: u32, t: u32, p: u32, _out_len: u32) -> Argon2Params {
-  Argon2Params::new(m_kib, t, p).unwrap()
+fn params(m_kib: u32, t: u32, p: u32) -> Argon2Params {
+  Argon2Params::new(m_kib, t, p).expect("Argon2 kernel-test parameters must be valid")
 }
 
 const PASSWORD: &[u8] = b"correct horse battery staple";
@@ -30,12 +29,14 @@ const SALT: &[u8] = b"rscrypto-salt-16b!!!";
 /// Every kernel must agree at a range of cost points.
 fn all_kernels_agree(variant: Argon2Variant) {
   for &(m, t, p) in &[(16u32, 1u32, 1u32), (32, 2, 1), (64, 1, 2), (32, 3, 1)] {
-    let params = params(m, t, p, 32);
+    let params = params(m, t, p);
     let mut expected = [0u8; 32];
-    argon2::diag_hash_portable(&params, PASSWORD, SALT, variant, &mut expected).unwrap();
+    argon2::diag_hash_portable(&params, PASSWORD, SALT, variant, &mut expected)
+      .expect("portable Argon2 kernel-test hash must succeed");
 
     let mut active_out = [0u8; 32];
-    argon2::diag_hash_active(&params, PASSWORD, SALT, variant, &mut active_out).unwrap();
+    argon2::diag_hash_active(&params, PASSWORD, SALT, variant, &mut active_out)
+      .expect("active Argon2 kernel-test hash must succeed");
     assert_eq!(
       active_out, expected,
       "active kernel diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -44,7 +45,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
     #[cfg(target_arch = "aarch64")]
     {
       let mut neon_out = [0u8; 32];
-      argon2::diag_hash_aarch64_neon(&params, PASSWORD, SALT, variant, &mut neon_out).unwrap();
+      argon2::diag_hash_aarch64_neon(&params, PASSWORD, SALT, variant, &mut neon_out)
+        .expect("AArch64 NEON Argon2 kernel-test hash must succeed");
       assert_eq!(
         neon_out, expected,
         "aarch64-neon diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -57,7 +59,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
 
       if host.has(rscrypto::auth::argon2::required_caps(argon2::KernelId::X86Avx2)) {
         let mut out = [0u8; 32];
-        argon2::diag_hash_x86_avx2(&params, PASSWORD, SALT, variant, &mut out).unwrap();
+        argon2::diag_hash_x86_avx2(&params, PASSWORD, SALT, variant, &mut out)
+          .expect("x86 AVX2 Argon2 kernel-test hash must succeed");
         assert_eq!(
           out, expected,
           "x86-avx2 diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -66,7 +69,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
 
       if host.has(rscrypto::auth::argon2::required_caps(argon2::KernelId::X86Avx512)) {
         let mut out = [0u8; 32];
-        argon2::diag_hash_x86_avx512(&params, PASSWORD, SALT, variant, &mut out).unwrap();
+        argon2::diag_hash_x86_avx512(&params, PASSWORD, SALT, variant, &mut out)
+          .expect("x86 AVX-512 Argon2 kernel-test hash must succeed");
         assert_eq!(
           out, expected,
           "x86-avx512 diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -77,7 +81,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
     #[cfg(target_arch = "powerpc64")]
     if rscrypto::platform::caps().has(rscrypto::auth::argon2::required_caps(argon2::KernelId::PowerVsx)) {
       let mut out = [0u8; 32];
-      argon2::diag_hash_power_vsx(&params, PASSWORD, SALT, variant, &mut out).unwrap();
+      argon2::diag_hash_power_vsx(&params, PASSWORD, SALT, variant, &mut out)
+        .expect("POWER VSX Argon2 kernel-test hash must succeed");
       assert_eq!(
         out, expected,
         "power-vsx diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -87,7 +92,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
     #[cfg(target_arch = "s390x")]
     if rscrypto::platform::caps().has(rscrypto::auth::argon2::required_caps(argon2::KernelId::S390xVector)) {
       let mut out = [0u8; 32];
-      argon2::diag_hash_s390x_vector(&params, PASSWORD, SALT, variant, &mut out).unwrap();
+      argon2::diag_hash_s390x_vector(&params, PASSWORD, SALT, variant, &mut out)
+        .expect("s390x vector Argon2 kernel-test hash must succeed");
       assert_eq!(
         out, expected,
         "s390x-vector diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -97,7 +103,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
     #[cfg(target_arch = "riscv64")]
     if rscrypto::platform::caps().has(rscrypto::auth::argon2::required_caps(argon2::KernelId::Riscv64V)) {
       let mut out = [0u8; 32];
-      argon2::diag_hash_riscv64_v(&params, PASSWORD, SALT, variant, &mut out).unwrap();
+      argon2::diag_hash_riscv64_v(&params, PASSWORD, SALT, variant, &mut out)
+        .expect("RISC-V vector Argon2 kernel-test hash must succeed");
       assert_eq!(
         out, expected,
         "riscv64-v diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -107,7 +114,8 @@ fn all_kernels_agree(variant: Argon2Variant) {
     #[cfg(target_arch = "wasm32")]
     if rscrypto::platform::caps().has(rscrypto::auth::argon2::required_caps(argon2::KernelId::WasmSimd128)) {
       let mut out = [0u8; 32];
-      argon2::diag_hash_wasm_simd128(&params, PASSWORD, SALT, variant, &mut out).unwrap();
+      argon2::diag_hash_wasm_simd128(&params, PASSWORD, SALT, variant, &mut out)
+        .expect("WASM SIMD128 Argon2 kernel-test hash must succeed");
       assert_eq!(
         out, expected,
         "wasm-simd128 diverged on m={m} t={t} p={p} variant={variant:?}"
@@ -136,9 +144,16 @@ fn argon2id_all_kernels_agree() {
 #[test]
 fn single_block_compress_matches_across_kernels() {
   use argon2::DIAG_BLOCK_WORDS;
-  let x: [u64; DIAG_BLOCK_WORDS] = core::array::from_fn(|i| (i as u64).wrapping_mul(0x0f0f_0f0f_0f0f_0f0f));
-  let y: [u64; DIAG_BLOCK_WORDS] =
-    core::array::from_fn(|i| (i as u64).wrapping_mul(0xa5a5_a5a5_a5a5_a5a5).rotate_left(i as u32));
+  let x: [u64; DIAG_BLOCK_WORDS] = core::array::from_fn(|index| {
+    u64::try_from(index)
+      .expect("Argon2 block-word index must fit in u64")
+      .wrapping_mul(0x0f0f_0f0f_0f0f_0f0f)
+  });
+  let y: [u64; DIAG_BLOCK_WORDS] = core::array::from_fn(|index| {
+    let index_word = u64::try_from(index).expect("Argon2 block-word index must fit in u64");
+    let rotation = u32::try_from(index).expect("Argon2 block-word index must fit in u32");
+    index_word.wrapping_mul(0xa5a5_a5a5_a5a5_a5a5).rotate_left(rotation)
+  });
 
   for xor_into in [false, true] {
     let mut expected = if xor_into {

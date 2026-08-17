@@ -4,8 +4,6 @@
 //! `v128`, diagonalization is lane shuffling, and the 32-bit rotates map to
 //! byte shuffles plus shift/or.
 
-#![allow(clippy::indexing_slicing)]
-
 use core::arch::wasm32::*;
 
 use super::kernels::{SIGMA, init_v, load_msg};
@@ -62,9 +60,21 @@ fn load_msg_quad(m: &[u32; 16], i0: u8, i1: u8, i2: u8, i3: u8) -> v128 {
 }
 
 #[inline(always)]
-unsafe fn vload_u32_quad(p: *const u32) -> v128 {
-  // SAFETY: caller ensures `p` is valid for 16 bytes / 4 u32 lanes.
-  unsafe { v128_load(p.cast()) }
+fn load_u32_quad<const N: usize>(words: &[u32; N], offset: usize) -> v128 {
+  u32x4(
+    words[offset],
+    words[offset.strict_add(1)],
+    words[offset.strict_add(2)],
+    words[offset.strict_add(3)],
+  )
+}
+
+#[inline(always)]
+fn store_u32_quad(words: &mut [u32; 8], offset: usize, value: v128) {
+  words[offset] = u32x4_extract_lane::<0>(value);
+  words[offset.strict_add(1)] = u32x4_extract_lane::<1>(value);
+  words[offset.strict_add(2)] = u32x4_extract_lane::<2>(value);
+  words[offset.strict_add(3)] = u32x4_extract_lane::<3>(value);
 }
 
 /// Blake2s WASM SIMD128 compress.
@@ -77,10 +87,10 @@ pub(super) unsafe fn compress_simd128(h: &mut [u32; 8], block: &[u8; 64], t: u64
   let m = load_msg(block);
   let v = init_v(h, t, last);
 
-  let mut a = unsafe { vload_u32_quad(v.as_ptr()) };
-  let mut b = unsafe { vload_u32_quad(v.as_ptr().add(4)) };
-  let mut c = unsafe { vload_u32_quad(v.as_ptr().add(8)) };
-  let mut d = unsafe { vload_u32_quad(v.as_ptr().add(12)) };
+  let mut a = load_u32_quad(&v, 0);
+  let mut b = load_u32_quad(&v, 4);
+  let mut c = load_u32_quad(&v, 8);
+  let mut d = load_u32_quad(&v, 12);
 
   for round in 0..10u8 {
     let s = &SIGMA[round as usize];
@@ -98,11 +108,9 @@ pub(super) unsafe fn compress_simd128(h: &mut [u32; 8], block: &[u8; 64], t: u64
     undiagonalize(&mut b, &mut c, &mut d);
   }
 
-  let h0 = unsafe { vload_u32_quad(h.as_ptr()) };
-  let h1 = unsafe { vload_u32_quad(h.as_ptr().add(4)) };
+  let h0 = load_u32_quad(h, 0);
+  let h1 = load_u32_quad(h, 4);
 
-  unsafe {
-    v128_store(h.as_mut_ptr().cast(), v128_xor(h0, v128_xor(a, c)));
-    v128_store(h.as_mut_ptr().add(4).cast(), v128_xor(h1, v128_xor(b, d)));
-  }
+  store_u32_quad(h, 0, v128_xor(h0, v128_xor(a, c)));
+  store_u32_quad(h, 4, v128_xor(h1, v128_xor(b, d)));
 }

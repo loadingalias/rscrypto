@@ -75,26 +75,17 @@ impl MlKemShake256XofReader {
   }
 
   #[inline]
-  #[allow(clippy::too_many_arguments)]
-  pub(crate) fn squeeze_quad(
-    a: &mut Self,
+  pub(crate) fn squeeze_quad<const N: usize>(
+    &mut self,
     b: &mut Self,
     c: &mut Self,
     d: &mut Self,
-    out_a: &mut [u8],
-    out_b: &mut [u8],
-    out_c: &mut [u8],
-    out_d: &mut [u8],
+    outputs: &mut [[u8; N]; 4],
   ) {
+    let [out_a, out_b, out_c, out_d] = outputs;
     KeccakXof::<136>::squeeze_quad_into(
-      &mut a.inner,
-      &mut b.inner,
-      &mut c.inner,
-      &mut d.inner,
-      out_a,
-      out_b,
-      out_c,
-      out_d,
+      [&mut self.inner, &mut b.inner, &mut c.inner, &mut d.inner],
+      [out_a, out_b, out_c, out_d],
     );
   }
 }
@@ -148,13 +139,9 @@ pub fn diag_zeroize_mlkem_shake256_pair(mut seed: [u8; 32]) -> u8 {
 pub fn diag_zeroize_mlkem_shake256_quad(mut seed: [u8; 32]) -> u8 {
   let (mut a, mut b, mut c, mut d) = MlKemShake256XofReader::seeded_32_1_quad(&seed, 1, 2, 3, 4);
   crate::traits::ct::zeroize(&mut seed);
-  let mut out_a = [0u8; 192];
-  let mut out_b = [0u8; 192];
-  let mut out_c = [0u8; 192];
-  let mut out_d = [0u8; 192];
-  MlKemShake256XofReader::squeeze_quad(
-    &mut a, &mut b, &mut c, &mut d, &mut out_a, &mut out_b, &mut out_c, &mut out_d,
-  );
+  let mut outputs = [[0u8; 192]; 4];
+  a.squeeze_quad(&mut b, &mut c, &mut d, &mut outputs);
+  let [mut out_a, mut out_b, mut out_c, mut out_d] = outputs;
   let observed = out_a[0] ^ out_b[0] ^ out_c[0] ^ out_d[0];
   crate::traits::ct::zeroize(&mut out_a);
   crate::traits::ct::zeroize(&mut out_b);
@@ -497,12 +484,14 @@ impl core::fmt::Debug for Shake128 {
 }
 
 impl Shake128 {
+  /// Create an empty SHAKE128 state.
   #[inline]
   #[must_use]
   pub fn new() -> Self {
     Self::default()
   }
 
+  /// Absorb `data` and return a SHAKE128 output reader.
   #[inline]
   #[must_use]
   pub fn xof(data: &[u8]) -> Shake128XofReader {
@@ -511,11 +500,13 @@ impl Shake128 {
     h.finalize_xof()
   }
 
+  /// Absorb more input into this state.
   #[inline]
   pub fn update(&mut self, data: &[u8]) {
     self.core.update(data);
   }
 
+  /// Finalize absorption and return an output reader.
   #[inline]
   #[must_use]
   pub fn finalize_xof(self) -> Shake128XofReader {
@@ -524,6 +515,7 @@ impl Shake128 {
     }
   }
 
+  /// Reset this state to its empty value.
   #[inline]
   pub fn reset(&mut self) {
     *self = Self::default();
@@ -619,6 +611,7 @@ impl Shake128 {
   }
 }
 
+/// Streaming reader for SHAKE128 output.
 #[derive(Clone)]
 pub struct Shake128XofReader {
   inner: PublicKeccakXof<168>,
@@ -678,26 +671,17 @@ impl Shake128XofReader {
       ))
     )
   ))]
-  #[allow(clippy::too_many_arguments)]
-  pub(crate) fn squeeze_quad(
-    a: &mut Self,
+  pub(crate) fn squeeze_quad<const N: usize>(
+    &mut self,
     b: &mut Self,
     c: &mut Self,
     d: &mut Self,
-    out_a: &mut [u8],
-    out_b: &mut [u8],
-    out_c: &mut [u8],
-    out_d: &mut [u8],
+    outputs: &mut [[u8; N]; 4],
   ) {
+    let [out_a, out_b, out_c, out_d] = outputs;
     PublicKeccakXof::<168>::squeeze_quad_into(
-      &mut a.inner,
-      &mut b.inner,
-      &mut c.inner,
-      &mut d.inner,
-      out_a,
-      out_b,
-      out_c,
-      out_d,
+      [&mut self.inner, &mut b.inner, &mut c.inner, &mut d.inner],
+      [out_a, out_b, out_c, out_d],
     );
   }
 
@@ -740,12 +724,14 @@ impl Shake128XofReader {
 impl_xof_read!(Shake128XofReader);
 
 impl Shake256 {
+  /// Create an empty SHAKE256 state.
   #[inline]
   #[must_use]
   pub fn new() -> Self {
     Self::default()
   }
 
+  /// Absorb `data` and return a SHAKE256 output reader.
   #[inline]
   #[must_use]
   pub fn xof(data: &[u8]) -> Shake256XofReader {
@@ -754,11 +740,13 @@ impl Shake256 {
     h.finalize_xof()
   }
 
+  /// Absorb more input into this state.
   #[inline]
   pub fn update(&mut self, data: &[u8]) {
     self.core.update(data);
   }
 
+  /// Finalize absorption and return an output reader.
   #[inline]
   #[must_use]
   pub fn finalize_xof(self) -> Shake256XofReader {
@@ -767,6 +755,7 @@ impl Shake256 {
     }
   }
 
+  /// Reset this state to its empty value.
   #[inline]
   pub fn reset(&mut self) {
     *self = Self::default();
@@ -782,6 +771,7 @@ impl Shake256 {
   }
 }
 
+/// Streaming reader for SHAKE256 output.
 #[derive(Clone)]
 pub struct Shake256XofReader {
   inner: PublicKeccakXof<136>,
@@ -804,8 +794,6 @@ impl_xof_read!(Shake256XofReader);
 
 #[cfg(test)]
 mod tests {
-  #[cfg(feature = "ml-kem")]
-  use super::Shake128XofReader;
   use super::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
   use crate::traits::{Digest, Xof};
 
@@ -814,7 +802,7 @@ mod tests {
     use core::fmt::Write;
     let mut s = String::new();
     for &b in bytes {
-      write!(&mut s, "{:02x}", b).unwrap();
+      write!(&mut s, "{b:02x}").expect("writing to a String should not fail");
     }
     s
   }
@@ -881,30 +869,8 @@ mod tests {
     let msg_d = &[0xa5u8; 409];
 
     let (mut quad_a, mut quad_b, mut quad_c, mut quad_d) = Shake128::xof_quad(msg_a, msg_b, msg_c, msg_d);
-    let mut actual_a = [0u8; 320];
-    let mut actual_b = [0u8; 320];
-    let mut actual_c = [0u8; 320];
-    let mut actual_d = [0u8; 320];
-    Shake128XofReader::squeeze_quad(
-      &mut quad_a,
-      &mut quad_b,
-      &mut quad_c,
-      &mut quad_d,
-      &mut actual_a[..168],
-      &mut actual_b[..168],
-      &mut actual_c[..168],
-      &mut actual_d[..168],
-    );
-    Shake128XofReader::squeeze_quad(
-      &mut quad_a,
-      &mut quad_b,
-      &mut quad_c,
-      &mut quad_d,
-      &mut actual_a[168..],
-      &mut actual_b[168..],
-      &mut actual_c[168..],
-      &mut actual_d[168..],
-    );
+    let mut actual = [[0u8; 320]; 4];
+    quad_a.squeeze_quad(&mut quad_b, &mut quad_c, &mut quad_d, &mut actual);
 
     let mut expected_a = [0u8; 320];
     let mut expected_b = [0u8; 320];
@@ -915,10 +881,10 @@ mod tests {
     Shake128::xof(msg_c).squeeze(&mut expected_c);
     Shake128::xof(msg_d).squeeze(&mut expected_d);
 
-    assert_eq!(actual_a, expected_a, "lane 0");
-    assert_eq!(actual_b, expected_b, "lane 1");
-    assert_eq!(actual_c, expected_c, "lane 2");
-    assert_eq!(actual_d, expected_d, "lane 3");
+    assert_eq!(actual[0], expected_a, "lane 0");
+    assert_eq!(actual[1], expected_b, "lane 1");
+    assert_eq!(actual[2], expected_c, "lane 2");
+    assert_eq!(actual[3], expected_d, "lane 3");
   }
 
   /// Test inputs of length `RATE - 1` for each SHA-3 variant.

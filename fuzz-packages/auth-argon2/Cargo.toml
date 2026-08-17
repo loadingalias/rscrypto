@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 rscrypto = { path = "../..", features = ["std", "argon2"] }
 rscrypto_fuzz = { package = "rscrypto-fuzz-support", path = "../../fuzz/support" }
-argon2 = { version = "0.6.0-rc.8", default-features = false, features = ["alloc"] }
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc"] }
 
 [workspace]
 members = ["."]

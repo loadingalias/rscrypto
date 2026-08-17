@@ -14,6 +14,9 @@ echo ""
 echo "🔗 Checking workflow ownership and action pins..."
 "$SCRIPT_DIR/check-ci-ownership.sh"
 "$SCRIPT_DIR/check-ci-ownership-test.sh"
+"$SCRIPT_DIR/check-locked-cargo.sh"
+"$SCRIPT_DIR/check-locked-cargo-test.sh"
+"$SCRIPT_DIR/../lib/target-matrix.sh" --validate
 "$SCRIPT_DIR/check-action-pins.sh"
 
 export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
@@ -21,7 +24,7 @@ export RSCRYPTO_SKIP_CHECK_SUPPLY_CHAIN=1
 
 echo ""
 echo "🔨 Building all targets..."
-cargo build --workspace --all-targets --all-features
+cargo build --locked --workspace --all-targets --all-features
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,67 +1,89 @@
 //! BLAKE3 x86_64 SSE4.1 throughput kernel (4-way).
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::many_single_char_names)]
-
 use core::arch::x86_64::*;
 
 use super::{
-  super::{BLOCK_LEN, IV, MSG_SCHEDULE},
-  counter_high, counter_low,
+  super::{BLOCK_LEN, BLOCK_LEN_U32, IV, MSG_SCHEDULE},
+  HashManyRequest, counter_high, counter_low,
 };
 
-pub const DEGREE: usize = 4;
+pub(crate) const DEGREE: usize = 4;
 
+/// # Safety
+///
+/// SSE2 must be available and `src` must be readable for 16 bytes.
 #[inline(always)]
 unsafe fn loadu(src: *const u8) -> __m128i {
   // SAFETY: Caller guarantees `src` is valid to read 16 bytes and has enabled this SSE backend.
   unsafe { _mm_loadu_si128(src.cast()) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available and `dest` must be writable for 16 bytes.
 #[inline(always)]
 unsafe fn storeu(src: __m128i, dest: *mut u8) {
   // SAFETY: Caller guarantees `dest` is valid to write 16 bytes and has enabled this SSE backend.
   unsafe { _mm_storeu_si128(dest.cast(), src) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn add(a: __m128i, b: __m128i) -> __m128i {
   // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_add_epi32(a, b) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn xor(a: __m128i, b: __m128i) -> __m128i {
   // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_xor_si128(a, b) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn set1(x: u32) -> __m128i {
   // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_set1_epi32(x.cast_signed()) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn set4(a: u32, b: u32, c: u32, d: u32) -> __m128i {
   // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_setr_epi32(a.cast_signed(), b.cast_signed(), c.cast_signed(), d.cast_signed()) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn rot12(a: __m128i) -> __m128i {
   // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 12), _mm_slli_epi32(a, 20)) }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn rot7(a: __m128i) -> __m128i {
   // SAFETY: Caller guarantees the required SSE4.1/SSSE3 feature set for this backend.
   unsafe { _mm_or_si128(_mm_srli_epi32(a, 7), _mm_slli_epi32(a, 25)) }
 }
 
+/// # Safety
+///
+/// SSE4.1 and SSSE3 must be available, and `r` must be in `0..7`.
 #[inline(always)]
 unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize, rot16_mask: __m128i, rot8_mask: __m128i) {
   // SAFETY: Caller guarantees this SSE4.1/SSSE3 backend is active; all vector lanes are local
@@ -183,6 +205,9 @@ unsafe fn round(v: &mut [__m128i; 16], m: &[__m128i; 16], r: usize, rot16_mask: 
   }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn transpose_vecs(vecs: &mut [__m128i; DEGREE]) {
   // SAFETY: Caller guarantees this SSE4.1/SSSE3 backend is active; `vecs` is a valid fixed-size
@@ -205,11 +230,15 @@ unsafe fn transpose_vecs(vecs: &mut [__m128i; DEGREE]) {
   }
 }
 
+/// # Safety
+///
+/// SSE4.1 and SSSE3 must be available. Every input must be readable for a
+/// complete block starting at `block_offset`.
 #[inline(always)]
 unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) -> [__m128i; 16] {
   // SAFETY: Caller guarantees each input points to at least one full block at `block_offset`.
   unsafe {
-    let stride = 4 * DEGREE;
+    let stride = 4usize.strict_mul(DEGREE);
     let mut quarter0 = [
       loadu(inputs[0].add(block_offset)),
       loadu(inputs[1].add(block_offset)),
@@ -217,26 +246,29 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
       loadu(inputs[3].add(block_offset)),
     ];
     let mut quarter1 = [
-      loadu(inputs[0].add(block_offset + stride)),
-      loadu(inputs[1].add(block_offset + stride)),
-      loadu(inputs[2].add(block_offset + stride)),
-      loadu(inputs[3].add(block_offset + stride)),
+      loadu(inputs[0].add(block_offset.strict_add(stride))),
+      loadu(inputs[1].add(block_offset.strict_add(stride))),
+      loadu(inputs[2].add(block_offset.strict_add(stride))),
+      loadu(inputs[3].add(block_offset.strict_add(stride))),
     ];
     let mut quarter2 = [
-      loadu(inputs[0].add(block_offset + 2 * stride)),
-      loadu(inputs[1].add(block_offset + 2 * stride)),
-      loadu(inputs[2].add(block_offset + 2 * stride)),
-      loadu(inputs[3].add(block_offset + 2 * stride)),
+      loadu(inputs[0].add(block_offset.strict_add(2usize.strict_mul(stride)))),
+      loadu(inputs[1].add(block_offset.strict_add(2usize.strict_mul(stride)))),
+      loadu(inputs[2].add(block_offset.strict_add(2usize.strict_mul(stride)))),
+      loadu(inputs[3].add(block_offset.strict_add(2usize.strict_mul(stride)))),
     ];
     let mut quarter3 = [
-      loadu(inputs[0].add(block_offset + 3 * stride)),
-      loadu(inputs[1].add(block_offset + 3 * stride)),
-      loadu(inputs[2].add(block_offset + 3 * stride)),
-      loadu(inputs[3].add(block_offset + 3 * stride)),
+      loadu(inputs[0].add(block_offset.strict_add(3usize.strict_mul(stride)))),
+      loadu(inputs[1].add(block_offset.strict_add(3usize.strict_mul(stride)))),
+      loadu(inputs[2].add(block_offset.strict_add(3usize.strict_mul(stride)))),
+      loadu(inputs[3].add(block_offset.strict_add(3usize.strict_mul(stride)))),
     ];
 
     for &input in inputs.iter() {
-      _mm_prefetch(input.wrapping_add(block_offset + 256).cast::<i8>(), _MM_HINT_T0);
+      _mm_prefetch(
+        input.wrapping_add(block_offset.strict_add(256)).cast::<i8>(),
+        _MM_HINT_T0,
+      );
     }
 
     transpose_vecs(&mut quarter0);
@@ -265,6 +297,9 @@ unsafe fn transpose_msg_vecs(inputs: &[*const u8; DEGREE], block_offset: usize) 
   }
 }
 
+/// # Safety
+///
+/// SSE2 must be available.
 #[inline(always)]
 unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m128i, __m128i) {
   let mask = if increment_counter { !0u64 } else { 0u64 };
@@ -294,15 +329,17 @@ unsafe fn load_counters(counter: u64, increment_counter: bool) -> (__m128i, __m1
 /// for `blocks * BLOCK_LEN` bytes.
 #[target_feature(enable = "sse4.1,ssse3")]
 pub(crate) unsafe fn hash4(
-  inputs: &[*const u8; DEGREE],
-  blocks: usize,
-  key: &[u32; 8],
-  counter: u64,
-  increment_counter: bool,
-  flags: u32,
-  flags_start: u32,
-  flags_end: u32,
-  out: *mut u8,
+  HashManyRequest {
+    inputs,
+    blocks,
+    key,
+    counter,
+    increment_counter,
+    flags,
+    flags_start,
+    flags_end,
+    out,
+  }: HashManyRequest<'_, DEGREE>,
 ) {
   // SAFETY: Caller guarantees SSE4.1/SSSE3 availability, valid input pointers for `blocks *
   // BLOCK_LEN`, and `out` writable for `DEGREE * OUT_LEN`.
@@ -310,7 +347,7 @@ pub(crate) unsafe fn hash4(
     let rot16_mask = _mm_setr_epi8(2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
     let rot8_mask = _mm_setr_epi8(1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
 
-    let block_len_vec = set1(BLOCK_LEN as u32);
+    let block_len_vec = set1(BLOCK_LEN_U32);
     let iv0 = set1(IV[0]);
     let iv1 = set1(IV[1]);
     let iv2 = set1(IV[2]);
@@ -334,12 +371,12 @@ pub(crate) unsafe fn hash4(
       if block == 0 {
         block_flags |= flags_start;
       }
-      if block + 1 == blocks {
+      if block.strict_add(1) == blocks {
         block_flags |= flags_end;
       }
 
       let block_flags_vec = set1(block_flags);
-      let msg_vecs = transpose_msg_vecs(inputs, block * BLOCK_LEN);
+      let msg_vecs = transpose_msg_vecs(inputs, block.strict_mul(BLOCK_LEN));
 
       let mut v = [
         h_vecs[0],
@@ -515,7 +552,7 @@ pub(crate) unsafe fn root_output_blocks4(
     transpose_vecs(&mut g3);
 
     for lane in 0..DEGREE {
-      let base = out.add(lane * 64);
+      let base = out.add(lane.strict_mul(64));
       storeu(g0[lane], base);
       storeu(g1[lane], base.add(16));
       storeu(g2[lane], base.add(32));
@@ -560,8 +597,8 @@ unsafe fn root_output_blocks1_from_ptr(
     let mut row3 = _mm_set_epi32(
       flags.cast_signed(),
       block_len.cast_signed(),
-      (counter >> 32) as i32,
-      counter as i32,
+      counter_high(counter).cast_signed(),
+      counter_low(counter).cast_signed(),
     );
 
     // Load message words row-wise

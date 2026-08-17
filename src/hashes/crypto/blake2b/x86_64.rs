@@ -12,8 +12,6 @@
 //!
 //! `compress_avx2` requires `avx2`. `compress_avx512vl` requires `avx512f` + `avx512vl`.
 
-#![allow(clippy::cast_possible_truncation, clippy::indexing_slicing)]
-
 use core::arch::x86_64::*;
 
 use super::kernels::{SIGMA, init_v, load_msg};
@@ -23,6 +21,10 @@ use super::kernels::{SIGMA, init_v, load_msg};
 // ─── AVX2 rotation helpers ───────────────────────────────────────────────────
 
 /// ROR 32: swap 32-bit halves within each 64-bit lane.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn ror32_avx2(x: __m256i) -> __m256i {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
@@ -31,17 +33,19 @@ unsafe fn ror32_avx2(x: __m256i) -> __m256i {
 }
 
 /// ROR 24: byte shuffle within each 128-bit lane.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn ror24_avx2(x: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   // Each 64-bit lane rotates its bytes right by 3 (= rotate_right(24)).
   #[repr(align(32))]
   struct Align32([u8; 32]);
   static ROT24: Align32 = Align32([
     3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10, 3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10,
   ]);
-  // SAFETY: `ROT24` is 32-byte aligned by construction, so loading it with an
-  // aligned AVX2 load is valid and the subsequent shuffle stays in registers.
+  // SAFETY: the caller provides AVX2, and `ROT24` is 32-byte aligned for the aligned load.
   unsafe {
     let mask = _mm256_load_si256(ROT24.0.as_ptr().cast());
     _mm256_shuffle_epi8(x, mask)
@@ -49,17 +53,19 @@ unsafe fn ror24_avx2(x: __m256i) -> __m256i {
 }
 
 /// ROR 16: byte shuffle within each 128-bit lane.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn ror16_avx2(x: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
   // Each 64-bit lane rotates its bytes right by 2 (= rotate_right(16)).
   #[repr(align(32))]
   struct Align32([u8; 32]);
   static ROT16: Align32 = Align32([
     2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9,
   ]);
-  // SAFETY: `ROT16` is 32-byte aligned by construction, so loading it with an
-  // aligned AVX2 load is valid and the subsequent shuffle stays in registers.
+  // SAFETY: the caller provides AVX2, and `ROT16` is 32-byte aligned for the aligned load.
   unsafe {
     let mask = _mm256_load_si256(ROT16.0.as_ptr().cast());
     _mm256_shuffle_epi8(x, mask)
@@ -67,6 +73,10 @@ unsafe fn ror16_avx2(x: __m256i) -> __m256i {
 }
 
 /// ROR 63: (x >> 63) | (x << 1) = (x + x) ^ (x >> 63).
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn ror63_avx2(x: __m256i) -> __m256i {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
@@ -76,6 +86,10 @@ unsafe fn ror63_avx2(x: __m256i) -> __m256i {
 // ─── AVX2 G function ─────────────────────────────────────────────────────────
 
 /// Blake2b quarter-round G on 4-wide AVX2 rows.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn g_avx2(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
@@ -102,6 +116,10 @@ unsafe fn g_avx2(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m2
 // ─── Diagonalize / un-diagonalize ────────────────────────────────────────────
 
 /// Diagonalize: rotate B left by 1, C left by 2, D left by 3.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn diagonalize(b: &mut __m256i, c: &mut __m256i, d: &mut __m256i) {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
@@ -116,6 +134,10 @@ unsafe fn diagonalize(b: &mut __m256i, c: &mut __m256i, d: &mut __m256i) {
 }
 
 /// Un-diagonalize: reverse the rotations (B right 1, C swap, D left 1).
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is available.
 #[inline(always)]
 unsafe fn undiagonalize(b: &mut __m256i, c: &mut __m256i, d: &mut __m256i) {
   // SAFETY: AVX2 intrinsics are available via the caller's #[target_feature] attribute.
@@ -156,16 +178,16 @@ pub(super) unsafe fn compress_avx2(h: &mut [u64; 8], block: &[u8; 128], t: u128,
       // Column step: G on (0,4,8,12), (1,5,9,13), (2,6,10,14), (3,7,11,15)
       // _mm256_set_epi64x takes args in HIGH→LOW order: lane3, lane2, lane1, lane0
       let mx = _mm256_set_epi64x(
-        m[s[6] as usize] as i64,
-        m[s[4] as usize] as i64,
-        m[s[2] as usize] as i64,
-        m[s[0] as usize] as i64,
+        m[s[6] as usize].cast_signed(),
+        m[s[4] as usize].cast_signed(),
+        m[s[2] as usize].cast_signed(),
+        m[s[0] as usize].cast_signed(),
       );
       let my = _mm256_set_epi64x(
-        m[s[7] as usize] as i64,
-        m[s[5] as usize] as i64,
-        m[s[3] as usize] as i64,
-        m[s[1] as usize] as i64,
+        m[s[7] as usize].cast_signed(),
+        m[s[5] as usize].cast_signed(),
+        m[s[3] as usize].cast_signed(),
+        m[s[1] as usize].cast_signed(),
       );
 
       g_avx2(&mut a, &mut b, &mut c, &mut d, mx, my);
@@ -174,16 +196,16 @@ pub(super) unsafe fn compress_avx2(h: &mut [u64; 8], block: &[u8; 128], t: u128,
 
       // Diagonal step: G on (0,5,10,15), (1,6,11,12), (2,7,8,13), (3,4,9,14)
       let mx = _mm256_set_epi64x(
-        m[s[14] as usize] as i64,
-        m[s[12] as usize] as i64,
-        m[s[10] as usize] as i64,
-        m[s[8] as usize] as i64,
+        m[s[14] as usize].cast_signed(),
+        m[s[12] as usize].cast_signed(),
+        m[s[10] as usize].cast_signed(),
+        m[s[8] as usize].cast_signed(),
       );
       let my = _mm256_set_epi64x(
-        m[s[15] as usize] as i64,
-        m[s[13] as usize] as i64,
-        m[s[11] as usize] as i64,
-        m[s[9] as usize] as i64,
+        m[s[15] as usize].cast_signed(),
+        m[s[13] as usize].cast_signed(),
+        m[s[11] as usize].cast_signed(),
+        m[s[9] as usize].cast_signed(),
       );
 
       g_avx2(&mut a, &mut b, &mut c, &mut d, mx, my);
@@ -212,6 +234,10 @@ pub(super) unsafe fn compress_avx2(h: &mut [u64; 8], block: &[u8; 128], t: u128,
 /// Blake2b quarter-round G on 4-wide AVX-512VL rows.
 ///
 /// All rotations use `VPRORQ` (`_mm256_ror_epi64`) — no shuffle tables needed.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512F and AVX-512VL are available.
 #[inline(always)]
 unsafe fn g_avx512vl(a: &mut __m256i, b: &mut __m256i, c: &mut __m256i, d: &mut __m256i, mx: __m256i, my: __m256i) {
   // SAFETY: AVX-512VL intrinsics are available via the caller's #[target_feature] attribute.
@@ -265,16 +291,16 @@ pub(super) unsafe fn compress_avx512vl(h: &mut [u64; 8], block: &[u8; 128], t: u
 
       // Column step
       let mx = _mm256_set_epi64x(
-        m[s[6] as usize] as i64,
-        m[s[4] as usize] as i64,
-        m[s[2] as usize] as i64,
-        m[s[0] as usize] as i64,
+        m[s[6] as usize].cast_signed(),
+        m[s[4] as usize].cast_signed(),
+        m[s[2] as usize].cast_signed(),
+        m[s[0] as usize].cast_signed(),
       );
       let my = _mm256_set_epi64x(
-        m[s[7] as usize] as i64,
-        m[s[5] as usize] as i64,
-        m[s[3] as usize] as i64,
-        m[s[1] as usize] as i64,
+        m[s[7] as usize].cast_signed(),
+        m[s[5] as usize].cast_signed(),
+        m[s[3] as usize].cast_signed(),
+        m[s[1] as usize].cast_signed(),
       );
 
       g_avx512vl(&mut a, &mut b, &mut c, &mut d, mx, my);
@@ -283,16 +309,16 @@ pub(super) unsafe fn compress_avx512vl(h: &mut [u64; 8], block: &[u8; 128], t: u
 
       // Diagonal step
       let mx = _mm256_set_epi64x(
-        m[s[14] as usize] as i64,
-        m[s[12] as usize] as i64,
-        m[s[10] as usize] as i64,
-        m[s[8] as usize] as i64,
+        m[s[14] as usize].cast_signed(),
+        m[s[12] as usize].cast_signed(),
+        m[s[10] as usize].cast_signed(),
+        m[s[8] as usize].cast_signed(),
       );
       let my = _mm256_set_epi64x(
-        m[s[15] as usize] as i64,
-        m[s[13] as usize] as i64,
-        m[s[11] as usize] as i64,
-        m[s[9] as usize] as i64,
+        m[s[15] as usize].cast_signed(),
+        m[s[13] as usize].cast_signed(),
+        m[s[11] as usize].cast_signed(),
+        m[s[9] as usize].cast_signed(),
       );
 
       g_avx512vl(&mut a, &mut b, &mut c, &mut d, mx, my);

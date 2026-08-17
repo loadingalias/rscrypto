@@ -1,7 +1,7 @@
 use rscrypto::{Ed25519PublicKey, Ed25519Signature};
 use rscrypto_fuzz::{FuzzInput, some_or_return};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let public_bytes: [u8; 32] = some_or_return!(input.bytes());
   let signature_bytes: [u8; 64] = some_or_return!(input.bytes());

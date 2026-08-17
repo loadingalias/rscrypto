@@ -3,10 +3,12 @@
 use rscrypto::{HkdfSha256, auth::HkdfOutputLengthError};
 
 mod common;
+#[path = "common/array.rs"]
+mod hex_array;
 use common::decode_hex_vec;
 
 fn decode_hex_array<const N: usize>(hex: &str) -> [u8; N] {
-  common::decode_hex_array(&hex.replace('\n', ""))
+  hex_array::decode_hex_array(&hex.replace('\n', ""))
 }
 
 #[test]
@@ -21,7 +23,9 @@ fn hkdf_sha256_rfc5869_case_1() {
     &decode_hex_array::<32>("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")
   );
 
-  let okm = hkdf.expand_array::<42>(&info).unwrap();
+  let okm = hkdf
+    .expand_array::<42>(&info)
+    .expect("RFC 5869 HKDF-SHA-256 case 1 expansion must succeed");
   assert_eq!(
     okm,
     decode_hex_array::<42>(
@@ -33,7 +37,8 @@ fn hkdf_sha256_rfc5869_case_1() {
 
 #[test]
 fn hkdf_sha256_rfc5869_case_3() {
-  let okm = HkdfSha256::derive_array::<42>(b"", &[0x0b; 22], b"").unwrap();
+  let okm = HkdfSha256::derive_array::<42>(b"", &[0x0b; 22], b"")
+    .expect("RFC 5869 HKDF-SHA-256 case 3 derivation must succeed");
   assert_eq!(
     okm,
     decode_hex_array::<42>(
@@ -45,7 +50,8 @@ fn hkdf_sha256_rfc5869_case_3() {
 
 #[test]
 fn hkdf_sha256_rejects_oversized_output() {
-  let mut out = vec![0u8; HkdfSha256::MAX_OUTPUT_SIZE + 1];
-  let err = HkdfSha256::derive(b"salt", b"ikm", b"info", &mut out).unwrap_err();
+  let mut out = vec![0u8; HkdfSha256::MAX_OUTPUT_SIZE.strict_add(1)];
+  let err =
+    HkdfSha256::derive(b"salt", b"ikm", b"info", &mut out).expect_err("HKDF-SHA-256 must reject oversized output");
   assert_eq!(err, HkdfOutputLengthError::new());
 }

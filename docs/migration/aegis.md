@@ -4,14 +4,14 @@
 > rscrypto's caller-buffer `encrypt(&nonce, aad, msg, &mut out)`. The mapped
 > AEGIS-256 operation preserves ciphertext and tag bytes.
 
-Verified against `aegis = "0.9.12"` and the `rscrypto` 0.7.8 line.
+Verified against `aegis = "0.9.15"` and the `rscrypto` 0.8.1 line.
 Evidence: `tests/aegis256_oracle.rs` and `tests/aead_wycheproof.rs`.
 
 ## TL;DR
 
-| | Before (`aegis` 0.9.x) | After (`rscrypto` 0.7.8) |
+| | Before (`aegis` 0.9.x) | After (`rscrypto` 0.8.1) |
 |---|---|---|
-| Cargo dep | `aegis = "0.9"` | `rscrypto = { version = "0.7.8", features = ["aegis256"] }` |
+| Cargo dep | `aegis = "0.9"` | `rscrypto = { version = "0.8.1", features = ["aegis256"] }` |
 | Import | `use aegis::aegis256::Aegis256;` | `use rscrypto::{Aead, Aegis256, Aegis256Key, aead::{Nonce256, expert::AeadWithNonce}};` |
 | Encrypt | `Aegis256::<16>::new(&key, &nonce).encrypt(msg, aad) -> (Vec<u8>, [u8; 16])` | `cipher.encrypt(&nonce, aad, msg, &mut out)?` |
 
@@ -26,7 +26,7 @@ aegis = "0.9"
 ```toml
 # After
 [dependencies]
-rscrypto = { version = "0.7.8", features = ["aegis256"] }
+rscrypto = { version = "0.8.1", features = ["aegis256"] }
 ```
 
 ## Algorithm map

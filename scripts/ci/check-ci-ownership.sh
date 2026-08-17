@@ -686,7 +686,7 @@ group_musl=$(jq '[.groups.linux[] | select(contains("musl"))] | length' "$MANIFE
 [[ "$group_musl" -eq 2 ]] || fail "the target manifest must retain both MUSL triples"
 
 # shellcheck disable=SC2016 # `$target` is an intentional literal in the workflow contract regex.
-[[ $(count_matches 'cargo (check|clippy|build) --target "\$target"' "$CROSS_SCRIPT") -ge 3 ]] \
+[[ $(count_matches 'cargo (check|clippy|build) --locked --target "\$target"' "$CROSS_SCRIPT") -ge 3 ]] \
   || fail "MUSL evidence must pass the target triple explicitly to Cargo"
 
 echo "CI ownership contract passed"

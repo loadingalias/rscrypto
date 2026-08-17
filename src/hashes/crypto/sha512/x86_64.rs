@@ -15,9 +15,6 @@
 //! All functions require `sha512` and `avx2` target features.
 //! Callers must verify CPU capabilities before calling.
 
-#![allow(unsafe_code)]
-#![allow(clippy::inline_always)]
-
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
@@ -160,10 +157,14 @@ static BSWAP64_MASK: [u8; 32] = [
 ///
 /// Given a = [W[n], W[n+1], W[n+2], W[n+3]] and b = [W[n+4], ...],
 /// returns [W[n+1], W[n+2], W[n+3], W[n+4]].
+///
+/// # Safety
+///
+/// The caller must ensure that AVX2 is available on the executing CPU.
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 unsafe fn extract_w_tm7(a: __m256i, b: __m256i) -> __m256i {
-  // SAFETY: AVX2 intrinsics are available via this function's #[target_feature] attribute.
+  // SAFETY: The caller guarantees AVX2 support.
   unsafe {
     // Swap halves: [a_hi, b_lo]
     let t = _mm256_permute2x128_si256(a, b, 0x21);

@@ -1,7 +1,7 @@
 use rscrypto::{Argon2Params, Argon2id};
 use rscrypto_fuzz::{FuzzInput, pad_salt_to, some_or_return, split_at_ratio};
 
-pub fn run(data: &[u8]) {
+pub(super) fn run(data: &[u8]) {
   let mut input = FuzzInput::new(data);
   let pw_salt_split: u8 = some_or_return!(input.byte());
   let out_len_byte: u8 = some_or_return!(input.byte());
@@ -16,8 +16,7 @@ pub fn run(data: &[u8]) {
   let t = 1u32.strict_add(u32::from(t_byte) % 4);
   let out_len = 4u32.strict_add(u32::from(out_len_byte) % 29); // 4..=32 per RFC 9106 §3.1
 
-  let params = Argon2Params::new(m_kib, t, 1)
-    .expect("params must be valid for fuzzer ranges");
+  let params = Argon2Params::new(m_kib, t, 1).expect("params must be valid for fuzzer ranges");
 
   let (password, salt_material) = split_at_ratio(rest, pw_salt_split);
   let salt_buf = pad_salt_to::<16>(salt_material, pw_salt_split);

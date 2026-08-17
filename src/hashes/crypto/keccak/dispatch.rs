@@ -1,5 +1,3 @@
-#![cfg_attr(test, allow(dead_code))]
-
 use super::{
   dispatch_tables::DispatchTable,
   kernels::{Keccakf1600KernelId, permute_fn, required_caps},
@@ -96,7 +94,7 @@ fn select(d: &ActiveDispatch, len: usize) -> (PermuteFn, &'static str) {
 #[cfg(any(test, feature = "diag"))]
 #[inline]
 #[must_use]
-pub fn kernel_name_for_len(len: usize) -> &'static str {
+pub(crate) fn kernel_name_for_len(len: usize) -> &'static str {
   #[cfg(target_arch = "s390x")]
   {
     use crate::platform::caps::s390x;

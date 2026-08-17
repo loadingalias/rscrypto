@@ -51,12 +51,12 @@ where
   );
 
   let mut files = fs::read_dir(corpus_dir)
-    .unwrap_or_else(|err| panic!("corpus replay: failed to read {}: {err}", corpus_dir.display()))
-    .map(|entry| entry.unwrap_or_else(|err| panic!("corpus replay: failed to read directory entry: {err}")))
+    .expect("corpus replay directory must be readable")
+    .map(|entry| entry.expect("corpus replay directory entries must be readable"))
     .filter_map(|entry| {
       let file_type = entry
         .file_type()
-        .unwrap_or_else(|err| panic!("corpus replay: failed to inspect {}: {err}", entry.path().display()));
+        .expect("corpus replay directory entry metadata must be readable");
       if file_type.is_file() || file_type.is_symlink() {
         Some(entry.path())
       } else {
@@ -74,7 +74,7 @@ where
 
   let mut count = 0usize;
   for path in files {
-    let data = fs::read(&path).unwrap_or_else(|err| panic!("corpus replay: failed to read {}: {err}", path.display()));
+    let data = fs::read(&path).expect("corpus replay input must be readable");
     run(&data);
     count = count.checked_add(1).expect("corpus replay file count overflow");
   }
@@ -154,7 +154,7 @@ pub fn pad_salt_to<const N: usize>(material: &[u8], filler: u8) -> [u8; N] {
     out[..N / 2].fill(filler);
   } else {
     for (i, slot) in out.iter_mut().enumerate() {
-      *slot = material[i % material.len()];
+      *slot = material[i.rem_euclid(material.len())];
     }
   }
   out
@@ -258,7 +258,7 @@ pub fn assert_aead_forgery<A: Aead>(cipher: &A, nonce: &A::Nonce, aad: &[u8], pl
   match target {
     0 if !ct.is_empty() => {
       let mut forged = ct.clone();
-      let idx = seed as usize % forged.len();
+      let idx = usize::from(seed).rem_euclid(forged.len());
       forged[idx] ^= 1u8 << (seed as u32 & 7);
       assert!(
         cipher.decrypt_in_place(nonce, aad, &mut forged, &tag).is_err(),
@@ -267,7 +267,7 @@ pub fn assert_aead_forgery<A: Aead>(cipher: &A, nonce: &A::Nonce, aad: &[u8], pl
     }
     2 if !aad.is_empty() => {
       let mut forged_aad = aad.to_vec();
-      let idx = seed as usize % forged_aad.len();
+      let idx = usize::from(seed).rem_euclid(forged_aad.len());
       forged_aad[idx] ^= 1u8 << (seed as u32 & 7);
       let mut ct_copy = ct.clone();
       assert!(
@@ -278,9 +278,9 @@ pub fn assert_aead_forgery<A: Aead>(cipher: &A, nonce: &A::Nonce, aad: &[u8], pl
     _ => {
       let tag_ref = tag.as_ref();
       let mut tag_bytes = tag_ref.to_vec();
-      let idx = seed as usize % tag_bytes.len();
+      let idx = usize::from(seed).rem_euclid(tag_bytes.len());
       tag_bytes[idx] ^= 1u8 << (seed as u32 & 7);
-      let forged_tag = A::tag_from_slice(&tag_bytes).unwrap();
+      let forged_tag = A::tag_from_slice(&tag_bytes).expect("forged tag preserves the algorithm tag length");
       let mut ct_copy = ct.clone();
       assert!(
         cipher.decrypt_in_place(nonce, aad, &mut ct_copy, &forged_tag).is_err(),

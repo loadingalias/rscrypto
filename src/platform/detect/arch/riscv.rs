@@ -72,6 +72,12 @@ fn runtime_riscv() -> Caps {
   const RISCV_HWPROBE_EXT_ZVKT: u64 = 1 << 26;
 
   #[inline]
+  /// Invoke the Linux RISC-V hardware-probe syscall.
+  ///
+  /// # Safety
+  ///
+  /// `pairs` must be valid for writes to `pair_count` consecutive `RiscvHwprobe`
+  /// values and must remain valid until the syscall returns.
   unsafe fn syscall_riscv_hwprobe(pairs: *mut RiscvHwprobe, pair_count: usize) -> isize {
     let ret: usize;
     // SAFETY: We follow the Linux RISC-V syscall ABI directly:
@@ -89,7 +95,7 @@ fn runtime_riscv() -> Caps {
         options(nostack, preserves_flags),
       );
     }
-    ret as isize
+    isize::from_ne_bytes(ret.to_ne_bytes())
   }
 
   let mut probes = [

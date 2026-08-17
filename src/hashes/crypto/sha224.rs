@@ -3,8 +3,6 @@
 //! SHA-224 is identical to SHA-256 except for initial hash values (H0) and
 //! output truncation (28 bytes / 7 words). The compression function is shared.
 
-#![allow(clippy::indexing_slicing)] // Fixed-size arrays in finalization
-
 use self::kernels::CompressBlocksFn;
 use crate::{
   hashes::crypto::dispatch_util::{SizeClassDispatch, len_hint_from_u64},
@@ -181,7 +179,7 @@ impl Sha224 {
     compress_blocks(&mut state, &block);
 
     let mut out = [0u8; 28];
-    for (chunk, &word) in out.chunks_exact_mut(4).zip(state.iter()) {
+    for (chunk, &word) in out.as_chunks_mut::<4>().0.iter_mut().zip(state.iter()) {
       chunk.copy_from_slice(&word.to_be_bytes());
     }
     out
@@ -196,9 +194,9 @@ impl Drop for Sha224 {
     }
     crate::traits::ct::zeroize(&mut self.block);
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.bytes_hashed, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.bytes_hashed, 0) };
     // SAFETY: field is a valid, aligned, dereferenceable pointer to initialized memory.
-    unsafe { core::ptr::write_volatile(&mut self.block_len, 0) };
+    unsafe { core::ptr::write_volatile(&raw mut self.block_len, 0) };
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
   }
 }
@@ -257,7 +255,7 @@ mod tests {
     use core::fmt::Write;
     let mut s = String::new();
     for &b in bytes {
-      write!(&mut s, "{:02x}", b).unwrap();
+      write!(&mut s, "{:02x}", b).expect("writing hexadecimal to String must succeed");
     }
     s
   }
