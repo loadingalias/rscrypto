@@ -39,7 +39,7 @@ run_root_smoke() {
   cargo fetch --locked
   cargo check --locked --workspace --all-targets --all-features
   cargo test --locked --workspace --all-features --no-run
-  cargo deny check advisories
+  cargo deny --locked check advisories
 }
 
 run_manifest_smoke() {

@@ -110,7 +110,7 @@ cargo rail config validate --strict
 cargo rail config migrate --check
 # Exact-commit Weekly release mode owns exhaustive compiler-backed Cargo graph
 # assurance. The release evidence gate verifies that named job before publication.
-cargo deny check all
+cargo deny --locked check all
 # RustCrypto `rsa` is used only as a dev/test/bench oracle. Production RSA
 # verification is implemented in `src/auth/rsa.rs`; keep this scoped to the
 # known Marvin advisory until the oracle dependency is removed or fixed.
