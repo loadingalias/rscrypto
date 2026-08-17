@@ -600,14 +600,18 @@ case "$trusted_bin" in
 esac
 
 : >"$package_log"
+toolchain_env="$TMP_ROOT/toolchain.env"
+: >"$toolchain_env"
 MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" \
-  nightly-2026-08-12 'clippy, rustfmt' >/dev/null
+  nightly-2026-08-12 'clippy, rustfmt' "$toolchain_env" >/dev/null
 grep -Fq \
   'rustup toolchain install nightly-2026-08-12 --profile minimal --no-self-update --component clippy --component rustfmt' \
   "$package_log" || fail "rustup toolchain command was not exact"
 grep -Fq 'rustc +nightly-2026-08-12 --version --verbose' "$package_log" \
   || fail "installed toolchain was not verified explicitly"
+grep -Fxq 'RUSTUP_TOOLCHAIN=nightly-2026-08-12' "$toolchain_env" \
+  || fail "installed toolchain was not activated for later CI steps"
 if grep -Fq 'rustup default ' "$package_log"; then
   fail "toolchain setup mutated the runner default"
 fi

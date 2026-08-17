@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
-  echo "usage: setup-toolchain.sh <exact-toolchain> [comma-separated-components]" >&2
+if [[ $# -lt 1 || $# -gt 3 ]]; then
+  echo "usage: setup-toolchain.sh <exact-toolchain> [comma-separated-components] [github-env]" >&2
   exit 2
 fi
 
 toolchain=$1
 components=${2:-}
+github_env=${3:-}
 
 if [[ ! "$toolchain" =~ ^(nightly|beta)-[0-9]{4}-[0-9]{2}-[0-9]{2}$ \
   && ! "$toolchain" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -34,4 +35,7 @@ if [[ -n "$components" ]]; then
 fi
 
 rustup "${install_args[@]}"
+if [[ -n "$github_env" ]]; then
+  printf 'RUSTUP_TOOLCHAIN=%s\n' "$toolchain" >>"$github_env"
+fi
 rustc "+$toolchain" --version --verbose
