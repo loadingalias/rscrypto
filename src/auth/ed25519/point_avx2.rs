@@ -12,7 +12,7 @@
 //! scaling all output coordinates by `d2²` — which cancels in projective
 //! coordinates.
 
-#[cfg(all(target_arch = "x86_64", any(test, feature = "ed25519")))]
+#[cfg(all(target_arch = "x86_64", feature = "ed25519"))]
 use core::arch::x86_64::_mm256_loadu_si256;
 
 #[cfg(all(target_arch = "x86_64", feature = "ed25519"))]
@@ -27,7 +27,7 @@ use super::{
 };
 #[cfg(target_arch = "x86_64")]
 #[path = "basepoint_table_ifma.rs"]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 mod basepoint_table_ifma;
 
 /// Hamburg constants for the curve `d = -d1/d2`.
@@ -142,7 +142,7 @@ impl ExtendedPointAvx2 {
   /// Caller must ensure AVX2 is available.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn double(&self) -> Self {
     // Step 1: Build (X, Y, Z, X+Y) for squaring.
     let ab = self.0.shuffle(Shuffle::RepeatAB); // (X, Y, X, Y)
@@ -304,7 +304,7 @@ fn hamburg_affine_constants() -> FieldElement2625x4 {
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn cached_from_affine(cp: &CachedPoint, constants: &FieldElement2625x4) -> CachedPointAvx2 {
   let (y_plus_x, y_minus_x, t2d) = cp.components();
   let packed = FieldElement2625x4::new(y_minus_x, y_plus_x, &FieldElement::ONE, t2d);
@@ -348,7 +348,7 @@ fn select_signed_cached_avx2(
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn add_wnaf_digit_cached_avx2(
   acc: ExtendedPointAvx2,
   table: &[CachedPoint; 8],
@@ -375,7 +375,7 @@ fn add_wnaf_digit_cached_avx2(
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn add_signed_runtime_cached_avx2(
   acc: ExtendedPointAvx2,
   table: &[CachedPointAvx2; 8],
@@ -399,7 +399,7 @@ fn add_signed_runtime_cached_avx2(
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn cached_multiples_avx2(point: &ExtendedPointAvx2) -> [CachedPointAvx2; 8] {
   let mut acc = *point;
   let point_cached = point.to_cached();
@@ -505,7 +505,7 @@ pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn odd_multiples_avx2<const N: usize>(point: &ExtendedPointAvx2) -> [CachedPointAvx2; N] {
   let p2 = point.double();
   let p2_cached = p2.to_cached();
@@ -527,7 +527,7 @@ fn odd_multiples_avx2<const N: usize>(point: &ExtendedPointAvx2) -> [CachedPoint
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn add_wnaf_digit_avx2(acc: ExtendedPointAvx2, table: &[CachedPointAvx2], digit: i8) -> ExtendedPointAvx2 {
   let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
   let Some(point) = table.get(index) else {
@@ -683,7 +683,7 @@ impl ExtendedPointIfma {
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn double(&self) -> Self {
     // Prepare (X, Y, Z, X+Y) for squaring.
     let tmp0 = self.0.shuffle(Shuffle::SwapPairs); // (Y, X, _, _)
@@ -811,7 +811,7 @@ fn select_signed_cached_ifma(
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn add_signed_runtime_cached_ifma(
   acc: ExtendedPointIfma,
   table: &[CachedPointIfma; 8],
@@ -834,7 +834,7 @@ fn add_signed_runtime_cached_ifma(
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn cached_multiples_ifma(point: &ExtendedPointIfma) -> [CachedPointIfma; 8] {
   let mut acc = *point;
   let point_cached = point.to_cached();
@@ -936,7 +936,7 @@ pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn odd_multiples_ifma<const N: usize>(point: &ExtendedPointIfma) -> [CachedPointIfma; N] {
   let p2 = point.double();
   let p2_cached = p2.to_cached();
@@ -961,7 +961,7 @@ fn odd_multiples_ifma<const N: usize>(point: &ExtendedPointIfma) -> [CachedPoint
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma], digit: i8) -> ExtendedPointIfma {
   let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
   let Some(point) = table.get(index) else {
@@ -982,7 +982,7 @@ fn add_wnaf_digit_ifma(acc: ExtendedPointIfma, table: &[CachedPointIfma], digit:
 /// Caller must ensure AVX2 is available.
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
   // SAFETY: AVX2 is active in this function, and every inner array provides 32 initialized bytes for an unaligned load.
   let limbs = unsafe {
@@ -1004,7 +1004,7 @@ fn load_cached_ifma_raw(entry: &[[i64; 4]; 5]) -> CachedPointIfma {
 /// Caller must ensure AVX-512 IFMA + VL are available.
 #[inline]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-#[cfg(any(test, feature = "ed25519"))]
+#[cfg(feature = "ed25519")]
 fn add_wnaf_digit_ifma_raw(acc: ExtendedPointIfma, table: &[[[i64; 4]; 5]], digit: i8) -> ExtendedPointIfma {
   let index = usize::from((digit.unsigned_abs().wrapping_sub(1)) / 2);
   let Some(entry) = table.get(index) else {

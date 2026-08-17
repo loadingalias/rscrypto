@@ -30,7 +30,7 @@ use super::{
 // Constants
 
 const MASK51: i64 = (1i64 << 51) - 1;
-#[cfg(test)]
+#[cfg(all(test, feature = "ed25519"))]
 const MASK52: i64 = (1i64 << 52) - 1;
 
 /// Subtraction bias: 2p in radix-51. Limb 0 accounts for the -19 term.
@@ -96,7 +96,7 @@ fn madd52hi(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
-#[cfg(test)]
+#[cfg(all(test, feature = "ed25519"))]
 #[inline]
 #[target_feature(enable = "avx2")]
 fn select_by_bit(bit: __m256i, val: __m256i) -> __m256i {
@@ -284,17 +284,17 @@ impl FieldElement51x4 {
       Shuffle::SwapPairs => do_shuffle!(0b10_11_00_01),
       Shuffle::SwapAB => do_shuffle!(0b11_10_00_01),
       Shuffle::SwapCD => do_shuffle!(0b10_11_01_00),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Shuffle::BroadcastA => do_shuffle!(0b00_00_00_00),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Shuffle::BroadcastB => do_shuffle!(0b01_01_01_01),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Shuffle::AlternateCA => do_shuffle!(0b00_10_00_10),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Shuffle::OuterDInnerB => do_shuffle!(0b11_01_01_11),
       Shuffle::OuterAInnerD => do_shuffle!(0b00_11_11_00),
       Shuffle::AlternateCB => do_shuffle!(0b01_10_01_10),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Shuffle::RepeatAB => do_shuffle!(0b01_00_01_00),
     }
   }
@@ -324,16 +324,16 @@ impl FieldElement51x4 {
     }
 
     match lanes {
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::C => do_blend!(0b0011_0000),
       Lanes::D => do_blend!(0b1100_0000),
       Lanes::AB => do_blend!(0b0000_1111),
       Lanes::AC => do_blend!(0b0011_0011),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::AD => do_blend!(0b1100_0011),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::BC => do_blend!(0b0011_1100),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::ExceptA => do_blend!(0b1111_1100),
     }
   }
@@ -596,7 +596,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   pub(crate) fn mul_unreduced(&self, rhs: &Self) -> Self {
     let zero = _mm256_setzero_si256();
@@ -898,7 +898,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   pub(crate) fn mul_small_unreduced(&self, small: &Self) -> Self {
     let zero = _mm256_setzero_si256();
@@ -967,7 +967,7 @@ impl FieldElement51x4 {
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn square(&self) -> Self {
     let zero = _mm256_setzero_si256();
     let f = &self.0;
@@ -1071,7 +1071,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   fn square_wide_fold(&self) -> [__m256i; 5] {
     let zero = _mm256_setzero_si256();
@@ -1192,7 +1192,7 @@ impl FieldElement51x4 {
   /// # Safety
   ///
   /// Caller must ensure AVX-512 IFMA + VL are available.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[inline]
   #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
   pub(crate) fn square_and_negate_d_wide(&self) -> Self {
@@ -1283,6 +1283,7 @@ impl FieldElement51x4 {
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "ed25519")]
 mod tests {
   use super::{FieldElement, *};
 

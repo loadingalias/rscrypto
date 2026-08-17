@@ -55,23 +55,23 @@ pub(crate) enum Shuffle {
   /// Swap right pair only: (A, B, C, D) → (A, B, D, C)
   SwapCD,
   /// Broadcast A: (A, B, C, D) → (A, A, A, A)
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   BroadcastA,
   /// Broadcast B: (A, B, C, D) → (B, B, B, B)
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   BroadcastB,
   /// (A, B, C, D) → (C, A, C, A)
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   AlternateCA,
   /// (A, B, C, D) → (D, B, B, D)
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   OuterDInnerB,
   /// (A, B, C, D) → (A, D, D, A)
   OuterAInnerD,
   /// (A, B, C, D) → (C, B, C, B)
   AlternateCB,
   /// (A, B, C, D) → (A, B, A, B)
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   RepeatAB,
 }
 
@@ -83,17 +83,17 @@ impl Shuffle {
       Self::SwapPairs => [1, 0, 3, 2, 5, 4, 7, 6],
       Self::SwapAB => [1, 0, 3, 2, 4, 5, 6, 7],
       Self::SwapCD => [0, 1, 2, 3, 5, 4, 7, 6],
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Self::BroadcastA => [0, 0, 2, 2, 0, 0, 2, 2],
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Self::BroadcastB => [1, 1, 3, 3, 1, 1, 3, 3],
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Self::AlternateCA => [4, 0, 6, 2, 4, 0, 6, 2],
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Self::OuterDInnerB => [5, 1, 7, 3, 1, 5, 3, 7],
       Self::OuterAInnerD => [0, 5, 2, 7, 5, 0, 7, 2],
       Self::AlternateCB => [4, 1, 6, 3, 4, 1, 6, 3],
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Self::RepeatAB => [0, 1, 2, 3, 0, 1, 2, 3],
     }
   }
@@ -109,7 +109,7 @@ impl Shuffle {
 #[repr(u8)]
 pub(crate) enum Lanes {
   /// Select C lanes: positions 4, 6
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   C = 0b0101_0000,
   /// Select D lanes: positions 5, 7
   D = 0b1010_0000,
@@ -118,13 +118,13 @@ pub(crate) enum Lanes {
   /// Select A and C lanes: positions 0, 2, 4, 6
   AC = 0b0101_0101,
   /// Select A and D lanes: positions 0, 2, 5, 7
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   AD = 0b1010_0101,
   /// Select B and C lanes: positions 1, 3, 4, 6
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   BC = 0b0101_1010,
   /// Select every lane except A: positions 1, 3, 4, 5, 6, 7
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   ExceptA = 0b1111_1010,
 }
 
@@ -426,16 +426,16 @@ impl FieldElement2625x4 {
     }
 
     match lanes {
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::C => do_blend!(0b0101_0000),
       Lanes::D => do_blend!(0b1010_0000),
       Lanes::AB => do_blend!(0b0000_1111),
       Lanes::AC => do_blend!(0b0101_0101),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::AD => do_blend!(0b1010_0101),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::BC => do_blend!(0b0101_1010),
-      #[cfg(any(test, feature = "ed25519"))]
+      #[cfg(feature = "ed25519")]
       Lanes::ExceptA => do_blend!(0b1111_1010),
     }
   }
@@ -784,7 +784,7 @@ impl FieldElement2625x4 {
   /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   fn square_accum(&self) -> [__m256i; 10] {
     let v19 = _mm256_set1_epi64x(19);
 
@@ -908,7 +908,7 @@ impl FieldElement2625x4 {
   /// # Safety
   ///
   /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "ed25519"))]
   #[inline]
   #[target_feature(enable = "avx2")]
   pub(crate) fn square(&self) -> Self {
@@ -933,7 +933,7 @@ impl FieldElement2625x4 {
   /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   pub(crate) fn square_and_negate_d(&self) -> Self {
     let mut z = self.square_accum();
     Self::negate_d_accum(&mut z);
@@ -953,7 +953,7 @@ impl FieldElement2625x4 {
   /// Calls from outside an AVX2-enabled context require runtime AVX2 support.
   #[inline]
   #[target_feature(enable = "avx2")]
-  #[cfg(any(test, feature = "ed25519"))]
+  #[cfg(feature = "ed25519")]
   fn negate_d_accum(z: &mut [__m256i; 10]) {
     // p × 2^37 per limb (radix-26/25):
     let bias_even_0 = _mm256_set1_epi64x(((1i64 << 26) - 19) << 37);
@@ -987,6 +987,7 @@ impl FieldElement2625x4 {
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "ed25519")]
 mod tests {
   use super::{FieldElement, *};
 
