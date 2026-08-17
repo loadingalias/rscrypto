@@ -450,6 +450,13 @@ pub(crate) unsafe fn scalar_mul_vartime_avx2(point: &ExtendedPoint, scalar_bytes
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
+#[cfg_attr(
+  all(target_os = "linux", not(any(test, miri, feature = "portable-only"))),
+  expect(
+    dead_code,
+    reason = "x86_64 Linux library builds route fixed-base multiplication through assembly"
+  )
+)]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn scalar_mul_basepoint_avx2(scalar_bytes: &[u8; 32]) -> ExtendedPoint {
   use super::point::BASEPOINT_RADIX16_TABLE;
@@ -867,6 +874,13 @@ pub(crate) unsafe fn scalar_mul_vartime_ifma(point: &ExtendedPoint, scalar_bytes
 /// # Safety
 ///
 /// Caller must ensure AVX-512 IFMA + VL are available.
+#[cfg_attr(
+  all(target_os = "linux", not(any(test, miri, feature = "portable-only"))),
+  expect(
+    dead_code,
+    reason = "x86_64 Linux library builds route fixed-base multiplication through assembly"
+  )
+)]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
 pub(crate) unsafe fn scalar_mul_basepoint_ifma(scalar_bytes: &[u8; 32]) -> ExtendedPoint {
   use super::point::BASEPOINT_RADIX16_TABLE;

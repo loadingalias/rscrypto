@@ -49,7 +49,7 @@ mod ppc;
 #[cfg(target_arch = "riscv64")]
 #[path = "aes/riscv64_aes.rs"]
 mod rv_aes;
-#[cfg(any(target_arch = "riscv64", test))]
+#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
 #[path = "aes/riscv64_fixslice_aes.rs"]
 mod rv_fixslice_aes;
 #[cfg(target_arch = "riscv64")]
@@ -1706,7 +1706,7 @@ pub(crate) fn aes256_encrypt_block(ek: &Aes256EncKey, block: &mut [u8; BLOCK_SIZ
   }
 }
 
-#[cfg(any(target_arch = "riscv64", test))]
+#[cfg(any(target_arch = "riscv64", all(test, not(target_arch = "s390x"))))]
 #[inline]
 pub(super) fn aes_enc_round_4_fixslice(blocks: &mut [[u8; BLOCK_SIZE]; 4], round_keys: &[[u8; BLOCK_SIZE]; 4]) {
   rv_fixslice_aes::cipher_round_4(blocks, round_keys);

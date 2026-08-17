@@ -51,8 +51,8 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
   let n15 = vdupq_n_u32(load_u32_le(&nonce[8..12]));
 
   let mut counter = initial_counter;
-  let mut double_batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH * 2);
-  for chunk in &mut double_batches {
+  let (double_batches, double_remainder) = buffer.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH * 2 }>();
+  for chunk in double_batches {
     debug_assert!(counter.checked_add(COUNTERS_PER_DOUBLE_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = c0;
@@ -175,7 +175,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
 
     let ptr = chunk.as_mut_ptr();
     // SAFETY: vector transpose and XOR stores because:
-    // 1. `chunk` is exactly eight ChaCha20 blocks from `chunks_exact_mut`.
+    // 1. `chunk` is an array of exactly eight ChaCha20 blocks.
     // 2. The first four-block group starts at `ptr`; the second starts at `ptr + 256`.
     // 3. NEON is guaranteed by the enclosing `#[target_feature(enable = "neon")]`.
     unsafe {
@@ -194,10 +194,8 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     counter = counter.wrapping_add(COUNTERS_PER_DOUBLE_BATCH);
   }
 
-  let mut batches = double_batches
-    .into_remainder()
-    .chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
+  let (batches, remainder) = double_remainder.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH }>();
+  for chunk in batches {
     debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = c0;
@@ -285,7 +283,7 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
 
     let ptr = chunk.as_mut_ptr();
     // SAFETY: vector transpose and XOR stores because:
-    // 1. `chunk` is exactly `BLOCKS_PER_BATCH * BLOCK_SIZE` bytes from `chunks_exact_mut`.
+    // 1. `chunk` is an array of exactly `BLOCKS_PER_BATCH * BLOCK_SIZE` bytes.
     // 2. Each call stores four 16-byte word groups at offsets inside the 256-byte chunk.
     // 3. NEON is guaranteed by the enclosing `#[target_feature(enable = "neon")]`.
     unsafe {
@@ -298,7 +296,6 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
-  let remainder = batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }

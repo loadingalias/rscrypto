@@ -496,17 +496,16 @@ impl ChaCha20Poly1305 {
     authenticator.update_padded_segment(aad);
 
     let mut counter = 1u32;
-    let mut chunks = buffer.chunks_exact_mut(AARCH64_INTERLEAVED_CHUNK);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = buffer.as_chunks_mut::<AARCH64_INTERLEAVED_CHUNK>();
+    for chunk in chunks {
       // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
-      // diagnostic length bound, or from a same-module test with a bounded buffer; the iterator and exact counter
-      // advance preserve that whole-buffer bound for this segment.
+      // diagnostic length bound, or from a same-module test with a bounded buffer; the fixed-size chunks and exact
+      // counter advance preserve that whole-buffer bound for this segment.
       unsafe { chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk) };
       authenticator.update_padded_segment(chunk);
       counter = counter.wrapping_add(AARCH64_INTERLEAVED_BLOCKS);
     }
 
-    let remainder = chunks.into_remainder();
     if !remainder.is_empty() {
       // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
       // diagnostic length bound, or from a same-module test with a bounded buffer; `counter` tracks the preceding
@@ -553,17 +552,16 @@ impl ChaCha20Poly1305 {
     authenticator.update_padded_segment(aad);
 
     let mut counter = 1u32;
-    let mut chunks = buffer.chunks_exact_mut(AARCH64_INTERLEAVED_CHUNK);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = buffer.as_chunks_mut::<AARCH64_INTERLEAVED_CHUNK>();
+    for chunk in chunks {
       authenticator.update_padded_segment(chunk);
       // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or
-      // diagnostic length bound, or from a same-module test with a bounded buffer; the iterator and exact counter
-      // advance preserve that whole-buffer bound for this segment.
+      // diagnostic length bound, or from a same-module test with a bounded buffer; the fixed-size chunks and exact
+      // counter advance preserve that whole-buffer bound for this segment.
       unsafe { chacha20::xor_keystream_aarch64_neon(self.key.as_bytes(), counter, nonce.as_bytes(), chunk) };
       counter = counter.wrapping_add(AARCH64_INTERLEAVED_BLOCKS);
     }
 
-    let remainder = chunks.into_remainder();
     if !remainder.is_empty() {
       authenticator.update_padded_segment(remainder);
       // SAFETY: the capability gate proves NEON. Every caller reaches this private helper after the public or

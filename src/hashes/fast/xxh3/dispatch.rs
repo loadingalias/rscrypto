@@ -102,7 +102,7 @@ pub(crate) fn stream_accumulate_fn() -> StreamAccumulateFn {
   active().stream_accumulate
 }
 
-#[cfg(feature = "diag")]
+#[cfg(any(feature = "diag", all(test, target_arch = "x86_64")))]
 #[inline]
 #[must_use]
 fn kernel_id64_for_len(long_id: Xxh3KernelId, caps: Caps, len: usize) -> Xxh3KernelId {

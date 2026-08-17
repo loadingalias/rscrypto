@@ -95,7 +95,9 @@ impl AeadPar4 {
     if self.num_cached == 0 {
       let group_len = segment.len().strict_sub(offset).strict_div(64).strict_mul(64);
       let group_end = offset.strict_add(group_len);
-      for group in segment[offset..group_end].chunks_exact(64) {
+      let (groups, remainder) = segment[offset..group_end].as_chunks::<64>();
+      debug_assert!(remainder.is_empty());
+      for group in groups {
         let (blocks, remainder) = group.as_chunks::<16>();
         debug_assert!(remainder.is_empty());
         assert_eq!(blocks.len(), 4, "64-byte Poly1305 group must contain four blocks");

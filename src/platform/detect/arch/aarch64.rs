@@ -96,7 +96,8 @@ fn hwcap_batch_aarch64() -> Caps {
 
     // Parse as array of (u64, u64) pairs
     let entries = buf.get(..n)?;
-    for chunk in entries.chunks_exact(16) {
+    let (entries, _) = entries.as_chunks::<16>();
+    for chunk in entries {
       let a_type = u64::from_ne_bytes(chunk.get(0..8)?.try_into().ok()?);
       let a_val = u64::from_ne_bytes(chunk.get(8..16)?.try_into().ok()?);
 

@@ -33,6 +33,17 @@ pub use point_avx2::{
 };
 
 /// Dispatch `[s]B` (fixed-base scalar mul) to the fastest validated CT path.
+#[cfg_attr(
+  all(
+    target_arch = "x86_64",
+    target_os = "linux",
+    not(any(test, miri, feature = "portable-only"))
+  ),
+  expect(
+    dead_code,
+    reason = "x86_64 Linux library builds use the assembly fixed-base entry points"
+  )
+)]
 #[must_use]
 pub(crate) fn basepoint_mul_dispatch(scalar_bytes: &[u8; 32]) -> point::ExtendedPoint {
   #[cfg(target_arch = "x86_64")]
