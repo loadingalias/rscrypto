@@ -167,11 +167,11 @@ mod tests {
     for seed in 0u8..16 {
       let mut input_a = [0u8; 200];
       let mut input_b = [0u8; 200];
-      for (i, byte) in input_a.iter_mut().enumerate() {
-        *byte = seed.wrapping_add((i as u8).wrapping_mul(17));
+      for (i, byte) in (0u8..).zip(&mut input_a) {
+        *byte = seed.wrapping_add(i.wrapping_mul(17));
       }
-      for (i, byte) in input_b.iter_mut().enumerate() {
-        *byte = seed.wrapping_mul(3).wrapping_add((i as u8).wrapping_mul(29));
+      for (i, byte) in (0u8..).zip(&mut input_b) {
+        *byte = seed.wrapping_mul(3).wrapping_add(i.wrapping_mul(29));
       }
 
       let mut state_a = state_from_bytes(&input_a);

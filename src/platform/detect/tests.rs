@@ -427,27 +427,31 @@ mod tests {
       snapshot.leaf7_0.ebx |= 1 << 5;
     });
 
+    enum Leaf7Register {
+      Ebx,
+      Ecx,
+      Edx,
+    }
     let avx512_cases = [
-      (x86::AVX512DQ, "ebx", 17),
-      (x86::AVX512IFMA, "ebx", 21),
-      (x86::AVX512CD, "ebx", 28),
-      (x86::AVX512BW, "ebx", 30),
-      (x86::AVX512VL, "ebx", 31),
-      (x86::AVX512VBMI, "ecx", 1),
-      (x86::AVX512VBMI2, "ecx", 6),
-      (x86::AVX512VNNI, "ecx", 11),
-      (x86::AVX512BITALG, "ecx", 12),
-      (x86::AVX512VPOPCNTDQ, "ecx", 14),
-      (x86::AVX512VP2INTERSECT, "edx", 8),
+      (x86::AVX512DQ, Leaf7Register::Ebx, 17),
+      (x86::AVX512IFMA, Leaf7Register::Ebx, 21),
+      (x86::AVX512CD, Leaf7Register::Ebx, 28),
+      (x86::AVX512BW, Leaf7Register::Ebx, 30),
+      (x86::AVX512VL, Leaf7Register::Ebx, 31),
+      (x86::AVX512VBMI, Leaf7Register::Ecx, 1),
+      (x86::AVX512VBMI2, Leaf7Register::Ecx, 6),
+      (x86::AVX512VNNI, Leaf7Register::Ecx, 11),
+      (x86::AVX512BITALG, Leaf7Register::Ecx, 12),
+      (x86::AVX512VPOPCNTDQ, Leaf7Register::Ecx, 14),
+      (x86::AVX512VP2INTERSECT, Leaf7Register::Edx, 8),
     ];
     for (feature, register, bit) in avx512_cases {
       assert_feature(avx512_caps() | feature, |snapshot| {
         enable_avx512(snapshot);
         match register {
-          "ebx" => snapshot.leaf7_0.ebx |= 1 << bit,
-          "ecx" => snapshot.leaf7_0.ecx |= 1 << bit,
-          "edx" => snapshot.leaf7_0.edx |= 1 << bit,
-          _ => unreachable!(),
+          Leaf7Register::Ebx => snapshot.leaf7_0.ebx |= 1 << bit,
+          Leaf7Register::Ecx => snapshot.leaf7_0.ecx |= 1 << bit,
+          Leaf7Register::Edx => snapshot.leaf7_0.edx |= 1 << bit,
         }
       });
     }

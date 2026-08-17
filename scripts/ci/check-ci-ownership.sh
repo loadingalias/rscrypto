@@ -346,6 +346,13 @@ release_intent_condition=$(yq eval '.jobs."rail-plan".steps[] | select(.name == 
   || fail "only repository-owned Cargo Rail release PRs may consume change intent"
 grep -Fq 'scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"' "$TOOLCHAIN_ACTION" \
   || fail "toolchain setup must use the repository-owned rustup policy"
+grep -Fq 'echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"' "$TOOLCHAIN_ACTION" \
+  || fail "toolchain setup must activate the resolved contract for later steps"
+grep -Fq 'RUSTUP_TOOLCHAIN="$TOOLCHAIN" rustc --version --verbose' "$TOOLCHAIN_ACTION" \
+  || fail "toolchain setup must verify the activated contract without a rust-toolchain override"
+if grep -Fq 'rustup default ' "$SETUP_TOOLCHAIN"; then
+  fail "toolchain setup must not mutate a runner-global default"
+fi
 if grep -Eq '[.]cargo/(bin|[.]crates)|[.]opam' "$SETUP_ACTION"; then
   fail "CI tool executables and OPAM switches must not be restored from caches"
 fi

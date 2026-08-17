@@ -18,15 +18,11 @@ const XFEATURE_XTILEDATA: usize = 18;
 const XCOMP_TILE_MASK: u64 = (1 << 17) | (1 << 18);
 
 fn cpu_supports_amx_tile() -> bool {
-  // MSRV: CPUID is unsafe on Rust 1.91 but safe on the pinned nightly.
-  // SAFETY: CPUID is a non-privileged x86-64 identification instruction.
-  let leaf0 = unsafe { core::arch::x86_64::__cpuid(0) };
+  let leaf0 = core::arch::x86_64::__cpuid(0);
   if leaf0.eax < 7 {
     return false;
   }
-  // SAFETY: CPUID leaf 7, subleaf 0 is valid because leaf 0 reports support
-  // for leaf 7; the intrinsic only returns register values.
-  let leaf7 = unsafe { core::arch::x86_64::__cpuid_count(7, 0) };
+  let leaf7 = core::arch::x86_64::__cpuid_count(7, 0);
   leaf7.edx & (1 << 24) != 0
 }
 

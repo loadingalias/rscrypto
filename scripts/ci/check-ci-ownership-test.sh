@@ -166,6 +166,13 @@ printf '\n    - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca002889
   >>"$unauthenticated_rustup/.github/actions/setup-toolchain/action.yaml"
 expect_failure "$unauthenticated_rustup" "toolchain setup can run a network bootstrap installer"
 
+inactive_toolchain_contract="$TMP_ROOT/inactive-toolchain-contract"
+make_fixture "$inactive_toolchain_contract"
+sed -i.bak '/echo "RUSTUP_TOOLCHAIN=.*GITHUB_ENV"/d' \
+  "$inactive_toolchain_contract/.github/actions/setup-toolchain/action.yaml"
+rm -f "$inactive_toolchain_contract/.github/actions/setup-toolchain/action.yaml.bak"
+expect_failure "$inactive_toolchain_contract" "toolchain contract is installed but not activated"
+
 floating_rail_action="$TMP_ROOT/floating-rail-action"
 make_fixture "$floating_rail_action"
 yq eval '(.jobs."rail-plan".steps[] | select(.id == "rail") | .uses) = "loadingalias/cargo-rail-action@v6"' -i \

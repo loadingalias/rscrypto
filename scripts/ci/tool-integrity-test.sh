@@ -333,6 +333,7 @@ SH
 
 cat >"$package_bin/rustc" <<'SH'
 #!/usr/bin/env bash
+printf 'rustc %s\n' "$*" >>"$MOCK_PACKAGE_LOG"
 printf 'rustc 1.99.0-nightly\ncommit-date: 2026-07-16\n'
 SH
 
@@ -605,8 +606,11 @@ MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
 grep -Fq \
   'rustup toolchain install nightly-2026-08-12 --profile minimal --no-self-update --component clippy --component rustfmt' \
   "$package_log" || fail "rustup toolchain command was not exact"
-grep -Fq 'rustup default nightly-2026-08-12' "$package_log" \
-  || fail "rustup did not select the exact toolchain"
+grep -Fq 'rustc +nightly-2026-08-12 --version --verbose' "$package_log" \
+  || fail "installed toolchain was not verified explicitly"
+if grep -Fq 'rustup default ' "$package_log"; then
+  fail "toolchain setup mutated the runner default"
+fi
 if MOCK_PACKAGE_LOG="$package_log" PATH="$package_bin:$PATH" \
   "$REPO_ROOT/scripts/ci/setup-toolchain.sh" nightly clippy >/dev/null 2>&1; then
   fail "mutable rustup channel was accepted"

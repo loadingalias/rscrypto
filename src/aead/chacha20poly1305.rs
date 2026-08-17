@@ -992,19 +992,22 @@ mod tests {
     for plaintext_len in [
       1usize, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257, 1024,
     ] {
-      let plaintext = (0..plaintext_len)
-        .map(|index| 0x51u8.wrapping_add((index as u8).wrapping_mul(13)))
+      let plaintext = (0u8..=u8::MAX)
+        .cycle()
+        .take(plaintext_len)
+        .map(|index| 0x51u8.wrapping_add(index.wrapping_mul(13)))
         .collect::<Vec<_>>();
 
       for aad_len in [0usize, 1, 13, 14, 15, 16, 17, 31, 32, 63, 64] {
-        let aad = (0..aad_len)
-          .map(|index| 0xa7u8.wrapping_add((index as u8).wrapping_mul(7)))
+        let aad = (0u8..)
+          .take(aad_len)
+          .map(|index| 0xa7u8.wrapping_add(index.wrapping_mul(7)))
           .collect::<Vec<_>>();
 
         let mut ciphertext = plaintext.clone();
         let tag = cipher
           .encrypt_in_place_owned_unchecked(&nonce, &aad, &mut ciphertext)
-          .unwrap();
+          .expect("bounded test input must encrypt through the owned path");
         let mut actual = ciphertext.clone();
         // SAFETY: the test returned unless AVX2+BMI2 are available; every selected ciphertext is nonempty and well
         // below ChaCha20's 2^32-block limit.

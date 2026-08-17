@@ -3064,7 +3064,7 @@ mod tests {
 
     assert!(!VPCLMUL_READY.has(CRC32C_READY));
     let table = select_crc64_table(VPCLMUL_READY);
-    assert!(core::ptr::eq(table, &GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE));
+    assert!(core::ptr::eq(table, &raw const GENERIC_X86_VPCLMUL_NO_CRC32C_TABLE));
     assert_eq!(table.select_names(4096).crc64_xz_name, "x86_64/vpclmul-2way");
     assert_eq!(table.select_names(4097).crc64_xz_name, "x86_64/vpclmul-4x512");
     assert_eq!(table.select_names(4097).crc64_nvme_name, "x86_64/vpclmul-4way");

@@ -908,19 +908,19 @@ mod tests {
     let sapphire_rapids = x86::AVX512_READY | x86::INTEL_SAPPHIRE_RAPIDS;
     assert!(core::ptr::eq(
       select_profile_for_caps(sapphire_rapids),
-      &PROFILE_INTEL_SAPPHIRE_RAPIDS
+      &raw const PROFILE_INTEL_SAPPHIRE_RAPIDS
     ));
     assert!(core::ptr::eq(
       select_profile_for_caps(sapphire_rapids | ALL_AMX),
-      &PROFILE_INTEL_SAPPHIRE_RAPIDS
+      &raw const PROFILE_INTEL_SAPPHIRE_RAPIDS
     ));
     assert!(core::ptr::eq(
       select_profile_for_caps(x86::AVX512_READY),
-      &PROFILE_X86_AVX512
+      &raw const PROFILE_X86_AVX512
     ));
     assert!(core::ptr::eq(
       select_profile_for_caps(x86::AVX512_READY | ALL_AMX),
-      &PROFILE_X86_AVX512
+      &raw const PROFILE_X86_AVX512
     ));
   }
 }

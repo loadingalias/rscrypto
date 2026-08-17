@@ -2596,7 +2596,7 @@ mod tests {
       let mut data = [0u8; 321];
       let mut i = 0usize;
       while i < len {
-        data[i] = i.wrapping_mul(37).wrapping_add(19) as u8;
+        data[i] = i.to_le_bytes()[0].wrapping_mul(37).wrapping_add(19);
         i = i.strict_add(1);
       }
 

@@ -40,4 +40,7 @@ runs:
       env:
         TOOLCHAIN: ${{ steps.read-toolchain.outputs.toolchain }}
         TOOLCHAIN_COMPONENTS: ${{ inputs.components }}
-      run: scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"
+      run: |
+        scripts/ci/setup-toolchain.sh "$TOOLCHAIN" "$TOOLCHAIN_COMPONENTS"
+        echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+        RUSTUP_TOOLCHAIN="$TOOLCHAIN" rustc --version --verbose

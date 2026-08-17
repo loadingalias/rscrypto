@@ -34,5 +34,4 @@ if [[ -n "$components" ]]; then
 fi
 
 rustup "${install_args[@]}"
-rustup default "$toolchain"
 rustc "+$toolchain" --version --verbose

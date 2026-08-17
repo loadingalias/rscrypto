@@ -152,7 +152,26 @@ assert!(
 )]
 // s390x VGFM/hash backends use vector asm; selected checksum/hash/AEAD/password
 // kernels also use portable SIMD.
-#![cfg_attr(target_arch = "s390x", feature(asm_experimental_reg))]
+#![cfg_attr(
+  all(
+    target_arch = "s390x",
+    any(
+      feature = "crc16",
+      feature = "crc24",
+      feature = "crc32",
+      feature = "crc64",
+      feature = "aes-gcm",
+      feature = "aes-gcm-siv",
+      feature = "aegis256",
+      feature = "xxh3",
+      feature = "chacha20poly1305",
+      feature = "xchacha20poly1305",
+      feature = "ml-kem",
+      feature = "argon2"
+    )
+  ),
+  feature(asm_experimental_reg)
+)]
 #![cfg_attr(
   all(
     target_arch = "s390x",

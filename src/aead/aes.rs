@@ -2700,6 +2700,8 @@ unsafe fn x86_gcm_ctr_blocks_be_16(
 #[cfg(all(target_arch = "x86_64", feature = "aes-gcm", test))]
 #[target_feature(enable = "avx2")]
 #[inline]
+/// # Safety
+/// Caller must ensure AVX2 is available.
 unsafe fn x86_gcm_ctr_blocks_be_2(iv_words: [u32; 3], ctr: u32) -> core::arch::x86_64::__m256i {
   use core::arch::x86_64::*;
 
@@ -5314,14 +5316,11 @@ mod tests {
   #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
   fn fill_expected_gcm_counter_blocks<const N: usize>(iv_prefix: &[u8; 12], ctr: u32, expected: &mut [u8; N]) {
     debug_assert_eq!(N.strict_rem(BLOCK_SIZE), 0);
-    let blocks = N.strict_div(BLOCK_SIZE);
-    let mut block_idx = 0usize;
-    while block_idx < blocks {
-      let start = block_idx.strict_mul(BLOCK_SIZE);
-      expected[start..start.strict_add(12)].copy_from_slice(iv_prefix);
-      expected[start.strict_add(12)..start.strict_add(16)]
-        .copy_from_slice(&ctr.wrapping_add(block_idx as u32).to_be_bytes());
-      block_idx = block_idx.strict_add(1);
+    let (blocks, tail) = expected.as_chunks_mut::<BLOCK_SIZE>();
+    debug_assert!(tail.is_empty());
+    for (block_idx, block) in (0u32..).zip(blocks) {
+      block[..12].copy_from_slice(iv_prefix);
+      block[12..].copy_from_slice(&ctr.wrapping_add(block_idx).to_be_bytes());
     }
   }
 
@@ -5494,7 +5493,11 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    feature = "aes-gcm",
+    any(target_os = "linux", target_os = "macos")
+  ))]
   fn x86_z512_gcm_caps_available() -> bool {
     let required = crate::platform::caps::x86::VAES_READY
       | crate::platform::caps::x86::VPCLMUL_READY
@@ -5502,7 +5505,11 @@ mod tests {
     crate::platform::caps().has(required)
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    feature = "aes-gcm",
+    any(target_os = "linux", target_os = "macos")
+  ))]
   struct X86GcmTestPowers16 {
     h_polyval: u128,
     h_powers_rev: [u128; 4],
@@ -5515,7 +5522,11 @@ mod tests {
     h_powers_rev_128: [u128; 128],
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    feature = "aes-gcm",
+    any(target_os = "linux", target_os = "macos")
+  ))]
   impl X86GcmTestPowers16 {
     fn tables<'a>(&'a self) -> X86GcmTables<'a> {
       X86GcmTables {
@@ -5532,7 +5543,11 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    feature = "aes-gcm",
+    any(target_os = "linux", target_os = "macos")
+  ))]
   fn x86_gcm_test_powers_16() -> X86GcmTestPowers16 {
     let h_polyval = 0x1287_3d5b_fedc_ba09_7654_3210_f0e1_d2c3u128;
     let powers = crate::aead::polyval::precompute_powers_128(h_polyval);
@@ -5557,7 +5572,11 @@ mod tests {
     }
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    feature = "aes-gcm",
+    any(target_os = "linux", target_os = "macos")
+  ))]
   fn x86_gcm_wrap_counter_block() -> [u8; 16] {
     let mut counter = [0u8; 16];
     counter[..12].copy_from_slice(b"ctr wrap iv!");
@@ -5565,7 +5584,11 @@ mod tests {
     counter
   }
 
-  #[cfg(all(target_arch = "x86_64", feature = "aes-gcm"))]
+  #[cfg(all(
+    target_arch = "x86_64",
+    feature = "aes-gcm",
+    any(target_os = "linux", target_os = "macos")
+  ))]
   fn fill_x86_gcm_test_plaintext(out: &mut [u8]) {
     let mut i = 0usize;
     while i < out.len() {
