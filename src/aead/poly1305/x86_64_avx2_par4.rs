@@ -703,15 +703,12 @@ pub(super) unsafe fn authenticate_aead_par4(
 
   // Reimplements padded-segment logic from `update_padded_segment` for 4-way batching.
   for segment in [aad, ciphertext] {
-    let mut chunks = segment.chunks_exact(16);
-    for chunk in &mut chunks {
-      let mut block = [0u8; 16];
-      block.copy_from_slice(chunk);
+    let (chunks, rem) = segment.as_chunks::<16>();
+    for chunk in chunks {
       // SAFETY: the caller guarantees AVX2. The loop produces consecutive full blocks; `push_block` preserves
       // `num_cached < 4` and keeps the cache, powers, and accumulator in the same key stream.
-      num_cached = unsafe { push_block(block, &mut cached, num_cached, &mut acc, r1, r2) };
+      num_cached = unsafe { push_block(*chunk, &mut cached, num_cached, &mut acc, r1, r2) };
     }
-    let rem = chunks.remainder();
     if !rem.is_empty() {
       let mut block = [0u8; 16];
       block[..rem.len()].copy_from_slice(rem);

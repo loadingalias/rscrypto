@@ -885,6 +885,9 @@ pub extern "C" fn ct_binsec_rsa_private_component_validation_32() -> ! {
 #[unsafe(no_mangle)]
 #[inline(never)]
 #[target_feature(enable = "avx2")]
+/// # Safety
+///
+/// The caller must ensure AVX2 is available before invoking this entrypoint.
 pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };
@@ -905,6 +908,10 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
 #[unsafe(no_mangle)]
 #[inline(never)]
 #[target_feature(enable = "avx2,avx512ifma,avx512vl")]
+/// # Safety
+///
+/// The caller must ensure AVX2, AVX-512 IFMA, and AVX-512 VL are available
+/// before invoking this entrypoint.
 pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
   // SAFETY: This pointer references a fixed harness global with static storage.
   let digit = unsafe { ptr::read_volatile(ptr::addr_of!(CT_BINSEC_ED25519_DIGIT)) };

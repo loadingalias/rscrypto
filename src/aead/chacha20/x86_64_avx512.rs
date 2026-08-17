@@ -36,8 +36,8 @@ pub(super) unsafe fn xor_keystream(
 #[target_feature(enable = "avx512f,avx512vl,avx512bw,avx512dq")]
 unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: &[u8; NONCE_SIZE], buffer: &mut [u8]) {
   let mut counter = initial_counter;
-  let mut batches = buffer.chunks_exact_mut(BLOCK_SIZE * BLOCKS_PER_BATCH);
-  for chunk in &mut batches {
+  let (batches, remainder) = buffer.as_chunks_mut::<{ BLOCK_SIZE * BLOCKS_PER_BATCH }>();
+  for chunk in batches {
     debug_assert!(counter.checked_add(COUNTERS_PER_BATCH.strict_sub(1)).is_some());
 
     let mut x0 = _mm512_set1_epi32(0x6170_7865u32.cast_signed());
@@ -236,16 +236,14 @@ unsafe fn xor_keystream_impl(key: &[u8; KEY_SIZE], initial_counter: u32, nonce: 
     counter = counter.wrapping_add(COUNTERS_PER_BATCH);
   }
 
-  let remainder = batches.into_remainder();
-  let mut x4_batches = remainder.chunks_exact_mut(BLOCK_SIZE * x86_ssse3_x4::BLOCKS_PER_BATCH);
-  for chunk in &mut x4_batches {
+  let (x4_batches, remainder) = remainder.as_chunks_mut::<{ BLOCK_SIZE * x86_ssse3_x4::BLOCKS_PER_BATCH }>();
+  for chunk in x4_batches {
     // SAFETY: AVX-512-ready CPUs provide the SSSE3 instructions used by the
     // 4-block tail kernel, and `chunk` is exactly 4 ChaCha20 blocks.
     unsafe { x86_ssse3_x4::xor_blocks(key, counter, nonce, chunk) };
     counter = counter.wrapping_add(x86_ssse3_x4::COUNTERS_PER_BATCH);
   }
 
-  let remainder = x4_batches.into_remainder();
   if !remainder.is_empty() {
     xor_keystream_portable(key, counter, nonce, remainder);
   }

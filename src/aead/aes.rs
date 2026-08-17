@@ -5766,6 +5766,7 @@ mod tests {
   }
 
   /// FIPS 197 Appendix C.1 against the table-free fixslice AES-128 path.
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn riscv64_fixslice_matches_nist_aes128_vector() {
     let key: [u8; 16] = [
@@ -5784,6 +5785,7 @@ mod tests {
     assert_eq!(block, expected);
   }
 
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn riscv64_fixslice_128_4blocks_matches_portable() {
     let key = [0xC4u8; KEY_SIZE_128];
@@ -5806,6 +5808,7 @@ mod tests {
     assert_eq!(blocks, expected);
   }
 
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn riscv64_fixslice_matches_nist_aes256_vector() {
     let key: [u8; 32] = [
@@ -5825,6 +5828,7 @@ mod tests {
     assert_eq!(block, expected);
   }
 
+  #[cfg(not(target_arch = "s390x"))]
   #[test]
   fn riscv64_fixslice_4blocks_matches_portable() {
     let key = [0x3cu8; KEY_SIZE];

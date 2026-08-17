@@ -490,7 +490,7 @@ pub unsafe fn diag_select_basepoint_cached_avx2_limb_digest(digit: i8) -> [u64; 
   let selected = select_signed_cached_avx2(&BASEPOINT_RADIX16_TABLE[0], digit, &affine_k, &identity);
   let fields = selected.0.split();
   let mut out = [0u64; 20];
-  for (chunk, field) in out.chunks_exact_mut(5).zip(fields.iter()) {
+  for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
     chunk.copy_from_slice(field.limbs());
   }
   out
@@ -914,7 +914,7 @@ pub unsafe fn diag_select_basepoint_cached_ifma_limb_digest(digit: i8) -> [u64; 
   let selected = select_signed_cached_ifma(&BASEPOINT_RADIX16_TABLE[0], digit, &affine_k, &identity);
   let fields = selected.0.split();
   let mut out = [0u64; 20];
-  for (chunk, field) in out.chunks_exact_mut(5).zip(fields.iter()) {
+  for (chunk, field) in out.as_chunks_mut::<5>().0.iter_mut().zip(fields.iter()) {
     chunk.copy_from_slice(field.limbs());
   }
   out
@@ -1085,6 +1085,7 @@ pub(crate) unsafe fn straus_wnaf_vartime_ifma(s: &[u8; 32], h: &[u8; 32], a: &Ex
 
 #[cfg(test)]
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "ed25519")]
 mod tests {
   use super::{ExtendedPoint, *};
 
@@ -1320,7 +1321,6 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "ed25519")]
   #[test]
   fn scalar_mul_basepoint_rfc8032_vector1() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1345,7 +1345,6 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "ed25519")]
   #[test]
   fn straus_matches_scalar() {
     if !std::arch::is_x86_feature_detected!("avx2") {
@@ -1371,7 +1370,6 @@ mod tests {
     }
   }
 
-  #[cfg(feature = "ed25519")]
   #[test]
   fn straus_matches_scalar_large_scalars() {
     if !std::arch::is_x86_feature_detected!("avx2") {
