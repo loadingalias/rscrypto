@@ -14026,7 +14026,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(all(
     any(
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
+      )
     ),
     not(feature = "portable-only"),
     not(miri)
@@ -14046,7 +14050,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(all(
     any(
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
+      )
     ),
     not(feature = "portable-only"),
     not(miri)
@@ -14068,7 +14076,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(all(
     any(
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
+      )
     ),
     not(feature = "portable-only"),
     not(miri)
@@ -14084,7 +14096,11 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
   #[cfg(all(
     any(
       all(target_arch = "aarch64", any(target_os = "linux", target_os = "macos")),
-      all(target_arch = "x86_64", target_os = "linux")
+      all(
+        target_arch = "x86_64",
+        target_os = "linux",
+        any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
+      )
     ),
     not(feature = "portable-only"),
     not(miri)
@@ -14199,11 +14215,17 @@ f70203010001a3533051301d0603551d0e04160414fd0e576ce3f05b08884ad67ef3e8b4d39039c6
     assert_aarch64_rsa_montgomery_backend_matches_portable!(rsa_aarch64_asm);
   }
 
+  // x86-64 BMI2/ADX discovery is `std`-only: without it `caps()` reports just
+  // the compile-time feature set, so the assembly backend is unreachable and
+  // there is no second implementation to differentially test. Compile this
+  // evidence test exactly when the backend can be observed as available, and
+  // keep the assertion hard inside it.
   #[cfg(all(
     target_arch = "x86_64",
     target_os = "linux",
     not(feature = "portable-only"),
-    not(miri)
+    not(miri),
+    any(feature = "std", all(target_feature = "bmi2", target_feature = "adx"))
   ))]
   #[test]
   fn x86_64_linux_rsa_montgomery_asm_matches_portable_across_supported_widths() {

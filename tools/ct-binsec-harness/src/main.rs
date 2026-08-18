@@ -899,9 +899,8 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_avx2() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done(
-    (acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8,
-  )
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -923,9 +922,8 @@ pub unsafe extern "C" fn ct_binsec_ed25519_select_basepoint_cached_ifma() -> ! {
   for limb in limbs {
     acc ^= limb;
   }
-  ct_binsec_done(
-    (acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56)) as u8,
-  )
+  let folded = acc | (acc >> 8) | (acc >> 16) | (acc >> 24) | (acc >> 32) | (acc >> 40) | (acc >> 48) | (acc >> 56);
+  ct_binsec_done(folded.to_le_bytes()[0])
 }
 
 #[unsafe(no_mangle)]
