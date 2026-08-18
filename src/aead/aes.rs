@@ -1764,6 +1764,22 @@ pub(crate) fn aes128_encrypt_block(ek: &Aes128EncKey, block: &mut [u8; BLOCK_SIZ
 /// instruction or the RV64 4-block kernels when available, otherwise calls
 /// the per-block dispatcher. Used by `riscv64` from the AES-128 CTR paths
 /// and by AES-128-GCM-SIV key derivation.
+// Live callers are GCM-SIV key derivation (any arch), the batch CTR path on the
+// arches that have a block-batch kernel, and the unit tests below -- `mod aes`
+// is also compiled for `aegis256` under `cfg(test)`.
+#[cfg(any(
+  test,
+  feature = "aes-gcm-siv",
+  all(
+    feature = "aes-gcm",
+    any(
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "riscv64",
+      target_arch = "s390x"
+    )
+  )
+))]
 #[inline]
 pub(crate) fn aes128_encrypt_blocks_ecb(ek: &Aes128EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(target_arch = "aarch64")]
@@ -1925,6 +1941,22 @@ fn aes128_encrypt_block_portable(rk: &[u32; EXPANDED_KEY_WORDS_128], block: &mut
 /// On s390x this issues a single KM instruction for all `blocks`,
 /// avoiding per-block parameter-block setup overhead. On other platforms
 /// falls back to per-block dispatch.
+// Live callers are GCM-SIV key derivation (any arch), the batch CTR path on the
+// arches that have a block-batch kernel, and the unit tests below -- `mod aes`
+// is also compiled for `aegis256` under `cfg(test)`.
+#[cfg(any(
+  test,
+  feature = "aes-gcm-siv",
+  all(
+    feature = "aes-gcm",
+    any(
+      target_arch = "aarch64",
+      target_arch = "powerpc64",
+      target_arch = "riscv64",
+      target_arch = "s390x"
+    )
+  )
+))]
 #[inline]
 pub(crate) fn aes256_encrypt_blocks_ecb(ek: &Aes256EncKey, blocks: &mut [[u8; BLOCK_SIZE]]) {
   #[cfg(target_arch = "aarch64")]

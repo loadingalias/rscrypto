@@ -140,6 +140,7 @@ unsafe extern "C" {
     state: *mut AesGcmX86State,
   );
 
+  #[cfg(feature = "aes-gcm-siv")]
   pub(super) fn rscrypto_aes128_gcmsiv_ctr_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
@@ -147,6 +148,7 @@ unsafe extern "C" {
     len: usize,
   ) -> usize;
 
+  #[cfg(feature = "aes-gcm-siv")]
   pub(super) fn rscrypto_aes256_gcmsiv_ctr_16x_vaes512_x86_64_linux(
     round_keys: *const u8,
     initial_counter: *const u8,
