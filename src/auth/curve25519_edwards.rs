@@ -87,3 +87,47 @@ fn scalar_radix_16(bytes: &[u8; 32]) -> [i8; 64] {
 
   digits
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // Keeps `basepoint_mul_dispatch` reachable under every feature
+  // combination: the x86_64/aarch64 assembly entry points route around it
+  // in ed25519's and x25519's own callers, so without a direct test caller
+  // it goes dead under feature sets that enable only one of the two curves.
+  // Encoding is curve-specific (`to_bytes` needs ed25519, `to_montgomery_u`
+  // needs x25519), so each active curve gets its own comparison.
+
+  #[cfg(feature = "ed25519")]
+  #[test]
+  fn basepoint_mul_dispatch_matches_portable_edwards_encoding() {
+    let mut scalar = [0u8; 32];
+    scalar[0] = 9;
+
+    let dispatched = basepoint_mul_dispatch(&scalar);
+    let portable = point::ExtendedPoint::scalar_mul_basepoint(&scalar);
+
+    assert_eq!(
+      dispatched.to_bytes(),
+      portable.to_bytes(),
+      "dispatched basepoint mul should match the portable reference"
+    );
+  }
+
+  #[cfg(feature = "x25519")]
+  #[test]
+  fn basepoint_mul_dispatch_matches_portable_montgomery_encoding() {
+    let mut scalar = [0u8; 32];
+    scalar[0] = 9;
+
+    let dispatched = basepoint_mul_dispatch(&scalar);
+    let portable = point::ExtendedPoint::scalar_mul_basepoint(&scalar);
+
+    assert_eq!(
+      dispatched.to_montgomery_u().normalize().to_bytes(),
+      portable.to_montgomery_u().normalize().to_bytes(),
+      "dispatched basepoint mul should match the portable reference"
+    );
+  }
+}
