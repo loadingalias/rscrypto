@@ -7,11 +7,12 @@ Benchmark numbers are only meaningful with their platform, commit, feature set,
 and comparison shape. Treat every headline number as a pointer to the raw
 results in [`benchmark_results/`](../benchmark_results/).
 
-The published 2026-07-04 aggregate is archival, not an equivalent-work
-performance claim. Its RustCrypto HMAC-SHA-256 rows include key setup inside
-the timed loop while the rscrypto, `ring`, and AWS-LC rows reuse keyed state.
-The current benchmark source corrects that mismatch; publish a new aggregate
-only after regenerating the complete artifact.
+The published aggregate is the 2026-08-18 eight-runner Linux CI pass at commit
+`7eb44e9`. The earlier RustCrypto HMAC-SHA-256 mismatch—key setup inside the
+timed loop while the rscrypto, `ring`, and AWS-LC rows reused keyed state—is
+corrected in the benchmark source and in this artifact, so the aggregate is an
+equivalent-work claim. The RISE RISC-V runner did not execute in that run, so
+row counts are not comparable to the nine-runner 2026-07-04 snapshot.
 
 ## Read the numbers
 
@@ -26,8 +27,10 @@ Values above `1.00x` mean `rscrypto` was faster for that row. Values below
 
 The published W/T/L summaries classify ratios above `1.05x` as wins, ratios
 from `0.95x` through `1.05x` as ties, and ratios below `0.95x` as losses. Use
-individual equivalent-work rows—not the archival aggregate—when a primitive or
-message size matters to a deployment.
+individual rows—not the crate-wide aggregate—when a primitive or message size
+matters to a deployment. A single regressed runner can move a whole category
+aggregate: in the 2026-08-18 pass the s390x ECDSA regression pulls the ECDSA
+geomean from above parity to `0.87x`.
 
 ## Published sources
 

@@ -26,6 +26,7 @@ const MUTED: &str = "#7d8590";
 const RULE: &str = "#30363d";
 const BLUE: &str = "#0090FF";
 const TRACK: &str = "#21262d";
+const LOSS: &str = "#FF7B72";
 
 const CHART_TITLE: &str = "rscrypto";
 const CHART_SUBTITLE: &str = "Geomean speedups vs fastest matched competitors. Higher is better.";
@@ -34,9 +35,10 @@ const SUMMARY_APPLE_LABEL: &str = "Apple Silicon";
 const CHECKSUM_TITLE: &str = "Checksums";
 const CHECKSUM_COMPETITORS: &str = "- Competitor Crates/Libs: crc-fast, crc, crc32fast, crc32c, crc64fast";
 const GROUP_TITLE: &str = "Primitive Geomeans";
+const GROUP_PARITY_NOTE: &str = "1.00x";
 const FOOTER_LINUX_RUNNERS: &str = concat!(
   "- Linux Runners: AMD Zen 4/5; Intel Sapphire Rapids/Ice Lake; ",
-  "AWS Graviton 3/4; IBM POWER 10 and IBM Z16 (s390x); Rise RISC-V",
+  "AWS Graviton 3/4; IBM POWER 10 and IBM Z16 (s390x)",
 );
 const FOOTER_MACOS: &str = "- macOS: MBP M1 10-Core, 16GB RAM - Local Dev Box";
 const FOOTER_FASTEST_EXTERNAL: &str =
@@ -561,22 +563,51 @@ fn render_group_bars(svg: &mut String, data: &ChartData) {
   let row_y = 398.0;
   let row_gap = 21.0;
   let bar_h = 11.0;
-  let max = 1.60_f64;
+  let (lo, hi) = group_axis(data);
+  let span = hi - lo;
+  let pos = |value: f64| bar_x + ((value.clamp(lo, hi) - lo) / span) * bar_w;
+  let parity_x = pos(1.0);
 
   for (idx, (label, value)) in data.rows.iter().enumerate() {
     let y = row_y + (idx as f64) * row_gap;
-    let clamped = value.clamp(1.0, max);
-    let width = ((clamped - 1.0) / (max - 1.0)) * bar_w;
+    let value_x_pos = pos(*value);
 
     text(svg, label_x, y + 10.0, 13, 700, TEXT, label);
     svg.push_str(&format!(
       "<rect x=\"{bar_x:.1}\" y=\"{y:.1}\" width=\"{bar_w:.1}\" height=\"{bar_h:.1}\" fill=\"{TRACK}\" rx=\"3\"/>"
     ));
+    // Bars grow from the 1.00x parity marker: wins extend right, losses extend left.
+    let (fill_x, fill_w, fill) = if *value >= 1.0 {
+      (parity_x, value_x_pos - parity_x, BLUE)
+    } else {
+      (value_x_pos, parity_x - value_x_pos, LOSS)
+    };
     svg.push_str(&format!(
-      "<rect x=\"{bar_x:.1}\" y=\"{y:.1}\" width=\"{width:.1}\" height=\"{bar_h:.1}\" fill=\"{BLUE}\" rx=\"3\"/>"
+      "<rect x=\"{fill_x:.1}\" y=\"{y:.1}\" width=\"{fill_w:.1}\" height=\"{bar_h:.1}\" fill=\"{fill}\" rx=\"3\"/>"
     ));
     mono(svg, value_x, y + 10.0, 15, 850, TITLE, &format!("{value:.2}x"));
   }
+
+  let rule_top = row_y - 4.0;
+  let rule_bottom = row_y + (data.rows.len() as f64 - 1.0) * row_gap + bar_h + 4.0;
+  svg.push_str(&format!(
+    "<line x1=\"{parity_x:.1}\" y1=\"{rule_top:.1}\" x2=\"{parity_x:.1}\" y2=\"{rule_bottom:.1}\" \
+stroke=\"{MUTED}\" stroke-width=\"1\"/>"
+  ));
+  mono(svg, parity_x - 15.0, rule_bottom + 12.0, 9, 500, MUTED, GROUP_PARITY_NOTE);
+}
+
+/// Axis bounds for the primitive bars: always straddle parity, never clip a bar.
+fn group_axis(data: &ChartData) -> (f64, f64) {
+  let mut lo = 1.0_f64;
+  let mut hi = 1.0_f64;
+  for (_, value) in &data.rows {
+    lo = lo.min(*value);
+    hi = hi.max(*value);
+  }
+  let lo = ((lo - 0.05) * 10.0).floor() / 10.0;
+  let hi = ((hi + 0.05) * 10.0).ceil() / 10.0;
+  (lo.min(0.9), hi.max(1.6))
 }
 
 fn render_evidence_bullets(svg: &mut String) {

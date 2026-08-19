@@ -156,24 +156,28 @@ code from a binary.
 
 ## Performance
 
-The published 2026-07-04 benchmark snapshot is historical. Its aggregate
-geomeans are not equivalent-work performance claims because the historical
-RustCrypto HMAC-SHA-256 rows included key setup while the compared rscrypto,
-`ring`, and AWS-LC rows reused keyed state. The benchmark source now aligns
-that setup, but a new aggregate requires a complete regenerated artifact.
+The 2026-08-18 snapshot covers eight Linux CI runners at commit `7eb44e9`. The
+RustCrypto HMAC-SHA-256 key setup is now hoisted out of the timed loop, matching
+the reusable keyed state given to rscrypto, `ring`, and AWS-LC, so these
+aggregates are equivalent-work claims. Ratios are `external / rscrypto`; higher
+is better.
 
-<details>
-<summary>Historical 2026-07-04 scorecard (not an equivalent-work aggregate)</summary>
 <p align="center">
-  <img alt="rscrypto benchmark chart: 1.59x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 5.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
+  <img alt="rscrypto benchmark chart: 1.62x Linux and 1.37x Apple Silicon fastest-matched geomeans, checksums at 6.18x against crc-fast, crc, crc32fast, crc32c, and crc64fast, plus primitive geomean bars and M1 MBP Apple Silicon notes."
        src="assets/readme/perf.svg"
        width="640">
 </p>
-</details>
+
+3,780 of 6,144 fastest-external comparisons are wins and 5,475 are wins or ties,
+for a 1.62x Linux geomean. Known losses: ECDSA P-256/P-384 regressed sharply on
+IBM z16/s390x in this run and drags every ECDSA aggregate below parity (0.87x
+across 128 rows; 1.19x-1.53x excluding that one runner), and
+`rapidhash-stream/one-write` trails the `rapidhash` crate at 0.87x, mostly on
+x86_64.
 
 Use individual shape-compatible rows for investigation and benchmark the
-deployment workload on its target hardware. The correction, raw results,
-methodology, and known losses are in
+deployment workload on its target hardware. Raw results, methodology, and the
+full loss list are in
 [`benchmark_results/OVERVIEW.md`](benchmark_results/OVERVIEW.md) and
 [`docs/benchmarking.md`](docs/benchmarking.md).
 
